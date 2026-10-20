@@ -15,8 +15,9 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_MODELLED, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only,
-    inject_load_outcomes, inject_profile, press_tv, set_session_profile, tv, wait_for_tv,
+    E2E_DAMAGED, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, GIANTS_SERIAL, Phone, TestServer,
+    fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, press_tv,
+    set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -806,62 +807,600 @@ async fn a_damaged_model_keeps_its_portrait_and_is_logged() {
     phone.close().await.unwrap();
 }
 
+// ---- guacamole/figure-progress: the phone's editor on the rows (AH.3) --------
+
+/// The phone's details of `name`, opened from the toy box's search.
+async fn open_details(phone: &Phone, name: &str) {
+    phone.search_named(name).await.unwrap();
+    phone.tap_figure_named(name).await.unwrap();
+    phone
+        .wait_for(Locator::Css(".detail-surface"), Duration::from_secs(5))
+        .await
+        .unwrap();
+}
+
+/// What the details' stats strip reads: level, gold and playtime, or the
+/// line it shows instead.
+async fn strip(phone: &Phone) -> Vec<String> {
+    let read = phone
+        .client
+        .execute(
+            "return Array.from(document.querySelectorAll(
+               '.detail-stats-strip .detail-stat-v, .detail-stats-soon-label'))
+               .map(e => e.innerText.trim());",
+            vec![],
+        )
+        .await
+        .unwrap();
+    serde_json::from_value(read).unwrap()
+}
+
+/// Waits up to `within` for the strip to read `want`; when it did.
+async fn wait_strip(phone: &Phone, want: &[&str], within: Duration) -> Instant {
+    let deadline = Instant::now() + within;
+    loop {
+        let read = strip(phone).await;
+        if read == want {
+            return Instant::now();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the strip read {read:?}, never {want:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A details action by its aria label: (disabled, its title).
+async fn action(phone: &Phone, label: &str) -> (bool, String) {
+    let btn = phone
+        .client
+        .find(Locator::Css(&format!(
+            ".detail-action-btn[aria-label='{label}']"
+        )))
+        .await
+        .unwrap();
+    let disabled = btn.attr("disabled").await.unwrap().is_some();
+    (
+        disabled,
+        btn.attr("title").await.unwrap().unwrap_or_default(),
+    )
+}
+
+/// Clicks `selector` and waits for `then` to show.
+async fn click_then(phone: &Phone, selector: &str, then: &str) {
+    phone
+        .client
+        .find(Locator::Css(selector))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    phone
+        .wait_for(Locator::Css(then), Duration::from_secs(5))
+        .await
+        .unwrap_or_else(|e| panic!("{then} after clicking {selector}: {e}"));
+}
+
+/// Taps the edit sheet's button `label` `times` times.
+async fn tap_sheet(phone: &Phone, label: &str, times: usize) {
+    for _ in 0..times {
+        phone
+            .client
+            .find(Locator::Css(&format!("[aria-label='{label}']")))
+            .await
+            .unwrap()
+            .click()
+            .await
+            .unwrap();
+    }
+}
+
+/// The edit sheet's SAVE; returns once the sheet closed.
+async fn save_sheet(phone: &Phone) -> Instant {
+    phone
+        .client
+        .find(Locator::Css(".edit-btn-primary"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    let clicked = Instant::now();
+    phone
+        .wait_until(Duration::from_secs(5), || async {
+            phone
+                .client
+                .find(Locator::Css(".edit-scrim"))
+                .await
+                .is_err()
+        })
+        .await
+        .expect("the sheet closes after SAVE");
+    clicked
+}
+
+/// RESET on the details, held on the confirm's HOLD TO RESET until it fires.
+async fn reset_from_details(phone: &Phone) {
+    click_then(
+        phone,
+        ".detail-action-btn[aria-label='Reset to pack-fresh']",
+        ".reset-btn-danger",
+    )
+    .await;
+    let press = |kind: &str| {
+        format!(
+            "const el = document.querySelector('.reset-btn-danger');
+             if (!el) return false;
+             el.dispatchEvent(new PointerEvent('{kind}', {{pointerId: 1, isPrimary: true, bubbles: true}}));
+             return true;"
+        )
+    };
+    let down = phone.client.execute(&press("pointerdown"), vec![]).await;
+    assert_eq!(down.unwrap(), json!(true));
+    // The hold fires at 1.2 s.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let _ = phone.client.execute(&press("pointerup"), vec![]).await;
+}
+
+/// `GET .../stats` for `profile_id`'s `figure_id`: (status, body).
+async fn stats(server: &TestServer, profile_id: &str, figure_id: &str) -> (u16, Value) {
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{}/api/profiles/{profile_id}/figures/{figure_id}/stats",
+            server.url
+        ))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    (status, resp.json().await.unwrap_or_default())
+}
+
+/// The edit the phone's SAVE sends, from session `sid`; its status.
+async fn edit_from(
+    server: &TestServer,
+    sid: u64,
+    profile_id: &str,
+    figure_id: &str,
+    level: u8,
+    gold: u32,
+) -> u16 {
+    reqwest::Client::new()
+        .post(format!(
+            "{}/api/profiles/{profile_id}/figures/{figure_id}/edit",
+            server.url
+        ))
+        .header("x-session-id", sid.to_string())
+        .json(&json!({ "level": level, "gold": gold }))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+/// The figure reset the phone's RESET sends off the portal, from `sid`.
+async fn reset_from(server: &TestServer, sid: u64, profile_id: &str, figure_id: &str) -> u16 {
+    reqwest::Client::new()
+        .post(format!(
+            "{}/api/profiles/{profile_id}/figures/{figure_id}/reset",
+            server.url
+        ))
+        .header("x-session-id", sid.to_string())
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+/// AA's `figure_details_have_no_progress_and_stats_and_reset_are_off`, now
+/// that guacamole keeps figure progress (the figure-cards delta REMOVES AA's
+/// "not shown or edited yet"): a never-placed figure says so and edits, the
+/// sheet stops at the extract's own caps, and a first placement shows level
+/// 1 with nothing earned ("A first placement"), STATS off while it stands on
+/// the portal and RESET resetting it where it stands.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
-async fn figure_details_have_no_progress_and_stats_and_reset_are_off() {
+async fn figure_details_show_the_rows_progress_and_the_games_caps() {
     if guacamole_only() {
         return;
     }
     let server = spawn();
     let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
     pick_giants(&server, &phone).await;
-    phone.open_search().await.unwrap();
-    phone.search("Eruptor").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    phone.tap_figure_named("Eruptor").await.unwrap();
+    open_details(&phone, "Eruptor").await;
 
-    // The buttons start enabled while the stats fetch is in flight (AA.9).
-    phone
-        .wait_until(Duration::from_secs(5), || async {
-            phone
-                .inner_text(".detail-stats-soon-label")
-                .await
-                .ok()
-                .flatten()
-                .is_some_and(|t| t.trim() == "NOT AVAILABLE YET")
-        })
-        .await
-        .expect("NOT AVAILABLE YET strip");
-    for label in ["Edit stats", "Reset to pack-fresh"] {
-        let btn = phone
+    wait_strip(&phone, &["NEVER PLACED"], Duration::from_secs(5)).await;
+    assert_eq!(
+        action(&phone, "Edit stats").await,
+        (false, "Edit level + gold".into())
+    );
+    assert!(!action(&phone, "Reset to pack-fresh").await.0);
+
+    // The sheet's caps are the extract's: its table's 15 levels, its clamp.
+    click_then(
+        &phone,
+        ".detail-action-btn[aria-label='Edit stats']",
+        ".edit-scrim",
+    )
+    .await;
+    let metas: Vec<String> = serde_json::from_value(
+        phone
             .client
-            .find(Locator::Css(&format!(
-                ".detail-action-btn[aria-label='{label}']"
-            )))
+            .execute(
+                "return Array.from(document.querySelectorAll('.edit-stepper-meta'))
+                   .map(e => e.innerText.trim());",
+                vec![],
+            )
             .await
-            .unwrap();
-        assert!(
-            btn.attr("disabled").await.unwrap().is_some(),
-            "{label} should be disabled"
-        );
-        let title = btn.attr("title").await.unwrap().unwrap_or_default();
-        assert_eq!(title, "Not available yet", "{label}");
-    }
-    let stat_labels = phone
-        .client
-        .find_all(Locator::Css(".detail-stat-l"))
+            .unwrap(),
+    )
+    .unwrap();
+    let max_level = format!("max {}", E2E_LEVEL_XP.len());
+    let max_gold = format!("max {E2E_GOLD_CAP}");
+    assert_eq!(metas, [max_level.as_str(), max_gold.as_str()]);
+    tap_sheet(&phone, "Increase level", 20).await;
+    let level = phone.inner_text(".edit-stepper-value").await.unwrap();
+    assert_eq!(level.as_deref().map(str::trim), Some("15"));
+    tap_sheet(&phone, "Set gold to max", 1).await;
+    let gold = phone
+        .inner_text(".edit-stepper-gold .edit-stepper-value")
         .await
         .unwrap();
-    assert!(stat_labels.is_empty(), "no level, gold or playtime cells");
+    assert_eq!(
+        gold.as_deref().map(str::trim),
+        Some(E2E_GOLD_CAP.to_string().as_str())
+    );
+    phone
+        .client
+        .find(Locator::Css(".edit-btn-secondary"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+
+    // A first placement: level 1, no gold, no playtime.
+    phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    wait_slot(&phone, 1, "Eruptor").await;
+    open_details(&phone, "Eruptor").await;
+    wait_strip(&phone, &["1", "0", "0m"], Duration::from_secs(5)).await;
+    assert_eq!(
+        action(&phone, "Edit stats").await,
+        (true, "Remove from portal before editing".into())
+    );
+    assert_eq!(
+        action(&phone, "Reset to pack-fresh").await,
+        (false, "Reset to fresh where it stands".into())
+    );
     let detail = phone
         .inner_text(".detail-surface")
         .await
         .unwrap()
-        .unwrap_or_default()
-        .to_uppercase();
-    for word in ["LEVEL", "GOLD", "XP"] {
-        assert!(!detail.contains(word), "details show {word}: {detail}");
+        .unwrap_or_default();
+    assert!(!detail.contains("NOT AVAILABLE YET"), "{detail}");
+    phone.close().await.unwrap();
+}
+
+/// "Never placed" and "Kept across a restart": a figure the profile never
+/// placed edited from the phone, its row made by the edit, its level at the
+/// table's threshold, still there after guacamole is quit and started again.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_never_placed_figure_edited_is_kept_across_a_restart() {
+    if guacamole_only() {
+        return;
     }
+    let mut server = spawn();
+    let (phone, pid, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let spyro = id_named(&figures(&server, sid).await, "Spyro");
+    assert_eq!(stats(&server, &pid, &spyro).await.0, 404);
+
+    open_details(&phone, "Spyro").await;
+    wait_strip(&phone, &["NEVER PLACED"], Duration::from_secs(5)).await;
+    click_then(
+        &phone,
+        ".detail-action-btn[aria-label='Edit stats']",
+        ".edit-scrim",
+    )
+    .await;
+    tap_sheet(&phone, "Increase level", 9).await;
+    tap_sheet(&phone, "Increase gold by 100", 3).await;
+    save_sheet(&phone).await;
+    wait_strip(&phone, &["10", "300", "0m"], Duration::from_secs(5)).await;
+    let want = json!({
+        "level": 10, "xp": E2E_LEVEL_XP[9], "gold": 300, "playtime_secs": 0,
+        "max_level": E2E_LEVEL_XP.len(), "max_gold": E2E_GOLD_CAP,
+    });
+    assert_eq!(stats(&server, &pid, &spyro).await, (200, want.clone()));
+    phone.close().await.unwrap();
+
+    server.restart_guacamole().expect("start guacamole again");
+    // The table is published from the extract at start.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let (status, body) = stats(&server, &pid, &spyro).await;
+        if status != 409 {
+            assert_eq!((status, body), (200, want));
+            break;
+        }
+        assert!(Instant::now() < deadline, "the table never came back");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// "Another profile's Eruptor on the portal" then "Her own Eruptor on the
+/// portal": Bob's placement leaves Alice's edit free; her own refuses it, the
+/// phone saying so in her words, and nothing changes.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn an_edit_is_refused_only_while_her_own_figure_is_on_the_portal() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (alice, alice_pid, alice_sid) = phone_as(&server, "Alice", ALICE).await;
+    let (bob, bob_pid, bob_sid) = phone_as(&server, "Bob", BOB).await;
+    pick_giants(&server, &alice).await;
+    let eruptor = id_named(&figures(&server, alice_sid).await, "Eruptor");
+
+    load(&server, bob_sid, 1, &eruptor).await;
+    wait_slot(&alice, 1, "Eruptor").await;
+    let bobs = stats(&server, &bob_pid, &eruptor).await;
+    assert_eq!(bobs.1["level"], 1);
+    open_details(&alice, "Eruptor").await;
+    wait_strip(&alice, &["NEVER PLACED"], Duration::from_secs(5)).await;
+    assert!(
+        !action(&alice, "Edit stats").await.0,
+        "Bob's doesn't lock hers"
+    );
+    click_then(
+        &alice,
+        ".detail-action-btn[aria-label='Edit stats']",
+        ".edit-scrim",
+    )
+    .await;
+    tap_sheet(&alice, "Increase level", 1).await;
+    save_sheet(&alice).await;
+    wait_strip(&alice, &["2", "0", "0m"], Duration::from_secs(5)).await;
+    assert_eq!(
+        stats(&server, &bob_pid, &eruptor).await,
+        bobs,
+        "Bob's untouched"
+    );
+
+    // The sheet open, then her own Eruptor lands on the portal.
+    click_then(
+        &alice,
+        ".detail-action-btn[aria-label='Edit stats']",
+        ".edit-scrim",
+    )
+    .await;
+    tap_sheet(&alice, "Increase level", 1).await;
+    load(&server, alice_sid, 2, &eruptor).await;
+    wait_slot(&alice, 2, "Eruptor").await;
+    alice
+        .client
+        .find(Locator::Css(".edit-btn-primary"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    alice
+        .wait_until(Duration::from_secs(5), || async {
+            alice
+                .inner_text(".edit-error")
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|t| !t.is_empty())
+        })
+        .await
+        .expect("the sheet says why");
+    let said = alice.inner_text(".edit-error").await.unwrap().unwrap();
+    assert_eq!(
+        said.trim(),
+        "Eruptor is on the portal! Take Eruptor off first, then try again."
+    );
+    let (_, after) = stats(&server, &alice_pid, &eruptor).await;
+    assert_eq!(
+        (after["level"].clone(), after["xp"].clone()),
+        (json!(2), json!(E2E_LEVEL_XP[1]))
+    );
+    alice
+        .client
+        .find(Locator::Css(".edit-btn-secondary"))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    assert_eq!(
+        action(&alice, "Edit stats").await,
+        (true, "Remove from portal before editing".into())
+    );
+    alice.close().await.unwrap();
+    bob.close().await.unwrap();
+}
+
+/// "A sibling's figure": a phone with Alice unlocked asking to edit or reset
+/// Bob's Eruptor is refused, and his Eruptor is unchanged.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_siblings_phone_can_neither_edit_nor_reset_his_figure() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (alice, _, alice_sid) = phone_as(&server, "Alice", ALICE).await;
+    let (bob, bob_pid, bob_sid) = phone_as(&server, "Bob", BOB).await;
+    let eruptor = id_named(&figures(&server, bob_sid).await, "Eruptor");
+    assert_eq!(
+        edit_from(&server, bob_sid, &bob_pid, &eruptor, 5, 500).await,
+        202
+    );
+    let bobs = stats(&server, &bob_pid, &eruptor).await;
+    assert_eq!((bobs.0, bobs.1["level"].clone()), (200, json!(5)));
+
+    assert_eq!(
+        edit_from(&server, alice_sid, &bob_pid, &eruptor, 15, E2E_GOLD_CAP).await,
+        403
+    );
+    assert_eq!(
+        reset_from(&server, alice_sid, &bob_pid, &eruptor).await,
+        403
+    );
+    assert_eq!(stats(&server, &bob_pid, &eruptor).await, bobs);
+    alice.close().await.unwrap();
+    bob.close().await.unwrap();
+}
+
+/// "Reset, then placed": RESET off the portal drops her progress, the
+/// details say never placed, and the next placement is level 1 with no gold
+/// and no playtime.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn reset_to_fresh_and_the_next_placement_starts_fresh() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (phone, pid, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let eruptor = id_named(&figures(&server, sid).await, "Eruptor");
+    assert_eq!(edit_from(&server, sid, &pid, &eruptor, 10, 500).await, 202);
+
+    open_details(&phone, "Eruptor").await;
+    wait_strip(&phone, &["10", "500", "0m"], Duration::from_secs(5)).await;
+    reset_from_details(&phone).await;
+    wait_strip(&phone, &["NEVER PLACED"], Duration::from_secs(5)).await;
+    assert_eq!(stats(&server, &pid, &eruptor).await.0, 404);
+
+    phone
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(5))
+        .await
+        .unwrap()
+        .click()
+        .await
+        .unwrap();
+    wait_slot(&phone, 1, "Eruptor").await;
+    open_details(&phone, "Eruptor").await;
+    wait_strip(&phone, &["1", "0", "0m"], Duration::from_secs(5)).await;
+    let (_, fresh) = stats(&server, &pid, &eruptor).await;
+    assert_eq!(
+        (fresh["xp"].clone(), fresh["gold"].clone()),
+        (json!(0), json!(0))
+    );
+    phone.close().await.unwrap();
+}
+
+/// "A second phone watching", for an edit: the strip on one phone follows an
+/// edit the other makes within 1 second.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_second_phones_strip_follows_an_edit_within_a_second() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let pid = inject_profile(&server.url, "Alice", "1234", ALICE)
+        .await
+        .unwrap();
+    let mut phones = Vec::new();
+    for _ in 0..2 {
+        let phone = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+            .await
+            .unwrap();
+        let sid = session_id(&phone).await;
+        set_session_profile(&server.url, sid, &pid).await.unwrap();
+        phones.push(phone);
+    }
+    let (watching, editing) = (&phones[0], &phones[1]);
+    pick_giants(&server, watching).await;
+    editing
+        .wait_for_portal(Duration::from_secs(15))
+        .await
+        .expect("the second phone's portal");
+    open_details(watching, "Spyro").await;
+    wait_strip(watching, &["NEVER PLACED"], Duration::from_secs(5)).await;
+
+    open_details(editing, "Spyro").await;
+    wait_strip(editing, &["NEVER PLACED"], Duration::from_secs(5)).await;
+    click_then(
+        editing,
+        ".detail-action-btn[aria-label='Edit stats']",
+        ".edit-scrim",
+    )
+    .await;
+    tap_sheet(editing, "Increase level", 4).await;
+    tap_sheet(editing, "Increase gold by 100", 2).await;
+    let saved = save_sheet(editing).await;
+    let shown = wait_strip(watching, &["5", "200", "0m"], Duration::from_secs(1)).await;
+    eprintln!(
+        "the watching phone showed the edit {} ms after SAVE",
+        shown.duration_since(saved).as_millis()
+    );
+    for phone in phones {
+        phone.close().await.unwrap();
+    }
+}
+
+/// "A slot reset while waiting" (no level running yet, so no hero): RESET on
+/// the details of her own figure standing on the portal puts it back fresh
+/// where it stands; the slot and the TV's card keep it.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_slot_reset_puts_her_figure_back_fresh_where_it_stands() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    let (phone, pid, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let tree_rex = id_named(&figures(&server, sid).await, "Tree Rex");
+    assert_eq!(
+        edit_from(&server, sid, &pid, &tree_rex, 10, 1200).await,
+        202
+    );
+    load(&server, sid, 1, &tree_rex).await;
+    let seen = wait_slot(&phone, 1, "Tree Rex").await;
+    tv_card(&server, 1, "Tree Rex", seen).await;
+
+    open_details(&phone, "Tree Rex").await;
+    wait_strip(&phone, &["10", "1200", "0m"], Duration::from_secs(5)).await;
+    assert_eq!(
+        action(&phone, "Reset to pack-fresh").await,
+        (false, "Reset to fresh where it stands".into())
+    );
+    reset_from_details(&phone).await;
+    wait_strip(&phone, &["1", "0", "0m"], Duration::from_secs(5)).await;
+    let (_, fresh) = stats(&server, &pid, &tree_rex).await;
+    assert_eq!(
+        (
+            fresh["level"].clone(),
+            fresh["xp"].clone(),
+            fresh["gold"].clone()
+        ),
+        (json!(1), json!(0), json!(0))
+    );
+    let seen = wait_slot(&phone, 1, "Tree Rex").await;
+    tv_card(&server, 1, "Tree Rex", seen).await;
+    let toast = phone.last_toast_text().await.unwrap();
+    assert!(
+        toast.as_deref().is_none_or(|t| !t.contains("Reset failed")),
+        "{toast:?}"
+    );
     phone.close().await.unwrap();
 }
 

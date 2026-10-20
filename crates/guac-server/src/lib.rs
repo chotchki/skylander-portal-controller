@@ -5,6 +5,7 @@
 pub mod boot;
 pub mod config;
 pub mod dumps;
+pub mod editor;
 pub mod embedded_assets;
 pub mod figures;
 pub mod firewall;

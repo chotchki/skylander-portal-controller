@@ -5,6 +5,7 @@ use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{
     Category, GameOfOrigin, PublicFigure, ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
 };
+use crate::screens::figure_edit_sheet::GOLD_MAX;
 use crate::screens::FigureEditSheet;
 use crate::{
     element_slug, first_empty_slot, placed_names, push_toast_level, ResetTarget, ToastLevel,
@@ -139,12 +140,14 @@ pub(crate) fn FigureDetail(
         async move {
             match profile_id {
                 Some(pid) => fetch_figure_stats(&pid, &fig_id).await,
-                None => StatsFetch::Missing,
+                None => StatsFetch::Missing(None),
             }
         }
     });
 
-    // PLAN 11 + AA.9 — STATS and RESET share one gate, `edit_gate`.
+    // PLAN 11 + AA.9 — STATS and RESET share one gate, `edit_gate`; under
+    // guacamole RESET also resets the viewer's own figure where it stands on
+    // the portal (AH.3, `reset_via`).
     let category = figure.category;
     let fig_id_for_portal_check = fig_id.clone();
     let on_portal = Signal::derive(move || {
@@ -158,10 +161,25 @@ pub(crate) fn FigureDetail(
     });
     let gate = Signal::derive(move || {
         let fetched = stats.get();
-        edit_gate(category, on_portal.get(), fetched.as_deref())
+        edit_gate(
+            category,
+            on_portal.get(),
+            fetched.as_deref(),
+            server_app.get(),
+        )
     });
     let stats_editable = Signal::derive(move || gate.get().enabled());
     let stats_tooltip = move || gate.get().tooltip();
+    let fig_id_for_own_slot = fig_id.clone();
+    let reset = Signal::derive(move || {
+        let viewer = unlocked_profile.get().map(|p| p.id);
+        let own = own_loaded_slot(&portal.get(), &fig_id_for_own_slot, viewer.as_deref());
+        reset_via(gate.get(), server_app.get(), own)
+    });
+    let reset_tooltip = move || match reset.get() {
+        Some(ResetVia::Slot(_)) => "Reset to fresh where it stands".to_string(),
+        _ => gate.get().tooltip(),
+    };
 
     // A tap during the in-flight fetch can open the sheet or modal before the 409; close them.
     let gate_fig_id = fig_id.clone();
@@ -176,7 +194,18 @@ pub(crate) fn FigureDetail(
         }
     });
 
-    let max_level = max_level_for_game(game);
+    // The steppers' caps: the product's by game of origin, guacamole's the
+    // game's own from the stats answer (AH.3).
+    let caps = move || {
+        let fetched = stats.get();
+        let caps = fetched.as_deref().and_then(StatsFetch::caps);
+        match (server_app.get(), caps) {
+            (ServerApp::Guacamole, Some(c)) => {
+                (c.max_level, u16::try_from(c.max_gold).unwrap_or(u16::MAX))
+            }
+            _ => (max_level_for_game(game), GOLD_MAX),
+        }
+    };
 
     // PLAN 11.16 — APPEARANCE button enable + next-variant resolution.
     // Cluster of size ≤ 1 means no alternates → keep the button disabled.
@@ -368,16 +397,21 @@ pub(crate) fn FigureDetail(
                     <div class="detail-action">
                         <button
                             class="detail-action-btn"
-                            disabled=move || !stats_editable.get()
+                            disabled=move || reset.get().is_none()
                             aria-label="Reset to pack-fresh"
-                            title=stats_tooltip
+                            title=reset_tooltip
                             on:click=move |_| {
                                 let pid = match unlocked_profile.get() {
                                     Some(p) => p.id,
                                     None => return,
                                 };
+                                let slot = match reset.get() {
+                                    Some(ResetVia::Figure) => None,
+                                    Some(ResetVia::Slot(n)) => Some(n),
+                                    None => return,
+                                };
                                 reset_target.set(Some(ResetTarget {
-                                    slot: None,
+                                    slot,
                                     profile_id: pid,
                                     figure_id: reset_fig_id.clone(),
                                     display_name: reset_name.clone(),
@@ -419,7 +453,7 @@ pub(crate) fn FigureDetail(
                             <div class="detail-stats-soon-label">"NOT AVAILABLE YET"</div>
                         </div>
                     }.into_any(),
-                    Some(StatsFetch::Missing) | None => view! {
+                    Some(StatsFetch::Missing(_)) | None => view! {
                         <div class="detail-stats-strip detail-stats-soon">
                             <div class="detail-stats-soon-label">"NEVER PLACED"</div>
                         </div>
@@ -465,6 +499,7 @@ pub(crate) fn FigureDetail(
                         .and_then(StatsFetch::stats)
                         .map(|s| (s.level, s.gold))
                         .unwrap_or((1, 0));
+                    let (max_level, max_gold) = caps();
                     view! {
                         <FigureEditSheet
                             figure_name=edit_name.clone()
@@ -473,6 +508,8 @@ pub(crate) fn FigureDetail(
                             initial_level=initial_level
                             initial_gold=initial_gold
                             max_level=max_level
+                            max_gold=max_gold
+                            server_app=server_app.get_untracked()
                             toasts
                             on_close=Callback::new(move |_| show_edit_sheet.set(false))
                             on_saved=Callback::new(move |_| stats_rev.update(|n| *n += 1))
@@ -491,9 +528,13 @@ enum EditGate {
     /// No level/gold semantics (Trap, Vehicle, CreationCrystal,
     /// AdventurePack, Item, Other).
     UnsupportedCategory(Category),
-    /// The server keeps no figure files (guacamole, until AH), so edit and
-    /// reset would 409.
+    /// The server can't read or write this figure's progress yet (guacamole
+    /// before its extract holds the game's table), so edit and reset would
+    /// 409.
     NotAvailableYet,
+    /// guacamole's stats haven't answered yet, and the steppers' caps come
+    /// with them (AH.3).
+    Checking,
     /// Editing the working copy under the game's nose would let it see
     /// stale state after the next read; the slot has to be cleared first.
     OnPortal,
@@ -509,6 +550,7 @@ impl EditGate {
             EditGate::Editable => "Edit level + gold".to_string(),
             EditGate::UnsupportedCategory(c) => format!("Editing not supported for {c:?}"),
             EditGate::NotAvailableYet => "Not available yet".to_string(),
+            EditGate::Checking => "Checking\u{2026}".to_string(),
             EditGate::OnPortal => "Remove from portal before editing".to_string(),
         }
     }
@@ -516,13 +558,19 @@ impl EditGate {
 
 /// The STATS + RESET gate. `stats` is the stats fetch's outcome, `None`
 /// while it's in flight. Only a fetch the server refused outright
-/// (`Unavailable`) turns the actions off: the product's 404 for a
-/// never-placed figure (`Missing`) still edits, because the first edit
-/// forks the working copy from the pack. In-flight counts as editable so
-/// the product's buttons render enabled immediately, as before AA.9.
-/// Category wins over the rest (permanent), and "not available yet" wins
-/// over "on portal" (clearing the slot wouldn't help).
-fn edit_gate(category: Category, on_portal: bool, stats: Option<&StatsFetch>) -> EditGate {
+/// (`Unavailable`) turns the actions off: a 404 for a never-placed figure
+/// (`Missing`) still edits, because the first edit makes its progress (the
+/// product forks the working copy from the pack). In the product in-flight
+/// counts as editable so its buttons render enabled immediately, as before
+/// AA.9; guacamole waits for the answer, which carries the game's caps
+/// (AH.3). Category wins over the rest (permanent), and "not available yet"
+/// wins over "on portal" (clearing the slot wouldn't help).
+fn edit_gate(
+    category: Category,
+    on_portal: bool,
+    stats: Option<&StatsFetch>,
+    app: ServerApp,
+) -> EditGate {
     if !matches!(
         category,
         Category::Figure | Category::Sidekick | Category::Giant | Category::Kaos
@@ -532,10 +580,52 @@ fn edit_gate(category: Category, on_portal: bool, stats: Option<&StatsFetch>) ->
     if matches!(stats, Some(StatsFetch::Unavailable)) {
         return EditGate::NotAvailableYet;
     }
+    if app == ServerApp::Guacamole {
+        match stats {
+            None => return EditGate::Checking,
+            Some(fetched) if fetched.caps().is_none() => return EditGate::NotAvailableYet,
+            Some(_) => {}
+        }
+    }
     if on_portal {
         return EditGate::OnPortal;
     }
     EditGate::Editable
+}
+
+/// Where RESET sends the figure back to fresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResetVia {
+    /// Off the portal: the figure-keyed reset; the next placement is fresh.
+    Figure,
+    /// guacamole, the viewer's own placement in this slot (1-based): the
+    /// slot reset, fresh where it stands (AH.3).
+    Slot(u8),
+}
+
+/// RESET follows the STATS gate, except that under guacamole the viewer's own
+/// figure standing on the portal resets in its slot (the server refuses that
+/// for the hero in a level). `own_slot` is [`own_loaded_slot`]'s; a figure
+/// still loading has none, so RESET waits for it.
+fn reset_via(gate: EditGate, app: ServerApp, own_slot: Option<u8>) -> Option<ResetVia> {
+    match gate {
+        EditGate::Editable => Some(ResetVia::Figure),
+        EditGate::OnPortal if app == ServerApp::Guacamole => own_slot.map(ResetVia::Slot),
+        _ => None,
+    }
+}
+
+/// The slot (1-based) holding `viewer`'s own loaded placement of `figure_id`.
+fn own_loaded_slot(portal: &[Slot], figure_id: &str, viewer: Option<&str>) -> Option<u8> {
+    let viewer = viewer?;
+    let i = portal.iter().position(|slot| {
+        matches!(
+            &slot.state,
+            SlotState::Loaded { figure_id: Some(id), placed_by: Some(by), .. }
+                if id == figure_id && by == viewer
+        )
+    })?;
+    u8::try_from(i + 1).ok()
 }
 
 /// Whether `figure_id` is on the portal for `viewer`'s STATS and RESET, loaded
@@ -640,15 +730,31 @@ mod tests {
             gold: 120,
             playtime_secs: 600,
             nickname: String::new(),
+            max_level: None,
+            max_gold: None,
         })
     }
+
+    /// guacamole's answer: the row's numbers with the game's caps.
+    fn read_guac() -> StatsFetch {
+        StatsFetch::Read(FigureStats {
+            level: 3,
+            gold: 120,
+            playtime_secs: 600,
+            nickname: String::new(),
+            max_level: Some(15),
+            max_gold: Some(65_000),
+        })
+    }
+
+    const PRODUCT: ServerApp = ServerApp::Product;
 
     #[test]
     fn stats_present_follows_category_and_portal() {
         let stats = read();
         for c in ALL_CATEGORIES {
-            let off = edit_gate(c, false, Some(&stats));
-            let on = edit_gate(c, true, Some(&stats));
+            let off = edit_gate(c, false, Some(&stats), PRODUCT);
+            let on = edit_gate(c, true, Some(&stats), PRODUCT);
             if editable_category(c) {
                 assert_eq!(off, EditGate::Editable, "{c:?} off portal");
                 assert_eq!(on, EditGate::OnPortal, "{c:?} on portal");
@@ -663,7 +769,7 @@ mod tests {
     fn stats_unavailable_disables_every_category_on_and_off_portal() {
         for c in ALL_CATEGORIES {
             for on_portal in [false, true] {
-                let gate = edit_gate(c, on_portal, Some(&StatsFetch::Unavailable));
+                let gate = edit_gate(c, on_portal, Some(&StatsFetch::Unavailable), PRODUCT);
                 assert!(!gate.enabled(), "{c:?} on_portal={on_portal}");
                 if editable_category(c) {
                     assert_eq!(
@@ -686,9 +792,10 @@ mod tests {
         let stats = read();
         for c in ALL_CATEGORIES {
             for on_portal in [false, true] {
-                let present = edit_gate(c, on_portal, Some(&stats));
-                assert_eq!(edit_gate(c, on_portal, Some(&StatsFetch::Missing)), present);
-                assert_eq!(edit_gate(c, on_portal, None), present);
+                let present = edit_gate(c, on_portal, Some(&stats), PRODUCT);
+                let missing = StatsFetch::Missing(None);
+                assert_eq!(edit_gate(c, on_portal, Some(&missing), PRODUCT), present);
+                assert_eq!(edit_gate(c, on_portal, None, PRODUCT), present);
             }
         }
     }
@@ -760,5 +867,101 @@ mod tests {
         assert!(on_portal_for(&portal, "spyro", guac, Some("bob")));
         assert!(!on_portal_for(&portal, "spyro", guac, Some("alice")));
         assert!(!on_portal_for(&portal, "bash", guac, Some("alice")));
+    }
+
+    /// AH.3: under guacamole the gate waits for the stats, whose caps the
+    /// steppers need; a never-placed figure's 404 with the caps edits, one
+    /// without them (a transport error) doesn't.
+    #[test]
+    fn guacamole_edits_once_the_stats_bring_the_caps() {
+        let guac = ServerApp::Guacamole;
+        let caps = crate::api::GameCaps {
+            max_level: 15,
+            max_gold: 65_000,
+        };
+        let never = StatsFetch::Missing(Some(caps));
+        for c in ALL_CATEGORIES {
+            if !editable_category(c) {
+                assert_eq!(
+                    edit_gate(c, false, None, guac),
+                    EditGate::UnsupportedCategory(c)
+                );
+                continue;
+            }
+            assert_eq!(edit_gate(c, false, None, guac), EditGate::Checking);
+            assert_eq!(edit_gate(c, true, None, guac), EditGate::Checking);
+            for fetched in [read_guac(), never.clone()] {
+                assert_eq!(
+                    edit_gate(c, false, Some(&fetched), guac),
+                    EditGate::Editable
+                );
+                assert_eq!(edit_gate(c, true, Some(&fetched), guac), EditGate::OnPortal);
+            }
+            for fetched in [StatsFetch::Missing(None), read(), StatsFetch::Unavailable] {
+                assert_eq!(
+                    edit_gate(c, false, Some(&fetched), guac),
+                    EditGate::NotAvailableYet,
+                    "{fetched:?}"
+                );
+            }
+        }
+        assert!(!EditGate::Checking.enabled());
+        assert_eq!(EditGate::Checking.tooltip(), "Checking\u{2026}");
+    }
+
+    /// AH.3: RESET off the portal resets the figure; under guacamole the
+    /// viewer's own figure standing on the portal resets in its slot, while
+    /// the product keeps RESET off on the portal as before.
+    #[test]
+    fn reset_goes_to_the_slot_only_for_guacamoles_own_figure_on_the_portal() {
+        let guac = ServerApp::Guacamole;
+        assert_eq!(
+            reset_via(EditGate::Editable, guac, None),
+            Some(ResetVia::Figure)
+        );
+        assert_eq!(
+            reset_via(EditGate::Editable, PRODUCT, None),
+            Some(ResetVia::Figure)
+        );
+        assert_eq!(
+            reset_via(EditGate::OnPortal, guac, Some(3)),
+            Some(ResetVia::Slot(3))
+        );
+        assert_eq!(
+            reset_via(EditGate::OnPortal, guac, None),
+            None,
+            "still loading"
+        );
+        assert_eq!(reset_via(EditGate::OnPortal, PRODUCT, Some(3)), None);
+        for gate in [
+            EditGate::Checking,
+            EditGate::NotAvailableYet,
+            EditGate::UnsupportedCategory(Category::Trap),
+        ] {
+            assert_eq!(reset_via(gate, guac, Some(3)), None, "{gate:?}");
+        }
+
+        let slot = |state| Slot { state };
+        let portal = [
+            slot(SlotState::Loaded {
+                figure_id: Some("eruptor".to_string()),
+                display_name: "Eruptor".to_string(),
+                placed_by: Some("bob".to_string()),
+            }),
+            slot(SlotState::Loading {
+                figure_id: Some("eruptor".to_string()),
+                placed_by: Some("alice".to_string()),
+            }),
+            slot(SlotState::Loaded {
+                figure_id: Some("spyro".to_string()),
+                display_name: "Spyro".to_string(),
+                placed_by: Some("alice".to_string()),
+            }),
+        ];
+        assert_eq!(own_loaded_slot(&portal, "eruptor", Some("bob")), Some(1));
+        assert_eq!(own_loaded_slot(&portal, "eruptor", Some("alice")), None);
+        assert_eq!(own_loaded_slot(&portal, "spyro", Some("alice")), Some(3));
+        assert_eq!(own_loaded_slot(&portal, "spyro", Some("bob")), None);
+        assert_eq!(own_loaded_slot(&portal, "spyro", None), None);
     }
 }

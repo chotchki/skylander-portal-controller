@@ -114,6 +114,13 @@ pub struct AppState {
     /// RPCS3 config and the settings writer. The product passes all four.
     pub hooks: crate::hooks::Hooks,
 
+    /// The game's progression once guacamole's extract holds it (AH.2): the
+    /// figure editor's levels and caps (AH.3). The product never fills it.
+    pub progression: crate::progress::ProgressionSlot,
+    /// The slot whose figure is the hero in a level, as guacamole's TV says;
+    /// the slot reset refuses it (AH.3).
+    pub level_hero: crate::progress::LevelHero,
+
     /// The driver again, as the /api/_test/* endpoints inject failure
     /// outcomes into it: the mock's or the native driver's, else `None`.
     #[cfg(feature = "test-hooks")]

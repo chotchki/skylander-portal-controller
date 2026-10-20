@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use crate::config::{Config, DriverKind};
 use crate::figures::{FigureList, FigureSet, RosterState};
 use crate::hooks::Hooks;
-use crate::progress::{ProgressSink, ProgressionSlot, spawn_drainer};
+use crate::progress::{LevelHero, ProgressSink, ProgressionSlot, spawn_drainer};
 use crate::state::{
     AppState, DriverJob, GameList, LauncherScreen, LauncherStatus, RpcsLifecycle,
     spawn_connectivity_watchdog, spawn_crash_watchdog, spawn_driver_worker, spawn_state_poller,
@@ -125,6 +125,9 @@ pub struct ServerHandles {
     /// The game's progression for the store's caps and levels, once the
     /// extract holds it.
     pub progression: ProgressionSlot,
+    /// Which slot's figure is the hero in a level; guacamole's TV writes it
+    /// (AH.36) and the slot reset refuses that slot (AH.3).
+    pub level_hero: LevelHero,
     /// The driver worker's job queue (PLAN B.2's macOS game-window fit);
     /// closed when the server died before the worker started.
     pub driver_tx: mpsc::Sender<DriverJob>,
@@ -241,6 +244,9 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     let progress_for_task = progress.clone();
     let progression = ProgressionSlot::default();
     let progression_for_task = progression.clone();
+    let progression_for_state = progression.clone();
+    let level_hero = LevelHero::default();
+    let level_hero_for_state = level_hero.clone();
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
@@ -423,6 +429,8 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     sessions,
                     join_qr_png: join_qr_png_for_task,
                     hooks,
+                    progression: progression_for_state,
+                    level_hero: level_hero_for_state,
                     #[cfg(feature = "test-hooks")]
                     test_injector: built.test_injector,
                 });
@@ -493,6 +501,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         figures,
         progress,
         progression,
+        level_hero,
         driver_tx,
         bind_addr: bind,
         server_thread,

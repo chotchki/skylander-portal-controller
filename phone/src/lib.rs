@@ -460,7 +460,7 @@ pub fn App() -> impl IntoView {
             <Show when=move || resume_offer.get().is_some() && current_game.get().is_some() fallback=|| ()>
                 <ResumeModal resume_offer portal known_profiles unlocked_profile toasts />
             </Show>
-            <ResetConfirmModal reset_target toasts />
+            <ResetConfirmModal reset_target toasts server_app />
             <Rpcs3SettingsOverlay visible=rpcs3_settings_open />
             <MenuOverlay
                 open=menu_open
@@ -721,6 +721,63 @@ mod tests {
         let unowned = [loaded("Eruptor", None)];
         assert!(placed_names(&unowned, app, Some("alice")).is_empty());
         assert_eq!(placed_names(&unowned, app, None), ["Eruptor"]);
+    }
+
+    /// AH.3: guacamole's 403 and 409 on a figure action in a kid's words, the
+    /// slot reset's 409 saying the figure's in the level; anything else, and
+    /// everything in the product, keeps the error as it was.
+    #[test]
+    fn guacamoles_refusals_are_in_a_kids_words() {
+        use model::FigureAction::{Edit, Reset, SlotReset};
+        let guac = ServerApp::Guacamole;
+        for action in [Edit, Reset, SlotReset] {
+            let words = guac.refusal(action, "HTTP 403", "Eruptor").unwrap();
+            assert!(words.contains("own profile"), "{words}");
+            for status in ["HTTP 404", "HTTP 422", "HTTP 500", "no window"] {
+                assert_eq!(guac.refusal(action, status, "Eruptor"), None, "{status}");
+            }
+            for status in ["HTTP 403", "HTTP 409"] {
+                assert_eq!(ServerApp::Product.refusal(action, status, "Eruptor"), None);
+            }
+        }
+        for action in [Edit, Reset] {
+            let words = guac.refusal(action, "HTTP 409", "Eruptor").unwrap();
+            assert!(words.starts_with("Eruptor is on the portal!"), "{words}");
+            assert!(words.contains("Take Eruptor off"), "{words}");
+        }
+        let words = guac.refusal(SlotReset, "HTTP 409", "Tree Rex").unwrap();
+        assert!(
+            words.starts_with("Tree Rex is out in the level!"),
+            "{words}"
+        );
+    }
+
+    /// AH.3: guacamole's stats answer carries the game's caps, its
+    /// never-placed 404 too; the product's `.sky` stats carry none.
+    #[test]
+    fn the_stats_carry_guacamoles_caps() {
+        use api::{FigureStats, GameCaps, StatsFetch};
+        let guac: FigureStats = serde_json::from_str(
+            r#"{"level":10,"xp":33000,"gold":1234,"playtime_secs":61,"max_level":15,"max_gold":65000}"#,
+        )
+        .unwrap();
+        assert_eq!((guac.level, guac.gold, guac.playtime_secs), (10, 1234, 61));
+        let caps = GameCaps {
+            max_level: 15,
+            max_gold: 65_000,
+        };
+        assert_eq!(StatsFetch::Read(guac).caps(), Some(caps));
+        let product: FigureStats = serde_json::from_str(
+            r#"{"level":5,"gold":300,"playtime_secs":0,"nickname":"Spyro","xp_2011":6000}"#,
+        )
+        .unwrap();
+        assert_eq!(product.nickname, "Spyro");
+        assert_eq!(StatsFetch::Read(product).caps(), None);
+        let never: Option<GameCaps> =
+            serde_json::from_str(r#"{"max_level":15,"max_gold":65000}"#).ok();
+        assert_eq!(StatsFetch::Missing(never).caps(), Some(caps));
+        assert_eq!(StatsFetch::Missing(None).caps(), None);
+        assert_eq!(StatsFetch::Unavailable.caps(), None);
     }
 
     #[test]

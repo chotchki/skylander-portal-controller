@@ -165,58 +165,7 @@ impl TestServer {
     /// `cargo run -p <package> --features test-hooks` in `tmp`, then a
     /// chromedriver beside it.
     fn run(tmp: TempDir, repo: &Path, package: &str) -> Result<Self> {
-        // Build once up front so subsequent spawns are fast; re-invoking
-        // cargo run also rebuilds incrementally if source changed.
-        let mut cmd = Command::new("cargo");
-        cmd.current_dir(tmp.path())
-            .env("CARGO_MANIFEST_DIR", repo)
-            .env("CARGO_TARGET_DIR", repo.join("target"))
-            // Pin BUILD_TOKEN so the spawned server's stale-bundle
-            // check matches the phone bundle. Without this the phone's
-            // baked-in `<git-hash>-dirty` value drifts away from the
-            // server's whenever the working tree's dirty state changes
-            // independently (e.g., editing tests after the last
-            // `trunk build`), which raises a StaleVersion overlay
-            // mid-test and blocks every click. Contributors should
-            // build the phone the same way: `BUILD_TOKEN=e2e-test
-            // trunk build`. Documented in
-            // `crates/e2e-tests/README.md`.
-            .env("BUILD_TOKEN", "e2e-test")
-            // guacamole's intros play muted: nobody listens to an e2e run.
-            .env("GUAC_MUTE", "1")
-            .args([
-                "run",
-                "--manifest-path",
-                repo.join("Cargo.toml").to_str().unwrap(),
-                "-p",
-                package,
-                "--features",
-                "test-hooks",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        // Spawn into our own process group so ChildGuard can kill the
-        // entire chain (cargo + rustc + the eventual server binary)
-        // atomically. Without this, killing `cargo` doesn't reliably
-        // take down its descendants. PLAN 10.3.6 process-hygiene.
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
-
-        let mut child = cmd.spawn().context("spawn server via cargo run")?;
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-
-        // Read both streams in parallel; scrape URL from either.
-        let (tx, rx) = mpsc::channel::<String>();
-        spawn_reader("stdout", stdout, tx.clone());
-        spawn_reader("stderr", stderr, tx);
-
-        let url = wait_for_url(&rx, Duration::from_secs(120))?;
-        let guard = ChildGuard::new(child);
-
+        let (url, guard) = start_server(tmp.path(), repo, package)?;
         let (chromedriver_url, chromedriver_guard) = spawn_chromedriver()?;
 
         Ok(Self {
@@ -226,6 +175,19 @@ impl TestServer {
             _chromedriver: chromedriver_guard,
             _tmpdir: tmp,
         })
+    }
+
+    /// Kills guacamole and starts it again in the same temp dir, so over the
+    /// same `.env.dev`, port, database and extract: what a kid sees after
+    /// closing it and opening it again (openspec AH.3). Phones connected
+    /// before see the connection drop; chromedriver stays up.
+    pub fn restart_guacamole(&mut self) -> Result<()> {
+        self._child.kill_now();
+        let repo = repo_root()?;
+        let (url, guard) = start_server(self._tmpdir.path(), &repo, "guacamole")?;
+        self.url = url;
+        self._child = guard;
+        Ok(())
     }
 
     /// URL to navigate the phone to. Bakes the HMAC key into a `#k=<hex>`
@@ -622,6 +584,62 @@ fn spawn_reader(
             let _ = tx.send(line);
         }
     });
+}
+
+/// `cargo run -p <package> --features test-hooks` in `dir`; returns once the
+/// server logs the URL it serves on.
+fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, ChildGuard)> {
+    // Build once up front so subsequent spawns are fast; re-invoking
+    // cargo run also rebuilds incrementally if source changed.
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(dir)
+        .env("CARGO_MANIFEST_DIR", repo)
+        .env("CARGO_TARGET_DIR", repo.join("target"))
+        // Pin BUILD_TOKEN so the spawned server's stale-bundle
+        // check matches the phone bundle. Without this the phone's
+        // baked-in `<git-hash>-dirty` value drifts away from the
+        // server's whenever the working tree's dirty state changes
+        // independently (e.g., editing tests after the last
+        // `trunk build`), which raises a StaleVersion overlay
+        // mid-test and blocks every click. Contributors should
+        // build the phone the same way: `BUILD_TOKEN=e2e-test
+        // trunk build`. Documented in
+        // `crates/e2e-tests/README.md`.
+        .env("BUILD_TOKEN", "e2e-test")
+        // guacamole's intros play muted: nobody listens to an e2e run.
+        .env("GUAC_MUTE", "1")
+        .args([
+            "run",
+            "--manifest-path",
+            repo.join("Cargo.toml").to_str().unwrap(),
+            "-p",
+            package,
+            "--features",
+            "test-hooks",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Spawn into our own process group so ChildGuard can kill the
+    // entire chain (cargo + rustc + the eventual server binary)
+    // atomically. Without this, killing `cargo` doesn't reliably
+    // take down its descendants. PLAN 10.3.6 process-hygiene.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd.spawn().context("spawn server via cargo run")?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    // Read both streams in parallel; scrape URL from either.
+    let (tx, rx) = mpsc::channel::<String>();
+    spawn_reader("stdout", stdout, tx.clone());
+    spawn_reader("stderr", stderr, tx);
+
+    let url = wait_for_url(&rx, Duration::from_secs(120))?;
+    Ok((url, ChildGuard::new(child)))
 }
 
 fn wait_for_url(rx: &mpsc::Receiver<String>, timeout: Duration) -> Result<String> {

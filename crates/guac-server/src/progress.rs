@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use skylander_core::{Event, FigureId};
+use skylander_core::{Event, FigureId, SlotIndex};
 use skylander_rpcs3_control::FigureProgress;
 use tokio::sync::{Notify, broadcast};
 use tracing::{debug, info, warn};
@@ -90,6 +90,24 @@ impl ProgressionSlot {
 
     pub fn publish(&self, progression: Progression) {
         *self.0.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(progression));
+    }
+}
+
+/// Which portal slot's figure is the hero in a level, as the TV last said;
+/// `None` while no level runs. The slot reset refuses that slot (AH.3, design
+/// decision 10): the hero's health came from his old level, and nothing in
+/// the original resets a figure mid-level. The TV writes it once a level has
+/// a hero (AH.36); until then it stays `None`.
+#[derive(Clone, Default, Debug)]
+pub struct LevelHero(Arc<RwLock<Option<SlotIndex>>>);
+
+impl LevelHero {
+    pub fn get(&self) -> Option<SlotIndex> {
+        *self.0.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn set(&self, hero: Option<SlotIndex>) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = hero;
     }
 }
 
