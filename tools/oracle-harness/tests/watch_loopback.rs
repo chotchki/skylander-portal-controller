@@ -1749,6 +1749,173 @@ fn an_item_freed_mid_chain_is_dropped_or_reads_as_missing() {
     }
 }
 
+/// The world's root region, for a test that bends the list under a chain.
+fn root(e: &mut Emu) -> &mut Vec<u8> {
+    e.memory.get_mut(&ROOT).unwrap()
+}
+
+#[test]
+fn a_list_broken_mid_run_names_its_link_and_4096_is_the_most_listed() {
+    let fake = spawn();
+    fake.set(world);
+    let at = fake.pause(5);
+    let chains = armed(&[(0, spec(8, &["chompy(1)", "chompy(2)"]))]);
+    fake.control.chains_arm(&chains).unwrap();
+    let list = list();
+    fake.control
+        .watch_arm_chained(&list, &chains, 0, 64)
+        .unwrap();
+    // Two records each: whole; the list's vtable off (the path's second hop);
+    // the root pointing at a list whose count word isn't mapped, then at one
+    // whose array pointer isn't (the path's two hops, then 1 and 2); the list
+    // counting 4,097 (3); counting 4,096, its entries past the four zeros or
+    // unmapped.
+    let (short, shorter) = (0x3F00_0000u32, 0x3F10_0000u32);
+    fake.control.pause_at(at + 2, WAIT).unwrap();
+    fake.set(|e| put(root(e), 0x100, LIST_VT + 1));
+    fake.control.pause_at(at + 4, WAIT).unwrap();
+    fake.set(|e| {
+        put(root(e), 0x100, LIST_VT);
+        let mut s = vec![0u8; 8];
+        put(&mut s, 0, LIST_VT);
+        e.memory.insert(short, s);
+        put(root(e), 0x10, short);
+    });
+    fake.control.pause_at(at + 6, WAIT).unwrap();
+    fake.set(|e| {
+        let mut s = vec![0u8; 0x10];
+        put(&mut s, 0, LIST_VT);
+        put(&mut s, 0x08, 4);
+        e.memory.insert(shorter, s);
+        put(root(e), 0x10, shorter);
+    });
+    fake.control.pause_at(at + 8, WAIT).unwrap();
+    fake.set(|e| {
+        put(root(e), 0x10, LIST);
+        put(root(e), 0x108, 4_097);
+    });
+    fake.control.pause_at(at + 10, WAIT).unwrap();
+    fake.set(|e| put(root(e), 0x108, 4_096));
+    fake.control.pause_at(at + 12, WAIT).unwrap();
+    let got: Vec<[u32; 5]> = blocks(&fake, &list, &chains, 0)
+        .iter()
+        .map(|(_, _, b)| {
+            [
+                b.status,
+                b.listed,
+                b.unread,
+                b.matched,
+                b.items.len() as u32,
+            ]
+        })
+        .collect();
+    let want = [
+        [0, 4, 0, 2, 2],
+        [2, 0, 0, 0, 0],
+        [3, 0, 0, 0, 0],
+        [4, 0, 0, 0, 0],
+        [5, 0, 0, 0, 0],
+        [0, 4_096, 4_092, 2, 2],
+    ];
+    assert_eq!(got.len(), 2 * want.len());
+    for (k, w) in want.iter().enumerate() {
+        assert_eq!(
+            (got[2 * k], got[2 * k + 1]),
+            (*w, *w),
+            "records {}-{}",
+            2 * k,
+            2 * k + 1
+        );
+    }
+}
+
+#[test]
+fn a_search_past_1024_elements_and_a_name_past_256_bytes_dont_read() {
+    let fake = spawn();
+    fake.set(world);
+    // A name of 255 bytes and its NUL keys; one of 256 runs past O6's 256
+    // bytes before its NUL and is counted unread.
+    let (n255, n256) = ("n".repeat(255), "m".repeat(256));
+    fake.set(|e| {
+        place(e, 4, &n255, 5.0, 74, &[]);
+        place(e, 5, &n256, 6.0, 75, &[]);
+        listing(e, &[0, 1, 2, 3, 4, 5]);
+    });
+    let at = fake.pause(5);
+    let chains = armed(&[(0, spec(8, &["chompy(1)", &n255, &n256]))]);
+    let got = fake.control.chains_arm(&chains).unwrap();
+    assert_eq!((got[0].listed, got[0].kept), (6, 2));
+    let list = list();
+    fake.control
+        .watch_arm_chained(&list, &chains, 0, 32)
+        .unwrap();
+    // chompy(1)'s variables counting 1,024 (its `hp` second among them)
+    // still find it; counting 1,025 the search gives up and its hp is missing.
+    fake.control.pause_at(at + 2, WAIT).unwrap();
+    fake.set(|e| put(e.memory.get_mut(&vars_at(0)).unwrap(), 0x08, 1_024));
+    fake.control.pause_at(at + 4, WAIT).unwrap();
+    fake.set(|e| put(e.memory.get_mut(&vars_at(0)).unwrap(), 0x08, 1_025));
+    fake.control.pause_at(at + 6, WAIT).unwrap();
+    let got: Vec<Kept> = blocks(&fake, &list, &chains, 0)
+        .iter()
+        .map(|(_, _, b)| {
+            (
+                b.unread,
+                b.matched,
+                b.items.iter().map(|i| (i.index, i.missing)).collect(),
+            )
+        })
+        .collect();
+    let found = (1, 2, vec![(0, 0), (4, 1 << 3)]);
+    let gave_up = (1, 2, vec![(0, 1 << 3), (4, 1 << 3)]);
+    assert_eq!(got.len(), 6);
+    assert_eq!(got[..4], vec![found; 4][..]);
+    assert_eq!(got[4..], vec![gave_up; 2][..]);
+}
+
+#[test]
+fn two_chains_ride_in_slot_order_and_arming_again_drops_a_slot_left_out() {
+    let fake = spawn();
+    fake.set(world);
+    let at = fake.pause(5);
+    // Two chains of different sizes: the Chompies in slot 4, the rock's
+    // position alone in slot 1.
+    let mut rock = spec(2, &["rock"]);
+    rock.ranges.truncate(1);
+    let both = armed(&[(4, spec(8, &["chompy(1)", "chompy(2)"])), (1, rock.clone())]);
+    fake.control.chains_arm(&both).unwrap();
+    let list = list();
+    fake.control.watch_arm_chained(&list, &both, 0, 16).unwrap();
+    fake.control.pause_at(at + 2, WAIT).unwrap();
+    let xs = |slot: u8| -> Vec<Vec<f32>> {
+        blocks(&fake, &list, &both, slot)
+            .iter()
+            .map(|(_, _, b)| {
+                b.items
+                    .iter()
+                    .map(|i| {
+                        f32::from_bits(u32::from_be_bytes(
+                            i.range(0).unwrap()[..4].try_into().unwrap(),
+                        ))
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    assert_eq!(xs(1), vec![vec![2.0]; 2]);
+    assert_eq!(xs(4), vec![vec![1.0, 3.0]; 2]);
+    // Armed again as slot 4 alone: slot 1 is dropped, so the watch's records
+    // are the list and slot 4's block, as the harness expects.
+    fake.control.watch_clear().unwrap();
+    let one = armed(&[(4, spec(8, &["chompy(1)", "chompy(2)"]))]);
+    fake.control.chains_arm(&one).unwrap();
+    fake.control.watch_arm_chained(&list, &one, 0, 16).unwrap();
+    match fake.verbs().send_watch(&Watch::Summary).unwrap() {
+        WatchReply::Summary(s) => assert_eq!(s.bytes as usize, list.bytes() + one.bytes()),
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn a_flip_running_two_game_frames_carries_a_block_for_each() {
     let fake = spawn();

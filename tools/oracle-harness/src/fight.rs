@@ -1662,6 +1662,9 @@ mod tests {
         let started = ranged(&mut w, "Activate_Norticus and Chompies", 3, 0.0, 32.0, true);
         // Woke once and gone back to sleep: its clock shows it.
         let slept = ranged(&mut w, "Pop_to_Camera_5", 2, 1.5, 10.0, false);
+        // Taken off (state 3) with its clock back at 0 and no script: the
+        // state alone says it fired.
+        let off = ranged(&mut w, "Transition 1-2", 3, 0.0, 100.0, false);
         // No range: awake from the start, its controller's check decides.
         let volume = ranged(&mut w, "Setup_003_Trigger(1)", 1, 55.65, 0.0, false);
         let got = triggers(
@@ -1671,6 +1674,7 @@ mod tests {
                 ("Transition 7-1", awake),
                 ("Activate_Norticus and Chompies", started),
                 ("Pop_to_Camera_5", slept),
+                ("Transition 1-2", off),
                 ("Setup_003_Trigger(1)", volume),
             ],
         )
@@ -1694,6 +1698,7 @@ mod tests {
                 ("Transition 7-1", 1, false, 55.0, Some(true)),
                 ("Activate_Norticus and Chompies", 3, true, 32.0, Some(true)),
                 ("Pop_to_Camera_5", 2, false, 10.0, Some(true)),
+                ("Transition 1-2", 3, false, 100.0, Some(true)),
                 ("Setup_003_Trigger(1)", 1, false, 0.0, None),
             ]
         );

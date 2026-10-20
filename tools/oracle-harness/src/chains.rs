@@ -1417,7 +1417,19 @@ mod tests {
         f.w.putf(leaf_placement + 0xB4, 0.5);
         f.w.put32(f.w.app + 0x5C, 5961);
         let second = record(&mut f);
-        let records: Vec<WatchRecord> = [first, second]
+        // Then the slot taken by a leaf with a placement of its own whose
+        // clock is past the last one's: the placement changing alone is a new
+        // serial.
+        let other = f.w.object(0x0062_1048, 0xF8);
+        for off in (0x08..0xF8).step_by(4) {
+            let v = f.w.get32(leaf_placement + off);
+            f.w.put32(other + off, v);
+        }
+        f.w.putf(other + 0xB4, 0.9);
+        f.w.put32(f.leaf + 0x50, other);
+        f.w.put32(f.w.app + 0x5C, 5962);
+        let third = record(&mut f);
+        let records: Vec<WatchRecord> = [first, second, third]
             .into_iter()
             .enumerate()
             .map(|(k, payload)| WatchRecord {
@@ -1456,7 +1468,7 @@ mod tests {
             ["Battle".to_owned(), "default".to_owned()].into()
         );
         let (chain, _) = g.records(&watch, &records, &resolved).unwrap();
-        assert_eq!(chain.len(), 2);
+        assert_eq!(chain.len(), 3);
         let first = &chain[0];
         let by_kind = |k: &str| {
             first
@@ -1480,6 +1492,8 @@ mod tests {
         assert_eq!((leaf.placement.as_deref(), leaf.serial), (None, Some(0)));
         let leaf2 = chain[1].items.iter().find(|i| i.kind == "leaf").unwrap();
         assert_eq!((leaf2.address, leaf2.serial), (leaf.address, Some(1)));
+        let leaf3 = chain[2].items.iter().find(|i| i.kind == "leaf").unwrap();
+        assert_eq!((leaf3.address, leaf3.serial), (leaf.address, Some(2)));
         // Orbs and coins: their worth and serial, the clone's placement none,
         // the placed treasure named.
         let orbs = by_kind("orb");
@@ -1535,6 +1549,127 @@ mod tests {
         spec.path.push(Hop::checked(0, 0xDEAD_BEEF));
         let b = evaluate(&spec, &mut f.w).unwrap();
         assert_eq!((b.status, b.listed), (spec.path.len() as u32, 0));
+    }
+
+    /// Guest memory as separate regions, so a test can end one a word short.
+    struct Regions(BTreeMap<u32, Vec<u8>>);
+
+    impl Gather for Regions {
+        fn gather(&mut self, ranges: &[(u32, usize)]) -> Result<Vec<Option<Vec<u8>>>> {
+            Ok(ranges
+                .iter()
+                .map(|&(addr, len)| {
+                    let (&base, bytes) = self.0.range(..=addr).next_back()?;
+                    let at = (addr - base) as usize;
+                    bytes.get(at..at.checked_add(len)?).map(<[u8]>::to_vec)
+                })
+                .collect())
+        }
+    }
+
+    impl Regions {
+        fn put(&mut self, addr: u32, v: u32) {
+            let (&base, bytes) = self.0.range_mut(..=addr).next_back().unwrap();
+            let at = (addr - base) as usize;
+            bytes[at..at + 4].copy_from_slice(&v.to_be_bytes());
+        }
+
+        fn region(&mut self, at: u32, len: usize) {
+            self.0.insert(at, vec![0; len]);
+        }
+
+        /// A C string at the start of a page of its own: guest memory is
+        /// mapped by the page, and the walk reads a name to its page's end.
+        fn string(&mut self, at: u32, s: &str) {
+            let mut b = vec![0; 0x1000];
+            b[..s.len()].copy_from_slice(s.as_bytes());
+            self.0.insert(at, b);
+        }
+    }
+
+    #[test]
+    fn the_walks_bounds_and_broken_links_are_o6s() {
+        const BASE: u32 = 0x0010_0000;
+        const LIST: u32 = 0x0020_0000;
+        const ARRAY: u32 = 0x0030_0000;
+        const SUB: u32 = 0x0060_0000;
+        let item = |k: u32| 0x0040_0000 + 0x100 * k;
+        let (n255, n256) = ("n".repeat(255), "m".repeat(256));
+        let mut m = Regions(BTreeMap::new());
+        m.region(BASE, 0x10);
+        m.put(BASE, LIST);
+        m.region(LIST, 0x20);
+        m.put(LIST + 0x08, 3);
+        m.put(LIST + 0x14, ARRAY);
+        m.region(ARRAY, 4 * 4_096);
+        // Three items, each a name pointer at +0 and a list at +0x18 (its
+        // array +0x24) whose element named `hp` holds 7 at +4.
+        m.region(item(0), 0x300);
+        for (k, name) in ["chompy", n255.as_str(), n256.as_str()]
+            .into_iter()
+            .enumerate()
+        {
+            let k = k as u32;
+            m.put(ARRAY + 4 * k, item(k));
+            m.string(0x0050_0000 + 0x1000 * k, name);
+            m.put(item(k), 0x0050_0000 + 0x1000 * k);
+            m.put(item(k) + 0x24, SUB);
+        }
+        m.region(SUB, 4 * 1_025);
+        m.put(SUB, 0x0070_0000);
+        m.region(0x0070_0000, 0x10);
+        m.string(0x0070_1000, "hp");
+        m.put(0x0070_0000, 0x0070_1000);
+        m.put(0x0070_0004, 7);
+        // chompy's search runs over 1,024 elements, the 255-byte name's over
+        // 1,025; the 256-byte name has no NUL in O6's 256 bytes.
+        m.put(item(0) + 0x18, 1_024);
+        m.put(item(1) + 0x18, 1_025);
+        let spec = ChainSpec {
+            items: 8,
+            base: BASE,
+            path: vec![Hop::at(0)],
+            count: 0x08,
+            array: 0x14,
+            key: Key {
+                hops: Vec::new(),
+                off: 0,
+                hashed: true,
+            },
+            values: vec![name_hash("chompy"), name_hash(&n255), name_hash(&n256)],
+            ranges: vec![Probe::new(vec![Hop::named(0x18, 0x24, 0, "hp")], 4, 4)],
+        };
+        let b = evaluate(&spec, &mut m).unwrap();
+        assert_eq!((b.status, b.listed, b.unread, b.matched), (0, 3, 1, 2));
+        let kept: Vec<(u32, u32, u32)> = b
+            .items
+            .iter()
+            .map(|i| (i.index, i.value, i.missing))
+            .collect();
+        assert_eq!(kept, [(0, 0, 0), (1, 1, 1)]);
+        assert_eq!(b.items[0].range(0), Some(&7u32.to_be_bytes()[..]));
+        // 4,096 is a list (the entries past the three null, unread); 4,097
+        // isn't, the path's one hop then 3.
+        m.put(LIST + 0x08, 4_096);
+        let b = evaluate(&spec, &mut m).unwrap();
+        assert_eq!(
+            (b.status, b.listed, b.unread, b.matched),
+            (0, 4_096, 4_094, 2)
+        );
+        m.put(LIST + 0x08, 4_097);
+        let b = evaluate(&spec, &mut m).unwrap();
+        assert_eq!((b.status, b.listed, b.items.len()), (2 + 2, 0, 0));
+        // The count word, then the array pointer, past the end of the list's
+        // memory; then the path's own hop null.
+        m.region(0x0080_0000, 8);
+        m.put(BASE, 0x0080_0000);
+        assert_eq!(evaluate(&spec, &mut m).unwrap().status, 2);
+        m.region(0x0090_0000, 0x10);
+        m.put(0x0090_0008, 3);
+        m.put(BASE, 0x0090_0000);
+        assert_eq!(evaluate(&spec, &mut m).unwrap().status, 3);
+        m.put(BASE, 0);
+        assert_eq!(evaluate(&spec, &mut m).unwrap().status, 1);
     }
 
     /// A block's bytes as O6 writes them.
