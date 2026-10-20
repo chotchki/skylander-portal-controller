@@ -29,7 +29,7 @@ While the hero moves, the eye SHALL keep its offset from a follow point that clo
 - **THEN** the follow point closes 8 % of its distance in it, as in a 16.7 ms frame
 
 ### Requirement: Camera switches move the view
-When the level switches cameras, the view SHALL move to the new camera over the switch's time in game seconds, speeding up evenly for its first 40 %, steady for 20 % and slowing evenly for its last 40 %, its far clip moving with it; a transition plane crossed or a camera volume entered SHALL switch the same way, and crossing back SHALL switch back. Each frame the stick SHALL walk the hero against the view as that frame shows it. A shake SHALL move the eye, not the view's angles.
+When a script switches cameras, the view SHALL move to the new camera over the switch's time in game seconds, speeding up evenly for its first 40 %, steady for 20 % and slowing evenly for its last 40 %, its far clip moving with it; a camera volume entered SHALL switch the same way (as read). Each frame the stick SHALL walk the hero against the view as the frame before showed it. A shake SHALL move the eye, not the view's angles.
 
 #### Scenario: The rock slide up the corridor
 - **WHEN** Eruptor comes within 32 ft (9.75 m) of the sliding rocks' trigger at the top of the corridor east of the clearing
@@ -37,15 +37,26 @@ When the level switches cameras, the view SHALL move to the new camera over the 
 
 #### Scenario: The stick held through a switch
 - **WHEN** the stick is held while the view moves to another camera
-- **THEN** in each frame he walks the stick's way against that frame's view, so his walk turns with the view
+- **THEN** in each frame he walks the stick's way against the view of the frame before, so his walk turns with the view
 
 #### Scenario: Forward after a switch
 - **WHEN** the view has switched to another camera and the stick is held forward
 - **THEN** the hero walks away from the camera along the direction it now looks across the ground
 
+### Requirement: A transition plane blends by where he stands
+Inside a transition plane's box the view SHALL be its two cameras blended by where the hero's feet were the frame before, not by time: on the camera behind the plane a weight of 3G² − 2G³, G = 0.5 − a / L clamped to [0, 1], a his feet's distance in front of the box's centre along the plane's facing and L the box's length; the eye, the aim point and the far clip each that weighted sum of the two cameras' own. Standing in it, the view SHALL hold where it is.
+
 #### Scenario: Across the transition by the gate and back
-- **WHEN** Eruptor walks from the start across the level's `Transition 7-1` plane, past the ledge route's barrels and pot, and back
-- **THEN** the view moves to the plane's far camera and back, each along the switch's curve over the plane's own time
+- **WHEN** Eruptor, his eruptions having broken the ledge route's barrels and pot, walks west at full stick from the ledge route across `Transition 7-1` (35 ft long, facing 92°, camera 7 in front of it and camera 1 behind) onto the upper walkway, and back east
+- **THEN** the view starts toward camera 1 the frame after his feet come within 17.5 ft (5.334 m) of the plane's centre along its facing and is wholly camera 1's the frame after they are 17.5 ft past it, 1.72-1.73 s later at his 6.49-6.55 m/s, its far clip from 1,000 ft to 800 ft, and back the same way, every frame within 4.5e-7 of the blend
+
+#### Scenario: Let go in the plane
+- **WHEN** the stick is let go half way across and he stands 0.31-0.58 m in front of the plane's centre
+- **THEN** the view holds 0.42-0.46 of the way to camera 1, its far clip unchanged at 908.7-916.2 ft, for the 3.7-3.8 s he stands, and moves on with him when he walks on
+
+#### Scenario: Half stick across the plane
+- **WHEN** Eruptor crosses `Transition 7-1` at half stick
+- **THEN** the view moves as his feet do, over 2.98-3.00 s going west and 1.73-2.20 s coming back, the walkway's crests lifting a half-stick walk past its 3.28 m/s top (to 4.28 m/s going west, 6.55 m/s coming back) for part of it
 
 ### Requirement: Nothing pushes the camera in
 Scenery or props between the camera and the hero SHALL NOT move the camera: its eye SHALL keep its camera's offset from the follow point whatever stands between them and the hero, as in the original, whose camera never tests itself against the level.
