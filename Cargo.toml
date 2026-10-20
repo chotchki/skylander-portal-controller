@@ -50,10 +50,11 @@ anyhow = "1"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# At least 1.52.1: 1.52.0's blocking pool could hand two spawn_blocking calls
-# its one idle thread, so the second waited for the first to return (tokio#7757,
-# reverted in 1.52.1 for the hang in tokio#8056). The driver worker's calls
-# waited out a blocked neighbour that way (guac-server's state.rs tests).
+# At least 1.52.1: 1.52.0's blocking pool (tokio#7757, reverted in 1.52.1 for
+# tokio#8056) could hand two spawn_blocking calls its one idle thread, so the
+# second waited until the first returned or another call started a thread, and
+# it could strand a call for good. guacamole's driver tests timed out that way;
+# guac-server's a_blocking_call_never_waits_for_one_that_blocks fails on 1.52.0.
 tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
