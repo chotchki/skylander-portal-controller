@@ -176,6 +176,54 @@ fn let_go_mid_turn_freezes_his_facing() {
     assert!(slowing.last().unwrap().velocity == Vec3::ZERO);
 }
 
+/// The lags (AG.8, AG.38): the push and the turn integrate the step two
+/// frames before the frame's own, the slowing the step one before, the move
+/// its own. With a 0.05 s hitch in the third frame, the push it gives shows in
+/// the fifth, the slowing it gives in the fourth.
+#[test]
+fn the_push_and_the_slowing_take_the_steps_before_their_own() {
+    let world = world(&open_ground(), &[]);
+    let mut hero = eruptor(&world, START, VIEW);
+    let steps = [DT, DT, 0.05, DT, DT, DT];
+    let mut lengths = Vec::new();
+    for &step in &steps {
+        hero.step(&world, &Input::stick(stick(1.0, 0.0), VIEW), step, &[]);
+        lengths.push(hero.walk.velocity.length());
+    }
+    // Two nominal frames of history before the first.
+    let lagged = [DT, DT, DT, DT, 0.05, DT];
+    let mut want = 0.0f32;
+    for (k, &lag) in lagged.iter().enumerate() {
+        want = (want + 160.0 * lag).min(21.5);
+        assert!((lengths[k] - want).abs() < 1e-4, "frame {k}: {lengths:?}");
+    }
+    // The move takes its own step: the hitch frame moves him 0.05 s worth.
+    let mut hero = eruptor(&world, START, VIEW);
+    run(&world, &mut hero, 30, |_| stick(1.0, 0.0));
+    let before = hero.pivot;
+    hero.step(&world, &Input::stick(stick(1.0, 0.0), VIEW), 0.05, &[]);
+    assert!((ground_speed(hero.pivot - before) - TOP * 0.05).abs() < 1e-4);
+    // Let go: the slowing takes the step before, so the hitch shows a frame
+    // after it.
+    let mut slowed = Vec::new();
+    for &step in &[0.05, DT, DT] {
+        hero.step(&world, &Input::stick(Stick::CENTRED, VIEW), step, &[]);
+        slowed.push(hero.walk.velocity.length());
+    }
+    assert!(
+        (slowed[0] - (21.5 - 80.0 * 0.05)).abs() < 1e-4,
+        "{slowed:?}"
+    );
+    assert!(
+        (slowed[1] - (slowed[0] - 80.0 * 0.05)).abs() < 1e-4,
+        "{slowed:?}"
+    );
+    assert!(
+        (slowed[2] - (slowed[1] - 80.0 * DT)).abs() < 1e-4,
+        "{slowed:?}"
+    );
+}
+
 /// No jumping: the face buttons change nothing, frame for frame.
 #[test]
 fn no_button_lifts_him() {

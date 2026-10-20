@@ -7,13 +7,15 @@
 mod common;
 
 use common::*;
-use guac_motion::edge::FAST_REACH;
 use guac_motion::hero::Input;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_motion::tuning::FOOT;
 
 const EDGE: f32 = 5.0;
+/// AG.36's reach ahead along his walk: every refusal under 1.2104 m, every
+/// step let through from 1.2106 m.
+const REACH: f32 = 1.2105;
 
 /// A platform ending at z = 5 with nothing under its edge.
 fn platform() -> Soup {
@@ -57,15 +59,29 @@ fn head_on_he_stops_dead_short_of_it() {
     let at = stop(&states);
     assert!((ground_speed(states[at - 1].velocity) - TOP).abs() < 1e-3);
     let left = EDGE - states[at].pivot.z;
-    assert!(
-        (FAST_REACH - TOP * DT..FAST_REACH).contains(&left),
-        "{left}"
-    );
+    assert!((REACH - TOP * DT..REACH).contains(&left), "{left}");
     assert!(
         states[at..]
             .iter()
             .all(|s| s.pivot == states[at].pivot && s.supported)
     );
+}
+
+/// AG.36's bracket: at top speed with the edge 1.2104 m ahead he's refused
+/// before he moves; 1.2106 m ahead he moves.
+#[test]
+fn the_probe_refuses_within_1_2104_and_not_from_1_2106() {
+    let soup = platform();
+    let world = world(&soup, &[]);
+    for (ahead, moves) in [(1.2104, false), (1.2106, true)] {
+        let mut hero = eruptor(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        hero.pivot.z = EDGE - ahead;
+        hero.walk.velocity = Vec3::new(0.0, 0.0, 21.5);
+        let start = hero.pivot;
+        hero.step(&world, &Input::stick(stick(1.0, 0.0), 0.0), DT, &[]);
+        assert_eq!(hero.pivot != start, moves, "{ahead}: {:?}", hero.pivot);
+        assert_eq!(hero.held_off, !moves, "{ahead}");
+    }
 }
 
 /// Along an edge, 30° and 82° from head-on: he stops dead with the edge
@@ -82,7 +98,7 @@ fn along_an_edge_he_never_slides() {
         assert!(pivot_off.contains(&off), "{degrees}°: {off}");
         let ahead = off / degrees.to_radians().cos();
         assert!(
-            ahead < FAST_REACH && ahead > FAST_REACH - TOP * DT,
+            ahead < REACH && ahead > REACH - TOP * DT,
             "{degrees}°: {ahead}"
         );
         assert!(
@@ -113,10 +129,7 @@ fn let_go_short_of_it() {
     let from = ground_speed(states[at - 1].velocity);
     assert!((4.6..=5.8).contains(&from), "{from}");
     let left = EDGE - states[at].pivot.z;
-    assert!(
-        (FAST_REACH - TOP * DT..FAST_REACH).contains(&left),
-        "{left}"
-    );
+    assert!((REACH - TOP * DT..REACH).contains(&left), "{left}");
     assert!(states[at..].iter().all(|s| s.pivot == states[at].pivot));
 }
 
@@ -134,7 +147,7 @@ fn part_stick_creeps_on_to_three_feet() {
         let first = stop(&states);
         let short = EDGE - states[first].pivot.z;
         assert!(
-            (FAST_REACH - TOP * s * DT..FAST_REACH).contains(&short),
+            (REACH - TOP * s * DT..REACH).contains(&short),
             "{s}: {short}"
         );
         let moves: Vec<usize> = (first..states.len())
