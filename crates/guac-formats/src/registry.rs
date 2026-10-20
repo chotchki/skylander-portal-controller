@@ -6,8 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    edge, exports, havok, iga, igz, language, material, model, progression, roster, sfo, texture,
-    toys,
+    edge, exports, havok, iga, igz, language, material, model, progression, roster, script, sfo,
+    texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -153,7 +153,38 @@ pub const PARSERS: &[RegisteredParser] = &[
         // The IGZ parse, then the definitions' index and op lists.
         heap_budget: |len| 64 * len + 32 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "script_ops",
+        parse: walk_script_ops,
+        seeds: script::builder::seeds,
+        // The IGZ parse, then one object at a time read as an op (no heap
+        // past an error) and as an operand: its path, 40 bytes an element
+        // of 4 input bytes.
+        heap_budget: |len| 64 * len + 16 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "script_graph",
+        parse: |bytes| script::Graph::read(&igz::Igz::parse(bytes)?).map(drop),
+        seeds: script::builder::seeds,
+        // The IGZ parse, then every op (about 330 bytes, from 28 input
+        // bytes or more) and operand (about 120, from 24) once in a map,
+        // and the list entries the budget allows: one per 2 data bytes, 40
+        // bytes an element and 8 a position.
+        heap_budget: |len| 64 * len + 64 * len + (64 << 10),
+    },
 ];
+
+/// Parses an IGZ, then reads every object as a tfbScript op and as an
+/// operand (AH.13), dropping each result. The property test and the fuzz
+/// targets run it.
+pub fn walk_script_ops(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    for i in 0..file.objects().len() {
+        let _ = script::Op::read(&file, i);
+        let _ = script::Operand::read(&file, i);
+    }
+    Ok(())
+}
 
 /// Reads a bundled init_setup, global and bootstrap as the extract's
 /// progression part does (AH.2): the export ids, then the level table and

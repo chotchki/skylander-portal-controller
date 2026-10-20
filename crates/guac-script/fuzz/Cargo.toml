@@ -1,0 +1,30 @@
+[package]
+name = "guac-script-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# cargo-fuzz targets for guac-script (openspec AH.14, design decision 3):
+# the interpreter itself, over graphs of the op-graph writer's shapes, the
+# budget on. Nightly only, so this is its own workspace and the root one
+# excludes it. Run from crates/guac-script: `cargo +nightly fuzz run
+# interpreter`; it needs no seeds (the structured half builds scripts from
+# any bytes), and `cargo run -p guac-formats --features test-fixtures
+# --example fuzz_seeds` seeds the raw half.
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+guac-script = { path = ".." }
+guac-formats = { path = "../../guac-formats", features = ["test-fixtures"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "interpreter"
+path = "fuzz_targets/interpreter.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,6 @@
+# cargo-fuzz output stays local: a corpus seeded from a real dump would be game
+# bytes, and the guard only catches files that start with a magic.
+target
+corpus
+artifacts
+coverage

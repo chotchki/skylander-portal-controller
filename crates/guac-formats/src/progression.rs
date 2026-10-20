@@ -41,14 +41,15 @@ use crate::igz::layouts::{
     OpMacroParameter, OpUseMacro, RhsValueStack, ScriptInfo, ScriptSet, ScriptSetList, Stack,
     ValueInfo, ValueRhsVariant, Variable, is_a, read_all,
 };
+use crate::script::Op;
 use crate::{ErrorKind, FormatError, fnv1a32};
 
 mod ops;
 
-pub use ops::{
+pub use crate::script::{
     OpCheckValue, OpDefineMacroSpecialization, OpIncValue, OpSetReference, OpSetValue,
-    ScriptStructure,
 };
+pub use ops::ScriptStructure;
 
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod builder;
@@ -763,38 +764,33 @@ impl<'f, 'a, 'g> Reader<'f, 'a, 'g> {
                 ));
             }
             let op = ops[pc];
-            let ty = self.type_of(op);
-            let next = match ty {
-                "OpFlowBuiltInBehavior" => pc + 1,
-                t if t == OpUseMacro::TYPE => self.call(ops, pc, run)?,
-                t if t == OpSetValue::TYPE => {
-                    let set = OpSetValue::read(self.igz, op)?;
+            // AH.13's decoder: the class picks the arm, the layout comes read.
+            let next = match Op::read(self.igz, op)? {
+                Op::FlowContinue(_) => pc + 1,
+                Op::UseMacro(_) => self.call(ops, pc, run)?,
+                Op::SetValue(set) => {
                     let lhs = self.operand_path(set.lhs)?;
                     let value = self.eval(run, set.rhs, 0).ok();
                     run.write(lhs, value);
                     pc + 1
                 }
-                t if t == OpIncValue::TYPE => {
-                    let inc = OpIncValue::read(self.igz, op)?;
+                Op::IncValue(inc) => {
                     let lhs = self.operand_path(inc.lhs)?;
                     let value = self.read(run, &lhs).ok().and_then(|v| v.checked_add(1));
                     run.write(lhs, value);
                     pc + 1
                 }
-                t if t == OpSetReference::TYPE => {
-                    let set = OpSetReference::read(self.igz, op)?;
+                Op::SetReference(set) => {
                     let lhs = self.operand_path(set.lhs)?;
                     run.write(lhs, None);
                     pc + 1
                 }
-                "OpChangeMembership" => {
-                    let change = crate::igz::layouts::OpChangeMembership::read(self.igz, op)?;
+                Op::ChangeMembership(change) => {
                     let lhs = self.operand_path(change.lhs)?;
                     run.write(lhs, None);
                     pc + 1
                 }
-                t if t == OpCheckValue::TYPE => {
-                    let check = OpCheckValue::read(self.igz, op)?;
+                Op::CheckValue(check) => {
                     let a = self.eval(run, check.lhs, 0)?;
                     let b = self.eval(run, check.rhs, 0)?;
                     if holds(check.relation, a, b)? {
@@ -804,15 +800,13 @@ impl<'f, 'a, 'g> Reader<'f, 'a, 'g> {
                     }
                 }
                 // `else/skip n`: the branch taken skips the else block.
-                "OpAbstractFlow" => {
-                    let branch = OpCode::read(self.igz, op)?.branch;
-                    if branch == BRANCH_END {
+                Op::Skip(code) => {
+                    if code.branch == BRANCH_END {
                         return Err(stranger(self.igz, op, "an op of the save-param table"));
                     }
-                    pc + usize::from(branch) + 1
+                    pc + usize::from(code.branch) + 1
                 }
-                t if t == OpLoopValue::TYPE => {
-                    let looped = OpLoopValue::read(self.igz, op)?;
+                Op::LoopValue(looped) => {
                     let end = looped
                         .op
                         .block_end(pc)
@@ -841,7 +835,7 @@ impl<'f, 'a, 'g> Reader<'f, 'a, 'g> {
                         pc + 1
                     }
                 }
-                "OpFlowLoop" => {
+                Op::FlowLoop(_) => {
                     let frame = run
                         .loops
                         .last_mut()

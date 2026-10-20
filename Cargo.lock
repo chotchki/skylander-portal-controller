@@ -4436,6 +4436,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "guac-script"
+version = "0.1.0"
+dependencies = [
+ "guac-formats",
+ "guac-oracle",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "guac-server"
 version = "0.1.0"
 dependencies = [

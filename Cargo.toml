@@ -7,6 +7,7 @@ members = [
     "crates/guac-ir",
     "crates/guac-motion",
     "crates/guac-oracle",
+    "crates/guac-script",
     "crates/guac-server",
     "crates/guacamole",
     "crates/indexer",
@@ -26,7 +27,7 @@ members = [
 # cargo-fuzz targets build on nightly with sanitizer flags, so they're their own
 # workspace (openspec AB, design decision 3); the stable property test in
 # guac-formats is what `cargo test --workspace` runs.
-exclude = ["crates/guac-formats/fuzz"]
+exclude = ["crates/guac-formats/fuzz", "crates/guac-script/fuzz"]
 # Bare cargo commands from the repo root narrow to the server, which has
 # one bin (`skylander-portal-controller`), plus the guac-server library it
 # links (no bin, so `cargo run` stays unambiguous). Without this, `cargo run`
