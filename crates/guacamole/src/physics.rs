@@ -28,9 +28,9 @@ use avian3d::parry::query::Ray;
 use avian3d::parry::shape::SharedShape;
 use avian3d::prelude::{
     BroadPhaseCorePlugin, Collider, ColliderAabb, ColliderBackendPlugin, ColliderHierarchyPlugin,
-    ColliderTreePlugin, PhysicsSchedule, PhysicsSchedulePlugin, PhysicsStepSystems, PhysicsSystems,
-    Position, RigidBody, Rotation, Sensor, ShapeCastConfig, SolverSystems, SpatialQuery,
-    SpatialQueryFilter, TrimeshFlags,
+    ColliderTreePlugin, PhysicsSchedule, PhysicsSchedulePlugin, PhysicsStepSystems, Position,
+    RigidBody, Rotation, Sensor, ShapeCastConfig, SolverSystems, SpatialQuery, SpatialQueryFilter,
+    TrimeshFlags,
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -65,22 +65,8 @@ impl Plugin for SeamPlugin {
         .configure_sets(
             PhysicsSchedule,
             SolverSystems::Finalize.in_set(PhysicsStepSystems::Solver),
-        )
-        .init_resource::<SeamSteps>()
-        .add_systems(
-            FixedPostUpdate,
-            count_steps.after(PhysicsSystems::StepSimulation),
         );
     }
-}
-
-/// The physics steps run so far: a body spawned at step n is in the trees
-/// the queries walk once this passes n (the step refits and rebuilds them).
-#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct SeamSteps(pub(crate) u64);
-
-fn count_steps(mut steps: ResMut<SeamSteps>) {
-    steps.0 += 1;
 }
 
 /// Tags a collider entity with its seam body, so a query hit (an entity) reads

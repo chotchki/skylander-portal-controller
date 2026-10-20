@@ -7,9 +7,9 @@
 //!   Eruptor alone until AG.27. Any other figure, a character placed before
 //!   him included, keeps the portal view and its card.
 //! - When: once his intro is over (or none plays), the TV on the portal
-//!   view, the level loaded and walkable ([`Level::walkable`]) and his model
-//!   read with every pipeline it draws compiled. Until then the portal view
-//!   holds.
+//!   view, the level loaded with its solids ([`Level::walkable`]) and his
+//!   model read with every pipeline it draws compiled. Until then the portal
+//!   view holds.
 //! - What: he stands at `213_Init_Location`'s first waypoint facing 0°,
 //!   settled onto the level's collision, his idle looping on AE's
 //!   evaluator; the camera at camera 0's rest pose follows him on AG.17's
@@ -69,7 +69,7 @@ use crate::level::{
 };
 use crate::motion::ReducedMotion;
 use crate::pad::LevelPads;
-use crate::physics::{AvianSeam, SeamSteps};
+use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
 use crate::screen::TvScreen;
 use crate::turntable::{Loaded, Turntables, load_model};
@@ -182,7 +182,8 @@ impl Play {
         }
     }
 
-    /// The hero's entity, while the level shows.
+    /// The hero's entity, while the level shows: the walk's shots'.
+    #[cfg(any(test, feature = "dev-tools"))]
     pub(crate) fn hero(&self) -> Option<Entity> {
         self.inside.as_ref().map(|i| i.hero)
     }
@@ -416,7 +417,6 @@ fn enter(
     mut level: ResMut<Level>,
     mut pads: ResMut<LevelPads>,
     seam: AvianSeam,
-    steps: Option<Res<SeamSteps>>,
     current: Option<Res<Current>>,
     prepare: Option<Res<Prepare>>,
     queue: Option<Res<IntroQueue>>,
@@ -441,10 +441,10 @@ fn enter(
     if !on_portal || preparing || intros {
         return;
     }
-    let (Some(steps), Ok(target)) = (steps, tv.single()) else {
+    let Ok(target) = tv.single() else {
         return;
     };
-    let Some(start) = level.walkable(*steps).map(|l| l.start) else {
+    let Some(start) = level.walkable().map(|l| l.start) else {
         return;
     };
     let Some((lights, fog)) = level.lighting().map(|(l, f)| (l.clone(), f)) else {
@@ -551,9 +551,10 @@ fn draw_hero(
     let mut lit = Vec::with_capacity(drawn.materials.len());
     let mut scrolling = Vec::new();
     for m in &drawn.materials {
-        let mut material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
+        // Lit in the world's frame once the level takes them
+        // (`Level::light_also`).
+        let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
-        material.uniform = material.uniform.lit_in_world();
         let reference = reference_material(m).map_err(|e| format!("material {}: {e}", m.name))?;
         let handle = s.materials.add(material);
         if !m.scrolls.is_empty() {
@@ -881,13 +882,15 @@ mod tests {
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
     /// waypoint facing 0°, settled 5 mm above the floor, drawn there at his
     /// 150 %; the camera at camera 0's rest pose off his feet (55 ft at 32°
-    /// behind the view along 15°, aimed 9 ft up), looking along 15°.
+    /// behind the view along 15°, aimed 9 ft up), looking along 15°. Placed
+    /// before the level loads, so he walks in the frame its floor spawns.
     #[test]
     fn the_start_pose() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, tx) = play_app(tmp.path());
-        tx.send(write_level(tmp.path(), &lights())).unwrap();
         place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "his model", |a| hero_model(a) == Some("ready"));
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
         until(&mut app, "the level", |a| mode(a) == Mode::Level);
         let h = hero(&app);
         eprintln!("settled at {:?}, facing {}", h.pivot, h.facing);
@@ -956,6 +959,30 @@ mod tests {
         app.world_mut()
             .resource_mut::<IntroQueue>()
             .apply(crate::intro::IntroEvent::Skip);
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    }
+
+    /// Taken off before the level shows, he never walks in; placed again,
+    /// he does.
+    #[test]
+    fn a_hero_taken_off_before_the_level_shows_never_enters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "his model", |a| hero_model(a) == Some("ready"));
+        let cleared = PortalChange::Cleared {
+            slot: SlotIndex::new(0).unwrap(),
+        };
+        crate::turntable::tests::set(&mut app, [cleared.clone()]);
+        app.world_mut().write_message(PortalChanged(cleared));
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        for _ in 0..60 {
+            app.update();
+        }
+        assert_eq!(mode(&app), Mode::Portal);
+        assert_eq!(hero_model(&app), None);
+        place(&mut app, 2, ERUPTOR, "Eruptor");
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
     }
 

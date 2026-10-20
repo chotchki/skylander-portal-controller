@@ -32,9 +32,10 @@
 //!   Nothing runs the program yet (AH.16).
 //! - The walk (AG.21): the collision and placements parts are read on the
 //!   same task, the collision built into Avian colliders there
-//!   ([`PreparedBody`]), spawned with the level and walkable once a physics
-//!   step has put them in the trees the queries walk ([`Level::walkable`]);
-//!   where the hero starts is `213_Init_Location`'s first waypoint.
+//!   ([`PreparedBody`]) and spawned with the level, where the hero's queries
+//!   find them at once (Avian puts a collider in its trees, its bounds
+//!   computed, as it's inserted); where the hero starts is
+//!   `213_Init_Location`'s first waypoint.
 //!
 //! The first character placed takes the TV into it ([`crate::play`]): its
 //! camera shows the level ([`Level::show`]) and the hero's materials are lit
@@ -85,7 +86,7 @@ use tracing::{info, warn};
 
 use crate::extraction::Extraction;
 use crate::motion::ReducedMotion;
-use crate::physics::{PreparedBody, SeamSteps};
+use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
 use crate::tv::{Redrawn, TvCamera};
 use crate::warm::Warm;
@@ -452,10 +453,8 @@ pub(crate) struct Loaded {
     lit_fog: LevelFog,
     camera: Option<Entity>,
     shown_at: Option<Duration>,
-    /// Its solids, spawned with it, and the physics step they were spawned
-    /// at ([`Level::walkable`]); `None` without the physics.
+    /// Its solids, spawned with it.
     bodies: Vec<Entity>,
-    bodies_at: Option<SeamSteps>,
     /// Where the hero starts, before he's settled.
     pub(crate) start: Vec3,
     /// Materials lit with the level's but in the hero's scene
@@ -557,12 +556,11 @@ impl Level {
         self.stage = Stage::Failed;
     }
 
-    /// The ready level, once a physics step has put its solids in the trees
-    /// the queries walk (a body spawned at step n is there once `steps`
-    /// passes n): what the hero can be spawned into.
-    pub(crate) fn walkable(&self, steps: SeamSteps) -> Option<&Loaded> {
+    /// The ready level, its solids spawned: what the hero can be spawned
+    /// into.
+    pub(crate) fn walkable(&self) -> Option<&Loaded> {
         match &self.stage {
-            Stage::Ready(l) if l.bodies_at.is_some_and(|at| steps > at) => Some(l),
+            Stage::Ready(l) => Some(l),
             _ => None,
         }
     }
@@ -753,7 +751,6 @@ pub(crate) struct LevelSpawner<'w, 's> {
     watch: Res<'w, LevelWatch>,
     fog: ResMut<'w, LevelFog>,
     extraction: Option<Res<'w, Extraction>>,
-    steps: Option<Res<'w, SeamSteps>>,
 }
 
 /// One step of the load a frame: the task's result taken, a frame's share
@@ -1052,7 +1049,6 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         camera: None,
         shown_at: None,
         bodies,
-        bodies_at: s.steps.as_deref().copied(),
         start: built.walk.start,
         also: Vec::new(),
     }

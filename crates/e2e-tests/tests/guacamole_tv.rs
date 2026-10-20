@@ -811,13 +811,17 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     assert_eq!(snap["level"]["triangles"], 4);
 
     place_named(&phone, "Eruptor").await;
-    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
         s["mode"] != "portal"
     })
     .await
     .expect("the TV enters the level");
-    // No pad: the level waits for one from its first frame.
-    assert_eq!(snap["mode"], "paused", "{snap}");
+    // No pad: the level waits for one from its first frame of input.
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["mode"] == "paused"
+    })
+    .await
+    .expect("the level waits for a pad");
     assert_eq!(snap["input"]["pause"], "controller");
     assert_eq!(snap["input"]["layer"], "level");
     assert_eq!(snap["level"]["shown"], true);
