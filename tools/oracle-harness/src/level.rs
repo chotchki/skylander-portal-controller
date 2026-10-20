@@ -324,7 +324,7 @@ pub fn read_collision(pine: &mut PineClient) -> Result<LiveCollision> {
     Ok(c)
 }
 
-fn still_paused(pine: &mut PineClient, what: &str) -> Result<()> {
+pub(crate) fn still_paused(pine: &mut PineClient, what: &str) -> Result<()> {
     match pine.status()? {
         EmuStatus::Paused => Ok(()),
         other => bail!("PINE reports the emulator {other:?} after {what}; it reads at a pause"),

@@ -10,9 +10,13 @@
 //! recorder with Giants' watch list ([`watch`], AG.1), a level as the live
 //! game holds it: its placements, its collision and its solids ([`level`],
 //! AG.7), the hero's own scale, solid and parameters ([`hero`], AG.8), his walk
-//! as the movement script keeps it ([`mover`], AG.38), and every
+//! as the movement script keeps it ([`mover`], AG.38), every
 //! character placed in turn with what the game attaches to it ([`sweep`],
-//! AE.22).
+//! AE.22), the script runtime's cells and `global.bld`'s exports
+//! ([`script`], AH.4) and the fight's state on them: the hero's health, his
+//! figure's experience and gold, the enemy stats, the difficulty, the
+//! multiplier, the element area, the loot counts and the triggers
+//! ([`fight`], AH.4).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -28,6 +32,7 @@ pub mod actors;
 pub mod control;
 pub mod divergence;
 pub mod env;
+pub mod fight;
 pub mod hero;
 pub mod home;
 pub mod identity;
@@ -40,6 +45,7 @@ pub mod pine;
 pub mod rng;
 pub mod rpcs3_log;
 pub mod scan;
+pub mod script;
 pub mod snapshot;
 pub mod sweep;
 pub mod template;

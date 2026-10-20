@@ -71,6 +71,11 @@
 //!   +0x3C. Each collidable a contact names is a phantom's (+0x10) or the
 //!   level body's (+0x10), named at the resolve from [`crate::level`]'s
 //!   solids and the level body.
+//! - the fight's cells (AH.4), when [`GiantsWatch::with_fight`] grows the
+//!   list with them: the hero's health, full health and invulnerability, the
+//!   figure's save words AH.2's rows read experience, gold and playtime from,
+//!   both players' element-area flags and the destructibles' common loot
+//!   count, each a `ValueInfo`'s type word and value ([`crate::fight`]).
 //! - every `Generic_FollowActor` the frame holds (AG.13): each one's
 //!   placement `_currentMatrix`, named `follow.<placement>`. The camera
 //!   scripts keep their points on such clones (the magic point the eye keeps
@@ -99,6 +104,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actors::{self, Gather, be32, expect_vtable, f32_at, floats, object_ptr, one, vtable};
 use crate::control::Control;
+use crate::fight::{FightFrame, FightWatch};
 use crate::mover::MoverWatch;
 use crate::outputs::hex;
 use crate::verbs::{
@@ -429,6 +435,10 @@ pub struct GiantsWatch {
     /// list written before it, or for a hero without a script description.
     #[serde(default)]
     pub mover: Option<MoverWatch>,
+    /// The fight's cells that move frame by frame (AH.4): none in a list
+    /// written before it, or one [`GiantsWatch::with_fight`] didn't grow.
+    #[serde(default)]
+    pub fight: Option<FightWatch>,
 }
 
 /// A `Generic_FollowActor` on the watch list (AG.13).
@@ -775,7 +785,26 @@ impl GiantsWatch {
             proxy,
             followers,
             mover,
+            fight: None,
         })
+    }
+
+    /// The list grown with the fight's cells (AH.4), resolved from a
+    /// [`crate::fight::read`] at the same pause; refused when the grown list
+    /// passes O5's range or byte caps.
+    pub fn with_fight(mut self, fight: FightWatch) -> Result<Self> {
+        let mut fields = self.list.fields().to_vec();
+        fields.retain(|f| !f.name.starts_with("fight."));
+        fields.extend(fight.list_fields());
+        self.list = WatchList::new(fields)?;
+        self.fight = Some(fight);
+        Ok(self)
+    }
+
+    /// The fight's cells in a record: none without them on the list or with a
+    /// block unreadable.
+    pub fn fight(&self, record: &WatchRecord) -> Option<FightFrame> {
+        self.fight.as_ref()?.read(&self.list, record)
     }
 
     /// One record decoded into a [`Frame`], `pad` the readback joined for its
@@ -1716,6 +1745,58 @@ mod tests {
         g.w.put32(params, vtable::ANIMATION_INFO);
         let err = GiantsWatch::resolve(&mut g.w).unwrap_err();
         assert!(format!("{err:#}").contains("ActorParameters"), "{err:#}");
+    }
+
+    #[test]
+    fn the_list_grows_with_the_fights_cells_and_reads_them_back() {
+        // The list first (the fixture's hero has no movement description, so
+        // no mover), then the fight's cells on the same heap.
+        let mut g = giants();
+        let hero = g.hero.placement;
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        let mut f = crate::fight::fixture::fight_on(g.w, hero, 999, 1_234, 3_600);
+        let rows = crate::fight::Rows::of(&crate::fight::fixture::progression()).unwrap();
+        let base = watch.list.ranges().len();
+        assert!(watch.fight.is_none());
+        let state = crate::fight::read(&mut f.w, hero, &rows).unwrap();
+        let grown = watch
+            .with_fight(crate::fight::FightWatch::of(&state, &rows).unwrap())
+            .unwrap();
+        let fight_fields: Vec<&str> = grown
+            .list
+            .fields()
+            .iter()
+            .map(|f| f.name.as_str())
+            .filter(|n| n.starts_with("fight."))
+            .collect();
+        assert!(!fight_fields.is_empty());
+        assert!(grown.list.ranges().len() > base);
+        assert!(grown.list.ranges().len() <= WATCH_MAX_RANGES);
+        let r = sample(&mut f.w, &grown.list, 40);
+        let got = grown.fight(&r).unwrap();
+        assert_eq!(
+            (got.experience, got.gold, got.playtime_secs, got.level),
+            (999, 1_234, 3_600, 1)
+        );
+        assert_eq!(got.health, crate::script::Number::Int(290));
+        // The frame the recording decodes is the same with the cells on.
+        let pads = BTreeMap::new();
+        let frames = grown.recording(std::slice::from_ref(&r), &pads).unwrap();
+        assert_eq!(
+            frames.frames()[0].hero.position,
+            [10.19027, 43.38267, -93.39406]
+        );
+        // Growing again replaces the cells rather than adding them twice.
+        let again = grown
+            .clone()
+            .with_fight(crate::fight::FightWatch::of(&state, &rows).unwrap())
+            .unwrap();
+        assert_eq!(again.list.fields().len(), grown.list.fields().len());
+        // A list written before AH.4 reads as having none.
+        let mut json = serde_json::to_value(&grown).unwrap();
+        json.as_object_mut().unwrap().remove("fight");
+        let old: GiantsWatch = serde_json::from_value(json).unwrap();
+        assert!(old.fight.is_none() && old.fight(&r).is_none());
     }
 
     #[test]
