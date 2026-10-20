@@ -27,6 +27,9 @@
 //!   before any shelf exists ([`Warm::ask_census`], [`crate::prepare`]),
 //!   drawn [`Warm::per_frame`] at a time while the TV says it's getting
 //!   ready, so a shelf or a level that lands later finds its keys compiled.
+//!   A key a shelf, a level or a turntable asks for that the census doesn't
+//!   hold is the pass's miss: counted (`outside_census`) and logged once
+//!   with the census row that would cover it.
 //!
 //! Without a renderer (the headless tests) nothing compiles: the list is
 //! still read, and every key counts as compiled.
@@ -53,6 +56,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Model};
 use guac_ir::shading::Scene;
+use guacamole::census::Row;
 use guacamole::character::turntable::{Framing, Sweep, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
@@ -288,6 +292,10 @@ pub(crate) struct WarmReport {
     pub keys: usize,
     pub compiled: usize,
     pub failed: usize,
+    /// Keys a shelf, a level or a turntable asked for that the start's
+    /// census doesn't hold (AE.25): 0 on the disc the census was taken
+    /// from; none counted unless the start's pass asked for it.
+    pub outside_census: usize,
     /// From the shelf landing (or the first key asked) to the last key
     /// compiled so far.
     pub took_ms: Option<u64>,
@@ -314,6 +322,10 @@ pub(crate) struct Warm {
     listed: Vec<WarmKey>,
     /// The keys a level asked for, in its order.
     level_listed: Vec<WarmKey>,
+    /// The start's census (AE.25), once its pass asked for it.
+    census: HashSet<WarmKey>,
+    /// Keys asked for that the census doesn't hold, each noted once.
+    outside: HashSet<WarmKey>,
     /// Keys drawn a frame once the stage is up: one, so a portal frame
     /// compiles at most one key's pipelines, unless the first start's pass
     /// raises it while nothing but its screen is up ([`crate::prepare`]).
@@ -334,6 +346,8 @@ impl Warm {
             started: None,
             listed: Vec::new(),
             level_listed: Vec::new(),
+            census: HashSet::new(),
+            outside: HashSet::new(),
             per_frame: 1,
             report: WarmReport {
                 state: "idle".into(),
@@ -380,6 +394,9 @@ impl Warm {
             self.scene = Some((scene.clone(), model.identity.clone()));
         }
         self.started.get_or_insert_with(Instant::now);
+        for (key, _) in keys {
+            self.note_outside(key);
+        }
         for (key, material) in keys.iter().rev() {
             if self.done.contains(key) {
                 continue;
@@ -408,6 +425,7 @@ impl Warm {
         self.started.get_or_insert_with(Instant::now);
         self.level_listed = keys.iter().map(|(k, _)| *k).collect();
         for (key, material) in keys {
+            self.note_outside(key);
             if self.done.contains(key) || !self.pending.insert(*key) {
                 continue;
             }
@@ -429,6 +447,7 @@ impl Warm {
     ) {
         self.started.get_or_insert_with(Instant::now);
         for (key, material, scene) in keys {
+            self.census.insert(key);
             if self.done.contains(&key) || !self.pending.insert(key) {
                 continue;
             }
@@ -438,7 +457,32 @@ impl Warm {
                 scene: Some(scene),
             });
         }
+        // A list or a level that landed before the census is held to it now.
+        let asked: Vec<WarmKey> = self
+            .listed
+            .iter()
+            .chain(&self.level_listed)
+            .copied()
+            .collect();
+        for key in &asked {
+            self.note_outside(key);
+        }
         self.update_report();
+    }
+
+    /// Notes `key` once the start's pass has asked for the census and when
+    /// the census doesn't hold it: a key the pass didn't compile, so a TV
+    /// frame will (AE.25). Logged once, with the row that would cover it.
+    fn note_outside(&mut self, key: &WarmKey) {
+        if self.census.is_empty() || self.census.contains(key) || !self.outside.insert(*key) {
+            return;
+        }
+        self.report.outside_census = self.outside.len();
+        warn!(
+            row = %Row::of(key).source(),
+            skinned = key.mesh.skinned,
+            "a key outside the start's census: the TV compiles it in a frame"
+        );
     }
 
     pub(crate) fn report(&self) -> &WarmReport {
@@ -513,6 +557,7 @@ pub(crate) fn step(mut warm: ResMut<Warm>, mut s: WarmSpawner) {
         warm.listed = list.entries.iter().map(|e| e.key).collect();
         let mut new = 0;
         for entry in list.entries.iter() {
+            warm.note_outside(&entry.key);
             if !warm.done.contains(&entry.key) && warm.pending.insert(entry.key) {
                 warm.queue.push_back(entry.clone());
                 new += 1;
@@ -1021,5 +1066,59 @@ mod tests {
         settle(&mut app);
         assert_eq!(states(&app)[0], Some("model"));
         assert!(app.world().resource::<Warm>().report().failed >= 1);
+    }
+
+    /// AE.25's guard: once the start's pass has asked for the census, a key
+    /// a level or a turntable asks for that the census doesn't hold is
+    /// counted, once; the census's own aren't; nothing counts before the
+    /// census is asked, and a level asked before it is held to it then. (A
+    /// shelf's list: `prepare`'s pass test.)
+    #[test]
+    fn a_key_outside_the_census_is_counted_once() {
+        use guacamole::census;
+        let scene = Arc::new(Scene {
+            fog: true,
+            ..Scene::new()
+        });
+        let entry = |k: WarmKey| (k, census::material_for(&k));
+        // Every census row has a tangent: the same keys without one aren't
+        // the census's.
+        let without_tangents = |k: &WarmKey| {
+            let mut row = Row::of(k);
+            row.tangents = false;
+            row.key(k.mesh.skinned).unwrap()
+        };
+        let inside = census::level_keys()[0];
+        let level_miss = without_tangents(&inside);
+        let card_miss = without_tangents(&census::turntable_keys()[0]);
+        let all: HashSet<WarmKey> = census::turntable_keys()
+            .into_iter()
+            .chain(census::level_keys())
+            .collect();
+        assert!(!all.contains(&level_miss) && !all.contains(&card_miss));
+
+        let mut warm = Warm::new(true);
+        warm.ask_level(&[entry(level_miss)], scene.clone());
+        assert_eq!(warm.report().outside_census, 0, "no census asked yet");
+        warm.ask_census(
+            all.iter()
+                .map(|k| (*k, census::material_for(k), scene.clone())),
+        );
+        assert_eq!(warm.report().outside_census, 1, "the earlier level's miss");
+        warm.ask_level(&[entry(inside), entry(level_miss)], scene.clone());
+        assert_eq!(
+            warm.report().outside_census,
+            1,
+            "once; the census's own not"
+        );
+        let identity = census_identity();
+        let model =
+            warm::triangle_model(&identity, &census::material_for(&card_miss), card_miss.mesh);
+        warm.ask(&model, &[(card_miss, 0)], &scene);
+        assert_eq!(warm.report().outside_census, 2, "a turntable's miss");
+        let card = census::turntable_keys()[0];
+        let model = warm::triangle_model(&identity, &census::material_for(&card), card.mesh);
+        warm.ask(&model, &[(card, 0)], &scene);
+        assert_eq!(warm.report().outside_census, 2);
     }
 }

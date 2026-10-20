@@ -21,7 +21,7 @@
 
 use bevy::camera::PerspectiveProjection;
 use bevy::math::{Mat4, Vec3};
-use bevy::prelude::Transform;
+use bevy::prelude::{GlobalTransform, Transform};
 use guac_ir::level::{Atmosphere, AtmosphericZone, LevelMaterial, Lights, SceneGraph, ZoneFog};
 use guac_ir::model::{self, Segment};
 use guac_ir::shading::{DirectionalLight, PointLight, Scene};
@@ -407,6 +407,55 @@ pub fn keys(drawn: &Drawn, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, Level
         &drawn.segments,
         scene,
     )?)
+}
+
+/// A level as it draws at its start: its drawn part, the world lights and
+/// fog its start's zone sets up, and the keys it draws at the fresh state's
+/// camera ([`at_start`]).
+#[derive(Debug, Clone)]
+pub struct AtStart {
+    pub drawn: Drawn,
+    pub lights: LevelLights,
+    pub fog: LevelFog,
+    pub keys: Vec<(WarmKey, usize)>,
+}
+
+/// `scene`'s drawn part (its scenes' in one list, materials numbered across
+/// them), lit and fogged by `atmosphere`'s start zone over `lights`' placed
+/// lights, the sky taking the zone's share of the fog, and the keys it
+/// draws seen from [`fresh_state_view`]. The TV's loader reads a level
+/// through this, and `tests/giants_census.rs` holds the census's level
+/// table to it, so the start's pass compiles the loader's own keys.
+pub fn at_start(
+    scene: guac_ir::level::Scene,
+    lights: &Lights,
+    atmosphere: &Atmosphere,
+) -> Result<AtStart, LevelError> {
+    let zone = start_zone(atmosphere)?;
+    let lights = level_lights(lights, zone)?;
+    let fog = LevelFog::from_zone(&zone.fog)?;
+    let sky = sky_fogged(zone)?;
+    let mut all = Drawn::default();
+    for graph in scene.scenes {
+        all.append(drawn(graph, sky)?);
+    }
+    let keys = keys(&all, &view_scene(&lights, &fog, fresh_state_view()))?;
+    Ok(AtStart {
+        drawn: all,
+        lights,
+        fog,
+        keys,
+    })
+}
+
+/// The fresh state's camera as a view (`view_from_world`), through the
+/// `GlobalTransform` Bevy propagates for it, so a camera placed there
+/// matches what the materials were lit for to the bit and its first frame
+/// relights nothing.
+pub fn fresh_state_view() -> Mat4 {
+    GlobalTransform::from(fresh_state_transform())
+        .to_matrix()
+        .inverse()
 }
 
 /// Where AF's fresh state's camera stands: the `default` viewport AG.7's

@@ -60,8 +60,8 @@ use guacamole::character::{
     CharacterMaterial, CharacterUniform, ShadowLookup, reference_material, remaster, static_mesh,
 };
 use guacamole::level_scene::{
-    self as arithmetic, Drawn, LevelFog, LevelLights, fresh_state_projection,
-    fresh_state_transform, level_lights, sky_fogged, start_zone, view_scene,
+    self as arithmetic, AtStart, Drawn, LevelFog, LevelLights, fresh_state_projection,
+    fresh_state_transform, fresh_state_view, view_scene,
 };
 use serde::Serialize;
 use tracing::{info, warn};
@@ -166,18 +166,14 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         }
     }
     let read = started.elapsed();
-    let e = |e: arithmetic::LevelError| e.to_string();
-    let zone = start_zone(&atmosphere).map_err(e)?;
-    let lights = level_lights(&lights, zone).map_err(e)?;
-    let fog = LevelFog::from_zone(&zone.fog).map_err(e)?;
-    let sky_fogged = sky_fogged(zone).map_err(e)?;
-    // Every scene's drawn part in one list, materials numbered across them.
-    let mut drawn = Drawn::default();
-    for graph in scene.scenes {
-        drawn.append(arithmetic::drawn(graph, sky_fogged).map_err(e)?);
-    }
-    let scene = view_scene(&lights, &fog, fresh_state_view());
-    let keys = arithmetic::keys(&drawn, &scene).map_err(|e| e.to_string())?;
+    // The census's level table is held to this derivation on the disc
+    // (`tests/giants_census.rs`).
+    let AtStart {
+        mut drawn,
+        lights,
+        fog,
+        keys,
+    } = arithmetic::at_start(scene, &lights, &atmosphere).map_err(|e| e.to_string())?;
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
         .materials
@@ -683,16 +679,6 @@ fn level_scene(lights: &LevelLights, fog: &LevelFog) -> Scene {
     view_scene(lights, fog, fresh_state_view())
 }
 
-/// The fresh state's camera as a view (`view_from_world`), through the
-/// `GlobalTransform` Bevy propagates for it, so the dev entry's camera
-/// matches what the materials were lit for to the bit and its first frame
-/// relights nothing.
-fn fresh_state_view() -> Mat4 {
-    GlobalTransform::from(fresh_state_transform())
-        .to_matrix()
-        .inverse()
-}
-
 /// Hands the renderer this frame's share: textures, then meshes, up to
 /// [`UPLOAD_BYTES`] (always at least one), then materials,
 /// [`MATERIALS_PER_FRAME`] a frame. True once everything is handed over.
@@ -955,6 +941,7 @@ mod tests {
     };
     use guac_ir::{RigLight, Sha256};
     use guacamole::character::warm::MeshShape;
+    use guacamole::level_scene::level_lights;
     use std::path::Path;
 
     const LEVEL: &str = "level_213_tutotial";

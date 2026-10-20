@@ -462,8 +462,24 @@ mod tests {
         assert!(p.report().largest_batch > 1, "{:?}", p.report());
         assert!(p.extras.is_empty());
         assert_eq!(app.world().resource::<Warm>().per_frame, 1);
-        // The made-up extract's shelf lands too: its keys beside the census's.
-        let warm = app.world().resource::<Warm>().report().clone();
+        // The made-up extract's shelf lands too: its keys beside the census's,
+        // each the census lacks counted (AE.25's guard: a Giants dump's
+        // shelf counts none, `tests/giants_census.rs`).
+        let until = Instant::now() + Duration::from_secs(5);
+        while app.world().resource::<Warm>().listed().is_empty() {
+            assert!(Instant::now() < until, "the shelf's list never read");
+            app.world().resource::<PipelineWatch>().compile_all();
+            app.update();
+        }
+        let census: Vec<WarmKey> = census::turntable_keys()
+            .into_iter()
+            .chain(census::level_keys())
+            .collect();
+        let w = app.world().resource::<Warm>();
+        let misses = w.listed().iter().filter(|k| !census.contains(k)).count();
+        assert!(misses > 0, "the made-up models draw keys Giants doesn't");
+        assert_eq!(w.report().outside_census, misses);
+        let warm = w.report().clone();
         assert!(warm.compiled >= total && warm.failed == 0, "{warm:?}");
     }
 }

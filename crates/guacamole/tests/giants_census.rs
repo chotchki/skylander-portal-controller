@@ -10,16 +10,13 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use bevy::prelude::GlobalTransform;
 use guac_extract::{levels, models, roster};
 use guac_formats::igz::Igz;
 use guac_ir::{DumpIdentity, Sha256};
 use guacamole::census::{self, Row};
 use guacamole::character::turntable::rig_scene;
 use guacamole::character::warm::{self, WarmKey};
-use guacamole::level_scene::{
-    self, Drawn, LevelFog, fresh_state_transform, level_lights, sky_fogged, start_zone, view_scene,
-};
+use guacamole::level_scene;
 
 /// `key` from the environment, else from the repo's `.env.dev`.
 fn env_or_dotenv(key: &str) -> Option<String> {
@@ -69,9 +66,10 @@ fn card_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
     (keys, loads.len())
 }
 
-/// Every key chapter 1 draws, as the level loader keys it: its drawn
-/// segments in its scene at the fresh state's camera, lit and fogged by its
-/// start's zone (AG.41), the sky unfogged as that zone has it.
+/// Every key chapter 1 draws, as the level loader keys it (through its own
+/// `level_scene::at_start`): its drawn segments in its scene at the fresh
+/// state's camera, lit and fogged by its start's zone (AG.41), the sky
+/// unfogged as that zone has it.
 fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let level = levels::LEVELS[0];
@@ -87,24 +85,9 @@ fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
     let atmosphere = levels::atmosphere(&igz, level, identity())
         .expect("the atmosphere")
         .ir;
-    let zone = start_zone(&atmosphere).expect("the start's zone");
-    let lights = level_lights(&lights, zone).expect("the world lights");
-    let fog = LevelFog::from_zone(&zone.fog).expect("the start's fog");
-    let sky_fogged = sky_fogged(zone).expect("the sky dome's share");
-    let mut drawn = Drawn::default();
-    for graph in scene.scenes {
-        drawn.append(level_scene::drawn(graph, sky_fogged).expect("a scene draws"));
-    }
-    let view = GlobalTransform::from(fresh_state_transform())
-        .to_matrix()
-        .inverse();
-    let scene = view_scene(&lights, &fog, view);
-    let keys = level_scene::keys(&drawn, &scene)
-        .expect("the level's keys")
-        .into_iter()
-        .map(|(k, _)| k)
-        .collect();
-    (keys, drawn.materials.len())
+    let start = level_scene::at_start(scene, &lights, &atmosphere).expect("chapter 1 at its start");
+    let keys = start.keys.into_iter().map(|(k, _)| k).collect();
+    (keys, start.drawn.materials.len())
 }
 
 /// The rows `keys` give, sorted as the tables keep them.
