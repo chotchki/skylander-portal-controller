@@ -464,13 +464,13 @@ pub(crate) fn read_model(shelf: &Shelf, load: &str) -> Result<Model, String> {
 
 /// A relative path of plain names, so a model can't send the loader outside
 /// its extract.
-fn plain(rel: &str) -> bool {
+pub(crate) fn plain(rel: &str) -> bool {
     let path = Path::new(rel);
     !rel.is_empty() && path.components().all(|c| matches!(c, PathPart::Normal(_)))
 }
 
 /// `path` out of the IR's envelope, or why not.
-fn read_ir<T: DeserializeOwned>(ir: IrFormat, path: &Path) -> Result<T, String> {
+pub(crate) fn read_ir<T: DeserializeOwned>(ir: IrFormat, path: &Path) -> Result<T, String> {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),

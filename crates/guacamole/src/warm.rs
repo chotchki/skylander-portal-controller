@@ -19,6 +19,11 @@
 //!   model never comes up on a pipeline that isn't compiled, whether it's
 //!   placed before the warm is through or a key escaped the list.
 //!
+//! - A level's keys (openspec AG.19) join the queue behind the list when
+//!   the level is read ([`Warm::ask_level`]), each drawn on the stage as a
+//!   static triangle in the level's own scene, with no glow mask (the level
+//!   draws no glow pass); the level shows only once [`Warm::covers`] them.
+//!
 //! Without a renderer (the headless tests) nothing compiles: the list is
 //! still read, and every key counts as compiled.
 
@@ -28,7 +33,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::RenderLayers;
+use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::pbr::SpecializedMaterialPipelineCache;
 use bevy::prelude::*;
@@ -46,7 +51,9 @@ use guac_ir::model::{self, Model};
 use guac_ir::shading::Scene;
 use guacamole::character::turntable::{Framing, Sweep, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
-use guacamole::character::{CharacterMaterial, ShadowLookup, spawn_character, spawn_glow_masks};
+use guacamole::character::{
+    CharacterMaterial, ShadowLookup, spawn_character, spawn_glow_masks, static_mesh,
+};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
@@ -64,6 +71,8 @@ const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 struct Entry {
     key: WarmKey,
     material: model::Material,
+    /// A level's scene for a level's key; the cards' for none.
+    scene: Option<Arc<Scene>>,
 }
 
 /// What a shelf's models draw.
@@ -106,6 +115,7 @@ fn read_list(shelf: &Shelf, scene: &Scene) -> List {
                         list.entries.push(Entry {
                             key,
                             material: model.materials[material].clone(),
+                            scene: None,
                         });
                     }
                 }
@@ -147,6 +157,14 @@ impl PipelineWatch {
     /// as of the render world's last frame.
     pub(crate) fn ready(&self) -> usize {
         self.lock().ready
+    }
+
+    /// Plays the render world: every pipeline the warm watches compiles.
+    #[cfg(test)]
+    pub(crate) fn compile_all(&self) {
+        for state in self.lock().checks.values_mut() {
+            *state = Compiled::Ready;
+        }
     }
 }
 
@@ -270,6 +288,8 @@ pub(crate) struct Warm {
     report: WarmReport,
     /// The last list's keys, in its order.
     listed: Vec<WarmKey>,
+    /// The keys a level asked for, in its order.
+    level_listed: Vec<WarmKey>,
 }
 
 impl Warm {
@@ -285,6 +305,7 @@ impl Warm {
             stage: None,
             started: None,
             listed: Vec::new(),
+            level_listed: Vec::new(),
             report: WarmReport {
                 state: "idle".into(),
                 ..Default::default()
@@ -341,12 +362,31 @@ impl Warm {
                 None => Some(Entry {
                     key: *key,
                     material: model.materials[*material].clone(),
+                    scene: None,
                 }),
             };
             if let Some(entry) = entry {
                 self.pending.insert(entry.key);
                 self.queue.push_front(entry);
             }
+        }
+        self.update_report();
+    }
+
+    /// Queues a level's keys (each with the material that first draws it)
+    /// behind everything already asked for, drawn in the level's `scene`.
+    pub(crate) fn ask_level(&mut self, keys: &[(WarmKey, model::Material)], scene: Arc<Scene>) {
+        self.started.get_or_insert_with(Instant::now);
+        self.level_listed = keys.iter().map(|(k, _)| *k).collect();
+        for (key, material) in keys {
+            if self.done.contains(key) || !self.pending.insert(*key) {
+                continue;
+            }
+            self.queue.push_back(Entry {
+                key: *key,
+                material: material.clone(),
+                scene: Some(scene.clone()),
+            });
         }
         self.update_report();
     }
@@ -379,6 +419,12 @@ impl Warm {
     #[cfg(test)]
     pub(crate) fn listed(&self) -> &[WarmKey] {
         &self.listed
+    }
+
+    /// The keys the last level asked for, in its order.
+    #[cfg(test)]
+    pub(crate) fn level_listed(&self) -> &[WarmKey] {
+        &self.level_listed
     }
 }
 
@@ -562,6 +608,9 @@ fn spawn_stage(s: &mut WarmSpawner) -> Option<Stage> {
 /// and its glow mask unless the glow pass leaves the part out, each
 /// watched.
 fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatch) {
+    if let Some(scene) = entry.scene.clone() {
+        return draw_static(warm, entry, &scene, s, watch);
+    }
     let (Some(stage), Some((scene, identity))) = (warm.stage.as_mut(), warm.scene.as_ref()) else {
         warm.finish(entry.key);
         return;
@@ -629,6 +678,62 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
     });
 }
 
+/// A level's key on the stage: one static triangle of its mesh shape with
+/// its material in the level's scene, watched. No glow mask: the level
+/// draws no glow pass.
+fn draw_static(
+    warm: &mut Warm,
+    entry: Entry,
+    scene: &Scene,
+    s: &mut WarmSpawner,
+    watch: &PipelineWatch,
+) {
+    let Some(stage) = warm.stage.as_mut() else {
+        warm.finish(entry.key);
+        return;
+    };
+    let texture = stage.texture.clone();
+    let built = CharacterMaterial::from_ir(&entry.material, scene, ShadowLookup::NONE, |_| {
+        texture.clone()
+    })
+    .map_err(|e| e.to_string())
+    .and_then(|material| {
+        if material.key != entry.key.material {
+            warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
+        }
+        static_mesh(&entry.key.mesh.triangle(0))
+            .map(|mesh| (material, mesh))
+            .map_err(|e| e.to_string())
+    });
+    let (material, mesh) = match built {
+        Ok(built) => built,
+        Err(why) => {
+            warn!(key = ?entry.key, %why, "the warm couldn't draw a level key");
+            warm.report.failed += 1;
+            warm.finish(entry.key);
+            return;
+        }
+    };
+    let triangle = s
+        .commands
+        .spawn((
+            Mesh3d(s.meshes.add(mesh)),
+            MeshMaterial3d(s.materials.add(material)),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            RenderLayers::layer(model_layer(WARM_SLOT)),
+            Name::new("warm level key"),
+        ))
+        .id();
+    watch.lock().checks.insert(triangle, Compiled::Waiting);
+    stage.roots.push(triangle);
+    stage.drawing.push(Drawing {
+        key: entry.key,
+        checks: vec![triangle],
+        since: Instant::now(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -674,6 +779,7 @@ mod tests {
                 .count() as u8,
                 tangents: mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(),
                 colours: mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some(),
+                skinned: mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some(),
             };
             let mut key = materials.get(&material.0).unwrap().key;
             let pass = std::mem::take(&mut key.pass);
@@ -745,10 +851,7 @@ mod tests {
 
     /// Plays the render world: every pipeline the warm watches compiles.
     fn compile_all(app: &App) {
-        let watch = app.world().resource::<PipelineWatch>();
-        for state in watch.lock().checks.values_mut() {
-            *state = Compiled::Ready;
-        }
+        app.world().resource::<PipelineWatch>().compile_all();
     }
 
     fn roots(app: &App) -> usize {

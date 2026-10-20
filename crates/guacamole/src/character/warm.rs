@@ -5,7 +5,9 @@
 //! A [`WarmKey`] per (material key, mesh shape) a model draws names every
 //! pipeline its colour pass and its glow pass need on a turntable, so the
 //! TV can draw each once offscreen before a model needs it: macOS compiles
-//! a pipeline inside the frame that first draws with it.
+//! a pipeline inside the frame that first draws with it. A level's draws
+//! (openspec AG.19) are keys of the same kind on unskinned meshes
+//! ([`segment_keys`], [`MeshShape::skinned`]).
 
 use bevy::asset::Handle;
 use guac_ir::model::{self, Model, Segment};
@@ -15,12 +17,15 @@ use super::key::MaterialKey;
 use super::material::{CharacterMaterial, MaterialError, ShadowLookup};
 
 /// What a segment's mesh gives the vertex layout: [`super::segment_mesh`]
-/// always writes positions, normals, joints and weights, and these vary.
+/// always writes positions and normals, and these vary. A skinned one (a
+/// character's) also has joints and weights; a static one (a level's,
+/// [`super::static_mesh`]) has neither, which is another pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MeshShape {
     pub uv_sets: u8,
     pub tangents: bool,
     pub colours: bool,
+    pub skinned: bool,
 }
 
 impl MeshShape {
@@ -29,21 +34,22 @@ impl MeshShape {
             uv_sets: u8::try_from(segment.uvs.len()).unwrap_or(u8::MAX),
             tangents: segment.tangents.is_some(),
             colours: segment.colors.is_some(),
+            skinned: !segment.joints.is_empty(),
         }
     }
 
-    /// One triangle of this shape on joint 0, facing +Z, its colours half
-    /// grey: what the warm draws a key with.
+    /// One triangle of this shape facing +Z, its colours half grey, on
+    /// joint 0 when it's skinned: what the warm draws a key with.
     pub fn triangle(&self, material: u16) -> Segment {
-        let n = 3;
+        let n = if self.skinned { 3 } else { 0 };
         Segment {
             material,
             source: 0,
             positions: vec![[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.0, 0.5, 0.0]],
-            normals: vec![[0.0, 0.0, 1.0]; n],
-            tangents: self.tangents.then(|| vec![[1.0, 0.0, 0.0, 1.0]; n]),
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            tangents: self.tangents.then(|| vec![[1.0, 0.0, 0.0, 1.0]; 3]),
             uvs: vec![vec![[0.0, 1.0], [1.0, 1.0], [0.5, 0.0]]; usize::from(self.uv_sets)],
-            colors: self.colours.then(|| vec![[128, 128, 128, 255]; n]),
+            colors: self.colours.then(|| vec![[128, 128, 128, 255]; 3]),
             joints: vec![[0; 4]; n],
             weights: vec![[255, 0, 0, 0]; n],
             indices: vec![0, 1, 2],
@@ -79,8 +85,18 @@ pub enum WarmError {
 /// materials, so a key here is the key there and a model it refuses has no
 /// keys.
 pub fn keys(model: &Model, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, WarmError> {
-    let materials = model
-        .materials
+    segment_keys(&model.materials, &model.segments, scene)
+}
+
+/// Every key `segments` draw with `materials` in `scene`, each once, in
+/// segment order, with the index of the material that first draws it: a
+/// model's ([`keys`]) or a level's drawn segments (AG.19).
+pub fn segment_keys(
+    materials: &[model::Material],
+    segments: &[Segment],
+    scene: &Scene,
+) -> Result<Vec<(WarmKey, usize)>, WarmError> {
+    let materials = materials
         .iter()
         .map(|m| {
             CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, |_| Handle::default())
@@ -92,7 +108,7 @@ pub fn keys(model: &Model, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, WarmE
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut keys: Vec<(WarmKey, usize)> = Vec::new();
-    for (i, s) in model.segments.iter().enumerate() {
+    for (i, s) in segments.iter().enumerate() {
         let index = usize::from(s.material);
         let material = *materials.get(index).ok_or(WarmError::Segment {
             segment: i,
@@ -145,7 +161,7 @@ pub fn triangle_model(
 mod tests {
     use super::*;
     use crate::character::key::{Pass, SceneBits, ShaderKey, StateKey};
-    use crate::character::mesh::segment_mesh;
+    use crate::character::mesh::{segment_mesh, static_mesh};
     use guac_ir::model::{
         Blend, Filter, Glow, Mask, Params, RenderStates, Sampler, TextureRole, TextureSlot, Wrap,
     };
@@ -232,6 +248,7 @@ mod tests {
                 uv_sets: 1,
                 tangents: true,
                 colours: false,
+                skinned: true,
             },
         );
         m.materials = materials;
@@ -251,6 +268,7 @@ mod tests {
             uv_sets: 1,
             tangents: true,
             colours: false,
+            skinned: true,
         };
         let coloured = MeshShape {
             colours: true,
@@ -335,6 +353,7 @@ mod tests {
             uv_sets: 1,
             tangents: true,
             colours: false,
+            skinned: true,
         };
         let m = model(
             vec![material("good", 0, OPAQUE), bad],
@@ -360,14 +379,22 @@ mod tests {
         for uv_sets in 1..=3 {
             for tangents in [false, true] {
                 for colours in [false, true] {
-                    let shape = MeshShape {
-                        uv_sets,
-                        tangents,
-                        colours,
-                    };
-                    let t = shape.triangle(0);
-                    assert_eq!(MeshShape::of(&t), shape);
-                    segment_mesh(&t).expect("a mesh");
+                    for skinned in [false, true] {
+                        let shape = MeshShape {
+                            uv_sets,
+                            tangents,
+                            colours,
+                            skinned,
+                        };
+                        let t = shape.triangle(0);
+                        assert_eq!(MeshShape::of(&t), shape);
+                        let mesh = if skinned {
+                            segment_mesh(&t)
+                        } else {
+                            static_mesh(&t)
+                        };
+                        mesh.expect("a mesh");
+                    }
                 }
             }
         }

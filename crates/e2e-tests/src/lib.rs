@@ -1609,11 +1609,13 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
 
 /// Chapter 1 into the extract as the level stage leaves it (AG.15), every
 /// part recorded so the extract is current: a 20 m floor at the spawn's
-/// height and `213_Init_Location` with its first waypoint, nothing drawn and
-/// no props or lights yet (AG.21 adds what its walk needs).
+/// height, `213_Init_Location` with its first waypoint and the three world
+/// lights the TV's loader lights the level with (AG.19), nothing drawn and
+/// no props yet (AG.21 adds what its walk needs). Every number made up.
 fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::levels::{COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
+    use guac_ir::RigLight;
     use guac_ir::level::{
         Collision, CollisionMesh, Lights, Placement, Placements, Props, Scene, Waypoint,
     };
@@ -1707,7 +1709,21 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
                 &Lights {
                     identity,
                     level: level.clone(),
-                    directional: Vec::new(),
+                    directional: [
+                        ("_worldLight1", [-45.0, 0.0, 0.0]),
+                        ("_worldLight2", [45.0, 180.0, 0.0]),
+                        ("_worldLight3", [-45.0, 90.0, 0.0]),
+                    ]
+                    .map(|(name, rotation)| RigLight {
+                        name: name.into(),
+                        diffuse: [120, 110, 100, 255],
+                        ambient: [30, 30, 30, 255],
+                        specular: [90, 90, 90, 255],
+                        multiplier: 1.0,
+                        position: [0.0; 3],
+                        rotation,
+                    })
+                    .to_vec(),
                     placed: Vec::new(),
                 },
                 dir,
