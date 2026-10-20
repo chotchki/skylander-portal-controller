@@ -100,6 +100,43 @@ impl ServerApp {
     }
 }
 
+/// Why a load (a PLACE, or one slot of a resume) didn't land.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadError {
+    /// guacamole's 409 for the viewer's own figure already standing in
+    /// another slot (AH.37), told from AB.22's 409 by its body.
+    AlreadyOnPortal,
+    /// Anything else, worded as every other request's error: `HTTP <status>`,
+    /// or what the browser said when no answer came.
+    Failed(String),
+}
+
+impl LoadError {
+    /// A refused load's status and body. Only the 409 whose body names the
+    /// slot already holding the figure is AH.37's; AB.22's 409 (the slot holds
+    /// another kid's figure) and the product's answers stay `HTTP <status>`.
+    pub fn from_answer(status: u16, body: &str) -> Self {
+        #[derive(Deserialize)]
+        struct AlreadyOnPortal {
+            already_on_portal: u8,
+        }
+        let names_a_slot = || {
+            serde_json::from_str::<AlreadyOnPortal>(body)
+                .is_ok_and(|a| (1..=SLOT_COUNT as u8).contains(&a.already_on_portal))
+        };
+        match status {
+            409 if names_a_slot() => Self::AlreadyOnPortal,
+            _ => Self::Failed(format!("HTTP {status}")),
+        }
+    }
+}
+
+/// What the phone says when `name` is already on the portal for its viewer,
+/// whether the phone's own view caught it or the server did (AA.18, AH.37).
+pub fn already_on_portal(name: &str) -> String {
+    format!("{name} is already on the portal.")
+}
+
 /// A figure action the server can refuse (AH.3): the edit sheet's SAVE, the
 /// details' reset off the portal, and the reset of the figure where it stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

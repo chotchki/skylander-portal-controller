@@ -36,7 +36,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response};
 
 use crate::model::{
-    GameLaunched, InstalledGame, PublicFigure, PublicProfile, RosterState, ServerApp,
+    GameLaunched, InstalledGame, LoadError, PublicFigure, PublicProfile, RosterState, ServerApp,
     UnlockedProfile,
 };
 
@@ -426,12 +426,13 @@ pub async fn post_edit_figure(
     do_fetch(&url, "POST", Some(&body)).await.map(|_| ())
 }
 
-pub async fn post_load(slot: u8, figure_id: &str) -> Result<(), String> {
+pub async fn post_load(slot: u8, figure_id: &str) -> Result<(), LoadError> {
     let url = format!("{}/api/portal/slot/{slot}/load", origin());
     let body = json!({ "figure_id": figure_id }).to_string();
-    match do_fetch(&url, "POST", Some(&body)).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e),
+    match fetch_answer(&url, "POST", Some(&body)).await {
+        Ok((200..=299, _)) => Ok(()),
+        Ok((status, text)) => Err(LoadError::from_answer(status, &text)),
+        Err(e) => Err(LoadError::Failed(e)),
     }
 }
 

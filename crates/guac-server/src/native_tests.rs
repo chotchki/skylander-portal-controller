@@ -103,7 +103,14 @@ struct Native {
 /// `db.sqlite`, the controller's `config.json` and Eruptor's and Spyro's
 /// roster already landed, Eruptor's portrait in the extract and Spyro's not.
 async fn native() -> Native {
-    let n = native_waiting().await;
+    native_as(DriverKind::Native).await
+}
+
+/// [`native`] behind `kind`'s router: a product driver's under `Mock`. It keeps
+/// no figure-file hook, so the worker still places by identity; what the router
+/// answers is the app's.
+async fn native_as(kind: DriverKind) -> Native {
+    let n = native_waiting_as(kind).await;
     let extract = n.root.path().join(EXTRACT);
     let roster = fixture::eruptor_and_spyro();
     n.state
@@ -114,6 +121,10 @@ async fn native() -> Native {
 
 /// [`native`] before its roster lands: reading it off the disc.
 async fn native_waiting() -> Native {
+    native_waiting_as(DriverKind::Native).await
+}
+
+async fn native_waiting_as(kind: DriverKind) -> Native {
     let root = tempfile::tempdir().unwrap();
     let portrait = root
         .path()
@@ -153,7 +164,7 @@ async fn native_waiting() -> Native {
     let state = Arc::new(AppState {
         figures,
         held_resumes: Mutex::new(Vec::new()),
-        driver_kind: DriverKind::Native,
+        driver_kind: kind,
         window_mode: WindowMode::Desktop,
         render_2x: false,
         driver_tx,
@@ -235,6 +246,18 @@ impl Native {
             .set_profile(sid, Some(profile_id.clone()))
             .await;
         (sid, profile_id)
+    }
+
+    /// A second phone with `profile_id` unlocked on it too.
+    async fn session_of(&self, profile_id: &str) -> SessionId {
+        let RegistrationOutcome::Admitted(sid) = self.state.sessions.register().await else {
+            panic!("the registry has a free seat");
+        };
+        self.state
+            .sessions
+            .set_profile(sid, Some(profile_id.into()))
+            .await;
+        sid
     }
 
     /// A signed request through the full router.
@@ -768,6 +791,149 @@ async fn a_load_over_another_profiles_figure_is_refused_and_changes_nothing() {
     );
     n.wait_loaded(1, ERUPTOR).await;
     assert_eq!(owner(&n.state.portal.lock().await[1]), Some(bob.as_str()));
+}
+
+/// openspec AH.37: a profile's figure stands in one slot at a time, whichever
+/// of its phones asks, loaded or still loading; its own slot again and another
+/// profile's copy still land, and once it's off it goes anywhere.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profiles_figure_already_on_the_portal_is_refused_a_second_slot() {
+    let n = native().await;
+    let (phone_a, alice) = n.unlocked_session_as("Alice", "#e8423f").await;
+    let phone_b = n.session_of(&alice).await;
+    let eruptor = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    let spyro = format!(r#"{{"figure_id":"{SPYRO}"}}"#);
+    let load = |slot: u8| format!("/api/portal/slot/{slot}/load");
+    assert_eq!(
+        n.send("POST", &load(1), &eruptor, Some(phone_a)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(0, ERUPTOR).await;
+    let portal = n.state.portal.lock().await.clone();
+
+    let mut events = n.state.events.subscribe();
+    for (phone, slot) in [(phone_b, 2), (phone_a, 3)] {
+        let (status, body) = n
+            .send_read("POST", &load(slot), &eruptor, Some(phone))
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "slot {slot}");
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body, serde_json::json!({ "already_on_portal": 1 }));
+    }
+    assert_eq!(*n.state.portal.lock().await, portal, "nothing moved");
+    // Slot 1's own Loaded can still be on its way out.
+    while let Ok(event) = events.try_recv() {
+        if let Event::SlotChanged { slot, .. } = event {
+            assert_eq!(slot.as_usize(), 0, "a refused load announced {slot}");
+        }
+    }
+    assert_eq!(n.driver.places.lock().unwrap().len(), 1);
+    assert_eq!(n.instance_rows().await, 1);
+
+    // Its own slot again (AB.21), from the other phone.
+    assert_eq!(
+        n.send("POST", &load(1), &eruptor, Some(phone_b)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(0, ERUPTOR).await;
+    assert_eq!(n.last_place().0, 0);
+
+    // A load still in flight holds it too.
+    n.state.portal.lock().await[3] = SlotState::Loading {
+        figure_id: Some(FigureId::new(SPYRO)),
+        placed_by: Some(alice.clone()),
+    };
+    let (status, body) = n.send_read("POST", &load(5), &spyro, Some(phone_b)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, r#"{"already_on_portal":4}"#);
+    n.state.portal.lock().await[3] = SlotState::Empty;
+
+    // A sibling on the second phone places his own copy (AA.18).
+    let bob = n.state.profiles.create("Bob", "1234", "#3f8ee8").await;
+    let bob = bob.unwrap();
+    n.state
+        .sessions
+        .set_profile(phone_b, Some(bob.clone()))
+        .await;
+    assert_eq!(
+        n.send("POST", &load(2), &eruptor, Some(phone_b)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(1, ERUPTOR).await;
+    assert_eq!(owner(&n.state.portal.lock().await[1]), Some(bob.as_str()));
+
+    // Off the portal, hers goes anywhere.
+    let clear = n.send("POST", "/api/portal/slot/1/clear", "", Some(phone_a));
+    assert_eq!(clear.await, StatusCode::ACCEPTED);
+    n.wait_empty(0).await;
+    assert_eq!(
+        n.send("POST", &load(6), &eruptor, Some(phone_a)).await,
+        StatusCode::ACCEPTED
+    );
+    n.wait_loaded(5, ERUPTOR).await;
+    assert_eq!(owner(&n.state.portal.lock().await[5]), Some(alice.as_str()));
+}
+
+/// openspec AH.37: two of one profile's phones pressing PLACE together put the
+/// figure in one slot. The check and the slot's flip share the portal's lock,
+/// so whichever lands second sees the first loading.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_phones_of_one_profile_placing_together_place_it_once() {
+    let n = native().await;
+    let (phone_a, alice) = n.unlocked_session_as("Alice", "#e8423f").await;
+    let phone_b = n.session_of(&alice).await;
+    let eruptor = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    for round in 0..20 {
+        let (a, b) = tokio::join!(
+            n.send("POST", "/api/portal/slot/1/load", &eruptor, Some(phone_a)),
+            n.send("POST", "/api/portal/slot/2/load", &eruptor, Some(phone_b)),
+        );
+        let placed = match (a, b) {
+            (StatusCode::ACCEPTED, StatusCode::CONFLICT) => 0,
+            (StatusCode::CONFLICT, StatusCode::ACCEPTED) => 1,
+            other => panic!("round {round}: {other:?}"),
+        };
+        n.wait_loaded(placed, ERUPTOR).await;
+        let portal = n.state.portal.lock().await.clone();
+        let held = portal
+            .iter()
+            .filter(|s| owner(s) == Some(alice.as_str()))
+            .count();
+        assert_eq!(held, 1, "round {round}: {portal:?}");
+        let clear = format!("/api/portal/slot/{}/clear", placed + 1);
+        assert_eq!(
+            n.send("POST", &clear, "", Some(phone_a)).await,
+            StatusCode::ACCEPTED
+        );
+        n.wait_empty(placed).await;
+    }
+    assert_eq!(n.driver.places.lock().unwrap().len(), 20);
+    assert_eq!(n.instance_rows().await, 1);
+}
+
+/// openspec AH.37: the product's load is as it was: one profile's figure goes
+/// into a second slot (its two working-copy loads were never one row).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_products_load_places_a_profiles_figure_in_a_second_slot() {
+    let n = native_as(DriverKind::Mock).await;
+    let (phone_a, alice) = n.unlocked_session_as("Alice", "#e8423f").await;
+    let phone_b = n.session_of(&alice).await;
+    let eruptor = format!(r#"{{"figure_id":"{ERUPTOR}"}}"#);
+    for (slot, phone) in [(1u8, phone_a), (2, phone_b), (3, phone_a)] {
+        let uri = format!("/api/portal/slot/{slot}/load");
+        assert_eq!(
+            n.send("POST", &uri, &eruptor, Some(phone)).await,
+            StatusCode::ACCEPTED,
+            "slot {slot}"
+        );
+        n.wait_loaded(usize::from(slot - 1), ERUPTOR).await;
+    }
+    let portal = n.state.portal.lock().await.clone();
+    let held = portal
+        .iter()
+        .filter(|s| owner(s) == Some(alice.as_str()))
+        .count();
+    assert_eq!(held, 3, "{portal:?}");
 }
 
 /// AE.4: guacamole serves the portrait the roster stage extracted, and a

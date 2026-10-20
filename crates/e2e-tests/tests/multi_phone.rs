@@ -592,6 +592,110 @@ async fn the_same_figure_from_two_profiles_follows_the_apps_rule() {
     bob.close().await.unwrap();
 }
 
+// ---- AH.37 one placement per figure instance -------------------------------
+//
+// Two of one profile's phones, the second's view stale: it still shows her
+// Spyro in slot 1 after the first swapped him for her Eruptor, so its PLACE of
+// Eruptor asks for slot 2 with nothing in its view to stop it. guacamole's
+// server refuses and the phone says it's already on the portal.
+
+/// Holds the page in one synchronous script, so no WebSocket message reaches
+/// the phone's portal view, until the server's portal shows `arguments[0]`
+/// loaded in slot 1; then presses PLACE. Returns what happened.
+const HOLD_UNTIL_SLOT_1_THEN_PLACE: &str = r#"
+    const [name, ms] = arguments;
+    const until = Date.now() + ms;
+    const slot1 = () => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/portal', false);
+      xhr.send();
+      return JSON.parse(xhr.responseText)[0];
+    };
+    const stands = (s) => s.kind === 'loaded' && s.display_name === name;
+    if (stands(slot1())) return 'already there when the hold began';
+    for (;;) {
+      if (Date.now() > until) return 'timed out';
+      const pause = Date.now() + 20;
+      while (Date.now() < pause) {}
+      if (stands(slot1())) break;
+    }
+    document.querySelector('.detail-btn-primary').click();
+    return 'pressed';
+"#;
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver"]
+async fn a_second_phone_of_one_profile_cant_place_her_figure_twice() {
+    if skylander_e2e_tests::guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn().expect("spawn");
+    launch_giants(&server.url).await.unwrap();
+    let alice_id = inject_profile(&server.url, "Alice", "1111", "#ff6b2a")
+        .await
+        .unwrap();
+    let first = new_phone(&server).await;
+    let first_sid = wait_for_session_id(&first).await;
+    let second = new_phone(&server).await;
+    let second_sid = wait_for_session_id(&second).await;
+    for sid in [first_sid, second_sid] {
+        set_session_profile(&server.url, sid, &alice_id)
+            .await
+            .unwrap();
+    }
+    for phone in [&first, &second] {
+        phone
+            .wait_for_portal(Duration::from_secs(15))
+            .await
+            .unwrap();
+    }
+    search_and_place(&first, "Spyro").await;
+    wait_slot_named(&first, 1, "Spyro").await;
+    wait_slot_named(&second, 1, "Spyro").await;
+
+    // The second phone on Eruptor's details, PLACE showing.
+    second.search_named("Eruptor").await.unwrap();
+    second.tap_figure_named("Eruptor").await.unwrap();
+    second
+        .wait_for(Locator::Css(".detail-btn-primary"), Duration::from_secs(15))
+        .await
+        .expect("Eruptor's details show PLACE");
+
+    let hold = second.client.execute(
+        HOLD_UNTIL_SLOT_1_THEN_PLACE,
+        vec![json!("Eruptor"), json!(20_000)],
+    );
+    let swap = async {
+        first.remove_slot(1).await.unwrap();
+        first
+            .wait_for_slot_empty(1, Duration::from_secs(8))
+            .await
+            .unwrap();
+        search_and_place(&first, "Eruptor").await;
+    };
+    let (held, ()) = tokio::join!(hold, swap);
+    assert_eq!(held.unwrap(), json!("pressed"));
+
+    let said = refusal(&second).await;
+    assert!(said.contains("Eruptor is already on the portal"), "{said}");
+    let log = server.log_text();
+    assert!(
+        log.contains("load refused: the profile's figure is already on the portal"),
+        "the server, not the phone's own view, refused it"
+    );
+    wait_slot_named(&second, 1, "Eruptor").await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    for phone in [&first, &second] {
+        assert!(
+            phone.slot_text(2).await.is_err(),
+            "slot 2 took a second placement of her Eruptor"
+        );
+    }
+
+    first.close().await.unwrap();
+    second.close().await.unwrap();
+}
+
 // ---- 8.1.4 disconnect_ghosts_session_keeps_slots --------------------------
 //
 // Updated disconnect policy (PLAN 8.1): when Phone A drops while it had

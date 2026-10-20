@@ -404,7 +404,15 @@ fn unless_editable(state: &AppState, figure_id: &FigureId) -> Option<Response> {
 /// Whether `profile_id`'s own placement of the figure is on the portal,
 /// loaded or loading (AA.18's rule: another profile's copy doesn't count).
 fn holds_own(portal: &[SlotState], figure_id: &FigureId, profile_id: &str) -> bool {
-    portal.iter().any(|slot| match slot {
+    portal
+        .iter()
+        .any(|slot| is_own_placement(slot, figure_id, profile_id))
+}
+
+/// The figure's instance for `profile_id` stands in `slot`. A load still in
+/// flight counts: the worker places it next, carrying the row as it reads now.
+pub(crate) fn is_own_placement(slot: &SlotState, figure_id: &FigureId, profile_id: &str) -> bool {
+    match slot {
         SlotState::Loaded {
             figure_id: Some(id),
             placed_by,
@@ -415,7 +423,7 @@ fn holds_own(portal: &[SlotState], figure_id: &FigureId, profile_id: &str) -> bo
             placed_by,
         } => id == figure_id && placed_by.as_deref() == Some(profile_id),
         _ => false,
-    })
+    }
 }
 
 /// `FigureUpdated` carries gold as the product's `u16`; every game's clamp

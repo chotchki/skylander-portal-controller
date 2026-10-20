@@ -3,7 +3,8 @@ use leptos::prelude::*;
 use crate::api::{fetch_figure_stats, post_load, StatsFetch};
 use crate::components::{DisplayHeading, FigureHero, HeadingSize, HeroState};
 use crate::model::{
-    Category, GameOfOrigin, PublicFigure, ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+    already_on_portal, Category, GameOfOrigin, LoadError, PublicFigure, ServerApp, Slot, SlotState,
+    UnlockedProfile, SLOT_COUNT,
 };
 use crate::screens::figure_edit_sheet::GOLD_MAX;
 use crate::screens::FigureEditSheet;
@@ -242,7 +243,7 @@ pub(crate) fn FigureDetail(
             let p = portal.get();
             let viewer = unlocked_profile.get().map(|u| u.id);
             if placed_names(&p, server_app.get(), viewer.as_deref()).contains(&name) {
-                error_msg.set(format!("{name} is already on the portal."));
+                error_msg.set(already_on_portal(&name));
                 state.set(DetailState::Errored);
                 return;
             }
@@ -280,10 +281,16 @@ pub(crate) fn FigureDetail(
                         crate::gloo_timer(620).await;
                         placed_cb.run(());
                     }
-                    Err(e) if e.contains("429") => {
+                    Err(LoadError::Failed(e)) if e.contains("429") => {
                         state.set(DetailState::Default);
                     }
-                    Err(e) => {
+                    // guacamole: this profile's own copy stands in another
+                    // slot, which this phone's view hadn't shown (AH.37).
+                    Err(LoadError::AlreadyOnPortal) => {
+                        error_msg.set(already_on_portal(&name));
+                        state.set(DetailState::Errored);
+                    }
+                    Err(LoadError::Failed(e)) => {
                         error_msg.set(format!("Failed to place {name}: {e}"));
                         state.set(DetailState::Errored);
                     }
