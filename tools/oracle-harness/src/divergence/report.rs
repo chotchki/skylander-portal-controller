@@ -420,7 +420,7 @@ impl Report {
         // `paused`'s.
         let mut observing = Vec::new();
         for ((script, set), replays) in &by_set {
-            if *set != Set::W {
+            if !matches!(set, Set::W | Set::O) {
                 continue;
             }
             let Some(reference) = by_set.get(&(script.clone(), Set::A)) else {
@@ -435,7 +435,7 @@ impl Report {
                 observing.push(super::observing::Discriminators::build(
                     script,
                     (Set::A, reference),
-                    (Set::W, replays),
+                    (*set, replays),
                     paused,
                     end,
                 ));

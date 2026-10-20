@@ -13,6 +13,7 @@
 # oracle/apply.sh); one that already carries them (`oracle/apply.sh --check`) builds
 # as it stands; anything else, or a dirty tree, is refused rather than reset.
 # --no-brew passes BUILD_MAC_NO_BREW=1 through (see build-mac.sh).
+# BUILD_MAC_JOBS in the environment caps the compile's jobs (see build-mac.sh).
 #
 # The identity goes to stdout and to oracle-build.txt beside the installed .app:
 # upstream base, the repo commit the series came from, the source tree, every patch's

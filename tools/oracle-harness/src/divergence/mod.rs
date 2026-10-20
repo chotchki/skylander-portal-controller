@@ -98,6 +98,9 @@ pub enum Set {
     C,
     /// Set A with O5's watch armed at F0 and read at the end flip (AG.1).
     W,
+    /// Set W with O6's chains on Giants' actors, orbs and loot armed with it
+    /// (AH.5), read at the end flip.
+    O,
 }
 
 impl Set {
@@ -107,7 +110,8 @@ impl Set {
             "B" | "b" => Ok(Set::B),
             "C" | "c" => Ok(Set::C),
             "W" | "w" => Ok(Set::W),
-            other => bail!("a set is A, B, C or W, not {other:?}"),
+            "O" | "o" => Ok(Set::O),
+            other => bail!("a set is A, B, C, W or O, not {other:?}"),
         }
     }
 }
@@ -119,6 +123,7 @@ impl std::fmt::Display for Set {
             Set::B => "B",
             Set::C => "C",
             Set::W => "W",
+            Set::O => "O",
         })
     }
 }
@@ -190,7 +195,7 @@ impl Plan {
     /// and the end.
     pub fn checkpoints(&self) -> Vec<u64> {
         match self.set {
-            Set::A | Set::W => vec![self.end],
+            Set::A | Set::W | Set::O => vec![self.end],
             Set::B | Set::C => {
                 let mut offsets: Vec<u64> = (1..=self.end / self.every)
                     .map(|k| k * self.every)
@@ -210,12 +215,17 @@ impl Plan {
 
     /// A set A (or W) replay ends in a `SAVESTATE`.
     pub fn saves_at_end(&self) -> bool {
-        matches!(self.set, Set::A | Set::W)
+        matches!(self.set, Set::A | Set::W | Set::O)
     }
 
     /// A set W replay records every frame through O5's watch.
     pub fn watches(&self) -> bool {
-        self.set == Set::W
+        matches!(self.set, Set::W | Set::O)
+    }
+
+    /// A set O replay arms O6's chains with the watch.
+    pub fn chains(&self) -> bool {
+        self.set == Set::O
     }
 
     /// The ring a set W replay arms: the run's flips with room to spare.
@@ -457,6 +467,9 @@ pub struct WatchRun {
     pub frames_without_clips: usize,
     /// The ring read back and the readback joined, milliseconds.
     pub read_ms: f64,
+    /// Set O's chains (AH.5): none for set W, or a record before them.
+    #[serde(default)]
+    pub chain: Option<crate::chains::ChainRun>,
 }
 
 /// Everything one replay recorded, as `record.json` in its dir.
@@ -603,6 +616,16 @@ mod tests {
         assert_eq!(w.label(9), "walk-W-09");
         assert_eq!(Set::parse("w").unwrap(), Set::W);
         assert_eq!(Set::W.to_string(), "W");
+        // Set O is set W chained: the same pauses and ring, O6's chains armed
+        // with the watch.
+        let o = Plan::named("walk", Set::O, END, EVERY).unwrap();
+        assert_eq!(o.checkpoints(), a.checkpoints());
+        assert!(o.saves_at_end() && o.watches() && o.chains() && !w.chains());
+        assert_eq!(o.ring_frames(), w.ring_frames());
+        assert_eq!(
+            (Set::parse("O").unwrap(), o.label(3).as_str()),
+            (Set::O, "walk-O-03")
+        );
     }
 
     #[test]

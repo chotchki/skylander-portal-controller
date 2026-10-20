@@ -213,6 +213,7 @@ rpcs3-patches/oracle/
   0003-O3-oracle-capture-and-control-verbs-over-the-P1-sock.patch   PAUSE_AT, RESUME, RSXCAP, SCREENSHOT, SAVESTATE
   0004-O4-oracle-frame-locked-input-on-pads-0-and-1-over-th.patch   PAD, PAD_CLEAR, PAD_STATE
   0005-O5-oracle-per-frame-recorder-over-the-P1-socket-GUAC.patch   WATCH, WATCH_READ, WATCH_CLEAR
+  0006-O6-oracle-chains-for-actors-spawned-mid-stretch-GUAC.patch   CHAIN, CHAIN_CLEAR
   apply.sh   check P1-P8 on HEAD by subject, then git am --3way the O-series (--check: verify only)
   build.sh   clone/patch a checkout outside the repo, build it with build-mac.sh, install + identity
 ```
@@ -250,7 +251,7 @@ fake. `build.sh` refuses to replace the installed bundle while an `rpcs3` from i
 
 **O5 is the oracle's per-frame recorder** (AG.1, AG.35), behind the same gate: `WATCH <frames>
 <port> <addr> <len> ...` arms a ring of records of the guest ranges it names (up to 64, 16 KiB a
-record, 16 MiB for the ring), taken at every read of pad port `<port>` (0-6); `WATCH_READ [<first>
+record, 16 MiB for the ring until O6 made it 128), taken at every read of pad port `<port>` (0-6); `WATCH_READ [<first>
 <count>]` hands back its summary or its records at a pause, and `WATCH_CLEAR` drops it. The first
 thing `pad_get_data` does, under `pad::g_pad_mutex` on the guest thread making the read, is the
 record: every read of the watched port copies the ranges, so a game that reads that port once a
@@ -266,6 +267,24 @@ watch. Its shapes are in `verbs.rs` with the others', and
 [`tools/oracle-harness/tests/watch_loopback.rs`](../tools/oracle-harness/tests/watch_loopback.rs) is its
 fake.
 
+**O6 is the oracle's chains** (AH.5), behind the same gate: actors that appear after a recording
+starts, at addresses no fixed range can name, followed inside O5's records. `CHAIN <slot> <items>
+<base> <path> <count> <array> <key> <values> [<range> ...]` arms one of eight chains: from `<base>`,
+the path's pointer hops to a list (its count word and its pointer to an array of item pointers), each
+item kept when its key matches one of the values (up to `<items>` a record), each kept item's ranges
+copied through hops of their own. A hop follows a pointer (and can check the word the object starts
+with) or searches a list for the element whose name hashes to a value; a key is a word or the
+FNV-1a of the C string a word points at. Every link is checked as it's followed and a range that
+doesn't read is zeros with its bit set. `WATCH` takes the chains armed when it's armed and every
+record carries their blocks after its ranges (a 20-byte header: the list's status, count, unread,
+matched and kept items; then each kept item's address, list index, value, missing mask and ranges),
+so the run is still recorded every game frame with no pause. `CHAIN_CLEAR` drops them; both refuse
+while a watch is armed. O6 grows O5's ring budget to 128 MiB and a `WATCH_READ` reply to 256 KiB of
+records; the chains take 48 KiB a record at most. Nothing in it knows the game: Giants' chains
+(the actor list, the experience orbs' set, the loot's set) are the harness's
+([`tools/oracle-harness/src/chains.rs`](../tools/oracle-harness/src/chains.rs)). It touches
+`cellPad.cpp` and `Skylander.cpp`; its fake is `watch_loopback.rs`, beside O5's.
+
 Build it on the Mac:
 
 ```bash
@@ -280,7 +299,8 @@ bundle `GUAC_ORACLE_EXE` names (refused inside any work tree). A checkout that a
 series builds as it stands; any other HEAD, or a dirty tree, is refused rather than reset.
 `--no-brew` passes `BUILD_MAC_NO_BREW=1`, which leaves Homebrew alone: the script's `brew install`
 upgrades whatever the local tap calls outdated and its unlink pulls `ffmpeg` out of `PATH`, both
-machine-wide. The script pins `OpenCV_DIR` to the `opencv@4` keg (find_package otherwise takes the
+machine-wide. `BUILD_MAC_JOBS=<n>` caps the compile at n jobs (unset, ninja takes every core);
+on a Mac other lanes share, build at 4. The script pins `OpenCV_DIR` to the `opencv@4` keg (find_package otherwise takes the
 linked `opencv`, 5.x since 2026-10-17). It prints the build's identity and writes it to
 `oracle-build.txt` beside the `.app`: upstream base, the repo commit the series came from, the
 checkout's tree, every patch's SHA-256, the binary's SHA-256 and the MoltenVK (Homebrew's, through
@@ -312,11 +332,11 @@ to match** — it doubles as the executable spec the live binary must satisfy.
 tests in [`src/verbs.rs`](../tools/oracle-harness/src/verbs.rs) and the fake listeners
 [`tests/verbs_loopback.rs`](../tools/oracle-harness/tests/verbs_loopback.rs) (O3),
 [`tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) (O4) and
-[`tests/watch_loopback.rs`](../tools/oracle-harness/tests/watch_loopback.rs) (O5) run in
+[`tests/watch_loopback.rs`](../tools/oracle-harness/tests/watch_loopback.rs) (O5, O6) run in
 `cargo test`; the `#[ignore]`d `tests/live_*.rs` drive the oracle build on the Mac
 (`live_gate` boots it without `GUAC_ORACLE=1` and checks every O-verb answers
-`ERR unknown_cmd`, `live_verbs`, `live_pad` and `live_watch` drive O3, O4 and O5 in a
-level). O1 and O2
+`ERR unknown_cmd`, `live_verbs`, `live_pad`, `live_watch` and `live_chain` drive O3, O4,
+O5 and O6 in a level). O1 and O2
 are upstream's code and have no test of their own beyond the oracle booting in the
 default shader mode.
 

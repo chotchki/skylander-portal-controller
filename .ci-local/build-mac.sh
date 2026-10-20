@@ -25,6 +25,9 @@
 # checks the formulae are there. `brew install` upgrades a formula the local tap
 # calls outdated and the unlink pulls ffmpeg out of PATH, both machine-wide; on a
 # Mac other work shares, set it once the deps are in.
+#
+# BUILD_MAC_JOBS=<n> caps the compile at n jobs (cmake --build --parallel <n>); unset,
+# ninja takes every core, as it always has. A Mac other lanes share builds at 4.
 set -euo pipefail
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -41,6 +44,13 @@ VENDOR="$REPO_ROOT/vendor/rpcs3"
 SRC="$VENDOR"
 if [ $# -gt 0 ]; then
   SRC="$(cd "$1" && pwd -P)"
+fi
+JOBS=()
+if [ -n "${BUILD_MAC_JOBS:-}" ]; then
+  case "$BUILD_MAC_JOBS" in
+    *[!0-9]*|0*) echo "error: BUILD_MAC_JOBS must be a whole number of jobs (got $BUILD_MAC_JOBS)" >&2; exit 1 ;;
+  esac
+  JOBS=("$BUILD_MAC_JOBS")
 fi
 IS_VENDOR=0
 if [ "$SRC" = "$VENDOR" ] || [ "$SRC" = "$(cd "$VENDOR" 2>/dev/null && pwd -P)" ]; then
@@ -161,7 +171,7 @@ echo "==> building (ninja)"
 # step and resolves Qt from Homebrew at runtime, so a codesign failure is
 # non-fatal for a local build. Tolerate it, then ad-hoc re-sign for local run.
 build_rc=0
-cmake --build "$BUILD_DIR" --parallel || build_rc=$?
+cmake --build "$BUILD_DIR" --parallel ${JOBS[@]+"${JOBS[@]}"} || build_rc=$?
 
 APP="$BUILD_DIR/bin/rpcs3.app"
 BIN="$APP/Contents/MacOS/rpcs3"
