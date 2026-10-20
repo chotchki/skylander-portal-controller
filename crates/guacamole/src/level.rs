@@ -16,6 +16,8 @@
 //!   world has every texture, mesh and material resident ([`watch_residency`])
 //!   and every key compiled, so the frame it first shows uploads and
 //!   compiles nothing of its own.
+//! - Fog: every material's fog term reads the [`LevelFog`] resource, a
+//!   placeholder until AG.37; a change relights them all ([`light_level`]).
 //!
 //! Nothing shows it in the product yet (AG.21 and AG.29 take the TV into
 //! it). The dev entry does: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build,
@@ -162,11 +164,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     for graph in scene.scenes {
         drawn.append(arithmetic::drawn(graph).map_err(|e| e.to_string())?);
     }
-    let scene = view_scene(
-        &lights,
-        &LevelFog::PLACEHOLDER,
-        fresh_state_transform().to_matrix().inverse(),
-    );
+    let scene = view_scene(&lights, &LevelFog::PLACEHOLDER, fresh_state_view());
     let keys = arithmetic::keys(&drawn, &scene).map_err(|e| e.to_string())?;
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
@@ -255,6 +253,18 @@ impl Pending {
     fn len(&self) -> usize {
         self.images.len() + self.meshes.len() + self.materials.len()
     }
+
+    /// Strikes off what the render world says is resident.
+    fn strike(
+        &mut self,
+        image: impl Fn(AssetId<Image>) -> bool,
+        mesh: impl Fn(AssetId<Mesh>) -> bool,
+        material: impl Fn(AssetId<CharacterMaterial>) -> bool,
+    ) {
+        self.images.retain(|id| !image(*id));
+        self.meshes.retain(|id| !mesh(*id));
+        self.materials.retain(|id| !material(*id));
+    }
 }
 
 /// Shared by the two worlds: the level's assets the render world hasn't
@@ -282,11 +292,11 @@ fn watch_residency(
     if pending.len() == 0 {
         return;
     }
-    pending.images.retain(|id| images.get(*id).is_none());
-    pending
-        .meshes
-        .retain(|id| meshes.get(*id).is_none() || allocator.mesh_vertex_slice(id).is_none());
-    pending.materials.retain(|id| materials.get(*id).is_none());
+    pending.strike(
+        |id| images.get(id).is_some(),
+        |id| meshes.get(id).is_some() && allocator.mesh_vertex_slice(&id).is_some(),
+        |id| materials.get(id).is_some(),
+    );
 }
 
 /// What `/api/_test/tv` reports of the level.
@@ -330,6 +340,8 @@ struct Uploading {
     image_handles: Vec<(ImageKey, Handle<Image>)>,
     mesh_handles: Vec<Handle<Mesh>>,
     materials: Vec<Handle<CharacterMaterial>>,
+    /// The fog every material is made with.
+    fog: LevelFog,
 }
 
 /// A level the renderer has: its entities (hidden until shown), the
@@ -344,8 +356,10 @@ pub(crate) struct Loaded {
     scrolling: Vec<(usize, Vec<Scroll>)>,
     lights: LevelLights,
     pub(crate) keys: Vec<WarmKey>,
-    /// The camera the uniforms are lit for, as `view_from_world`.
+    /// The camera the uniforms are lit for, as `view_from_world`, and the
+    /// fog.
     lit_for: Mat4,
+    lit_fog: LevelFog,
     camera: Option<Entity>,
     shown_at: Option<Duration>,
 }
@@ -396,8 +410,6 @@ pub(crate) struct Level {
     source: Option<LevelSource>,
     stage: Stage,
     since: Option<Instant>,
-    /// The fog the materials take; a placeholder until AG.37.
-    fog: LevelFog,
     report: LevelReport,
 }
 
@@ -408,7 +420,6 @@ impl Level {
             source: None,
             stage: Stage::Idle,
             since: None,
-            fog: LevelFog::PLACEHOLDER,
             report: LevelReport {
                 state: "idle".into(),
                 ..Default::default()
@@ -465,20 +476,24 @@ impl Plugin for LevelPlugin {
             info!("GUAC_LEVEL_VIEW: the level shows once it's ready, at AF's fresh-state camera");
         }
         app.insert_resource(Level::new(gpu))
+            .init_resource::<LevelFog>()
             .insert_resource(LevelView(view))
             .insert_resource(watch.clone())
             .add_systems(
                 Update,
-                (
-                    receive_level,
-                    step_level,
-                    show_level,
-                    light_level,
-                    scroll_level,
-                )
+                (receive_level, step_level, show_level, scroll_level)
                     .chain()
                     .in_set(LevelSystems)
                     .after(crate::turntable::TurntableSystems),
+            )
+            // After the camera's transform has propagated, so a camera
+            // spawned or moved this frame lights it from where it stands, and
+            // before the assets' events go out, so the frame draws it lit.
+            .add_systems(
+                PostUpdate,
+                light_level
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .before(bevy::asset::AssetEventSystems),
             );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -488,12 +503,13 @@ impl Plugin for LevelPlugin {
     }
 }
 
-/// A new source starts the level loading; the same one again changes
-/// nothing.
+/// A new source starts the level loading, the last one's assets no longer
+/// waited on; the same one again changes nothing.
 fn receive_level(
     mut commands: Commands,
     feed: Option<Res<LevelFeed>>,
     mut level: ResMut<Level>,
+    watch: Res<LevelWatch>,
     device: Option<Res<RenderDevice>>,
 ) {
     let Some(source) = feed.and_then(|f| f.0.try_iter().last()) else {
@@ -508,6 +524,8 @@ fn receive_level(
             commands.entity(camera).despawn();
         }
     }
+    // Its handles go with it, so what it left pending never turns up.
+    *watch.lock() = Pending::default();
     info!(dir = %source.dir.display(), level = %source.level, "the level loads");
     // Headless (no GPU) the images keep their blocks as given.
     let formats = device.map_or(CompressedImageFormats::BC, |d| {
@@ -535,6 +553,7 @@ pub(crate) struct LevelSpawner<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: ResMut<'w, Assets<CharacterMaterial>>,
     watch: Res<'w, LevelWatch>,
+    fog: Res<'w, LevelFog>,
     extraction: Option<Res<'w, Extraction>>,
 }
 
@@ -575,7 +594,8 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                 r.read_ms = Some(built.read.as_millis() as u64);
                 r.built_ms = since.map(|d| d.as_millis() as u64);
                 // The warm compiles the keys while the frames upload.
-                let scene = Arc::new(level_scene(&built.lights, &level.fog));
+                let fog = *s.fog;
+                let scene = Arc::new(level_scene(&built.lights, &fog));
                 let entries: Vec<(WarmKey, model::Material)> = built
                     .keys
                     .iter()
@@ -592,6 +612,7 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                     image_handles: Vec::new(),
                     mesh_handles: Vec::new(),
                     materials: Vec::new(),
+                    fog,
                 }));
             }
         },
@@ -643,7 +664,17 @@ fn wait(loaded: Box<Loaded>, level: &mut Level, warm: &Warm, s: &LevelSpawner) -
 /// at the fresh state's camera (only the switches it turns on key a
 /// pipeline).
 fn level_scene(lights: &LevelLights, fog: &LevelFog) -> Scene {
-    view_scene(lights, fog, fresh_state_transform().to_matrix().inverse())
+    view_scene(lights, fog, fresh_state_view())
+}
+
+/// The fresh state's camera as a view (`view_from_world`), through the
+/// `GlobalTransform` Bevy propagates for it, so the dev entry's camera
+/// matches what the materials were lit for to the bit and its first frame
+/// relights nothing.
+fn fresh_state_view() -> Mat4 {
+    GlobalTransform::from(fresh_state_transform())
+        .to_matrix()
+        .inverse()
 }
 
 /// Hands the renderer this frame's share: textures, then meshes, up to
@@ -673,7 +704,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     if bytes > 0 {
         return false;
     }
-    let scene = level_scene(&up.built.lights, &level.fog);
+    let scene = level_scene(&up.built.lights, &up.fog);
     let start = up.materials.len();
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
     for m in &up.built.drawn.materials[start..end] {
@@ -722,6 +753,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         built,
         mesh_handles,
         materials,
+        fog,
         ..
     } = up;
     let root = s
@@ -766,7 +798,8 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         scrolling,
         lights: built.lights,
         keys: built.keys.iter().map(|(k, _)| *k).collect(),
-        lit_for: fresh_state_transform().to_matrix().inverse(),
+        lit_for: fresh_state_view(),
+        lit_fog: fog,
         camera: None,
         shown_at: None,
     }
@@ -819,25 +852,28 @@ fn show_level(
     redrawn.write(Redrawn::Level);
 }
 
-/// The materials light in view space: when the level's camera moves, every
-/// material's uniform is lit again from where it now stands.
+/// The materials light in view space: when the level's camera moves, or the
+/// fog changes, every material's uniform is lit again (from where the
+/// camera now stands; with none, from where it was lit for). In
+/// `PostUpdate`, after transforms propagate: a camera spawned this frame
+/// still holds the identity before that, and lighting for it would light
+/// the frame it first shows wrong and rewrite every material twice.
 fn light_level(
     mut level: ResMut<Level>,
-    cameras: Query<&GlobalTransform, (With<LevelCamera>, Changed<GlobalTransform>)>,
+    fog: Res<LevelFog>,
+    cameras: Query<&GlobalTransform, With<LevelCamera>>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
-    let Ok(camera) = cameras.single() else {
-        return;
-    };
-    let fog = level.fog;
     let Some(loaded) = level.stage.loaded_mut() else {
         return;
     };
-    let view = camera.to_matrix().inverse();
-    if view.abs_diff_eq(loaded.lit_for, 1e-6) {
+    let view = cameras
+        .single()
+        .map_or(loaded.lit_for, |c| c.to_matrix().inverse());
+    if view.abs_diff_eq(loaded.lit_for, 1e-6) && *fog == loaded.lit_fog {
         return;
     }
-    loaded.lit_for = view;
+    (loaded.lit_for, loaded.lit_fog) = (view, *fog);
     let scene = view_scene(&loaded.lights, &fog, view);
     for (h, reference) in loaded.materials.iter().zip(&loaded.reference) {
         let Some((reference, alpha)) = reference else {
@@ -1158,33 +1194,62 @@ mod tests {
         }
     }
 
+    /// Frames, `between` played before each, until the level's report
+    /// passes `done`, up to 5 s.
+    fn until_report(
+        app: &mut App,
+        done: impl Fn(&LevelReport) -> bool,
+        mut between: impl FnMut(&mut App),
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done(app.world().resource::<Level>().report()) {
+            assert!(Instant::now() < deadline, "stuck at {}", state(app));
+            between(app);
+            app.update();
+        }
+    }
+
+    fn report(app: &App) -> LevelReport {
+        app.world().resource::<Level>().report().clone()
+    }
+
     /// AG.19: the level is ready only once the renderer has every texture,
     /// mesh and material resident and the warm has compiled every key it
-    /// draws; meanwhile it stays spawned hidden, waiting.
+    /// draws; meanwhile it stays spawned hidden, waiting. Here the warm
+    /// finishes first, so only residency holds it.
     #[test]
     fn the_level_is_ready_only_once_every_part_is_resident() {
         let tmp = tempfile::tempdir().unwrap();
         let source = write_level(tmp.path(), &lights());
         let mut app = level_app(tmp.path(), source, true);
         until(&mut app, &["waiting"], |_| {});
-        let report = app.world().resource::<Level>().report().clone();
+        let r = report(&app);
         // Four ground maps and the sky's, four meshes (the grass's isn't
         // drawn), two materials: none resident with no render world.
-        assert_eq!(
-            (report.textures, report.segments, report.materials),
-            (5, 4, 2)
+        assert_eq!((r.textures, r.segments, r.materials), (5, 4, 2));
+        assert_eq!((r.left_out, r.segments_left_out), (1, 1));
+        assert_eq!(r.sky_segments, 1);
+        assert_eq!(r.not_resident, 5 + 4 + 2, "{r:?}");
+        assert_eq!(r.keys, 3);
+
+        // Every key compiled: still waiting, on the renderer alone.
+        let pipelines = app.world().resource::<PipelineWatch>().clone();
+        until_report(
+            &mut app,
+            |r| r.keys_waiting == 0,
+            |_| pipelines.compile_all(),
         );
-        assert_eq!((report.left_out, report.segments_left_out), (1, 1));
-        assert_eq!(report.sky_segments, 1);
-        assert_eq!(report.not_resident, 5 + 4 + 2, "{report:?}");
-        assert_eq!(report.keys, 3);
         for _ in 0..10 {
             app.update();
         }
-        assert_eq!(state(&app), "waiting", "nothing resident");
+        let r = report(&app);
+        assert_eq!(
+            (r.state.as_str(), r.not_resident, r.keys_waiting),
+            ("waiting", 11, 0),
+            "nothing resident"
+        );
 
-        // The render world strikes off all but one texture, then that: the
-        // level still waits, now on the warm alone.
+        // The render world strikes off all but one texture, then that.
         let watch = app.world().resource::<LevelWatch>().clone();
         let last = {
             let mut p = watch.lock();
@@ -1195,27 +1260,149 @@ mod tests {
             last
         };
         app.update();
-        assert_eq!(state(&app), "waiting");
-        assert_eq!(app.world().resource::<Level>().report().not_resident, 1);
+        assert_eq!(
+            (state(&app), report(&app).not_resident),
+            ("waiting".into(), 1)
+        );
         watch.lock().images.remove(&last);
         app.update();
-        let report = app.world().resource::<Level>().report().clone();
-        assert_eq!((report.state.as_str(), report.not_resident), ("waiting", 0));
-        assert!(report.keys_waiting > 0, "{report:?}");
-
-        // Each key the warm draws compiles: ready.
-        let pipelines = app.world().resource::<PipelineWatch>().clone();
-        until(&mut app, &["ready"], |_| pipelines.compile_all());
         let level = app.world().resource::<Level>();
-        let report = level.report();
-        assert_eq!((report.not_resident, report.keys_waiting), (0, 0));
-        assert!(report.ready_ms.is_some() && !report.shown);
+        let r = level.report();
+        assert_eq!(
+            (r.state.as_str(), r.not_resident, r.keys_waiting),
+            ("ready", 0, 0)
+        );
+        assert!(r.ready_ms.is_some() && !r.shown);
         let root = level.loaded().unwrap().root;
         assert_eq!(
             app.world().get::<Visibility>(root),
             Some(&Visibility::Hidden),
             "nothing shows it"
         );
+    }
+
+    /// The other order: everything resident, the level still waits on the
+    /// warm until every key it draws is compiled.
+    #[test]
+    fn a_resident_level_waits_on_its_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, true);
+        until(&mut app, &["waiting"], |_| {});
+        let watch = app.world().resource::<LevelWatch>().clone();
+        *watch.lock() = Pending::default();
+        for _ in 0..10 {
+            app.update();
+        }
+        let r = report(&app);
+        assert_eq!((r.state.as_str(), r.not_resident), ("waiting", 0));
+        assert!(r.keys_waiting > 0, "{r:?}");
+        let pipelines = app.world().resource::<PipelineWatch>().clone();
+        until(&mut app, &["ready"], |_| pipelines.compile_all());
+        assert_eq!(report(&app).keys_waiting, 0);
+    }
+
+    /// A second source while the first still waits on the renderer: what
+    /// the first left pending goes with it, so the second waits on its own
+    /// parts alone (the first's never turn up).
+    #[test]
+    fn a_new_source_waits_on_its_own_parts_alone() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = write_level(a.path(), &lights());
+        let second = write_level(b.path(), &lights());
+        let mut app = level_app(a.path(), first, true);
+        until(&mut app, &["waiting"], |_| {});
+        assert_eq!(report(&app).not_resident, 11);
+        let (tx, feed) = level_channel();
+        tx.send(second).unwrap();
+        app.insert_resource(feed);
+        app.update();
+        assert_eq!(state(&app), "reading");
+        until(&mut app, &["waiting"], |_| {});
+        assert_eq!(report(&app).not_resident, 11, "the first's parts let go");
+        let watch = app.world().resource::<LevelWatch>().clone();
+        *watch.lock() = Pending::default();
+        let pipelines = app.world().resource::<PipelineWatch>().clone();
+        until(&mut app, &["ready"], |_| pipelines.compile_all());
+    }
+
+    fn asset<A: Asset>(n: u128) -> AssetId<A> {
+        AssetId::Uuid {
+            uuid: bevy::asset::uuid::Uuid::from_u128(n),
+        }
+    }
+
+    /// The render world's word strikes off exactly what it says is resident.
+    #[test]
+    fn the_render_world_strikes_off_only_what_is_resident() {
+        let mut p = Pending {
+            images: [asset(1), asset(2)].into(),
+            meshes: [asset(3), asset(4)].into(),
+            materials: [asset(5), asset(6)].into(),
+        };
+        p.strike(|i| i == asset(1), |m| m == asset(4), |m| m == asset(6));
+        assert_eq!(p.images, [asset(2)].into());
+        assert_eq!(p.meshes, [asset(3)].into());
+        assert_eq!(p.materials, [asset(5)].into());
+        p.strike(|_| false, |_| false, |_| false);
+        assert_eq!(p.len(), 3);
+        p.strike(|_| true, |_| true, |_| true);
+        assert_eq!(p.len(), 0);
+    }
+
+    /// The fog every level material reads is the TV's `LevelFog`: the
+    /// placeholder until something sets it, and a new one relights every
+    /// material from the camera it was lit for (AG.37's seam).
+    #[test]
+    fn a_changed_fog_reaches_every_level_material() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = lights();
+        let source = write_level(tmp.path(), &l);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let materials = app
+            .world()
+            .resource::<Level>()
+            .loaded()
+            .unwrap()
+            .materials
+            .clone();
+        let uniforms = |app: &App| -> Vec<CharacterUniform> {
+            let assets = app.world().resource::<Assets<CharacterMaterial>>();
+            materials
+                .iter()
+                .map(|h| assets.get(h).unwrap().uniform)
+                .collect()
+        };
+        let p = LevelFog::PLACEHOLDER;
+        for u in uniforms(&app) {
+            assert_eq!(u.fog_range, Vec4::new(p.near, p.far, 0.0, 0.0));
+        }
+        // Made-up numbers, none of AG.13's.
+        let fog = LevelFog {
+            colour: [90, 60, 30],
+            near: 30.0,
+            far: 300.0,
+        };
+        app.insert_resource(fog);
+        app.update();
+        let lit = view_scene(
+            &level_lights(&l).unwrap(),
+            &fog,
+            fresh_state_transform().to_matrix().inverse(),
+        );
+        for u in uniforms(&app) {
+            assert_eq!(u.fog_range, Vec4::new(30.0, 300.0, 0.0, 0.0));
+            assert_eq!(
+                u.fog_colour.truncate(),
+                Vec3::from_array(remaster::linear([90, 60, 30]))
+            );
+            assert!(
+                u.light_travel[0]
+                    .truncate()
+                    .abs_diff_eq(Vec3::from_array(lit.lights[0].travel), 1e-6)
+            );
+        }
     }
 
     /// AG.19: the keys the level asks the warm for are exactly the keys its
@@ -1322,7 +1509,6 @@ mod tests {
             .insert_resource(ReducedMotion(true));
         app.world_mut().spawn(TvCamera);
         until(&mut app, &["shown"], |_| {});
-        app.update();
         let (root, camera, materials) = {
             let loaded = app.world().resource::<Level>().loaded().unwrap();
             (
@@ -1331,6 +1517,33 @@ mod tests {
                 loaded.materials.clone(),
             )
         };
+        let lit = level_lights(&l).unwrap();
+        let travel = |app: &App| {
+            let m = app
+                .world()
+                .resource::<Assets<CharacterMaterial>>()
+                .get(&materials[0])
+                .unwrap();
+            m.uniform.light_travel[0].truncate()
+        };
+        let at = |t: &Transform| {
+            view_scene(&lit, &LevelFog::PLACEHOLDER, t.to_matrix().inverse()).lights[0].travel
+        };
+        // The frame it shows is lit for the fresh state's camera, not for
+        // the new camera's transform before it has propagated, and rewrites
+        // no material to get there (the sky's scroll aside).
+        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&fresh_state_transform())), 1e-6));
+        let rewritten = app
+            .world()
+            .resource::<Messages<AssetEvent<CharacterMaterial>>>()
+            .iter_current_update_messages()
+            .any(|e| {
+                *e == AssetEvent::Modified {
+                    id: materials[0].id(),
+                }
+            });
+        assert!(!rewritten, "the show frame relit the level");
+        app.update();
         assert_eq!(
             app.world().get::<Visibility>(root),
             Some(&Visibility::Inherited)
@@ -1354,19 +1567,6 @@ mod tests {
             Some(&RenderLayers::layer(LEVEL_LAYER))
         );
         assert!(app.world().resource::<Level>().report().shown);
-
-        let lit = level_lights(&l).unwrap();
-        let travel = |app: &App| {
-            let m = app
-                .world()
-                .resource::<Assets<CharacterMaterial>>()
-                .get(&materials[0])
-                .unwrap();
-            m.uniform.light_travel[0].truncate()
-        };
-        let at = |t: &Transform| {
-            view_scene(&lit, &LevelFog::PLACEHOLDER, t.to_matrix().inverse()).lights[0].travel
-        };
         assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&fresh_state_transform())), 1e-6));
         // Turned to face the other way: the key light's travel turns too.
         let moved = Transform::from_xyz(0.0, 50.0, 0.0).looking_to(Vec3::NEG_Z, Vec3::Y);

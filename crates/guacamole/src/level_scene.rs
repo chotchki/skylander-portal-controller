@@ -37,12 +37,20 @@ pub const MAX_POINT_LIGHTS: usize = 3;
 
 /// The level's fog: its colour as a disc stores one (encoded for display,
 /// decoded like every colour the remaster takes) and where it starts and
-/// ends along the view, in metres.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// ends along the view, in metres. The TV holds one as a resource, every
+/// level material's fog term reads it, and a change relights them all; it
+/// starts at [`LevelFog::PLACEHOLDER`].
+#[derive(bevy::prelude::Resource, Debug, Clone, Copy, PartialEq)]
 pub struct LevelFog {
     pub colour: [u8; 3],
     pub near: f32,
     pub far: f32,
+}
+
+impl Default for LevelFog {
+    fn default() -> Self {
+        Self::PLACEHOLDER
+    }
 }
 
 impl LevelFog {
