@@ -30,8 +30,8 @@ use bevy::pbr::MaterialPlugin;
 pub use glow::{Glow, GlowPlugin, GlowView, spawn_glow_camera, spawn_glow_masks};
 pub use key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey};
 pub use material::{
-    CharacterMaterial, CharacterTextures, CharacterUniform, MaterialError, ShadowLookup,
-    reference_material,
+    CharacterMaterial, CharacterTextures, CharacterUniform, LIGHTS_IN_VIEW, LIGHTS_IN_WORLD,
+    MaterialError, ShadowLookup, reference_material,
 };
 pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character, static_mesh};
 pub use warm::{MeshShape, WarmError, WarmKey};

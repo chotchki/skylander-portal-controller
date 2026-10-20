@@ -15,7 +15,8 @@
 //!   [`LevelFog`] the TV holds, set from the same zone ([`LevelFog::from_zone`]),
 //!   which the sky dome takes its zone's share of ([`sky_fogged`]); no shadows
 //!   (AG.23). The shader lights in view space, so the scene is the lights
-//!   seen from a camera.
+//!   seen from a camera ([`view_scene`]); the TV hands it the world's
+//!   ([`world_scene`]) and the shader turns them by its view (AG.21).
 //! - The camera AF's fresh state shows ([`fresh_state_transform`],
 //!   [`fresh_state_projection`]), which the dev entry draws the level at.
 //! - The walk (AG.21): the level's collision as static seam bodies
@@ -338,6 +339,14 @@ pub fn hero_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
     let mut scene = view_scene(lights, fog, view_from_world);
     scene.point_lights.clear();
     scene
+}
+
+/// The scene the level's materials are lit in, in the world's frame: the
+/// directional lights' travels and the point lights' positions as the level
+/// has them, which the shader turns by the view it draws for (a uniform lit
+/// in the world, `CharacterUniform::lit_in_world`, AG.21).
+pub fn world_scene(lights: &LevelLights, fog: &LevelFog) -> Scene {
+    view_scene(lights, fog, Mat4::IDENTITY)
 }
 
 /// A second layer's exponent and detail weight (`layer2ExtraValues`) when

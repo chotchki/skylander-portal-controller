@@ -20,7 +20,11 @@
 //! - Fog and light: the atmospheric zone the level's definition sets up at
 //!   its start (AG.41) lights it and sets the [`LevelFog`] resource, which
 //!   every material's fog term reads; a change relights them all
-//!   ([`light_level`]).
+//!   ([`light_level`]). The lights are handed to the shader in the world's
+//!   frame, which it turns by the view it draws for (AG.21,
+//!   [`CharacterUniform::lit_in_world`]), so the camera following the hero
+//!   rewrites no material: lit in view space, every frame it moved rewrote
+//!   all 471 of chapter 1's.
 //! - Scripts (AH.22): the level's script part, parsed and linked on a task
 //!   of its own beside the reading one ([`guacamole::level_scripts`]), so it
 //!   adds nothing to the time the level takes to show; the level is drawn
@@ -73,7 +77,7 @@ use guacamole::character::{
 };
 use guacamole::level_scene::{
     self as arithmetic, AtStart, Drawn, LevelFog, LevelLights, fresh_state_projection,
-    fresh_state_transform, fresh_state_view, hero_scene, view_scene,
+    fresh_state_transform, fresh_state_view, hero_scene, view_scene, world_scene,
 };
 use guacamole::level_scripts;
 use serde::Serialize;
@@ -389,6 +393,8 @@ pub(crate) struct LevelReport {
     pub built_ms: Option<u64>,
     pub uploaded_ms: Option<u64>,
     pub ready_ms: Option<u64>,
+    /// Times every material was lit again (a camera's move, a fog change).
+    pub relit: u64,
     /// From the Giants pick to ready.
     pub pick_to_ready_ms: Option<u64>,
     pub shown: bool,
@@ -442,9 +448,7 @@ pub(crate) struct Loaded {
     scrolling: Vec<(usize, Vec<Scroll>)>,
     lights: LevelLights,
     pub(crate) keys: Vec<WarmKey>,
-    /// The camera the uniforms are lit for, as `view_from_world`, and the
-    /// fog.
-    lit_for: Mat4,
+    /// The fog the uniforms are lit with.
     lit_fog: LevelFog,
     camera: Option<Entity>,
     shown_at: Option<Duration>,
@@ -611,8 +615,8 @@ impl Level {
     }
 
     /// Lights `materials` with the level from now on, in the hero's scene
-    /// ([`hero_scene`]): lit for the camera the level's are lit for at once,
-    /// then again whenever they are.
+    /// ([`hero_scene`]) in the world's frame: at once, then again whenever
+    /// the level's are.
     pub(crate) fn light_also(
         &mut self,
         materials: Vec<LitAlso>,
@@ -621,19 +625,20 @@ impl Level {
         let Some(loaded) = self.stage.loaded_mut() else {
             return;
         };
-        let scene = hero_scene(&loaded.lights, &loaded.lit_fog, loaded.lit_for);
+        let scene = hero_scene(&loaded.lights, &loaded.lit_fog, Mat4::IDENTITY);
         relight(&materials, &scene, assets);
         loaded.also.extend(materials);
     }
 }
 
-/// `materials`' uniforms lit in `scene`, each texture-coordinate transform
-/// kept.
+/// `materials`' uniforms lit in `scene`, the world's frame, each
+/// texture-coordinate transform kept.
 fn relight(materials: &[LitAlso], scene: &Scene, assets: &mut Assets<CharacterMaterial>) {
     for lit in materials {
         if let Some(mut m) = assets.get_mut(&lit.material) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
-            m.uniform = CharacterUniform::new(&lit.reference, scene, ShadowLookup::NONE, lit.alpha);
+            m.uniform = CharacterUniform::new(&lit.reference, scene, ShadowLookup::NONE, lit.alpha)
+                .lit_in_world();
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
     }
@@ -643,8 +648,7 @@ fn relight(materials: &[LitAlso], scene: &Scene, assets: &mut Assets<CharacterMa
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct LevelView(pub(crate) bool);
 
-/// Marks the camera the level is drawn from, the one its materials are lit
-/// for ([`light_level`]).
+/// Marks the camera the level is drawn from.
 #[derive(Component, Debug)]
 pub(crate) struct LevelCamera;
 
@@ -677,14 +681,10 @@ impl Plugin for LevelPlugin {
                     .in_set(LevelSystems)
                     .after(crate::turntable::TurntableSystems),
             )
-            // After the camera's transform has propagated, so a camera
-            // spawned or moved this frame lights it from where it stands, and
-            // before the assets' events go out, so the frame draws it lit.
+            // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,
-                light_level
-                    .after(bevy::transform::TransformSystems::Propagate)
-                    .before(bevy::asset::AssetEventSystems),
+                light_level.before(bevy::asset::AssetEventSystems),
             );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -947,7 +947,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     if bytes > 0 {
         return false;
     }
-    let scene = level_scene(&up.built.lights, &up.fog);
+    let scene = world_scene(&up.built.lights, &up.fog);
     let start = up.materials.len();
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
     for m in &up.built.drawn.materials[start..end] {
@@ -967,7 +967,10 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         // task, so this can't refuse one; a material that does draws as
         // Bevy's default rather than fail the level.
         let material = match CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, texture) {
-            Ok(material) => s.materials.add(material),
+            Ok(mut material) => {
+                material.uniform = material.uniform.lit_in_world();
+                s.materials.add(material)
+            }
             Err(e) => {
                 warn!(material = %m.name, reason = %e, "a level material didn't build");
                 Handle::default()
@@ -1045,7 +1048,6 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         scrolling,
         lights: built.lights,
         keys: built.keys.iter().map(|(k, _)| *k).collect(),
-        lit_for: fresh_state_view(),
         lit_fog: fog,
         camera: None,
         shown_at: None,
@@ -1106,42 +1108,41 @@ fn show_level(
     redrawn.write(Redrawn::Level);
 }
 
-/// The materials light in view space: when the level's camera moves, or the
-/// fog changes, every material's uniform is lit again (from where the
-/// camera now stands; with none, from where it was lit for). In
-/// `PostUpdate`, after transforms propagate: a camera spawned this frame
-/// still holds the identity before that, and lighting for it would light
-/// the frame it first shows wrong and rewrite every material twice.
+/// A fog change relights every material: the level's in its scene, the
+/// hero's in his ([`Level::light_also`]), each in the world's frame, which
+/// the shader turns by the view it draws for, so a camera that moves
+/// rewrites none (lit in view space, a following camera rewrote all of
+/// chapter 1's 471 every frame it moved, and every frame at rest too, since
+/// the eased camera's rotation jitters by float noise).
 fn light_level(
     mut level: ResMut<Level>,
     fog: Res<LevelFog>,
-    cameras: Query<&GlobalTransform, With<LevelCamera>>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
+    let level = &mut *level;
     let Some(loaded) = level.stage.loaded_mut() else {
         return;
     };
-    let view = cameras
-        .single()
-        .map_or(loaded.lit_for, |c| c.to_matrix().inverse());
-    if view.abs_diff_eq(loaded.lit_for, 1e-6) && *fog == loaded.lit_fog {
+    if *fog == loaded.lit_fog {
         return;
     }
-    (loaded.lit_for, loaded.lit_fog) = (view, *fog);
-    let scene = view_scene(&loaded.lights, &fog, view);
+    loaded.lit_fog = *fog;
+    level.report.relit += 1;
+    let scene = world_scene(&loaded.lights, &fog);
     for (h, reference) in loaded.materials.iter().zip(&loaded.reference) {
         let Some((reference, alpha)) = reference else {
             continue;
         };
         if let Some(mut m) = materials.get_mut(h) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
-            m.uniform = CharacterUniform::new(reference, &scene, ShadowLookup::NONE, *alpha);
+            m.uniform =
+                CharacterUniform::new(reference, &scene, ShadowLookup::NONE, *alpha).lit_in_world();
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
     }
     relight(
         &loaded.also,
-        &hero_scene(&loaded.lights, &fog, view),
+        &hero_scene(&loaded.lights, &fog, Mat4::IDENTITY),
         &mut materials,
     );
 }
@@ -1823,11 +1824,7 @@ pub(crate) mod tests {
         };
         app.insert_resource(fog);
         app.update();
-        let lit = view_scene(
-            &level_lights(&l, &zone()).unwrap(),
-            &fog,
-            fresh_state_transform().to_matrix().inverse(),
-        );
+        let lit = world_scene(&level_lights(&l, &zone()).unwrap(), &fog);
         for (u, _) in uniforms(&app) {
             assert_eq!(u.fog_range, Vec4::new(30.0, 300.0, 0.0, 0.0));
             assert_eq!(
@@ -1839,7 +1836,9 @@ pub(crate) mod tests {
                     .truncate()
                     .abs_diff_eq(Vec3::from_array(lit.lights[0].travel), 1e-6)
             );
+            assert_eq!(u.misc.w, guacamole::character::LIGHTS_IN_WORLD);
         }
+        assert_eq!(app.world().resource::<Level>().report().relit, 1);
     }
 
     /// AG.19: the keys the level asks the warm for are exactly the keys its
@@ -1959,7 +1958,7 @@ pub(crate) mod tests {
     /// material from where it stands. Under reduced motion a scroll holds
     /// its start.
     #[test]
-    fn the_dev_view_shows_the_level_and_a_moved_camera_relights_it() {
+    fn the_dev_view_shows_the_level_lit_in_the_world_and_a_moved_camera_relights_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let l = lights();
         let source = write_level(tmp.path(), &l);
@@ -1983,25 +1982,29 @@ pub(crate) mod tests {
                 .resource::<Assets<CharacterMaterial>>()
                 .get(&materials[0])
                 .unwrap();
-            m.uniform.light_travel[0].truncate()
+            (m.uniform.light_travel[0].truncate(), m.uniform.misc.w)
         };
-        let at = |t: &Transform| {
-            view_scene(&lit, &LevelFog::NONE, t.to_matrix().inverse()).lights[0].travel
+        // Lit in the world's frame, which the shader turns by its view.
+        let world = || {
+            (
+                Vec3::from_array(world_scene(&lit, &LevelFog::NONE).lights[0].travel),
+                guacamole::character::LIGHTS_IN_WORLD,
+            )
         };
-        // The frame it shows is lit for the fresh state's camera, not for
-        // the new camera's transform before it has propagated, and rewrites
-        // no material to get there (the sky's scroll aside).
-        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&fresh_state_transform())), 1e-6));
-        let rewritten = app
-            .world()
-            .resource::<Messages<AssetEvent<CharacterMaterial>>>()
-            .iter_current_update_messages()
-            .any(|e| {
-                *e == AssetEvent::Modified {
-                    id: materials[0].id(),
-                }
-            });
-        assert!(!rewritten, "the show frame relit the level");
+        let rewritten = |app: &App| {
+            app.world()
+                .resource::<Messages<AssetEvent<CharacterMaterial>>>()
+                .iter_current_update_messages()
+                .any(|e| {
+                    *e == AssetEvent::Modified {
+                        id: materials[0].id(),
+                    }
+                })
+        };
+        let (t, w) = travel(&app);
+        assert!(t.abs_diff_eq(world().0, 1e-6) && w == world().1, "{t} {w}");
+        // The frame it shows rewrites no material (the sky's scroll aside).
+        assert!(!rewritten(&app), "the show frame relit the level");
         app.update();
         assert_eq!(
             app.world().get::<Visibility>(root),
@@ -2026,8 +2029,9 @@ pub(crate) mod tests {
             Some(&RenderLayers::layer(LEVEL_LAYER))
         );
         assert!(app.world().resource::<Level>().report().shown);
-        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&fresh_state_transform())), 1e-6));
-        // Turned to face the other way: the key light's travel turns too.
+        // Turned to face the other way: nothing is lit again, since the
+        // shader turns the world's lights by the view it draws for (AG.21).
+        let relit = app.world().resource::<Level>().report().relit;
         let moved = Transform::from_xyz(0.0, 50.0, 0.0).looking_to(Vec3::NEG_Z, Vec3::Y);
         *app.world_mut().get_mut::<Transform>(camera).unwrap() = moved;
         let sky_rows = |app: &App| {
@@ -2039,8 +2043,10 @@ pub(crate) mod tests {
             (m.uniform.uv_u, m.uniform.uv_v)
         };
         app.update();
+        assert!(!rewritten(&app), "a moved camera relit the level");
         app.update();
-        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&moved)), 1e-6));
+        assert_eq!(app.world().resource::<Level>().report().relit, relit);
+        assert_eq!(travel(&app), (world().0, world().1));
         // The sky's u slides from half a texture along, its track's start,
         // not the identity's 0.
         let (u, _) = sky_rows(&app);

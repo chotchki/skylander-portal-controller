@@ -21,7 +21,9 @@
 //! - He's drawn in the level's lights and fog without its point light
 //!   ([`guacamole::level_scene::hero_scene`]), so his keys are the ones the
 //!   start's pass compiled from the census for his card; any that aren't
-//!   go through the warm, which counts them as outside the census.
+//!   go through the warm, which counts them as outside the census. His
+//!   lights are the world's, as the level's are, so his camera's moves
+//!   rewrite none of his materials.
 //!
 //! The TV leaves the level when it leaves the portal view (the game
 //! quit, a server error) or the level gives way to another load. What a
@@ -465,9 +467,8 @@ fn enter(
         camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
         planes: Vec::new(),
     };
-    let view = crate::hero::viewed(&follow.camera.view());
-    let view_from_world = GlobalTransform::from(view).to_matrix().inverse();
-    let scene = hero_scene(&lights, &fog, view_from_world);
+    // In the world's frame, as the level's lights are.
+    let scene = hero_scene(&lights, &fog, Mat4::IDENTITY);
     let hero_entity = spawn_hero(&mut s.commands, hero);
     let drawn = match draw_hero(&mut s, hero_entity, walker, &loaded, &scene) {
         Ok(drawn) => drawn,
@@ -550,8 +551,9 @@ fn draw_hero(
     let mut lit = Vec::with_capacity(drawn.materials.len());
     let mut scrolling = Vec::new();
     for m in &drawn.materials {
-        let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
+        let mut material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
+        material.uniform = material.uniform.lit_in_world();
         let reference = reference_material(m).map_err(|e| format!("material {}: {e}", m.name))?;
         let handle = s.materials.add(material);
         if !m.scrolls.is_empty() {
@@ -821,6 +823,59 @@ mod tests {
         test_pad::press(&mut app, pad, GamepadButton::Start);
         app.update();
         assert_eq!(mode(&app), Mode::Paused);
+    }
+
+    /// The camera following him rewrites no material, standing or walking:
+    /// the level's and the hero's lights are the world's, which the shader
+    /// turns by its view. (Lit in view space, the eased camera's float noise
+    /// alone rewrote every material on 131 of 144 frames at rest.)
+    #[test]
+    fn a_following_camera_lights_nothing_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1.0 / 144.0,
+        )));
+        let relit = app.world().resource::<Level>().report().relit;
+        let eye = view(&mut app).eye;
+        for _ in 0..144 {
+            app.update();
+        }
+        test_pad::stick(&mut app, pad, 1.0, 1.0);
+        for _ in 0..144 {
+            app.update();
+        }
+        assert!(
+            view(&mut app).eye.distance(eye) > 1.0,
+            "the camera followed"
+        );
+        assert_eq!(app.world().resource::<Level>().report().relit, relit);
+        // Everything the level's camera draws, the hero and the level, is
+        // lit in the world's frame (his card's turntable keeps its rig's
+        // view space).
+        let mut materials = app
+            .world_mut()
+            .query::<(&MeshMaterial3d<CharacterMaterial>, &RenderLayers)>();
+        let assets = app.world().resource::<Assets<CharacterMaterial>>();
+        let frames: Vec<f32> = materials
+            .iter(app.world())
+            .filter(|(_, l)| **l == RenderLayers::layer(LEVEL_LAYER))
+            .map(|(m, _)| assets.get(&m.0).unwrap().uniform.misc.w)
+            .collect();
+        assert!(
+            frames.len() >= 5,
+            "the level's four segments and his: {frames:?}"
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|w| *w == guacamole::character::LIGHTS_IN_WORLD),
+            "{frames:?}"
+        );
     }
 
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first

@@ -7,7 +7,10 @@
 //
 // Lighting is in view space: the eye direction and the rim lookup are
 // view-space by construction, and a turntable's rig is fixed to its camera.
-// Every vector the uniform holds is view space.
+// Every vector the uniform holds is view space, but for a level's lights
+// (AG.21): with `misc.w` 1 the directional lights' travels and the point
+// lights' positions are the world's, turned into view space by the view
+// drawn for, so a camera that moves rewrites no material.
 //
 // WESL flattens a block an `@if` holds into the block around it, so each
 // such block's names are its own.
@@ -179,6 +182,25 @@ fn mapped_normal(texel: vec4<f32>, normal: vec3<f32>, tangent: vec3<f32>, bitang
     return normalize(y * bitangent - x * tangent + z * normal);
 }
 
+// Directional light `i`'s travel in view space ([`light_travel`] and
+// [`point_position`] read the uniform's frame off `misc.w`).
+fn light_travel(i: u32) -> vec3<f32> {
+    let travel = character.light_travel[i].xyz;
+    if character.misc.w > 0.5 {
+        return (view.view_from_world * vec4<f32>(travel, 0.0)).xyz;
+    }
+    return travel;
+}
+
+// Point light `j`'s position in view space.
+fn point_position(j: u32) -> vec3<f32> {
+    let at = character.point_position[j].xyz;
+    if character.misc.w > 0.5 {
+        return (view.view_from_world * vec4<f32>(at, 1.0)).xyz;
+    }
+    return at;
+}
+
 // The dot with the direction toward the light, the reverse of its travel.
 fn facing(n: vec3<f32>, travel: vec3<f32>) -> f32 {
     return -dot(n, travel);
@@ -210,7 +232,7 @@ fn lit_layer(
 @if(CHAR_DIRECTIONAL) {
     var lights = vec3<f32>(0.0);
     for (var i = 0u; i < 3u; i++) {
-        let diffuse = character.light_diffuse[i].rgb * max(facing(n, character.light_travel[i].xyz), 0.0);
+        let diffuse = character.light_diffuse[i].rgb * max(facing(n, light_travel(i)), 0.0);
         lights += character.light_ambient[i].rgb + diffuse;
     }
     base = 2.0 * (c.rgb * lights);
@@ -220,7 +242,7 @@ fn lit_layer(
 @if(!CHAR_DIRECTIONAL && CHAR_NORMAL_MAP) {
     var detail = vec3<f32>(0.0);
     for (var i = 0u; i < 3u; i++) {
-        let travel = character.light_travel[i].xyz;
+        let travel = light_travel(i);
         let difference = max(facing(mapped, travel), 0.0) - max(facing(g, travel), 0.0);
         detail += character.light_diffuse[i].rgb * difference;
     }
@@ -232,7 +254,7 @@ fn lit_layer(
 @if(CHAR_SPEC_MAP) {
     var sheen = vec3<f32>(0.0);
     for (var i = 0u; i < 3u; i++) {
-        let travel = character.light_travel[i].xyz;
+        let travel = light_travel(i);
         var r = travel;
 @if(CHAR_NORMAL_MAP || CHAR_GEOMETRIC_NORMAL)
         r = normalize(travel - n * (2.0 * dot(travel, n)));
@@ -247,7 +269,7 @@ fn lit_layer(
 // Point light `j`: its colour by the normal's facing to it and its falloff,
 // unscaled by the colour map.
 fn point_light(j: u32, n: vec3<f32>, position: vec3<f32>) -> vec3<f32> {
-    let to = character.point_position[j].xyz - position;
+    let to = point_position(j) - position;
     let d = length(to);
     let f = max(dot(n, to) / d, 0.0);
     let de = d + 0.001;
