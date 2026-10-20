@@ -24,6 +24,7 @@ mod pad;
 mod pause;
 mod physics;
 mod picker;
+mod play;
 mod prepare;
 mod progress;
 mod screen;
@@ -293,6 +294,7 @@ fn run_tv(
         extraction::ExtractPlugin,
         intro_player::IntroPlugin,
         physics::SeamPlugin,
+        play::PlayPlugin,
         progress::ProgressPlugin,
     ));
     if let Some(progress) = &progress {

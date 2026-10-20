@@ -15,9 +15,9 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, GIANTS_SERIAL, Phone,
-    TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, pad_tv,
-    press_tv, set_session_profile, tv, wait_for_tv,
+    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, E2E_START,
+    E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only,
+    inject_load_outcomes, inject_profile, pad_tv, press_tv, set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -766,6 +766,114 @@ async fn the_pick_loads_the_level_behind_the_portal() {
     assert_eq!(scripts["files"], 5, "{}", snap["level"]);
     assert_eq!(scripts["scripts"].as_u64(), Some(E2E_SCRIPTS as u64));
     assert!(snap["level"]["scripts_reason"].is_null());
+    phone.close().await.unwrap();
+}
+
+/// The hero's pivot off `/api/_test/tv`.
+fn hero_at(snap: &Value) -> [f64; 3] {
+    let p = &snap["hero"]["position"];
+    [0, 1, 2].map(|i| {
+        p[i].as_f64()
+            .unwrap_or_else(|| panic!("no position: {snap}"))
+    })
+}
+
+/// AG.21: with the level loaded, placing Eruptor takes the TV into it with
+/// him at the start, facing 0°, settled on the floor (5 mm up); with no pad
+/// it waits for one, a press on a posted pad takes him over, and its stick
+/// walks him against the camera's view (15°) until the made-up level's wall
+/// holds him 5 mm off it (his 0.8644 m sphere, the triangles' 0.05 m).
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn placing_a_character_enters_the_level_at_its_start() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_walking().expect("spawn guacamole");
+    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready" || s["level"]["state"] == "failed"
+    })
+    .await
+    .expect("the level loads");
+    assert_eq!(snap["level"]["state"], "ready", "{}", snap["level"]);
+    assert_eq!(snap["mode"], "portal");
+    let start = snap["level"]["start"].clone();
+    for (i, want) in E2E_START.iter().enumerate() {
+        let read = start[i].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            (read - f64::from(*want)).abs() < 1e-5,
+            "the waypoint, read: {}",
+            snap["level"]
+        );
+    }
+    assert_eq!(snap["level"]["triangles"], 4);
+
+    place_named(&phone, "Eruptor").await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] != "portal"
+    })
+    .await
+    .expect("the TV enters the level");
+    // No pad: the level waits for one from its first frame.
+    assert_eq!(snap["mode"], "paused", "{snap}");
+    assert_eq!(snap["input"]["pause"], "controller");
+    assert_eq!(snap["input"]["layer"], "level");
+    assert_eq!(snap["level"]["shown"], true);
+    assert_eq!(snap["screen"], "Portal");
+    let hero = &snap["hero"];
+    assert_eq!(hero["load_file"], "009_Eruptor", "{hero}");
+    assert_eq!(hero["slot"], 1);
+    assert_eq!(hero["heading"], 0.0);
+    let at = hero_at(&snap);
+    assert_eq!(
+        (at[0], at[2]),
+        (start[0].as_f64().unwrap(), start[2].as_f64().unwrap())
+    );
+    let above = at[1] - f64::from(E2E_FLOOR);
+    assert!((above - 0.005).abs() < 1e-3, "{above} m above the floor");
+
+    // A press on a posted pad takes him over; its stick walks him.
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level"
+    })
+    .await
+    .expect("the pad takes him over");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 1.0]}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        let p = hero_at(s);
+        (p[2] - at[2]).hypot(p[0] - at[0]) > 1.0
+    })
+    .await
+    .expect("he walks");
+    let p = hero_at(&snap);
+    let heading = (p[0] - at[0]).atan2(p[2] - at[2]).to_degrees();
+    assert!((heading - 15.0).abs() < 0.5, "along the view: {heading}°");
+    // On to the wall, then along it: he never goes past 5 mm off it.
+    let wall = f64::from(E2E_START[2] + E2E_WALL);
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(8), |s| {
+        hero_at(s)[0] - at[0] > 3.0
+    })
+    .await
+    .expect("he slides along the wall");
+    let p = hero_at(&snap);
+    let gap = wall - (p[2] + 0.8644 + 0.05);
+    assert!((gap - 0.005).abs() < 2e-3, "{gap} m off the wall at {p:?}");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 0.0]}))
+        .await
+        .unwrap();
     phone.close().await.unwrap();
 }
 

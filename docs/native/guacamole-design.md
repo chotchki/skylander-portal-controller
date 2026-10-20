@@ -1965,7 +1965,9 @@ press:
   overlay holds `InputFocus` meanwhile, so an Enter the widget would see lands on a node with no `Button`.
   While the level shows, its layer reads the pads itself ([`pad.rs`](../../crates/guacamole/src/pad.rs),
   AG.20: the first pad connected walks the hero, Start pauses, a lost pad waits for a press) and the
-  screen hears nothing. Otherwise the screen hears `TvInput`s.
+  screen hears nothing. Otherwise the screen hears `TvInput`s. The level shows once the first figure
+  placed that walks has entered it ([`play.rs`](../../crates/guacamole/src/play.rs), AG.21), and the
+  hero's fixed step reads the walking pad's stick against the following camera's view.
 - Mapping is positional, as Controllers has it: South activates (`act_on_input` triggers `Activate` on the
   focused button and holds `Pressed` on it while South is down), East is Back (it closes the error
   screens), Mode is Home (nothing until Open question 1 is answered), and the D-pad, the arrows and the

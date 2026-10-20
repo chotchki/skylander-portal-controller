@@ -5,7 +5,8 @@
 //! extract written) and keyed by the TV's own derivation (the warm's for a
 //! card, the level loader's for chapter 1), equal to `guacamole::census`'s
 //! tables. A table that drifts prints the rows the dump gives, in the
-//! table's syntax.
+//! table's syntax. And every character that walks (AG.21), drawn in the
+//! level as the hero, keys nothing the card tables don't hold.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -13,12 +14,14 @@ use std::time::Instant;
 
 use guac_extract::{levels, models, roster};
 use guac_formats::igz::Igz;
+use guac_ir::shading::Scene;
 use guac_ir::{DumpIdentity, Sha256};
 use guacamole::census::{self, Row};
 use guacamole::character::attach;
 use guacamole::character::turntable::rig_scene;
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::level_scene;
+use guacamole::walkers;
 
 /// `key` from the environment, else from the repo's `.env.dev`.
 fn env_or_dotenv(key: &str) -> Option<String> {
@@ -44,6 +47,8 @@ fn identity() -> DumpIdentity {
 /// What the card side read: its keys, the models and what they carry.
 struct Cards {
     keys: Vec<WarmKey>,
+    /// Each walker's keys in the level as the hero.
+    heroes: Vec<(String, Vec<WarmKey>)>,
     models: usize,
     /// Attached models over every model, and those the turntable draws
     /// nothing of (helpers whose material it doesn't read).
@@ -55,7 +60,7 @@ struct Cards {
 /// off a shelf: each model, with what a fresh figure carries (read as the
 /// model stage reads it, with `global.bld`'s templates), keyed by the
 /// warm's own derivation in the rig's scene.
-fn card_keys(dump: &Path) -> Cards {
+fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let roster = roster::read(dump, identity()).expect("the roster");
     let level_of = |archive: &str| {
@@ -69,6 +74,7 @@ fn card_keys(dump: &Path) -> Cards {
     let scene = rig_scene(&rig).expect("the rig's scene");
     let mut cards = Cards {
         keys: Vec::new(),
+        heroes: Vec::new(),
         models: 0,
         carried: 0,
         undrawn: 0,
@@ -96,6 +102,12 @@ fn card_keys(dump: &Path) -> Cards {
                 cards.keys.push(k);
             }
         }
+        if walkers::walker(load).is_some() {
+            let keys = warm::keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
+            cards
+                .heroes
+                .push((load.to_string(), keys.into_iter().map(|(k, _)| k).collect()));
+        }
     }
     cards
 }
@@ -103,8 +115,8 @@ fn card_keys(dump: &Path) -> Cards {
 /// Every key chapter 1 draws, as the level loader keys it (through its own
 /// `level_scene::at_start`): its drawn segments in its scene at the fresh
 /// state's camera, lit and fogged by its start's zone (AG.41), the sky
-/// unfogged as that zone has it.
-fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
+/// unfogged as that zone has it; and the scene the hero draws in there.
+fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize, Scene) {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let level = levels::LEVELS[0];
     let archive = std::fs::read(levels::archive_path(&usrdir, level)).expect("the level archive");
@@ -120,8 +132,9 @@ fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
         .expect("the atmosphere")
         .ir;
     let start = level_scene::at_start(scene, &lights, &atmosphere).expect("chapter 1 at its start");
+    let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let keys = start.keys.into_iter().map(|(k, _)| k).collect();
-    (keys, start.drawn.materials.len())
+    (keys, start.drawn.materials.len(), hero)
 }
 
 /// The rows `keys` give, sorted as the tables keep them.
@@ -160,11 +173,11 @@ fn the_census_is_the_discs() {
         env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP to the Giants dump"),
     );
     let started = Instant::now();
-    let cards = card_keys(&dump);
-    let cards_took = started.elapsed();
-    let started = Instant::now();
-    let (level, materials) = level_keys(&dump);
+    let (level, materials, hero_scene) = level_keys(&dump);
     let level_took = started.elapsed();
+    let started = Instant::now();
+    let cards = card_keys(&dump, &hero_scene);
+    let cards_took = started.elapsed();
     let (skinned, unskinned): (Vec<WarmKey>, Vec<WarmKey>) =
         cards.keys.iter().partition(|k| k.mesh.skinned);
     eprintln!(
@@ -190,6 +203,39 @@ fn the_census_is_the_discs() {
         }
     }
     assert!(checks.iter().all(Result::is_ok), "a table isn't the dump's");
+    // The hero's keys are his card's: the start's pass compiled them.
+    assert_eq!(
+        cards
+            .heroes
+            .iter()
+            .map(|(l, _)| l.as_str())
+            .collect::<Vec<_>>(),
+        walkers::WALKERS
+            .iter()
+            .map(|w| w.load_file)
+            .collect::<Vec<_>>(),
+        "every walker's model read"
+    );
+    for (load, keys) in &cards.heroes {
+        let outside: Vec<String> = keys
+            .iter()
+            .filter(|k| {
+                let table = if k.mesh.skinned {
+                    census::TURNTABLE
+                } else {
+                    census::TURNTABLE_STATIC
+                };
+                !table.contains(&Row::of(k))
+            })
+            .map(|k| Row::of(k).source())
+            .collect();
+        eprintln!(
+            "{load} as the hero: {} keys, {} outside the card tables",
+            keys.len(),
+            outside.len()
+        );
+        assert!(outside.is_empty(), "{load} as the hero: {outside:?}");
+    }
     assert_eq!(
         (cards.models, cards.carried, cards.undrawn),
         (67, 102, 3),

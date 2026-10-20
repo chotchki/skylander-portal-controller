@@ -140,6 +140,15 @@ impl TestServer {
         Self::spawn_guacamole_over(tmp, &dumps, &env)
     }
 
+    /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level
+    /// (openspec AG.21), no intros.
+    pub fn spawn_guacamole_walking() -> Result<Self> {
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let fixture = IntroFixture::build_walking_in(&tmp.path().join("giants"), &[])?;
+        let (dumps, env) = (fixture.dumps.clone(), fixture.env());
+        Self::spawn_guacamole_over(tmp, &dumps, &env)
+    }
+
     /// guacamole over `fixture`'s Giants dump and finished extract, the dump
     /// trusted through `GUAC_TEST_KNOWN_DUMP` (openspec AB.11).
     pub fn spawn_guacamole_with_intros(fixture: &IntroFixture) -> Result<Self> {
@@ -1427,6 +1436,22 @@ pub const E2E_MODELLED: u32 = 0x0e;
 /// its portrait and the log says why.
 pub const E2E_DAMAGED: u32 = 0x04;
 
+/// The toy type that walks the level in a walking fixture (AG.21,
+/// [`IntroFixture::build_walking_in`]): Eruptor, on the load file the walk
+/// takes for him, with the synthetic model of its own. Elsewhere he keeps
+/// his portrait and the portal view, so the other tests' placements of him
+/// never take the TV into the level.
+pub const E2E_WALKER: u32 = 0x09;
+
+/// The made-up chapter 1's start (`213_Init_Location`'s first waypoint) and
+/// its floor's height: every e2e extract's.
+pub const E2E_START: [f32; 3] = [10.191352, 43.37944, -93.393616];
+pub const E2E_FLOOR: f32 = E2E_START[1] - 0.01;
+
+/// How far ahead of the start along +z the made-up chapter 1's wall stands,
+/// where its floor ends.
+pub const E2E_WALL: f32 = 6.0;
+
 /// A synthetic Giants dump and a finished extract of it (openspec AB.11,
 /// AE.4, AE.13, AG.15, AH.2, AH.22): [`E2E_ROSTER`] with a flat-colour
 /// portrait each, the progression tables ([`E2E_LEVEL_XP`],
@@ -1470,6 +1495,15 @@ impl IntroFixture {
 
     /// Under `dir`, which must outlive the run (a server's own temp dir).
     pub fn build_in(dir: &Path, intros: &[FixtureIntro]) -> Result<Self> {
+        Self::build_with(dir, intros, false)
+    }
+
+    /// [`Self::build_in`], with [`E2E_WALKER`] walking the level (AG.21).
+    pub fn build_walking_in(dir: &Path, intros: &[FixtureIntro]) -> Result<Self> {
+        Self::build_with(dir, intros, true)
+    }
+
+    fn build_with(dir: &Path, intros: &[FixtureIntro], walking: bool) -> Result<Self> {
         use guac_extract::intros::{self, IrFormat};
         use guac_extract::known::KnownDump;
         use guac_extract::transcode::TARGET;
@@ -1519,9 +1553,9 @@ impl IntroFixture {
         };
         // A test-hooks build is a dev build, which reads RON.
         intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
-        write_roster(&mut opened.dir)?;
+        write_roster(&mut opened.dir, walking)?;
         write_progression(&mut opened.dir)?;
-        write_models(&mut opened.dir)?;
+        write_models(&mut opened.dir, walking)?;
         write_level(&mut opened.dir)?;
         write_scripts(&mut opened.dir)?;
 
@@ -1578,7 +1612,7 @@ impl IntroFixture {
 
 /// [`E2E_ROSTER`] into the extract as the roster stage leaves it: the IR, then
 /// a 16x16 flat-colour PNG per figure.
-fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+fn write_roster(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_ir::{FigureKind, Language, Roster, RosterFigure, Text};
 
@@ -1600,7 +1634,11 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
             variant_word: f.word.map(|w| text("ToyType_Variant", w)),
             element: f.element,
             category: f.category,
-            load_file: load_file(f.toy_type),
+            load_file: if walking && f.toy_type == E2E_WALKER {
+                WALKING_LOAD.into()
+            } else {
+                load_file(f.toy_type)
+            },
             portrait: Some(format!(
                 "portraits/{:06x}-{:04x}.png",
                 f.toy_type, f.variant
@@ -1630,11 +1668,12 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
 }
 
 /// Chapter 1 into the extract as the level stage leaves it (AG.15), every
-/// part recorded so the extract is current: a 20 m floor at the spawn's
-/// height, `213_Init_Location` with its first waypoint, the three world
-/// lights (AG.19) and the start's atmospheric zone the TV's loader lights
-/// and fogs the level with (AG.41), nothing drawn and no props yet (AG.21
-/// adds what its walk needs). Every number made up.
+/// part recorded so the extract is current: a floor at the spawn's height
+/// ending at a wall (AG.21's walk), `213_Init_Location` with its first
+/// waypoint, the three world lights (AG.19) and the start's atmospheric
+/// zone the TV's loader lights and fogs the level with (AG.41), nothing
+/// drawn and no props. Its camera is camera 0's definition, which guacamole
+/// holds until AG.26 reads them off the scripts. Every number made up.
 fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
@@ -1647,14 +1686,25 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     let ir = IrFormat::Ron;
     let identity = dir.manifest().identity.clone();
     let level = LEVELS[0].to_owned();
-    let spawn = [10.191352, 43.37944, -93.393616];
+    let spawn = E2E_START;
+    // The floor, 20 m wide, runs from 10 m behind the start to the wall
+    // [`E2E_WALL`] ahead of it along +z, which shares its edge (level 213's
+    // mesh is indexed so too) and stands 3 m: up, then the wall's face
+    // toward the start.
     let floor = CollisionMesh {
         world: "Levels/E2E/E2E_ART_MASTER.ma".into(),
-        vertices: [[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]]
-            .map(|[x, z]| [spawn[0] + x, spawn[1] - 0.01, spawn[2] + z])
-            .to_vec(),
-        triangles: vec![[0, 2, 1], [0, 3, 2]],
-        materials: vec![0, 0],
+        vertices: [
+            [-10.0, 0.0, -10.0],
+            [10.0, 0.0, -10.0],
+            [10.0, 0.0, E2E_WALL],
+            [-10.0, 0.0, E2E_WALL],
+            [10.0, 3.0, E2E_WALL],
+            [-10.0, 3.0, E2E_WALL],
+        ]
+        .map(|[x, y, z]| [spawn[0] + x, E2E_FLOOR + y, spawn[2] + z])
+        .to_vec(),
+        triangles: vec![[0, 2, 1], [0, 3, 2], [3, 4, 2], [3, 5, 4]],
+        materials: vec![0; 4],
         radius: 0.05,
         welding: 4,
     };
@@ -1890,10 +1940,14 @@ fn load_file(toy_type: u32) -> String {
     format!("{toy_type:03}_e2e")
 }
 
+/// [`E2E_WALKER`]'s load file in a walking fixture: the one guacamole walks
+/// on Eruptor's numbers (`guacamole::walkers`).
+const WALKING_LOAD: &str = "009_Eruptor";
+
 /// What the model stage leaves for [`E2E_MODELLED`] and [`E2E_DAMAGED`]: the
 /// first's model and texture, the second's model file cut short, and the
 /// rig. Every number made up here.
-fn write_models(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_formats::texture::{Format, Texture};
     use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
@@ -2027,6 +2081,14 @@ fn write_models(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     let rel = ir.model_path(&model.load_file);
     let bytes = ir.encode(&model, dir, &rel)?;
     dir.write_output(&rel, &bytes)?;
+    if walking {
+        let walker = Model {
+            load_file: WALKING_LOAD.into(),
+            ..model.clone()
+        };
+        let rel = ir.model_path(WALKING_LOAD);
+        dir.write_output(&rel, &ir.encode(&walker, dir, &rel)?)?;
+    }
     // Its palette (AH.22): the idle alone, in slot 0.
     let palette = guac_ir::palette::Palette {
         identity: identity.clone(),

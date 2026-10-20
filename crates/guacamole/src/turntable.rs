@@ -214,6 +214,11 @@ impl Turntables {
         }
     }
 
+    /// The shelf the cards draw from, once one has landed.
+    pub(crate) fn shelf(&self) -> Option<&Arc<Shelf>> {
+        self.shelf.as_ref()
+    }
+
     /// Why `slot`'s card keeps its portrait, when it does for good.
     pub(crate) fn portrait_reason(&self, slot: u8) -> Option<&str> {
         match &self.slots[usize::from(slot)].as_ref()?.state {
@@ -272,13 +277,14 @@ struct Scrolling {
     materials: Vec<Handle<CharacterMaterial>>,
 }
 
-/// A model read off the extract, ready to spawn.
-struct Loaded {
-    model: Arc<Model>,
+/// A model read off the extract, ready to spawn: a card's, or the hero's
+/// ([`crate::play`]).
+pub(crate) struct Loaded {
+    pub(crate) model: Arc<Model>,
     /// Each texture as a role samples it: (extract path, sRGB view, sampler).
-    images: Vec<((String, bool, Sampler), Image)>,
+    pub(crate) images: Vec<((String, bool, Sampler), Image)>,
     framing: Framing,
-    took: Duration,
+    pub(crate) took: Duration,
 }
 
 /// The turntable cameras draw before the TV's (order 0) samples their
@@ -429,7 +435,7 @@ fn begin(slot: usize, p: &Placement, shelf: &Arc<Shelf>, formats: CompressedImag
 }
 
 /// A load file's model, textures and framing off the extract.
-fn load_model(
+pub(crate) fn load_model(
     shelf: &Shelf,
     load: &str,
     formats: CompressedImageFormats,
@@ -1099,7 +1105,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn figure(toy: u32, name: &str, category: Category, load: &str) -> RosterFigure {
+    pub(crate) fn figure(toy: u32, name: &str, category: Category, load: &str) -> RosterFigure {
         let text = |key: &str, en: &str| Text {
             key: key.into(),
             texts: vec![en.into()],

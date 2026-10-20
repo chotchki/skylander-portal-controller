@@ -18,13 +18,21 @@
 //!   seen from a camera.
 //! - The camera AF's fresh state shows ([`fresh_state_transform`],
 //!   [`fresh_state_projection`]), which the dev entry draws the level at.
+//! - The walk (AG.21): the level's collision as static seam bodies
+//!   ([`solids`]), where the hero starts ([`start_point`]) and the scene he
+//!   draws in ([`hero_scene`]).
+
+use std::sync::Arc;
 
 use bevy::camera::PerspectiveProjection;
 use bevy::math::{Mat4, Vec3};
 use bevy::prelude::{GlobalTransform, Transform};
-use guac_ir::level::{Atmosphere, AtmosphericZone, LevelMaterial, Lights, SceneGraph, ZoneFog};
+use guac_ir::level::{
+    Atmosphere, AtmosphericZone, Collision, LevelMaterial, Lights, Placements, SceneGraph, ZoneFog,
+};
 use guac_ir::model::{self, Segment};
 use guac_ir::shading::{DirectionalLight, PointLight, Scene};
+use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, MeshError, Pose};
 
 use crate::character::key::bit;
 use crate::character::remaster;
@@ -130,6 +138,73 @@ pub enum LevelError {
     },
     #[error(transparent)]
     Keys(#[from] WarmError),
+    #[error("the level has no collision mesh")]
+    NoCollision,
+    #[error("the {world} collision mesh: {error}")]
+    Collision { world: String, error: MeshError },
+    #[error("the level has no {START_PLACEMENT} with a waypoint")]
+    NoStart,
+}
+
+/// The placement whose first waypoint is where the first player stands at
+/// the chapter's start (ag-motion section 4; AF.9: Eruptor idles on it,
+/// settled onto the ground, facing 0°).
+pub const START_PLACEMENT: &str = "213_Init_Location";
+
+/// The way the hero faces at the start, degrees (AF.9: heading 0).
+pub const START_FACING: f32 = 0.0;
+
+/// Where the hero starts: [`START_PLACEMENT`]'s first waypoint, before he's
+/// settled onto the ground.
+pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
+    placements
+        .actors
+        .iter()
+        .find(|a| a.name == START_PLACEMENT)
+        .and_then(|a| {
+            placements
+                .waypoints
+                .get(usize::try_from(a.waypoints?).ok()?)
+        })
+        .and_then(|path| path.first())
+        .map(|w| Vec3::from_array(w.position))
+        .filter(|p| p.is_finite())
+        .ok_or(LevelError::NoStart)
+}
+
+/// The first body id the level's collision meshes take, one each in the
+/// part's order; placements' solids (AG.25) number past them.
+pub const LEVEL_BODIES: u32 = 1;
+
+/// The level's static solids: each world's collision mesh as a static seam
+/// body in the level's frame (its vertices already there, AG.15), every
+/// triangle's material kept.
+pub fn solids(collision: &Collision) -> Result<Vec<Body>, LevelError> {
+    if collision.meshes.is_empty() {
+        return Err(LevelError::NoCollision);
+    }
+    collision
+        .meshes
+        .iter()
+        .zip(LEVEL_BODIES..)
+        .map(|(m, id)| {
+            let mesh = Mesh::new(
+                m.vertices.iter().map(|v| Vec3::from_array(*v)).collect(),
+                m.triangles.iter().map(|t| t.map(u32::from)).collect(),
+                m.materials.clone(),
+            )
+            .map_err(|error| LevelError::Collision {
+                world: m.world.clone(),
+                error,
+            })?;
+            Ok(Body {
+                id: BodyId(id),
+                kind: BodyKind::Static,
+                pose: Pose::IDENTITY,
+                collider: Collider::Mesh(Arc::new(mesh)),
+            })
+        })
+        .collect()
 }
 
 /// The way a light faces, in the level's frame: a `tfbEulerTransform`'s
@@ -248,6 +323,20 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
     scene.fog = true;
     scene.fog_colour = remaster::linear(fog.colour);
     (scene.fog_near, scene.fog_far) = (fog.near, fog.far);
+    scene
+}
+
+/// The scene the hero draws in, seen from a camera whose view is
+/// `view_from_world`: the level's directional lights and fog as
+/// [`view_scene`] gives them, no point light and no shadows (AG.21). So his
+/// masks are the ones a card draws him with (fog on, nothing else), keys
+/// the start's pass compiled from the census. Whether the original lights a
+/// hero by a level's point lights is unread; level 213's one is about 103 m
+/// from the start, under 1 % of its colour there. AG.23's shadows key him
+/// again either way.
+pub fn hero_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
+    let mut scene = view_scene(lights, fog, view_from_world);
+    scene.point_lights.clear();
     scene
 }
 
@@ -706,6 +795,46 @@ mod tests {
         const { assert!(LevelFog::NONE.near > FRESH_STATE_FAR) };
     }
 
+    /// AG.21: the hero draws in the level's lights and fog as the camera
+    /// sees them, without its point light, so a material leaving point
+    /// lights and fog to the scene keys as a card draws it (fog on, nothing
+    /// else), where the level's scene keys the point light too.
+    #[test]
+    fn the_hero_draws_in_the_levels_light_and_fog_without_its_point_light() {
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let fog = LevelFog {
+            colour: [115, 83, 49],
+            near: 30.48,
+            far: 335.28,
+        };
+        let view = Transform::from_xyz(3.0, 2.0, 10.0)
+            .looking_to(Vec3::new(1.0, -0.5, 2.0), Vec3::Y)
+            .to_matrix()
+            .inverse();
+        let level = view_scene(&l, &fog, view);
+        let hero = hero_scene(&l, &fog, view);
+        assert_eq!(hero.lights, level.lights, "the level's lights, in view");
+        assert_eq!(level.point_lights.len(), 1);
+        assert!(hero.point_lights.is_empty());
+        assert!(hero.fog && !hero.shadows);
+        assert_eq!(
+            (hero.fog_colour, hero.fog_near, hero.fog_far),
+            (level.fog_colour, 30.48, 335.28)
+        );
+        let key = |m: &model::Material, scene: &Scene| {
+            CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, |_| Handle::default())
+                .unwrap()
+                .key
+        };
+        let card = Scene {
+            fog: true,
+            ..Scene::new()
+        };
+        let open = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
+        assert_eq!(key(&open, &hero), key(&open, &card));
+        assert_ne!(key(&open, &level), key(&open, &card));
+    }
+
     fn slot(role: TextureRole) -> TextureSlot {
         TextureSlot {
             role,
@@ -1142,5 +1271,102 @@ mod tests {
         let p = fresh_state_projection();
         assert!((p.fov.to_degrees() - 53.96).abs() < 0.005, "{}", p.fov);
         assert!((p.far - 243.84).abs() < 1e-4);
+    }
+
+    fn placement(name: &str, waypoints: Option<u32>) -> guac_ir::level::Placement {
+        guac_ir::level::Placement {
+            object: 7,
+            id: 0,
+            name: name.into(),
+            script: None,
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            model: None,
+            solid: None,
+            movement: None,
+            waypoints,
+            activity_state: 4,
+        }
+    }
+
+    fn waypoint(position: [f32; 3]) -> guac_ir::level::Waypoint {
+        guac_ir::level::Waypoint {
+            name: "wp".into(),
+            position,
+            rotation: [0.0, 90.0, 0.0],
+            height: 0.0,
+        }
+    }
+
+    /// AG.21: the hero starts at `213_Init_Location`'s first waypoint, not
+    /// at the placement itself or another path's; a level without one, or
+    /// whose path is empty or out of range, has no start.
+    #[test]
+    fn the_start_is_the_init_locations_first_waypoint() {
+        let first = [10.191352, 43.37944, -93.393616];
+        let mut p = Placements {
+            identity: identity(),
+            level: "level_213_tutotial".into(),
+            actors: vec![
+                placement("Sheep_1", Some(0)),
+                placement(START_PLACEMENT, Some(1)),
+            ],
+            waypoints: vec![
+                vec![waypoint([1.0, 2.0, 3.0])],
+                vec![waypoint(first), waypoint([0.0; 3])],
+            ],
+        };
+        assert_eq!(start_point(&p), Ok(Vec3::from_array(first)));
+        assert_eq!(START_FACING, 0.0);
+        p.waypoints[1].clear();
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+        p.actors[1].waypoints = Some(9);
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+        p.actors[1].waypoints = None;
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+        p.actors.pop();
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+    }
+
+    /// AG.21: each world's collision mesh is a static body in the level's
+    /// frame, numbered from 1, its triangles and their materials kept; no
+    /// mesh, or one the seam refuses, is the level's error.
+    #[test]
+    fn the_levels_collision_becomes_static_bodies() {
+        let mesh = |world: &str, y: f32| guac_ir::level::CollisionMesh {
+            world: world.into(),
+            vertices: vec![[0.0, y, 0.0], [1.0, y, 0.0], [0.0, y, 1.0], [1.0, y, 1.0]],
+            triangles: vec![[0, 2, 1], [1, 2, 3]],
+            materials: vec![1, 3],
+            radius: 0.05,
+            welding: 4,
+        };
+        let mut c = Collision {
+            identity: identity(),
+            level: "level_213_tutotial".into(),
+            meshes: vec![mesh("a", 0.0), mesh("b", 5.0)],
+        };
+        let bodies = solids(&c).unwrap();
+        assert_eq!(bodies.len(), 2);
+        for (body, (id, y)) in bodies.iter().zip([(1, 0.0), (2, 5.0)]) {
+            assert_eq!(
+                (body.id, body.kind, body.pose),
+                (BodyId(id), BodyKind::Static, Pose::IDENTITY)
+            );
+            let Collider::Mesh(m) = &body.collider else {
+                panic!("{body:?}")
+            };
+            assert_eq!(m.triangles(), &[[0, 2, 1], [1, 2, 3]]);
+            assert_eq!(m.vertices()[3], Vec3::new(1.0, y, 1.0));
+            assert_eq!(m.materials(), &[1, 3]);
+        }
+        c.meshes[1].triangles[1] = [1, 2, 4];
+        assert!(matches!(
+            solids(&c),
+            Err(LevelError::Collision { world, .. }) if world == "b"
+        ));
+        c.meshes.clear();
+        assert_eq!(solids(&c).err(), Some(LevelError::NoCollision));
     }
 }

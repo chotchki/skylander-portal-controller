@@ -289,10 +289,6 @@ pub(crate) struct LevelPads {
 impl LevelPads {
     /// The level takes the TV: this layer takes the pads, the first connected
     /// walking.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "AG.21 takes the TV into the level")
-    )]
     pub(crate) fn show(&mut self) {
         if self.seat.is_none() {
             self.seat = Some(Seat::new());
@@ -300,10 +296,6 @@ impl LevelPads {
     }
 
     /// The level gave the TV back.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "AG.21 takes the TV into the level")
-    )]
     pub(crate) fn hide(&mut self) {
         self.seat = None;
     }

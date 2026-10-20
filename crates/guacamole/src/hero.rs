@@ -7,9 +7,10 @@
 //! [`FollowCamera`]): after his step, on his pivot as the step began, its
 //! `Transform` the eye looking at the aim, eased the same way; his next step
 //! walks him against the view it left (gameplay-camera's The stick held
-//! through a switch). A later box (AG.21) puts [`HeroPlugin`] on the TV,
-//! feeds [`HeroInput`] from the pad and gives the camera entity its
-//! `Camera3d`; the tests here run it headless.
+//! through a switch). AG.21 puts [`HeroPlugin`] on the TV
+//! ([`crate::play`]), [`crate::pad`]'s layer feeds [`HeroInput`] and the
+//! level's camera is the [`FollowCamera`]'s entity; the tests here run it
+//! headless.
 //!
 //! Ordering: Avian refits its trees for a moved kinematic body when its
 //! physics schedule runs (`FixedPostUpdate`), so a body moved in `FixedUpdate`
@@ -18,17 +19,10 @@
 //! both sides meet it where it stood when the step began, and record its
 //! velocity in [`MovingSolids`] for the next.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "AG.21 puts the hero on the TV; until then its tests are its callers"
-    )
-)]
-
+use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
-use guac_motion::camera::{GameCamera, TransitionPlane, View};
+use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
 use guac_motion::proxy::Surfaces;
 use guac_motion::seam::BodyId;
@@ -101,19 +95,37 @@ pub(crate) struct FollowCamera {
 }
 
 /// The camera's drawn transform: at the eye, looking at the aim.
-fn viewed(view: &View) -> Transform {
+pub(crate) fn viewed(view: &View) -> Transform {
     Transform::from_translation(view.eye).looking_at(view.aim, Vec3::Y)
 }
 
+/// The picture a view draws: its height, the near plane and its far clip;
+/// the aspect follows the target.
+pub(crate) fn projection(view: &View) -> PerspectiveProjection {
+    PerspectiveProjection {
+        fov: view.fov_y.to_radians(),
+        near: NEAR,
+        far: view.far(),
+        ..PerspectiveProjection::default()
+    }
+}
+
+/// The gameplay camera where `camera` stands, eased between steps: what a
+/// camera entity takes to follow the hero.
+pub(crate) fn following(camera: FollowCamera) -> impl Bundle {
+    let view = camera.camera.view();
+    (
+        viewed(&view),
+        Projection::Perspective(projection(&view)),
+        TransformInterpolation,
+        camera,
+    )
+}
+
 /// Spawns the gameplay camera where `camera` stands, eased between steps.
+#[cfg(test)]
 pub(crate) fn spawn_camera(commands: &mut Commands, camera: FollowCamera) -> Entity {
-    commands
-        .spawn((
-            viewed(&camera.camera.view()),
-            TransformInterpolation,
-            camera,
-        ))
-        .id()
+    commands.spawn(following(camera)).id()
 }
 
 /// His drawn transform: the pivot, his facing turned before his lean.
@@ -169,16 +181,29 @@ fn step_heroes(
 fn step_cameras(
     time: Res<Time>,
     heroes: Query<&HeroBody>,
-    mut cameras: Query<(&mut FollowCamera, &mut Transform), Without<HeroBody>>,
+    mut cameras: Query<
+        (&mut FollowCamera, &mut Transform, Option<&mut Projection>),
+        Without<HeroBody>,
+    >,
 ) {
     let Ok(hero) = heroes.single() else {
         return;
     };
     let step = time.delta_secs();
-    for (mut follow, mut transform) in &mut cameras {
+    for (mut follow, mut transform, drawn) in &mut cameras {
         let FollowCamera { camera, planes } = &mut *follow;
         camera.step(hero.before, step, planes);
-        *transform = viewed(&camera.view());
+        let view = camera.view();
+        *transform = viewed(&view);
+        // The far clip moves through a plane's blend (AG.28's).
+        if let Some(mut drawn) = drawn {
+            let want = projection(&view);
+            let same = matches!(&*drawn, Projection::Perspective(p)
+                if (p.fov, p.near, p.far) == (want.fov, want.near, want.far));
+            if !same {
+                *drawn = Projection::Perspective(want);
+            }
+        }
     }
 }
 

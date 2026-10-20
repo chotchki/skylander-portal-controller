@@ -5,8 +5,9 @@
 //! Copied from the resources that feed the tree: the screen, game, message,
 //! Setup's lists, each card's figure and owner ids, and the intro queue. The
 //! focused choice is `InputFocus`'s entity's `FocusId`. The turntables'
-//! warm (AE.14), the level's load (AG.19), the start's pass (AE.25) and
-//! the pads as the level's layer reads them (AG.20) ride along,
+//! warm (AE.14), the level's load (AG.19), the start's pass (AE.25), the
+//! pads as the level's layer reads them (AG.20) and the walk's mode and
+//! hero (AG.21) ride along,
 //! `/api/_test/tv/frames` hands out the TV's frame times for the stall check
 //! and `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
 
@@ -27,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
+use crate::hero::HeroBody;
 use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
@@ -34,6 +36,7 @@ use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::level::{Level, LevelReport};
 use crate::pad::{LevelPads, Pause, labels};
 use crate::pause::{LevelOverlay, PromptGlyph};
+use crate::play::{HeroReport, Mode, Play};
 use crate::prepare::{Prepare, PrepareReport};
 use crate::screen::TvScreen;
 use crate::turntable::{CardPlate, CardState, Turntables};
@@ -88,6 +91,12 @@ pub struct TvSnapshot {
     pub prepare: Option<PrepareReport>,
     /// The pads and the level's layer (AG.20).
     pub input: InputShot,
+    /// Where the TV is (AG.21): `portal` (its own screens), `level`, or
+    /// `paused` (the level waiting, Start's or for a pad).
+    pub mode: String,
+    /// The hero, once a figure that walks is placed: who, his model's way
+    /// to the level and, in it, where he stands and faces.
+    pub hero: Option<HeroReport>,
 }
 
 /// The pads as the router reads them, and the level's layer (AG.20).
@@ -712,7 +721,7 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos, turntables, plates, warm, level, prepare): (
+    (queue, player, overlays, videos, turntables, plates, warm, level, prepare, play, heroes): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
@@ -722,6 +731,8 @@ fn mirror_tv(
         Option<Res<Warm>>,
         Option<Res<Level>>,
         Option<Res<Prepare>>,
+        Option<Res<Play>>,
+        Query<&HeroBody>,
     ),
 ) {
     let Some(current) = current else {
@@ -850,6 +861,11 @@ fn mirror_tv(
         .as_ref()
         .map(|q| q.queued().map(QueuedShot::from).collect())
         .unwrap_or_default();
+    let mode = match (play.as_deref(), pads.0.as_deref()) {
+        (Some(play), Some(level_pads)) => play.mode(level_pads),
+        _ => Mode::Portal,
+    };
+    let hero = play.as_deref().and_then(|p| p.report(&heroes));
     let input = input_shot(intro.is_some(), pads, (&children, &texts, &images, &pips));
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
@@ -882,6 +898,8 @@ fn mirror_tv(
         level: level.map(|l| l.report().clone()),
         prepare: prepare.map(|p| p.report().clone()),
         input,
+        mode: mode.name().to_owned(),
+        hero,
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

@@ -106,7 +106,7 @@ lists them from the start (openspec AE.4). No
 pinned the same way, so the phone bundle from step 3 serves both apps.
 `spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
 
-[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (44 tests) is
+[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (25 tests) is
 guacamole-only and skips with a message otherwise. It reads what the TV
 shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
@@ -131,7 +131,20 @@ reports the pads in the order they connected (name, ids, the resolver's
 `labels`, the raw `stick`, `walking`), the `layer` that takes them, the
 level's `pause` and its `overlay` as drawn, and `hero_stick`.
 `a_posted_pad_reads_raw` checks a stick value inside Bevy's own dead zone
-lands as posted. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
+lands as posted. `placing_a_character_enters_the_level_at_its_start`
+(openspec AG.21) runs over a walking fixture
+(`TestServer::spawn_guacamole_walking`: `E2E_WALKER`, Eruptor, on the
+load file guacamole walks, with a synthetic model of its own; in every
+other fixture he keeps his portrait, so no other test's placement of him
+enters the level), whose made-up chapter 1 is a floor ending at a wall
+`E2E_WALL` (6 m) ahead of `213_Init_Location`'s first waypoint
+(`E2E_START`). Placing him takes the TV into the level: the mirror's
+`mode` (`portal`, `level`, or `paused` while it waits) and `hero` (slot,
+figure, load file, his model's way to the level, and in it his `position`
+and `heading`) show him at the start facing 0°, settled 5 mm above the
+floor, waiting for a pad; a posted pad's press takes him over and its
+stick walks him along the camera's 15° to the wall, which holds him 5 mm
+off. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
 and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame
 log, `[ended_ms, took_ms, pipelines_compiled]` per frame after

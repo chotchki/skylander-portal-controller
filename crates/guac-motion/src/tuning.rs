@@ -6,6 +6,8 @@
 //! (design decision 2's tuning row): Eruptor's live values (AG.8, AG.10, AG.38),
 //! in the script's own units, feet and seconds.
 
+use crate::solid::{HavokSolid, SolidInfo, SolidKind};
+
 /// Metres in a foot: the script's and the disc's lengths are feet, the
 /// world's metres.
 pub const FOOT: f32 = 0.3048;
@@ -65,4 +67,28 @@ impl Tuning {
         terminal: 120.0,
         width: 4.0,
     };
+}
+
+/// Eruptor's scale in chapter 1, AG.8's live read: 150 %, which his solid and
+/// his drawn model both take. A script sets it; the disc's placement holds
+/// 100 (AG.14).
+pub const ERUPTOR_SCALE: f32 = 1.5;
+
+/// Eruptor's `CollisionInfo` (AG.8's live read): a 4 x 6 x 3 ft sphere,
+/// before his scale.
+pub const ERUPTOR_SHAPE: SolidInfo = SolidInfo {
+    kind: SolidKind::Sphere,
+    offset: [0.0; 3],
+    rotation: [0.0; 3],
+    width: 4.0,
+    height: 6.0,
+    length: 3.0,
+};
+
+/// Eruptor's solid as the original builds it: [`ERUPTOR_SHAPE`] at
+/// [`ERUPTOR_SCALE`], a 0.8644 m sphere centred 0.9144 m up.
+pub fn eruptor_solid() -> HavokSolid {
+    ERUPTOR_SHAPE
+        .havok([ERUPTOR_SCALE * 100.0; 3])
+        .expect("a sphere has a shape")
 }
