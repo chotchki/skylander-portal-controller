@@ -26,3 +26,9 @@ parry3d = "0.31"
 # Cargo.lock.
 glam = "0.33"
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# The #[ignore]d recording tests read O5 recordings (AG.38, AG.39) through
+# guac-oracle's own reader; guac-oracle is pure, so no Bevy and no RPCS3.
+guac-oracle = { path = "../guac-oracle" }
+serde_json = { workspace = true }

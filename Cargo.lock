@@ -4419,7 +4419,9 @@ name = "guac-motion"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "guac-oracle",
  "parry3d",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 

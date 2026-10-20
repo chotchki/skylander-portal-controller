@@ -16,7 +16,8 @@
 //!   vertical part held; supported with no across part left, the walk stops
 //!   dead; a frame off the ground within 0.4 ft of it adds 10 ft/s downward and
 //!   cuts the whole to the top speed (a crest's gain), higher up gravity
-//!   (136.21 ft/s² to 120 ft/s); landing from up there slides him a frame down
+//!   (136.21 ft/s² to 120 ft/s); landed after a frame off the ground that
+//!   began with the walk falling faster than 30 ft/s, he slides a frame down
 //!   the fall line. hero-movement's Speeding up and slowing down, Slopes,
 //!   Falling and landing.
 //!
@@ -30,8 +31,13 @@
 //! helper actor's measurements (AG.38), so on the ground it steers only after
 //! something sped it past the top; the landing's slide speed is the
 //! decompile's 1.2 x the fall's speed x the slope/90° (AG.10: 1.08-4.75 m/s
-//! with no law yet, AG.47's); what the band does to a walk rising past 20 ft/s
-//! is the reading's, never seen.
+//! with no law yet, AG.47's); what triggers the slide is the decompile's 30
+//! ft/s on the walk's own vertical speed, read as its speed when the last
+//! frame off the ground began, one of AG.47's two candidates: it calls every
+//! landing of AG.39's with the stick held as recorded, the cliff's top (met
+//! at 9.75 ft/s: no slide) among them, where the band rule AG.10's text gives
+//! slides him there (the recordings' test counts both); what the band does
+//! to a walk rising past 20 ft/s is the reading's, never seen.
 
 use crate::seam::Vec3;
 use crate::stick::Push;
@@ -69,12 +75,17 @@ impl Footing {
     }
 }
 
-/// The walk, ft/s, and whether his last update off the ground began up in
-/// the air, so landing slides him.
+/// The downward speed, ft/s, past which a frame off the ground slides him
+/// the frame he lands (the decompile's, as read).
+pub const SLIDE_FALL: f32 = 30.0;
+
+/// The walk, ft/s, and the downward speed it began his last frame off the
+/// ground with when that was faster than [`SLIDE_FALL`]: the slide's, the
+/// frame he's on the ground.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Walk {
     pub velocity: Vec3,
-    pub falling: bool,
+    pub landing: Option<f32>,
 }
 
 /// The part every slowing and cap in the air acts on.
@@ -115,6 +126,13 @@ pub fn push_direction(heading: f32, slope: Option<Vec3>) -> Vec3 {
     }
 }
 
+/// The movement script's "greater than": by more than its float tolerance,
+/// the difference taken first, as its VM compares (AG.38: at once up to
+/// 1.00e-4 ft/s over, steering from 1.01e-4).
+fn over(a: f32, b: f32) -> bool {
+    a - b > FLOAT_TOLERANCE
+}
+
 fn cut(v: Vec3, cap: f32) -> Vec3 {
     let len = v.length();
     if len > cap { v * (cap / len) } else { v }
@@ -137,7 +155,7 @@ fn slide(fall: f32, ground: Option<Vec3>) -> Vec3 {
 impl Walk {
     pub const STILL: Walk = Walk {
         velocity: Vec3::ZERO,
-        falling: false,
+        landing: None,
     };
 
     /// Face and Move: the stick turns and pushes the walk; `step` is the one
@@ -148,7 +166,7 @@ impl Walk {
         }
         let v = self.velocity;
         let length = v.length();
-        let v = if length <= tuning.max_speed + FLOAT_TOLERANCE {
+        let v = if !over(length, tuning.max_speed) {
             turned(v, push.heading)
         } else {
             v
@@ -171,8 +189,9 @@ impl Walk {
     pub fn update_movers(&mut self, held: bool, footing: &Footing, tuning: &Tuning, step: f32) {
         let high = footing.high();
         let mut v = self.velocity;
+        let fast = v.y < -SLIDE_FALL;
         let a = across(v);
-        if !held || a > tuning.max_speed + FLOAT_TOLERANCE {
+        if !held || over(a, tuning.max_speed) {
             let rate = if high {
                 tuning.air_let_go
             } else {
@@ -188,19 +207,19 @@ impl Walk {
             }
         }
         if footing.supported {
-            if self.falling {
-                v = slide(-v.y, footing.ground);
+            if let Some(fall) = self.landing.take() {
+                v = slide(fall, footing.ground);
             } else if v.x == 0.0 && v.z == 0.0 {
                 v = Vec3::ZERO;
             }
-            self.falling = false;
-        } else if !high && v.y <= BAND_RISE {
-            v.y -= BAND_KICK;
-            v = cut(v, tuning.max_speed);
-            self.falling = false;
         } else {
-            v.y = (v.y - tuning.gravity * step).max(-tuning.terminal);
-            self.falling = high;
+            self.landing = fast.then_some(-v.y);
+            if !high && v.y <= BAND_RISE {
+                v.y -= BAND_KICK;
+                v = cut(v, tuning.max_speed);
+            } else {
+                v.y = (v.y - tuning.gravity * step).max(-tuning.terminal);
+            }
         }
         self.velocity = v;
     }
@@ -286,7 +305,7 @@ mod tests {
         let ground = Footing::level(0.005);
         let mut walk = Walk {
             velocity: Vec3::new(0.0, 0.0, 21.5),
-            falling: false,
+            landing: None,
         };
         for _ in 0..36 {
             frame(&mut walk, part(0.9896, 90.0), &ground);
@@ -302,7 +321,7 @@ mod tests {
         let ground = Footing::level(0.005);
         let mut walk = Walk {
             velocity: Vec3::new(0.0, 0.0, 21.5),
-            falling: false,
+            landing: None,
         };
         let mut feet = 0.0;
         let mut moving = 0;
@@ -326,7 +345,7 @@ mod tests {
         for length in [21.5, 21.5 + 0.99e-4] {
             let mut walk = Walk {
                 velocity: Vec3::new(0.0, 0.0, length),
-                falling: false,
+                landing: None,
             };
             frame(&mut walk, full(180.0), &ground);
             assert!((heading(walk.velocity).unwrap() - 180.0).abs() < 1e-3);
@@ -342,7 +361,7 @@ mod tests {
         let over = 21.5 + 1.5e-4;
         let mut walk = Walk {
             velocity: Vec3::new(0.0, 0.0, over),
-            falling: false,
+            landing: None,
         };
         walk.face_and_move(full(90.0), &ground, &T, DT);
         let turned = heading(walk.velocity).unwrap();
@@ -390,16 +409,15 @@ mod tests {
         for (from, to) in [(3.179, 4.404), (2.269, 3.800), (6.553, 6.553)] {
             let mut walk = Walk {
                 velocity: Vec3::new(0.0, 0.0, from / FOOT),
-                falling: false,
+                landing: None,
             };
             walk.update_movers(true, &in_the_band(), &T, DT);
             assert!((walk.velocity.length() * FOOT - to).abs() < 1e-3, "{from}");
-            assert!(!walk.falling);
         }
         // Held until let go: the push can't take it back under its length.
         let mut walk = Walk {
             velocity: Vec3::new(0.0, -10.0, 3.179 / FOOT),
-            falling: false,
+            landing: None,
         };
         let length = walk.velocity.length();
         for _ in 0..30 {
@@ -423,7 +441,7 @@ mod tests {
         };
         let mut walk = Walk {
             velocity: Vec3::new(0.0, -slope.sin(), slope.cos()) * 21.5,
-            falling: false,
+            landing: None,
         };
         let (mut feet, mut moving, mut last) = (0.0, 0, 0.0);
         for _ in 0..30 {
@@ -444,11 +462,10 @@ mod tests {
     fn up_in_the_air_he_falls_at_136_21_to_120() {
         let mut walk = Walk {
             velocity: Vec3::new(0.0, 0.0, 21.5),
-            falling: false,
+            landing: None,
         };
         walk.update_movers(true, &up_in_the_air(), &T, 0.02);
         assert!((walk.velocity.y + 136.21 * 0.02).abs() < 1e-4);
-        assert!(walk.falling);
         for _ in 0..200 {
             walk.update_movers(true, &up_in_the_air(), &T, DT);
         }
@@ -463,11 +480,11 @@ mod tests {
     #[test]
     fn in_the_air_the_walk_steers_and_slows_at_50() {
         let air = up_in_the_air();
-        let falling = Vec3::new(0.0, -30.0, 21.5);
+        let fall = Vec3::new(0.0, -30.0, 21.5);
         for (s, angle) in [(1.0, 7.07), (0.5, 3.55)] {
             let mut walk = Walk {
-                velocity: falling,
-                falling: true,
+                velocity: fall,
+                landing: None,
             };
             walk.face_and_move(part(s, 90.0), &air, &T, DT);
             assert!(
@@ -478,24 +495,27 @@ mod tests {
             assert_eq!(walk.velocity.y, -30.0);
         }
         let mut walk = Walk {
-            velocity: falling,
-            falling: true,
+            velocity: fall,
+            landing: None,
         };
         walk.face_and_move(full(180.0), &air, &T, DT);
         assert!((across(walk.velocity) - (21.5 - 160.0 * DT)).abs() < 1e-4);
         let mut walk = Walk {
-            velocity: falling,
-            falling: true,
+            velocity: fall,
+            landing: None,
         };
         walk.update_movers(false, &air, &T, DT);
         assert!((across(walk.velocity) - (21.5 - 50.0 * DT)).abs() < 1e-4);
     }
 
-    /// Falling and landing: from up in the air he slides a frame down the fall
-    /// line, then walks the stick's way at that speed; from within the band
-    /// he doesn't.
+    /// Falling and landing: landed after a frame off the ground that began
+    /// with the walk falling past 30 ft/s, he slides a frame down the fall
+    /// line at the decompile's speed for that fall, then walks the stick's
+    /// way at that speed; a frame that began at 30 ft/s or slower, nothing,
+    /// though an earlier one was faster (AG.39's `g39_w` W-00: the band cut
+    /// it to 21.5 ft/s a frame before it landed).
     #[test]
-    fn landing_from_up_in_the_air_slides_down_the_fall_line() {
+    fn a_fast_landing_slides_down_the_fall_line() {
         let slope = 20.0f32.to_radians();
         let n = Vec3::new(slope.sin(), slope.cos(), 0.0);
         let landed = Footing {
@@ -505,32 +525,34 @@ mod tests {
         };
         let mut walk = Walk {
             velocity: Vec3::new(0.0, -50.0, 21.5),
-            falling: true,
+            landing: None,
         };
+        // Its last frame off the ground in the band: the cut doesn't take
+        // the fall back.
+        walk.update_movers(true, &in_the_band(), &T, DT);
+        assert_eq!(walk.landing, Some(50.0));
         walk.update_movers(true, &landed, &T, DT);
         let want = 1.2 * 50.0 * 20.0 / 90.0;
         assert!((walk.velocity.length() - want).abs() < 1e-3);
-        assert!(
-            (heading(walk.velocity).unwrap() - 90.0).abs() < 1e-3,
-            "downhill is +x"
-        );
-        assert!(walk.velocity.y < 0.0 && !walk.falling);
+        let downhill = heading(walk.velocity).unwrap();
+        assert!((downhill - 90.0).abs() < 1e-3, "downhill is +x");
+        assert!(walk.velocity.y < 0.0 && walk.landing.is_none());
         // The next frame it turns to the stick at once, its pitch kept, and
         // the push adds to it.
         let pitched = walk.velocity;
         frame(&mut walk, full(0.0), &landed);
         assert!((heading(walk.velocity).unwrap()).abs() < 1e-3);
         let pushed = Vec3::new(0.0, pitched.y, across(pitched) + 160.0 * DT);
-        assert!(
-            (walk.velocity - pushed).length() < 1e-3,
-            "{}",
-            walk.velocity
-        );
+        let miss = (walk.velocity - pushed).length();
+        assert!(miss < 1e-3, "{}", walk.velocity);
 
+        // Two frames in the band: the second began at the cut's 21.5 ft/s.
         let mut walk = Walk {
-            velocity: Vec3::new(0.0, -10.0, 19.0),
-            falling: false,
+            velocity: Vec3::new(0.0, -50.0, 21.5),
+            landing: None,
         };
+        walk.update_movers(true, &in_the_band(), &T, DT);
+        walk.update_movers(true, &in_the_band(), &T, DT);
         let before = walk.velocity;
         walk.update_movers(true, &landed, &T, DT);
         assert_eq!(walk.velocity, before);

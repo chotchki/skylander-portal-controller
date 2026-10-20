@@ -145,7 +145,7 @@ impl Hero {
         if let Some(hit) = seam.cast(
             &proxy.shape,
             proxy.pose(from, self.up),
-            Vec3::NEG_Y * 4.0,
+            Vec3::NEG_Y * 10.0,
             0.0,
             exclude,
         ) {
