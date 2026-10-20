@@ -40,11 +40,15 @@
 //!   `XP_Value_Near`): `ValueInfo`s in the level's data section, in place, so
 //!   each sits at the section's base ([`crate::level::section_base`]) plus its
 //!   offset on the disc ([`level_values`]).
-//! - A trigger is a placement the scripts wait on to go active: a range
-//!   trigger (`Setup_001_Trigger`) wakes when the hero comes within its range,
-//!   and one with a script (`Activate_Norticus and Chompies`) runs its STARTUP
-//!   then. [`triggers`] reads each one's `_activityState`, its started flag and
-//!   `_activeTime`; it has fired once it's been active.
+//! - A trigger is a placement the scripts wait on: a range trigger
+//!   (`Setup_001_Trigger`, 20 ft) wakes when the hero comes within its range
+//!   and a controller checks it's no longer inactive, and one with a script
+//!   (`Activate_Norticus and Chompies`, 32 ft) runs its STARTUP then. One
+//!   without a range (`Setup_003_Trigger(1)`) is awake from the level's start
+//!   and its controller's `set-ups - check for player triggered` decides.
+//!   [`triggers`] reads each one's `_activityState`, started flag,
+//!   `_activeTime` and live range; a range trigger has fired once it's been
+//!   active.
 
 use std::collections::BTreeMap;
 
@@ -65,6 +69,7 @@ use crate::watch::{Field, WatchList};
 pub const MACROS_UI: &str = "Macros_UI";
 pub const CONSOLE_SAVE: &str = "console save params";
 pub const COMBAT_CONTROL: &str = "combat control data";
+pub const LEVEL_PROGRESSION: &str = "level progression data";
 /// Each 1 while that player's hero stands in an area of his own element.
 pub const AREA_FLAGS: [&str; 2] = ["ZoneElement_P1_Correct", "ZoneElement_P2_Correct"];
 pub const AREA_CURRENT: &str = "ZoneElement_Current";
@@ -378,11 +383,15 @@ pub fn level_values(
         .collect()
 }
 
-/// The difficulty as the console save holds it.
+/// A value out of the console save's words, through its row in `console save
+/// params`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Difficulty {
-    /// 0 easy, 1 medium, 2 hard, 3 nightmare, as the enemy stats read it.
+pub struct ConsoleValue {
+    /// For the difficulty: 0 easy, 1 medium, 2 hard, 3 nightmare, as the
+    /// enemy stats read it.
     pub value: i64,
+    /// Its first bit in the words' stream (the row's `bit index` plus `num
+    /// bits` for each field before it) and its width.
     pub bit: u32,
     pub bits: u32,
     pub signed: bool,
@@ -392,30 +401,36 @@ pub struct Difficulty {
     pub words: usize,
 }
 
-/// The difficulty out of `console save params`: refused when its row or its
-/// words' chain breaks.
-pub fn difficulty(g: &mut impl Gather, types: &mut Types, console_save: u32) -> Result<Difficulty> {
-    let cells = fields(g, console_save, CONSOLE_SAVE)?;
-    let row_at = script::structure_at(g, &cells, &["option - difficulty"], CONSOLE_SAVE)?;
-    let row = fields(g, row_at, "option - difficulty")?;
+/// The `field`-th value of the row `row` names among the console save's
+/// cells: refused when the row or its words' chain breaks.
+fn console_value(
+    g: &mut impl Gather,
+    types: &mut Types,
+    cells: &[Named],
+    row: &str,
+    field: u32,
+) -> Result<ConsoleValue> {
+    let row_at = script::structure_at(g, cells, &[row], CONSOLE_SAVE)?;
+    let row_cells = fields(g, row_at, row)?;
     let mut get = |name: &str| -> Result<i64> {
-        Ok(number(g, types, the(&row, name, "option - difficulty")?.at, name)?.as_int())
+        Ok(number(g, types, the(&row_cells, name, row)?.at, name)?.as_int())
     };
-    let (bit, bits, signed, header) = (
+    let (first, bits, signed, header) = (
         get("bit index")?,
         get("num bits")?,
         get("signed")? != 0,
         get("header param")? != 0,
     );
-    let (Ok(bit), Ok(bits)) = (u32::try_from(bit), u32::try_from(bits)) else {
-        bail!("the difficulty's row reads bit {bit}, {bits} bits");
+    let (Ok(first), Ok(bits)) = (u32::try_from(first), u32::try_from(bits)) else {
+        bail!("`{row}` reads bit {first}, {bits} bits");
     };
+    let bit = first + bits * field;
     let set_name = if header {
         "header save val set"
     } else {
         "save val set"
     };
-    let set_ref = the(&cells, set_name, CONSOLE_SAVE)?;
+    let set_ref = the(cells, set_name, CONSOLE_SAVE)?;
     if set_ref.vtable != vtable::SET_REFERENCE {
         bail!(
             "`{set_name}` at {:#010x} has vtable {:#010x}, not a set reference's",
@@ -430,13 +445,110 @@ pub fn difficulty(g: &mut impl Gather, types: &mut Types, console_save: u32) -> 
     for (i, &at) in items.iter().enumerate() {
         words.push(number(g, types, at, &format!("{set_name}[{i}]"))?.as_int() as u32);
     }
-    Ok(Difficulty {
-        value: bit_field(&words, bit, bits, signed)?,
+    Ok(ConsoleValue {
+        value: bit_field(&words, bit, bits, signed)
+            .with_context(|| format!("`{row}` field {field}"))?,
         bit,
         bits,
         signed,
         header,
         words: words.len(),
+    })
+}
+
+/// The difficulty out of `console save params`' `option - difficulty`.
+pub fn difficulty(
+    g: &mut impl Gather,
+    types: &mut Types,
+    console_save: u32,
+) -> Result<ConsoleValue> {
+    let cells = fields(g, console_save, CONSOLE_SAVE)?;
+    console_value(g, types, &cells, "option - difficulty", 0)
+}
+
+/// The portal-master experience multiplier and what sets it: `Save - Accolade
+/// Set XP Multiplier` counts the collection accolades `level progression
+/// data.accolade checks.xp multiplier accolades` lists that the console save
+/// marks done (each its `save bit index`-th field of `collection -
+/// accolades`) and takes the count's entry of `xp multiplier table` (the
+/// first for one), 1 for none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XpMultiplier {
+    /// `combat control data.accolade xp multiplier`.
+    pub value: Number,
+    /// Each accolade that counts, by name, and whether the save marks it done.
+    pub accolades: Vec<(String, bool)>,
+    pub table: Vec<Number>,
+}
+
+impl XpMultiplier {
+    pub fn completed(&self) -> usize {
+        self.accolades.iter().filter(|(_, done)| *done).count()
+    }
+
+    /// What the game's rule gives for the accolades done: none past the table.
+    pub fn by_rule(&self) -> Option<f64> {
+        match self.completed() {
+            0 => Some(1.0),
+            n => self.table.get(n - 1).map(|v| v.as_f64()),
+        }
+    }
+}
+
+/// The multiplier, the accolades and the table: refused when a chain breaks.
+pub fn xp_multiplier(
+    g: &mut impl Gather,
+    types: &mut Types,
+    combat: &Named,
+    level_progression: u32,
+    console_save: u32,
+) -> Result<XpMultiplier> {
+    let (_, value) = script::number_at(
+        g,
+        types,
+        std::slice::from_ref(combat),
+        &[COMBAT_CONTROL, "accolade xp multiplier"],
+        "global.bld",
+    )?;
+    let progression = fields(g, level_progression, LEVEL_PROGRESSION)?;
+    let checks_at = script::structure_at(g, &progression, &["accolade checks"], LEVEL_PROGRESSION)?;
+    let checks = fields(g, checks_at, "accolade checks")?;
+    let table_set = the(&checks, "xp multiplier table", "accolade checks")?;
+    let table = set_items(g, table_set.at, "xp multiplier table")?
+        .iter()
+        .enumerate()
+        .map(|(i, &at)| number(g, types, at, &format!("xp multiplier table[{i}]")))
+        .collect::<Result<Vec<_>>>()?;
+    let listed = the(&checks, "xp multiplier accolades", "accolade checks")?;
+    let console = fields(g, console_save, CONSOLE_SAVE)?;
+    let mut accolades = Vec::new();
+    for (i, &at) in set_items(g, listed.at, "xp multiplier accolades")?
+        .iter()
+        .enumerate()
+    {
+        let what = format!("xp multiplier accolades[{i}]");
+        let name = script::named(g, &[at])?
+            .pop()
+            .with_context(|| format!("{what} has no name"))?
+            .name;
+        let cells = fields(g, at, &what)?;
+        let index = number(
+            g,
+            types,
+            the(&cells, "save bit index", &what)?.at,
+            "save bit index",
+        )?
+        .as_int();
+        let Ok(index) = u32::try_from(index) else {
+            bail!("{what} names save bit {index}");
+        };
+        let done = console_value(g, types, &console, "collection - accolades", index)?;
+        accolades.push((name, done.value != 0));
+    }
+    Ok(XpMultiplier {
+        value,
+        accolades,
+        table,
     })
 }
 
@@ -501,7 +613,7 @@ pub struct Area {
     pub cells: [u32; 2],
 }
 
-/// A trigger placement's wake state; `fired` is any sign it has been active.
+/// A trigger placement's wake state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trigger {
     pub name: String,
@@ -509,9 +621,13 @@ pub struct Trigger {
     pub activity_state: u32,
     pub started: bool,
     pub active_seconds: f32,
-    /// It has been active: it is (state 1), has been and was taken off (3), or
-    /// has a clock or a started script to show it.
-    pub fired: bool,
+    /// Its live activation range, feet.
+    pub range: f32,
+    /// For a range trigger, whether it has been active: it is (state 1), was
+    /// and has been taken off (3), or its clock or started script shows it.
+    /// None for one without a range, which is awake from the level's start
+    /// and fires when its controller's own check finds a player in it.
+    pub fired: Option<bool>,
 }
 
 /// Each named placement's trigger state: refused when the placement at an
@@ -533,7 +649,10 @@ pub fn triggers(g: &mut impl Gather, placements: &[(&str, u32)]) -> Result<Vec<T
                 activity_state: i.activity_state,
                 started: i.started,
                 active_seconds: i.active_seconds,
-                fired: matches!(i.activity_state, 1 | 3) || i.started || i.active_seconds > 0.0,
+                range: i.activation_range,
+                fired: (i.activation_range > 0.0).then_some(
+                    matches!(i.activity_state, 1 | 3) || i.started || i.active_seconds > 0.0,
+                ),
             })
         })
         .collect()
@@ -544,9 +663,8 @@ pub fn triggers(g: &mut impl Gather, placements: &[(&str, u32)]) -> Result<Vec<T
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FightState {
     pub hero: Hero,
-    pub difficulty: Difficulty,
-    /// `combat control data.accolade xp multiplier`.
-    pub xp_multiplier: Number,
+    pub difficulty: ConsoleValue,
+    pub xp_multiplier: XpMultiplier,
     pub area: Area,
     /// The flag of the hero's own player.
     pub area_at_hero: Number,
@@ -560,7 +678,13 @@ pub struct FightState {
 /// in one pass over the handle table.
 pub fn read(g: &mut impl Gather, hero_placement: u32, rows: &Rows) -> Result<FightState> {
     let mut types = Types::default();
-    let mut names = vec![MACROS_UI, CONSOLE_SAVE, COMBAT_CONTROL, AREA_CURRENT];
+    let mut names = vec![
+        MACROS_UI,
+        CONSOLE_SAVE,
+        COMBAT_CONTROL,
+        LEVEL_PROGRESSION,
+        AREA_CURRENT,
+    ];
     names.extend(AREA_FLAGS);
     let ex = exports(g, script::GLOBAL, &names)?;
     let class = |name: &str, want: u32, class: &str| -> Result<u32> {
@@ -586,15 +710,14 @@ pub fn read(g: &mut impl Gather, hero_placement: u32, rows: &Rows) -> Result<Fig
         class(AREA_FLAGS[1], vtable::VALUE_INFO, "ValueInfo")?,
     ];
     let current = class(AREA_CURRENT, vtable::VALUE_INFO, "ValueInfo")?;
+    let progression = class(
+        LEVEL_PROGRESSION,
+        vtable::SCRIPT_STRUCTURE,
+        "ScriptStructure",
+    )?;
 
     let hero = hero(g, &mut types, hero_placement, rows)?;
-    let (_, xp_multiplier) = script::number_at(
-        g,
-        &mut types,
-        std::slice::from_ref(&combat),
-        &[COMBAT_CONTROL, "accolade xp multiplier"],
-        "global.bld",
-    )?;
+    let xp_multiplier = xp_multiplier(g, &mut types, &combat, progression, console)?;
     let area = Area {
         p1: number(g, &mut types, flags[0], AREA_FLAGS[0])?,
         p2: number(g, &mut types, flags[1], AREA_FLAGS[1])?,
@@ -633,8 +756,9 @@ pub fn read_paused(pine: &mut PineClient, hero_placement: u32, rows: &Rows) -> R
 /// The fight's cells that move frame by frame, on Giants' watch list: the
 /// hero's health, full health and invulnerability, the figure's words AH.2's
 /// rows read experience, gold and playtime from, both players' element-area
-/// flags and the destructibles' common loot count. Each cell's type word and
-/// value are watched, in blocks of cells near each other.
+/// flags and the destructibles' common loot count, each cell's type word and
+/// value, in blocks of cells near each other; and, when named, triggers'
+/// wake state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FightWatch {
     /// Each cell by label (`hp`, `hp max`, `invulnerable`, `word.<n>`,
@@ -644,6 +768,18 @@ pub struct FightWatch {
     /// as a float, anything else as an integer.
     pub float_type: u32,
     pub rows: Rows,
+    /// Trigger placements by name ([`FightWatch::with_triggers`]): each
+    /// one's `_activityState` to its `_activeTime` (+0x54 to +0xB8).
+    #[serde(default)]
+    pub triggers: Vec<(String, u32)>,
+}
+
+/// A watched trigger in a record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TriggerAt {
+    pub name: String,
+    pub activity_state: u32,
+    pub active_seconds: f32,
 }
 
 /// The fight's cells decoded from one O5 record.
@@ -659,12 +795,16 @@ pub struct FightFrame {
     pub area_p1: Number,
     pub area_p2: Number,
     pub loot: Number,
+    pub triggers: Vec<TriggerAt>,
 }
+
+const TRIGGER_FIRST: u32 = 0x54;
+const TRIGGER_LEN: u32 = 0xB8 - TRIGGER_FIRST;
 
 impl FightWatch {
     /// The cells `state` was read from: refused when the state carries no
-    /// float type or no destructibles' common count, or a block would span past
-    /// [`MAX_SPAN`]... which can't happen, since a block closes before it.
+    /// float type or no destructibles' common count, or the rows read a word
+    /// past the figure's save area.
     pub fn of(state: &FightState, rows: &Rows) -> Result<Self> {
         let float_type = state
             .float_type
@@ -695,7 +835,18 @@ impl FightWatch {
             cells,
             float_type,
             rows: rows.clone(),
+            triggers: Vec::new(),
         })
+    }
+
+    /// The watch with these triggers' wake state on it too, `trigger.<name>`
+    /// each (AH.8 times the route's from them).
+    pub fn with_triggers(mut self, triggers: &[Trigger]) -> Self {
+        self.triggers = triggers
+            .iter()
+            .map(|t| (t.name.clone(), t.placement))
+            .collect();
+        self
     }
 
     /// The cells grouped into blocks by address, each block from its first
@@ -717,12 +868,16 @@ impl FightWatch {
         out
     }
 
-    /// The watch-list fields, `fight.<n>` per block.
+    /// The watch-list fields, `fight.<n>` per block and `trigger.<name>` per
+    /// trigger.
     pub fn list_fields(&self) -> Vec<Field> {
         self.blocks()
             .iter()
             .enumerate()
             .map(|(n, (lo, hi, _))| Field::new(format!("fight.{n}"), *lo, hi - lo))
+            .chain(self.triggers.iter().map(|(name, at)| {
+                Field::new(format!("trigger.{name}"), at + TRIGGER_FIRST, TRIGGER_LEN)
+            }))
             .collect()
     }
 
@@ -747,6 +902,18 @@ impl FightWatch {
             _ => None,
         };
         let (experience, gold, playtime_secs) = self.rows.values(word).ok()?;
+        let triggers = self
+            .triggers
+            .iter()
+            .map(|(name, _)| {
+                let b = list.field(record, &format!("trigger.{name}"))?;
+                Some(TriggerAt {
+                    name: name.clone(),
+                    activity_state: be32(b, 0),
+                    active_seconds: f32_at(b, (0xB4 - TRIGGER_FIRST) as usize),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
         Some(FightFrame {
             health: values["hp"],
             health_max: values["hp max"],
@@ -758,6 +925,7 @@ impl FightWatch {
             area_p1: values["area.p1"],
             area_p2: values["area.p2"],
             loot: values["loot"],
+            triggers,
         })
     }
 }
@@ -784,6 +952,8 @@ pub(crate) mod fixture {
         pub macros_ui: u32,
         pub console: u32,
         pub combat_ref: u32,
+        pub save_words: Vec<u32>,
+        pub listed: u32,
         pub flags: [u32; 2],
         pub enemy_list: u32,
         pub common_index: u32,
@@ -964,6 +1134,8 @@ pub(crate) mod fixture {
         // The console save: 178 words, medium (1) at bit 2,549.
         let mut save: Vec<u32> = (0..178).map(|_| 0).collect();
         save[79] = 1 << 21;
+        // Captain's save bit (1) of the collection accolades from bit 8.
+        save[0] = 1 << 9;
         let save_cells: Vec<u32> = save
             .iter()
             .map(|&v| fx::int(&mut w, &t, "", v as i32))
@@ -986,7 +1158,36 @@ pub(crate) mod fixture {
             fx::int(&mut w, &t, "header param", 0),
         ];
         let option = fx::structure(&mut w, "option - difficulty", &opt);
-        let console = fx::structure(&mut w, CONSOLE_SAVE, &[option, save_ref, header_ref]);
+        let acc = [
+            fx::int(&mut w, &t, "fields total", 32),
+            fx::int(&mut w, &t, "num bits", 1),
+            fx::int(&mut w, &t, "bit index", 8),
+            fx::int(&mut w, &t, "signed", 0),
+            fx::int(&mut w, &t, "header param", 0),
+        ];
+        let collection = fx::structure(&mut w, "collection - accolades", &acc);
+        let console = fx::structure(
+            &mut w,
+            CONSOLE_SAVE,
+            &[option, collection, save_ref, header_ref],
+        );
+        // The accolades that count toward the multiplier, and its table.
+        let accolade = |w: &mut World, name: &str, bit: i32| {
+            let b = fx::int(w, &t, "save bit index", bit);
+            fx::structure(w, name, &[b])
+        };
+        let listed = [
+            accolade(&mut w, "ambassador - 1 toy of every element", 0),
+            accolade(&mut w, "captain - non-starter pack toy", 1),
+        ];
+        let listed = fx::set(&mut w, "xp multiplier accolades", &listed);
+        let table: Vec<u32> = [1.1f32, 1.2, 1.35]
+            .iter()
+            .map(|&v| fx::float(&mut w, &t, "", v))
+            .collect();
+        let table = fx::set(&mut w, "xp multiplier table", &table);
+        let checks = fx::structure(&mut w, "accolade checks", &[listed, table]);
+        let progression_data = fx::structure(&mut w, LEVEL_PROGRESSION, &[checks]);
 
         // Combat control, the area flags.
         let multiplier = fx::float(&mut w, &t, "accolade xp multiplier", 1.1);
@@ -1002,6 +1203,7 @@ pub(crate) mod fixture {
                 (0x4B9, macros_ui),
                 (0x520, console),
                 (0x508, combat_ref),
+                (0x518, progression_data),
                 (0xA21, p1),
                 (0xA22, p2),
                 (0xA20, current),
@@ -1036,6 +1238,8 @@ pub(crate) mod fixture {
             macros_ui,
             console,
             combat_ref,
+            save_words: save_cells,
+            listed,
             flags: [p1, p2],
             enemy_list,
             common_index,
@@ -1109,7 +1313,7 @@ mod tests {
         );
         assert_eq!(
             s.difficulty,
-            Difficulty {
+            ConsoleValue {
                 value: 1,
                 bit: 2549,
                 bits: 4,
@@ -1118,7 +1322,17 @@ mod tests {
                 words: 178
             }
         );
-        assert_eq!(s.xp_multiplier, Number::Float(1.1));
+        let m = &s.xp_multiplier;
+        assert_eq!(m.value, Number::Float(1.1));
+        assert_eq!(
+            m.accolades,
+            [
+                ("ambassador - 1 toy of every element".to_owned(), false),
+                ("captain - non-starter pack toy".to_owned(), true),
+            ]
+        );
+        assert_eq!(m.table.len(), 3);
+        assert_eq!((m.completed(), m.by_rule()), (1, Some(f64::from(1.1f32))));
         assert_eq!(
             (s.area.p1, s.area.p2, s.area.current, s.area_at_hero),
             (
@@ -1205,7 +1419,8 @@ mod tests {
         let build = |header: i32| {
             let mut w = crate::actors::fixture::World::new();
             let t = fx::types(&mut w);
-            let save = fx::int(&mut w, &t, "", 2 << 4);
+            // Field 2 of the row sits 2 x 3 bits on, at bit 10: 3 there.
+            let save = fx::int(&mut w, &t, "", (2 << 4) | (3 << 10));
             let header_word = fx::int(&mut w, &t, "", 0b111 << 4);
             let save_set = fx::set(&mut w, "SaveGame", &[save]);
             let header_set = fx::set(&mut w, "SaveGame_Header", &[header_word]);
@@ -1231,9 +1446,53 @@ mod tests {
         let (mut w, console) = build(0);
         let d = difficulty(&mut w, &mut Types::default(), console).unwrap();
         assert_eq!((d.value, d.header, d.signed, d.words), (2, false, true, 1));
+        let cells = fields(&mut w, console, CONSOLE_SAVE).unwrap();
+        let third = console_value(
+            &mut w,
+            &mut Types::default(),
+            &cells,
+            "option - difficulty",
+            2,
+        )
+        .unwrap();
+        assert_eq!((third.bit, third.value), (10, 3));
         let (mut w, console) = build(1);
         let d = difficulty(&mut w, &mut Types::default(), console).unwrap();
         assert_eq!((d.value, d.header), (-1, true));
+    }
+
+    #[test]
+    fn the_multiplier_counts_the_accolades_the_save_marks_done() {
+        let read_m = |f: &mut super::fixture::Fixture| {
+            read(&mut f.w, f.hero, &rows()).map(|s| s.xp_multiplier)
+        };
+        // None done: the rule gives 1; both: the table's second entry.
+        let mut f = fight(0, 0, 4);
+        f.w.put32(f.save_words[0] + 0x20, 0);
+        let m = read_m(&mut f).unwrap();
+        assert_eq!((m.completed(), m.by_rule()), (0, Some(1.0)));
+        f.w.put32(f.save_words[0] + 0x20, 0b11 << 8);
+        let m = read_m(&mut f).unwrap();
+        assert_eq!((m.completed(), m.by_rule()), (2, Some(f64::from(1.2f32))));
+        // More done than the table holds: no rule.
+        let m = XpMultiplier {
+            accolades: vec![("a".into(), true); 4],
+            ..m
+        };
+        assert_eq!(m.by_rule(), None);
+        // An accolade's bit past the save's words, the list not a set.
+        let mut f = fight(0, 0, 4);
+        let list = f.w.get32(f.listed + 0x18);
+        let data = f.w.get32(list + 0x14);
+        let captain = f.w.get32(data + 4);
+        let cl = f.w.get32(captain + 0x18);
+        let cd = f.w.get32(cl + 0x14);
+        let bit = f.w.get32(cd);
+        f.w.put32(bit + 0x20, 178 * 32);
+        assert!(err(read_m(&mut f)).contains("collection - accolades"));
+        let mut f = fight(0, 0, 4);
+        f.w.put32(f.listed, vtable::SCRIPT_STRUCTURE);
+        assert!(err(read_m(&mut f)).contains("xp multiplier accolades"));
     }
 
     #[test]
@@ -1351,11 +1610,11 @@ mod tests {
         let mut f = fight(0, 0, 4);
         f.w.put32(f.xp_loot, vtable::SCRIPT_STRUCTURE);
         assert!(err(read_it(&mut f)).contains("XpLoot"));
-        // The difficulty's words not a set reference.
+        // The console save's words not a set reference.
         let mut f = fight(0, 0, 4);
         let cells = f.w.get32(f.console + 0x18);
         let data = f.w.get32(cells + 0x14);
-        let svs = f.w.get32(data + 4);
+        let svs = f.w.get32(data + 8);
         f.w.put32(svs, vtable::SCRIPT_REFERENCE);
         assert!(err(read_it(&mut f)).contains("not a set reference's"));
         // The difficulty past the console save's words.
@@ -1386,20 +1645,25 @@ mod tests {
     #[test]
     fn triggers_read_their_state_and_whether_they_fired() {
         let mut w = crate::actors::fixture::World::new();
-        let asleep = fx::placement(&mut w, "Setup_001_Trigger", None, 0.0, None);
-        w.put32(asleep + 0x54, 2);
-        let awake = fx::placement(&mut w, "Transition 7-1", None, 0.75, None);
-        let started = fx::placement(
-            &mut w,
-            "Activate_Norticus and Chompies",
-            None,
-            0.0,
-            Some(&[]),
-        );
-        w.put32(started + 0x54, 3);
+        let ranged = |w: &mut crate::actors::fixture::World,
+                      name: &str,
+                      state: u32,
+                      active: f32,
+                      range: f32,
+                      script: bool| {
+            let p = fx::placement(w, name, None, active, script.then_some(&[][..]));
+            w.put32(p + 0x54, state);
+            w.putf(p + 0xD0, range);
+            w.putf(p + 0xD4, 1.0);
+            p
+        };
+        let asleep = ranged(&mut w, "Setup_001_Trigger", 2, 0.0, 20.0, false);
+        let awake = ranged(&mut w, "Transition 7-1", 1, 0.75, 55.0, false);
+        let started = ranged(&mut w, "Activate_Norticus and Chompies", 3, 0.0, 32.0, true);
         // Woke once and gone back to sleep: its clock shows it.
-        let slept = fx::placement(&mut w, "Pop_to_Camera_5", None, 1.5, None);
-        w.put32(slept + 0x54, 2);
+        let slept = ranged(&mut w, "Pop_to_Camera_5", 2, 1.5, 10.0, false);
+        // No range: awake from the start, its controller's check decides.
+        let volume = ranged(&mut w, "Setup_003_Trigger(1)", 1, 55.65, 0.0, false);
         let got = triggers(
             &mut w,
             &[
@@ -1407,23 +1671,35 @@ mod tests {
                 ("Transition 7-1", awake),
                 ("Activate_Norticus and Chompies", started),
                 ("Pop_to_Camera_5", slept),
+                ("Setup_003_Trigger(1)", volume),
             ],
         )
         .unwrap();
-        let summary: Vec<(&str, u32, bool, bool)> = got
+        let summary: Vec<(&str, u32, bool, f32, Option<bool>)> = got
             .iter()
-            .map(|t| (t.name.as_str(), t.activity_state, t.started, t.fired))
+            .map(|t| {
+                (
+                    t.name.as_str(),
+                    t.activity_state,
+                    t.started,
+                    t.range,
+                    t.fired,
+                )
+            })
             .collect();
         assert_eq!(
             summary,
             [
-                ("Setup_001_Trigger", 2, false, false),
-                ("Transition 7-1", 1, false, true),
-                ("Activate_Norticus and Chompies", 3, true, true),
-                ("Pop_to_Camera_5", 2, false, true),
+                ("Setup_001_Trigger", 2, false, 20.0, Some(false)),
+                ("Transition 7-1", 1, false, 55.0, Some(true)),
+                ("Activate_Norticus and Chompies", 3, true, 32.0, Some(true)),
+                ("Pop_to_Camera_5", 2, false, 10.0, Some(true)),
+                ("Setup_003_Trigger(1)", 1, false, 0.0, None),
             ]
         );
         assert_eq!(got[1].active_seconds, 0.75);
+        let i = Instance::read(&mut w, asleep).unwrap();
+        assert_eq!((i.activation_range, i.deactivation_buffer), (20.0, 1.0));
         // An address whose placement carries another name.
         assert!(
             err(triggers(&mut w, &[("Setup_001_Trigger", awake)]))
@@ -1493,6 +1769,7 @@ mod tests {
                 area_p1: Number::Int(0),
                 area_p2: Number::Int(0),
                 loot: Number::Float(0.824_279_5),
+                triggers: Vec::new(),
             }
         );
         // A bite, an orb into level 2, the hero erupting: the next record has
@@ -1522,6 +1799,45 @@ mod tests {
     }
 
     #[test]
+    fn the_watch_carries_named_triggers_wake_state() {
+        let mut f = fight(0, 0, 4);
+        let r = rows();
+        let s = read(&mut f.w, f.hero, &r).unwrap();
+        let trigger = fx::placement(&mut f.w, "Setup_001_Trigger", None, 0.0, None);
+        f.w.put32(trigger + 0x54, 2);
+        f.w.putf(trigger + 0xD0, 20.0);
+        let named = triggers(&mut f.w, &[("Setup_001_Trigger", trigger)]).unwrap();
+        let watch = FightWatch::of(&s, &r).unwrap().with_triggers(&named);
+        let fields = watch.list_fields();
+        let t = fields
+            .iter()
+            .find(|f| f.name == "trigger.Setup_001_Trigger")
+            .unwrap();
+        assert_eq!((t.addr, t.len), (trigger + 0x54, 0x64));
+        let list = WatchList::new(fields).unwrap();
+        let at = |w: &mut crate::actors::fixture::World| {
+            watch.read(&list, &sample(w, &list)).unwrap().triggers
+        };
+        assert_eq!(
+            at(&mut f.w),
+            [TriggerAt {
+                name: "Setup_001_Trigger".into(),
+                activity_state: 2,
+                active_seconds: 0.0
+            }]
+        );
+        // The hero comes within its range: awake, its clock running.
+        f.w.put32(trigger + 0x54, 1);
+        f.w.putf(trigger + 0xB4, 0.05);
+        let now = at(&mut f.w);
+        assert_eq!((now[0].activity_state, now[0].active_seconds), (1, 0.05));
+        // Its range unreadable: no frame.
+        let mut record = sample(&mut f.w, &list);
+        record.missing = 1 << list.placed("trigger.Setup_001_Trigger").unwrap().range;
+        assert!(watch.read(&list, &record).is_none());
+    }
+
+    #[test]
     fn cells_far_apart_go_in_blocks_of_their_own() {
         let watch = FightWatch {
             cells: vec![
@@ -1534,6 +1850,7 @@ mod tests {
             ],
             float_type: 1,
             rows: rows(),
+            triggers: Vec::new(),
         };
         let blocks = watch.blocks();
         assert_eq!(blocks.len(), 2);

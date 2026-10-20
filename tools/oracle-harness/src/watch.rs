@@ -75,7 +75,9 @@
 //!   list with them: the hero's health, full health and invulnerability, the
 //!   figure's save words AH.2's rows read experience, gold and playtime from,
 //!   both players' element-area flags and the destructibles' common loot
-//!   count, each a `ValueInfo`'s type word and value ([`crate::fight`]).
+//!   count, each a `ValueInfo`'s type word and value, and any triggers the
+//!   caller names, each one's `_activityState` to its `_activeTime`
+//!   ([`crate::fight`]).
 //! - every `Generic_FollowActor` the frame holds (AG.13): each one's
 //!   placement `_currentMatrix`, named `follow.<placement>`. The camera
 //!   scripts keep their points on such clones (the magic point the eye keeps

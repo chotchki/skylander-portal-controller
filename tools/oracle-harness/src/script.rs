@@ -22,7 +22,8 @@
 //!   variables (`_localVarList` +0xB0, an `igObjectList` its STARTUP builds, so
 //!   0 for a placement whose script never started; the dynamic variables
 //!   scripts make on it by name join the same list) and `_activeTime` +0xB4,
-//!   the seconds it has been active, which `system.script timer` reads.
+//!   the seconds it has been active, which `system.script timer` reads;
+//!   its activation range (+0xD0, feet) and deactivation buffer (+0xD4).
 //! - `global.bld`'s exports are handles in Alchemy's handle manager (the static
 //!   at [`HANDLE_MANAGER`]): its table (+0x24) keeps `capacity` (+0x08)
 //!   8-byte keys (+0x14: the namespace's FNV-1a hash, then the export's id)
@@ -84,7 +85,9 @@ const PLACEMENT_SCRIPT: usize = 0xA8;
 const PLACEMENT_BEHAVIOUR: usize = 0xAC;
 const PLACEMENT_LOCALS: usize = 0xB0;
 const PLACEMENT_ACTIVE_TIME: usize = 0xB4;
-const PLACEMENT_LEN: usize = 0xB8;
+const PLACEMENT_RANGE: usize = 0xD0;
+const PLACEMENT_BUFFER: usize = 0xD4;
+const PLACEMENT_LEN: usize = 0xD8;
 /// The flag a placement's STARTUP sets.
 pub const STARTED: u32 = 0x8;
 const MANAGER_TABLE: usize = 0x24;
@@ -458,6 +461,11 @@ pub struct Instance {
     pub started: bool,
     /// `_activeTime`, the seconds it has been active.
     pub active_seconds: f32,
+    /// Its activation range and the buffer past it that it stays active in,
+    /// feet: the engine wakes it while the hero is within the range (0 for a
+    /// placement the scripts wake), and scripts rewrite both.
+    pub activation_range: f32,
+    pub deactivation_buffer: f32,
     /// Its script (`_script`), none for a placement without one.
     pub script: Option<u32>,
     /// The behaviour it runs, by name; none before its STARTUP picks one.
@@ -494,6 +502,8 @@ impl Instance {
             activity_state: be32(&p, PLACEMENT_STATE),
             started: be32(&p, PLACEMENT_FLAGS) & STARTED != 0,
             active_seconds: f32_at(&p, PLACEMENT_ACTIVE_TIME),
+            activation_range: f32_at(&p, PLACEMENT_RANGE),
+            deactivation_buffer: f32_at(&p, PLACEMENT_BUFFER),
             script: Some(be32(&p, PLACEMENT_SCRIPT)).filter(|&s| s != 0),
             behaviour,
             variables: variables(g, placement)?,
