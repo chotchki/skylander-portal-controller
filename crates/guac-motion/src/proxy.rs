@@ -106,6 +106,18 @@ impl Proxy<'_> {
         Pose::new(pivot + lean * self.centre, lean * self.rotation)
     }
 
+    /// How far his shape, skin included, sits off the plane through `point`
+    /// facing `n`, his pivot at `pivot`: negative when it's inside it.
+    pub fn clearance(&self, pivot: Vec3, up: Vec3, point: Vec3, n: Vec3) -> f32 {
+        let pose = self.pose(pivot, up);
+        let shape = crate::parry::convex_shape(&self.shape);
+        let Some(map) = shape.as_support_map() else {
+            return f32::INFINITY;
+        };
+        let local = map.local_support_point(pose.rotation.inverse() * -n);
+        (pose.position + pose.rotation * local - point).dot(n) - KEEP
+    }
+
     /// The planes within `reach` past his skin, nearest of each near-same set
     /// kept, their distances past the skin.
     pub fn planes(&self, pivot: Vec3, up: Vec3, reach: f32) -> Vec<ContactPlane> {

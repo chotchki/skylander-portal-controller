@@ -24,8 +24,15 @@
 //! Hypotheses here: the engine walks him along the ground (and the snap holds
 //! him to it from up to 0.375 m) only while the support check passed, the
 //! ground faces up past 0.69 and the walk isn't leaving it faster than 0.01
-//! m/s (the velocity model as read; it's what lifts him for a frame over a
-//! crest and off a slope he's let go on uphill); the edge probe's hold turns
+//! m/s (the velocity model as read), and a frame that fails that test ends
+//! without support whatever the support check finds (the corpus's 0x200
+//! flag, set only in frames without support, AG.38): it's what takes him off
+//! the ground for a frame over a crest (AG.38's dip edge) and on the first
+//! frame he's let go walking uphill (AG.38's `g38_t2979_up`, record 381); the
+//! lean turns before the snap, and the snap never sets his shape inside the
+//! ground: until his lean reaches a slope he rides as high as his shape needs
+//! there (AG.39: no landing rose after it, where a snap to 10 mm with his
+//! sphere still upright would set it 35 mm into a 17° slope); the edge probe's hold turns
 //! his facing to the stick at his usual rate; his collision shape turns with
 //! his lean about his pivot; he leans only while he's on the ground (the
 //! post-step's grounded test, as read), so not up in the air or on ground
@@ -146,7 +153,7 @@ impl Hero {
             let back = if facing > 1e-3 { KEEP / facing } else { 0.0 };
             self.pivot = from + Vec3::NEG_Y * (hit.distance - back).max(0.0);
         }
-        self.look(seam, exclude, true, NOMINAL_STEP);
+        self.look(seam, exclude, true, false, NOMINAL_STEP);
     }
 
     /// One game frame of `step` seconds.
@@ -175,6 +182,7 @@ impl Hero {
         let v = self.walk.velocity * FOOT;
         let n = self.footing.ground.unwrap_or(Vec3::Y);
         let walking = self.footing.supported && n.y >= LEAVE_NORMAL && n.dot(v) <= LEAVE_SPEED;
+        let left = self.footing.supported && !walking;
         let v = if walking { proxy::lay_along(v, n) } else { v };
         let start = self.pivot;
         let moved = self
@@ -182,33 +190,52 @@ impl Hero {
             .integrate(self.pivot, self.up, v, step, walking);
         self.pivot = moved.pivot;
         self.velocity = (self.pivot - start) / step;
-        self.look(seam, exclude, walking, step);
+        self.look(seam, exclude, walking, left, step);
         self.steps = [step, before];
     }
 
     /// The engine's look after a move: the support check, the ground finder,
-    /// the snap and the lean, into his footing.
-    fn look(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId], walking: bool, step: f32) {
+    /// the snap and the lean, into his footing. A frame whose walk `left` the
+    /// ground (the velocity model's leave test) ends without support, as the
+    /// corpus's airborne flag marks only frames without it (AG.38).
+    fn look(
+        &mut self,
+        seam: &dyn PhysicsSeam,
+        exclude: &[BodyId],
+        walking: bool,
+        left: bool,
+        step: f32,
+    ) {
         let planes = self
             .proxy(seam, exclude)
             .planes(self.pivot, self.up, SUPPORT_GAP);
-        let support = ground::support(&planes);
+        let supported = ground::support(&planes).supported && !left;
         let found = ground::find(seam, self.pivot, exclude);
         let mut height = found.map(|g| self.pivot.y - g.point.y);
         if let (Some(g), Some(h)) = (found, height) {
             let near = walking && h < SNAP_REACH && g.normal.y > MAX_SLOPE_COS;
-            let grounded = support.supported || near;
-            if grounded && let Some(to) = ground::snap(h) {
-                self.pivot.y = g.point.y + to;
-                height = Some(to);
-            }
-            if grounded {
+            if supported || near {
                 self.up = ground::lean(self.up, g.normal, step);
+                if let Some(to) = ground::snap(h) {
+                    let proxy = self.proxy(seam, exclude);
+                    let mut y = g.point.y + to;
+                    let inside = proxy.clearance(
+                        Vec3::new(self.pivot.x, y, self.pivot.z),
+                        self.up,
+                        g.point,
+                        g.normal,
+                    );
+                    if inside < 0.0 && g.normal.y > 1e-3 {
+                        y -= inside / g.normal.y;
+                    }
+                    self.pivot.y = y;
+                    height = Some(y - g.point.y);
+                }
             }
         }
         let settled = found.is_some_and(|g| ground::angle(self.up, g.normal) <= LEAN_SETTLED);
         self.footing = Footing {
-            supported: support.supported,
+            supported,
             height,
             slope: if settled {
                 self.up
