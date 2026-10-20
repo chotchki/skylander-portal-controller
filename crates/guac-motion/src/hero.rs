@@ -21,22 +21,30 @@
 //! counted from the records either side of a step). At a steady 1/60 s these
 //! are all the same, and AG.18's replay feeds a recording's own.
 //!
-//! Hypotheses here: the engine walks him along the ground (and the snap holds
-//! him to it from up to 0.375 m) only while the support check passed, the
-//! ground faces up past 0.69 and the walk isn't leaving it faster than 0.01
-//! m/s (the velocity model as read), and a frame that fails that test ends
-//! without support whatever the support check finds (the corpus's 0x200
-//! flag, set only in frames without support, AG.38): it's what takes him off
-//! the ground for a frame over a crest (AG.38's dip edge) and on the first
-//! frame he's let go walking uphill (AG.38's `g38_t2979_up`, record 381); the
-//! lean turns before the snap, and the snap never sets his shape inside the
-//! ground: until his lean reaches a slope he rides as high as his shape needs
-//! there (AG.39: no landing rose after it, where a snap to 10 mm with his
-//! sphere still upright would set it 35 mm into a 17° slope); the edge probe's hold turns
-//! his facing to the stick at his usual rate; his collision shape turns with
-//! his lean about his pivot; he leans only while he's on the ground (the
-//! post-step's grounded test, as read), so not up in the air or on ground
-//! steeper than 45°.
+//! Hypotheses here, each with the reading or the recording behind it:
+//! - the engine walks him along the ground (and the snap holds him to it
+//!   from up to 0.375 m) only while the support check passed, the ground
+//!   faces up past 0.69 and the walk isn't leaving it faster than 0.01 m/s
+//!   (the velocity model as read);
+//! - a frame that fails that test ends without support whatever the support
+//!   check finds (the corpus's 0x200 flag, set only in frames without
+//!   support, AG.38): it's what takes him off the ground for a frame over a
+//!   crest (AG.38's dip edge) and on the first frame he's let go walking
+//!   uphill (AG.38's `g38_t2979_up`, record 381);
+//! - the lean turns before the snap, and the snap never sets his shape
+//!   inside the ground: until his lean reaches a slope he rides as high as
+//!   his shape needs there (AG.39: no landing rose after it, where a snap to
+//!   10 mm with his sphere still upright would set it 35 mm into a 17°
+//!   slope);
+//! - the edge probe's hold turns his facing to the stick at his usual rate;
+//! - his collision shape turns with his lean about his pivot (AG.9: on the
+//!   slopes his proxy's plane distance matched his pivot's height, which only
+//!   a leaned sphere gives);
+//! - he leans only while he's on the ground (the post-step's grounded test,
+//!   as read), so not up in the air or on ground steeper than 45°;
+//! - the downhill hug rays never run for a hero: they need a ground
+//!   acceleration in his `ActorParameters`, which read 0 through every walk
+//!   (AG.8), so none are built.
 
 use crate::edge;
 use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_REACH, SUPPORT_GAP};
