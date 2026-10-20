@@ -6,102 +6,24 @@
 //! --ignored`.
 //!
 //! Each test replays one law a record at a time from the record before, as
-//! AG.38 did, so it checks the law and not the geometry (that's AG.18's
-//! replay over level 213's collision). Records pair by `_curFrame`. Steps:
+//! AG.38 did, so it checks the law and not the geometry (`replays.rs` runs
+//! the whole controller over level 213's collision, AG.18 both sides of the
+//! seam). Records pair by `_curFrame`. Steps:
 //! the push and the facing take the step three records back, the slowing and
 //! gravity the step two back (the movement script's "time since last update"
 //! where the watch holds it, each record's being the step two back).
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+mod oracle;
 
-use guac_motion::ground::{self, LEAN_SETTLED};
+use guac_motion::ground;
 use guac_motion::seam::{BodyId, ContactPlane, Vec3};
-use guac_motion::solid::euler;
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{FOOT, Tuning};
-use guac_motion::walk::{Footing, Walk, heading, turn_facing, wrap};
-use guac_oracle::recording::{Frame, Mover, Recording};
+use guac_motion::walk::{Walk, heading, turn_facing, wrap};
+use guac_oracle::recording::Frame;
+use oracle::{consecutive, field, footing, recordings, stored};
 
 const T: Tuning = Tuning::ERUPTOR;
-
-/// A key from the environment, else from the workspace's `.env.dev`.
-fn env_or_dotenv(key: &str) -> Option<String> {
-    if let Ok(value) = std::env::var(key) {
-        return Some(value);
-    }
-    let dotenv = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env.dev");
-    let text = std::fs::read_to_string(dotenv).ok()?;
-    text.lines().find_map(|line| {
-        let (k, v) = line.trim().split_once('=')?;
-        (k.trim() == key).then(|| v.trim().trim_matches('"').to_owned())
-    })
-}
-
-/// Every replay of a run, by its set and label.
-fn recordings(run: &str) -> BTreeMap<String, Vec<Frame>> {
-    let root = env_or_dotenv("GUAC_CAPTURE_DIR")
-        .expect("set GUAC_CAPTURE_DIR (env or .env.dev) to the oracle's captures");
-    let run_dir = PathBuf::from(root).join("BLUS30968").join(run);
-    assert!(run_dir.is_dir(), "no {}", run_dir.display());
-    let mut out = BTreeMap::new();
-    for set in std::fs::read_dir(&run_dir).unwrap().flatten() {
-        let Ok(replays) = std::fs::read_dir(set.path()) else {
-            continue;
-        };
-        for replay in replays.flatten() {
-            let file = replay.path().join("recording.json");
-            let Ok(text) = std::fs::read_to_string(&file) else {
-                continue;
-            };
-            let recording: Recording = serde_json::from_str(&text).unwrap();
-            let name = format!(
-                "{}/{}",
-                set.file_name().to_string_lossy(),
-                replay.file_name().to_string_lossy()
-            );
-            out.insert(name, recording.frames().to_vec());
-        }
-    }
-    assert!(!out.is_empty(), "no recordings under {}", run_dir.display());
-    out
-}
-
-/// The stored walk, ft/s.
-fn stored(m: &Mover) -> Vec3 {
-    let (s, c) = m.heading.to_radians().sin_cos();
-    let (sp, cp) = m.pitch.to_radians().sin_cos();
-    Vec3::new(cp * s, sp, cp * c) * m.length
-}
-
-fn field(m: &Mover, name: &str) -> f32 {
-    m.fields[name]
-}
-
-/// What the script read of the engine at a record.
-fn footing(f: &Frame) -> Option<Footing> {
-    let c = f.contacts.as_ref()?;
-    let g = c.ground.as_ref();
-    let normal = g.map(|g| Vec3::from(g.normal));
-    let up = euler(f.hero.rotation) * Vec3::Y;
-    let settled = normal.is_some_and(|n| ground::angle(up, n) <= LEAN_SETTLED);
-    Some(Footing {
-        supported: c.support == 2,
-        height: g.map(|g| f.hero.position[1] - g.location[1]),
-        slope: if settled {
-            up
-        } else {
-            normal.unwrap_or(Vec3::Y)
-        },
-        ground: normal,
-    })
-}
-
-fn consecutive(frames: &[Frame]) -> bool {
-    frames
-        .windows(2)
-        .all(|w| w[1].game_frame == w[0].game_frame.wrapping_add(1))
-}
 
 /// AG.38's (2026-10-20) replay of the stored walk, Face and Move then Update
 /// Movers from the record before: within 0.032 ft/s on every record but the

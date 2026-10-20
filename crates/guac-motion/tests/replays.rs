@@ -1,9 +1,27 @@
-//! The controller run free from each recording's start (openspec AG.16).
+//! The controller stepped from a recording's own state on its own sticks,
+//! views and steps, over level 213's collision read off the dump (openspec
+//! AG.16 on AG.9, AG.10, AG.36, AG.38 and AG.39). `#[ignore]`d: the
+//! recordings are guest memory under `GUAC_CAPTURE_DIR` and the level comes
+//! from `GUAC_GIANTS_DUMP` (each from the process env, else `.env.dev`). Run
+//! with `cargo test -p guac-motion --release --test replays -- --ignored
+//! --nocapture --test-threads 1`.
+//!
+//! Unlike `recordings.rs`, which replays one law a record at a time from the
+//! record before, these run the whole controller free: from a recording's
+//! first record, or from the record before an event (a let-go, the gate's
+//! swing, the first record of a fall) so that what's measured is the law's
+//! and not the drift a run picks up on the way there. The world holds the
+//! level's mesh and the gate's door; nothing else in reach is solid in these
+//! recordings' manifolds but a Titan boulder, whose live solid scripts
+//! rewrite (AG.7), touched in 4 records of one replay. AG.18 replays the
+//! same recordings through both sides of the seam with its declared
+//! tolerances; this is the parry side's account of where each one parts.
 
 mod oracle;
 
 use guac_motion::hero::{Hero, Input};
 use guac_motion::parry::ParryWorld;
+use guac_motion::proxy::Proxy;
 use guac_motion::seam::Vec3;
 use guac_motion::solid::euler;
 use guac_motion::stick::Stick;
@@ -12,6 +30,9 @@ use guac_motion::walk::Walk;
 use guac_oracle::recording::Frame;
 use oracle::*;
 
+/// The controller's state after record `k`'s frame: his pivot, the move
+/// over the frame's step (m/s, as `moved` measures theirs) and his walk
+/// (ft/s, as the script stores it).
 #[derive(Debug, Clone)]
 struct Step {
     k: usize,
@@ -19,10 +40,15 @@ struct Step {
     velocity: Vec3,
     walk: Vec3,
     supported: bool,
-    held_off: bool,
+    /// The gate's door within 1 cm of his shape.
+    door: bool,
 }
 
-fn start(frames: &[Frame], s: usize) -> Hero {
+/// The hero as record `s` holds him: his pivot, facing and lean, his walk
+/// (the stored one where the watch held it, else what moved his body into
+/// the record, which is the walk off the ground, AG.10, and laid along it
+/// on it), his footing, and the steps of the two records before.
+fn seeded(frames: &[Frame], s: usize) -> Hero {
     let f = &frames[s];
     let mut hero = Hero::new(
         eruptor_solid(),
@@ -32,10 +58,7 @@ fn start(frames: &[Frame], s: usize) -> Hero {
     );
     hero.up = euler(f.hero.rotation) * Vec3::Y;
     hero.walk = Walk {
-        velocity: f
-            .mover
-            .as_ref()
-            .map_or(Vec3::from(f.hero.velocity) / FOOT, stored),
+        velocity: f.mover.as_ref().map_or(moved(frames, s) / FOOT, stored),
         landing: None,
     };
     hero.footing = footing(f).unwrap();
@@ -48,10 +71,12 @@ fn start(frames: &[Frame], s: usize) -> Hero {
     hero
 }
 
-fn run(world: &ParryWorld, frames: &[Frame], s: usize) -> Vec<Step> {
-    let mut hero = start(frames, s);
+/// The controller from record `s` through record `until`, stopping at a gap
+/// in the game's frame count.
+fn run(world: &ParryWorld, frames: &[Frame], s: usize, until: usize) -> Vec<Step> {
+    let mut hero = seeded(frames, s);
     let mut out = Vec::new();
-    for k in s + 1..frames.len() {
+    for k in s + 1..=until.min(frames.len() - 1) {
         let (a, b) = (&frames[k - 1], &frames[k]);
         if b.game_frame != a.game_frame.wrapping_add(1) {
             break;
@@ -59,385 +84,466 @@ fn run(world: &ParryWorld, frames: &[Frame], s: usize) -> Vec<Step> {
         let view = a.camera.map_or(0.0, |c| c.rotation[1]);
         let input = Input::stick(Stick::new(b.stick[0], b.stick[1]), view);
         hero.step(world, &input, a.clock.step(), &[]);
+        let proxy = Proxy {
+            seam: world,
+            shape: hero.solid().grown(0.0),
+            centre: hero.solid().centre,
+            rotation: hero.solid().rotation,
+            exclude: &[],
+        };
+        let door = proxy
+            .planes(hero.pivot, hero.up, 0.01)
+            .iter()
+            .any(|p| p.body == DOOR);
         out.push(Step {
             k,
             pivot: hero.pivot,
             velocity: hero.velocity,
             walk: hero.walk.velocity,
             supported: hero.footing.supported,
-            held_off: hero.held_off,
+            door,
         });
     }
     out
 }
 
-fn describe(f: &Frame) -> String {
-    let c = f.contacts.as_ref();
-    let plane = c.and_then(|c| c.planes.first()).map(|p| {
-        format!(
-            "plane d {:.4} n ({:.3},{:.3},{:.3}) col {}",
-            p.distance, p.normal[0], p.normal[1], p.normal[2], p.collider
-        )
-    });
-    let ground = c.and_then(|c| c.ground.as_ref()).map(|g| {
-        format!(
-            "h {:.4} gn ({:.3},{:.3},{:.3})",
-            f.hero.position[1] - g.location[1],
-            g.normal[0],
-            g.normal[1],
-            g.normal[2]
-        )
-    });
-    format!(
-        "support {:?} {} {} stick {:?} inactive {:?}",
-        c.map(|c| c.support),
-        plane.unwrap_or_default(),
-        ground.unwrap_or_default(),
-        f.stick,
-        f.mover.as_ref().map(|m| field(m, "controller inactive"))
-    )
-}
-
-/// What theirs did over a record: its displacement over the step that
+/// What theirs did over record `k`: its displacement over the step that
 /// moved it there, m/s.
 fn moved(frames: &[Frame], k: usize) -> Vec3 {
     let (a, b) = (&frames[k - 1], &frames[k]);
     (Vec3::from(b.hero.position) - Vec3::from(a.hero.position)) / a.clock.step()
 }
 
-fn survey(run_name: &str) {
-    let world = ParryWorld::new(&level_213()).unwrap();
-    for (name, frames) in recordings(run_name) {
-        let steps = run(&world, &frames, 2);
-        let (mut mm, mut cm, mut dv_ok, mut dw_ok, mut walks) = (0, 0, 0, 0, 0);
-        let (mut first_mm, mut first_cm) = (None, None);
-        let mut worst = 0.0f32;
-        for s in &steps {
+/// The gate's door is the manifold's own entry at a record.
+fn their_door(f: &Frame) -> bool {
+    const DOOR_COLLIDER: u32 = 815_119_376;
+    f.contacts
+        .as_ref()
+        .and_then(|c| c.planes.first())
+        .is_some_and(|p| p.collider == DOOR_COLLIDER)
+}
+
+/// Records a run spent within 1 mm and 1 cm of the recorded pivot, the
+/// first past each, the records whose move over the step is within 0.01
+/// m/s of theirs, and (where the watch held the walk) whose walk is within
+/// AG.38's 0.032 ft/s.
+#[derive(Debug, Default, Clone)]
+struct Held {
+    steps: usize,
+    within_mm: usize,
+    within_cm: usize,
+    first_off_mm: Option<usize>,
+    first_off_cm: Option<usize>,
+    worst: f32,
+    moved_ok: usize,
+    walks: usize,
+    walk_ok: usize,
+}
+
+impl Held {
+    fn of(frames: &[Frame], steps: &[Step]) -> Held {
+        let mut h = Held {
+            steps: steps.len(),
+            ..Held::default()
+        };
+        for s in steps {
             let b = &frames[s.k];
             let dp = (s.pivot - Vec3::from(b.hero.position)).length();
-            worst = worst.max(dp);
+            h.worst = h.worst.max(dp);
             if dp <= 1e-3 {
-                mm += 1;
-            } else if first_mm.is_none() {
-                first_mm = Some(s.k);
+                h.within_mm += 1;
+            } else if h.first_off_mm.is_none() {
+                h.first_off_mm = Some(s.k);
             }
             if dp <= 1e-2 {
-                cm += 1;
-            } else if first_cm.is_none() {
-                first_cm = Some(s.k);
+                h.within_cm += 1;
+            } else if h.first_off_cm.is_none() {
+                h.first_off_cm = Some(s.k);
             }
-            if (s.velocity - moved(&frames, s.k)).length() <= 0.01 {
-                dv_ok += 1;
-            }
+            h.moved_ok += usize::from((s.velocity - moved(frames, s.k)).length() <= 0.01);
             if let Some(m) = &b.mover {
-                walks += 1;
-                if (s.walk - stored(m)).length() <= 0.032 {
-                    dw_ok += 1;
-                }
+                h.walks += 1;
+                h.walk_ok += usize::from((s.walk - stored(m)).length() <= 0.032);
             }
         }
-        eprintln!(
-            "{name}: {} steps; pos 1 mm {mm} (first off {first_mm:?}), 1 cm {cm} (first off {first_cm:?}), worst {worst:.4} m; moved within 0.01 m/s {dv_ok}; walk within 0.032 ft/s {dw_ok} of {walks}",
-            steps.len()
-        );
-        if std::env::var("REPLAY_VERBOSE").is_ok()
-            && let Some(k) = first_cm
-        {
-            let s = steps.iter().find(|s| s.k == k).unwrap();
-            let (a, b) = (&frames[k - 1], &frames[k]);
-            eprintln!(
-                "  at {k}: ours {:?} v {:?} walk {:?} sup {} held {}; theirs {:?} moved {:?} walk {:?}",
-                s.pivot,
-                s.velocity,
-                s.walk,
-                s.supported,
-                s.held_off,
-                b.hero.position,
-                moved(&frames, k),
-                b.mover.as_ref().map(stored)
-            );
-            eprintln!("  a: {}", describe(a));
-            eprintln!("  b: {}", describe(b));
-        }
+        h
+    }
+
+    fn add(&mut self, h: &Held) {
+        self.steps += h.steps;
+        self.within_mm += h.within_mm;
+        self.within_cm += h.within_cm;
+        self.moved_ok += h.moved_ok;
+        self.walks += h.walks;
+        self.walk_ok += h.walk_ok;
+        self.worst = self.worst.max(h.worst);
+    }
+
+    fn line(&self, name: &str) -> String {
+        format!(
+            "{name}: {} records, pivot within 1 mm {} (first past {:?}) and 1 cm {} (first past {:?}, worst {:.3} m), moved within 0.01 m/s {}, walk within 0.032 ft/s {} of {}",
+            self.steps,
+            self.within_mm,
+            self.first_off_mm,
+            self.within_cm,
+            self.first_off_cm,
+            self.worst,
+            self.moved_ok,
+            self.walk_ok,
+            self.walks
+        )
     }
 }
 
-#[test]
-#[ignore]
-fn survey_ag38() {
-    survey("ag38-switch-1792509065");
+fn level() -> ParryWorld {
+    ParryWorld::new(&level_213()).unwrap()
 }
 
-#[test]
-#[ignore]
-fn survey_ag39() {
-    survey("ag39-falls-1792502813");
+/// The first record from `from` on where the stick reads `stick` after not
+/// doing so (the game's own floats).
+fn first_reading(frames: &[Frame], from: usize, stick: [f32; 2]) -> Option<usize> {
+    (from.max(1)..frames.len()).find(|&k| frames[k].stick == stick && frames[k - 1].stick != stick)
 }
 
-#[test]
-#[ignore]
-fn survey_ag9() {
-    survey("ag9-contacts-1792471160");
-    survey("ag9-contacts-1792472400");
-}
+const AG38: &str = "ag38-switch-1792509065";
 
+/// AG.38's 38 replays run free from their first record: each holds within
+/// 1 mm until its first frame off the ground (a crest's, the corridor
+/// foot's, the gate's) and its walk comes back after it.
 #[test]
 #[ignore]
-fn survey_ag36() {
-    survey("ag36-edges-1792474678");
-}
-
-/// REPLAY_DEBUG="run|set/replay|from|to" prints every step between.
-#[test]
-#[ignore]
-fn debug_one() {
-    let spec = std::env::var("REPLAY_DEBUG").unwrap();
-    let parts: Vec<&str> = spec.split('|').collect();
-    let (run_name, name, from, to) = (
-        parts[0],
-        parts[1],
-        parts[2].parse::<usize>().unwrap(),
-        parts[3].parse::<usize>().unwrap(),
+fn ag38_free_from_the_start() {
+    let world = level();
+    let mut total = Held::default();
+    let mut earliest = usize::MAX;
+    for (name, frames) in recordings(AG38) {
+        let steps = run(&world, &frames, 2, frames.len());
+        let h = Held::of(&frames, &steps);
+        eprintln!("{}", h.line(&name));
+        earliest = earliest.min(h.first_off_mm.unwrap_or(usize::MAX));
+        total.add(&h);
+    }
+    eprintln!("{}", total.line("all"));
+    assert!(earliest >= 91, "{earliest}");
+    assert!(
+        total.within_mm >= 3_700 && total.walk_ok >= 15_800,
+        "{total:?}"
     );
-    let world = ParryWorld::new(&level_213()).unwrap();
-    let frames = recordings(run_name).remove(name).unwrap();
-    let mut hero = start(&frames, 2);
-    for k in 3..=to.min(frames.len() - 1) {
-        let (a, b) = (&frames[k - 1], &frames[k]);
-        let view = a.camera.map_or(0.0, |c| c.rotation[1]);
-        let input = Input::stick(Stick::new(b.stick[0], b.stick[1]), view);
-        let before = hero.clone();
-        hero.step(&world, &input, a.clock.step(), &[]);
-        if k >= from {
-            let planes = guac_motion::proxy::Proxy {
-                seam: &world,
-                shape: hero.solid().grown(0.0),
-                centre: hero.solid().centre,
-                rotation: hero.solid().rotation,
-                exclude: &[],
-            }
-            .planes(hero.pivot, hero.up, 0.1);
-            eprintln!(
-                "{k}: ours p {:?} v {:?} walk {:?} foot {:?} up {:?} held {}",
-                hero.pivot, hero.velocity, hero.walk, hero.footing, hero.up, hero.held_off
-            );
-            for p in planes.iter().take(4) {
-                eprintln!(
-                    "    plane d {:.5} n {:?} tri {:?}",
-                    p.distance, p.normal, p.triangle
-                );
-            }
-            eprintln!(
-                "    theirs p {:?} v {:?} walk {:?} rot {:?}",
-                b.hero.position,
-                b.hero.velocity,
-                b.mover.as_ref().map(stored),
-                b.hero.rotation
-            );
-            eprintln!("    b: {}", describe(b));
-            let _ = before;
-        }
-    }
 }
 
-/// REPLAY_TRIS="a,b,..." prints those triangles and who shares their edges.
+/// The first record from `from` on where he lands from a frame off the
+/// ground within 0.4 ft of it: the crest's landing.
+fn crest_landing(frames: &[Frame], from: usize) -> Option<usize> {
+    (from.max(1)..frames.len()).find(|&k| {
+        let (a, b) = (footing(&frames[k - 1]), footing(&frames[k]));
+        a.is_some_and(|a| !a.supported && !a.high()) && b.is_some_and(|b| b.supported)
+    })
+}
+
+/// The dip's edge at six strengths (AG.38's `a/g38_m*`, 2 replays each), run
+/// free from the start: the two records after the crest's landing he walks
+/// at the original's speed to 1e-3 m/s, his walk its length to 0.005 ft/s
+/// (AG.38's 3.809, 4.415, 5.006-5.007, 5.826-5.827, 6.553 and 6.553 m/s).
+/// The landing's own record is the proxy's (a hypothesis, reported).
 #[test]
 #[ignore]
-fn debug_triangles() {
-    use guac_motion::seam::Collider;
-    let tris: Vec<usize> = std::env::var("REPLAY_TRIS")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse().unwrap())
-        .collect();
-    let bodies = level_213();
-    let Collider::Mesh(mesh) = &bodies[0].collider else {
-        panic!()
-    };
-    let v = mesh.vertices();
-    let t = mesh.triangles();
-    for &i in &tris {
-        let [a, b, c] = t[i];
-        let (pa, pb, pc) = (v[a as usize], v[b as usize], v[c as usize]);
-        let n = (pb - pa).cross(pc - pa).normalize();
+fn ag38_the_crests_at_six_strengths() {
+    let world = level();
+    let mut seen = 0;
+    for (name, frames) in recordings(AG38) {
+        if !name.starts_with("a/g38_m") {
+            continue;
+        }
+        let steps = run(&world, &frames, 2, frames.len());
+        let at = |k: usize| steps.iter().find(|s| s.k == k).unwrap();
+        let land = crest_landing(&frames, 70).unwrap();
+        for k in land + 1..=land + 2 {
+            let (ours, theirs) = (at(k).velocity.length(), moved(&frames, k).length());
+            let walk = stored(frames[k].mover.as_ref().unwrap()).length();
+            assert!((ours - theirs).abs() <= 1e-3, "{name} {k}: {ours} {theirs}");
+            assert!((at(k).walk.length() - walk).abs() <= 5e-3, "{name} {k}");
+        }
         eprintln!(
-            "tri {i}: {a} {b} {c} n {n:?} welding? mat {}",
-            mesh.materials()[i]
+            "{name}: from {:.4} m/s, landing at record {land} ours {:.4} theirs {:.4}, then ours {:.4} theirs {:.4} m/s",
+            moved(&frames, land - 3).length(),
+            at(land).velocity.length(),
+            moved(&frames, land).length(),
+            at(land + 1).velocity.length(),
+            moved(&frames, land + 1).length(),
         );
-        eprintln!("   {pa:?} {pb:?} {pc:?}");
-        for (e0, e1) in [(a, b), (b, c), (c, a)] {
-            let shared: Vec<usize> = t
-                .iter()
-                .enumerate()
-                .filter(|(j, tj)| *j != i && tj.contains(&e0) && tj.contains(&e1))
-                .map(|(j, _)| j)
-                .collect();
-            // Same position, other index.
-            let dup = |x: u32| {
-                v.iter()
-                    .enumerate()
-                    .filter(|(j, p)| *j as u32 != x && (**p - v[x as usize]).length() < 1e-4)
-                    .map(|(j, _)| j)
-                    .collect::<Vec<_>>()
-            };
-            eprintln!(
-                "   edge {e0}-{e1}: shared by {shared:?}; dups {:?} {:?}",
-                dup(e0),
-                dup(e1)
-            );
-        }
+        seen += 1;
+    }
+    assert_eq!(seen, 12);
+}
+
+/// A let-go's slide: the records it moved, how far, its last moving
+/// record's speed and the game time it took.
+#[derive(Debug, Clone, Copy)]
+struct Slide {
+    frames: usize,
+    metres: f32,
+    last: f32,
+    seconds: f32,
+}
+
+/// The slide in `speeds` (record, pivot, speed), from `from`.
+fn slide(frames: &[Frame], speeds: &[(usize, Vec3, f32)], from: Vec3) -> Slide {
+    let moving: Vec<&(usize, Vec3, f32)> = speeds.iter().take_while(|s| s.2 > 1e-4).collect();
+    let end = moving.last().map_or(from, |s| s.1);
+    Slide {
+        frames: moving.len(),
+        metres: (end - from).length(),
+        last: moving.last().map_or(0.0, |s| s.2),
+        seconds: moving.iter().map(|s| frames[s.0 - 1].clock.step()).sum(),
     }
 }
 
-/// Every record of AG.38's run stepped from the recorded record before:
-/// where the controller's own frame parts from the original's.
+/// The nine slope let-gos (AG.38's `a/g38_t*`, up, down and across t2673
+/// at 5.34°, t2871 at 8.53° and t2979 at 17.3°, 2 replays each), each from
+/// the record before the stick reads centred: the same number of records
+/// moving, the last one's speed to 1e-3 m/s and the slide's length to 1 cm,
+/// inside AG.38's bands (stopped dead from 1.323-2.543 m/s walking down,
+/// 0.011-0.519 across, 1.208-2.732 up; 0.814-1.049 m in 0.232-0.269 s).
 #[test]
 #[ignore]
-fn one_step_ag38() {
-    use std::collections::BTreeMap;
-    let world = ParryWorld::new(&level_213()).unwrap();
-    let mut table: BTreeMap<String, usize> = BTreeMap::new();
-    let mut samples: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut pos_err = Vec::new();
-    for (name, frames) in recordings("ag38-switch-1792509065") {
-        for k in 4..frames.len() {
-            if !consecutive(&frames[k - 4..=k]) {
+fn ag38_the_nine_slope_let_gos() {
+    let world = level();
+    let mut seen = 0;
+    for (name, frames) in recordings(AG38) {
+        if !name.starts_with("a/g38_t") {
+            continue;
+        }
+        let g = first_reading(&frames, 100, [0.0, 0.0]).unwrap();
+        let steps = run(&world, &frames, g - 1, g + 60);
+        let from = Vec3::from(frames[g - 1].hero.position);
+        let ours: Vec<(usize, Vec3, f32)> = steps
+            .iter()
+            .map(|s| (s.k, s.pivot, s.velocity.length()))
+            .collect();
+        let theirs: Vec<(usize, Vec3, f32)> = (g..=g + 60)
+            .map(|k| {
+                let p = Vec3::from(frames[k].hero.position);
+                (k, p, moved(&frames, k).length())
+            })
+            .collect();
+        let (o, t) = (slide(&frames, &ours, from), slide(&frames, &theirs, from));
+        eprintln!("{name} let go at record {g}: ours {o:?}; theirs {t:?}");
+        assert_eq!(o.frames, t.frames, "{name}");
+        assert!((o.last - t.last).abs() <= 1e-3, "{name}");
+        assert!((o.metres - t.metres).abs() <= 0.01, "{name}");
+        let band = if name.contains("_down") {
+            1.323..=2.543
+        } else if name.contains("_across") {
+            0.011..=0.519
+        } else {
+            1.208..=2.733
+        };
+        assert!(band.contains(&o.last), "{name}: {}", o.last);
+        assert!((0.814..=1.049).contains(&o.metres), "{name}");
+        assert!(
+            (0.232..=0.269).contains(&o.seconds),
+            "{name}: {}",
+            o.seconds
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, 18);
+}
+
+/// The gate's split (AG.38's `gate`, AF.11's walk, 6 replays): the stick
+/// swings 90° at full on the ground falling away ahead of the gate. Free
+/// from the start, his walk sits at most 1.2e-5 ft/s over 21.5 at the swing,
+/// under the switch, and he turns free in all six (the creep that tips the
+/// original's past it is hypothesis 1). From the record before the swing,
+/// with the original's crept walk, he steers into the door in the three
+/// whose walk sat 1.26e-4-1.49e-4 over (W-00, -01, -04) and turns free in
+/// two of the other three; W-05's, 1.03e-4 over, steers a frame and turns
+/// free in the original as rounding took it back under 1e-4.
+#[test]
+#[ignore]
+fn ag38_the_gates_split() {
+    let world = level();
+    let mut agree = Vec::new();
+    for (name, frames) in recordings(AG38) {
+        if !name.starts_with("gate/") {
+            continue;
+        }
+        let swing = first_reading(&frames, 100, [-1.0, 0.0]).unwrap();
+        let theirs = (swing..frames.len()).any(|k| their_door(&frames[k]));
+        let free = run(&world, &frames, 2, frames.len());
+        let free_door = free.iter().any(|s| s.door);
+        let free_over = free
+            .iter()
+            .find(|s| s.k == swing - 1)
+            .unwrap()
+            .walk
+            .length()
+            - 21.5;
+        let seeded = run(&world, &frames, swing - 1, swing + 60);
+        let seeded_door = seeded.iter().any(|s| s.door);
+        let over = stored(frames[swing - 1].mover.as_ref().unwrap()).length() - 21.5;
+        eprintln!(
+            "{name} swing at record {swing}: theirs into the door {theirs}, walk {over:+.3e} ft/s over; free run into it {free_door} ({free_over:+.3e} over); from the record before {seeded_door}; {}",
+            Held::of(&frames, &seeded).line("from there")
+        );
+        assert!(!free_door && free_over < 1e-4, "{name}");
+        if seeded_door == theirs {
+            agree.push(name.clone());
+        } else {
+            assert_eq!(name, "gate/walk-W-05");
+        }
+    }
+    assert_eq!(agree.len(), 5, "{agree:?}");
+}
+
+const AG39: &str = "ag39-falls-1792502813";
+
+/// Free in the air: not supported, 0.4 ft or more up, and his manifold's
+/// own closest point 2 cm or more off (AG.10's choice).
+fn free(f: &Frame) -> bool {
+    let Some(c) = &f.contacts else { return false };
+    footing(f).is_some_and(|ft| ft.high()) && c.planes.first().is_none_or(|p| p.distance >= 0.02)
+}
+
+/// AG.39's falls off the ledge route (54 replays): from the second record of
+/// each run of free ones (the frame into it moved him by his walk alone, so
+/// the walk is known), his move over each record theirs stays free (gravity
+/// 136.21 ft/s², the air's steer and its 50 ft/s² slowing) and the record he
+/// lands at.
+#[test]
+#[ignore]
+fn ag39_falls_from_their_second_free_record() {
+    let world = level();
+    let (mut falls, mut held, mut landed, mut free_records, mut free_ok) = (0, 0, 0, 0, 0);
+    let mut parted = Vec::new();
+    for (name, frames) in recordings(AG39) {
+        let mut k = 3;
+        while k < frames.len() - 1 {
+            if !(free(&frames[k]) && free(&frames[k - 1]) && !free(&frames[k - 2])) {
+                k += 1;
                 continue;
             }
-            let (a, b) = (&frames[k - 1], &frames[k]);
-            if a.mover.is_none() || b.mover.is_none() || a.contacts.is_none() {
-                continue;
-            }
-            let mut hero = start(&frames, k - 1);
-            let view = a.camera.map_or(0.0, |c| c.rotation[1]);
-            let input = Input::stick(Stick::new(b.stick[0], b.stick[1]), view);
-            hero.step(&world, &input, a.clock.step(), &[]);
-            let theirs = footing(b).unwrap();
-            let key = format!(
-                "sup ours {} theirs {}",
-                hero.footing.supported, theirs.supported
-            );
-            *table.entry(key.clone()).or_default() += 1;
-            let dp = (hero.pivot - Vec3::from(b.hero.position)).length();
-            pos_err.push(dp);
-            if hero.footing.supported != theirs.supported {
-                let list = samples.entry(key).or_default();
-                if list.len() < 15 {
-                    list.push(format!(
-                        "{name} {k}: a h {:?} sup {} | b h {:?} | ours h {:?} dp {dp:.4} walk {:?} theirs {:?}\n      b {}",
-                        footing(a).unwrap().height,
-                        footing(a).unwrap().supported,
-                        theirs.height,
-                        hero.footing.height,
-                        hero.walk.velocity,
-                        stored(b.mover.as_ref().unwrap()),
-                        describe(b)
-                    ));
+            let land =
+                (k..frames.len()).find(|&j| footing(&frames[j]).is_some_and(|f| f.supported));
+            let until = land.map_or(frames.len() - 1, |l| (l + 3).min(frames.len() - 1));
+            let steps = run(&world, &frames, k, until);
+            let mut worst = 0.0f32;
+            for s in &steps {
+                if free(&frames[s.k]) && free(&frames[s.k - 1]) {
+                    let off = (s.velocity - moved(&frames, s.k)).length();
+                    worst = worst.max(off);
+                    free_records += 1;
+                    free_ok += usize::from(off <= 1.1e-3);
                 }
             }
+            let ours = steps.iter().find(|s| s.supported).map(|s| s.k);
+            let lands_with = ours.zip(land).is_some_and(|(o, t)| o.abs_diff(t) <= 1);
+            eprintln!(
+                "{name} from record {k}: worst {worst:.2e} m/s while free; lands at ours {ours:?} theirs {land:?}"
+            );
+            falls += 1;
+            held += usize::from(worst <= 1.1e-3);
+            landed += usize::from(lands_with);
+            if worst > 1.1e-3 || !lands_with {
+                parted.push(format!("{name} from {k}"));
+            }
+            k = until.max(k + 1);
         }
     }
-    pos_err.sort_by(f32::total_cmp);
-    let q = |f: f64| pos_err[((pos_err.len() - 1) as f64 * f) as usize];
-    eprintln!("{table:?}");
     eprintln!(
-        "position after one step: n {} median {:.2e} p90 {:.2e} p99 {:.2e} max {:.2e}; within 1e-4 {}",
-        pos_err.len(),
+        "{falls} falls, {held} within 1.1e-3 m/s while free and {landed} landing within a record of theirs; {free_ok} of {free_records} free records within 1.1e-3 m/s; parted: {parted:#?}"
+    );
+    assert!(
+        falls >= 40 && held >= 29 && landed >= 34,
+        "{falls} {held} {landed}"
+    );
+    assert!(free_ok >= 190, "{free_ok} of {free_records}");
+}
+
+/// The records where a run comes to rest: over 1 mm/s the record before,
+/// not over it at the record.
+fn stops(speeds: &[(usize, f32)]) -> Vec<usize> {
+    speeds
+        .windows(2)
+        .filter(|w| w[0].1 > 1e-3 && w[1].1 <= 1e-3)
+        .map(|w| w[1].0)
+        .collect()
+}
+
+const AG36: &str = "ag36-edges-1792474678";
+const AG9: [&str; 2] = ["ag9-contacts-1792471160", "ag9-contacts-1792472400"];
+
+/// AG.36's edges and AG.9's walls, door, mounds and corridor (51 and 38
+/// replays), run free from the start: each recording's first rest (an
+/// edge's stop dead in AG.36's, the positioning leg's in AG.9's) against
+/// theirs, and over AG.9's wall slides the move along the wall against
+/// theirs.
+#[test]
+#[ignore]
+fn ag36_and_ag9_free_from_the_start() {
+    let world = level();
+    let (mut rests, mut same_record, mut within_8cm) = (0, 0, 0);
+    let mut slides = Vec::new();
+    for run_name in [AG36, AG9[0], AG9[1]] {
+        let mut total = Held::default();
+        for (name, frames) in recordings(run_name) {
+            let steps = run(&world, &frames, 2, frames.len());
+            let h = Held::of(&frames, &steps);
+            total.add(&h);
+            let ours = stops(
+                &steps
+                    .iter()
+                    .map(|s| (s.k, s.velocity.length()))
+                    .collect::<Vec<_>>(),
+            );
+            let theirs = stops(
+                &steps
+                    .iter()
+                    .map(|s| (s.k, moved(&frames, s.k).length()))
+                    .collect::<Vec<_>>(),
+            );
+            let rest = ours.first().zip(theirs.first()).map(|(&o, &t)| {
+                let at = steps.iter().find(|s| s.k == o).unwrap().pivot;
+                (o, t, (at - Vec3::from(frames[t].hero.position)).length())
+            });
+            if let Some((o, t, apart)) = rest {
+                rests += 1;
+                same_record += usize::from(o == t);
+                within_8cm += usize::from(apart <= 0.08);
+            }
+            // Along a wall: their manifold's own entry a wall within 6 mm
+            // over two records running, theirs moving over 1 m/s.
+            for s in &steps {
+                let wall = |f: &Frame| {
+                    f.contacts
+                        .as_ref()
+                        .and_then(|c| c.planes.first())
+                        .is_some_and(|p| p.normal[1] < 0.7 && p.distance < 0.006)
+                };
+                let theirs = moved(&frames, s.k).length();
+                if name.contains("wall")
+                    && wall(&frames[s.k])
+                    && wall(&frames[s.k - 1])
+                    && theirs > 1.0
+                {
+                    slides.push((s.velocity.length() - theirs).abs());
+                }
+            }
+            eprintln!("{}; first rest ours/theirs/apart {rest:?}", h.line(&name));
+        }
+        eprintln!("{}", total.line(run_name));
+    }
+    slides.sort_by(f32::total_cmp);
+    let q = |f: f64| slides[((slides.len() - 1) as f64 * f) as usize];
+    eprintln!(
+        "{rests} rests, {same_record} at theirs' record, {within_8cm} within 8 cm; {} wall records, ours' move off theirs median {:.4} p90 {:.4} max {:.4} m/s",
+        slides.len(),
         q(0.5),
         q(0.9),
-        q(0.99),
-        q(1.0),
-        pos_err.iter().filter(|&&d| d <= 1e-4).count()
+        q(1.0)
     );
-    for (k, v) in samples {
-        eprintln!("{k}:");
-        for s in v {
-            eprintln!("  {s}");
-        }
-    }
-}
-
-/// Their support against the leave test and our planes at the end pose.
-#[test]
-#[ignore]
-fn support_table_ag38() {
-    use guac_motion::proxy::{LEAVE_NORMAL, LEAVE_SPEED, Proxy};
-    use std::collections::BTreeMap;
-    let world = ParryWorld::new(&level_213()).unwrap();
-    let mut table: BTreeMap<(bool, bool, i32), [usize; 2]> = BTreeMap::new();
-    for (_, frames) in recordings("ag38-switch-1792509065") {
-        for k in 4..frames.len() {
-            if !consecutive(&frames[k - 4..=k]) {
-                continue;
-            }
-            let (a, b) = (&frames[k - 1], &frames[k]);
-            let (Some(_), Some(mb), Some(fa)) = (&a.mover, &b.mover, footing(a)) else {
-                continue;
-            };
-            let hero = start(&frames, k - 1);
-            let v = stored(mb) * FOOT;
-            let n = fa.ground.unwrap_or(Vec3::Y);
-            let walking = fa.supported && n.y >= LEAVE_NORMAL && n.dot(v) <= LEAVE_SPEED;
-            let left = fa.supported && !walking;
-            let proxy = Proxy {
-                seam: &world,
-                shape: hero.solid().grown(0.0),
-                centre: hero.solid().centre,
-                rotation: hero.solid().rotation,
-                exclude: &[],
-            };
-            let up = euler(b.hero.rotation) * Vec3::Y;
-            let planes = proxy.planes(Vec3::from(b.hero.position), up, 0.05);
-            let d = planes
-                .iter()
-                .filter(|p| p.normal.y > 0.7)
-                .map(|p| p.distance)
-                .fold(f32::INFINITY, f32::min);
-            let bin = if d.is_finite() {
-                (d * 1000.0).floor() as i32
-            } else {
-                99
-            };
-            let theirs = b.contacts.as_ref().unwrap().support == 2;
-            table.entry((fa.supported, left, bin)).or_default()[usize::from(theirs)] += 1;
-        }
-    }
-    eprintln!("(a supported, left, mm past skin at b's pose): [unsupported, supported]");
-    for (k, v) in table {
-        eprintln!("  {k:?}: {v:?}");
-    }
-}
-
-/// REPLAY_RAYS="x,y,z" prints what rays straight down and up from there,
-/// and down from 100 m over it, meet.
-#[test]
-#[ignore]
-fn debug_rays() {
-    use guac_motion::seam::PhysicsSeam;
-    let p: Vec<f32> = std::env::var("REPLAY_RAYS")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse().unwrap())
-        .collect();
-    let at = Vec3::new(p[0], p[1], p[2]);
-    let world = ParryWorld::new(&level_213()).unwrap();
-    eprintln!("down: {:?}", world.ray(at, Vec3::NEG_Y, 500.0, &[]));
-    eprintln!("up: {:?}", world.ray(at, Vec3::Y, 500.0, &[]));
-    eprintln!(
-        "from 100 m up: {:?}",
-        world.ray(at + Vec3::Y * 100.0, Vec3::NEG_Y, 500.0, &[])
+    assert!(
+        same_record >= 80 && within_8cm >= 80,
+        "{rests} {same_record} {within_8cm}"
     );
-    for dz in [-0.6f32, -0.3, 0.0, 0.3, 0.6, 0.9] {
-        let q = at + Vec3::new(0.0, 0.0, dz);
-        eprintln!(
-            "  z {:+.1}: down {:?} up {:?}",
-            dz,
-            world
-                .ray(q, Vec3::NEG_Y, 500.0, &[])
-                .map(|h| (h.point.y, h.triangle, h.normal)),
-            world
-                .ray(q, Vec3::Y, 500.0, &[])
-                .map(|h| (h.point.y, h.triangle, h.normal))
-        );
-    }
 }
