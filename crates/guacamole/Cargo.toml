@@ -76,6 +76,9 @@ avian3d = { git = "https://github.com/avianphysics/avian", rev = "1070759b2145dc
     "parry-f32",
 ] }
 guac-motion = { path = "../guac-motion" }
+# The shots plugin (AE.29) and hero_view write their PNGs themselves; the
+# version bevy_image already pulls.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 # The seam's shared test table, run through the Avian side (physics.rs).
@@ -85,8 +88,6 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 serde_json = { workspace = true }
 tempfile = "3"
-# hero_view writes its screenshot PNG itself; the version bevy_image already pulls.
-image = { version = "0.25", default-features = false, features = ["png"] }
 # The builders (SfoBuilder, the sample disc) for the setup and extraction tests.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 

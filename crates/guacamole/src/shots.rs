@@ -8,17 +8,19 @@
 //! window frames, so a window capture comes back black; the window stays empty
 //! meanwhile. An intro's shot is a frame of the disc's own FMV, so the folder
 //! must be outside any git checkout (the extract root's rule, design decision
-//! 5); one inside is refused and nothing shot. A card's turning model holds
+//! 5); one inside is refused and nothing shot. A folder that isn't there is
+//! made, and a shot that doesn't land is logged as an error (openspec AE.29).
+//! A card's turning model holds
 //! its idle's first pose at `GUAC_SHOT_YAW` degrees of its turn (default 0,
 //! facing the camera), so a walk can shoot a turn one run per angle.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bevy::camera::RenderTarget;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
-use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
+use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
 use tracing::{error, info};
 
 use crate::cards::PortalCards;
@@ -40,14 +42,18 @@ impl Plugin for Shots {
         let Some(dir) = shot_dir.map(PathBuf::from) else {
             return;
         };
-        let dir = match outside_checkouts(dir) {
+        let dir = match made_shot_dir(dir) {
             Ok(dir) => dir,
-            Err((dir, repo)) => {
+            Err(ShotDirError::InCheckout { dir, repo }) => {
                 error!(
                     dir = %dir.display(),
                     repo = %repo.display(),
                     "GUAC_SHOT_DIR is inside a git work tree and intro shots are game frames; no shots"
                 );
+                return;
+            }
+            Err(ShotDirError::NotMade { dir, why }) => {
+                error!(dir = %dir.display(), %why, "GUAC_SHOT_DIR couldn't be made; no shots");
                 return;
             }
         };
@@ -67,6 +73,8 @@ impl Plugin for Shots {
             target: None,
             seq: 0,
             due: None,
+            saved: 0,
+            failed: 0,
         })
         .add_systems(PostStartup, render_offscreen)
         .add_systems(Last, snap);
@@ -80,6 +88,9 @@ struct ShotState {
     target: Option<Handle<Image>>,
     seq: u32,
     due: Option<Instant>,
+    /// Shots written so far, and those whose write failed.
+    saved: u32,
+    failed: u32,
 }
 
 /// `dir` made absolute, or it and the work tree holding it.
@@ -88,6 +99,54 @@ fn outside_checkouts(dir: PathBuf) -> Result<PathBuf, (PathBuf, PathBuf)> {
     match guac_extract::root::enclosing_git_tree(&dir) {
         Some(repo) => Err((dir, repo)),
         None => Ok(dir),
+    }
+}
+
+/// Why `GUAC_SHOT_DIR` takes no shots.
+#[derive(Debug, PartialEq)]
+enum ShotDirError {
+    /// Inside a git work tree: refused before anything is made.
+    InCheckout { dir: PathBuf, repo: PathBuf },
+    /// Outside one, but it couldn't be made.
+    NotMade { dir: PathBuf, why: String },
+}
+
+/// The shot folder: `dir` made absolute, refused inside a git work tree,
+/// else made with its parents.
+fn made_shot_dir(dir: PathBuf) -> Result<PathBuf, ShotDirError> {
+    let dir =
+        outside_checkouts(dir).map_err(|(dir, repo)| ShotDirError::InCheckout { dir, repo })?;
+    match std::fs::create_dir_all(&dir) {
+        Ok(()) => Ok(dir),
+        Err(e) => Err(ShotDirError::NotMade {
+            dir,
+            why: e.to_string(),
+        }),
+    }
+}
+
+/// Writes a captured shot to `path` as an 8-bit RGB PNG, its alpha dropped
+/// as Bevy's `save_to_disk` drops it.
+fn save(shot: &Image, path: &Path) -> Result<(), String> {
+    let image = shot.clone().try_into_dynamic().map_err(|e| e.to_string())?;
+    image
+        .to_rgb8()
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
+}
+
+/// The observer a shot's capture lands on: written to `path`, counted and
+/// logged as saved, or counted and logged as an error when the write fails.
+fn store(path: PathBuf) -> impl FnMut(On<ScreenshotCaptured>, ResMut<ShotState>) {
+    move |captured, mut state| match save(&captured.image, &path) {
+        Ok(()) => {
+            state.saved += 1;
+            info!(path = %path.display(), "screenshot saved");
+        }
+        Err(why) => {
+            state.failed += 1;
+            error!(path = %path.display(), %why, "screenshot not saved");
+        }
     }
 }
 
@@ -171,13 +230,9 @@ fn snap(
     );
     let path = state.dir.join(name);
     info!(path = %path.display(), "screenshot requested");
-    let logged = path.clone();
     commands
         .spawn(Screenshot::image(target))
-        .observe(save_to_disk(path))
-        .observe(move |_: On<ScreenshotCaptured>| {
-            info!(path = %logged.display(), "screenshot saved");
-        });
+        .observe(store(path));
 }
 
 #[cfg(test)]
@@ -211,5 +266,84 @@ mod tests {
         // Relative to the cwd, which is this crate in the repo.
         let (dir, _) = outside_checkouts("shots".into()).unwrap_err();
         assert!(dir.is_absolute(), "{}", dir.display());
+    }
+
+    /// AE.29: a folder that isn't there is made, parents and all; one in a
+    /// checkout is refused and nothing made; one that can't be made says so.
+    #[test]
+    fn the_shot_folder_is_made_unless_its_in_a_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fresh = tmp.path().join("shots/walk-1");
+        assert_eq!(made_shot_dir(fresh.clone()), Ok(fresh.clone()));
+        assert!(fresh.is_dir());
+        // Made already: fine.
+        assert_eq!(made_shot_dir(fresh.clone()), Ok(fresh));
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let inside = repo.join("shots");
+        assert_eq!(
+            made_shot_dir(inside.clone()),
+            Err(ShotDirError::InCheckout {
+                dir: inside.clone(),
+                repo
+            })
+        );
+        assert!(!inside.exists(), "nothing made in a checkout");
+        let file = tmp.path().join("a-file");
+        std::fs::write(&file, b"x").unwrap();
+        let under_a_file = file.join("shots");
+        assert!(matches!(
+            made_shot_dir(under_a_file),
+            Err(ShotDirError::NotMade { .. })
+        ));
+    }
+
+    /// AE.29: a capture is written as a PNG and counted saved; one whose
+    /// write fails (its folder gone) is counted failed, not saved.
+    #[test]
+    fn a_shot_that_doesnt_land_is_a_failure() {
+        use bevy::asset::RenderAssetUsages;
+        use bevy::render::render_resource::{Extent3d, TextureDimension};
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = App::new();
+        app.insert_resource(ShotState {
+            dir: tmp.path().to_path_buf(),
+            size: UVec2::new(2, 2),
+            target: None,
+            seq: 0,
+            due: None,
+            saved: 0,
+            failed: 0,
+        });
+        let shot = Image::new_fill(
+            Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            &[200, 60, 20, 255],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        let capture = |app: &mut App, path: PathBuf| {
+            let world = app.world_mut();
+            let entity = world.spawn_empty().observe(store(path)).id();
+            world.trigger(ScreenshotCaptured {
+                entity,
+                image: shot.clone(),
+            });
+            world.flush();
+        };
+        let landed = tmp.path().join("01-Portal.png");
+        capture(&mut app, landed.clone());
+        let read = image::open(&landed).unwrap().to_rgb8();
+        assert_eq!(read.dimensions(), (2, 2));
+        assert_eq!(read.get_pixel(1, 1).0, [200, 60, 20]);
+        let lost = tmp.path().join("gone/02-Portal.png");
+        capture(&mut app, lost.clone());
+        assert!(!lost.exists());
+        let state = app.world().resource::<ShotState>();
+        assert_eq!((state.saved, state.failed), (1, 1));
     }
 }
