@@ -1,10 +1,11 @@
 //! The census tables against the disc (openspec AE.25, AG.43): every key the
-//! 01.00 roster's character models draw on a card and every key chapter 1
-//! draws, read off `GUAC_GIANTS_DUMP` through the extractor's own readers
-//! (in memory, no extract written) and keyed by the TV's own derivation (the
-//! warm's for a card, the level loader's for chapter 1), equal to
-//! `guacamole::census`'s tables. A table that drifts prints the rows the dump
-//! gives, in the table's syntax.
+//! 01.00 roster's figures draw on a card (each character model with what a
+//! fresh figure of it carries, AE.23) and every key chapter 1 draws, read off
+//! `GUAC_GIANTS_DUMP` through the extractor's own readers (in memory, no
+//! extract written) and keyed by the TV's own derivation (the warm's for a
+//! card, the level loader's for chapter 1), equal to `guacamole::census`'s
+//! tables. A table that drifts prints the rows the dump gives, in the
+//! table's syntax.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use guac_extract::{levels, models, roster};
 use guac_formats::igz::Igz;
 use guac_ir::{DumpIdentity, Sha256};
 use guacamole::census::{self, Row};
+use guacamole::character::attach;
 use guacamole::character::turntable::rig_scene;
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::level_scene;
@@ -39,9 +41,21 @@ fn identity() -> DumpIdentity {
     }
 }
 
-/// Every key the roster's character models draw on a card, as the warm
-/// reads them off a shelf: each model in the rig's scene.
-fn card_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
+/// What the card side read: its keys, the models and what they carry.
+struct Cards {
+    keys: Vec<WarmKey>,
+    models: usize,
+    /// Attached models over every model, and those the turntable draws
+    /// nothing of (helpers whose material it doesn't read).
+    carried: usize,
+    undrawn: usize,
+}
+
+/// Every key the roster's figures draw on a card, as the warm reads them
+/// off a shelf: each model, with what a fresh figure carries (read as the
+/// model stage reads it, with `global.bld`'s templates), keyed by the
+/// warm's own derivation in the rig's scene.
+fn card_keys(dump: &Path) -> Cards {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let roster = roster::read(dump, identity()).expect("the roster");
     let level_of = |archive: &str| {
@@ -53,22 +67,37 @@ fn card_keys(dump: &Path) -> (Vec<WarmKey>, usize) {
     let globals = models::Globals::new(&global, &bootstrap).expect("global's templates");
     let rig = models::rig(&global, identity()).expect("the sprite rig");
     let scene = rig_scene(&rig).expect("the rig's scene");
-    let mut keys = Vec::new();
-    let loads = models::character_loads(&roster);
-    for load in &loads {
+    let mut cards = Cards {
+        keys: Vec::new(),
+        models: 0,
+        carried: 0,
+        undrawn: 0,
+    };
+    for load in &models::character_loads(&roster) {
         let path = models::archive_path(&usrdir, load);
         let archive = models::archive(&path, load).expect("the archive");
         let level = models::level(&archive, load).expect("its level");
         let model = models::read(&level, load, identity(), Some(&globals))
             .unwrap_or_else(|e| panic!("{load}: {e}"))
             .model;
+        assert!(
+            model.attachments_unsettled.is_none(),
+            "{load}: {:?}",
+            model.attachments_unsettled
+        );
+        cards.models += 1;
+        cards.carried += model.attachments.len();
+        cards.undrawn += attach::segments(&model, &attach::drawn(&model))
+            .iter()
+            .filter(|s| s.is_empty())
+            .count();
         for (k, _) in warm::keys(&model, &scene).unwrap_or_else(|e| panic!("{load}: {e}")) {
-            if !keys.contains(&k) {
-                keys.push(k);
+            if !cards.keys.contains(&k) {
+                cards.keys.push(k);
             }
         }
     }
-    (keys, loads.len())
+    cards
 }
 
 /// Every key chapter 1 draws, as the level loader keys it (through its own
@@ -131,20 +160,28 @@ fn the_census_is_the_discs() {
         env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP to the Giants dump"),
     );
     let started = Instant::now();
-    let (cards, models) = card_keys(&dump);
+    let cards = card_keys(&dump);
     let cards_took = started.elapsed();
     let started = Instant::now();
     let (level, materials) = level_keys(&dump);
     let level_took = started.elapsed();
+    let (skinned, unskinned): (Vec<WarmKey>, Vec<WarmKey>) =
+        cards.keys.iter().partition(|k| k.mesh.skinned);
     eprintln!(
-        "cards: {} keys off {models} models in {:.1} s; chapter 1: {} keys off {materials} materials in {:.1} s",
-        cards.len(),
+        "cards: {} keys ({} skinned, {} static) off {} models carrying {} ({} drawing nothing) in {:.1} s; chapter 1: {} keys off {materials} materials in {:.1} s",
+        cards.keys.len(),
+        skinned.len(),
+        unskinned.len(),
+        cards.models,
+        cards.carried,
+        cards.undrawn,
         cards_took.as_secs_f64(),
         level.len(),
         level_took.as_secs_f64()
     );
     let checks = [
-        check("cards", &cards, census::TURNTABLE, true),
+        check("cards, skinned", &skinned, census::TURNTABLE, true),
+        check("cards, static", &unskinned, census::TURNTABLE_STATIC, false),
         check("chapter 1", &level, census::LEVEL, false),
     ];
     for c in &checks {
@@ -154,8 +191,13 @@ fn the_census_is_the_discs() {
     }
     assert!(checks.iter().all(Result::is_ok), "a table isn't the dump's");
     assert_eq!(
-        (models, cards.len(), level.len()),
-        (67, 33, 55),
-        "AE.5's and AG.19's counts"
+        (cards.models, cards.carried, cards.undrawn),
+        (67, 102, 3),
+        "AE.5's models, what AE.23 found them carrying, and the global inviso.mdl's three"
+    );
+    assert_eq!(
+        (skinned.len(), unskinned.len(), level.len()),
+        (33, 24, 55),
+        "the census's counts"
     );
 }

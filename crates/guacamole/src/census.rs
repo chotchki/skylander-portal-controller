@@ -1,13 +1,15 @@
 //! The pipelines the TV draws Giants 01.00 with, as numbers (openspec AE.25,
-//! AG.43): every key the roster's character models draw on a card (AE.5's
-//! census) and every key chapter 1 draws (AG.19's), so a first start can
-//! compile them before any extraction, when nothing of the disc is read yet.
+//! AG.43): every key the roster's figures draw on a card (AE.5's census of
+//! the character models, with what each carries fresh since AE.23) and
+//! every key chapter 1 draws (AG.19's), so a first start can compile them
+//! before any extraction, when nothing of the disc is read yet.
 //!
 //! Which of the code's keys a part draws is the disc's: a key is a material
 //! key ([`MaterialKey`]: the masks as drawn, the render states) on a mesh
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
-//! 01.00 disc's models draw 33 and its chapter 1 another 55. So the tables
+//! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
+//! static parts they carry) and its chapter 1 another 55. So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on
 //! `GUAC_GIANTS_DUMP`) holds them equal to what the extractor's readers and
@@ -24,8 +26,8 @@ use crate::character::warm::{MeshShape, WarmKey};
 
 /// A drawn key as the tables keep it: the masks as drawn, the render
 /// states, and the mesh's texture-coordinate sets, tangents and vertex
-/// colours. Whether it's skinned is the table's: a card's are, a level's
-/// aren't.
+/// colours. Whether it's skinned is the table's: [`TURNTABLE`]'s are,
+/// [`TURNTABLE_STATIC`]'s and [`LEVEL`]'s aren't.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Row {
     pub pixel: u32,
@@ -78,7 +80,7 @@ const fn row(
 }
 
 impl Row {
-    /// The row's key; `skinned` for a card's, unskinned for a level's.
+    /// The row's key, on a skinned mesh or a static one.
     pub fn key(&self, skinned: bool) -> Result<WarmKey, KeyError> {
         Ok(WarmKey {
             material: MaterialKey {
@@ -133,9 +135,10 @@ impl Row {
     }
 }
 
-/// Every key the 01.00 roster's 67 character models draw on a card (the
-/// turntable's scene: fog on, nothing else), each once: AE.5's census as
-/// the warm keys it.
+/// Every key the 01.00 roster's figures draw on a card on a skinned mesh
+/// (the turntable's scene: fog on, nothing else), each once: AE.5's census
+/// of the 67 character models as the warm keys it, with the skinned parts
+/// they carry fresh (AE.23).
 pub const TURNTABLE: &[Row] = &[
     row(0x0400, 0x0400, O, true, false, false, 1, true, false),
     row(0x0404, 0x0404, O, true, false, false, 1, true, false),
@@ -235,9 +238,42 @@ pub const LEVEL: &[Row] = &[
     row(0x0c9c, 0x349c, O, true, false, true, 2, true, true),
 ];
 
-/// [`TURNTABLE`]'s keys: a card draws a character's skinned meshes.
+/// Every key the 01.00 roster's figures draw on a card on a static mesh
+/// (the turntable's scene), each once: the unskinned parts they carry
+/// fresh (AE.23), each drawn under its bone or its parent part.
+pub const TURNTABLE_STATIC: &[Row] = &[
+    row(0x0400, 0x0400, O, true, false, false, 1, true, false),
+    row(0x0400, 0x0400, A, false, true, false, 1, true, false),
+    row(0x0404, 0x0404, O, true, false, false, 1, true, false),
+    row(0x0404, 0x0404, A, false, false, false, 1, true, false),
+    row(0x0404, 0x0404, A, true, false, false, 1, true, false),
+    row(0x0404, 0x1404, O, true, false, false, 1, true, true),
+    row(0x0404, 0x1404, A, false, false, false, 1, true, true),
+    row(0x0404, 0x1404, A, true, false, false, 1, true, true),
+    row(0x0404, 0x1404, A, true, true, false, 1, true, true),
+    row(0x0408, 0x0408, O, true, false, false, 1, true, false),
+    row(0x040c, 0x040c, O, true, false, false, 1, true, false),
+    row(0x040c, 0x040c, O, true, true, false, 1, true, false),
+    row(0x041c, 0x041c, O, true, false, false, 1, true, false),
+    row(0x0420, 0x0420, O, true, false, false, 1, true, false),
+    row(0x0424, 0x0424, O, true, false, false, 1, true, false),
+    row(0x0424, 0x0424, A, true, true, false, 1, true, false),
+    row(0x0424, 0x0424, ADD, true, false, false, 1, true, false),
+    row(0x0424, 0x1424, A, true, false, false, 1, true, true),
+    row(0x042c, 0x042c, O, true, false, false, 1, true, false),
+    row(0x0438, 0x0438, O, true, false, false, 1, true, false),
+    row(0x043c, 0x043c, O, true, false, false, 1, true, false),
+    row(0x043c, 0x043c, O, true, true, false, 1, true, false),
+    row(0x043c, 0x143c, O, true, false, false, 1, true, true),
+    row(0x043c, 0x143c, A, true, false, false, 1, true, true),
+];
+
+/// Every key a card draws: [`TURNTABLE`]'s on skinned meshes, then
+/// [`TURNTABLE_STATIC`]'s on static ones.
 pub fn turntable_keys() -> Vec<WarmKey> {
-    keys(TURNTABLE, true)
+    let mut out = keys(TURNTABLE, true);
+    out.extend(keys(TURNTABLE_STATIC, false));
+    out
 }
 
 /// [`LEVEL`]'s keys: a level's segments are static, in world space.
@@ -361,7 +397,12 @@ mod tests {
 
     #[test]
     fn every_row_is_a_key_and_none_twice() {
-        for (rows, skinned, n) in [(TURNTABLE, true, 33), (LEVEL, false, 55)] {
+        let mut every = HashSet::new();
+        for (rows, skinned, n) in [
+            (TURNTABLE, true, 33),
+            (TURNTABLE_STATIC, false, 24),
+            (LEVEL, false, 55),
+        ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
                 .iter()
@@ -373,26 +414,36 @@ mod tests {
                 assert_eq!(Row::of(k), *r);
                 assert_eq!(k.material.pass, Pass::Colour);
             }
+            every.extend(unique);
         }
-        assert_eq!(turntable_keys().len(), TURNTABLE.len());
+        // No key in two tables: the warm draws a key once, a card's with
+        // its glow pass and a level's without.
+        assert_eq!(every.len(), 33 + 24 + 55);
+        assert_eq!(
+            turntable_keys().len(),
+            TURNTABLE.len() + TURNTABLE_STATIC.len()
+        );
         assert_eq!(level_keys().len(), LEVEL.len());
     }
 
     /// The tables as the scenes they were counted in draw them: the cards'
-    /// keys carry the turntable's fog and nothing else, the level's its fog
-    /// (but the sky's, which own it off and their point lights with it) and
-    /// at most its one point light.
+    /// keys (a body's and what it carries) carry the turntable's fog and
+    /// nothing else, the level's its fog (but the sky's, which own it off
+    /// and their point lights with it) and at most its one point light.
     #[test]
     fn each_table_is_its_scenes() {
-        for k in turntable_keys() {
+        let cards = turntable_keys();
+        for k in &cards {
             let s = k.material.shader.switches();
             assert!(s.fog && !s.shadows && s.point_lights == 0, "{k:?}");
             assert_eq!(
                 (k.mesh.uv_sets, k.mesh.tangents),
                 (1, true),
-                "a character segment: one set and a tangent"
+                "a character's or a carried part's segment: one set and a tangent"
             );
         }
+        let static_parts = cards.iter().filter(|k| !k.mesh.skinned).count();
+        assert_eq!(static_parts, TURNTABLE_STATIC.len());
         // A level material that owns its point lights draws none.
         let mut sky = 0;
         for k in level_keys() {

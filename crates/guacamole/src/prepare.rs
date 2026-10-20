@@ -11,9 +11,10 @@
 //! this), the TV compiles everything it will draw Giants with, under a
 //! screen that says so:
 //!
-//! - the census's keys ([`guacamole::census`]): the 33 the roster's models
-//!   draw on a card, each with its glow pass, and chapter 1's 55, through
-//!   the warm ([`crate::warm`]) on its hidden stage, with its camera's own
+//! - the census's keys ([`guacamole::census`]): the 57 the roster's figures
+//!   draw on a card (33 on skinned meshes, 24 on the static parts they
+//!   carry), each with its glow pass, and chapter 1's 55, through the warm
+//!   ([`crate::warm`]) on its hidden stage, with its camera's own
 //!   pipelines (the remaster's main pass, tonemapping, the glow chain);
 //! - a card's UI pipelines: a card drawn offscreen by a camera of its own
 //!   ([`crate::tv::spawn_sample_card`]);
@@ -52,7 +53,7 @@ use crate::level;
 use crate::theme::TvTheme;
 use crate::turntable::TurntableSystems;
 use crate::tv::{ServerLink, TvAssets, TvCamera};
-use crate::warm::{PipelineWatch, Warm};
+use crate::warm::{CensusKey, PipelineWatch, Warm};
 
 /// The most keys the pass draws in one frame: on a warm cache each takes a
 /// few milliseconds, and a frame of this many cold ones stays a few seconds
@@ -177,18 +178,24 @@ impl Plugin for PreparePlugin {
     }
 }
 
-/// Every census key with the material that draws it and its scene: the
-/// cards' with the turntable's fog, the level's with its fog and a point
-/// light (the census owns its masks whole, so the scene keys nothing).
-fn census_entries() -> Vec<(WarmKey, guac_ir::model::Material, Arc<Scene>)> {
+/// Every census key with the material that draws it and its scene, the
+/// cards' first (each with its glow pass), then the level's (the census
+/// owns its masks whole, so the scene keys nothing).
+fn census_entries() -> Vec<CensusKey> {
     let scene = Arc::new(Scene {
         fog: true,
         ..Scene::new()
     });
-    census::turntable_keys()
-        .into_iter()
-        .chain(census::level_keys())
-        .map(|k| (k, census::material_for(&k), scene.clone()))
+    let cards = census::turntable_keys().into_iter().map(|k| (k, true));
+    let level = census::level_keys().into_iter().map(|k| (k, false));
+    cards
+        .chain(level)
+        .map(|(key, card)| CensusKey {
+            key,
+            material: census::material_for(&key),
+            scene: scene.clone(),
+            card,
+        })
         .collect()
 }
 
@@ -231,7 +238,7 @@ fn begin(
     };
     let target = target.cloned().unwrap_or_default();
     let entries = census_entries();
-    prepare.keys = entries.iter().map(|(k, _, _)| *k).collect();
+    prepare.keys = entries.iter().map(|e| e.key).collect();
     warm.ask_census(entries);
     let output = s
         .commands
@@ -394,13 +401,21 @@ mod tests {
         let cards = census::turntable_keys();
         let level = census::level_keys();
         assert_eq!(entries.len(), cards.len() + level.len());
-        for ((k, _, _), want) in entries.iter().zip(cards.iter().chain(&level)) {
-            assert_eq!(k, want);
+        for (e, want) in entries.iter().zip(cards.iter().chain(&level)) {
+            assert_eq!(e.key, *want);
+            assert_eq!(e.material, census::material_for(want));
         }
-        assert!(entries.iter().all(|(_, _, s)| s.fog));
-        let shapes: Vec<MeshShape> = entries.iter().map(|(k, _, _)| k.mesh).collect();
-        assert!(shapes[..cards.len()].iter().all(|m| m.skinned));
-        assert!(shapes[cards.len()..].iter().all(|m| !m.skinned));
+        assert!(entries.iter().all(|e| e.scene.fog));
+        // The cards' with their glow pass, the skinned table's then what
+        // the figures carry on static meshes; the level's static, no glow.
+        let (on_cards, in_level) = entries.split_at(cards.len());
+        assert!(on_cards.iter().all(|e| e.card) && in_level.iter().all(|e| !e.card));
+        let shapes: Vec<MeshShape> = on_cards.iter().map(|e| e.key.mesh).collect();
+        let skinned = census::TURNTABLE.len();
+        assert!(shapes[..skinned].iter().all(|m| m.skinned));
+        assert!(shapes[skinned..].iter().all(|m| !m.skinned));
+        assert_eq!(shapes.len() - skinned, census::TURNTABLE_STATIC.len());
+        assert!(in_level.iter().all(|e| !e.key.mesh.skinned));
     }
 
     fn compiling(app: &App) -> bool {
@@ -433,7 +448,7 @@ mod tests {
         // A TV camera to read the target off.
         app.world_mut().spawn((Camera2d, TvCamera));
         app.update();
-        let total = census::TURNTABLE.len() + census::LEVEL.len();
+        let total = census::turntable_keys().len() + census::level_keys().len();
         {
             let p = app.world().resource::<Prepare>();
             assert_eq!(p.report().state, "compiling");

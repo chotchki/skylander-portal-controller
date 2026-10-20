@@ -91,6 +91,17 @@ struct Entry {
     glow: bool,
 }
 
+/// A census key as the start's pass asks for it (AE.25): the material that
+/// draws it and the scene it's drawn in.
+#[derive(Debug, Clone)]
+pub(crate) struct CensusKey {
+    pub(crate) key: WarmKey,
+    pub(crate) material: model::Material,
+    pub(crate) scene: Arc<Scene>,
+    /// A card's key, drawn with its glow pass; a level's draws none.
+    pub(crate) card: bool,
+}
+
 /// What a shelf's models draw.
 struct List {
     entries: Vec<Entry>,
@@ -450,16 +461,17 @@ impl Warm {
         self.update_report();
     }
 
-    /// Queues the census's keys (each with the material that draws it and
-    /// its scene) behind everything already asked for: the first start's
-    /// pass, before any shelf or level exists. Its unskinned keys are the
-    /// level's, drawn without a glow mask.
-    pub(crate) fn ask_census(
-        &mut self,
-        keys: impl IntoIterator<Item = (WarmKey, model::Material, Arc<Scene>)>,
-    ) {
+    /// Queues the census's keys behind everything already asked for: the
+    /// first start's pass, before any shelf or level exists.
+    pub(crate) fn ask_census(&mut self, keys: impl IntoIterator<Item = CensusKey>) {
         self.started.get_or_insert_with(Instant::now);
-        for (key, material, scene) in keys {
+        for CensusKey {
+            key,
+            material,
+            scene,
+            card,
+        } in keys
+        {
             self.census.insert(key);
             if self.done.contains(&key) || !self.pending.insert(key) {
                 continue;
@@ -468,7 +480,7 @@ impl Warm {
                 key,
                 material,
                 scene: Some(scene),
-                glow: key.mesh.skinned,
+                glow: card,
             });
         }
         // A list or a level that landed before the census is held to it now.
@@ -1118,6 +1130,64 @@ mod tests {
         assert!(app.world().resource::<Warm>().report().failed >= 1);
     }
 
+    /// The census on the stage (AE.25 with AE.23): a card's static key (what
+    /// a figure carries) is drawn with its glow mask on the glow layer, as a
+    /// body's skinned one is; a level's static key without one.
+    #[test]
+    fn the_census_draws_a_carried_parts_glow_mask_and_not_a_levels() {
+        use guacamole::census;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app(extract(tmp.path()));
+        app.insert_resource(Warm::new(true));
+        let scene = Arc::new(Scene {
+            fog: true,
+            ..Scene::new()
+        });
+        let body = census::TURNTABLE[0].key(true).unwrap();
+        let carried = census::TURNTABLE_STATIC[0].key(false).unwrap();
+        let level = census::LEVEL[0].key(false).unwrap();
+        for k in [body, carried, level] {
+            assert!(k.material.states.depth_write, "a key the glow pass draws");
+        }
+        let card = |key: WarmKey, card| CensusKey {
+            key,
+            material: census::material_for(&key),
+            scene: scene.clone(),
+            card,
+        };
+        app.world_mut().resource_mut::<Warm>().ask_census([
+            card(body, true),
+            card(carried, true),
+            card(level, false),
+        ]);
+        // The stage's camera, then a key a frame, the census's first.
+        let until = Instant::now() + Duration::from_secs(5);
+        while roots(&app) < 3 {
+            assert!(Instant::now() < until, "the census never drawn");
+            app.update();
+        }
+        let glow = RenderLayers::layer(glow_layer(WARM_SLOT));
+        let drawing: Vec<(WarmKey, Vec<Entity>)> = {
+            let warm = app.world().resource::<Warm>();
+            let stage = warm.stage.as_ref().unwrap();
+            stage
+                .drawing
+                .iter()
+                .map(|d| (d.key, d.checks.clone()))
+                .collect()
+        };
+        let masks = |key: WarmKey| {
+            let (_, checks) = drawing.iter().find(|(k, _)| *k == key).unwrap();
+            checks
+                .iter()
+                .filter(|e| app.world().get::<RenderLayers>(**e) == Some(&glow))
+                .count()
+        };
+        assert_eq!(masks(body), 1, "a body's glow mask");
+        assert_eq!(masks(carried), 1, "a carried part's glow mask");
+        assert_eq!(masks(level), 0, "a level draws no glow pass");
+    }
+
     /// AE.25's guard: once the start's pass has asked for the census, a key
     /// a level or a turntable asks for that the census doesn't hold is
     /// counted, once; the census's own aren't; nothing counts before the
@@ -1150,10 +1220,12 @@ mod tests {
         let mut warm = Warm::new(true);
         warm.ask_level(&[entry(level_miss)], scene.clone());
         assert_eq!(warm.report().outside_census, 0, "no census asked yet");
-        warm.ask_census(
-            all.iter()
-                .map(|k| (*k, census::material_for(k), scene.clone())),
-        );
+        warm.ask_census(all.iter().map(|k| CensusKey {
+            key: *k,
+            material: census::material_for(k),
+            scene: scene.clone(),
+            card: census::turntable_keys().contains(k),
+        }));
         assert_eq!(warm.report().outside_census, 1, "the earlier level's miss");
         warm.ask_level(&[entry(inside), entry(level_miss)], scene.clone());
         assert_eq!(
