@@ -17,7 +17,7 @@
 //! Not set: the event-sequence and totals floors ([`crate::events`],
 //! [`crate::totals`]). AF observes no game events and no XP or gold, so they
 //! wait for the first rung that does (AH's combat) to calibrate them the same
-//! way.
+//! way: AH.9-AH.11, through [`crate::fight::log::floors_needed`] on game time.
 
 use crate::trace::TrajectoryTolerance;
 

@@ -103,4 +103,36 @@ pub enum MetricError {
     NotStill { from: f64, to: f64 },
     #[error("sample {index} has no camera")]
     NoCamera { index: usize },
+    #[error("tick {index} is game frame {frame} after {previous}: a frame is missing")]
+    TickGap {
+        index: usize,
+        previous: u32,
+        frame: u32,
+    },
+    #[error("actor {id} is listed twice at frame {frame}")]
+    DuplicateActor { frame: u32, id: u64 },
+    #[error("actor {id} changes kind or placement at frame {frame}")]
+    ActorChanged { frame: u32, id: u64 },
+    #[error("actor {id} comes back at frame {frame} after leaving")]
+    ActorReturned { frame: u32, id: u64 },
+    #[error("chain record {index} doesn't ride the O5 record at its index")]
+    ChainMismatch { index: usize },
+    #[error("the item at {address:#010x} has no readable body at frame {frame}")]
+    Unreadable { frame: u32, address: u32 },
+    #[error("no {kind:?} behaviour is named for cell {cell:#x} (frame {frame})")]
+    UnknownBehaviour { kind: String, cell: u32, frame: u32 },
+    #[error("no clip is named for id {id} (frame {frame})")]
+    UnknownClip { id: u32, frame: u32 },
+    #[error("frame {frame} carries no generator words")]
+    NoRng { frame: u32 },
+    #[error("the generator at frame {frame} isn't within reach of F0's")]
+    RngLost { frame: u32 },
+    #[error("the generator at frame {frame} has drawn fewer than before")]
+    RngBackwards { frame: u32 },
+    #[error("{found} categories where {expected} were expected")]
+    Categories { expected: usize, found: usize },
+    #[error("probability {index} is {value}, not one a test can take")]
+    BadProbability { index: usize, value: f64 },
+    #[error("nothing to test: a side has no samples")]
+    NoSamples,
 }
