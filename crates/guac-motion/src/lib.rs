@@ -17,6 +17,11 @@
 //! - [`tuning`]: Eruptor's numbers, in the script's feet;
 //! - [`clock`]: the fixed 1/60 s step against the display's.
 //!
+//! The gameplay camera beside it ([`camera`], AG.17): the follow point, the
+//! camera target, the views and a transition plane's blend; and, behind the
+//! `runner` feature, the headless runner that steps both from an AF.7 input
+//! script into the oracle's trace shape (`runner`).
+//!
 //! What the oracle didn't show is labelled a hypothesis in the module that
 //! builds it, with the reading behind it; AG.16's box keeps the list.
 //! [`scenarios`] (with `conformance`) holds the controller's open-ground and
@@ -24,6 +29,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod camera;
 pub mod clock;
 #[cfg(any(test, feature = "conformance"))]
 pub mod conformance;
@@ -32,6 +38,8 @@ pub mod ground;
 pub mod hero;
 pub mod parry;
 pub mod proxy;
+#[cfg(feature = "runner")]
+pub mod runner;
 #[cfg(any(test, feature = "conformance"))]
 pub mod scenarios;
 pub mod seam;

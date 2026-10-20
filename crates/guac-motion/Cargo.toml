@@ -6,7 +6,7 @@ publish.workspace = true
 
 # The hero's motion, pure (openspec AG, design decision 3): the physics seam the
 # controller queries, its parry3d implementation and, from AG.16 on, the
-# controller and the camera follow. No Bevy, so every controller test runs
+# controller and the camera follow (AG.17). No Bevy, so every controller test runs
 # without an app; guacamole's Avian implementation of the seam passes the same
 # table (`conformance`).
 [lib]
@@ -18,6 +18,11 @@ path = "src/lib.rs"
 # scenarios, for another implementation's tests (guacamole's Avian side takes
 # them as a dev-dependency) and this crate's own.
 conformance = []
+# The headless runner (AG.17): the hero and the camera from an AF.7 input
+# script into guac-oracle's trace, for AG.31's comparisons and this crate's
+# tests. guac-oracle is the oracle's pure half (no I/O, nothing of RPCS3),
+# but dev-only: the guacamole binary never turns this on.
+runner = ["dep:guac-oracle"]
 
 [dependencies]
 # Avian's own parry (avian3d 0.8.0-dev at 1070759 builds on parry3d 0.31), so
@@ -27,6 +32,7 @@ parry3d = "0.31"
 # Cargo.lock.
 glam = "0.33"
 thiserror = { workspace = true }
+guac-oracle = { path = "../guac-oracle", optional = true }
 
 [dev-dependencies]
 # The #[ignore]d recording tests read O5 recordings (AG.38, AG.39) through
@@ -35,5 +41,5 @@ thiserror = { workspace = true }
 guac-formats = { path = "../guac-formats" }
 guac-oracle = { path = "../guac-oracle" }
 # The scenarios the tests in tests/ run on parry (src/scenarios.rs).
-guac-motion = { path = ".", features = ["conformance"] }
+guac-motion = { path = ".", features = ["conformance", "runner"] }
 serde_json = { workspace = true }

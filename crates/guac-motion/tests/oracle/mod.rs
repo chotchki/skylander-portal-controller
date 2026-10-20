@@ -194,3 +194,112 @@ pub fn eruptor_solid() -> HavokSolid {
     .havok([150.0; 3])
     .unwrap()
 }
+
+/// Every replay directory of a run, by its set and label (or its label
+/// alone where the run holds its replays directly, as AG.40's do), in name
+/// order.
+pub fn replay_dirs(run: &str) -> Vec<(String, PathBuf)> {
+    let root = env_or_dotenv("GUAC_CAPTURE_DIR")
+        .expect("set GUAC_CAPTURE_DIR (env or .env.dev) to the oracle's captures");
+    let run_dir = PathBuf::from(root).join("BLUS30968").join(run);
+    assert!(run_dir.is_dir(), "no {}", run_dir.display());
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&run_dir).unwrap().flatten() {
+        let label = entry.file_name().to_string_lossy().into_owned();
+        if entry.path().join("recording.json").is_file() {
+            out.push((label, entry.path()));
+            continue;
+        }
+        let Ok(replays) = std::fs::read_dir(entry.path()) else {
+            continue;
+        };
+        for replay in replays.flatten() {
+            if replay.path().join("recording.json").is_file() {
+                let name = format!("{label}/{}", replay.file_name().to_string_lossy());
+                out.push((name, replay.path()));
+            }
+        }
+    }
+    out.sort();
+    assert!(!out.is_empty(), "no recordings under {}", run_dir.display());
+    out
+}
+
+/// A replay's records.
+pub fn frames(dir: &Path) -> Vec<Frame> {
+    let text = std::fs::read_to_string(dir.join("recording.json")).unwrap();
+    let recording: Recording = serde_json::from_str(&text).unwrap();
+    recording.frames().to_vec()
+}
+
+/// Every `Generic_FollowActor` the watch held (AG.13's `follow.<placement>`
+/// fields), each its position per record, decoded off `watch.json`'s raw
+/// big-endian records; a record whose range the watch couldn't read holds
+/// NaN. One per record of `recording.json`, the two checked flip by flip.
+pub fn followers(dir: &Path, frames: &[Frame]) -> BTreeMap<String, Vec<Vec3>> {
+    let text = std::fs::read_to_string(dir.join("watch.json")).unwrap();
+    let watch: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let list = &watch["watch"]["list"];
+    let ranges: Vec<(u64, u64)> = list["ranges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["addr"].as_u64().unwrap(), r["len"].as_u64().unwrap()))
+        .collect();
+    let mut at = Vec::new();
+    let mut offset = 0;
+    for &(_, len) in &ranges {
+        at.push(offset);
+        offset += len;
+    }
+    let mut fields = BTreeMap::new();
+    for f in list["fields"].as_array().unwrap() {
+        let name = f["name"].as_str().unwrap();
+        if !name.starts_with("follow.") {
+            continue;
+        }
+        let addr = f["addr"].as_u64().unwrap();
+        let (i, (start, _)) = ranges
+            .iter()
+            .enumerate()
+            .find(|(_, (a, l))| *a <= addr && addr + 12 <= a + l)
+            .expect("a follower inside a watched range");
+        fields.insert(name.to_owned(), (i, (at[i] + addr - start) as usize));
+    }
+    let records = watch["records"].as_array().unwrap();
+    assert_eq!(records.len(), frames.len(), "{}", dir.display());
+    let mut out: BTreeMap<String, Vec<Vec3>> =
+        fields.keys().map(|k| (k.clone(), Vec::new())).collect();
+    for (r, f) in records.iter().zip(frames) {
+        assert_eq!(r["flip"].as_u64(), Some(f.flip));
+        let missing = r["missing"].as_u64().unwrap_or(0);
+        let hex = r["payload"].as_str().unwrap();
+        for (name, &(range, off)) in &fields {
+            let v = if missing & (1 << range) != 0 {
+                Vec3::splat(f32::NAN)
+            } else {
+                let word = |k: usize| {
+                    let s = &hex[(off + 4 * k) * 2..(off + 4 * k + 4) * 2];
+                    f32::from_bits(u32::from_str_radix(s, 16).unwrap())
+                };
+                Vec3::new(word(0), word(1), word(2))
+            };
+            out.get_mut(name).unwrap().push(v);
+        }
+    }
+    out
+}
+
+/// Runs `f` over level 213's placements, read off the dump.
+pub fn with_placements_213<R>(f: impl FnOnce(&Placements<'_>) -> R) -> R {
+    let root = env_or_dotenv("GUAC_GIANTS_DUMP")
+        .expect("set GUAC_GIANTS_DUMP (env or .env.dev) to the Giants dump");
+    let path = Path::new(&root).join("PS3_GAME/USRDIR").join(LEVEL_213);
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let archive = Archive::parse(&bytes).unwrap();
+    let entry = archive.find("level.bld").unwrap();
+    let data = archive.read(entry).unwrap().into_owned();
+    let igz = Igz::parse(&data).unwrap();
+    let placements = Placements::read(&igz).unwrap();
+    f(&placements)
+}
