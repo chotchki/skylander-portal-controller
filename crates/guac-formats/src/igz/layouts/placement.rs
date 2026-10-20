@@ -470,3 +470,68 @@ impl<'a> Layout<'a> for ActorWaypointList<'a> {
         Ok(Self { list, waypoints })
     }
 }
+
+/// `BoneAttachInfo`: size 0x3C, through `AbstractAttachNode`: one entry of
+/// a model's attach list (`tfbModelInfo._attachList`), a point a script
+/// hangs another placement on (openspec AE.23). Stealth Elf's model lists
+/// `J_attach_L` and `J_attach_R`, where her knives hang; a prop's lists
+/// `*root*`, its own origin, at an offset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoneAttachInfo<'a> {
+    pub name: Option<&'a str>,
+    pub tag_list: ObjectRef<'a>,
+    /// The bone it follows, by name: a joint of the model's skeleton, or
+    /// `*root*`.
+    pub bone_name: Option<&'a str>,
+    /// That bone's index in `igSkeleton2`, -1 on `*root*`.
+    pub bone_index: i32,
+    /// The offset from the bone: a position in metres, then tilt, heading
+    /// and roll in degrees.
+    pub transform: EulerTransform,
+}
+
+impl BoneAttachInfo<'_> {
+    pub const NAME: u32 = 0x08;
+    pub const TAG_LIST: u32 = 0x18;
+    pub const BONE_NAME: u32 = 0x1C;
+    pub const BONE_INDEX: u32 = 0x20;
+    pub const TRANSFORM: u32 = 0x24;
+    /// The name a model's own origin goes by in its attach list.
+    pub const ROOT: &'static str = "*root*";
+}
+
+impl<'a> Layout<'a> for BoneAttachInfo<'a> {
+    const TYPE: &'static str = "BoneAttachInfo";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            name: v.string(Self::NAME, "_name")?,
+            tag_list: v.object_ref(Self::TAG_LIST, "_tagList")?,
+            bone_name: v.string(Self::BONE_NAME, "_boneName")?,
+            bone_index: v.i32(Self::BONE_INDEX, "_boneIndex")?,
+            transform: EulerTransform::read(v, Self::TRANSFORM, "_transform")?,
+        })
+    }
+}
+
+/// `BoneAttachInfoList`: a model's attach points in list order, the order
+/// scripts index them by (`attach nodes [1]`). A null slot is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoneAttachInfoList<'a> {
+    pub list: DataList<'a>,
+    /// Indexes of the `BoneAttachInfo` objects.
+    pub nodes: Vec<usize>,
+}
+
+impl<'a> Layout<'a> for BoneAttachInfoList<'a> {
+    const TYPE: &'static str = "BoneAttachInfoList";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        let list = DataList::fields(v)?;
+        let mut nodes = Vec::new();
+        for n in v.elements(&list, Some(BoneAttachInfo::TYPE))? {
+            nodes.push(n.ok_or_else(|| v.refused(DataList::DATA, "element"))?);
+        }
+        Ok(Self { list, nodes })
+    }
+}

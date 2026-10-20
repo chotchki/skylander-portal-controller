@@ -6,8 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    edge, exports, havok, iga, igz, language, material, model, progression, roster, sfo, texture,
-    toys,
+    attachments, edge, exports, havok, iga, igz, language, material, model, progression, roster,
+    sfo, texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -145,6 +145,16 @@ pub const PARSERS: &[RegisteredParser] = &[
         // cells and rows hold a path or a field per op stepped, and a loop's
         // passes are bounded by MAX_PASSES and the step budget.
         heap_budget: |len| 64 * len + 32 * len + (256 << 10),
+    },
+    RegisteredParser {
+        name: "attachments",
+        parse: walk_attachments,
+        seeds: attachments::builder::seeds,
+        // The IGZ parse and the placements (level's 32x), then each
+        // scripted actor's stepping: its cells and clones are bounded by
+        // the file's stacks and MAX_CLONES, an unsure value by
+        // MAX_ALTERNATIVES, its reasons by MAX_NOTES.
+        heap_budget: |len| 64 * len + 32 * len + 64 * len + (1 << 20),
     },
     RegisteredParser {
         name: "gold_clamp",
@@ -300,6 +310,30 @@ pub fn walk_havok(bytes: &[u8]) -> Result<(), FormatError> {
 /// segment buffers is spent; then the hero side (AG.14), each locomotion
 /// slot's clip in turn sampled the same way and the hero's placement. The
 /// property test and the fuzz targets run it.
+/// Steps every scripted actor's STARTUP as a hero's (AE.23), then what
+/// hangs on it and its model's attach points.
+pub fn walk_attachments(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    let placements = crate::level::Placements::read(&file)?;
+    for actor in placements
+        .actors
+        .iter()
+        .filter(|a| a.info.placement.script.is_some())
+    {
+        let fresh = attachments::fresh(&file, actor)?;
+        let _ = attachments::hung(&fresh, |t| match t {
+            attachments::Template::Local(p) => {
+                attachments::placement_model(&file, *p).is_ok_and(|m| m.is_some())
+            }
+            attachments::Template::Global(_) => false,
+        });
+        if let Some(m) = actor.info.model {
+            let _ = attachments::attach_points(&file, m);
+        }
+    }
+    Ok(())
+}
+
 pub fn walk_model(bytes: &[u8]) -> Result<(), FormatError> {
     let file = igz::Igz::parse(bytes)?;
     let p = model::portal_model(&file)?;
