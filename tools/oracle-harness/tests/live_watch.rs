@@ -1,12 +1,16 @@
-//! Live (openspec AG.1): O5 records a walk every frame without a pause. AF.8's
-//! fresh state (or whatever gameplay state `GUAC_ORACLE_SAVESTATE` names)
-//! boots to Start Paused's pause (F0), gets `RECONNECT` and a fresh copy of the
-//! figure, and there Giants' full watch list is resolved through PINE and
-//! armed. AF.11's walk script ([`oracle_harness::divergence::WALK`]) loads with
-//! offset 0 on F0 + 1 and the run goes to F0 + 600 with no pause on the way.
+//! Live (openspec AG.1, AG.35): O5 records a walk every game frame without a
+//! pause. AF.8's fresh state (or whatever gameplay state
+//! `GUAC_ORACLE_SAVESTATE` names) boots to Start Paused's pause (F0), gets
+//! `RECONNECT` and a fresh copy of the figure, and there Giants' full watch
+//! list is resolved through PINE and armed on pad 0's reads. AF.11's walk
+//! script ([`oracle_harness::divergence::WALK`]) loads with offset 0 on F0 + 1
+//! and the run goes to F0 + 600 with no pause on the way.
 //!
-//! Then the ring has to hold one record a flip, every range readable, with
-//! `_curFrame` stepping by one a flip; O4's readback is joined to it per flip.
+//! Then the ring has to hold every game frame once: `_curFrame` stepping by one
+//! a record, every range readable, and as many records at each flip as O4's
+//! readback counts reads of pad 0 there, so a flip that ran two game frames
+//! holds two and one that ran none holds none (those are counted and
+//! recorded); O4's readback is joined to it per flip.
 //! What's measured and recorded, not gated past float noise: each position
 //! step against velocity times the clamped step under both alignments (the
 //! step read in the earlier record or the later one) and both integration
@@ -17,7 +21,7 @@
 //! read at the end pause. On open ground one alignment and order has to fit
 //! within [`FLOAT_NOISE`].
 //!
-//! Everything lands in `$GUAC_CAPTURE_DIR/BLUS30968/ag1-watch-<unix time>/`
+//! Everything lands in `$GUAC_CAPTURE_DIR/BLUS30968/ag35-watch-<unix time>/`
 //! (refused inside any work tree): `run.txt` opening on the identity line, the
 //! list, the ring raw (`watch.json`), the recording and the two actor frames,
 //! since all of it is guest memory. Mac, against `GUAC_ORACLE_EXE` from
@@ -31,7 +35,6 @@
 
 mod common;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -128,7 +131,7 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
     let out: PathBuf = rrc_dump::output::refuse_repo_output(
         &capture_root
             .join("BLUS30968")
-            .join(format!("ag1-watch-{stamp}")),
+            .join(format!("ag35-watch-{stamp}")),
     )
     .unwrap();
     std::fs::create_dir_all(&out).unwrap();
@@ -209,12 +212,13 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
             clip.name.as_deref().unwrap_or("?")
         ));
     }
-    control.watch_arm(&watch.list, RING).unwrap();
+    control.watch_arm(&watch.list, watch.port, RING).unwrap();
     let script = InputScript::from_ron(WALK).unwrap();
     let loaded = control.load_script(&script).unwrap();
     rec.line(format!(
-        "armed a ring of {RING} records; AF.11's walk script, offset 0 on flip {}",
-        loaded.base
+        "armed a ring of {RING} records at every read of port {}; AF.11's walk script, offset \
+         0 on flip {}",
+        watch.port, loaded.base
     ));
 
     // ---- the walk, no pause until its end -------------------------------------
@@ -228,14 +232,8 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
     drop(pine);
     let t = Instant::now();
     let ring = control.watch_read().unwrap();
-    let flips: Vec<u64> = ring.records.iter().map(|r| r.flip).collect();
-    let pads: BTreeMap<u64, _> = control
-        .pad_reads(0, &flips)
-        .unwrap()
-        .into_iter()
-        .zip(&flips)
-        .filter_map(|(read, &flip)| read.map(|r| (flip, r.pad)))
-        .collect();
+    let flips = ring.flips();
+    let (pads, reads) = control.pad_readback(watch.port, &flips).unwrap();
     let read_ms = t.elapsed().as_secs_f64() * 1e3;
     let file = WatchFile {
         identity: identity.clone(),
@@ -246,6 +244,7 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
         armed: ring.summary.armed,
         records: ring.records.iter().map(RawRecord::of).collect(),
         pads,
+        reads,
     };
     file.write(&out.join(WatchFile::FILE)).unwrap();
     let recording = file.recording().unwrap();
@@ -254,27 +253,58 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
         serde_json::to_string(&recording).unwrap(),
     )
     .unwrap();
-    let check = RingCheck::of(&recording, &ring.records);
+    let check = RingCheck::of(&recording, &ring.records, &file.reads);
     rec.line(format!(
         "paused at {} after {:.2} s running; the ring read and the readback joined in \
-         {read_ms:.0} ms: {} held of {} taken (armed at {}), {} readbacks; {check:?}",
+         {read_ms:.0} ms: {} held of {} taken (armed at {}, port {}), {} readbacks over {} \
+         flips; {check:?}",
         end.frames,
         ran.as_secs_f64(),
         ring.summary.held,
         ring.summary.total,
         ring.summary.armed,
-        file.pads.len()
+        ring.summary.port,
+        file.pads.len(),
+        flips.len()
     ));
     let frames = recording.frames();
 
-    // ---- one record a flip, _curFrame a step a flip -------------------------
+    // ---- every game frame once, as many records a flip as reads --------------
     assert!(check.holds(), "{check:?}");
     assert_eq!(check.last_flip, Some(f0 + FLIPS - 1), "{check:?}");
     assert!(
         matches!(check.first_flip, Some(f) if f == f0 || f == f0 + 1),
         "{check:?}"
     );
-    assert_eq!(file.pads.len(), frames.len(), "a flip without a readback");
+    assert_eq!(check.reads_mismatch, Some(0), "{check:?}");
+    assert_eq!(file.pads.len(), flips.len(), "a flip without a readback");
+    // The flips that ran two game frames (or none): where one record a flip,
+    // at its first read, would have lost a frame, and whether the hero moved.
+    let doubled: Vec<String> = frames
+        .iter()
+        .filter(|f| f.read > 0)
+        .map(|f| {
+            let speed = f64::from(f.hero.velocity[0]).hypot(f64::from(f.hero.velocity[2]));
+            format!(
+                "flip {} (offset {}) read {}: game frame {}, frame time {:.4} s, {speed:.3} m/s",
+                f.flip,
+                f.flip as i64 - loaded.base as i64,
+                f.read,
+                f.game_frame,
+                f.clock.frame_delta
+            )
+        })
+        .collect();
+    rec.line(format!(
+        "{} game frames over {} flips: {} flips ran two or more, {} ran none; one record a \
+         flip would have lost {}: {}",
+        frames.len(),
+        check.last_flip.unwrap() - check.first_flip.unwrap() + 1,
+        check.shared_flips,
+        check.flip_gaps,
+        check.later_reads,
+        doubled.join("; ")
+    ));
 
     // ---- the walk's legs, keyed by flip ----------------------------------------
     let base = loaded.base;
@@ -367,7 +397,9 @@ fn a_walk_is_recorded_every_flip_without_a_pause() {
     let mut slope_pairs = 0;
     for (k, w) in frames.windows(2).enumerate() {
         let speed = f64::from(w[1].hero.velocity[0]).hypot(f64::from(w[1].hero.velocity[2]));
-        if speed <= 0.01 || w[1].flip != w[0].flip + 1 || w[1].hero.rotation[0].abs() <= LEVEL_TILT
+        if speed <= 0.01
+            || w[1].game_frame != w[0].game_frame.wrapping_add(1)
+            || w[1].hero.rotation[0].abs() <= LEVEL_TILT
         {
             continue;
         }

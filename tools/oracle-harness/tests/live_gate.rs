@@ -72,6 +72,7 @@ fn without_the_gate_every_o_verb_is_an_unknown_command() {
     for watch in [
         Watch::Arm {
             frames: 16,
+            port: 0,
             ranges: vec![WatchRange {
                 addr: oracle_harness::actors::APP,
                 len: 4,

@@ -81,16 +81,18 @@ usage:
       at a pause: Giants' watch list resolved through PINE (the frame time and its
       scales, the hero's placement, corpus, matrix, parameters and pad floats, the
       camera, the hero's clips), written to <list.json> (outside every work tree),
-      and O5 armed with a ring of <n> (1024) records of it, the first the next
-      flip's first pad read
+      and O5 armed with a ring of <n> (1024) records of it, one at every read of
+      pad 0 (once a game frame in Giants), the first the next flip's
   oracle watch read --socket <p1> --list <list.json> --out <dir>
-      at a pause: the ring and O4's readback on port 0 for its flips, into
+      at a pause: the ring and O4's readback on the list's port for its flips, into
       <dir>/watch.json (raw) and <dir>/recording.json (decoded); prints the ring's
-      checks (one record a flip, every range readable, _curFrame a step a flip)
+      checks (_curFrame a step a record, every range readable, a record for every
+      read O4 counted) and the flips that ran two game frames
   oracle watch clear --socket <p1>
   oracle watch residuals <recording.json> [--from <flip>] [--to <flip>]
       each position step against velocity times the clamped step, under both
-      alignments and both integration orders, over the consecutive flips in range
+      alignments and both integration orders, over the records one game frame
+      apart whose earlier one's flip is in range
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
@@ -117,12 +119,14 @@ usage:
       counting as failed. <dir> must sit outside every work tree; the dev's RPCS3 dirs
       are checked unchanged at the end, and the home's saves and trophies (which a
       state's load doesn't put back) after every replay, a change stopping the run
-  oracle divergence report <dir>
+  oracle divergence report <dir> [--paused <dir>]
       the numbers from <dir>'s records: per observable the spread at each checkpoint
       and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
       between end shots, set A against set B at the end flip, set W against set A on
-      AF.11's discriminators (AG.1) and the spreads against the host's load; written
-      to <dir>/report.txt and report.json
+      AF.11's discriminators by AG.34's rule (a) (rank-sum |z| < 2, and on the camera's
+      offset and the slides' stops no set W replay inside set B's range: <dir>'s set B
+      of the script, else --paused's, AF.11's measurement) and the spreads against the
+      host's load; written to <dir>/report.txt and report.json
   oracle divergence calibrate <dir>
       AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
       defaults: each replay against the envelope of the others inside the
@@ -146,7 +150,10 @@ fn main() -> Result<()> {
         ["actors", "--pine", socket, rest @ ..] => actors_cmd(socket.as_ref(), rest),
         ["watch", rest @ ..] => watch_cmd(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
-        ["divergence", "report", dir] => divergence_report(dir.as_ref()),
+        ["divergence", "report", dir] => divergence_report(dir.as_ref(), None),
+        ["divergence", "report", dir, "--paused", paused] => {
+            divergence_report(dir.as_ref(), Some(paused.as_ref()))
+        }
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
         ["divergence", "check", rest @ ..] => divergence_check(rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
@@ -606,13 +613,14 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
             drop(pine);
             let path = rrc_dump::output::refuse_repo_output(list_at.as_ref())?;
             std::fs::write(&path, serde_json::to_string_pretty(&watch)?)?;
-            control(socket)?.watch_arm(&watch.list, frames)?;
+            control(socket)?.watch_arm(&watch.list, watch.port, frames)?;
             println!(
-                "armed: {} fields in {} ranges, {} bytes a record, {frames} records; hero {} at \
-                 {:#010x}, {} clips; list in {}",
+                "armed: {} fields in {} ranges, {} bytes a record, {frames} records at every read \
+                 of port {}; hero {} at {:#010x}, {} clips; list in {}",
                 watch.list.fields().len(),
                 watch.list.ranges().len(),
                 watch.list.bytes(),
+                watch.port,
                 watch.hero_name.as_deref().unwrap_or("?"),
                 watch.hero_corpus,
                 watch.clips.len(),
@@ -628,13 +636,7 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
             .with_context(|| format!("parsing {list_at}"))?;
             let control = control(socket)?;
             let ring = control.watch_read()?;
-            let flips: Vec<u64> = ring.records.iter().map(|r| r.flip).collect();
-            let pads = control
-                .pad_reads(0, &flips)?
-                .into_iter()
-                .zip(&flips)
-                .filter_map(|(read, &flip)| read.map(|r| (flip, r.pad)))
-                .collect();
+            let (pads, reads) = control.pad_readback(watch.port, &ring.flips())?;
             let identity = match env::path(env::ORACLE_EXE) {
                 Some(exe) => Identity::of(
                     &exe,
@@ -652,6 +654,7 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
                 armed: ring.summary.armed,
                 records: ring.records.iter().map(RawRecord::of).collect(),
                 pads,
+                reads,
             };
             let dir = rrc_dump::output::refuse_repo_output(&out)?;
             std::fs::create_dir_all(&dir)?;
@@ -661,14 +664,15 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
                 dir.join(divergence::RECORDING_FILE),
                 serde_json::to_string(&recording)?,
             )?;
-            let check = RingCheck::of(&recording, &ring.records);
+            let check = RingCheck::of(&recording, &ring.records, &file.reads);
             println!(
-                "{} held of {} taken (armed at {}): {check:?}; {}",
+                "{} held of {} taken (armed at {} on port {}): {check:?}; {}",
                 ring.summary.held,
                 ring.summary.total,
                 ring.summary.armed,
+                ring.summary.port,
                 if check.holds() {
-                    "one record a flip"
+                    "every game frame once"
                 } else {
                     "GAPS"
                 }
@@ -992,10 +996,14 @@ fn summary(r: &ReplayRecord) -> String {
     )
 }
 
-fn divergence_report(dir: &std::path::Path) -> Result<()> {
+fn divergence_report(dir: &std::path::Path, paused: Option<&std::path::Path>) -> Result<()> {
     let dir = rrc_dump::output::refuse_repo_output(dir)?;
     let records = divergence::load_records(&dir)?;
-    let report = Report::build(&records, Some(&dir))?;
+    let paused = match paused {
+        Some(p) => divergence::load_records(p)?,
+        None => Vec::new(),
+    };
+    let report = Report::build_with(&records, Some(&dir), &paused)?;
     let text = report.text();
     std::fs::write(dir.join("report.txt"), &text)?;
     std::fs::write(
