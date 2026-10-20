@@ -121,7 +121,8 @@ pub(crate) const UPLOAD_BYTES: usize = 16 << 20;
 /// Materials made a frame, each a bind group the renderer prepares.
 pub(crate) const MATERIALS_PER_FRAME: usize = 64;
 
-/// A texture as a role samples it: (extract path, sRGB view, sampler).
+/// A texture as a material's slot samples it: (extract path, sRGB view,
+/// sampler).
 type ImageKey = (String, bool, Sampler);
 
 /// What the reading task hands the frame.
@@ -168,12 +169,13 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     );
     let keys = arithmetic::keys(&drawn, &scene).map_err(|e| e.to_string())?;
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
-    for slot in drawn.materials.iter().flat_map(|m| &m.textures) {
-        let key = (
-            slot.texture.clone(),
-            remaster::is_srgb(slot.role),
-            slot.sampler,
-        );
+    let slots = drawn
+        .materials
+        .iter()
+        .flat_map(|m| m.textures.iter().map(move |slot| (m, slot)));
+    for (material, slot) in slots {
+        let srgb = remaster::samples_srgb(material, slot.role);
+        let key = (slot.texture.clone(), srgb, slot.sampler);
         if images.iter().any(|(k, _)| *k == key) {
             continue;
         }
@@ -185,7 +187,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         }
         let ktx2 = std::fs::read(source.dir.join(&slot.texture))
             .map_err(|e| format!("{}: {e}", slot.texture))?;
-        let image = remaster::texture(&ktx2, slot.role, &slot.sampler, formats)
+        let image = remaster::texture_view(&ktx2, srgb, &slot.sampler, formats)
             .map_err(|e| format!("{}: {e}", slot.texture))?;
         images.push((key, image));
     }
@@ -676,7 +678,11 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
     for m in &up.built.drawn.materials[start..end] {
         let texture = |t: &model::TextureSlot| -> Handle<Image> {
-            let key = (t.texture.clone(), remaster::is_srgb(t.role), t.sampler);
+            let key = (
+                t.texture.clone(),
+                remaster::samples_srgb(m, t.role),
+                t.sampler,
+            );
             up.image_handles
                 .iter()
                 .find(|(k, _)| *k == key)
@@ -1383,5 +1389,97 @@ mod tests {
             u[0].abs_diff_eq(Vec4::new(1.0, 0.0, 0.5, 0.0), 1e-6),
             "{u:?}"
         );
+    }
+
+    /// AG.22: a gloss map is a weight, so the level loads it through a
+    /// linear view, even where the same texture is another material's
+    /// third layer, decoded; the gloss-mapped material draws on its own key.
+    #[test]
+    fn a_gloss_map_loads_as_stored() {
+        use bevy::render::render_resource::TextureFormat;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let path = tmp.path().join(source.ir.level_path(LEVEL, SCENE));
+        let mut scene: guac_ir::level::Scene =
+            guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let graph = &mut scene.scenes[0];
+        let LevelMaterial::Multi2(ground) = &graph.materials[0] else {
+            panic!("the ground");
+        };
+        let shared = ground
+            .textures
+            .iter()
+            .find(|t| t.role == TextureRole::Layer3ColorMap)
+            .unwrap()
+            .clone();
+        let mut leaves = multi2(
+            "leaves",
+            Mask {
+                base: 0x9C,
+                ignore: 0x3FF,
+            },
+            Mask {
+                base: 0x109C,
+                ignore: 0x1BFF,
+            },
+            &[
+                TextureRole::Layer1ColorMap,
+                TextureRole::Layer1BaseNormalMap,
+                TextureRole::Layer1BaseSpecMap,
+                TextureRole::Layer4ColorMap,
+            ],
+        );
+        leaves.textures.push(TextureSlot {
+            role: TextureRole::Layer3ColorMap,
+            ..shared.clone()
+        });
+        leaves.params.fixed_alpha = [-1.0, -1.0, 1.0, 0.125];
+        let shape = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: true,
+            skinned: false,
+        };
+        graph.materials.push(LevelMaterial::Multi2(leaves.clone()));
+        graph.segments.push(segment(3, shape, 10.0));
+        std::fs::write(&path, guac_ir::to_ron(&scene).unwrap()).unwrap();
+        let ktx2 = std::fs::read(tmp.path().join(&shared.texture)).unwrap();
+        for t in leaves
+            .textures
+            .iter()
+            .filter(|t| t.texture != shared.texture)
+        {
+            std::fs::write(tmp.path().join(&t.texture), &ktx2).unwrap();
+        }
+
+        let built = read_level(&source, CompressedImageFormats::BC).unwrap();
+        let views: Vec<(bool, TextureFormat)> = built
+            .images
+            .iter()
+            .filter(|(k, _)| k.0 == shared.texture)
+            .map(|(k, image)| (k.1, image.texture_descriptor.format))
+            .collect();
+        assert_eq!(
+            views,
+            [
+                (true, TextureFormat::Bc1RgbaUnormSrgb),
+                (false, TextureFormat::Bc1RgbaUnorm)
+            ]
+        );
+        // The leaves' other maps decode as they would anywhere.
+        for t in leaves
+            .textures
+            .iter()
+            .filter(|t| t.texture != shared.texture)
+        {
+            let (k, _) = built.images.iter().find(|(k, _)| k.0 == t.texture).unwrap();
+            assert_eq!(k.1, remaster::is_srgb(t.role), "{:?}", t.role);
+        }
+        let gloss = built
+            .keys
+            .iter()
+            .filter(|(k, _)| k.material.shader.switches().gloss)
+            .count();
+        assert_eq!((built.keys.len(), gloss), (4, 1));
     }
 }

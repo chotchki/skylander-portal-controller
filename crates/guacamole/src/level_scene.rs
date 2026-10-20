@@ -4,9 +4,9 @@
 //! tests share:
 //!
 //! - What's drawn ([`drawn`]): every tfbmulti2 segment, the scene's sky
-//!   among them, its material with the gloss map's bit (7) off until AG.22
-//!   draws that term. The other effects' (the grass's `0xAA6`, `0xAA8`, the
-//!   warp) are AG.24's stand-ins and draw nothing yet.
+//!   among them, on its own material, the one with a gloss map (AG.22)
+//!   included. The other effects' (the grass's `0xAA6`, `0xAA8`, the warp)
+//!   are AG.24's stand-ins and draw nothing yet.
 //! - The light ([`level_lights`], [`view_scene`]): `_worldLight1`-`3`, each
 //!   travelling the way it faces, as AE.13 reads the sprite rig, and the
 //!   placed point lights; fog from a [`LevelFog`] the TV holds, a placeholder
@@ -192,10 +192,9 @@ pub const LAYER2_BLEND: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 /// A third layer's blend when its material sets none: multiply.
 pub const LAYER3_BLEND: [f32; 4] = [0.0, 0.0, 1.0, 0.0];
 
-/// What a level material draws as here: tfbmulti2's, with the gloss map's
-/// bit off on both masks until AG.22 draws its term, and a second or third
-/// layer's values the material doesn't set at the original's defaults;
-/// `None` for another effect's. Most of level 213's layered materials set
+/// What a level material draws as here: tfbmulti2's, with a second or
+/// third layer's values the material doesn't set at the original's
+/// defaults; `None` for another effect's. Most of level 213's layered materials set
 /// none (no third layer sets a blend; of the 177 second layers, 174 set no
 /// blend and 148 no exponent), and the June state's draws of them read
 /// these values in every patched copy bar the few that set their own
@@ -205,8 +204,6 @@ pub fn drawn_material(m: &LevelMaterial) -> Option<model::Material> {
         return None;
     };
     let mut m = m.clone();
-    m.pixel.base &= !(1 << bit::GLOSS_MAP);
-    m.vertex.base &= !(1 << bit::GLOSS_MAP);
     let p = &mut m.params;
     if m.pixel.base >> bit::LAYER2 & 1 == 1 {
         p.layer2_extra.get_or_insert(LAYER2_EXTRA);
@@ -501,6 +498,7 @@ mod tests {
         for (b, role) in [
             (bit::LAYER2, TextureRole::Layer2ColorMap),
             (bit::LAYER3, TextureRole::Layer3ColorMap),
+            (bit::GLOSS_MAP, TextureRole::Layer3ColorMap),
             (bit::RIM, TextureRole::Layer4ColorMap),
             (bit::NORMAL_MAP, TextureRole::Layer1BaseNormalMap),
             (bit::SPEC_MAP, TextureRole::Layer1BaseSpecMap),
@@ -562,8 +560,8 @@ mod tests {
     /// point light, no shadows) and the shader defs it becomes. The masks
     /// are level 213's kinds: one leaving shadows, fog and point lights to
     /// the scene (ignore 0x2FF), one owning shadows off (0x3FF), one owning
-    /// point lights off too (0x3BFF), the gloss-mapped one, drawn without
-    /// its gloss until AG.22.
+    /// point lights off too (0x3BFF), and the gloss-mapped one, drawn with
+    /// its gloss (AG.22).
     #[test]
     fn level_material_keys_become_their_shader_defs() {
         let l = level_lights(&lights()).unwrap();
@@ -608,10 +606,11 @@ mod tests {
         let k = key(&unlit);
         assert_eq!(k.shader.pixel(), 1 << bit::FOG);
         assert_eq!(defs(&k), names(&[def::FOG, def::VERTEX_COLOUR]));
-        // The gloss map's bit off on both sides; the rest of the key kept.
+        // The gloss map's bit kept on both sides (AG.22): its def, and the
+        // second set it reads in a third layer's place.
         let gloss = multi2(mask(0x9C, 0x3FF), mask(0x109C, 0x1BFF));
         let drawn = drawn_material(&LevelMaterial::Multi2(gloss.clone())).unwrap();
-        assert_eq!((drawn.pixel.base, drawn.vertex.base), (0x1C, 0x101C));
+        assert_eq!((drawn.pixel.base, drawn.vertex.base), (0x9C, 0x109C));
         let k = key(&drawn);
         assert_eq!(
             defs(&k),
@@ -619,16 +618,25 @@ mod tests {
                 def::RIM,
                 def::NORMAL_MAP,
                 def::SPEC_MAP,
+                def::GLOSS_MAP,
                 def::FOG,
                 def::VERTEX_COLOUR,
                 def::EYE,
                 def::GEOMETRIC_NORMAL,
+                def::UV1,
                 def::POINT_LIGHTS[0],
             ])
         );
-        // Kept, the key would be refused: no character has a gloss map.
+        // Its gloss strength is the third layer's fixed alpha; a gloss map
+        // beside a third layer is refused.
+        let built =
+            CharacterMaterial::from_ir(&gloss, &scene, ShadowLookup::NONE, |_| Handle::default())
+                .unwrap();
+        assert_eq!(built.uniform.fixed_alpha.z, 1.0);
+        let both = multi2(mask(0x9E, 0x3FF), mask(0x109E, 0x1BFF));
+        let both = drawn_material(&LevelMaterial::Multi2(both)).unwrap();
         assert!(
-            CharacterMaterial::from_ir(&gloss, &scene, ShadowLookup::NONE, |_| {
+            CharacterMaterial::from_ir(&both, &scene, ShadowLookup::NONE, |_| {
                 Handle::default()
             })
             .is_err()

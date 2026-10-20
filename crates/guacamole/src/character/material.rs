@@ -58,8 +58,8 @@ pub struct CharacterUniform {
     /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
     /// shader takes it).
     pub misc: Vec4,
-    /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength, w the
-    /// rim's.
+    /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength (or the
+    /// gloss map's, which takes its place), w the rim's.
     pub fixed_alpha: Vec4,
     /// x the exponent, y the detail weight.
     pub layer1: Vec4,
@@ -143,7 +143,10 @@ impl CharacterUniform {
             fixed_alpha: Vec4::new(
                 material.first.fixed_alpha,
                 second.map_or(-1.0, |s| s.layer.fixed_alpha),
-                third.map_or(0.0, |t| t.strength),
+                third
+                    .map(|t| t.strength)
+                    .or(rim.and_then(|r| r.gloss))
+                    .unwrap_or(0.0),
                 rim.map_or(0.0, |r| r.strength),
             ),
             layer1: layer(&material.first),
@@ -216,6 +219,7 @@ impl CharacterTextures {
                 "second spec map",
             ),
             (s.third, self.third.is_some(), "third layer's map"),
+            (s.gloss, self.third.is_some(), "gloss map"),
             (s.rim, self.rim.is_some(), "rim map"),
             (s.shadows, self.shadow.is_some(), "shadow map"),
         ]
@@ -440,6 +444,8 @@ pub fn reference_material(
             strength: pr.fixed_alpha[3],
             weights: weights(pr.layer4_blend),
             split: pr.layer4_values[3],
+            // A gloss map's strength is the third layer's fixed alpha.
+            gloss: mask_bit(p.base, bit::GLOSS_MAP).then_some(pr.fixed_alpha[2]),
         }),
         tint: super::remaster::tint(pr.material_tint),
         glow: match pr.glow {
@@ -699,6 +705,74 @@ mod tests {
         }
     }
 
+    /// Chapter 1's one gloss-mapped material, "leaves", as the extract
+    /// reads it (AG.22): normal, spec and colour maps, an ambient-occlusion
+    /// map in the third layer's slot as the gloss map at strength 1, the rim
+    /// added at 0.125, vertex colours, alpha-tested.
+    fn leaves() -> model::Material {
+        let mut m = eruptor_body();
+        m.name = "leaves".into();
+        m.pixel = Mask {
+            base: 0x9C,
+            ignore: 0x3FF,
+        };
+        m.vertex = Mask {
+            base: 0x109C,
+            ignore: 0x1BFF,
+        };
+        m.textures.push(slot(TextureRole::Layer3ColorMap));
+        m.params.fixed_alpha = [-1.0, -1.0, 1.0, 0.125];
+        m.params.layer1_extra = [1.0, 1.0, 1.0, 0.25];
+        m.params.layer4_values = [0.0, 1.0, 1.0, 0.0];
+        m.params.glow = model::Glow::None;
+        m.states.alpha_test = Some(0.964706);
+        m
+    }
+
+    #[test]
+    fn the_leaves_gloss_map_weighs_their_rim() {
+        let m = reference_material(&leaves()).unwrap();
+        let rim = m.rim.unwrap();
+        assert_eq!(
+            (rim.strength, rim.weights, rim.gloss, rim.split),
+            (0.125, Weights::ADD, Some(1.0), 0.0)
+        );
+        assert_eq!(m.third, None, "the gloss map is no third layer");
+        assert!(m.vertex_colour && m.normal_map && m.spec_map);
+        // Fog and the point light from the level's scene; shadows owned off.
+        let mut scene = fogged();
+        scene.point_lights.push(PointLight {
+            position: [0.0; 3],
+            colour: [0.0; 3],
+            linear: 0.0,
+            quadratic: 0.0,
+        });
+        let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.964706);
+        assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 1.0, 0.125));
+        let mut images = bevy::asset::Assets::<Image>::default();
+        let mut seen = Vec::new();
+        let material = CharacterMaterial::from_ir(&leaves(), &scene, ShadowLookup::NONE, |s| {
+            seen.push(s.role);
+            images.add(Image::default())
+        })
+        .unwrap();
+        assert_eq!(
+            (material.key.shader.pixel(), material.key.shader.vertex()),
+            (0xC9C, 0x349C)
+        );
+        assert!(material.key.shader.switches().gloss);
+        assert!(material.third.is_some() && seen.contains(&TextureRole::Layer3ColorMap));
+        assert_eq!(material.alpha_mode(), AlphaMode::Mask(0.964706));
+        // Without its map it's refused by name.
+        let mut bare = leaves();
+        bare.textures
+            .retain(|t| t.role != TextureRole::Layer3ColorMap);
+        let got = CharacterMaterial::from_ir(&bare, &scene, ShadowLookup::NONE, |_| {
+            images.add(Image::default())
+        });
+        assert_eq!(got.unwrap_err(), MaterialError::MissingTexture("gloss map"));
+    }
+
     #[test]
     fn a_layer_without_its_values_is_refused() {
         let mut ir = eruptor_body();
@@ -884,6 +958,9 @@ mod tests {
         // A third layer alone reads the second set; both read the third.
         assert_eq!(locations(&key(0x002, 0x002), &full), [0, 1, 2, 3, 6, 7]);
         assert_eq!(locations(&key(0x003, 0x003), &full), [0, 1, 2, 3, 6, 7, 8]);
+        // A gloss map reads the third layer's set: the second here.
+        assert_eq!(locations(&key(0x084, 0x084), &full), [0, 1, 2, 3, 6, 7]);
+        assert_eq!(locations(&key(0x085, 0x085), &full), [0, 1, 2, 3, 6, 7, 8]);
     }
 
     #[test]
