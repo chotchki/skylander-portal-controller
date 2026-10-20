@@ -166,6 +166,10 @@ impl Session for Fake {
             "port 1 rests from the first flip"
         );
         self.runs.push((self.flip + 1, flips));
+        // A drive that never ends fails here rather than hanging the tests.
+        if self.flip + flips > 100_000 {
+            anyhow::bail!("the fake ran past 100,000 flips");
+        }
         for k in 0..flips {
             let pad = script.state_at(0, k).expect("port 0 from offset 0");
             self.step(&pad);
@@ -328,6 +332,9 @@ fn the_recorded_input_takes_a_fresh_world_to_the_same_place_without_a_pause() {
     assert_eq!(again.pos, fake.pos);
     assert_eq!(again.facing, fake.facing);
     assert_eq!(again.held, fake.held);
+    // Each step changes what port 0 holds: a repeat is left out.
+    let entries = &script.entries()[0];
+    assert!(entries.windows(2).all(|w| w[0].pad != w[1].pad));
     // The press is in it once, 6 flips long.
     let presses: Vec<_> = script.entries()[0]
         .iter()
@@ -659,4 +666,72 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
     ] {
         assert!(RoutePlan::from_ron(bad).is_err(), "{bad}");
     }
+}
+
+/// A look made by hand: his pivot at (`x`, `z`), still unless `speed` says
+/// otherwise (along -x), the view and eye fixed unless `eye` moves it.
+fn look(flip: u64, x: f64, z: f64, speed: f64, eye: f64) -> Seen {
+    Seen {
+        flip,
+        game_frame: 5_960 + flip as u32,
+        pivot: [x, 43.38, z],
+        facing: 270.0,
+        velocity: [-speed, 0.0, 0.0],
+        view: 15.0,
+        eye: [eye, 52.0, -107.0],
+    }
+}
+
+fn is_rest(order: &Order) -> bool {
+    matches!(order, Order::Run { schedule, .. } if schedule.len() == 1 && schedule[0].1 == PadState::default())
+}
+
+#[test]
+fn the_drivers_decisions_on_looks_made_by_hand() {
+    let k = Knobs::default();
+    // A stop a metre off at 6 m/s: he's let go of (a held stick never slows
+    // him), though his slide alone wouldn't carry him there.
+    let stop = plan(vec![stop(0.0, -93.0, 0.1)]);
+    let mut d = Driver::new(stop.clone(), k);
+    assert!(!is_rest(&d.next(&look(2, 3.0, -93.0, 0.0, 0.0)).unwrap()));
+    assert!(is_rest(&d.next(&look(10, 1.0, -93.0, 6.0, 0.0)).unwrap()));
+    // Inside the radius with his velocity read 0 but his pivot moved since
+    // the last look: not done until a look finds him where he was.
+    let mut d = Driver::new(stop.clone(), k);
+    d.next(&look(2, 0.3, -93.0, 0.0, 0.0)).unwrap();
+    assert!(is_rest(&d.next(&look(4, 0.05, -93.0, 0.0, 0.0)).unwrap()));
+    assert_eq!(
+        d.next(&look(6, 0.05, -93.0, 0.0, 0.0)).unwrap(),
+        Order::Done
+    );
+    // Creeping a millimetre a look is no progress: given up once patience
+    // runs out after the last 0.2 m gained, well inside the budget.
+    let mut d = Driver::new(plan(vec![via(0.0, -93.0)]), k);
+    let mut stuck = None;
+    for i in 0..1_000u64 {
+        let x = 10.0 - 0.001 * i as f64;
+        if let Err(s) = d.next(&look(2 + 2 * i, x, -93.0, 0.03, 0.0)) {
+            stuck = Some(s);
+            break;
+        }
+    }
+    let Some(Stuck::NoProgress { best_at, flip, .. }) = stuck else {
+        panic!("{stuck:?}");
+    };
+    assert_eq!(best_at, 2);
+    assert_eq!(flip - best_at, k.patience + 2);
+    // An eye that never holds still: the settle is given up at its budget.
+    let mut d = Driver::new(plan(vec![Step::Settle { flips: 30 }]), k);
+    let mut stuck = None;
+    for i in 0..1_000u64 {
+        if let Err(s) = d.next(&look(2 + 10 * i, 0.0, -93.0, 0.0, i as f64 * 0.01)) {
+            stuck = Some(s);
+            break;
+        }
+    }
+    let Some(Stuck::Budget { began, flip, .. }) = stuck else {
+        panic!("{stuck:?}");
+    };
+    assert_eq!(began, 2);
+    assert!(flip - began > k.budget && flip - began <= k.budget + 10);
 }
