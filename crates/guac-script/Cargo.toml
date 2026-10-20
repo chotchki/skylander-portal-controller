@@ -1,0 +1,22 @@
+[package]
+name = "guac-script"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The tfbScript interpreter, pure (openspec AH.14, design decisions 3 and 21):
+# the original's scripts run over AH.13's op graphs, members through a host
+# trait. No Bevy and no I/O: guacamole implements the host over its ECS
+# queries, the tests over plain structs.
+[lib]
+name = "guac_script"
+path = "src/lib.rs"
+
+[dependencies]
+guac-formats = { path = "../guac-formats" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The op-graph writer (`guac_formats::script::builder`) the unit tests build
+# their scripts with.
+guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
