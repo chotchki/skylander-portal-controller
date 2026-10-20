@@ -65,8 +65,12 @@ const QUICK: Duration = Duration::from_millis(25);
 /// ...and one this slow brings it back to one.
 const SLOW: Duration = Duration::from_millis(50);
 
-/// Frames the offscreen card and the level's output stay up: the card's
-/// layout, its images and its first draw.
+/// Frames the offscreen card and the level's output stay up (the card's
+/// layout, its images and its first draw), and then frames the TV draws
+/// alone before the pass lets it go: with the output camera under it the
+/// TV's own output is a blended write, and alone it's another pipeline
+/// (Bevy picks the write by a camera's place on its target), which would
+/// otherwise compile in the first frame after the pass (AE.30).
 const EXTRA_FRAMES: u32 = 4;
 
 /// How long the pass waits on pipelines it didn't ask for (the card's, the
@@ -305,8 +309,9 @@ fn begin(
 }
 
 /// Each frame of the pass: the next batch's size from the last frame's
-/// length, the count compiled, and done once every key is, the extras have
-/// drawn and nothing else is still compiling.
+/// length, the count compiled, and once every key is, the extras have drawn
+/// and nothing else is still compiling, the extras gone; done once the TV
+/// has drawn alone as many frames with nothing compiling.
 fn step(
     mut commands: Commands,
     mut prepare: ResMut<Prepare>,
@@ -343,8 +348,14 @@ fn step(
             "pipelines still compiling after the census; going on"
         );
     }
-    for e in p.extras.drain(..) {
-        commands.entity(e).despawn();
+    if !p.extras.is_empty() {
+        for e in p.extras.drain(..) {
+            commands.entity(e).despawn();
+        }
+        // The TV alone from the next frame: its own output compiles here,
+        // under the getting-ready screen.
+        p.extra_frames = 0;
+        return;
     }
     warm.per_frame = 1;
     p.phase = Phase::Done;
@@ -464,14 +475,26 @@ mod tests {
         assert_eq!(app.world().resource::<Prepare>().report().compiled, 0);
         assert!(compiling(&app), "nothing compiled yet");
         app.world().resource::<PipelineWatch>().compile_all();
+        let output = app.world().resource::<Prepare>().extras[0];
+        // Frames ending with the extras gone and the TV still held (AE.30).
+        let mut alone = 0;
         for _ in 0..200 {
             if !compiling(&app) {
                 break;
             }
             app.world().resource::<PipelineWatch>().compile_all();
             app.update();
+            let p = app.world().resource::<Prepare>();
+            if p.preparing() && p.extras.is_empty() {
+                alone += 1;
+                assert!(app.world().get_entity(output).is_err(), "the output gone");
+            }
         }
         assert!(!compiling(&app));
+        assert_eq!(
+            alone, EXTRA_FRAMES,
+            "the TV drew alone under the screen before the pass let it go"
+        );
         let p = app.world().resource::<Prepare>();
         assert_eq!(p.report().compiled, total);
         assert!(p.report().largest_batch > 1, "{:?}", p.report());
