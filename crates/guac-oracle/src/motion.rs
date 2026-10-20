@@ -1225,6 +1225,7 @@ mod tests {
             pad: Some(Ds3Pad::REST),
             clips: Vec::new(),
             contacts: None,
+            mover: None,
         }
     }
 

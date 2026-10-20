@@ -99,6 +99,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actors::{self, Gather, be32, expect_vtable, f32_at, floats, object_ptr, one, vtable};
 use crate::control::Control;
+use crate::mover::MoverWatch;
 use crate::outputs::hex;
 use crate::verbs::{
     PadRead, Refusal, Reply, ReplyError, Verb, WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES,
@@ -424,6 +425,10 @@ pub struct GiantsWatch {
     /// written before it.
     #[serde(default)]
     pub followers: Vec<Follower>,
+    /// The hero's walk as the movement script keeps it (AG.38): none in a
+    /// list written before it, or for a hero without a script description.
+    #[serde(default)]
+    pub mover: Option<MoverWatch>,
 }
 
 /// A `Generic_FollowActor` on the watch list (AG.13).
@@ -673,6 +678,7 @@ impl GiantsWatch {
         }
 
         let proxy = proxy_watch(g, &frame, hero.corpus, &corpus, &block)?;
+        let mover = MoverWatch::resolve(g, hero.placement)?;
 
         let mut fields = vec![
             Field::new("app", app + APP_FIRST, 0x14),
@@ -735,6 +741,9 @@ impl GiantsWatch {
                 24,
             ));
         }
+        if let Some(m) = &mover {
+            fields.extend(m.list_fields());
+        }
         for (i, clip) in clips.iter().enumerate() {
             fields.push(Field::new(
                 format!("anim.control.{i}"),
@@ -765,6 +774,7 @@ impl GiantsWatch {
             clips,
             proxy,
             followers,
+            mover,
         })
     }
 
@@ -827,6 +837,7 @@ impl GiantsWatch {
             pad,
             clips: self.clips(record).unwrap_or_default(),
             contacts: self.contacts(record),
+            mover: self.mover.as_ref().and_then(|m| m.read(&self.list, record)),
         })
     }
 
