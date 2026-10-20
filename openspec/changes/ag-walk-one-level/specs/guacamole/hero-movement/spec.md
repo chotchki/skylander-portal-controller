@@ -93,7 +93,7 @@ A hero SHALL walk up and down the opening area's slopes (to 17.3°) at his walki
 - **THEN** he slides back to its foot, never higher up it than the original's Eruptor gets
 
 ### Requirement: Steps and drops
-A hero SHALL ride 5 mm above the ground he stands or walks on. Where it falls away under him he SHALL be held 10 mm above it, set back there in one frame from as high as 189 mm, and a frame without support SHALL set him back 5-10 mm above it. He SHALL get up no step the original's same character doesn't: the opening area's static collision has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m.
+A hero SHALL ride 5 mm above the ground he stands or walks on. Where it falls away under him he SHALL be held 10 mm above it, set back there in one frame from as high as 189 mm, and a frame without support SHALL set him back 5-10 mm above it. He SHALL get up no step the original's same character doesn't: the opening area's static collision has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m bar the ledge route's edge over the corridor (An edge with nothing below).
 
 #### Scenario: The ground falling away
 - **WHEN** Eruptor walks at full stick from the start toward the gate, the ground falling away 0.15°-1° under him
@@ -103,9 +103,28 @@ A hero SHALL ride 5 mm above the ground he stands or walks on. Where it falls aw
 - **WHEN** Eruptor walks at half stick down the corridor east of the clearing against its north wall, the wall nearer him than the ground
 - **THEN** he drifts up to 171-189 mm above the ground and is put back 10 mm above it in one frame
 
-#### Scenario: The edge by the bridge's foot
-- **WHEN** Eruptor walks at full stick toward the edge with nothing below it by the bridge's foot
-- **THEN** he stops dead short of it with nothing but the ground in his contacts, as AG.36 records
+### Requirement: An edge with nothing below
+A hero SHALL stop dead the frame a point 4 ft (1.2192 m) ahead of him along his walk would be over no ground within 225 ft (68.58 m) below: his walk across the ground drops to 0 there whatever the angle, held or let go, with no slide along the edge, and he stays while the stick pushes on. Slower than 2 ft/s (0.61 m/s) the point SHALL be half his width and 1 ft ahead along the stick (3 ft for Eruptor). Where ground lies within 225 ft below, he SHALL walk off and fall.
+
+#### Scenario: Head-on at the bridge's foot
+- **WHEN** Eruptor walks at full stick straight at the edge by the bridge's foot, or at the sheep's ground's rim or the ledge route's edges
+- **THEN** he stops dead from top speed with 1.12-1.18 m of ground left ahead of him, supported, only the ground in his contacts, and stays there while the stick holds and once it's let go
+
+#### Scenario: Along an edge
+- **WHEN** Eruptor walks at full stick at an edge with nothing below 21°, 30°, 39°, 47-49°, 60° and 82-83° from head-on
+- **THEN** he stops dead with 1.11-1.21 m left ahead along his walk, his pivot 1.05-1.06, 0.97-1.02, 0.90, 0.74-0.78, 0.56-0.60 and 0.14-0.17 m from the edge, and never slides along it
+
+#### Scenario: Let go short of it
+- **WHEN** Eruptor walking at full stick at the edge has the stick let go 1.4-1.85 m short of it
+- **THEN** his slide stops dead from 4.6-5.8 m/s with 1.16-1.20 m left ahead of him
+
+#### Scenario: Part stick
+- **WHEN** Eruptor walks at the edge at half or 0.6 of the stick, or creeps at 0.088 of it (0.58 m/s)
+- **THEN** at half and 0.6 he stops dead 1.13-1.21 m short, then creeps on a 5-8 mm step every third frame and stops for good 0.896-0.911 m short; creeping, he stops there at once; at 0.9 of the stick he stays at the first stop
+
+#### Scenario: Off the ledge route
+- **WHEN** Eruptor walks at full stick off the ledge route's edge over the corridor, its upper slope 2-3.5 m below, 17.5° and 33.8° from head-on
+- **THEN** he walks over the edge at 6.553 m/s without slowing, falls 3.60 and 2.72 m onto the slope in 0.40 and 0.36 s, and walks on
 
 ### Requirement: He leans with the ground
 A hero SHALL turn his up axis toward the normal of the ground under him at 120°/s of game time until he's within half a degree of it, the last frame taking what's left or stopping short by up to 0.48°, so a change under 2° at 1/60 s is done in one frame.
