@@ -398,7 +398,9 @@ fn find_mover(g: &mut impl Gather, description: u32, hero: u32, velocity_data: u
     let mut found = Vec::new();
     for ((base, _), chunk) in chunks.iter().zip(&bytes) {
         let Some(chunk) = chunk else { continue };
-        for off in (0..chunk.len().saturating_sub(OBJECT_HEAD)).step_by(4) {
+        // Every word to the chunk's last: `fields_of` reads the object on its
+        // own, so one whose head runs past the chunk is still checked.
+        for off in (0..=chunk.len().saturating_sub(4)).step_by(4) {
             if be32(chunk, off) != vtable::SCRIPT_STRUCTURE {
                 continue;
             }
@@ -509,11 +511,16 @@ pub(crate) mod fixture {
         let params_ref = reference(w, vtable::SCRIPT_REFERENCE, "movement parameters", params);
         let creature = reference(w, vtable::PLACEMENT_REFERENCE, "creature", hero_placement);
         let description = structure(w, "", &[velocity_data, creature, params_ref]);
-        // Someone else's mover data first: it names his velocity data but not
-        // his placement.
+        // Two decoys first: someone else's mover data, naming his velocity
+        // data but not his placement, and a structure naming him but another
+        // velocity.
         let other = reference(w, vtable::PLACEMENT_REFERENCE, "mover", 0x3000_0100);
         let vel_ref = reference(w, vtable::SCRIPT_REFERENCE, "velocity", velocity_data);
         structure(w, "", &[other, vel_ref]);
+        let other_velocity = structure(w, "velocity data", &[]);
+        let him = reference(w, vtable::PLACEMENT_REFERENCE, "mover", hero_placement);
+        let vel_ref = reference(w, vtable::SCRIPT_REFERENCE, "velocity", other_velocity);
+        structure(w, "", &[him, vel_ref]);
         let simple = number(w, "simple", int_type, 0);
         let gravity = number(w, "gravity velocity", int_type, 10);
         let trying = number(w, "trying to move", int_type, 1);
@@ -548,7 +555,7 @@ pub(crate) mod fixture {
 mod tests {
     use super::fixture::{number, with_mover};
     use super::*;
-    use crate::actors::fixture::{Spec, World};
+    use crate::actors::fixture::{HEAP, OTHER_VTABLE, Spec, World};
 
     fn add_hero(w: &mut World) -> u32 {
         w.actor(&Spec {
@@ -574,7 +581,8 @@ mod tests {
             m.velocity.iter().map(|(_, a)| *a).collect::<Vec<_>>(),
             fx.velocity
         );
-        // The decoy names another actor, so the search took his.
+        // The decoys name another actor or another velocity, so the search
+        // took his.
         let names: Vec<&str> = m.fields.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             names,
@@ -621,7 +629,6 @@ mod tests {
         assert_eq!(got.fields["gravity velocity"], 9.75);
         assert_eq!(got.fields["time since last update"], 3.0);
         assert_eq!(got.fields["trying to move"], 1.0);
-        let _ = fx.trying;
     }
 
     /// What O5 copies at a pad read: each range's bytes back to back.
@@ -684,5 +691,45 @@ mod tests {
         w.put32(name, u32::from_be_bytes(*b"xxxx"));
         let e = format!("{:#}", MoverWatch::resolve(&mut w, hero_at).unwrap_err());
         assert!(e.contains("velocity pitch"), "{e}");
+        // A number the mover data must hold missing.
+        let mut w = World::new();
+        let hero_at = add_hero(&mut w);
+        let fx = with_mover(&mut w, hero_at);
+        let name = w.get32(fx.trying + 0x08);
+        w.put32(name, u32::from_be_bytes(*b"xxxx"));
+        let e = format!("{:#}", MoverWatch::resolve(&mut w, hero_at).unwrap_err());
+        assert!(e.contains("no `trying to move`"), "{e}");
+        // Its numbers spread wider than a watched block may span.
+        let mut w = World::new();
+        let hero_at = add_hero(&mut w);
+        let fx = with_mover(&mut w, hero_at);
+        w.alloc(MAX_SPAN as usize);
+        let far = number(&mut w, "time since last update", fx.float_type, 0);
+        let list = w.get32(fx.mover + 0x18);
+        let data = w.get32(list + 0x14);
+        assert_eq!(w.get32(data + 4 * 4), fx.timer);
+        w.put32(data + 4 * 4, far);
+        let e = format!("{:#}", MoverWatch::resolve(&mut w, hero_at).unwrap_err());
+        assert!(e.contains("would span"), "{e}");
+    }
+
+    #[test]
+    fn mover_data_in_the_last_bytes_of_a_search_chunk_is_found() {
+        let mut w = World::new();
+        let hero = add_hero(&mut w);
+        let fx = with_mover(&mut w, hero);
+        // His mover data moved to the last 32 bytes of the fixture's heap, which
+        // is one search chunk: the old one no longer a structure.
+        let (name, fields) = (w.get32(fx.mover + 0x08), w.get32(fx.mover + 0x18));
+        w.put32(fx.mover, OTHER_VTABLE);
+        let end = HEAP + CHUNK - 0x20;
+        let here = w.alloc(0);
+        w.alloc((end - here) as usize);
+        let moved = w.object(vtable::SCRIPT_STRUCTURE, 0x20);
+        assert_eq!(moved, end);
+        w.put32(moved + 0x08, name);
+        w.put32(moved + 0x18, fields);
+        let m = MoverWatch::resolve(&mut w, hero).unwrap().unwrap();
+        assert_eq!(m.mover, moved);
     }
 }

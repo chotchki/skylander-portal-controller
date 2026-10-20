@@ -162,15 +162,15 @@ A hero SHALL turn his up axis toward the normal of the ground under him at 120°
 - **THEN** his tilt turns toward the new slope at 120°/s, 1.9-2.1° a frame, and stays 0.26-0.31° short of it after six frames
 
 ### Requirement: Falling and landing
-Off the ground a hero SHALL gain 136.21 ft/s² (41.52 m/s²) of downward speed over the step two frames back, up to 120 ft/s as read. In the air his walk SHALL steer, gaining 160 ft/s² × S along the stick over the step three frames back, cut to the larger of 21.5 ft/s × S and the speed he had; let go, it SHALL slow at 50 ft/s² over the step two back. He SHALL land without bouncing; from a fall he SHALL slide a frame down the ground's fall line, then walk the stick's way from that speed.
+Off the ground a hero SHALL fall faster by 136.21 ft/s² (41.52 m/s²) over the step two back, up to 120 ft/s as read. In the air his walk SHALL steer, gaining 160 ft/s² × S along the stick over the step three back, cut across the ground to the larger of 21.5 ft/s × S and what it had, and slow that part as on the ground but at 50 ft/s². He SHALL land without bouncing and, from a last frame in the air begun over 0.4 ft up, slide a frame down the fall line, then walk the stick's way at that speed.
 
 #### Scenario: Falling off the ledge route
 - **WHEN** Eruptor walks at full stick off the ledge route's edge into the corridor, head-on, up to 64° west of it or up to 70° east of it, and keeps the stick held
-- **THEN** in every frame nothing touches him his downward speed grows by 136.21 ft/s² times the step two frames back, his walk staying at 21.5 ft/s times the stick's strength along it, and he lands 1.5-3.9 m down after 0.27-0.48 s, 10.0-17.6 m/s down
+- **THEN** in every frame nothing touches him his downward speed grows by 136.21 ft/s² times the step two frames back, his walk staying at 21.5 ft/s times the stick's strength along it, and he lands 1.5-3.9 m down after 0.27-0.48 s, 10.0-17.6 m/s down unless a face slows him first (at 64° west from 15.2 m/s to 0.7)
 
 #### Scenario: Steering in the air
 - **WHEN** the stick is swung 90° or reversed 0.1 s into a fall from the ledge route, at full or half strength
-- **THEN** his walk turns toward it 6.0-7.7° a frame at full stick and 3.1-3.9° at half over the first three frames, less as it nears the stick's way, keeping 6.553 m/s; reversed, he slows 0.7-0.9 m/s a frame along the way he was going
+- **THEN** his walk turns toward it 6.0-7.7° a frame at full stick and 3.1-3.9° at half over the first three frames, less as it nears the stick's way, keeping 6.553 m/s but for a frame at 6.30-6.33 m/s each time the walk creeps past 21.5 ft/s + 1e-4 (3 in the left swing's two replays); reversed, he slows 0.7-0.9 m/s a frame along the way he was going
 
 #### Scenario: Let go in the air
 - **WHEN** the stick is let go 0.1 s into a fall from the ledge route
@@ -178,7 +178,7 @@ Off the ground a hero SHALL gain 136.21 ft/s² (41.52 m/s²) of downward speed o
 
 #### Scenario: Landing on the corridor's slope
 - **WHEN** Eruptor lands on the corridor's 13°-21° slope from 10-19 m/s down with the stick held, not into the cliff
-- **THEN** he never rises; the next frame he slides 1.1-4.7 m/s straight down the slope (in all but one of 32 landings, which walked on at 21.5 ft/s at once), and the frame after walks the stick's way at that speed, back at full stick's top 4-8 frames after landing or, landing faster than a weaker push allows, holding that speed until it's let go
+- **THEN** he never rises; the next frame he slides 1.1-4.7 m/s straight down the slope (in all but one of 32 landings, whose last frame in the air began 0.133 ft up and which walked on at 21.5 ft/s at once), and the frame after walks the stick's way at that speed, back at full stick's top 4-8 frames after landing or, landing faster than a weaker push allows, holding that speed until it's let go
 
 #### Scenario: Off where the drop is short
 - **WHEN** Eruptor walks at full stick off the ledge route's edge near its east end, where the corridor's slope is 0.6 m or less below it
