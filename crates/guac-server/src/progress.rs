@@ -657,6 +657,7 @@ mod tests {
         assert!(landed.await.unwrap(), "the quit's flush never landed");
     }
 
+    /// Playtime stays short of a minute, so only the quit's flush writes it.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_burst_then_a_quit_keeps_the_final_values() {
         let (sink, store, alice, placed) = spawned().await;
@@ -666,7 +667,7 @@ mod tests {
             let p = FigureProgress {
                 xp: n,
                 gold: n / 4,
-                playtime_secs: n / 60,
+                playtime_secs: n / 400,
                 ..placed
             };
             sink.send(&alice, &eruptor, p);
@@ -674,20 +675,26 @@ mod tests {
         quit(&sink).await;
         let row = store.instances().read(&alice, ERUPTOR).await.unwrap();
         let row = row.unwrap().progress;
+        assert!(last / 400 < PLAYTIME_WRITE_SECS);
         assert_eq!(
             (row.xp, row.gold, row.playtime_secs),
-            (last, last / 4, last / 60)
+            (last, last / 4, last / 400)
         );
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_quit_straight_after_an_orb_keeps_it() {
+    async fn a_quit_straight_after_an_orb_keeps_it_and_the_playtime() {
         let (sink, store, alice, placed) = spawned().await;
-        let p = FigureProgress { xp: 1, ..placed };
+        let p = FigureProgress {
+            xp: 1,
+            playtime_secs: 30,
+            ..placed
+        };
         sink.send(&alice, &FigureId::new(ERUPTOR), p);
         quit(&sink).await;
         let row = store.instances().read(&alice, ERUPTOR).await.unwrap();
-        assert_eq!(row.unwrap().progress.xp, 1);
+        let row = row.unwrap().progress;
+        assert_eq!((row.xp, row.playtime_secs), (1, 30));
     }
 
     #[test]

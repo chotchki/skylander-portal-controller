@@ -1120,10 +1120,11 @@ mod tests {
         let row = rt
             .block_on(store.instances().fresh(&alice, "000009-0000"))
             .unwrap();
+        // Under a minute of playtime: only the quit's flush writes it.
         let earned = skylander_rpcs3_control::FigureProgress {
             xp: 16,
             gold: 3,
-            playtime_secs: 61,
+            playtime_secs: 45,
             ..row.progress
         };
         let eruptor = skylander_core::FigureId::new("000009-0000");

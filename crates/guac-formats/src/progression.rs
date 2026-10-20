@@ -22,7 +22,9 @@
 //! as unknown, and refused only if a row or a branch reads it.
 //!
 //! `permanent/global.bld`'s "Game - Award Money" clamps a figure's gold: the
-//! one `if <amount> > C` in its body whose block sets `amount` to `C`.
+//! one `if <x> > C` in its body whose block sets `amount` to `C`. The check's
+//! left side isn't read (on the 01.00 disc it isn't a plain path to `amount`);
+//! the block's write is what pins the check.
 //!
 //! Comparison codes are ah-progression's reading (`0 <=, 1 ==, 2 >=, 3 <,
 //! 4 >, 5 !=`, design decision 3), which AH.11's level-up at exactly 1,000
@@ -192,8 +194,9 @@ impl SaveTable {
     }
 }
 
-/// The most gold a figure holds: the `C` of the one `if <amount> > C` in
-/// "Game - Award Money"'s body whose block sets `amount` to `C`, read off
+/// The most gold a figure holds: the `C` of the one `if <x> > C` in
+/// "Game - Award Money"'s body whose block sets `amount` to `C` (`x` not
+/// read, see the module docs), read off
 /// `global.bld`'s `level.bld`. Refused by the macro's name when there's no
 /// such check, more than one, or the macro isn't defined exactly once.
 pub fn gold_clamp(global: &Igz<'_>) -> Result<u32, FormatError> {

@@ -1509,3 +1509,48 @@ async fn the_slot_reset_makes_a_waiting_figure_fresh_and_refuses_the_hero() {
     n.state.sessions.set_profile(sid, None).await;
     assert_eq!(n.reset_slot(sid, 1, ERUPTOR).await, StatusCode::FORBIDDEN);
 }
+
+/// The refusals the other tests leave out: a reset of a figure off the list,
+/// and the slot reset of a figure off the list, of a slot past the portal and
+/// of a slot still loading. None changes a row or the portal.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_reset_routes_refuse_what_isnt_there_or_isnt_ready() {
+    let n = Native::with_giants().await;
+    let (sid, alice) = n.unlocked_session().await;
+    n.place(sid, 1, ERUPTOR).await;
+    let eruptor = n.row(&alice, ERUPTOR).await.unwrap();
+    let placed = n.driver.places.lock().unwrap().len();
+    let mut events = n.state.events.subscribe();
+
+    assert_eq!(
+        n.reset(sid, &alice, "000099-0000").await,
+        StatusCode::NOT_FOUND,
+        "a figure off the list"
+    );
+    assert_eq!(
+        n.reset_slot(sid, 1, "000099-0000").await,
+        StatusCode::NOT_FOUND,
+        "a slot reset of a figure off the list"
+    );
+    assert_eq!(
+        n.reset_slot(sid, 9, ERUPTOR).await,
+        StatusCode::BAD_REQUEST,
+        "slot 9"
+    );
+    let loading = SlotState::Loading {
+        figure_id: Some(FigureId::new(ERUPTOR)),
+        placed_by: Some(alice.clone()),
+    };
+    let held = std::mem::replace(&mut n.state.portal.lock().await[0], loading.clone());
+    assert_eq!(
+        n.reset_slot(sid, 1, ERUPTOR).await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "mid-load"
+    );
+    assert_eq!(n.state.portal.lock().await[0], loading);
+    n.state.portal.lock().await[0] = held;
+
+    assert_eq!(n.row(&alice, ERUPTOR).await.unwrap(), eruptor);
+    assert_eq!(n.driver.places.lock().unwrap().len(), placed);
+    assert!(figure_updates(&mut events).is_empty());
+}

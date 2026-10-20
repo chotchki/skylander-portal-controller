@@ -196,16 +196,7 @@ pub(crate) fn FigureDetail(
 
     // The steppers' caps: the product's by game of origin, guacamole's the
     // game's own from the stats answer (AH.3).
-    let caps = move || {
-        let fetched = stats.get();
-        let caps = fetched.as_deref().and_then(StatsFetch::caps);
-        match (server_app.get(), caps) {
-            (ServerApp::Guacamole, Some(c)) => {
-                (c.max_level, u16::try_from(c.max_gold).unwrap_or(u16::MAX))
-            }
-            _ => (max_level_for_game(game), GOLD_MAX),
-        }
-    };
+    let caps = move || edit_caps(server_app.get(), stats.get().as_deref(), game);
 
     // PLAN 11.16 — APPEARANCE button enable + next-variant resolution.
     // Cluster of size ≤ 1 means no alternates → keep the button disabled.
@@ -593,6 +584,19 @@ fn edit_gate(
     EditGate::Editable
 }
 
+/// The edit sheet's level and gold caps: under guacamole the game's own,
+/// from the stats answer (AH.3); in the product, and in guacamole before an
+/// answer carried them, the product's by game of origin and [`GOLD_MAX`].
+/// guacamole's gate keeps the sheet shut until the caps arrive.
+fn edit_caps(app: ServerApp, stats: Option<&StatsFetch>, game: GameOfOrigin) -> (u8, u16) {
+    match (app, stats.and_then(StatsFetch::caps)) {
+        (ServerApp::Guacamole, Some(c)) => {
+            (c.max_level, u16::try_from(c.max_gold).unwrap_or(u16::MAX))
+        }
+        _ => (max_level_for_game(game), GOLD_MAX),
+    }
+}
+
 /// Where RESET sends the figure back to fresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResetVia {
@@ -907,6 +911,48 @@ mod tests {
         }
         assert!(!EditGate::Checking.enabled());
         assert_eq!(EditGate::Checking.tooltip(), "Checking\u{2026}");
+    }
+
+    /// AH.3: the sheet's caps are the stats answer's under guacamole (the
+    /// game's table and clamp) and the product's own by game of origin,
+    /// whatever its answer carries.
+    #[test]
+    fn the_sheets_caps_follow_the_app() {
+        let guac = ServerApp::Guacamole;
+        let fixture_caps = crate::api::GameCaps {
+            max_level: 15,
+            max_gold: 50_000,
+        };
+        let never = StatsFetch::Missing(Some(fixture_caps));
+        assert_eq!(
+            edit_caps(guac, Some(&read_guac()), GameOfOrigin::Giants),
+            (15, 65_000)
+        );
+        assert_eq!(
+            edit_caps(guac, Some(&never), GameOfOrigin::Giants),
+            (15, 50_000)
+        );
+        let past_u16 = StatsFetch::Missing(Some(crate::api::GameCaps {
+            max_level: 15,
+            max_gold: 70_000,
+        }));
+        assert_eq!(
+            edit_caps(guac, Some(&past_u16), GameOfOrigin::Giants).1,
+            u16::MAX
+        );
+        // The product: 10 for a Giants figure, 65,000 gold, even if an
+        // answer carried caps.
+        for fetched in [Some(&read()), Some(&read_guac()), Some(&never), None] {
+            assert_eq!(
+                edit_caps(PRODUCT, fetched, GameOfOrigin::Giants),
+                (10, GOLD_MAX)
+            );
+        }
+        assert_eq!(
+            edit_caps(PRODUCT, Some(&read()), GameOfOrigin::SwapForce),
+            (15, GOLD_MAX)
+        );
+        assert_eq!(GOLD_MAX, 65_000);
     }
 
     /// AH.3: RESET off the portal resets the figure; under guacamole the

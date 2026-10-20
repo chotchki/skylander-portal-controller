@@ -389,7 +389,24 @@ fn window(mode: WindowMode) -> Window {
 /// How long a quit waits for the figures' progress to reach the store; the
 /// farewell's fallback waits less, to keep its 5 s.
 const PROGRESS_FLUSH: Duration = Duration::from_secs(3);
-const PROGRESS_FLUSH_AFTER_FAREWELL: Duration = Duration::from_millis(400);
+const PROGRESS_FLUSH_AFTER_FAREWELL: Duration = Duration::from_millis(300);
+
+/// The farewell fallback's steps: how often it looks for the farewell, how
+/// long past the farewell's beat it gives the TV, and the file log's catch-up.
+const FAREWELL_POLL: Duration = Duration::from_millis(100);
+const FAREWELL_GRACE: Duration = Duration::from_millis(1500);
+const LOG_CATCH_UP: Duration = Duration::from_millis(100);
+
+/// SHUT DOWN closes the app within 5 s (the shell spec), the progress flush
+/// included, however late in a poll the farewell lands.
+const _: () = assert!(
+    FAREWELL_POLL.as_millis()
+        + FAREWELL_BEAT.as_millis()
+        + FAREWELL_GRACE.as_millis()
+        + PROGRESS_FLUSH_AFTER_FAREWELL.as_millis()
+        + LOG_CATCH_UP.as_millis()
+        <= 5_000
+);
 
 /// Writes everything the TV handed over, playtime included, before exiting.
 fn flush_progress(progress: Option<&ProgressSink>, timeout: Duration) {
@@ -413,7 +430,7 @@ fn exit_after_farewell(
         .name("farewell".into())
         .spawn(move || {
             loop {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(FAREWELL_POLL);
                 let farewell = status
                     .lock()
                     .map(|s| matches!(s.screen, LauncherScreen::Farewell))
@@ -422,11 +439,11 @@ fn exit_after_farewell(
                     break;
                 }
             }
-            std::thread::sleep(FAREWELL_BEAT + Duration::from_millis(1500));
+            std::thread::sleep(FAREWELL_BEAT + FAREWELL_GRACE);
             warn!("the TV didn't exit after the farewell; exiting now");
             flush_progress(progress.as_ref(), PROGRESS_FLUSH_AFTER_FAREWELL);
             // The file log's worker writes asynchronously; let it catch up.
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(LOG_CATCH_UP);
             std::process::exit(0);
         })
         .expect("spawn the farewell thread");
