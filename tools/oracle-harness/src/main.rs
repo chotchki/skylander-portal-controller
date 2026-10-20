@@ -9,6 +9,7 @@ use oracle_harness::actors::{self, ActorFrame};
 use oracle_harness::chains::{self, GiantsChains};
 use oracle_harness::control::Control;
 use oracle_harness::divergence::calibrate::{self, Reference};
+use oracle_harness::divergence::observing::Choice;
 use oracle_harness::divergence::{self, Inputs, Perturbation, Plan, ReplayRecord, Report, Set};
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
@@ -154,14 +155,17 @@ usage:
       counting as failed. <dir> must sit outside every work tree; the dev's RPCS3 dirs
       are checked unchanged at the end, and the home's saves and trophies (which a
       state's load doesn't put back) after every replay, a change stopping the run
-  oracle divergence report <dir> [--paused <dir>]
+  oracle divergence report <dir> [--paused <dir>] [--rule d|a] [--out <dir>]
       the numbers from <dir>'s records: per observable the spread at each checkpoint
       and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
-      between end shots, set A against set B at the end flip, set W against set A on
-      AF.11's discriminators by AG.34's rule (a) (rank-sum |z| < 2, and on the camera's
-      offset and the slides' stops no set W replay inside set B's range: <dir>'s set B
-      of the script, else --paused's, AF.11's measurement) and the spreads against the
-      host's load; written to <dir>/report.txt and report.json
+      between end shots, set A against set B at the end flip, set W or O against set A
+      on AF.11's discriminators judged against set B (<dir>'s set B of the script, else
+      --paused's, AF.11's measurement) and the spreads against the host's load; written
+      to <out> (<dir> by default)/report.txt and report.json. The rule: d (AH.40's, the
+      default) the draws by rank-sum |z| < 2 against set A, the camera's offset and the
+      slide's stop z by that and |z| >= 2 against set B, the slide's stop x printed
+      only; a (AG.34's) the draws by rank-sum, the camera's offset and both slide stops
+      by rank-sum and no replay inside set B's range
   oracle divergence calibrate <dir>
       AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
       defaults: each replay against the envelope of the others inside the
@@ -187,10 +191,7 @@ fn main() -> Result<()> {
         ["sweep", "list", "--pack", pack] => sweep_list(pack.as_ref()),
         ["sweep", "run", rest @ ..] => sweep_run(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
-        ["divergence", "report", dir] => divergence_report(dir.as_ref(), None),
-        ["divergence", "report", dir, "--paused", paused] => {
-            divergence_report(dir.as_ref(), Some(paused.as_ref()))
-        }
+        ["divergence", "report", rest @ ..] => divergence_report(rest),
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
         ["divergence", "check", rest @ ..] => divergence_check(rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
@@ -1172,18 +1173,41 @@ fn summary(r: &ReplayRecord) -> String {
     )
 }
 
-fn divergence_report(dir: &std::path::Path, paused: Option<&std::path::Path>) -> Result<()> {
-    let dir = rrc_dump::output::refuse_repo_output(dir)?;
+fn divergence_report(rest: &[&str]) -> Result<()> {
+    let [dir, tail @ ..] = rest else {
+        bail!("{USAGE}");
+    };
+    let mut rest = tail;
+    let (mut paused, mut out, mut choice) = (None, None, Choice::default());
+    while let [flag, value, tail @ ..] = rest {
+        rest = tail;
+        match *flag {
+            "--paused" => paused = Some(PathBuf::from(value)),
+            "--rule" => choice = Choice::parse(value)?,
+            "--out" => out = Some(PathBuf::from(value)),
+            _ => bail!("{USAGE}"),
+        }
+    }
+    if !rest.is_empty() {
+        bail!("{USAGE}");
+    }
+    let dir = rrc_dump::output::refuse_repo_output(dir.as_ref())?;
+    // Another output dir keeps <dir>'s own report (another rule's) as it was.
+    let out = match out {
+        Some(o) => rrc_dump::output::refuse_repo_output(&o)?,
+        None => dir.clone(),
+    };
+    std::fs::create_dir_all(&out)?;
     let records = divergence::load_records(&dir)?;
     let paused = match paused {
-        Some(p) => divergence::load_records(p)?,
+        Some(p) => divergence::load_records(&p)?,
         None => Vec::new(),
     };
-    let report = Report::build_with(&records, Some(&dir), &paused)?;
+    let report = Report::build_with(&records, Some(&dir), &paused, choice)?;
     let text = report.text();
-    std::fs::write(dir.join("report.txt"), &text)?;
+    std::fs::write(out.join("report.txt"), &text)?;
     std::fs::write(
-        dir.join("report.json"),
+        out.join("report.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
     print!("{text}");
