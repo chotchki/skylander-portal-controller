@@ -1,11 +1,13 @@
 //! The extraction's stages in order (openspec AE.3, AE.6, AG.14, AG.15,
-//! AH.2) on synthetic dumps: a PARAM.SFO, the roster builder's four archives
-//! (the progression tables in two of them), the
+//! AH.2, AH.22) on synthetic dumps: a PARAM.SFO, the roster builder's four
+//! archives (the progression tables in two of them, scripts in three), the
 //! model builder's character archive under nine of the roster's eleven
 //! character load files (one of them without a hero, one more refused for a
-//! gloss-map bit, one missing), the level builder's chapter 1, two
-//! voice-over archives and two movies, transcoded by a fake ffmpeg (a shell
-//! script that copies its input into each output). Unix only, as AB's
+//! gloss-map bit, one missing), its character with a script and the models
+//! it hangs as the fighter's archive, the level builder's chapter 1 (its
+//! chest running a whitelisted script), two voice-over archives and two
+//! movies, transcoded by a fake ffmpeg (a shell script that copies its
+//! input into each output). Unix only, as AB's
 //! transcode tests; the real dump runs in `giants_stages.rs`,
 //! `giants_model_stage.rs` and `giants_level_stage.rs`.
 #![cfg(unix)]
@@ -18,6 +20,7 @@ use std::sync::Mutex;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
 use guac_extract::levels::{self, LEVELS, PARTS};
+use guac_extract::scripts;
 use guac_extract::stages::{self, Event, Files};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
 use guac_formats::iga::builder::IgaBuilder;
@@ -49,6 +52,20 @@ const LEVEL_TEXTURES: usize = 12;
 const LEVEL_SHARED: usize = 5;
 /// A level's events: none of its parts done, then each.
 const LEVEL_EVENTS: usize = PARTS.len() + 1;
+/// The script stage's events: none of its two parts done, then each.
+const SCRIPT_EVENTS: usize = 3;
+/// The script entries (bootstrap, global, init_setup and the fighter's),
+/// the scripts in them (none, Spyro_PortalManager.ai, three Init_Setup
+/// scripts and the fighter's Def and hero scripts) and the fighter's
+/// models past his body (two knives, armour, a gun, a spear, a boomerang
+/// and a hat). Their one texture is the character sample's colour map.
+const ENTRIES: usize = 4;
+const SCRIPTS: usize = 6;
+const SPAWN_PROPS: usize = 7;
+/// The level's scripts: the spawn's, the chest's and the definition's.
+const LEVEL_SCRIPTS: usize = 3;
+/// The sample's five clips a palette: idle, walk, run, falling, landing.
+const SAMPLE_CLIPS: usize = 5;
 /// The progression builder's sample level table.
 const SAMPLE_LEVELS: [u32; 5] = [0, 400, 1100, 2500, 4500];
 
@@ -116,6 +133,9 @@ fn make_dump_from(tmp: &Path, roster: &DiscSpec, level: &StageSpec) -> PathBuf {
     fs::write(usr.join("character/009_eruptor.arc"), eruptor).unwrap();
     let eagle = IgaBuilder::new().stored("model.igz", b"igz").build();
     fs::write(usr.join("character/100_eagle.arc"), eagle).unwrap();
+    // The fighter's archive (AH.22): a script and what it hangs.
+    let fighter = model::archive(&model::character(&model::attached()));
+    fs::write(usr.join(scripts::character_archive("009_Eruptor")), fighter).unwrap();
     let good = model::archive(&model::character(&model::sample()));
     let mut bad = model::sample();
     bad.materials[0].pixel = Some((0x5C, 0x2FF));
@@ -169,6 +189,7 @@ enum Seen {
     Models(usize, usize),
     ModelsReady(Vec<String>),
     Level(usize, usize),
+    Scripts(usize, usize),
     Indexing,
     Transcode,
 }
@@ -185,6 +206,7 @@ impl Seen {
                 Self::ModelsReady(failed.iter().map(|f| f.load_file.clone()).collect())
             }
             Event::Level { done, total } => Self::Level(*done, *total),
+            Event::Scripts { done, total } => Self::Scripts(*done, *total),
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
         }
@@ -268,7 +290,17 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         .collect();
     let at = FIGURES + 6 + LOADS;
     assert_eq!(seen[at..at + LEVEL_EVENTS], level[..]);
-    assert_eq!(indexing, Some(at + LEVEL_EVENTS));
+    // The script entries and the spawn models, then the intros.
+    let at = at + LEVEL_EVENTS;
+    assert_eq!(
+        seen[at..at + SCRIPT_EVENTS],
+        [
+            Seen::Scripts(0, 2),
+            Seen::Scripts(1, 2),
+            Seen::Scripts(2, 2)
+        ]
+    );
+    assert_eq!(indexing, Some(at + SCRIPT_EVENTS));
     assert!(first_transcode > indexing, "{seen:?}");
 
     // The roster's IR, every portrait, the models, their textures, the
@@ -290,6 +322,12 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "ir/rig.ron"), 1);
     assert_eq!(recorded(&m, "levels/"), PARTS.len());
     assert!(levels::complete(&m), "every part recorded before ffmpeg");
+    // AH.22's: a palette a model, the script entries, the spawn models.
+    assert_eq!(recorded(&m, "palettes/"), MODELS);
+    assert_eq!(m.parts["palettes"].len(), MODELS);
+    assert_eq!(recorded(&m, "scripts/"), ENTRIES);
+    assert_eq!(recorded(&m, "spawns/"), 2);
+    assert!(scripts::complete(&m));
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
     assert!(!m.complete);
@@ -311,6 +349,28 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     );
     assert!(lv.failed.is_empty(), "{:?}", lv.failed);
     assert_eq!((lv.props, lv.refused_props.len()), (2, 1));
+    // The level's entry, and its one creature's palette: the chest runs the
+    // Chompy's script, its idle alone in its set.
+    assert_eq!(lv.scripts, LEVEL_SCRIPTS);
+    assert_eq!(
+        (lv.palettes.palettes, lv.palettes.clips, lv.palettes.refused),
+        (1, 1, 0)
+    );
+    assert_eq!(lv.palettes.files.written, 1);
+    let entry = fs::read(dir.join(levels::script_path(LEVELS[0]))).unwrap();
+    assert_eq!(
+        entry,
+        guac_formats::level::builder::stage_level(&stage_sample()),
+        "the entry as the disc holds it"
+    );
+    let creatures: guac_ir::palette::LevelPalettes = guac_ir::from_ron(
+        &fs::read_to_string(dir.join("levels/level_213_tutotial/palettes.ron")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        creatures.palettes[0].owner,
+        "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl"
+    );
     assert_eq!((lv.textures, lv.shared), (LEVEL_TEXTURES, LEVEL_SHARED));
     assert_eq!(
         (lv.files.written, lv.files.kept),
@@ -359,6 +419,40 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert!(dir.join(format!("models/{HEROLESS}.ron")).is_file());
     assert!(!dir.join(format!("heroes/{HEROLESS}.ron")).exists());
     assert!(md.heroes_took <= md.took);
+    // A palette for each model, the hero-less one's too, its files apart
+    // from the models'.
+    let pc = &md.palettes;
+    assert_eq!(
+        (pc.palettes, pc.clips, pc.networks, pc.refused),
+        (MODELS, MODELS * SAMPLE_CLIPS, 0, 0)
+    );
+    assert_eq!((pc.files.written, pc.files.kept), (MODELS, 0));
+    assert!(pc.took <= md.took);
+    assert!(dir.join(format!("palettes/{HEROLESS}.ron")).is_file());
+    // The script stage: both parts read, the entries as the disc holds
+    // them, the spawn models' one texture already in the store.
+    let sc = &done.scripts;
+    assert_eq!((sc.parts_read, sc.parts_kept), (2, 0));
+    assert!(sc.failed.is_empty(), "{:?}", sc.failed);
+    assert_eq!((sc.entries, sc.scripts), (ENTRIES, SCRIPTS));
+    assert_eq!((sc.props, sc.refused_props.len()), (SPAWN_PROPS, 0));
+    assert_eq!(
+        (
+            sc.script_files.written,
+            sc.spawn_files.written,
+            sc.spawn_files.kept
+        ),
+        (ENTRIES, 2, 1)
+    );
+    assert_eq!(
+        fs::read(dir.join("scripts/global.igz")).unwrap(),
+        disc(&sample()).global
+    );
+    let spawns: guac_ir::spawn::SpawnModels =
+        guac_ir::from_ron(&fs::read_to_string(dir.join("spawns/009_eruptor.ron")).unwrap())
+            .unwrap();
+    assert_eq!(spawns.props.len(), SPAWN_PROPS);
+    assert_eq!(spawns.archive, "character/009_eruptor.bld");
     let hero: guac_ir::Hero = guac_ir::from_ron(
         &fs::read_to_string(dir.join("heroes/MinionLoad_100_Eagle.ron")).unwrap(),
     )
@@ -433,15 +527,20 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(e.code(), "GUAC-E-NO-FFMPEG", "{e}");
     assert_eq!(done.roster.roster.figures.len(), FIGURES);
     let seen = seen.into_inner().unwrap();
-    // The models, the turntable's cue, then the level: nothing after it.
-    let at = seen.len() - LEVEL_EVENTS;
+    // The models, the turntable's cue, the level and the scripts: nothing
+    // after them.
+    let at = seen.len() - LEVEL_EVENTS - SCRIPT_EVENTS;
     assert_eq!(seen[at - 2], Seen::Models(LOADS, LOADS));
     assert_eq!(
         seen[at - 1],
         Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
     );
     assert_eq!(seen[at], Seen::Level(0, PARTS.len()));
-    assert_eq!(seen.last(), Some(&Seen::Level(PARTS.len(), PARTS.len())));
+    assert_eq!(
+        seen[at + LEVEL_EVENTS - 1],
+        Seen::Level(PARTS.len(), PARTS.len())
+    );
+    assert_eq!(seen.last(), Some(&Seen::Scripts(2, 2)));
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
@@ -454,10 +553,17 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     for part in PARTS {
         let files = &m.levels[LEVELS[0]].parts[part];
         assert!(
-            files.contains(&IrFormat::Ron.level_path(LEVELS[0], part)),
+            files.contains(&levels::part_path(IrFormat::Ron, LEVELS[0], part)),
             "{part}"
         );
         for f in files {
+            assert!(dir.join(f).is_file(), "{f}");
+        }
+    }
+    // So are AH.22's palettes, script entries and spawn models.
+    assert!(m.parts.contains_key("palettes") && scripts::complete(&m));
+    for part in ["palettes", "scripts", "spawns"] {
+        for f in &m.parts[part] {
             assert!(dir.join(f).is_file(), "{f}");
         }
     }
@@ -488,6 +594,18 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         (0, PARTS.len())
     );
     assert_eq!(done.levels.files.written, 0);
+    // The palettes are written again as they were (kept); the script
+    // parts, whole, are kept without reading them.
+    assert_eq!(
+        (
+            done.models.palettes.files.written,
+            done.models.palettes.files.kept
+        ),
+        (0, MODELS)
+    );
+    let sc = &done.scripts;
+    assert_eq!((sc.parts_read, sc.parts_kept, sc.entries), (0, 2, 0));
+    assert_eq!((sc.files.written, sc.files.kept), (0, ENTRIES + 3));
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
 }
@@ -573,20 +691,19 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     // read again and only its IR written, beside the RON, the textures
     // kept.
     let lv = stages::level_stage(&mut again.dir, IrFormat::Postcard, &|_| {}).unwrap();
+    // The script entry is the same file in either format: kept.
     assert_eq!(
-        (lv.parts_read, lv.files.written),
-        (PARTS.len(), PARTS.len())
+        (lv.parts_read, lv.parts_kept, lv.files.written),
+        (PARTS.len() - 1, 1, PARTS.len() - 1)
     );
-    assert_eq!(lv.files.kept, LEVEL_TEXTURES);
+    assert_eq!(lv.files.kept, LEVEL_TEXTURES + 1);
     for part in PARTS {
-        assert!(
-            dir.join(IrFormat::Postcard.level_path(LEVELS[0], part))
-                .is_file()
-        );
-        assert!(
-            dir.join(IrFormat::Ron.level_path(LEVELS[0], part))
-                .is_file()
-        );
+        for ir in [IrFormat::Postcard, IrFormat::Ron] {
+            assert!(
+                dir.join(levels::part_path(ir, LEVELS[0], part)).is_file(),
+                "{part}"
+            );
+        }
     }
 
     // An IR in the other format is a file of its own, written beside.
@@ -940,6 +1057,11 @@ fn the_progression_part_an_older_manifest_lacks_resumes_alone() {
         (done.levels.parts_read, done.levels.parts_kept),
         (0, PARTS.len())
     );
+    // Without `parts` the palettes and both script parts are missing too:
+    // read again, their files kept.
+    assert_eq!(done.models.palettes.files.written, 0);
+    let sc = &done.scripts;
+    assert_eq!((sc.parts_read, sc.files.written), (2, 0));
     assert_eq!(done.intros.unwrap().summary.transcoded, 0);
     drop(again);
     assert_eq!(
@@ -1074,4 +1196,262 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
         done.levels.failed[0]
     );
     assert!(done.intros.is_ok());
+}
+
+/// `part` taken out of a finished extract as an extract made before AH.22
+/// lacks it: its record gone from the manifest, with its files' outputs and
+/// the files themselves (textures too, which another part may share and
+/// so keep). `level` says whether it's chapter 1's part or extract-wide.
+fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let parts = if level {
+        json["levels"][LEVELS[0]]["parts"].as_object_mut().unwrap()
+    } else {
+        json["parts"].as_object_mut().unwrap()
+    };
+    let files: Vec<String> = parts
+        .remove(part)
+        .unwrap_or_else(|| panic!("no {part}"))
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap().to_owned())
+        .filter(|f| !f.starts_with("textures/"))
+        .collect();
+    let outputs = json["outputs"].as_array_mut().unwrap();
+    outputs.retain(|o| !files.iter().any(|f| o["path"] == f.as_str()));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    for f in &files {
+        fs::remove_file(dir.join(f)).unwrap();
+    }
+    files
+}
+
+/// Each of AH.22's parts, missing alone from a finished extract, resumes
+/// alone: the extract isn't current, the next run writes that part's files
+/// and no other (the model stage, which reads every archive on a resume,
+/// keeps every file but the palettes), and then it's current.
+#[test]
+fn each_of_the_fights_parts_resumes_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    for (level, part) in [
+        (false, "palettes"),
+        (true, levels::SCRIPT),
+        (true, levels::PALETTES),
+        (false, scripts::SCRIPTS),
+        (false, scripts::SPAWNS),
+    ] {
+        let gone = without_part(&dir, level, part);
+        assert!(!gone.is_empty(), "{part}");
+        let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+        assert_eq!(again.state, DirState::Resume, "{part}");
+        let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+        let written = done.roster.files.written
+            + done.progression.files.written
+            + done.models.files.written
+            + done.models.palettes.files.written
+            + done.levels.files.written
+            + done.scripts.files.written;
+        assert_eq!(written, gone.len(), "{part}: only its files");
+        let (lv, sc) = (&done.levels, &done.scripts);
+        let (level_read, script_read) = match (level, part) {
+            (true, _) => (1, 0),
+            (false, "palettes") => (0, 0),
+            _ => (0, 1),
+        };
+        assert_eq!(lv.parts_read, level_read, "{part}");
+        assert_eq!(sc.parts_read, script_read, "{part}");
+        assert_eq!(sc.parts_kept, 2 - script_read, "{part}");
+        assert_eq!(done.intros.unwrap().summary.transcoded, 0);
+        for f in &gone {
+            assert!(again.dir.output_done(f).unwrap(), "{part}: {f}");
+        }
+        drop(again);
+        assert_eq!(
+            open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+            DirState::Current,
+            "{part}"
+        );
+    }
+    // A file the build adds to a part (a fighter joining) reads as the part
+    // not in: the scripts part recorded without the fighter's entry is read
+    // again, its files kept.
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let files = json["parts"][scripts::SCRIPTS].as_array_mut().unwrap();
+    files.retain(|f| f != "scripts/009_eruptor.igz");
+    assert_eq!(files.len(), ENTRIES - 1);
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((sc.parts_read, sc.parts_kept), (1, 1));
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (0, ENTRIES)
+    );
+    assert_eq!(again.dir.manifest().parts[scripts::SCRIPTS].len(), ENTRIES);
+    // A part's file gone with its record kept (the review's case): the
+    // part isn't in, so it's read again and only that file written.
+    let spawn = IrFormat::Ron.spawn_path(scripts::spawn_archives()[0].as_str());
+    for f in ["scripts/009_eruptor.igz", spawn.as_str()] {
+        fs::remove_file(again.dir.path().join(f)).unwrap();
+    }
+    let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((sc.parts_read, sc.parts_kept), (2, 0));
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (1, ENTRIES - 1)
+    );
+    assert_eq!(sc.spawn_files.written, 1);
+}
+
+/// A level whose scripts don't read (AG.3's sample names one with no op
+/// list): its script part is refused by name and not written; the parts
+/// that read land.
+#[test]
+fn a_level_whose_scripts_dont_read_keeps_its_entry_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path());
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let bare = guac_formats::level::builder::sample().bytes;
+    fs::write(
+        levels::archive_path(&usr, LEVELS[0]),
+        IgaBuilder::new().stored("level.bld", &bare).build(),
+    )
+    .unwrap();
+    let known = known_for(&dump);
+    let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    let lv = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    let script = lv
+        .failed
+        .iter()
+        .find(|f| f.part == levels::SCRIPT)
+        .expect("the script part refused");
+    assert!(
+        script
+            .reason
+            .starts_with("GUAC-E-LEVEL-UNREADABLE: level_213_tutotial's script didn't read:")
+            && script.reason.contains("_opList"),
+        "{}",
+        script.reason
+    );
+    assert_eq!(lv.scripts, 0);
+    assert!(
+        !opened
+            .dir
+            .path()
+            .join(levels::script_path(LEVELS[0]))
+            .exists()
+    );
+    let m = opened.dir.manifest();
+    assert!(!m.levels[LEVELS[0]].parts.contains_key(levels::SCRIPT));
+    // The collision and the placements read off the same file.
+    for part in [levels::COLLISION, levels::PLACEMENTS] {
+        assert!(m.levels[LEVELS[0]].parts.contains_key(part), "{part}");
+    }
+}
+
+/// The fighter's archive unreadable: both script parts need it, so both are
+/// reported against it and neither recorded; the palettes, the level's
+/// script and creatures and the intros land, the manifest is marked, but
+/// the extract isn't current, so the next start tries the two again.
+#[test]
+fn script_parts_that_dont_read_leave_the_rest() {
+    let s = setup();
+    let usr = s.dump.join("PS3_GAME/USRDIR");
+    let fighter = usr.join(scripts::character_archive("009_Eruptor"));
+    fs::write(&fighter, b"not an archive").unwrap();
+    let known = known_for(&s.dump);
+    let mut opened = open(&s.dump, &s.root, &known, &|_| {}).unwrap();
+    let done = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let sc = &done.scripts;
+    assert_eq!((sc.parts_read, sc.parts_kept), (0, 0));
+    let parts: Vec<(&str, &str)> = sc
+        .failed
+        .iter()
+        .map(|f| (f.part.as_str(), f.archive.as_str()))
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            ("scripts", "character/009_eruptor.bld"),
+            ("spawns", "character/009_eruptor.bld")
+        ]
+    );
+    for f in &sc.failed {
+        assert!(
+            f.reason.starts_with(&format!(
+                "GUAC-E-SCRIPTS-UNREADABLE: the {} from character/009_eruptor.bld didn't read:",
+                f.part
+            )),
+            "{}",
+            f.reason
+        );
+    }
+    // Nothing of either part written, not even the entries that read.
+    assert_eq!(sc.files, Files::default());
+    assert_eq!(done.models.palettes.palettes, MODELS);
+    assert!(done.levels.failed.is_empty());
+    assert_eq!(done.levels.parts_read, PARTS.len());
+    assert_eq!(done.intros.unwrap().summary.transcoded, 2);
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let m = manifest_on_disk(&dir);
+    assert!(m.complete && !scripts::complete(&m));
+    assert_eq!(recorded(&m, "scripts/") + recorded(&m, "spawns/"), 0);
+    assert!(m.parts.contains_key("palettes") && levels::complete(&m));
+    let mut again = open(&s.dump, &s.root, &known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    // The next start tries them again, and nothing else is written.
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(done.scripts.failed.len(), 2);
+    assert_eq!(done.levels.parts_read, 0);
+    assert_eq!(done.models.palettes.files.written, 0);
+}
+
+/// The script part read back by AH.13's readers: every entry the extract
+/// holds, the level's included, parses and its graph reads, holding the
+/// scripts the synthetic files carry.
+#[test]
+fn the_script_part_reads_back_through_ah13s_readers() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path();
+    let m = opened.dir.manifest();
+    let mut files = m.parts[scripts::SCRIPTS].clone();
+    files.extend(m.levels[LEVELS[0]].parts[levels::SCRIPT].clone());
+    let mut names = Vec::new();
+    for f in &files {
+        let bytes = fs::read(dir.join(f)).unwrap();
+        let igz = guac_formats::igz::Igz::parse(&bytes).unwrap();
+        let graph = guac_formats::script::Graph::read(&igz).unwrap();
+        for s in &graph.scripts {
+            names.push(s.name.unwrap().rsplit('/').next().unwrap().to_owned());
+        }
+    }
+    assert_eq!(
+        names,
+        [
+            "Spyro_PortalManager.ai",
+            "Init_Setup.ai",
+            "Init_Setup_Minions.ai",
+            "Init_Setup_SaveGame_Portal.ai",
+            "026_Def_Synthetic.ai",
+            "026_Synthetic.ai",
+            "InitializeLevel.ai",
+            "S2_Enemy_Chompy.ai",
+            "Level_Definition_900.ai",
+        ]
+    );
 }

@@ -1,0 +1,307 @@
+//! The fight's script data off the dump (openspec AH.22, design decision 7):
+//! the whitelist (decision 2) as AH.12 counted it, and two extract-wide
+//! parts its scripts need outside a level. Writing them is the script
+//! stage's ([`crate::stages`]); a level's own entry and its creatures'
+//! palettes are level parts ([`crate::levels`]).
+//!
+//! - The scripts: the decompressed `level.bld` of `bootstrap.bld`,
+//!   `global.bld`, `init_setup.bld` and each fighting character's archive,
+//!   copied raw, `scripts/<archive>.igz`. A script refers to placements,
+//!   structures and sets in its own file, so a subset of one isn't
+//!   self-contained: whole entries it is, parsed at level load by
+//!   `guac-formats` (decision 7's departure from "tfbScript graphs → IR").
+//!   Each is checked to parse and its op graph to read before it's written.
+//! - The spawn models: every model a placement names in `global.bld` and in
+//!   each fighting character's archive (his own body aside, which the model
+//!   stage writes), read as a level's props are,
+//!   `spawns/<archive>.<ron|postcard>`: the lava ball, the level-up's rings,
+//!   the death stars. A level's own spawn templates draw from its props.
+//!
+//! Each part lands whole or not at all: its files are loaded together. One
+//! that doesn't read is the stage's failure for that part alone, and the
+//! next start tries it again.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use guac_formats::iga::Archive;
+use guac_formats::igz::Igz;
+use guac_formats::level::Placements;
+use guac_formats::model as fmodel;
+use guac_formats::script::Graph;
+use guac_ir::DumpIdentity;
+use guac_ir::level::{Prop, RefusedProp};
+use guac_ir::spawn::SpawnModels;
+
+use crate::extract::Manifest;
+use crate::levels::Read;
+use crate::models::{self, Textures};
+use crate::roster::{BOOTSTRAP, GLOBAL, INIT_SETUP, LEVEL};
+
+/// The parts' names in the manifest, which [`complete`] asks for.
+pub const SCRIPTS: &str = "scripts";
+pub const SPAWNS: &str = "spawns";
+/// Where each part's files go.
+pub const SCRIPT_DIR: &str = "scripts";
+pub const SPAWN_DIR: &str = "spawns";
+
+/// The characters whose attack scripts run, by load file (design decision
+/// 15; Open question 3, answered 2026-10-19: Eruptor alone).
+pub const FIGHTERS: [&str; 1] = ["009_Eruptor"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Whitelisted {
+    /// The archive under `PS3_GAME/USRDIR`.
+    pub archive: &'static str,
+    /// Each script by its source path's file name, any case.
+    pub scripts: &'static [&'static str],
+}
+
+/// The whitelist (design decision 2): AH.12's roots and the scripts they
+/// spawn, by archive. AH.34 grows it with AH.8's route.
+pub const WHITELIST: [Whitelisted; 5] = [
+    Whitelisted {
+        archive: BOOTSTRAP,
+        // The empty base every update callback specializes.
+        scripts: &["Boot_Halt_LoadLevel.ai"],
+    },
+    Whitelisted {
+        archive: GLOBAL,
+        // The 17 placements running at a level's start (their STARTUP and
+        // first behaviour; the portal manager's and the mover update's
+        // ticks), then what the fight spawns from here.
+        scripts: &[
+            "360_PS3_pointer_setup.ai",
+            "360PS3GestureManager.ai",
+            "GameSystems.ai",
+            "Macros_Achievements.ai",
+            "Macros_Animation.ai",
+            "Minion_Tuning.ai",
+            "movementUpdate.ai",
+            "MusicController.ai",
+            "PauseController.ai",
+            "PointLightManager.ai",
+            "PortalControl.ai",
+            "PortalManager.ai",
+            "PS3SpecificSetup.ai",
+            "SoundController.ai",
+            "Spyro_PortalManager.ai",
+            "TRG_Checks_Manager.ai",
+            "UI.ai",
+            "LevelUp.ai",
+            "MinionDeathActor.ai",
+            "ShakeSpriteMaster.ai",
+            "FX_StunnedStars.ai",
+            "UI_Controller_Prompt.ai",
+        ],
+    },
+    Whitelisted {
+        archive: INIT_SETUP,
+        // The first tick on a PS3.
+        scripts: &[
+            "Init_Setup_Plat_PS3.ai",
+            "Init_Setup.ai",
+            "InitSetup_Achievements.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/009_eruptor.bld",
+        scripts: &[
+            "009_Def_Eruptor.ai",
+            "009_Eruptor_Tuning.ai",
+            "009_Eruptor.ai",
+            "009_LavaAttack.ai",
+            "009_MagmaBall.ai",
+            "Accolades_Macros_Fire.ai",
+            "PortalEntry_Fire.ai",
+            "PortalEntry_LightForce.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "level/level_213_tutotial.bld",
+        scripts: &[
+            // The level's definition and enemy stats, Setup_001's
+            // controller and its Chompies, Norticus, the breakables and
+            // coins in reach, the loot, the level's enemy system, the
+            // route's triggers, push blocks and spike gate.
+            "Level_Definition_213.ai",
+            "Setup_001_Controller.ai",
+            "S2_Enemy_Chompy.ai",
+            "Norticus_First_appearance.ai",
+            "Ambient_Chmpie.ai",
+            "init_barrel_b.ai",
+            "init_Ancient_Pottery.ai",
+            "init_gourds_01.ai",
+            "Scale.ai",
+            "WoodFence_Spawner.ai",
+            "Breakable_Wall_213.ai",
+            "Placed_Loot_Spinning.ai",
+            "LootSystem_Init.ai",
+            "_EnemySystem_Functions.ai",
+            "Activate_Norticus_Chompies.ai",
+            "PushBlock_Template.ai",
+            "Push_Block_End.ai",
+            "Gate_Spikes.ai",
+            // What those spawn.
+            "Art_Generic_Stone.ai",
+            "Box_Tortoise.ai",
+            "Bouncing_Wood_Pieces.ai",
+            "CannonWarpRing.ai",
+            "Canon_Ball.ai",
+            "Elemental_Symbol_Hints.ai",
+            "Fence_Sign.ai",
+            "Gate_Spikes_Hole.ai",
+            "Lock_EnemyGate.ai",
+            "Canon_bottom.ai",
+            "Pushblock_canon.ai",
+            "Switch_90_Setup.ai",
+            "Torus_Effect.ai",
+            "stone_wall_Piece_213.ai",
+            "Wood_Plank.ai",
+        ],
+    },
+];
+
+/// Whether a script's source path (`C:/tfb/.../S2_Enemy_Chompy.ai`) names
+/// one of `scripts`, by its file name, any case.
+pub fn listed(scripts: &[&str], path: &str) -> bool {
+    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    scripts.iter().any(|s| s.eq_ignore_ascii_case(file))
+}
+
+/// The whitelisted scripts of the level archive `level`
+/// (`level_213_tutotial`); none for a level off the whitelist.
+pub fn level_scripts(level: &str) -> &'static [&'static str] {
+    let archive = format!("{}/{level}.bld", crate::levels::LEVEL_FOLDER);
+    WHITELIST
+        .iter()
+        .find(|w| w.archive == archive)
+        .map_or(&[], |w| w.scripts)
+}
+
+/// `character/<load file>.bld`, lower-cased as the disc names them.
+pub fn character_archive(load_file: &str) -> String {
+    format!(
+        "{}/{}.bld",
+        models::CHARACTER_DIR,
+        load_file.to_ascii_lowercase()
+    )
+}
+
+/// The archives the scripts part copies, in load order: `bootstrap.bld`
+/// (its roots take the first export ids), `global.bld`, `init_setup.bld`,
+/// then each fighter's.
+pub fn archives() -> Vec<String> {
+    [BOOTSTRAP, GLOBAL, INIT_SETUP]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(FIGHTERS.iter().map(|f| character_archive(f)))
+        .collect()
+}
+
+/// The archives the spawn models come from: `global.bld` and each
+/// fighter's.
+pub fn spawn_archives() -> Vec<String> {
+    std::iter::once(GLOBAL.to_owned())
+        .chain(FIGHTERS.iter().map(|f| character_archive(f)))
+        .collect()
+}
+
+/// An archive's stem (`permanent/global.bld` → `global`): its files' name
+/// in each part.
+pub fn stem(archive: &str) -> &str {
+    let file = archive.rsplit('/').next().unwrap_or(archive);
+    file.strip_suffix(".bld").unwrap_or(file)
+}
+
+/// `scripts/<stem>.igz`: the entry as the disc holds it, in either IR
+/// format.
+pub fn script_path(archive: &str) -> String {
+    format!("{SCRIPT_DIR}/{}.igz", stem(archive))
+}
+
+/// Whether `m` holds both parts: a start is current only then.
+pub fn complete(m: &Manifest) -> bool {
+    [SCRIPTS, SPAWNS].iter().all(|p| m.parts.contains_key(*p))
+}
+
+/// The `level.bld` `archive` keeps, decompressed, under `usrdir`. Why it
+/// can't is the error: no archive, no entry, or one that won't unpack.
+pub fn entry(usrdir: &Path, archive: &str) -> Result<Vec<u8>, String> {
+    let path = usrdir.join(archive);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let arc = Archive::parse(&bytes).map_err(|e| e.to_string())?;
+    let e = arc.find(LEVEL).ok_or("no level.bld")?;
+    Ok(arc.read(e).map_err(|e| e.to_string())?.into_owned())
+}
+
+/// The scripts an entry holds, by source path, once it parses and its op
+/// graph reads (AH.13's readers): what's checked before it's written.
+pub fn check(entry: &[u8]) -> Result<Vec<String>, String> {
+    let igz = Igz::parse(entry).map_err(|e| e.to_string())?;
+    let graph = Graph::read(&igz).map_err(|e| e.to_string())?;
+    Ok(graph
+        .scripts
+        .iter()
+        .map(|s| s.name.unwrap_or_default().to_owned())
+        .collect())
+}
+
+/// Every model a placement in `igz` names, as a level's props are read,
+/// but `skip` (a character's own body), its textures into the read. One
+/// that doesn't read is listed with why.
+pub fn spawn_models(
+    igz: &Igz<'_>,
+    archive: &str,
+    identity: DumpIdentity,
+    skip: Option<usize>,
+) -> Result<Read<SpawnModels>, String> {
+    let placements = Placements::read(igz).map_err(|e| e.to_string())?;
+    let mut textures = Textures::default();
+    let mut by_path: BTreeMap<&str, ()> = BTreeMap::new();
+    let (mut props, mut refused): (Vec<Prop>, Vec<RefusedProp>) = (Vec::new(), Vec::new());
+    for (&model, info) in &placements.models {
+        if Some(model) == skip {
+            continue;
+        }
+        let path = info
+            .info
+            .name
+            .ok_or_else(|| format!("model #{model} has no name"))?;
+        if by_path.insert(path, ()).is_some() {
+            return Err(format!("two models named {path}"));
+        }
+        let mut own = textures.clone();
+        match crate::levels::prop(igz, model, path, &mut own) {
+            Ok(p) => {
+                textures = own;
+                props.push(p);
+            }
+            Err(reason) => refused.push(RefusedProp {
+                path: path.to_owned(),
+                reason,
+            }),
+        }
+    }
+    Ok(Read {
+        ir: SpawnModels {
+            identity,
+            archive: archive.to_owned(),
+            props,
+            refused,
+        },
+        textures: textures.files,
+    })
+}
+
+/// The model a character archive draws its figure with in play
+/// ([`fmodel::in_play`]): the model stage's, left out of its spawns.
+/// `None` for an archive that isn't a character's.
+pub fn body(igz: &Igz<'_>, archive: &str) -> Option<usize> {
+    let load = stem(archive);
+    let portal = fmodel::portal_model(igz).ok()?;
+    Some(fmodel::in_play(igz, portal, load).ok()?.model)
+}
+
+#[cfg(test)]
+mod tests;

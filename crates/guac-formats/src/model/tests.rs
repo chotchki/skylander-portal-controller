@@ -213,6 +213,141 @@ fn a_locomotion_slot_that_isnt_a_full_normal_clip_is_refused() {
     assert_eq!(e.field, "transformTrackToBoneIndices");
 }
 
+/// The sample with a palette of every kind past its locomotion: a partial
+/// clip on one joint (slot 20, Eruptor's throw), an additive one (slot
+/// 12, a lean) and an entry with no clip (slot 7, a network).
+fn palette_sample() -> CharacterSpec {
+    let mut s = sample();
+    let mut partial = clip();
+    partial.tracks.truncate(1);
+    partial.track_to_bone = vec![2];
+    s.slots.push(SlotSpec {
+        clip: Some(partial),
+        properties: 0x620,
+        label: Some("throw"),
+        ..SlotSpec::new(20, 1.0 / 30.0, "Eruptor_LavaLob.ma")
+    });
+    let mut additive = clip();
+    additive.blend_hint = 1;
+    s.slots.push(SlotSpec {
+        clip: Some(additive),
+        properties: 0x610,
+        ..SlotSpec::new(12, 1.0 / 30.0, "Eruptor_LeanLeft.ma")
+    });
+    s.slots.push(SlotSpec {
+        clip: None,
+        ..SlotSpec::new(7, 1.0 / 30.0, "Eruptor_Network.ma")
+    });
+    s
+}
+
+/// Every slot of `spec`'s set as the palette reads it, past its end too.
+fn palette(spec: &CharacterSpec) -> Vec<Result<Option<PaletteSlot<'static>>, FormatError>> {
+    let igz = parsed(spec);
+    let p = portal_model(igz).unwrap();
+    let sk = skeleton(igz, &p.hero).unwrap();
+    (0..=p.hero.clip_slots.len())
+        .map(|slot| palette_slot(igz, &p.hero, &sk, slot))
+        .collect()
+}
+
+#[test]
+fn the_palette_reads_every_slot_whatever_it_holds() {
+    let read = palette(&palette_sample());
+    // Slots 0-61 and one past the end.
+    assert_eq!(read.len(), 63);
+    /// Slot, file, (additive, partial), the clip's tracks and their joints.
+    type Seen = (usize, Option<&'static str>, (bool, bool), Vec<u16>);
+    let mut clips: Vec<Seen> = Vec::new();
+    let mut networks = Vec::new();
+    for r in &read {
+        let Some(s) = r.as_ref().unwrap() else {
+            continue;
+        };
+        match &s.clip {
+            Some(c) => clips.push((
+                s.slot,
+                c.file,
+                (c.flags.additive_blend(), c.flags.partial_animation()),
+                c.clip.binding.track_to_bone.clone(),
+            )),
+            None => networks.push((s.slot, s.name)),
+        }
+    }
+    assert_eq!(
+        clips,
+        [
+            (0, Some("Eruptor_Idle.ma"), (false, false), vec![0, 1, 2]),
+            (1, Some("Eruptor_Walk.ma"), (false, false), vec![0, 1, 2]),
+            (3, Some("Eruptor_Run.ma"), (false, false), vec![0, 1, 2]),
+            (
+                12,
+                Some("Eruptor_LeanLeft.ma"),
+                (true, false),
+                vec![0, 1, 2]
+            ),
+            (20, Some("Eruptor_LavaLob.ma"), (false, true), vec![2]),
+            (
+                57,
+                Some("Eruptor_Falling.ma"),
+                (false, false),
+                vec![0, 1, 2]
+            ),
+            (
+                61,
+                Some("Eruptor_Landing.ma"),
+                (false, false),
+                vec![0, 1, 2]
+            ),
+        ]
+    );
+    assert_eq!(networks, [(7, Some("?"))]);
+    let throw = read[20].as_ref().unwrap().as_ref().unwrap();
+    assert_eq!((throw.label, throw.slot), (Some("throw"), 20));
+    // The locomotion reader still refuses the throw and the lean, and the
+    // palette keeps its clips exactly as the locomotion reads them.
+    let igz = parsed(&palette_sample());
+    let p = portal_model(igz).unwrap();
+    let sk = skeleton(igz, &p.hero).unwrap();
+    for slot in [12, 20] {
+        assert_eq!(
+            slot_clip(igz, &p.hero, &sk, slot).unwrap_err().field,
+            "_properties"
+        );
+    }
+    let walk = slot_clip(igz, &p.hero, &sk, WALK_SLOT).unwrap().unwrap();
+    let read_walk = read[1].as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(read_walk.clip.as_ref().unwrap().clip, walk.clip);
+}
+
+#[test]
+fn a_palette_slot_that_cant_play_is_refused_by_name() {
+    let refused = |slot: usize, bend: &dyn Fn(&mut SlotSpec)| {
+        let mut s = palette_sample();
+        bend(s.slots.iter_mut().find(|x| x.slot == slot).unwrap());
+        palette(&s).swap_remove(slot).unwrap_err()
+    };
+    // The wrapper says additive and the binding normal, or the other way.
+    let e = refused(12, &|x| x.clip.as_mut().unwrap().blend_hint = 0);
+    assert_eq!(
+        (e.field, e.kind),
+        ("blendHint", ErrorKind::Unsupported { value: 0 })
+    );
+    let e = refused(20, &|x| x.clip.as_mut().unwrap().blend_hint = 1);
+    assert_eq!(
+        (e.field, e.kind),
+        ("blendHint", ErrorKind::Unsupported { value: 1 })
+    );
+    // A track bound past the skeleton, partial, additive or whole.
+    for slot in [20, 12, RUN_SLOT] {
+        let e = refused(slot, &|x| {
+            let c = x.clip.as_mut().unwrap();
+            *c.track_to_bone.last_mut().unwrap() = 7;
+        });
+        assert_eq!(e.field, "transformTrackToBoneIndices", "slot {slot}");
+    }
+}
+
 /// The hero `spec`'s archive plays, read as `009_Eruptor`'s.
 fn hero(spec: &CharacterSpec) -> Result<Actor<'static>, FormatError> {
     let igz = parsed(spec);

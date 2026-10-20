@@ -752,6 +752,37 @@ mod tests {
         );
     }
 
+    /// AH.37: guacamole's 409 naming the slot that already holds the viewer's
+    /// figure reads as already on the portal, in the words the phone's own
+    /// check uses; AB.22's 409 and every other answer keep `HTTP <status>`.
+    #[test]
+    fn a_load_refused_for_a_figure_already_on_the_portal_says_so() {
+        use model::{already_on_portal, LoadError};
+        assert_eq!(
+            LoadError::from_answer(409, r#"{"already_on_portal":3}"#),
+            LoadError::AlreadyOnPortal
+        );
+        assert_eq!(
+            already_on_portal("Eruptor"),
+            "Eruptor is already on the portal."
+        );
+        for (status, body) in [
+            (409, "slot 2 holds another player's figure"),
+            (409, ""),
+            (409, r#"{"already_on_portal":0}"#),
+            (409, r#"{"already_on_portal":9}"#),
+            (429, "slot busy"),
+            (404, r#"{"already_on_portal":3}"#),
+            (500, "working-copy resolve failed: x"),
+        ] {
+            assert_eq!(
+                LoadError::from_answer(status, body),
+                LoadError::Failed(format!("HTTP {status}")),
+                "{status} {body}"
+            );
+        }
+    }
+
     /// AH.3: guacamole's stats answer carries the game's caps, its
     /// never-placed 404 too; the product's `.sky` stats carry none.
     #[test]

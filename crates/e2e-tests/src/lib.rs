@@ -1428,11 +1428,12 @@ pub const E2E_MODELLED: u32 = 0x0e;
 pub const E2E_DAMAGED: u32 = 0x04;
 
 /// A synthetic Giants dump and a finished extract of it (openspec AB.11,
-/// AE.4, AE.13, AG.15, AH.2): [`E2E_ROSTER`] with a flat-colour portrait each,
-/// the progression tables ([`E2E_LEVEL_XP`], [`E2E_GOLD_CAP`]),
-/// one synthetic character model ([`E2E_MODELLED`]), one damaged one
-/// ([`E2E_DAMAGED`]), a light rig, a chapter 1 of a floor and a spawn
-/// ([`write_level`]) and the intros asked for. No game bytes: the dump is a
+/// AE.4, AE.13, AG.15, AH.2, AH.22): [`E2E_ROSTER`] with a flat-colour
+/// portrait each, the progression tables ([`E2E_LEVEL_XP`],
+/// [`E2E_GOLD_CAP`]), one synthetic character model ([`E2E_MODELLED`]) and
+/// its palette, one damaged one ([`E2E_DAMAGED`]), a light rig, a chapter 1
+/// of a floor and a spawn ([`write_level`]), the fight's script entries
+/// ([`write_scripts`]) and the intros asked for. No game bytes: the dump is a
 /// PARAM.SFO and a text file, the model is a few triangles on two joints with
 /// a two-key idle and a flat-colour texture, all made up here, and each intro
 /// is ffmpeg's `testsrc` picture over a `sine` tone, encoded at run time to
@@ -1522,6 +1523,7 @@ impl IntroFixture {
         write_progression(&mut opened.dir)?;
         write_models(&mut opened.dir)?;
         write_level(&mut opened.dir)?;
+        write_scripts(&mut opened.dir)?;
 
         // Only the intros need ffmpeg.
         let ffmpeg = match intros {
@@ -1793,6 +1795,63 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
         dir.write_output(&rel, &bytes)?;
         dir.record_level_part(&level, part, vec![rel])?;
     }
+    // AH.22's two: the level's entry (AH.13's creature, our numbers) and no
+    // creature palettes.
+    let rel = guac_extract::levels::script_path(&level);
+    dir.write_output(&rel, &guac_formats::script::builder::creature().0)?;
+    dir.record_level_part(&level, guac_extract::levels::SCRIPT, vec![rel])?;
+    let palettes = guac_ir::palette::LevelPalettes {
+        identity,
+        level: level.clone(),
+        palettes: Vec::new(),
+    };
+    let rel = ir.level_path(&level, guac_extract::levels::PALETTES);
+    dir.write_output(&rel, &ir.encode(&palettes, dir, &rel)?)?;
+    dir.record_level_part(&level, guac_extract::levels::PALETTES, vec![rel])?;
+    Ok(())
+}
+
+/// How many scripts [`write_scripts`] and [`write_level`]'s entries link
+/// into (AH.22): the roster builder's portal manager and three Init_Setup
+/// scripts, and AH.13's creature as the fighter's and the level's.
+pub const E2E_SCRIPTS: usize = 6;
+
+/// The fight's script data as the script stage leaves it (AH.22), both
+/// parts recorded: the roster builder's bootstrap, global and init_setup
+/// entries and AH.13's creature as the fighter's, built here, and spawn
+/// models of none.
+fn write_scripts(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+    use guac_extract::intros::IrFormat;
+    use guac_extract::scripts;
+
+    let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
+    let (creature, _) = guac_formats::script::builder::creature();
+    let mut files = Vec::new();
+    for (archive, bytes) in
+        scripts::archives()
+            .iter()
+            .zip([&d.bootstrap, &d.global, &d.init_setup, &creature])
+    {
+        let rel = scripts::script_path(archive);
+        dir.write_output(&rel, bytes)?;
+        files.push(rel);
+    }
+    dir.record_part(scripts::SCRIPTS, files)?;
+    let ir = IrFormat::Ron;
+    let identity = dir.manifest().identity.clone();
+    let mut files = Vec::new();
+    for archive in scripts::spawn_archives() {
+        let rel = ir.spawn_path(&archive);
+        let none = guac_ir::spawn::SpawnModels {
+            identity: identity.clone(),
+            archive: archive.clone(),
+            props: Vec::new(),
+            refused: Vec::new(),
+        };
+        dir.write_output(&rel, &ir.encode(&none, dir, &rel)?)?;
+        files.push(rel);
+    }
+    dir.record_part(scripts::SPAWNS, files)?;
     Ok(())
 }
 
@@ -1968,6 +2027,28 @@ fn write_models(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     let rel = ir.model_path(&model.load_file);
     let bytes = ir.encode(&model, dir, &rel)?;
     dir.write_output(&rel, &bytes)?;
+    // Its palette (AH.22): the idle alone, in slot 0.
+    let palette = guac_ir::palette::Palette {
+        identity: identity.clone(),
+        owner: model.load_file.clone(),
+        slots: 1,
+        entries: vec![guac_ir::palette::PaletteSlot {
+            slot: 0,
+            name: Some("Idle".into()),
+            label: None,
+            entry: guac_ir::palette::SlotEntry::Clip {
+                additive: false,
+                partial: false,
+                layered: false,
+                motion_extraction: 0,
+                clip: model.idle.clone(),
+            },
+        }],
+        refused: Vec::new(),
+    };
+    let palette_rel = ir.palette_path(&model.load_file);
+    dir.write_output(&palette_rel, &ir.encode(&palette, dir, &palette_rel)?)?;
+    dir.record_part(guac_extract::models::PALETTES, vec![palette_rel])?;
     // The damaged one: the same file cut off halfway.
     let damaged = ir.model_path(&load_file(E2E_DAMAGED));
     dir.write_output(&damaged, &bytes[..bytes.len() / 2])?;

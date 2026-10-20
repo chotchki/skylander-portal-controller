@@ -227,6 +227,20 @@ live-RPCS3 skips and 28 guacamole-only skips. Without `--no-fail-fast`
 cargo stops at the first failing test binary (`figure_edit.rs` under the
 product), so a product run needs it to reach the rest.
 
+After AH.37 (2026-10-20, the same flags): guacamole 67 of 67 ok, 54 for
+real (23 TV + 5 intro + 25 shared + AH.37's) and the same 13
+product-only skips; the product 64 of 67 ok, 31 for real (28 passed, the
+same 3 failed), 7 live-RPCS3 skips and 29 guacamole-only skips. AH.37's
+`a_second_phone_of_one_profile_cant_place_her_figure_twice`
+([`tests/multi_phone.rs`](tests/multi_phone.rs), guacamole-only) needs a
+PLACE the phone's own view lets through, so it holds the second phone's
+page in one synchronous script: a synchronous XHR poll of `/api/portal`,
+during which no WebSocket message reaches that phone's view. Its view
+keeps her Spyro in slot 1 while the first phone swaps him for her
+Eruptor, and once the server shows Eruptor there the script presses
+PLACE, which asks for slot 2. The test reads the server's log line too,
+so a refusal by the phone's own check can't pass for the server's.
+
 ## macOS specifics
 
 - `phone URL …` log line uses Bonjour (`<host>.local`) and `serving on

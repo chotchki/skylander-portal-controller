@@ -23,8 +23,9 @@ use guac_extract::{DirState, ExtractRoot, Stale, open};
 use guac_formats::collision;
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
-use guac_ir::level::{Collision, LevelMaterial, Lights, Placements, Props, Scene};
+use guac_ir::level::{Atmosphere, Collision, LevelMaterial, Lights, Placements, Props, Scene};
 use guac_ir::model::{Blend, MaterialTrack};
+use guac_ir::palette::LevelPalettes;
 
 fn env_or_dotenv(key: &str) -> Option<String> {
     if let Ok(value) = std::env::var(key) {
@@ -123,14 +124,16 @@ fn the_level_stage_extracts_chapter_1() {
         println!("  REFUSED PROP {p}: {r}");
     }
     assert!(stage.failed.is_empty(), "every part of level 213 reads");
-    assert_eq!((stage.levels, stage.parts_read), (1, 5));
+    // AG.15's five, AG.41's atmosphere and AH.22's script and palettes.
+    let parts = levels::PARTS.len();
+    assert_eq!((stage.levels, stage.parts_read), (1, parts));
     let events = events.into_inner().unwrap();
-    assert_eq!(events.first(), Some(&(0, 5)));
-    assert_eq!(events.last(), Some(&(5, 5)));
+    assert_eq!(events.first(), Some(&(0, parts)));
+    assert_eq!(events.last(), Some(&(parts, parts)));
     let level = LEVELS[0];
     let m = opened.dir.manifest().clone();
     for part in levels::PARTS {
-        let rel = IrFormat::Ron.level_path(level, part);
+        let rel = levels::part_path(IrFormat::Ron, level, part);
         let size = m.outputs.iter().find(|o| o.path == rel).unwrap().size;
         let files = m.levels[level].parts[part].len();
         println!("  {part}: {rel} {size} bytes, {files} files recorded");
@@ -353,7 +356,7 @@ fn the_level_stage_extracts_chapter_1() {
         again.files,
         again.took.as_secs_f64()
     );
-    assert_eq!((again.parts_read, again.parts_kept), (0, 5));
+    assert_eq!((again.parts_read, again.parts_kept), (0, parts));
     assert_eq!(again.files.written, 0);
 
     // The install format writes only its IR, beside.
@@ -366,11 +369,12 @@ fn the_level_stage_extracts_chapter_1() {
         .map(|o| o.size)
         .sum();
     println!(
-        "  postcard: {:?} in {:.2} s; the five parts {postcard} bytes",
+        "  postcard: {:?} in {:.2} s; the parts' IR {postcard} bytes",
         post.files,
         post.took.as_secs_f64()
     );
-    assert_eq!(post.files.written, 5);
+    // The script entry is the same file in either format: kept.
+    assert_eq!(post.files.written, parts - 1);
     // Every part's RON, read back and put in postcard, is the postcard file
     // byte for byte: the two formats hold the same bits.
     agree::<Scene>(&dir, level, levels::SCENE);
@@ -378,6 +382,8 @@ fn the_level_stage_extracts_chapter_1() {
     agree::<Collision>(&dir, level, levels::COLLISION);
     agree::<Placements>(&dir, level, levels::PLACEMENTS);
     agree::<Lights>(&dir, level, levels::LIGHTS);
+    agree::<Atmosphere>(&dir, level, levels::ATMOSPHERE);
+    agree::<LevelPalettes>(&dir, level, levels::PALETTES);
     drop(opened);
 
     // A layout-3 extract (AE.6's: models, no heroes, no level) is rebuilt,

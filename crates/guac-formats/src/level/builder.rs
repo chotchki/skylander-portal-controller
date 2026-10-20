@@ -451,6 +451,9 @@ pub struct StageSpec {
     pub props: Vec<(&'static str, crate::model::builder::MaterialSpec)>,
     /// A skinned prop, built as a character's model is, at this path.
     pub skinned: Option<(&'static str, crate::model::builder::CharacterSpec)>,
+    /// The script the skinned prop's placement runs (AH.22's palettes
+    /// follow a whitelisted one to its creature), an empty frame.
+    pub skinned_script: Option<&'static str>,
     /// A prop whose technique sits under an animated transform.
     pub transformed: Option<(&'static str, crate::model::builder::MaterialSpec)>,
     /// The PS3's zones its definition script adds (AG.41); `None` writes no
@@ -567,6 +570,7 @@ pub fn stage_sample() -> StageSpec {
             colour_only("gourd", 2),
         )],
         skinned: Some(("C:/tfb/Content/Models/Objects/Treasure_Chest.mdl", chest)),
+        skinned_script: Some("C:/tfb/Content/Levels/Synthetic/Scripts/S2_Enemy_Chompy.ai"),
         transformed: Some((
             "C:/tfb/Content/Models/Objects/fairy_upgrade_gem.mdl",
             colour_only("m_butterfly_wings", 7),
@@ -680,7 +684,13 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
 
     // The actors: the spawn with its waypoints, then one per prop.
     let spawn = b.object(0, "tfbActorInfo", 0xF8);
-    let script = b.object(0, "tfbScriptInfo", 0x1C);
+    // An empty frame, so the file's every script reads (AH.13's graph).
+    let script = crate::script::builder::Writer::new(&mut b).script(
+        "Levels/Synthetic/Scripts/InitializeLevel.ai",
+        |_| {},
+        |_| {},
+        |_| {},
+    );
     let solid = b.object(0, "CollisionInfo", 0x58);
     let parameters = b.object(0, "ActorParameters", 0x4C);
     let waypoint_list = b.object(0, "ActorWaypointList", 0x18);
@@ -697,11 +707,6 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
     b.pointer(at(spawn, 0xC4), solid);
     b.pointer(at(spawn, 0xE0), parameters);
     b.pointer(at(spawn, 0xE4), waypoint_list);
-    b.string(
-        at(script, 0x08),
-        "Levels/Synthetic/Scripts/InitializeLevel.ai",
-    );
-    b.put_bytes(at(script, 0x10), &[1]);
     b.put_u32(at(solid, 0x18), 0x1B);
     floats(
         &mut b,
@@ -737,9 +742,15 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
             ],
         );
     }
+    let skinned = spec.skinned.as_ref().map(|_| spec.props.len());
     for (k, &model) in models.iter().enumerate() {
         let a = b.object(0, "tfbActorInfo", 0xF8);
         let c = b.object(0, "CollisionInfo", 0x58);
+        if let (Some(path), true) = (spec.skinned_script, skinned == Some(k)) {
+            let info =
+                crate::script::builder::Writer::new(&mut b).script(path, |_| {}, |_| {}, |_| {});
+            b.pointer(at(a, 0xA8), info);
+        }
         placement(
             &mut b,
             a,

@@ -15,9 +15,12 @@
 //! [`levels`] (AG.15) reads each level the build plays, chapter 1, in parts.
 //! [`progression`] (AH.2) reads the level table, the save params and the
 //! gold clamp, an extract-wide part of their own.
+//! [`scripts`] (AH.22) holds the whitelist and reads the fight's script
+//! data outside a level: the script entries and the models they spawn.
 //! [`stages`] (AE.3) runs everything after identity in guacamole's order:
 //! the roster and its portraits first, then the models with their hero side
-//! (AG.14), then the levels, then ffmpeg and the intros.
+//! (AG.14) and palettes (AH.22), then the levels, then the scripts, then
+//! ffmpeg and the intros.
 
 pub mod census;
 pub mod dump;
@@ -33,6 +36,7 @@ pub mod progression;
 mod report;
 pub mod root;
 pub mod roster;
+pub mod scripts;
 pub mod stages;
 pub mod transcode;
 
@@ -52,5 +56,17 @@ pub use root::{ExtractRoot, RootMode};
 /// side does too, and (AG.15) `levels/`, each level's parts named in the
 /// manifest, so a part a later build adds resumes alone. AH.2's
 /// `ir/progression.*` is such a part outside the levels (the manifest's
-/// `parts`), so v4 holds.
+/// `parts`), so v4 holds, and so are AH.22's `palettes/`, `scripts/` and
+/// `spawns/`, beside each level's `script.igz` and `palettes.*`.
 pub const LAYOUT_VERSION: u32 = 4;
+
+/// The extract-wide parts this build reads (the manifest's `parts`), each
+/// recorded once its files are in: AH.2's progression, AH.22's palettes,
+/// script entries and spawn models. A start is current only once every one
+/// is, so an extract made before one resumes for it alone.
+pub const PARTS: [&str; 4] = [
+    progression::PART,
+    models::PALETTES,
+    scripts::SCRIPTS,
+    scripts::SPAWNS,
+];

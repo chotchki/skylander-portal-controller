@@ -15,8 +15,8 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, GIANTS_SERIAL, Phone, TestServer,
-    fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, press_tv,
+    E2E_DAMAGED, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, GIANTS_SERIAL, Phone,
+    TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, press_tv,
     set_session_profile, tv, wait_for_tv,
 };
 
@@ -756,6 +756,16 @@ async fn the_pick_loads_the_level_behind_the_portal() {
     );
     assert_eq!(level["shown"], false);
     assert_eq!(snap["screen"], "Portal", "the portal stays up");
+    // AH.22: the script part links on a task of its own beside the load.
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        !s["level"]["scripts"].is_null() || !s["level"]["scripts_reason"].is_null()
+    })
+    .await
+    .expect("the scripts link");
+    let scripts = &snap["level"]["scripts"];
+    assert_eq!(scripts["files"], 5, "{}", snap["level"]);
+    assert_eq!(scripts["scripts"].as_u64(), Some(E2E_SCRIPTS as u64));
+    assert!(snap["level"]["scripts_reason"].is_null());
     phone.close().await.unwrap();
 }
 

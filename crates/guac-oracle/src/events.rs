@@ -4,7 +4,9 @@
 //! they part is reported with it; a candidate passes when its sequence is that
 //! prefix and every stamp lies within the replays' stamps for that event, plus
 //! a floor. AF observes no events, so the floor has no default until the first
-//! rung that does (AH) calibrates it.
+//! rung that does (AH) calibrates it. A fight outgrows this shape (four
+//! Chompies interleave differently from replay to replay): AH.6's per-actor
+//! logs on game time are [`crate::fight::log`].
 
 use serde::{Deserialize, Serialize};
 

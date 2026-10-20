@@ -813,3 +813,141 @@ fn an_attach_points_angles_become_a_rotation() {
         ([1.0, 2.0, 3.0], [1.0; 3])
     );
 }
+
+/// The sample with Eruptor's attack slots in small: a partial throw on one
+/// joint (20), its additive lean (12), a network (7) and an eruption past
+/// the locomotion (32), plus a slot that can't play (40: the wrapper says
+/// partial, the binding additive).
+fn fighter() -> CharacterSpec {
+    let mut s = sample();
+    let mut throw = havok_clip();
+    throw.tracks.truncate(1);
+    throw.track_to_bone = vec![2];
+    let mut lean = havok_clip();
+    lean.blend_hint = 1;
+    let mut odd = havok_clip();
+    odd.blend_hint = 1;
+    s.slots.extend([
+        SlotSpec {
+            clip: Some(throw),
+            properties: 0x620,
+            ..SlotSpec::new(20, 1.0 / 30.0, "Eruptor_LavaLob.ma")
+        },
+        SlotSpec {
+            clip: Some(lean),
+            properties: 0x612,
+            ..SlotSpec::new(12, 1.0 / 30.0, "Eruptor_LeanLeft.ma")
+        },
+        SlotSpec {
+            clip: None,
+            ..SlotSpec::new(7, 1.0 / 30.0, "Eruptor_Network.ma")
+        },
+        SlotSpec::new(32, 1.0 / 40.0, "Eruptor_Eruption.ma"),
+        SlotSpec {
+            clip: Some(odd),
+            properties: 0x620,
+            ..SlotSpec::new(40, 1.0 / 30.0, "Eruptor_Odd.ma")
+        },
+    ]);
+    s
+}
+
+#[test]
+fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
+    use guac_ir::palette::SlotEntry;
+    let e = extracted(&fighter()).unwrap();
+    let p = &e.palette;
+    assert_eq!(p.identity, identity());
+    assert_eq!((p.owner.as_str(), p.slots), ("009_Eruptor", 62));
+    // Slot, file, (additive, partial, motion extraction), joints, duration.
+    type Seen = (u16, String, (bool, bool, u8), Vec<u16>, f32);
+    let mut clips: Vec<Seen> = Vec::new();
+    let mut networks = Vec::new();
+    for s in &p.entries {
+        match &s.entry {
+            SlotEntry::Clip {
+                additive,
+                partial,
+                layered,
+                motion_extraction,
+                clip,
+            } => {
+                assert!(!layered);
+                clips.push((
+                    s.slot,
+                    clip.name.clone(),
+                    (*additive, *partial, *motion_extraction),
+                    clip.tracks.iter().map(|t| t.joint).collect(),
+                    clip.duration,
+                ));
+            }
+            SlotEntry::Network => networks.push(s.slot),
+        }
+    }
+    let three = || vec![0, 1, 2];
+    let clip = |slot, name: &str, flags, joints, frame: f32| {
+        (slot, name.to_owned(), flags, joints, 8.0 * frame)
+    };
+    assert_eq!(
+        clips,
+        [
+            clip(0, "Eruptor_Idle.ma", (false, false, 0), three(), 1.0 / 30.0),
+            clip(1, "Eruptor_Walk.ma", (false, false, 0), three(), 1.0 / 15.0),
+            clip(3, "Eruptor_Run.ma", (false, false, 0), three(), 1.0 / 30.0),
+            clip(
+                12,
+                "Eruptor_LeanLeft.ma",
+                (true, false, 2),
+                three(),
+                1.0 / 30.0
+            ),
+            clip(
+                20,
+                "Eruptor_LavaLob.ma",
+                (false, true, 0),
+                vec![2],
+                1.0 / 30.0
+            ),
+            clip(
+                32,
+                "Eruptor_Eruption.ma",
+                (false, false, 0),
+                three(),
+                1.0 / 40.0
+            ),
+            clip(
+                57,
+                "Eruptor_Falling.ma",
+                (false, false, 0),
+                three(),
+                1.0 / 60.0
+            ),
+            clip(
+                61,
+                "Eruptor_Landing.ma",
+                (false, false, 0),
+                three(),
+                1.0 / 20.0
+            ),
+        ]
+    );
+    assert_eq!(networks, [7]);
+    assert_eq!(p.refused.len(), 1);
+    assert_eq!(p.refused[0].slot, 40);
+    assert!(p.refused[0].reason.contains("blendHint"), "{:?}", p.refused);
+    // The palette's clips are the hero side's and the model's, exactly.
+    let walk = &e
+        .hero
+        .as_ref()
+        .unwrap()
+        .locomotion
+        .walk
+        .as_ref()
+        .unwrap()
+        .clip;
+    assert_eq!(p.clip(1), Some(walk));
+    assert_eq!(p.clip(0), Some(&e.model.idle));
+    assert!(e.palette_took <= std::time::Duration::from_secs(5));
+    // A slot that can't play leaves the model, the hero and the rest.
+    assert!(e.hero.is_ok());
+}

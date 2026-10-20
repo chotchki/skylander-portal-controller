@@ -409,6 +409,16 @@ pub fn walk_model(bytes: &[u8]) -> Result<(), FormatError> {
             sample(&c.clip);
         }
     }
+    // Every slot as the palette reads it (AH.22), as many as the disc's
+    // largest set: slots can share one clip, so an input could otherwise
+    // decode one big payload once per entry it lists.
+    for slot in 0..p.hero.clip_slots.len().min(PALETTE_WALK_SLOTS) {
+        if let Ok(Some(model::PaletteSlot { clip: Some(c), .. })) =
+            model::palette_slot(&file, &p.hero, &skeleton, slot)
+        {
+            sample(&c.clip);
+        }
+    }
     // The builder's sample is Eruptor's archive.
     let _ = model::hero_actor(&file, &p, "009_Eruptor");
     Ok(())
@@ -583,6 +593,10 @@ fn converted_textures(bytes: &[u8]) -> Result<usize, FormatError> {
     }
     Ok(converted)
 }
+
+/// How many animation-set slots [`walk_model`] reads as the palette does:
+/// the disc's largest set has 258 (AH.22).
+pub const PALETTE_WALK_SLOTS: usize = 260;
 
 /// How many buffer bytes [`walk_edge`] hands the decoder before it stops.
 /// Segments can share buffers, so an input can ask for far more than it holds.

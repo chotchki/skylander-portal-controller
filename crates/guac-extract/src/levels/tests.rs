@@ -432,7 +432,9 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             "collision",
             "placements",
             "lights",
-            "atmosphere"
+            "atmosphere",
+            "script",
+            "palettes"
         ]
     );
     let mut m: crate::extract::Manifest = serde_json::from_value(serde_json::json!({
@@ -464,7 +466,34 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .unwrap()
         .parts
         .insert(ATMOSPHERE.to_owned(), Vec::new());
+    // AH.22's two: an extract written before them resumes for those alone.
+    assert!(!complete(&m), "the script and the palettes missing");
+    for part in [SCRIPT, PALETTES] {
+        m.levels
+            .get_mut(LEVELS[0])
+            .unwrap()
+            .parts
+            .insert(part.to_owned(), Vec::new());
+    }
     assert!(complete(&m));
+    // The script is the entry as the disc holds it, in either format.
+    for ir in [
+        crate::intros::IrFormat::Ron,
+        crate::intros::IrFormat::Postcard,
+    ] {
+        assert_eq!(
+            part_path(ir, LEVELS[0], SCRIPT),
+            "levels/level_213_tutotial/script.igz"
+        );
+        assert_eq!(
+            part_path(ir, LEVELS[0], PALETTES),
+            ir.level_path(LEVELS[0], PALETTES)
+        );
+    }
+    assert_eq!(
+        part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES),
+        "levels/level_213_tutotial/palettes.ron"
+    );
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),
         Path::new("/u/level/level_213_tutotial.bld")
@@ -486,4 +515,121 @@ fn a_scene_two_worlds_name_is_refused() {
     let igz = Igz::parse(bytes).unwrap();
     let e = super::scene(&igz, LEVEL, identity()).unwrap_err();
     assert!(e.contains("named by two physics worlds"), "{e}");
+}
+
+#[test]
+fn the_script_part_holds_the_levels_scripts_once_its_graph_reads() {
+    // The spawn's, the chest's and the level definition's.
+    assert_eq!(script(parsed(&stage_sample())), Ok(3));
+    // AG.3's sample names a script with no op list: AH.13's graph refuses
+    // it, so the entry isn't written.
+    let bytes: &'static [u8] = Vec::leak(guac_formats::level::builder::sample().bytes);
+    let e = script(&Igz::parse(bytes).unwrap()).unwrap_err();
+    assert!(e.contains("_opList"), "{e}");
+}
+
+/// The stage sample with the chest's set holding a partial clip, an
+/// additive one and a network beside its idle, and its placement running
+/// `script`.
+fn creature_level(script: Option<&'static str>) -> StageSpec {
+    use guac_formats::havok::builder::clip;
+    use guac_formats::model::builder::SlotSpec;
+    let mut spec = stage_sample();
+    spec.skinned_script = script;
+    let (_, chest) = spec.skinned.as_mut().unwrap();
+    let mut partial = clip();
+    partial.tracks.truncate(1);
+    partial.track_to_bone = vec![1];
+    let mut additive = clip();
+    additive.blend_hint = 1;
+    chest.slots = vec![
+        SlotSpec {
+            clip: Some(partial),
+            properties: 0x620,
+            ..SlotSpec::new(20, 1.0 / 30.0, "Chest_Bite.ma")
+        },
+        SlotSpec {
+            clip: Some(additive),
+            properties: 0x611,
+            ..SlotSpec::new(11, 1.0 / 30.0, "Chest_Lean.ma")
+        },
+        SlotSpec {
+            clip: None,
+            ..SlotSpec::new(6, 1.0 / 30.0, "Chest_Network.ma")
+        },
+    ];
+    // A slot that can't play: the wrapper says additive, the binding not.
+    let mut mismatched = clip();
+    mismatched.blend_hint = 0;
+    chest.slots.push(SlotSpec {
+        clip: Some(mismatched),
+        properties: 0x610,
+        ..SlotSpec::new(25, 1.0 / 30.0, "Chest_Odd.ma")
+    });
+    spec
+}
+
+#[test]
+fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
+    use guac_ir::palette::SlotEntry;
+    const CHEST: &str = "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl";
+    // The chest runs the Chompy's script (by its file name, any case): its
+    // palette is in, the gourd and the gem have no skeleton and none.
+    let spec = creature_level(Some("Levels/Elsewhere/s2_enemy_CHOMPY.AI"));
+    let r = palettes(parsed(&spec), LEVEL, identity()).unwrap();
+    assert_eq!(
+        (r.ir.level.as_str(), r.ir.identity.clone()),
+        (LEVEL, identity())
+    );
+    assert!(r.textures.is_empty());
+    let [p] = &r.ir.palettes[..] else {
+        panic!("{} palettes", r.ir.palettes.len());
+    };
+    assert_eq!((p.owner.as_str(), p.slots), (CHEST, 26));
+    let seen: Vec<(u16, String)> = p
+        .entries
+        .iter()
+        .map(|e| {
+            let what = match &e.entry {
+                SlotEntry::Network => "network".to_owned(),
+                SlotEntry::Clip {
+                    additive,
+                    partial,
+                    layered,
+                    motion_extraction,
+                    clip,
+                } => format!(
+                    "{} {additive} {partial} {layered} {motion_extraction} {:?}",
+                    clip.name,
+                    clip.tracks.iter().map(|t| t.joint).collect::<Vec<_>>()
+                ),
+            };
+            (e.slot, what)
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                0,
+                "Eruptor_Idle.ma false false false 0 [0, 1, 2]".to_owned()
+            ),
+            (6, "network".to_owned()),
+            (11, "Chest_Lean.ma true false false 1 [0, 1, 2]".to_owned()),
+            (20, "Chest_Bite.ma false true false 0 [1]".to_owned()),
+        ]
+    );
+    let [refused] = &p.refused[..] else {
+        panic!("{:?}", p.refused);
+    };
+    assert_eq!(refused.slot, 25);
+    assert!(refused.reason.contains("blendHint"), "{}", refused.reason);
+    // Off the whitelist, or no script at all: no palette.
+    for script in [Some("Levels/Synthetic/Scripts/Chest.ai"), None] {
+        let r = palettes(parsed(&creature_level(script)), LEVEL, identity()).unwrap();
+        assert!(r.ir.palettes.is_empty(), "{script:?}");
+    }
+    // A level off the whitelist runs none of its scripts.
+    let r = palettes(parsed(&spec), "level_999_elsewhere", identity()).unwrap();
+    assert!(r.ir.palettes.is_empty());
 }

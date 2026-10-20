@@ -17,11 +17,13 @@ pub mod hero;
 mod identity;
 pub mod level;
 pub mod model;
+pub mod palette;
 pub mod progression;
 pub mod rig;
 pub mod roster;
 pub mod scroll;
 pub mod shading;
+pub mod spawn;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use clip::Clip;
@@ -52,7 +54,8 @@ use serde::{Deserialize, Serialize};
 /// file can't say, so a v4 extract redoes itself. AG.41's level atmosphere
 /// ([`level::Atmosphere`]), written beside v4 on a parallel branch, is a
 /// new part in a file of its own, so v5 holds: an extract without the part
-/// adds it alone.
+/// adds it alone. AH.22's palettes ([`palette`]) and spawn models
+/// ([`spawn`]) are new records in files of their own too, so v5 holds.
 pub const IR_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]

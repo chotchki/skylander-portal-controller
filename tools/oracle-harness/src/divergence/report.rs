@@ -14,6 +14,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use guac_oracle::frames::{self, FlipMatrix, Frame};
+// The rank-sum and its ranks live in guac-oracle's `stats` (AH.6's
+// distribution tests read the same one); observing.rs takes it from here.
+pub(super) use guac_oracle::stats::rank_sum_z;
+use guac_oracle::stats::ranks;
 use guac_oracle::tolerance;
 use guac_oracle::trace::{Envelope, Horizon, Sample, Trace, TrajectoryTolerance};
 use serde::Serialize;
@@ -1114,26 +1118,6 @@ fn fmt_band(b: Option<Band>) -> String {
     b.map_or("?".into(), |b| format!("{:.2}-{:.2}", b.min, b.max))
 }
 
-/// Ranks from 1, ties sharing their mean rank.
-fn ranks(values: &[f64]) -> Vec<f64> {
-    let mut order: Vec<usize> = (0..values.len()).collect();
-    order.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
-    let mut out = vec![0.0; values.len()];
-    let mut i = 0;
-    while i < order.len() {
-        let mut j = i;
-        while j + 1 < order.len() && values[order[j + 1]] == values[order[i]] {
-            j += 1;
-        }
-        let rank = (i + j) as f64 / 2.0 + 1.0;
-        for &k in &order[i..=j] {
-            out[k] = rank;
-        }
-        i = j + 1;
-    }
-    out
-}
-
 /// Spearman's rank correlation, ties at their mean rank; `None` under three
 /// pairs or when either side doesn't vary.
 pub fn spearman(x: &[f64], y: &[f64]) -> Option<f64> {
@@ -1147,26 +1131,6 @@ pub fn spearman(x: &[f64], y: &[f64]) -> Option<f64> {
     let vx: f64 = rx.iter().map(|a| (a - mx).powi(2)).sum();
     let vy: f64 = ry.iter().map(|b| (b - my).powi(2)).sum();
     (vx > 0.0 && vy > 0.0).then(|| cov / (vx * vy).sqrt())
-}
-
-/// The Mann-Whitney rank-sum z of `b` against `a` (normal approximation, no
-/// tie correction): positive when B sits higher. `None` when either side is
-/// empty or every value is equal.
-pub(super) fn rank_sum_z(a: &[f64], b: &[f64]) -> Option<f64> {
-    if a.is_empty() || b.is_empty() {
-        return None;
-    }
-    let all: Vec<f64> = a.iter().chain(b).copied().collect();
-    if all.iter().all(|v| *v == all[0]) {
-        return None;
-    }
-    let r = ranks(&all);
-    let (na, nb) = (a.len() as f64, b.len() as f64);
-    let rb: f64 = r[a.len()..].iter().sum();
-    let u = rb - nb * (nb + 1.0) / 2.0;
-    let mean = na * nb / 2.0;
-    let sd = (na * nb * (na + nb + 1.0) / 12.0).sqrt();
-    Some((u - mean) / sd)
 }
 
 #[cfg(test)]
@@ -1357,25 +1321,15 @@ mod tests {
     }
 
     #[test]
-    fn spearman_and_the_rank_sum_read_ranks() {
+    fn spearman_reads_ranks() {
         let x = [1.0, 2.0, 3.0, 4.0, 5.0];
         assert_eq!(spearman(&x, &[2.0, 4.0, 8.0, 16.0, 32.0]), Some(1.0));
         assert_eq!(spearman(&x, &[5.0, 4.0, 3.0, 2.0, 1.0]), Some(-1.0));
         assert_eq!(spearman(&x, &[1.0; 5]), None);
         assert_eq!(spearman(&x[..2], &x[..2]), None);
         // Ties share a mean rank.
-        assert_eq!(ranks(&[3.0, 1.0, 3.0, 2.0]), [3.5, 1.0, 3.5, 2.0]);
         let tied = spearman(&[1.0, 2.0, 2.0, 3.0], &[1.0, 2.0, 3.0, 4.0]).unwrap();
         assert!((tied - 0.9487).abs() < 1e-4, "{tied}");
-        assert!(
-            rank_sum_z(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0])
-                .unwrap()
-                .abs()
-                < 1e-12
-        );
-        assert!(rank_sum_z(&[1.0, 2.0], &[3.0, 4.0]).unwrap() > 0.0);
-        assert_eq!(rank_sum_z(&[1.0], &[1.0]), None);
-        assert_eq!(rank_sum_z(&[], &[1.0]), None);
     }
 
     #[test]

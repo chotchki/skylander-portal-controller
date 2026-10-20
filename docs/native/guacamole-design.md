@@ -389,7 +389,7 @@ figure file, keyed on the driver kind or on the hook being absent, never on `cfg
 | `BootDirect` | IPC spawn, else a UIA spawn on Windows | returns before any spawn arm, on any OS (the job carries the driver kind) |
 | window-mode and 2× toggles, RPCS3 settings | rewrite the settings file; open RPCS3's settings (409 for Mock) | 409 |
 | quit | kills RPCS3 under a cover | `DriverJob::ResetPortal` empties the driver's slots (the TV gets `Cleared`) and keeps the saved layout for "resume last setup?" |
-| "resume last setup?" offer; a load onto a filled slot | the whole saved layout; loads over anything | only the slots the resumer placed; 409 on a slot another profile's figure holds (AB.22) |
+| "resume last setup?" offer; a load onto a filled slot, or of a figure already on the portal | the whole saved layout; loads over anything, anywhere (a Kaos swap too) | only the slots the resumer placed; 409 on a slot another profile's figure holds (AB.22), and on any other slot while the loader's own placement of the figure stands or loads (AH.37: one row, so one slot earning over it), its body naming that slot so the phone says it's already on the portal; a Kaos swap whose replacement the profile placed after the pick is dropped, checked under the same lock |
 
 `BootDirect` was the dangerous one: its non-IPC arm was gated on `cfg(windows)`, so anything without an
 IPC socket would have launched RPCS3 on the HTPC. The unit test hands it a driver that advertises an IPC

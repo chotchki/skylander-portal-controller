@@ -324,22 +324,52 @@ pub fn slot_clip<'a>(
             },
         ));
     }
-    let Some(Payload::Havok(bytes)) = a.info.data_info.payload() else {
-        return Err(igz.err_at(anim_at, "_data", ErrorKind::Missing));
-    };
-    let clip = havok::Container::parse(bytes)?
-        .clip
-        .ok_or_else(|| igz.err_at(anim_at, "hkaAnimationBinding", ErrorKind::Missing))?;
+    let clip = decode_clip(igz, animation, &a)?;
     if clip.binding.blend_hint != BlendHint::Normal {
         return Err(igz.err_at(anim_at, "blendHint", ErrorKind::Unsupported { value: 1 }));
     }
+    poses(igz, animation, &clip, skeleton)?;
+    Ok(Some(SlotClip {
+        slot,
+        info,
+        animation,
+        file: clip_file(&a),
+        label: entry.info.media_name,
+        clip,
+    }))
+}
+
+/// Refused when the wrapper's `_data` holds no Havok payload, or the payload
+/// no clip with its binding.
+fn decode_clip<'a>(
+    igz: &Igz<'a>,
+    animation: usize,
+    a: &PhysicsAnimation<'a>,
+) -> Result<havok::Clip<'a>, FormatError> {
+    let anim_at = igz.objects()[animation].at;
+    let Some(Payload::Havok(bytes)) = a.info.data_info.payload() else {
+        return Err(igz.err_at(anim_at, "_data", ErrorKind::Missing));
+    };
+    havok::Container::parse(bytes)?
+        .clip
+        .ok_or_else(|| igz.err_at(anim_at, "hkaAnimationBinding", ErrorKind::Missing))
+}
+
+/// Refused unless a NORMAL clip poses `skeleton` at its start and halfway:
+/// every track bound to one of its bones.
+fn poses(
+    igz: &Igz<'_>,
+    animation: usize,
+    clip: &havok::Clip<'_>,
+    skeleton: &havok::Skeleton<'_>,
+) -> Result<(), FormatError> {
     for t in [0.0, f64::from(clip.animation.duration) / 2.0] {
         let posed = clip
             .local_pose(skeleton, t)
             .and_then(|p| skeleton.model_pose(&p));
         if posed.is_none() {
             return Err(igz.err_at(
-                anim_at,
+                igz.objects()[animation].at,
                 "transformTrackToBoneIndices",
                 ErrorKind::OutOfRange {
                     value: clip.binding.track_to_bone.len() as u64,
@@ -348,20 +378,108 @@ pub fn slot_clip<'a>(
             ));
         }
     }
-    let file = a
-        .info
+    Ok(())
+}
+
+fn clip_file<'a>(a: &PhysicsAnimation<'a>) -> Option<&'a str> {
+    a.info
         .data_info
         .info
         .name
-        .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n));
-    Ok(Some(SlotClip {
+        .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n))
+}
+
+/// One slot of an animation set as the palette keeps it (openspec AH.22):
+/// whatever the slot holds, where [`slot_clip`] takes only a full NORMAL
+/// clip. A script plays a slot by number (`animation palette [20]`), so the
+/// palette is every slot, additive and partial clips among them (Eruptor's
+/// throw, slots 20 and 21, is partial).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaletteSlot<'a> {
+    pub slot: usize,
+    /// The `AnimationInfo` in the slot.
+    pub info: usize,
+    /// The entry's `_name` and its label (`_mediaName`).
+    pub name: Option<&'a str>,
+    pub label: Option<&'a str>,
+    /// `None` for an entry wrapping no `tfbPhysicsAnimation`: an animation
+    /// network, or nothing.
+    pub clip: Option<PaletteClip<'a>>,
+}
+
+/// A `tfbPhysicsAnimation`'s clip, with the wrapper's flags (additive,
+/// partial, layered, motion extraction) it's played by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaletteClip<'a> {
+    pub animation: usize,
+    pub flags: crate::igz::layouts::TfbAnimationInfo<'a>,
+    /// The clip's file name without its folders.
+    pub file: Option<&'a str>,
+    pub clip: havok::Clip<'a>,
+}
+
+/// The entry in `slot` of `hero`'s animation set, `None` when the slot is
+/// empty or past the set's end. Refused: a clip whose binding's blend hint
+/// disagrees with the wrapper's additive flag, and a NORMAL one (partial
+/// or not) that doesn't pose `skeleton` at its start and halfway; an
+/// additive clip's tracks must each name one of its bones.
+pub fn palette_slot<'a>(
+    igz: &Igz<'a>,
+    hero: &Hero<'a>,
+    skeleton: &havok::Skeleton<'_>,
+    slot: usize,
+) -> Result<Option<PaletteSlot<'a>>, FormatError> {
+    let Some(info) = hero.clip_slots.get(slot).copied().flatten() else {
+        return Ok(None);
+    };
+    let entry = &hero.clips[&info];
+    let slot_of = |clip| PaletteSlot {
         slot,
         info,
-        animation,
-        file,
+        name: entry.info.name,
         label: entry.info.media_name,
         clip,
-    }))
+    };
+    let Some((animation, a)) = entry.animation else {
+        return Ok(Some(slot_of(None)));
+    };
+    let clip = decode_clip(igz, animation, &a)?;
+    let additive = clip.binding.blend_hint == BlendHint::Additive;
+    if additive != a.info.additive_blend() {
+        return Err(igz.err_at(
+            igz.objects()[animation].at,
+            "blendHint",
+            ErrorKind::Unsupported {
+                value: u64::from(additive),
+            },
+        ));
+    }
+    if additive {
+        let bones = skeleton.bones.len();
+        if let Some(&b) = clip
+            .binding
+            .track_to_bone
+            .iter()
+            .find(|&&b| usize::from(b) >= bones)
+        {
+            return Err(igz.err_at(
+                igz.objects()[animation].at,
+                "transformTrackToBoneIndices",
+                ErrorKind::OutOfRange {
+                    value: u64::from(b),
+                    limit: bones as u64,
+                },
+            ));
+        }
+    } else {
+        poses(igz, animation, &clip, skeleton)?;
+    }
+    Ok(Some(slot_of(Some(PaletteClip {
+        animation,
+        flags: a.info,
+        file: clip_file(&a),
+        clip,
+    }))))
 }
 
 /// Slot 0 of `hero`'s animation set: a NORMAL clip, neither additive nor

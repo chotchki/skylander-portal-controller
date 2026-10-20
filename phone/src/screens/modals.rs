@@ -4,7 +4,8 @@ use crate::api::{clear_resume, post_load, post_reset, post_reset_figure};
 use crate::components::{BezelSize, DisplayHeading, FramedPanel, GoldBezel, HeadingSize};
 use crate::gloo_timer;
 use crate::model::{
-    FigureAction, PublicProfile, ServerApp, Slot, SlotState, UnlockedProfile, SLOT_COUNT,
+    already_on_portal, FigureAction, LoadError, PublicProfile, ServerApp, Slot, SlotState,
+    UnlockedProfile, SLOT_COUNT,
 };
 use crate::{push_toast, push_toast_level, ResetTarget, ResumeOffer, ToastLevel, ToastMsg};
 
@@ -146,17 +147,22 @@ pub(crate) fn ResumeModal(
                                             let id = id.clone();
                                             match post_load(slot_1_indexed, &id).await {
                                                 Ok(()) => {}
-                                                Err(e) if e.contains("429") => {}
+                                                Err(LoadError::Failed(e)) if e.contains("429") => {}
+                                                // guacamole only: this profile's figure
+                                                // already stands in another slot (AH.37).
+                                                Err(LoadError::AlreadyOnPortal) => {
+                                                    push_toast_level(toasts, &already_on_portal(display_name), ToastLevel::Warn);
+                                                }
                                                 // guacamole only: another player's figure
                                                 // holds the slot (AB.22), so say whose.
-                                                Err(e) if e == "HTTP 409" => {
+                                                Err(LoadError::Failed(e)) if e == "HTTP 409" => {
                                                     let held = portal.with_untracked(|p| p[i].state.clone());
                                                     let message = known_profiles.with_untracked(|ps| {
                                                         resume_refused_message(display_name, &held, resumer.as_deref(), ps)
                                                     });
                                                     push_toast_level(toasts, &message, ToastLevel::Warn);
                                                 }
-                                                Err(e) => {
+                                                Err(LoadError::Failed(e)) => {
                                                     push_toast(
                                                         toasts,
                                                         &format!("Resume slot {slot_1_indexed}: {e}"),

@@ -101,6 +101,16 @@ pub enum ExtractError {
         reason: String,
     },
 
+    /// A part of the fight's script data outside a level (AH.22: the
+    /// script entries or the spawn models) didn't read: the other parts
+    /// land, and the next start tries this one again.
+    #[error("GUAC-E-SCRIPTS-UNREADABLE: the {part} from {archive} didn't read: {reason}")]
+    ScriptsUnreadable {
+        part: String,
+        archive: String,
+        reason: String,
+    },
+
     #[error("GUAC-E-EXTRACT-IO: {}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -126,6 +136,7 @@ impl ExtractError {
             Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
             Self::HeroUnsettled { .. } => "GUAC-E-HERO-UNSETTLED",
             Self::LevelUnreadable { .. } => "GUAC-E-LEVEL-UNREADABLE",
+            Self::ScriptsUnreadable { .. } => "GUAC-E-SCRIPTS-UNREADABLE",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
     }
@@ -207,6 +218,11 @@ mod tests {
             ExtractError::LevelUnreadable {
                 level: "level_213_tutotial".into(),
                 part: "scene".into(),
+                reason: "x".into(),
+            },
+            ExtractError::ScriptsUnreadable {
+                part: "scripts".into(),
+                archive: "character/009_eruptor.bld".into(),
                 reason: "x".into(),
             },
             ExtractError::io("p")(io::Error::other("x")),

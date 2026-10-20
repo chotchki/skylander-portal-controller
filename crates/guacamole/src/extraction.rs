@@ -133,6 +133,11 @@ pub enum ExtractStatus {
         done: usize,
         total: usize,
     },
+    /// `done` of `total` parts of the fight's scripts (AH.22).
+    Scripts {
+        done: usize,
+        total: usize,
+    },
     /// Mapping toy types to intro movies.
     Indexing,
     /// `done` of `total` intros converted; `movie` is the one in hand.
@@ -159,6 +164,7 @@ impl ExtractStatus {
             Self::Roster { .. } => "Roster",
             Self::Models { .. } => "Models",
             Self::Level { .. } => "Level",
+            Self::Scripts { .. } => "Scripts",
             Self::Indexing => "Indexing",
             Self::Converting { .. } => "Converting",
             Self::Ready { .. } => "Ready",
@@ -306,6 +312,13 @@ pub fn band(status: &ExtractStatus) -> Option<Band> {
                 Some(pct),
             )
         }
+        ExtractStatus::Scripts { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading the game's scripts off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
         ExtractStatus::Indexing => progress("Finding each character's intro…".into(), None),
         ExtractStatus::Converting { done, total, .. } => progress(
             format!("Converting intro {} of {total}…", (done + 1).min(*total)),
@@ -378,6 +391,7 @@ pub fn band_after(status: &ExtractStatus, running_for: Duration) -> Option<Band>
             | ExtractStatus::Roster { .. }
             | ExtractStatus::Models { .. }
             | ExtractStatus::Level { .. }
+            | ExtractStatus::Scripts { .. }
             | ExtractStatus::Indexing
             | ExtractStatus::Converting { .. }
     );
@@ -405,6 +419,11 @@ pub enum ExtractEvent {
     },
     /// The level stage: `done` of `total` parts (AG.15).
     Level {
+        done: usize,
+        total: usize,
+    },
+    /// The script stage: `done` of `total` parts (AH.22).
+    Scripts {
         done: usize,
         total: usize,
     },
@@ -456,6 +475,10 @@ pub fn step(event: &ExtractEvent) -> ExtractStatus {
             total: *total,
         },
         ExtractEvent::Level { done, total } => ExtractStatus::Level {
+            done: *done,
+            total: *total,
+        },
+        ExtractEvent::Scripts { done, total } => ExtractStatus::Scripts {
             done: *done,
             total: *total,
         },
@@ -550,6 +573,7 @@ pub fn run(
                 }
             }
             Event::Level { done, total } => send(ExtractEvent::Level { done, total }),
+            Event::Scripts { done, total } => send(ExtractEvent::Scripts { done, total }),
             Event::Indexing => send(ExtractEvent::Indexing),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
@@ -613,6 +637,18 @@ pub fn run(
     for f in &m.unsettled {
         warn!(load_file = %f.load_file, reason = %f.reason, "a character's walk didn't settle; it keeps its model");
     }
+    let p = &m.palettes;
+    info!(
+        palettes = p.palettes,
+        clips = p.clips,
+        networks = p.networks,
+        refused = p.refused,
+        written = p.files.written,
+        kept = p.files.kept,
+        bytes = p.files.bytes,
+        took_s = p.took.as_secs_f64(),
+        "palettes written"
+    );
     let l = &extracted.levels;
     info!(
         levels = l.levels,
@@ -630,6 +666,25 @@ pub fn run(
     );
     for f in &l.failed {
         warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
+    }
+    let sc = &extracted.scripts;
+    info!(
+        read = sc.parts_read,
+        kept = sc.parts_kept,
+        failed = sc.failed.len(),
+        entries = sc.entries,
+        scripts = sc.scripts,
+        level_scripts = l.scripts,
+        creatures = l.palettes.palettes,
+        spawn_models = sc.props,
+        refused_spawn_models = sc.refused_props.len(),
+        written = sc.files.written,
+        bytes = sc.files.bytes,
+        took_s = sc.took.as_secs_f64(),
+        "the fight's scripts written"
+    );
+    for f in &sc.failed {
+        warn!(part = %f.part, archive = %f.archive, reason = %f.reason, "a script part didn't extract; the next start tries it again");
     }
     // The level is whole before ffmpeg is looked for, so a missing one
     // doesn't keep it from the TV.
@@ -1064,6 +1119,19 @@ mod tests {
     }
 
     #[test]
+    fn the_script_stage_names_the_scripts_and_counts_its_parts() {
+        let scripts = step(&ExtractEvent::Scripts { done: 1, total: 2 });
+        assert_eq!(scripts, ExtractStatus::Scripts { done: 1, total: 2 });
+        assert_eq!(scripts.kind(), "Scripts");
+        let b = band(&scripts).unwrap();
+        assert_eq!(b.title, GETTING_READY);
+        assert_eq!(b.detail, "Reading the game's scripts off your disc… 50%");
+        assert_eq!((b.percent, b.code.as_deref()), (Some(50), None));
+        assert_eq!(band_after(&scripts, QUIET_START / 2), None);
+        assert_eq!(band_after(&scripts, QUIET_START), Some(b));
+    }
+
+    #[test]
     fn an_unknown_dump_says_so_with_its_code_and_the_report() {
         let b = failed(Failure::UnknownDump {
             report: "/x/unknown-dump-1.json".into(),
@@ -1424,8 +1492,10 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
     }
 
     /// The roster builder's sample disc, plus two intros: Eruptor maps by
-    /// his voice-over name, Jet-Vac (toy 100) by the roster's; and the level
-    /// builder's chapter 1 (AG.15), which a current extract holds.
+    /// his voice-over name, Jet-Vac (toy 100) by the roster's; the level
+    /// builder's chapter 1 (AG.15) and the model builder's character with a
+    /// script as the fighter's archive (AH.22), which a current extract
+    /// holds the script entries of.
     fn make_dump(tmp: &Path) -> PathBuf {
         let dump = tmp.join("discs/Giants");
         let usr = dump.join("PS3_GAME/USRDIR");
@@ -1446,6 +1516,9 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         fs::write(usr.join("character/009_eruptor.arc"), eruptor).unwrap();
         let eagle = IgaBuilder::new().stored("model.igz", b"igz").build();
         fs::write(usr.join("character/100_eagle.arc"), eagle).unwrap();
+        use guac_formats::model::builder as model;
+        let fighter = model::archive(&model::character(&model::attached()));
+        fs::write(usr.join("character/009_eruptor.bld"), fighter).unwrap();
         fs::write(usr.join("movies/eruptor.mov"), b"eruptor bink").unwrap();
         fs::write(usr.join("movies/jetvac.mov"), b"jetvac bink").unwrap();
         let level = guac_extract::levels::archive_path(&usr, guac_extract::levels::LEVELS[0]);
@@ -1558,6 +1631,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
                 "Roster",
                 "Models",
                 "Level",
+                "Scripts",
                 "Indexing",
                 "Converting"
             ]
@@ -1728,7 +1802,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         );
         assert!(
             seen.iter()
-                .all(|s| ["Checking", "Roster", "Models", "Level"].contains(&s.kind())),
+                .all(|s| ["Checking", "Roster", "Models", "Level", "Scripts"].contains(&s.kind())),
             "{seen:?}"
         );
         // The roster and its portraits are there; the intros aren't.

@@ -736,9 +736,23 @@ async fn load_slot(
         if matches!(p[slot.as_usize()], SlotState::Loading { .. }) {
             return (StatusCode::TOO_MANY_REQUESTS, "slot busy").into_response();
         }
-        if ServingApp::of(state.driver_kind)
-            .refuses_load_over(&p[slot.as_usize()], placed_by.as_deref())
-        {
+        let app = ServingApp::of(state.driver_kind);
+        // Before AB.22's check: no slot would take it, whichever was asked.
+        if let Some(held_at) = app.placed_elsewhere(&*p, slot, &figure_id, placed_by.as_deref()) {
+            info!(
+                slot = n,
+                held_at = held_at.display(),
+                "load refused: the profile's figure is already on the portal"
+            );
+            return (
+                StatusCode::CONFLICT,
+                axum::Json(AlreadyOnPortal {
+                    already_on_portal: held_at.display(),
+                }),
+            )
+                .into_response();
+        }
+        if app.refuses_load_over(&p[slot.as_usize()], placed_by.as_deref()) {
             info!(
                 slot = n,
                 "load refused: the slot holds another profile's figure"
@@ -948,13 +962,13 @@ struct StatusBody {
 /// native driver, so the driver kind says which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ServingApp {
+pub(crate) enum ServingApp {
     Product,
     Guacamole,
 }
 
 impl ServingApp {
-    fn of(kind: crate::config::DriverKind) -> Self {
+    pub(crate) fn of(kind: crate::config::DriverKind) -> Self {
         use crate::config::DriverKind;
         match kind {
             DriverKind::Native => Self::Guacamole,
@@ -996,6 +1010,39 @@ impl ServingApp {
             ),
         }
     }
+
+    /// The other slot holding `loader`'s own placement of `figure_id`, loaded
+    /// or loading, which refuses a load of it into `target` (AH.37). guacamole
+    /// keeps one row per profile per figure and the TV one writer per placed
+    /// figure, so a second slot would earn over the same row and lose one
+    /// slot's experience and gold. Placing it again in its own slot stays
+    /// allowed (AB.21), and so does another profile's copy (AA.18); a load with
+    /// no profile unlocked has no row to guard. The product loads anything.
+    /// A Kaos swap asks it too ([`crate::state::AppState::execute_kaos_swap`]).
+    pub(crate) fn placed_elsewhere(
+        self,
+        portal: &[SlotState],
+        target: SlotIndex,
+        figure_id: &FigureId,
+        loader: Option<&str>,
+    ) -> Option<SlotIndex> {
+        let loader = match self {
+            Self::Product => return None,
+            Self::Guacamole => loader?,
+        };
+        let i = portal.iter().enumerate().position(|(i, held)| {
+            i != target.as_usize() && crate::editor::is_own_placement(held, figure_id, loader)
+        })?;
+        SlotIndex::new(u8::try_from(i).ok()?).ok()
+    }
+}
+
+/// The body of guacamole's 409 for a profile's figure already on the portal
+/// (AH.37): the slot it stands in, 1-based, so the phone tells it from
+/// AB.22's 409 and says so.
+#[derive(Debug, Serialize)]
+struct AlreadyOnPortal {
+    already_on_portal: u8,
 }
 
 async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -3027,6 +3074,52 @@ mod serving_app_tests {
                 "{held:?} by {loader:?}"
             );
         }
+    }
+
+    /// openspec AH.37: guacamole finds a profile's own placement of the figure
+    /// in another slot, loaded or loading, and nothing else; the product never.
+    #[test]
+    fn a_profiles_figure_in_another_slot_refuses_a_second_the_product_never() {
+        // Alice's Eruptor in slot 1 and her Tree Rex loading in slot 4.
+        let saved = co_op_layout();
+        let at = |n: u8| SlotIndex::new(n).unwrap();
+        let fig = FigureId::new;
+        for (target, figure, loader, held_at) in [
+            // Another slot, loaded or still loading.
+            (2, "eruptor", Some("alice"), Some(0)),
+            (7, "tree-rex", Some("alice"), Some(3)),
+            // Its own slot again (AB.21).
+            (0, "eruptor", Some("alice"), None),
+            (3, "tree-rex", Some("alice"), None),
+            // Another profile's copy (AA.18), and Bob's Spyro for Alice.
+            (4, "eruptor", Some("bob"), None),
+            (4, "spyro", Some("alice"), None),
+            (4, "spyro", Some("bob"), Some(1)),
+            // An ownerless copy is nobody's instance, nor is a locked load.
+            (4, "bash", Some("alice"), None),
+            (4, "bash", None, None),
+            (4, "eruptor", None, None),
+            (4, "cynder", Some("alice"), None),
+        ] {
+            let case = format!("{figure} into {target} by {loader:?}");
+            assert_eq!(
+                ServingApp::Guacamole.placed_elsewhere(&saved, at(target), &fig(figure), loader),
+                held_at.map(at),
+                "{case}"
+            );
+            assert_eq!(
+                ServingApp::Product.placed_elsewhere(&saved, at(target), &fig(figure), loader),
+                None,
+                "{case}"
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(AlreadyOnPortal {
+                already_on_portal: 3
+            })
+            .unwrap(),
+            serde_json::json!({ "already_on_portal": 3 })
+        );
     }
 }
 

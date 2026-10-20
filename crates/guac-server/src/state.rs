@@ -525,6 +525,25 @@ impl AppState {
         // round-trip.
         {
             let mut portal = self.portal.lock().await;
+            // The swap was picked from a copy of the portal taken before this
+            // lock, so a phone may have placed the replacement in another slot
+            // since: under guacamole one instance stands in one slot (AH.37),
+            // and the swap is dropped. The product swaps as it always has.
+            if let Some(held_at) = crate::http::ServingApp::of(self.driver_kind).placed_elsewhere(
+                &*portal,
+                swap.slot,
+                &new_figure.id,
+                Some(profile_id),
+            ) {
+                info!(
+                    profile_id,
+                    slot = swap.slot.as_u8(),
+                    held_at = held_at.display(),
+                    new = %swap.new_figure_id.as_str(),
+                    "kaos swap dropped: the profile's replacement is already on the portal"
+                );
+                return;
+            }
             portal[swap.slot.as_u8() as usize] = SlotState::Loading {
                 figure_id: Some(new_figure.id.clone()),
                 placed_by: Some(profile_id.to_string()),
