@@ -3,13 +3,15 @@ use leptos::task::spawn_local;
 
 use crate::api::post_edit_figure;
 use crate::components::{DisplayHeading, FramedPanel, HeadingSize};
+use crate::model::{FigureAction, ServerApp};
 use crate::{push_toast_level, ToastLevel, ToastMsg};
 
-/// Practical gold cap — Skylanders games reject `.sky` dumps with gold near
-/// the `u16::MAX` ceiling (observed: Spyro's Adventure refuses to load a
-/// figure whose persisted gold == 65535). Cap the UI well short of the
-/// hardware limit so an over-eager parent can't soft-brick a save.
-const GOLD_MAX: u16 = 65000;
+/// The product's practical gold cap — Skylanders games reject `.sky` dumps
+/// with gold near the `u16::MAX` ceiling (observed: Spyro's Adventure
+/// refuses to load a figure whose persisted gold == 65535). Cap the UI well
+/// short of the hardware limit so an over-eager parent can't soft-brick a
+/// save. guacamole's cap is the game's own clamp, from its stats (AH.3).
+pub(crate) const GOLD_MAX: u16 = 65000;
 
 /// Modal/sheet overlay for editing a figure's level + gold (PLAN 11).
 ///
@@ -31,10 +33,14 @@ pub(crate) fn FigureEditSheet(
     initial_level: u8,
     /// Current gold — seeds the gold stepper.
     initial_gold: u16,
-    /// Max level for the figure's generation (10 / 15 / 20). Clamps the level
-    /// stepper's upper bound — earlier-generation figures can't exceed their
-    /// in-game cap, see `sky-parser::max_level_for`.
+    /// Max level: the product's for the figure's generation (10 / 15 / 20,
+    /// see `sky-parser::max_level_for`), guacamole's the game's table length
+    /// from its stats (AH.3). Clamps the level stepper's upper bound.
     max_level: u8,
+    /// Max gold: the product's [`GOLD_MAX`], guacamole's the game's clamp.
+    max_gold: u16,
+    /// Whose server: guacamole's refusals read in a kid's words (AH.3).
+    server_app: ServerApp,
     /// Shared toast queue — PLAN 11.14 pushes a "Stats saved" success
     /// toast on save so the user gets instant confirmation independent
     /// of the stats-strip LocalResource refetch latency.
@@ -54,6 +60,7 @@ pub(crate) fn FigureEditSheet(
     let on_save = {
         let profile_id = profile_id.clone();
         let figure_id = figure_id.clone();
+        let name = figure_name.clone();
         move |_| {
             if saving.get() {
                 return;
@@ -64,6 +71,7 @@ pub(crate) fn FigureEditSheet(
             let fid = figure_id.clone();
             let lvl = level.get();
             let g = gold.get();
+            let name = name.clone();
             spawn_local(async move {
                 match post_edit_figure(&pid, &fid, lvl, g).await {
                     Ok(()) => {
@@ -78,7 +86,8 @@ pub(crate) fn FigureEditSheet(
                     }
                     Err(e) => {
                         saving.set(false);
-                        error_msg.set(e);
+                        let words = server_app.refusal(FigureAction::Edit, &e, &name);
+                        error_msg.set(words.unwrap_or(e));
                     }
                 }
             });
@@ -88,9 +97,9 @@ pub(crate) fn FigureEditSheet(
     let dec_level = move |_| level.update(|v| *v = v.saturating_sub(1).max(1));
     let inc_level = move |_| level.update(|v| *v = (*v + 1).min(max_level));
     let dec_gold_small = move |_| gold.update(|v| *v = v.saturating_sub(100));
-    let inc_gold_small = move |_| gold.update(|v| *v = v.saturating_add(100).min(GOLD_MAX));
+    let inc_gold_small = move |_| gold.update(|v| *v = v.saturating_add(100).min(max_gold));
     let dec_gold_min = move |_| gold.set(0);
-    let inc_gold_max = move |_| gold.set(GOLD_MAX);
+    let inc_gold_max = move |_| gold.set(max_gold);
 
     view! {
         <section class="edit-scrim">
@@ -149,7 +158,7 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn"
                                 on:click=inc_gold_small
                                 aria-label="Increase gold by 100"
-                                disabled=Signal::derive(move || gold.get() >= GOLD_MAX || saving.get())
+                                disabled=Signal::derive(move || gold.get() >= max_gold || saving.get())
                             >
                                 "+"
                             </button>
@@ -157,12 +166,12 @@ pub(crate) fn FigureEditSheet(
                                 class="edit-stepper-btn edit-stepper-btn-small"
                                 on:click=inc_gold_max
                                 aria-label="Set gold to max"
-                                disabled=Signal::derive(move || gold.get() >= GOLD_MAX || saving.get())
+                                disabled=Signal::derive(move || gold.get() >= max_gold || saving.get())
                             >
                                 "\u{226B}"
                             </button>
                         </div>
-                        <div class="edit-stepper-meta">{format!("max {GOLD_MAX}")}</div>
+                        <div class="edit-stepper-meta">{format!("max {max_gold}")}</div>
                     </div>
 
                     {move || {

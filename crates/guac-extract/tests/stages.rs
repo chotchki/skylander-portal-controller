@@ -1,5 +1,6 @@
-//! The extraction's stages in order (openspec AE.3, AE.6, AG.14, AG.15) on
-//! synthetic dumps: a PARAM.SFO, the roster builder's four archives, the
+//! The extraction's stages in order (openspec AE.3, AE.6, AG.14, AG.15,
+//! AH.2) on synthetic dumps: a PARAM.SFO, the roster builder's four archives
+//! (the progression tables in two of them), the
 //! model builder's character archive under nine of the roster's eleven
 //! character load files (one of them without a hero, one more refused for a
 //! gloss-map bit, one missing), the level builder's chapter 1, two
@@ -22,7 +23,7 @@ use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, 
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::level::builder::{StageSpec, stage_level, stage_sample};
 use guac_formats::model::builder as model;
-use guac_formats::roster::builder::{disc, sample};
+use guac_formats::roster::builder::{DiscSpec, disc, sample};
 use guac_formats::sfo::builder::SfoBuilder;
 use guac_ir::{IntroSource, Roster};
 
@@ -48,6 +49,8 @@ const LEVEL_TEXTURES: usize = 12;
 const LEVEL_SHARED: usize = 5;
 /// A level's events: none of its five parts done, then each.
 const LEVEL_EVENTS: usize = 6;
+/// The progression builder's sample level table.
+const SAMPLE_LEVELS: [u32; 5] = [0, 400, 1100, 2500, 4500];
 
 const ENCODERS: &str = "Encoders:\\n ------\\n V....D libx264  x\\n A....D libmp3lame  y\\n";
 const DECODERS: &str = "Decoders:\\n ------\\n V....D binkvideo  x\\n A....D binkaudio_dct  y\\n A....D binkaudio_rdft  z\\n";
@@ -90,6 +93,10 @@ fn make_dump(tmp: &Path) -> PathBuf {
 }
 
 fn make_dump_with(tmp: &Path, level: &StageSpec) -> PathBuf {
+    make_dump_from(tmp, &sample(), level)
+}
+
+fn make_dump_from(tmp: &Path, roster: &DiscSpec, level: &StageSpec) -> PathBuf {
     let dump = tmp.join("dump");
     let usr = dump.join("PS3_GAME/USRDIR");
     fs::create_dir_all(usr.join("movies")).unwrap();
@@ -99,7 +106,7 @@ fn make_dump_with(tmp: &Path, level: &StageSpec) -> PathBuf {
         SfoBuilder::disc_game("BLUS30968", "01.00", "01.00").build(),
     )
     .unwrap();
-    for (path, bytes) in disc(&sample()).archives() {
+    for (path, bytes) in disc(roster).archives() {
         let path = usr.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
@@ -157,6 +164,8 @@ enum Seen {
     ReadingRoster,
     Portraits(usize, usize),
     RosterReady(usize),
+    /// The level table.
+    ProgressionReady(Vec<u32>),
     Models(usize, usize),
     ModelsReady(Vec<String>),
     Level(usize, usize),
@@ -170,6 +179,7 @@ impl Seen {
             Event::ReadingRoster => Self::ReadingRoster,
             Event::Portraits { done, total } => Self::Portraits(*done, *total),
             Event::RosterReady(r) => Self::RosterReady(r.figures.len()),
+            Event::ProgressionReady(p) => Self::ProgressionReady(p.level_xp.clone()),
             Event::Models { done, total } => Self::Models(*done, *total),
             Event::ModelsReady { failed } => {
                 Self::ModelsReady(failed.iter().map(|f| f.load_file.clone()).collect())
@@ -240,16 +250,21 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(seen[1], Seen::Portraits(0, FIGURES));
     assert_eq!(seen[FIGURES + 1], Seen::Portraits(FIGURES, FIGURES));
     assert_eq!(ready, Some(FIGURES + 2));
-    // Then the models, one event each, the turntable's cue with what didn't
-    // extract, then the level's parts, before the intros.
-    let models: Vec<Seen> = (0..=LOADS).map(|i| Seen::Models(i, LOADS)).collect();
-    assert_eq!(seen[FIGURES + 3..FIGURES + 4 + LOADS], models[..]);
+    // The progression tables next, then the models, one event each, the
+    // turntable's cue with what didn't extract, then the level's parts,
+    // before the intros.
     assert_eq!(
-        seen[FIGURES + 4 + LOADS],
+        seen[FIGURES + 3],
+        Seen::ProgressionReady(SAMPLE_LEVELS.into())
+    );
+    let models: Vec<Seen> = (0..=LOADS).map(|i| Seen::Models(i, LOADS)).collect();
+    assert_eq!(seen[FIGURES + 4..FIGURES + 5 + LOADS], models[..]);
+    assert_eq!(
+        seen[FIGURES + 5 + LOADS],
         Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
     );
     let level: Vec<Seen> = (0..LEVEL_EVENTS).map(|i| Seen::Level(i, 5)).collect();
-    let at = FIGURES + 5 + LOADS;
+    let at = FIGURES + 6 + LOADS;
     assert_eq!(seen[at..at + LEVEL_EVENTS], level[..]);
     assert_eq!(indexing, Some(at + LEVEL_EVENTS));
     assert!(first_transcode > indexing, "{seen:?}");
@@ -261,6 +276,8 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         .unwrap()
         .expect("the intros started");
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
+    assert_eq!(recorded(&m, "ir/progression.ron"), 1);
+    assert!(guac_extract::progression::complete(&m));
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
     assert_eq!(recorded(&m, "models/"), MODELS);
     assert_eq!(
@@ -274,6 +291,17 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
     assert!(!m.complete);
+    let p = &done.progression;
+    let tables = p.progression.as_ref().unwrap();
+    assert!(p.read);
+    assert_eq!((p.files.written, p.files.kept), (1, 0));
+    assert_eq!(
+        (tables.level_xp.as_slice(), tables.gold_cap),
+        (&SAMPLE_LEVELS[..], 9000)
+    );
+    let on_disk: guac_ir::progression::Progression =
+        guac_ir::from_ron(&fs::read_to_string(dir.join("ir/progression.ron")).unwrap()).unwrap();
+    assert_eq!(on_disk, **tables);
     let lv = &done.levels;
     assert_eq!((lv.levels, lv.parts_read, lv.parts_kept), (1, 5, 0));
     assert!(lv.failed.is_empty(), "{:?}", lv.failed);
@@ -444,7 +472,12 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         (done.models.files.written, done.models.files.kept),
         (0, MODELS + HEROES + TEXTURES + 1)
     );
-    // The level, whole, is kept without reading it.
+    // The progression and the level, whole, are kept without reading them.
+    assert!(!done.progression.read);
+    assert_eq!(
+        (done.progression.files.written, done.progression.files.kept),
+        (0, 1)
+    );
     assert_eq!((done.levels.parts_read, done.levels.parts_kept), (0, 5));
     assert_eq!(done.levels.files.written, 0);
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
@@ -812,6 +845,89 @@ fn a_level_part_the_manifest_lacks_resumes_alone() {
     assert_eq!(
         open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
         DirState::Current
+    );
+}
+
+/// An extract made before the progression tables (its manifest has no
+/// `parts`): not current, and the next run reads the tables alone, every
+/// other file kept, then the extract is current.
+#[test]
+fn the_progression_part_an_older_manifest_lacks_resumes_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(json.as_object_mut().unwrap().remove("parts").is_some());
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    let seen = Mutex::new(Vec::new());
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
+        seen.lock().unwrap().push(Seen::of(&e));
+    })
+    .unwrap();
+    let p = &done.progression;
+    assert!(p.read, "read again off the dump");
+    // Its file was there as recorded: kept, not written again.
+    assert_eq!((p.files.written, p.files.kept), (0, 1));
+    assert!(
+        seen.into_inner()
+            .unwrap()
+            .contains(&Seen::ProgressionReady(SAMPLE_LEVELS.into()))
+    );
+    assert_eq!(done.roster.files.written, 0);
+    assert_eq!(done.models.files.written, 0);
+    assert_eq!((done.levels.parts_read, done.levels.parts_kept), (0, 5));
+    assert_eq!(done.intros.unwrap().summary.transcoded, 0);
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
+/// Tables that don't read are reported and stop nothing: every other stage
+/// lands and the manifest is marked, but the extract isn't current, so the
+/// next start tries them again.
+#[test]
+fn progression_tables_that_dont_read_leave_the_rest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut roster = sample();
+    roster.progression = None;
+    let dump = make_dump_from(tmp.path(), &roster, &stage_sample());
+    let known = known_for(&dump);
+    let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
+    let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    let seen = Mutex::new(Vec::new());
+    let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|e| {
+        seen.lock().unwrap().push(Seen::of(&e));
+    })
+    .unwrap();
+    let why = done.progression.progression.unwrap_err();
+    assert!(why.starts_with("GUAC-E-PROGRESSION-UNREADABLE"), "{why}");
+    assert!(
+        !seen
+            .into_inner()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Seen::ProgressionReady(_)))
+    );
+    assert_eq!(done.models.models, MODELS);
+    assert_eq!(done.levels.parts_read, 5);
+    assert_eq!(done.intros.unwrap().summary.transcoded, 2);
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let m = manifest_on_disk(&dir);
+    assert!(m.complete && !guac_extract::progression::complete(&m));
+    assert_eq!(
+        open(&dump, &root, &known, &|_| {}).unwrap().state,
+        DirState::Resume
     );
 }
 

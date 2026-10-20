@@ -183,7 +183,9 @@ fn joint_error(field: &'static str, kind: ErrorKind) -> FormatError {
 }
 
 impl JointMap {
-    /// Every Havok joint must name exactly one Alchemy bone.
+    /// Every Havok joint must name exactly one Alchemy bone, and no two
+    /// joints the same one (`cargo fuzz` found a pair that did: the second
+    /// overwrote the first and the map stopped being one to one).
     pub fn new(
         skeleton: &havok::Skeleton<'_>,
         bones: &[SkeletonBone<'_>],
@@ -205,7 +207,9 @@ impl JointMap {
                     return Err(joint_error("igSkeletonBone name", ErrorKind::Duplicate));
                 }
             };
-            joint_of_bone[bone] = Some(j);
+            if joint_of_bone[bone].replace(j).is_some() {
+                return Err(joint_error("hkaBone name", ErrorKind::Duplicate));
+            }
             bone_of_joint.push(bone);
         }
         Ok(Self {

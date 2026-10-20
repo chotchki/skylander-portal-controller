@@ -391,10 +391,19 @@ fn pad(buttons: &[Button], left: (u8, u8), right: (u8, u8)) -> PadState {
     }
 }
 
-/// Pauses a few flips on and returns where.
+/// Pauses a few flips on and returns where. A loaded host can let more than
+/// five 2 ms flips pass between reading the count and asking (load 157 did,
+/// on 2026-10-19), so a refusal as past asks again from the new count.
 fn pause(fake: &Fake) -> u64 {
-    let at = fake.control.state().unwrap().frames + 5;
-    fake.control.pause_at(at, WAIT).unwrap().frames
+    for _ in 0..50 {
+        let at = fake.control.state().unwrap().frames + 5;
+        match fake.control.pause_at(at, WAIT) {
+            Ok(paused) => return paused.frames,
+            Err(e) if e.to_string().contains("ERR past") => continue,
+            Err(e) => panic!("{e:#}"),
+        }
+    }
+    panic!("PAUSE_AT landed in the past 50 times running");
 }
 
 #[test]

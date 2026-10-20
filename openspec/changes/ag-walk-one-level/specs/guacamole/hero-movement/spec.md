@@ -7,48 +7,56 @@ How a hero moves through a level under a player's stick: what the original Skyla
 ## ADDED Requirements
 
 ### Requirement: The stick walks the hero as seen from the camera
-The left stick SHALL walk the hero in the direction it's pushed as seen from the camera: pushed forward he walks away from the camera along the direction it looks across the ground, pushed left he walks to the screen's left at right angles to that. He SHALL face the way he walks.
+The left stick SHALL walk the hero in the direction it's pushed as seen from the camera, from his first frame and whichever way he faces: pushed forward he walks away from the camera along the direction it looks across the ground, pushed left at right angles to its left. He SHALL turn to face the way he walks (Turning and hard reversals).
 
 #### Scenario: Forward at the start
-- **WHEN** the stick is held fully forward with Eruptor at the level's start
-- **THEN** he walks away from the camera within 0.01° of the direction it looks across the ground (15° there), facing his path within 0.01°
+- **WHEN** the stick is held fully forward with Eruptor at rest at the level's start
+- **THEN** from his first frame he walks within 0.01° of the direction the camera looks across the ground (15° there), facing it
 
 #### Scenario: Left at the start
-- **WHEN** the stick is held fully left with Eruptor at rest at the level's start
-- **THEN** he walks to the screen's left, at 90° to that direction (105°)
+- **WHEN** the stick is held fully left with Eruptor at rest at the level's start, facing 0°
+- **THEN** from his first frame he walks at 105° within 0.01°, his facing reaching 105° in his fifth frame
 
 ### Requirement: Top speed
-With the stick held fully over on level ground, a hero wearing no hat and with no speed from heroic challenges SHALL walk at the top speed the original gives that character in the chapter: 21.5 ft/s (6.553 m/s) for Eruptor.
+With the stick held over on level ground a hero SHALL walk at the top speed the original gives that character in the chapter, times the stick's strength: for Eruptor, with no hat and no speed from heroic challenges, 21.5 ft/s (6.553 m/s) at full strength, distance over game time.
 
 #### Scenario: Eruptor at full stick
-- **WHEN** Eruptor has been walking with the stick fully forward for a second of game time
-- **THEN** he covers 6.553 m in each further second of game time, within 1 mm
+- **WHEN** Eruptor walks on level ground with the stick fully over
+- **THEN** once up to speed, 0.115-0.135 s of game time after a push from rest, he covers 6.553 m in each second of game time, within 1 mm
+
+#### Scenario: Half stick
+- **WHEN** Eruptor walks on level ground with the stick half over
+- **THEN** he walks at 3.277 m/s
 
 ### Requirement: Speeding up and slowing down
-From rest a hero SHALL speed up to his top speed, and with the stick let go slow to a stop, over the same distances and game time as the original's same character, and SHALL NOT drift once he has stopped.
+Pushed from rest, a hero SHALL speed up at 160 ft/s² (48.77 m/s²) times the stick's strength until he walks at his top speed for that strength, about 0.13 s whatever the strength; a speed over a weaker push's top SHALL hold. Let go, he SHALL slow at 80 ft/s² (24.38 m/s²) along the way he last walked to a stop, and stay there.
 
 #### Scenario: From rest
-- **WHEN** the stick is pushed fully forward with Eruptor at rest
-- **THEN** over the first half second of game time he covers the distance the original's Eruptor covers, within the oracle's spread
+- **WHEN** the stick is pushed fully over with Eruptor at rest on level ground
+- **THEN** he walks at 90 % of top speed or more from 0.115-0.119 s of game time on, and covers 2.88-2.90 m in the first half second
 
 #### Scenario: Letting go
-- **WHEN** the stick is let go with Eruptor at top speed
-- **THEN** he stops in the distance the original's Eruptor stops in (within the oracle's spread) and stays put
+- **WHEN** the stick is let go with Eruptor at top speed on level ground
+- **THEN** he stops 0.81-0.85 m further along the way he was walking, 0.26-0.27 s of game time later, and stays put
 
 ### Requirement: Turning and hard reversals
-A hero SHALL turn toward the stick at the original's rate for that character (1440°/s for Eruptor at full stick), slower with the stick part way over, slowing his walk while he turns. Pushed more than 135° away from the way he's walking, he SHALL stop dead and turn in place before walking off; from rest, pushed more than 15° away from his facing, he SHALL turn in place first.
+A hero SHALL turn to face the way he walks, the short way, at 1440°/s times the stick's strength for Eruptor, while his walk takes each new direction of the stick at once at the speed he has: no angle stops him, so a hard reversal sends him straight back at speed. Let go mid-turn, his facing SHALL stay where it was while he slows along the way he last walked.
 
 #### Scenario: A full reversal
 - **WHEN** Eruptor walks at top speed and the stick is swung fully the opposite way
-- **THEN** he stops dead, turns around on the spot and walks back the way he came
+- **THEN** from the next frame he walks back the way he came at top speed, without stopping, his facing swinging round in 0.13-0.15 s of game time
 
 #### Scenario: From rest at the start
-- **WHEN** the stick is pushed fully forward with Eruptor at rest at the level's start, which points it exactly 15° from his facing
-- **THEN** over his first three frames of game time his heading and speed are the original Eruptor's
+- **WHEN** the stick is pushed fully forward with Eruptor at rest at the level's start, which points it 15° from his facing
+- **THEN** in his first frame he faces 15° and walks off speeding up as from any other angle, as at 13.8° and 16.2° from his facing
 
 #### Scenario: Part stick
-- **WHEN** Eruptor turns with the stick pushed half way over
-- **THEN** he turns at the original Eruptor's rate for half stick, slower than at full stick
+- **WHEN** Eruptor turns with the stick half over
+- **THEN** his facing turns at 720°/s, half the full stick's rate, while he walks the stick's new way at once
+
+#### Scenario: Let go mid-turn
+- **WHEN** the stick is swung 90° at top speed and let go one frame later
+- **THEN** he slows to a stop along that one frame's stick, his facing staying where that frame left it
 
 ### Requirement: Walls
 A wall SHALL slide a hero along it without bouncing or lifting him, at the speed the original's same character slides at the same angle of approach, keeping him as far from it as the original keeps him.

@@ -38,6 +38,7 @@ use crate::card_motion::{self, CardFace, Schedule};
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
 use crate::input::FocusId;
+use crate::level::LevelPlugin;
 use crate::look::{self, ChoiceFace};
 use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
@@ -276,6 +277,8 @@ pub(crate) enum Redrawn {
     Text,
     /// A choice's focus look turned on or off (`look`).
     Focus,
+    /// The level came up over the TV (the dev entry, AG.19).
+    Level,
 }
 
 /// The `Update` systems that redraw part of a screen in place.
@@ -394,6 +397,9 @@ impl Plugin for Tv {
             // The cards' turntables (AE.13): the character material, the
             // game's glow and the per-slot scenes.
             .add_plugins((CharacterShadingPlugin, GlowPlugin, TurntablePlugin))
+            // The level, loaded behind the portal from the Giants pick
+            // (AG.19); the warm compiles its keys.
+            .add_plugins(LevelPlugin)
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
             .add_systems(Update, (scale_ui, farewell_exit));
@@ -806,7 +812,7 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
                 report.0 = REPORT_AFTER_FRAMES;
             }
             Redrawn::Screen(_) => report.0 = 0,
-            Redrawn::Text | Redrawn::Focus => {}
+            Redrawn::Text | Redrawn::Focus | Redrawn::Level => {}
         }
     }
 }
@@ -1814,6 +1820,7 @@ mod tests {
             profile_id: "p".into(),
             initial: "A".into(),
             color: c.into(),
+            progress: Default::default(),
         };
         let theme = TvTheme::default();
         assert_eq!(
@@ -1923,6 +1930,7 @@ pub(crate) mod layout_tests {
                 profile_id: "p".into(),
                 initial: "A".into(),
                 color: c.into(),
+                progress: Default::default(),
             }),
         }
     }

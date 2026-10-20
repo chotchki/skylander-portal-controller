@@ -22,6 +22,7 @@ pub mod language;
 pub mod level;
 pub mod material;
 pub mod model;
+pub mod progression;
 mod reader;
 pub mod roster;
 pub mod sfo;

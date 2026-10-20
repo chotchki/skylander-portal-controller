@@ -54,6 +54,8 @@ pub mod def {
     pub const NORMAL_MAP: &str = "CHAR_NORMAL_MAP";
     pub const SPEC_MAP: &str = "CHAR_SPEC_MAP";
     pub const DIRECTIONAL: &str = "CHAR_DIRECTIONAL";
+    /// The rim's gloss map (a level's, AG.22).
+    pub const GLOSS_MAP: &str = "CHAR_GLOSS_MAP";
     pub const SHADOWS: &str = "CHAR_SHADOWS";
     pub const FOG: &str = "CHAR_FOG";
     pub const POINT_LIGHTS: [&str; 3] = [
@@ -78,7 +80,7 @@ pub mod def {
 pub enum KeyError {
     #[error("{side} bit {bit} isn't one of tfbmulti2's")]
     Unknown { side: Side, bit: u32 },
-    #[error("{side} bit {bit} is {name}, which no character has")]
+    #[error("{side} bit {bit} is {name}, which the shader doesn't draw")]
     Feature {
         side: Side,
         bit: u32,
@@ -86,6 +88,8 @@ pub enum KeyError {
     },
     #[error("pixel bit {bit} needs bit {needs}")]
     Requires { bit: u32, needs: u32 },
+    #[error("pixel bits {bit} and {other} never come together")]
+    Excludes { bit: u32, other: u32 },
     #[error("the pixel ({pixel:#06x}) and vertex ({vertex:#06x}) masks disagree on bits 0-10")]
     Disagree { pixel: u32, vertex: u32 },
     #[error("vertex bit 13 (point lit) is {vertex} where the pixel side has {pixel} point lights")]
@@ -162,7 +166,6 @@ impl ShaderKey {
             }
             for (bit, name) in [
                 (bit::RIM_BY_POSITION, "rim by position"),
-                (bit::GLOSS_MAP, "a gloss map"),
                 (bit::REFLECTIONS, "reflections"),
             ] {
                 if mask >> bit & 1 == 1 {
@@ -177,10 +180,19 @@ impl ShaderKey {
                 name: "skinning in the shader",
             });
         }
-        for (bit, needs) in [(12, 11), (13, 12)] {
+        // The gloss map weighs the rim and reads the third layer's texture,
+        // so it needs the one and never comes with the other (ae-shader
+        // section 4's existence rules).
+        for (bit, needs) in [(12, 11), (13, 12), (bit::GLOSS_MAP, bit::RIM)] {
             if pixel >> bit & 1 == 1 && pixel >> needs & 1 == 0 {
                 return Err(KeyError::Requires { bit, needs });
             }
+        }
+        if pixel >> bit::GLOSS_MAP & 1 == 1 && pixel >> bit::LAYER3 & 1 == 1 {
+            return Err(KeyError::Excludes {
+                bit: bit::GLOSS_MAP,
+                other: bit::LAYER3,
+            });
         }
         if pixel & SHARED != vertex & SHARED {
             return Err(KeyError::Disagree { pixel, vertex });
@@ -222,6 +234,7 @@ impl ShaderKey {
         let shared = u32::from(s.second) << bit::LAYER2
             | u32::from(s.third) << bit::LAYER3
             | u32::from(s.rim) << bit::RIM
+            | u32::from(s.gloss) << bit::GLOSS_MAP
             | u32::from(s.normal_map) << bit::NORMAL_MAP
             | u32::from(s.spec_map) << bit::SPEC_MAP
             | u32::from(s.directional) << bit::DIRECTIONAL
@@ -263,6 +276,7 @@ impl ShaderKey {
             second: self.pixel_bit(bit::LAYER2),
             third: self.pixel_bit(bit::LAYER3),
             rim: self.pixel_bit(bit::RIM),
+            gloss: self.pixel_bit(bit::GLOSS_MAP),
             shadows: self.pixel_bit(bit::SHADOWS),
             fog: self.pixel_bit(bit::FOG),
             point_lights: (self.pixel() >> bit::POINT_LIGHTS & 0b111).count_ones() as u8,
@@ -293,10 +307,11 @@ impl ShaderKey {
     }
 
     /// How many texture-coordinate sets the part reads: the first layer's,
-    /// then one each for a second and a third layer.
+    /// then one each for a second and a third layer, the gloss map reading
+    /// the third's.
     pub fn uv_sets(&self) -> usize {
         let s = self.switches();
-        1 + usize::from(s.second) + usize::from(s.third)
+        1 + usize::from(s.second) + usize::from(s.third || s.gloss)
     }
 
     /// One def per bit set, then the derived ones.
@@ -309,6 +324,7 @@ impl ShaderKey {
             (s.normal_map, def::NORMAL_MAP),
             (s.spec_map, def::SPEC_MAP),
             (s.directional, def::DIRECTIONAL),
+            (s.gloss, def::GLOSS_MAP),
             (s.shadows, def::SHADOWS),
             (s.fog, def::FOG),
             (s.vertex_colour, def::VERTEX_COLOUR),
@@ -522,6 +538,11 @@ mod tests {
                 0x0020,
                 vec![def::DIRECTIONAL, def::GEOMETRIC_NORMAL],
             ),
+            (
+                0x0084,
+                0x0084,
+                vec![def::RIM, def::GLOSS_MAP, def::GEOMETRIC_NORMAL, def::UV1],
+            ),
             (0x0100, 0x0100, vec![def::SHADOWS]),
             (0x0400, 0x0400, vec![def::FOG]),
             (
@@ -561,6 +582,10 @@ mod tests {
         assert_eq!(key(0x0002, 0x0002).shader.uv_sets(), 2);
         assert_eq!(key(0x0003, 0x0003).shader.uv_sets(), 3);
         assert!(names(&key(0x0003, 0x0003)).contains(&def::UV2.to_string()));
+        // The gloss map reads the third layer's set in its place.
+        assert_eq!(key(0x0084, 0x0084).shader.uv_sets(), 2);
+        assert_eq!(key(0x0085, 0x0085).shader.uv_sets(), 3);
+        assert!(names(&key(0x0085, 0x0085)).contains(&def::UV2.to_string()));
         // Eruptor's body as the turntable draws it.
         assert_eq!(
             names(&key(0x041C, 0x041C)),
@@ -579,8 +604,9 @@ mod tests {
     fn the_masks_and_the_model_agree_on_the_eye_direction_and_the_normal() {
         // The shader's two derived defs come off the vertex mask, the
         // model's off its switches: two readings of the spec's conditions,
-        // equal on every key (64 layer and lighting sets, shadows, fog and
-        // 0-3 point lights, with and without vertex colour).
+        // equal on every key (64 layer and lighting sets and the 16 of them
+        // with a gloss-mapped rim, shadows, fog and 0-3 point lights, with
+        // and without vertex colour).
         let mut keys = 0;
         for pixel in 0u32..1 << 14 {
             let lit = u32::from(pixel >> 11 & 0b111 != 0) << 13;
@@ -594,7 +620,7 @@ mod tests {
                 keys += 1;
             }
         }
-        assert_eq!(keys, 64 * 2 * 2 * 4 * 2);
+        assert_eq!(keys, (64 + 16) * 2 * 2 * 4 * 2);
     }
 
     #[test]
@@ -632,12 +658,34 @@ mod tests {
     }
 
     #[test]
-    fn features_no_character_has_are_refused_by_name() {
-        for (bit, name) in [
-            (6, "rim by position"),
-            (7, "a gloss map"),
-            (9, "reflections"),
-        ] {
+    fn the_gloss_map_needs_the_rim_and_never_comes_with_a_third_layer() {
+        assert!(ShaderKey::new(0x84, 0x84).is_ok());
+        assert_eq!(
+            ShaderKey::new(0x80, 0x80),
+            Err(KeyError::Requires { bit: 7, needs: 2 })
+        );
+        assert_eq!(
+            ShaderKey::new(0x86, 0x86),
+            Err(KeyError::Excludes { bit: 7, other: 1 })
+        );
+        // Chapter 1's leaves in the level's scene: fog and the point light.
+        let leaves = ShaderKey::resolve(
+            mask(0x9C, 0x3FF),
+            mask(0x109C, 0x1BFF),
+            SceneBits {
+                shadows: false,
+                fog: true,
+                point_lights: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!((leaves.pixel(), leaves.vertex()), (0xC9C, 0x349C));
+        assert!(leaves.switches().gloss && leaves.switches().rim);
+    }
+
+    #[test]
+    fn features_the_shader_doesnt_draw_are_refused_by_name() {
+        for (bit, name) in [(6, "rim by position"), (9, "reflections")] {
             let m = 1 << bit | 0x4;
             assert_eq!(
                 ShaderKey::new(m, m),

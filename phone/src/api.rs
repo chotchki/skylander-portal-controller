@@ -322,21 +322,38 @@ pub struct FigureStats {
     pub level: u8,
     pub gold: u16,
     pub playtime_secs: u32,
+    /// The product's `.sky` nickname; guacamole sends none.
+    #[serde(default)]
     pub nickname: String,
+    /// guacamole's (AH.3): the game's level cap, off its disc.
+    #[serde(default)]
+    pub max_level: Option<u8>,
+    /// guacamole's (AH.3): the game's gold clamp, off its disc.
+    #[serde(default)]
+    pub max_gold: Option<u32>,
+}
+
+/// The game's caps guacamole's stats answer carries, a never-placed figure's
+/// 404 included (AH.3): where the edit sheet's steppers stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+pub struct GameCaps {
+    pub max_level: u8,
+    pub max_gold: u32,
 }
 
 /// What the stats fetch learned. `Unavailable` and `Missing` both mean
 /// no numbers to show, but only `Unavailable` means an edit can't work
-/// either: the server has no figure files at all (guacamole answers 409
-/// until it keeps figure progress of its own). `Missing` is the product's
-/// 404 for a figure this profile never placed, where the first edit forks
-/// a working copy from the pack, so editing stays on.
+/// either: the server can't read or write figure progress yet (guacamole
+/// answers 409 until its extract holds the game's table). `Missing` is the
+/// 404 for a figure this profile never placed, where the first edit makes
+/// its progress (the product forks a working copy from the pack), so
+/// editing stays on; guacamole's carries the game's caps.
 #[derive(Debug, Clone)]
 pub enum StatsFetch {
     Read(FigureStats),
-    /// 404 (no working copy yet), a parse failure or a transport error.
-    Missing,
-    /// 409: the server keeps no figure files, so edit and reset 409 too.
+    /// 404 (never placed), a parse failure or a transport error.
+    Missing(Option<GameCaps>),
+    /// 409: the server can't keep this figure's progress yet, so edit 409s too.
     Unavailable,
 }
 
@@ -347,6 +364,18 @@ impl StatsFetch {
             _ => None,
         }
     }
+
+    /// The game's caps, when the server said them (guacamole only).
+    pub fn caps(&self) -> Option<GameCaps> {
+        match self {
+            StatsFetch::Read(s) => Some(GameCaps {
+                max_level: s.max_level?,
+                max_gold: s.max_gold?,
+            }),
+            StatsFetch::Missing(caps) => *caps,
+            StatsFetch::Unavailable => None,
+        }
+    }
 }
 
 /// `GET /api/profiles/:profile_id/figures/:figure_id/stats`.
@@ -355,24 +384,27 @@ pub async fn fetch_figure_stats(profile_id: &str, figure_id: &str) -> StatsFetch
         "{}/api/profiles/{profile_id}/figures/{figure_id}/stats",
         origin()
     );
-    match do_fetch(&url, "GET", None).await {
-        Ok(text) => match serde_json::from_str::<FigureStats>(&text) {
+    match fetch_answer(&url, "GET", None).await {
+        Ok((200..=299, text)) => match serde_json::from_str::<FigureStats>(&text) {
             Ok(s) => StatsFetch::Read(s),
             Err(e) => {
                 crate::dev_warn!("fetch_figure_stats: parse error {e}");
-                StatsFetch::Missing
+                StatsFetch::Missing(None)
             }
         },
-        Err(e) if e == "HTTP 409" => StatsFetch::Unavailable,
+        Ok((409, _)) => StatsFetch::Unavailable,
+        // Never placed — common on first browse before the figure has
+        // ever been on the portal. guacamole's says the game's caps.
+        Ok((404, text)) => StatsFetch::Missing(serde_json::from_str(&text).ok()),
+        // Anything else is at most a soft warn; the UI just shows the
+        // placeholder strip.
+        Ok((status, _)) => {
+            crate::dev_warn!("fetch_figure_stats: HTTP {status}");
+            StatsFetch::Missing(None)
+        }
         Err(e) => {
-            // 404 just means no working copy yet — common on first
-            // browse before the figure has ever been on the portal.
-            // Anything else is at most a soft warn; the UI just shows
-            // the placeholder strip.
-            if !e.contains("404") {
-                crate::dev_warn!("fetch_figure_stats: {e}");
-            }
-            StatsFetch::Missing
+            crate::dev_warn!("fetch_figure_stats: {e}");
+            StatsFetch::Missing(None)
         }
     }
 }
@@ -664,6 +696,19 @@ pub async fn post_open_rpcs3_settings() -> Result<(), String> {
 }
 
 async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
+    match fetch_answer(url, method, body).await? {
+        (200..=299, text) => Ok(text),
+        (status, _) => Err(format!("HTTP {status}")),
+    }
+}
+
+/// The request [`do_fetch`] makes, answered with its status and body
+/// whatever the status; `Err` only when no answer came.
+async fn fetch_answer(
+    url: &str,
+    method: &str,
+    body: Option<&str>,
+) -> Result<(u16, String), String> {
     let opts = RequestInit::new();
     opts.set_method(method);
     if let Some(b) = body {
@@ -699,13 +744,11 @@ async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String,
         .await
         .map_err(js_err)?;
     let resp: Response = resp_val.dyn_into().map_err(js_err)?;
-    if !resp.ok() && resp.status() != 202 {
-        return Err(format!("HTTP {}", resp.status()));
-    }
+    let status = resp.status();
     let text = JsFuture::from(resp.text().map_err(js_err)?)
         .await
         .map_err(js_err)?;
-    Ok(text.as_string().unwrap_or_default())
+    Ok((status, text.as_string().unwrap_or_default()))
 }
 
 fn js_err(v: JsValue) -> String {

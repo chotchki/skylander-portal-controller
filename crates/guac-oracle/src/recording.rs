@@ -1,8 +1,9 @@
-//! A per-frame recording of the oracle (openspec AG.1, design decisions 5 and
-//! 6): what O5's watch copied at each flip's first pad read, decoded into the
-//! game's clock, the hero, the camera, the stick and the hero's clips, keyed by
-//! flip and by game time. The harness decodes Giants' guest bytes into these
-//! frames (`tools/oracle-harness`'s `watch`); nothing here knows an address.
+//! A per-frame recording of the oracle (openspec AG.1 and AG.35, design
+//! decisions 5 and 6): what O5's watch copied at every read of the pad port it
+//! names (Giants reads port 0 once a game frame), decoded into the game's
+//! clock, the hero, the camera, the stick and the hero's clips, keyed by flip
+//! and by game time. The harness decodes Giants' guest bytes into these frames
+//! (`tools/oracle-harness`'s `watch`); nothing here knows an address.
 //!
 //! Game time is the sum of each frame's step, never flips and never the raw
 //! frame time: Giants integrates its measured frame time (`_frameDelta`)
@@ -19,12 +20,18 @@
 //! both against the position steps, and [`Recording::game_time`] keys the
 //! frames under the alignment that held (AG.1's tick has it).
 //!
-//! O5 records flips, not game frames: a hitch can leave a flip without a pad
-//! read and the next flip with two game frames, one of them unrecorded (AG.35,
-//! AG.1's walk-W-03). So records pair by `_curFrame`, never by flip: a pair of
-//! consecutive flips can be two updates apart, and two flips apart can be one.
-//! Game time can't be summed across a game frame the recording lacks, so
-//! [`Recording::game_time`] refuses one rather than drop its step.
+//! Game frames don't fall one to a flip: a hitch can leave a flip without a pad
+//! read and the next flip with two game frames (AG.1's walk-W-03). O5 records
+//! every read of its port, so such a flip holds two records, its reads 0 and 1
+//! (AG.35; before it O5 took each flip's first read only and lost the second).
+//! Each record keeps its flip and that read, so a record is keyed by both: by
+//! flip and read, its place against the flip counter (the first read of each
+//! flip, [`Recording::per_flip`], is the record a trace keyed by flip offset
+//! reads, as before), and by `_curFrame` and game time, its place in the game.
+//! Records pair by `_curFrame`, never by flip: two in one flip are one update
+//! apart, and two flips apart can be one. Game time can't be summed across a
+//! game frame the recording lacks or counts twice, so [`Recording::game_time`]
+//! refuses either rather than drop or double a step.
 
 use serde::{Deserialize, Serialize};
 
@@ -130,11 +137,17 @@ impl Clip {
     }
 }
 
-/// One record, the frame's state at its first pad read.
+/// One record: the game's state at a read of the watched pad port, once a
+/// game frame in Giants.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
-    /// The flip whose first pad read took it.
+    /// The flip the read fell in.
     pub flip: u64,
+    /// Which of the port's reads in that flip took it, 0 the first: 1 is a
+    /// second game frame run in the same flip. 0 in a recording made before
+    /// AG.35, which took each flip's first read alone.
+    #[serde(default)]
+    pub read: u32,
     /// The host's steady clock then, microseconds.
     pub host_us: u64,
     /// The game's own frame count (`_curFrame`).
@@ -228,7 +241,8 @@ impl Order {
 pub struct Residuals {
     pub alignment: Alignment,
     pub order: Order,
-    /// Consecutive flips whose earlier one the caller kept.
+    /// Consecutive records one game frame apart whose earlier one's flip the
+    /// caller kept.
     pub pairs: usize,
     /// The largest and the root-mean-square ground-plane miss, metres.
     pub max_ground: f64,
@@ -240,7 +254,19 @@ pub struct Residuals {
     pub max_height: f64,
 }
 
-/// Frames in flip order, each flip once.
+/// A record's keys: its flip and which of the port's reads there it was, its
+/// game frame (`_curFrame`) and the game time at it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Key {
+    pub flip: u64,
+    pub read: u32,
+    pub game_frame: u32,
+    /// Seconds of game time from the recording's first record.
+    pub time: f64,
+}
+
+/// Frames in the order the port was read: by flip, and within a flip by read,
+/// each flip's reads 0, 1, ... with none missing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "Vec<Frame>", into = "Vec<Frame>")]
 pub struct Recording {
@@ -248,17 +274,33 @@ pub struct Recording {
 }
 
 impl Recording {
-    /// Refuses no frames, flips that don't increase and values that aren't
-    /// finite.
+    /// Refuses no frames, flips that go back, a record that isn't the read
+    /// after the one before it in its flip or the first of a new flip (the
+    /// first record may be a later read, the ring having overwritten the ones
+    /// before it) and values that aren't finite.
     pub fn new(frames: Vec<Frame>) -> Result<Self, MetricError> {
         if frames.is_empty() {
             return Err(MetricError::EmptyTrace);
         }
         for pair in frames.windows(2) {
-            if pair[1].flip <= pair[0].flip {
+            let (a, b) = (&pair[0], &pair[1]);
+            if b.flip < a.flip {
                 return Err(MetricError::OffsetOrder {
-                    previous: pair[0].flip,
-                    offset: pair[1].flip,
+                    previous: a.flip,
+                    offset: b.flip,
+                });
+            }
+            let next = if b.flip == a.flip {
+                a.read.checked_add(1) == Some(b.read)
+            } else {
+                b.read == 0
+            };
+            if !next {
+                return Err(MetricError::ReadOrder {
+                    previous_flip: a.flip,
+                    previous_read: a.read,
+                    flip: b.flip,
+                    read: b.read,
                 });
             }
         }
@@ -275,6 +317,13 @@ impl Recording {
         &self.frames
     }
 
+    /// The first record of each flip that has one: what O5 recorded before
+    /// AG.35, and the record a trace keyed by flip offset (AF.10's, an AF.7
+    /// script's) reads at that flip.
+    pub fn per_flip(&self) -> impl Iterator<Item = &Frame> {
+        self.frames.iter().filter(|f| f.read == 0)
+    }
+
     /// Each frame's step, seconds ([`Clock::step`]).
     pub fn steps(&self) -> Vec<f64> {
         self.frames
@@ -287,19 +336,29 @@ impl Recording {
     /// that moved the hero there under `alignment`. Under
     /// [`Alignment::Later`] the first record's own step is the one before it,
     /// so it isn't counted; under [`Alignment::Earlier`] the last record's is
-    /// the one after it. Refused ([`MetricError::FrameGap`]) when two records'
-    /// `_curFrame` aren't one apart: the frame between them is missing and so
-    /// is its step. Flips that skip with the game frames one apart are fine.
+    /// the one after it. Refused when two records' `_curFrame` aren't one
+    /// apart: [`MetricError::FrameGap`] when the frame between them is missing
+    /// and so is its step, [`MetricError::FrameRepeat`] when they're the same
+    /// frame, whose step would count twice. Flips that skip, or hold two
+    /// records, with the game frames one apart are fine.
     pub fn game_time(&self, alignment: Alignment) -> Result<Vec<f64>, MetricError> {
         if let Some(w) = self
             .frames
             .windows(2)
             .find(|w| !consecutive_frames(&w[0], &w[1]))
         {
-            return Err(MetricError::FrameGap {
-                flip: w[1].flip,
-                previous: w[0].game_frame,
-                frame: w[1].game_frame,
+            let (a, b) = (&w[0], &w[1]);
+            return Err(if b.game_frame == a.game_frame {
+                MetricError::FrameRepeat {
+                    flip: b.flip,
+                    frame: b.game_frame,
+                }
+            } else {
+                MetricError::FrameGap {
+                    flip: b.flip,
+                    previous: a.game_frame,
+                    frame: b.game_frame,
+                }
             });
         }
         let steps = self.steps();
@@ -313,21 +372,27 @@ impl Recording {
         Ok(out)
     }
 
-    /// The frames keyed by game time under `alignment`: `(flip, seconds)`,
-    /// refused as [`Recording::game_time`] refuses.
-    pub fn keyed(&self, alignment: Alignment) -> Result<Vec<(u64, f64)>, MetricError> {
+    /// Each frame's keys, its game time under `alignment`, refused as
+    /// [`Recording::game_time`] refuses.
+    pub fn keyed(&self, alignment: Alignment) -> Result<Vec<Key>, MetricError> {
         Ok(self
             .frames
             .iter()
-            .map(|f| f.flip)
             .zip(self.game_time(alignment)?)
+            .map(|(f, time)| Key {
+                flip: f.flip,
+                read: f.read,
+                game_frame: f.game_frame,
+                time,
+            })
             .collect())
     }
 
     /// Each position step from record `k` to `k + 1` against the velocity
     /// `order` names times the step `alignment` names, over the pairs whose
     /// earlier flip `keep` accepts and whose game frames are consecutive, so
-    /// one update lies between them (their flips may not be, AG.35).
+    /// one update lies between them (their flips may be one apart, further
+    /// apart or the same, AG.35).
     pub fn residuals(
         &self,
         alignment: Alignment,
@@ -414,6 +479,7 @@ mod tests {
     fn frame(flip: u64, frame_delta: f32, position: [f32; 3], velocity: [f32; 3]) -> Frame {
         Frame {
             flip,
+            read: 0,
             host_us: flip * 16_667,
             game_frame: 6_000 + flip as u32,
             clock: clock(frame_delta),
@@ -516,9 +582,70 @@ mod tests {
         assert!((earlier[8] - 0.1661).abs() < 1e-6, "{}", earlier[8]);
         let keyed = r.keyed(Alignment::Later).unwrap();
         assert_eq!(keyed.len(), 9);
-        assert_eq!(keyed[0], (100, 0.0));
-        assert_eq!(keyed[8].0, 108);
-        assert!((keyed[8].1 - later[8]).abs() < 1e-15);
+        assert_eq!(
+            keyed[0],
+            Key {
+                flip: 100,
+                read: 0,
+                game_frame: 6_100,
+                time: 0.0
+            }
+        );
+        assert_eq!((keyed[8].flip, keyed[8].game_frame), (108, 6_108));
+        assert!((keyed[8].time - later[8]).abs() < 1e-15);
+    }
+
+    /// `walk()` with flip 104 left without a pad read and flip 105 running two
+    /// game frames, its reads 0 and 1 (AG.1's walk-W-03, AG.35).
+    fn two_in_a_flip() -> Vec<Frame> {
+        let mut frames = walk(Alignment::Earlier, Order::VelocityFirst);
+        frames[4].flip = 105;
+        frames[5].read = 1;
+        frames
+    }
+
+    #[test]
+    fn a_flip_holding_two_game_frames_keys_both_and_loses_neither() {
+        let whole = Recording::new(walk(Alignment::Earlier, Order::VelocityFirst)).unwrap();
+        let r = Recording::new(two_in_a_flip()).unwrap();
+        // Same frames, same steps: the same game time and the same fit.
+        for a in Alignment::ALL {
+            assert_eq!(r.game_time(a), whole.game_time(a));
+        }
+        let fit = r.residuals(Alignment::Earlier, Order::VelocityFirst, |_| true);
+        assert_eq!(fit.pairs, 8);
+        assert!(fit.max_ground < 1e-5, "{fit:?}");
+        // Keyed by both: flip 105's two reads are game frames 6104 and 6105.
+        let keys = r.keyed(Alignment::Earlier).unwrap();
+        let k: Vec<(u64, u32, u32)> = keys
+            .iter()
+            .map(|k| (k.flip, k.read, k.game_frame))
+            .collect();
+        assert_eq!(
+            k[3..7],
+            [
+                (103, 0, 6_103),
+                (105, 0, 6_104),
+                (105, 1, 6_105),
+                (106, 0, 6_106)
+            ]
+        );
+        assert!(keys[5].time > keys[4].time);
+        // One record a flip is what O5 took before AG.35: game frame 6105 lost.
+        let firsts: Vec<u32> = r.per_flip().map(|f| f.game_frame).collect();
+        assert_eq!(firsts.len(), 8);
+        assert!(!firsts.contains(&6_105));
+        assert_eq!(whole.per_flip().count(), 9);
+        // And kept alone, those records can't sum game time across the loss.
+        let old = Recording::new(r.per_flip().cloned().collect()).unwrap();
+        assert_eq!(
+            old.game_time(Alignment::Earlier),
+            Err(MetricError::FrameGap {
+                flip: 106,
+                previous: 6_104,
+                frame: 6_106
+            })
+        );
     }
 
     #[test]
@@ -587,7 +714,7 @@ mod tests {
         for a in Alignment::ALL {
             assert_eq!(skipped.game_time(a), whole.game_time(a));
             let keyed = skipped.keyed(a).unwrap();
-            assert_eq!(keyed[3].0, 104);
+            assert_eq!((keyed[3].flip, keyed[3].game_frame), (104, 6_103));
         }
         // A game frame the ring never took: its step is missing, so no sum.
         let mut lost = walk(Alignment::Earlier, Order::VelocityFirst);
@@ -604,21 +731,75 @@ mod tests {
             assert_eq!(lost.game_time(a).unwrap_err(), want);
             assert_eq!(lost.keyed(a).unwrap_err(), want);
         }
+        // The port read twice in one game frame: its step would count twice.
+        let mut twice = two_in_a_flip();
+        twice[5].game_frame = twice[4].game_frame;
+        for f in &mut twice[6..] {
+            f.game_frame -= 1;
+        }
+        let twice = Recording::new(twice).unwrap();
+        for a in Alignment::ALL {
+            let want = MetricError::FrameRepeat {
+                flip: 105,
+                frame: 6_104,
+            };
+            assert_eq!(twice.game_time(a).unwrap_err(), want);
+            assert_eq!(twice.keyed(a).unwrap_err(), want);
+        }
+        assert_eq!(
+            twice
+                .residuals(Alignment::Earlier, Order::VelocityFirst, |_| true)
+                .pairs,
+            7
+        );
     }
 
     #[test]
     fn a_recording_refuses_disordered_flips_and_values_that_arent_numbers() {
         let frames = walk(Alignment::Earlier, Order::VelocityFirst);
         assert!(Recording::new(Vec::new()).is_err());
+        // A flip that goes back.
+        let mut back = frames.clone();
+        back[3].flip = 101;
+        assert_eq!(
+            Recording::new(back),
+            Err(MetricError::OffsetOrder {
+                previous: 102,
+                offset: 101
+            })
+        );
+        // Two records at one flip are its reads 0 and 1, and only those.
         let mut repeated = frames.clone();
         repeated[3].flip = repeated[2].flip;
         assert_eq!(
-            Recording::new(repeated),
-            Err(MetricError::OffsetOrder {
-                previous: 102,
-                offset: 102
+            Recording::new(repeated.clone()),
+            Err(MetricError::ReadOrder {
+                previous_flip: 102,
+                previous_read: 0,
+                flip: 102,
+                read: 0
             })
         );
+        repeated[3].read = 1;
+        assert!(Recording::new(repeated.clone()).is_ok());
+        repeated[3].read = 2;
+        assert!(Recording::new(repeated).is_err());
+        // A later read with its flip's first missing, unless the ring overwrote
+        // it (the first record).
+        let mut missing_first = frames.clone();
+        missing_first[3].read = 1;
+        assert_eq!(
+            Recording::new(missing_first),
+            Err(MetricError::ReadOrder {
+                previous_flip: 102,
+                previous_read: 0,
+                flip: 103,
+                read: 1
+            })
+        );
+        let mut wrapped = frames.clone();
+        wrapped[0].read = 1;
+        assert!(Recording::new(wrapped).is_ok());
         let mut nan = frames.clone();
         nan[4].hero.velocity[1] = f32::NAN;
         assert!(Recording::new(nan).is_err());
@@ -626,13 +807,20 @@ mod tests {
         inf[2].clock.frame_delta = f32::INFINITY;
         assert!(Recording::new(inf).is_err());
         // JSON round trip, and the same checks on the way in.
-        let r = Recording::new(frames).unwrap();
+        let r = Recording::new(frames.clone()).unwrap();
         let text = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<Recording>(&text).unwrap(), r);
         let mut v: Vec<Frame> = r.into();
         v.swap(0, 1);
         let text = serde_json::to_string(&v).unwrap();
         assert!(serde_json::from_str::<Recording>(&text).is_err());
+        // A recording from before AG.35 carries no read: each record is read 0.
+        let mut old = serde_json::to_value(&frames).unwrap();
+        for f in old.as_array_mut().unwrap() {
+            f.as_object_mut().unwrap().remove("read");
+        }
+        let old: Recording = serde_json::from_value(old).unwrap();
+        assert_eq!(old.frames(), &frames[..]);
     }
 
     #[test]

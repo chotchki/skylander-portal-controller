@@ -329,10 +329,26 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
     let split = character.rim.y;
     let rim_strength = character.fixed_alpha.w;
     let rim_uv = vec2<f32>((0.5 + 0.5 * n.x) * rim_scale, (0.5 - 0.5 * n.y) * rim_scale);
-    let rim = textureSample(rim_map, rim_sampler, rim_uv) * rim_strength;
+    let rim_sample = textureSample(rim_map, rim_sampler, rim_uv);
     let under = vec4<f32>(colour, alpha);
     let w4 = character.rim_weights;
-    let blended = w4.x * (rim + under * (1.0 - rim_strength)) + w4.y * (under + rim) + w4.z * (under * rim);
+    var blended = vec4<f32>(0.0);
+@if(!CHAR_GLOSS_MAP) {
+    let rim = rim_sample * rim_strength;
+    blended = w4.x * (rim + under * (1.0 - rim_strength)) + w4.y * (under + rim) + w4.z * (under * rim);
+}
+    // A gloss map (AG.22): the third layer's texture, at its set, read as
+    // stored; its red times the gloss strength is the share of the rim's
+    // strength each pixel takes, and k the strength it leaves.
+@if(CHAR_GLOSS_MAP) {
+    var gloss_uv = in.uv01.zw;
+@if(CHAR_UV2)
+    gloss_uv = in.uv2;
+    let gloss = textureSample(third_map, third_sampler, gloss_uv).r * character.fixed_alpha.z;
+    let glossed = rim_sample * (gloss * rim_strength);
+    let k = rim_strength * (1.0 - gloss);
+    blended = w4.x * (under * k + glossed) + w4.y * (under + glossed) + w4.z * (under * (k / 2.0 + glossed));
+}
     colour = lerp3(colour, blended.rgb, 1.0 - split);
     alpha = alpha + (blended.a - alpha) * split;
 }

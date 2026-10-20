@@ -1153,15 +1153,24 @@ mod tests {
         out
     }
 
+    /// guacamole's own tables: settings (AA) and the figure store (AH.1).
+    const GUACAMOLE_ONLY: [&str; 3] = ["figure_generation", "figure_instances", "settings"];
+
     #[tokio::test]
-    async fn guacamoles_set_has_the_products_tables_plus_settings() {
+    async fn guacamoles_set_has_the_products_tables_plus_its_own() {
         let product = shape(&TEST_MIGRATOR).await;
         let mut guac = shape(&crate::setup::MIGRATOR).await;
-        let settings = guac
-            .iter()
-            .position(|(t, ..)| t == "settings")
-            .expect("settings");
-        guac.remove(settings);
+        for table in GUACAMOLE_ONLY {
+            assert!(
+                product.iter().all(|(t, ..)| t != table),
+                "the product's set has {table}"
+            );
+            let at = guac
+                .iter()
+                .position(|(t, ..)| t == table)
+                .unwrap_or_else(|| panic!("guacamole's set has no {table}"));
+            guac.remove(at);
+        }
         assert_eq!(guac, product);
     }
 }

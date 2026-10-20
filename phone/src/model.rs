@@ -76,6 +76,37 @@ impl ServerApp {
     pub fn offers_rpcs3_settings(self) -> bool {
         self == Self::Product
     }
+
+    /// What guacamole's refusal of a figure action says to a kid (AH.3), from
+    /// the `HTTP <status>` error the request came back with; `None` keeps the
+    /// error as the phone showed it before, and always in the product.
+    pub fn refusal(self, action: FigureAction, error: &str, name: &str) -> Option<String> {
+        if self != Self::Guacamole {
+            return None;
+        }
+        let words = match (action, error.strip_prefix("HTTP ")?) {
+            (_, "403") => "This phone can only change its own profile's Skylanders. \
+                           Unlock your profile and try again."
+                .to_string(),
+            (FigureAction::Edit | FigureAction::Reset, "409") => {
+                format!("{name} is on the portal! Take {name} off first, then try again.")
+            }
+            (FigureAction::SlotReset, "409") => {
+                format!("{name} is out in the level! Try again once the level's over.")
+            }
+            _ => return None,
+        };
+        Some(words)
+    }
+}
+
+/// A figure action the server can refuse (AH.3): the edit sheet's SAVE, the
+/// details' reset off the portal, and the reset of the figure where it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FigureAction {
+    Edit,
+    Reset,
+    SlotReset,
 }
 
 /// Where guacamole's figure list stands, from `/api/status`'s `roster`

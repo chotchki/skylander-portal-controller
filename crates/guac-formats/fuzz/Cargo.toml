@@ -111,3 +111,17 @@ path = "fuzz_targets/character_model.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "save_table"
+path = "fuzz_targets/save_table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gold_clamp"
+path = "fuzz_targets/gold_clamp.rs"
+test = false
+doc = false
+bench = false

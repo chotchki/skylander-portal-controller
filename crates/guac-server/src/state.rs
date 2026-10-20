@@ -114,6 +114,13 @@ pub struct AppState {
     /// RPCS3 config and the settings writer. The product passes all four.
     pub hooks: crate::hooks::Hooks,
 
+    /// The game's progression once guacamole's extract holds it (AH.2): the
+    /// figure editor's levels and caps (AH.3). The product never fills it.
+    pub progression: crate::progress::ProgressionSlot,
+    /// The slot whose figure is the hero in a level, as guacamole's TV says;
+    /// the slot reset refuses it (AH.3).
+    pub level_hero: crate::progress::LevelHero,
+
     /// The driver again, as the /api/_test/* endpoints inject failure
     /// outcomes into it: the mock's or the native driver's, else `None`.
     #[cfg(feature = "test-hooks")]
@@ -686,8 +693,11 @@ fn first_grapheme_uppercase(name: &str) -> Option<String> {
 
 /// The identity placement for a file-less load (openspec AA, design decision
 /// 4): the subtype word as the id spells it (AE.4) and the roster's portrait.
-/// Errors only for an id that isn't in the list or isn't tag-form; an owner
-/// whose profile can't be read is logged and left off.
+/// An owner carries its row for the figure, made fresh on the profile's first
+/// placement of it (AH.1), so a load, a resume and a Kaos swap all make it.
+/// Errors for an id that isn't in the list or isn't tag-form, and for a row
+/// that can't be made or read; an owner whose profile can't be read is logged
+/// and left off.
 async fn build_placement(
     figure_id: &FigureId,
     name: &str,
@@ -708,6 +718,11 @@ async fn build_placement(
                 profile_id: profile_id.to_string(),
                 initial: first_grapheme_uppercase(&row.display_name).unwrap_or_default(),
                 color: row.color,
+                progress: profiles
+                    .instances()
+                    .fresh(profile_id, figure_id.as_str())
+                    .await?
+                    .progress,
             }),
             Ok(None) => {
                 warn!(profile_id, "place: placing profile is gone; no owner pip");
@@ -2313,6 +2328,46 @@ mod tests {
 
         // The restorable slot was flipped to Loading in the mirror.
         assert!(matches!(portal.lock().await[0], SlotState::Loading { .. }));
+    }
+
+    // ---- the blocking pool the driver worker runs on ------------------------
+
+    /// Every driver call the worker makes goes through `spawn_blocking`, next
+    /// to whatever else is on that pool: the product's boot wait, `tokio::fs`
+    /// reads, guacamole's driver tests' wait on the TV. tokio 1.52.0's sharded
+    /// pool (tokio#7757, reverted in 1.52.1 for tokio#8056) let two calls made
+    /// while one pool thread sat idle both claim it, so the second ran only
+    /// once the first returned; guacamole's driver tests timed out that way,
+    /// the worker's `place` queued behind their own wait (2026-10-19). Two
+    /// calls back to back over one idle thread: on 1.52.0 about half the
+    /// rounds stall.
+    #[test]
+    fn a_blocking_call_never_waits_for_one_that_blocks() {
+        use std::time::Duration;
+        for round in 0..20 {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_time()
+                .build()
+                .unwrap();
+            let heard = rt.block_on(async {
+                // One pool thread, idle by the end of the sleep: the worker's
+                // pool after its boot refresh.
+                tokio::task::spawn_blocking(|| ()).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                let (tx, rx) = std::sync::mpsc::channel();
+                let blocked =
+                    tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10)));
+                let sender = tokio::task::spawn_blocking(move || tx.send(()));
+                let heard = blocked.await.unwrap();
+                let _ = sender.await;
+                heard
+            });
+            assert!(
+                heard.is_ok(),
+                "round {round}: the second call ran only after the first gave up"
+            );
+        }
     }
 
     // ---- BootDirect mock reveal (PLAN U.1) ----------------------------------

@@ -6,7 +6,8 @@
 //! guac-extract's order (AE.3): the roster and its portraits, the models, the
 //! level (AG.15), then ffmpeg and the intros. The roster goes on the server's
 //! figure list the moment it lands, or at start when the extract is already
-//! current (AE.4).
+//! current (AE.4), and the progression tables into the server's slot the
+//! same way (AH.2).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -22,8 +23,10 @@ use guac_extract::transcode::{Done, Step, TranscodeEvent};
 use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
 use guac_ir::{CharacterTable, Roster};
 use guac_server::figures::{FigureList, FigureSet, RosterState};
+use guac_server::progress::{Progression, ProgressionSlot};
 use tracing::{error, info, warn};
 
+use crate::level::{LevelSender, LevelSource};
 use crate::screen::TvScreen;
 use crate::turntable::{Shelf, ShelfSender};
 use crate::tv::{Current, Setup};
@@ -41,9 +44,15 @@ pub struct ExtractJob {
     /// The server's figure list, where the roster goes when it lands (AE.4);
     /// `None` when the server didn't come up.
     pub figures: Option<FigureList>,
+    /// The server's progression slot, where the level table and the caps go
+    /// when they land (AH.2); `None` when the server didn't come up.
+    pub progression: Option<ProgressionSlot>,
     /// The TV's turntables, where the extract's models go once they're in
     /// (AE.13); `None` with no TV to tell.
     pub shelf: Option<ShelfSender>,
+    /// The TV's level loader, told where chapter 1 is once a pick finds it
+    /// in the extract (AG.19); `None` with no TV to tell.
+    pub level: Option<LevelSender>,
 }
 
 impl ExtractJob {
@@ -63,7 +72,9 @@ impl ExtractJob {
             ir,
             test_known: None,
             figures: None,
+            progression: None,
             shelf: None,
+            level: None,
         }
     }
 
@@ -497,7 +508,14 @@ pub fn run(
         match loaded {
             Ok((table, roster)) => {
                 publish(job, &roster, opened.dir.path());
+                // Current means the progression part is in too.
+                match guac_extract::progression::load(&opened.dir, job.ir) {
+                    Ok(p) => publish_progression(job, &p),
+                    Err(e) => warn!("the current extract's progression didn't load: {e}"),
+                }
                 put_on_shelf(job, &roster, opened.dir.path(), &[]);
+                // Current means every part of every level is in.
+                send_level(job, &roster, opened.dir.path());
                 return Ok(Ready {
                     library: IntroLibrary {
                         dir: opened.dir.path().to_path_buf(),
@@ -524,6 +542,7 @@ pub fn run(
                 publish(job, &roster, &dir);
                 *landed.lock().unwrap_or_else(|e| e.into_inner()) = Some(roster);
             }
+            Event::ProgressionReady(p) => publish_progression(job, &p),
             Event::Models { done, total } => send(ExtractEvent::Models { done, total }),
             Event::ModelsReady { failed } => {
                 if let Some(roster) = &*landed.lock().unwrap_or_else(|e| e.into_inner()) {
@@ -557,6 +576,23 @@ pub fn run(
         took_s = r.took.as_secs_f64(),
         "roster written"
     );
+    let p = &extracted.progression;
+    match &p.progression {
+        Ok(t) => info!(
+            levels = t.level_xp.len(),
+            xp_cap = t.level_xp.last().copied().unwrap_or(0),
+            save_params = t.save_params.len(),
+            gold_cap = t.gold_cap,
+            read = p.read,
+            written = p.files.written,
+            kept = p.files.kept,
+            took_s = p.took.as_secs_f64(),
+            "progression written"
+        ),
+        Err(why) => {
+            warn!("the progression tables didn't extract; the next start tries them again: {why}")
+        }
+    }
     let m = &extracted.models;
     info!(
         models = m.models,
@@ -595,6 +631,11 @@ pub fn run(
     for f in &l.failed {
         warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
     }
+    // The level is whole before ffmpeg is looked for, so a missing one
+    // doesn't keep it from the TV.
+    if l.failed.is_empty() && l.levels == guac_extract::levels::LEVELS.len() {
+        send_level(job, &extracted.roster.roster, &dir);
+    }
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;
     info!(ffmpeg = %ffmpeg.path.display(), how = ?ffmpeg.how, version = %ffmpeg.version, "ffmpeg");
@@ -625,6 +666,23 @@ fn publish(job: &ExtractJob, roster: &Roster, dir: &Path) {
     info!(figures = roster.figures.len(), "roster published");
 }
 
+/// Puts the extract's progression tables in the server's slot (AH.2): the
+/// store clamps at their caps and levels read off their table from then on.
+fn publish_progression(job: &ExtractJob, p: &guac_ir::progression::Progression) {
+    let Some(slot) = &job.progression else {
+        return;
+    };
+    let progression = Progression::from(p);
+    let caps = progression.caps();
+    slot.publish(progression);
+    info!(
+        max_level = p.level_xp.len(),
+        xp_cap = caps.xp,
+        gold_cap = caps.gold,
+        "progression published"
+    );
+}
+
 /// Puts the extract at `dir` on the TV's shelf: the turntable draws from it
 /// once every model the roster names is in it or in `failed` (AE.13).
 fn put_on_shelf(job: &ExtractJob, roster: &Roster, dir: &Path, failed: &[ModelFailure]) {
@@ -633,6 +691,17 @@ fn put_on_shelf(job: &ExtractJob, roster: &Roster, dir: &Path, failed: &[ModelFa
     };
     // The app is gone; nothing to tell.
     let _ = tx.send(std::sync::Arc::new(Shelf::new(roster, dir, job.ir, failed)));
+}
+
+/// Tells the TV's level loader that chapter 1 is whole in the extract at
+/// `dir` (AG.19).
+fn send_level(job: &ExtractJob, roster: &Roster, dir: &Path) {
+    let Some(tx) = &job.level else {
+        return;
+    };
+    let source = LevelSource::chapter_1(dir.to_path_buf(), job.ir, roster.identity.clone());
+    // The app is gone; nothing to tell.
+    let _ = tx.send(source);
 }
 
 /// At start, the roster of a current extract of `dump`, published on a thread
@@ -651,6 +720,10 @@ pub fn preload_roster(dump: PathBuf, job: ExtractJob) {
                     Ok(roster) => {
                         publish(&job, &roster, dir.path());
                         put_on_shelf(&job, &roster, dir.path(), &[]);
+                        match guac_extract::progression::load(&dir, job.ir) {
+                            Ok(p) => publish_progression(&job, &p),
+                            Err(e) => warn!("the current extract's progression didn't load: {e}"),
+                        }
                         info!(
                             took_ms = started.elapsed().as_millis() as u64,
                             "start-time roster from the current extract"
@@ -1401,8 +1474,21 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             ir: IrFormat::Ron,
             test_known: None,
             figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
+            progression: Some(ProgressionSlot::default()),
             shelf: None,
+            level: None,
         }
+    }
+
+    /// The sample's level table and caps, once `job` published them.
+    fn caps(job: &ExtractJob) -> Option<(Vec<u32>, u32, u32)> {
+        let p = job.progression.as_ref()?.get()?;
+        Some((p.level_xp.clone(), p.caps().xp, p.caps().gold))
+    }
+
+    /// The progression builder's sample: five levels to 4,500, gold to 9,000.
+    fn sample_caps() -> Option<(Vec<u32>, u32, u32)> {
+        Some((vec![0, 400, 1100, 2500, 4500], 4500, 9000))
     }
 
     /// The figure list `job` publishes to, as it is now.
@@ -1476,8 +1562,10 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
                 "Converting"
             ]
         );
-        // The roster went on the list before the intros failed (AE.4).
+        // The roster went on the list before the intros failed (AE.4), and
+        // the progression tables in the server's slot (AH.2).
         assert_eq!(listed(&job).roster(), Some(RosterState::Ready));
+        assert_eq!(caps(&job), sample_caps());
         assert_eq!(listed(&job).figures().len(), 24);
         assert!(
             seen.contains(&ExtractStatus::Roster {
@@ -1524,11 +1612,13 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         // the roster published off the extract.
         let restarted = ExtractJob {
             figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
+            progression: Some(ProgressionSlot::default()),
             ..job.clone()
         };
         let (result, seen) = run_all(&dump, &restarted, &known);
         let again = result.unwrap();
         assert!(!again.ran);
+        assert_eq!(caps(&restarted), sample_caps(), "loaded off the extract");
         // A current extract goes on the shelf as it's loaded.
         assert_eq!(shelves.0.try_iter().count(), 2, "the second run's and this");
         assert_eq!(again.library, ready.library);
@@ -1580,10 +1670,18 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         run_all(&dump, &job(&extract, Some(ffmpeg)), &known)
             .0
             .unwrap();
+        assert_eq!(caps(&partial), None, "nothing until the extract is current");
         let start = trusted(job(&extract, None));
         preload_roster(dump.clone(), start.clone());
         wait(&start, 24);
         assert_eq!(listed(&start).roster(), Some(RosterState::Ready));
+        // The progression is published on the same thread, after the roster.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while caps(&start).is_none() {
+            assert!(Instant::now() < deadline, "no progression published");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(caps(&start), sample_caps());
     }
 
     #[test]

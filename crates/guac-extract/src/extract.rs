@@ -44,6 +44,12 @@ pub struct Manifest {
     /// added later (AG.27's script data) resumes alone.
     #[serde(default)]
     pub levels: BTreeMap<String, LevelRecord>,
+    /// Each part that isn't a level's, by name, with its files (AH.2's
+    /// progression), recorded as a level's parts are: a start is current
+    /// only once every one this build reads is in
+    /// ([`crate::progression::complete`]).
+    #[serde(default)]
+    pub parts: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +216,7 @@ pub fn open(
             outputs: Vec::new(),
             transcode: None,
             levels: BTreeMap::new(),
+            parts: BTreeMap::new(),
         },
     };
     let dir = IdentityDir { path, manifest };
@@ -262,14 +269,15 @@ pub fn find_current(
     Ok(current(&manifest).then_some(IdentityDir { path, manifest }))
 }
 
-/// Marked complete, its intros for this build's target and every level the
-/// build plays whole.
+/// Marked complete, its intros for this build's target, every level the
+/// build plays whole and every other part in.
 fn current(m: &Manifest) -> bool {
     m.complete
         && m.transcode
             .as_ref()
             .is_none_or(|t| t.target == crate::transcode::TARGET.tag())
         && crate::levels::complete(m)
+        && crate::progression::complete(m)
 }
 
 fn read_manifest(dir: &Path, id: &DumpIdentity) -> Result<Manifest, Stale> {
@@ -506,6 +514,29 @@ impl IdentityDir {
             .or_default()
             .parts
             .insert(part.to_owned(), files);
+        self.save()
+    }
+
+    /// Whether the extract-wide `part` is in as `ir_file`: recorded with
+    /// that file, and every file it names still as recorded.
+    pub fn part_done(&self, part: &str, ir_file: &str) -> Result<bool> {
+        let Some(files) = self.manifest.parts.get(part) else {
+            return Ok(false);
+        };
+        if !files.iter().any(|f| f == ir_file) {
+            return Ok(false);
+        }
+        for f in files {
+            if !self.output_done(f)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Records the extract-wide `part` as in, with its files (written first).
+    pub fn record_part(&mut self, part: &str, files: Vec<String>) -> Result<()> {
+        self.manifest.parts.insert(part.to_owned(), files);
         self.save()
     }
 
