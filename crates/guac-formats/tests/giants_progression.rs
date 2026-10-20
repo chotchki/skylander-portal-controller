@@ -51,6 +51,7 @@ fn giants_progression_tables() {
         parsed.as_millis(),
         read.as_millis()
     );
+    println!("stepped {} ops", table.steps);
     println!("level table: {:?}", table.level_xp);
     for p in &table.params {
         let fields: Vec<String> = p

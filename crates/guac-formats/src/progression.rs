@@ -85,7 +85,7 @@ pub mod params {
     pub const HP_MULT: &str = "level hp mult";
 }
 
-/// How many ops one body may step through. The 01.00 body steps about 700.
+/// How many ops one body may step through. The 01.00 body steps 233.
 pub const MAX_STEPS: usize = 1 << 16;
 /// The most passes one loop may make. The 01.00 disc's loops make 16 at most.
 pub const MAX_PASSES: i64 = 1 << 10;
@@ -158,6 +158,9 @@ pub struct SaveTable {
     pub level_xp: Vec<u32>,
     /// In call order.
     pub params: Vec<SaveParam>,
+    /// The ops stepping the body took, loops' passes each counted: a
+    /// measured tick for AH.14's op budget to sit above.
+    pub steps: usize,
 }
 
 impl SaveTable {
@@ -184,6 +187,7 @@ impl SaveTable {
         Ok(Self {
             level_xp,
             params: run.rows,
+            steps: run.steps,
         })
     }
 }

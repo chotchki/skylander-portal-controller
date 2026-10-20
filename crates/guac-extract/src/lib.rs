@@ -50,5 +50,7 @@ pub use root::{ExtractRoot, RootMode};
 /// `models/`, `textures/` and `ir/rig.*`, so an extract made before the
 /// models redoes itself; v4 (AG.14) `heroes/`, so one made before the hero
 /// side does too, and (AG.15) `levels/`, each level's parts named in the
-/// manifest, so a part a later build adds resumes alone.
+/// manifest, so a part a later build adds resumes alone. AH.2's
+/// `ir/progression.*` is such a part outside the levels (the manifest's
+/// `parts`), so v4 holds.
 pub const LAYOUT_VERSION: u32 = 4;
