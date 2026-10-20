@@ -29,7 +29,7 @@ With the stick held over on level ground a hero SHALL walk at the top speed the 
 - **THEN** he walks at 3.277 m/s
 
 ### Requirement: Speeding up and slowing down
-Pushed from rest, a hero SHALL speed up at 160 ft/s² (48.77 m/s²) times the stick's strength until he walks at his top speed for that strength, about 0.13 s whatever the strength; a speed over a weaker push's top SHALL hold. Let go, he SHALL slow at 80 ft/s² (24.38 m/s²) along the way he last walked to a stop, and stay there.
+Pushed from rest, a hero SHALL speed up at 160 ft/s² (48.77 m/s²) × S to his top speed for that strength, about 0.13 s whatever S; a speed over a weaker push's top SHALL hold. Let go, his walk's speed across the ground SHALL fall by 80 ft/s² (24.38 m/s²) × the step two frames back, its vertical part held, his speed along the ground their root sum square, and once it's gone he SHALL stop dead and stay; over 21.5 ft/s plus 1e-4 ft/s it SHALL fall so with the stick held too.
 
 #### Scenario: From rest
 - **WHEN** the stick is pushed fully over with Eruptor at rest on level ground
@@ -39,8 +39,16 @@ Pushed from rest, a hero SHALL speed up at 160 ft/s² (48.77 m/s²) times the st
 - **WHEN** the stick is let go with Eruptor at top speed on level ground
 - **THEN** he stops 0.81-0.85 m further along the way he was walking, 0.26-0.27 s of game time later, and stays put
 
+#### Scenario: Let go on a slope
+- **WHEN** the stick is let go with Eruptor at top speed on the 5.3° rise ahead of the start or the corridor's 8.5° and 17.3° slopes, walking down, across or up them
+- **THEN** he slides 0.81-1.05 m in 0.23-0.27 s of game time, his speed along the ground falling in shrinking steps to what his walk's vertical part leaves, and stops dead from it: 1.32-2.54 m/s walking down, 0.01-0.52 m/s across, 1.21-2.73 m/s up, each uphill slide leaving the ground for a frame
+
+#### Scenario: Over top speed across the ground
+- **WHEN** Eruptor, his walk crept past 21.5 ft/s plus 1e-4 ft/s and steering, walks at full stick off the gate's door onto the 9° slope at the corridor's foot (AF.11's walk)
+- **THEN** for one frame he walks 0.41-0.45 m/s slower, 80 ft/s² × the step, and is back at 6.553 m/s the next
+
 ### Requirement: Turning and hard reversals
-A hero SHALL turn to face the way he walks, the short way, at 1440°/s times the stick's strength for Eruptor, while his walk takes each new direction of the stick at once at the speed he has: no angle stops him, so a hard reversal sends him straight back at speed. Let go mid-turn, his facing SHALL stay where it was while he slows along the way he last walked.
+A hero SHALL turn to face the way he walks, the short way, at 1440°/s × S for Eruptor. While his walk's speed along the ground is at most 21.5 ft/s plus 1e-4 ft/s the walk SHALL take each new direction of the stick at once at that speed, so a hard reversal sends him straight back; over it, it SHALL steer, gaining 160 ft/s² × S along the stick over the step three frames back, cut to the larger of 21.5 ft/s × S and the speed it had. Let go mid-turn, his facing SHALL stay put while he slows.
 
 #### Scenario: A full reversal
 - **WHEN** Eruptor walks at top speed and the stick is swung fully the opposite way
@@ -57,6 +65,10 @@ A hero SHALL turn to face the way he walks, the short way, at 1440°/s times the
 #### Scenario: Let go mid-turn
 - **WHEN** the stick is swung 90° at top speed and let go one frame later
 - **THEN** he slows to a stop along that one frame's stick, his facing staying where that frame left it
+
+#### Scenario: A swing at the gate
+- **WHEN** AF.11's walk swings the stick 90° at full stick on the ground falling away ahead of the gate
+- **THEN** in each frame his walk sits over 21.5 ft/s plus 1e-4 ft/s it steers, 6-8° a frame, and a walk that stays over meets the door's face; under it, or cut back to 21.5 ft/s by a frame off the ground, it turns at once and he walks free
 
 ### Requirement: Walls
 A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, and slide him along it at his walking speed times 1 − 0.1235 × (1 − sin θ), θ the push's angle from head-on, from 2° on; let go, he slows along it as on open ground. Nearer head-on he SHALL creep along it at the push's share of his speed (0.12 m/s at 1.06°) and, within 0.15°, stop dead the frame he meets it and stay while the stick holds.
@@ -78,7 +90,7 @@ A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, a
 - **THEN** he leaves it the way that recording's Eruptor did, sliding along the door's face or turning free
 
 ### Requirement: Slopes
-A hero SHALL walk up and down the opening area's slopes (to 17.3°) at his walking speed measured along the ground. Where the original's leaves the ground for a frame crossing onto steeper downhill ground, he SHALL too and land 0.88-1.36 m/s faster, a speed over his push's top that holds until he lets go, never past full stick's 6.553 m/s. Ground steeper than 45° SHALL NOT hold a hero; up to 45° it can.
+A hero SHALL walk the opening area's slopes (to 17.3°) at his walk's speed along the ground, each push tilting the walk toward the ground's slope along the stick. A frame off the ground within 0.4 ft (12.2 cm) above it SHALL add 10 ft/s downward to his walk, the whole cut to 21.5 ft/s if over; landed, he SHALL walk at its whole speed, √(v² + 10²) ft/s from v, held until let go. Ground steeper than 45° SHALL NOT hold a hero; up to 45° it can.
 
 #### Scenario: Up and down the corridor
 - **WHEN** Eruptor walks at full stick up the corridor east of the clearing, over slopes of 3.4° to 17.3°, and back down at half stick
@@ -86,7 +98,11 @@ A hero SHALL walk up and down the opening area's slopes (to 17.3°) at his walki
 
 #### Scenario: Half stick over the dip ahead of the start
 - **WHEN** Eruptor walks at half stick from the start over the edge of the 1.4° dip ahead of it
-- **THEN** he leaves the ground for one frame there and walks on at 4.41-4.49 m/s until the stick is let go
+- **THEN** he leaves the ground for one frame there and walks on at 4.41-4.49 m/s, the root sum square of his 3.18-3.28 m/s and that frame's 10 ft/s (3.05 m/s), until the stick is let go
+
+#### Scenario: The dip's edge at six strengths
+- **WHEN** Eruptor walks from the start over the edge of the dip ahead of it at 0.35, 0.49, 0.60, 0.76, 0.89 and all of the stick
+- **THEN** he leaves the ground for one frame there and walks on at 3.809, 4.415, 5.006-5.007, 5.826-5.827, 6.553 and 6.553 m/s from 2.269, 3.179, 3.957, 4.951, 5.861 and 6.553 m/s, the last two cut back to full stick's top
 
 #### Scenario: A steep bank
 - **WHEN** Eruptor walks onto ground sloping at 50°
