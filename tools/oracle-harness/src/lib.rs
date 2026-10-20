@@ -16,7 +16,8 @@
 //! ([`script`], AH.4) and the fight's state on them: the hero's health, his
 //! figure's experience and gold, the enemy stats, the difficulty, the
 //! multiplier, the element area, the loot counts and the triggers
-//! ([`fight`], AH.4).
+//! ([`fight`], AH.4), and O6's chains over the actors, orbs and loot a fight
+//! spawns ([`chains`], AH.5).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -29,6 +30,7 @@
 //! `#[ignore]`d live tests against the real oracle on the Mac.
 
 pub mod actors;
+pub mod chains;
 pub mod control;
 pub mod divergence;
 pub mod env;

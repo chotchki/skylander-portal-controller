@@ -28,6 +28,11 @@
 //!                       <-  OK first=<i> count=<k> data=<hex> | ERR bad_args | ERR not_paused
 //!                           | ERR no_watch | ERR bad_index | ERR bad_count
 //! ->  WATCH_CLEAR       <-  OK | ERR bad_args
+//! ->  CHAIN <slot> <items> <base> <path> <count> <array> <key> <values> [<range> ...]
+//!                       <-  OK slot=<s> bytes=<b> listed=<n> kept=<k> | ERR bad_args
+//!                           | ERR bad_slot | ERR bad_items | ERR bad_hop | ERR bad_values
+//!                           | ERR bad_range | ERR too_big | ERR watching | ERR no_list
+//! ->  CHAIN_CLEAR       <-  OK | ERR bad_args | ERR watching
 //! (any of them, gate off)  <-  ERR unknown_cmd
 //! ```
 //!
@@ -36,7 +41,9 @@
 //! digits and its axes decimal bytes ([`guac_oracle::input::Ds3Pad`]). O5's
 //! (AG.1, AG.35) are [`Watch`]'s: a watch's addresses are hex, its port, lengths
 //! and counts decimal, and a read's records come back as one hex run
-//! ([`WatchRecord`]).
+//! ([`WatchRecord`]). O6's (AH.5) are [`Chain`]'s: a chain armed before a
+//! watch rides in each of its records after the ranges ([`ChainSpec`] has the
+//! grammar, [`ChainBlock`] a record's block).
 //! Pushes (`HB`, `PE`) interleave with replies, as on P1. The codec is pure:
 //! every line shape unit-tests without a socket.
 
@@ -176,10 +183,12 @@ pub enum Refusal {
     /// `bad_frames`: a ring size that isn't a decimal 1 to [`WATCH_MAX_FRAMES`].
     BadFrames,
     /// `bad_range`: an address that isn't 1-8 hex digits, or a length that
-    /// isn't a decimal 1 to [`WATCH_MAX_BYTES`], or a range past 4 GiB.
+    /// isn't a decimal 1 to [`WATCH_MAX_BYTES`], or a range past 4 GiB; for
+    /// `CHAIN`, a range O6 can't parse or longer than [`CHAIN_MAX_RANGE`].
     BadRange,
     /// `too_big`: the ranges add up past [`WATCH_MAX_BYTES`] a record, or the
-    /// ring past [`WATCH_BUDGET`].
+    /// ring (the chains' blocks in each record) past [`WATCH_BUDGET`]; for
+    /// `CHAIN`, its block, or every chain's together, past [`CHAIN_BUDGET`].
     TooBig,
     /// `unmapped`: a range isn't readable guest memory when it's armed.
     Unmapped,
@@ -190,10 +199,25 @@ pub enum Refusal {
     /// `bad_count`: no records, or more than one reply carries
     /// ([`WATCH_REPLY_BYTES`]).
     BadCount,
+    /// `bad_slot`: a chain slot that isn't a decimal 0 to 7 ([`CHAIN_SLOTS`]).
+    BadSlot,
+    /// `bad_items`: a chain's items a record that isn't a decimal 1 to
+    /// [`CHAIN_MAX_ITEMS`].
+    BadItems,
+    /// `bad_hop`: a base, path, offset or key O6 can't parse, or more than
+    /// [`CHAIN_MAX_HOPS`] hops in one.
+    BadHop,
+    /// `bad_values`: a filter's values that aren't 1 to [`CHAIN_MAX_VALUES`]
+    /// hex words joined by commas.
+    BadValues,
+    /// `watching`: `CHAIN` or `CHAIN_CLEAR` while a watch is armed.
+    Watching,
+    /// `no_list`: the chain's path doesn't reach a list when it's armed.
+    NoList,
 }
 
 impl Refusal {
-    pub const ALL: [Refusal; 21] = [
+    pub const ALL: [Refusal; 27] = [
         Refusal::BadFlip,
         Refusal::NoRenderer,
         Refusal::Past,
@@ -215,6 +239,12 @@ impl Refusal {
         Refusal::NoWatch,
         Refusal::BadIndex,
         Refusal::BadCount,
+        Refusal::BadSlot,
+        Refusal::BadItems,
+        Refusal::BadHop,
+        Refusal::BadValues,
+        Refusal::Watching,
+        Refusal::NoList,
     ];
 
     /// The reason word after `ERR `.
@@ -241,6 +271,12 @@ impl Refusal {
             Refusal::NoWatch => "no_watch",
             Refusal::BadIndex => "bad_index",
             Refusal::BadCount => "bad_count",
+            Refusal::BadSlot => "bad_slot",
+            Refusal::BadItems => "bad_items",
+            Refusal::BadHop => "bad_hop",
+            Refusal::BadValues => "bad_values",
+            Refusal::Watching => "watching",
+            Refusal::NoList => "no_list",
         }
     }
 
@@ -379,14 +415,15 @@ pub const WATCH_PORTS: u8 = 7;
 pub const WATCH_MAX_BYTES: u32 = 16_384;
 /// Records a ring.
 pub const WATCH_MAX_FRAMES: u32 = 1 << 20;
-/// The ring, headers included.
-pub const WATCH_BUDGET: u64 = 16 << 20;
+/// The ring, headers and chains included (16 MiB before O6).
+pub const WATCH_BUDGET: u64 = 128 << 20;
 /// A record's header: the flip, the host's steady clock in microseconds, the
 /// mask of ranges that weren't readable and which of the port's reads in that
 /// flip it was, each a big-endian u64.
 pub const WATCH_HEADER: usize = 32;
-/// Record bytes (headers included) one `WATCH_READ` reply carries at most.
-pub const WATCH_REPLY_BYTES: u64 = 32_768;
+/// Record bytes (headers included) one `WATCH_READ` reply carries at most
+/// (32 KiB before O6).
+pub const WATCH_REPLY_BYTES: u64 = 262_144;
 
 /// A guest range a watch copies at each read of its port.
 #[derive(
@@ -653,6 +690,476 @@ pub fn parse_watch_reply(verb: &Watch, line: &str) -> Result<WatchReply, ReplyEr
     }
 }
 
+/// O6's limits (`rpcs3-patches/oracle/0006-O6-*.patch`): chains armed at once.
+pub const CHAIN_SLOTS: u8 = 8;
+/// Items a chain keeps a record.
+pub const CHAIN_MAX_ITEMS: u32 = 512;
+/// Ranges a chain copies of each item (one bit each in its missing mask).
+pub const CHAIN_MAX_RANGES: usize = 32;
+/// Hops a path, key or range.
+pub const CHAIN_MAX_HOPS: usize = 16;
+/// Values a filter matches.
+pub const CHAIN_MAX_VALUES: usize = 64;
+/// Bytes a range.
+pub const CHAIN_MAX_RANGE: u16 = 1_024;
+/// A list counting more isn't one (the block's status says so).
+pub const CHAIN_MAX_LIST: u32 = 4_096;
+/// Elements a search hop looks through.
+pub const CHAIN_MAX_SCAN: u32 = 1_024;
+/// Bytes a name is hashed over, its NUL included, before O6 gives up.
+pub const CHAIN_MAX_NAME: usize = 256;
+/// A block's header: the status, the list's count, the items whose key
+/// didn't read, the items the filter matched and the items kept.
+pub const CHAIN_HEADER: usize = 20;
+/// A kept item's header: its address, its index in the list, the value it
+/// matched and the mask of its ranges that didn't read.
+pub const CHAIN_ITEM_HEADER: usize = 16;
+/// Every chain's block together, a record.
+pub const CHAIN_BUDGET: usize = 49_152;
+
+/// FNV-1a over a name's bytes, as O6 hashes the C string a key or a search
+/// hop names (Alchemy keys its namespaces the same way: [`crate::script::fnv1a`]).
+pub fn name_hash(name: &str) -> u32 {
+    crate::script::fnv1a(name)
+}
+
+/// One link O6 follows from where it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Hop {
+    /// The pointer at `+off`, its object's first word `check` when there is
+    /// one (a vtable).
+    Deref { off: u16, check: Option<u32> },
+    /// Here is a list (its count at `+count`, its array of element pointers
+    /// at `+array`): the element whose name, the C string the word at the
+    /// element's `+name` points at, hashes to `hash`.
+    Search {
+        count: u16,
+        array: u16,
+        name: u16,
+        hash: u32,
+    },
+}
+
+impl Hop {
+    /// The pointer at `+off`.
+    pub fn at(off: u16) -> Self {
+        Hop::Deref { off, check: None }
+    }
+
+    /// The pointer at `+off`, its object's first word `vtable`.
+    pub fn checked(off: u16, vtable: u32) -> Self {
+        Hop::Deref {
+            off,
+            check: Some(vtable),
+        }
+    }
+
+    /// The element of the list here named `name`.
+    pub fn named(count: u16, array: u16, name_at: u16, name: &str) -> Self {
+        Hop::Search {
+            count,
+            array,
+            name: name_at,
+            hash: name_hash(name),
+        }
+    }
+
+    fn text(&self) -> String {
+        match *self {
+            Hop::Deref { off, check: None } => format!("{off:x}"),
+            Hop::Deref {
+                off,
+                check: Some(w),
+            } => format!("{off:x}={w:x}"),
+            Hop::Search {
+                count,
+                array,
+                name,
+                hash,
+            } => format!("?{count:x},{array:x},{name:x}={hash:x}"),
+        }
+    }
+}
+
+fn hops_text(hops: &[Hop], term: String) -> String {
+    let mut parts: Vec<String> = hops.iter().map(Hop::text).collect();
+    parts.push(term);
+    parts.join(">")
+}
+
+/// A chain item's key: its hops from the item, then the word at `+off`, or
+/// (`hashed`) the FNV-1a of the C string that word points at.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Key {
+    pub hops: Vec<Hop>,
+    pub off: u16,
+    pub hashed: bool,
+}
+
+/// A range a chain copies of each kept item: hops from the item, then `len`
+/// bytes at `+off`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Probe {
+    pub hops: Vec<Hop>,
+    pub off: u16,
+    pub len: u16,
+}
+
+impl Probe {
+    pub fn new(hops: Vec<Hop>, off: u16, len: u16) -> Self {
+        Self { hops, off, len }
+    }
+}
+
+/// What O6 follows for one chain: from `base`, `path`'s hops to a list whose
+/// count word sits at `+count` and whose pointer to its array of item
+/// pointers at `+array`; an item whose key matches one of `values` is kept,
+/// up to `items` a record, with its `ranges`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChainSpec {
+    pub items: u32,
+    pub base: u32,
+    pub path: Vec<Hop>,
+    pub count: u16,
+    pub array: u16,
+    pub key: Key,
+    pub values: Vec<u32>,
+    pub ranges: Vec<Probe>,
+}
+
+impl ChainSpec {
+    /// A kept item's bytes in a block: its header and its ranges.
+    pub fn item_bytes(&self) -> usize {
+        CHAIN_ITEM_HEADER + self.ranges.iter().map(|r| r.len as usize).sum::<usize>()
+    }
+
+    /// The block this chain adds to each record.
+    pub fn bytes(&self) -> usize {
+        CHAIN_HEADER + self.items as usize * self.item_bytes()
+    }
+
+    /// O6's limits, checked before a request goes: the refusal O6 would give.
+    pub fn check(&self) -> Result<(), Refusal> {
+        if self.ranges.len() > CHAIN_MAX_RANGES {
+            return Err(Refusal::BadArgs);
+        }
+        if self.items == 0 || self.items > CHAIN_MAX_ITEMS {
+            return Err(Refusal::BadItems);
+        }
+        if self.path.len() > CHAIN_MAX_HOPS || self.key.hops.len() > CHAIN_MAX_HOPS {
+            return Err(Refusal::BadHop);
+        }
+        if self.values.is_empty() || self.values.len() > CHAIN_MAX_VALUES {
+            return Err(Refusal::BadValues);
+        }
+        if self
+            .ranges
+            .iter()
+            .any(|r| r.hops.len() > CHAIN_MAX_HOPS || r.len == 0 || r.len > CHAIN_MAX_RANGE)
+        {
+            return Err(Refusal::BadRange);
+        }
+        if self.bytes() > CHAIN_BUDGET {
+            return Err(Refusal::TooBig);
+        }
+        Ok(())
+    }
+
+    /// The `CHAIN` request's fields after the slot.
+    fn args(&self) -> String {
+        let path = if self.path.is_empty() {
+            "-".to_owned()
+        } else {
+            self.path
+                .iter()
+                .map(Hop::text)
+                .collect::<Vec<_>>()
+                .join(">")
+        };
+        let key = hops_text(
+            &self.key.hops,
+            format!(
+                "{}{:x}",
+                if self.key.hashed { "#" } else { "" },
+                self.key.off
+            ),
+        );
+        let values = self
+            .values
+            .iter()
+            .map(|v| format!("{v:x}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut line = format!(
+            "{} {:x} {path} {:x} {:x} {key} {values}",
+            self.items, self.base, self.count, self.array
+        );
+        for r in &self.ranges {
+            line.push(' ');
+            line.push_str(&hops_text(&r.hops, format!("{:x}+{}", r.off, r.len)));
+        }
+        line
+    }
+}
+
+/// O6's verbs (openspec AH.5): chains armed before a watch, whose blocks then
+/// ride in each of its records after the ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Chain {
+    /// Chain `slot` (0-7), replacing the one there; refused while a watch is
+    /// armed and when the path doesn't reach a list now.
+    Arm { slot: u8, spec: ChainSpec },
+    /// Every chain dropped; refused while a watch is armed.
+    Clear,
+}
+
+impl Chain {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Chain::Arm { .. } => "CHAIN",
+            Chain::Clear => "CHAIN_CLEAR",
+        }
+    }
+
+    /// The newline-terminated request line.
+    pub fn encode(&self) -> String {
+        match self {
+            Chain::Arm { slot, spec } => format!("CHAIN {slot} {}\n", spec.args()),
+            Chain::Clear => "CHAIN_CLEAR\n".into(),
+        }
+    }
+
+    /// The refusals this verb can get besides `unknown_cmd`.
+    pub fn refusals(&self) -> &'static [Refusal] {
+        match self {
+            Chain::Arm { .. } => &[
+                Refusal::BadArgs,
+                Refusal::BadSlot,
+                Refusal::BadItems,
+                Refusal::BadHop,
+                Refusal::BadValues,
+                Refusal::BadRange,
+                Refusal::TooBig,
+                Refusal::Watching,
+                Refusal::NoList,
+            ],
+            Chain::Clear => &[Refusal::BadArgs, Refusal::Watching],
+        }
+    }
+}
+
+/// An O6 verb's answer when it isn't refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainReply {
+    /// `CHAIN`'s `OK slot=<s> bytes=<b> listed=<n> kept=<k>`: the block's
+    /// bytes, and the list's count and the items kept when it was armed.
+    Armed {
+        slot: u8,
+        bytes: u32,
+        listed: u32,
+        kept: u32,
+    },
+    /// `CHAIN_CLEAR`'s `OK`.
+    Ok,
+}
+
+/// Parses `verb`'s reply line (trimmed of the newline).
+pub fn parse_chain_reply(verb: &Chain, line: &str) -> Result<ChainReply, ReplyError> {
+    let unexpected = || ReplyError::Unexpected {
+        verb: verb.name(),
+        line: line.to_owned(),
+    };
+    if let Some(word) = line.strip_prefix("ERR ") {
+        return match Refusal::from_wire(word) {
+            Some(r) if r == Refusal::UnknownCmd || verb.refusals().contains(&r) => {
+                Err(ReplyError::Refused {
+                    verb: verb.name(),
+                    refusal: r,
+                })
+            }
+            _ => Err(unexpected()),
+        };
+    }
+    match verb {
+        Chain::Arm { slot, spec } => {
+            let mut it = line.strip_prefix("OK ").ok_or_else(unexpected)?.split(' ');
+            let mut field = |key: &str| -> Option<u32> {
+                decimal(it.next()?.strip_prefix(key)?.strip_prefix('=')?)
+            };
+            let (got_slot, bytes, listed, kept) = (
+                field("slot").ok_or_else(unexpected)?,
+                field("bytes").ok_or_else(unexpected)?,
+                field("listed").ok_or_else(unexpected)?,
+                field("kept").ok_or_else(unexpected)?,
+            );
+            if it.next().is_some()
+                || got_slot != u32::from(*slot)
+                || bytes as usize != spec.bytes()
+                || kept > spec.items
+                || kept > listed
+            {
+                return Err(unexpected());
+            }
+            Ok(ChainReply::Armed {
+                slot: *slot,
+                bytes,
+                listed,
+                kept,
+            })
+        }
+        Chain::Clear if line == "OK" => Ok(ChainReply::Ok),
+        Chain::Clear => Err(unexpected()),
+    }
+}
+
+/// A kept item as its chain's block holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainEntry {
+    /// The list's entry: the item's address.
+    pub address: u32,
+    /// Its index in the list.
+    pub index: u32,
+    /// Which of the chain's values its key matched.
+    pub value: u32,
+    /// A bit per range that didn't read.
+    pub missing: u32,
+    /// Each range's bytes, zeros where one didn't read.
+    pub ranges: Vec<Vec<u8>>,
+}
+
+impl ChainEntry {
+    /// Range `i`'s bytes, or `None` when it didn't read.
+    pub fn range(&self, i: usize) -> Option<&[u8]> {
+        (self.missing & (1 << i) == 0)
+            .then(|| self.ranges.get(i).map(Vec::as_slice))
+            .flatten()
+    }
+}
+
+/// One chain's block in one record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainBlock {
+    /// 0 when the list read; else the 1-based link that broke: the path's
+    /// hops, then the count word, the array pointer and a count past
+    /// [`CHAIN_MAX_LIST`].
+    pub status: u32,
+    /// The list's count.
+    pub listed: u32,
+    /// Items whose key didn't read (unreadable, or freed).
+    pub unread: u32,
+    /// Items the filter matched, kept or not.
+    pub matched: u32,
+    /// The items kept, in list order.
+    pub items: Vec<ChainEntry>,
+}
+
+impl ChainBlock {
+    /// Items the filter matched past the chain's `items`.
+    pub fn dropped(&self) -> u32 {
+        self.matched - self.items.len() as u32
+    }
+
+    /// `bytes` as `spec`'s block. Refused: the wrong size, counts that don't
+    /// hold together (more kept than matched, matched or unread than listed,
+    /// anything listed under a broken link), an item matching a value the
+    /// spec doesn't have or missing a range it doesn't copy, or a byte past
+    /// the kept items that isn't zero.
+    pub fn parse(spec: &ChainSpec, bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != spec.bytes() {
+            bail!(
+                "a chain block of {} bytes; the spec makes {}",
+                bytes.len(),
+                spec.bytes()
+            );
+        }
+        let word = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().expect("4 bytes"));
+        let (status, listed, unread, matched, kept) =
+            (word(0), word(4), word(8), word(12), word(16));
+        if kept > spec.items
+            || kept > matched
+            || matched.saturating_add(unread) > listed
+            || listed > CHAIN_MAX_LIST
+            || (status != 0 && listed != 0)
+        {
+            bail!(
+                "a chain block's counts don't hold: status {status}, listed {listed}, unread \
+                 {unread}, matched {matched}, kept {kept} of {}",
+                spec.items
+            );
+        }
+        let stride = spec.item_bytes();
+        let all = if spec.ranges.len() >= 32 {
+            u32::MAX
+        } else {
+            (1u32 << spec.ranges.len()) - 1
+        };
+        let mut items = Vec::with_capacity(kept as usize);
+        let mut last = None;
+        for k in 0..kept as usize {
+            let at = CHAIN_HEADER + k * stride;
+            let (address, index, value, missing) =
+                (word(at), word(at + 4), word(at + 8), word(at + 12));
+            if value as usize >= spec.values.len() || missing & !all != 0 || index >= listed {
+                bail!(
+                    "chain item {k} at {address:#010x}: value {value}, index {index}, missing \
+                     {missing:#x} don't fit the spec"
+                );
+            }
+            if last.is_some_and(|l| index <= l) {
+                bail!("chain item {k}'s index {index} isn't past the one before");
+            }
+            last = Some(index);
+            let mut ranges = Vec::with_capacity(spec.ranges.len());
+            let mut r = at + CHAIN_ITEM_HEADER;
+            for p in &spec.ranges {
+                ranges.push(bytes[r..r + p.len as usize].to_vec());
+                r += p.len as usize;
+            }
+            items.push(ChainEntry {
+                address,
+                index,
+                value,
+                missing,
+                ranges,
+            });
+        }
+        if bytes[CHAIN_HEADER + kept as usize * stride..]
+            .iter()
+            .any(|&b| b != 0)
+        {
+            bail!("a chain block holds bytes past its {kept} kept items");
+        }
+        Ok(Self {
+            status,
+            listed,
+            unread,
+            matched,
+            items,
+        })
+    }
+}
+
+/// A record's payload split into its watch list's ranges and each armed
+/// chain's block, in slot order; `None` unless the sizes add up.
+pub fn split_payload<'a>(
+    payload: &'a [u8],
+    list_bytes: usize,
+    chains: &[&ChainSpec],
+) -> Option<(&'a [u8], Vec<&'a [u8]>)> {
+    let total = list_bytes + chains.iter().map(|c| c.bytes()).sum::<usize>();
+    if payload.len() != total {
+        return None;
+    }
+    let (ranges, mut rest) = payload.split_at(list_bytes);
+    let mut blocks = Vec::with_capacity(chains.len());
+    for c in chains {
+        let (block, tail) = rest.split_at(c.bytes());
+        blocks.push(block);
+        rest = tail;
+    }
+    Some((ranges, blocks))
+}
+
 /// The O-verbs on one run's P1 socket, a fresh connection per request as
 /// `IpcPortalDriver` does (the emulator serves each on a thread of its own).
 #[derive(Debug, Clone)]
@@ -707,6 +1214,13 @@ impl VerbClient {
             .zip(&lines)
             .map(|(verb, line)| parse_watch_reply(verb, line))
             .collect())
+    }
+
+    /// Sends an O6 verb; a refusal comes back as a [`ReplyError`] inside the
+    /// error, as for [`VerbClient::send`].
+    pub fn send_chain(&self, verb: &Chain) -> Result<ChainReply> {
+        let line = self.roundtrip_line(&verb.encode())?;
+        Ok(parse_chain_reply(verb, &line)?)
     }
 
     /// One request line (newline included) and the first reply line that isn't
@@ -1232,5 +1746,339 @@ mod tests {
                 "{verb:?} {line:?}"
             );
         }
+    }
+
+    /// A chain off a static: its root and list checked by vtable, each item
+    /// keyed by the hash of its info's name, its position, and its `hp`
+    /// through two hops and a search by name.
+    fn chain_spec() -> ChainSpec {
+        ChainSpec {
+            items: 4,
+            base: 0x0089_D4F0,
+            path: vec![
+                Hop::checked(0, 0x0061_DD60),
+                Hop::at(0x2C),
+                Hop::checked(0x14, 0x0064_0028),
+            ],
+            count: 0x08,
+            array: 0x14,
+            key: Key {
+                hops: vec![Hop::checked(0x50, 0x0062_1048)],
+                off: 0x08,
+                hashed: true,
+            },
+            values: vec![name_hash("Enemy_Chompy(1)"), 0x0062_1618],
+            ranges: vec![
+                Probe::new(vec![Hop::at(0x50)], 0x3C, 24),
+                Probe::new(vec![], 0x58, 12),
+                Probe::new(
+                    vec![
+                        Hop::at(0x50),
+                        Hop::at(0xB0),
+                        Hop::named(0x08, 0x14, 0x08, "description"),
+                    ],
+                    0x1C,
+                    8,
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn each_chain_verb_encodes_as_o6_reads_it() {
+        let spec = chain_spec();
+        assert_eq!(name_hash(""), 0x811C_9DC5);
+        assert_eq!(name_hash("global.bld"), 0x2694_BE8E);
+        let hash = name_hash("Enemy_Chompy(1)");
+        let desc = name_hash("description");
+        assert_eq!(
+            Chain::Arm {
+                slot: 3,
+                spec: spec.clone()
+            }
+            .encode(),
+            format!(
+                "CHAIN 3 4 89d4f0 0=61dd60>2c>14=640028 8 14 50=621048>#8 {hash:x},621618 \
+                 50>3c+24 58+12 50>b0>?8,14,8={desc:x}>1c+8\n"
+            )
+        );
+        // No path, an unhashed key without hops, a range without hops.
+        let bare = ChainSpec {
+            path: Vec::new(),
+            key: Key {
+                hops: Vec::new(),
+                off: 0x50,
+                hashed: false,
+            },
+            ranges: vec![Probe::new(vec![], 0, 1024)],
+            values: vec![0xFFFF_FFFF],
+            items: CHAIN_MAX_ITEMS,
+            ..spec.clone()
+        };
+        assert_eq!(
+            Chain::Arm {
+                slot: CHAIN_SLOTS - 1,
+                spec: bare
+            }
+            .encode(),
+            "CHAIN 7 512 89d4f0 - 8 14 50 ffffffff 0+1024\n"
+        );
+        assert_eq!(Chain::Clear.encode(), "CHAIN_CLEAR\n");
+        assert_eq!(
+            (Chain::Clear.name(), Chain::Arm { slot: 0, spec }.name()),
+            ("CHAIN_CLEAR", "CHAIN")
+        );
+    }
+
+    #[test]
+    fn a_chains_size_and_limits_are_o6s() {
+        let spec = chain_spec();
+        assert_eq!(spec.item_bytes(), CHAIN_ITEM_HEADER + 24 + 12 + 8);
+        assert_eq!(spec.bytes(), CHAIN_HEADER + 4 * 60);
+        assert_eq!(spec.check(), Ok(()));
+        let bent = |f: &dyn Fn(&mut ChainSpec)| {
+            let mut s = chain_spec();
+            f(&mut s);
+            s.check()
+        };
+        assert_eq!(bent(&|s| s.items = 0), Err(Refusal::BadItems));
+        assert_eq!(
+            bent(&|s| s.items = CHAIN_MAX_ITEMS + 1),
+            Err(Refusal::BadItems)
+        );
+        assert_eq!(bent(&|s| s.values.clear()), Err(Refusal::BadValues));
+        assert_eq!(
+            bent(&|s| s.values = vec![1; CHAIN_MAX_VALUES + 1]),
+            Err(Refusal::BadValues)
+        );
+        assert_eq!(bent(&|s| s.values = vec![1; CHAIN_MAX_VALUES]), Ok(()));
+        assert_eq!(
+            bent(&|s| s.path = vec![Hop::at(0); CHAIN_MAX_HOPS + 1]),
+            Err(Refusal::BadHop)
+        );
+        assert_eq!(
+            bent(&|s| s.key.hops = vec![Hop::at(0); CHAIN_MAX_HOPS + 1]),
+            Err(Refusal::BadHop)
+        );
+        assert_eq!(bent(&|s| s.ranges[0].len = 0), Err(Refusal::BadRange));
+        assert_eq!(
+            bent(&|s| s.ranges[0].len = CHAIN_MAX_RANGE + 1),
+            Err(Refusal::BadRange)
+        );
+        assert_eq!(
+            bent(&|s| s.ranges = vec![Probe::new(vec![], 0, 4); CHAIN_MAX_RANGES + 1]),
+            Err(Refusal::BadArgs)
+        );
+        // 71 items of 692 bytes fill the budget exactly; one more byte an item
+        // doesn't fit.
+        let at = |len: u16| {
+            let mut s = chain_spec();
+            s.items = 71;
+            s.ranges = vec![Probe::new(vec![], 0, len)];
+            s
+        };
+        assert_eq!(at(676).bytes(), CHAIN_BUDGET);
+        assert_eq!(at(676).check(), Ok(()));
+        assert_eq!(at(677).check(), Err(Refusal::TooBig));
+    }
+
+    #[test]
+    fn each_chain_success_shape_parses() {
+        let spec = chain_spec();
+        let arm = Chain::Arm {
+            slot: 2,
+            spec: spec.clone(),
+        };
+        assert_eq!(
+            parse_chain_reply(
+                &arm,
+                &format!("OK slot=2 bytes={} listed=166 kept=4", spec.bytes())
+            ),
+            Ok(ChainReply::Armed {
+                slot: 2,
+                bytes: spec.bytes() as u32,
+                listed: 166,
+                kept: 4
+            })
+        );
+        assert_eq!(parse_chain_reply(&Chain::Clear, "OK"), Ok(ChainReply::Ok));
+    }
+
+    #[test]
+    fn every_refusal_maps_for_the_chain_verbs_that_get_it_and_no_other() {
+        let verbs = [
+            Chain::Arm {
+                slot: 0,
+                spec: chain_spec(),
+            },
+            Chain::Clear,
+        ];
+        for verb in &verbs {
+            for refusal in Refusal::ALL {
+                let line = format!("ERR {}", refusal.wire());
+                let got = parse_chain_reply(verb, &line).unwrap_err();
+                if refusal == Refusal::UnknownCmd || verb.refusals().contains(&refusal) {
+                    assert_eq!(got.refusal(), Some(refusal), "{verb:?} {line}");
+                } else {
+                    assert_eq!(got.refusal(), None, "{verb:?} can't get {line}");
+                }
+            }
+        }
+        assert_eq!(
+            verbs.iter().map(|v| v.refusals().len()).collect::<Vec<_>>(),
+            [9, 2]
+        );
+        // O3-O5's verbs never get O6's own refusals.
+        for refusal in &Refusal::ALL[21..] {
+            assert!(
+                VERBS.iter().all(|v| !v.refusals().contains(refusal)),
+                "{refusal:?}"
+            );
+            assert!(
+                watch_verbs()
+                    .iter()
+                    .all(|v| !v.refusals().contains(refusal)),
+                "{refusal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chain_reply_off_the_table_is_unexpected() {
+        let spec = chain_spec();
+        let b = spec.bytes();
+        let arm = Chain::Arm { slot: 2, spec };
+        let cases = [
+            (arm.clone(), "OK".to_owned()),
+            (arm.clone(), format!("OK slot=3 bytes={b} listed=1 kept=1")),
+            (
+                arm.clone(),
+                format!("OK slot=2 bytes={} listed=1 kept=1", b + 1),
+            ),
+            (arm.clone(), format!("OK slot=2 bytes={b} listed=1")),
+            (
+                arm.clone(),
+                format!("OK slot=2 bytes={b} listed=1 kept=1 extra=0"),
+            ),
+            (arm.clone(), format!("OK bytes={b} slot=2 listed=1 kept=1")),
+            // More kept than the chain keeps, or than the list holds.
+            (arm.clone(), format!("OK slot=2 bytes={b} listed=9 kept=5")),
+            (arm.clone(), format!("OK slot=2 bytes={b} listed=1 kept=2")),
+            (arm.clone(), "ERR no_watch".to_owned()),
+            (Chain::Clear, "OK slot=0".to_owned()),
+            (Chain::Clear, "ERR no_list".to_owned()),
+        ];
+        for (verb, line) in &cases {
+            assert_eq!(
+                parse_chain_reply(verb, line).unwrap_err(),
+                ReplyError::Unexpected {
+                    verb: verb.name(),
+                    line: line.clone()
+                },
+                "{line}"
+            );
+        }
+    }
+
+    /// `spec`'s block holding `items` (address, index, value, missing and a
+    /// fill byte for its ranges), under the counts given.
+    fn block(spec: &ChainSpec, counts: [u32; 4], items: &[(u32, u32, u32, u32, u8)]) -> Vec<u8> {
+        let mut b = vec![0u8; spec.bytes()];
+        let [status, listed, unread, matched] = counts;
+        for (i, w) in [status, listed, unread, matched, items.len() as u32]
+            .iter()
+            .enumerate()
+        {
+            b[4 * i..4 * i + 4].copy_from_slice(&w.to_be_bytes());
+        }
+        for (k, &(address, index, value, missing, fill)) in items.iter().enumerate() {
+            let at = CHAIN_HEADER + k * spec.item_bytes();
+            for (i, w) in [address, index, value, missing].iter().enumerate() {
+                b[at + 4 * i..at + 4 * i + 4].copy_from_slice(&w.to_be_bytes());
+            }
+            b[at + CHAIN_ITEM_HEADER..at + spec.item_bytes()].fill(fill);
+        }
+        b
+    }
+
+    #[test]
+    fn a_chain_block_parses_and_what_doesnt_hold_together_is_refused() {
+        let spec = chain_spec();
+        let good = block(
+            &spec,
+            [0, 166, 2, 5],
+            &[
+                (0x3500_0000, 3, 0, 0, 0x11),
+                (0x3500_1000, 90, 1, 0b100, 0x22),
+            ],
+        );
+        let b = ChainBlock::parse(&spec, &good).unwrap();
+        assert_eq!(
+            (b.status, b.listed, b.unread, b.matched, b.dropped()),
+            (0, 166, 2, 5, 3)
+        );
+        assert_eq!(b.items[0].range(0), Some(&[0x11; 24][..]));
+        assert_eq!(b.items[1].range(1), Some(&[0x22; 12][..]));
+        assert_eq!(b.items[1].range(2), None);
+        assert_eq!(b.items[1].ranges[2].len(), 8);
+        // A broken list: nothing listed, nothing kept.
+        assert!(ChainBlock::parse(&spec, &block(&spec, [3, 0, 0, 0], &[])).is_ok());
+        let refused = [
+            // Wrong size.
+            good[..good.len() - 1].to_vec(),
+            // A broken list listing something.
+            block(&spec, [3, 1, 0, 0], &[]),
+            // More kept than matched; matched and unread past listed.
+            block(&spec, [0, 9, 0, 1], &[(1, 0, 0, 0, 0), (2, 1, 0, 0, 0)]),
+            block(&spec, [0, 4, 2, 3], &[]),
+            // More kept than the chain keeps: four items laid out, the header
+            // saying five.
+            {
+                let mut b = block(
+                    &spec,
+                    [0, 9, 0, 5],
+                    &[
+                        (1, 0, 0, 0, 0),
+                        (2, 1, 0, 0, 0),
+                        (3, 2, 0, 0, 0),
+                        (4, 3, 0, 0, 0),
+                    ],
+                );
+                b[16..20].copy_from_slice(&5u32.to_be_bytes());
+                b
+            },
+            // A value the spec doesn't have, a range it doesn't copy, an index
+            // past the list or out of order.
+            block(&spec, [0, 9, 0, 1], &[(1, 0, 2, 0, 0)]),
+            block(&spec, [0, 9, 0, 1], &[(1, 0, 0, 0b1000, 0)]),
+            block(&spec, [0, 9, 0, 1], &[(1, 9, 0, 0, 0)]),
+            block(&spec, [0, 9, 0, 2], &[(1, 4, 0, 0, 0), (2, 4, 0, 0, 0)]),
+            // A count past O6's list cap.
+            block(&spec, [0, CHAIN_MAX_LIST + 1, 0, 0], &[]),
+        ];
+        for (i, bytes) in refused.iter().enumerate() {
+            assert!(ChainBlock::parse(&spec, bytes).is_err(), "case {i}");
+        }
+        // A byte past the kept items.
+        let mut tail = good.clone();
+        *tail.last_mut().unwrap() = 1;
+        assert!(ChainBlock::parse(&spec, &tail).is_err());
+    }
+
+    #[test]
+    fn a_payload_splits_into_its_list_and_each_chains_block() {
+        let a = chain_spec();
+        let mut b = chain_spec();
+        b.items = 1;
+        let payload: Vec<u8> = (0..(6 + a.bytes() + b.bytes())).map(|i| i as u8).collect();
+        let (ranges, blocks) = split_payload(&payload, 6, &[&a, &b]).unwrap();
+        assert_eq!(ranges, &payload[..6]);
+        assert_eq!(
+            blocks.iter().map(|x| x.len()).collect::<Vec<_>>(),
+            [a.bytes(), b.bytes()]
+        );
+        assert_eq!(blocks[1], &payload[6 + a.bytes()..]);
+        assert!(split_payload(&payload, 7, &[&a, &b]).is_none());
+        assert!(split_payload(&payload[..6], 6, &[]).is_some());
     }
 }

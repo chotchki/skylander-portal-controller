@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use guac_oracle::input::InputScript;
 use oracle_harness::actors::{self, ActorFrame};
+use oracle_harness::chains::{self, GiantsChains};
 use oracle_harness::control::Control;
 use oracle_harness::divergence::calibrate::{self, Reference};
 use oracle_harness::divergence::{self, Inputs, Perturbation, Plan, ReplayRecord, Report, Set};
@@ -79,16 +80,26 @@ usage:
       skinned actor a pad drives); --all prints every actor, --out writes the
       frame (outside every work tree), --p1 stamps it with STATE's flip
   oracle watch arm --socket <p1> --pine <socket> --list <list.json> [--frames <n>]
+              [--chains <chains.json>]
       at a pause: Giants' watch list resolved through PINE (the frame time and its
       scales, the hero's placement, corpus, matrix, parameters and pad floats, the
-      camera, the hero's clips), written to <list.json> (outside every work tree),
-      and O5 armed with a ring of <n> (1024) records of it, one at every read of
-      pad 0 (once a game frame in Giants), the first the next flip's
+      camera, the hero's clips, the generator's _mti and first word), written to
+      <list.json> (outside every work tree), and O5 armed with a ring of <n> (1024)
+      records of it, one at every read of pad 0 (once a game frame in Giants), the
+      first the next flip's. --chains (AH.5) resolves Giants' O6 chains too (the
+      actor list keeping the hero, the Chompies, Norticus, the breakables in reach
+      and Eruptor's projectiles; the orbs; the loot), writes them to <chains.json>
+      and arms them before the watch, so each record carries their blocks
   oracle watch read --socket <p1> --list <list.json> --out <dir>
+              [--chains <chains.json> --pine <socket>]
       at a pause: the ring and O4's readback on the list's port for its flips, into
       <dir>/watch.json (raw) and <dir>/recording.json (decoded); prints the ring's
       checks (_curFrame a step a record, every range readable, a record for every
-      read O4 counted) and the flips that ran two game frames
+      read O4 counted) and the flips that ran two game frames. With --chains each
+      record's chain blocks are split off and named through PINE: <dir>/chain.json,
+      chain.bin (raw) and chain-records.json (guac_oracle's chain records)
+  oracle watch unchain --socket <p1>
+      O6's CHAIN_CLEAR, refused while a watch is armed
   oracle watch clear --socket <p1>
   oracle watch residuals <recording.json> [--from <flip>] [--to <flip>]
       each position step against velocity times the clamped step, under both
@@ -635,10 +646,32 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
             let mut pine = PineClient::connect(pine_at.as_ref())?;
             rng::check_title(&mut pine)?;
             let watch = GiantsWatch::resolve(&mut pine)?;
+            let chained = match flag(opts, "--chains") {
+                Some(at) => {
+                    let chains = GiantsChains::resolve(&mut pine, &watch, &chains::fight_kinds())?;
+                    let path = rrc_dump::output::refuse_repo_output(at.as_ref())?;
+                    std::fs::write(&path, serde_json::to_string_pretty(&chains)?)?;
+                    Some(chains)
+                }
+                None => None,
+            };
             drop(pine);
             let path = rrc_dump::output::refuse_repo_output(list_at.as_ref())?;
             std::fs::write(&path, serde_json::to_string_pretty(&watch)?)?;
-            control(socket)?.watch_arm(&watch.list, watch.port, frames)?;
+            let control = control(socket)?;
+            let armed = match &chained {
+                Some(c) => {
+                    for a in control.chains_arm(&c.chains)? {
+                        println!(
+                            "chain {}: {} listed, {} kept when armed",
+                            a.slot, a.listed, a.kept
+                        );
+                    }
+                    c.chains.clone()
+                }
+                None => Default::default(),
+            };
+            control.watch_arm_chained(&watch.list, &armed, watch.port, frames)?;
             println!(
                 "armed: {} fields in {} ranges, {} bytes a record, {frames} records at every read \
                  of port {}; hero {} at {:#010x}, {} clips; list in {}",
@@ -660,7 +693,7 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
             )
             .with_context(|| format!("parsing {list_at}"))?;
             let control = control(socket)?;
-            let ring = control.watch_read()?;
+            let mut ring = control.watch_read()?;
             let (pads, reads) = control.pad_readback(watch.port, &ring.flips())?;
             let identity = match env::path(env::ORACLE_EXE) {
                 Some(exe) => Identity::of(
@@ -670,6 +703,20 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
                 .line(),
                 None => "?".into(),
             };
+            if let Some(at) = flag(opts, "--chains") {
+                let chains: GiantsChains = serde_json::from_str(
+                    &std::fs::read_to_string(&at).with_context(|| format!("reading {at}"))?,
+                )
+                .with_context(|| format!("parsing {at}"))?;
+                let pine_at = flag(opts, "--pine").context("--chains needs --pine to name them")?;
+                let mut pine = PineClient::connect(pine_at.as_ref())?;
+                rng::check_title(&mut pine)?;
+                let (own, run, _) =
+                    chains.write_outputs(&watch, &ring.records, &mut pine, &identity, &out)?;
+                drop(pine);
+                ring.records = own;
+                println!("chains: {}", serde_json::to_string(&run)?);
+            }
             let file = WatchFile {
                 identity,
                 watch,
@@ -706,6 +753,10 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
         ["clear", "--socket", socket] => {
             control(socket)?.watch_clear()?;
             println!("cleared");
+        }
+        ["unchain", "--socket", socket] => {
+            control(socket)?.chain_clear()?;
+            println!("chains cleared");
         }
         ["residuals", file, opts @ ..] => {
             let recording: Recording = serde_json::from_str(

@@ -15,6 +15,7 @@ use super::{
     SAVE_RETRY_FLIPS, SAVE_TRIES, WatchRun, actors_file, peek_file,
 };
 use crate::actors::{self, ActorFrame};
+use crate::chains::{self, GiantsChains};
 use crate::control::{Control, SAVESTATE_REFUSED, Saved};
 use crate::home::OracleHome;
 use crate::identity::Identity;
@@ -169,10 +170,23 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
     }
     // Set W: Giants' list resolved at F0 and armed before the script loads,
     // so the first record is F0's own first pad read once the run resumes.
+    // Set O: O6's chains armed first, so each record carries them too.
     let watched = if plan.watches() {
         let watch = GiantsWatch::resolve(&mut pine).context("the watch list at F0")?;
-        control.watch_arm(&watch.list, watch.port, plan.ring_frames())?;
-        Some(watch)
+        let chains = if plan.chains() {
+            let chains = GiantsChains::resolve(&mut pine, &watch, &chains::fight_kinds())
+                .context("Giants' chains at F0")?;
+            control.chains_arm(&chains.chains)?;
+            Some(chains)
+        } else {
+            None
+        };
+        let armed = chains
+            .as_ref()
+            .map(|c| c.chains.clone())
+            .unwrap_or_default();
+        control.watch_arm_chained(&watch.list, &armed, watch.port, plan.ring_frames())?;
+        Some((watch, chains))
     } else {
         None
     };
@@ -197,7 +211,10 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
     }
 
     let watch = match &watched {
-        Some(w) => Some(read_watch(&control, w, identity, dir).context("reading the watch")?),
+        Some((w, c)) => Some(
+            read_watch(&control, w, c.as_ref(), &mut pine, identity, dir)
+                .context("reading the watch")?,
+        ),
         None => None,
     };
     let shot = match shots.last() {
@@ -248,17 +265,29 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
 /// At the end pause: the ring and O4's readback on the watched port for its
 /// flips (with the port's reads in each), both written raw beside the record
 /// (`watch.json`) with the recording decoded from them (`recording.json`), and
-/// AG.1's and AG.35's checks on it.
+/// AG.1's and AG.35's checks on it. A set O ring's records carry O6's chains
+/// after the list: split off, named through `pine` and written beside it
+/// ([`chains::CHAIN_FILE`] and the rest).
 fn read_watch(
     control: &Control,
     watch: &GiantsWatch,
+    chained: Option<&GiantsChains>,
+    pine: &mut PineClient,
     identity: &str,
     dir: &Path,
 ) -> Result<WatchRun> {
     let t = Instant::now();
-    let ring = control.watch_read()?;
+    let mut ring = control.watch_read()?;
     let (pads, reads) = control.pad_readback(watch.port, &ring.flips())?;
     let read_ms = t.elapsed().as_secs_f64() * 1e3;
+    let chain = match chained {
+        Some(c) => {
+            let (own, run, _) = c.write_outputs(watch, &ring.records, pine, identity, dir)?;
+            ring.records = own;
+            Some(run)
+        }
+        None => None,
+    };
     let file = WatchFile {
         identity: identity.to_owned(),
         watch: watch.clone(),
@@ -293,6 +322,7 @@ fn read_watch(
             .filter(|f| f.clips.is_empty())
             .count(),
         read_ms,
+        chain,
     })
 }
 

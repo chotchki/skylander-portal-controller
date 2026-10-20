@@ -78,6 +78,11 @@
 //!   count, each a `ValueInfo`'s type word and value, and any triggers the
 //!   caller names, each one's `_activityState` to its `_activeTime`
 //!   ([`crate::fight`]).
+//! - the generator (AH.5): the one `igMersenneTwisterRandomNumber`
+//!   ([`crate::rng::MT_GLOBAL`] points at it), its `_mti` (+0x08) and its
+//!   first state word (+0x0C) in one 8-byte field, so every record carries the
+//!   draws since F0 ([`guac_oracle::fight::draws`] counts them from an `rng
+//!   peek` at F0) and an anchor's horizon is measured, not assumed.
 //! - every `Generic_FollowActor` the frame holds (AG.13): each one's
 //!   placement `_currentMatrix`, named `follow.<placement>`. The camera
 //!   scripts keep their points on such clones (the magic point the eye keeps
@@ -100,6 +105,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use guac_oracle::fight::draws::MtWords;
 use guac_oracle::input::Ds3Pad;
 use guac_oracle::recording::{Body, Clip, Clock, Contacts, Frame, Ground, Plane, Recording, View};
 use serde::{Deserialize, Serialize};
@@ -110,8 +116,9 @@ use crate::fight::{FightFrame, FightWatch};
 use crate::mover::MoverWatch;
 use crate::outputs::hex;
 use crate::verbs::{
-    PadRead, Refusal, Reply, ReplyError, Verb, WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES,
-    WATCH_REPLY_BYTES, Watch, WatchRange, WatchRecord, WatchReply, WatchSummary,
+    Chain, ChainBlock, ChainReply, ChainSpec, PadRead, Refusal, Reply, ReplyError, Verb,
+    WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES, WATCH_REPLY_BYTES, Watch, WatchRange,
+    WatchRecord, WatchReply, WatchSummary, split_payload,
 };
 
 /// A named span of guest memory.
@@ -278,22 +285,130 @@ impl Ring {
     }
 }
 
+/// O6's chains as armed, by slot (openspec AH.5): what a record's payload
+/// carries after the watch list's ranges, in slot order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Chains {
+    pub slots: BTreeMap<u8, ChainSpec>,
+}
+
+/// A chain as `CHAIN` armed it: the list's count and the items kept then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainArmed {
+    pub slot: u8,
+    pub listed: u32,
+    pub kept: u32,
+}
+
+impl Chains {
+    /// The blocks' bytes a record carries.
+    pub fn bytes(&self) -> usize {
+        self.slots.values().map(ChainSpec::bytes).sum()
+    }
+
+    /// `record` (whose payload is `list`'s ranges and these chains' blocks)
+    /// as the record of `list` alone and each chain's block by slot. Refused
+    /// when the sizes don't add up or a block doesn't parse.
+    pub fn split(
+        &self,
+        list: &WatchList,
+        record: &WatchRecord,
+    ) -> Result<(WatchRecord, BTreeMap<u8, ChainBlock>)> {
+        let specs: Vec<&ChainSpec> = self.slots.values().collect();
+        let (ranges, blocks) =
+            split_payload(&record.payload, list.bytes(), &specs).with_context(|| {
+                format!(
+                    "a record of {} payload bytes isn't a {}-byte list and {} bytes of chains",
+                    record.payload.len(),
+                    list.bytes(),
+                    self.bytes()
+                )
+            })?;
+        let mut out = BTreeMap::new();
+        for ((&slot, spec), block) in self.slots.iter().zip(blocks) {
+            let parsed = ChainBlock::parse(spec, block)
+                .with_context(|| format!("chain {slot} in the record of flip {}", record.flip))?;
+            out.insert(slot, parsed);
+        }
+        Ok((
+            WatchRecord {
+                payload: ranges.to_vec(),
+                ..record.clone()
+            },
+            out,
+        ))
+    }
+}
+
 impl Control {
     /// `WATCH`: a ring of `frames` records of `list`, one at every read of pad
     /// `port`, its first record the port's first read in a whole flip. The
     /// payload and port O5 reports have to be the list's and the one asked for.
     pub fn watch_arm(&self, list: &WatchList, port: u8, frames: u32) -> Result<()> {
+        self.watch_arm_chained(list, &Chains::default(), port, frames)
+    }
+
+    /// `WATCH` with O6's `chains` armed already: each record carries their
+    /// blocks after the list's ranges, so the payload O5 reports has to be
+    /// both together.
+    pub fn watch_arm_chained(
+        &self,
+        list: &WatchList,
+        chains: &Chains,
+        port: u8,
+        frames: u32,
+    ) -> Result<()> {
+        let want = list.bytes() + chains.bytes();
         match self.verbs().send_watch(&list.arm(frames, port))? {
             WatchReply::Armed {
                 bytes,
                 frames: f,
                 port: p,
-            } if bytes as usize == list.bytes() && f == frames && p == port => Ok(()),
+            } if bytes as usize == want && f == frames && p == port => Ok(()),
             other => bail!(
-                "WATCH answered {other:?} for a {}-byte list of {frames} records on port {port}",
-                list.bytes()
+                "WATCH answered {other:?} for a {}-byte list and {} bytes of chains, {frames} \
+                 records on port {port}",
+                list.bytes(),
+                chains.bytes()
             ),
         }
+    }
+
+    /// `CHAIN`: `spec` armed in `slot` (before a watch; refused while one is
+    /// armed), and what the list held then.
+    pub fn chain_arm(&self, slot: u8, spec: &ChainSpec) -> Result<ChainArmed> {
+        if let Err(r) = spec.check() {
+            bail!(
+                "chain {slot} breaks O6's limits: O6 would answer ERR {}",
+                r.wire()
+            );
+        }
+        let verb = Chain::Arm {
+            slot,
+            spec: spec.clone(),
+        };
+        match self.verbs().send_chain(&verb)? {
+            ChainReply::Armed {
+                slot, listed, kept, ..
+            } => Ok(ChainArmed { slot, listed, kept }),
+            other => bail!("CHAIN answered {other:?}"),
+        }
+    }
+
+    /// Every chain in `chains` armed, in slot order, after `CHAIN_CLEAR`.
+    pub fn chains_arm(&self, chains: &Chains) -> Result<Vec<ChainArmed>> {
+        self.chain_clear()?;
+        chains
+            .slots
+            .iter()
+            .map(|(&slot, spec)| self.chain_arm(slot, spec))
+            .collect()
+    }
+
+    /// `CHAIN_CLEAR`: every chain dropped (refused while a watch is armed).
+    pub fn chain_clear(&self) -> Result<()> {
+        self.verbs().send_chain(&Chain::Clear)?;
+        Ok(())
     }
 
     /// At a pause: the summary, then every record held, as many to a reply as
@@ -441,6 +556,10 @@ pub struct GiantsWatch {
     /// written before it, or one [`GiantsWatch::with_fight`] didn't grow.
     #[serde(default)]
     pub fight: Option<FightWatch>,
+    /// The generator whose `_mti` and first state word the list watches
+    /// (AH.5): none in a list written before it.
+    #[serde(default)]
+    pub mt: Option<u32>,
 }
 
 /// A `Generic_FollowActor` on the watch list (AG.13).
@@ -497,6 +616,9 @@ impl ProxyWatch {
 }
 
 const APP_FIRST: u32 = 0x54;
+/// The generator's field: `_mti` (+0x08) and the first of its 624 words.
+const MT_FIELD: &str = "mt";
+const MT_WATCHED: u32 = 0x08;
 const APP_LOGIC_SCALE: usize = 0x10;
 const SCALE_FIRST: u32 = 0x08;
 const CORPUS_FIRST: u32 = 0x54;
@@ -691,6 +813,17 @@ impl GiantsWatch {
 
         let proxy = proxy_watch(g, &frame, hero.corpus, &corpus, &block)?;
         let mover = MoverWatch::resolve(g, hero.placement)?;
+        let mt = be32(
+            &one(g, crate::rng::MT_GLOBAL, 4, "the generator pointer")?,
+            0,
+        );
+        let head = one(g, mt, 4, "the generator")?;
+        expect_vtable(
+            &head,
+            crate::rng::MT_VTABLE,
+            mt,
+            "igMersenneTwisterRandomNumber",
+        )?;
 
         let mut fields = vec![
             Field::new("app", app + APP_FIRST, 0x14),
@@ -706,6 +839,7 @@ impl GiantsWatch {
             Field::new("hero.pad", controller + PAD_FIRST, PAD_LEN),
             Field::new("anim.playing", animation + COMPONENT_PLAYING, 12),
             Field::new("anim.slots", slots, 4 * capacity.max(1)),
+            Field::new(MT_FIELD, mt + MT_WATCHED, 8),
         ];
         if let Some(c) = pad0.filter(|&c| c != controller) {
             fields.push(Field::new("pad0", c + PAD_FIRST, PAD_LEN));
@@ -788,6 +922,18 @@ impl GiantsWatch {
             followers,
             mover,
             fight: None,
+            mt: Some(mt),
+        })
+    }
+
+    /// The generator's `_mti` and first state word in a record: none in a
+    /// list without them or when they weren't readable.
+    pub fn mt_words(&self, record: &WatchRecord) -> Option<MtWords> {
+        self.mt?;
+        let b = self.list.field(record, MT_FIELD)?;
+        Some(MtWords {
+            mti: be32(b, 0),
+            word0: be32(b, 4),
         })
     }
 
@@ -1440,6 +1586,11 @@ mod tests {
             ..Spec::default()
         });
         let pad0 = w.get32(follow.placement + 0xD8);
+        // The generator: its vtable, a refcount, _mti 397 and the first word.
+        let mt = w.object(crate::rng::MT_VTABLE, 0x10);
+        w.put32(mt + 0x08, 397);
+        w.put32(mt + 0x0C, 0x1234_5678);
+        w.put32(crate::rng::MT_GLOBAL, mt);
         w.putf(w.app + 0x60, 1.0 / 60.0);
         let message = w.object(vtable::LOGIC_SCALE_MESSAGE, 0x10);
         w.putf(message + 0x08, 1.0);
