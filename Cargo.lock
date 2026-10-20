@@ -4419,7 +4419,11 @@ name = "guac-motion"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "guac-formats",
+ "guac-motion",
+ "guac-oracle",
  "parry3d",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
@@ -4492,6 +4496,7 @@ dependencies = [
  "avian3d",
  "axum",
  "bevy",
+ "bevy_transform_interpolation",
  "crossbeam-channel",
  "guac-extract",
  "guac-formats",

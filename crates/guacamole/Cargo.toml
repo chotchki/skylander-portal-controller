@@ -80,6 +80,9 @@ avian3d = { git = "https://github.com/avianphysics/avian", rev = "1070759b2145dc
     "parry-f32",
 ] }
 guac-motion = { path = "../guac-motion" }
+# The hero's drawn transform eased between fixed steps (AG.16, design decision
+# 5): the copy avian3d already builds on, not a new crate.
+bevy_transform_interpolation = { version = "0.6", default-features = false, features = ["std"] }
 # The shots plugin (AE.29) and hero_view write their PNGs themselves; the
 # version bevy_image already pulls.
 image = { version = "0.25", default-features = false, features = ["png"] }

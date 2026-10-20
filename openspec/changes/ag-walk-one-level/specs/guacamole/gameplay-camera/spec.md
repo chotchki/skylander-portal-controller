@@ -14,7 +14,7 @@ With a hero at the level's start, the camera SHALL keep the level's first camera
 - **THEN** the eye is 14.2167 m behind his feet along 15° and 8.8836 m above them, within 0.1 mm, looking along 15° and 23.36° down, the point 9 ft above his feet at the picture's centre
 
 ### Requirement: The camera follows
-While the hero moves, the eye SHALL keep its offset from a follow point that closes 8 % of its distance to an aim point every game frame, however long the frame, within 5 ft; a frame beyond 5 ft SHALL raise that share for good (9 % after one at 5.004 ft). The aim point SHALL sit 35 % of the way from his feet to a look-ahead point that trails him as he sets off, draws ahead as he walks (1.04 m after 1.2 s at top speed, 4.79 m after 4.3 s up the corridor) and holds still once he stops.
+While the hero moves, the eye SHALL keep its offset from a follow point that closes 8 % of its distance to an aim point every game frame, however long the frame, within 5 ft; a frame beyond 5 ft SHALL raise that share until it rests on its aim (9 % after one at 5.004 ft). The aim point SHALL sit 35 % of the way from his feet to a look-ahead point that trails him as he sets off, draws ahead as he walks (1.04 m after 1.2 s at top speed, 4.79 m after 4.3 s up the corridor) and stops when he does.
 
 #### Scenario: A walk and a stop
 - **WHEN** Eruptor walks at full stick on open level ground about the start and the stick is let go
@@ -57,6 +57,17 @@ Inside a transition plane's box the view SHALL be its two cameras blended by whe
 #### Scenario: Half stick across the plane
 - **WHEN** Eruptor crosses `Transition 7-1` at half stick
 - **THEN** the view moves as his feet do, over 2.98-3.00 s going west and 1.73-2.20 s coming back, the walkway's crests lifting a half-stick walk past its 3.28 m/s top (to 4.28 m/s going west, 6.55 m/s coming back) for part of it
+
+### Requirement: A camera coming into use starts on its aim
+When a camera comes into use, its follow point SHALL start on its aim point: one new to the level SHALL stay on it until 0.5 s of game time have passed from the frame after, and one coming back into use SHALL close on it from the next frame. A camera out of use SHALL keep its follow point where it was. A transition plane's cameras SHALL be in use while his feet are inside its box.
+
+#### Scenario: Into the plane the first time
+- **WHEN** Eruptor walks west into `Transition 7-1`'s box from the ledge route for the first time, camera 1 new to the level
+- **THEN** camera 1's part of the blended eye sits on its aim for its first 31-32 frames (0.517-0.534 s of game time), then closes 8 % a frame
+
+#### Scenario: Back into the plane
+- **WHEN** he walks back east into the box from the upper walkway, camera 7's follow point having stood still while the view was wholly camera 1's
+- **THEN** camera 7's follow point jumps onto its aim the frame his feet come back inside the box (1.33-1.46 m at once) and closes 8 % a frame from the next
 
 ### Requirement: Nothing pushes the camera in
 Scenery or props between the camera and the hero SHALL NOT move the camera: its eye SHALL keep its camera's offset from the follow point whatever stands between them and the hero, as in the original, whose camera never tests itself against the level.

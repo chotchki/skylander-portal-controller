@@ -125,6 +125,10 @@ pub struct Mesh {
     vertices: Vec<Vec3>,
     triangles: Vec<[u32; 3]>,
     materials: Vec<u8>,
+    /// Per triangle, the one other triangle across each edge (a then b, b
+    /// then c, c then a), vertices matched by position as parry merges them;
+    /// `None` on a boundary edge or one three triangles share.
+    neighbours: Vec<[Option<u32>; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -170,11 +174,36 @@ impl Mesh {
                 });
             }
         }
+        let neighbours = neighbours(&vertices, &triangles);
         Ok(Mesh {
             vertices,
             triangles,
             materials,
+            neighbours,
         })
+    }
+
+    /// The triangle across edge `edge` (0: a-b, 1: b-c, 2: c-a) of triangle
+    /// `index`, if exactly one other shares it.
+    pub fn neighbour(&self, index: u32, edge: usize) -> Option<u32> {
+        self.neighbours
+            .get(index as usize)?
+            .get(edge)
+            .copied()
+            .flatten()
+    }
+
+    /// Triangle `index`'s corners.
+    pub fn corners(&self, index: u32) -> Option<[Vec3; 3]> {
+        let t = self.triangles.get(index as usize)?;
+        Some(t.map(|i| self.vertices[i as usize]))
+    }
+
+    /// Triangle `index`'s front, (b − a) × (c − a) normalized; `None` for a
+    /// degenerate one.
+    pub fn face_normal(&self, index: u32) -> Option<Vec3> {
+        let [a, b, c] = self.corners(index)?;
+        (b - a).cross(c - a).try_normalize()
     }
 
     pub fn vertices(&self) -> &[Vec3] {
@@ -193,6 +222,41 @@ impl Mesh {
     pub fn material(&self, index: u32) -> Option<u8> {
         self.materials.get(index as usize).copied()
     }
+}
+
+/// Each triangle's neighbour across each edge, vertices keyed by their bits
+/// (parry merges equal positions too).
+fn neighbours(vertices: &[Vec3], triangles: &[[u32; 3]]) -> Vec<[Option<u32>; 3]> {
+    use std::collections::HashMap;
+    let mut ids: HashMap<[u32; 3], u32> = HashMap::new();
+    let canon: Vec<u32> = vertices
+        .iter()
+        .map(|v| {
+            let key = v.to_array().map(f32::to_bits);
+            let next = ids.len() as u32;
+            *ids.entry(key).or_insert(next)
+        })
+        .collect();
+    let edge = |t: &[u32; 3], e: usize| {
+        let (a, b) = (canon[t[e] as usize], canon[t[(e + 1) % 3] as usize]);
+        (a.min(b), a.max(b))
+    };
+    let mut by_edge: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+    for (i, t) in triangles.iter().enumerate() {
+        for e in 0..3 {
+            by_edge.entry(edge(t, e)).or_default().push(i as u32);
+        }
+    }
+    triangles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            std::array::from_fn(|e| match by_edge[&edge(t, e)].as_slice() {
+                [x, y] => Some(if *x == i as u32 { *y } else { *x }),
+                _ => None,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
