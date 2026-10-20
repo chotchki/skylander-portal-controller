@@ -19,10 +19,20 @@
 //!   model never comes up on a pipeline that isn't compiled, whether it's
 //!   placed before the warm is through or a key escaped the list.
 //!
+//! - What a figure carries (openspec AE.23) is on the list with its body:
+//!   a carried part's skinned keys are drawn as a body's, its unskinned ones
+//!   as static triangles in the cards' scene, each with its glow mask.
 //! - A level's keys (openspec AG.19) join the queue behind the list when
 //!   the level is read ([`Warm::ask_level`]), each drawn on the stage as a
 //!   static triangle in the level's own scene, with no glow mask (the level
 //!   draws no glow pass); the level shows only once [`Warm::covers`] them.
+//! - At start (openspec AE.25, AG.43) the census's keys go on the queue
+//!   before any shelf exists ([`Warm::ask_census`], [`crate::prepare`]),
+//!   drawn [`Warm::per_frame`] at a time while the TV says it's getting
+//!   ready, so a shelf or a level that lands later finds its keys compiled.
+//!   A key a shelf, a level or a turntable asks for that the census doesn't
+//!   hold is the pass's miss: counted (`outside_census`) and logged once
+//!   with the census row that would cover it.
 //!
 //! Without a renderer (the headless tests) nothing compiles: the list is
 //! still read, and every key counts as compiled.
@@ -49,6 +59,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Model};
 use guac_ir::shading::Scene;
+use guacamole::census::Row;
 use guacamole::character::attach;
 use guacamole::character::turntable::{Framing, Sweep, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
@@ -72,8 +83,12 @@ const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 struct Entry {
     key: WarmKey,
     material: model::Material,
-    /// A level's scene for a level's key; the cards' for none.
+    /// The scene it's drawn in: a level's for a level's key, the census's
+    /// own; none for a model's, which takes the cards' ([`Warm::scene`]).
     scene: Option<Arc<Scene>>,
+    /// Whether its glow mask is drawn too: a card's key (a body's or what a
+    /// figure carries, AE.23), not a level's, whose draws take no glow pass.
+    glow: bool,
 }
 
 /// What a shelf's models draw.
@@ -118,6 +133,7 @@ fn read_list(shelf: &Shelf, scene: &Scene) -> List {
                             key,
                             material: drawn.materials[material].clone(),
                             scene: None,
+                            glow: true,
                         });
                     }
                 }
@@ -143,6 +159,9 @@ pub(crate) struct Watched {
     checks: HashMap<Entity, Compiled>,
     /// Render pipelines compiled, as of the render world's last frame.
     ready: usize,
+    /// Pipelines queued or compiling, or waiting on their shader, as of the
+    /// render world's last frame.
+    pending: usize,
 }
 
 /// Shared by the two worlds: what the warm asks the render world to look
@@ -159,6 +178,12 @@ impl PipelineWatch {
     /// as of the render world's last frame.
     pub(crate) fn ready(&self) -> usize {
         self.lock().ready
+    }
+
+    /// Render pipelines not compiled yet (queued, compiling or waiting on a
+    /// shader), as of the render world's last frame.
+    pub(crate) fn pending(&self) -> usize {
+        self.lock().pending
     }
 
     /// Plays the render world: every pipeline the warm watches compiles.
@@ -180,10 +205,19 @@ fn watch_pipelines(
     specialized: Option<Res<SpecializedMaterialPipelineCache>>,
     mut compiled: Local<Vec<bool>>,
 ) {
-    let mut ready = 0;
+    let (mut ready, mut pending) = (0, 0);
     for (i, p) in cache.pipelines().enumerate() {
         let ok = matches!(p.state, CachedPipelineState::Ok(_));
         ready += usize::from(ok);
+        pending += usize::from(matches!(
+            p.state,
+            CachedPipelineState::Queued
+                | CachedPipelineState::Creating(_)
+                | CachedPipelineState::Err(
+                    ShaderCacheError::ShaderNotLoaded(_)
+                        | ShaderCacheError::ShaderImportNotYetAvailable
+                )
+        ));
         if compiled.len() <= i {
             compiled.resize(i + 1, false);
         }
@@ -207,6 +241,7 @@ fn watch_pipelines(
     }
     let mut watched = watch.lock();
     watched.ready = ready;
+    watched.pending = pending;
     let Some(specialized) = specialized else {
         return;
     };
@@ -266,6 +301,10 @@ pub(crate) struct WarmReport {
     pub keys: usize,
     pub compiled: usize,
     pub failed: usize,
+    /// Keys a shelf, a level or a turntable asked for that the start's
+    /// census doesn't hold (AE.25): 0 on the disc the census was taken
+    /// from; none counted unless the start's pass asked for it.
+    pub outside_census: usize,
     /// From the shelf landing (or the first key asked) to the last key
     /// compiled so far.
     pub took_ms: Option<u64>,
@@ -292,6 +331,14 @@ pub(crate) struct Warm {
     listed: Vec<WarmKey>,
     /// The keys a level asked for, in its order.
     level_listed: Vec<WarmKey>,
+    /// The start's census (AE.25), once its pass asked for it.
+    census: HashSet<WarmKey>,
+    /// Keys asked for that the census doesn't hold, each noted once.
+    outside: HashSet<WarmKey>,
+    /// Keys drawn a frame once the stage is up: one, so a portal frame
+    /// compiles at most one key's pipelines, unless the first start's pass
+    /// raises it while nothing but its screen is up ([`crate::prepare`]).
+    pub(crate) per_frame: usize,
 }
 
 impl Warm {
@@ -308,6 +355,9 @@ impl Warm {
             started: None,
             listed: Vec::new(),
             level_listed: Vec::new(),
+            census: HashSet::new(),
+            outside: HashSet::new(),
+            per_frame: 1,
             report: WarmReport {
                 state: "idle".into(),
                 ..Default::default()
@@ -354,6 +404,9 @@ impl Warm {
         }
         let drawn = attach::drawn(model);
         self.started.get_or_insert_with(Instant::now);
+        for (key, _) in keys {
+            self.note_outside(key);
+        }
         for (key, material) in keys.iter().rev() {
             if self.done.contains(key) {
                 continue;
@@ -366,6 +419,7 @@ impl Warm {
                     key: *key,
                     material: drawn.materials[*material].clone(),
                     scene: None,
+                    glow: true,
                 }),
             };
             if let Some(entry) = entry {
@@ -382,6 +436,7 @@ impl Warm {
         self.started.get_or_insert_with(Instant::now);
         self.level_listed = keys.iter().map(|(k, _)| *k).collect();
         for (key, material) in keys {
+            self.note_outside(key);
             if self.done.contains(key) || !self.pending.insert(*key) {
                 continue;
             }
@@ -389,9 +444,59 @@ impl Warm {
                 key: *key,
                 material: material.clone(),
                 scene: Some(scene.clone()),
+                glow: false,
             });
         }
         self.update_report();
+    }
+
+    /// Queues the census's keys (each with the material that draws it and
+    /// its scene) behind everything already asked for: the first start's
+    /// pass, before any shelf or level exists. Its unskinned keys are the
+    /// level's, drawn without a glow mask.
+    pub(crate) fn ask_census(
+        &mut self,
+        keys: impl IntoIterator<Item = (WarmKey, model::Material, Arc<Scene>)>,
+    ) {
+        self.started.get_or_insert_with(Instant::now);
+        for (key, material, scene) in keys {
+            self.census.insert(key);
+            if self.done.contains(&key) || !self.pending.insert(key) {
+                continue;
+            }
+            self.queue.push_back(Entry {
+                key,
+                material,
+                scene: Some(scene),
+                glow: key.mesh.skinned,
+            });
+        }
+        // A list or a level that landed before the census is held to it now.
+        let asked: Vec<WarmKey> = self
+            .listed
+            .iter()
+            .chain(&self.level_listed)
+            .copied()
+            .collect();
+        for key in &asked {
+            self.note_outside(key);
+        }
+        self.update_report();
+    }
+
+    /// Notes `key` once the start's pass has asked for the census and when
+    /// the census doesn't hold it: a key the pass didn't compile, so a TV
+    /// frame will (AE.25). Logged once, with the row that would cover it.
+    fn note_outside(&mut self, key: &WarmKey) {
+        if self.census.is_empty() || self.census.contains(key) || !self.outside.insert(*key) {
+            return;
+        }
+        self.report.outside_census = self.outside.len();
+        warn!(
+            row = %Row::of(key).source(),
+            skinned = key.mesh.skinned,
+            "a key outside the start's census: the TV compiles it in a frame"
+        );
     }
 
     pub(crate) fn report(&self) -> &WarmReport {
@@ -466,6 +571,7 @@ pub(crate) fn step(mut warm: ResMut<Warm>, mut s: WarmSpawner) {
         warm.listed = list.entries.iter().map(|e| e.key).collect();
         let mut new = 0;
         for entry in list.entries.iter() {
+            warm.note_outside(&entry.key);
             if !warm.done.contains(&entry.key) && warm.pending.insert(entry.key) {
                 warm.queue.push_back(entry.clone());
                 new += 1;
@@ -500,7 +606,10 @@ pub(crate) fn step(mut warm: ResMut<Warm>, mut s: WarmSpawner) {
         match warm.stage.as_mut() {
             None => warm.stage = spawn_stage(&mut s),
             Some(_) => {
-                if let Some(entry) = warm.queue.pop_front() {
+                for _ in 0..warm.per_frame.max(1) {
+                    let Some(entry) = warm.queue.pop_front() else {
+                        break;
+                    };
                     draw(warm, entry, &mut s, &watch);
                 }
             }
@@ -609,22 +718,29 @@ fn spawn_stage(s: &mut WarmSpawner) -> Option<Stage> {
 
 /// One key on the stage: a triangle of its mesh shape with its material,
 /// and its glow mask unless the glow pass leaves the part out, each
-/// watched.
+/// watched. A static shape is a level's or what a figure carries
+/// ([`draw_static`]).
 fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatch) {
-    if let Some(scene) = entry.scene.clone() {
+    let cards = warm.scene.as_ref();
+    let scene = match (&entry.scene, cards) {
+        (Some(own), _) => own.as_ref().clone(),
+        (None, Some((scene, _))) => scene.clone(),
+        (None, None) => {
+            warm.finish(entry.key);
+            return;
+        }
+    };
+    if !entry.key.mesh.skinned {
         return draw_static(warm, entry, &scene, s, watch);
     }
-    let (Some(stage), Some((scene, identity))) = (warm.stage.as_mut(), warm.scene.as_ref()) else {
+    let identity = cards.map_or_else(census_identity, |(_, identity)| identity.clone());
+    let Some(stage) = warm.stage.as_mut() else {
         warm.finish(entry.key);
         return;
     };
-    if !entry.key.mesh.skinned {
-        let scene = scene.clone();
-        return draw_carried(warm, entry, &scene, s, watch);
-    }
-    let model = warm::triangle_model(identity, &entry.material, entry.key.mesh);
+    let model = warm::triangle_model(&identity, &entry.material, entry.key.mesh);
     let texture = stage.texture.clone();
-    let built = CharacterMaterial::from_ir(&model.materials[0], scene, ShadowLookup::NONE, |_| {
+    let built = CharacterMaterial::from_ir(&model.materials[0], &scene, ShadowLookup::NONE, |_| {
         texture.clone()
     })
     .map_err(|e| e.to_string())
@@ -685,11 +801,22 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
     });
 }
 
-/// A key on an unskinned mesh a turntable draws (what a figure carries,
-/// AE.23): one static triangle of its shape with its material, and its
-/// glow mask on the glow layer under it unless the glow pass leaves the
-/// part out, each watched.
-fn draw_carried(
+/// What a census key's triangle model says it came off: no dump, since the
+/// census is the code's (only a label: nothing checks it).
+fn census_identity() -> DumpIdentity {
+    DumpIdentity {
+        title_id: "census".into(),
+        app_ver: String::new(),
+        manifest_hash: guac_ir::Sha256([0; 32]),
+    }
+}
+
+/// A key on an unskinned mesh on the stage: one static triangle of its
+/// shape with its material, watched. A card's (what a figure carries,
+/// AE.23) also gets its glow mask on the glow layer under it unless the
+/// glow pass leaves the part out; a level's gets none, since the level
+/// draws no glow pass.
+fn draw_static(
     warm: &mut Warm,
     entry: Entry,
     scene: &Scene,
@@ -723,7 +850,16 @@ fn draw_carried(
         }
     };
     let mesh = s.meshes.add(mesh);
-    let glow = material.glow_mask().map(|g| s.materials.add(g));
+    let glow = entry
+        .glow
+        .then(|| material.glow_mask())
+        .flatten()
+        .map(|g| s.materials.add(g));
+    let name = if entry.glow {
+        "warm carried key"
+    } else {
+        "warm level key"
+    };
     let triangle = s
         .commands
         .spawn((
@@ -732,7 +868,7 @@ fn draw_carried(
             Transform::IDENTITY,
             NoFrustumCulling,
             RenderLayers::layer(model_layer(WARM_SLOT)),
-            Name::new("warm carried key"),
+            Name::new(name),
         ))
         .id();
     let mut checks = vec![triangle];
@@ -758,62 +894,6 @@ fn draw_carried(
     stage.drawing.push(Drawing {
         key: entry.key,
         checks,
-        since: Instant::now(),
-    });
-}
-
-/// A level's key on the stage: one static triangle of its mesh shape with
-/// its material in the level's scene, watched. No glow mask: the level
-/// draws no glow pass.
-fn draw_static(
-    warm: &mut Warm,
-    entry: Entry,
-    scene: &Scene,
-    s: &mut WarmSpawner,
-    watch: &PipelineWatch,
-) {
-    let Some(stage) = warm.stage.as_mut() else {
-        warm.finish(entry.key);
-        return;
-    };
-    let texture = stage.texture.clone();
-    let built = CharacterMaterial::from_ir(&entry.material, scene, ShadowLookup::NONE, |_| {
-        texture.clone()
-    })
-    .map_err(|e| e.to_string())
-    .and_then(|material| {
-        if material.key != entry.key.material {
-            warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
-        }
-        static_mesh(&entry.key.mesh.triangle(0))
-            .map(|mesh| (material, mesh))
-            .map_err(|e| e.to_string())
-    });
-    let (material, mesh) = match built {
-        Ok(built) => built,
-        Err(why) => {
-            warn!(key = ?entry.key, %why, "the warm couldn't draw a level key");
-            warm.report.failed += 1;
-            warm.finish(entry.key);
-            return;
-        }
-    };
-    let triangle = s
-        .commands
-        .spawn((
-            Mesh3d(s.meshes.add(mesh)),
-            MeshMaterial3d(s.materials.add(material)),
-            Transform::IDENTITY,
-            NoFrustumCulling,
-            RenderLayers::layer(model_layer(WARM_SLOT)),
-            Name::new("warm level key"),
-        ))
-        .id();
-    watch.lock().checks.insert(triangle, Compiled::Waiting);
-    stage.roots.push(triangle);
-    stage.drawing.push(Drawing {
-        key: entry.key,
-        checks: vec![triangle],
         since: Instant::now(),
     });
 }
@@ -1036,5 +1116,59 @@ mod tests {
         settle(&mut app);
         assert_eq!(states(&app)[0], Some("model"));
         assert!(app.world().resource::<Warm>().report().failed >= 1);
+    }
+
+    /// AE.25's guard: once the start's pass has asked for the census, a key
+    /// a level or a turntable asks for that the census doesn't hold is
+    /// counted, once; the census's own aren't; nothing counts before the
+    /// census is asked, and a level asked before it is held to it then. (A
+    /// shelf's list: `prepare`'s pass test.)
+    #[test]
+    fn a_key_outside_the_census_is_counted_once() {
+        use guacamole::census;
+        let scene = Arc::new(Scene {
+            fog: true,
+            ..Scene::new()
+        });
+        let entry = |k: WarmKey| (k, census::material_for(&k));
+        // Every census row has a tangent: the same keys without one aren't
+        // the census's.
+        let without_tangents = |k: &WarmKey| {
+            let mut row = Row::of(k);
+            row.tangents = false;
+            row.key(k.mesh.skinned).unwrap()
+        };
+        let inside = census::level_keys()[0];
+        let level_miss = without_tangents(&inside);
+        let card_miss = without_tangents(&census::turntable_keys()[0]);
+        let all: HashSet<WarmKey> = census::turntable_keys()
+            .into_iter()
+            .chain(census::level_keys())
+            .collect();
+        assert!(!all.contains(&level_miss) && !all.contains(&card_miss));
+
+        let mut warm = Warm::new(true);
+        warm.ask_level(&[entry(level_miss)], scene.clone());
+        assert_eq!(warm.report().outside_census, 0, "no census asked yet");
+        warm.ask_census(
+            all.iter()
+                .map(|k| (*k, census::material_for(k), scene.clone())),
+        );
+        assert_eq!(warm.report().outside_census, 1, "the earlier level's miss");
+        warm.ask_level(&[entry(inside), entry(level_miss)], scene.clone());
+        assert_eq!(
+            warm.report().outside_census,
+            1,
+            "once; the census's own not"
+        );
+        let identity = census_identity();
+        let model =
+            warm::triangle_model(&identity, &census::material_for(&card_miss), card_miss.mesh);
+        warm.ask(&model, &[(card_miss, 0)], &scene);
+        assert_eq!(warm.report().outside_census, 2, "a turntable's miss");
+        let card = census::turntable_keys()[0];
+        let model = warm::triangle_model(&identity, &census::material_for(&card), card.mesh);
+        warm.ask(&model, &[(card, 0)], &scene);
+        assert_eq!(warm.report().outside_census, 2);
     }
 }

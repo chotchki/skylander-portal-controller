@@ -88,6 +88,10 @@ impl SetupView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TvScreen {
+    /// The start's pass compiles the pipelines the TV draws Giants with
+    /// (openspec AE.25): before any other screen but an error's or the
+    /// farewell, and before any extraction.
+    Preparing,
     /// The server hasn't bound yet.
     Starting,
     /// No dumps folder: ask for one.
@@ -112,6 +116,7 @@ impl TvScreen {
     /// The variant's name, for logs and the e2e mirror.
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::Preparing => "Preparing",
             Self::Starting => "Starting",
             Self::Setup => "Setup",
             Self::NoGiants => "NoGiants",
@@ -127,6 +132,17 @@ impl TvScreen {
     /// Screens the keyboard's Escape may close: nothing is being served.
     pub fn escape_quits(&self) -> bool {
         matches!(self, Self::AlreadyRunning | Self::ServerError { .. })
+    }
+}
+
+/// While the start's pass runs (`preparing`), every screen but the
+/// farewell and the errors waits behind it: the setup screens, the join code
+/// and the portal, whose first frame would start an extraction.
+pub fn while_preparing(screen: TvScreen, preparing: bool) -> TvScreen {
+    match screen {
+        TvScreen::Farewell | TvScreen::AlreadyRunning | TvScreen::ServerError { .. } => screen,
+        _ if preparing => TvScreen::Preparing,
+        _ => screen,
     }
 }
 
@@ -379,6 +395,51 @@ mod tests {
         // A cancelled pick with nothing stored still asks for a folder.
         let view = SetupView::at_start(false, true, &[], &DumpScan::default());
         assert_eq!(screen_for(&ready(), &view), TvScreen::Setup);
+    }
+
+    /// AE.25: the start's pass holds every screen a phone or the setup could
+    /// act on, the portal (whose first frame starts an extraction) among
+    /// them, and none once it's done; the errors and the farewell show
+    /// through it.
+    #[test]
+    fn the_starts_pass_holds_every_screen_but_the_errors_and_the_farewell() {
+        let held = [
+            TvScreen::Starting,
+            TvScreen::Setup,
+            TvScreen::NoGiants,
+            TvScreen::Found,
+            TvScreen::Join,
+            TvScreen::Portal {
+                game: "Skylanders: Giants".into(),
+            },
+        ];
+        for screen in held {
+            assert_eq!(
+                while_preparing(screen.clone(), true),
+                TvScreen::Preparing,
+                "{screen:?}"
+            );
+            assert_eq!(while_preparing(screen.clone(), false), screen);
+        }
+        let through = [
+            TvScreen::Farewell,
+            TvScreen::AlreadyRunning,
+            TvScreen::ServerError {
+                message: "bind".into(),
+            },
+        ];
+        for screen in through {
+            assert_eq!(while_preparing(screen.clone(), true), screen);
+        }
+        assert_eq!(TvScreen::Preparing.kind(), "Preparing");
+        assert!(!TvScreen::Preparing.escape_quits());
+        // A pick during the pass: the portal waits behind it.
+        let status = LauncherStatus {
+            current_game: Some("Skylanders: Giants".into()),
+            ..ready()
+        };
+        let screen = screen_for(&status, &set_up());
+        assert_eq!(while_preparing(screen, true), TvScreen::Preparing);
     }
 
     #[test]

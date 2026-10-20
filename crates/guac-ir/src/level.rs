@@ -1,5 +1,5 @@
 //! A level as guacamole plays it (openspec AG.15, design decision 8), in
-//! five parts, each a file of its own under `levels/<archive>/` so a part
+//! six parts, each a file of its own under `levels/<archive>/` so a part
 //! the extract lacks is extracted alone (the manifest names each level's
 //! parts):
 //!
@@ -10,10 +10,13 @@
 //! - [`Collision`]: each world's triangle mesh, in the level's frame;
 //! - [`Placements`]: every actor with its transform, solid, movement,
 //!   waypoints and activity state;
-//! - [`Lights`]: the directional rig and the placed lights.
+//! - [`Lights`]: the directional rig and the placed lights;
+//! - [`Atmosphere`] (AG.41): the atmospheric zones the level's definition
+//!   script adds at its start, the fog and lights of the one it sets up.
 //!
 //! Nothing is converted: positions in metres, angles in degrees, scales in
-//! percent, solids and movement in the disc's units ([`crate::actor`]).
+//! percent, solids and movement in the disc's units ([`crate::actor`]), the
+//! atmosphere's fog distances in the script's feet.
 //! What exists at the start, what's solid and how it's drawn are the
 //! consumers' (AG.7's rule, AG.19, AG.25).
 
@@ -234,6 +237,64 @@ pub struct PlacedLight {
     pub ambient: [u8; 4],
     pub specular: [u8; 4],
     pub multiplier: f32,
+}
+
+/// The atmosphere part: `levels/<archive>/atmosphere.<ron|postcard>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Atmosphere {
+    pub identity: DumpIdentity,
+    pub level: String,
+    /// The definition script the zones are read from (its source path,
+    /// `.../Level_Definition_213.ai`).
+    pub script: String,
+    /// Every zone its STARTUP adds on a PS3, in the order each id was first
+    /// added, each as the last call for its id leaves it.
+    pub zones: Vec<AtmosphericZone>,
+    /// Into `zones`: the zone set up at the start (id 0), if one is added.
+    pub start: Option<u32>,
+}
+
+impl Atmosphere {
+    /// The zone set up at the start; `None` when none is.
+    pub fn start_zone(&self) -> Option<&AtmosphericZone> {
+        self.zones.get(usize::try_from(self.start?).ok()?)
+    }
+}
+
+/// One zone: what "Game - Setup Atmospherics" gives the lights and the
+/// viewport when it's set up. Colours packed as the script has them, low
+/// byte red, the top byte as stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AtmosphericZone {
+    pub id: i32,
+    /// Directional light 1's ambient; the zone sets no other light's.
+    pub ambient: [u8; 4],
+    pub lights: [ZoneLight; 3],
+    pub fog: ZoneFog,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneLight {
+    pub diffuse: [u8; 4],
+    pub specular: [u8; 4],
+    /// Degrees, as a `tfbEulerTransform`'s heading and tilt.
+    pub facing: i32,
+    pub tilt: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneFog {
+    /// The viewport's fog max: 1 on, 0 off.
+    pub on: i32,
+    /// Feet along the view where it starts, and how far past that it runs.
+    pub start: i32,
+    pub range: i32,
+    pub colour: [u8; 4],
+    /// The sky dome's share of the fog, in percent, and its colour.
+    pub sky_dome_percent: i32,
+    pub sky_dome_colour: [u8; 4],
+    /// The colour past the far clip.
+    pub yon_colour: [u8; 4],
 }
 
 impl SceneGraph {
@@ -470,5 +531,43 @@ mod tests {
                 multiplier: 1.5,
             }],
         });
+        // Made-up numbers.
+        let light = |n: u8, facing| ZoneLight {
+            diffuse: [n, n + 1, n + 2, 0],
+            specular: [n + 3, n + 4, n + 5, 0],
+            facing,
+            tilt: -20,
+        };
+        let zone = AtmosphericZone {
+            id: 0,
+            ambient: [10, 20, 30, 0],
+            lights: [light(40, 70), light(50, 280), light(60, 210)],
+            fog: ZoneFog {
+                on: 1,
+                start: 80,
+                range: 900,
+                colour: [100, 90, 80, 0],
+                sky_dome_percent: 0,
+                sky_dome_colour: [128, 128, 128, 0],
+                yon_colour: [100, 90, 80, 0],
+            },
+        };
+        let atmosphere = Atmosphere {
+            identity: identity(),
+            level: "level_213_tutotial".into(),
+            script: "C:/tfb/Content/Levels/Level_900/Scripts/Level_Definition_900.ai".into(),
+            zones: vec![zone, AtmosphericZone { id: 4, ..zone }],
+            start: Some(0),
+        };
+        both(&atmosphere);
+        assert_eq!(atmosphere.start_zone(), Some(&zone));
+        assert_eq!(
+            Atmosphere {
+                start: None,
+                ..atmosphere
+            }
+            .start_zone(),
+            None
+        );
     }
 }

@@ -453,6 +453,9 @@ pub struct StageSpec {
     pub skinned: Option<(&'static str, crate::model::builder::CharacterSpec)>,
     /// A prop whose technique sits under an animated transform.
     pub transformed: Option<(&'static str, crate::model::builder::MaterialSpec)>,
+    /// The PS3's zones its definition script adds (AG.41); `None` writes no
+    /// definition script.
+    pub atmosphere: Option<Vec<crate::atmosphere::builder::ZoneCall>>,
 }
 
 /// The collision world's name in [`stage_sample`].
@@ -568,6 +571,10 @@ pub fn stage_sample() -> StageSpec {
             "C:/tfb/Content/Models/Objects/fairy_upgrade_gem.mdl",
             colour_only("m_butterfly_wings", 7),
         )),
+        atmosphere: Some(vec![
+            crate::atmosphere::builder::ZoneCall::sample(0, 1),
+            crate::atmosphere::builder::ZoneCall::sample(1, 2),
+        ]),
     }
 }
 
@@ -780,6 +787,10 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
             0x24,
             &[1.0, 0.0, 0.0, 0.0, -45.0 + 90.0 * k as f32, 30.0, 0.0],
         );
+    }
+    if let Some(zones) = &spec.atmosphere {
+        let shape = crate::atmosphere::builder::Shape::default();
+        crate::atmosphere::builder::definition(&mut b, &[], zones, &[], &shape);
     }
     b.build()
 }

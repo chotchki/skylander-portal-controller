@@ -69,6 +69,17 @@ On the M3 Max, placing a figure and its model appearing SHALL NOT make any TV fr
 - **WHEN** guacamole has just started and a phone places the first figure since
 - **THEN** no TV frame takes longer than 50 ms, and the figure's model is on its card when the intro ends
 
+### Requirement: A start gets the graphics ready first
+Before the TV shows a screen the setup or a phone acts on, and before any extraction, guacamole SHALL get ready every pipeline it draws the disc's characters, a card and chapter 1 with, under a screen saying so. On a Mac that has drawn them before, that screen SHALL show no longer than the Mac takes to find them, under a second on the M3 Max. Nothing after it SHALL get one of them ready in a TV frame.
+
+#### Scenario: A Mac's first start
+- **WHEN** guacamole starts on a Mac that has never drawn Giants
+- **THEN** the TV says it's getting ready until it is, then shows the join code, and the first pick, its extraction, a placement and chapter 1 loading make no TV frame wait on a pipeline
+
+#### Scenario: A later start
+- **WHEN** guacamole starts again on the same Mac
+- **THEN** the getting-ready screen is up for under a second before the join code
+
 ### Requirement: Eight turning figures fit
 With all eight slots holding figures that have models, the TV SHALL show eight cards, each with its model turning, none hidden, cut off or overlapping.
 

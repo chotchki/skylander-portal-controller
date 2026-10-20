@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod atmosphere;
 pub mod attachments;
 pub mod collision;
 pub mod edge;

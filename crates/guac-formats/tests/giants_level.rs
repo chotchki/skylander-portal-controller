@@ -6,7 +6,9 @@
 //! lists, `213_Init_Location`'s first waypoint, and its collision (AG.2's
 //! reader) checked against its render triangles: 823 of its 2,168 vertices
 //! (ag-levels' 38.0 %) within 0.01 with the body's translation, none
-//! without.
+//! without. Its atmosphere (AG.41): zone 0 of `Level_Definition_213.ai`
+//! as a PS3 adds it, read statically, is the fog and the rig AG.13 read off
+//! the live viewport and the capture at AF's fresh state.
 //! Ignored by default; it reads `GUAC_GIANTS_DUMP` like `giants_igz`:
 //!
 //! `cargo test -p guac-formats --release --test giants_level -- --ignored --nocapture --test-threads 1`
@@ -672,4 +674,81 @@ fn level_213s_collision_lies_on_its_render_mesh_once_translated() {
     assert_eq!(within(&translated, 0.1), 1_247);
     assert_eq!(within(&translated, 2.0), 1_986);
     assert_eq!(within(&local, 0.01), 0);
+}
+
+/// AG.41: the zone the definition sets up at the start, as a PS3 runs it,
+/// is what AG.13 read off the running game at AF's fresh state: the
+/// viewport's fog effect (colour (115, 83, 49), near 100 and far 1,000 ft
+/// as start and range, sky dome 0 %, the yon colour the fog's) and the
+/// capture's lights (the ambient on light 1 alone; each light's colours, its
+/// direction turned back out of eye space to these facings and tilts).
+#[test]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]
+fn level_213s_start_zone_is_the_live_fog_and_rig() {
+    use guac_formats::atmosphere::{Atmosphere, Fog, Light};
+    let path = usrdir().join(LEVEL_213);
+    let data = level_bld(&std::fs::read(&path).unwrap()).unwrap();
+    let igz = Igz::parse(&data).unwrap();
+    let started = Instant::now();
+    let a = Atmosphere::read(&igz).unwrap();
+    println!(
+        "{}: zones {:?} in {:?}",
+        a.script,
+        a.zones
+            .iter()
+            .map(|z| (z.id, z.position))
+            .collect::<Vec<_>>(),
+        started.elapsed()
+    );
+    assert!(
+        a.script.ends_with("/Level_Definition_213.ai"),
+        "{}",
+        a.script
+    );
+    // The PS3's 0 and 6 (the Wii's pair skipped), then the five after.
+    assert_eq!(
+        a.zones.iter().map(|z| z.id).collect::<Vec<_>>(),
+        [0, 6, 1, 3, 4, 5, 2]
+    );
+    let z = a.start_zone().expect("zone 0");
+    let rgb = |c: [u8; 4]| [c[0], c[1], c[2]];
+    assert_eq!(rgb(z.ambient), [39, 42, 67]);
+    let light = |l: &Light| (rgb(l.diffuse), rgb(l.specular), l.facing, l.tilt);
+    assert_eq!(
+        z.lights.each_ref().map(light),
+        [
+            ([172, 134, 18], [172, 134, 18], 73, -30),
+            ([56, 50, 71], [75, 85, 107], 279, 30),
+            ([79, 75, 35], [138, 129, 60], 215, -45),
+        ]
+    );
+    let Fog {
+        on,
+        start,
+        range,
+        colour,
+        sky_dome_percent,
+        sky_dome_colour,
+        yon_colour,
+    } = z.fog;
+    assert_eq!((on, start, range), (1, 100, 1000));
+    assert_eq!(rgb(colour), [115, 83, 49]);
+    assert_eq!(
+        (sky_dome_percent, rgb(sky_dome_colour)),
+        (0, [128, 128, 128])
+    );
+    assert_eq!(yon_colour, colour);
+    // The level file's own rig, which the zone replaces but for lights 2
+    // and 3's ambients, which it leaves: black, as the capture's are.
+    let rig = directional_lights(&igz).unwrap();
+    for (_, l) in &rig {
+        println!(
+            "{:?}: diffuse {:?} ambient {:?} specular {:?} x{} at {:?}",
+            l.name, l.diffuse, l.ambient, l.specular, l.multiplier, l.init_matrix.rotation
+        );
+    }
+    for name in ["_worldLight2", "_worldLight3"] {
+        let (_, l) = rig.iter().find(|(_, l)| l.name == Some(name)).unwrap();
+        assert_eq!(rgb(l.ambient), [0, 0, 0], "{name}");
+    }
 }

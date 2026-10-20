@@ -48,7 +48,7 @@ The level's surfaces SHALL be drawn with the original's shading model in the rem
 
 #### Scenario: The start's fog and lights
 - **WHEN** the level shows at the start
-- **THEN** its surfaces fade linearly toward (115, 83, 49) from 30.48 m (100 ft) to 335.28 m (1,100 ft) of depth along the view, wholly past it, under a key light of (172, 134, 18) heading 73° and 30° down, fills of (56, 50, 71) heading 279° and 30° up and (79, 75, 35) heading 215° and 45° down, and an ambient of (39, 42, 67)
+- **THEN** its surfaces fade linearly toward (115, 83, 49) from 30.48 m (100 ft) to 335.28 m (1,100 ft) of depth along the view, wholly past it, the sky not at all, under a key light of (172, 134, 18) heading 73° and 30° down, fills of (56, 50, 71) heading 279° and 30° up and (79, 75, 35) heading 215° and 45° down, and an ambient of (39, 42, 67)
 
 ### Requirement: The level loads behind the intro
 Guacamole SHALL start loading the level when Giants is picked with its extract ready, with no TV frame over 50 ms on the M3 Max while it loads. When the hero's intro ends, or when he's placed if none plays, the level SHALL show within 1 second once it has loaded, and the portal view SHALL hold until it has.
@@ -63,6 +63,10 @@ On the M3 Max, once the level shows, no TV frame SHALL take longer than 50 ms, i
 #### Scenario: New scenery comes into view
 - **WHEN** the hero walks to where scenery he hasn't seen yet comes into view
 - **THEN** no frame takes longer than 50 ms
+
+#### Scenario: The first time a Mac draws the level
+- **WHEN** chapter 1 loads and first shows on a Mac that has never drawn it, after the start got the graphics ready
+- **THEN** no frame of the load or the first show waits on a pipeline, and none takes longer than 50 ms
 
 ### Requirement: The first character placed walks into the level
 With Giants picked and its level extracted, placing a character on the portal SHALL take the TV into the level with that character as the hero, after its intro when one plays. A figure that isn't a character (a magic item, an adventure-pack piece or a sidekick) SHALL NOT start the level or become the hero.

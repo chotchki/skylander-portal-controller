@@ -1,6 +1,6 @@
 //! The levels guacamole plays off the dump (openspec AG.15, design decision
 //! 8): chapter 1, `level/level_213_tutotial.bld`, into IR v3's level
-//! records ([`guac_ir::level`]) in five parts, each a file of its own under
+//! records ([`guac_ir::level`]) in six parts, each a file of its own under
 //! `levels/<archive>/`, the textures into the characters' store. Writing
 //! them is the level stage's ([`crate::stages`]).
 //!
@@ -14,6 +14,9 @@
 //!   it), a static one through its body's graph. One that doesn't read is
 //!   listed in the part, not fatal to it.
 //! - The collision (AG.2's reader), the placements and the lights (AG.3's).
+//! - The atmosphere (AG.41): the zones the level's definition script adds
+//!   at its start on a PS3, read statically ([`guac_formats::atmosphere`]).
+//!   An extract written before it gains this part alone on its next start.
 //!
 //! A part that doesn't read is the level stage's failure for that part
 //! alone: the other parts land, and the next start tries it again.
@@ -34,8 +37,9 @@ use guac_formats::level::{GroupKind, IDENTITY, Placements as FormatPlacements, S
 use guac_formats::material::{self, Drawn, TFBMULTI2};
 use guac_formats::model::{self as fmodel, IDLE_SLOT, JointMap};
 use guac_ir::level::{
-    Collision, CollisionMesh, EffectMaterial, LevelMaterial, Lights, PlacedLight, Placement,
-    Placements, Prop, Props, RefusedProp, Scene, SceneGraph, SkyGroup, UnitTexture, Waypoint,
+    Atmosphere, AtmosphericZone, Collision, CollisionMesh, EffectMaterial, LevelMaterial, Lights,
+    PlacedLight, Placement, Placements, Prop, Props, RefusedProp, Scene, SceneGraph, SkyGroup,
+    UnitTexture, Waypoint, ZoneFog, ZoneLight,
 };
 use guac_ir::model::{Mask, Segment};
 use guac_ir::{DumpIdentity, RigLight};
@@ -58,7 +62,8 @@ pub const PROPS: &str = "props";
 pub const COLLISION: &str = "collision";
 pub const PLACEMENTS: &str = "placements";
 pub const LIGHTS: &str = "lights";
-pub const PARTS: [&str; 5] = [SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS];
+pub const ATMOSPHERE: &str = "atmosphere";
+pub const PARTS: [&str; 6] = [SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE];
 
 /// `level/<archive>.bld` under the dump's `PS3_GAME/USRDIR`.
 pub fn archive_path(usrdir: &Path, level: &str) -> PathBuf {
@@ -531,6 +536,48 @@ pub fn lights(igz: &Igz<'_>, level: &str, identity: DumpIdentity) -> Result<Read
             level: level.to_owned(),
             directional,
             placed,
+        },
+        textures: Vec::new(),
+    })
+}
+
+/// The atmosphere part: the zones the level's definition adds at its start.
+pub fn atmosphere(
+    igz: &Igz<'_>,
+    level: &str,
+    identity: DumpIdentity,
+) -> Result<Read<Atmosphere>, String> {
+    let a = guac_formats::atmosphere::Atmosphere::read(igz).map_err(s)?;
+    let zones = a
+        .zones
+        .iter()
+        .map(|z| AtmosphericZone {
+            id: z.id,
+            ambient: z.ambient,
+            lights: z.lights.map(|l| ZoneLight {
+                diffuse: l.diffuse,
+                specular: l.specular,
+                facing: l.facing,
+                tilt: l.tilt,
+            }),
+            fog: ZoneFog {
+                on: z.fog.on,
+                start: z.fog.start,
+                range: z.fog.range,
+                colour: z.fog.colour,
+                sky_dome_percent: z.fog.sky_dome_percent,
+                sky_dome_colour: z.fog.sky_dome_colour,
+                yon_colour: z.fog.yon_colour,
+            },
+        })
+        .collect();
+    Ok(Read {
+        ir: Atmosphere {
+            identity,
+            level: level.to_owned(),
+            script: a.script.to_owned(),
+            zones,
+            start: a.start.map(|i| i as u32),
         },
         textures: Vec::new(),
     })

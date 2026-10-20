@@ -49,7 +49,10 @@ use serde::{Deserialize, Serialize};
 /// extract either branch's v3 wrote redoes itself. AH.2's progression is a
 /// new record in a file of its own, so v4 holds. v5 (AE.23) gives a model
 /// what a fresh figure carries ([`model::Attachment`]), which a v4 model
-/// file can't say, so a v4 extract redoes itself.
+/// file can't say, so a v4 extract redoes itself. AG.41's level atmosphere
+/// ([`level::Atmosphere`]), written beside v4 on a parallel branch, is a
+/// new part in a file of its own, so v5 holds: an extract without the part
+/// adds it alone.
 pub const IR_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]

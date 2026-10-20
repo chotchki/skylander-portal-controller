@@ -21,6 +21,7 @@ mod mirror;
 mod motion;
 mod physics;
 mod picker;
+mod prepare;
 mod progress;
 mod screen;
 #[cfg(feature = "dev-tools")]
