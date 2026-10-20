@@ -16,8 +16,10 @@
 //! ([`script`], AH.4) and the fight's state on them: the hero's health, his
 //! figure's experience and gold, the enemy stats, the difficulty, the
 //! multiplier, the element area, the loot counts and the triggers
-//! ([`fight`], AH.4), and O6's chains over the actors, orbs and loot a fight
-//! spawns ([`chains`], AH.5).
+//! ([`fight`], AH.4), O6's chains over the actors, orbs and loot a fight
+//! spawns ([`chains`], AH.5), and the route driver that walks the oracle to a
+//! point and leaves it still there, closed loop, for a state to be saved
+//! ([`route`], AH.7).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -45,6 +47,7 @@ pub mod outputs;
 pub mod pad;
 pub mod pine;
 pub mod rng;
+pub mod route;
 pub mod rpcs3_log;
 pub mod scan;
 pub mod script;

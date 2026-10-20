@@ -28,6 +28,8 @@ guac-ir = { path = "../../crates/guac-ir" }
 guac-oracle = { path = "../../crates/guac-oracle" }
 # A SCREENSHOT's PNG, decoded to check it's a whole frame and to hash its pixels.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# A route (AH.7) and the driver's knobs, read as RON like an input script.
+ron = "0.12"
 # The work-tree refusal every harness output goes through.
 rrc-dump = { path = "../rrc-dump" }
 # RpcsProcess (the launch and its lifecycle), the P1 codec and IpcPortalDriver.
