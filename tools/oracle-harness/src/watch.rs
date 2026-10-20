@@ -117,8 +117,9 @@ use crate::mover::MoverWatch;
 use crate::outputs::hex;
 use crate::verbs::{
     Chain, ChainBlock, ChainReply, ChainSpec, PadRead, Refusal, Reply, ReplyError, Verb,
-    WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES, WATCH_REPLY_BYTES, Watch, WatchRange,
-    WatchRecord, WatchReply, WatchSummary, split_payload,
+    WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES, WATCH_REPLY_BYTES,
+    WATCH_REPLY_BYTES_BEFORE_O6, Watch, WatchRange, WatchRecord, WatchReply, WatchSummary,
+    split_payload,
 };
 
 /// A named span of guest memory.
@@ -418,17 +419,30 @@ impl Control {
             bail!("WATCH_READ answered without its summary");
         };
         let stride = (WATCH_HEADER + summary.bytes as usize) as u64;
-        let per = (WATCH_REPLY_BYTES / stride).max(1);
-        let pages: Vec<Watch> = (0..summary.held)
-            .step_by(per as usize)
-            .map(|first| Watch::Read {
-                first,
-                count: per.min(summary.held - first),
-            })
-            .collect();
+        let pages = |reply: u64| -> Vec<Watch> {
+            let per = (reply / stride).max(1);
+            (0..summary.held)
+                .step_by(per as usize)
+                .map(|first| Watch::Read {
+                    first,
+                    count: per.min(summary.held - first),
+                })
+                .collect()
+        };
         let mut records = Vec::with_capacity(summary.held as usize);
-        if !pages.is_empty() {
-            for (page, reply) in pages.iter().zip(self.verbs().send_watch_all(&pages)?) {
+        // O6's 256 KiB pages; a build before O6 takes 32 KiB and refuses a
+        // bigger page outright, so the read starts again at its size.
+        let mut pages_at = pages(WATCH_REPLY_BYTES);
+        if let Some(first) = pages_at.first()
+            && matches!(
+                self.verbs().send_watch(first),
+                Err(e) if is_refusal(&e, Refusal::BadCount)
+            )
+        {
+            pages_at = pages(WATCH_REPLY_BYTES_BEFORE_O6);
+        }
+        if !pages_at.is_empty() {
+            for (page, reply) in pages_at.iter().zip(self.verbs().send_watch_all(&pages_at)?) {
                 match reply
                     .with_context(|| format!("reading the ring: {}", page.encode().trim_end()))?
                 {
@@ -1893,6 +1907,21 @@ mod tests {
         }
         assert!(watch.list.ranges().len() <= WATCH_MAX_RANGES);
         assert!(watch.list.bytes() < 1_000, "{}", watch.list.bytes());
+        // The generator's _mti and first word, in every record (AH.5).
+        let r = sample(&mut g.w, &watch.list, 7);
+        assert_eq!(
+            watch.mt_words(&r),
+            Some(MtWords {
+                mti: 397,
+                word0: 0x1234_5678
+            })
+        );
+        // No generator at its static: the resolve names it.
+        let mt = g.w.get32(crate::rng::MT_GLOBAL);
+        g.w.put32(crate::rng::MT_GLOBAL, 0);
+        let err = GiantsWatch::resolve(&mut g.w).unwrap_err();
+        assert!(format!("{err:#}").contains("the generator"), "{err:#}");
+        g.w.put32(crate::rng::MT_GLOBAL, mt);
         // A pointer that isn't its class's stops the resolve.
         let params = g.w.get32(g.hero.placement + 0xE0);
         g.w.put32(params, vtable::ANIMATION_INFO);

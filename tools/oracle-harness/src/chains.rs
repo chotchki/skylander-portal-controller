@@ -37,12 +37,17 @@
 //!   (the placed treasure among them), each a structure whose `lootActor`
 //!   is the coin's placement and `monetaryValue` its worth.
 //!
-//! The breakables in reach, the Chompies, Norticus, the hero and Eruptor's
-//! projectiles ride [`ACTORS`] by name ([`fight_kinds`]); the hero's health,
-//! experience and gold come from O5's fight cells ([`crate::fight`]), so his
-//! item carries them every record. [`evaluate`] is O6's walk over guest
-//! memory read at a pause, the reference a recording's last block is checked
-//! against.
+//! The breakables in reach and their debris, the Chompies, Norticus, the hero
+//! and Eruptor's projectiles ride [`ACTORS`] by name ([`fight_kinds`]): a
+//! placed actor from F0 while it's listed, a clone from its spawn to its last
+//! listing (AH.5's walks kept every body readable to the last; a coin's
+//! corpus can go a record before its loot entry, its transform then its
+//! body). Giants' actors carry no id or spawn count, so a clone's serial
+//! counts its slot being taken again; an orb's is the game's own `my ID`. The
+//! hero's health, experience and gold come from O5's fight cells
+//! ([`crate::fight`]), so his item carries them every record. [`evaluate`] is
+//! O6's walk over guest memory read at a pause, the reference a recording's
+//! last block is checked against.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -69,9 +74,10 @@ pub const ORBS: u8 = 1;
 pub const LOOT: u8 = 2;
 
 /// Items each chain keeps a record. AF.9's list held 162-182 actors in the
-/// clearing; the fight keeps the hero, 4 Chompies, Norticus' 2 placements,
-/// the 13 breakables in reach and Eruptor's projectiles (a lob every 0.25 s
-/// living 2 s is 8 at once), well under 48. A Chompy's 4 experience splits
+/// clearing (AH.5's walks 166-199); the fight keeps the hero, 4 Chompies,
+/// Norticus' 2 placements, the 13 breakables in reach, Eruptor's projectiles
+/// (a lob every 0.25 s living 2 s is 8 at once) and a break's debris, under
+/// 48. A Chompy's 4 experience splits
 /// into 4 or 5 orbs (AH.4's 1.1), 16-20 for the fight against 64; the
 /// clearing's loot is 3 placed treasures and a coin or two a break.
 pub const ACTOR_ITEMS: u32 = 48;
@@ -121,6 +127,21 @@ pub const ERUPTOR_SPAWNS: [&str; 6] = [
     "009_MiniVolcano",
 ];
 
+/// The debris templates in level 213 for the breakables in reach (its
+/// placements named so beside `barrel_b_intact`, `pottery_*` and `gourd_*`).
+/// AH.9 says which ones a break spawns, and what the stone wall leaves.
+pub const DEBRIS: [&str; 9] = [
+    "barrel_b_debris_01",
+    "barrel_b_debris_02",
+    "barrel_b_debris_03",
+    "pottery_debris_(1)",
+    "pottery_debris_(2)",
+    "pottery_debris_(3)",
+    "gourd_debris_(1)",
+    "gourd_debris_(2)",
+    "gourd_debris_(3)",
+];
+
 /// The kinds [`ACTORS`] keeps for the fight, by placement name, beside the
 /// hero.
 pub fn fight_kinds() -> Vec<(String, Vec<String>)> {
@@ -130,6 +151,7 @@ pub fn fight_kinds() -> Vec<(String, Vec<String>)> {
         ("norticus".into(), owned(&NORTICUS)),
         ("breakable".into(), owned(&BREAKABLES)),
         ("projectile".into(), owned(&ERUPTOR_SPAWNS)),
+        ("debris".into(), owned(&DEBRIS)),
     ]
 }
 
@@ -1327,7 +1349,7 @@ mod tests {
         assert_eq!(g.updater_index, 1);
         assert_eq!(g.actors[0], (HERO.to_owned(), "009_Eruptor".to_owned()));
         assert_eq!(g.kind(1), Some("chompy"));
-        assert_eq!(g.actors.len(), 1 + 4 + 2 + 13 + 6 + 1);
+        assert_eq!(g.actors.len(), 1 + 4 + 2 + 13 + 6 + 9 + 1);
         assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
         let actors = evaluate(&g.chains.slots[&ACTORS], &mut f.w).unwrap();
         // The hero, the Chompy, the barrel and the leaf; the rock and the two

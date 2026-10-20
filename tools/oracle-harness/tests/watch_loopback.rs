@@ -153,6 +153,8 @@ struct Emu {
     /// Called right after a game frame's first read of port 0.
     between_reads: Option<fn(&mut Emu)>,
     watch: Ring,
+    /// Record bytes a `WATCH_READ` reply carries: O6's, or an O5 build's 32 KiB.
+    reply: u64,
     /// Each read's port and flip, in order, so a test can see every read happened.
     reads: Vec<(u8, u64)>,
 }
@@ -179,6 +181,7 @@ impl Emu {
             memory,
             between_reads: None,
             watch: Ring::default(),
+            reply: REPLY,
             reads: Vec::new(),
         }
     }
@@ -618,7 +621,7 @@ impl Emu {
         if first >= held || count > held - first {
             return Err("bad_index");
         }
-        if count > REPLY / stride {
+        if count > self.reply / stride {
             return Err("bad_count");
         }
         let oldest = w.total - held;
@@ -1146,6 +1149,24 @@ fn a_ring_bigger_than_a_reply_comes_back_whole_in_order() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_build_before_o6_has_its_ring_read_in_its_own_pages() {
+    let fake = spawn();
+    // O5b's 32 KiB a reply: 8 records of 4,064 bytes, so 100 take 13 pages
+    // once the first 256 KiB page is refused.
+    fake.set(|e| e.reply = 32_768);
+    let at = fake.pause(5);
+    let big = WatchList::new(vec![Field::new("page", 0x3000_0000, 4_064)]).unwrap();
+    fake.control.watch_arm(&big, 0, 128).unwrap();
+    fake.control.pause_at(at + 100, WAIT).unwrap();
+    let ring = fake.control.watch_read().unwrap();
+    assert_eq!(ring.records.len(), 100);
+    assert!(ring.records.windows(2).all(|w| w[1].flip == w[0].flip + 1));
+    let over = Watch::Read { first: 0, count: 9 };
+    let err = fake.verbs().send_watch(&over).unwrap_err();
+    assert_eq!(refusal(err), Refusal::BadCount);
 }
 
 #[test]

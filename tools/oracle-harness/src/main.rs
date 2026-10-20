@@ -87,8 +87,9 @@ usage:
       <list.json> (outside every work tree), and O5 armed with a ring of <n> (1024)
       records of it, one at every read of pad 0 (once a game frame in Giants), the
       first the next flip's. --chains (AH.5) resolves Giants' O6 chains too (the
-      actor list keeping the hero, the Chompies, Norticus, the breakables in reach
-      and Eruptor's projectiles; the orbs; the loot), writes them to <chains.json>
+      actor list keeping the hero, the Chompies, Norticus, the breakables in reach,
+      their debris and Eruptor's projectiles; the orbs; the loot), writes them to
+      <chains.json>
       and arms them before the watch, so each record carries their blocks
   oracle watch read --socket <p1> --list <list.json> --out <dir>
               [--chains <chains.json> --pine <socket>]

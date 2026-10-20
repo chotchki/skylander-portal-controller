@@ -424,6 +424,9 @@ pub const WATCH_HEADER: usize = 32;
 /// Record bytes (headers included) one `WATCH_READ` reply carries at most
 /// (32 KiB before O6).
 pub const WATCH_REPLY_BYTES: u64 = 262_144;
+/// What an O5 build before O6 carries a reply: [`crate::control::Control::watch_read`]
+/// falls back to it when the first page is refused `bad_count`.
+pub const WATCH_REPLY_BYTES_BEFORE_O6: u64 = 32_768;
 
 /// A guest range a watch copies at each read of its port.
 #[derive(
