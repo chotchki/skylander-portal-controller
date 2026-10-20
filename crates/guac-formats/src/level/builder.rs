@@ -573,7 +573,7 @@ pub fn stage_sample() -> StageSpec {
 
 /// A `tfbPhysicsModel` named `path` whose body's `_node` is `node`, no
 /// skeleton or clips: a static prop.
-fn static_model(b: &mut IgzBuilder, path: &str, node: Location) -> Location {
+pub(crate) fn static_model(b: &mut IgzBuilder, path: &str, node: Location) -> Location {
     let model = b.object(0, "tfbPhysicsModel", 0x30);
     let body = b.object(0, "tfbPhysicsBody", 0x40);
     crate::model::builder::info(b, model, path);

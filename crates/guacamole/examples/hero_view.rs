@@ -380,7 +380,7 @@ fn decode(root: &Path, load_file: &str) -> Result<Decoded> {
         app_ver: String::new(),
         manifest_hash: Sha256([0; 32]),
     };
-    let extracted = models::read(&level, load_file, identity)?;
+    let extracted = models::read(&level, load_file, identity, None)?;
     let model = extracted.model;
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
     let vertices: usize = model.segments.iter().map(|s| s.positions.len()).sum();

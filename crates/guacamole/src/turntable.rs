@@ -49,6 +49,7 @@ use guac_ir::model::{Sampler, Scroll};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_ir::{Category, DumpIdentity, Model, Rig, Roster};
+use guacamole::character::attach::{self, SpawnedAttachments};
 use guacamole::character::turntable::{Framing, SAMPLES, Sweep, TURN_SECONDS, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
@@ -199,6 +200,20 @@ impl Turntables {
         }
     }
 
+    /// A stage's body joints and what it carries: each attachment's root
+    /// and the entities of its drawn parts.
+    #[cfg(test)]
+    pub(crate) fn carried(&self, slot: u8) -> Option<(Vec<Entity>, Vec<Entity>, Vec<Entity>)> {
+        match &self.slots[usize::from(slot)].as_ref()?.state {
+            State::Model(s) => Some((
+                s.joints.clone(),
+                s.attachments.roots.clone(),
+                s.attachments.parts.iter().map(|p| p.entity).collect(),
+            )),
+            _ => None,
+        }
+    }
+
     /// Why `slot`'s card keeps its portrait, when it does for good.
     pub(crate) fn portrait_reason(&self, slot: u8) -> Option<&str> {
         match &self.slots[usize::from(slot)].as_ref()?.state {
@@ -240,6 +255,9 @@ struct Stage {
     image: Handle<Image>,
     size: UVec2,
     model: Arc<Model>,
+    /// What it carries (AE.23): a skinned attachment's joints follow its
+    /// own idle.
+    attachments: SpawnedAttachments,
     framing: Framing,
     backdrop: Color,
     /// When it came up, for its turn, idle and scrolls.
@@ -420,7 +438,8 @@ fn load_model(
     let rel = shelf.ir.model_path(load);
     let model = read_model(shelf, load)?;
     let mut images: Vec<((String, bool, Sampler), Image)> = Vec::new();
-    for slot in model.materials.iter().flat_map(|m| &m.textures) {
+    let drawn = attach::drawn(&model);
+    for slot in drawn.materials.iter().flat_map(|m| &m.textures) {
         let key = (
             slot.texture.clone(),
             remaster::is_srgb(slot.role),
@@ -604,10 +623,12 @@ fn spawn_stage(
             .map(|(_, h)| h.clone())
             .unwrap_or_default()
     };
-    let mut colour = Vec::with_capacity(model.materials.len());
-    let mut glow = Vec::with_capacity(model.materials.len());
+    // The body's materials, then what it carries (AE.23).
+    let drawn = attach::drawn(&model);
+    let mut colour = Vec::with_capacity(drawn.materials.len());
+    let mut glow = Vec::with_capacity(drawn.materials.len());
     let mut scrolling = Vec::new();
-    for m in &model.materials {
+    for m in &drawn.materials {
         let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
         let mask = material.glow_mask().map(|g| s.materials.add(g));
@@ -637,6 +658,24 @@ fn spawn_stage(
             .insert(RenderLayers::layer(model_layer(slot)));
     }
     spawn_glow_masks(&mut s.commands, &model, &spawned, &glow, glow_layer(slot));
+    let attachments = attach::spawn_attachments(
+        &mut s.commands,
+        &model,
+        &drawn,
+        spawned.root,
+        &spawned.joints,
+        0.0,
+        &mut s.meshes,
+        &mut s.bindposes,
+        &colour,
+    )
+    .map_err(|e| e.to_string())?;
+    for part in &attachments.parts {
+        s.commands
+            .entity(part.entity)
+            .insert(RenderLayers::layer(model_layer(slot)));
+    }
+    attach::spawn_glow_masks(&mut s.commands, &attachments, &glow, glow_layer(slot));
     let backdrop = match &s.theme {
         Some(theme) => theme.element(p.element).unwrap_or(theme.plate)[1],
         None => Color::BLACK,
@@ -657,6 +696,7 @@ fn spawn_stage(
         image,
         size,
         model,
+        attachments,
         framing,
         backdrop,
         since: s.time.elapsed(),
@@ -788,7 +828,14 @@ fn turn(
             }
         }
         let pose = guacamole::character::mesh::pose(&stage.model, seconds);
-        for (joint, p) in stage.joints.iter().zip(pose) {
+        let carried = stage
+            .model
+            .attachments
+            .iter()
+            .zip(&stage.attachments.joints)
+            .filter(|(_, joints)| !joints.is_empty())
+            .flat_map(|(a, joints)| joints.iter().zip(attach::attachment_pose(a, seconds)));
+        for (joint, p) in stage.joints.iter().zip(pose).chain(carried) {
             if let Ok(mut tr) = transforms.get_mut(*joint)
                 && *tr != p
             {
@@ -900,6 +947,7 @@ pub(crate) mod tests {
             scrolls: Vec::new(),
             tracks: Vec::new(),
         };
+        let carried_material = material.clone();
         let top = Track {
             joint: 1,
             translation: VecTrack {
@@ -962,6 +1010,49 @@ pub(crate) mod tests {
         } else {
             (vec![material], vec![quad(0, false)])
         };
+        // Two's top carries a made-up knife a quarter out and turned, and
+        // the knife a jewel on its root (AE.23).
+        let attachments = if load == "002_two" {
+            let mut flat = quad(0, false);
+            flat.joints.clear();
+            flat.weights.clear();
+            let prop = |path: &str| guac_ir::level::Prop {
+                path: path.into(),
+                skeleton: None,
+                materials: vec![guac_ir::level::LevelMaterial::Multi2(
+                    carried_material.clone(),
+                )],
+                segments: vec![flat.clone()],
+                idle: None,
+            };
+            vec![
+                model::Attachment {
+                    placement: "002_Knife".into(),
+                    parent: None,
+                    bone: Some("top".into()),
+                    joint: Some(1),
+                    offset: model::Transform {
+                        translation: [0.25, 0.0, 0.0],
+                        rotation: Quat::from_rotation_y(0.5).to_array(),
+                        scale: [1.0; 3],
+                    },
+                    model: prop("Knife.mdl"),
+                },
+                model::Attachment {
+                    placement: "002_Jewel".into(),
+                    parent: Some(0),
+                    bone: Some("*root*".into()),
+                    joint: None,
+                    offset: model::Transform {
+                        translation: [0.0, 0.0, 0.5],
+                        ..model::Transform::IDENTITY
+                    },
+                    model: prop("Jewel.mdl"),
+                },
+            ]
+        } else {
+            Vec::new()
+        };
         Model {
             identity: identity(),
             load_file: load.into(),
@@ -978,6 +1069,8 @@ pub(crate) mod tests {
                 frames: 31,
                 tracks: vec![top],
             },
+            attachments,
+            attachments_unsettled: None,
         }
     }
 
@@ -1286,6 +1379,220 @@ pub(crate) mod tests {
         tx.send(Arc::new(shelf)).unwrap();
         settle(&mut app);
         assert_eq!(states(&app)[0], Some("model"));
+    }
+
+    #[test]
+    fn what_a_figure_carries_hangs_on_its_bone_through_the_idle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app(extract(tmp.path()));
+        set(&mut app, [placed(2, 2, "Two")]);
+        settle(&mut app);
+        assert_eq!(states(&app)[2], Some("model"));
+        let (joints, roots, parts) = app.world().resource::<Turntables>().carried(2).unwrap();
+        assert_eq!((roots.len(), parts.len()), (2, 2));
+        // Each part on the slot's layer, the knife under the top joint and
+        // the jewel under the knife.
+        let world = app.world();
+        for p in &parts {
+            assert_eq!(
+                world.get::<RenderLayers>(*p),
+                Some(&RenderLayers::layer(model_layer(2)))
+            );
+        }
+        assert_eq!(world.get::<ChildOf>(roots[0]).unwrap().parent(), joints[1]);
+        assert_eq!(world.get::<ChildOf>(roots[1]).unwrap().parent(), roots[0]);
+        // As the top joint slides through the idle, the knife holds its
+        // offset from it.
+        let m = model("002_two");
+        let knife =
+            guacamole::character::mesh::joint_transform(&m.attachments[0].offset).to_matrix();
+        let at = |app: &App| {
+            let w = app.world();
+            let joint = w.get::<GlobalTransform>(joints[1]).unwrap().to_matrix();
+            let root = w.get::<GlobalTransform>(roots[0]).unwrap().to_matrix();
+            (joint, root)
+        };
+        let (j0, r0) = at(&app);
+        assert!(r0.abs_diff_eq(j0 * knife, 1e-5));
+        std::thread::sleep(Duration::from_millis(300));
+        app.update();
+        let (j1, r1) = at(&app);
+        assert!(r1.abs_diff_eq(j1 * knife, 1e-5));
+        assert!(!r1.abs_diff_eq(r0, 1e-4), "the knife moved with the joint");
+    }
+
+    /// A key from the environment, else the workspace's `.env.dev`.
+    fn env_or_dotenv(key: &str) -> Option<String> {
+        if let Ok(value) = std::env::var(key) {
+            return Some(value);
+        }
+        let dotenv = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env.dev");
+        let text = std::fs::read_to_string(dotenv).ok()?;
+        text.lines().find_map(|line| {
+            let (k, v) = line.trim().split_once('=')?;
+            (k.trim() == key).then(|| v.trim().trim_matches('"').to_owned())
+        })
+    }
+
+    /// AE.23 on the real disc: every figure with a character model comes up
+    /// on a turntable (eight at a time, headless, no renderer), framed to a
+    /// finite camera that holds what it carries, every segment of its body
+    /// and of what it carries drawn on its slot's layer, none on its
+    /// portrait. The extract is written to a throwaway folder under
+    /// `GUAC_EXTRACT_DIR`, outside the tree, and removed after.
+    ///
+    /// `cargo test -p guacamole --bin guacamole every_figures_turntable --
+    /// --ignored --nocapture`
+    #[test]
+    #[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and writes under GUAC_EXTRACT_DIR"]
+    fn every_figures_turntable_loads_frames_and_draws() {
+        use guac_extract::known::KNOWN_DUMPS;
+        use guac_extract::{models, roster};
+        let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
+        let root = PathBuf::from(env_or_dotenv("GUAC_EXTRACT_DIR").expect("set GUAC_EXTRACT_DIR"));
+        let tmp = tempfile::Builder::new()
+            .prefix("ae23-turntables-")
+            .tempdir_in(&root)
+            .unwrap();
+        let dir = tmp.path();
+        let known = &KNOWN_DUMPS[0];
+        let identity = DumpIdentity {
+            title_id: known.title_id.into(),
+            app_ver: known.app_ver.into(),
+            manifest_hash: Sha256([0; 32]),
+        };
+        let started = Instant::now();
+        let roster = roster::read(&dump, identity.clone()).unwrap();
+        let usrdir = dump.join("PS3_GAME/USRDIR");
+        let level_of = |archive: &str| {
+            let bytes = std::fs::read(usrdir.join(archive)).unwrap();
+            models::level(&bytes, archive).unwrap()
+        };
+        let (global, bootstrap) = (level_of(roster::GLOBAL), level_of(roster::BOOTSTRAP));
+        let globals = models::Globals::new(&global, &bootstrap).unwrap();
+        let ir = IrFormat::Postcard;
+        for sub in ["models", "textures", "ir"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        let mut read: HashMap<String, Model> = HashMap::new();
+        for load in models::character_loads(&roster) {
+            let level = models::archive(&models::archive_path(&usrdir, load), load)
+                .and_then(|bytes| models::level(&bytes, load))
+                .unwrap();
+            let m = models::read(&level, load, identity.clone(), Some(&globals)).unwrap();
+            for (rel, ktx2) in &m.textures {
+                std::fs::write(dir.join(rel), ktx2).unwrap();
+            }
+            std::fs::write(
+                dir.join(ir.model_path(load)),
+                guac_ir::to_postcard(&m.model).unwrap(),
+            )
+            .unwrap();
+            read.insert(load.to_owned(), m.model);
+        }
+        let rig = models::rig(&global, identity.clone()).unwrap();
+        std::fs::write(dir.join(ir.rig_path()), guac_ir::to_postcard(&rig).unwrap()).unwrap();
+        let extracted = started.elapsed();
+        let shelf = Shelf::new(&roster, dir, ir, &[]);
+        let mut figures: Vec<&guac_ir::RosterFigure> = roster
+            .figures
+            .iter()
+            .filter(|f| shelf.loads.contains_key(&f.id()))
+            .collect();
+        figures.sort_by_key(|f| f.id());
+        let mut app = app(shelf);
+        let started = Instant::now();
+        let (mut up, mut carried_parts, mut body_parts) = (0, 0, 0);
+        let mut slowest = Duration::ZERO;
+        for batch in figures.chunks(SLOT_COUNT) {
+            let changes = batch.iter().enumerate().map(|(i, f)| {
+                let figure_id = skylander_core::FigureId::new(f.id());
+                let (toy_type, variant) = figure_id.subtype_parts().unwrap();
+                PortalChange::Placed {
+                    slot: SlotIndex::new(i as u8).unwrap(),
+                    placement: Placement {
+                        figure_id,
+                        toy_type,
+                        variant,
+                        name: f.load_file.clone(),
+                        element: None,
+                        portrait: None,
+                        owner: None,
+                    },
+                }
+            });
+            let at = Instant::now();
+            set(&mut app, changes);
+            let until = Instant::now() + Duration::from_secs(120);
+            loop {
+                app.update();
+                let t = app.world().resource::<Turntables>();
+                let waiting = (0..batch.len())
+                    .any(|s| matches!(t.card_state(s as u8), Some(CardState::Loading)));
+                if !waiting {
+                    app.update();
+                    break;
+                }
+                assert!(Instant::now() < until, "still loading");
+            }
+            slowest = slowest.max(at.elapsed());
+            for (i, f) in batch.iter().enumerate() {
+                let slot = i as u8;
+                let t = app.world().resource::<Turntables>();
+                assert_eq!(
+                    t.card_state(slot),
+                    Some(CardState::Model),
+                    "{} ({}): {:?}",
+                    f.id(),
+                    f.load_file,
+                    t.portrait_reason(slot)
+                );
+                let (root, camera) = t.stage_entities(slot).unwrap();
+                let (_, roots, parts) = t.carried(slot).unwrap();
+                let m = &read[&f.load_file];
+                let drawn = attach::drawn(m);
+                let carried: usize = attach::segments(m, &drawn).iter().map(Vec::len).sum();
+                assert_eq!(roots.len(), m.attachments.len(), "{}", f.id());
+                assert_eq!(parts.len(), carried, "{}", f.id());
+                // Every body and carried segment on the slot's layer.
+                let world = app.world_mut();
+                let layer = RenderLayers::layer(model_layer(i));
+                let on = world
+                    .query::<(&Mesh3d, &RenderLayers)>()
+                    .iter(world)
+                    .filter(|(_, l)| **l == layer)
+                    .count();
+                assert_eq!(on, m.segments.len() + carried, "{}", f.id());
+                // A finite camera, framed on a sweep holding what it carries.
+                let eye = world.get::<Transform>(camera).unwrap().translation;
+                assert!(eye.is_finite(), "{}", f.id());
+                assert!(world.get::<Transform>(root).is_some());
+                let sweep = Sweep::of_idle(m, SAMPLES).unwrap();
+                for p in attach::points(m, 0.0) {
+                    assert!(p.x.hypot(p.z) <= sweep.radius + 1e-4, "{}", f.id());
+                }
+                up += 1;
+                carried_parts += carried;
+                body_parts += m.segments.len();
+            }
+            set(
+                &mut app,
+                (0..batch.len()).map(|i| PortalChange::Cleared {
+                    slot: SlotIndex::new(i as u8).unwrap(),
+                }),
+            );
+            app.update();
+            app.update();
+        }
+        println!(
+            "{} figures over {} load files (extract {:.1} s): {up} up on a turntable, {body_parts} body and {carried_parts} carried segments drawn, every batch of eight up within {:.2} s, {:.1} s in all",
+            figures.len(),
+            read.len(),
+            extracted.as_secs_f64(),
+            slowest.as_secs_f64(),
+            started.elapsed().as_secs_f64()
+        );
+        assert_eq!((figures.len(), up), (99, 99));
     }
 
     #[test]

@@ -49,6 +49,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Model};
 use guac_ir::shading::Scene;
+use guacamole::character::attach;
 use guacamole::character::turntable::{Framing, Sweep, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
@@ -110,11 +111,12 @@ fn read_list(shelf: &Shelf, scene: &Scene) -> List {
         match read {
             Ok((model, keys)) => {
                 list.models += 1;
+                let drawn = attach::drawn(&model);
                 for (key, material) in keys {
                     if seen.insert(key) {
                         list.entries.push(Entry {
                             key,
-                            material: model.materials[material].clone(),
+                            material: drawn.materials[material].clone(),
                             scene: None,
                         });
                     }
@@ -350,6 +352,7 @@ impl Warm {
         if self.scene.is_none() {
             self.scene = Some((scene.clone(), model.identity.clone()));
         }
+        let drawn = attach::drawn(model);
         self.started.get_or_insert_with(Instant::now);
         for (key, material) in keys.iter().rev() {
             if self.done.contains(key) {
@@ -361,7 +364,7 @@ impl Warm {
                 None if self.pending.contains(key) => None,
                 None => Some(Entry {
                     key: *key,
-                    material: model.materials[*material].clone(),
+                    material: drawn.materials[*material].clone(),
                     scene: None,
                 }),
             };
@@ -615,6 +618,10 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         warm.finish(entry.key);
         return;
     };
+    if !entry.key.mesh.skinned {
+        let scene = scene.clone();
+        return draw_carried(warm, entry, &scene, s, watch);
+    }
     let model = warm::triangle_model(identity, &entry.material, entry.key.mesh);
     let texture = stage.texture.clone();
     let built = CharacterMaterial::from_ir(&model.materials[0], scene, ShadowLookup::NONE, |_| {
@@ -671,6 +678,83 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         watched.checks.insert(*e, Compiled::Waiting);
     }
     stage.roots.push(spawned.root);
+    stage.drawing.push(Drawing {
+        key: entry.key,
+        checks,
+        since: Instant::now(),
+    });
+}
+
+/// A key on an unskinned mesh a turntable draws (what a figure carries,
+/// AE.23): one static triangle of its shape with its material, and its
+/// glow mask on the glow layer under it unless the glow pass leaves the
+/// part out, each watched.
+fn draw_carried(
+    warm: &mut Warm,
+    entry: Entry,
+    scene: &Scene,
+    s: &mut WarmSpawner,
+    watch: &PipelineWatch,
+) {
+    let Some(stage) = warm.stage.as_mut() else {
+        warm.finish(entry.key);
+        return;
+    };
+    let texture = stage.texture.clone();
+    let built = CharacterMaterial::from_ir(&entry.material, scene, ShadowLookup::NONE, |_| {
+        texture.clone()
+    })
+    .map_err(|e| e.to_string())
+    .and_then(|material| {
+        if material.key != entry.key.material {
+            warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
+        }
+        static_mesh(&entry.key.mesh.triangle(0))
+            .map(|mesh| (material, mesh))
+            .map_err(|e| e.to_string())
+    });
+    let (material, mesh) = match built {
+        Ok(built) => built,
+        Err(why) => {
+            warn!(key = ?entry.key, %why, "the warm couldn't draw a key");
+            warm.report.failed += 1;
+            warm.finish(entry.key);
+            return;
+        }
+    };
+    let mesh = s.meshes.add(mesh);
+    let glow = material.glow_mask().map(|g| s.materials.add(g));
+    let triangle = s
+        .commands
+        .spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(s.materials.add(material)),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            RenderLayers::layer(model_layer(WARM_SLOT)),
+            Name::new("warm carried key"),
+        ))
+        .id();
+    let mut checks = vec![triangle];
+    if let Some(glow) = glow {
+        checks.push(
+            s.commands
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(glow),
+                    Transform::IDENTITY,
+                    NoFrustumCulling,
+                    RenderLayers::layer(glow_layer(WARM_SLOT)),
+                    ChildOf(triangle),
+                ))
+                .id(),
+        );
+    }
+    let mut watched = watch.lock();
+    for e in &checks {
+        watched.checks.insert(*e, Compiled::Waiting);
+    }
+    stage.roots.push(triangle);
     stage.drawing.push(Drawing {
         key: entry.key,
         checks,
@@ -810,7 +894,9 @@ mod tests {
         assert_eq!((report.models, report.unreadable), (2, 1), "{report:?}");
         let unique: HashSet<WarmKey> = listed.iter().copied().collect();
         assert_eq!(unique.len(), listed.len(), "each key once: {listed:?}");
-        assert_eq!(listed.len(), 3);
+        // One's and Two's three, and the unskinned key Two's carried knife
+        // brings (AE.23).
+        assert_eq!(listed.len(), 4);
 
         set(
             &mut app,
@@ -836,17 +922,18 @@ mod tests {
         let (colour, glow) = drawn(&mut app);
         assert_eq!(colour, unique);
         // The glow pass draws the same keys but the fins': no glow attribute
-        // and no depth written, so the glow pass leaves them out.
+        // and no depth written, so the glow pass leaves them out. The
+        // knife's key is in both.
         let masked: HashSet<WarmKey> = unique
             .iter()
             .copied()
             .filter(|k| k.material.states.depth_write)
             .collect();
-        assert_eq!(masked.len(), 2);
+        assert_eq!(masked.len(), 3);
         assert_eq!(glow, masked, "the glow pass draws the same keys");
         // Headless, nothing compiles: every key counts as compiled.
         let report = app.world().resource::<Warm>().report().clone();
-        assert_eq!((report.state.as_str(), report.keys), ("done", 3));
+        assert_eq!((report.state.as_str(), report.keys), ("done", 4));
     }
 
     /// Plays the render world: every pipeline the warm watches compiles.
@@ -869,8 +956,10 @@ mod tests {
         let mut app = app(extract(tmp.path()));
         app.insert_resource(Warm::new(true));
         set(&mut app, [placed(0, 2, "Two")]);
-        // Read, then waiting on its three keys, drawn before nothing else
-        // is: the list may land first, but the asked keys go to the front.
+        // Read, then waiting on its four keys (three of its own, one its
+        // carried knife's unskinned mesh brings, AE.23), drawn before
+        // nothing else is: the list may land first, but the asked keys go
+        // to the front.
         let until = Instant::now() + Duration::from_secs(5);
         loop {
             app.update();
@@ -889,7 +978,8 @@ mod tests {
             .iter()
             .map(|e| e.key)
             .collect();
-        assert_eq!(asked.len(), 3, "{asked:?}");
+        assert_eq!(asked.len(), 4, "{asked:?}");
+        assert!(asked.iter().any(|k| !k.mesh.skinned), "the knife's key");
         // The stage's camera, then a key a frame.
         while roots(&app) == 0 {
             app.update();
@@ -899,6 +989,8 @@ mod tests {
         assert_eq!(roots(&app), 2);
         app.update();
         assert_eq!(roots(&app), 3);
+        app.update();
+        assert_eq!(roots(&app), 4);
         assert_eq!(
             app.world().resource::<Turntables>().card_state(0),
             Some(CardState::Loading),
@@ -916,7 +1008,7 @@ mod tests {
                 warm.report().failed,
                 warm.report().keys
             ),
-            (3, 0, 3)
+            (4, 0, 4)
         );
         assert_eq!(warm.report().state, "done");
         // Nothing of it left: only the slot's own camera and its glow camera.

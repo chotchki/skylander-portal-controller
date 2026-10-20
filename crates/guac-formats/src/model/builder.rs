@@ -175,7 +175,15 @@ pub struct CharacterSpec {
     pub slots: Vec<SlotSpec>,
     /// The archive's actors.
     pub actors: Vec<ActorSpec>,
+    /// The hero's script and what it hangs (AE.23), each template's model a
+    /// static prop drawing the colour image of [`CharacterSpec::images`]
+    /// at [`ATTACHMENT_COLOUR`]; the hero is the actor drawing the portal
+    /// model with a solid that blocks and meets the level.
+    pub scripts: Option<crate::attachments::builder::ScriptSpec>,
 }
+
+/// The image an attachment prop's material binds as its colour map.
+pub const ATTACHMENT_COLOUR: usize = 2;
 
 /// One animation-set entry past slot 0.
 #[derive(Debug, Clone, PartialEq)]
@@ -320,6 +328,27 @@ pub fn sample() -> CharacterSpec {
                 parameters: None,
             },
         ],
+        scripts: None,
+    }
+}
+
+/// The sample with a script hanging things on it (AE.23): the attachment
+/// builder's sample, its hero points on skeleton3's spine and head.
+pub fn attached() -> CharacterSpec {
+    use crate::attachments::builder::{PointSpec, sample as scripts};
+    let mut s = scripts();
+    s.hero_points = vec![
+        PointSpec::bone("J_spine", 2),
+        PointSpec::bone("J_head", 3),
+        PointSpec {
+            bone: "J_spine",
+            index: 2,
+            transform: [0.0, 0.25, 0.0, 0.0, 90.0, 0.0],
+        },
+    ];
+    CharacterSpec {
+        scripts: Some(s),
+        ..sample()
     }
 }
 
@@ -718,8 +747,12 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
     list(b, table, blocks, &slots);
 
     // The actors, each with its solid and maybe its movement.
+    let mut hero = None;
     for (id, a) in spec.actors.iter().enumerate() {
         let o = b.object(0, "tfbActorInfo", 0xF8);
+        if a.draws_portal && a.collision & crate::model::HERO_SOLID == crate::model::HERO_SOLID {
+            hero = Some(o);
+        }
         placement(b, o, a.name, id as u32, &[0.0; 6], 5);
         let c = b.object(0, "CollisionInfo", 0x58);
         b.pointer(at(o, 0xC4), c);
@@ -736,6 +769,17 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
             b.put_bytes(at(p, 0x44), &[u8::from(tilts)]);
             floats(b, p, 0x48, &[time_scale]);
         }
+    }
+
+    // The hero's script and what it hangs, each template's model a prop.
+    if let (Some(scripts), Some(hero)) = (&spec.scripts, hero) {
+        let prop = crate::edge::builder::unskinned();
+        crate::attachments::builder::scripts_in(b, blocks, scripts, hero, model, &mut |b, t| {
+            let name = t.name;
+            let m = crate::level::builder::colour_only(name, ATTACHMENT_COLOUR);
+            let technique = technique(b, blocks, &m, &images, &prop);
+            crate::level::builder::static_model(b, t.model.unwrap_or_default(), technique)
+        });
     }
 
     // Attachments: another sprite each, its model unskinned (no body) or a
