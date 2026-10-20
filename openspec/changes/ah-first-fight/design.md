@@ -256,6 +256,16 @@ AH.0 requires this table complete.
 | pad-input | Two 8BitDo variants; The second attack's position | AH.7 (the positions), AH.24 (unit), AH.31 (chotchki's hands) |
 | figure-cards | (REMOVED: Figure progress is not shown or edited yet) | AH.3 (`figure_details_have_no_progress_and_stats_and_reset_are_off` rewritten) |
 
+**21. The VM's boundary with the ECS: queries for state, messages for engine work, no copy.**
+chotchki (2026-10-19), on the VM's design: Bevy's event system over "a ton of lock the world queries", then "you shouldn't even need the copy in that case, bevy provides you that consistent view and then you queue up events/commands". The script phase is one ordinary system (not an exclusive one) in `FixedUpdate`, so Bevy runs everything that doesn't touch its components beside it:
+- State: a member's get and set go straight to the component through the system's queries (`Query<&mut ...>`, an O(1) `get_mut` per access). Writes land at once, because the scripts read their own writes: the hurt chain lowers health and checks it in the same tick, and a later placement in the same frame reads what an earlier one wrote. Deferred `Commands` would break that, so state never goes through them.
+- Engine work: what the original only starts and the scripts poll (an animation, a sequence, a slide, an effect, a sound) goes out as a Bevy message, read after the phase; spawns and despawns go through `Commands`, as Bevy requires. Its result reaches the scripts through the components on a later tick, as the original's polling expects.
+- Queries: rays, shape casts and nearest-in-a-set run synchronously through Avian's `SpatialQuery` in the same system.
+- The seam: `guac-script` stays pure and calls a host trait for member get and set; guacamole implements it as a `SystemParam` over those queries, the tests over plain structs.
+- Per member, its box records the visibility the oracle shows: a write later ops see at once (most state), one engine work picks up next tick (a message), or a query that sees this tick's writes or not (if a script moves an actor and raycasts in the same tick, does the original's physics see the move). A member whose visibility the traces can't settle is labelled a hypothesis, as AG.16 does.
+
+Rejected: reading through events (every script a frame behind); a mirror of the members copied in and out around the phase (a second copy of the state for no gain, as chotchki pointed out); an exclusive `&mut World` system (it would stop the rest of the frame for no ordering the queries don't already give).
+
 ## Risks / Trade-offs
 
 - [The VM slice outgrows AH: 193 members for Chompy and Eruptor alone, 259 with the portal manager, more over the whole whitelist] → AH.12's recount first, value cells for cosmetic members, a whitelist, the count recorded per root box; the route splits off if its scripts don't close (Open question 1).
