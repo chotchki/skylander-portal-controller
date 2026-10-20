@@ -2102,6 +2102,22 @@ pub async fn press_tv(base: &str, button: &str) -> Result<()> {
     Ok(())
 }
 
+/// guacamole's `POST /api/_test/tv/pad`: one act on one of four pads, as a
+/// hand would (`{"pad": 0, "connect": {..}}`, `"disconnect": true`,
+/// `"stick": [x, y]` or `"press": "start"`; `drive_posted_pads` in
+/// `crates/guacamole/src/mirror.rs`).
+pub async fn pad_tv(base: &str, body: serde_json::Value) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/pad"))
+        .json(&body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/pad {body} returned {}", resp.status());
+    }
+    Ok(())
+}
+
 /// guacamole's `/api/_test/tv`: what its TV shows (`TvSnapshot` in
 /// `crates/guacamole/src/mirror.rs`).
 pub async fn tv(base: &str) -> Result<serde_json::Value> {

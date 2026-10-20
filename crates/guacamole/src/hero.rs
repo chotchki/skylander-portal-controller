@@ -219,22 +219,28 @@ mod tests {
     /// seconds, with `bodies` in Avian's world and the walk script on the
     /// pad, its step count at 0.
     fn headless(frame: f64, bodies: &[Body]) -> App {
+        headless_with(frame, bodies, |_| {})
+    }
+
+    /// [`headless`], with `more` added before the app is built.
+    fn headless_with(frame: f64, bodies: &[Body], more: impl FnOnce(&mut App)) -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, SeamPlugin, HeroPlugin))
-            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
-                frame,
-            )))
-            .init_resource::<Steps>()
-            .insert_resource(WalkScript)
-            .add_systems(
-                FixedUpdate,
-                (
-                    script
-                        .run_if(resource_exists::<WalkScript>)
-                        .before(HeroSystems::Step),
-                    count.after(HeroSystems::Step),
-                ),
-            );
+        app.add_plugins((MinimalPlugins, SeamPlugin, HeroPlugin));
+        more(&mut app);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            frame,
+        )))
+        .init_resource::<Steps>()
+        .insert_resource(WalkScript)
+        .add_systems(
+            FixedUpdate,
+            (
+                script
+                    .run_if(resource_exists::<WalkScript>)
+                    .before(HeroSystems::Step),
+                count.after(HeroSystems::Step),
+            ),
+        );
         app.finish();
         app.cleanup();
         let mut commands = app.world_mut().commands();
@@ -543,6 +549,102 @@ mod tests {
         let moved = hero_of(&app, hero).pivot - from;
         let heading = moved.x.atan2(moved.z).to_degrees().rem_euclid(360.0);
         assert!((heading - 195.0).abs() < 1e-2, "{heading}");
+    }
+
+    /// AG.20 through AP's router: the first pad connected walks him by its
+    /// raw stick; Start stops everything under the overlay (no step runs and
+    /// his drawn transform holds, the stick moving nothing) and the bottom
+    /// button carries on from where he stopped, at the speed he had; that
+    /// pad switched off stops him the same way, another's stick moves no
+    /// one, and its press takes him over.
+    #[test]
+    fn a_pad_walks_him_and_start_or_losing_it_stops_everything() {
+        use bevy::input::gamepad::GamepadButton;
+
+        use crate::pad::{LevelPads, Pause, test_pad};
+
+        let bodies = open_ground();
+        let mut app = headless_with(1.0 / 60.0, &bodies, |app| {
+            app.add_plugins((bevy::input::InputPlugin, crate::input::InputRouter));
+        });
+        app.world_mut().remove_resource::<WalkScript>();
+        let hero = spawn_eruptor(&mut app, START, 15.0);
+        let first = test_pad::connect(&mut app, None, None);
+        app.update();
+        app.world_mut().resource_mut::<LevelPads>().show();
+        test_pad::stick(&mut app, first, 0.0, 1.0);
+        let pivot = |app: &App| hero_of(app, hero).pivot;
+        let drawn = |app: &App| *app.world().entity(hero).get::<Transform>().unwrap();
+        let pause = |app: &App| {
+            app.world()
+                .resource::<LevelPads>()
+                .seat()
+                .and_then(|s| s.pause())
+        };
+        let from = pivot(&app);
+        walk_steps(&mut app, 40);
+        let walked = pivot(&app) - from;
+        assert!(walked.length() > 3.0, "{walked}");
+        // Forward along the view; with no camera the input's, the walk
+        // script's 15°.
+        let heading = walked.x.atan2(walked.z).to_degrees();
+        assert!((heading - 15.0).abs() < 1e-2, "{heading}");
+        let speed = hero_of(&app, hero).velocity.length();
+
+        // Start: the frame it's read runs the steps already due, then none.
+        test_pad::press(&mut app, first, GamepadButton::Start);
+        assert_eq!(pause(&app), Some(Pause::Start { by: first }));
+        app.update();
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        let (held, shown, n) = (pivot(&app), drawn(&app), steps(&app));
+        test_pad::stick(&mut app, first, 1.0, 0.0);
+        for _ in 0..60 {
+            app.update();
+        }
+        assert_eq!((pivot(&app), drawn(&app), steps(&app)), (held, shown, n));
+
+        // The bottom button: on from where he stopped, at the speed he had.
+        test_pad::stick(&mut app, first, 0.0, 1.0);
+        test_pad::press(&mut app, first, GamepadButton::South);
+        assert_eq!(pause(&app), None);
+        walk_steps(&mut app, n + 1);
+        assert_eq!(steps(&app), n + 1);
+        let after = hero_of(&app, hero).velocity.length();
+        assert!((after - speed).abs() < 1e-3, "{speed} then {after}");
+        assert!(pivot(&app).distance(held) < 0.12, "one step on");
+
+        // Switched off: everything stops until another pad's press.
+        test_pad::disconnect(&mut app, first);
+        app.update();
+        app.update();
+        assert_eq!(pause(&app), Some(Pause::NoPad));
+        let (held, n) = (pivot(&app), steps(&app));
+        let second = test_pad::connect(&mut app, None, None);
+        app.update();
+        test_pad::stick(&mut app, second, -1.0, 0.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(
+            (pivot(&app), steps(&app)),
+            (held, n),
+            "a stick takes nothing over"
+        );
+        test_pad::press(&mut app, second, GamepadButton::East);
+        assert_eq!(pause(&app), None);
+        walk_steps(&mut app, n + 30);
+        let turned = pivot(&app) - held;
+        let heading = turned.x.atan2(turned.z).to_degrees();
+        assert!((heading - 105.0).abs() < 1.0, "left, along 105°: {heading}");
+
+        // The level gone, its pause can't hold the clock.
+        test_pad::disconnect(&mut app, second);
+        app.update();
+        app.update();
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        app.world_mut().resource_mut::<LevelPads>().hide();
+        app.update();
+        assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     }
 
     /// AG.16's Verify: the controller's open-ground and wall cases, each in

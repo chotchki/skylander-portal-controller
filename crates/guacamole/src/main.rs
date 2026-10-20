@@ -20,6 +20,8 @@ mod level;
 mod look;
 mod mirror;
 mod motion;
+mod pad;
+mod pause;
 mod physics;
 mod picker;
 mod prepare;

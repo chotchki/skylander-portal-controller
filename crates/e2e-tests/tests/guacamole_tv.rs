@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
     E2E_DAMAGED, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, GIANTS_SERIAL, Phone,
-    TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, press_tv,
-    set_session_profile, tv, wait_for_tv,
+    TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, pad_tv,
+    press_tv, set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -1453,6 +1453,61 @@ async fn pad_presses_leave_the_join_code_up() {
     for field in ["join_address", "players"] {
         assert_eq!(after[field], before[field], "{field}");
     }
+}
+
+/// AG.20's test hook, in the real binary: a posted pad connects through
+/// Bevy's own gamepad systems beside gilrs, its move stick lands raw (a
+/// first value inside Bevy's dead zone and under its change threshold
+/// included), the resolver gives a pad it can't place the position, the
+/// level's layer isn't up with no level, Start on the join code changes
+/// nothing, and the pad goes away when posted off.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_posted_pad_reads_raw() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["screen"] == "Join"
+    })
+    .await
+    .unwrap();
+    for body in [
+        json!({"pad": 0, "connect": {"name": "e2e pad", "vendor": 11720, "product": 1}}),
+        json!({"pad": 0, "stick": [0.26, -0.004]}),
+    ] {
+        pad_tv(&server.url, body).await.unwrap();
+    }
+    let (shot, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["input"]["pads"][0]["stick"] == json!([0.26, -0.004])
+    })
+    .await
+    .unwrap();
+    let pad = &shot["input"]["pads"][0];
+    assert_eq!(pad["name"], "e2e pad", "{shot}");
+    assert_eq!(
+        (&pad["vendor"], &pad["product"]),
+        (&json!(11720), &json!(1))
+    );
+    assert_eq!(pad["labels"], "position", "{shot}");
+    assert_eq!(pad["walking"], false, "no level, no walking pad");
+    assert_eq!(shot["input"]["layer"], "screen");
+    assert_eq!(shot["input"]["hero_stick"], Value::Null);
+
+    pad_tv(&server.url, json!({"pad": 0, "press": "start"}))
+        .await
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "disconnect": true}))
+        .await
+        .unwrap();
+    let (shot, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["input"]["pads"] == json!([])
+    })
+    .await
+    .unwrap();
+    assert_eq!(shot["screen"], "Join", "{shot}");
+    assert_eq!(shot["input"]["pause"], Value::Null);
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -106,7 +106,7 @@ lists them from the start (openspec AE.4). No
 pinned the same way, so the phone bundle from step 3 serves both apps.
 `spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
 
-[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (23 tests) is
+[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (44 tests) is
 guacamole-only and skips with a message otherwise. It reads what the TV
 shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
@@ -120,7 +120,18 @@ under `test-hooks`, not a phone remote. `no_giants_dump_offers_no_game`
 waits for `focus` to read `choose-folder` without pressing it (that
 would open the folder sheet), and `pad_presses_leave_the_join_code_up`
 posts South, East and Mode on the join screen and finds it unchanged
-(AP.5). The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
+(AP.5). `POST /api/_test/tv/pad` (`pad_tv`) drives one of four pads as a
+hand would, one act a body: `{"pad": 0, "connect": {"name", "vendor",
+"product"}}` (each optional), `"disconnect": true`, `"stick": [x, y]`
+(raw, each −1 to 1, held until the next) or `"press": "start"` (a face
+button by position, `start`, `select`, `mode` or a D-pad direction; down
+a frame, then up), through Bevy's own gamepad systems, so the level's
+layer (openspec AG.20) reads it as a real pad; the mirror's `input`
+reports the pads in the order they connected (name, ids, the resolver's
+`labels`, the raw `stick`, `walking`), the `layer` that takes them, the
+level's `pause` and its `overlay` as drawn, and `hero_stick`.
+`a_posted_pad_reads_raw` checks a stick value inside Bevy's own dead zone
+lands as posted. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
 and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame
 log, `[ended_ms, took_ms, pipelines_compiled]` per frame after

@@ -1099,6 +1099,53 @@ mod tests {
             assert_eq!(tv.shot().cards.len(), 2);
         }
 
+        /// AG.20: over the level an intro still takes any button as its
+        /// skip, and the press moves no one: the hero reads nothing while it
+        /// plays, then the walking pad's stick, the skip's South kept from
+        /// him until it's let go and pressed again.
+        #[test]
+        fn a_press_under_an_intro_skips_it_and_moves_no_one() {
+            use crate::hero::HeroInput;
+            use crate::pad::{LevelPads, test_pad};
+            use guac_motion::stick::Stick;
+            let hero = |tv: &Tv| tv.app.world().resource::<HeroInput>().0;
+            let tmp = tempfile::tempdir().unwrap();
+            let lib = library(tmp.path(), &[("eruptor", 100)]);
+            let mut tv = tv(Some(lib));
+            tv.app.init_resource::<HeroInput>();
+            let pad = pad(&mut tv);
+            tv.app.world_mut().resource_mut::<LevelPads>().show();
+            test_pad::stick(&mut tv.app, pad, 0.0, 1.0);
+            tv.app.update();
+            assert_eq!(hero(&tv).stick, Stick::new(0.0, 1.0), "the level walks him");
+            tv.place(0, "000009-0000");
+            assert_eq!(tv.movie().as_deref(), Some("eruptor"));
+            // The router reads the frame before the intro starts in it.
+            tv.app.update();
+            assert_eq!(hero(&tv).stick, Stick::CENTRED, "nothing under an intro");
+            button(&mut tv, pad, GamepadButton::South, 1.0);
+            assert_eq!(tv.movie(), None, "skipped");
+            assert_eq!(
+                (hero(&tv).stick, hero(&tv).buttons),
+                (Stick::CENTRED, [false; 4])
+            );
+            tv.app.update();
+            assert_eq!(hero(&tv).stick, Stick::new(0.0, 1.0), "the level's again");
+            assert_eq!(hero(&tv).buttons, [false; 4], "the skip's South isn't his");
+            button(&mut tv, pad, GamepadButton::South, 0.0);
+            button(&mut tv, pad, GamepadButton::South, 1.0);
+            assert_eq!(hero(&tv).buttons, [true, false, false, false]);
+            assert!(
+                tv.app
+                    .world()
+                    .resource::<LevelPads>()
+                    .seat()
+                    .unwrap()
+                    .pause()
+                    .is_none()
+            );
+        }
+
         /// AP.5: the overlay holds the focus while intros play back to back
         /// and gives it back when the last one stops.
         #[test]

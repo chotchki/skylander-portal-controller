@@ -1027,13 +1027,13 @@ fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<>
 
 /// What every line is drawn with: the font and the theme, so a size comes
 /// only from a [`Step`] and a colour from a [`Role`].
-struct Pen {
+pub(crate) struct Pen {
     font: Handle<Font>,
-    theme: TvTheme,
+    pub(crate) theme: TvTheme,
 }
 
 impl Pen {
-    fn new(assets: &TvAssets, theme: &TvTheme) -> Self {
+    pub(crate) fn new(assets: &TvAssets, theme: &TvTheme) -> Self {
         Self {
             font: assets.font.clone(),
             theme: theme.clone(),
@@ -1049,7 +1049,7 @@ impl Pen {
     }
 
     /// Centred.
-    fn text(&self, s: &str, step: Step, role: Role) -> impl Bundle + use<> {
+    pub(crate) fn text(&self, s: &str, step: Step, role: Role) -> impl Bundle + use<> {
         self.text_at(s, step, role, Justify::Center)
     }
 

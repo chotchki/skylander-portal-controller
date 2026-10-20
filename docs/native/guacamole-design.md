@@ -1960,10 +1960,12 @@ press:
 - `route_input` runs in `PreUpdate` after Bevy's input systems and reads every `Gamepad` (South, East and
   Mode just pressed, the D-pad, the left stick past 0.5), the keys the widgets don't take (the arrows, Esc,
   NumpadEnter) and one press a frame posted to `/api/_test/tv/press` (a `test-hooks` build only).
-- It hands the frame to the top layer alone (`Layer::top`). An intro playing over the portal takes any pad
-  button, key or posted press as its skip and nothing under it sees the press; the intro overlay holds
-  `InputFocus` meanwhile, so an Enter the widget would see lands on a node with no `Button`. Otherwise the
-  screen hears `TvInput`s.
+- It hands the frame to the top layer alone (`Layer::top`). An intro playing over the portal or the level
+  takes any pad button, key or posted press as its skip and nothing under it sees the press; the intro
+  overlay holds `InputFocus` meanwhile, so an Enter the widget would see lands on a node with no `Button`.
+  While the level shows, its layer reads the pads itself ([`pad.rs`](../../crates/guacamole/src/pad.rs),
+  AG.20: the first pad connected walks the hero, Start pauses, a lost pad waits for a press) and the
+  screen hears nothing. Otherwise the screen hears `TvInput`s.
 - Mapping is positional, as Controllers has it: South activates (`act_on_input` triggers `Activate` on the
   focused button and holds `Pressed` on it while South is down), East is Back (it closes the error
   screens), Mode is Home (nothing until Open question 1 is answered), and the D-pad, the arrows and the
