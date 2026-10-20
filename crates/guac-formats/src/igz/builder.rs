@@ -221,6 +221,17 @@ impl IgzBuilder {
         index
     }
 
+    /// An EXNM entry with no word pointing at it yet, made once per name:
+    /// the index [`Self::unflagged_meta`] words hold.
+    pub fn external_name(&mut self, namespace: &str, name: &str) -> u32 {
+        let entry = (self.tstr_index(namespace), self.tstr_index(name));
+        if let Some(i) = self.exnm.iter().position(|e| *e == entry) {
+            return i as u32;
+        }
+        self.exnm.push(entry);
+        (self.exnm.len() - 1) as u32
+    }
+
     /// A metaobject word without the index flag, as Giants' script types hold.
     pub fn unflagged_meta(&mut self, at: Location, value: u32) {
         self.put_u32(at, value);

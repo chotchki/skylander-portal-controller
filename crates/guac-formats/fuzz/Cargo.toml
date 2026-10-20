@@ -125,3 +125,17 @@ path = "fuzz_targets/gold_clamp.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "script_ops"
+path = "fuzz_targets/script_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_graph"
+path = "fuzz_targets/script_graph.rs"
+test = false
+doc = false
+bench = false
