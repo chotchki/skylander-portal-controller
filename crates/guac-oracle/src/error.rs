@@ -91,4 +91,16 @@ pub enum MetricError {
         flip: u64,
         read: u32,
     },
+    #[error("sample {index}'s game time {time} doesn't follow the one before it, {previous}")]
+    TimeOrder {
+        index: usize,
+        previous: f64,
+        time: f64,
+    },
+    #[error("game time {from} to {to} isn't a stretch inside the trace")]
+    Window { from: f64, to: f64 },
+    #[error("he doesn't stay still between game time {from} and {to}")]
+    NotStill { from: f64, to: f64 },
+    #[error("sample {index} has no camera")]
+    NoCamera { index: usize },
 }
