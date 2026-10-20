@@ -29,8 +29,8 @@ The left stick SHALL read each axis as centred while it's a quarter of its trave
 - **THEN** the hero walks at the same top speed as with the stick fully forward
 
 #### Scenario: Between the axes
-- **WHEN** a round-gate pad's stick is pushed fully 22.5° off forward
-- **THEN** the hero walks 11.2° off forward at 91.3 % of his top speed
+- **WHEN** the left stick reads 49 of its 128 steps to the right and 118 forward, a round-gate pad pushed to its rim 22.55° off forward
+- **THEN** the hero walks 11.18° off forward at 91.32 % of his top speed
 
 ### Requirement: One pad walks the hero
 The hero SHALL follow the first pad connected; another pad's stick and face buttons SHALL NOT move him. When that pad disconnects, or none is connected when the level starts, the level SHALL wait under a message asking for a controller, and a press on any connected pad SHALL make it the hero's and carry on.

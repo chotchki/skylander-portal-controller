@@ -88,20 +88,32 @@ pub struct Stop {
     pub drift: f64,
 }
 
-/// A hard reversal: the stick swung so far he stops dead, turns where he
-/// stands and walks off the new way.
+/// A hard reversal, the stick swung to the other way: how he gets from one
+/// way to the other. The original never stops for one (AG.8: from the next
+/// frame he walks back at the speed he had while his facing comes round); a
+/// walk that stops dead, turns where it stands and sets off again has a stop
+/// and a turn as well.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Reversal {
-    /// From the swing to the first step he doesn't move in.
-    pub stop: Phase,
-    /// From there to the first step he moves in again.
-    pub turn: Phase,
-    /// Degrees he turned while standing (signed, the way he turned).
+    /// The least ground speed of a step in the window, m/s.
+    pub least: f64,
+    /// From the swing to the first sample whose facing is within the
+    /// threshold of his facing at the window's end, game seconds.
+    pub facing: f64,
+    /// From the swing to the first step he doesn't move in; `None` when he
+    /// never stops.
+    pub stop: Option<Phase>,
+    /// From there to the first step he moves in again; `None` when he never
+    /// stops.
+    pub turn: Option<Phase>,
+    /// Degrees he turned while standing (signed, the way he turned); 0 when
+    /// he never stops.
     pub turned: f64,
-    /// Degrees of the whole change still to turn when he set off again.
+    /// Degrees of the whole change still to turn when he set off the new way
+    /// (at the swing when he never stops).
     pub left: f64,
-    /// From setting off again to the first step at the given share of top
-    /// speed.
+    /// From setting off the new way (the swing when he never stops) to the
+    /// first step at the given share of top speed.
     pub go: Phase,
 }
 
@@ -420,56 +432,74 @@ impl Motion {
         })
     }
 
-    /// A reversal swung at `swing`: the stop (to the first step he moves no
-    /// more than `still` in), the turn where he stands (to the first step he
-    /// moves further in again, with the angle turned and what's still to turn
-    /// of the change to his heading at `until`) and the go (from there to
-    /// the first step at `share` of `top`).
+    /// A reversal swung at `swing`, over the window to `until`: the least
+    /// speed of a step in it; the game time until his facing comes within
+    /// `still_deg` of where it is at `until`; when he stops (a step he moves
+    /// `still` or less in), the stop, the turn where he stands (to the first
+    /// step he moves further in again, with the angle turned) and what's
+    /// still to turn of the change to his heading at `until` when he sets off;
+    /// and the go, from setting off the new way (the swing itself when he
+    /// never stops, as the original's hero never does) to the first step at
+    /// `share` of `top`.
     pub fn reversal(
         &self,
         swing: f64,
         top: f64,
         share: f64,
         still: f64,
+        still_deg: f64,
         until: f64,
     ) -> Result<Reversal, MetricError> {
         let (k0, k1) = self.window(swing, until)?;
         let moved = |k: usize| ground(self.samples[k].position, self.samples[k + 1].position);
-        let stopped = (k0..k1)
-            .find(|&k| moved(k) <= still)
-            .ok_or(MetricError::NotStill {
-                from: swing,
-                to: until,
-            })?;
-        let off = (stopped..k1)
-            .find(|&k| moved(k) > still)
-            .ok_or(MetricError::NotStill {
-                from: swing,
-                to: until,
-            })?;
-        let (t_stop, t_off) = (self.samples[stopped].time, self.samples[off].time);
         let end = self.samples[k1].heading;
-        let turned = (stopped..off)
-            .map(|k| wrap(self.samples[k + 1].heading - self.samples[k].heading))
-            .sum();
+        let least = (k0..k1)
+            .map(|k| self.ground_speed(k))
+            .fold(f64::INFINITY, f64::min);
+        // Sample k1 is within any threshold of itself, so one is found.
+        let faced = (k0..=k1)
+            .find(|&k| wrap(end - self.samples[k].heading).abs() <= still_deg)
+            .unwrap_or(k1);
+        let facing = (self.samples[faced].time - swing).max(0.0);
+        let (stop, turn, turned, set_off, t_set) = match (k0..k1).find(|&k| moved(k) <= still) {
+            None => (None, None, 0.0, k0, swing),
+            Some(stopped) => {
+                let off =
+                    (stopped..k1)
+                        .find(|&k| moved(k) > still)
+                        .ok_or(MetricError::NotStill {
+                            from: swing,
+                            to: until,
+                        })?;
+                let (t_stop, t_off) = (self.samples[stopped].time, self.samples[off].time);
+                let turned = (stopped..off)
+                    .map(|k| wrap(self.samples[k + 1].heading - self.samples[k].heading))
+                    .sum();
+                let stop = Phase {
+                    seconds: t_stop - swing,
+                    distance: self.distance(swing, t_stop),
+                };
+                let turn = Phase {
+                    seconds: t_off - t_stop,
+                    distance: self.distance(t_stop, t_off),
+                };
+                (Some(stop), Some(turn), turned, off, t_off)
+            }
+        };
         let go = self
-            .time_to_speed(t_off, top, share)
-            .filter(|g| t_off + g.seconds <= until)
+            .time_to_speed(t_set, top, share)
+            .filter(|g| t_set + g.seconds <= until)
             .ok_or(MetricError::NotStill {
-                from: t_off,
+                from: t_set,
                 to: until,
             })?;
         Ok(Reversal {
-            stop: Phase {
-                seconds: t_stop - swing,
-                distance: self.distance(swing, t_stop),
-            },
-            turn: Phase {
-                seconds: t_off - t_stop,
-                distance: self.distance(t_stop, t_off),
-            },
+            least,
+            facing,
+            stop,
+            turn,
             turned,
-            left: wrap(end - self.samples[off].heading),
+            left: wrap(end - self.samples[set_off].heading),
             go,
         })
     }
@@ -872,22 +902,24 @@ mod tests {
     }
 
     #[test]
-    fn a_reversal_splits_into_its_stop_turn_and_go() {
+    fn a_reversal_that_stops_dead_splits_into_its_stop_turn_and_go() {
         // Walking at 90 deg; swung at sample 3 to 270. He stops dead in the
         // swing's own step, turns 24 deg a step where he stands (a hitch turns
-        // 72) until within 15 deg, then walks off speeding up 2 m/s a step.
+        // 72) until within 15 deg, creeping 0.05 mm in one of those steps (under
+        // the 0.1 mm a step that counts as moving), then walks off speeding up
+        // 2 m/s a step.
         let mut headings = vec![90.0, 90.0, 90.0, 90.0];
         let mut speeds = vec![6.0, 6.0, 6.0];
         let mut dts = vec![STEP, STEP, STEP];
-        for (h, dt) in [
-            (114.0, STEP),
-            (186.0, HITCH),
-            (210.0, STEP),
-            (234.0, STEP),
-            (258.0, STEP),
+        for (h, dt, v) in [
+            (114.0, STEP, 0.0),
+            (186.0, HITCH, 0.0),
+            (210.0, STEP, 0.0),
+            (234.0, STEP, 5e-5 / STEP),
+            (258.0, STEP, 0.0),
         ] {
             headings.push(h);
-            speeds.push(0.0);
+            speeds.push(v);
             dts.push(dt);
         }
         for v in [2.0, 4.0, 6.0, 6.0, 6.0] {
@@ -898,22 +930,77 @@ mod tests {
         let m = walk_turning(&headings, &dts, &speeds);
         let swing = m.samples()[3].time;
         let (_, end) = m.span();
-        let r = m.reversal(swing, 6.0, 0.9, 1e-4, end).unwrap();
+        let r = m.reversal(swing, 6.0, 0.9, 1e-4, 1e-3, end).unwrap();
         assert_eq!(
             r.stop,
-            Phase {
+            Some(Phase {
                 seconds: 0.0,
                 distance: 0.0
-            }
+            })
         );
-        close(r.turn.seconds, 4.0 * STEP + HITCH, 1e-12);
-        close(r.turn.distance, 0.0, 1e-12);
+        let turn = r.turn.unwrap();
+        close(turn.seconds, 4.0 * STEP + HITCH, 1e-12);
+        close(turn.distance, 5e-5, 1e-12);
         // 90 to 258 in place, 12 left once he sets off.
         close(r.turned, 168.0, 1e-9);
         close(r.left, 12.0, 1e-9);
         // Off at sample 8: 2 then 4 m/s, then 6 at sample 10.
         close(r.go.seconds, 2.0 * STEP, 1e-12);
         close(r.go.distance, 6.0 * STEP, 1e-12);
+        // He stood: the least speed is 0, and he faces 270 from sample 9.
+        close(r.least, 0.0, 1e-12);
+        close(r.facing, 5.0 * STEP + HITCH, 1e-12);
+    }
+
+    #[test]
+    fn a_reversal_at_speed_never_stops_while_his_facing_comes_round() {
+        // The original's (AG.8): walking at 90 deg at 6 m/s (a hitch among the
+        // steps), swung at sample 3 to 270. From the swing's own step he walks
+        // along 270, at 5.5 m/s in that step and 6 after, while his facing
+        // turns 24 deg a step the short way round, through 0, until it's on 270.
+        let mut p = [10.0, 43.0, -93.0];
+        let mut t = 0.0;
+        let mut samples = vec![sample(t, p, 90.0)];
+        let mut steps: Vec<(f64, f64, f64, f64)> = [STEP, HITCH, STEP]
+            .into_iter()
+            .map(|dt| (dt, 6.0, 90.0, 90.0))
+            .collect();
+        let turning = [
+            66.0, 42.0, 18.0, -6.0, -30.0, -54.0, -78.0, -90.0, -90.0, -90.0,
+        ];
+        for (i, h) in turning.into_iter().enumerate() {
+            steps.push((STEP, if i == 0 { 5.5 } else { 6.0 }, 270.0, h));
+        }
+        for (dt, v, walk, facing) in steps {
+            let w = walk.to_radians();
+            p = [p[0] + v * dt * w.sin(), p[1], p[2] + v * dt * w.cos()];
+            t += dt;
+            samples.push(sample(t, p, facing));
+        }
+        let m = Motion::new(samples).unwrap();
+        let swing = m.samples()[3].time;
+        let (_, end) = m.span();
+        let r = m.reversal(swing, 6.0, 0.9, 1e-4, 1e-3, end).unwrap();
+        assert_eq!((r.stop, r.turn, r.turned), (None, None, 0.0));
+        close(r.least, 5.5, 1e-9);
+        // On 270 (-90) at sample 11, eight steps after the swing.
+        close(r.facing, 8.0 * STEP, 1e-12);
+        // The whole half turn still to go at the swing.
+        close(r.left.abs(), 180.0, 1e-9);
+        // Already at 90 % of top in the swing's own step; 99 % a step on.
+        assert_eq!(
+            r.go,
+            Phase {
+                seconds: 0.0,
+                distance: 0.0
+            }
+        );
+        let near = m.reversal(swing, 6.0, 0.99, 1e-4, 1e-3, end).unwrap();
+        close(near.go.seconds, STEP, 1e-12);
+        close(near.go.distance, 5.5 * STEP, 1e-12);
+        // A window that ends before he's up to that share: refused.
+        let early = m.samples()[4].time - STEP / 2.0;
+        assert!(m.reversal(swing, 6.0, 0.99, 1e-4, 1e-3, early).is_err());
     }
 
     #[test]
@@ -1108,6 +1195,11 @@ mod tests {
         assert_eq!((s.before, s.after), ([15.0, -23.36], [60.0, -30.0]));
         // Held still: no switch.
         assert_eq!(m.view_switch(m.samples()[9].time, t1, 1e-3), Ok(None));
+        // The trail reads each sample's own heading: at 40 deg, the hero at
+        // (10, -93) from the eye at (0, -107) bears 35.54 deg, 4.46 left of it.
+        let k = 6;
+        assert_eq!(m.samples()[k].camera.unwrap().heading, 40.0);
+        close(m.trail_angle(k).unwrap(), bearing(10.0, 14.0) - 40.0, 1e-9);
     }
 
     fn frame(flip: u64, game_frame: u32, frame_delta: f32, z: f32, stick: [f32; 2]) -> Frame {
@@ -1184,6 +1276,14 @@ mod tests {
         // At rest from the start: nothing changes before the push.
         assert_eq!(placed[0].seen, None);
         assert_eq!((placed[3].time, placed[3].seen), (None, None));
+        // A ring that wrapped can start on a flip's second read: a step at
+        // that flip has no first read to act at, so it isn't placed.
+        let mut wrapped = rec.frames()[2..].to_vec();
+        wrapped[0].read = 1;
+        let wrapped = Recording::new(wrapped).unwrap();
+        let placed = script_times(&wrapped, &script, 10).unwrap();
+        assert_eq!((placed[1].flip, placed[1].time), (12, None));
+        assert!(placed[2].time.is_some());
         // A lost game frame can't be keyed.
         let mut lost = rec.frames().to_vec();
         lost[4].game_frame += 1;

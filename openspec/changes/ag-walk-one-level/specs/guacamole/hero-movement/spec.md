@@ -22,7 +22,7 @@ With the stick held over on level ground a hero SHALL walk at the top speed the 
 
 #### Scenario: Eruptor at full stick
 - **WHEN** Eruptor walks on level ground with the stick fully over
-- **THEN** once up to speed, within 0.12 s of game time, he covers 6.553 m in each second of game time, within 1 mm
+- **THEN** once up to speed, 0.115-0.135 s of game time after a push from rest, he covers 6.553 m in each second of game time, within 1 mm
 
 #### Scenario: Half stick
 - **WHEN** Eruptor walks on level ground with the stick half over
@@ -33,7 +33,7 @@ Pushed from rest, a hero SHALL speed up at 160 ft/s² (48.77 m/s²) times the st
 
 #### Scenario: From rest
 - **WHEN** the stick is pushed fully over with Eruptor at rest on level ground
-- **THEN** he walks at 90 % of top speed or more from 0.115-0.119 s of game time on, and covers 2.88-2.91 m in the first half second
+- **THEN** he walks at 90 % of top speed or more from 0.115-0.119 s of game time on, and covers 2.88-2.90 m in the first half second
 
 #### Scenario: Letting go
 - **WHEN** the stick is let go with Eruptor at top speed on level ground
