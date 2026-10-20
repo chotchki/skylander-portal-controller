@@ -185,7 +185,7 @@ fn read_character(root: &Path, load_file: &'static str) -> Character {
         app_ver: String::new(),
         manifest_hash: Sha256([0; 32]),
     };
-    let extracted = models::read(&level, load_file, identity).expect("the model");
+    let extracted = models::read(&level, load_file, identity, None).expect("the model");
     let texels = extracted
         .textures
         .iter()

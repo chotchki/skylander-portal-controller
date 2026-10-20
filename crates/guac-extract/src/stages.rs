@@ -453,12 +453,24 @@ pub fn model_stage(
         took: Duration::ZERO,
     };
     let mut written: HashSet<String> = HashSet::new();
+    // `global.bld` and `bootstrap.bld`, for the attachments a global
+    // template draws (AE.23); without them those sets stay unsettled.
+    let level_of = |archive: &str| {
+        std::fs::read(usrdir.join(archive))
+            .ok()
+            .and_then(|bytes| models::level(&bytes, archive).ok())
+    };
+    let (global_level, bootstrap_level) = (level_of(roster::GLOBAL), level_of(roster::BOOTSTRAP));
+    let globals = match (&global_level, &bootstrap_level) {
+        (Some(g), Some(b)) => models::Globals::new(g, b).ok(),
+        _ => None,
+    };
     send(Event::Models { done: 0, total });
     for (i, load) in loads.iter().enumerate() {
         let path = models::archive_path(&usrdir, load);
         let extracted = models::archive(&path, load)
             .and_then(|bytes| models::level(&bytes, load))
-            .and_then(|level| models::read(&level, load, identity.clone()));
+            .and_then(|level| models::read(&level, load, identity.clone(), globals.as_ref()));
         match extracted {
             Ok(m) => {
                 stage.binds += m.binds;

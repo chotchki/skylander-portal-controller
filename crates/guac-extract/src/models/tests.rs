@@ -5,7 +5,7 @@ use guac_formats::havok::builder::{
     clip as havok_clip, encode40, payload, skeleton3,
 };
 use guac_formats::model::builder::{
-    ActorSpec, CharacterSpec, SlotSpec, character, eruptor, inverse_joint, sample,
+    ActorSpec, CharacterSpec, SlotSpec, attached, character, eruptor, inverse_joint, sample,
 };
 use guac_formats::roster::builder::{RIG, disc};
 use guac_ir::model::{Glow, TextureRole as R};
@@ -19,7 +19,7 @@ fn identity() -> DumpIdentity {
 }
 
 fn extracted(spec: &CharacterSpec) -> Result<Extracted> {
-    read(&character(spec), "009_Eruptor", identity())
+    read(&character(spec), "009_Eruptor", identity(), None)
 }
 
 #[test]
@@ -650,5 +650,166 @@ fn a_solid_keeps_each_bit_and_shape_apart() {
     assert_eq!(
         (s.width, s.height, s.length, s.weight, s.rebound),
         (7.0, 8.0, 9.0, 10.0, 11.0)
+    );
+}
+
+#[test]
+fn a_fresh_figures_attachments_land_beside_its_model() {
+    let e = extracted(&attached()).unwrap();
+    let m = &e.model;
+    assert_eq!(m.attachments_unsettled, None);
+    // (model path, parent, bone, joint) per attachment.
+    type Shown<'a> = (&'a str, Option<u16>, Option<&'a str>, Option<u16>);
+    let shown: Vec<Shown<'_>> = m
+        .attachments
+        .iter()
+        .map(|a| (a.model.path.as_str(), a.parent, a.bone.as_deref(), a.joint))
+        .collect();
+    // The knives on the head and the spine (attach points 1 and 0), the
+    // gun on the spine's turned point, the spear on the gun's root, the
+    // two boomerangs; no armour, upgraded knife or hat, and the dummy
+    // draws nothing. Joints are Havok's: J_root 0, J_spine 1, J_head 2.
+    assert_eq!(
+        shown,
+        [
+            ("Models/Characters/Knife.mdl", None, Some("J_head"), Some(2)),
+            (
+                "Models/Characters/Knife.mdl",
+                None,
+                Some("J_spine"),
+                Some(1)
+            ),
+            ("Models/Characters/Gun.mdl", None, Some("J_spine"), Some(1)),
+            ("Models/Characters/Spear.mdl", Some(2), Some("*root*"), None),
+            (
+                "Models/Characters/Boomerang.mdl",
+                None,
+                Some("J_spine"),
+                Some(1)
+            ),
+            (
+                "Models/Characters/Boomerang.mdl",
+                None,
+                Some("J_head"),
+                Some(2)
+            ),
+        ]
+    );
+    let names: Vec<&str> = m.attachments.iter().map(|a| a.placement.as_str()).collect();
+    assert_eq!(names[0], "026_Knife_reg1");
+    // Offsets: the gun's point turned 90 about +Y, the spear 0.9144 m out
+    // along the gun's +Z.
+    let gun = &m.attachments[2].offset;
+    assert_eq!(gun.translation, [0.0, 0.25, 0.0]);
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    for (got, want) in gun.rotation.iter().zip([0.0, h, 0.0, h]) {
+        assert!((got - want).abs() < 1e-6, "{:?}", gun.rotation);
+    }
+    assert_eq!(m.attachments[3].offset.translation, [0.0, 0.0, 0.9144]);
+    assert_eq!(m.attachments[0].offset.rotation, [0.0, 0.0, 0.0, 1.0]);
+    // Each a static prop, its colour map the body's own texture file.
+    for a in &m.attachments {
+        assert!(a.model.skeleton.is_none() && a.model.idle.is_none());
+        assert_eq!(a.model.segments.len(), 1);
+        assert!(a.model.segments[0].joints.is_empty());
+    }
+    let body_colour = &m.materials[0].texture(R::Layer1ColorMap).unwrap().texture;
+    let guac_ir::level::LevelMaterial::Multi2(knife) = &m.attachments[0].model.materials[0] else {
+        panic!("a tfbmulti2 prop");
+    };
+    assert_eq!(
+        &knife.texture(R::Layer1ColorMap).unwrap().texture,
+        body_colour
+    );
+    let plain = extracted(&sample()).unwrap();
+    assert_eq!(e.textures.len(), plain.textures.len());
+    assert!(plain.model.attachments.is_empty());
+    assert_eq!(plain.model.attachments_unsettled, None);
+}
+
+#[test]
+fn attachments_the_rule_cant_settle_leave_the_body_alone() {
+    use guac_formats::attachments::builder::{HAT, On, Source, Step};
+    let mut spec = attached();
+    spec.scripts
+        .as_mut()
+        .unwrap()
+        .startup
+        .push(Step::Unreadable(vec![Step::Clone {
+            from: Source::Template(HAT),
+            on: On::Hero(1),
+            keep: None,
+        }]));
+    let m = extracted(&spec).unwrap().model;
+    assert!(m.attachments.is_empty());
+    let why = m.attachments_unsettled.unwrap();
+    assert!(why.contains("might hang a model"), "{why}");
+    // The body is whole.
+    assert_eq!(
+        m.segments.len(),
+        extracted(&sample()).unwrap().model.segments.len()
+    );
+
+    // A point naming a bone the body lacks.
+    let mut spec = attached();
+    spec.scripts.as_mut().unwrap().hero_points[1].bone = "J_tail";
+    let why = extracted(&spec)
+        .unwrap()
+        .model
+        .attachments_unsettled
+        .unwrap();
+    assert!(why.contains("J_tail"), "{why}");
+}
+
+#[test]
+fn an_attach_points_angles_become_a_rotation() {
+    let t = |rotation: [f32; 3]| {
+        euler_transform(&EulerTransform {
+            position: [1.0, 2.0, 3.0],
+            rotation,
+        })
+    };
+    // Heading 90 turns +Z to +X; tilt 90 lifts +Z to +Y; roll 180 about Z.
+    let rotate = |q: [f32; 4], v: [f32; 3]| {
+        let [x, y, z, w] = q.map(f64::from);
+        let v = v.map(f64::from);
+        let u = [x, y, z];
+        let cross = |a: [f64; 3], b: [f64; 3]| {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        };
+        let c1 = cross(u, v);
+        let c2 = cross(u, c1);
+        [0, 1, 2].map(|i| v[i] + 2.0 * (w * c1[i] + c2[i]))
+    };
+    let near = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+    assert!(near(
+        rotate(t([0.0, 90.0, 0.0]).rotation, [0.0, 0.0, 1.0]),
+        [1.0, 0.0, 0.0]
+    ));
+    assert!(near(
+        rotate(t([90.0, 0.0, 0.0]).rotation, [0.0, 0.0, 1.0]),
+        [0.0, 1.0, 0.0]
+    ));
+    assert!(near(
+        rotate(t([0.0, 0.0, 180.0]).rotation, [1.0, 0.0, 0.0]),
+        [-1.0, 0.0, 0.0]
+    ));
+    // Against euler_rows for an angle on every axis.
+    let angles = [30.0, -120.0, 45.0];
+    let rows = guac_formats::level::euler_rows(angles);
+    for (k, v) in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        .iter()
+        .enumerate()
+    {
+        let want = rows[k].map(f64::from);
+        assert!(near(rotate(t(angles).rotation, *v), want), "axis {k}");
+    }
+    assert_eq!(
+        (t([0.0; 3]).translation, t([0.0; 3]).scale),
+        ([1.0, 2.0, 3.0], [1.0; 3])
     );
 }

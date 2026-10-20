@@ -379,6 +379,8 @@ fn quad_model(c: &Case) -> Model {
             frames: 31,
             tracks: Vec::new(),
         },
+        attachments: Vec::new(),
+        attachments_unsettled: None,
     }
 }
 

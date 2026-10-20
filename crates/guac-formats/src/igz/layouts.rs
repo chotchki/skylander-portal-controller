@@ -50,8 +50,8 @@ pub use ops::{
     Stack, ValueRhsVariant, Variable,
 };
 pub use placement::{
-    ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, CollisionInfo, LightInfo,
-    ModelParameters, ParticleInfo, Placement, Shape,
+    ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, BoneAttachInfo,
+    BoneAttachInfoList, CollisionInfo, LightInfo, ModelParameters, ParticleInfo, Placement, Shape,
 };
 pub use scene::{
     Actor2, AttrSet, BlendMatrixSelect, Group, IntList, Node, NodeList, RuntimeTechniqueInstance,
@@ -214,6 +214,9 @@ pub const TYPES: &[TypeDef] = &[
     def("MatrixMeasurement", "PositionMeasurement", 0x18),
     def("AbstractAttachNode", "MatrixMeasurement", 0x1C),
     def("AbstractPlacement", "AbstractAttachNode", 0xA0),
+    // A model's attach points (AE.23).
+    def("BoneAttachInfo", "AbstractAttachNode", 0x3C),
+    def("BoneAttachInfoList", "ScriptObjectList", 0x18),
     def("tfbSpriteInfo", "AbstractPlacement", 0xE4),
     def("AnimatableTextureDataInfo", "tfbBuildDataInfo", 0x34),
     // Script ops and operand stacks, what the toy table's reader walks (AE.2).

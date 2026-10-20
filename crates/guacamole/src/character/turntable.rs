@@ -104,12 +104,16 @@ impl Sweep {
     }
 
     /// The idle loop's sweep: `samples` poses spread over the clip, its
-    /// start included.
+    /// start included, what the model carries (AE.23) with it.
     pub fn of_idle(model: &Model, samples: usize) -> Option<Self> {
         let duration = f64::from(model.idle.duration.max(0.0));
         let samples = samples.max(1);
         let times = (0..samples).map(|i| duration * i as f64 / samples as f64);
-        Self::of(times.flat_map(|t| skinned(model, t)))
+        Self::of(times.flat_map(|t| {
+            let mut points = skinned(model, t);
+            points.extend(super::attach::points(model, t));
+            points
+        }))
     }
 
     fn centre(&self) -> Vec3 {
@@ -382,6 +386,8 @@ mod tests {
                 frames: 61,
                 tracks: vec![head],
             },
+            attachments: Vec::new(),
+            attachments_unsettled: None,
         }
     }
 

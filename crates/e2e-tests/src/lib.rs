@@ -1925,6 +1925,8 @@ fn write_models(dir: &mut guac_extract::IdentityDir) -> Result<()> {
             frames: 31,
             tracks: vec![sway],
         },
+        attachments: Vec::new(),
+        attachments_unsettled: None,
     };
     let rel = ir.model_path(&model.load_file);
     let bytes = ir.encode(&model, dir, &rel)?;

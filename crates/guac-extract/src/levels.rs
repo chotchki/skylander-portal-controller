@@ -331,6 +331,28 @@ fn static_prop(
     })
 }
 
+/// The model at `model` as a prop, its textures into `textures`: skinned
+/// when its body's node is an `igActor2`, static otherwise. A character's
+/// attachments read this way too (AE.23).
+pub fn prop(
+    igz: &Igz<'_>,
+    model: usize,
+    path: &str,
+    textures: &mut Textures,
+) -> Result<Prop, String> {
+    let skinned = PhysicsModel::read(igz, model)
+        .ok()
+        .and_then(|m| m.model.tfb_body)
+        .and_then(|b| PhysicsBody::read(igz, b).ok())
+        .and_then(|b| b.body.node)
+        .is_some_and(|n| is_a(igz.type_name(&igz.objects()[n]), Actor2::TYPE));
+    if skinned {
+        skinned_prop(igz, model, path, textures)
+    } else {
+        static_prop(igz, model, path, textures)
+    }
+}
+
 /// The props part: each model a placement names, by its path, skinned when
 /// its body's node is an `igActor2`. One that doesn't read is listed with
 /// why, and its textures stay out.
@@ -348,20 +370,9 @@ pub fn props(igz: &Igz<'_>, level: &str, identity: DumpIdentity) -> Result<Read<
         {
             return Err(format!("two models named {path}"));
         }
-        let skinned = PhysicsModel::read(igz, model)
-            .ok()
-            .and_then(|m| m.model.tfb_body)
-            .and_then(|b| PhysicsBody::read(igz, b).ok())
-            .and_then(|b| b.body.node)
-            .is_some_and(|n| is_a(igz.type_name(&igz.objects()[n]), Actor2::TYPE));
         // A prop's textures land only if all of it reads.
         let mut own = textures.clone();
-        let prop = if skinned {
-            skinned_prop(igz, model, path, &mut own)
-        } else {
-            static_prop(igz, model, path, &mut own)
-        };
-        match prop {
+        match prop(igz, model, path, &mut own) {
             Ok(p) => {
                 textures = own;
                 props.push(p);

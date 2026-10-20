@@ -8,6 +8,11 @@
 //! influence names a joint. Every segment is one a fresh figure draws (the
 //! whole of the portal model's scene graph, AE.5). Textures are files of
 //! their own, `textures/<sha256>.ktx2`, shared by content across models.
+//!
+//! Beside the body, what a fresh figure carries (AE.23, IR v5): each model
+//! the hero's script hangs on it as it lands with every upgrade unbought
+//! (Stealth Elf's two knives), each on a point of the body or of an earlier
+//! attachment, its model read as a level's prop is (AG.15).
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +31,32 @@ pub struct Model {
     pub materials: Vec<Material>,
     pub segments: Vec<Segment>,
     pub idle: Clip,
+    /// What a fresh figure carries, each after the one it hangs on.
+    pub attachments: Vec<Attachment>,
+    /// Why `attachments` is empty when the rule couldn't settle them: the
+    /// figure then draws its body alone. `None` when they settled.
+    pub attachments_unsettled: Option<String>,
+}
+
+/// One model a fresh figure carries (openspec AE.23).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// The placement the hero's script clones (`026_Knife_reg1`).
+    pub placement: String,
+    /// What it hangs on: `None` the body, `Some(i)` the earlier attachment
+    /// `i` (Gill Grunt's spear on his gun).
+    pub parent: Option<u16>,
+    /// The attach point's bone (`J_attach_R`, `*root*`); `None` hangs it on
+    /// the parent itself.
+    pub bone: Option<String>,
+    /// That bone's joint in the parent's skeleton; `None` holds it at the
+    /// parent's origin (`*root*`, a parent without a skeleton).
+    pub joint: Option<u16>,
+    /// Where on the bone: the attach point's offset, its Euler angles
+    /// turned to a rotation, scale 1.
+    pub offset: Transform,
+    /// The model it draws.
+    pub model: crate::level::Prop,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

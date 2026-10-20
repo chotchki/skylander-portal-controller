@@ -9,7 +9,9 @@
 //! measurement built on all of them ([`divergence`]), O5's per-frame
 //! recorder with Giants' watch list ([`watch`], AG.1), a level as the live
 //! game holds it: its placements, its collision and its solids ([`level`],
-//! AG.7), and the hero's own scale, solid and parameters ([`hero`], AG.8).
+//! AG.7), the hero's own scale, solid and parameters ([`hero`], AG.8), and every
+//! character placed in turn with what the game attaches to it ([`sweep`],
+//! AE.22).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -37,6 +39,7 @@ pub mod rng;
 pub mod rpcs3_log;
 pub mod scan;
 pub mod snapshot;
+pub mod sweep;
 pub mod template;
 pub mod verbs;
 pub mod watch;

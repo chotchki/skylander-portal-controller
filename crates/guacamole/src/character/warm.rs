@@ -79,13 +79,17 @@ pub enum WarmError {
     },
 }
 
-/// Every key `model` draws in `scene`, each once, in segment order, with
-/// the material that first draws it. Built through
+/// Every key `model` draws in `scene`, its attachments' (AE.23) after its
+/// own, each once, in segment order, with the index of the material that
+/// first draws it in [`super::attach::drawn`]'s list. Built through
 /// [`CharacterMaterial::from_ir`], as the turntable builds the model's
 /// materials, so a key here is the key there and a model it refuses has no
 /// keys.
 pub fn keys(model: &Model, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, WarmError> {
-    segment_keys(&model.materials, &model.segments, scene)
+    let drawn = super::attach::drawn(model);
+    let mut segments = model.segments.clone();
+    segments.extend(super::attach::segments(model, &drawn).into_iter().flatten());
+    segment_keys(&drawn.materials, &segments, scene)
 }
 
 /// Every key `segments` draw with `materials` in `scene`, each once, in
@@ -154,6 +158,8 @@ pub fn triangle_model(
             frames: 1,
             tracks: Vec::new(),
         },
+        attachments: Vec::new(),
+        attachments_unsettled: None,
     }
 }
 

@@ -18,22 +18,38 @@ For each occupied slot whose figure has a character model on the disc, the TV SH
 - **THEN** his whole model, head to feet, stays inside his card all the way around a turn
 
 ### Requirement: Each figure shows its own model
-An alternate deco and a figure the disc defines as a toy of its own (Dark Spyro and the Spyro's Adventure legendaries) SHALL show the model the disc loads for that figure. A Series 2 or LightCore figure SHALL show its base character's model, the one the disc loads for it.
+Each figure SHALL show the model the original game draws for it in play: an alternate deco or a toy of its own (Dark Spyro, the Spyro's Adventure legendaries) its own model, a Series 2 or LightCore figure its base character's. Where the game's portal screen draws another model than the one the figure plays as, the card SHALL show the one it plays as.
 
 #### Scenario: Crusher and Granite Crusher
 - **WHEN** Crusher and Granite Crusher are both on the portal
-- **THEN** the two cards show two different models, each the one the disc loads for that figure
+- **THEN** the two cards show two different models, each the one the original game draws for that figure
 
 #### Scenario: Series 2 Whirlwind
 - **WHEN** Series 2 Whirlwind is placed
 - **THEN** its card shows Whirlwind's model
 
-### Requirement: Models show no upgrades until progress is kept
-Every figure is fresh until guacamole keeps figure progress, so a model SHALL show only the parts the original game draws for that character with no upgrades bought.
+#### Scenario: Punch Pop Fizz
+- **WHEN** Punch Pop Fizz is placed
+- **THEN** her card shows the model she plays as in the original game, not the one its portal screen draws for her
+
+### Requirement: A figure carries what it carries fresh and no upgrades
+Every figure is fresh until guacamole keeps figure progress, so a card SHALL show the character with exactly what the original game hangs on it as a fresh figure lands (weapons and gear, each on its bone or on the part it hangs from, following it through the idle) and nothing an upgrade adds. A Series 2 or LightCore figure SHALL carry its base character's set. Where guacamole can't tell what a figure carries, its card SHALL show the body alone.
 
 #### Scenario: Eruptor without upgrades
 - **WHEN** Eruptor is placed
-- **THEN** his card shows him without the spikes his upgrades add
+- **THEN** his card shows him without the spikes his upgrades add, and carrying nothing
+
+#### Scenario: Stealth Elf holds her knives
+- **WHEN** Stealth Elf is placed
+- **THEN** her card shows a knife in each hand, each following its hand through her idle, and not the knives her upgrades swap in
+
+#### Scenario: A part on a part
+- **WHEN** Gill Grunt is placed
+- **THEN** his card shows his harpoon gun in his hand with its harpoon on the gun, and his backpack on his back
+
+#### Scenario: LightCore Prism Break
+- **WHEN** LightCore Prism Break is placed
+- **THEN** its card shows Prism Break's crystals on the hands and shoulders, as Prism Break's does
 
 ### Requirement: A figure without a model keeps its portrait
 A figure with no character model on the disc (magic items, adventure-pack pieces and sidekicks, for now) SHALL keep its portrait on its card, and so SHALL a figure whose model couldn't be read, which guacamole SHALL log with the reason. A card SHALL show the portrait while its model loads. A model that can't be shown SHALL NOT stop the TV or another card.

@@ -5,7 +5,8 @@
 //! [`remaster`] (AE.12) says what's decoded into linear light and how the
 //! camera draws; [`glow`] (AE.11) is the game's glow on that frame;
 //! [`turntable`] (AE.13) frames and lights a model on a card; [`warm`]
-//! (AE.14) names the pipelines a model's draws compile.
+//! (AE.14) names the pipelines a model's draws compile; [`attach`] (AE.23)
+//! hangs what a fresh figure carries on its model.
 //!
 //! The shader is checked against [`guac_ir::shading`], the spec's CPU
 //! model, by an `#[ignore]`d GPU lane ([`tests/character_gpu_lane.rs`]),
@@ -13,6 +14,7 @@
 //!
 //! [`tests/character_gpu_lane.rs`]: ../../tests/character_gpu_lane.rs
 
+pub mod attach;
 pub mod glow;
 pub mod key;
 pub mod material;

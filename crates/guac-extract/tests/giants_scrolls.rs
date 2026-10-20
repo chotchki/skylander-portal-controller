@@ -172,7 +172,7 @@ fn every_scroll_track_and_the_six_heroes() {
     for load in models::character_loads(&r) {
         let archive = models::archive(&models::archive_path(&usrdir, load), load).unwrap();
         let level = models::level(&archive, load).unwrap();
-        let x = models::read(&level, load, identity.clone()).unwrap();
+        let x = models::read(&level, load, identity.clone(), None).unwrap();
         models += 1;
         for m in x.model.materials.iter().filter(|m| !m.scrolls.is_empty()) {
             println!(

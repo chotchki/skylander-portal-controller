@@ -21,6 +21,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+# The roster off the dump, the sweep's figure list (AE.22).
+guac-extract = { path = "../../crates/guac-extract" }
+guac-ir = { path = "../../crates/guac-ir" }
 # The input-script format (AF.7) a schedule is loaded from, and a pad's DS3 words.
 guac-oracle = { path = "../../crates/guac-oracle" }
 # A SCREENSHOT's PNG, decoded to check it's a whole frame and to hash its pixels.

@@ -23,6 +23,11 @@
 //! - The hero is the placement drawing the portal model with a solid that
 //!   blocks and meets the level ([`hero_actor`]), which carries the
 //!   character's `CollisionInfo` and its disc `ActorParameters`.
+//! - The model a figure shows is the one the game draws for it in play
+//!   ([`in_play`], AE.23): the hero's, which is the portal model on 66 of
+//!   the 67 archives. Punch Pop Fizz's hero draws `Alchemist_Legendary.mdl`
+//!   where her portal sprite draws `AlchemistRed.mdl`, and the oracle's
+//!   sweep (AE.22) shows the first in play.
 
 use crate::havok::{self, BlendHint};
 use crate::igz::Igz;
@@ -146,6 +151,28 @@ pub fn portal_model<'a>(igz: &Igz<'a>) -> Result<PortalModel<'a>, FormatError> {
         hero,
         attached,
     })
+}
+
+/// `portal`'s character as the game draws it in play: its hero's model
+/// when that's another one with a skeleton of its own, walked as the portal
+/// model is; otherwise `portal` as it is (no hero found, or one drawing the
+/// portal model). A hero model that doesn't walk is refused.
+pub fn in_play<'a>(
+    igz: &Igz<'a>,
+    portal: PortalModel<'a>,
+    load_file: &str,
+) -> Result<PortalModel<'a>, FormatError> {
+    let Ok(actor) = hero_actor(igz, &portal, load_file) else {
+        return Ok(portal);
+    };
+    match actor.info.model {
+        Some(m) if m != portal.model => Ok(PortalModel {
+            model: m,
+            hero: Hero::read(igz, m)?,
+            ..portal
+        }),
+        _ => Ok(portal),
+    }
 }
 
 /// The hero body's Havok skeleton: exactly one `hkaSkeleton`.

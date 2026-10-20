@@ -619,7 +619,7 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("video/intro/eruptor.mp4").exists());
     let m = again.dir.manifest();
     assert_eq!((m.layout, m.ir_version), (LAYOUT_VERSION, IR_VERSION));
-    assert_eq!((LAYOUT_VERSION, IR_VERSION), (4, 4));
+    assert_eq!((LAYOUT_VERSION, IR_VERSION), (4, 5));
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.roster.files.written, FIGURES + 1);
     assert!(done.intros.is_ok());

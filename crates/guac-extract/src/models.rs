@@ -9,6 +9,14 @@
 //! joints (AC.17), each technique's tfbmulti2 material read by
 //! [`guac_formats::material`], and slot 0's idle as its spline data.
 //!
+//! The body is the model the game draws for the figure in play
+//! ([`fmodel::in_play`]), and beside it what a fresh figure carries (AE.23,
+//! [`guac_formats::attachments`]): each model the hero's script hangs on it
+//! with every upgrade unbought, read as a level's prop is
+//! ([`crate::levels::prop`]), with the attach point it hangs on. A set the
+//! rule can't settle is left off with why ([`Model::attachments_unsettled`]),
+//! and the figure draws its body alone.
+//!
 //! Beside it the hero side (AG.14, design decisions 8 and 14), a [`Hero`]:
 //! the placement the archive plays the character as, with its solid and
 //! disc movement parameters, and the clips in the animation set's
@@ -21,13 +29,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use guac_formats::FormatError;
+use guac_formats::attachments::{self as fattach, Template};
 use guac_formats::edge::{BoneMap, Segment as EdgeSegment, Semantic};
+use guac_formats::exports::Exports;
 use guac_formats::havok::spline::{Channel, QuatTrack, VecTrack as HavokVecTrack};
 use guac_formats::havok::{self, QsTransform};
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
 use guac_formats::igz::layouts::{
-    ActorParameters, CollisionInfo, DirectionalLightInfo, Shape as FShape, TextureAttr2, read_all,
+    ActorParameters, BoneAttachInfo, CollisionInfo, DirectionalLightInfo, EulerTransform,
+    Shape as FShape, TextureAttr2, read_all,
 };
 use guac_formats::material::{self, Blend as FBlend, Glow as FGlow, Role};
 use guac_formats::model::{self as fmodel, JointMap, PortalModel};
@@ -36,8 +47,8 @@ use guac_ir::actor::{Movement, Shape, Solid};
 use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
 use guac_ir::hero::{Gait, Locomotion, SlotClip};
 use guac_ir::model::{
-    Blend, Filter, Glow, Joint, Mask, Material, MaterialTrack, Params, RenderStates, Sampler,
-    Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
+    Attachment, Blend, Filter, Glow, Joint, Mask, Material, MaterialTrack, Params, RenderStates,
+    Sampler, Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
@@ -132,11 +143,35 @@ pub fn level(archive: &[u8], name: &str) -> Result<Vec<u8>> {
     Ok(arc.read(entry).map_err(|e| refused(name, e))?.into_owned())
 }
 
-/// The model `load_file`'s archive level holds, and its hero side.
-pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Extracted> {
+/// `global.bld`'s level and the export ids into it: where a character's
+/// clones of a global template (`Dummy_Inviso`) find what they draw.
+pub struct Globals<'a> {
+    pub global: Igz<'a>,
+    pub exports: Exports,
+}
+
+impl<'a> Globals<'a> {
+    /// Over `global.bld`'s and `bootstrap.bld`'s `level.bld`s.
+    pub fn new(global: &'a [u8], bootstrap: &[u8]) -> std::result::Result<Self, FormatError> {
+        let global = Igz::parse(global)?;
+        let exports = Exports::new(&Igz::parse(bootstrap)?, &global)?;
+        Ok(Self { global, exports })
+    }
+}
+
+/// The model `load_file`'s archive level holds, what a fresh figure of it
+/// carries and its hero side. Without `globals`, a set that clones a global
+/// template is left unsettled.
+pub fn read(
+    level: &[u8],
+    load_file: &str,
+    identity: DumpIdentity,
+    globals: Option<&Globals<'_>>,
+) -> Result<Extracted> {
     let bad = |e: FormatError| refused(load_file, e);
     let igz = Igz::parse(level).map_err(bad)?;
     let portal = fmodel::portal_model(&igz).map_err(bad)?;
+    let portal = fmodel::in_play(&igz, portal, load_file).map_err(bad)?;
     let hero = &portal.hero;
     let havok_skeleton = fmodel::skeleton(&igz, hero).map_err(bad)?;
     let joints = JointMap::new(&havok_skeleton, &hero.bones).map_err(bad)?;
@@ -171,6 +206,23 @@ pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Ext
             segments.push(seg);
         }
     }
+    let mut global_textures = Textures::default();
+    let (attachments, attachments_unsettled) = match self::attachments(
+        &igz,
+        &portal,
+        load_file,
+        &skeleton,
+        globals,
+        (&mut textures, &mut global_textures),
+    ) {
+        Ok(a) => (a, None),
+        Err(why) => (Vec::new(), Some(why)),
+    };
+    for (path, ktx2) in global_textures.files {
+        if !textures.files.iter().any(|(p, _)| *p == path) {
+            textures.files.push((path, ktx2));
+        }
+    }
     let started = Instant::now();
     let hero = self::hero(&igz, &portal, &havok_skeleton, load_file, identity.clone())
         .map_err(|e| e.to_string());
@@ -184,12 +236,227 @@ pub fn read(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Ext
             materials,
             segments,
             idle,
+            attachments,
+            attachments_unsettled,
         },
         textures: textures.files,
         binds,
         hero,
         hero_took,
     })
+}
+
+/// Where an attachment's template lives: in the archive or `global.bld`,
+/// its placement and the model it draws.
+#[derive(Debug, Clone, Copy)]
+struct Drawn {
+    global: bool,
+    placement: usize,
+    model: usize,
+}
+
+/// What a fresh figure of `portal`'s character carries (AE.23): the
+/// models [`fattach::hung`] keeps, each read as a prop (the archive's
+/// textures into the first of `textures`, `global.bld`'s into the second)
+/// with the attach point it hangs on. Why it can't settle is the error.
+fn attachments(
+    igz: &Igz<'_>,
+    portal: &PortalModel<'_>,
+    load_file: &str,
+    body: &Skeleton,
+    globals: Option<&Globals<'_>>,
+    textures: (&mut Textures, &mut Textures),
+) -> std::result::Result<Vec<Attachment>, String> {
+    let hero = fmodel::hero_actor(igz, portal, load_file).map_err(|e| format!("no hero: {e}"))?;
+    let fresh = fattach::fresh(igz, &hero).map_err(|e| e.to_string())?;
+    let drawn = |t: &Template| -> std::result::Result<Option<Drawn>, String> {
+        let (global, file, placement) = match t {
+            Template::Local(p) => (false, igz, *p),
+            Template::Global(id) => {
+                let g = globals.ok_or("a global template without global.bld")?;
+                let placement = g
+                    .exports
+                    .resolve_import(id)
+                    .ok_or("an import of another file")?
+                    .map_err(|e| e.to_string())?
+                    .object()
+                    .ok_or("a global template global.bld imports")?;
+                (true, &g.global, placement)
+            }
+        };
+        Ok(fattach::placement_model(file, placement)
+            .map_err(|e| e.to_string())?
+            .map(|model| Drawn {
+                global,
+                placement,
+                model,
+            }))
+    };
+    let hung =
+        fattach::hung(&fresh, |t| !matches!(drawn(t), Ok(None))).map_err(|e| e.to_string())?;
+    let (local_textures, global_textures) = textures;
+    let mut out: Vec<Attachment> = Vec::with_capacity(hung.len());
+    let mut parts: Vec<Drawn> = Vec::with_capacity(hung.len());
+    for h in &hung {
+        let d = drawn(&h.template)?.ok_or("a hung clone that draws nothing")?;
+        let file = match (d.global, globals) {
+            (true, Some(g)) => &g.global,
+            _ => igz,
+        };
+        let name = |o: usize| {
+            file.objects()[o]
+                .field(8)
+                .and_then(|at| file.string(at, "_name").ok().flatten())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let path = name(d.model);
+        let texture_store = if d.global {
+            &mut *global_textures
+        } else {
+            &mut *local_textures
+        };
+        let model = if draws_anything(file, d.model) {
+            crate::levels::prop(file, d.model, &path, texture_store)
+                .map_err(|e| format!("{path}: {e}"))?
+        } else {
+            // `inviso.mdl`: hung, drawing nothing here.
+            guac_ir::level::Prop {
+                path: path.clone(),
+                skeleton: None,
+                materials: Vec::new(),
+                segments: Vec::new(),
+                idle: None,
+            }
+        };
+        // The point it hangs on: an entry of the parent's attach list, a
+        // joint of the parent's skeleton by name.
+        let (owner_file, owner_model, owner_joints): (&Igz<'_>, usize, Option<&Skeleton>) =
+            match h.parent {
+                None => (igz, hero.info.model.unwrap_or(portal.model), Some(body)),
+                Some(k) => {
+                    let p = parts[k];
+                    let f = match (p.global, globals) {
+                        (true, Some(g)) => &g.global,
+                        _ => igz,
+                    };
+                    (f, p.model, out[k].model.skeleton.as_ref())
+                }
+            };
+        let (bone, joint, offset) = match h.slot {
+            None => (
+                None,
+                None,
+                euler_transform(&EulerTransform {
+                    position: [0.0; 3],
+                    rotation: [0.0; 3],
+                }),
+            ),
+            Some(slot) => {
+                let points =
+                    fattach::attach_points(owner_file, owner_model).map_err(|e| e.to_string())?;
+                let p = points.get(slot).ok_or_else(|| {
+                    format!("attach point {slot} past the parent's {}", points.len())
+                })?;
+                let bone = p.bone_name.unwrap_or_default();
+                let joint = if bone == BoneAttachInfo::ROOT {
+                    None
+                } else {
+                    let joints = owner_joints.ok_or_else(|| {
+                        format!("{path} hangs on {bone} of a model without bones")
+                    })?;
+                    let j = joints
+                        .joints
+                        .iter()
+                        .position(|j| j.name == bone)
+                        .ok_or_else(|| format!("{path} hangs on {bone}, which its parent lacks"))?;
+                    Some(u16::try_from(j).map_err(|_| "65,536 joints")?)
+                };
+                (Some(bone.to_owned()), joint, euler_transform(&p.transform))
+            }
+        };
+        out.push(Attachment {
+            placement: name(d.placement),
+            parent: h
+                .parent
+                .map(|k| u16::try_from(k).map_err(|_| "65,536 attachments"))
+                .transpose()?,
+            bone,
+            joint,
+            offset,
+            model,
+        });
+        parts.push(d);
+    }
+    Ok(out)
+}
+
+/// Whether a static model has a technique whose effect the material
+/// reader follows (an import of `global.bld`'s effects). The global
+/// `inviso.mdl` a dummy hangs (Whale's anchor, Shroomboom's slingshot)
+/// has one technique naming `global.bld`'s own effect object instead,
+/// which the reader doesn't follow: it's kept as an attachment drawing
+/// nothing, as the invisible helper it is in the oracle's shots (AE.22). A
+/// model that doesn't walk as a static one is left to
+/// [`crate::levels::prop`].
+fn draws_anything(igz: &Igz<'_>, model: usize) -> bool {
+    match guac_formats::level::StaticModel::read(igz, model) {
+        Ok(m) => m
+            .graph
+            .draws
+            .iter()
+            .any(|d| material::effect(igz, d.technique_index, &d.technique).is_ok()),
+        Err(_) => true,
+    }
+}
+
+/// An attach point's offset (`tfbEulerTransform`: metres, then tilt,
+/// heading and roll in degrees) as the IR's transform: the position, and
+/// [`guac_formats::level::euler_rows`]'s rotation (row vectors) as a
+/// quaternion for column vectors, so heading 90 turns +Z to +X.
+pub fn euler_transform(t: &EulerTransform) -> Transform {
+    let m = guac_formats::level::euler_rows(t.rotation);
+    // Column-vector R is the row-vector matrix transposed: R[i][j] = m[j][i].
+    let r = |i: usize, j: usize| f64::from(m[j][i]);
+    let trace = r(0, 0) + r(1, 1) + r(2, 2);
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [
+            (r(2, 1) - r(1, 2)) / s,
+            (r(0, 2) - r(2, 0)) / s,
+            (r(1, 0) - r(0, 1)) / s,
+            0.25 * s,
+        ]
+    } else if r(0, 0) > r(1, 1) && r(0, 0) > r(2, 2) {
+        let s = (1.0 + r(0, 0) - r(1, 1) - r(2, 2)).sqrt() * 2.0;
+        [
+            0.25 * s,
+            (r(0, 1) + r(1, 0)) / s,
+            (r(0, 2) + r(2, 0)) / s,
+            (r(2, 1) - r(1, 2)) / s,
+        ]
+    } else if r(1, 1) > r(2, 2) {
+        let s = (1.0 + r(1, 1) - r(0, 0) - r(2, 2)).sqrt() * 2.0;
+        [
+            (r(0, 1) + r(1, 0)) / s,
+            0.25 * s,
+            (r(1, 2) + r(2, 1)) / s,
+            (r(0, 2) - r(2, 0)) / s,
+        ]
+    } else {
+        let s = (1.0 + r(2, 2) - r(0, 0) - r(1, 1)).sqrt() * 2.0;
+        [
+            (r(0, 2) + r(2, 0)) / s,
+            (r(1, 2) + r(2, 1)) / s,
+            0.25 * s,
+            (r(1, 0) - r(0, 1)) / s,
+        ]
+    };
+    Transform {
+        translation: t.position,
+        rotation: q.map(|c| c as f32),
+        scale: [1.0; 3],
+    }
 }
 
 /// The hero side of `portal`'s character: its placement
