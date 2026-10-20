@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: The gloss map
-A material with a gloss map SHALL take a gloss amount from the red channel of its third-layer texture, used as stored, at the third layer's texture coordinates, times that layer's strength, and SHALL draw no third layer. With the rim sample scaled by the gloss and the rim strength, and k the rim strength times one less the gloss, the rim's over SHALL be the colour times k plus that sample, its add the colour plus that sample and its multiply the colour times half k plus that sample.
+A material with a gloss map SHALL take a gloss amount from the red channel of its third-layer texture, used as stored, at the third layer's texture coordinates, times that layer's strength, and SHALL draw no third layer. With the rim sample scaled by the gloss and the rim strength, and k the rim strength times one less the gloss, the rim's over SHALL be the colour times k plus that sample, its add the colour plus that sample and its multiply the colour times the sum of half k and that sample.
 
 #### Scenario: Full gloss
 - **WHEN** a part with a gloss map at strength 1 is drawn in the rim's over mode at full rim strength where its gloss texture's red is full
