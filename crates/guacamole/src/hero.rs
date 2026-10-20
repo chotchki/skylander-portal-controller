@@ -3,9 +3,13 @@
 //! original's nominal 1/60 s over Avian's queries ([`AvianSeam`]), his drawn
 //! `Transform` eased between steps by `bevy_transform_interpolation`, so the
 //! TV draws at any rate and the walk stays the same (hero-movement's The same
-//! walk at any frame rate). A later box (AG.21) puts [`HeroPlugin`] on the
-//! TV and feeds [`HeroInput`] from the pad and the camera; the tests here
-//! run it headless.
+//! walk at any frame rate). The gameplay camera steps beside him (AG.17,
+//! [`FollowCamera`]): after his step, on his pivot as the step began, its
+//! `Transform` the eye looking at the aim, eased the same way; his next step
+//! walks him against the view it left (gameplay-camera's The stick held
+//! through a switch). A later box (AG.21) puts [`HeroPlugin`] on the TV,
+//! feeds [`HeroInput`] from the pad and gives the camera entity its
+//! `Camera3d`; the tests here run it headless.
 //!
 //! Ordering: Avian refits its trees for a moved kinematic body when its
 //! physics schedule runs (`FixedPostUpdate`), so a body moved in `FixedUpdate`
@@ -24,6 +28,7 @@
 
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
+use guac_motion::camera::{GameCamera, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
 use guac_motion::proxy::Surfaces;
 use guac_motion::seam::BodyId;
@@ -42,7 +47,14 @@ impl Plugin for HeroPlugin {
             .add_plugins(TransformInterpolationPlugin::default())
             .init_resource::<HeroInput>()
             .init_resource::<MovingSolids>()
-            .add_systems(FixedUpdate, step_heroes.in_set(HeroSystems::Step));
+            .add_systems(
+                FixedUpdate,
+                (
+                    step_heroes.in_set(HeroSystems::Step),
+                    step_cameras.in_set(HeroSystems::Camera),
+                ),
+            )
+            .configure_sets(FixedUpdate, HeroSystems::Camera.after(HeroSystems::Step));
     }
 }
 
@@ -50,6 +62,8 @@ impl Plugin for HeroPlugin {
 pub(crate) enum HeroSystems {
     /// Every hero's frame; kinematic movers run after it.
     Step,
+    /// The gameplay camera's frame, after the hero's.
+    Camera,
 }
 
 /// What the next step reads of the player: the walking stick and the
@@ -73,6 +87,33 @@ pub(crate) struct MovingSolids(pub(crate) Surfaces);
 pub(crate) struct HeroBody {
     pub(crate) hero: Hero,
     pub(crate) exclude: Vec<BodyId>,
+    /// His pivot as his last step began: where the camera's step reads his
+    /// feet.
+    pub(crate) before: Vec3,
+}
+
+/// The gameplay camera following the hero, and the level's transition
+/// planes it blends through.
+#[derive(Component, Debug, Clone)]
+pub(crate) struct FollowCamera {
+    pub(crate) camera: GameCamera,
+    pub(crate) planes: Vec<TransitionPlane>,
+}
+
+/// The camera's drawn transform: at the eye, looking at the aim.
+fn viewed(view: &View) -> Transform {
+    Transform::from_translation(view.eye).looking_at(view.aim, Vec3::Y)
+}
+
+/// Spawns the gameplay camera where `camera` stands, eased between steps.
+pub(crate) fn spawn_camera(commands: &mut Commands, camera: FollowCamera) -> Entity {
+    commands
+        .spawn((
+            viewed(&camera.camera.view()),
+            TransformInterpolation,
+            camera,
+        ))
+        .id()
 }
 
 /// His drawn transform: the pivot, his facing turned before his lean.
@@ -87,6 +128,7 @@ pub(crate) fn spawn_hero(commands: &mut Commands, hero: Hero) -> Entity {
             placed(&hero),
             TransformInterpolation,
             HeroBody {
+                before: hero.pivot,
                 hero,
                 exclude: Vec::new(),
             },
@@ -94,19 +136,49 @@ pub(crate) fn spawn_hero(commands: &mut Commands, hero: Hero) -> Entity {
         .id()
 }
 
-/// One game frame of every hero, the fixed step's length its step.
+/// One game frame of every hero, the fixed step's length its step, against
+/// the gameplay camera's view as the frame before left it when there is one.
 fn step_heroes(
     seam: AvianSeam,
     input: Res<HeroInput>,
     moving: Res<MovingSolids>,
     time: Res<Time>,
-    mut heroes: Query<(&mut HeroBody, &mut Transform)>,
+    cameras: Query<&FollowCamera>,
+    mut heroes: Query<(&mut HeroBody, &mut Transform), Without<FollowCamera>>,
 ) {
     let step = time.delta_secs();
+    let mut input = input.0;
+    if let Some(follow) = cameras.iter().next() {
+        input.view_heading = follow.camera.view().heading();
+    }
     for (mut body, mut transform) in &mut heroes {
-        let HeroBody { hero, exclude } = &mut *body;
-        hero.step_among(&seam, &input.0, step, exclude, &moving.0);
+        let HeroBody {
+            hero,
+            exclude,
+            before,
+        } = &mut *body;
+        *before = hero.pivot;
+        hero.step_among(&seam, &input, step, exclude, &moving.0);
         *transform = placed(hero);
+    }
+}
+
+/// One game frame of the gameplay camera on the hero's pivot as his step
+/// began. One hero walks (pad-input's One pad walks the hero): with none,
+/// or a second, the camera waits.
+fn step_cameras(
+    time: Res<Time>,
+    heroes: Query<&HeroBody>,
+    mut cameras: Query<(&mut FollowCamera, &mut Transform), Without<HeroBody>>,
+) {
+    let Ok(hero) = heroes.single() else {
+        return;
+    };
+    let step = time.delta_secs();
+    for (mut follow, mut transform) in &mut cameras {
+        let FollowCamera { camera, planes } = &mut *follow;
+        camera.step(hero.before, step, planes);
+        *transform = viewed(&camera.view());
     }
 }
 
@@ -116,6 +188,7 @@ mod tests {
 
     use bevy::ecs::system::SystemState;
     use bevy::time::TimeUpdateStrategy;
+    use guac_motion::camera::{CameraDef, LookFrom};
     use guac_motion::parry::ParryWorld;
     use guac_motion::scenarios::{self, eruptor, stick};
     use guac_motion::seam::{Body, BodyKind, Collider, Pose, Shape, Vec3};
@@ -379,6 +452,97 @@ mod tests {
         assert!((hero.velocity.z + 1.0).abs() < 1e-3, "{:?}", hero.velocity);
         let gap = (at.z - half) - (hero.pivot.z + 0.9144);
         assert!((gap - 0.005).abs() < 1e-4, "{gap}");
+    }
+
+    /// The gameplay camera on `def` at rest on a hero standing at `feet`.
+    fn spawn_follow(app: &mut App, def: CameraDef, feet: Vec3) -> Entity {
+        let mut commands = app.world_mut().commands();
+        let entity = spawn_camera(
+            &mut commands,
+            FollowCamera {
+                camera: GameCamera::new(def, feet),
+                planes: Vec::new(),
+            },
+        );
+        app.world_mut().flush();
+        entity
+    }
+
+    fn camera_of(app: &App, entity: Entity) -> &GameCamera {
+        &app.world()
+            .entity(entity)
+            .get::<FollowCamera>()
+            .unwrap()
+            .camera
+    }
+
+    /// AG.17: the gameplay camera steps once a fixed step after the hero, on
+    /// his pivot as the step began, and on Avian's side its view is the one
+    /// the camera stepped by hand beside the controller on parry gives, the
+    /// hero's walk read against it; at 30 and 144 Hz the same after 120
+    /// steps; its drawn transform the eye looking at the aim.
+    #[test]
+    fn the_camera_steps_beside_the_hero_as_on_parry() {
+        let bodies = open_ground();
+        let dt = (1.0f64 / 60.0) as f32;
+        let parry = ParryWorld::new(&bodies).unwrap();
+        let mut by_hand = eruptor(&parry, START, 15.0);
+        let mut follow = GameCamera::new(CameraDef::LEVEL_213_START, by_hand.pivot);
+        for k in 0..120 {
+            let mut input = walk_input(k).0;
+            input.view_heading = follow.view().heading();
+            let feet = by_hand.pivot;
+            by_hand.step(&parry, &input, dt, &[]);
+            follow.step(feet, dt, &[]);
+        }
+        let mut ends = Vec::new();
+        for rate in [30.0, 60.0, 144.0] {
+            let mut app = headless(1.0 / rate, &bodies);
+            let hero = spawn_eruptor(&mut app, START, 15.0);
+            let pivot = hero_of(&app, hero).pivot;
+            let camera = spawn_follow(&mut app, CameraDef::LEVEL_213_START, pivot);
+            walk_steps(&mut app, 120);
+            let view = camera_of(&app, camera).view();
+            ends.push(view.eye);
+            let miss = (view.eye - follow.view().eye).length();
+            eprintln!("{rate} Hz: the camera's eye {miss:e} m from parry's by hand");
+            assert!(miss < 1e-4, "{rate} Hz: {miss}");
+            assert!((hero_of(&app, hero).pivot - by_hand.pivot).length() < 1e-4);
+            // Drawn eased between the last two steps: within one step's move
+            // of the eye (the eye moves at most 0.11 m a step here), looking
+            // the way the view does.
+            let drawn = app.world().entity(camera).get::<Transform>().unwrap();
+            assert!((drawn.translation - view.eye).length() < 0.15, "{rate} Hz");
+            let forward = drawn.forward();
+            let want = (view.aim - view.eye).normalize();
+            assert!(forward.dot(want) > 1.0 - 1e-4, "{forward:?} {want}");
+        }
+        assert_eq!(ends[0], ends[1]);
+        assert_eq!(ends[1], ends[2]);
+    }
+
+    /// The stick walks him against the camera's view, not the pad input's:
+    /// a camera looking along 195° sends him along 195° with the stick
+    /// forward (gameplay-camera's Forward after a switch, decision 12).
+    #[test]
+    fn the_hero_walks_against_the_cameras_view() {
+        let bodies = open_ground();
+        let mut app = headless(1.0 / 60.0, &bodies);
+        app.world_mut().remove_resource::<WalkScript>();
+        app.insert_resource(HeroInput(Input::stick(stick(1.0, 0.0), 0.0)));
+        let hero = spawn_eruptor(&mut app, START, 0.0);
+        let pivot = hero_of(&app, hero).pivot;
+        let def = CameraDef {
+            look_from: LookFrom::Heading(15.0),
+            ..CameraDef::LEVEL_213_START
+        };
+        spawn_follow(&mut app, def, pivot);
+        walk_steps(&mut app, 30);
+        let from = hero_of(&app, hero).pivot;
+        walk_steps(&mut app, 60);
+        let moved = hero_of(&app, hero).pivot - from;
+        let heading = moved.x.atan2(moved.z).to_degrees().rem_euclid(360.0);
+        assert!((heading - 195.0).abs() < 1e-2, "{heading}");
     }
 
     /// AG.16's Verify: the controller's open-ground and wall cases, each in
