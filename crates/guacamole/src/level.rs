@@ -805,6 +805,26 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
     }
 }
 
+/// The camera the level is drawn from into `target` at `order`: the
+/// remaster's at AF's fresh-state camera, writing over what's there
+/// ([`VIEW_OUTPUT`]). The dev entry's over the TV; the start's pass draws
+/// one under it ([`crate::prepare`]), so the output's pipeline for the TV's
+/// target and that write is compiled before the level first shows (AG.42).
+pub(crate) fn view_camera(target: RenderTarget, order: isize) -> impl Bundle {
+    (
+        remaster::camera(),
+        Camera {
+            order,
+            clear_color: ClearColorConfig::Custom(Color::BLACK),
+            output_mode: VIEW_OUTPUT,
+            ..default()
+        },
+        target,
+        Projection::Perspective(fresh_state_projection()),
+        fresh_state_transform(),
+    )
+}
+
 /// The dev entry: once the level is ready, the remaster's camera at AF's
 /// fresh-state camera, drawing the level over the TV into its target.
 fn show_level(
@@ -827,16 +847,7 @@ fn show_level(
     };
     let camera = commands
         .spawn((
-            remaster::camera(),
-            Camera {
-                order: VIEW_ORDER,
-                clear_color: ClearColorConfig::Custom(Color::BLACK),
-                output_mode: VIEW_OUTPUT,
-                ..default()
-            },
-            target,
-            Projection::Perspective(fresh_state_projection()),
-            fresh_state_transform(),
+            view_camera(target, VIEW_ORDER),
             RenderLayers::layer(LEVEL_LAYER),
             LevelCamera,
             Name::new("level view"),

@@ -64,6 +64,10 @@ On the M3 Max, once the level shows, no TV frame SHALL take longer than 50 ms, i
 - **WHEN** the hero walks to where scenery he hasn't seen yet comes into view
 - **THEN** no frame takes longer than 50 ms
 
+#### Scenario: The first time a Mac draws the level
+- **WHEN** chapter 1 loads and first shows on a Mac that has never drawn it, after the start got the graphics ready
+- **THEN** no frame of the load or the first show waits on a pipeline, and none takes longer than 50 ms
+
 ### Requirement: The first character placed walks into the level
 With Giants picked and its level extracted, placing a character on the portal SHALL take the TV into the level with that character as the hero, after its intro when one plays. A figure that isn't a character (a magic item, an adventure-pack piece or a sidekick) SHALL NOT start the level or become the hero.
 

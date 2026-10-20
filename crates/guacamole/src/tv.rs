@@ -42,7 +42,8 @@ use crate::level::LevelPlugin;
 use crate::look::{self, ChoiceFace};
 use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
-use crate::screen::{SetupView, TvScreen, screen_for};
+use crate::prepare::{Prepare, PreparePlugin};
+use crate::screen::{SetupView, TvScreen, screen_for, while_preparing};
 use crate::starfield;
 use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
@@ -182,6 +183,13 @@ pub(crate) struct ExtractBar(pub(crate) u8);
 #[derive(Component)]
 pub(crate) struct GameName;
 
+/// The start's pass's progress line and bar fill (percent) as drawn.
+#[derive(Component)]
+pub(crate) struct PrepareLine;
+
+#[derive(Component)]
+pub(crate) struct PrepareBar(pub(crate) u8);
+
 /// Found's list of titles as drawn.
 #[derive(Component)]
 pub(crate) struct TitlesLine;
@@ -291,6 +299,7 @@ struct Redraw;
 pub(crate) enum TvState {
     #[default]
     Starting,
+    Preparing,
     Setup,
     NoGiants,
     Found,
@@ -302,8 +311,9 @@ pub(crate) enum TvState {
 }
 
 impl TvState {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Starting,
+        Self::Preparing,
         Self::Setup,
         Self::NoGiants,
         Self::Found,
@@ -317,6 +327,7 @@ impl TvState {
     pub(crate) fn of(screen: &TvScreen) -> Self {
         match screen {
             TvScreen::Starting => Self::Starting,
+            TvScreen::Preparing => Self::Preparing,
             TvScreen::Setup => Self::Setup,
             TvScreen::NoGiants => Self::NoGiants,
             TvScreen::Found => Self::Found,
@@ -369,6 +380,7 @@ impl Plugin for Screens {
                     patch_address,
                     patch_screen_text,
                     patch_titles,
+                    patch_prepare,
                     sync_setup_lines,
                     sync_band,
                     sync_cells,
@@ -400,6 +412,9 @@ impl Plugin for Tv {
             // The level, loaded behind the portal from the Giants pick
             // (AG.19); the warm compiles its keys.
             .add_plugins(LevelPlugin)
+            // The start's pass (AE.25): every pipeline the TV draws Giants
+            // with, before the first screen a phone or the setup acts on.
+            .add_plugins(PreparePlugin)
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
             .add_systems(Update, (scale_ui, farewell_exit));
@@ -417,9 +432,11 @@ fn poll_status(
     mut commands: Commands,
     link: Res<ServerLink>,
     setup: Res<Setup>,
+    prepare: Option<Res<Prepare>>,
     current: Option<ResMut<Current>>,
 ) {
-    let screen = screen_for(&read_status(&link), &setup.0);
+    let preparing = prepare.is_some_and(|p| p.preparing());
+    let screen = while_preparing(screen_for(&read_status(&link), &setup.0), preparing);
     let clients = link.clients.load(Ordering::Relaxed);
     match current {
         Some(mut current) => {
@@ -537,6 +554,8 @@ struct Sources<'w> {
     time: Res<'w, Time>,
     /// A card's model, once its turntable has one up (AE.13).
     turntables: Res<'w, Turntables>,
+    /// The start's pass, for its screen's progress (AE.25).
+    prepare: Option<Res<'w, Prepare>>,
 }
 
 impl Sources<'_> {
@@ -632,6 +651,40 @@ fn patch_screen_text(
         TvScreen::ServerError { message } => patch(messages.iter_mut(), message, redrawn),
         _ => {}
     }
+}
+
+/// The start's pass's line and bar follow its count of keys compiled.
+fn patch_prepare(
+    prepare: Option<Res<Prepare>>,
+    mut lines: Query<&mut Text, With<PrepareLine>>,
+    mut bars: Query<(&mut PrepareBar, &mut Node)>,
+    redrawn: MessageWriter<Redrawn>,
+) {
+    let Some(prepare) = prepare.filter(|p| p.is_changed()) else {
+        return;
+    };
+    let r = prepare.report();
+    let pct = prepare_percent(r.compiled, r.keys);
+    for (mut bar, mut node) in &mut bars {
+        if bar.0 != pct {
+            bar.0 = pct;
+            node.width = percent(f32::from(pct));
+        }
+    }
+    patch(lines.iter_mut(), &prepare_line(r.compiled, r.keys), redrawn);
+}
+
+/// The pass's progress as drawn: how many of its keys are ready.
+fn prepare_line(compiled: usize, keys: usize) -> String {
+    if keys == 0 {
+        String::new()
+    } else {
+        format!("{compiled} of {keys} ready")
+    }
+}
+
+fn prepare_percent(compiled: usize, keys: usize) -> u8 {
+    (compiled.min(keys) * 100).checked_div(keys).unwrap_or(0) as u8
 }
 
 fn patch_titles(
@@ -1156,6 +1209,29 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
         TvState::Starting => {
             ui.spawn(pen.text("Starting…", Step::Lg, Role::Muted));
         }
+        TvState::Preparing => {
+            let (compiled, keys) = sources
+                .prepare
+                .as_ref()
+                .map_or((0, 0), |p| (p.report().compiled, p.report().keys));
+            pen.screen_title(ui, "Getting ready", TITLE);
+            ui.spawn(pen.text(
+                "Setting up the graphics on this computer.",
+                Step::Md,
+                Role::Primary,
+            ));
+            let pct = prepare_percent(compiled, keys);
+            spawn_bar(ui, &pen, pct, PrepareBar(pct));
+            ui.spawn((
+                PrepareLine,
+                pen.text(&prepare_line(compiled, keys), Step::Body, Role::Muted),
+            ));
+            ui.spawn(pen.text(
+                "The first start takes a while. Later ones don't.",
+                Step::Caption,
+                Role::Muted,
+            ));
+        }
         TvState::Setup => {
             pen.screen_title(ui, "Where are your disc dumps?", TITLE);
             ui.spawn(pen.text(
@@ -1611,7 +1687,15 @@ fn spawn_band(left: &mut ChildSpawnerCommands, pen: &Pen, band: &Band) {
         ),
     ));
     if let Some(pct) = band.percent {
-        left.spawn((
+        spawn_bar(left, pen, pct, ExtractBar(pct));
+    }
+}
+
+/// A progress bar: `pct` of a faint track in gold, its fill marked with
+/// `fill` (the extraction's or the start's pass's) for the patch to find.
+fn spawn_bar(parent: &mut ChildSpawnerCommands, pen: &Pen, pct: u8, fill: impl Component) {
+    parent
+        .spawn((
             Node {
                 width: percent(100),
                 max_width: px(640),
@@ -1625,7 +1709,7 @@ fn spawn_band(left: &mut ChildSpawnerCommands, pen: &Pen, band: &Band) {
         ))
         .with_children(|bar| {
             bar.spawn((
-                ExtractBar(pct),
+                fill,
                 Node {
                     width: percent(f32::from(pct)),
                     height: percent(100),
@@ -1634,7 +1718,6 @@ fn spawn_band(left: &mut ChildSpawnerCommands, pen: &Pen, band: &Band) {
                 BackgroundColor(pen.theme.gold),
             ));
         });
-    }
 }
 
 /// A cell's content box: fills the cell.
@@ -1691,49 +1774,129 @@ fn spawn_card(
     images: CardImages,
     motion: Schedule,
 ) {
+    spawn_card_as(cell, pen, Some(slot), placement, images, motion);
+}
+
+/// [`spawn_card`], marked as `slot`'s card (`CardSlot`, `CardPlate`, `Pip`)
+/// or, with none, marked as nothing: the start's pass's offscreen card.
+fn spawn_card_as(
+    cell: &mut ChildSpawnerCommands,
+    pen: &Pen,
+    slot: Option<u8>,
+    placement: &Placement,
+    images: CardImages,
+    motion: Schedule,
+) {
     let theme = &pen.theme;
-    cell.spawn((CardSlot(slot), slot_box()))
-        .with_children(|card| {
-            card.spawn((
-                CardFace(motion),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0),
-                    right: px(0),
-                    top: px(0),
-                    bottom: px(0),
-                    ..slot_frame()
-                },
-                surfaces::card(theme),
-            ))
-            .with_children(|face| {
-                let shown = images.model.or_else(|| images.portrait.clone());
-                let (bezel, plate) = surfaces::spawn_bezel(face, theme, placement.element, shown);
+    let mut card = cell.spawn(slot_box());
+    if let Some(slot) = slot {
+        card.insert(CardSlot(slot));
+    }
+    card.with_children(|card| {
+        card.spawn((
+            CardFace(motion),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                top: px(0),
+                bottom: px(0),
+                ..slot_frame()
+            },
+            surfaces::card(theme),
+        ))
+        .with_children(|face| {
+            let shown = images.model.or_else(|| images.portrait.clone());
+            let (bezel, plate) = surfaces::spawn_bezel(face, theme, placement.element, shown);
+            if let Some(slot) = slot {
                 face.commands().entity(plate).insert(CardPlate {
                     slot,
                     portrait: images.portrait,
                 });
-                card_motion::on_bezel(face.commands().entity(bezel), motion, theme);
-                face.spawn((
-                    pen.text(&placement.name, CARD_NAME, Role::Primary),
-                    Node {
-                        max_width: percent(100),
-                        ..default()
-                    },
-                ));
-                if let Some(element) = placement.element {
-                    face.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
+            }
+            card_motion::on_bezel(face.commands().entity(bezel), motion, theme);
+            face.spawn((
+                pen.text(&placement.name, CARD_NAME, Role::Primary),
+                Node {
+                    max_width: percent(100),
+                    ..default()
+                },
+            ));
+            if let Some(element) = placement.element {
+                face.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
+            }
+            if let Some(owner) = &placement.owner {
+                let color = owner_color(owner, theme);
+                let mut pip = face.spawn(surfaces::pip(theme, color.into()));
+                if let Some(slot) = slot {
+                    pip.insert(Pip(slot));
                 }
-                if let Some(owner) = &placement.owner {
-                    let color = owner_color(owner, theme);
-                    face.spawn((Pip(slot), surfaces::pip(theme, color.into())))
-                        .with_children(|pip| {
-                            let ink = theme.ink_on(color);
-                            pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
-                        });
-                }
-            });
+                pip.with_children(|pip| {
+                    let ink = theme.ink_on(color);
+                    pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
+                });
+            }
         });
+    });
+}
+
+/// A card for no figure on the portal, drawn by `camera` (offscreen, `size`
+/// pixels) and nowhere else: the start's pass (AE.25) draws one so the UI
+/// pipelines a card's face, bezel, shadows, flash, name and pip draw with
+/// are compiled before the first placement. It carries none of the markers
+/// the mirror, the layout report and the turntables find a card by.
+pub(crate) fn spawn_sample_card(
+    commands: &mut Commands,
+    assets: &TvAssets,
+    theme: &TvTheme,
+    camera: Entity,
+    size: UVec2,
+    plate: Handle<Image>,
+    now: Duration,
+) -> Entity {
+    let pen = Pen::new(assets, theme);
+    let figure_id = skylander_core::FigureId::new("000009-0000");
+    let (toy_type, variant) = figure_id.subtype_parts().expect("a well-formed figure id");
+    let placement = Placement {
+        figure_id,
+        toy_type,
+        variant,
+        name: "Getting ready".into(),
+        element: Some(Element::Fire),
+        portrait: None,
+        owner: Some(PlacementOwner {
+            profile_id: String::new(),
+            initial: "G".into(),
+            color: "#da5ad6".into(),
+            progress: Default::default(),
+        }),
+    };
+    let images = CardImages {
+        portrait: Some(plate),
+        model: None,
+    };
+    commands
+        .spawn((
+            Node {
+                width: px(size.x as f32),
+                height: px(size.y as f32),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            bevy::ui::UiTargetCamera(camera),
+            Name::new("prepare: a card"),
+        ))
+        .with_children(|cell| {
+            spawn_card_as(
+                cell,
+                &pen,
+                None,
+                &placement,
+                images,
+                Schedule::placement(0, now),
+            );
+        })
+        .id()
 }
 
 fn spawn_empty(cell: &mut ChildSpawnerCommands, pen: &Pen, slot: u8) {
@@ -2617,6 +2780,7 @@ pub(crate) mod layout_tests {
         // Titles in caps (AP.10); "Starting…" isn't one.
         let steps = [
             (TvScreen::Starting, TvState::Starting, "Starting…"),
+            (TvScreen::Preparing, TvState::Preparing, "GETTING READY"),
             (
                 TvScreen::Setup,
                 TvState::Setup,
@@ -2676,9 +2840,10 @@ pub(crate) mod layout_tests {
         q.iter(world).map(|t| t.0.clone()).collect()
     }
 
-    fn every_screen() -> [TvScreen; 9] {
+    fn every_screen() -> [TvScreen; 10] {
         [
             TvScreen::Starting,
+            TvScreen::Preparing,
             TvScreen::Setup,
             TvScreen::NoGiants,
             TvScreen::Found,
@@ -4192,6 +4357,119 @@ pub(crate) mod layout_tests {
         );
         let third = plates(&mut app).into_iter().find(|p| p.0 == 2).unwrap();
         assert_eq!(third.2, None, "no portrait in the made-up roster, no model");
+    }
+
+    /// AE.25: the start's pass's screen, its title, lines and bar inside
+    /// the inset at 1080p and 4K on the TV and in the desktop window, the
+    /// line and the bar following the count of keys ready.
+    #[test]
+    fn the_preparing_screen_lays_out_inside_the_inset_and_counts_up() {
+        for (width, height, mode) in [
+            (1920, 1080, WindowMode::Tv),
+            (3840, 2160, WindowMode::Tv),
+            (1280, 720, WindowMode::Desktop),
+        ] {
+            let mut app = portal_app(width, height, mode, PortalCards::default());
+            let mut prepare = Prepare::new(true);
+            prepare.set_progress(44, 88);
+            app.insert_resource(prepare);
+            app.world_mut().resource_mut::<Current>().screen = TvScreen::Preparing;
+            let laid = measure(&mut app);
+            let safe = safe_area(width, height, mode);
+            assert!(laid.texts.len() >= 3, "{width}x{height}: {:?}", laid.texts);
+            for t in &laid.texts {
+                assert!(
+                    contains(safe, *t),
+                    "{width}x{height} {mode:?}: {t:?} outside {safe:?}"
+                );
+            }
+            assert!(laid.cards.is_empty() && laid.empties.is_empty());
+            let drawn = texts(&mut app);
+            assert!(drawn.contains(&"44 of 88 ready".to_string()), "{drawn:?}");
+            assert_eq!(titles(&mut app), ["GETTING READY"]);
+            let world = app.world_mut();
+            let bars: Vec<u8> = world
+                .query::<&PrepareBar>()
+                .iter(world)
+                .map(|b| b.0)
+                .collect();
+            assert_eq!(bars, [50]);
+            // The count moves on: patched in place, no new screen.
+            let root = roots(&mut app);
+            app.world_mut()
+                .resource_mut::<Prepare>()
+                .set_progress(88, 88);
+            app.update();
+            assert!(texts(&mut app).contains(&"88 of 88 ready".to_string()));
+            let world = app.world_mut();
+            let bars: Vec<u8> = world
+                .query::<&PrepareBar>()
+                .iter(world)
+                .map(|b| b.0)
+                .collect();
+            assert_eq!(bars, [100]);
+            assert_eq!(roots(&mut app), root);
+        }
+        assert_eq!(prepare_line(0, 0), "");
+        assert_eq!(prepare_percent(3, 0), 0);
+        assert_eq!(prepare_percent(1, 3), 33);
+    }
+
+    /// AE.25: the pass's card is drawn by its own camera and counted by
+    /// nothing that counts cards: no card, plate, pip or empty frame on the
+    /// TV's camera, the portal's own cards untouched beside it.
+    #[test]
+    fn the_sample_card_draws_offscreen_and_is_counted_nowhere() {
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, full("Eruptor"));
+        let laid = measure(&mut app);
+        let before = (laid.cards.len(), laid.pips.len());
+        let camera = app.world_mut().spawn(Camera2d).id();
+        let plate = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let world = app.world_mut();
+        let assets = world.remove_resource::<TvAssets>().unwrap();
+        let theme = world.resource::<TvTheme>().clone();
+        let root = {
+            let mut commands = world.commands();
+            spawn_sample_card(
+                &mut commands,
+                &assets,
+                &theme,
+                camera,
+                UVec2::splat(448),
+                plate.clone(),
+                Duration::ZERO,
+            )
+        };
+        world.flush();
+        world.insert_resource(assets);
+        frames(&mut app, 3);
+        let world = app.world_mut();
+        let counted = (
+            world.query::<&CardSlot>().iter(world).count(),
+            world.query::<&Pip>().iter(world).count(),
+        );
+        assert_eq!(counted, before);
+        assert_eq!(world.query::<&EmptySlot>().iter(world).count(), 0);
+        assert_eq!(
+            world
+                .get::<bevy::ui::UiTargetCamera>(root)
+                .map(|c| c.entity()),
+            Some(camera)
+        );
+        assert_eq!(world.query::<&CardPlate>().iter(world).count(), 8);
+        // Its face, bezel and plate are there, on its camera alone.
+        let mut faces = world.query_filtered::<&bevy::ui::ComputedUiTargetCamera, With<CardFace>>();
+        let on: Vec<Option<Entity>> = faces.iter(world).map(|c| c.get()).collect();
+        assert_eq!(
+            on.iter().filter(|c| **c == Some(camera)).count(),
+            1,
+            "{on:?}"
+        );
+        let mut images = world.query::<&ImageNode>();
+        assert!(images.iter(world).any(|i| i.image == plate));
     }
 }
 

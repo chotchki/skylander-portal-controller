@@ -5,9 +5,9 @@
 //! Copied from the resources that feed the tree: the screen, game, message,
 //! Setup's lists, each card's figure and owner ids, and the intro queue. The
 //! focused choice is `InputFocus`'s entity's `FocusId`. The turntables'
-//! warm (AE.14) and the level's load (AG.19) ride along, and
-//! `/api/_test/tv/frames` hands out the TV's frame times for the stall
-//! check.
+//! warm (AE.14), the level's load (AG.19) and the start's pass (AE.25)
+//! ride along, and `/api/_test/tv/frames` hands out the TV's frame times
+//! for the stall check.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,6 +25,7 @@ use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::level::{Level, LevelReport};
+use crate::prepare::{Prepare, PrepareReport};
 use crate::screen::TvScreen;
 use crate::turntable::{CardPlate, CardState, Turntables};
 use crate::tv::{
@@ -74,6 +75,8 @@ pub struct TvSnapshot {
     pub warm: Option<WarmReport>,
     /// The level's load (AG.19); none without the loader.
     pub level: Option<LevelReport>,
+    /// The start's pass (AE.25); none without it.
+    pub prepare: Option<PrepareReport>,
 }
 
 /// A queued intro, from `IntroQueue`.
@@ -379,7 +382,7 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos, turntables, plates, warm, level): (
+    (queue, player, overlays, videos, turntables, plates, warm, level, prepare): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
@@ -388,6 +391,7 @@ fn mirror_tv(
         Query<(&CardPlate, &ComputedNode, &UiGlobalTransform)>,
         Option<Res<Warm>>,
         Option<Res<Level>>,
+        Option<Res<Prepare>>,
     ),
 ) {
     let Some(current) = current else {
@@ -545,6 +549,7 @@ fn mirror_tv(
         intro_queue,
         warm: warm.map(|w| w.report().clone()),
         level: level.map(|l| l.report().clone()),
+        prepare: prepare.map(|p| p.report().clone()),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
