@@ -137,6 +137,55 @@ impl Clip {
     }
 }
 
+/// One entry of the hero's character proxy's manifold: a contact his last
+/// step's casts found (AG.9). The point is on the other body's surface, the
+/// normal points from it toward the hero, and the distance is the gap between
+/// them, negative when he's inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Plane {
+    pub position: [f32; 3],
+    /// The point's fourth word: 1 on the entries a step's start points gave,
+    /// 0 or a fraction on a cast's hit (as read, not decoded further).
+    pub position_w: f32,
+    pub normal: [f32; 3],
+    pub distance: f32,
+    /// The other body's collidable, its guest address: the harness names it.
+    pub collider: u32,
+}
+
+/// The ground under the hero as the game's ground finder last left it (his
+/// corpus's `ContactInfo`): the point it hit, its normal, and the contact's
+/// context and flags words as read.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Ground {
+    pub location: [f32; 3],
+    /// `_magnitude`: in Giants' hero, the height his pivot was at when it ran.
+    pub magnitude: f32,
+    pub normal: [f32; 3],
+    pub context: u32,
+    pub flags: u32,
+}
+
+/// What the hero's character proxy held at a record (AG.9): the velocity its
+/// last solve left, the support its last check found and the manifold's
+/// entries. The game zeroes the manifold's count after every step, so
+/// `planes` is every entry the array's capacity holds as that step left them:
+/// the step rebuilds the array from its start each cast, so the first is that
+/// step's, and a later one can be an earlier step's left behind, which only
+/// the records around it tell.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Contacts {
+    pub velocity: [f32; 3],
+    /// The support check's state word: 2 supported.
+    pub support: u32,
+    /// The surface normal the support check found.
+    pub surface: [f32; 3],
+    /// The proxy's four flag bytes after its step, as read.
+    pub flags: [u8; 4],
+    pub ground: Option<Ground>,
+    pub planes: Vec<Plane>,
+}
+
 /// One record: the game's state at a read of the watched pad port, once a
 /// game frame in Giants.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -164,6 +213,9 @@ pub struct Frame {
     pub pad: Option<Ds3Pad>,
     /// The hero's clips, in the game's order.
     pub clips: Vec<Clip>,
+    /// His character proxy's contacts, when the watch held them (AG.9 on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contacts: Option<Contacts>,
 }
 
 impl Frame {
@@ -492,6 +544,7 @@ mod tests {
             stick: [0.0, -1.0],
             pad: None,
             clips: Vec::new(),
+            contacts: None,
         }
     }
 

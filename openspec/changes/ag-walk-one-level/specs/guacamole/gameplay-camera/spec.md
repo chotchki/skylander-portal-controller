@@ -7,37 +7,49 @@ Where the gameplay camera sits and how it follows a hero through a level: what t
 ## ADDED Requirements
 
 ### Requirement: The camera starts behind the hero
-With a hero at the level's start, the camera SHALL sit where the original's does: behind him, looking across the ground the way the level's first camera looks (15° at chapter 1's start), 55 ft (16.764 m) from his feet and 32° above level, aimed at a point 9 ft above him.
+With a hero at the level's start, the camera SHALL keep the level's first camera's place: its eye 55 ft (16.764 m) from a point at his feet, 32° above level, behind him along the 15° the view looks across the ground, aimed at 9 ft (2.743 m) above that point, so it looks 23.36° down. The picture SHALL span 53.96° top to bottom at 16:9 (84.29° across), from 0.1 m out to that camera's far clip, 800 ft (243.84 m).
 
 #### Scenario: Eruptor at the start
 - **WHEN** Eruptor stands still at the level's start
-- **THEN** the camera is 14.217 m behind him along that direction and 8.883 m above him, within 1 mm, with Eruptor on the screen's vertical centre line
+- **THEN** the eye is 14.2167 m behind his feet along 15° and 8.8836 m above them, within 0.1 mm, looking along 15° and 23.36° down, the point 9 ft above his feet at the picture's centre
 
 ### Requirement: The camera follows
-While the hero walks, the camera SHALL follow him as the original's does, keeping its direction and its distance from him as the original's keeps them, letting him drift off its centre by no more than the original lets him, and easing back onto him once he stops as the original's does.
+While the hero moves, the eye SHALL keep its offset from a follow point that closes 8 % of its distance to an aim point every game frame, however long the frame, within 5 ft; a frame beyond 5 ft SHALL raise that share for good (9 % after one at 5.004 ft). The aim point SHALL sit 35 % of the way from his feet to a look-ahead point that trails him as he sets off, draws ahead as he walks (1.04 m after 1.2 s at top speed, 4.79 m after 4.3 s up the corridor) and holds still once he stops.
 
 #### Scenario: A walk and a stop
-- **WHEN** Eruptor walks at top speed from the start and then stops
-- **THEN** the camera's trail angle, its distance from him and its settle stay inside the original's spread over the same walk
+- **WHEN** Eruptor walks at full stick on open level ground about the start and the stick is let go
+- **THEN** he drifts at most 8.2° off the view's centre line, the eye stays 15.16-17.97 m from his feet, and the camera stops moving 73-83 game frames after he does, resting within 1.5° of dead ahead and 16.34-16.77 m from his feet
 
-### Requirement: Camera triggers switch the view
-When the hero crosses one of the level's camera transition planes, the camera SHALL move to the camera on the side he crossed to, over the time and with the easing the original uses, and crossing back SHALL bring the other back the same way. Walking into one of its camera volumes SHALL switch the view as the original's does. The stick SHALL then walk the hero as seen from the new view.
+#### Scenario: Half stick
+- **WHEN** Eruptor walks at half stick on level ground about the start
+- **THEN** he drifts at most 5.9° off the view's centre line and the eye stays 15.84-17.57 m from his feet
 
-#### Scenario: Across the transition by the gate and back
-- **WHEN** Eruptor walks from the start across the level's `Transition 7-1` plane, about 18 m from it, and back
-- **THEN** the view moves to the plane's far camera and back, each over the original's time and easing
+#### Scenario: A long frame
+- **WHEN** a game frame takes 50 ms while the camera settles
+- **THEN** the follow point closes 8 % of its distance in it, as in a 16.7 ms frame
 
-#### Scenario: Forward after a switch
-- **WHEN** the view has switched to a trigger's camera and the stick is held forward
-- **THEN** the hero walks away from the camera along the direction it now looks across the ground
+### Requirement: Camera switches move the view
+When the level switches cameras, the view SHALL move to the new camera over the switch's time in game seconds, speeding up evenly for its first 40 %, steady for 20 % and slowing evenly for its last 40 %, its far clip moving with it; a transition plane crossed or a camera volume entered SHALL switch the same way, and crossing back SHALL switch back. Each frame the stick SHALL walk the hero against the view as that frame shows it. A shake SHALL move the eye, not the view's angles.
+
+#### Scenario: The rock slide up the corridor
+- **WHEN** Eruptor comes within 32 ft (9.75 m) of the sliding rocks' trigger at the top of the corridor east of the clearing
+- **THEN** from 0.25-0.40 s later the eye shakes to and fro along one line, mostly across the view, up to 0.682 m off its place, until 2 s later the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 54 m north of the start and 10.5 m above it, its far clip from 800 to 1,000 ft
 
 #### Scenario: The stick held through a switch
-- **WHEN** the stick is held forward while the view switches
-- **THEN** the hero's heading follows the stick the way the original's does through the same switch
+- **WHEN** the stick is held while the view moves to another camera
+- **THEN** in each frame he walks the stick's way against that frame's view, so his walk turns with the view
+
+#### Scenario: Forward after a switch
+- **WHEN** the view has switched to another camera and the stick is held forward
+- **THEN** the hero walks away from the camera along the direction it now looks across the ground
+
+#### Scenario: Across the transition by the gate and back
+- **WHEN** Eruptor walks from the start across the level's `Transition 7-1` plane, past the ledge route's barrels and pot, and back
+- **THEN** the view moves to the plane's far camera and back, each along the switch's curve over the plane's own time
 
 ### Requirement: Nothing pushes the camera in
-Scenery or props between the camera and the hero SHALL NOT move the camera, as in the original, whose camera never tests itself against the level.
+Scenery or props between the camera and the hero SHALL NOT move the camera: its eye SHALL keep its camera's offset from the follow point whatever stands between them and the hero, as in the original, whose camera never tests itself against the level.
 
 #### Scenario: Scenery in the way
-- **WHEN** Eruptor walks behind a tall piece of scenery as seen from the camera
-- **THEN** the camera keeps its place and distance
+- **WHEN** Eruptor walks right from the start along the clearing's near rim, the rim and the rope fence between the camera and his middle
+- **THEN** the eye stays 55 ft at 32° from the follow point, within 0.1 mm, and rests 16.76 m from his feet once he stops there

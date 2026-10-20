@@ -90,6 +90,9 @@ pub mod vtable {
     pub const ANIM_CONTROL: u32 = 0x0063_2608;
     pub const ANIMATION_INFO: u32 = 0x0067_E0A0;
     pub const PHYSICS_ANIMATION: u32 = 0x0063_2790;
+    /// AG.9's contacts: the hero's proxy and his ground.
+    pub const CHARACTER_PROXY: u32 = 0x0063_4018;
+    pub const CONTACT_INFO: u32 = 0x0062_32E0;
 }
 
 pub(crate) const APP_LEN: usize = 0x68;
@@ -818,9 +821,10 @@ pub mod fixture {
     /// Where the heap starts; objects are handed out from here, 16-aligned.
     pub const HEAP: u32 = 0x3000_0000;
     const HEAP_LEN: usize = 0x1_0000;
-    /// The ELF data page holding [`super::APP`].
+    /// The ELF data pages holding [`super::APP`] and, past it,
+    /// [`crate::level::HKP_WORLD`].
     pub const STATICS: u32 = 0x0089_0000;
-    const STATICS_LEN: usize = 0x1_0000;
+    const STATICS_LEN: usize = 0x6_0000;
     /// A vtable none of the reader's classes has (another updater, a mesh node).
     pub const OTHER_VTABLE: u32 = 0x0062_0000;
 
