@@ -13,6 +13,8 @@
 //! (AE.6) each character's model, its textures and the 3D-UI rig, and
 //! (AG.14) its hero side.
 //! [`levels`] (AG.15) reads each level the build plays, chapter 1, in parts.
+//! [`progression`] (AH.2) reads the level table, the save params and the
+//! gold clamp, an extract-wide part of their own.
 //! [`stages`] (AE.3) runs everything after identity in guacamole's order:
 //! the roster and its portraits first, then the models with their hero side
 //! (AG.14), then the levels, then ffmpeg and the intros.
@@ -27,6 +29,7 @@ pub mod known;
 pub mod levels;
 pub mod magic;
 pub mod models;
+pub mod progression;
 mod report;
 pub mod root;
 pub mod roster;

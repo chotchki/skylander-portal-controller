@@ -171,6 +171,7 @@ fn main() -> Result<()> {
         Ok(server) => {
             keep_pairing_key(&root, &server, &cfg.hmac_key);
             job.figures = Some(server.figures.clone());
+            job.progression = Some(server.progression.clone());
             progress = Some(server.progress.clone());
             if let Some(giants) = scan.offered() {
                 extraction::preload_roster(giants.dir.clone(), job.clone());
@@ -292,6 +293,10 @@ fn run_tv(
     ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));
+    }
+    // The TV reads the caps from the same slot the extraction fills.
+    if let Some(slot) = job.as_ref().and_then(|j| j.progression.clone()) {
+        app.insert_resource(progress::ProgressionIn(slot));
     }
     if let Some(job) = job {
         app.insert_resource(job);

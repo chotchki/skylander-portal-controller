@@ -111,6 +111,9 @@ pub struct DiscSpec {
     pub texts: Vec<(&'static str, &'static str)>,
     /// Sprite set name, then its sprites' names.
     pub sprites: Vec<(&'static str, Vec<&'static str>)>,
+    /// The progression tables' scripts and objects (AH.2), in the same two
+    /// levels.
+    pub progression: Option<crate::progression::builder::ProgressionSpec>,
 }
 
 /// The four inputs, as `level.bld` IGZ bytes plus `global.bld`'s packs.
@@ -264,6 +267,16 @@ fn global(spec: &DiscSpec) -> Global {
         b.put_u32(at(v, 0x20), *value as u32);
         ids.insert((*name).to_owned(), BOOTSTRAP_ROOTS + 1 + roots.len() as u32);
         roots.push(Some(v));
+    }
+    if let Some(p) = &spec.progression {
+        crate::progression::builder::global_part(
+            &mut b,
+            blocks,
+            p,
+            &mut roots,
+            &mut ids,
+            BOOTSTRAP_ROOTS,
+        );
     }
     // The 3D-UI rig, outside the root list as on the disc.
     for (name, diffuse, ambient, specular, rotation) in RIG {
@@ -647,6 +660,9 @@ fn init_setup(spec: &DiscSpec, ids: &BTreeMap<String, u32>) -> Vec<u8> {
         s.close(start);
     }
 
+    if let Some(p) = &spec.progression {
+        crate::progression::builder::init_setup_part(&mut s.b, blocks, p, ids);
+    }
     let ops: Vec<Option<Location>> = s.ops.iter().copied().map(Some).collect();
     list(&mut s.b, lists[1], blocks, &ops);
     list(&mut s.b, lists[0], blocks, &[]);
@@ -818,6 +834,7 @@ pub fn sample() -> DiscSpec {
         },
     ];
     DiscSpec {
+        progression: Some(crate::progression::builder::sample()),
         toys,
         alt_characters: vec![AltCharacterSpec {
             normal: "MinionLoad_016_Spyro",

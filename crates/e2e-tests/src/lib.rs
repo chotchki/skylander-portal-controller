@@ -1410,7 +1410,8 @@ pub const E2E_MODELLED: u32 = 0x0e;
 pub const E2E_DAMAGED: u32 = 0x04;
 
 /// A synthetic Giants dump and a finished extract of it (openspec AB.11,
-/// AE.4, AE.13, AG.15): [`E2E_ROSTER`] with a flat-colour portrait each,
+/// AE.4, AE.13, AG.15, AH.2): [`E2E_ROSTER`] with a flat-colour portrait each,
+/// the progression tables ([`E2E_LEVEL_XP`], [`E2E_GOLD_CAP`]),
 /// one synthetic character model ([`E2E_MODELLED`]), one damaged one
 /// ([`E2E_DAMAGED`]), a light rig, a chapter 1 of a floor and a spawn
 /// ([`write_level`]) and the intros asked for. No game bytes: the dump is a
@@ -1500,6 +1501,7 @@ impl IntroFixture {
         // A test-hooks build is a dev build, which reads RON.
         intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
         write_roster(&mut opened.dir)?;
+        write_progression(&mut opened.dir)?;
         write_models(&mut opened.dir)?;
         write_level(&mut opened.dir)?;
 
@@ -1736,6 +1738,36 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
         dir.write_output(&rel, &bytes)?;
         dir.record_level_part(&level, part, vec![rel])?;
     }
+    Ok(())
+}
+
+/// The level table every e2e extract holds (AH.2): fifteen levels, as the
+/// game has, at thresholds of our own.
+pub const E2E_LEVEL_XP: [u32; 15] = [
+    0, 500, 1100, 1800, 2600, 3500, 4500, 5600, 6800, 8100, 9500, 11000, 12600, 14300, 16100,
+];
+
+/// The gold clamp every e2e extract holds (AH.2), ours.
+pub const E2E_GOLD_CAP: u32 = 50_000;
+
+/// The progression tables into the extract as the progression stage leaves
+/// them (AH.2): [`E2E_LEVEL_XP`] and [`E2E_GOLD_CAP`], no save params
+/// (nothing lays a figure's data out yet), recorded as the part it is.
+fn write_progression(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+    use guac_extract::intros::IrFormat;
+    use guac_ir::progression::Progression;
+
+    let progression = Progression {
+        identity: dir.manifest().identity.clone(),
+        level_xp: E2E_LEVEL_XP.to_vec(),
+        save_params: Vec::new(),
+        gold_cap: E2E_GOLD_CAP,
+    };
+    let ir = IrFormat::Ron;
+    let rel = ir.progression_path();
+    let bytes = ir.encode(&progression, dir, rel)?;
+    dir.write_output(rel, &bytes)?;
+    dir.record_part(guac_extract::progression::PART, vec![rel.to_owned()])?;
     Ok(())
 }
 

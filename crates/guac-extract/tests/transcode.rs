@@ -456,12 +456,15 @@ fn an_ffmpeg_without_the_codecs_or_none_at_all_is_named() {
     }
 }
 
-/// What a whole run's level stage records (AG.15), each level part with no
-/// files of its own here: a current extract needs it.
+/// What a whole run's level and progression stages record (AG.15, AH.2),
+/// each part with no files of its own here: a current extract needs them.
 fn record_levels(dir: &mut guac_extract::IdentityDir) {
     for level in guac_extract::levels::LEVELS {
         for part in guac_extract::levels::PARTS {
             dir.record_level_part(level, part, Vec::new()).unwrap();
         }
+    }
+    for part in guac_extract::progression::PARTS {
+        dir.record_part(part, Vec::new()).unwrap();
     }
 }

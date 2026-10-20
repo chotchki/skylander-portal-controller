@@ -247,6 +247,15 @@ pub const TYPES: &[TypeDef] = &[
         parent: Some("igObject"),
         size: 0x1C,
     },
+    // The ops and the save param class the progression readers follow (AH.2).
+    def("OpSetValue", "OpCode", 0x24),
+    def("OpIncValue", "OpCode", 0x20),
+    def("OpAbstractCheckValue", "OpBranch", 0x28),
+    def("OpCheckValue", "OpAbstractCheckValue", 0x28),
+    def("OpSetReference", "OpCode", 0x28),
+    def("OpDefineMacroStack", "ScriptObjectList", 0x18),
+    def("StructureVariant", "AbstractScriptVariant", 0x18),
+    def("ScriptStructure", "StructureVariant", 0x20),
     // A tfbmulti2 material's attributes and its UV animation (AE.6).
     def("igPixelShaderVariantMaskAttr", "igVisualAttribute", 0x18),
     def("igVertexShaderVariantMaskAttr", "igVisualAttribute", 0x18),

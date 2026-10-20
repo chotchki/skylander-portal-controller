@@ -3,12 +3,14 @@
 //! to the server's latest-wins map whenever they change, in whole when the
 //! figure leaves the portal or the level ends. The quit's flush is `main`'s,
 //! once the app has exited. AH.23's figure buffer writes [`Earner::progress`]
-//! after each logic tick; nothing else changes it yet.
+//! after each logic tick; nothing else changes it yet. Once the extract's
+//! progression tables are in (AH.2), what a figure holds stops at the game's
+//! caps on the TV too, so nothing past them is sent or carried on.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use guac_server::progress::ProgressSink;
+use guac_server::progress::{ProgressSink, ProgressionSlot};
 use skylander_core::{FigureId, SLOT_COUNT};
 use skylander_rpcs3_control::{FigureProgress, Placement};
 
@@ -18,6 +20,12 @@ use crate::driver::PortalChange;
 /// The server's end of the map; absent when the server never came up.
 #[derive(Resource, Clone)]
 pub struct ProgressOut(pub ProgressSink);
+
+/// The server's progression slot, which the extraction fills (AH.2): the
+/// caps the TV holds every figure's values to once it's filled. Absent when
+/// the server never came up.
+#[derive(Resource, Clone)]
+pub struct ProgressionIn(pub ProgressionSlot);
 
 /// Whatever ends the level writes this, so every figure's values go in whole.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,8 +116,18 @@ fn follow_portal(
     }
 }
 
-/// Hands over whatever changed since the last frame, latest wins.
-fn send_changes(mut earning: ResMut<Earning>, out: Option<Res<ProgressOut>>) {
+/// Holds each figure's values to the game's caps, then hands over whatever
+/// changed since the last frame, latest wins.
+fn send_changes(
+    mut earning: ResMut<Earning>,
+    out: Option<Res<ProgressOut>>,
+    progression: Option<Res<ProgressionIn>>,
+) {
+    if let Some(caps) = progression.and_then(|p| p.0.get()).map(|p| p.caps()) {
+        for e in earning.slots.iter_mut().flatten() {
+            (e.progress.xp, e.progress.gold) = caps.clamp(e.progress.xp, e.progress.gold);
+        }
+    }
     let Some(out) = out else {
         return;
     };
@@ -274,6 +292,48 @@ mod tests {
         assert_eq!(tv.waiting(), vec![("alice".into(), sent(4, 7, true))]);
         let earning = tv.app.world().resource::<Earning>();
         assert_eq!(earning.slots[0].as_ref().unwrap().profile_id, "bob");
+    }
+
+    /// Past the game's caps nothing is sent or held, once the extract's
+    /// tables are in; before then nothing is clamped.
+    #[test]
+    fn values_past_the_games_caps_stop_at_them() {
+        let mut tv = tv();
+        let slot = ProgressionSlot::default();
+        tv.app.insert_resource(ProgressionIn(slot.clone()));
+        tv.place(0, eruptor(Some(("alice", row(0, 7)))));
+        tv.earn(0, 120_000);
+        assert_eq!(
+            tv.waiting(),
+            vec![("alice".into(), sent(120_000, 7, false))]
+        );
+
+        slot.publish(guac_server::progress::Progression {
+            level_xp: vec![0, 1000, 96_500],
+            gold_cap: 65_000,
+        });
+        tv.earn(0, 100_000);
+        {
+            let mut earning = tv.app.world_mut().resource_mut::<Earning>();
+            earning.slots[0].as_mut().unwrap().progress.gold = 70_000;
+        }
+        tv.app.update();
+        let want = FigureProgress {
+            gold: 65_000,
+            ..row(96_500, 7)
+        };
+        let earning = tv.app.world().resource::<Earning>();
+        assert_eq!(earning.slots[0].as_ref().unwrap().progress, want);
+        assert_eq!(
+            tv.waiting(),
+            vec![(
+                "alice".into(),
+                Sent {
+                    progress: want,
+                    whole: false
+                }
+            )]
+        );
     }
 
     /// The drainer writes the flush (guac_server's tests); the TV only asks.

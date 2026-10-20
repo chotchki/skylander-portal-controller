@@ -1,6 +1,8 @@
-//! The extraction's stages in guacamole's order (openspec AE.3, AE.6, AG.14
-//! and AG.15, design decision 5). Identity is [`crate::open`], the caller's;
-//! then the roster with its portraits, then the character models with their
+//! The extraction's stages in guacamole's order (openspec AE.3, AE.6, AG.14,
+//! AG.15 and AH.2, design decision 5). Identity is [`crate::open`], the
+//! caller's; then the roster with its portraits, then the progression tables
+//! (a part of their own: a resume reads them only when they're missing),
+//! then the character models with their
 //! textures, each with its hero side, and the 3D-UI rig, then the levels the
 //! build plays, part by part, then ffmpeg is looked for and the intros are
 //! indexed and transcoded. The roster lands first so a phone can place
@@ -21,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use guac_ir::progression::Progression;
 use guac_ir::{Roster, Sha256};
 use sha2::Digest;
 
@@ -29,7 +32,7 @@ use crate::extract::IdentityDir;
 use crate::ffmpeg::Ffmpeg;
 use crate::intros::{self, IntroIndex, IrFormat};
 use crate::transcode::{self, Summary, TranscodeEvent};
-use crate::{levels, models, roster};
+use crate::{levels, models, progression, roster};
 
 /// What a run reports as it goes.
 #[derive(Debug, Clone)]
@@ -44,6 +47,9 @@ pub enum Event {
     /// The roster and every portrait are in the extract: the figure list can
     /// be published now (AE.4).
     RosterReady(Arc<Roster>),
+    /// The progression tables are in the extract (AH.2): the store's caps
+    /// and the editor's levels can be published now.
+    ProgressionReady(Arc<Progression>),
     /// `done` of `total` character models written, kept or reported.
     Models {
         done: usize,
@@ -92,6 +98,18 @@ pub struct ModelFailure {
     /// [`ExtractError::ModelUnreadable`]'s or
     /// [`ExtractError::HeroUnsettled`]'s message.
     pub reason: String,
+}
+
+/// The progression tables: read off the dump this run, or kept.
+#[derive(Debug, Clone)]
+pub struct ProgressionStage {
+    /// The tables, or [`ExtractError::ProgressionUnreadable`]'s message:
+    /// the other stages run either way, and the next start tries again.
+    pub progression: std::result::Result<Arc<Progression>, String>,
+    /// Read off the dump this run, not kept from an earlier one.
+    pub read: bool,
+    pub files: Files,
+    pub took: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +173,7 @@ pub struct IntroStage {
 #[derive(Debug)]
 pub struct Extracted {
     pub roster: RosterStage,
+    pub progression: ProgressionStage,
     pub models: ModelStage,
     pub levels: LevelStage,
     /// The intros, or why there are none. The roster stays either way, and
@@ -173,6 +192,10 @@ pub fn run(
 ) -> Result<Extracted> {
     let roster = roster_stage(dir, ir, send)?;
     send(Event::RosterReady(roster.roster.clone()));
+    let progression = progression_stage(dir, ir)?;
+    if let Ok(p) = &progression.progression {
+        send(Event::ProgressionReady(p.clone()));
+    }
     let models = model_stage(dir, &roster.roster, ir, send)?;
     send(Event::ModelsReady {
         failed: models.failed.clone(),
@@ -184,9 +207,60 @@ pub fn run(
     }
     Ok(Extracted {
         roster,
+        progression,
         models,
         levels,
         intros,
+    })
+}
+
+/// The progression tables into `ir/progression.<ron|postcard>`, unless the
+/// extract already holds them ([`IdentityDir::part_done`]): then they're
+/// loaded, not read. Tables that don't read are reported in
+/// [`ProgressionStage::progression`]; a file that won't write stops the run.
+pub fn progression_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<ProgressionStage> {
+    let started = Instant::now();
+    let rel = ir.progression_path();
+    let mut files = Files::default();
+    if dir.part_done(progression::PART, rel)?
+        && let Ok(p) = progression::load(dir, ir)
+    {
+        files.kept += 1;
+        files.bytes += dir
+            .manifest()
+            .outputs
+            .iter()
+            .find(|o| o.path == rel)
+            .map_or(0, |o| o.size);
+        return Ok(ProgressionStage {
+            progression: Ok(Arc::new(p)),
+            read: false,
+            files,
+            took: started.elapsed(),
+        });
+    }
+    let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
+    let identity = dir.manifest().identity.clone();
+    let read = match progression::read(&usrdir, identity) {
+        Ok(p) => p,
+        Err(e @ (ExtractError::ProgressionUnreadable { .. } | ExtractError::Io { .. })) => {
+            return Ok(ProgressionStage {
+                progression: Err(e.to_string()),
+                read: true,
+                files,
+                took: started.elapsed(),
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    let bytes = ir.encode(&read, dir, rel)?;
+    put(dir, rel, &bytes, &mut files)?;
+    dir.record_part(progression::PART, vec![rel.to_owned()])?;
+    Ok(ProgressionStage {
+        progression: Ok(Arc::new(read)),
+        read: true,
+        files,
+        took: started.elapsed(),
     })
 }
 

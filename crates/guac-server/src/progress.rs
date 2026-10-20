@@ -51,6 +51,13 @@ impl Progression {
         u8::try_from(self.level_xp.len()).unwrap_or(u8::MAX)
     }
 
+    /// The experience `level` starts at (level 1's 0); `None` past the table
+    /// or for level 0. What an edit to a level sets.
+    pub fn threshold(&self, level: u8) -> Option<u32> {
+        let i = usize::from(level).checked_sub(1)?;
+        self.level_xp.get(i).copied()
+    }
+
     /// Experience stops at the table's last entry, gold at the clamp.
     pub fn caps(&self) -> Caps {
         Caps {
@@ -60,10 +67,20 @@ impl Progression {
     }
 }
 
+/// The extract's tables, as the store and the editor use them.
+impl From<&guac_ir::progression::Progression> for Progression {
+    fn from(p: &guac_ir::progression::Progression) -> Self {
+        Self {
+            level_xp: p.level_xp.clone(),
+            gold_cap: p.gold_cap,
+        }
+    }
+}
+
 /// The progression once the current extract holds it, `None` until then.
 /// Without it the store clamps nothing and every level reads 0 (unknown), so
 /// only gold and playtime writes announce themselves.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct ProgressionSlot(Arc<RwLock<Option<Arc<Progression>>>>);
 
 impl ProgressionSlot {
@@ -429,6 +446,42 @@ mod tests {
                 gold: 65_000
             }
         );
+    }
+
+    #[test]
+    fn each_level_starts_at_its_threshold() {
+        let g = giants();
+        for (level, xp) in (1..=15).zip(TABLE) {
+            assert_eq!(g.threshold(level), Some(xp), "level {level}");
+            assert_eq!(g.level_for(xp), level);
+        }
+        assert_eq!((g.threshold(0), g.threshold(16)), (None, None));
+    }
+
+    /// The extract's record, as the progression stage writes it, gives the
+    /// same table and caps.
+    #[test]
+    fn the_extracts_tables_give_the_caps() {
+        let ir = guac_ir::progression::Progression {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([1; 32]),
+            },
+            level_xp: TABLE.to_vec(),
+            save_params: Vec::new(),
+            gold_cap: 65_000,
+        };
+        let g = Progression::from(&ir);
+        assert_eq!(g, giants());
+        assert_eq!(
+            (g.max_level(), g.caps().xp, g.caps().gold),
+            (15, 96_500, 65_000)
+        );
+        let slot = ProgressionSlot::default();
+        assert!(slot.get().is_none(), "nothing until the extract holds it");
+        slot.publish(g);
+        assert_eq!(slot.get().unwrap().caps(), giants().caps());
     }
 
     #[tokio::test]

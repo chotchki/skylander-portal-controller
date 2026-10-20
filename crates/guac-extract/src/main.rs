@@ -293,6 +293,19 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
         files_line(&r.files),
         r.took.as_secs_f64()
     );
+    let p = &done.progression;
+    match &p.progression {
+        Ok(t) => println!(
+            "progression {} levels to {} xp, {} save params, gold to {}; {}; {:.2} s",
+            t.level_xp.len(),
+            t.level_xp.last().copied().unwrap_or(0),
+            t.save_params.len(),
+            t.gold_cap,
+            files_line(&p.files),
+            p.took.as_secs_f64()
+        ),
+        Err(why) => println!("progression didn't read: {why}"),
+    }
     println!("models      {}", models_line(&done.models));
     model_failures(&done.models);
     println!("levels      {}", levels_line(&done.levels));
