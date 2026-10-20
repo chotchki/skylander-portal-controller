@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{ClearColorConfig, Projection, RenderTarget};
+use bevy::camera::{CameraOutputMode, ClearColorConfig, Projection, RenderTarget};
 use bevy::image::CompressedImageFormats;
 use bevy::pbr::PreparedMaterial;
 use bevy::prelude::*;
@@ -37,6 +37,7 @@ use bevy::render::erased_render_asset::ErasedRenderAssets;
 use bevy::render::mesh::RenderMesh;
 use bevy::render::mesh::allocator::MeshAllocator;
 use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::BlendState;
 use bevy::render::renderer::RenderDevice;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
@@ -108,6 +109,13 @@ pub fn level_channel() -> (LevelSender, LevelFeed) {
 pub(crate) const LEVEL_LAYER: usize = 2;
 /// The dev view's camera draws after the TV's own (order 0), over it.
 const VIEW_ORDER: isize = 1;
+/// How it writes over the TV: replacing it. Bevy alpha-blends a second
+/// camera on a target by default, and the level's opaque parts write the
+/// alpha their maps hold, so the portal would show through them.
+const VIEW_OUTPUT: CameraOutputMode = CameraOutputMode::Write {
+    blend_state: Some(BlendState::REPLACE),
+    clear_color: ClearColorConfig::None,
+};
 /// Texture and mesh bytes handed to the renderer a frame.
 pub(crate) const UPLOAD_BYTES: usize = 16 << 20;
 /// Materials made a frame, each a bind group the renderer prepares.
@@ -784,6 +792,7 @@ fn show_level(
             Camera {
                 order: VIEW_ORDER,
                 clear_color: ClearColorConfig::Custom(Color::BLACK),
+                output_mode: VIEW_OUTPUT,
                 ..default()
             },
             target,
@@ -1321,7 +1330,18 @@ mod tests {
             Some(&Visibility::Inherited)
         );
         let c = app.world().entity(camera);
-        assert_eq!(c.get::<Camera>().unwrap().order, VIEW_ORDER);
+        let cam = c.get::<Camera>().unwrap();
+        assert_eq!(cam.order, VIEW_ORDER);
+        assert!(
+            matches!(
+                cam.output_mode,
+                CameraOutputMode::Write {
+                    blend_state: Some(BlendState::REPLACE),
+                    ..
+                }
+            ),
+            "it replaces the TV, not blends over it"
+        );
         assert_eq!(c.get::<Transform>(), Some(&fresh_state_transform()));
         assert_eq!(
             c.get::<RenderLayers>(),

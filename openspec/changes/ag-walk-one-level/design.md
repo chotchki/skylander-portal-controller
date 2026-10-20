@@ -187,6 +187,7 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | figure-turntable | Eruptor; A Giant; A full portal | AE.13's tests (its fixture has no level, so the portal view stays) |
 | figure-turntable | The first placement after a start | AE.14, AG.19 |
 | character-shading | Full gloss; No gloss | AG.22 |
+| character-shading | A third layer with no blend set | AG.19 (unit) |
 
 Figure-turntable's other requirements (each figure's own model, no upgrades, a portrait without a model) describe what a card carries, not when the TV shows one, so AG leaves them to AE: the MODIFIED "Each figure on the portal shows as a card" already confines cards to the portal view.
 

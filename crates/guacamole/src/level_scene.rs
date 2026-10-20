@@ -184,9 +184,22 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
     scene
 }
 
+/// A second layer's exponent and detail weight (`layer2ExtraValues`) when
+/// its material sets none, as the first layer's default is.
+pub const LAYER2_EXTRA: [f32; 4] = [1.0, 1.0, 1.0, 0.25];
+/// A second layer's blend when its material sets none: over.
+pub const LAYER2_BLEND: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+/// A third layer's blend when its material sets none: multiply.
+pub const LAYER3_BLEND: [f32; 4] = [0.0, 0.0, 1.0, 0.0];
+
 /// What a level material draws as here: tfbmulti2's, with the gloss map's
-/// bit off on both masks until AG.22 draws its term; `None` for another
-/// effect's.
+/// bit off on both masks until AG.22 draws its term, and a second or third
+/// layer's values the material doesn't set at the original's defaults;
+/// `None` for another effect's. Most of level 213's layered materials set
+/// none (no third layer sets a blend; of the 177 second layers, 174 set no
+/// blend and 148 no exponent), and the June state's draws of them read
+/// these values in every patched copy bar the few that set their own
+/// (`ag19/notes/layer_defaults.txt`, over ae-shader's savestate check).
 pub fn drawn_material(m: &LevelMaterial) -> Option<model::Material> {
     let LevelMaterial::Multi2(m) = m else {
         return None;
@@ -194,6 +207,14 @@ pub fn drawn_material(m: &LevelMaterial) -> Option<model::Material> {
     let mut m = m.clone();
     m.pixel.base &= !(1 << bit::GLOSS_MAP);
     m.vertex.base &= !(1 << bit::GLOSS_MAP);
+    let p = &mut m.params;
+    if m.pixel.base >> bit::LAYER2 & 1 == 1 {
+        p.layer2_extra.get_or_insert(LAYER2_EXTRA);
+        p.layer2_blend.get_or_insert(LAYER2_BLEND);
+    }
+    if m.pixel.base >> bit::LAYER3 & 1 == 1 {
+        p.layer3_blend.get_or_insert(LAYER3_BLEND);
+    }
     Some(m)
 }
 
@@ -625,6 +646,69 @@ mod tests {
             drawn_material(&effect()),
             None,
             "another effect draws nothing"
+        );
+    }
+
+    /// A level material that sets no values for its second or third layer
+    /// draws them at the original's defaults (second over, exponent 1,
+    /// detail 0.25; third multiplied); one that sets its own keeps them, and
+    /// a layer it doesn't have takes none.
+    #[test]
+    fn a_layer_with_no_values_takes_the_defaults() {
+        let mut bare = multi2(mask(0x1B, 0x3FF), mask(0x101B, 0x1BFF));
+        (
+            bare.params.layer2_extra,
+            bare.params.layer2_blend,
+            bare.params.layer3_blend,
+        ) = (None, None, None);
+        let drawn = drawn_material(&LevelMaterial::Multi2(bare.clone())).unwrap();
+        assert_eq!(drawn.params.layer2_extra, Some(LAYER2_EXTRA));
+        assert_eq!(drawn.params.layer2_blend, Some(LAYER2_BLEND));
+        assert_eq!(drawn.params.layer3_blend, Some(LAYER3_BLEND));
+        let r = crate::character::reference_material(&drawn).unwrap();
+        let second = r.second.unwrap();
+        assert_eq!(
+            (second.layer.exponent, second.layer.detail_weight),
+            (1.0, 0.25)
+        );
+        assert_eq!(
+            (
+                second.weights.over,
+                second.weights.add,
+                second.weights.multiply
+            ),
+            (1.0, 0.0, 0.0)
+        );
+        let third = r.third.unwrap();
+        assert_eq!(
+            (
+                third.weights.over,
+                third.weights.add,
+                third.weights.multiply
+            ),
+            (0.0, 0.0, 1.0)
+        );
+        // Kept as the character path keeps it: refused without them.
+        assert!(crate::character::reference_material(&bare).is_err());
+
+        let mut own = bare.clone();
+        own.params.layer2_blend = Some([0.0, 0.0, 1.0, 0.0]);
+        own.params.layer2_extra = Some([1.0, 1.0, 6.5, 0.25]);
+        let drawn = drawn_material(&LevelMaterial::Multi2(own)).unwrap();
+        assert_eq!(drawn.params.layer2_blend, Some([0.0, 0.0, 1.0, 0.0]));
+        assert_eq!(drawn.params.layer2_extra, Some([1.0, 1.0, 6.5, 0.25]));
+
+        let mut single = bare;
+        single.pixel.base = 0x18;
+        single.vertex.base = 0x1018;
+        let drawn = drawn_material(&LevelMaterial::Multi2(single)).unwrap();
+        assert_eq!(
+            (
+                drawn.params.layer2_extra,
+                drawn.params.layer2_blend,
+                drawn.params.layer3_blend
+            ),
+            (None, None, None)
         );
     }
 
