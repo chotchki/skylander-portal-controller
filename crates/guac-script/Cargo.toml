@@ -20,3 +20,6 @@ thiserror = { workspace = true }
 # The op-graph writer (`guac_formats::script::builder`) the unit tests build
 # their scripts with.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# The oracle's MT19937 model (`guac_oracle::rng`), the reference the
+# generator is checked against (AH.15).
+guac-oracle = { path = "../guac-oracle" }

@@ -173,6 +173,24 @@ impl Host for Bare {
     }
 }
 
+/// [`Bare`], drawing from a seeded generator.
+struct Rolling(Generator);
+
+impl Host for Rolling {
+    fn get(&mut self, _: &Access) -> Result<Value, HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn set(&mut self, _: &Access, _: Value) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn reset(&mut self, _: &Access) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn draw(&mut self) -> u32 {
+        self.0.next_u32()
+    }
+}
+
 fn run(program: &Arc<Program>, config: Config, ticks: usize) -> (Vm, PlacementId) {
     let mut vm = Vm::new(program.clone(), config);
     let id = vm.add(HANDLE, "Thing", 0);
@@ -1001,4 +1019,49 @@ fn a_placement_off_the_whitelist_stays_inert() {
     let mut vm = Vm::new(p, c);
     vm.add(3, "Anything", 0);
     assert!(vm.inert().is_empty());
+}
+
+#[test]
+fn a_scripts_rolls_draw_from_the_generator_in_the_order_written() {
+    // bite = 11 + random(3), then frac = random(0.5), each tick: one number
+    // a roll, in the order written, read as the generator's own `random`.
+    let p = program(|w| {
+        let (bite, frac) = (var(w, "bite"), var(w, "frac"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let eleven = w.int(11);
+                let roll = w.literal(INT, 3, true);
+                let sum = w.expr(eleven, Some((0, roll)));
+                w.set(&[El::Local(bite)], sum);
+                let half = w.literal("FloatMeasurement", 0.5f32.to_bits(), true);
+                w.set(&[El::Local(frac)], half);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    let mut host = Rolling(Generator::seeded(5150));
+    let mut twin = Generator::seeded(5150);
+    let mut seen = [0u32; 4];
+    for tick in 0..1_000 {
+        vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+        let Some(Value::Int(n)) = twin.random(Value::Int(3)) else {
+            unreachable!()
+        };
+        assert_eq!(
+            vm.local(id, "bite"),
+            Some(Value::Int(11 + n)),
+            "tick {tick}"
+        );
+        assert_eq!(
+            vm.local(id, "frac"),
+            twin.random(Value::Float(0.5)),
+            "tick {tick}"
+        );
+        seen[n as usize] += 1;
+    }
+    assert!(seen.iter().all(|&c| c > 0), "{seen:?}");
+    assert_eq!(host.0, twin);
 }

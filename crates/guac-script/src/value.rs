@@ -159,9 +159,10 @@ pub fn convert(spec: &MemberSpec, v: Value) -> Option<Value> {
 }
 
 /// A random literal of `v` drawn with `word` (crate docs, Literals and
-/// rolls): a float r reads r x word x 2^-32, an integer n reads
-/// `(word & 0x7fffffff) mod (n + sign n)`; a packed value is drawn per byte
-/// or half and isn't modelled yet (`None`).
+/// rolls): a float r reads r x word x 2^-32, the word rounded to single
+/// precision first, an integer n reads `(word & 0x7fffffff) mod (n + sign
+/// n)`; a packed value is drawn per byte or half and isn't modelled yet
+/// (`None`).
 pub fn random_literal(v: Value, word: u32) -> Option<Value> {
     match v {
         Value::Float(r) => Some(Value::Float(r * (word as f32 * (1.0 / 4_294_967_296.0)))),
@@ -310,9 +311,19 @@ mod tests {
         assert_eq!(random_literal(Value::Int(3), u32::MAX), Some(Value::Int(3)));
         // random(-3): mod -4 keeps the word's sign, 0..=3.
         assert_eq!(random_literal(Value::Int(-3), 7), Some(Value::Int(3)));
-        // random(0.5) stays under 0.5 for every word.
-        let top = random_literal(Value::Float(0.5), u32::MAX).unwrap();
-        assert!(top.as_f32().unwrap() <= 0.5);
+        // random(0.5): the word rounds to single precision first. The
+        // highest word that stays under 2^32 reads the largest float under
+        // 0.5; the 128 from 0xFFFF_FF80 up round to 2^32 and read 0.5 itself.
+        assert_eq!(
+            random_literal(Value::Float(0.5), 0xFFFF_FF7F),
+            Some(Value::Float(0.5 - f32::EPSILON / 4.0))
+        );
+        for word in [0xFFFF_FF80, u32::MAX] {
+            assert_eq!(
+                random_literal(Value::Float(0.5), word),
+                Some(Value::Float(0.5))
+            );
+        }
         assert_eq!(
             random_literal(Value::Float(0.5), 0),
             Some(Value::Float(0.0))

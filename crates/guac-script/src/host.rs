@@ -289,7 +289,8 @@ pub trait Host {
     /// `reset`: the member back to its reset value.
     fn reset(&mut self, at: &Access) -> Result<(), HostFault>;
 
-    /// The next 32-bit word of the session's generator (decision 11).
+    /// The next 32-bit number of the session's [`crate::Generator`]
+    /// (decision 11).
     fn draw(&mut self) -> u32;
 
     /// A world op or `find variable`. The default leaves it unmodelled.

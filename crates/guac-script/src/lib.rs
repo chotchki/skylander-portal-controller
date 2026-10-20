@@ -186,11 +186,16 @@
 //! # Literals and rolls
 //!
 //! A literal's class says how its bits read: a float, an integer, or a
-//! packed colour or screen position. A random literal draws a 32-bit word
-//! from the host's generator ([`Host::draw`]; decision 11's MT19937 is
-//! AH.15's): a float literal r reads r x word x 2^-32, on [0, r); an integer
-//! literal n reads (word & 0x7fffffff) mod (n + 1) for n >= 0 and mod (n - 1)
-//! for n < 0, so `random(3)` is 0 to 3 with both ends.
+//! packed colour or screen position. A random literal draws a 32-bit number
+//! from the session's generator ([`Generator`], through [`Host::draw`]): one
+//! MT19937 per session, seeded the original's way from the clock, as the
+//! original's every roll draws from its one MT. An integer literal n reads
+//! (number & 0x7fffffff) mod (n + 1) for n >= 0 and mod (n - 1) for n < 0,
+//! so `random(3)` is 0 to 3 with both ends. A float literal r reads r x
+//! number x 2^-32 with the number rounded to single precision first, as the
+//! original's routine is read to do: [0, r), except that the 128 highest
+//! numbers round to 2^32 and read r itself, one draw in 2^25. That corner
+//! is the reading, kept for parity; no measurement sees it.
 //!
 //! # Members
 //!
@@ -253,6 +258,7 @@
 
 #![forbid(unsafe_code)]
 
+mod generator;
 mod host;
 mod program;
 mod stall;
@@ -263,6 +269,7 @@ mod whitelist;
 #[cfg(test)]
 mod tests;
 
+pub use generator::{Generator, StateError, session_seed};
 pub use host::{
     Access, Answer, Builtin, Host, HostFault, Kind, MemberId, MemberSpec, Members, OpCall, Place,
 };
