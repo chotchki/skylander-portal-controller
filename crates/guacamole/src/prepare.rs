@@ -20,15 +20,19 @@
 //!   ([`crate::tv::spawn_sample_card`]);
 //! - the level camera's output to the TV's target, with the write the level
 //!   draws over the TV with ([`crate::level::view_camera`]), drawn under
-//!   the TV's own so it shows nothing.
+//!   the TV's own so it shows nothing;
+//! - then, those extras gone, the TV's own output alone for
+//!   [`EXTRA_FRAMES`] frames, the write it takes once nothing sits under it
+//!   (AE.30).
 //!
 //! Every start runs it. On a warm cache it lasts as long as the cache takes
 //! to answer (AE.25 has the numbers), so no marker in settings decides it,
 //! and a Mac whose shared cache let guacamole's pipelines go (other apps'
 //! compiles, AE.25's first probe after a night of RPCS3), or a build whose
-//! shaders changed, compiles them again here rather than under the portal. It draws up to [`MAX_BATCH`]
-//! keys a frame while frames stay quick, and one a frame once one runs long
-//! (a cold cache), so the screen keeps moving between compiles.
+//! shaders changed, compiles them again here rather than under the portal.
+//! It draws up to [`MAX_BATCH`] keys a frame while frames stay quick, and
+//! one a frame once one runs long (a cold cache), so the screen keeps
+//! moving between compiles.
 //!
 //! Without a renderer (the headless tests) there's nothing to compile and
 //! nothing to show: the pass is done before the first frame.

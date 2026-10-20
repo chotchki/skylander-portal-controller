@@ -1188,6 +1188,59 @@ mod tests {
         assert_eq!(masks(level), 0, "a level draws no glow pass");
     }
 
+    /// What a figure carries is a card's key however it's asked for (AE.23
+    /// through the one static drawer the AE.25 merge left, which draws a
+    /// glow mask only when the entry says so): off a shelf's list it's drawn
+    /// with its glow mask, and a waiting turntable queues it to be.
+    #[test]
+    fn a_carried_key_draws_its_glow_mask_off_a_shelf_and_for_a_turntable() {
+        use crate::turntable::tests::{model, rig};
+        // Off the shelf, no card waiting: the list's four keys, a frame each.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app(extract(tmp.path()));
+        app.insert_resource(Warm::new(true));
+        let until = Instant::now() + Duration::from_secs(5);
+        while roots(&app) < 4 {
+            assert!(Instant::now() < until, "the list never drawn");
+            app.update();
+        }
+        let glow = RenderLayers::layer(glow_layer(WARM_SLOT));
+        let listed = app.world().resource::<Warm>();
+        let carried: Vec<&Drawing> = listed
+            .stage
+            .as_ref()
+            .unwrap()
+            .drawing
+            .iter()
+            .filter(|d| !d.key.mesh.skinned)
+            .collect();
+        let [knife] = carried[..] else {
+            panic!("one unskinned key, the knife's, not {}", carried.len());
+        };
+        let masks = knife
+            .checks
+            .iter()
+            .filter(|e| app.world().get::<RenderLayers>(**e) == Some(&glow))
+            .count();
+        assert_eq!(masks, 1, "the knife's glow mask, off the shelf");
+
+        // For a turntable: Two's keys asked with no list read, each a card's.
+        let two = model("002_two");
+        let scene = rig_scene(&rig()).unwrap();
+        let keys = warm::keys(&two, &scene).unwrap();
+        let mut asked = Warm::new(true);
+        asked.ask(&two, &keys, &scene);
+        assert_eq!(asked.queue.len(), 4);
+        assert!(
+            asked.queue.iter().any(|e| !e.key.mesh.skinned),
+            "the knife's"
+        );
+        assert!(
+            asked.queue.iter().all(|e| e.glow && e.scene.is_none()),
+            "drawn in the cards' scene with their glow pass"
+        );
+    }
+
     /// AE.25's guard: once the start's pass has asked for the census, a key
     /// a level or a turntable asks for that the census doesn't hold is
     /// counted, once; the census's own aren't; nothing counts before the

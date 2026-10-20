@@ -10,9 +10,9 @@
 //! must be outside any git checkout (the extract root's rule, design decision
 //! 5); one inside is refused and nothing shot. A folder that isn't there is
 //! made, and a shot that doesn't land is logged as an error (openspec AE.29).
-//! A card's turning model holds
-//! its idle's first pose at `GUAC_SHOT_YAW` degrees of its turn (default 0,
-//! facing the camera), so a walk can shoot a turn one run per angle.
+//! A card's turning model holds its idle's first pose at `GUAC_SHOT_YAW`
+//! degrees of its turn (default 0, facing the camera), so a walk can shoot a
+//! turn one run per angle.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
