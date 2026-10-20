@@ -1,0 +1,615 @@
+From 5dfd78e585b755a1fd968a1a19e7b52c65c7c0f7 Mon Sep 17 00:00:00 2001
+From: Christopher Hotchkiss <chris@hotchkiss.io>
+Date: Tue, 20 Oct 2026 12:33:21 -0700
+Subject: [PATCH] O6: oracle chains for actors spawned mid-stretch
+ (GUAC_ORACLE=1)
+
+Two verbs on P1's AF_UNIX listener so O5's records follow actors that appear after a recording starts, at addresses no fixed range can name (openspec AH.5, design decision 16). Behind O3's gate: each answers P1's ERR unknown_cmd unless GUAC_ORACLE=1 is in the emulator's environment. Nothing knows the game: the client names every address, offset, value and name.
+
+- CHAIN <slot> <items> <base> <path> <count> <array> <key> <values> [<range> ...] -> OK slot=<s> bytes=<b> listed=<n> kept=<k> | ERR bad_args | ERR bad_slot | ERR bad_items | ERR bad_hop | ERR bad_values | ERR bad_range | ERR too_big | ERR watching | ERR no_list. Arms chain <slot> (0-7), replacing the one there: from <base>, <path>'s hops (`-` for none) to a list whose count word sits at +<count> and its pointer to an array of item pointers at +<array>; each item whose <key> matches one of <values> (hex words joined by `,`, up to 64) is kept, up to <items> (1-512) a record, with its ranges (up to 32). A hop is `<off>` (the pointer there followed), `<off>=<word>` (and the object reached starts with that word) or `?<count>,<array>,<name>=<hash>` (a search through the list there for the element whose name, the C string the word at +<name> points at, hashes to <hash> by FNV-1a); a key is hops then `<off>` (the word there) or `#<off>` (the FNV-1a of the C string that word points at); a range is hops then `<off>+<len>` (1-1024 bytes). Offsets are 1-4 hex digits, words 1-8, hops 16 a probe. Refused while a watch is armed and when the path doesn't reach a list now (no_list). The block's 48 KiB budget is every chain's together.
+- CHAIN_CLEAR -> OK | ERR bad_args | ERR watching. Every chain dropped.
+
+Where it records: O5's record. WATCH takes the chains armed when it's armed, and every record it takes carries each one's block after the ranges, in slot order, so WATCH's bytes= and WATCH_READ's records grow by them. A block is a 20-byte header (the status: 0 when the list read, else the 1-based link that broke, the path's hops then the count, the array and a count past 4,096; the list's count; the items whose key didn't read; the items the filter matched; the items kept; each a big-endian u32), then each kept item in list order, 16 bytes (its address, its index in the list, the value it matched, a mask of its ranges that didn't read) and its ranges back to back, the rest of the block zeros. Every link is checked as it's followed (4-aligned, readable, not null, its word when one's named) and a range that doesn't read is zeros with its bit set. WATCH_CLEAR keeps the chains; a new emulation session drops them with the watch.
+
+O5's ring budget grows from 16 MiB to 128 MiB and a WATCH_READ reply from 32 KiB of records to 256 KiB, so a record carrying its 16 KiB of ranges and 48 KiB of chains fits; O5's ranges stay capped at 16 KiB a record.
+
+Touches cellPad.cpp (the chains beside O5's watch, followed at each record) and Skylander.cpp beside O3-O5.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012qQNwXEQ8in9uR8sc7SjCW
+---
+ rpcs3/Emu/Cell/Modules/cellPad.cpp | 442 ++++++++++++++++++++++++++++-
+ rpcs3/Emu/Io/Skylander.cpp         |  35 ++-
+ 2 files changed, 468 insertions(+), 9 deletions(-)
+
+diff --git a/rpcs3/Emu/Cell/Modules/cellPad.cpp b/rpcs3/Emu/Cell/Modules/cellPad.cpp
+index e392bf3e0..7ea1e8459 100644
+--- a/rpcs3/Emu/Cell/Modules/cellPad.cpp
++++ b/rpcs3/Emu/Cell/Modules/cellPad.cpp
+@@ -599,11 +599,11 @@ bool oracle_pad_read(u32 port, u64 flip, u64& at, u32& reads, u32& differ, u16 (
+ namespace
+ {
+ 	constexpr usz oracle_watch_max_ranges = 64;      // one bit each in a record's missing mask
+-	constexpr u32 oracle_watch_max_bytes = 16384;    // payload a record
++	constexpr u32 oracle_watch_max_bytes = 16384;    // the ranges' payload a record
+ 	constexpr u32 oracle_watch_max_frames = 1u << 20;
+-	constexpr u64 oracle_watch_budget = 16u << 20;   // the ring, records and headers
++	constexpr u64 oracle_watch_budget = 128u << 20;  // the ring, records and headers (O6: 16 MiB before)
+ 	constexpr u32 oracle_watch_header = 32;          // flip, host microseconds, missing mask, read
+-	constexpr u64 oracle_watch_reply = 32768;        // record bytes a WATCH_READ reply carries
++	constexpr u64 oracle_watch_reply = 262144;       // record bytes a WATCH_READ reply carries (O6: 32 KiB before)
+ 
+ 	struct oracle_watch_range
+ 	{
+@@ -611,6 +611,66 @@ namespace
+ 		u32 len;
+ 	};
+ 
++	// --- O6: chains, actors spawned mid-stretch (openspec AH.5) ----------------------------------
++	// A chain is followed at every record O5 takes, its block written after O5's ranges: from a base
++	// address, pointer hops to a list (a count word and a pointer to an array of item pointers), and
++	// for each item a key (a word, or the FNV-1a of the C string a word points at) matched against
++	// the client's values; each kept item's ranges are copied through hops of their own, every link
++	// checked, an unreadable one leaving its range zeros with its bit set. The client names every
++	// offset, value and name; nothing here knows the game.
++	constexpr usz oracle_chain_slots = 8;
++	constexpr u32 oracle_chain_max_items = 512;      // items a chain keeps a record
++	constexpr usz oracle_chain_max_ranges = 32;      // one bit each in an item's missing mask
++	constexpr usz oracle_chain_max_hops = 16;        // hops a probe
++	constexpr usz oracle_chain_max_values = 64;
++	constexpr u32 oracle_chain_max_range = 1024;     // bytes a range
++	constexpr u32 oracle_chain_max_list = 4096;      // a list counting more isn't one
++	constexpr u32 oracle_chain_max_scan = 1024;      // elements a search hop looks through
++	constexpr u32 oracle_chain_max_name = 256;       // bytes a name is hashed over before giving up
++	constexpr u32 oracle_chain_header = 20;          // status, listed, unread, matched, kept
++	constexpr u32 oracle_chain_item_header = 16;     // address, list index, value index, missing mask
++	constexpr u32 oracle_chain_budget = 49152;       // every chain's block a record
++
++	// A hop: the pointer at +off followed (its object starting with `word` when `check`), or a search
++	// through a list for the element whose name (the C string the word at element + name points at)
++	// hashes to `hash`.
++	struct oracle_chain_hop
++	{
++		bool search = false;
++		u32 off = 0;
++		bool check = false;
++		u32 word = 0;
++		u32 count = 0;
++		u32 array = 0;
++		u32 name = 0;
++		u32 hash = 0;
++	};
++
++	// Hops from an item, then a term: a key's word at +off (or the hash of the name it points at), or
++	// a range's `len` bytes at +off.
++	struct oracle_chain_probe
++	{
++		std::vector<oracle_chain_hop> hops;
++		u32 off = 0;
++		bool hashed = false;
++		u32 len = 0;
++	};
++
++	struct oracle_chain
++	{
++		bool armed = false;
++		u32 items = 0;       // items a record keeps
++		u32 base = 0;
++		std::vector<oracle_chain_hop> path; // base to the list
++		u32 count = 0;       // the list's count word
++		u32 array = 0;       // the list's pointer to its item pointers
++		oracle_chain_probe key;
++		std::vector<u32> values;
++		std::vector<oracle_chain_probe> ranges;
++		u32 item_bytes = 0;  // an item's header and its ranges
++		u32 bytes = 0;       // the block: its header and `items` items
++	};
++
+ 	// One port's reads: the flip of its latest read and how many it has had in that flip.
+ 	struct oracle_watch_port
+ 	{
+@@ -625,11 +685,13 @@ namespace
+ 		u32 port = 0;         // the port whose reads record
+ 		u64 from_flip = 0;    // the first flip recorded, so a ring starts on a whole flip
+ 		std::vector<oracle_watch_range> ranges;
+-		u32 bytes = 0;        // payload a record: the ranges back to back
++		u32 bytes = 0;        // payload a record: the ranges back to back, then the chains' blocks
++		u32 range_bytes = 0;  // the ranges' share of it
+ 		u32 frames = 0;       // records the ring holds; 0 when nothing is armed
+ 		u64 armed_at = 0;     // the flip counter when it was armed
+ 		u64 total = 0;        // records taken since
+ 		std::vector<u8> ring;
++		std::array<oracle_chain, oracle_chain_slots> chains{}; // O6: a WATCH records the ones armed, in slot order
+ 	};
+ 
+ 	oracle_watch_state g_oracle_watch;
+@@ -650,6 +712,165 @@ namespace
+ 			at[i] = static_cast<u8>(v);
+ 	}
+ 
++	void oracle_chain_put_be(u8* at, u32 v)
++	{
++		for (int i = 3; i >= 0; i--, v >>= 8)
++			at[i] = static_cast<u8>(v);
++	}
++
++	// The big-endian word at `addr`: 4-aligned and readable, else false.
++	bool oracle_chain_word(u64 addr, u32& out)
++	{
++		if (addr % 4 || addr + 4 > 0x1'0000'0000ull || !vm::check_addr(static_cast<u32>(addr), vm::page_readable, 4))
++			return false;
++		const u8* p = static_cast<const u8*>(vm::base(static_cast<u32>(addr)));
++		out = (u32{p[0]} << 24) | (u32{p[1]} << 16) | (u32{p[2]} << 8) | u32{p[3]};
++		return true;
++	}
++
++	// FNV-1a over the NUL-terminated string at `at`; false when it isn't readable or runs past
++	// oracle_chain_max_name bytes.
++	bool oracle_chain_name_hash(u32 at, u32& out)
++	{
++		u32 h = 0x811c9dc5u;
++		for (u32 i = 0; i < oracle_chain_max_name; i++)
++		{
++			const u64 a = u64{at} + i;
++			if (a >= 0x1'0000'0000ull || ((i == 0 || (a & 0xfff) == 0) && !vm::check_addr(static_cast<u32>(a), vm::page_readable, 1)))
++				return false;
++			const u8 c = *static_cast<const u8*>(vm::base(static_cast<u32>(a)));
++			if (!c)
++			{
++				out = h;
++				return true;
++			}
++			h = (h ^ c) * 0x01000193u;
++		}
++		return false;
++	}
++
++	// `hops` from `cur`: 0 once every one held (`cur` the object reached), else the 1-based hop that
++	// didn't: a pointer unreadable or null, an object not starting with its word, a list without the
++	// name searched for (or past oracle_chain_max_scan elements).
++	usz oracle_chain_follow(u32& cur, const std::vector<oracle_chain_hop>& hops)
++	{
++		for (usz i = 0; i < hops.size(); i++)
++		{
++			const oracle_chain_hop& h = hops[i];
++			if (!h.search)
++			{
++				u32 next = 0, w = 0;
++				if (!oracle_chain_word(u64{cur} + h.off, next) || next == 0 || (h.check && (!oracle_chain_word(next, w) || w != h.word)))
++					return i + 1;
++				cur = next;
++				continue;
++			}
++			u32 n = 0, arr = 0;
++			if (!oracle_chain_word(u64{cur} + h.count, n) || !oracle_chain_word(u64{cur} + h.array, arr) || n > oracle_chain_max_scan)
++				return i + 1;
++			bool found = false;
++			for (u32 k = 0; k < n && !found; k++)
++			{
++				u32 e = 0, name = 0, hash = 0;
++				if (oracle_chain_word(u64{arr} + 4 * k, e) && e && oracle_chain_word(u64{e} + h.name, name) && name &&
++					oracle_chain_name_hash(name, hash) && hash == h.hash)
++				{
++					cur = e;
++					found = true;
++				}
++			}
++			if (!found)
++				return i + 1;
++		}
++		return 0;
++	}
++
++	// An item's key: its probe's word, or the hash of the name that word points at.
++	bool oracle_chain_key(u32 item, const oracle_chain_probe& p, u32& key)
++	{
++		u32 cur = item, w = 0;
++		if (oracle_chain_follow(cur, p.hops) || !oracle_chain_word(u64{cur} + p.off, w))
++			return false;
++		if (!p.hashed)
++		{
++			key = w;
++			return true;
++		}
++		return w && oracle_chain_name_hash(w, key);
++	}
++
++	struct oracle_chain_counts
++	{
++		u32 status = 0, listed = 0, unread = 0, matched = 0, kept = 0;
++	};
++
++	// The chain's block as memory holds it now, into `out` (c.bytes of it): its header (the status,
++	// the list's count, the items whose key didn't read, the items the filter matched, the items kept,
++	// each a big-endian u32) and each kept item in list order (its address, its index in the list,
++	// the value it matched, a mask of its ranges that didn't read, then its ranges back to back), the
++	// rest zeros. The status is 0 when the list was read, else the 1-based link that broke: a path
++	// hop, then the count word, the array pointer and a count past oracle_chain_max_list.
++	oracle_chain_counts oracle_chain_block(const oracle_chain& c, u8* out)
++	{
++		std::memset(out, 0, c.bytes);
++		oracle_chain_counts n;
++		u32 list = c.base, count = 0, arr = 0;
++		const usz hops = c.path.size();
++		if (const usz broke = oracle_chain_follow(list, c.path))
++			n.status = static_cast<u32>(broke);
++		else if (!oracle_chain_word(u64{list} + c.count, count))
++			n.status = static_cast<u32>(hops + 1);
++		else if (!oracle_chain_word(u64{list} + c.array, arr))
++			n.status = static_cast<u32>(hops + 2);
++		else if (count > oracle_chain_max_list)
++			n.status = static_cast<u32>(hops + 3);
++		if (!n.status)
++		{
++			n.listed = count;
++			u8* item = out + oracle_chain_header;
++			for (u32 k = 0; k < count; k++)
++			{
++				u32 e = 0, key = 0;
++				if (!oracle_chain_word(u64{arr} + 4 * k, e) || !e || !oracle_chain_key(e, c.key, key))
++				{
++					n.unread++;
++					continue;
++				}
++				const auto v = std::find(c.values.begin(), c.values.end(), key);
++				if (v == c.values.end())
++					continue;
++				n.matched++;
++				if (n.kept == c.items)
++					continue;
++				u32 missing = 0;
++				u8* at = item + oracle_chain_item_header;
++				for (usz r = 0; r < c.ranges.size(); r++)
++				{
++					const oracle_chain_probe& p = c.ranges[r];
++					u32 cur = e;
++					if (!oracle_chain_follow(cur, p.hops) && u64{cur} + p.off + p.len <= 0x1'0000'0000ull &&
++						vm::check_addr(static_cast<u32>(u64{cur} + p.off), vm::page_readable, p.len))
++						std::memcpy(at, vm::base(static_cast<u32>(u64{cur} + p.off)), p.len);
++					else
++						missing |= 1u << r;
++					at += p.len;
++				}
++				oracle_chain_put_be(item, e);
++				oracle_chain_put_be(item + 4, k);
++				oracle_chain_put_be(item + 8, static_cast<u32>(v - c.values.begin()));
++				oracle_chain_put_be(item + 12, missing);
++				item += c.item_bytes;
++				n.kept++;
++			}
++		}
++		oracle_chain_put_be(out, n.status);
++		oracle_chain_put_be(out + 4, n.listed);
++		oracle_chain_put_be(out + 8, n.unread);
++		oracle_chain_put_be(out + 12, n.matched);
++		oracle_chain_put_be(out + 16, n.kept);
++		return n;
++	}
++
+ 	// Every pad read, before anything else in it: the read is counted against its port and flip,
+ 	// and a read of the watched port from the first recorded flip on copies the watched ranges
+ 	// into the next record (the oldest one once the ring is full). A range that isn't readable at
+@@ -687,6 +908,14 @@ namespace
+ 			}
+ 			out += r.len;
+ 		}
++		// O6: each armed chain's block, in slot order, after the ranges.
++		for (const oracle_chain& c : w.chains)
++		{
++			if (!c.armed)
++				continue;
++			oracle_chain_block(c, out);
++			out += c.bytes;
++		}
+ 		const auto us = std::chrono::duration_cast<std::chrono::microseconds>(steady_clock::now().time_since_epoch()).count();
+ 		oracle_watch_put_be(rec, flip);
+ 		oracle_watch_put_be(rec + 8, static_cast<u64>(us));
+@@ -699,7 +928,7 @@ namespace
+ // O5: WATCH. Arms a ring of `frames` records of `ranges` (each an address and a length), one at
+ // every read of `port`, replacing any watch before it. Recording starts on a whole flip: this one
+ // when `port` hasn't been read in it yet, else the next. nullptr once armed (`bytes` is a
+-// record's payload), else the ERR reason.
++// record's payload: the ranges, then O6's armed chains' blocks), else the ERR reason.
+ const char* oracle_watch_arm(u32 frames, u32 port, const std::vector<std::pair<u32, u32>>& ranges, u32& bytes)
+ {
+ 	if (frames == 0 || frames > oracle_watch_max_frames)
+@@ -715,10 +944,18 @@ const char* oracle_watch_arm(u32 frames, u32 port, const std::vector<std::pair<u
+ 			return "bad_range";
+ 		total += len;
+ 	}
+-	if (total > oracle_watch_max_bytes || u64{frames} * (oracle_watch_header + total) > oracle_watch_budget)
++	if (total > oracle_watch_max_bytes)
+ 		return "too_big";
+ 	std::lock_guard lock(pad::g_pad_mutex);
+ 	oracle_watch_session();
++	const u64 range_bytes = total;
++	for (const oracle_chain& c : g_oracle_watch.chains)
++	{
++		if (c.armed)
++			total += c.bytes;
++	}
++	if (u64{frames} * (oracle_watch_header + total) > oracle_watch_budget)
++		return "too_big";
+ 	const rsx::thread* r = rsx::get_current_renderer();
+ 	if (!r)
+ 		return "no_renderer";
+@@ -735,6 +972,7 @@ const char* oracle_watch_arm(u32 frames, u32 port, const std::vector<std::pair<u
+ 	w.port = port;
+ 	w.from_flip = w.ports[port].flip == now ? now + 1 : now;
+ 	w.bytes = static_cast<u32>(total);
++	w.range_bytes = static_cast<u32>(range_bytes);
+ 	w.frames = frames;
+ 	w.armed_at = now;
+ 	w.total = 0;
+@@ -743,16 +981,206 @@ const char* oracle_watch_arm(u32 frames, u32 port, const std::vector<std::pair<u
+ 	return nullptr;
+ }
+ 
+-// O5: WATCH_CLEAR. The watch and its ring dropped; the ports' read counts stay.
++// O5: WATCH_CLEAR. The watch and its ring dropped; the ports' read counts and O6's chains stay.
+ void oracle_watch_clear()
+ {
+ 	std::lock_guard lock(pad::g_pad_mutex);
+ 	oracle_watch_session();
+ 	const u64 session = g_oracle_watch.session;
+ 	const auto ports = g_oracle_watch.ports;
++	auto chains = std::move(g_oracle_watch.chains);
+ 	g_oracle_watch = {};
+ 	g_oracle_watch.session = session;
+ 	g_oracle_watch.ports = ports;
++	g_oracle_watch.chains = std::move(chains);
++}
++
++namespace
++{
++	// 1 to `digits` characters of `base` (10 or 16) no greater than `max`: Skylander.cpp's
++	// sky_parse_num on a view.
++	bool oracle_chain_num(std::string_view s, u32 base, usz digits, u32 max, u32& out)
++	{
++		if (s.empty() || s.size() > digits)
++			return false;
++		u64 v = 0;
++		for (const char c : s)
++		{
++			u32 d;
++			if (c >= '0' && c <= '9')
++				d = static_cast<u32>(c - '0');
++			else if (base == 16 && c >= 'a' && c <= 'f')
++				d = static_cast<u32>(c - 'a' + 10);
++			else if (base == 16 && c >= 'A' && c <= 'F')
++				d = static_cast<u32>(c - 'A' + 10);
++			else
++				return false;
++			v = v * base + d;
++		}
++		if (v > max)
++			return false;
++		out = static_cast<u32>(v);
++		return true;
++	}
++
++	// `s` split at every `sep`; an empty part is kept (and refused by whoever parses it).
++	std::vector<std::string_view> oracle_chain_split(std::string_view s, char sep)
++	{
++		std::vector<std::string_view> parts;
++		usz at = 0;
++		while (true)
++		{
++			const usz i = s.find(sep, at);
++			parts.push_back(s.substr(at, i == umax ? umax : i - at));
++			if (i == umax)
++				return parts;
++			at = i + 1;
++		}
++	}
++
++	// A hop: `<off>`, `<off>=<word>` or `?<count>,<array>,<name>=<hash>` (offsets 1-4 hex digits,
++	// words and hashes 1-8).
++	bool oracle_chain_parse_hop(std::string_view s, oracle_chain_hop& h)
++	{
++		const std::vector<std::string_view> eq = oracle_chain_split(s, '=');
++		if (eq.size() > 2)
++			return false;
++		if (!s.empty() && s[0] == '?')
++		{
++			const std::vector<std::string_view> f = oracle_chain_split(eq[0].substr(1), ',');
++			h.search = true;
++			return eq.size() == 2 && f.size() == 3 && oracle_chain_num(f[0], 16, 4, 0xffff, h.count) &&
++				oracle_chain_num(f[1], 16, 4, 0xffff, h.array) && oracle_chain_num(f[2], 16, 4, 0xffff, h.name) &&
++				oracle_chain_num(eq[1], 16, 8, 0xffffffffu, h.hash);
++		}
++		h.check = eq.size() == 2;
++		return oracle_chain_num(eq[0], 16, 4, 0xffff, h.off) && (!h.check || oracle_chain_num(eq[1], 16, 8, 0xffffffffu, h.word));
++	}
++
++	bool oracle_chain_parse_hops(const std::vector<std::string_view>& parts, usz n, std::vector<oracle_chain_hop>& hops)
++	{
++		if (n > oracle_chain_max_hops)
++			return false;
++		hops.assign(n, {});
++		for (usz i = 0; i < n; i++)
++		{
++			if (!oracle_chain_parse_hop(parts[i], hops[i]))
++				return false;
++		}
++		return true;
++	}
++
++	// A path: `-` for none, else hops joined by `>`.
++	bool oracle_chain_parse_path(std::string_view s, std::vector<oracle_chain_hop>& hops)
++	{
++		if (s == "-")
++		{
++			hops.clear();
++			return true;
++		}
++		const std::vector<std::string_view> parts = oracle_chain_split(s, '>');
++		return oracle_chain_parse_hops(parts, parts.size(), hops);
++	}
++
++	// A key: hops joined by `>`, then `<off>` (the word) or `#<off>` (its name's hash).
++	bool oracle_chain_parse_key(std::string_view s, oracle_chain_probe& p)
++	{
++		const std::vector<std::string_view> parts = oracle_chain_split(s, '>');
++		std::string_view term = parts.back();
++		p.hashed = !term.empty() && term[0] == '#';
++		if (p.hashed)
++			term.remove_prefix(1);
++		return oracle_chain_parse_hops(parts, parts.size() - 1, p.hops) && oracle_chain_num(term, 16, 4, 0xffff, p.off);
++	}
++
++	// A range: hops joined by `>`, then `<off>+<len>` (the length decimal, 1 to oracle_chain_max_range).
++	bool oracle_chain_parse_range(std::string_view s, oracle_chain_probe& p)
++	{
++		const std::vector<std::string_view> parts = oracle_chain_split(s, '>');
++		const std::vector<std::string_view> term = oracle_chain_split(parts.back(), '+');
++		return term.size() == 2 && oracle_chain_parse_hops(parts, parts.size() - 1, p.hops) &&
++			oracle_chain_num(term[0], 16, 4, 0xffff, p.off) && oracle_chain_num(term[1], 10, 4, oracle_chain_max_range, p.len) && p.len;
++	}
++}
++
++// O6: CHAIN <slot> <items> <base> <path> <count> <array> <key> <values> [<range> ...]. Arms chain
++// `slot` (0-7), replacing the one there: from `base`, `path`'s hops to a list whose count word sits
++// at +`count` and whose array of item pointers at +`array`; each item whose `key` matches one of
++// `values` (hex words joined by `,`) is kept, up to `items` a record, with its `range`s. Refused
++// while a watch is armed (WATCH_CLEAR first), and when the path doesn't reach a list now. nullptr
++// and `out` its OK line (the block's bytes, the list's count and the items kept now), else the ERR
++// reason.
++const char* oracle_chain_arm(const std::string& arg, std::string& out)
++{
++	const std::vector<std::string_view> w = arg.empty() ? std::vector<std::string_view>{} : oracle_chain_split(arg, ' ');
++	if (w.size() < 8 || w.size() > 8 + oracle_chain_max_ranges)
++		return "bad_args";
++	u32 slot = 0;
++	oracle_chain c;
++	if (!oracle_chain_num(w[0], 10, 1, static_cast<u32>(oracle_chain_slots - 1), slot))
++		return "bad_slot";
++	if (!oracle_chain_num(w[1], 10, 3, oracle_chain_max_items, c.items) || !c.items)
++		return "bad_items";
++	if (!oracle_chain_num(w[2], 16, 8, 0xffffffffu, c.base) || !oracle_chain_parse_path(w[3], c.path) ||
++		!oracle_chain_num(w[4], 16, 4, 0xffff, c.count) || !oracle_chain_num(w[5], 16, 4, 0xffff, c.array) ||
++		!oracle_chain_parse_key(w[6], c.key))
++		return "bad_hop";
++	const std::vector<std::string_view> values = oracle_chain_split(w[7], ',');
++	if (values.size() > oracle_chain_max_values)
++		return "bad_values";
++	for (const std::string_view v : values)
++	{
++		u32 value = 0;
++		if (!oracle_chain_num(v, 16, 8, 0xffffffffu, value))
++			return "bad_values";
++		c.values.push_back(value);
++	}
++	c.item_bytes = oracle_chain_item_header;
++	for (usz i = 8; i < w.size(); i++)
++	{
++		oracle_chain_probe p;
++		if (!oracle_chain_parse_range(w[i], p))
++			return "bad_range";
++		c.item_bytes += p.len;
++		c.ranges.push_back(std::move(p));
++	}
++	const u64 bytes = oracle_chain_header + u64{c.items} * c.item_bytes;
++	if (bytes > oracle_chain_budget)
++		return "too_big";
++	c.bytes = static_cast<u32>(bytes);
++	std::lock_guard lock(pad::g_pad_mutex);
++	oracle_watch_session();
++	oracle_watch_state& st = g_oracle_watch;
++	if (st.frames)
++		return "watching";
++	u64 others = 0;
++	for (u32 i = 0; i < oracle_chain_slots; i++)
++	{
++		if (i != slot && st.chains[i].armed)
++			others += st.chains[i].bytes;
++	}
++	if (others + bytes > oracle_chain_budget)
++		return "too_big";
++	std::vector<u8> scratch(c.bytes);
++	const oracle_chain_counts n = oracle_chain_block(c, scratch.data());
++	if (n.status)
++		return "no_list";
++	c.armed = true;
++	st.chains[slot] = std::move(c);
++	out = "OK slot=" + std::to_string(slot) + " bytes=" + std::to_string(bytes) + " listed=" + std::to_string(n.listed) +
++		" kept=" + std::to_string(n.kept) + "\n";
++	return nullptr;
++}
++
++// O6: CHAIN_CLEAR. Every chain dropped; refused while a watch is armed.
++const char* oracle_chain_clear()
++{
++	std::lock_guard lock(pad::g_pad_mutex);
++	oracle_watch_session();
++	if (g_oracle_watch.frames)
++		return "watching";
++	g_oracle_watch.chains = {};
++	return nullptr;
+ }
+ 
+ // O5: WATCH_READ. `summary`: the ring's held and total record counts, a record's payload, its size,
+diff --git a/rpcs3/Emu/Io/Skylander.cpp b/rpcs3/Emu/Io/Skylander.cpp
+index 1d3bd22a9..418944801 100644
+--- a/rpcs3/Emu/Io/Skylander.cpp
++++ b/rpcs3/Emu/Io/Skylander.cpp
+@@ -63,6 +63,11 @@ const char* oracle_watch_arm(u32 frames, u32 port, const std::vector<std::pair<u
+ void oracle_watch_clear();
+ const char* oracle_watch_records(bool summary, u64 first, u64 count, std::string& out);
+ 
++// O6 (oracle, chains for actors spawned mid-stretch): parsed and kept in cellPad.cpp beside O5's
++// watch, whose records carry each armed chain's block after the ranges.
++const char* oracle_chain_arm(const std::string& arg, std::string& out);
++const char* oracle_chain_clear();
++
+ sky_portal g_skyportal;
+ 
+ // PLAN 16.1.3 — defined here (emucore); set by gs_frame on window creation (rpcs3qt),
+@@ -865,6 +870,31 @@ namespace
+ 		return false;
+ 	}
+ 
++	// --- O6: chains, actors spawned mid-stretch (openspec AH.5) -------------
++	// Behind the same gate. CHAIN arms a chain O5's records then carry: a list the client finds by
++	// pointer hops, filtered by a key per item, each kept item's ranges copied through hops of its own
++	// (cellPad.cpp has the grammar). CHAIN_CLEAR drops them. Both are refused while a watch is armed.
++	bool sky_oracle_chain_handle(const std::string& cmd, const std::string& arg, std::string& out)
++	{
++		if (cmd == "CHAIN")
++		{
++			if (const char* err = oracle_chain_arm(arg, out))
++				out = std::string("ERR ") + err + "\n";
++			return true;
++		}
++		if (cmd == "CHAIN_CLEAR")
++		{
++			if (!arg.empty())
++				out = "ERR bad_args\n";
++			else if (const char* err = oracle_chain_clear())
++				out = std::string("ERR ") + err + "\n";
++			else
++				out = "OK\n";
++			return true;
++		}
++		return false;
++	}
++
+ 	void sky_ipc_handle(const std::string& line, std::string& out)
+ 	{
+ 		const usz sp = line.find(' ');
+@@ -1033,9 +1063,10 @@ namespace
+ 			out = "OK\n";
+ 		}
+ 		else if (sky_oracle_gate() &&
+-			(sky_oracle_handle(cmd, arg, out) || sky_oracle_pad_handle(cmd, arg, out) || sky_oracle_watch_handle(cmd, arg, out)))
++			(sky_oracle_handle(cmd, arg, out) || sky_oracle_pad_handle(cmd, arg, out) || sky_oracle_watch_handle(cmd, arg, out) ||
++				sky_oracle_chain_handle(cmd, arg, out)))
+ 		{
+-			// O3, O4, O5: an oracle verb, answered above.
++			// O3, O4, O5, O6: an oracle verb, answered above.
+ 		}
+ 		else
+ 		{
+-- 
+2.54.0 (Apple Git-157)
+
