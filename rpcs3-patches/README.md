@@ -248,14 +248,19 @@ beside O3. A new emulation session drops both. Its shapes are in `verbs.rs` with
 [`tools/oracle-harness/tests/pad_loopback.rs`](../tools/oracle-harness/tests/pad_loopback.rs) is its
 fake. `build.sh` refuses to replace the installed bundle while an `rpcs3` from it runs.
 
-**O5 is the oracle's per-frame recorder** (AG.1), behind the same gate: `WATCH <frames> <addr>
-<len> ...` arms a ring of records of the guest ranges it names (up to 64, 16 KiB a record, 16 MiB
-for the ring), `WATCH_READ [<first> <count>]` hands back its summary or its records at a pause, and
-`WATCH_CLEAR` drops it. The first thing `pad_get_data` does, under `pad::g_pad_mutex` on the guest
-thread making the read, is the record: the first read of each flip on any port copies the ranges,
-so a run is recorded every frame at the same point in it without a pause, which a `PAUSE_AT`
-checkpoint can't give (AF.11: a pause moves the run). What to watch is the client's: Giants'
-addresses are the harness's ([`tools/oracle-harness/src/watch.rs`](../tools/oracle-harness/src/watch.rs)).
+**O5 is the oracle's per-frame recorder** (AG.1, AG.35), behind the same gate: `WATCH <frames>
+<port> <addr> <len> ...` arms a ring of records of the guest ranges it names (up to 64, 16 KiB a
+record, 16 MiB for the ring), taken at every read of pad port `<port>` (0-6); `WATCH_READ [<first>
+<count>]` hands back its summary or its records at a pause, and `WATCH_CLEAR` drops it. The first
+thing `pad_get_data` does, under `pad::g_pad_mutex` on the guest thread making the read, is the
+record: every read of the watched port copies the ranges, so a game that reads that port once a
+frame is recorded every frame at the same point in it without a pause, which a `PAUSE_AT`
+checkpoint can't give (AF.11: a pause moves the run). Each record's 32-byte header carries the flip,
+the host's clock, a mask of unreadable ranges and which of the port's reads in that flip it was, so
+a flip that ran two game frames holds two records (reads 0 and 1); AG.1's O5 recorded only each
+flip's first read on any port and lost the second (AG.35). Recording starts on a whole flip. What
+to watch, and on which port, is the client's: Giants' addresses and its port 0 are the harness's
+([`tools/oracle-harness/src/watch.rs`](../tools/oracle-harness/src/watch.rs)).
 It touches `cellPad.cpp` and `Skylander.cpp` beside O3 and O4. A new emulation session drops the
 watch. Its shapes are in `verbs.rs` with the others', and
 [`tools/oracle-harness/tests/watch_loopback.rs`](../tools/oracle-harness/tests/watch_loopback.rs) is its

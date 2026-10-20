@@ -160,11 +160,33 @@ After the tints, a third layer's colour map times its strength (the material's f
 - **THEN** its colour map adds to the tinted colour and the alpha stays as it was
 
 ### Requirement: Texture-coordinate sets
-Texture-coordinate sets SHALL be handed out in order of use (the first layer the first set, then a second layer, then a third), so a third layer without a second reads the second set. Each set SHALL go through its own 2×3 transform (u' = a·u + b·v + c, and v' alike), numbered as the set.
+Texture-coordinate sets SHALL be handed out in order of use (the first layer the first set, then a second layer, then a third), so a third layer without a second reads the second set. Each set SHALL go through its own 2×3 transform (u' = a·u + b·v + c, and v' alike), numbered as the set: the identity, unless a scroll track on the material names that number as its layer.
 
 #### Scenario: A third layer alone
 - **WHEN** a material has a third layer and no second
 - **THEN** the third layer reads the part's second texture-coordinate set through the second transform
+
+#### Scenario: A set no track moves
+- **WHEN** Eruptor's body, which has no scroll track, is drawn
+- **THEN** every set is read as the part stores it
+
+### Requirement: A scroll track's turn and scale
+A scroll track SHALL set the transform its layer numbers from the values the disc stores on it. The first two columns SHALL turn the set by the track's rotation phase r, in radians, and scale each axis by that axis's own scale: u' takes s_u·cos r of u and −s_u·sin r of v, and v' takes s_v·sin r of u and s_v·cos r of v. The third column SHALL be each axis's offset (the slide), so a track with scales of 1 and no rotation only slides its set.
+
+#### Scenario: A quarter turn
+- **WHEN** a track with scales of 2 on u and 1 on v, a rotation phase of π/2 and no offset moves a set
+- **THEN** the set's coordinates (0.25, 0.5) are read at (−1, 0.25)
+
+### Requirement: A scroll track's slide
+Each axis's offset SHALL be its velocity times t, plus its amplitude times the sine of its frequency times t plus its phase (in radians), less the offset's whole part with its sign kept: 1.25 slides 0.25 and −1.25 slides −0.25. t SHALL be the scene's clock in seconds, wherever its zero falls (the original's counts from the console's start): no scroll track on the disc stores a start or a fixed time of its own.
+
+#### Scenario: Hot Dog's fire
+- **WHEN** Hot Dog's fire, whose track stores a velocity of −1.869 on v and nothing else moving, has run for 1 s
+- **THEN** its colour map is read at (u, v − 0.869)
+
+#### Scenario: A swing
+- **WHEN** a track stores an amplitude of 0.5 and a frequency of π on u and nothing else moving
+- **THEN** u slides 0.5 at 0.5 s, back to 0 at 1 s and −0.5 at 1.5 s
 
 ### Requirement: The order of the terms
 The terms SHALL apply in this order: each layer's lighting and specular, the second layer's blend, tints, third layer, shadow, rim, point lights, replace colour, fog.

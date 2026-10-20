@@ -1,8 +1,10 @@
 //! O5's per-frame recorder as run steps, and Giants' watch list (openspec
-//! AG.1, design decisions 5 and 6).
+//! AG.1 and AG.35, design decisions 5 and 6).
 //!
-//! O5 copies guest ranges into a ring at each flip's first pad read, on the
-//! guest thread making it, so a run is recorded every frame without a pause.
+//! O5 copies guest ranges into a ring at every read of the pad port it's armed
+//! on, on the guest thread making the read, so a game that reads that port once
+//! a frame is recorded every frame without a pause, whatever its frames do
+//! against the flips (Giants reads port 0 once a game frame: [`GiantsWatch::PORT`]).
 //! What it copies is a [`WatchList`]: named fields merged into the fewest
 //! ranges (overlapping or touching fields share one), each field found again
 //! in a record's payload by name. [`GiantsWatch::resolve`] builds Giants'
@@ -55,7 +57,8 @@
 //! slots too and [`GiantsWatch::frame`] drops the clips from a frame whose
 //! slots aren't the resolved ones. What O4's readback says the guest read on
 //! the hero's pad is joined per flip afterwards (`PAD_STATE <port> <flip>`,
-//! 4,096 flips kept).
+//! 4,096 flips kept), with its count of the port's reads in each flip, which
+//! has to equal the records the ring holds at that flip ([`RingCheck`]).
 //!
 //! Every address is the 01.00 EBOOT's and every pointer is checked against its
 //! class's vtable before it's followed, as in [`crate::actors`].
@@ -192,7 +195,7 @@ impl WatchList {
         &self.ranges
     }
 
-    /// What O5 copies each flip, the ranges back to back.
+    /// What O5 copies at each read, the ranges back to back.
     pub fn bytes(&self) -> usize {
         self.ranges.iter().map(|r| r.len as usize).sum()
     }
@@ -212,10 +215,12 @@ impl WatchList {
         Some(&record.payload[p.offset..p.offset + p.len])
     }
 
-    /// The `WATCH` that arms a ring of `frames` records of this list.
-    pub fn arm(&self, frames: u32) -> Watch {
+    /// The `WATCH` that arms a ring of `frames` records of this list, one at
+    /// every read of pad `port`.
+    pub fn arm(&self, frames: u32, port: u8) -> Watch {
         Watch::Arm {
             frames,
+            port,
             ranges: self.ranges.clone(),
         }
     }
@@ -228,18 +233,29 @@ pub struct Ring {
     pub records: Vec<WatchRecord>,
 }
 
+impl Ring {
+    /// The flips the records fell in, each once, in order: two records share a
+    /// flip that ran two game frames.
+    pub fn flips(&self) -> Vec<u64> {
+        let mut flips: Vec<u64> = self.records.iter().map(|r| r.flip).collect();
+        flips.dedup();
+        flips
+    }
+}
+
 impl Control {
-    /// `WATCH`: a ring of `frames` records of `list`, its first record the next
-    /// flip's first pad read. The payload O5 reports has to be the list's.
-    pub fn watch_arm(&self, list: &WatchList, frames: u32) -> Result<()> {
-        match self.verbs().send_watch(&list.arm(frames))? {
-            WatchReply::Armed { bytes, frames: f }
-                if bytes as usize == list.bytes() && f == frames =>
-            {
-                Ok(())
-            }
+    /// `WATCH`: a ring of `frames` records of `list`, one at every read of pad
+    /// `port`, its first record the port's first read in a whole flip. The
+    /// payload and port O5 reports have to be the list's and the one asked for.
+    pub fn watch_arm(&self, list: &WatchList, port: u8, frames: u32) -> Result<()> {
+        match self.verbs().send_watch(&list.arm(frames, port))? {
+            WatchReply::Armed {
+                bytes,
+                frames: f,
+                port: p,
+            } if bytes as usize == list.bytes() && f == frames && p == port => Ok(()),
             other => bail!(
-                "WATCH answered {other:?} for a {}-byte list of {frames} records",
+                "WATCH answered {other:?} for a {}-byte list of {frames} records on port {port}",
                 list.bytes()
             ),
         }
@@ -290,8 +306,31 @@ impl Control {
         Ok(())
     }
 
+    /// O4's readback on `port` joined by flip for a ring's flips: what the
+    /// guest read there, and how many times it read the port in each. O4 keeps
+    /// ports 0 and 1; another port has none.
+    pub fn pad_readback(
+        &self,
+        port: u8,
+        flips: &[u64],
+    ) -> Result<(BTreeMap<u64, Ds3Pad>, BTreeMap<u64, u32>)> {
+        let mut pads = BTreeMap::new();
+        let mut reads = BTreeMap::new();
+        if port > 1 {
+            return Ok((pads, reads));
+        }
+        for (read, &flip) in self.pad_reads(port, flips)?.into_iter().zip(flips) {
+            if let Some(r) = read {
+                pads.insert(flip, r.pad);
+                reads.insert(flip, r.reads);
+            }
+        }
+        Ok((pads, reads))
+    }
+
     /// O4's readback for each flip on `port`, on one connection; `None` for a
-    /// flip the guest made no read in (or past the 4,096 flips O4 keeps).
+    /// flip the guest made no read in (or past the 4,096 flips O4 keeps). Its
+    /// `reads` counts the port's reads in that flip.
     pub fn pad_reads(&self, port: u8, flips: &[u64]) -> Result<Vec<Option<PadRead>>> {
         let verbs: Vec<Verb> = flips
             .iter()
@@ -330,6 +369,10 @@ pub struct WatchedClip {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GiantsWatch {
     pub list: WatchList,
+    /// The pad port whose reads record ([`GiantsWatch::PORT`]); a list written
+    /// before AG.35 has none and was recorded at each flip's first read.
+    #[serde(default)]
+    pub port: u8,
     pub application: u32,
     pub logic_scale: u32,
     pub hero_corpus: u32,
@@ -379,6 +422,10 @@ const MAX_SLOTS: u32 = 16;
 const CLIP_NAME_LEN: usize = 128;
 
 impl GiantsWatch {
+    /// The port the watch records on: pad 0, the hero's, which Giants reads
+    /// once a game frame (AG.35's runs: as many reads a flip as game frames).
+    pub const PORT: u8 = 0;
+
     /// Builds Giants' list from the frame the run is paused at: the actor
     /// chain to the hero and the camera, then the time scales and the hero's
     /// clips. Fails when there's no single hero, or a pointer on the way isn't
@@ -537,6 +584,7 @@ impl GiantsWatch {
         }
         Ok(Self {
             list: WatchList::new(fields)?,
+            port: Self::PORT,
             application: app,
             logic_scale,
             hero_corpus: hero.corpus,
@@ -597,6 +645,8 @@ impl GiantsWatch {
         };
         Ok(Frame {
             flip: record.flip,
+            read: u32::try_from(record.read)
+                .with_context(|| format!("read {} at flip {}", record.read, record.flip))?,
             host_us: record.host_us,
             game_frame: be32(app, 0x08),
             clock,
@@ -652,7 +702,8 @@ impl GiantsWatch {
             .collect()
     }
 
-    /// Every record decoded, `pads` the readback by flip.
+    /// Every record decoded, `pads` the readback by flip (both records of a
+    /// flip that ran two game frames read the flip's scheduled pad).
     pub fn recording(
         &self,
         records: &[WatchRecord],
@@ -707,6 +758,9 @@ pub struct WatchFile {
     pub records: Vec<RawRecord>,
     /// O4's readback on the hero's pad by flip, where the guest read one.
     pub pads: BTreeMap<u64, Ds3Pad>,
+    /// O4's count of the guest's reads of that pad by flip (since AG.35).
+    #[serde(default)]
+    pub reads: BTreeMap<u64, u32>,
 }
 
 /// A record as it came back, its payload in hex.
@@ -715,6 +769,9 @@ pub struct RawRecord {
     pub flip: u64,
     pub host_us: u64,
     pub missing: u64,
+    /// Which of the port's reads in the flip (0 in a file from before AG.35).
+    #[serde(default)]
+    pub read: u64,
     pub payload: String,
 }
 
@@ -724,6 +781,7 @@ impl RawRecord {
             flip: r.flip,
             host_us: r.host_us,
             missing: r.missing,
+            read: r.read,
             payload: hex(&r.payload),
         }
     }
@@ -735,6 +793,7 @@ impl RawRecord {
             flip: self.flip,
             host_us: self.host_us,
             missing: self.missing,
+            read: self.read,
             payload,
         })
     }
@@ -769,49 +828,110 @@ impl WatchFile {
     }
 }
 
-/// What a ring says about the run it recorded, the checks AG.1's verify
-/// makes: one record a flip with none missing, and the game's frame count
-/// stepping by one a flip.
+/// What a ring says about the run it recorded, the checks AG.1's and AG.35's
+/// verifies make: every read of the port recorded, every range readable, and
+/// `_curFrame` stepping by one a record, so no game frame is lost or counted
+/// twice whatever the flips did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RingCheck {
     pub records: usize,
     pub first_flip: Option<u64>,
     pub last_flip: Option<u64>,
-    /// Consecutive records whose flips aren't one apart.
+    /// Consecutive records whose flips are more than one apart: a flip the
+    /// port wasn't read in, which loses nothing when the game frames go on by
+    /// one.
     pub flip_gaps: usize,
-    /// Consecutive records whose `_curFrame` isn't one apart.
+    /// Flips holding more than one record: the port read in them twice or
+    /// more, a game frame each in Giants.
+    #[serde(default)]
+    pub shared_flips: usize,
+    /// Records past their flip's first read: the game frames a record at each
+    /// flip's first read alone (O5 before AG.35) would have lost.
+    #[serde(default)]
+    pub later_reads: usize,
+    /// Consecutive records whose `_curFrame` isn't one apart: a lost game frame
+    /// when it jumps, the port read twice in one frame when it repeats.
     pub frame_gaps: usize,
+    /// Of those, the ones whose `_curFrame` repeats.
+    #[serde(default)]
+    pub frame_repeats: usize,
     /// Records with a range that wasn't readable.
     pub missing: usize,
     /// `_curFrame` minus the flip, first and last: constant when the game
     /// counts a frame a flip.
     pub frame_minus_flip: Option<(i64, i64)>,
+    /// Flips whose records don't number O4's count of the port's reads in
+    /// them, a flip with reads and no record among them; `None` without the
+    /// counts. Judged over whole flips (a wrapped ring's first flip may have
+    /// lost its earlier reads) inside the [`PAD_HISTORY`] flips O4 keeps.
+    #[serde(default)]
+    pub reads_mismatch: Option<usize>,
 }
 
+/// Flips of reads O4 keeps a port (`PAD_STATE <port> <flip>` answers `no_read`
+/// past them).
+pub const PAD_HISTORY: u64 = 4_096;
+
 impl RingCheck {
-    pub fn of(recording: &Recording, raw: &[WatchRecord]) -> Self {
+    /// The checks over a decoded recording, its raw records and, when joined,
+    /// O4's count of the port's reads by flip.
+    pub fn of(recording: &Recording, raw: &[WatchRecord], reads: &BTreeMap<u64, u32>) -> Self {
         let frames = recording.frames();
         let pairs = || frames.windows(2);
         let diff = |f: &Frame| i64::from(f.game_frame) - f.flip as i64;
+        let mut per_flip: BTreeMap<u64, u32> = BTreeMap::new();
+        for f in frames {
+            *per_flip.entry(f.flip).or_default() += 1;
+        }
+        let reads_mismatch = match (
+            frames.iter().find(|f| f.read == 0),
+            frames.last(),
+            reads.is_empty(),
+        ) {
+            (Some(first), Some(last), false) => {
+                let judged =
+                    first.flip.max((last.flip + 1).saturating_sub(PAD_HISTORY))..=last.flip;
+                let counted = reads
+                    .range(judged.clone())
+                    .filter(|&(flip, n)| per_flip.get(flip) != Some(n))
+                    .count();
+                let uncounted = per_flip
+                    .range(judged)
+                    .filter(|&(flip, _)| !reads.contains_key(flip))
+                    .count();
+                Some(counted + uncounted)
+            }
+            _ => None,
+        };
         Self {
             records: frames.len(),
             first_flip: frames.first().map(|f| f.flip),
             last_flip: frames.last().map(|f| f.flip),
-            flip_gaps: pairs().filter(|w| w[1].flip != w[0].flip + 1).count(),
+            flip_gaps: pairs().filter(|w| w[1].flip > w[0].flip + 1).count(),
+            shared_flips: per_flip.values().filter(|&&n| n > 1).count(),
+            later_reads: frames.iter().filter(|f| f.read > 0).count(),
             frame_gaps: pairs()
                 .filter(|w| w[1].game_frame != w[0].game_frame.wrapping_add(1))
+                .count(),
+            frame_repeats: pairs()
+                .filter(|w| w[1].game_frame == w[0].game_frame)
                 .count(),
             missing: raw.iter().filter(|r| r.missing != 0).count(),
             frame_minus_flip: frames
                 .first()
                 .zip(frames.last())
                 .map(|(a, b)| (diff(a), diff(b))),
+            reads_mismatch,
         }
     }
 
-    /// One record a flip, every range readable, `_curFrame` a step a flip.
+    /// Every game frame once, every range readable, and where O4's counts were
+    /// joined, every read of the port recorded. Flips may skip or hold two.
     pub fn holds(&self) -> bool {
-        self.records > 0 && self.flip_gaps == 0 && self.frame_gaps == 0 && self.missing == 0
+        self.records > 0
+            && self.frame_gaps == 0
+            && self.missing == 0
+            && self.reads_mismatch.unwrap_or(0) == 0
     }
 }
 
@@ -832,6 +952,7 @@ mod tests {
             flip,
             host_us: flip * 16_667,
             missing,
+            read: 0,
             payload,
         }
     }
@@ -883,7 +1004,7 @@ mod tests {
         assert!(list.field(&unread, "a").is_some());
         assert!(list.field(&r, "nothing").is_none());
         assert!(list.field(&record(7, 0, vec![0; 3]), "a").is_none());
-        assert_eq!(list.arm(600).encode(), "WATCH 600 1000 28 1ffe 4\n");
+        assert_eq!(list.arm(600, 0).encode(), "WATCH 600 0 1000 28 1ffe 4\n");
     }
 
     #[test]
@@ -1095,8 +1216,10 @@ mod tests {
         }
         let pads = BTreeMap::from([(101, Ds3Pad::REST)]);
         let r = watch.recording(&records, &pads).unwrap();
-        let check = RingCheck::of(&r, &records);
+        let check = RingCheck::of(&r, &records, &BTreeMap::new());
         assert!(check.holds(), "{check:?}");
+        assert_eq!(check.reads_mismatch, None);
+        assert_eq!(watch.port, GiantsWatch::PORT);
         assert_eq!((check.first_flip, check.last_flip), (Some(100), Some(109)));
         assert_eq!(check.frame_minus_flip, Some((5_860, 5_860)));
         let f = &r.frames()[3];
@@ -1140,6 +1263,95 @@ mod tests {
         // The game's own clock on him reads back, and the camera's viewport.
         assert_eq!(watch.time_stamp(&records[0]), Some(0.0));
         assert_eq!(watch.current_viewport(&records[0]), watch.viewport);
+    }
+
+    #[test]
+    fn a_flip_running_two_game_frames_holds_both_and_the_check_counts_what_one_a_flip_lost() {
+        let mut g = giants();
+        let watch = GiantsWatch::resolve(&mut g.w).unwrap();
+        let app = g.w.app;
+        // Eight game frames read on port 0: flip 103 ran none (a long frame)
+        // and flip 104 ran two, its reads 0 and 1 (AG.1's walk-W-03, AG.35).
+        let reads_at = [
+            (100, 0),
+            (101, 0),
+            (102, 0),
+            (104, 0),
+            (104, 1),
+            (105, 0),
+            (106, 0),
+            (107, 0),
+        ];
+        let mut records = Vec::new();
+        for (n, &(flip, read)) in reads_at.iter().enumerate() {
+            g.w.put32(app + 0x5C, 5_960 + n as u32);
+            g.w.putf(
+                app + 0x64,
+                if flip == 104 && read == 0 {
+                    0.031
+                } else {
+                    1.0 / 60.0
+                },
+            );
+            let mut r = sample(&mut g.w, &watch.list, flip);
+            r.read = read;
+            records.push(r);
+        }
+        let r = watch.recording(&records, &BTreeMap::new()).unwrap();
+        let o4: BTreeMap<u64, u32> = [
+            (100, 1),
+            (101, 1),
+            (102, 1),
+            (104, 2),
+            (105, 1),
+            (106, 1),
+            (107, 1),
+        ]
+        .into_iter()
+        .collect();
+        let check = RingCheck::of(&r, &records, &o4);
+        assert!(check.holds(), "{check:?}");
+        assert_eq!(
+            (
+                check.records,
+                check.flip_gaps,
+                check.shared_flips,
+                check.later_reads
+            ),
+            (8, 1, 1, 1)
+        );
+        assert_eq!((check.frame_gaps, check.frame_repeats), (0, 0));
+        assert_eq!(check.frame_minus_flip, Some((5_860, 5_860)));
+        assert_eq!(check.reads_mismatch, Some(0));
+        assert_eq!(r.frames()[4].read, 1);
+        assert_eq!(r.game_time(Alignment::Earlier).unwrap().len(), 8);
+        // O4 counting a read the ring doesn't hold, or a flip with reads and no
+        // record, is a mismatch.
+        let mut short = o4.clone();
+        short.insert(104, 3);
+        assert_eq!(RingCheck::of(&r, &records, &short).reads_mismatch, Some(1));
+        let mut unrecorded = o4.clone();
+        unrecorded.insert(103, 1);
+        let check = RingCheck::of(&r, &records, &unrecorded);
+        assert_eq!(check.reads_mismatch, Some(1));
+        assert!(!check.holds());
+        // One record a flip, as O5 took them before AG.35: game frame 5964 lost.
+        let firsts: Vec<WatchRecord> = records.iter().filter(|r| r.read == 0).cloned().collect();
+        let old = watch.recording(&firsts, &BTreeMap::new()).unwrap();
+        let check = RingCheck::of(&old, &firsts, &BTreeMap::new());
+        assert!(!check.holds());
+        assert_eq!((check.frame_gaps, check.later_reads), (1, 0));
+        assert!(matches!(
+            old.game_time(Alignment::Earlier),
+            Err(guac_oracle::MetricError::FrameGap { flip: 105, .. })
+        ));
+        // The port read twice in one game frame shows as a repeat.
+        let mut twice = records.clone();
+        twice[4].payload = twice[3].payload.clone();
+        let r = watch.recording(&twice, &BTreeMap::new()).unwrap();
+        let check = RingCheck::of(&r, &twice, &o4);
+        assert_eq!((check.frame_gaps, check.frame_repeats), (2, 1));
+        assert!(!check.holds());
     }
 
     #[test]

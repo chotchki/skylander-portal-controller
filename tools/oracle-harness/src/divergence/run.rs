@@ -1,6 +1,5 @@
 //! One replay against the real oracle, as the module doc lays it out.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -172,7 +171,7 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
     // so the first record is F0's own first pad read once the run resumes.
     let watched = if plan.watches() {
         let watch = GiantsWatch::resolve(&mut pine).context("the watch list at F0")?;
-        control.watch_arm(&watch.list, plan.ring_frames())?;
+        control.watch_arm(&watch.list, watch.port, plan.ring_frames())?;
         Some(watch)
     } else {
         None
@@ -246,9 +245,10 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
     })
 }
 
-/// At the end pause: the ring and O4's readback on port 0 for its flips, both
-/// written raw beside the record (`watch.json`) with the recording decoded
-/// from them (`recording.json`), and AG.1's checks on it.
+/// At the end pause: the ring and O4's readback on the watched port for its
+/// flips (with the port's reads in each), both written raw beside the record
+/// (`watch.json`) with the recording decoded from them (`recording.json`), and
+/// AG.1's and AG.35's checks on it.
 fn read_watch(
     control: &Control,
     watch: &GiantsWatch,
@@ -257,13 +257,7 @@ fn read_watch(
 ) -> Result<WatchRun> {
     let t = Instant::now();
     let ring = control.watch_read()?;
-    let flips: Vec<u64> = ring.records.iter().map(|r| r.flip).collect();
-    let pads: BTreeMap<u64, _> = control
-        .pad_reads(0, &flips)?
-        .into_iter()
-        .zip(&flips)
-        .filter_map(|(read, &flip)| read.map(|r| (flip, r.pad)))
-        .collect();
+    let (pads, reads) = control.pad_readback(watch.port, &ring.flips())?;
     let read_ms = t.elapsed().as_secs_f64() * 1e3;
     let file = WatchFile {
         identity: identity.to_owned(),
@@ -274,6 +268,7 @@ fn read_watch(
         armed: ring.summary.armed,
         records: ring.records.iter().map(RawRecord::of).collect(),
         pads,
+        reads,
     };
     file.write(&dir.join(WatchFile::FILE))?;
     let recording = watch.recording(&ring.records, &file.pads)?;
@@ -291,7 +286,7 @@ fn read_watch(
         ranges: watch.list.ranges().len(),
         fields: watch.list.fields().len(),
         armed: ring.summary.armed,
-        check: RingCheck::of(&recording, &ring.records),
+        check: RingCheck::of(&recording, &ring.records, &file.reads),
         frames_without_clips: recording
             .frames()
             .iter()

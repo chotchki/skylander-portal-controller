@@ -5,8 +5,9 @@
 //! Copied from the resources that feed the tree: the screen, game, message,
 //! Setup's lists, each card's figure and owner ids, and the intro queue. The
 //! focused choice is `InputFocus`'s entity's `FocusId`. The turntables'
-//! warm (AE.14) rides along, and `/api/_test/tv/frames` hands out the TV's
-//! frame times for the stall check.
+//! warm (AE.14) and the level's load (AG.19) ride along, and
+//! `/api/_test/tv/frames` hands out the TV's frame times for the stall
+//! check.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,6 +24,7 @@ use crate::extraction::{ExtractStatus, Extraction};
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
+use crate::level::{Level, LevelReport};
 use crate::screen::TvScreen;
 use crate::turntable::{CardPlate, CardState, Turntables};
 use crate::tv::{
@@ -70,6 +72,8 @@ pub struct TvSnapshot {
     pub intro_queue: Vec<QueuedShot>,
     /// The turntables' warm (AE.14); none without turntables.
     pub warm: Option<WarmReport>,
+    /// The level's load (AG.19); none without the loader.
+    pub level: Option<LevelReport>,
 }
 
 /// A queued intro, from `IntroQueue`.
@@ -375,7 +379,7 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos, turntables, plates, warm): (
+    (queue, player, overlays, videos, turntables, plates, warm, level): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
@@ -383,6 +387,7 @@ fn mirror_tv(
         Option<Res<Turntables>>,
         Query<(&CardPlate, &ComputedNode, &UiGlobalTransform)>,
         Option<Res<Warm>>,
+        Option<Res<Level>>,
     ),
 ) {
     let Some(current) = current else {
@@ -539,6 +544,7 @@ fn mirror_tv(
         intro,
         intro_queue,
         warm: warm.map(|w| w.report().clone()),
+        level: level.map(|l| l.report().clone()),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

@@ -24,6 +24,7 @@ use guac_ir::{CharacterTable, Roster};
 use guac_server::figures::{FigureList, FigureSet, RosterState};
 use tracing::{error, info, warn};
 
+use crate::level::{LevelSender, LevelSource};
 use crate::screen::TvScreen;
 use crate::turntable::{Shelf, ShelfSender};
 use crate::tv::{Current, Setup};
@@ -44,6 +45,9 @@ pub struct ExtractJob {
     /// The TV's turntables, where the extract's models go once they're in
     /// (AE.13); `None` with no TV to tell.
     pub shelf: Option<ShelfSender>,
+    /// The TV's level loader, told where chapter 1 is once a pick finds it
+    /// in the extract (AG.19); `None` with no TV to tell.
+    pub level: Option<LevelSender>,
 }
 
 impl ExtractJob {
@@ -64,6 +68,7 @@ impl ExtractJob {
             test_known: None,
             figures: None,
             shelf: None,
+            level: None,
         }
     }
 
@@ -498,6 +503,8 @@ pub fn run(
             Ok((table, roster)) => {
                 publish(job, &roster, opened.dir.path());
                 put_on_shelf(job, &roster, opened.dir.path(), &[]);
+                // Current means every part of every level is in.
+                send_level(job, &roster, opened.dir.path());
                 return Ok(Ready {
                     library: IntroLibrary {
                         dir: opened.dir.path().to_path_buf(),
@@ -595,6 +602,11 @@ pub fn run(
     for f in &l.failed {
         warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
     }
+    // The level is whole before ffmpeg is looked for, so a missing one
+    // doesn't keep it from the TV.
+    if l.failed.is_empty() && l.levels == guac_extract::levels::LEVELS.len() {
+        send_level(job, &extracted.roster.roster, &dir);
+    }
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;
     info!(ffmpeg = %ffmpeg.path.display(), how = ?ffmpeg.how, version = %ffmpeg.version, "ffmpeg");
@@ -633,6 +645,17 @@ fn put_on_shelf(job: &ExtractJob, roster: &Roster, dir: &Path, failed: &[ModelFa
     };
     // The app is gone; nothing to tell.
     let _ = tx.send(std::sync::Arc::new(Shelf::new(roster, dir, job.ir, failed)));
+}
+
+/// Tells the TV's level loader that chapter 1 is whole in the extract at
+/// `dir` (AG.19).
+fn send_level(job: &ExtractJob, roster: &Roster, dir: &Path) {
+    let Some(tx) = &job.level else {
+        return;
+    };
+    let source = LevelSource::chapter_1(dir.to_path_buf(), job.ir, roster.identity.clone());
+    // The app is gone; nothing to tell.
+    let _ = tx.send(source);
 }
 
 /// At start, the roster of a current extract of `dump`, published on a thread
@@ -1402,6 +1425,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             test_known: None,
             figures: Some(FigureList::new(FigureSet::waiting(RosterState::Reading))),
             shelf: None,
+            level: None,
         }
     }
 

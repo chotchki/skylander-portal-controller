@@ -4,7 +4,8 @@
 //! (openspec AE.8, design decision 10): with the look a remaster, this
 //! lane is the only check that pins each shading term on the GPU's output.
 //!
-//! Every material key AE.5 counted on the roster's 67 character models is
+//! Every material key AE.5 counted on the roster's 67 character models
+//! (and, on its own test, the gloss map's keys a level draws, AG.22) is
 //! drawn through the real pipeline (the IR's mesh, Bevy's GPU skinning on
 //! one identity joint, the WESL shader specialized for the key) into an
 //! `Rgba16Float` target with tonemapping off, and every channel of every
@@ -229,6 +230,52 @@ fn layer_keys() -> Vec<MaterialKey> {
         pass: Pass::Colour,
     })
     .to_vec()
+}
+
+/// The gloss map's keys (AG.22): chapter 1's one gloss-mapped material,
+/// "leaves" (its masks and states as the extract reads them), in every
+/// scene the runtime can set, each again without its alpha test (the
+/// leaves' discard most of a random part, which then checks the test, not
+/// the shading); then the gloss map beside the terms the leaves don't have:
+/// a second layer (so it reads the third set), no normal map with
+/// directional light and vertex colours, and everything at once.
+fn gloss_keys() -> Vec<MaterialKey> {
+    let leaves = Stored {
+        pixel: Mask {
+            base: 0x9C,
+            ignore: 0x3FF,
+        },
+        vertex: Mask {
+            base: 0x109C,
+            ignore: 0x1BFF,
+        },
+        states: StateKey {
+            alpha_test: true,
+            ..StateKey::OPAQUE
+        },
+    };
+    let mut seen = HashSet::new();
+    let mut keys = Vec::new();
+    for scene in every_scene() {
+        for states in [leaves.states, StateKey::OPAQUE] {
+            let k = MaterialKey {
+                shader: ShaderKey::resolve(leaves.pixel, leaves.vertex, scene).expect("the leaves"),
+                states,
+                pass: Pass::Colour,
+            };
+            if seen.insert(k) {
+                keys.push(k);
+            }
+        }
+    }
+    keys.extend(
+        [(0x485, 0x485), (0x4A4, 0x14A4), (0x3DBD, 0x35BD)].map(|(p, v)| MaterialKey {
+            shader: ShaderKey::new(p, v).expect("a gloss key"),
+            states: StateKey::OPAQUE,
+            pass: Pass::Colour,
+        }),
+    );
+    keys
 }
 
 // ---- numbers ----
@@ -754,6 +801,7 @@ fn random_material(rng: &mut Rng, key: &ShaderKey) -> shading::Material {
         } else {
             rng.range(0.0, 1.0)
         },
+        gloss: s.gloss.then(|| rng.range(0.0, 1.5)),
     });
     let uv = |rng: &mut Rng| loop {
         let t = UvTransform {
@@ -1070,7 +1118,9 @@ fn build_case(rng: &mut Rng, name: String, key: MaterialKey) -> Case {
         .map(|v| {
             let material = random_material(rng, &key.shader);
             let scene = random_scene(rng);
-            let maps = Maps::random(rng);
+            let mut maps = Maps::random(rng);
+            // A gloss map is a weight, read as stored, as a level loads it.
+            maps.third.srgb = !key.shader.switches().gloss;
             let alpha_reference = rng.range(0.1, 0.9);
             let (ox, oy) = ((v % 2) * REGION, (v / 2) * REGION);
             let mut quads = Vec::new();
@@ -2105,6 +2155,25 @@ fn every_scene_and_layer_matches_the_reference_model() {
     let mut keys = drawn(&every_scene());
     keys.extend(layer_keys());
     lane("every scene", keys, 0xAE08_0002, 1.0);
+}
+
+#[test]
+#[ignore = "GPU lane: run on the Mac (AG.22)"]
+fn the_gloss_map_matches_the_reference_model() {
+    lane("gloss", gloss_keys(), 0xA622_0001, 1.0);
+}
+
+#[test]
+fn the_gloss_keys_are_the_leaves_and_three_more() {
+    // No GPU: the leaves own shadows off, so every scene gives 8 keys,
+    // each with its alpha test and without.
+    let keys = gloss_keys();
+    assert_eq!(keys.len(), 2 * 8 + 3);
+    assert!(keys.iter().all(|k| k.shader.switches().gloss));
+    assert!(
+        keys.iter()
+            .any(|k| (k.shader.pixel(), k.shader.vertex()) == (0xC9C, 0x349C))
+    );
 }
 
 #[test]

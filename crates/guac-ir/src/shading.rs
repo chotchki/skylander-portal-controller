@@ -3,7 +3,9 @@
 //! against, written from the spec's text
 //! (`openspec/changes/ae-animated-turntable/specs/guacamole/character-shading/spec.md`),
 //! not from the game's shader or the research one, so a term both read
-//! wrong can't pass unseen.
+//! wrong can't pass unseen. The gloss map (AG.22) is written from AG's
+//! delta to the same spec
+//! (`openspec/changes/ag-walk-one-level/specs/guacamole/character-shading/spec.md`).
 //!
 //! It computes in f32 on whatever values it's given. AE.8's and AE.12's GPU
 //! lanes hand it the remaster's: colours decoded into linear light, tints
@@ -122,17 +124,23 @@ pub struct Rim {
     pub weights: Weights,
     /// 0 puts the blend's result all into the colour, 1 all into the alpha.
     pub split: f32,
+    /// A gloss map's strength (the material's fixed alpha for the third
+    /// layer), on a material with one: the third layer's texture then says
+    /// how much of the rim each pixel takes (AG.22; a level's, never a
+    /// character's).
+    pub gloss: Option<f32>,
 }
 
 impl Rim {
     /// A rim at `strength` with the original's defaults: added, at a lookup
-    /// scale of 1, all of it into the colour.
+    /// scale of 1, all of it into the colour, no gloss map.
     pub const fn new(strength: f32) -> Self {
         Self {
             scale: 1.0,
             strength,
             weights: Weights::ADD,
             split: 0.0,
+            gloss: None,
         }
     }
 }
@@ -349,6 +357,8 @@ pub enum Error {
     Missing(Role),
     #[error("{0} point lights in the scene; three at most")]
     TooManyPointLights(usize),
+    #[error("the material has a gloss map and a third layer; it can have one")]
+    GlossAndThirdLayer,
 }
 
 /// Which terms are on for a part: the material's switches, and the
@@ -362,6 +372,8 @@ pub struct Switches {
     pub second: bool,
     pub third: bool,
     pub rim: bool,
+    /// The rim's gloss map.
+    pub gloss: bool,
     pub shadows: bool,
     pub fog: bool,
     pub point_lights: u8,
@@ -378,6 +390,7 @@ impl Switches {
             second: material.second.is_some(),
             third: material.third.is_some(),
             rim: material.rim.is_some(),
+            gloss: gloss(material).is_some(),
             shadows: material.fixed.shadows.unwrap_or(scene.shadows),
             fog: material.fixed.fog.unwrap_or(scene.fog),
             point_lights: material.fixed.point_lights.unwrap_or(lights).min(lights),
@@ -402,17 +415,23 @@ impl Switches {
 pub struct UvSets {
     pub first: usize,
     pub second: Option<usize>,
+    /// The third layer's, or the gloss map's in its place.
     pub third: Option<usize>,
 }
 
 pub fn uv_sets(material: &Material) -> UvSets {
     let second = material.second.map(|_| 1);
-    let third = material.third.map(|_| second.map_or(1, |s| s + 1));
+    let third = (material.third.is_some() || gloss(material).is_some())
+        .then(|| second.map_or(1, |s| s + 1));
     UvSets {
         first: 0,
         second,
         third,
     }
+}
+
+fn gloss(material: &Material) -> Option<f32> {
+    material.rim.and_then(|r| r.gloss)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -508,6 +527,9 @@ pub fn shade(
 ) -> Result<Shaded, Error> {
     if scene.point_lights.len() > 3 {
         return Err(Error::TooManyPointLights(scene.point_lights.len()));
+    }
+    if material.third.is_some() && gloss(material).is_some() {
+        return Err(Error::GlossAndThirdLayer);
     }
     let on = Switches::resolve(material, scene);
     let eye = if on.eye_direction() {
@@ -605,16 +627,33 @@ pub fn shade(
     // geometric normal on.
     let normal = first.mapped.or(ctx.geometric).unwrap_or(fragment.normal);
 
-    // Rim.
+    // Rim, weighed pixel by pixel where the material has a gloss map.
     if let Some(rim) = &material.rim {
         let sample = need(textures.rim, Role::Rim)?.sample(rim_uv(normal, rim.scale));
-        let t = sample.map(|c| c * rim.strength);
         let base = [colour[0], colour[1], colour[2], alpha];
-        let blended = rim.weights.blend(
-            std::array::from_fn(|i| t[i] + base[i] * (1.0 - rim.strength)),
-            std::array::from_fn(|i| base[i] + t[i]),
-            std::array::from_fn(|i| base[i] * t[i]),
-        );
+        let blended = match (rim.gloss, sets.third) {
+            (Some(strength), Some(set)) => {
+                // The gloss: the third layer's texture's red as stored,
+                // times the gloss map's strength. The rim takes that share
+                // of its strength, and k is the strength the gloss leaves.
+                let g = need(textures.third, Role::Third)?.sample(uv(set))[0] * strength;
+                let t = sample.map(|c| c * (g * rim.strength));
+                let k = rim.strength * (1.0 - g);
+                rim.weights.blend(
+                    std::array::from_fn(|i| base[i] * k + t[i]),
+                    std::array::from_fn(|i| base[i] + t[i]),
+                    std::array::from_fn(|i| base[i] * (k / 2.0 + t[i])),
+                )
+            }
+            _ => {
+                let t = sample.map(|c| c * rim.strength);
+                rim.weights.blend(
+                    std::array::from_fn(|i| t[i] + base[i] * (1.0 - rim.strength)),
+                    std::array::from_fn(|i| base[i] + t[i]),
+                    std::array::from_fn(|i| base[i] * t[i]),
+                )
+            }
+        };
         colour = mix(colour, rgb(blended), 1.0 - rim.split);
         alpha += (blended[3] - alpha) * rim.split;
     }
@@ -1869,6 +1908,215 @@ mod tests {
             &shaded(&m, &s, &f, &t).colour,
             &[want[0], want[1], 0.0],
             1e-6,
+        );
+    }
+
+    // The gloss map (AG's delta).
+
+    /// [`rimmed`]'s part with a gloss map at `gloss`'s strength, its texture
+    /// `red` in red and other numbers elsewhere, which nothing should read.
+    fn glossed(rim: Rim, gloss: f32, red: f32) -> Shaded {
+        let mut m = Material {
+            rim: Some(Rim {
+                gloss: Some(gloss),
+                ..rim
+            }),
+            ..Material::new()
+        };
+        let mut s = Scene::new();
+        unit_tints(&mut m, &mut s);
+        let (c, r, g) = (
+            Flat([0.4, 0.6, 0.8, 0.5]),
+            Flat([0.5, 0.25, 1.0, 0.8]),
+            Flat([red, 0.9, 0.1, 0.3]),
+        );
+        let t = Textures {
+            colour: Some(&c),
+            rim: Some(&r),
+            third: Some(&g),
+            ..Default::default()
+        };
+        shaded(&m, &s, &frag(), &t)
+    }
+
+    const BASE: [f32; 4] = [0.4, 0.6, 0.8, 0.5];
+    const RIM: [f32; 4] = [0.5, 0.25, 1.0, 0.8];
+
+    #[test]
+    fn full_gloss_shows_the_rim() {
+        let rim = Rim {
+            weights: Weights::OVER,
+            ..Rim::new(1.0)
+        };
+        let got = glossed(rim, 1.0, 1.0);
+        near(&got.colour, &RIM[..3], 1e-7);
+        assert_eq!(got.alpha, 0.5, "no split: alpha stays");
+        // Its alpha, split all into alpha, is the rim's.
+        let split = glossed(Rim { split: 1.0, ..rim }, 1.0, 1.0);
+        near(&split.colour, &BASE[..3], 1e-7);
+        assert!((split.alpha - RIM[3]).abs() < 1e-7);
+    }
+
+    #[test]
+    fn no_gloss_keeps_the_colour() {
+        // Over at full rim strength: the colour times the strength the
+        // gloss leaves, all of it.
+        let over = Rim {
+            weights: Weights::OVER,
+            ..Rim::new(1.0)
+        };
+        near(&glossed(over, 1.0, 0.0).colour, &BASE[..3], 1e-7);
+        // Added at any strength, a red of zero adds nothing either.
+        near(&glossed(Rim::new(0.7), 1.0, 0.0).colour, &BASE[..3], 1e-7);
+        // A gloss map at strength 0 is no gloss, whatever its red.
+        near(&glossed(over, 0.0, 1.0).colour, &BASE[..3], 1e-7);
+    }
+
+    #[test]
+    fn the_multiply_modes_half_share() {
+        let multiply = Rim {
+            weights: Weights::MULTIPLY,
+            ..Rim::new(0.5)
+        };
+        // No gloss: the colour times half the rim strength, the rim map
+        // not at all.
+        near(
+            &glossed(multiply, 1.0, 0.0).colour,
+            &BASE[..3].iter().map(|b| b * 0.25).collect::<Vec<_>>(),
+            1e-7,
+        );
+        // Full gloss: the colour times the rim at its strength.
+        let full: Vec<f32> = (0..3).map(|i| BASE[i] * RIM[i] * 0.5).collect();
+        near(&glossed(multiply, 1.0, 1.0).colour, &full, 1e-7);
+        // A gloss of 0.4 (red 0.8 at strength 0.5): k = 0.5 · 0.6 = 0.3, so
+        // the colour times 0.15 plus the rim at 0.4 · 0.5.
+        let partial: Vec<f32> = (0..3).map(|i| BASE[i] * (0.15 + RIM[i] * 0.2)).collect();
+        near(&glossed(multiply, 0.5, 0.8).colour, &partial, 1e-6);
+    }
+
+    #[test]
+    fn each_mode_weighs_the_glossed_rim() {
+        // Rim strength 0.5, gloss 0.4: the rim sample at 0.2, k = 0.3.
+        let rim = [0, 1, 2, 3].map(|i| RIM[i] * 0.2);
+        let over: [f32; 4] = std::array::from_fn(|i| BASE[i] * 0.3 + rim[i]);
+        let add: [f32; 4] = std::array::from_fn(|i| BASE[i] + rim[i]);
+        let multiply: [f32; 4] = std::array::from_fn(|i| BASE[i] * (0.15 + rim[i]));
+        for (weights, want) in [
+            (Weights::OVER, over),
+            (Weights::ADD, add),
+            (Weights::MULTIPLY, multiply),
+        ] {
+            let got = glossed(
+                Rim {
+                    weights,
+                    ..Rim::new(0.5)
+                },
+                0.5,
+                0.8,
+            );
+            near(&got.colour, &want[..3], 1e-6);
+        }
+        // Mixed weights, a quarter split: as the rim's own blend does it.
+        let w = Weights::new(0.2, 0.3, 0.5);
+        let blended: [f32; 4] =
+            std::array::from_fn(|i| 0.2 * over[i] + 0.3 * add[i] + 0.5 * multiply[i]);
+        let got = glossed(
+            Rim {
+                weights: w,
+                split: 0.25,
+                ..Rim::new(0.5)
+            },
+            0.5,
+            0.8,
+        );
+        let colour: Vec<f32> = (0..3)
+            .map(|i| BASE[i] + (blended[i] - BASE[i]) * 0.75)
+            .collect();
+        near(&got.colour, &colour, 1e-6);
+        assert!((got.alpha - (BASE[3] + (blended[3] - BASE[3]) * 0.25)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn chapter_1s_leaves_add_an_eighth_of_the_rim_by_their_gloss() {
+        // Level 213's one gloss-mapped material, "leaves": the rim added at
+        // 0.125, the gloss map at strength 1.
+        let leaves = Rim::new(0.125);
+        for red in [0.0, 0.5, 1.0] {
+            let want: Vec<f32> = (0..3).map(|i| BASE[i] + RIM[i] * red * 0.125).collect();
+            near(&glossed(leaves, 1.0, red).colour, &want, 1e-7);
+        }
+    }
+
+    #[test]
+    fn the_gloss_map_reads_the_third_set_where_a_third_layer_would() {
+        let mut m = Material {
+            rim: Some(Rim {
+                gloss: Some(1.0),
+                ..Rim::new(1.0)
+            }),
+            ..Material::new()
+        };
+        assert_eq!(
+            uv_sets(&m),
+            UvSets {
+                first: 0,
+                second: None,
+                third: Some(1)
+            }
+        );
+        assert!(Switches::resolve(&m, &Scene::new()).gloss);
+        let mut s = Scene::new();
+        unit_tints(&mut m, &mut s);
+        m.uv_transforms[1] = UvTransform {
+            u: [0.5, 0.0, 0.1],
+            v: [0.0, 1.0, 0.0],
+        };
+        // Red is the u it's read at; the rim white, the colour black.
+        let at = |uv: Uv| [uv[0], 0.0, 0.0, 0.0];
+        let t = Textures {
+            colour: Some(&BLACK),
+            second_colour: Some(&BLACK),
+            third: Some(&at),
+            rim: Some(&WHITE),
+            ..Default::default()
+        };
+        let f = Fragment {
+            uv: [[0.0, 0.0], [0.6, 0.7], [0.9, 0.1]],
+            ..frag()
+        };
+        // The second set through the second transform: 0.5 · 0.6 + 0.1.
+        near(&shaded(&m, &s, &f, &t).colour, &[0.4; 3], 1e-6);
+        m.second = Some(SecondLayer {
+            layer: Layer::DEFAULT,
+            weights: Weights::ADD,
+        });
+        assert_eq!(uv_sets(&m).third, Some(2));
+        near(&shaded(&m, &s, &f, &t).colour, &[0.9; 3], 1e-6);
+    }
+
+    #[test]
+    fn a_gloss_map_takes_the_third_layers_place() {
+        let mut m = third(1.0, Weights::ADD);
+        m.rim = Some(Rim {
+            gloss: Some(1.0),
+            ..Rim::new(1.0)
+        });
+        let t = Textures {
+            colour: Some(&BLACK),
+            third: Some(&WHITE),
+            rim: Some(&WHITE),
+            ..Default::default()
+        };
+        assert_eq!(
+            shade(&m, &Scene::new(), &frag(), &t),
+            Err(Error::GlossAndThirdLayer)
+        );
+        m.third = None;
+        assert!(shade(&m, &Scene::new(), &frag(), &t).is_ok());
+        let t = Textures { third: None, ..t };
+        assert_eq!(
+            shade(&m, &Scene::new(), &frag(), &t),
+            Err(Error::Missing(Role::Third))
         );
     }
 

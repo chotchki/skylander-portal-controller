@@ -352,7 +352,8 @@ pub struct AcrossSets {
 pub struct Report {
     pub groups: Vec<Group>,
     pub across: Vec<AcrossSets>,
-    /// Set W against set A, per script with both (AG.1).
+    /// Set W against set A, per script with both, clear of its set B (AG.1,
+    /// AG.34).
     pub observing: Vec<super::observing::Discriminators>,
 }
 
@@ -361,9 +362,24 @@ impl Report {
     /// the output dir, is where the actor frames and end shots are read from;
     /// without it the world and FLIP are left out.
     pub fn build(records: &[ReplayRecord], dir: Option<&Path>) -> Result<Self> {
+        Self::build_with(records, dir, &[])
+    }
+
+    /// [`Report::build`], with `paused`: another measurement's replays (AF.11's)
+    /// whose set B of a script keeps that script's set W clear of a paused run
+    /// (AG.34) where `records` hold no set B of it.
+    pub fn build_with(
+        records: &[ReplayRecord],
+        dir: Option<&Path>,
+        paused: &[ReplayRecord],
+    ) -> Result<Self> {
         let mut by: BTreeMap<(String, Set), Vec<&ReplayRecord>> = BTreeMap::new();
         for r in records {
             by.entry((r.script.clone(), r.set)).or_default().push(r);
+        }
+        let mut paused_by: BTreeMap<String, Vec<&ReplayRecord>> = BTreeMap::new();
+        for r in paused.iter().filter(|r| r.set == Set::B) {
+            paused_by.entry(r.script.clone()).or_default().push(r);
         }
         let by_set = by.clone();
         let mut groups = Vec::new();
@@ -396,7 +412,8 @@ impl Report {
             }
         }
         // Set W against set A on AF.11's discriminators, at the end flip both
-        // share.
+        // share, kept clear of the script's set B: this measurement's, else
+        // `paused`'s.
         let mut observing = Vec::new();
         for ((script, set), replays) in &by_set {
             if *set != Set::W {
@@ -405,12 +422,17 @@ impl Report {
             let Some(reference) = by_set.get(&(script.clone(), Set::A)) else {
                 continue;
             };
+            let paused = by_set
+                .get(&(script.clone(), Set::B))
+                .or_else(|| paused_by.get(script))
+                .map(|rs| (Set::B, rs.as_slice()));
             let both: Vec<&ReplayRecord> = reference.iter().chain(replays).copied().collect();
             if let Some(&end) = common_offsets(&both).last() {
                 observing.push(super::observing::Discriminators::build(
                     script,
                     (Set::A, reference),
                     (Set::W, replays),
+                    paused,
                     end,
                 ));
             }

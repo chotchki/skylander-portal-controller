@@ -22,8 +22,11 @@
 //!   and additive parts blend on what the card shows and the glow keeps its
 //!   halo. The image is the plate's size in pixels and follows it.
 //! - The model turns about its vertical axis once every
-//!   [`TURN_SECONDS`] playing its idle; under [`ReducedMotion`] it holds its
-//!   idle's first pose at [`FrozenYaw`], so a shot repeats.
+//!   [`TURN_SECONDS`] playing its idle, and a part with a scroll track
+//!   slides its texture coordinates on the same clock (AE.21,
+//!   [`guac_ir::scroll`]); under [`ReducedMotion`] it holds at [`FrozenYaw`]
+//!   in its idle's first pose with each scroll at its start, so a shot
+//!   repeats.
 
 use std::collections::HashMap;
 use std::path::{Component as PathPart, Path, PathBuf};
@@ -42,14 +45,15 @@ use bevy::ui::ComputedNode;
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::intros::IrFormat;
 use guac_extract::stages::ModelFailure;
-use guac_ir::model::Sampler;
+use guac_ir::model::{Sampler, Scroll};
+use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_ir::{Category, DumpIdentity, Model, Rig, Roster};
 use guacamole::character::turntable::{Framing, SAMPLES, Sweep, TURN_SECONDS, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
-    CharacterMaterial, GlowView, ShadowLookup, remaster, spawn_character, spawn_glow_camera,
-    spawn_glow_masks,
+    CharacterMaterial, CharacterUniform, GlowView, ShadowLookup, remaster, spawn_character,
+    spawn_glow_camera, spawn_glow_masks,
 };
 use serde::de::DeserializeOwned;
 use skylander_core::SLOT_COUNT;
@@ -238,8 +242,16 @@ struct Stage {
     model: Arc<Model>,
     framing: Framing,
     backdrop: Color,
-    /// When it came up, for its turn and idle.
+    /// When it came up, for its turn, idle and scrolls.
     since: Duration,
+    scrolling: Vec<Scrolling>,
+}
+
+/// A part a scroll track moves: its tracks, and the colour and glow-mask
+/// materials whose texture-coordinate transforms follow them.
+struct Scrolling {
+    scrolls: Vec<Scroll>,
+    materials: Vec<Handle<CharacterMaterial>>,
 }
 
 /// A model read off the extract, ready to spawn.
@@ -452,13 +464,13 @@ pub(crate) fn read_model(shelf: &Shelf, load: &str) -> Result<Model, String> {
 
 /// A relative path of plain names, so a model can't send the loader outside
 /// its extract.
-fn plain(rel: &str) -> bool {
+pub(crate) fn plain(rel: &str) -> bool {
     let path = Path::new(rel);
     !rel.is_empty() && path.components().all(|c| matches!(c, PathPart::Normal(_)))
 }
 
 /// `path` out of the IR's envelope, or why not.
-fn read_ir<T: DeserializeOwned>(ir: IrFormat, path: &Path) -> Result<T, String> {
+pub(crate) fn read_ir<T: DeserializeOwned>(ir: IrFormat, path: &Path) -> Result<T, String> {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -594,11 +606,20 @@ fn spawn_stage(
     };
     let mut colour = Vec::with_capacity(model.materials.len());
     let mut glow = Vec::with_capacity(model.materials.len());
+    let mut scrolling = Vec::new();
     for m in &model.materials {
         let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
-        glow.push(material.glow_mask().map(|g| s.materials.add(g)));
-        colour.push(s.materials.add(material));
+        let mask = material.glow_mask().map(|g| s.materials.add(g));
+        let part = s.materials.add(material);
+        if !m.scrolls.is_empty() {
+            scrolling.push(Scrolling {
+                scrolls: m.scrolls.clone(),
+                materials: std::iter::once(part.clone()).chain(mask.clone()).collect(),
+            });
+        }
+        glow.push(mask);
+        colour.push(part);
     }
     let spawned = spawn_character(
         &mut s.commands,
@@ -639,6 +660,7 @@ fn spawn_stage(
         framing,
         backdrop,
         since: s.time.elapsed(),
+        scrolling,
     })
 }
 
@@ -737,14 +759,16 @@ fn resize_targets(mut turntables: ResMut<Turntables>, mut spawner: Spawner) {
     }
 }
 
-/// Each model turns and plays its idle; under reduced motion it holds the
-/// idle's first pose at the frozen turn.
+/// Each model turns, plays its idle and slides its scrolling parts; under
+/// reduced motion it holds the idle's first pose and the scrolls' starts at
+/// the frozen turn.
 fn turn(
     time: Res<Time>,
     reduced: Res<ReducedMotion>,
     frozen: Res<FrozenYaw>,
     turntables: Res<Turntables>,
     mut transforms: Query<&mut Transform>,
+    mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
     for t in turntables.slots.iter().flatten() {
         let State::Model(stage) = &t.state else {
@@ -769,6 +793,17 @@ fn turn(
                 && *tr != p
             {
                 *tr = p;
+            }
+        }
+        for part in &stage.scrolling {
+            let rows = CharacterUniform::uv_rows(&scroll::transforms(&part.scrolls, seconds));
+            for h in &part.materials {
+                // Read first: a write marks the material for upload again.
+                if let Some(mut m) = materials.get_mut(h)
+                    && (m.uniform.uv_u, m.uniform.uv_v) != rows
+                {
+                    (m.uniform.uv_u, m.uniform.uv_v) = rows;
+                }
             }
         }
     }
@@ -1280,6 +1315,59 @@ pub(crate) mod tests {
         std::thread::sleep(Duration::from_millis(50));
         app.update();
         assert_eq!(yaw(&app), held);
+    }
+
+    #[test]
+    fn a_scrolling_part_slides_its_coordinates_and_holds_its_start_under_reduced_motion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shelf = extract(tmp.path());
+        // One's colour map slides up v at a texture every 4 s, as Ninjini's
+        // genie does at 0.77.
+        let mut m = model("001_one");
+        m.materials[0].scrolls = vec![Scroll {
+            layer: 0,
+            scale: [1.0, 1.0],
+            velocity: [0.0, 0.25],
+            amplitude: [0.0, 0.0],
+            frequency: [0.0, 0.0],
+            phase: [0.0, 0.0],
+            rotation_phase: 0.0,
+        }];
+        let path = tmp.path().join(IrFormat::Ron.model_path("001_one"));
+        std::fs::write(path, guac_ir::to_ron(&m).unwrap()).unwrap();
+        let mut app = app(shelf);
+        set(&mut app, [placed(0, 1, "One")]);
+        settle(&mut app);
+        assert_eq!(states(&app)[0], Some("model"));
+        // Its colour material and its glow mask (glow 64), both moving.
+        let offsets = |app: &App| -> Vec<Vec4> {
+            let mats = app.world().resource::<Assets<CharacterMaterial>>();
+            mats.iter().map(|(_, m)| m.uniform.uv_v[0]).collect()
+        };
+        let before = offsets(&app);
+        assert_eq!(before.len(), 2);
+        std::thread::sleep(Duration::from_millis(50));
+        app.update();
+        let after = offsets(&app);
+        for (b, a) in before.iter().zip(&after) {
+            assert!(a.z > b.z && a.z < 1.0, "{b} -> {a}");
+            assert_eq!((a.x, a.y, a.w), (0.0, 1.0, 0.0));
+        }
+        assert_eq!(after[0], after[1]);
+        // Every other set, and u, as stored.
+        let mats = app.world().resource::<Assets<CharacterMaterial>>();
+        for (_, m) in mats.iter() {
+            assert_eq!(m.uniform.uv_u[0], Vec4::X);
+            assert_eq!(&m.uniform.uv_u[1..], [Vec4::X; 2]);
+            assert_eq!(&m.uniform.uv_v[1..], [Vec4::Y; 2]);
+        }
+        // Held at its start, and still there a moment later.
+        app.insert_resource(ReducedMotion(true));
+        app.update();
+        assert_eq!(offsets(&app), [Vec4::Y; 2]);
+        std::thread::sleep(Duration::from_millis(50));
+        app.update();
+        assert_eq!(offsets(&app), [Vec4::Y; 2]);
     }
 
     #[test]

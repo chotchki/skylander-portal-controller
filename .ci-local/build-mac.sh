@@ -218,10 +218,15 @@ codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 # libomp trip "OMP: Error #15 … multiple copies of the OpenMP runtime" → abort.
 # KMP_DUPLICATE_LIB_OK=TRUE is OpenMP's own escape hatch (the launcher should set
 # it until libomp is de-duped in the bundle — see docs/dev/macos-rpcs3-build.md).
-if ! KMP_DUPLICATE_LIB_OK=TRUE "$BIN" --version >/dev/null 2>&1; then
+# Even --version writes RPCS3.log, RPCS3.log.gz and RPCS3.buf under
+# $HOME/Library/Caches/rpcs3, so it runs with a throwaway HOME: the user's RPCS3
+# data comes through a build untouched (AG.35 found the oracle builds rewriting it).
+check_home="$(mktemp -d)"
+if ! HOME="$check_home" KMP_DUPLICATE_LIB_OK=TRUE "$BIN" --version >/dev/null 2>&1; then
   echo "==> WARNING: 'rpcs3 --version' did not exit cleanly even with" >&2
   echo "    KMP_DUPLICATE_LIB_OK=TRUE — check ~/Library/Logs/DiagnosticReports" >&2
 fi
+rm -rf "$check_home"
 
 if [ "$build_rc" -ne 0 ]; then
   echo "==> note: build reported rc=$build_rc — almost certainly the macdeployqt"

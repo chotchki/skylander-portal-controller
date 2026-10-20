@@ -2323,6 +2323,46 @@ mod tests {
         assert!(matches!(portal.lock().await[0], SlotState::Loading { .. }));
     }
 
+    // ---- the blocking pool the driver worker runs on ------------------------
+
+    /// Every driver call the worker makes goes through `spawn_blocking`, next
+    /// to whatever else is on that pool: the product's boot wait, `tokio::fs`
+    /// reads, guacamole's driver tests' wait on the TV. tokio 1.52.0's sharded
+    /// pool (tokio#7757, reverted in 1.52.1 for tokio#8056) let two calls made
+    /// while one pool thread sat idle both claim it, so the second ran only
+    /// once the first returned; guacamole's driver tests timed out that way,
+    /// the worker's `place` queued behind their own wait (2026-10-19). Two
+    /// calls back to back over one idle thread: on 1.52.0 about half the
+    /// rounds stall.
+    #[test]
+    fn a_blocking_call_never_waits_for_one_that_blocks() {
+        use std::time::Duration;
+        for round in 0..20 {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_time()
+                .build()
+                .unwrap();
+            let heard = rt.block_on(async {
+                // One pool thread, idle by the end of the sleep: the worker's
+                // pool after its boot refresh.
+                tokio::task::spawn_blocking(|| ()).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                let (tx, rx) = std::sync::mpsc::channel();
+                let blocked =
+                    tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10)));
+                let sender = tokio::task::spawn_blocking(move || tx.send(()));
+                let heard = blocked.await.unwrap();
+                let _ = sender.await;
+                heard
+            });
+            assert!(
+                heard.is_ok(),
+                "round {round}: the second call ran only after the first gave up"
+            );
+        }
+    }
+
     // ---- BootDirect mock reveal (PLAN U.1) ----------------------------------
     //
     // Regression guard: on the non-Windows mock path BootDirect spawns no real

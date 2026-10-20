@@ -31,7 +31,7 @@ pub use material::{
     CharacterMaterial, CharacterTextures, CharacterUniform, MaterialError, ShadowLookup,
     reference_material,
 };
-pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character};
+pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character, static_mesh};
 pub use warm::{MeshShape, WarmError, WarmKey};
 
 /// Embeds the shader and registers [`CharacterMaterial`].

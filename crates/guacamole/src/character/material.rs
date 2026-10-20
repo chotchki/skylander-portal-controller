@@ -58,8 +58,8 @@ pub struct CharacterUniform {
     /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
     /// shader takes it).
     pub misc: Vec4,
-    /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength, w the
-    /// rim's.
+    /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength (or the
+    /// gloss map's, which takes its place), w the rim's.
     pub fixed_alpha: Vec4,
     /// x the exponent, y the detail weight.
     pub layer1: Vec4,
@@ -114,8 +114,7 @@ impl CharacterUniform {
         let second = material.second.as_ref();
         let third = material.third.as_ref();
         let rim = material.rim.as_ref();
-        let uv = |set: usize| material.uv_transforms[set];
-        let row = |r: [f32; 3]| Vec4::new(r[0], r[1], r[2], 0.0);
+        let (uv_u, uv_v) = Self::uv_rows(&material.uv_transforms);
         Self {
             light_travel: lights.map(|l| v3(l.travel)),
             light_ambient: lights.map(|l| v3(l.ambient)),
@@ -144,7 +143,10 @@ impl CharacterUniform {
             fixed_alpha: Vec4::new(
                 material.first.fixed_alpha,
                 second.map_or(-1.0, |s| s.layer.fixed_alpha),
-                third.map_or(0.0, |t| t.strength),
+                third
+                    .map(|t| t.strength)
+                    .or(rim.and_then(|r| r.gloss))
+                    .unwrap_or(0.0),
                 rim.map_or(0.0, |r| r.strength),
             ),
             layer1: layer(&material.first),
@@ -154,9 +156,16 @@ impl CharacterUniform {
             rim_weights: weights(rim.map_or(unset, |r| r.weights)),
             rim: rim.map_or(Vec4::ZERO, |r| Vec4::new(r.scale, r.split, 0.0, 0.0)),
             material_tint: v4(material.tint),
-            uv_u: [0, 1, 2].map(|s| row(uv(s).u)),
-            uv_v: [0, 1, 2].map(|s| row(uv(s).v)),
+            uv_u,
+            uv_v,
         }
+    }
+
+    /// The sets' transforms as the shader's `uv_u` and `uv_v` rows; a scroll
+    /// writes these each frame ([`guac_ir::scroll::transforms`]).
+    pub fn uv_rows(transforms: &[UvTransform; 3]) -> ([Vec4; 3], [Vec4; 3]) {
+        let row = |r: [f32; 3]| Vec4::new(r[0], r[1], r[2], 0.0);
+        (transforms.map(|t| row(t.u)), transforms.map(|t| row(t.v)))
     }
 }
 
@@ -210,6 +219,7 @@ impl CharacterTextures {
                 "second spec map",
             ),
             (s.third, self.third.is_some(), "third layer's map"),
+            (s.gloss, self.third.is_some(), "gloss map"),
             (s.rim, self.rim.is_some(), "rim map"),
             (s.shadows, self.shadow.is_some(), "shadow map"),
         ]
@@ -371,8 +381,9 @@ fn owned(mask: Mask, b: u32) -> Option<bool> {
 
 /// The reference model's material for an IR one: the switches its base
 /// masks set, the scene switches its ignore masks own, and its numbers
-/// (the character-shading spec's material requirement; a scroll track's
-/// motion is AE.21's, so every set keeps its identity transform).
+/// (the character-shading spec's material requirement), each set's
+/// transform where its scroll track starts: the turntable moves it from
+/// there each frame.
 pub fn reference_material(
     ir: &model::Material,
 ) -> Result<guac_ir::shading::Material, MaterialError> {
@@ -433,6 +444,8 @@ pub fn reference_material(
             strength: pr.fixed_alpha[3],
             weights: weights(pr.layer4_blend),
             split: pr.layer4_values[3],
+            // A gloss map's strength is the third layer's fixed alpha.
+            gloss: mask_bit(p.base, bit::GLOSS_MAP).then_some(pr.fixed_alpha[2]),
         }),
         tint: super::remaster::tint(pr.material_tint),
         glow: match pr.glow {
@@ -440,7 +453,7 @@ pub fn reference_material(
             model::Glow::Amount(a) => Glow::Amount(f32::from(a) / 255.0),
             model::Glow::LayerAlpha => Glow::LayerAlpha,
         },
-        uv_transforms: [UvTransform::IDENTITY; 3],
+        uv_transforms: guac_ir::scroll::transforms(&ir.scrolls, 0.0),
         fixed: Fixed {
             shadows: owned(p, bit::SHADOWS),
             fog: owned(p, bit::FOG),
@@ -692,6 +705,74 @@ mod tests {
         }
     }
 
+    /// Chapter 1's one gloss-mapped material, "leaves", as the extract
+    /// reads it (AG.22): normal, spec and colour maps, an ambient-occlusion
+    /// map in the third layer's slot as the gloss map at strength 1, the rim
+    /// added at 0.125, vertex colours, alpha-tested.
+    fn leaves() -> model::Material {
+        let mut m = eruptor_body();
+        m.name = "leaves".into();
+        m.pixel = Mask {
+            base: 0x9C,
+            ignore: 0x3FF,
+        };
+        m.vertex = Mask {
+            base: 0x109C,
+            ignore: 0x1BFF,
+        };
+        m.textures.push(slot(TextureRole::Layer3ColorMap));
+        m.params.fixed_alpha = [-1.0, -1.0, 1.0, 0.125];
+        m.params.layer1_extra = [1.0, 1.0, 1.0, 0.25];
+        m.params.layer4_values = [0.0, 1.0, 1.0, 0.0];
+        m.params.glow = model::Glow::None;
+        m.states.alpha_test = Some(0.964706);
+        m
+    }
+
+    #[test]
+    fn the_leaves_gloss_map_weighs_their_rim() {
+        let m = reference_material(&leaves()).unwrap();
+        let rim = m.rim.unwrap();
+        assert_eq!(
+            (rim.strength, rim.weights, rim.gloss, rim.split),
+            (0.125, Weights::ADD, Some(1.0), 0.0)
+        );
+        assert_eq!(m.third, None, "the gloss map is no third layer");
+        assert!(m.vertex_colour && m.normal_map && m.spec_map);
+        // Fog and the point light from the level's scene; shadows owned off.
+        let mut scene = fogged();
+        scene.point_lights.push(PointLight {
+            position: [0.0; 3],
+            colour: [0.0; 3],
+            linear: 0.0,
+            quadratic: 0.0,
+        });
+        let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.964706);
+        assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 1.0, 0.125));
+        let mut images = bevy::asset::Assets::<Image>::default();
+        let mut seen = Vec::new();
+        let material = CharacterMaterial::from_ir(&leaves(), &scene, ShadowLookup::NONE, |s| {
+            seen.push(s.role);
+            images.add(Image::default())
+        })
+        .unwrap();
+        assert_eq!(
+            (material.key.shader.pixel(), material.key.shader.vertex()),
+            (0xC9C, 0x349C)
+        );
+        assert!(material.key.shader.switches().gloss);
+        assert!(material.third.is_some() && seen.contains(&TextureRole::Layer3ColorMap));
+        assert_eq!(material.alpha_mode(), AlphaMode::Mask(0.964706));
+        // Without its map it's refused by name.
+        let mut bare = leaves();
+        bare.textures
+            .retain(|t| t.role != TextureRole::Layer3ColorMap);
+        let got = CharacterMaterial::from_ir(&bare, &scene, ShadowLookup::NONE, |_| {
+            images.add(Image::default())
+        });
+        assert_eq!(got.unwrap_err(), MaterialError::MissingTexture("gloss map"));
+    }
+
     #[test]
     fn a_layer_without_its_values_is_refused() {
         let mut ir = eruptor_body();
@@ -760,6 +841,37 @@ mod tests {
         assert_eq!(u.uv_u[1], Vec4::new(2.0, 0.0, 0.5, 0.0));
         assert_eq!(u.uv_v[1], Vec4::new(0.0, 3.0, 0.25, 0.0));
         assert_eq!(u.uv_u[0], Vec4::new(1.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_scroll_track_moves_the_set_its_layer_names_from_its_start() {
+        let mut ir = eruptor_body();
+        ir.scrolls = vec![model::Scroll {
+            layer: 1,
+            scale: [2.0, 1.0],
+            velocity: [0.0, 0.75],
+            amplitude: [0.25, 0.0],
+            frequency: [0.0, 0.0],
+            phase: [std::f32::consts::FRAC_PI_2, 0.0],
+            rotation_phase: 0.0,
+        }];
+        // At its start: u doubled and swung by 0.25 sin(pi/2), v as stored;
+        // the other sets untouched.
+        let m = reference_material(&ir).unwrap();
+        let start = m.uv_transforms[1];
+        assert_eq!(
+            (start.u[0], start.u[1], start.v),
+            (2.0, 0.0, [0.0, 1.0, 0.0])
+        );
+        assert!((start.u[2] - 0.25).abs() < 1e-6, "{start:?}");
+        assert_eq!(m.uv_transforms[0], UvTransform::IDENTITY);
+        assert_eq!(m.uv_transforms[2], UvTransform::IDENTITY);
+        // Two seconds in, v has slid 1.5 textures, so the shader's row reads
+        // half of one; u's swing is where it started (no frequency).
+        let (u, v) = CharacterUniform::uv_rows(&guac_ir::scroll::transforms(&ir.scrolls, 2.0));
+        assert_eq!(v[1], Vec4::new(0.0, 1.0, 0.5, 0.0));
+        assert!((u[1] - Vec4::new(2.0, 0.0, 0.25, 0.0)).abs().max_element() < 1e-6);
+        assert_eq!((u[0], v[0]), (Vec4::X, Vec4::Y));
     }
 
     #[test]
@@ -846,6 +958,9 @@ mod tests {
         // A third layer alone reads the second set; both read the third.
         assert_eq!(locations(&key(0x002, 0x002), &full), [0, 1, 2, 3, 6, 7]);
         assert_eq!(locations(&key(0x003, 0x003), &full), [0, 1, 2, 3, 6, 7, 8]);
+        // A gloss map reads the third layer's set: the second here.
+        assert_eq!(locations(&key(0x084, 0x084), &full), [0, 1, 2, 3, 6, 7]);
+        assert_eq!(locations(&key(0x085, 0x085), &full), [0, 1, 2, 3, 6, 7, 8]);
     }
 
     #[test]

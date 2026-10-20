@@ -937,13 +937,15 @@ mod tests {
         #[test]
         fn the_next_intro_starts_in_the_frame_the_first_ends() {
             let tmp = tempfile::tempdir().unwrap();
-            let lib = library(tmp.path(), &[("eruptor", 4), ("ignitor", 30)]);
+            // A second of Eruptor: at 4 frames (160 ms) one debug update at
+            // load 110+ outlasted his whole intro and the loop never saw it.
+            let lib = library(tmp.path(), &[("eruptor", 25), ("ignitor", 30)]);
             let mut tv = tv(Some(lib));
             tv.place(0, "000009-0000");
             tv.place(1, "00000a-0803");
             let mut movies = Vec::new();
             let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(5) {
+            while start.elapsed() < Duration::from_secs(15) {
                 tv.app.update();
                 let movie = tv.movie();
                 if movies.last() != Some(&movie) {

@@ -13,7 +13,8 @@
 //!   [`light`], [`replace`]); the colour, spec and rim maps and the other
 //!   layers' colour maps, sampled through `*UnormSrgb` views so the hardware
 //!   decodes before it filters ([`is_srgb`], [`texture`]);
-//! - as stored: normal maps (`Unorm`), and tints and vertex colours, which
+//! - as stored: normal maps (`Unorm`), a level's gloss map, which is a
+//!   weight ([`samples_srgb`], AG.22), and tints and vertex colours, which
 //!   are multipliers centred on half grey (×4·tint·material tint,
 //!   ×2·vertex colour), not colours ([`tint`]): decoded, a neutral tint's
 //!   0.216 would scale every part by 4 · 0.216² = 0.186 instead of 1.0079.
@@ -40,8 +41,10 @@ use bevy::image::{
 use bevy::math::UVec2;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::Msaa;
-use guac_ir::model::{Filter, Sampler, TextureRole, Wrap};
+use guac_ir::model::{Filter, Material, Sampler, TextureRole, Wrap};
 use guac_ir::shading::DirectionalLight;
+
+use super::key::bit;
 
 /// Open question 1's (d): the look ae-color measured at chroma 0.0963 and
 /// lightness 0.522 on Eruptor, which AE.12 re-measures.
@@ -93,6 +96,15 @@ pub fn is_srgb(role: TextureRole) -> bool {
     role.is_color()
 }
 
+/// Whether `material` samples its texture in `role` through an sRGB view:
+/// [`is_srgb`]'s answer, except that a gloss map (the third layer's texture
+/// on a material with the gloss bit, a level's) is a weight the shader
+/// reads as stored (character-shading's gloss map).
+pub fn samples_srgb(material: &Material, role: TextureRole) -> bool {
+    let gloss = material.pixel.base >> bit::GLOSS_MAP & 1 == 1;
+    is_srgb(role) && !(gloss && role == TextureRole::Layer3ColorMap)
+}
+
 /// An IR sampler as Bevy's; one without a mipmap filter samples level 0
 /// alone, as the original does.
 pub fn sampler(s: &Sampler) -> ImageSamplerDescriptor {
@@ -124,11 +136,22 @@ pub fn texture(
     s: &Sampler,
     formats: CompressedImageFormats,
 ) -> Result<Image, TextureError> {
+    texture_view(ktx2, is_srgb(role), s, formats)
+}
+
+/// An extract's KTX2 through an sRGB view or not, as [`texture`] loads it
+/// for a role; a level's loader picks the view by [`samples_srgb`].
+pub fn texture_view(
+    ktx2: &[u8],
+    srgb: bool,
+    s: &Sampler,
+    formats: CompressedImageFormats,
+) -> Result<Image, TextureError> {
     Image::from_buffer(
         ktx2,
         ImageType::Extension("ktx2"),
         formats,
-        is_srgb(role),
+        srgb,
         ImageSampler::Descriptor(sampler(s)),
         RenderAssetUsages::RENDER_WORLD,
     )
@@ -351,6 +374,42 @@ mod tests {
                 assert_eq!(*d, sampler(&linear_sampler));
             }
         }
+    }
+
+    #[test]
+    fn a_gloss_map_samples_as_stored() {
+        // A third layer's colour map decodes; the same slot holding a gloss
+        // map is a weight. Every other role keeps its view either way.
+        let mut third = material([128, 128, 128, 255]);
+        third.pixel.base = 0x02;
+        let mut gloss = material([128, 128, 128, 255]);
+        gloss.pixel.base = 0x84;
+        for role in [
+            TextureRole::Layer1ColorMap,
+            TextureRole::Layer1BaseNormalMap,
+            TextureRole::Layer1BaseSpecMap,
+            TextureRole::Layer4ColorMap,
+        ] {
+            assert_eq!(samples_srgb(&gloss, role), is_srgb(role), "{role:?}");
+            assert_eq!(samples_srgb(&third, role), is_srgb(role), "{role:?}");
+        }
+        assert!(samples_srgb(&third, TextureRole::Layer3ColorMap));
+        assert!(!samples_srgb(&gloss, TextureRole::Layer3ColorMap));
+        let s = Sampler {
+            wrap_u: Wrap::Repeat,
+            wrap_v: Wrap::Repeat,
+            mag: Filter::Linear,
+            min: Filter::Linear,
+            mip: None,
+        };
+        let image = texture_view(
+            &ktx2(Format::Bc1RgbaUnorm),
+            samples_srgb(&gloss, TextureRole::Layer3ColorMap),
+            &s,
+            CompressedImageFormats::BC,
+        )
+        .unwrap();
+        assert_eq!(image.texture_descriptor.format, TextureFormat::Bc1RgbaUnorm);
     }
 
     #[test]

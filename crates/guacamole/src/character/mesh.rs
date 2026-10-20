@@ -2,7 +2,8 @@
 //! each segment a Bevy `Mesh` with every attribute the shader reads, the
 //! skeleton's joints as entities Bevy's GPU skinning reads, each skinned
 //! with Alchemy's inverse joint (AC.17), the pose evaluated from the clip
-//! on the CPU.
+//! on the CPU. A level's segments (openspec AG.19) carry no skin and become
+//! meshes without joints ([`static_mesh`]).
 
 use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::camera::visibility::NoFrustumCulling;
@@ -44,6 +45,8 @@ pub enum MeshError {
         material: u16,
         materials: usize,
     },
+    #[error("a static segment carries {joints} joint influences")]
+    Skinned { joints: usize },
 }
 
 /// A segment as a Bevy mesh: positions, normals, tangents with their
@@ -51,6 +54,23 @@ pub enum MeshError {
 /// multiplier centred on half grey, never decoded), four joints and their
 /// weights of 255 as fractions, the same blend the SPU does.
 pub fn segment_mesh(segment: &Segment) -> Result<Mesh, MeshError> {
+    mesh(segment, true)
+}
+
+/// A level's segment as a Bevy mesh (openspec AG.19): [`segment_mesh`]'s
+/// attributes but the joints and weights, which a static segment doesn't
+/// have, so the mesh pipeline draws it unskinned. Refuses a segment that
+/// carries a skin.
+pub fn static_mesh(segment: &Segment) -> Result<Mesh, MeshError> {
+    if !(segment.joints.is_empty() && segment.weights.is_empty()) {
+        return Err(MeshError::Skinned {
+            joints: segment.joints.len().max(segment.weights.len()),
+        });
+    }
+    mesh(segment, false)
+}
+
+fn mesh(segment: &Segment, skinned: bool) -> Result<Mesh, MeshError> {
     let n = segment.positions.len();
     let check = |what, got| {
         (got == n).then_some(()).ok_or(MeshError::Length {
@@ -60,8 +80,10 @@ pub fn segment_mesh(segment: &Segment) -> Result<Mesh, MeshError> {
         })
     };
     check("normals", segment.normals.len())?;
-    check("joints", segment.joints.len())?;
-    check("weights", segment.weights.len())?;
+    if skinned {
+        check("joints", segment.joints.len())?;
+        check("weights", segment.weights.len())?;
+    }
     if let Some(t) = &segment.tangents {
         check("tangents", t.len())?;
     }
@@ -97,16 +119,18 @@ pub fn segment_mesh(segment: &Segment) -> Result<Mesh, MeshError> {
         let colours: Vec<[f32; 4]> = c.iter().map(|c| c.map(|v| f32::from(v) / 255.0)).collect();
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
     }
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_JOINT_INDEX,
-        VertexAttributeValues::Uint16x4(segment.joints.clone()),
-    );
-    let weights: Vec<[f32; 4]> = segment
-        .weights
-        .iter()
-        .map(|w| w.map(|v| f32::from(v) / 255.0))
-        .collect();
-    mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights);
+    if skinned {
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_JOINT_INDEX,
+            VertexAttributeValues::Uint16x4(segment.joints.clone()),
+        );
+        let weights: Vec<[f32; 4]> = segment
+            .weights
+            .iter()
+            .map(|w| w.map(|v| f32::from(v) / 255.0))
+            .collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights);
+    }
     mesh.insert_indices(Indices::U16(segment.indices.clone()));
     Ok(mesh)
 }
@@ -332,6 +356,48 @@ mod tests {
                 vertices: 3
             })
         );
+    }
+
+    /// AG.19: a level's segment has every attribute but the skin, and one
+    /// that carries a skin isn't static.
+    #[test]
+    fn a_static_segment_becomes_a_mesh_without_joints() {
+        let mut s = segment();
+        (s.joints, s.weights) = (Vec::new(), Vec::new());
+        let mesh = static_mesh(&s).unwrap();
+        let names: Vec<&str> = mesh.attributes().map(|(a, _)| a.name).collect();
+        assert_eq!(
+            names,
+            [
+                "Vertex_Position",
+                "Vertex_Normal",
+                "Vertex_Uv",
+                "Vertex_Tangent",
+                "Vertex_Color",
+            ]
+        );
+        assert_eq!(mesh.indices().unwrap().len(), 3);
+        assert_eq!(
+            segment_mesh(&s),
+            Err(MeshError::Length {
+                what: "joints",
+                got: 0,
+                vertices: 3
+            }),
+            "a character's segment still needs its skin"
+        );
+        assert_eq!(
+            static_mesh(&segment()),
+            Err(MeshError::Skinned { joints: 3 })
+        );
+        s.normals.pop();
+        assert!(matches!(
+            static_mesh(&s),
+            Err(MeshError::Length {
+                what: "normals",
+                ..
+            })
+        ));
     }
 
     fn model() -> Model {
