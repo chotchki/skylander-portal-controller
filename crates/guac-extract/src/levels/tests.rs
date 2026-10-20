@@ -363,6 +363,56 @@ fn collision_placements_and_lights_read_as_stored() {
     assert_eq!(placed.diffuse, [0x55, 0x2A, 0x11, 0xFF]);
 }
 
+/// The atmosphere part is the definition's zones as the format's reader
+/// gives them, its start the zone set up; a level without a definition
+/// script fails this part alone.
+#[test]
+fn the_atmosphere_is_the_definitions_zones() {
+    use guac_formats::atmosphere::builder::{SCRIPT, ZoneCall};
+    let igz = parsed(&stage_sample());
+    let r = atmosphere(igz, LEVEL, identity()).unwrap();
+    let a = &r.ir;
+    assert_eq!((a.level.as_str(), a.identity.clone()), (LEVEL, identity()));
+    assert_eq!(a.script, SCRIPT);
+    assert!(r.textures.is_empty());
+    assert_eq!(a.zones.iter().map(|z| z.id).collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(a.start, Some(0));
+    let call = ZoneCall::sample(0, 1);
+    let z = a.start_zone().unwrap();
+    assert_eq!(z.ambient, call.ambient.to_le_bytes());
+    let (diffuse, specular, facing, tilt) = call.lights[2];
+    assert_eq!(
+        z.lights[2],
+        ZoneLight {
+            diffuse: diffuse.to_le_bytes(),
+            specular: specular.to_le_bytes(),
+            facing,
+            tilt,
+        }
+    );
+    assert_eq!(
+        z.fog,
+        ZoneFog {
+            on: call.fog_on,
+            start: call.start,
+            range: call.range,
+            colour: call.colour.to_le_bytes(),
+            sky_dome_percent: call.sky_dome_percent,
+            sky_dome_colour: call.sky_dome_colour.to_le_bytes(),
+            yon_colour: call.colour.to_le_bytes(),
+        }
+    );
+
+    let mut bare = stage_sample();
+    bare.atmosphere = None;
+    let igz = parsed(&bare);
+    let e = atmosphere(igz, LEVEL, identity()).unwrap_err();
+    assert_eq!(
+        e,
+        "atmosphere: tfbScriptInfo at offset 0x0: required but missing"
+    );
+}
+
 #[test]
 fn a_scene_no_world_names_is_refused() {
     // AG.3's sample: a scene, but no physics world naming it.
@@ -376,7 +426,14 @@ fn a_scene_no_world_names_is_refused() {
 fn every_level_part_is_named_and_complete_wants_them_all() {
     assert_eq!(
         PARTS,
-        ["scene", "props", "collision", "placements", "lights"]
+        [
+            "scene",
+            "props",
+            "collision",
+            "placements",
+            "lights",
+            "atmosphere"
+        ]
     );
     let mut m: crate::extract::Manifest = serde_json::from_value(serde_json::json!({
         "extractor": "0", "layout": 4, "ir_version": 3,
@@ -399,6 +456,14 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .unwrap()
         .parts
         .insert(LIGHTS.to_owned(), Vec::new());
+    // AG.15's five parts: an extract written before AG.41 resumes for its
+    // atmosphere alone.
+    assert!(!complete(&m), "the atmosphere missing");
+    m.levels
+        .get_mut(LEVELS[0])
+        .unwrap()
+        .parts
+        .insert(ATMOSPHERE.to_owned(), Vec::new());
     assert!(complete(&m));
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),

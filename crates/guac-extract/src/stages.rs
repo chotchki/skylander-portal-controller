@@ -368,6 +368,8 @@ pub fn level_stage(
                         levels::LIGHTS => {
                             levels::lights(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
                         }
+                        levels::ATMOSPHERE => levels::atmosphere(igz, level, id)
+                            .and_then(|r| encoded(ir, dir, &rel, r)),
                         other => Err(format!("no reader for a part named {other}")),
                     }
                 });

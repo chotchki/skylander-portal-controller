@@ -6,8 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    edge, exports, havok, iga, igz, language, material, model, progression, roster, script, sfo,
-    texture, toys,
+    atmosphere, edge, exports, havok, iga, igz, language, material, model, progression, roster,
+    script, sfo, texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -135,6 +135,14 @@ pub const PARSERS: &[RegisteredParser] = &[
         // 1,208 from its 0xF8, a draw's 392 from its 0x38, each doubled at
         // worst by vector growth.
         heap_budget: |len| 64 * len + 32 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "atmosphere",
+        parse: |bytes| atmosphere::Atmosphere::read(&igz::Igz::parse(bytes)?).map(drop),
+        seeds: atmosphere::builder::seeds,
+        // The IGZ parse, then the script's op list (8 bytes a position from
+        // a 4-byte entry) and the zones, one per call of a dozen ops or more.
+        heap_budget: |len| 64 * len + 4 * len + (64 << 10),
     },
     RegisteredParser {
         name: "save_table",

@@ -47,8 +47,8 @@ const TEXTURES: usize = 5;
 /// holds five.
 const LEVEL_TEXTURES: usize = 12;
 const LEVEL_SHARED: usize = 5;
-/// A level's events: none of its five parts done, then each.
-const LEVEL_EVENTS: usize = 6;
+/// A level's events: none of its parts done, then each.
+const LEVEL_EVENTS: usize = PARTS.len() + 1;
 /// The progression builder's sample level table.
 const SAMPLE_LEVELS: [u32; 5] = [0, 400, 1100, 2500, 4500];
 
@@ -263,7 +263,9 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         seen[FIGURES + 5 + LOADS],
         Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
     );
-    let level: Vec<Seen> = (0..LEVEL_EVENTS).map(|i| Seen::Level(i, 5)).collect();
+    let level: Vec<Seen> = (0..LEVEL_EVENTS)
+        .map(|i| Seen::Level(i, PARTS.len()))
+        .collect();
     let at = FIGURES + 6 + LOADS;
     assert_eq!(seen[at..at + LEVEL_EVENTS], level[..]);
     assert_eq!(indexing, Some(at + LEVEL_EVENTS));
@@ -303,7 +305,10 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         guac_ir::from_ron(&fs::read_to_string(dir.join("ir/progression.ron")).unwrap()).unwrap();
     assert_eq!(on_disk, **tables);
     let lv = &done.levels;
-    assert_eq!((lv.levels, lv.parts_read, lv.parts_kept), (1, 5, 0));
+    assert_eq!(
+        (lv.levels, lv.parts_read, lv.parts_kept),
+        (1, PARTS.len(), 0)
+    );
     assert!(lv.failed.is_empty(), "{:?}", lv.failed);
     assert_eq!((lv.props, lv.refused_props.len()), (2, 1));
     assert_eq!((lv.textures, lv.shared), (LEVEL_TEXTURES, LEVEL_SHARED));
@@ -435,8 +440,8 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         seen[at - 1],
         Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
     );
-    assert_eq!(seen[at], Seen::Level(0, 5));
-    assert_eq!(seen.last(), Some(&Seen::Level(5, 5)));
+    assert_eq!(seen[at], Seen::Level(0, PARTS.len()));
+    assert_eq!(seen.last(), Some(&Seen::Level(PARTS.len(), PARTS.len())));
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
@@ -478,7 +483,10 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         (done.progression.files.written, done.progression.files.kept),
         (0, 1)
     );
-    assert_eq!((done.levels.parts_read, done.levels.parts_kept), (0, 5));
+    assert_eq!(
+        (done.levels.parts_read, done.levels.parts_kept),
+        (0, PARTS.len())
+    );
     assert_eq!(done.levels.files.written, 0);
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
@@ -557,7 +565,7 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     fs::remove_file(dir.join(&gloss)).unwrap();
     fs::remove_file(dir.join(IrFormat::Ron.level_path(LEVELS[0], "placements"))).unwrap();
     let lv = stages::level_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!((lv.parts_read, lv.parts_kept), (2, 3));
+    assert_eq!((lv.parts_read, lv.parts_kept), (2, PARTS.len() - 2));
     assert_eq!(lv.files.written, 2);
     assert!(again.dir.output_done(&gloss).unwrap());
     assert!(lv.failed.is_empty());
@@ -830,11 +838,11 @@ fn a_level_part_the_manifest_lacks_resumes_alone() {
     assert_eq!(done.roster.files.written, 0);
     assert_eq!(done.models.files.written, 0);
     let lv = &done.levels;
-    assert_eq!((lv.parts_read, lv.parts_kept), (1, 4));
+    assert_eq!((lv.parts_read, lv.parts_kept), (1, PARTS.len() - 1));
     // Its file was there as recorded: kept, not written again.
     assert_eq!(
         (lv.files.written, lv.files.kept),
-        (0, 1 + 4 + LEVEL_TEXTURES)
+        (0, PARTS.len() + LEVEL_TEXTURES)
     );
     assert_eq!(
         fs::metadata(dir.join(&lights)).unwrap().modified().unwrap(),
@@ -882,7 +890,10 @@ fn the_progression_part_an_older_manifest_lacks_resumes_alone() {
     );
     assert_eq!(done.roster.files.written, 0);
     assert_eq!(done.models.files.written, 0);
-    assert_eq!((done.levels.parts_read, done.levels.parts_kept), (0, 5));
+    assert_eq!(
+        (done.levels.parts_read, done.levels.parts_kept),
+        (0, PARTS.len())
+    );
     assert_eq!(done.intros.unwrap().summary.transcoded, 0);
     drop(again);
     assert_eq!(
@@ -919,7 +930,7 @@ fn progression_tables_that_dont_read_leave_the_rest() {
             .any(|e| matches!(e, Seen::ProgressionReady(_)))
     );
     assert_eq!(done.models.models, MODELS);
-    assert_eq!(done.levels.parts_read, 5);
+    assert_eq!(done.levels.parts_read, PARTS.len());
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     let dir = opened.dir.path().to_path_buf();
     drop(opened);
@@ -980,7 +991,7 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
     let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
     let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     let lv = &done.levels;
-    assert_eq!((lv.levels, lv.parts_read), (0, 4));
+    assert_eq!((lv.levels, lv.parts_read), (0, PARTS.len() - 1));
     let [f] = &lv.failed[..] else {
         panic!("{:?}", lv.failed);
     };
@@ -995,7 +1006,7 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
     assert!(done.intros.is_ok());
     let m = manifest_on_disk(opened.dir.path());
     assert!(m.complete && !levels::complete(&m));
-    assert_eq!(recorded(&m, "levels/"), 4);
+    assert_eq!(recorded(&m, "levels/"), PARTS.len() - 1);
     drop(opened);
     assert_eq!(
         open(&dump, &root, &known, &|_| {}).unwrap().state,

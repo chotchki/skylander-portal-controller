@@ -7,18 +7,22 @@
 //!   among them, on its own material, the one with a gloss map (AG.22)
 //!   included. The other effects' (the grass's `0xAA6`, `0xAA8`, the warp)
 //!   are AG.24's stand-ins and draw nothing yet.
-//! - The light ([`level_lights`], [`view_scene`]): `_worldLight1`-`3`, each
-//!   travelling the way it faces, as AE.13 reads the sprite rig, and the
-//!   placed point lights; fog from a [`LevelFog`] the TV holds, a placeholder
-//!   until AG.41 sets the fog AG.13 measures; no shadows (AG.23). The shader
-//!   lights in view space, so the scene is the lights seen from a camera.
+//! - The light ([`level_lights`], [`view_scene`]): the atmospheric zone the
+//!   level's definition sets up at its start (AG.41: AG.13 found the game
+//!   lights and fogs the opening area by it, not by the level file's
+//!   `_worldLight1`-`3`), each light travelling the way it faces, as AE.13
+//!   reads the sprite rig, and the placed point lights; fog from a
+//!   [`LevelFog`] the TV holds, set from the same zone ([`LevelFog::from_zone`]),
+//!   which the sky dome takes its zone's share of ([`sky_fogged`]); no shadows
+//!   (AG.23). The shader lights in view space, so the scene is the lights
+//!   seen from a camera.
 //! - The camera AF's fresh state shows ([`fresh_state_transform`],
 //!   [`fresh_state_projection`]), which the dev entry draws the level at.
 
 use bevy::camera::PerspectiveProjection;
 use bevy::math::{Mat4, Vec3};
 use bevy::prelude::Transform;
-use guac_ir::level::{LevelMaterial, Lights, SceneGraph};
+use guac_ir::level::{Atmosphere, AtmosphericZone, LevelMaterial, Lights, SceneGraph, ZoneFog};
 use guac_ir::model::{self, Segment};
 use guac_ir::shading::{DirectionalLight, PointLight, Scene};
 
@@ -26,20 +30,26 @@ use crate::character::key::bit;
 use crate::character::remaster;
 use crate::character::warm::{self, WarmError, WarmKey};
 
-/// The directional lights tfbmulti2 reads, by name. The rig's fourth,
-/// `_causticLight`, plays a role nobody has read yet (AG.13's capture may
-/// show it), so the level draws without it.
+/// The directional lights tfbmulti2 reads, by name: the start's zone sets
+/// their colours and angles but for lights 2 and 3's ambients, which it
+/// leaves as the level file has them. The rig's fourth, `_causticLight`, is
+/// the viewport's caustic effect's, off at the start (AG.13), so the level
+/// draws without it.
 pub const WORLD_LIGHTS: [&str; 3] = ["_worldLight1", "_worldLight2", "_worldLight3"];
 /// A placed light's `_type` for a point light (level 213's one).
 pub const POINT_LIGHT: u32 = 1;
 /// The most point lights tfbmulti2 takes (bits 11-13).
 pub const MAX_POINT_LIGHTS: usize = 3;
 
+/// A foot, in metres: the scripts give distances in feet.
+pub const FOOT: f32 = 0.3048;
+
 /// The level's fog: its colour as a disc stores one (encoded for display,
 /// decoded like every colour the remaster takes) and where it starts and
 /// ends along the view, in metres. The TV holds one as a resource, every
 /// level material's fog term reads it, and a change relights them all; it
-/// starts at [`LevelFog::PLACEHOLDER`].
+/// starts at [`LevelFog::NONE`] and a level's read sets it to its start's
+/// zone's ([`LevelFog::from_zone`]).
 #[derive(bevy::prelude::Resource, Debug, Clone, Copy, PartialEq)]
 pub struct LevelFog {
     pub colour: [u8; 3],
@@ -49,26 +59,69 @@ pub struct LevelFog {
 
 impl Default for LevelFog {
     fn default() -> Self {
-        Self::PLACEHOLDER
+        Self::NONE
     }
 }
 
 impl LevelFog {
-    /// A placeholder, not a reading, until AG.41 puts in the fog AG.13
-    /// measures in play: on, since every level material keys fog and a
-    /// spec-mapped part needs the eye direction it brings, but black and
-    /// starting past the camera's far clip, so it adds nothing.
-    pub const PLACEHOLDER: Self = Self {
+    /// Fog that adds nothing: black, starting past anything the level
+    /// draws (its sky reaches about 750 m), so a material keyed for fog
+    /// draws as without. Before a level is read, and for a zone whose fog is
+    /// off.
+    pub const NONE: Self = Self {
         colour: [0, 0, 0],
         near: 1.0e4,
         far: 2.0e4,
     };
+
+    /// A zone's fog as the original sets it up (AG.13, at AF's fresh
+    /// state): on, the fog fades in linearly with depth along the view from
+    /// its start to its start plus its range, wholly fogged past that (the
+    /// viewport's fog max is the zone's "fog on", 1, which the shader's
+    /// fade reaches); off (0), nothing. Any other "fog on" is refused.
+    pub fn from_zone(fog: &ZoneFog) -> Result<Self, LevelError> {
+        match fog.on {
+            0 => Ok(Self::NONE),
+            1 => Ok(Self {
+                colour: rgb(fog.colour),
+                near: fog.start as f32 * FOOT,
+                far: (fog.start + fog.range) as f32 * FOOT,
+            }),
+            on => Err(LevelError::Zone("fog on", on)),
+        }
+    }
+}
+
+fn rgb(c: [u8; 4]) -> [u8; 3] {
+    [c[0], c[1], c[2]]
+}
+
+/// The zone the level's definition sets up at its start.
+pub fn start_zone(atmosphere: &Atmosphere) -> Result<&AtmosphericZone, LevelError> {
+    atmosphere.start_zone().ok_or(LevelError::NoStartZone)
+}
+
+/// Whether the sky dome takes the start's fog: its share is the zone's
+/// "fog skydome percent". At 0, level 213's, the original draws its sky
+/// with the shader's fog switched off (AG.13's capture: its 14 sky draws,
+/// out to 657 m, are the only unfogged tfbmulti2 draws), so the sky's
+/// materials own their fog off ([`drawn`]). Another share isn't drawn yet
+/// and is refused.
+pub fn sky_fogged(zone: &AtmosphericZone) -> Result<bool, LevelError> {
+    match zone.fog.sky_dome_percent {
+        0 => Ok(false),
+        percent => Err(LevelError::Zone("fog skydome percent", percent)),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LevelError {
     #[error("the level has no {0}")]
     MissingLight(&'static str),
+    #[error("the level sets up no atmospheric zone at its start")]
+    NoStartZone,
+    #[error("the start's zone has {0} {1}, which isn't drawn")]
+    Zone(&'static str, i32),
     #[error("segment {segment} names material {material}, past the scene's {materials}")]
     Segment {
         segment: usize,
@@ -94,8 +147,9 @@ pub fn facing(rotation: [f32; 3]) -> Vec3 {
 /// The level's lights in its own frame, before a camera sees them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LevelLights {
-    /// `_worldLight1`-`3`: each one's colours decoded as the remaster
-    /// decodes them, its travel the way it faces, in the level's frame.
+    /// `_worldLight1`-`3` as the start's zone sets them: each one's colours
+    /// decoded as the remaster decodes them, its travel the way it faces, in
+    /// the level's frame.
     pub directional: [DirectionalLight; 3],
     /// Visible point lights, at their positions in the level's frame.
     pub points: Vec<PointLight>,
@@ -103,28 +157,33 @@ pub struct LevelLights {
     pub left_out: Vec<(String, &'static str)>,
 }
 
-/// The level's lights off its lights part. Each light's multiplier is 1 on
-/// the disc and what another would do is unread, so none is applied (as on
-/// the turntable). A point light's falloff takes the light's linear and
-/// quadratic attenuation as the shader's two terms and drops its constant,
-/// which the shader's falloff has no place for: a reading, not a
-/// measurement, since how the runtime fills those terms is ae-shader's open
-/// item (level 213's one sits at the origin with (0, 0.5, 0), about 103 m
-/// from the start, where its light is under 1 % of its colour).
-pub fn level_lights(lights: &Lights) -> Result<LevelLights, LevelError> {
-    let rgb = |c: [u8; 4]| [c[0], c[1], c[2]];
+/// The level's lights: the three directional lights as `zone` sets them up
+/// ("Game - Setup Atmospherics": light 1's ambient, each light's diffuse,
+/// specular, facing and tilt), lights 2 and 3's ambients as the lights part
+/// has them, and the placed point lights off the lights part. Each light's
+/// multiplier is 1 on the disc and what another would do is unread, so
+/// none is applied (as on the turntable). A point light's falloff takes the
+/// light's linear and quadratic attenuation as the shader's two terms and
+/// drops its constant, which the shader's falloff has no place for: a
+/// reading, not a measurement, since how the runtime fills those terms is
+/// ae-shader's open item (level 213's one sits at the origin with
+/// (0, 0.5, 0), about 103 m from the start, where its light is under 1 % of
+/// its colour).
+pub fn level_lights(lights: &Lights, zone: &AtmosphericZone) -> Result<LevelLights, LevelError> {
     let mut directional = [DirectionalLight::OFF; 3];
-    for (slot, name) in directional.iter_mut().zip(WORLD_LIGHTS) {
-        let l = lights
+    for (k, (slot, name)) in directional.iter_mut().zip(WORLD_LIGHTS).enumerate() {
+        let file = lights
             .directional
             .iter()
             .find(|l| l.name == name)
             .ok_or(LevelError::MissingLight(name))?;
+        let set = &zone.lights[k];
+        let ambient = if k == 0 { zone.ambient } else { file.ambient };
         *slot = remaster::light(
-            facing(l.rotation).to_array(),
-            rgb(l.ambient),
-            rgb(l.diffuse),
-            rgb(l.specular),
+            facing([set.tilt as f32, set.facing as f32, 0.0]).to_array(),
+            rgb(ambient),
+            rgb(set.diffuse),
+            rgb(set.specular),
         );
     }
     let mut left_out: Vec<(String, &'static str)> = lights
@@ -256,40 +315,81 @@ impl Drawn {
     }
 }
 
-/// `graph`'s drawn part, taking its segments.
-pub fn drawn(graph: SceneGraph) -> Result<Drawn, LevelError> {
-    let mut renumber = Vec::with_capacity(graph.materials.len());
-    let mut materials = Vec::new();
-    for m in &graph.materials {
-        renumber.push(drawn_material(m).map(|m| {
-            materials.push(m);
-            (materials.len() - 1) as u16
-        }));
+/// `m` owning its fog off: its masks hold the fog bit, unset, so it draws
+/// unfogged in any scene.
+pub fn unfogged(mut m: model::Material) -> model::Material {
+    for mask in [&mut m.pixel, &mut m.vertex] {
+        mask.ignore |= 1 << bit::FOG;
+        mask.base &= !(1 << bit::FOG);
     }
+    m
+}
+
+/// `graph`'s drawn part, taking its segments. Unless the sky dome takes the
+/// fog (`sky_fogged`, [`sky_fogged`]), the sky's segments draw on copies of
+/// their materials that own their fog off ([`unfogged`]): one a material
+/// the sky draws with, beside the material itself where the rest of the
+/// scene draws with it too.
+pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
     let sky: std::collections::HashSet<usize> = graph
         .sky
         .iter()
         .flat_map(|g| g.segments.iter().map(|&s| s as usize))
         .collect();
+    let n = graph.materials.len();
+    // Which kinds of segment draw with each material: the sky's own a copy
+    // only when the sky stays unfogged.
+    let (mut by_sky, mut by_rest) = (vec![false; n], vec![false; n]);
+    for (i, s) in graph.segments.iter().enumerate() {
+        let k = usize::from(s.material);
+        if k >= n {
+            return Err(LevelError::Segment {
+                segment: i,
+                material: s.material,
+                materials: n,
+            });
+        }
+        if sky.contains(&i) && !sky_fogged {
+            by_sky[k] = true;
+        } else {
+            by_rest[k] = true;
+        }
+    }
+    let mut materials = Vec::new();
+    let (mut rest, mut sky_copy) = (vec![None; n], vec![None; n]);
+    let mut multi2 = 0;
+    for (k, m) in graph.materials.iter().enumerate() {
+        let Some(d) = drawn_material(m) else {
+            continue;
+        };
+        multi2 += 1;
+        if by_rest[k] || !by_sky[k] {
+            materials.push(d.clone());
+            rest[k] = Some((materials.len() - 1) as u16);
+        }
+        if by_sky[k] {
+            materials.push(unfogged(d));
+            sky_copy[k] = Some((materials.len() - 1) as u16);
+        }
+    }
     let mut out = Drawn {
-        left_out_materials: graph.materials.len() - materials.len(),
+        left_out_materials: n - multi2,
         materials,
         ..Drawn::default()
     };
     for (i, mut s) in graph.segments.into_iter().enumerate() {
-        let index = renumber
-            .get(usize::from(s.material))
-            .ok_or(LevelError::Segment {
-                segment: i,
-                material: s.material,
-                materials: renumber.len(),
-            })?;
-        let Some(index) = *index else {
+        let is_sky = sky.contains(&i);
+        let index = if is_sky && !sky_fogged {
+            sky_copy[usize::from(s.material)]
+        } else {
+            rest[usize::from(s.material)]
+        };
+        let Some(index) = index else {
             out.left_out_segments += 1;
             continue;
         };
         s.material = index;
-        if sky.contains(&i) {
+        if is_sky {
             out.sky.push(out.segments.len());
         }
         out.segments.push(s);
@@ -368,16 +468,17 @@ mod tests {
         }
     }
 
-    fn rig_light(name: &str, rotation: [f32; 3]) -> RigLight {
-        // Made-up colours, none of the disc's.
+    fn rig_light(name: &str, ambient: [u8; 4]) -> RigLight {
+        // Made-up colours, none of the disc's, and an angle the zone's
+        // replace.
         RigLight {
             name: name.into(),
-            diffuse: [200, 100, 50, 255],
-            ambient: [10, 20, 30, 255],
-            specular: [60, 60, 60, 255],
+            diffuse: [7, 7, 7, 255],
+            ambient,
+            specular: [9, 9, 9, 255],
             multiplier: 1.0,
             position: [0.0; 3],
-            rotation,
+            rotation: [30.0, 30.0, 0.0],
         }
     }
 
@@ -403,10 +504,10 @@ mod tests {
             identity: identity(),
             level: "level_213_tutotial".into(),
             directional: vec![
-                rig_light("_worldLight1", [-45.0, 0.0, 0.0]),
-                rig_light("_worldLight3", [-45.0, 90.0, 0.0]),
-                rig_light("_worldLight2", [45.0, 180.0, 0.0]),
-                rig_light("_causticLight", [-45.0, 0.0, 0.0]),
+                rig_light("_worldLight1", [99, 99, 99, 255]),
+                rig_light("_worldLight3", [4, 5, 6, 255]),
+                rig_light("_worldLight2", [1, 2, 3, 255]),
+                rig_light("_causticLight", [99, 99, 99, 255]),
             ],
             placed: vec![
                 point("beam", POINT_LIGHT, true),
@@ -416,18 +517,51 @@ mod tests {
         }
     }
 
+    /// A zone with made-up colours, its lights at the angles the tests
+    /// below turn: down and away along +Z, up and back, down along +X.
+    fn zone() -> AtmosphericZone {
+        let light = |n: u8, facing, tilt| guac_ir::level::ZoneLight {
+            diffuse: [200, 100, n, 0],
+            specular: [60, 60, n, 0],
+            facing,
+            tilt,
+        };
+        AtmosphericZone {
+            id: 0,
+            ambient: [10, 20, 30, 0],
+            lights: [light(50, 0, -45), light(51, 180, 45), light(52, 90, -45)],
+            fog: ZoneFog {
+                on: 1,
+                start: 100,
+                range: 1000,
+                colour: [115, 83, 49, 0],
+                sky_dome_percent: 0,
+                sky_dome_colour: [128, 128, 128, 0],
+                yon_colour: [115, 83, 49, 0],
+            },
+        }
+    }
+
+    /// AG.41: the start's zone lights the world lights: each travels the
+    /// way the zone faces it, with the zone's colours, light 1 with the
+    /// zone's ambient and 2 and 3 with the level file's; the caustic light
+    /// stays out.
     #[test]
-    fn the_world_lights_travel_the_way_they_face_and_the_caustic_stays_out() {
-        let l = level_lights(&lights()).unwrap();
+    fn the_start_zone_lights_the_world_lights_and_the_caustic_stays_out() {
+        let l = level_lights(&lights(), &zone()).unwrap();
         let s = std::f32::consts::FRAC_1_SQRT_2;
         // In name order, whatever the part's order.
         assert!(close(l.directional[0].travel, [0.0, -s, s], 1e-6));
         assert!(close(l.directional[1].travel, [0.0, s, -s], 1e-6));
         assert!(close(l.directional[2].travel, [s, -s, 0.0], 1e-6));
-        // Colours decoded, each light with its own ambient.
-        assert_eq!(l.directional[0].diffuse, remaster::linear([200, 100, 50]));
+        // Colours decoded: the zone's, light 1 with its ambient.
+        for (k, n) in [50, 51, 52].into_iter().enumerate() {
+            assert_eq!(l.directional[k].diffuse, remaster::linear([200, 100, n]));
+            assert_eq!(l.directional[k].specular, remaster::linear([60, 60, n]));
+        }
         assert_eq!(l.directional[0].ambient, remaster::linear([10, 20, 30]));
-        assert_eq!(l.directional[0].specular, remaster::linear([60, 60, 60]));
+        assert_eq!(l.directional[1].ambient, remaster::linear([1, 2, 3]));
+        assert_eq!(l.directional[2].ambient, remaster::linear([4, 5, 6]));
         // The point light: its colour decoded, its linear and quadratic
         // attenuation the two terms, the constant dropped.
         assert_eq!(l.points.len(), 1);
@@ -441,19 +575,58 @@ mod tests {
         let mut missing = lights();
         missing.directional.retain(|l| l.name != "_worldLight2");
         assert_eq!(
-            level_lights(&missing),
+            level_lights(&missing, &zone()),
             Err(LevelError::MissingLight("_worldLight2"))
         );
         // A fourth point light has no place in the shader.
         let mut many = lights();
         many.placed = (0..5).map(|i| point(&format!("p{i}"), 1, true)).collect();
-        let l = level_lights(&many).unwrap();
+        let l = level_lights(&many, &zone()).unwrap();
         assert_eq!((l.points.len(), l.left_out.len()), (3, 3));
+    }
+
+    /// AG.41: the zone's fog, as AG.13 read the opening area's at AF's fresh
+    /// state: (115, 83, 49) from 100 ft to 100 + 1,000 ft, 30.48 m to
+    /// 335.28 m; off, it fogs nothing; the sky dome's 0 % keeps the sky
+    /// unfogged. What isn't drawn is refused, and a level whose start sets
+    /// up no zone says so.
+    #[test]
+    fn the_start_zones_fog_is_in_metres_and_the_sky_takes_none() {
+        let z = zone();
+        let fog = LevelFog::from_zone(&z.fog).unwrap();
+        assert_eq!(fog.colour, [115, 83, 49]);
+        assert!((fog.near - 30.48).abs() < 1e-4, "{fog:?}");
+        assert!((fog.far - 335.28).abs() < 1e-4, "{fog:?}");
+        let mut off = z.fog;
+        off.on = 0;
+        assert_eq!(LevelFog::from_zone(&off), Ok(LevelFog::NONE));
+        off.on = 2;
+        assert_eq!(
+            LevelFog::from_zone(&off),
+            Err(LevelError::Zone("fog on", 2))
+        );
+        assert_eq!(sky_fogged(&z), Ok(false));
+        let mut full = z;
+        full.fog.sky_dome_percent = 100;
+        assert_eq!(
+            sky_fogged(&full),
+            Err(LevelError::Zone("fog skydome percent", 100))
+        );
+        let mut atmosphere = Atmosphere {
+            identity: identity(),
+            level: "level_213_tutotial".into(),
+            script: "Level_Definition_900.ai".into(),
+            zones: vec![z],
+            start: Some(0),
+        };
+        assert_eq!(start_zone(&atmosphere), Ok(&z));
+        atmosphere.start = None;
+        assert_eq!(start_zone(&atmosphere), Err(LevelError::NoStartZone));
     }
 
     #[test]
     fn a_camera_sees_the_lights_in_its_view_space_and_the_fog_from_the_level() {
-        let l = level_lights(&lights()).unwrap();
+        let l = level_lights(&lights(), &zone()).unwrap();
         let fog = LevelFog {
             colour: [115, 83, 49],
             near: 30.0,
@@ -480,8 +653,8 @@ mod tests {
         assert!(scene.fog && !scene.shadows);
         assert_eq!(scene.fog_colour, remaster::linear([115, 83, 49]));
         assert_eq!((scene.fog_near, scene.fog_far), (30.0, 300.0));
-        // The placeholder starts past the far clip, so it fogs nothing drawn.
-        const { assert!(LevelFog::PLACEHOLDER.near > FRESH_STATE_FAR) };
+        // No fog starts past the far clip, so it fogs nothing drawn.
+        const { assert!(LevelFog::NONE.near > FRESH_STATE_FAR) };
     }
 
     fn slot(role: TextureRole) -> TextureSlot {
@@ -572,8 +745,8 @@ mod tests {
     /// its gloss (AG.22).
     #[test]
     fn level_material_keys_become_their_shader_defs() {
-        let l = level_lights(&lights()).unwrap();
-        let scene = view_scene(&l, &LevelFog::PLACEHOLDER, Mat4::IDENTITY);
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
         let key = |m: &model::Material| {
             CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, |_| Handle::default())
                 .unwrap()
@@ -785,7 +958,7 @@ mod tests {
                 segments: vec![2],
             }],
         };
-        let d = drawn(graph.clone()).unwrap();
+        let d = drawn(graph.clone(), true).unwrap();
         assert_eq!(d.materials.len(), 2);
         assert_eq!((d.left_out_materials, d.left_out_segments), (1, 1));
         assert_eq!(d.sources, [0, 2, 3, 4]);
@@ -795,8 +968,8 @@ mod tests {
         );
         assert_eq!(d.sky, [1]);
 
-        let l = level_lights(&lights()).unwrap();
-        let scene = view_scene(&l, &LevelFog::PLACEHOLDER, Mat4::IDENTITY);
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
         let k = keys(&d, &scene).unwrap();
         // The ground on two shapes, the sky on one: three keys, in segment
         // order, each with its drawn material.
@@ -811,12 +984,15 @@ mod tests {
         // A second scene numbers its materials on from the first's.
         let mut both = d.clone();
         both.append(
-            drawn(SceneGraph {
-                world: "Levels/Test/Test_GRASS.ma".into(),
-                materials: vec![LevelMaterial::Multi2(ground), effect()],
-                segments: vec![segment(1, false), segment(0, true)],
-                sky: Vec::new(),
-            })
+            drawn(
+                SceneGraph {
+                    world: "Levels/Test/Test_GRASS.ma".into(),
+                    materials: vec![LevelMaterial::Multi2(ground), effect()],
+                    segments: vec![segment(1, false), segment(0, true)],
+                    sky: Vec::new(),
+                },
+                true,
+            )
             .unwrap(),
         );
         assert_eq!(both.materials.len(), 3);
@@ -831,13 +1007,74 @@ mod tests {
         let mut bad = graph;
         bad.segments.push(segment(3, false));
         assert_eq!(
-            drawn(bad),
+            drawn(bad, true),
             Err(LevelError::Segment {
                 segment: 5,
                 material: 3,
                 materials: 3
             })
         );
+    }
+
+    /// AG.41: with the sky dome taking none of the fog, the sky's segments
+    /// draw on copies of their materials that own their fog off, so in the
+    /// level's fogged scene the sky keys without fog and the rest with it,
+    /// as the original's sky draws run unfogged programs; a material the
+    /// sky and the ground share draws on both.
+    #[test]
+    fn an_unfogged_sky_draws_on_copies_that_own_their_fog_off() {
+        let ground = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        let sky = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
+        let graph = SceneGraph {
+            world: "Levels/Test/Test_ART_MASTER.ma".into(),
+            materials: vec![
+                effect(),
+                LevelMaterial::Multi2(ground.clone()),
+                LevelMaterial::Multi2(sky.clone()),
+            ],
+            // The ground's material also draws one sky segment.
+            segments: vec![
+                segment(1, false),
+                segment(2, true),
+                segment(1, false),
+                segment(0, false),
+            ],
+            sky: vec![SkyGroup {
+                name: "sky".into(),
+                segments: vec![1, 2],
+            }],
+        };
+        let d = drawn(graph, false).unwrap();
+        // The ground, the ground's copy for the sky and the sky's copy; the
+        // sky's own material, which only the sky draws, isn't kept beside it.
+        assert_eq!(d.materials.len(), 3);
+        assert_eq!((d.left_out_materials, d.left_out_segments), (1, 1));
+        assert_eq!(
+            d.segments.iter().map(|s| s.material).collect::<Vec<_>>(),
+            [0, 2, 1]
+        );
+        assert_eq!(d.sky, [1, 2]);
+        assert_eq!(
+            d.materials[0],
+            drawn_material(&LevelMaterial::Multi2(ground.clone())).unwrap()
+        );
+        for (k, of) in [(1, &ground), (2, &sky)] {
+            let m = &d.materials[k];
+            assert_eq!(m.pixel.ignore >> bit::FOG & 1, 1, "owned");
+            assert_eq!(m.pixel.base >> bit::FOG & 1, 0, "off");
+            assert_eq!(m.vertex.ignore >> bit::FOG & 1, 1);
+            assert_eq!(m.pixel.base, of.pixel.base);
+            assert_eq!(m.textures, of.textures);
+        }
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let fog = LevelFog::from_zone(&zone().fog).unwrap();
+        let scene = view_scene(&l, &fog, Mat4::IDENTITY);
+        let k = keys(&d, &scene).unwrap();
+        let fogged: Vec<(usize, bool)> = k
+            .iter()
+            .map(|(k, m)| (*m, k.material.shader.switches().fog))
+            .collect();
+        assert_eq!(fogged, [(0, true), (2, false), (1, false)]);
     }
 
     /// The fresh state's camera looks where AC.13's capture of it does:

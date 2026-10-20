@@ -1629,15 +1629,17 @@ fn write_roster(dir: &mut guac_extract::IdentityDir) -> Result<()> {
 
 /// Chapter 1 into the extract as the level stage leaves it (AG.15), every
 /// part recorded so the extract is current: a 20 m floor at the spawn's
-/// height, `213_Init_Location` with its first waypoint and the three world
-/// lights the TV's loader lights the level with (AG.19), nothing drawn and
-/// no props yet (AG.21 adds what its walk needs). Every number made up.
+/// height, `213_Init_Location` with its first waypoint, the three world
+/// lights (AG.19) and the start's atmospheric zone the TV's loader lights
+/// and fogs the level with (AG.41), nothing drawn and no props yet (AG.21
+/// adds what its walk needs). Every number made up.
 fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     use guac_extract::intros::IrFormat;
-    use guac_extract::levels::{COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
+    use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
     use guac_ir::RigLight;
     use guac_ir::level::{
-        Collision, CollisionMesh, Lights, Placement, Placements, Props, Scene, Waypoint,
+        Atmosphere, AtmosphericZone, Collision, CollisionMesh, Lights, Placement, Placements,
+        Props, Scene, Waypoint, ZoneFog, ZoneLight,
     };
 
     let ir = IrFormat::Ron;
@@ -1654,7 +1656,27 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
         radius: 0.05,
         welding: 4,
     };
-    let parts: [(&str, Vec<u8>); 5] = [
+    let light = |facing| ZoneLight {
+        diffuse: [120, 110, 100, 0],
+        specular: [90, 90, 90, 0],
+        facing,
+        tilt: -40,
+    };
+    let zone = AtmosphericZone {
+        id: 0,
+        ambient: [30, 30, 30, 0],
+        lights: [light(60), light(250), light(200)],
+        fog: ZoneFog {
+            on: 1,
+            start: 120,
+            range: 900,
+            colour: [100, 90, 80, 0],
+            sky_dome_percent: 0,
+            sky_dome_colour: [128, 128, 128, 0],
+            yon_colour: [100, 90, 80, 0],
+        },
+    };
+    let parts: [(&str, Vec<u8>); 6] = [
         (
             SCENE,
             ir.encode(
@@ -1727,7 +1749,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
             LIGHTS,
             ir.encode(
                 &Lights {
-                    identity,
+                    identity: identity.clone(),
                     level: level.clone(),
                     directional: [
                         ("_worldLight1", [-45.0, 0.0, 0.0]),
@@ -1748,6 +1770,21 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
                 },
                 dir,
                 LIGHTS,
+            )?,
+        ),
+        (
+            ATMOSPHERE,
+            ir.encode(
+                &Atmosphere {
+                    identity: identity.clone(),
+                    level: level.clone(),
+                    script: "C:/tfb/Content/Levels/Level_E2E/Scripts/Level_Definition_E2E.ai"
+                        .into(),
+                    zones: vec![zone],
+                    start: Some(0),
+                },
+                dir,
+                ATMOSPHERE,
             )?,
         ),
     ];

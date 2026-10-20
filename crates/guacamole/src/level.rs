@@ -6,8 +6,9 @@
 //! - The extraction says where a level is ([`LevelSource`]) once the Giants
 //!   pick finds its extract current or the level stage has written it; the
 //!   level loads from there at once, behind whatever the portal shows.
-//! - Reading: on a task, the scene and lights parts, each drawn segment's
-//!   mesh, each texture through the remaster's views, the keys it draws.
+//! - Reading: on a task, the scene, lights and atmosphere parts, each drawn
+//!   segment's mesh, each texture through the remaster's views, the keys it
+//!   draws.
 //! - Uploading: the frame hands the renderer at most [`UPLOAD_BYTES`] of
 //!   textures and meshes, then [`MATERIALS_PER_FRAME`] materials, a frame,
 //!   so no frame carries the whole level to the GPU; the warm compiles its
@@ -16,8 +17,10 @@
 //!   world has every texture, mesh and material resident ([`watch_residency`])
 //!   and every key compiled, so the frame it first shows uploads and
 //!   compiles nothing of its own.
-//! - Fog: every material's fog term reads the [`LevelFog`] resource, a
-//!   placeholder until AG.41; a change relights them all ([`light_level`]).
+//! - Fog and light: the atmospheric zone the level's definition sets up at
+//!   its start (AG.41) lights it and sets the [`LevelFog`] resource, which
+//!   every material's fog term reads; a change relights them all
+//!   ([`light_level`]).
 //!
 //! Nothing shows it in the product yet (AG.21 and AG.29 take the TV into
 //! it). The dev entry does: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build,
@@ -47,7 +50,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::intros::IrFormat;
-use guac_extract::levels::{LEVELS, LIGHTS, SCENE};
+use guac_extract::levels::{ATMOSPHERE, LEVELS, LIGHTS, SCENE};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
@@ -58,7 +61,7 @@ use guacamole::character::{
 };
 use guacamole::level_scene::{
     self as arithmetic, Drawn, LevelFog, LevelLights, fresh_state_projection,
-    fresh_state_transform, level_lights, view_scene,
+    fresh_state_transform, level_lights, sky_fogged, start_zone, view_scene,
 };
 use serde::Serialize;
 use tracing::{info, warn};
@@ -135,36 +138,45 @@ struct Built {
     images: Vec<(ImageKey, Image)>,
     keys: Vec<(WarmKey, usize)>,
     lights: LevelLights,
+    /// The start's zone's fog, which the TV's [`LevelFog`] takes.
+    fog: LevelFog,
     /// The sky's bounds, for the log: (min, max).
     sky: Option<(Vec3, Vec3)>,
     read: Duration,
     took: Duration,
 }
 
-/// Reads `source`'s level for drawing: its scene and lights parts (each
-/// checked to be this dump's and this level's), the drawn segments' meshes,
-/// the textures they bind, the keys they draw at the fresh state's camera.
+/// Reads `source`'s level for drawing: its scene, lights and atmosphere
+/// parts (each checked to be this dump's and this level's), the start's
+/// zone's lights and fog, the drawn segments' meshes, the textures they
+/// bind, the keys they draw at the fresh state's camera.
 fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<Built, String> {
     let started = Instant::now();
     let part = |p: &str| source.dir.join(source.ir.level_path(&source.level, p));
     let scene: guac_ir::level::Scene = read_ir(source.ir, &part(SCENE))?;
     let lights: guac_ir::level::Lights = read_ir(source.ir, &part(LIGHTS))?;
+    let atmosphere: guac_ir::level::Atmosphere = read_ir(source.ir, &part(ATMOSPHERE))?;
     for (what, identity, level) in [
         ("scene", &scene.identity, &scene.level),
         ("lights", &lights.identity, &lights.level),
+        ("atmosphere", &atmosphere.identity, &atmosphere.level),
     ] {
         if *identity != source.identity || *level != source.level {
             return Err(format!("the {what} part is another dump's or level's"));
         }
     }
     let read = started.elapsed();
-    let lights = level_lights(&lights).map_err(|e| e.to_string())?;
+    let e = |e: arithmetic::LevelError| e.to_string();
+    let zone = start_zone(&atmosphere).map_err(e)?;
+    let lights = level_lights(&lights, zone).map_err(e)?;
+    let fog = LevelFog::from_zone(&zone.fog).map_err(e)?;
+    let sky_fogged = sky_fogged(zone).map_err(e)?;
     // Every scene's drawn part in one list, materials numbered across them.
     let mut drawn = Drawn::default();
     for graph in scene.scenes {
-        drawn.append(arithmetic::drawn(graph).map_err(|e| e.to_string())?);
+        drawn.append(arithmetic::drawn(graph, sky_fogged).map_err(e)?);
     }
-    let scene = view_scene(&lights, &LevelFog::PLACEHOLDER, fresh_state_view());
+    let scene = view_scene(&lights, &fog, fresh_state_view());
     let keys = arithmetic::keys(&drawn, &scene).map_err(|e| e.to_string())?;
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
@@ -219,6 +231,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         images,
         keys,
         lights,
+        fog,
         sky,
         read,
         took: started.elapsed(),
@@ -553,7 +566,7 @@ pub(crate) struct LevelSpawner<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: ResMut<'w, Assets<CharacterMaterial>>,
     watch: Res<'w, LevelWatch>,
-    fog: Res<'w, LevelFog>,
+    fog: ResMut<'w, LevelFog>,
     extraction: Option<Res<'w, Extraction>>,
 }
 
@@ -579,6 +592,7 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                     sky_segments = built.drawn.sky.len(),
                     sky = ?built.sky,
                     lights_left_out = ?built.lights.left_out,
+                    fog = ?built.fog,
                     read_ms = built.read.as_millis() as u64,
                     built_ms = built.took.as_millis() as u64,
                     "the level read"
@@ -593,8 +607,10 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                 r.sky_segments = built.drawn.sky.len();
                 r.read_ms = Some(built.read.as_millis() as u64);
                 r.built_ms = since.map(|d| d.as_millis() as u64);
-                // The warm compiles the keys while the frames upload.
-                let fog = *s.fog;
+                // The start's fog is the TV's; the warm compiles the keys
+                // while the frames upload.
+                let fog = built.fog;
+                *s.fog = fog;
                 let scene = Arc::new(level_scene(&built.lights, &fog));
                 let entries: Vec<(WarmKey, model::Material)> = built
                     .keys
@@ -931,7 +947,8 @@ mod tests {
     use crate::warm::PipelineWatch;
     use guac_formats::texture::{Format, Texture};
     use guac_ir::level::{
-        EffectMaterial, LevelMaterial, Lights, PlacedLight, SceneGraph, SkyGroup,
+        Atmosphere, AtmosphericZone, EffectMaterial, LevelMaterial, Lights, PlacedLight,
+        SceneGraph, SkyGroup, ZoneFog, ZoneLight,
     };
     use guac_ir::model::{
         Blend, Filter, Glow, Mask, Params, RenderStates, TextureRole, TextureSlot, Wrap,
@@ -1033,6 +1050,42 @@ mod tests {
                 specular: [0, 0, 0, 255],
                 multiplier: 1.0,
             }],
+        }
+    }
+
+    /// The start's zone: made-up lights at the rig's angles, and the fog
+    /// AG.13 read off the opening area at AF's fresh state, (115, 83, 49)
+    /// from 100 ft over 1,000 ft, the sky dome taking none.
+    fn zone() -> AtmosphericZone {
+        let light = |facing, tilt| ZoneLight {
+            diffuse: [90, 80, 70, 0],
+            specular: [60, 60, 60, 0],
+            facing,
+            tilt,
+        };
+        AtmosphericZone {
+            id: 0,
+            ambient: [20, 20, 20, 0],
+            lights: [light(0, -45), light(180, 45), light(90, -45)],
+            fog: ZoneFog {
+                on: 1,
+                start: 100,
+                range: 1000,
+                colour: [115, 83, 49, 0],
+                sky_dome_percent: 0,
+                sky_dome_colour: [128, 128, 128, 0],
+                yon_colour: [115, 83, 49, 0],
+            },
+        }
+    }
+
+    fn atmosphere() -> Atmosphere {
+        Atmosphere {
+            identity: identity(),
+            level: LEVEL.into(),
+            script: "C:/tfb/Content/Levels/Level_900/Scripts/Level_Definition_900.ai".into(),
+            zones: vec![zone()],
+            start: Some(0),
         }
     }
 
@@ -1153,6 +1206,11 @@ mod tests {
         std::fs::write(
             dir.join(ir.level_path(LEVEL, LIGHTS)),
             guac_ir::to_ron(lights).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(ir.level_path(LEVEL, ATMOSPHERE)),
+            guac_ir::to_ron(&atmosphere()).unwrap(),
         )
         .unwrap();
         // A 4x4 BC1 block of one colour: built here, none of the disc's.
@@ -1361,16 +1419,22 @@ mod tests {
         assert_eq!(p.len(), 0);
     }
 
-    /// The fog every level material reads is the TV's `LevelFog`: the
-    /// placeholder until something sets it, and a new one relights every
-    /// material from the camera it was lit for (AG.41's seam).
+    /// AG.41: the fog AG.13 read reaches every level material: the level's
+    /// read sets the TV's `LevelFog` to its start's zone's, 30.48 m to
+    /// 335.28 m, and every material is made with it (the sky's too, which
+    /// owns its fog off); a new one relights every material from the camera
+    /// it was lit for.
     #[test]
-    fn a_changed_fog_reaches_every_level_material() {
+    fn the_start_zones_fog_reaches_every_level_material() {
         let tmp = tempfile::tempdir().unwrap();
         let l = lights();
         let source = write_level(tmp.path(), &l);
         let mut app = level_app(tmp.path(), source, false);
+        assert_eq!(*app.world().resource::<LevelFog>(), LevelFog::NONE);
         until(&mut app, &["ready"], |_| {});
+        let fog = *app.world().resource::<LevelFog>();
+        assert_eq!(fog, LevelFog::from_zone(&zone().fog).unwrap());
+        assert_eq!(fog.colour, [115, 83, 49]);
         let materials = app
             .world()
             .resource::<Level>()
@@ -1378,16 +1442,29 @@ mod tests {
             .unwrap()
             .materials
             .clone();
-        let uniforms = |app: &App| -> Vec<CharacterUniform> {
+        let uniforms = |app: &App| -> Vec<(CharacterUniform, bool)> {
             let assets = app.world().resource::<Assets<CharacterMaterial>>();
             materials
                 .iter()
-                .map(|h| assets.get(h).unwrap().uniform)
+                .map(|h| {
+                    let m = assets.get(h).unwrap();
+                    (m.uniform, m.key.shader.switches().fog)
+                })
                 .collect()
         };
-        let p = LevelFog::PLACEHOLDER;
-        for u in uniforms(&app) {
-            assert_eq!(u.fog_range, Vec4::new(p.near, p.far, 0.0, 0.0));
+        let fogged: Vec<bool> = uniforms(&app).iter().map(|(_, f)| *f).collect();
+        assert_eq!(fogged, [true, false], "the ground fogged, the sky not");
+        for (u, _) in uniforms(&app) {
+            assert!(
+                u.fog_range
+                    .abs_diff_eq(Vec4::new(30.48, 335.28, 0.0, 0.0), 1e-4),
+                "{:?}",
+                u.fog_range
+            );
+            assert_eq!(
+                u.fog_colour.truncate(),
+                Vec3::from_array(remaster::linear([115, 83, 49]))
+            );
         }
         // Made-up numbers, none of AG.13's.
         let fog = LevelFog {
@@ -1398,11 +1475,11 @@ mod tests {
         app.insert_resource(fog);
         app.update();
         let lit = view_scene(
-            &level_lights(&l).unwrap(),
+            &level_lights(&l, &zone()).unwrap(),
             &fog,
             fresh_state_transform().to_matrix().inverse(),
         );
-        for u in uniforms(&app) {
+        for (u, _) in uniforms(&app) {
             assert_eq!(u.fog_range, Vec4::new(30.0, 300.0, 0.0, 0.0));
             assert_eq!(
                 u.fog_colour.truncate(),
@@ -1506,6 +1583,28 @@ mod tests {
         );
     }
 
+    /// AG.41: a level lit and fogged by its start's zone fails without its
+    /// atmosphere part, or with one that sets up no zone, saying why.
+    #[test]
+    fn a_level_without_its_start_zone_fails_and_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let path = tmp.path().join(source.ir.level_path(LEVEL, ATMOSPHERE));
+        let mut none = atmosphere();
+        none.start = None;
+        std::fs::write(&path, guac_ir::to_ron(&none).unwrap()).unwrap();
+        let mut app = level_app(tmp.path(), source.clone(), false);
+        until(&mut app, &["failed"], |_| {});
+        assert_eq!(
+            app.world().resource::<Level>().report().reason.as_deref(),
+            Some("the level sets up no atmospheric zone at its start")
+        );
+        std::fs::remove_file(&path).unwrap();
+        let built = read_level(&source, CompressedImageFormats::BC);
+        let why = built.err().unwrap();
+        assert!(why.starts_with("atmosphere.ron: "), "{why}");
+    }
+
     /// The dev entry: once ready, the level shows from AF's fresh-state
     /// camera over the TV, lit for it; moved, the camera relights every
     /// material from where it stands. Under reduced motion a scroll holds
@@ -1528,7 +1627,7 @@ mod tests {
                 loaded.materials.clone(),
             )
         };
-        let lit = level_lights(&l).unwrap();
+        let lit = level_lights(&l, &zone()).unwrap();
         let travel = |app: &App| {
             let m = app
                 .world()
@@ -1538,7 +1637,7 @@ mod tests {
             m.uniform.light_travel[0].truncate()
         };
         let at = |t: &Transform| {
-            view_scene(&lit, &LevelFog::PLACEHOLDER, t.to_matrix().inverse()).lights[0].travel
+            view_scene(&lit, &LevelFog::NONE, t.to_matrix().inverse()).lights[0].travel
         };
         // The frame it shows is lit for the fresh state's camera, not for
         // the new camera's transform before it has propagated, and rewrites

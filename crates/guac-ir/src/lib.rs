@@ -47,7 +47,8 @@ use serde::{Deserialize, Serialize};
 /// telling a part without the attribute (no glow) from one with it off
 /// (layer 1's alpha), which v2 read alike. v4 is the merge of both, so an
 /// extract either branch's v3 wrote redoes itself. AH.2's progression is a
-/// new record in a file of its own, so v4 holds.
+/// new record in a file of its own, so v4 holds, as it does for AG.41's
+/// level atmosphere ([`level::Atmosphere`]), a part a v4 extract adds alone.
 pub const IR_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]

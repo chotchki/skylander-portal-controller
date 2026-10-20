@@ -173,16 +173,18 @@ pub const TURNTABLE: &[Row] = &[
 ];
 
 /// Every key chapter 1 (`level_213_tutotial`) draws at AF's fresh state in
-/// the level's scene (fog on, its one point light unless a material owns
-/// its point lights off, no shadows until AG.23), each once: AG.19's 55.
+/// the level's scene (fog on but on the sky, which takes none of its
+/// start's fog (AG.41); its one point light unless a material owns its
+/// point lights off; no shadows until AG.23), each once: AG.19's 55, the
+/// sky's 7 unfogged since AG.41.
 pub const LEVEL: &[Row] = &[
-    row(0x0400, 0x0400, O, true, false, false, 1, true, false),
-    row(0x0400, 0x1400, O, true, false, false, 1, true, true),
-    row(0x0400, 0x1400, A, true, false, false, 1, true, true),
-    row(0x0400, 0x1400, A, true, false, true, 1, true, true),
-    row(0x0401, 0x1401, A, false, true, false, 2, true, true),
-    row(0x0401, 0x1401, A, false, true, true, 2, true, true),
-    row(0x0401, 0x1401, ADD, true, true, false, 2, true, true),
+    row(0x0000, 0x0000, O, true, false, false, 1, true, false),
+    row(0x0000, 0x1000, O, true, false, false, 1, true, true),
+    row(0x0000, 0x1000, A, true, false, false, 1, true, true),
+    row(0x0000, 0x1000, A, true, false, true, 1, true, true),
+    row(0x0001, 0x1001, A, false, true, false, 2, true, true),
+    row(0x0001, 0x1001, A, false, true, true, 2, true, true),
+    row(0x0001, 0x1001, ADD, true, true, false, 2, true, true),
     row(0x0c00, 0x2400, MUL, true, true, false, 1, true, false),
     row(0x0c00, 0x3400, O, true, true, false, 1, true, true),
     row(0x0c00, 0x3400, A, false, true, false, 1, true, true),
@@ -378,7 +380,8 @@ mod tests {
 
     /// The tables as the scenes they were counted in draw them: the cards'
     /// keys carry the turntable's fog and nothing else, the level's its fog
-    /// and at most its one point light.
+    /// (but the sky's, which own it off and their point lights with it) and
+    /// at most its one point light.
     #[test]
     fn each_table_is_its_scenes() {
         for k in turntable_keys() {
@@ -391,10 +394,16 @@ mod tests {
             );
         }
         // A level material that owns its point lights draws none.
+        let mut sky = 0;
         for k in level_keys() {
             let s = k.material.shader.switches();
-            assert!(s.fog && !s.shadows && s.point_lights <= 1, "{k:?}");
+            assert!(!s.shadows && s.point_lights <= 1, "{k:?}");
+            if !s.fog {
+                assert_eq!(s.point_lights, 0, "an unfogged key is the sky's: {k:?}");
+                sky += 1;
+            }
         }
+        assert_eq!(sky, 7);
     }
 
     /// The warm draws a census key through the constructor the turntable and
