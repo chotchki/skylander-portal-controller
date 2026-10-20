@@ -271,10 +271,10 @@ fn the_camera_on_ag13s_recorded_pivots() {
         "level walks: target {:.4} m, follow point {:.4} m, eye {:.4} m; corridor walks: {:.4}, {:.4}, {:.4} m",
         level[0], level[1], level[2], corridor[0], corridor[1], corridor[2]
     );
-    // The hypothesis's own numbers (AG.17's box): a regression past them
-    // fails here.
+    // The hypothesis's own numbers (AG.17's box: 2.64 and 2.89 cm, 0.92 and
+    // 0.90 cm): a regression past them fails here.
     assert!(level[0] < 0.03 && level[2] < 0.015, "{level:?}");
-    assert!(corridor[0] < 0.2 && corridor[2] < 0.1, "{corridor:?}");
+    assert!(corridor[0] < 0.03 && corridor[2] < 0.015, "{corridor:?}");
 }
 
 /// Each stop the hero stands 90 records or more after (AG.13's settle):
@@ -525,12 +525,10 @@ fn the_step_size_term() {
             let mut hero = eruptor(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
             let mut camera = GameCamera::new(CameraDef::LEVEL_213_START, hero.pivot);
             let (mut eyes, mut pivots) = (vec![camera.view().eye], vec![hero.pivot]);
-            for k in 0..frames.len() - 1 {
-                let step = if own {
-                    frames[k + 1].clock.step()
-                } else {
-                    1.0 / 60.0
-                };
+            // Record k's step moves it to record k + 1, as in the camera's
+            // own runs above.
+            for (k, frame) in frames[..frames.len() - 1].iter().enumerate() {
+                let step = if own { frame.clock.step() } else { 1.0 / 60.0 };
                 let input = runner::input(&script, k as u64, camera.view().heading());
                 let feet = hero.pivot;
                 hero.step(&world, &input, step, &[]);

@@ -2,8 +2,11 @@
 //! hero-movement's The same walk at any frame rate): the hero and the camera
 //! step at a fixed 1/60 s of game time, as the original does at full speed,
 //! however often the TV draws, and what's drawn between two steps is
-//! interpolated by [`FixedClock::alpha`]. guacamole's `FixedUpdate` is this
-//! clock; it lives here so the headless runner and the tests share it.
+//! interpolated by [`FixedClock::alpha`]. guacamole steps the hero in Bevy's
+//! `FixedUpdate` at the same 1/60 s, its own accumulator, which its hero tests
+//! drive at 30, 60 and 144 Hz display rates; this one is the same thing for
+//! tests without an app (the runner needs none: an AF.7 script's offsets are
+//! game frames already).
 
 /// Display time in, whole game steps out: at 1/60 s, the original's
 /// nominal frame ([`crate::tuning::NOMINAL_STEP`]), kept in f64 so a

@@ -33,11 +33,13 @@
 //! decompile's 1.2 x the fall's speed x the slope/90° (AG.10: 1.08-4.75 m/s
 //! with no law yet, AG.47's); what triggers the slide is the decompile's 30
 //! ft/s on the walk's own vertical speed, read as its speed when the last
-//! frame off the ground began, one of AG.47's two candidates: it calls every
-//! landing of AG.39's with the stick held as recorded, the cliff's top (met
-//! at 9.75 ft/s: no slide) among them, where the band rule AG.10's text gives
-//! slides him there (the recordings' test counts both); what the band does
-//! to a walk rising past 20 ft/s is the reading's, never seen.
+//! frame off the ground began, one of AG.47's two candidates and not the one
+//! Falling and landing states (a last frame begun 0.4 ft up or more): the two
+//! call AG.39's 26 landings with the stick held and not into the cliff alike,
+//! and of the 6 into it this calls 4 as recorded and the band 3, the band
+//! sliding `g39_b45_in` W-01 where the original didn't (the recordings' test
+//! reports both, the walk rebuilt from the body's velocity); what the band
+//! does to a walk rising past 20 ft/s is the reading's, never seen.
 
 use crate::seam::Vec3;
 use crate::stick::Push;
@@ -337,12 +339,18 @@ mod tests {
         assert_eq!(walk.velocity, Vec3::ZERO);
     }
 
+    /// The f32 lengths either side of 21.5 + 1e-4 ft/s (a step of 2^-19 there):
+    /// 9.92e-5 over and 1.011e-4 over (AG.38: at once up to 1.00e-4 ft/s over,
+    /// steering from 1.01e-4), so the tests below pin the switch to one step.
+    const UNDER: f32 = 21.5 + 52.0 / 524_288.0;
+    const PAST: f32 = 21.5 + 53.0 / 524_288.0;
+
     /// Turning and hard reversals: at or under 21.5 + 1e-4 ft/s the walk takes
     /// the stick's way at once, so a reversal goes straight back at speed.
     #[test]
     fn up_to_the_tolerance_the_walk_turns_at_once() {
         let ground = Footing::level(0.005);
-        for length in [21.5, 21.5 + 0.99e-4] {
+        for length in [21.5, UNDER] {
             let mut walk = Walk {
                 velocity: Vec3::new(0.0, 0.0, length),
                 landing: None,
@@ -358,7 +366,7 @@ mod tests {
     #[test]
     fn over_the_tolerance_the_walk_steers() {
         let ground = Footing::level(0.005);
-        let over = 21.5 + 1.5e-4;
+        let over = PAST;
         let mut walk = Walk {
             velocity: Vec3::new(0.0, 0.0, over),
             landing: None,

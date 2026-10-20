@@ -553,9 +553,10 @@ pub fn let_go_mid_turn_freezes_his_facing() -> Scenario {
 }
 
 /// The lags (AG.8, AG.38): the push and the turn integrate the step two
-/// frames before the frame's own, the slowing the step one before, the move
-/// its own. With a 0.05 s hitch in the third frame, the push it gives shows in
-/// the fifth, the slowing it gives in the fourth.
+/// frames before the frame's own, the slowing and gravity the step one
+/// before, the move its own. With a 0.05 s hitch in the third frame, the
+/// push and his facing's turn it gives show in the fifth, the slowing and,
+/// up in the air, gravity in the fourth.
 pub fn the_push_and_the_slowing_take_the_steps_before_their_own() -> Scenario {
     on_open_ground(
         "the_push_and_the_slowing_take_the_steps_before_their_own",
@@ -601,6 +602,41 @@ pub fn the_push_and_the_slowing_take_the_steps_before_their_own() -> Scenario {
                 (slowed[2] - (slowed[1] - 80.0 * DT)).abs() < 1e-4,
                 "{slowed:?}"
             );
+            // His facing: the stick 90° left of the view from facing 0, so
+            // 24° a nominal frame to 105°, the hitch's 72° in the fifth.
+            let mut hero = eruptor(seam, START, 0.0);
+            let mut facings = Vec::new();
+            for &step in &steps {
+                hero.step(seam, &Input::stick(stick(1.0, 90.0), VIEW), step, &[]);
+                facings.push(hero.facing);
+            }
+            for (k, want) in [24.0, 48.0, 72.0, 96.0, 105.0, 105.0].iter().enumerate() {
+                ensure!(
+                    (facings[k] - want).abs() < 1e-3,
+                    "facing, frame {k}: {facings:?}"
+                );
+            }
+            // Gravity, 30 m up: 136.21 ft/s² x the step before, the hitch's
+            // in the fourth frame.
+            let mut hero = Hero::new(
+                eruptor_solid(),
+                Tuning::ERUPTOR,
+                Vec3::new(0.0, 30.0, 0.0),
+                VIEW,
+            );
+            let mut was = 0.0f32;
+            let mut gained = Vec::new();
+            for &step in &steps {
+                hero.step(seam, &Input::stick(Stick::CENTRED, VIEW), step, &[]);
+                gained.push(was - hero.walk.velocity.y);
+                was = hero.walk.velocity.y;
+            }
+            for (k, &lag) in [DT, DT, DT, 0.05, DT, DT].iter().enumerate() {
+                ensure!(
+                    (gained[k] - 136.21 * lag).abs() < 1e-3,
+                    "gravity, frame {k}: {gained:?}"
+                );
+            }
             Ok(())
         },
     )
@@ -639,7 +675,9 @@ pub fn no_button_lifts_him() -> Scenario {
 
 /// The same walk at any frame rate: the same stick, held for the first
 /// second of game time and let go, leaves him in the same place after 2 s
-/// whether the display runs at 30, 60 or 144 Hz.
+/// whether the display runs at 30, 60 or 144 Hz. This drives
+/// [`FixedClock`]; guacamole's own test of the requirement runs Bevy's fixed
+/// schedule under each display rate.
 pub fn the_same_path_at_30_60_and_144_hz() -> Scenario {
     on_open_ground("the_same_path_at_30_60_and_144_hz", |seam| {
         let mut ends = Vec::new();

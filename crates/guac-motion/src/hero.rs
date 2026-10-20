@@ -39,7 +39,10 @@
 //!   inside the ground: until his lean reaches a slope he rides as high as
 //!   his shape needs there (AG.39: no landing rose after it, where a snap to
 //!   10 mm with his sphere still upright would set it 35 mm into a 17°
-//!   slope);
+//!   slope), and sets him down no higher than his move left him (the
+//!   ground finder's face, its plane run on past a convex crest, lifted him
+//!   2.3-5.7 m at the ledge route's edge in 29 of AG.39's 48 runs off it,
+//!   none of theirs over 1.2 cm: AG.16's review);
 //! - the edge probe's hold turns his facing to the stick at his usual rate;
 //! - his collision shape turns with his lean about his pivot (AG.9: on the
 //!   slopes his proxy's plane distance matched his pivot's height, which only
@@ -272,6 +275,14 @@ impl Hero {
                     );
                     if inside < 0.0 && g.normal.y > 1e-3 {
                         y -= inside / g.normal.y;
+                    }
+                    // Set down, never above where the move left him: past a
+                    // convex crest the face's plane runs on under his shape
+                    // where only the crest is solid (it lifted him 0.34 m
+                    // over a 50° bank's top, metres at the ledge route's edge).
+                    // On a plane the move already left him at least this high.
+                    if h > 0.0 {
+                        y = y.min(self.pivot.y);
                     }
                     self.pivot.y = y;
                     height = Some(y - g.point.y);

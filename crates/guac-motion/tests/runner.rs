@@ -188,9 +188,9 @@ fn the_camera_trails_and_settles_inside_ag13s_envelope() {
     }
 }
 
-/// gameplay-camera's Nothing pushes the camera in: a wall 6 m tall standing
-/// between the eye and his middle for much of a walk leaves the camera's
-/// trace, and his, bit for bit what they are without it.
+/// gameplay-camera's Nothing pushes the camera in: a wall 7 m tall standing
+/// between the eye and his middle through the whole walk leaves the
+/// camera's trace, and his, bit for bit what they are without it.
 #[test]
 fn a_wall_between_the_camera_and_him_moves_nothing() {
     let open = world(&open_ground(), &[]);
@@ -213,5 +213,5 @@ fn a_wall_between_the_camera_and_him_moves_nothing() {
         })
         .count();
     eprintln!("the wall stands between the eye and his middle in {cut} of 421 samples");
-    assert!(cut > 300, "{cut}");
+    assert_eq!(cut, 421);
 }

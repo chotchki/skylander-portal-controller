@@ -156,6 +156,28 @@ fn ground_steeper_than_45_doesnt_hold_him() {
     }
 }
 
+/// Steps and drops over a convex crest: walked at full stick off level
+/// ground onto a face falling away at 50°, 44°, 30° and 17.3°, he never rises
+/// past the ground he left. The snap sets him down, never up: the face's
+/// plane runs on under him past the crest, and setting him clear of it put
+/// him 0.34, 0.22 and 0.06 m up (AG.16's review).
+#[test]
+fn over_a_crest_he_never_rises() {
+    for degrees in [50.0f32, 44.0, 30.0, 17.3] {
+        let mut soup = Soup::default();
+        soup.floor(0.0, [-20.0, 20.0], [-20.0, 3.0], 2.0);
+        soup.ramp(Vec3::new(0.0, 0.0, 3.0), -degrees, [-20.0, 20.0], 12.0);
+        let states = walk_at(&soup, 45);
+        let top = states.iter().map(|s| s.pivot.y).fold(f32::MIN, f32::max);
+        assert!(top <= 0.005 + 1e-5, "{degrees}°: {top}");
+        let end = states.last().unwrap();
+        assert!(
+            end.pivot.z > 4.0 && end.pivot.y < -0.1,
+            "{degrees}°: {end:?}"
+        );
+    }
+}
+
 /// Slopes and Steps and drops: up a 17.3° slope at full stick his speed
 /// along it is his walking speed (AG.9: 6.553 m/s up the corridor), and he
 /// rides it 10 mm up once the snap has set him there.

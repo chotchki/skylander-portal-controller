@@ -523,14 +523,6 @@ impl GameCamera {
         self.shots.iter().find(|s| s.def.id == id)
     }
 
-    /// Switches the view wholly to `def` at once; its follow point starts
-    /// on its aim if it wasn't in use.
-    pub fn cut(&mut self, def: CameraDef, feet: Vec3) {
-        self.current = Current::Camera(def.id);
-        self.track(&[def], feet, self.target.point, None);
-        self.view = self.render(None);
-    }
-
     /// One game frame of `step` seconds. `feet` is his pivot as the frame
     /// began, before his own step; `planes` are the level's transition
     /// planes, the same list every frame.
@@ -573,12 +565,7 @@ impl GameCamera {
             Current::Plane(i) => vec![planes[i].front, planes[i].back],
         };
         let run = self.target.moved(feet).length() / FOOT;
-        self.track(
-            &defs,
-            feet,
-            target.unwrap_or(self.target.point),
-            Some((run, step)),
-        );
+        self.track(&defs, feet, target.unwrap_or(self.target.point), run, step);
         self.target.step(feet, step);
         let plane = match self.current {
             Current::Plane(i) => Some((&planes[i], feet)),
@@ -593,8 +580,8 @@ impl GameCamera {
     /// the frame his pivot came back inside `Transition 7-1`'s box, and
     /// closed 8 % from the next), one new to the level is made on it
     /// ([`FollowPoint::made`]); every other camera's stands still. `run` is
-    /// `None` for a cut, which only starts them.
-    fn track(&mut self, defs: &[CameraDef], feet: Vec3, target: Vec3, run: Option<(f32, f32)>) {
+    /// how far the fastest target moved this frame, feet.
+    fn track(&mut self, defs: &[CameraDef], feet: Vec3, target: Vec3, run: f32, step: f32) {
         let made = self.shots.len();
         for def in defs {
             if self.shot(def.id).is_none() {
@@ -610,10 +597,10 @@ impl GameCamera {
             let used = defs.iter().any(|d| d.id == shot.def.id);
             if used {
                 let aim = feet + (target - feet) * shot.def.aim_share();
-                match (shot.used, run) {
-                    (true, Some((run, step))) => shot.follow.step(aim, run, step),
-                    (true, None) => {}
-                    (false, _) => shot.follow = FollowPoint::at(aim),
+                if shot.used {
+                    shot.follow.step(aim, run, step);
+                } else {
+                    shot.follow = FollowPoint::at(aim);
                 }
             }
             shot.used = used;

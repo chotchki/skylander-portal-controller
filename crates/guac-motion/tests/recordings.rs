@@ -232,7 +232,8 @@ fn ag39_cliff_faces_hold_him_to_44_92_and_not_from_45_04() {
 /// the walk falling past 30 ft/s (the decompile's), and this test counts how
 /// many of AG.39's landings it calls as recorded, beside the band rule
 /// AG.10's text gives (that frame began 0.4 ft or more up), over every
-/// landing with the stick held but those into the cliff. The walk is
+/// landing with the stick held but those into the cliff, which it reports
+/// apart (the proxy against the cliff, AG.48, not the walk). The walk is
 /// rebuilt from the body's velocity at the last free record, frame by frame
 /// through the walk's laws to the landing. Where it slides him, the slide
 /// runs along the recorded one within 1°; how fast is the decompile's 1.2 x
@@ -241,6 +242,7 @@ fn ag39_cliff_faces_hold_him_to_44_92_and_not_from_45_04() {
 #[ignore]
 fn ag39_landings_slide_down_the_fall_line() {
     let (mut landings, mut slides, mut by_speed, mut by_band, mut cliff) = (0, 0, 0, 0, 0);
+    let (mut cliff_speed, mut cliff_band) = (0, 0);
     let mut lines = Vec::new();
     for (name, frames) in recordings("ag39-falls-1792502813") {
         let Some(last_free) = (1..frames.len()).rev().find(|&k| free(&frames[k])) else {
@@ -264,11 +266,9 @@ fn ag39_landings_slide_down_the_fall_line() {
                         .is_some_and(|p| p.distance < 0.02 && p.normal[1] < 0.75)
             })
         });
-        if into_the_cliff {
-            cliff += 1;
-            continue;
+        if !into_the_cliff {
+            landings += 1;
         }
-        landings += 1;
         let mut walk = Walk {
             velocity: Vec3::from(frames[last_free].hero.velocity) / FOOT,
             landing: None,
@@ -296,6 +296,17 @@ fn ag39_landings_slide_down_the_fall_line() {
         let downhill = heading(Vec3::new(fall_line.x, 0.0, fall_line.z)).unwrap();
         let slide = Vec3::from(frames[land + 1].hero.velocity);
         let slid = heading(slide).is_some_and(|t| wrap(downhill - t).abs() < 1.0);
+        if into_the_cliff {
+            // Reported, not counted: the proxy against the cliff isn't the
+            // walk's law (AG.48).
+            cliff += 1;
+            cliff_speed += usize::from(ours == slid);
+            cliff_band += usize::from(band == slid);
+            lines.push(format!(
+                "  {name}: into the cliff, land {land}, slid {slid}, ours {ours}, band {band}"
+            ));
+            continue;
+        }
         by_speed += usize::from(ours == slid);
         by_band += usize::from(band == slid);
         slides += usize::from(slid);
@@ -311,7 +322,8 @@ fn ag39_landings_slide_down_the_fall_line() {
     }
     eprintln!(
         "landings {landings} ({cliff} into the cliff left out), slid {slides}; \
-         the 30 ft/s rule calls {by_speed}, the band {by_band}"
+         the 30 ft/s rule calls {by_speed}, the band {by_band}; \
+         into the cliff the 30 ft/s rule calls {cliff_speed}, the band {cliff_band}"
     );
     for line in &lines {
         eprintln!("{line}");

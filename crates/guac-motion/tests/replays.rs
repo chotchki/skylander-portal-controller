@@ -461,6 +461,58 @@ fn ag39_falls_from_their_second_free_record() {
     assert!(free_ok >= 190, "{free_ok} of {free_records}");
 }
 
+/// AG.39's walks off the ledge route (the 48 of 54 that are 0.4 ft up after
+/// their third record), free from the start across the edge, which the falls
+/// above, seeded in the air, never cross: about the record he's first 0.4 ft
+/// up, his pivot rises over 1 cm between two records only where theirs does
+/// (the snap sets him down, never up off the crest: clear of the cliff
+/// face's plane it lifted him 2.3-5.7 m in 29 of them, AG.16's review), and
+/// the record he's next supported.
+#[test]
+#[ignore]
+fn ag39_off_the_edge_free_from_the_start() {
+    let world = level();
+    let (mut n, mut same_land, mut rose, mut theirs_rose) = (0, 0, Vec::new(), 0);
+    for (name, frames) in recordings(AG39) {
+        let Some(off) = (3..frames.len()).find(|&k| footing(&frames[k]).is_some_and(|f| f.high()))
+        else {
+            continue;
+        };
+        let steps = run(&world, &frames, 2, frames.len());
+        let their_land =
+            (off..frames.len()).find(|&k| footing(&frames[k]).is_some_and(|f| f.supported));
+        let our_land = steps.iter().find(|s| s.k > off && s.supported).map(|s| s.k);
+        let (mut ours, mut theirs) = (0.0f32, 0.0f32);
+        for w in steps.windows(2) {
+            if w[1].k + 8 >= off && w[1].k <= off + 4 {
+                ours = ours.max(w[1].pivot.y - w[0].pivot.y);
+                let (a, b) = (&frames[w[0].k], &frames[w[1].k]);
+                theirs = theirs.max(b.hero.position[1] - a.hero.position[1]);
+            }
+        }
+        eprintln!(
+            "{name}: up at record {off}; rises about it ours {ours:.4} m, theirs {theirs:.4} m; next supported ours {our_land:?}, theirs {their_land:?}"
+        );
+        n += 1;
+        theirs_rose += usize::from(theirs > 0.01);
+        if ours > 0.01 && theirs <= 0.01 {
+            rose.push(name.clone());
+        }
+        same_land += usize::from(
+            our_land
+                .zip(their_land)
+                .is_some_and(|(a, b)| a.abs_diff(b) <= 1),
+        );
+    }
+    eprintln!(
+        "{n} walks off the edge: theirs rising over 1 cm about it in {theirs_rose}, ours where theirs doesn't in {}; next supported within a record of theirs in {same_land}",
+        rose.len()
+    );
+    assert!(n >= 48, "{n}");
+    assert!(rose.is_empty(), "{rose:?}");
+    assert!(same_land >= 19, "{same_land}");
+}
+
 /// The records where a run comes to rest: over 1 mm/s the record before,
 /// not over it at the record.
 fn stops(speeds: &[(usize, f32)]) -> Vec<usize> {
@@ -474,7 +526,7 @@ fn stops(speeds: &[(usize, f32)]) -> Vec<usize> {
 const AG36: &str = "ag36-edges-1792474678";
 const AG9: [&str; 2] = ["ag9-contacts-1792471160", "ag9-contacts-1792472400"];
 
-/// AG.36's edges and AG.9's walls, door, mounds and corridor (51 and 38
+/// AG.36's edges and AG.9's walls, door, mounds and corridor (55 and 38
 /// replays), run free from the start: each recording's first rest (an
 /// edge's stop dead in AG.36's, the positioning leg's in AG.9's) against
 /// theirs, and over AG.9's wall slides the move along the wall against
