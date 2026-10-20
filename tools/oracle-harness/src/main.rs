@@ -136,11 +136,16 @@ usage:
       AH.7's route driver: a fresh RPCS3 from the gameplay state ($GUAC_ORACLE_SAVESTATE
       unless --state) with a fresh copy of the figure ($GUAC_ORACLE_FIGURE unless
       --figure), F0 read (actors-f0.json, peek-f0.json, and with $GUAC_GIANTS_DUMP set
-      the fight's state, fight-f0.json), then the route's steps closed loop: Via and
-      Stop walk to a point (pausing every few flips to read the hero and the camera
-      and steer through O4), Face turns him where he stands, Settle waits until he and
-      the eye hold still, Press and Wait run as one schedule, Shot and Read take a
-      SCREENSHOT or the reads at the pause; save: true takes a SAVESTATE at the end.
+      the fight's state, fight-f0.json, and AH.8's census of level 213's placements,
+      census-f0.json), then the route's steps closed loop: Via and Stop walk to a point
+      (pausing every few flips to read the hero and the camera and steer through O4),
+      Hold holds the stick toward a point for so many flips whatever he does, Face
+      turns him where he stands, Settle waits until he and the eye hold still, Press
+      and Wait run as one schedule, Shot and Read take a SCREENSHOT or the reads at the
+      pause; save: true takes a SAVESTATE at the end. With the dump and a watch, the
+      route's placements' wake state rides the watch per frame (route-frames.json),
+      and route-record.json puts the steps, what fired in order, what changed between
+      reads and the scripts that started beside the last read's.
       --watch arms O5's watch on Giants' list at F0 (a ring of <n> (6000) records),
       --chains O6's chains with it. Writes <dir> (new, outside every work tree):
       record.json, route.json (every pause), input.ron (what port 0 held from F0 + 1,
@@ -870,19 +875,23 @@ fn goto(mut rest: &[&str]) -> Result<()> {
         Some(f) => f,
         None => required("GUAC_ORACLE_FIGURE")?,
     };
-    let rows = match env::path(env::GIANTS_DUMP) {
+    let (rows, disc) = match env::path(env::GIANTS_DUMP) {
         Some(dump) => {
+            let usrdir = dump.join("PS3_GAME/USRDIR");
             let progression = guac_extract::progression::read(
-                &dump.join("PS3_GAME/USRDIR"),
+                &usrdir,
                 guac_ir::DumpIdentity {
                     title_id: "BLUS30968".into(),
                     app_ver: "01.00".into(),
                     manifest_hash: guac_ir::Sha256([0; 32]),
                 },
             )?;
-            Some(oracle_harness::fight::Rows::of(&progression)?)
+            (
+                Some(oracle_harness::fight::Rows::of(&progression)?),
+                Some(route::census::Disc::read(&usrdir)?),
+            )
         }
-        None => None,
+        None => (None, None),
     };
     let exe = required(env::ORACLE_EXE)?;
     let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
@@ -930,6 +939,7 @@ fn goto(mut rest: &[&str]) -> Result<()> {
         figure: &figure,
         boot_wait,
         rows: rows.as_ref(),
+        disc: disc.as_ref(),
         watch,
         chains: chained,
         ring,

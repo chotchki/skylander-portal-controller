@@ -23,6 +23,9 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 # The roster off the dump, the sweep's figure list (AE.22).
 guac-extract = { path = "../../crates/guac-extract" }
+# Level 213's placements off the dump, where a route's census finds them (AH.8);
+# live_level (AG.7) reads the level the same way.
+guac-formats = { path = "../../crates/guac-formats" }
 guac-ir = { path = "../../crates/guac-ir" }
 # The input-script format (AF.7) a schedule is loaded from, and a pad's DS3 words.
 guac-oracle = { path = "../../crates/guac-oracle" }
@@ -47,5 +50,3 @@ skylander-core = { path = "../../crates/core" }
 
 [dev-dependencies]
 tempfile = "3"
-# live_level (AG.7) reads level 213 off the dump to set the live game beside it.
-guac-formats = { path = "../../crates/guac-formats" }

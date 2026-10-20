@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actors::{ActorFrame, heading_deg, wrap_deg};
 
+pub mod census;
 pub mod session;
 
 /// Ground coordinates, metres.
@@ -56,6 +57,11 @@ pub enum Step {
     /// Walk to `at` and stop there: his pivot within `radius` metres of it,
     /// at rest.
     Stop { at: Point, radius: f64 },
+    /// The stick held full toward `toward` for `flips` flips, aimed again at
+    /// each look, whatever he does: a push against a block, a walk off an
+    /// edge, a fall steered (AH.8). No progress is asked of it, only the
+    /// budget.
+    Hold { toward: Point, flips: u64 },
     /// Turn him where he stands until he faces `toward` (plus `off` degrees,
     /// counter-clockwise from above as headings go) within `within` degrees.
     Face {
@@ -67,6 +73,11 @@ pub enum Step {
     /// The pad at rest until his pivot and the camera's eye have held still
     /// over `flips` flips.
     Settle { flips: u64 },
+    /// The stick held full toward `toward` for `flips` flips, then let go, as
+    /// part of the schedule the presses and waits around it make, so no pause
+    /// falls inside it (AH.8: an anchor's opening step). It's aimed from where
+    /// he stands, against the view, at the look that schedule starts from.
+    Tilt { toward: Point, flips: u64 },
     /// These buttons held for `flips` flips, the stick centred, then let go.
     Press {
         buttons: BTreeSet<Button>,
@@ -118,6 +129,11 @@ impl RoutePlan {
                 Step::Via { to, radius } | Step::Stop { at: to, radius } => {
                     if !fine(*radius) || !to.x.is_finite() || !to.z.is_finite() {
                         bail!("step {i}: a point with a positive radius, not {step:?}");
+                    }
+                }
+                Step::Hold { toward, flips } | Step::Tilt { toward, flips } => {
+                    if *flips == 0 || !toward.x.is_finite() || !toward.z.is_finite() {
+                        bail!("step {i}: a stick toward a point for at least a flip, not {step:?}");
                     }
                 }
                 Step::Face {
@@ -559,6 +575,20 @@ impl Driver {
                         k.every_near,
                     ));
                 }
+                Step::Hold { toward, flips } => {
+                    let held = seen.flip - began;
+                    if held >= flips {
+                        self.advance();
+                        continue;
+                    }
+                    // Looked at every few flips, the last stretch cut to end
+                    // on the hold's last flip.
+                    let every = k.every_far.min(flips - held);
+                    return Ok(run(
+                        walk(stick_toward(seen.bearing(toward), seen.view, 1.0)),
+                        every,
+                    ));
+                }
                 Step::Face {
                     toward,
                     within,
@@ -618,13 +648,24 @@ impl Driver {
                     }
                     return Ok(run(rest(), flips.min(10)));
                 }
-                Step::Press { .. } | Step::Wait { .. } => {
-                    // A run of presses and waits goes in as one schedule, so
-                    // no pause falls between a press and what follows it.
+                Step::Press { .. } | Step::Wait { .. } | Step::Tilt { .. } => {
+                    // A run of presses, tilts and waits goes in as one
+                    // schedule, so no pause falls between a press and what
+                    // follows it.
                     let mut schedule = Vec::new();
                     let mut at = 0;
                     while let Some(s) = self.plan.steps.get(self.step) {
                         match s {
+                            Step::Tilt { toward, flips } => {
+                                let tilted =
+                                    walk(stick_toward(seen.bearing(*toward), seen.view, 1.0));
+                                match schedule.last_mut() {
+                                    Some((o, pad)) if *o == at => *pad = tilted,
+                                    _ => schedule.push((at, tilted)),
+                                }
+                                schedule.push((at + flips, rest()));
+                                at += flips;
+                            }
                             Step::Press { buttons, flips } => {
                                 let pressed = PadState {
                                     buttons: buttons.clone(),

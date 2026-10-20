@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use skylander_core::SlotIndex;
 use skylander_rpcs3_control::PortalDriver;
 
+use super::census::{self, Census, Disc, RouteRecord, Wake};
 use super::{Knobs, Outcome, RoutePlan, Session, Trace, drive};
 use crate::actors::{self, ActorFrame};
 use crate::chains::{self, GiantsChains};
@@ -31,14 +32,14 @@ use crate::divergence::{
     self, EndState, FATAL, Host, SILENT, STEP_WAIT, WatchRun, file_name, log_lines, read_watch,
     save_retrying, saved_in, sha256_file,
 };
-use crate::fight::{self, Rows};
+use crate::fight::{self, FightWatch, Rows};
 use crate::home::OracleHome;
 use crate::identity::Identity;
 use crate::launch::{self, BootOptions};
 use crate::outputs::{Kind, Rpcs3Outputs};
 use crate::pine::PineClient;
 use crate::rng::{self, Peek};
-use crate::watch::GiantsWatch;
+use crate::watch::{GiantsWatch, WatchFile};
 
 /// Everything a drive needs: the oracle build and its home, the state it
 /// boots, the figure, the rows a read decodes the figure with, and the
@@ -54,6 +55,10 @@ pub struct Inputs<'a> {
     /// AH.2's rows off the dump: with them a read takes the fight's state
     /// (AH.4) too.
     pub rows: Option<&'a Rows>,
+    /// Level 213's placements off the dump (AH.8): with them and the rows a
+    /// read takes a census too ([`census`]), and a watch carries the route's
+    /// placements' wake state per frame ([`census::WATCHED`]).
+    pub disc: Option<&'a Disc>,
     /// O5's watch on Giants' list armed at F0, and O6's chains with it.
     pub watch: bool,
     pub chains: bool,
@@ -83,6 +88,9 @@ pub struct ReadTaken {
     pub drawn: Option<u64>,
     /// The fight's state was read too (`fight-<label>.json`).
     pub fight: bool,
+    /// A census was taken too (`census-<label>.json`), in this many ms.
+    #[serde(default)]
+    pub census_ms: Option<f64>,
 }
 
 /// One drive's record (`record.json`).
@@ -119,8 +127,11 @@ pub struct Live<'a> {
     pine: PineClient,
     dir: PathBuf,
     rows: Option<&'a Rows>,
+    disc: Option<&'a Disc>,
+    whole: Vec<String>,
     shots: Vec<ShotTaken>,
     reads: Vec<ReadTaken>,
+    censuses: Vec<(String, Census)>,
 }
 
 impl Live<'_> {
@@ -180,6 +191,20 @@ impl Session for Live<'_> {
         peek.write(&self.dir.join(format!("peek-{label}.json")))?;
         let origin = peek.origin(rng::ORIGIN_TWISTS);
         let hero = frame.hero()?;
+        let census_ms = match (self.rows, self.disc) {
+            (Some(_), Some(disc)) => {
+                let t = Instant::now();
+                let c = census::read_paused(&mut self.pine, frame, disc, &self.whole)
+                    .with_context(|| format!("the census at {flip}"))?;
+                let path = rrc_dump::output::refuse_repo_output(
+                    &self.dir.join(format!("census-{label}.json")),
+                )?;
+                fs::write(&path, serde_json::to_string_pretty(&c)?)?;
+                self.censuses.push((label.to_owned(), c));
+                Some(t.elapsed().as_secs_f64() * 1e3)
+            }
+            _ => None,
+        };
         let fight = match self.rows {
             Some(rows) => {
                 let state = fight::read_paused(&mut self.pine, hero.placement, rows)
@@ -200,6 +225,7 @@ impl Session for Live<'_> {
             seed: origin.map(|o| o.seed),
             drawn: origin.map(|o| o.draws),
             fight,
+            census_ms,
         });
         Ok(())
     }
@@ -311,8 +337,19 @@ fn drive_live(
     if control.state()?.frames != held.frames {
         bail!("the run moved off Start Paused's pause before F0 was read");
     }
+    // The route's placements per frame need the fight's cells to ride on
+    // (AH.4's watch) and the disc to find them.
+    let route_watch = match (inputs.watch, inputs.rows, inputs.disc) {
+        (true, Some(rows), Some(disc)) => Some(route_watch(&mut pine, rows, disc)?),
+        _ => None,
+    };
     let watched = if inputs.watch {
-        let watch = GiantsWatch::resolve(&mut pine).context("the watch list at F0")?;
+        let mut watch = GiantsWatch::resolve(&mut pine).context("the watch list at F0")?;
+        if let Some(fight) = &route_watch {
+            watch = watch
+                .with_fight(fight.clone())
+                .context("the route's placements on the watch list")?;
+        }
         let chains = if inputs.chains {
             let chains = GiantsChains::resolve(&mut pine, &watch, &chains::fight_kinds())
                 .context("Giants' chains at F0")?;
@@ -335,8 +372,11 @@ fn drive_live(
         pine,
         dir: dir.to_path_buf(),
         rows: inputs.rows,
+        disc: inputs.disc,
+        whole: inputs.disc.map(census::whole_names).unwrap_or_default(),
         shots: Vec::new(),
         reads: Vec::new(),
+        censuses: Vec::new(),
     };
     // F0 is read before anything runs, as every replay's is.
     let (_, f0_frame) = live.look()?;
@@ -350,6 +390,7 @@ fn drive_live(
         mut pine,
         shots,
         reads,
+        censuses,
         ..
     } = live;
     let watch = match &watched {
@@ -359,6 +400,22 @@ fn drive_live(
         ),
         None => None,
     };
+    // The route's record: its steps, what fired per frame (named while PINE
+    // is still open), what changed between reads, the scripts that started.
+    if inputs.disc.is_some() {
+        let fired = match (&watched, &route_watch) {
+            (Some(_), Some(_)) => {
+                let (frames, fired) = route_frames(&dir.join(WatchFile::FILE), &mut pine)
+                    .context("the route's frames")?;
+                let path = rrc_dump::output::refuse_repo_output(&dir.join(ROUTE_FRAMES_FILE))?;
+                fs::write(&path, serde_json::to_string(&frames)?)?;
+                fired
+            }
+            _ => Vec::new(),
+        };
+        let record = route_record(identity, plan, &trace, &censuses, &reads, fired);
+        record.write(dir)?;
+    }
     // A held PINE connection hangs a save and the shutdown (AF.8).
     drop(pine);
     let (saved, save_refusals, save_error) = if plan.save && trace.outcome == Outcome::Done {
@@ -393,4 +450,178 @@ fn drive_live(
         save_error,
         shutdown,
     })
+}
+
+/// The route's placements' wake state per frame, beside the record
+/// (`route-frames.json`).
+pub const ROUTE_FRAMES_FILE: &str = "route-frames.json";
+
+/// One record of a route's watch: the game frame, the hero's pivot, the
+/// fight's cells and each watched placement's wake state
+/// ([`census::WATCHED`]'s order).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FrameLine {
+    pub flip: u64,
+    pub read: u32,
+    pub game_frame: u32,
+    pub pivot: [f32; 3],
+    pub health: crate::script::Number,
+    pub experience: u32,
+    pub gold: u32,
+    pub loot: crate::script::Number,
+    pub wakes: Vec<Wake>,
+}
+
+/// The fight's cells and the route's placements on the watch list, from the
+/// pause F0 is read at: refused when a watched placement isn't listed once.
+fn route_watch(pine: &mut PineClient, rows: &Rows, disc: &Disc) -> Result<FightWatch> {
+    let frame = actors::read_frame(pine).context("the actors for the route's watch")?;
+    let hero = frame.hero()?;
+    let state = fight::read_paused(pine, hero.placement, rows)?;
+    let offsets = disc.offsets();
+    let base = crate::level::section_base(&frame, &offsets)?;
+    let named = census::WATCHED
+        .iter()
+        .map(|&n| {
+            let off = offsets
+                .get(n)
+                .with_context(|| format!("`{n}` isn't a placement the disc lists once"))?;
+            Ok((n, base.base + off))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let triggers = fight::triggers(pine, &named)?;
+    Ok(FightWatch::of(&state, rows)?.with_triggers(&triggers))
+}
+
+/// Every record of the ring at `path` as a [`FrameLine`], and what fired
+/// record by record, the behaviours named through PINE at the end pause.
+fn route_frames(
+    path: &Path,
+    pine: &mut PineClient,
+) -> Result<(Vec<FrameLine>, Vec<census::Fired>)> {
+    let file = WatchFile::load(path)?;
+    let fight = file
+        .watch
+        .fight
+        .as_ref()
+        .context("the watch carries no fight cells")?;
+    let names: Vec<String> = fight.triggers.iter().map(|(n, _)| n.clone()).collect();
+    let recording = file.recording()?;
+    let mut lines = Vec::with_capacity(file.records.len());
+    for (raw, frame) in file.records.iter().zip(recording.frames()) {
+        let record = raw.record()?;
+        if (record.flip, record.read) != (frame.flip, u64::from(frame.read)) {
+            bail!(
+                "the recording's frame at flip {} isn't the record at {}",
+                frame.flip,
+                record.flip
+            );
+        }
+        let f = file
+            .watch
+            .fight(&record)
+            .with_context(|| format!("the fight's cells at flip {} didn't read", record.flip))?;
+        lines.push(FrameLine {
+            flip: record.flip,
+            read: frame.read,
+            game_frame: frame.game_frame,
+            pivot: frame.hero.position,
+            health: f.health,
+            experience: f.experience,
+            gold: f.gold,
+            loot: f.loot,
+            wakes: f
+                .triggers
+                .iter()
+                .map(|t| Wake {
+                    activity_state: t.activity_state,
+                    behaviour: t.behaviour,
+                    active_seconds: t.active_seconds,
+                })
+                .collect(),
+        });
+    }
+    let pointers: std::collections::BTreeSet<u32> = lines
+        .iter()
+        .flat_map(|l| l.wakes.iter().map(|w| w.behaviour))
+        .filter(|&p| p != 0)
+        .collect();
+    crate::rng::check_title(pine)?;
+    let names_of = census::behaviour_names(pine, &pointers)?;
+    let wakes: Vec<(u64, u32, Vec<Wake>)> = lines
+        .iter()
+        .map(|l| (l.flip, l.game_frame, l.wakes.clone()))
+        .collect();
+    let fired = census::fired(&names, &wakes, &names_of)?;
+    Ok((lines, fired))
+}
+
+/// A drive's [`RouteRecord`] out of its trace, its censuses in read order,
+/// its reads and what fired per frame.
+fn route_record(
+    identity: &str,
+    plan: &RoutePlan,
+    trace: &Trace,
+    censuses: &[(String, Census)],
+    reads: &[ReadTaken],
+    fired: Vec<census::Fired>,
+) -> RouteRecord {
+    let changes = censuses
+        .windows(2)
+        .map(|w| {
+            (
+                w[0].0.clone(),
+                w[1].0.clone(),
+                w[1].1.changes_since(&w[0].1),
+            )
+        })
+        .collect();
+    let scripts = match (censuses.first(), censuses.last()) {
+        (Some((_, first)), Some((_, last))) => RouteRecord::scripts_between(first, last),
+        _ => Default::default(),
+    };
+    let anchor = reads.last().map(|r| {
+        let look = trace.looks.iter().rev().find(|l| l.seen.flip == r.flip);
+        let fired = censuses
+            .iter()
+            .find(|(l, _)| *l == r.label)
+            .map(|(_, c)| {
+                c.triggers
+                    .iter()
+                    .filter(|t| t.fired == Some(true))
+                    .map(|t| t.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut files = vec![
+            format!("actors-{}.json", r.label),
+            format!("peek-{}.json", r.label),
+        ];
+        if r.fight {
+            files.push(format!("fight-{}.json", r.label));
+        }
+        if r.census_ms.is_some() {
+            files.push(format!("census-{}.json", r.label));
+        }
+        census::AnchorReads {
+            label: r.label.clone(),
+            flip: r.flip,
+            game_frame: r.game_frame,
+            pivot: look.map_or([0.0; 3], |l| l.seen.pivot),
+            facing: look.map_or(0.0, |l| l.seen.facing),
+            files,
+            seed: r.seed,
+            drawn: r.drawn,
+            fired,
+        }
+    });
+    RouteRecord {
+        identity: identity.to_owned(),
+        route: plan.to_ron(),
+        steps: RouteRecord::steps(&trace.looks, plan),
+        fired,
+        changes,
+        scripts,
+        anchor,
+    }
 }

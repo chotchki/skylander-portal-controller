@@ -583,6 +583,115 @@ fn presses_and_waits_go_in_as_one_schedule_between_their_shots_and_reads() {
 }
 
 #[test]
+fn a_hold_keeps_the_stick_on_its_point_for_its_flips_whatever_he_does() {
+    // Into a wall: a Via would be given up, a hold just runs its flips.
+    let mut fake = Fake::new(SPAWN, 15.0);
+    fake.walls = vec![(Point { x: 13.0, z: -93.4 }, 1.5)];
+    let to = Point { x: 30.0, z: -93.4 };
+    let route = plan(vec![
+        Step::Hold {
+            toward: to,
+            flips: 300,
+        },
+        Step::Read {
+            label: "held".into(),
+        },
+    ]);
+    let trace = drive(&mut fake, &route, Knobs::default()).unwrap();
+    assert_eq!(trace.outcome, Outcome::Done, "{:?}", trace.looks.last());
+    // 300 flips in stretches of 8 (every_far), the last cut to 4, then the
+    // read at the hold's last flip.
+    assert_eq!(fake.runs.len(), 38);
+    assert!(fake.runs[..37].iter().all(|(_, f)| *f == 8));
+    assert_eq!(fake.runs[37].1, 4);
+    assert_eq!(fake.reads, vec![("held".to_owned(), 302)]);
+    assert_eq!(fake.held.len(), 300);
+    // Every flip held the stick full, pushing along the bearing to the point
+    // from where he stood at that stretch's look (the wall stopped him short).
+    for pad in &fake.held {
+        let (s, h) = push_of(pad.left, 15.0);
+        assert!(s > 0.97, "{s}");
+        assert!(wrap_deg(h - 90.0).abs() < 2.0, "{h}");
+    }
+    assert!(
+        fake.pos[0] < 13.0 - 1.4,
+        "the wall held him: {:?}",
+        fake.pos
+    );
+    // And on open ground he walks the hold's way, re-aimed at each look.
+    let mut open = Fake::new(SPAWN, 15.0);
+    open.view_turn = -1.5;
+    let trace = drive(
+        &mut open,
+        &plan(vec![Step::Hold {
+            toward: Point { x: 30.0, z: -80.0 },
+            flips: 120,
+        }]),
+        Knobs::default(),
+    )
+    .unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    assert_eq!(open.held.len(), 120);
+    let gone = (open.pos[0] - SPAWN.x).hypot(open.pos[2] - SPAWN.z);
+    assert!(gone > 10.0, "{gone}");
+    let bearing = heading_deg(30.0 - open.pos[0], -80.0 - open.pos[2]);
+    let walked = heading_deg(open.vel[0], open.vel[1]);
+    assert!(wrap_deg(walked - bearing).abs() < 6.0, "{walked} {bearing}");
+}
+
+#[test]
+fn a_tilt_goes_in_with_the_presses_and_waits_around_it_as_one_schedule() {
+    let mut fake = Fake::new(SPAWN, 15.0);
+    let to = Point { x: 20.0, z: -93.4 };
+    let route = plan(vec![
+        Step::Tilt {
+            toward: to,
+            flips: 10,
+        },
+        Step::Wait { flips: 20 },
+        Step::Press {
+            buttons: [Button::West].into(),
+            flips: 6,
+        },
+        Step::Tilt {
+            toward: to,
+            flips: 4,
+        },
+        Step::Read {
+            label: "end".into(),
+        },
+    ]);
+    let trace = drive(&mut fake, &route, Knobs::default()).unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    // One run of 40 flips, no pause inside it, the read at its end.
+    assert_eq!(fake.runs, vec![(3, 40)]);
+    assert_eq!(fake.reads, vec![("end".to_owned(), 42)]);
+    let stick = stick_toward(heading_deg(to.x - SPAWN.x, to.z - SPAWN.z), 15.0, 1.0);
+    for (k, pad) in fake.held.iter().enumerate() {
+        let tilted = k < 10 || (36..40).contains(&k);
+        assert_eq!(
+            pad.left,
+            if tilted { stick } else { Stick::CENTRED },
+            "flip {k}"
+        );
+        assert_eq!(!pad.buttons.is_empty(), (30..36).contains(&k), "flip {k}");
+    }
+    // Both tilts aimed from where he stood at the run's first look: east.
+    let (s, h) = push_of(stick, 15.0);
+    assert!(s > 0.97 && wrap_deg(h - 90.0).abs() < 1.0, "{s} {h}");
+    assert!(fake.pos[0] > SPAWN.x + 0.5, "he walked: {:?}", fake.pos);
+    // Its input is what was held, so the anchor's opening replays open loop.
+    let script = trace.input.unwrap();
+    for (k, held) in fake.held.iter().enumerate() {
+        assert_eq!(
+            script.state_at(0, k as u64).as_ref(),
+            Some(held),
+            "flip {k}"
+        );
+    }
+}
+
+#[test]
 fn settle_waits_for_the_eye_as_well_as_him() {
     let mut fake = Fake::new(SPAWN, 15.0);
     let route = plan(vec![
@@ -627,11 +736,23 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
             Press(buttons: [South], flips: 6),
             Wait(flips: 30),
             Shot(label: "lob_1"),
+            Hold(toward: (x: 4.5, z: -12.0), flips: 45),
+            Tilt(toward: (x: 1.797, z: -20.974), flips: 10),
         ],
         save: true,
     )"#;
     let plan = RoutePlan::from_ron(text).unwrap();
-    assert_eq!(plan.steps.len(), 8);
+    assert_eq!(plan.steps.len(), 10);
+    assert_eq!(
+        plan.steps[9],
+        Step::Tilt {
+            toward: Point {
+                x: 1.797,
+                z: -20.974
+            },
+            flips: 10
+        }
+    );
     assert!(plan.save);
     assert_eq!(
         plan.steps[2],
@@ -656,6 +777,8 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
         "(steps: [Wait(flips: 0)])",
         "(steps: [Press(buttons: [], flips: 3)])",
         "(steps: [Press(buttons: [South], flips: 0)])",
+        "(steps: [Hold(toward: (x: 1.0, z: 2.0), flips: 0)])",
+        "(steps: [Tilt(toward: (x: 1.0, z: 2.0), flips: 0)])",
         "(steps: [Shot(label: \"a/b\")])",
         "(steps: [Shot(label: \"\")])",
         "(steps: [Shot(label: \"x\"), Shot(label: \"x\")])",

@@ -780,6 +780,10 @@ pub struct TriggerAt {
     pub name: String,
     pub activity_state: u32,
     pub active_seconds: f32,
+    /// `_execBehavior` (+0xAC): the `OpUserBehavior` its script runs, 0
+    /// before its STARTUP picks one (named at a pause, AH.8).
+    #[serde(default)]
+    pub behaviour: u32,
 }
 
 /// The fight's cells decoded from one O5 record.
@@ -911,6 +915,7 @@ impl FightWatch {
                     name: name.clone(),
                     activity_state: be32(b, 0),
                     active_seconds: f32_at(b, (0xB4 - TRIGGER_FIRST) as usize),
+                    behaviour: be32(b, (0xAC - TRIGGER_FIRST) as usize),
                 })
             })
             .collect::<Option<Vec<_>>>()?;
@@ -1828,14 +1833,24 @@ mod tests {
             [TriggerAt {
                 name: "Setup_001_Trigger".into(),
                 activity_state: 2,
-                active_seconds: 0.0
+                active_seconds: 0.0,
+                behaviour: 0,
             }]
         );
-        // The hero comes within its range: awake, its clock running.
+        // The hero comes within its range: awake, its clock running, its
+        // script on a behaviour.
         f.w.put32(trigger + 0x54, 1);
         f.w.putf(trigger + 0xB4, 0.05);
+        f.w.put32(trigger + 0xAC, 0x3012_3450);
         let now = at(&mut f.w);
-        assert_eq!((now[0].activity_state, now[0].active_seconds), (1, 0.05));
+        assert_eq!(
+            (
+                now[0].activity_state,
+                now[0].active_seconds,
+                now[0].behaviour
+            ),
+            (1, 0.05, 0x3012_3450)
+        );
         // Its range unreadable: no frame.
         let mut record = sample(&mut f.w, &list);
         record.missing = 1 << list.placed("trigger.Setup_001_Trigger").unwrap().range;
