@@ -166,6 +166,14 @@ impl Row {
             for at in a.all() {
                 if at.model.is_some() {
                     row.attached.push(at.label());
+                    // Listed under a placement its `_attachNodeOwner` doesn't
+                    // name: the list and the back link disagree, so where it
+                    // hangs is in doubt. AE.22's 27 such entries are dummies,
+                    // effects and lights, none drawing a model.
+                    if !at.owned_by_parent {
+                        row.notes
+                            .push(format!("{} not owned by what lists it", at.label()));
+                    }
                 } else {
                     row.other_attached.push(at.label());
                 }
@@ -820,6 +828,15 @@ mod tests {
              1 swept with a model attached, 2 attached models; by attached models {0: 1, 2: 1}; \
              attachments unread on []\n"
         ));
+        assert!(rows[0].notes.is_empty(), "{:?}", rows[0].notes);
+        // A knife whose back link names someone else: kept, and noted.
+        let mut stray = knife("J_attach_L");
+        stray.owned_by_parent = false;
+        let r = record(&elf, vec![knife("J_attach_R"), stray]);
+        assert_eq!(
+            Row::of(&elf, Ok(&r)).notes,
+            ["StealthElfKnife.mdl@J_attach_L not owned by what lists it"]
+        );
         // A record round-trips through figure.json.
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join(RECORD_FILE);

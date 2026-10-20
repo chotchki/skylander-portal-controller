@@ -409,6 +409,49 @@ mod tests {
     }
 
     #[test]
+    fn a_figure_whose_toy_has_files_but_none_of_its_own_gets_none() {
+        // Only base tags of Stealth Elf and Chill in the pack: their Series 2,
+        // legendary and LightCore figures share the toy type, but no file reads
+        // as them, so none is listed for them rather than the base's.
+        let r = roster();
+        let pack = [
+            sky("Spyros Adventure/Life/Stealth Elf.sky", 26, 0x0000),
+            sky("Giants/Water/Chill.sky", 106, 0x1000),
+        ];
+        let list = figures(&r, &pack);
+        let sky_of = |id: &str| {
+            list.iter()
+                .find(|f| f.id == id)
+                .unwrap()
+                .sky
+                .as_ref()
+                .map(|s| s.path.clone())
+        };
+        assert_eq!(
+            sky_of("00001a-0000").as_deref(),
+            Some(Path::new("Spyros Adventure/Life/Stealth Elf.sky"))
+        );
+        assert_eq!(
+            sky_of("00006a-0000").as_deref(),
+            Some(Path::new("Giants/Water/Chill.sky"))
+        );
+        for id in [
+            "00001a-0800",
+            "00001a-0403",
+            "00006a-0200",
+            "00006a-0603",
+            "000070-0000",
+            "000072-0000",
+        ] {
+            assert_eq!(
+                sky_of(id),
+                None,
+                "{id} got a file that reads as another figure"
+            );
+        }
+    }
+
+    #[test]
     fn the_pack_scan_reads_headers_and_writes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("Giants/Life");

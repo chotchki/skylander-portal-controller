@@ -615,28 +615,59 @@ mod tests {
 
     #[test]
     fn a_list_of_another_class_a_cycle_and_a_bad_pointer_are_refused() {
+        // Each broken link refused for what it is, not for something else
+        // the reader happened to trip on.
+        let refused = |w: &mut World| {
+            let frame = read_frame(w).unwrap();
+            format!("{:#}", read(w, &frame).unwrap_err())
+        };
+
         // The list's vtable isn't AbstractPlacementList's.
         let (mut w, hero, _, _) = stealth_elf();
         let list = w.get32(hero.placement + ATTACHED_OBJECTS as u32);
         w.put32(list, 0x0062_0000);
-        let frame = read_frame(&mut w).unwrap();
-        assert!(read(&mut w, &frame).is_err());
+        let e = refused(&mut w);
+        assert!(e.contains("not AbstractPlacementList's"), "{e}");
 
         // A knife listing the hero as its own attachment.
         let (mut w, hero, knives, _) = stealth_elf();
         let back = w.list(vtable::PLACEMENT_LIST, &[hero.placement], 4);
         w.put32(knives[1].placement + ATTACHED_OBJECTS as u32, back);
-        let frame = read_frame(&mut w).unwrap();
-        let e = read(&mut w, &frame).unwrap_err();
-        assert!(format!("{e:#}").contains("cycle"), "{e:#}");
+        let e = refused(&mut w);
+        assert!(e.contains("cycle"), "{e}");
 
         // An attached object pointer that isn't an object address.
         let (mut w, hero, _, _) = stealth_elf();
         let list = w.get32(hero.placement + ATTACHED_OBJECTS as u32);
         let data = w.get32(list + 0x14);
         w.put32(data, 0x0000_0003);
-        let frame = read_frame(&mut w).unwrap();
-        assert!(read(&mut w, &frame).is_err());
+        let e = refused(&mut w);
+        assert!(
+            e.contains("an attached placement") && e.contains("object address"),
+            "{e}"
+        );
+
+        // A knife's attach node, and its model, pointing at unmapped memory:
+        // refused, never read as no node or no model.
+        const UNMAPPED: u32 = 0x2000_0000;
+        let (mut w, _, knives, _) = stealth_elf();
+        w.put32(knives[1].placement + ATTACH_NODE as u32, UNMAPPED);
+        let e = refused(&mut w);
+        assert!(
+            e.contains("an attach node") && e.contains("isn't mapped"),
+            "{e}"
+        );
+        let (mut w, _, knives, _) = stealth_elf();
+        w.put32(knives[0].placement + ACTOR_MODEL as u32, UNMAPPED);
+        let e = refused(&mut w);
+        assert!(e.contains("a model") && e.contains("isn't mapped"), "{e}");
+
+        // A list counting past its capacity.
+        let (mut w, hero, _, _) = stealth_elf();
+        let list = w.get32(hero.placement + ATTACHED_OBJECTS as u32);
+        w.put32(list + 0x08, 5);
+        let e = refused(&mut w);
+        assert!(e.contains("counts 5 with capacity 4"), "{e}");
     }
 
     #[test]

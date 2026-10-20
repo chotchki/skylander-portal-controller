@@ -437,6 +437,10 @@ fn load_model(
     let started = Instant::now();
     let rel = shelf.ir.model_path(load);
     let model = read_model(shelf, load)?;
+    if let Some(why) = &model.attachments_unsettled {
+        // The extract keeps why; the card draws the body alone (AE.23).
+        warn!(load, %why, "what the figure carries didn't settle: its body alone");
+    }
     let mut images: Vec<((String, bool, Sampler), Image)> = Vec::new();
     let drawn = attach::drawn(&model);
     for slot in drawn.materials.iter().flat_map(|m| &m.textures) {
@@ -1412,11 +1416,22 @@ pub(crate) mod tests {
             let root = w.get::<GlobalTransform>(roots[0]).unwrap().to_matrix();
             (joint, root)
         };
+        // The joint's own transform, under the body: only the idle moves it
+        // (the turn turns the stage above it).
+        let posed = |app: &App| app.world().get::<Transform>(joints[1]).copied().unwrap();
         let (j0, r0) = at(&app);
+        let p0 = posed(&app);
         assert!(r0.abs_diff_eq(j0 * knife, 1e-5));
         std::thread::sleep(Duration::from_millis(300));
         app.update();
         let (j1, r1) = at(&app);
+        let p1 = posed(&app);
+        assert!(
+            p1.translation.distance(p0.translation) > 1e-3,
+            "the top joint slid through the idle: {} then {}",
+            p0.translation,
+            p1.translation
+        );
         assert!(r1.abs_diff_eq(j1 * knife, 1e-5));
         assert!(!r1.abs_diff_eq(r0, 1e-4), "the knife moved with the joint");
     }
