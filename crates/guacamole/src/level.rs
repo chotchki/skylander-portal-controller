@@ -17,7 +17,7 @@
 //!   and every key compiled, so the frame it first shows uploads and
 //!   compiles nothing of its own.
 //! - Fog: every material's fog term reads the [`LevelFog`] resource, a
-//!   placeholder until AG.37; a change relights them all ([`light_level`]).
+//!   placeholder until AG.41; a change relights them all ([`light_level`]).
 //!
 //! Nothing shows it in the product yet (AG.21 and AG.29 take the TV into
 //! it). The dev entry does: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build,
@@ -1352,7 +1352,7 @@ mod tests {
 
     /// The fog every level material reads is the TV's `LevelFog`: the
     /// placeholder until something sets it, and a new one relights every
-    /// material from the camera it was lit for (AG.37's seam).
+    /// material from the camera it was lit for (AG.41's seam).
     #[test]
     fn a_changed_fog_reaches_every_level_material() {
         let tmp = tempfile::tempdir().unwrap();

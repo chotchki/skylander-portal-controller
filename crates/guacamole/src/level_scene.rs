@@ -10,7 +10,7 @@
 //! - The light ([`level_lights`], [`view_scene`]): `_worldLight1`-`3`, each
 //!   travelling the way it faces, as AE.13 reads the sprite rig, and the
 //!   placed point lights; fog from a [`LevelFog`] the TV holds, a placeholder
-//!   until AG.37 sets the fog AG.13 measures; no shadows (AG.23). The shader
+//!   until AG.41 sets the fog AG.13 measures; no shadows (AG.23). The shader
 //!   lights in view space, so the scene is the lights seen from a camera.
 //! - The camera AF's fresh state shows ([`fresh_state_transform`],
 //!   [`fresh_state_projection`]), which the dev entry draws the level at.
@@ -54,7 +54,7 @@ impl Default for LevelFog {
 }
 
 impl LevelFog {
-    /// A placeholder, not a reading, until AG.37 puts in the fog AG.13
+    /// A placeholder, not a reading, until AG.41 puts in the fog AG.13
     /// measures in play: on, since every level material keys fog and a
     /// spec-mapped part needs the eye direction it brings, but black and
     /// starting past the camera's far clip, so it adds nothing.
