@@ -166,7 +166,7 @@ Off the ground a hero SHALL fall faster by 136.21 ft/s² (41.52 m/s²) over the 
 
 #### Scenario: Falling off the ledge route
 - **WHEN** Eruptor walks at full stick off the ledge route's edge into the corridor, head-on, up to 64° west of it or up to 70° east of it, and keeps the stick held
-- **THEN** in every frame nothing touches him his downward speed grows by 136.21 ft/s² times the step two frames back, his walk staying at 21.5 ft/s times the stick's strength along it, and he lands 1.5-3.9 m down after 0.27-0.48 s, 10.0-17.6 m/s down unless a face slows him first (at 64° west from 15.2 m/s to 0.7)
+- **THEN** in every frame nothing touches him his downward speed grows by 136.21 ft/s² times the step two frames back, his walk staying at 21.5 ft/s times the stick's strength along it, and he lands 1.5-3.9 m down after 0.27-0.48 s, 10.0-17.6 m/s down unless a face slows him first (one of the two at 64° west, from 15.2 m/s to 0.7)
 
 #### Scenario: Steering in the air
 - **WHEN** the stick is swung 90° or reversed 0.1 s into a fall from the ledge route, at full or half strength
