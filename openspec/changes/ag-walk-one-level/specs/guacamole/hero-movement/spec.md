@@ -59,40 +59,60 @@ A hero SHALL turn to face the way he walks, the short way, at 1440°/s times the
 - **THEN** he slows to a stop along that one frame's stick, his facing staying where that frame left it
 
 ### Requirement: Walls
-A wall SHALL slide a hero along it without bouncing or lifting him, at the speed the original's same character slides at the same angle of approach, keeping him as far from it as the original keeps him.
+A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, and slide him along it at his walking speed times 1 − 0.1235 × (1 − sin θ), θ the push's angle from head-on, from 2° on; let go, he slows along it as on open ground. Nearer head-on he SHALL creep along it at the push's share of his speed (0.12 m/s at 1.06°) and, within 0.15°, stop dead the frame he meets it and stay while the stick holds.
 
 #### Scenario: Along a wall
-- **WHEN** Eruptor walks into the gate's stone wall at an angle
-- **THEN** he slides along it at the original Eruptor's speed for that angle, without rising
+- **WHEN** Eruptor walks at full stick into the wall behind the start at 2°, 5°, 10°, 20°, 45° and 70° from head-on
+- **THEN** he slides along it at 5.75-5.79, 5.79-5.85, 5.88-5.90, 6.015-6.018, 6.316 and 6.503-6.504 m/s, never more than 1.1 mm higher than where he met it
+
+#### Scenario: Half stick along a wall
+- **WHEN** Eruptor walks at half stick into the wall behind the start at 45.7° from head-on
+- **THEN** he slides along it at 3.182 m/s, 0.965 of his 3.297 m/s
+
+#### Scenario: Head-on
+- **WHEN** Eruptor walks at full stick straight into the wall behind the start, or into the gate's door
+- **THEN** he stops dead the frame he reaches it, 5 mm off its face (at the door his pivot 1.4781 m from its middle), and stays there while the stick holds
 
 #### Scenario: Into the corner by the gate
 - **WHEN** the stick and frame steps of an oracle recording walk Eruptor into the corner by the gate
-- **THEN** he leaves it the way that recording's Eruptor did, sliding along the wall or turning free
+- **THEN** he leaves it the way that recording's Eruptor did, sliding along the door's face or turning free
 
 ### Requirement: Slopes
-Ground too steep for the original's hero (between 45° and 46.4° as read) SHALL NOT hold a hero: he slides off it, and walking at it SHALL get him no higher up it than the original's same character gets.
+A hero SHALL walk up and down the opening area's slopes (to 17.3°) at his walking speed measured along the ground. Where the original's leaves the ground for a frame crossing onto steeper downhill ground, he SHALL too and land 0.88-1.36 m/s faster, a speed over his push's top that holds until he lets go, never past full stick's 6.553 m/s. Ground too steep for the original's hero (45°-46.4° as read) SHALL NOT hold a hero.
+
+#### Scenario: Up and down the corridor
+- **WHEN** Eruptor walks at full stick up the corridor east of the clearing, over slopes of 3.4° to 17.3°, and back down at half stick
+- **THEN** his speed along the ground is his walking speed on every slope, 6.553 m/s up and 3.284 m/s down until the first frame he leaves the ground
+
+#### Scenario: Half stick over the dip ahead of the start
+- **WHEN** Eruptor walks at half stick from the start over the edge of the 1.4° dip ahead of it
+- **THEN** he leaves the ground for one frame there and walks on at 4.41-4.49 m/s until the stick is let go
 
 #### Scenario: A steep bank
 - **WHEN** Eruptor walks onto ground sloping at 50°
 - **THEN** he slides back to its foot, never higher up it than the original's Eruptor gets
 
 ### Requirement: Steps and drops
-A hero SHALL get up the steps the original's same character gets up and no higher ones, with no fixed step height, and SHALL stay on the ground walking down a drop no deeper than the original's stays on. Nothing SHALL stop him at a ledge: past that depth he walks off it and falls.
+A hero SHALL ride 5 mm above the ground he stands or walks on. Where it falls away under him he SHALL be held 10 mm above it, set back there in one frame from as high as 189 mm, and a frame without support SHALL set him back 5-10 mm above it. He SHALL get up no step the original's same character doesn't: the opening area's static collision has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m.
 
-#### Scenario: A step up
-- **WHEN** Eruptor walks into a step the original's Eruptor gets up, then into one taller than any he gets up
-- **THEN** he gets up the first and the second stops him
+#### Scenario: The ground falling away
+- **WHEN** Eruptor walks at full stick from the start toward the gate, the ground falling away 0.15°-1° under him
+- **THEN** he rides up to 15 mm above it and is set back 10 mm above it, or 5 mm after a frame without support
 
-#### Scenario: Off a ledge
-- **WHEN** Eruptor walks at a drop at the opening area's edge deeper than the original's Eruptor stays on the ground for
-- **THEN** he walks straight off it and falls
+#### Scenario: Snapped back down
+- **WHEN** Eruptor walks at half stick down the corridor east of the clearing against its north wall, the wall nearer him than the ground
+- **THEN** he drifts up to 171-189 mm above the ground and is put back 10 mm above it in one frame
+
+#### Scenario: The edge by the bridge's foot
+- **WHEN** Eruptor walks at full stick toward the edge with nothing below it by the bridge's foot
+- **THEN** he stops dead short of it with nothing but the ground in his contacts, as AG.36 records
 
 ### Requirement: He leans with the ground
-A hero SHALL tilt to the ground under him as the original's does, turning onto a new slope no faster than the original's same character turns onto it (read as 120°/s).
+A hero SHALL turn his up axis toward the normal of the ground under him at 120°/s of game time until he's within half a degree of it, the last frame taking what's left or stopping short by up to 0.48°, so a change under 2° at 1/60 s is done in one frame.
 
 #### Scenario: Onto a slope
-- **WHEN** Eruptor walks from the flat clearing onto sloping ground
-- **THEN** his tilt follows the slope at the original Eruptor's rate
+- **WHEN** Eruptor walks at full stick from the 3.5° ground east of the clearing onto its 11.3° slope
+- **THEN** his tilt turns toward the new slope at 120°/s, 1.9-2.1° a frame, and stays 0.26-0.31° short of it after six frames
 
 ### Requirement: Falling and landing
 Off the ground a hero SHALL fall under the original's gravity, 128 ft/s² (39.0 m/s²), up to its terminal speed of 120 ft/s (36.6 m/s), steering at the air speed the original gives that character, and SHALL land without bouncing.
