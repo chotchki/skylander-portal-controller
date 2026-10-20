@@ -14,10 +14,10 @@ With a hero at the level's start, the camera SHALL keep the level's first camera
 - **THEN** the eye is 14.2167 m behind his feet along 15° and 8.8836 m above them, within 0.1 mm, looking along 15° and 23.36° down, the point 9 ft above his feet at the picture's centre
 
 ### Requirement: The camera follows
-While the hero moves, the eye SHALL keep its offset from a follow point that closes 8 % of its distance to an aim point every game frame, however long the frame, within 5 ft (faster beyond). The aim point SHALL sit 35 % of the way from his feet to a look-ahead point that trails him as he sets off, leads him by up to 1.44 m at top speed and holds still once he stops, so the camera comes to rest a little ahead of him.
+While the hero moves, the eye SHALL keep its offset from a follow point that closes 8 % of its distance to an aim point every game frame, however long the frame, within 5 ft; a frame beyond 5 ft SHALL raise that share for good (9 % after one at 5.004 ft). The aim point SHALL sit 35 % of the way from his feet to a look-ahead point that trails him as he sets off, draws ahead as he walks (1.04 m after 1.2 s at top speed, 4.79 m after 4.3 s up the corridor) and holds still once he stops.
 
 #### Scenario: A walk and a stop
-- **WHEN** Eruptor walks at full stick on level ground about the start and then stops
+- **WHEN** Eruptor walks at full stick on open level ground about the start and the stick is let go
 - **THEN** he drifts at most 8.2° off the view's centre line, the eye stays 15.16-17.97 m from his feet, and the camera stops moving 73-83 game frames after he does, resting within 1.5° of dead ahead and 16.34-16.77 m from his feet
 
 #### Scenario: Half stick
@@ -29,11 +29,11 @@ While the hero moves, the eye SHALL keep its offset from a follow point that clo
 - **THEN** the follow point closes 8 % of its distance in it, as in a 16.7 ms frame
 
 ### Requirement: Camera switches move the view
-When the level switches cameras, the view SHALL move to the new camera over the switch's time in game seconds, speeding up evenly for its first 40 %, steady for 20 % and slowing evenly for its last 40 %, its far clip moving with it; a transition plane crossed or a camera volume entered SHALL switch the same way, and crossing back SHALL switch back. Each frame the stick SHALL walk the hero against the view as that frame shows it.
+When the level switches cameras, the view SHALL move to the new camera over the switch's time in game seconds, speeding up evenly for its first 40 %, steady for 20 % and slowing evenly for its last 40 %, its far clip moving with it; a transition plane crossed or a camera volume entered SHALL switch the same way, and crossing back SHALL switch back. Each frame the stick SHALL walk the hero against the view as that frame shows it. A shake SHALL move the eye, not the view's angles.
 
 #### Scenario: The rock slide up the corridor
 - **WHEN** Eruptor comes within 32 ft (9.75 m) of the sliding rocks' trigger at the top of the corridor east of the clearing
-- **THEN** 2 s later the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 58 m north of the start, its far clip from 800 to 1,000 ft
+- **THEN** from 0.25-0.40 s later the eye shakes to and fro along one line, mostly across the view, up to 0.682 m off its place, until 2 s later the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 54 m north of the start and 10.5 m above it, its far clip from 800 to 1,000 ft
 
 #### Scenario: The stick held through a switch
 - **WHEN** the stick is held while the view moves to another camera

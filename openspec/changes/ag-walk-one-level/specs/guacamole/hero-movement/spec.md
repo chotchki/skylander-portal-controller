@@ -67,7 +67,7 @@ A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, a
 
 #### Scenario: Half stick along a wall
 - **WHEN** Eruptor walks at half stick into the wall behind the start at 45.7° from head-on
-- **THEN** he slides along it at 3.182 m/s, 0.965 of his 3.297 m/s
+- **THEN** he slides along it at 3.183 m/s, 0.965 of his 3.297 m/s
 
 #### Scenario: Head-on
 - **WHEN** Eruptor walks at full stick straight into the wall behind the start, or into the gate's door
@@ -82,7 +82,7 @@ A hero SHALL walk up and down the opening area's slopes (to 17.3°) at his walki
 
 #### Scenario: Up and down the corridor
 - **WHEN** Eruptor walks at full stick up the corridor east of the clearing, over slopes of 3.4° to 17.3°, and back down at half stick
-- **THEN** his speed along the ground is his walking speed on every slope, 6.553 m/s up and 3.284 m/s down until the first frame he leaves the ground
+- **THEN** his speed along the ground is his walking speed on every slope, 6.553 m/s up and 3.284 m/s down, within 1.1 % but for the three frames after the snap sets him down at the 13.3° crest (to 7 % under), until the first frame he leaves the ground
 
 #### Scenario: Half stick over the dip ahead of the start
 - **WHEN** Eruptor walks at half stick from the start over the edge of the 1.4° dip ahead of it
@@ -93,11 +93,15 @@ A hero SHALL walk up and down the opening area's slopes (to 17.3°) at his walki
 - **THEN** he slides back to its foot, never higher up it than the original's Eruptor gets
 
 ### Requirement: Steps and drops
-A hero SHALL ride 5 mm above the ground he stands or walks on. Where it falls away under him he SHALL be held 10 mm above it, set back there in one frame from as high as 189 mm, and a frame without support SHALL set him back 5-10 mm above it. He SHALL get up no step the original's same character doesn't: the opening area's static collision has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m bar the ledge route's edge over the corridor (An edge with nothing below).
+A hero SHALL ride 5 mm above level ground, and 10 mm above a slope once the snap has set him there. Where the ground falls away he SHALL be held 10 mm above it, set back there in one frame from as high as 189 mm; a frame without support SHALL set him back 5-10 mm up. He SHALL climb no step the original's same character doesn't: the opening area's static collision has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m bar the ledge route's edge (An edge with nothing below).
 
 #### Scenario: The ground falling away
 - **WHEN** Eruptor walks at full stick from the start toward the gate, the ground falling away 0.15°-1° under him
 - **THEN** he rides up to 15 mm above it and is set back 10 mm above it, or 5 mm after a frame without support
+
+#### Scenario: On the corridor's slopes
+- **WHEN** Eruptor walks at full stick up the corridor east of the clearing and back down at half stick, over slopes of 3.4° to 17.3°
+- **THEN** he rides 10 mm above them, up and down, but for the frames after a landing, which set him 5 mm up
 
 #### Scenario: Snapped back down
 - **WHEN** Eruptor walks at half stick down the corridor east of the clearing against its north wall, the wall nearer him than the ground

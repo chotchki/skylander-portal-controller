@@ -831,13 +831,14 @@ impl GiantsWatch {
     }
 
     /// The hero's contacts in a record: none without a proxy in the list or
-    /// with its range unreadable; no planes when the proxy names another
-    /// manifold array than the resolved one (it grew and moved).
+    /// with its range or the link's unreadable (an unread support word would
+    /// pass for a frame without support); no planes when the proxy names
+    /// another manifold array than the resolved one (it grew and moved).
     pub fn contacts(&self, record: &WatchRecord) -> Option<Contacts> {
         let watch = self.proxy.as_ref()?;
         let p = self.list.field(record, "hero.proxy")?;
         let at = |offset: usize| offset - PROXY_FIRST as usize;
-        let link = self.list.field(record, "hero.link");
+        let link = self.list.field(record, "hero.link")?;
         let planes = match self.list.field(record, "hero.manifold") {
             Some(m) if be32(p, at(PROXY_MANIFOLD)) == watch.manifold => (0..watch.capacity
                 as usize)
@@ -857,8 +858,8 @@ impl GiantsWatch {
         let flags = std::array::from_fn(|k| p[at(PROXY_FLAGS) + k]);
         Some(Contacts {
             velocity: floats(p, at(PROXY_VELOCITY)),
-            support: link.map_or(0, |l| be32(l, 0)),
-            surface: link.map_or([0.0; 3], |l| floats(l, 0x10)),
+            support: be32(link, 0),
+            surface: floats(link, 0x10),
             flags,
             ground: self.list.field(record, "hero.ground").map(|g| Ground {
                 location: floats(g, 0),
@@ -1605,6 +1606,13 @@ mod tests {
         // The proxy's range unreadable: no contacts, the frame still decodes.
         let mut unread = full.clone();
         unread.missing = 1 << watch.list.placed("hero.proxy").unwrap().range;
+        assert!(watch.frame(&unread, None).unwrap().contacts.is_none());
+        // The link's alone: no contacts either, rather than a support word of
+        // 0 that reads as a frame without support.
+        let link_range = watch.list.placed("hero.link").unwrap().range;
+        assert_ne!(link_range, watch.list.placed("hero.proxy").unwrap().range);
+        let mut unread = full.clone();
+        unread.missing = 1 << link_range;
         assert!(watch.frame(&unread, None).unwrap().contacts.is_none());
     }
 
