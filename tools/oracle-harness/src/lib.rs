@@ -9,7 +9,8 @@
 //! measurement built on all of them ([`divergence`]), O5's per-frame
 //! recorder with Giants' watch list ([`watch`], AG.1), a level as the live
 //! game holds it: its placements, its collision and its solids ([`level`],
-//! AG.7), the hero's own scale, solid and parameters ([`hero`], AG.8), and every
+//! AG.7), the hero's own scale, solid and parameters ([`hero`], AG.8), his walk
+//! as the movement script keeps it ([`mover`], AG.38), and every
 //! character placed in turn with what the game attaches to it ([`sweep`],
 //! AE.22).
 //!
@@ -32,6 +33,7 @@ pub mod home;
 pub mod identity;
 pub mod launch;
 pub mod level;
+pub mod mover;
 pub mod outputs;
 pub mod pad;
 pub mod pine;

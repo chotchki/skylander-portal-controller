@@ -186,6 +186,23 @@ pub struct Contacts {
     pub planes: Vec<Plane>,
 }
 
+/// The hero's walk as Giants' movement script keeps it between frames (AG.38):
+/// his velocity as its length, heading and pitch and as its vertical and
+/// across-the-ground parts, in the script's feet per second and degrees, and
+/// the rest of what the script keeps for him by its name there ("time since
+/// last update", "gravity velocity", "trying to move" and so on), each as
+/// read: a number the script holds as an integer comes back converted. The
+/// body's velocity is what the engine made of this one, so the two can differ.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Mover {
+    pub length: f32,
+    pub heading: f32,
+    pub pitch: f32,
+    pub vertical: f32,
+    pub horizontal: f32,
+    pub fields: std::collections::BTreeMap<String, f32>,
+}
+
 /// One record: the game's state at a read of the watched pad port, once a
 /// game frame in Giants.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -216,6 +233,10 @@ pub struct Frame {
     /// His character proxy's contacts, when the watch held them (AG.9 on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contacts: Option<Contacts>,
+    /// His walk as the movement script keeps it, when the watch held it
+    /// (AG.38 on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mover: Option<Mover>,
 }
 
 impl Frame {
@@ -545,6 +566,7 @@ mod tests {
             pad: None,
             clips: Vec::new(),
             contacts: None,
+            mover: None,
         }
     }
 
