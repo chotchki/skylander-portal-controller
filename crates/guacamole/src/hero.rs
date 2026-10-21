@@ -829,4 +829,235 @@ mod tests {
         assert_eq!(ran, 16);
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
+
+    /// AG.48: the overhang's open edge on Avian's side of the seam, headless:
+    /// the two open-edge scenarios guac-motion runs on parry.
+    #[test]
+    fn the_open_edge_cases_through_avian() {
+        let mut failures = Vec::new();
+        let mut ran = 0;
+        for scenario in scenarios::open_edge_scenarios() {
+            let mut app = headless(1.0 / 60.0, &scenario.bodies);
+            let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+            let seam = state.get(app.world()).unwrap();
+            if let Err(e) = (scenario.check)(&seam) {
+                failures.push(format!("{}: {e}", scenario.name));
+            }
+            ran += 1;
+        }
+        assert_eq!(ran, 2);
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// A key from the environment, else from the repo's `.env.dev`.
+    fn env_or_dotenv(key: &str) -> Option<String> {
+        if let Ok(v) = std::env::var(key) {
+            return Some(v);
+        }
+        let dotenv = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env.dev");
+        let text = std::fs::read_to_string(dotenv).ok()?;
+        text.lines().find_map(|line| {
+            let (k, v) = line.trim().split_once('=')?;
+            (k.trim() == key).then(|| v.trim().trim_matches('"').to_owned())
+        })
+    }
+
+    /// Level 213's collision mesh read off the dump through the extractor's
+    /// own readers, in memory (no extract written), as a seam body.
+    fn level_213_mesh(dump: &std::path::Path) -> (Body, std::sync::Arc<guac_motion::seam::Mesh>) {
+        use guac_extract::levels;
+        use guac_formats::igz::Igz;
+        use guac_ir::{DumpIdentity, Sha256};
+        let identity = DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: Sha256([0; 32]),
+        };
+        let level = levels::LEVELS[0];
+        let usrdir = dump.join("PS3_GAME/USRDIR");
+        let archive = std::fs::read(levels::archive_path(&usrdir, level)).expect("the archive");
+        let bld = levels::level_bld(&archive).expect("its level.bld");
+        let igz = Igz::parse(&bld).expect("the level parses");
+        let collision = levels::collision(&igz, level, identity)
+            .expect("the collision")
+            .ir;
+        let m = &collision.meshes[0];
+        let mesh = std::sync::Arc::new(
+            guac_motion::seam::Mesh::new(
+                m.vertices.iter().map(|v| Vec3::from_array(*v)).collect(),
+                m.triangles.iter().map(|t| t.map(u32::from)).collect(),
+                m.materials.clone(),
+            )
+            .unwrap(),
+        );
+        let body = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::IDENTITY,
+            collider: Collider::Mesh(mesh.clone()),
+        };
+        (body, mesh)
+    }
+
+    /// One record of an O5 recording as the replay reads it.
+    struct Record {
+        game_frame: u64,
+        step: f32,
+        position: Vec3,
+        rotation: [f32; 3],
+        velocity: Vec3,
+        view: f32,
+        stick: [f32; 2],
+        supported: bool,
+        ground: Option<(Vec3, Vec3)>,
+        first_plane: Option<f32>,
+    }
+
+    fn record(v: &serde_json::Value) -> Record {
+        let f = |v: &serde_json::Value| v.as_f64().unwrap() as f32;
+        let v3 = |v: &serde_json::Value| Vec3::new(f(&v[0]), f(&v[1]), f(&v[2]));
+        let clock = &v["clock"];
+        let rate = f(&clock["presentation_rate"]);
+        let clamped = f(&clock["frame_delta"]).clamp(rate * 0.5, rate * 3.0);
+        let step = if clock["logic_stopped"].as_bool().unwrap() {
+            0.0
+        } else {
+            (clamped * f(&clock["logic_scale"])) * f(&clock["object_scale"])
+        };
+        let contacts = &v["contacts"];
+        Record {
+            game_frame: v["game_frame"].as_u64().unwrap(),
+            step,
+            position: v3(&v["hero"]["position"]),
+            rotation: [0, 1, 2].map(|i| f(&v["hero"]["rotation"][i])),
+            velocity: v3(&v["hero"]["velocity"]),
+            view: f(&v["camera"]["rotation"][1]),
+            stick: [f(&v["stick"][0]), f(&v["stick"][1])],
+            supported: contacts["support"].as_u64() == Some(2),
+            ground: contacts["ground"].is_object().then(|| {
+                (
+                    v3(&contacts["ground"]["location"]),
+                    v3(&contacts["ground"]["normal"]),
+                )
+            }),
+            first_plane: contacts["planes"]
+                .as_array()
+                .and_then(|p| p.first())
+                .map(|p| f(&p["distance"])),
+        }
+    }
+
+    fn footing_of(r: &Record) -> guac_motion::walk::Footing {
+        use guac_motion::ground::{LEAN_SETTLED, angle};
+        let up = guac_motion::solid::euler(r.rotation) * Vec3::Y;
+        let normal = r.ground.map(|g| g.1);
+        let settled = normal.is_some_and(|n| angle(up, n) <= LEAN_SETTLED);
+        guac_motion::walk::Footing {
+            supported: r.supported,
+            height: r.ground.map(|g| r.position.y - g.0.y),
+            slope: if settled {
+                up
+            } else {
+                normal.unwrap_or(Vec3::Y)
+            },
+            ground: normal,
+        }
+    }
+
+    /// Free in the air, as guac-motion's replays read it: unsupported 0.4 ft
+    /// or more up, his manifold's own closest point 2 cm or more off.
+    fn free(r: &Record) -> bool {
+        footing_of(r).high() && r.first_plane.is_none_or(|d| d >= 0.02)
+    }
+
+    /// AG.48 on Avian's side (`#[ignore]`d: level 213's collision off
+    /// `GUAC_GIANTS_DUMP`, the recordings under `GUAC_CAPTURE_DIR`, from the
+    /// process env, else the repo's `.env.dev`): AG.39's `air/g39_air_rel`
+    /// and `g39_air_rev`, 2 replays each, stepped from their second free
+    /// record on each record's own stick, view and step through
+    /// `AvianSeam`, land within a record of theirs, every frame before it
+    /// moving him (no hanging on the overhang's open edge), and agree with
+    /// the parry side to 1 mm at every record.
+    #[test]
+    #[ignore]
+    fn ag48_the_air_replays_through_avian() {
+        use guac_motion::tuning::{FOOT, Tuning};
+        use guac_motion::walk::Walk;
+        let dump = env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP");
+        let captures = env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR");
+        let (level, _mesh) = level_213_mesh(std::path::Path::new(&dump));
+        let parry = ParryWorld::new(std::slice::from_ref(&level)).unwrap();
+        let mut app = headless(1.0 / 60.0, std::slice::from_ref(&level));
+        let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+        let avian = state.get(app.world()).unwrap();
+        let run_dir = std::path::Path::new(&captures).join("BLUS30968/ag39-falls-1792502813/air");
+        let mut seen = 0;
+        for name in [
+            "g39_air_rel-W-00",
+            "g39_air_rel-W-01",
+            "g39_air_rev-W-00",
+            "g39_air_rev-W-01",
+        ] {
+            let text = std::fs::read_to_string(run_dir.join(name).join("recording.json")).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let frames: Vec<Record> = json.as_array().unwrap().iter().map(record).collect();
+            let k = (3..frames.len())
+                .find(|&k| free(&frames[k]) && free(&frames[k - 1]) && !free(&frames[k - 2]))
+                .unwrap();
+            let land = (k..frames.len()).find(|&j| frames[j].supported).unwrap();
+            let seed = || {
+                let f = &frames[k];
+                let moved = (f.position - frames[k - 1].position) / frames[k - 1].step;
+                let mut hero = Hero::new(
+                    scenarios::eruptor_solid(),
+                    Tuning::ERUPTOR,
+                    f.position,
+                    f.rotation[1],
+                );
+                hero.up = guac_motion::solid::euler(f.rotation) * Vec3::Y;
+                hero.walk = Walk {
+                    velocity: moved / FOOT,
+                    landing: None,
+                };
+                hero.footing = footing_of(f);
+                hero.velocity = f.velocity;
+                hero.set_steps(frames[k - 1].step, frames[k - 2].step);
+                hero
+            };
+            let (mut ours, mut twin) = (seed(), seed());
+            let mut landed = None;
+            let mut apart = 0.0f32;
+            for j in k + 1..=land + 3 {
+                let (a, b) = (&frames[j - 1], &frames[j]);
+                assert_eq!(b.game_frame, a.game_frame + 1, "{name}");
+                let input = Input::stick(Stick::new(b.stick[0], b.stick[1]), a.view);
+                let before = ours.pivot;
+                ours.step(&avian, &input, a.step, &[]);
+                twin.step(&parry, &input, a.step, &[]);
+                apart = apart.max((ours.pivot - twin.pivot).length());
+                assert!(
+                    apart < 1e-3,
+                    "{name} {j}: Avian {} parry {}",
+                    ours.pivot,
+                    twin.pivot
+                );
+                if landed.is_none() {
+                    if ours.footing.supported {
+                        landed = Some(j);
+                    } else {
+                        assert!((ours.pivot - before).length() > 1e-3, "{name}: hung at {j}");
+                    }
+                }
+            }
+            eprintln!(
+                "{name} from record {k}: lands on Avian at {landed:?}, theirs {land}; Avian and parry {apart:.2e} m apart at worst"
+            );
+            assert!(
+                landed.is_some_and(|l| l.abs_diff(land) <= 1),
+                "{name}: {landed:?} against {land}"
+            );
+            seen += 1;
+        }
+        assert_eq!(seen, 4);
+    }
 }

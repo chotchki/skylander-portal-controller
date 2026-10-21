@@ -194,11 +194,12 @@ fn ground_below_lets_him_walk_off() {
     );
 }
 
-/// The probe runs in the air too (AG.39's `g39_b45_in`, where it stopped him
-/// with his pivot already over the edge): walked off an edge with ground
-/// below, he's stopped once his point comes over nothing, his walk across
-/// the ground zeroed before he moves, and drops straight down with it held
-/// at 0 while the point stays over nothing.
+/// The probe runs in the air too (AG.39's `g39_b45_in`, where it stopped
+/// him with his pivot over the edge and held his walk at 0 down the cliff):
+/// walked off an edge with ground below, then turned in the air so his
+/// point comes over nothing, he's stopped there, his walk across the ground
+/// zeroed before he moves, and drops straight down with it held at 0 while
+/// the point stays over nothing.
 #[test]
 fn the_probe_stops_him_in_the_air() {
     // The ledge at x = 0; under it ground for z < 0 only.
@@ -207,26 +208,37 @@ fn the_probe_stops_him_in_the_air() {
     soup.floor(-3.0, [0.0, 20.0], [-20.0, 0.0], 1.0);
     soup.wall_x(0.0, [-20.0, 0.0], [-3.0, 0.0], Vec3::X);
     let world = world(&soup, &[]);
-    // Heading 70° (mostly +x): at the ledge his point is over the ground
-    // below; 1.6 m past it, over nothing.
+    // Heading 70° (mostly +x) his point stays over the ground below; turned
+    // to +z once he's 1.1 m past the ledge (in the air, clear of the cliff),
+    // it's over nothing. Turned at the ledge, he'd still stand on its edge,
+    // which holds him while it lies within 45° below him (AG.48).
     let mut hero = eruptor(&world, Vec3::new(-3.0, 1.0, -2.09), 0.0);
-    let held = |k: usize| if k < 34 { 70.0 } else { 0.0 };
-    let states: Vec<State> = (0..60)
-        .map(|k| {
-            hero.step(&world, &Input::stick(stick(1.0, held(k)), 0.0), DT, &[]);
+    let mut turned = false;
+    let states: Vec<State> = (0..90)
+        .map(|_| {
+            turned |= hero.pivot.x >= 1.1;
+            let heading = if turned { 0.0 } else { 70.0 };
+            hero.step(&world, &Input::stick(stick(1.0, heading), 0.0), DT, &[]);
             state(&hero)
         })
         .collect();
     let refused = states.iter().position(|s| s.held_off).unwrap();
     let r = states[refused];
-    assert!(r.pivot.x > 0.0 && !r.supported, "{r:?}");
+    assert!(r.pivot.x > 1.1 && !r.supported, "{r:?}");
     assert_eq!(r.walk.x, 0.0);
     assert_eq!(r.walk.z, 0.0);
     let before = states[refused - 1];
+    assert!(!before.supported, "{before:?}");
     assert!((r.pivot.x - before.pivot.x).abs() < 1e-6 && r.pivot.y < before.pivot.y);
-    // Turned toward +z after it, his point stays over nothing: held, he
-    // drops straight down.
-    for s in states[refused..].iter().filter(|s| s.held_off) {
+    // Turned toward +z, his point stays over nothing: held, he drops
+    // straight down to the ground below and stays.
+    for s in states[refused..].iter() {
+        assert!(s.held_off || s.walk == Vec3::ZERO, "{s:?}");
         assert!((s.pivot.x - r.pivot.x).abs() < 1e-5 && (s.pivot.z - r.pivot.z).abs() < 1e-5);
     }
+    let end = states.last().unwrap();
+    assert!(
+        end.supported && (end.pivot.y + 3.0 - 0.005).abs() < 6e-3,
+        "{end:?}"
+    );
 }

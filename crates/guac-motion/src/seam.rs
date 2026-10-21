@@ -119,7 +119,9 @@ impl Shape {
 /// sliding across the seam between two triangles gets the faces' normal there,
 /// never the edge's. Fixing them makes contacts one-sided: a shape behind a
 /// triangle gets no plane from it, while casts and rays see both sides, so
-/// the winding decides which side holds a shape up.
+/// the winding decides which side holds a shape up. An open edge, one only a
+/// single triangle has, is no seam: a shape there gets the edge's own
+/// closest point and normal ([`crate::parry::planes_against`], AG.48).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mesh {
     vertices: Vec<Vec3>,
@@ -129,6 +131,12 @@ pub struct Mesh {
     /// then c, c then a), vertices matched by position as parry merges them;
     /// `None` on a boundary edge or one three triangles share.
     neighbours: Vec<[Option<u32>; 3]>,
+    /// Per triangle, whether each edge (as `neighbours` orders them) is open:
+    /// no other triangle has it.
+    open: Vec<[bool; 3]>,
+    /// The triangles with an open edge, each with its bounds (low and high
+    /// corners).
+    open_triangles: Vec<(u32, [Vec3; 2])>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -174,12 +182,25 @@ impl Mesh {
                 });
             }
         }
-        let neighbours = neighbours(&vertices, &triangles);
+        let (neighbours, open) = neighbours(&vertices, &triangles);
+        let open_triangles = open
+            .iter()
+            .enumerate()
+            .filter(|(_, edges)| edges.iter().any(|&o| o))
+            .map(|(t, _)| {
+                let corners = triangles[t].map(|i| vertices[i as usize]);
+                let low = corners[0].min(corners[1]).min(corners[2]);
+                let high = corners[0].max(corners[1]).max(corners[2]);
+                (t as u32, [low, high])
+            })
+            .collect();
         Ok(Mesh {
             vertices,
             triangles,
             materials,
             neighbours,
+            open,
+            open_triangles,
         })
     }
 
@@ -191,6 +212,22 @@ impl Mesh {
             .get(edge)
             .copied()
             .flatten()
+    }
+
+    /// Whether edge `edge` (0: a-b, 1: b-c, 2: c-a) of triangle `index` is
+    /// open: no other triangle has it.
+    pub fn open(&self, index: u32, edge: usize) -> bool {
+        self.open
+            .get(index as usize)
+            .and_then(|edges| edges.get(edge))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// The triangles with an open edge, each with its bounds (low and high
+    /// corners), in index order.
+    pub fn open_triangles(&self) -> &[(u32, [Vec3; 2])] {
+        &self.open_triangles
     }
 
     /// Triangle `index`'s corners.
@@ -224,9 +261,13 @@ impl Mesh {
     }
 }
 
-/// Each triangle's neighbour across each edge, vertices keyed by their bits
-/// (parry merges equal positions too).
-fn neighbours(vertices: &[Vec3], triangles: &[[u32; 3]]) -> Vec<[Option<u32>; 3]> {
+/// Each triangle's neighbour across each edge, and whether the edge is open
+/// (no other triangle has it), vertices keyed by their bits (parry merges
+/// equal positions too).
+fn neighbours(
+    vertices: &[Vec3],
+    triangles: &[[u32; 3]],
+) -> (Vec<[Option<u32>; 3]>, Vec<[bool; 3]>) {
     use std::collections::HashMap;
     let mut ids: HashMap<[u32; 3], u32> = HashMap::new();
     let canon: Vec<u32> = vertices
@@ -247,7 +288,7 @@ fn neighbours(vertices: &[Vec3], triangles: &[[u32; 3]]) -> Vec<[Option<u32>; 3]
             by_edge.entry(edge(t, e)).or_default().push(i as u32);
         }
     }
-    triangles
+    let neighbours = triangles
         .iter()
         .enumerate()
         .map(|(i, t)| {
@@ -256,7 +297,12 @@ fn neighbours(vertices: &[Vec3], triangles: &[[u32; 3]]) -> Vec<[Option<u32>; 3]
                 _ => None,
             })
         })
-        .collect()
+        .collect();
+    let open = triangles
+        .iter()
+        .map(|t| std::array::from_fn(|e| by_edge[&edge(t, e)].len() == 1))
+        .collect();
+    (neighbours, open)
 }
 
 #[derive(Clone, Debug, PartialEq)]

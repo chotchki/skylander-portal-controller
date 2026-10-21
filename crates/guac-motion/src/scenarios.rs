@@ -5,7 +5,8 @@
 //! Eruptor through it on whatever seam holds those bodies, from AG.8's and
 //! AG.9's numbers: hero-movement's The stick walks the hero as seen from the
 //! camera, Top speed, Speeding up and slowing down, Turning and hard
-//! reversals, No jumping, The same walk at any frame rate and Walls.
+//! reversals, No jumping, The same walk at any frame rate and Walls; and,
+//! since AG.48, Falling and landing's open edge.
 //!
 //! Synthetic walls share the floors' vertices, as level 213's indexed mesh
 //! does: parry gives an edge two triangles don't share by vertex (a
@@ -861,4 +862,116 @@ pub fn the_gate_door_stops_him() -> Scenario {
             Ok(())
         },
     }
+}
+
+/// A face 3 m high leaning out 4.8° over level ground at y = -3, as the
+/// overhang under the ledge route's west end leans over the corridor, its
+/// top edge open (nothing beyond it, as at that overhang: AG.48).
+pub fn overhang() -> Soup {
+    let mut soup = Soup::default();
+    soup.floor(-3.0, [-0.25, 20.0], [-10.0, 10.0], 2.0);
+    soup.quad(
+        [
+            Vec3::new(0.0, 0.0, -10.0),
+            Vec3::new(0.0, 0.0, 10.0),
+            Vec3::new(-0.25, -3.0, 10.0),
+            Vec3::new(-0.25, -3.0, -10.0),
+        ],
+        Vec3::X,
+    );
+    soup
+}
+
+fn over_the_overhang(
+    name: &'static str,
+    check: fn(&dyn PhysicsSeam) -> Result<(), String>,
+) -> Scenario {
+    Scenario {
+        name,
+        bodies: bodies(&overhang(), &[]),
+        check,
+    }
+}
+
+/// What AG.48 runs on each side of the seam: a hero falling onto the
+/// overhang's open edge.
+pub fn open_edge_scenarios() -> Vec<Scenario> {
+    vec![
+        round_an_open_edge_he_falls_on(),
+        an_open_edge_within_45_holds_him_up(),
+    ]
+}
+
+/// Eruptor dropped, the stick let go, from `at` (his pivot), unsettled.
+fn dropped(at: Vec3) -> Hero {
+    Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, 0.0)
+}
+
+/// Falling and landing (AG.48: AG.39's `g39_air_rel` and `g39_air_rev`):
+/// let go, he falls onto the overhang's open edge 0.8 m out from it, where
+/// it lies 61° below him, is held off it (his keep, 5-10 mm against a
+/// rounded edge) and slides round it, down past the face and onto the
+/// ground below, moving every frame until he lands there, never behind the
+/// face.
+pub fn round_an_open_edge_he_falls_on() -> Scenario {
+    over_the_overhang("round_an_open_edge_he_falls_on", |seam| {
+        let mut hero = dropped(Vec3::new(0.8, 1.0, 0.0));
+        let mut touched = 0;
+        for k in 0..60 {
+            let before = hero.pivot;
+            hero.step(seam, &Input::stick(Stick::CENTRED, VIEW), DT, &[]);
+            ensure!(
+                hero.pivot.x >= 0.8 - 1e-4,
+                "frame {k}: behind the edge at {}",
+                hero.pivot
+            );
+            if hero.footing.supported {
+                ensure!(
+                    hero.pivot.y < -2.9 && touched > 0,
+                    "frame {k}: held at {} after {touched} frames on the edge",
+                    hero.pivot
+                );
+                ensure!((hero.pivot.y + 3.0 - 0.005).abs() < 6e-3, "{}", hero.pivot);
+                return Ok(());
+            }
+            ensure!(
+                (hero.pivot - before).length() > 1e-3,
+                "frame {k}: hung in the air at {}",
+                hero.pivot
+            );
+            let centre = hero.pivot + Vec3::Y * 0.9144;
+            let gap = centre.x.hypot(centre.y.max(0.0)) - 0.9144;
+            if centre.y > 0.0 && gap < 0.02 {
+                ensure!(gap > 0.004, "frame {k}: {gap} m off the edge");
+                touched += 1;
+            }
+        }
+        Err(format!("never landed: {}", hero.pivot))
+    })
+}
+
+/// Falling and landing (AG.48: AG.39's let-gos at the ledge route's west
+/// end, held on the overhang's open edge at 41.6-45.0° below them): let go
+/// 0.45 m out from the open edge, where it lies 29° below him, he lands on
+/// it, slides round it a few centimetres as he lands and stays there, held
+/// up, the edge still within 45° below him.
+pub fn an_open_edge_within_45_holds_him_up() -> Scenario {
+    over_the_overhang("an_open_edge_within_45_holds_him_up", |seam| {
+        let mut hero = dropped(Vec3::new(0.45, 1.0, 0.0));
+        for _ in 0..90 {
+            hero.step(seam, &Input::stick(Stick::CENTRED, VIEW), DT, &[]);
+        }
+        ensure!(hero.footing.supported, "unsupported at {}", hero.pivot);
+        ensure!(hero.velocity == Vec3::ZERO, "moving {}", hero.velocity);
+        let centre = hero.pivot + hero.up * 0.9144;
+        let from_edge = Vec3::new(centre.x, centre.y, 0.0);
+        let gap = from_edge.length() - 0.9144;
+        let below = from_edge.angle_between(Vec3::Y).to_degrees();
+        ensure!(
+            (0.004..=0.012).contains(&gap) && below < 45.0 && (hero.pivot.x - 0.45).abs() < 0.1,
+            "{}: {gap} m off the edge, {below}° below him",
+            hero.pivot
+        );
+        Ok(())
+    })
 }
