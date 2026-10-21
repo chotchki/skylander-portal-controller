@@ -199,6 +199,9 @@ pub struct Placement {
     /// As stored (level 213: 4 on 584, 5 on 413; what each means is
     /// AG.7's).
     pub activity_state: u32,
+    /// `_activationRange`, feet: an UNMANAGED placement with one is there
+    /// while the hero is within it (AG.7's rule, AG.25); 0 without.
+    pub activation_range: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -496,6 +499,7 @@ mod tests {
                 movement: None,
                 waypoints: Some(0),
                 activity_state: 4,
+                activation_range: 160.0,
             }],
             waypoints: vec![vec![Waypoint {
                 name: "wp0".into(),

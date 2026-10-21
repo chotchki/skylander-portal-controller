@@ -1274,7 +1274,7 @@ fn mirror_tv(
         intro,
         intro_queue,
         warm: warm.map(|w| w.report().clone()),
-        level: level.map(|l| l.report().clone()),
+        level: level.map(|l| l.snapshot()),
         prepare: prepare.map(|p| p.report().clone()),
         input,
         mode: mode.name().to_owned(),

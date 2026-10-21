@@ -813,6 +813,21 @@ fn the_start_rule_follows_the_state_and_the_heros_distance() {
             Some(AtStart::ByScript),
         ]
     );
+    // The same rule on the fields an extract keeps (AG.25).
+    let kept: Vec<_> = p
+        .actors
+        .iter()
+        .map(|a| {
+            let pl = a.placement();
+            at_start_of(
+                pl.placement.activity_state,
+                pl.activation_range,
+                pl.placement.init_matrix.position,
+                hero,
+            )
+        })
+        .collect();
+    assert_eq!(kept, rule);
     // The same placements from the hero's other side of each boundary.
     let far = at_x(40.0);
     let moved: Vec<_> = p

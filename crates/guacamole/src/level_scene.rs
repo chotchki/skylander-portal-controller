@@ -1296,6 +1296,7 @@ mod tests {
             movement: None,
             waypoints,
             activity_state: 4,
+            activation_range: 0.0,
         }
     }
 

@@ -190,7 +190,7 @@ pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Result<Entity,
     not(test),
     expect(
         dead_code,
-        reason = "nothing in the level moves yet: AG.25's props are its first callers"
+        reason = "nothing in the level moves yet: AG.25's props stand still until their scripts run"
     )
 )]
 pub(crate) fn set_pose(
@@ -448,6 +448,183 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
+    /// AG.25: a prop's solid off each `CollisionInfo` shape AG.7 settled,
+    /// built as the props build them (the gate door's box on its own quarter
+    /// turn at heading 180, a pot's capsule, a gourd's sphere, a barrel's
+    /// cylinder, a trigger's non-solid box), answers through Avian as
+    /// through parry: rays and the hero's grown sphere cast at each, his
+    /// contacts touching each, overlaps in the trigger, within
+    /// `conformance::AGREE`.
+    #[test]
+    fn the_props_solids_answer_through_avian_as_through_parry() {
+        use guac_ir::actor::{Shape as IrShape, Solid as IrSolid};
+        use guac_ir::level::Placement;
+        use guac_motion::conformance::Query;
+        use guacamole::props;
+        let place = |object, at: [f32; 3], heading, shape, solid, size: [f32; 3], turn| {
+            let p = Placement {
+                object,
+                id: 0,
+                name: format!("prop {object}"),
+                script: None,
+                position: at,
+                rotation: [0.0, heading, 0.0],
+                scale: [100.0; 3],
+                model: None,
+                solid: None,
+                movement: None,
+                waypoints: None,
+                activity_state: 4,
+                activation_range: 160.0,
+            };
+            let info = IrSolid {
+                shape,
+                solid,
+                world: true,
+                actor_surface: false,
+                offset: [0.0; 3],
+                rotation: [0.0, turn, 0.0],
+                width: size[0],
+                height: size[1],
+                length: size[2],
+                weight: 1.0,
+                rebound: 0.0,
+            };
+            props::solid(&p, &info).unwrap()
+        };
+        let bodies = vec![
+            place(
+                1,
+                [0.0, 0.0, 5.0],
+                180.0,
+                IrShape::Box,
+                true,
+                [4.0, 21.0, 34.0],
+                90.0,
+            ),
+            place(
+                2,
+                [10.0, 0.0, 0.0],
+                30.0,
+                IrShape::Capsule,
+                true,
+                [6.0, 9.0, 3.0],
+                0.0,
+            ),
+            place(
+                3,
+                [20.0, 0.0, 0.0],
+                0.0,
+                IrShape::Sphere,
+                true,
+                [7.25, 6.5, 3.0],
+                0.0,
+            ),
+            place(
+                4,
+                [30.0, 0.0, 0.0],
+                45.0,
+                IrShape::Cylinder,
+                true,
+                [6.0, 7.0, 3.0],
+                0.0,
+            ),
+            place(
+                5,
+                [40.0, 0.0, 0.0],
+                0.0,
+                IrShape::Box,
+                false,
+                [41.0, 14.0, 35.0],
+                0.0,
+            ),
+        ];
+        let hero = Shape::Sphere { radius: 0.9144 };
+        let mut queries = Vec::new();
+        // From in front of each, and from over its middle (the door's at
+        // z 5, the rest at 0).
+        for (x, z, middle) in [
+            (0.0, -2.0, 5.0),
+            (10.0, -3.0, 0.0),
+            (20.0, -3.0, 0.0),
+            (30.0, -3.0, 0.0),
+            (40.0, -10.0, 0.0),
+        ] {
+            let from = Vec3::new(x, 0.9144, z);
+            queries.push(Query::Ray {
+                origin: from,
+                direction: Vec3::Z,
+                max_distance: 20.0,
+                exclude: Vec::new(),
+            });
+            queries.push(Query::Cast {
+                shape: hero,
+                from: Pose::at(from),
+                motion: Vec3::Z * 10.0,
+                contact_distance: 0.05,
+                exclude: Vec::new(),
+            });
+            queries.push(Query::Ray {
+                origin: Vec3::new(x + 0.3, 12.0, middle),
+                direction: -Vec3::Y,
+                max_distance: 20.0,
+                exclude: Vec::new(),
+            });
+        }
+        // Touching the door's face 5 mm off, and the gourd.
+        queries.push(Query::Contacts {
+            shape: hero,
+            at: Pose::at(Vec3::new(0.0, 0.9144, 5.0 - 0.5596 - 0.9144 - 0.005)),
+            distance: 0.05,
+            exclude: Vec::new(),
+        });
+        queries.push(Query::Contacts {
+            shape: hero,
+            at: Pose::at(Vec3::new(20.0, 1.1049, -(1.0049 + 0.9144 + 0.002))),
+            distance: 0.05,
+            exclude: Vec::new(),
+        });
+        queries.push(Query::Overlaps {
+            shape: hero,
+            at: Pose::at(Vec3::new(40.0, 1.0, 0.0)),
+            exclude: Vec::new(),
+        });
+        let case = Case {
+            name: "the props' solids",
+            bodies,
+            moves: Vec::new(),
+            queries,
+            expect: |answers| {
+                // Every solid one met by its ray and its cast, the trigger by
+                // neither; the two touching poses one plane each; the
+                // trigger overlapped.
+                let hits = answers
+                    .iter()
+                    .filter(|a| matches!(a, Answer::Ray(Some(_)) | Answer::Cast(Some(_))))
+                    .count();
+                let planes: Vec<usize> = answers
+                    .iter()
+                    .filter_map(|a| match a {
+                        Answer::Contacts(p) => Some(p.len()),
+                        _ => None,
+                    })
+                    .collect();
+                if hits != 12 || planes != [1, 1] {
+                    return Err(format!("{hits} hits, planes {planes:?}"));
+                }
+                match answers.last() {
+                    Some(Answer::Overlaps(ids)) if ids == &[BodyId(props::PROP_BODIES + 5)] => {
+                        Ok(())
+                    }
+                    other => Err(format!("the trigger: {other:?}")),
+                }
+            },
+        };
+        let parry = parry_answers(&case);
+        let avian = avian_answers(&case).unwrap();
+        conformance::agree(&avian, &parry).unwrap();
     }
 
     /// A moved kinematic body isn't where queries look until the physics

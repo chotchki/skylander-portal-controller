@@ -72,6 +72,15 @@ async fn pick_giants(server: &TestServer, phone: &Phone) {
         .wait_for_portal(Duration::from_secs(15))
         .await
         .expect("phone portal");
+    // The start's pass (AE.25) holds the TV on its getting-ready screen
+    // until every census key is compiled, chapter 1's props' since AG.25
+    // (144 keys), however soon the phone gets to its portal; a debug build
+    // under load takes most of a minute.
+    wait_for_tv(&server.url, Duration::from_secs(90), |s| {
+        s["prepare"]["state"] == "done"
+    })
+    .await
+    .expect("the start's pass");
     wait_for_tv(&server.url, Duration::from_secs(5), |s| {
         s["screen"] == "Portal"
     })

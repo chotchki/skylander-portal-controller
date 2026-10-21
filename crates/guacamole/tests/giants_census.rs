@@ -3,10 +3,11 @@
 //! fresh figure of it carries, AE.23) and every key chapter 1 draws, read off
 //! `GUAC_GIANTS_DUMP` through the extractor's own readers (in memory, no
 //! extract written) and keyed by the TV's own derivation (the warm's for a
-//! card, the level loader's for chapter 1), equal to `guacamole::census`'s
-//! tables. A table that drifts prints the rows the dump gives, in the
-//! table's syntax. And every character that walks (AG.21), drawn in the
-//! level as the hero, keys nothing the card tables don't hold.
+//! card, the level loader's for chapter 1 and its props), equal to
+//! `guacamole::census`'s tables. A table that drifts prints the rows the
+//! dump gives, in the table's syntax. And every character that walks
+//! (AG.21), drawn in the level as the hero, keys nothing the card tables
+//! don't hold.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ use guacamole::character::attach;
 use guacamole::character::turntable::rig_scene;
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::level_scene;
+use guacamole::props::LevelProps;
 use guacamole::walkers;
 
 /// `key` from the environment, else from the repo's `.env.dev`.
@@ -112,11 +114,22 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
     cards
 }
 
+/// What chapter 1 keys: its own segments', its props', how many materials
+/// they draw, and the scene the hero draws in there.
+struct Chapter1 {
+    keys: Vec<WarmKey>,
+    props: Vec<WarmKey>,
+    materials: usize,
+    prop_models: usize,
+    hero: Scene,
+}
+
 /// Every key chapter 1 draws, as the level loader keys it (through its own
 /// `level_scene::at_start`): its drawn segments in its scene at the fresh
 /// state's camera, lit and fogged by its start's zone (AG.41), the sky
-/// unfogged as that zone has it; and the scene the hero draws in there.
-fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize, Scene) {
+/// unfogged as that zone has it; its props' models in the same scene
+/// (`props::LevelProps`, AG.25); and the scene the hero draws in there.
+fn level_keys(dump: &Path) -> Chapter1 {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let level = levels::LEVELS[0];
     let archive = std::fs::read(levels::archive_path(&usrdir, level)).expect("the level archive");
@@ -131,10 +144,23 @@ fn level_keys(dump: &Path) -> (Vec<WarmKey>, usize, Scene) {
     let atmosphere = levels::atmosphere(&igz, level, identity())
         .expect("the atmosphere")
         .ir;
+    let props = levels::props(&igz, level, identity())
+        .expect("the props")
+        .ir;
+    let placements = levels::placements(&igz, level, identity())
+        .expect("the placements")
+        .ir;
     let start = level_scene::at_start(scene, &lights, &atmosphere).expect("chapter 1 at its start");
+    let view = level_scene::view_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
+    let props = LevelProps::new(&props, &placements).expect("chapter 1's props");
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
-    let keys = start.keys.into_iter().map(|(k, _)| k).collect();
-    (keys, start.drawn.materials.len(), hero)
+    Chapter1 {
+        keys: start.keys.into_iter().map(|(k, _)| k).collect(),
+        props: props.keys(&view).expect("the props' keys"),
+        materials: start.drawn.materials.len(),
+        prop_models: props.models.len(),
+        hero,
+    }
 }
 
 /// The rows `keys` give, sorted as the tables keep them.
@@ -173,15 +199,27 @@ fn the_census_is_the_discs() {
         env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP to the Giants dump"),
     );
     let started = Instant::now();
-    let (level, materials, hero_scene) = level_keys(&dump);
+    let Chapter1 {
+        keys: level,
+        props,
+        materials,
+        prop_models,
+        hero: hero_scene,
+    } = level_keys(&dump);
     let level_took = started.elapsed();
+    // The props' keys the level's table doesn't hold already.
+    let props_beyond: Vec<WarmKey> = props
+        .iter()
+        .filter(|k| !census::LEVEL.contains(&Row::of(k)))
+        .copied()
+        .collect();
     let started = Instant::now();
     let cards = card_keys(&dump, &hero_scene);
     let cards_took = started.elapsed();
     let (skinned, unskinned): (Vec<WarmKey>, Vec<WarmKey>) =
         cards.keys.iter().partition(|k| k.mesh.skinned);
     eprintln!(
-        "cards: {} keys ({} skinned, {} static) off {} models carrying {} ({} drawing nothing) in {:.1} s; chapter 1: {} keys off {materials} materials in {:.1} s",
+        "cards: {} keys ({} skinned, {} static) off {} models carrying {} ({} drawing nothing) in {:.1} s; chapter 1: {} keys off {materials} materials, its props {} off {prop_models} models ({} beyond the level's), in {:.1} s",
         cards.keys.len(),
         skinned.len(),
         unskinned.len(),
@@ -190,12 +228,20 @@ fn the_census_is_the_discs() {
         cards.undrawn,
         cards_took.as_secs_f64(),
         level.len(),
+        props.len(),
+        props_beyond.len(),
         level_took.as_secs_f64()
     );
     let checks = [
         check("cards, skinned", &skinned, census::TURNTABLE, true),
         check("cards, static", &unskinned, census::TURNTABLE_STATIC, false),
         check("chapter 1", &level, census::LEVEL, false),
+        check(
+            "chapter 1's props",
+            &props_beyond,
+            census::LEVEL_PROPS,
+            false,
+        ),
     ];
     for c in &checks {
         if let Err(why) = c {
@@ -245,5 +291,10 @@ fn the_census_is_the_discs() {
         (skinned.len(), unskinned.len(), level.len()),
         (33, 24, 55),
         "the census's counts"
+    );
+    assert_eq!(
+        (prop_models, props.len(), props_beyond.len()),
+        (46, 41, 32),
+        "chapter 1's props: the models that can stand, their keys, those past the level's"
     );
 }
