@@ -799,6 +799,12 @@ pub struct FightFrame {
     pub area_p1: Number,
     pub area_p2: Number,
     pub loot: Number,
+    /// The destructibles' uncommon and rare counts, when the watch holds
+    /// them (AH.9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot_uncommon: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot_rare: Option<Number>,
     pub triggers: Vec<TriggerAt>,
 }
 
@@ -827,6 +833,13 @@ impl FightWatch {
             ("area.p2".to_owned(), state.area.cells[1]),
             ("loot".to_owned(), common.index_cell),
         ];
+        // The uncommon and rare counts too (AH.9: which breakables step
+        // which), where the loot data holds them.
+        for (label, name) in [("loot.uncommon", LOOT[1]), ("loot.rare", LOOT[2])] {
+            if let Some(a) = state.loot.iter().find(|a| a.name == name) {
+                cells.push((label.to_owned(), a.index_cell));
+            }
+        }
         for w in rows.words() {
             let at = h
                 .figure
@@ -930,6 +943,8 @@ impl FightWatch {
             area_p1: values["area.p1"],
             area_p2: values["area.p2"],
             loot: values["loot"],
+            loot_uncommon: values.get("loot.uncommon").copied(),
+            loot_rare: values.get("loot.rare").copied(),
             triggers,
         })
     }
@@ -1755,6 +1770,8 @@ mod tests {
                 "area.p1",
                 "area.p2",
                 "loot",
+                "loot.uncommon",
+                "loot.rare",
                 "word.0",
                 "word.1",
                 "word.2",
@@ -1779,6 +1796,8 @@ mod tests {
                 area_p1: Number::Int(0),
                 area_p2: Number::Int(0),
                 loot: Number::Float(0.824_279_5),
+                loot_uncommon: Some(Number::Float(0.097_497)),
+                loot_rare: Some(Number::Float(0.570_767_6)),
                 triggers: Vec::new(),
             }
         );

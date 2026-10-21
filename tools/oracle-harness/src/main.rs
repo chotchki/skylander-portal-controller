@@ -199,7 +199,16 @@ usage:
       every replay under <candidates> whose script isn't <s> against <dir>'s group
       <s>, <set>: each trajectory inside the group's horizon and over the whole run,
       and each frame the two share a checkpoint for; written to <candidates>/check.txt
-      and check.json";
+      and check.json
+  oracle fight report --rules <rules.ron> --out <dir> <replay dir>... [--candidate <dir>]...
+      AH.9: each replay dir (a drive's or a divergence replay's, with O5's watch and
+      O6's chains) read back as guac_oracle's fight trace: its per-actor event logs,
+      chain links, breaks, totals and the generator's draws per game frame; over
+      the group (3 or more replays of one script from one anchor) the anchor's
+      horizon, each event kind's floor by AF.12's method (the least that passes
+      every replay's leave-one-out, rounded up to the rules' quantum), and each
+      candidate against the whole group at those floors; written to
+      <dir>/report.txt and report.json";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -218,9 +227,42 @@ fn main() -> Result<()> {
         ["divergence", "report", rest @ ..] => divergence_report(rest),
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
         ["divergence", "check", rest @ ..] => divergence_check(rest),
+        ["fight", "report", rest @ ..] => fight_report(rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
         _ => bail!("{USAGE}"),
     }
+}
+
+/// `oracle fight report` (AH.9).
+fn fight_report(mut rest: &[&str]) -> Result<()> {
+    let (mut rules, mut out) = (None, None);
+    let (mut dirs, mut candidates) = (Vec::new(), Vec::new());
+    while let [arg, tail @ ..] = rest {
+        rest = tail;
+        match (*arg, rest) {
+            ("--rules", [at, tail @ ..]) => {
+                rules = Some(PathBuf::from(at));
+                rest = tail;
+            }
+            ("--out", [at, tail @ ..]) => {
+                out = Some(PathBuf::from(at));
+                rest = tail;
+            }
+            ("--candidate", [at, tail @ ..]) => {
+                candidates.push(PathBuf::from(at));
+                rest = tail;
+            }
+            (flag, _) if flag.starts_with("--") => bail!("{USAGE}"),
+            (dir, _) => dirs.push(PathBuf::from(dir)),
+        }
+    }
+    let (Some(rules), Some(out)) = (rules, out) else {
+        bail!("{USAGE}");
+    };
+    let report = oracle_harness::fightlog::report(&rules, &dirs, &candidates, &out)?;
+    print!("{}", report.text());
+    println!("written to {}", out.display());
+    Ok(())
 }
 
 fn required(key: &str) -> Result<PathBuf> {
@@ -729,6 +771,7 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
                 .line(),
                 None => "?".into(),
             };
+            let mut chain_clips = None;
             if let Some(at) = flag(opts, "--chains") {
                 let chains: GiantsChains = serde_json::from_str(
                     &std::fs::read_to_string(&at).with_context(|| format!("reading {at}"))?,
@@ -737,11 +780,12 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
                 let pine_at = flag(opts, "--pine").context("--chains needs --pine to name them")?;
                 let mut pine = PineClient::connect(pine_at.as_ref())?;
                 rng::check_title(&mut pine)?;
-                let (own, run, _) =
+                let written =
                     chains.write_outputs(&watch, &ring.records, &mut pine, &identity, &out)?;
                 drop(pine);
-                ring.records = own;
-                println!("chains: {}", serde_json::to_string(&run)?);
+                ring.records = written.o5;
+                println!("chains: {}", serde_json::to_string(&written.run)?);
+                chain_clips = Some(written.clips);
             }
             let file = WatchFile {
                 identity,
@@ -758,6 +802,10 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
             std::fs::create_dir_all(&dir)?;
             file.write(&dir.join(WatchFile::FILE))?;
             let recording = file.recording()?;
+            let recording = match &chain_clips {
+                Some(c) => oracle_harness::chains::fill_clips(recording, c)?.0,
+                None => recording,
+            };
             std::fs::write(
                 dir.join(divergence::RECORDING_FILE),
                 serde_json::to_string(&recording)?,

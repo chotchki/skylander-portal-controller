@@ -3,7 +3,7 @@
 //! become `guac_oracle`'s [`ChainRecord`]s keyed by actor.
 //!
 //! O6 knows nothing of the game: it follows a chain the harness names. Giants'
-//! three, Giants 01.00 (`BLUS30968`), offsets from each object's start:
+//! four, Giants 01.00 (`BLUS30968`), offsets from each object's start:
 //! - [`ACTORS`]: the game's actor list, AF.9's layout ([`crate::actors`]): the
 //!   static at [`actors::APP`] to the application, its insight core (+0x2C),
 //!   the updater list (+0x1C, its array at +0x14), the `tfbActorUpdateGame`
@@ -36,6 +36,18 @@
 //!   art and kept by `Loot - Init Loot` in `Macros_UI`'s `LootInPlay` set
 //!   (the placed treasure among them), each a structure whose `lootActor`
 //!   is the coin's placement and `monetaryValue` its worth.
+//! - [`ANIMS`] (AH.9): the hero's clips. O5's list holds the `animControl`s
+//!   his `_nowPlaying` vector held at the resolve, and an attack plays a
+//!   control made for it (a throw dropped every clip from 20 of AH.7's
+//!   records), so the vector itself is a chain: his corpus's
+//!   `_animationBlock` (+0x7C, an `animationComponent`), its count at +0x08
+//!   and its slots behind +0x10, each control kept by its vtable, with the
+//!   control from `_animationSequence` to its end (+0x08 to +0x2C: the id at
+//!   +0x0C, `_timeRemaining` +0x14, `_period` +0x18), its sequence's
+//!   `_playbackPercent` to `_blendFactor` (+0x20 to +0x3C) and the name
+//!   pointer of its `tfbPhysicsAnimation` (sequence +0x3C, then +0x08), each
+//!   name read at the end pause. A record's clips are then the vector's,
+//!   whatever made them ([`GiantsChains::clips`]).
 //!
 //! The breakables in reach and their debris, the Chompies, Norticus, the hero
 //! and Eruptor's projectiles ride [`ACTORS`] by name ([`fight_kinds`]): a
@@ -54,7 +66,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use guac_oracle::fight::oracle::{ChainItem, ChainRecord, Names};
 use guac_oracle::fight::ticks::HERO;
-use guac_oracle::recording::Body;
+use guac_oracle::recording::{Body, Clip};
 use serde::{Deserialize, Serialize};
 
 use crate::actors::{self, Gather, be32, c_string, f32_at, floats, one, vtable};
@@ -72,17 +84,21 @@ pub type Blocks = BTreeMap<u8, ChainBlock>;
 pub const ACTORS: u8 = 0;
 pub const ORBS: u8 = 1;
 pub const LOOT: u8 = 2;
+pub const ANIMS: u8 = 3;
 
 /// Items each chain keeps a record. AF.9's list held 162-182 actors in the
 /// clearing (AH.5's walks 166-199); the fight keeps the hero, 4 Chompies,
-/// Norticus' 2 placements, the 13 breakables in reach, Eruptor's projectiles
-/// (a lob every 0.25 s living 2 s is 8 at once) and a break's debris, under
-/// 48. A Chompy's 4 experience splits
+/// Norticus' 2 placements, the 16 breakables in reach, the 9 debris
+/// templates, Eruptor's projectiles (a lob every 0.25 s living 2 s is 8 at
+/// once) and the debris a break spawns, 3 a breakable living 1.5 s, so an
+/// eruption breaking five leaves 15: 64. A Chompy's 4 experience splits
 /// into 4 or 5 orbs (AH.4's 1.1), 16-20 for the fight against 64; the
-/// clearing's loot is 3 placed treasures and a coin or two a break.
-pub const ACTOR_ITEMS: u32 = 48;
+/// clearing's loot is 3 placed treasures and a coin or two a break. The
+/// hero's blend held 5 clips at AF.8's fresh state in 8 slots.
+pub const ACTOR_ITEMS: u32 = 64;
 pub const ORB_ITEMS: u32 = 64;
 pub const LOOT_ITEMS: u32 = 32;
+pub const ANIM_ITEMS: u32 = 16;
 
 /// Setup_001's four Chompies (AH.4).
 pub const CHOMPIES: [&str; 4] = [
@@ -97,9 +113,11 @@ pub const NORTICUS: [&str; 2] = [
     "Norticus_First_Encounter(1)",
 ];
 /// The breakables touching the clearing's reach (AG.7's "each solid's
-/// absence", `ag7/out/reach2-final.txt`) and the ledge route's three
-/// (`barrel_b_intact(1)` and `(4)`, `pottery_1(8)`; design decision 1).
-pub const BREAKABLES: [&str; 13] = [
+/// absence", `ag7/out/reach2-final.txt`), the ledge route's three
+/// (`barrel_b_intact(1)` and `(4)`, `pottery_1(8)`; design decision 1) and
+/// the three more the ledge route's two eruptions broke in AH.8's route
+/// (`barrel_b_intact(3)`, `gourd_01(12)` and `(13)`).
+pub const BREAKABLES: [&str; 16] = [
     "barrel_b_intact(1)",
     "barrel_b_intact(4)",
     "barrel_b_intact(9)",
@@ -113,19 +131,29 @@ pub const BREAKABLES: [&str; 13] = [
     "gourd_01(2)",
     "gourd_01(10)",
     "Breakable_Stone_Wall_Castle_206(1)",
+    "barrel_b_intact(3)",
+    "gourd_01(12)",
+    "gourd_01(13)",
 ];
 /// The templates in Eruptor's archive whose clones his attacks make (the
 /// actors among `009_eruptor.bld`'s placements: the lava ball, its upgrade,
-/// the fire blob and its splash, the eruption and its volcano). AH.9 says
-/// which ones a throw and an eruption spawn.
-pub const ERUPTOR_SPAWNS: [&str; 6] = [
-    "009_LavaProjectile",
-    "009_LavaProjectileUpgrade",
-    "009_FireBlob",
-    "009_FireBlobSplash",
-    "009_LavaAttack",
-    "009_MiniVolcano",
+/// the fire blob and its splash, the eruption and its volcano), each with
+/// the kind its clones go by, so a trace tells a ball from the splash
+/// under his hand (AH.9).
+pub const ERUPTOR_SPAWNS: [(&str, &str); 6] = [
+    ("lava_ball", "009_LavaProjectile"),
+    ("lava_ball_upgrade", "009_LavaProjectileUpgrade"),
+    ("fire_blob", "009_FireBlob"),
+    ("fire_blob_splash", "009_FireBlobSplash"),
+    ("eruption", "009_LavaAttack"),
+    ("mini_volcano", "009_MiniVolcano"),
 ];
+
+/// The currency art `Loot - Get Loot` clones a dropped coin from (level
+/// 213's placements of that model set: worth 1, 1 and 2 common, 3 and 7
+/// uncommon in AH.9's drops), so a coin's actor rides [`ACTORS`] from its
+/// spawn through its slide to the hero, after its loot entry has gone.
+pub const COIN_ART: [&str; 5] = ["1_Coin", "2_Coin(1)", "3_Coin(2)", "4_Coin(3)", "5_Coin(1)"];
 
 /// The debris templates in level 213 for the breakables in reach (its
 /// placements named so beside `barrel_b_intact`, `pottery_*` and `gourd_*`).
@@ -150,9 +178,16 @@ pub fn fight_kinds() -> Vec<(String, Vec<String>)> {
         ("chompy".into(), owned(&CHOMPIES)),
         ("norticus".into(), owned(&NORTICUS)),
         ("breakable".into(), owned(&BREAKABLES)),
-        ("projectile".into(), owned(&ERUPTOR_SPAWNS)),
         ("debris".into(), owned(&DEBRIS)),
+        ("coin_art".into(), owned(&COIN_ART)),
     ]
+    .into_iter()
+    .chain(
+        ERUPTOR_SPAWNS
+            .iter()
+            .map(|(kind, name)| ((*kind).to_owned(), vec![(*name).to_owned()])),
+    )
+    .collect()
 }
 
 // Offsets, from the registry (AC.4) and AF.9's and AH.4's layouts.
@@ -176,6 +211,22 @@ const CELL_NUMBER: u16 = 0x1C;
 const INSIGHT: u16 = 0x2C;
 const UPDATERS: u16 = 0x1C;
 const ACTOR_UPDATE_LIST: u16 = 0x08;
+/// The corpus's `_animationBlock`, its `_nowPlaying` count and slots, a
+/// control's watched span and its sequence, the sequence's watched span and
+/// its `tfbPhysicsAnimation` (as [`crate::watch`] reads them).
+const CORPUS_ANIMATION: u16 = 0x7C;
+const COMPONENT_PLAYING: u16 = 0x08;
+const COMPONENT_SLOTS: u16 = 0x10;
+const CONTROL_SEQUENCE: u16 = 0x08;
+const CONTROL_FIRST: u16 = 0x08;
+const CONTROL_LEN: u16 = 0x2C - CONTROL_FIRST;
+const SEQUENCE_FIRST: u16 = 0x20;
+const SEQUENCE_LEN: u16 = 0x3C - SEQUENCE_FIRST;
+const SEQUENCE_ANIMATION: u16 = 0x3C;
+const ANIMATION_NAME: u16 = actors::NAME as u16;
+/// A clip's name is its `.ma` path (57 bytes for Eruptor's idle); longer is
+/// cut.
+const CLIP_NAME_LEN: usize = 128;
 
 /// [`ACTORS`]' ranges, in order.
 pub mod actor_range {
@@ -207,6 +258,14 @@ pub mod loot_range {
     pub const ACTOR: usize = 3;
     pub const PARENT: usize = 4;
     pub const NAME: usize = 5;
+}
+
+/// [`ANIMS`]' ranges: the control from +0x08, its sequence from +0x20, its
+/// animation's name pointer.
+pub mod anim_range {
+    pub const CONTROL: usize = 0;
+    pub const SEQUENCE: usize = 1;
+    pub const NAME: usize = 2;
 }
 
 /// The element of the list here named `name`: an `igDataList` of named
@@ -383,6 +442,56 @@ fn loot_chain(macros_ui: u32) -> ChainSpec {
     }
 }
 
+/// The hero's `_nowPlaying` controls, from his corpus.
+fn anim_chain(hero_corpus: u32) -> ChainSpec {
+    let sequence = || Hop::checked(CONTROL_SEQUENCE, vtable::ANIMATION_INFO);
+    ChainSpec {
+        items: ANIM_ITEMS,
+        base: hero_corpus,
+        path: vec![Hop::checked(CORPUS_ANIMATION, vtable::ANIMATION_COMPONENT)],
+        count: COMPONENT_PLAYING,
+        array: COMPONENT_SLOTS,
+        key: Key {
+            hops: Vec::new(),
+            off: 0,
+            hashed: false,
+        },
+        values: vec![vtable::ANIM_CONTROL],
+        ranges: vec![
+            Probe::new(vec![], CONTROL_FIRST, CONTROL_LEN),
+            Probe::new(vec![sequence()], SEQUENCE_FIRST, SEQUENCE_LEN),
+            Probe::new(
+                vec![
+                    sequence(),
+                    Hop::checked(SEQUENCE_ANIMATION, vtable::PHYSICS_ANIMATION),
+                ],
+                ANIMATION_NAME,
+                4,
+            ),
+        ],
+    }
+}
+
+/// A kept control's clip and its animation's name pointer, when its
+/// control and sequence read.
+fn anim_clip(e: &ChainEntry) -> Option<(Clip, Option<u32>)> {
+    let c = e.range(anim_range::CONTROL)?;
+    let s = e.range(anim_range::SEQUENCE)?;
+    let at = |off: u16| usize::from(off - CONTROL_FIRST);
+    let clip = Clip {
+        id: be32(c, at(0x0C)),
+        weight: f32_at(s, usize::from(0x38 - SEQUENCE_FIRST)),
+        rate: f32_at(s, 0),
+        period: f32_at(c, at(0x18)),
+        remaining: f32_at(c, at(0x14)),
+    };
+    let name = e
+        .range(anim_range::NAME)
+        .map(|b| be32(b, 0))
+        .filter(|&p| p != 0);
+    Some((clip, name))
+}
+
 /// Giants' chains as resolved at a pause, with what each [`ACTORS`] value
 /// stands for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -459,6 +568,7 @@ impl GiantsChains {
         slots.insert(ACTORS, actor_chain(updater_index as u32, values)?);
         slots.insert(ORBS, orb_chain(combat_control));
         slots.insert(LOOT, loot_chain(macros_ui));
+        slots.insert(ANIMS, anim_chain(watch.hero_corpus));
         for (slot, spec) in &slots {
             if let Err(r) = spec.check() {
                 bail!("chain {slot} breaks O6's limits (ERR {})", r.wire());
@@ -522,7 +632,25 @@ impl GiantsChains {
                 }
             }
         }
+        let mut clip_names = BTreeMap::new();
+        for record in blocks {
+            if let Some(b) = record.get(&ANIMS) {
+                for (clip, name) in b.items.iter().filter_map(anim_clip) {
+                    if let Some(at) = name {
+                        clip_names.insert(clip.id, at);
+                    }
+                }
+            }
+        }
         let mut out = Resolved::default();
+        // A name the end pause can't read keeps the clip named by its id, so
+        // a recording's every clip is named either way.
+        for (id, at) in clip_names {
+            let name = one(g, at, CLIP_NAME_LEN, "a clip's name")
+                .map(|b| c_string(&b))
+                .unwrap_or_else(|_| format!("clip {id:#010x}"));
+            out.clip_names.insert(id, name);
+        }
         for ty in types {
             let kind = if ty == 0 {
                 Some(false)
@@ -553,7 +681,10 @@ impl GiantsChains {
     /// The behaviour names `fight_trace` takes, by kind, from what the blocks
     /// held.
     pub fn names(&self, blocks: &[BTreeMap<u8, ChainBlock>], resolved: &Resolved) -> Names {
-        let mut out = Names::default();
+        let mut out = Names {
+            clips: resolved.clip_names.clone(),
+            ..Names::default()
+        };
         for record in blocks {
             let Some(b) = record.get(&ACTORS) else {
                 continue;
@@ -596,6 +727,12 @@ impl GiantsChains {
                 .with_context(|| format!("the game frame at flip {}", o5.flip))?;
             let mut items = Vec::new();
             for (&slot, block) in &blocks {
+                // The clips ride beside the actors, not among them
+                // ([`GiantsChains::clips`]); a vector that didn't read loses
+                // that record's clips alone.
+                if slot == ANIMS {
+                    continue;
+                }
                 if block.status != 0 {
                     bail!(
                         "chain {slot}'s list broke at link {} in the record of flip {} read {}",
@@ -649,6 +786,20 @@ impl GiantsChains {
             all.push(blocks);
         }
         Ok((out, all))
+    }
+
+    /// A record's clips as [`ANIMS`] read them, in the vector's order, the
+    /// shape O5's list gives a frame ([`guac_oracle::recording::Frame::clips`]);
+    /// `None` when the vector didn't read or a kept control's span didn't.
+    pub fn clips(blocks: &Blocks) -> Option<Vec<Clip>> {
+        let b = blocks.get(&ANIMS)?;
+        if b.status != 0 {
+            return None;
+        }
+        b.items
+            .iter()
+            .map(|e| anim_clip(e).map(|(c, _)| c))
+            .collect()
     }
 
     fn actor(
@@ -760,7 +911,7 @@ impl GiantsChains {
         g: &mut impl Gather,
         identity: &str,
         dir: &std::path::Path,
-    ) -> Result<(Vec<WatchRecord>, ChainRun, Vec<ChainRecord>)> {
+    ) -> Result<Written> {
         let lb = watch.list.bytes();
         let stride = self.chains.bytes();
         let mut o5 = Vec::with_capacity(records.len());
@@ -836,8 +987,51 @@ impl GiantsChains {
         std::fs::write(dir.join(CHAIN_FILE), serde_json::to_string_pretty(&file)?)?;
         std::fs::write(dir.join(CHAIN_BLOCKS), &raw)?;
         std::fs::write(dir.join(CHAIN_RECORDS), serde_json::to_string(&decoded)?)?;
-        Ok((o5, run, decoded))
+        let clips = blocks.iter().map(Self::clips).collect();
+        Ok(Written {
+            o5,
+            run,
+            decoded,
+            clips,
+        })
     }
+}
+
+/// What [`GiantsChains::write_outputs`] split off and decoded.
+pub struct Written {
+    /// Each record as O5's list alone, for `watch.json` and the recording.
+    pub o5: Vec<WatchRecord>,
+    pub run: ChainRun,
+    pub decoded: Vec<ChainRecord>,
+    /// Each record's clips as [`ANIMS`] read them ([`GiantsChains::clips`]).
+    pub clips: Vec<Option<Vec<Clip>>>,
+}
+
+/// `recording` with each frame whose clips O5's list dropped (an attack's
+/// control made after the resolve, AH.9) given the clips [`ANIMS`] read in
+/// the same record; frames O5 read keep theirs. Returns how many it filled.
+pub fn fill_clips(
+    recording: guac_oracle::recording::Recording,
+    clips: &[Option<Vec<Clip>>],
+) -> Result<(guac_oracle::recording::Recording, usize)> {
+    let mut frames = recording.frames().to_vec();
+    if frames.len() != clips.len() {
+        bail!(
+            "{} frames against {} records of clips",
+            frames.len(),
+            clips.len()
+        );
+    }
+    let mut filled = 0;
+    for (frame, c) in frames.iter_mut().zip(clips) {
+        if let (true, Some(c)) = (frame.clips.is_empty(), c)
+            && !c.is_empty()
+        {
+            frame.clips = c.clone();
+            filled += 1;
+        }
+    }
+    Ok((guac_oracle::recording::Recording::new(frames)?, filled))
 }
 
 /// What the end pause named for a recording's blocks.
@@ -850,6 +1044,9 @@ pub struct Resolved {
     pub behaviours: BTreeMap<u32, String>,
     /// A loot actor's name, by its name pointer.
     pub loot_names: BTreeMap<u32, String>,
+    /// A clip's name (its `.ma` path), by its id, from [`ANIMS`].
+    #[serde(default)]
+    pub clip_names: BTreeMap<u32, String>,
 }
 
 impl Resolved {
@@ -1161,6 +1358,57 @@ mod tests {
         watch: GiantsWatch,
         types: fx::Types,
         walk: u32,
+        /// The hero's `_nowPlaying` slots and the controls in them.
+        slots: u32,
+        controls: Vec<u32>,
+    }
+
+    /// Eruptor's idle and walk as AF.8's fresh state plays them, then the
+    /// throw an attack adds: (name, id, weight, rate, period, remaining).
+    const CLIPS: [(&str, u32, f32, f32, f32, f32); 3] = [
+        (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Idle.ma",
+            0x3090_C890,
+            100.0,
+            100.0,
+            1.333_333_4,
+            0.788_604,
+        ),
+        (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Walk.ma",
+            0x3090_B960,
+            0.0,
+            5.817_651,
+            1.066_666_7,
+            0.288_884,
+        ),
+        (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Attack1.ma",
+            0x3090_D000,
+            100.0,
+            150.0,
+            0.5,
+            0.42,
+        ),
+    ];
+
+    /// A control playing `clip`, its sequence and animation behind it.
+    fn anim_control(w: &mut World, clip: (&str, u32, f32, f32, f32, f32)) -> u32 {
+        let (name, id, weight, rate, period, remaining) = clip;
+        let animation = w.object(vtable::PHYSICS_ANIMATION, 0x2C);
+        let at = w.string(name);
+        w.put32(animation + 0x08, at);
+        w.put32(animation + 0x28, id);
+        let sequence = w.object(vtable::ANIMATION_INFO, 0x44);
+        w.put32(sequence + 0x3C, animation);
+        w.putf(sequence + 0x20, rate);
+        w.putf(sequence + 0x38, weight);
+        let control = w.object(vtable::ANIM_CONTROL, 0x2C);
+        w.put32(control + 0x08, sequence);
+        w.put32(control + 0x0C, id);
+        w.putf(control + 0x14, remaining);
+        w.putf(control + 0x18, period);
+        control
     }
 
     /// A creature's description: `description` a reference to a structure
@@ -1293,6 +1541,22 @@ mod tests {
             ..watch_stub()
         };
         let walk = w.get32(chompy + 0x50);
+        // The hero's blend: the idle and the walk in 8 slots, and a word in
+        // the third that isn't a control (the filter passes it over).
+        let block = w.object(vtable::ANIMATION_COMPONENT, 0x28);
+        w.put32(hero + 0x7C, block);
+        let slots = w.alloc(32);
+        w.put32(block + 0x08, 3);
+        w.put32(block + 0x0C, 0x1000_0020);
+        w.put32(block + 0x10, slots);
+        let controls: Vec<u32> = CLIPS[..2]
+            .iter()
+            .map(|&c| anim_control(&mut w, c))
+            .collect();
+        let stranger = w.object(vtable::ANIMATION_INFO, 0x44);
+        for (i, &c) in controls.iter().chain([&stranger]).enumerate() {
+            w.put32(slots + 4 * i as u32, c);
+        }
         Fixture {
             w,
             hero,
@@ -1301,6 +1565,8 @@ mod tests {
             watch,
             types: t,
             walk,
+            slots,
+            controls,
         }
     }
 
@@ -1349,18 +1615,35 @@ mod tests {
         assert_eq!(g.updater_index, 1);
         assert_eq!(g.actors[0], (HERO.to_owned(), "009_Eruptor".to_owned()));
         assert_eq!(g.kind(1), Some("chompy"));
-        assert_eq!(g.actors.len(), 1 + 4 + 2 + 13 + 6 + 9 + 1);
+        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 6 + 1);
         assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
         let actors = evaluate(&g.chains.slots[&ACTORS], &mut f.w).unwrap();
-        // The hero, the Chompy, the barrel and the leaf; the rock and the two
-        // loot actors aren't asked for.
-        assert_eq!((actors.status, actors.unread, actors.matched), (0, 0, 4));
+        // The hero, the Chompy, the barrel, the leaf and the dropped coin's
+        // clone of its currency art (AH.9); the rock and the placed treasure
+        // aren't asked for.
+        assert_eq!((actors.status, actors.unread, actors.matched), (0, 0, 5));
         let kept: Vec<&str> = actors
             .items
             .iter()
             .map(|i| g.kind(i.value).unwrap())
             .collect();
-        assert_eq!(kept, [HERO, "chompy", "breakable", "leaf"]);
+        assert_eq!(kept, [HERO, "chompy", "breakable", "leaf", "coin_art"]);
+        // Each of Eruptor's spawns its own kind.
+        assert_eq!(
+            g.actors
+                .iter()
+                .filter(|(k, n)| n.starts_with("009_") && k != HERO)
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "lava_ball",
+                "lava_ball_upgrade",
+                "fire_blob",
+                "fire_blob_splash",
+                "eruption",
+                "mini_volcano"
+            ]
+        );
         let hero = &actors.items[0];
         assert_eq!(hero.address, f.hero);
         assert_eq!(hero.missing, 0, "every range of the hero reads");
@@ -1392,7 +1675,42 @@ mod tests {
             loot.items.iter().map(|i| i.missing).collect::<Vec<_>>(),
             [0, 0, 1 << loot_range::VELOCITY]
         );
-        let _ = (f.leaf, f.types.int, f.walk);
+        // The hero's clips: his two controls kept in slot order, each range
+        // read; the slot holding something else listed and passed over.
+        let anims = evaluate(&g.chains.slots[&ANIMS], &mut f.w).unwrap();
+        assert_eq!(
+            (anims.status, anims.listed, anims.unread, anims.matched),
+            (0, 3, 0, 2)
+        );
+        assert_eq!(
+            anims
+                .items
+                .iter()
+                .map(|i| (i.address, i.index, i.missing))
+                .collect::<Vec<_>>(),
+            [(f.controls[0], 0, 0), (f.controls[1], 1, 0)]
+        );
+        let clips: Vec<Clip> = anims
+            .items
+            .iter()
+            .map(|e| anim_clip(e).unwrap().0)
+            .collect();
+        assert_eq!(
+            clips[0],
+            Clip {
+                id: 0x3090_C890,
+                weight: 100.0,
+                rate: 100.0,
+                period: 1.333_333_4,
+                remaining: 0.788_604,
+            }
+        );
+        assert_eq!((clips[1].id, clips[1].rate), (0x3090_B960, 5.817_651));
+        // A hero with no animation block: the list's link breaks, no items.
+        f.w.put32(f.hero + 0x7C, 0);
+        let none = evaluate(&g.chains.slots[&ANIMS], &mut f.w).unwrap();
+        assert_eq!((none.status, none.items.len()), (1, 0));
+        let _ = (f.leaf, f.types.int, f.walk, f.slots);
     }
 
     #[test]
@@ -1428,6 +1746,9 @@ mod tests {
         f.w.putf(other + 0xB4, 0.9);
         f.w.put32(f.leaf + 0x50, other);
         f.w.put32(f.w.app + 0x5C, 5962);
+        // And an attack: its throw's control made now, in the third slot.
+        let throw = anim_control(&mut f.w, CLIPS[2]);
+        f.w.put32(f.slots + 8, throw);
         let third = record(&mut f);
         let records: Vec<WatchRecord> = [first, second, third]
             .into_iter()
@@ -1531,6 +1852,93 @@ mod tests {
             names.behaviours["chompy"].values().next().unwrap(),
             "Battle"
         );
+        // The clips ride beside the actors: the idle and the walk in the
+        // first two records, the throw joining in the third, every id named
+        // from its animation, the names fight_trace takes the same.
+        let clips: Vec<Vec<Clip>> = blocks
+            .iter()
+            .map(|b| GiantsChains::clips(b).unwrap())
+            .collect();
+        let ids = |c: &[Clip]| c.iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(ids(&clips[0]), [0x3090_C890, 0x3090_B960]);
+        assert_eq!(ids(&clips[1]), ids(&clips[0]));
+        assert_eq!(ids(&clips[2]), [0x3090_C890, 0x3090_B960, 0x3090_D000]);
+        assert_eq!((clips[2][2].rate, clips[2][2].remaining), (150.0, 0.42));
+        assert_eq!(
+            resolved.clip_names.values().cloned().collect::<Vec<_>>(),
+            [CLIPS[1].0, CLIPS[0].0, CLIPS[2].0]
+        );
+        assert_eq!(names.clips, resolved.clip_names);
+        assert!(
+            chain
+                .iter()
+                .all(|r| r.items.iter().all(|i| i.kind != "clip"))
+        );
+        // A vector that didn't read: that record's clips alone are lost.
+        let mut broken = blocks[0].clone();
+        broken.get_mut(&ANIMS).unwrap().status = 1;
+        assert_eq!(GiantsChains::clips(&broken), None);
+    }
+
+    #[test]
+    fn the_chains_clips_fill_the_frames_o5_dropped_them_from() {
+        use guac_oracle::recording::{Clock, Frame, Recording};
+        let clip = |id: u32, remaining: f32| Clip {
+            id,
+            weight: 100.0,
+            rate: 150.0,
+            period: 0.5,
+            remaining,
+        };
+        let frame = |k: u32, clips: Vec<Clip>| Frame {
+            flip: 30 + u64::from(k),
+            read: 0,
+            host_us: 16_667 * u64::from(k),
+            game_frame: 6_662 + k,
+            clock: Clock {
+                frame_delta: 1.0 / 60.0,
+                presentation_rate: 1.0 / 60.0,
+                logic_scale: 1.0,
+                logic_stopped: false,
+                object_scale: 1.0,
+            },
+            hero: Body {
+                position: [31.1, 51.5, -73.0],
+                rotation: [0.0, 253.7, 0.0],
+                velocity: [0.0; 3],
+            },
+            camera: None,
+            stick: [0.0, 0.0],
+            pad: None,
+            clips,
+            contacts: None,
+            mover: None,
+        };
+        let idle = clip(0x3090_C890, 0.8);
+        let rec = Recording::new(vec![
+            frame(0, vec![idle]),
+            frame(1, Vec::new()),
+            frame(2, Vec::new()),
+            frame(3, vec![idle]),
+        ])
+        .unwrap();
+        let chain = vec![
+            Some(vec![clip(0x3090_C890, 0.1)]),
+            Some(vec![idle, clip(0x3090_D000, 0.42)]),
+            None,
+            Some(Vec::new()),
+        ];
+        let (filled, n) = fill_clips(rec.clone(), &chain).unwrap();
+        assert_eq!(n, 1);
+        let f = filled.frames();
+        // O5's own clips stay; a dropped frame takes the chain's, or stays
+        // empty where the chain didn't read.
+        assert_eq!(f[0].clips, [idle]);
+        assert_eq!(f[1].clips, chain[1].clone().unwrap());
+        assert!(f[2].clips.is_empty());
+        assert_eq!(f[3].clips, [idle]);
+        // The counts have to line up.
+        assert!(fill_clips(rec, &chain[..3]).is_err());
     }
 
     #[test]

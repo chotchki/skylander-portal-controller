@@ -467,8 +467,12 @@ pub struct WatchRun {
     /// The counter when it was armed.
     pub armed: u64,
     pub check: crate::watch::RingCheck,
-    /// Records whose clips were dropped (the vector's slots changed).
+    /// Records whose clips O5's list dropped (the vector's slots changed).
     pub frames_without_clips: usize,
+    /// Of those, the ones given the clips O6's [`crate::chains::ANIMS`] read
+    /// in the same record (AH.9).
+    #[serde(default)]
+    pub clips_from_chain: usize,
     /// The ring read back and the readback joined, milliseconds.
     pub read_ms: f64,
     /// Set O's chains (AH.5): none for set W, or a record before them.

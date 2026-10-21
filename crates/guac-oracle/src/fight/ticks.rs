@@ -57,6 +57,11 @@ pub struct Actor {
     /// The clip at the top of its blend.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clip: Option<String>,
+    /// Every clip its blend plays with a weight above 0, the top one among
+    /// them: an attack layered over the idle at the same weight plays though
+    /// it isn't on top (AH.9: Eruptor's throw).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub playing: BTreeSet<String>,
     /// Script variables by name (health, an orb's worth, the figure's
     /// experience and gold on the hero), those read at this tick.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -94,12 +99,21 @@ pub struct Tick {
 }
 
 /// How a spawned actor of `kind` finds its parent: the nearest actor of one
-/// of `parents`' kinds a tick before it appeared, within `radius` metres.
+/// of `parents`' kinds listed in the `within` ticks before it appeared
+/// (where it was last then), within `radius` metres. `within` is 1 unless a
+/// rule says more: a coin's loot entry lists 2 game frames after its
+/// breakable's last (AH.9).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpawnRule {
     pub kind: String,
     pub parents: Vec<String>,
     pub radius: f64,
+    #[serde(default = "one_tick")]
+    pub within: u32,
+}
+
+fn one_tick() -> u32 {
+    1
 }
 
 /// A condition on an actor's cells, entered at the tick it starts to hold.
@@ -107,6 +121,8 @@ pub struct SpawnRule {
 pub enum Cue {
     Behaviour(String),
     Clip(String),
+    /// Any of these clips in its blend ([`Actor::playing`]).
+    Playing(Vec<String>),
     /// A script variable at or under a value (health 0, say).
     AtMost {
         var: String,
@@ -121,6 +137,7 @@ impl Cue {
         match self {
             Cue::Behaviour(b) => actor.behaviour.as_deref() == Some(b.as_str()),
             Cue::Clip(c) => actor.clip.as_deref() == Some(c.as_str()),
+            Cue::Playing(clips) => clips.iter().any(|c| actor.playing.contains(c)),
             Cue::AtMost { var, value } => actor.vars.get(var).is_some_and(|v| v <= value),
             Cue::Gone => false,
         }
@@ -420,14 +437,19 @@ fn name_tracks(ticks: &[Tick], tracks: &mut [TrackInfo], spawns: &[SpawnRule]) {
             } else {
                 let rule = spawns.iter().find(|r| r.kind == a.kind);
                 let parent = rule.filter(|_| t > 0).and_then(|rule| {
+                    let since = t.saturating_sub(rule.within.max(1) as usize);
                     tracks
                         .iter()
                         .filter(|c| {
                             c.first < t
-                                && c.first + c.slots.len() > t - 1
+                                && c.first + c.slots.len() > since
                                 && rule.parents.contains(&c.kind)
                         })
-                        .map(|c| (distance(actor(c, t - 1).position, a.position), &c.name))
+                        .map(|c| {
+                            // Where it was at the tick before, or last before that.
+                            let last = (c.first + c.slots.len() - 1).min(t - 1);
+                            (distance(actor(c, last).position, a.position), &c.name)
+                        })
                         .filter(|(d, _)| *d <= rule.radius)
                         .min_by(|x, y| x.0.total_cmp(&y.0).then_with(|| x.1.cmp(y.1)))
                         .map(|(_, name)| name.clone())
@@ -466,6 +488,7 @@ pub(crate) mod tests {
             velocity: [0.0; 3],
             behaviour: None,
             clip: None,
+            playing: BTreeSet::new(),
             vars: BTreeMap::new(),
         }
     }
@@ -490,6 +513,7 @@ pub(crate) mod tests {
             kind: "orb".into(),
             parents: vec!["chompy".into()],
             radius: 2.0,
+            within: 1,
         }]
     }
 
@@ -545,6 +569,74 @@ pub(crate) mod tests {
         assert!(trace.track("orb#1").is_some());
         let trace = FightTrace::new(run([1, 2, 3]), &[]).unwrap();
         assert!(trace.track("orb#3").is_some());
+    }
+
+    #[test]
+    fn a_coin_two_ticks_after_its_barrel_finds_it_inside_the_rules_window() {
+        // AH.9: the barrel last listed at tick 1, its debris at 2, its coin's
+        // loot entry at 3, under where it stood.
+        let barrel = || actor(5, "breakable", Some("barrel_b_intact(1)"), 25.7);
+        let run = || {
+            ticks(vec![
+                vec![barrel()],
+                vec![barrel()],
+                vec![actor(6, "debris", None, 25.9)],
+                vec![actor(6, "debris", None, 26.4), actor(7, "coin", None, 25.6)],
+            ])
+        };
+        let rule = |kind: &str, within| SpawnRule {
+            kind: kind.into(),
+            parents: vec!["breakable".into()],
+            radius: 2.0,
+            within,
+        };
+        let names = |rules: &[SpawnRule]| {
+            let trace = FightTrace::new(run(), rules).unwrap();
+            trace
+                .tracks()
+                .map(|t| t.name().to_owned())
+                .collect::<Vec<_>>()
+        };
+        // A tick before: the debris finds it, the coin doesn't.
+        assert_eq!(
+            names(&[rule("debris", 1), rule("coin", 1)]),
+            [
+                "barrel_b_intact(1)",
+                "barrel_b_intact(1)>debris#1",
+                "coin#1"
+            ]
+        );
+        // Two ticks: the coin's parent where the barrel was last.
+        assert_eq!(
+            names(&[rule("debris", 1), rule("coin", 2)]),
+            [
+                "barrel_b_intact(1)",
+                "barrel_b_intact(1)>coin#1",
+                "barrel_b_intact(1)>debris#1"
+            ]
+        );
+        // A rule from before the window parses as one tick.
+        let parsed: SpawnRule =
+            serde_json::from_str(r#"{"kind":"coin","parents":["breakable"],"radius":2.0}"#)
+                .unwrap();
+        assert_eq!(parsed.within, 1);
+    }
+
+    #[test]
+    fn a_clip_layered_under_another_plays_without_topping_it() {
+        let mut a = actor(0, HERO, Some(HERO), 0.0);
+        a.clip = Some("Eruptor_Idle.ma".into());
+        a.playing = ["Eruptor_Idle.ma", "Eruptor_RunAttackLeft.ma"]
+            .map(String::from)
+            .into();
+        let throw = Cue::Playing(vec![
+            "Eruptor_RunAttackLeft.ma".into(),
+            "Eruptor_RunAttackRight.ma".into(),
+        ]);
+        assert!(throw.holds(&a));
+        assert!(!Cue::Clip("Eruptor_RunAttackLeft.ma".into()).holds(&a));
+        a.playing.remove("Eruptor_RunAttackLeft.ma");
+        assert!(!throw.holds(&a));
     }
 
     #[test]

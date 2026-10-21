@@ -19,7 +19,9 @@
 //! ([`fight`], AH.4), O6's chains over the actors, orbs and loot a fight
 //! spawns ([`chains`], AH.5), and the route driver that walks the oracle to a
 //! point and leaves it still there, closed loop, for a state to be saved
-//! ([`route`], AH.7).
+//! ([`route`], AH.7), and the fight's metrics over a group of the oracle's
+//! replays with the event floors AF.12's method gives them ([`fightlog`],
+//! AH.9).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -37,6 +39,7 @@ pub mod control;
 pub mod divergence;
 pub mod env;
 pub mod fight;
+pub mod fightlog;
 pub mod hero;
 pub mod home;
 pub mod identity;

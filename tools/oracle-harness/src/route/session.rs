@@ -91,6 +91,10 @@ pub struct ReadTaken {
     /// A census was taken too (`census-<label>.json`), in this many ms.
     #[serde(default)]
     pub census_ms: Option<f64>,
+    /// Each simulated actor's solid read too (`solids-<label>.json`, AG.7's
+    /// reader: whether a break leaves anything solid, AH.9), or why not.
+    #[serde(default)]
+    pub solids: Option<Result<usize, String>>,
 }
 
 /// One drive's record (`record.json`).
@@ -217,6 +221,16 @@ impl Session for Live<'_> {
             }
             None => false,
         };
+        let solids = match crate::level::read_solids(&mut self.pine, frame) {
+            Ok(s) => {
+                let path = rrc_dump::output::refuse_repo_output(
+                    &self.dir.join(format!("solids-{label}.json")),
+                )?;
+                fs::write(&path, serde_json::to_string_pretty(&s)?)?;
+                Ok(s.len())
+            }
+            Err(e) => Err(format!("{e:#}")),
+        };
         self.reads.push(ReadTaken {
             label: label.to_owned(),
             flip,
@@ -226,6 +240,7 @@ impl Session for Live<'_> {
             drawn: origin.map(|o| o.draws),
             fight,
             census_ms,
+            solids: Some(solids),
         });
         Ok(())
     }
@@ -469,6 +484,14 @@ pub struct FrameLine {
     pub experience: u32,
     pub gold: u32,
     pub loot: crate::script::Number,
+    /// The hero's invulnerable flag and the uncommon and rare loot counts,
+    /// when the watch holds them (AH.9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invulnerable: Option<crate::script::Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot_uncommon: Option<crate::script::Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot_rare: Option<crate::script::Number>,
     pub wakes: Vec<Wake>,
 }
 
@@ -530,6 +553,9 @@ fn route_frames(
             experience: f.experience,
             gold: f.gold,
             loot: f.loot,
+            invulnerable: Some(f.invulnerable),
+            loot_uncommon: f.loot_uncommon,
+            loot_rare: f.loot_rare,
             wakes: f
                 .triggers
                 .iter()
@@ -682,6 +708,7 @@ mod tests {
             drawn: Some(133_619),
             fight: true,
             census_ms: Some(40.0),
+            solids: Some(Ok(64)),
         }
     }
 
