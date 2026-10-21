@@ -49,9 +49,14 @@ use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
 use guac_script::{
     Access, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode, Obj, OpCall,
-    Program, Value, Vm, Whitelist,
+    PlacementId, Program, Value, Vm, Whitelist,
 };
 use tracing::{info, warn};
+
+use crate::script_engine::{
+    Actor, Angles, Engine, NoEngine, Object, Objects, Pad, Physics, Sequence, Solid,
+};
+use crate::script_members::Member;
 
 /// `system.hardware platform`'s PS 3.
 pub const PS3: i32 = 1;
@@ -67,7 +72,9 @@ const RUNNING: u32 = 4;
 /// `AbstractPlacement._ID`'s offset.
 const ID: u32 = 0x20;
 
-/// An actor placement of a file the scripts load with.
+/// An actor placement of a file the scripts load with, and what the engine
+/// makes an actor of it from (AH.17): where it stands, its turn, its scale,
+/// its movement numbers and its solid as its file holds them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Placed {
     pub obj: Obj,
@@ -81,6 +88,40 @@ pub struct Placed {
     pub buffer: f32,
     /// Its `ActorWaypointList`'s objects, in path order.
     pub waypoints: Vec<Obj>,
+    /// `_initMatrix`: metres and `[tilt, heading, roll]` degrees.
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    /// Percent per axis.
+    pub scale: [f32; 3],
+    /// RGBA as stored.
+    pub tint: u32,
+    /// `_activationRange`, feet.
+    pub range: f32,
+    pub physics: Option<Physics>,
+    pub solid: Option<Solid>,
+}
+
+impl Placed {
+    /// A placement with nothing but its object, name and script: the
+    /// tests' stand-in for one read off a file.
+    pub fn named(obj: Obj, name: &str, script: Option<&str>, activity_state: u32) -> Placed {
+        Placed {
+            obj,
+            name: name.to_owned(),
+            script: script.map(str::to_owned),
+            activity_state,
+            id: 0,
+            buffer: 0.0,
+            waypoints: Vec::new(),
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            tint: 0x8080_80FF,
+            range: 0.0,
+            physics: None,
+            solid: None,
+        }
+    }
 }
 
 /// What the host reads off the files the scripts load with.
@@ -126,6 +167,40 @@ impl Files {
                         .collect(),
                     None => Vec::new(),
                 };
+                let physics = actor.parameters.map(|ap| {
+                    let m = ap.parameters;
+                    Physics {
+                        ground_max_speed: m.ground_max_speed,
+                        ground_acceleration: m.ground_acceleration,
+                        ground_deceleration: m.ground_deceleration,
+                        ground_turn_rate: m.ground_turn_rate,
+                        air_max_speed: m.air_max_speed,
+                        air_acceleration: m.air_acceleration,
+                        air_deceleration: m.air_deceleration,
+                        air_turn_rate: m.air_turn_rate,
+                        gravity_max_speed: m.gravity_max_speed,
+                        gravity_acceleration: m.gravity_acceleration,
+                        jump_max_speed: m.jump_max_speed,
+                        jump_acceleration: m.jump_acceleration,
+                        jump_initial_speed: m.jump_initial_speed,
+                        move_type: m.motion_type as i32,
+                        tilts_with_ground: i32::from(m.tilts_with_ground),
+                        // The file's 1 is full speed; the member's percent.
+                        time_scale: ap.object_time_scale * 100.0,
+                    }
+                });
+                let solid = actor.collision.map(|c| Solid {
+                    width: c.width,
+                    length: c.length,
+                    height: c.height,
+                    offset: c.transform.position,
+                    weight: c.weight,
+                    rebound: c.rebound,
+                    interacts_with_actors: ((c.properties >> 3) & 1) as i32,
+                    interacts_with_level_mesh: ((c.properties >> 4) & 1) as i32,
+                    acts_as_actor_surface: ((c.properties >> 5) & 1) as i32,
+                    shape: (c.properties & 7) as i32,
+                });
                 out.placed.push(Placed {
                     obj: Obj {
                         unit,
@@ -137,6 +212,13 @@ impl Files {
                     id: p.placement.id,
                     buffer: p.activation_range_buffer,
                     waypoints,
+                    position: p.placement.init_matrix.position,
+                    rotation: p.placement.init_matrix.rotation,
+                    scale: p.scale,
+                    tint: u32::from_be_bytes(p.tint),
+                    range: p.activation_range,
+                    physics,
+                    solid,
                 });
             }
         }
@@ -144,84 +226,79 @@ impl Files {
     }
 }
 
-/// The host's members, by what each answers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Member {
-    Platform,
-    Configuration,
-    GameLanguage,
-    ConsoleLanguage,
-    TimeScale,
-    LoadLevel,
-    Buffer,
-    Id,
-    Waypoints,
-    Controller(usize),
-    Physical(usize),
-    Portal,
-}
-
-impl Member {
-    fn table() -> HashMap<MemberId, Member> {
-        let mut t = HashMap::new();
-        let mut add = |ns: &str, name: &str, m: Member| {
-            t.insert(MemberId::named(ns, name), m);
-        };
-        add("system", "hardware platform", Member::Platform);
-        add("system", "game configuration", Member::Configuration);
-        add("system", "game language", Member::GameLanguage);
-        add("system", "console language", Member::ConsoleLanguage);
-        add("system", "game time scale", Member::TimeScale);
-        add("system", "load level", Member::LoadLevel);
-        add("placement", "deactivation buffer", Member::Buffer);
-        add("abstractplacement", "id", Member::Id);
-        add("spritematrixmeasurement", "id", Member::Id);
-        add("actorinfo", "waypoints", Member::Waypoints);
-        for n in 0..2 {
-            add(
-                "scriptcontroller",
-                &format!("controller {}", n + 1),
-                Member::Controller(n),
-            );
-        }
-        for n in 0..4 {
-            add(
-                "scriptcontroller",
-                &format!("physical controller {}", n + 1),
-                Member::Physical(n),
-            );
-        }
-        add("redoctaneperipheralsystemobject", "portal", Member::Portal);
-        t
+/// An actor made from a file's placement: where and how its file has it.
+fn actor_of(p: &Placed) -> Actor {
+    let mut a = Actor::blank();
+    a.obj = Some(p.obj);
+    a.id = p.id;
+    a.buffer_loaded = p.buffer;
+    a.buffer = p.buffer;
+    a.range = p.range;
+    a.waypoints = p.waypoints.iter().map(|w| Value::Object(*w)).collect();
+    a.position = Vec3::from_array(p.position);
+    a.origin = a.position;
+    a.angles = Angles {
+        tilt: p.rotation[0],
+        facing: p.rotation[1],
+        roll: p.rotation[2],
+    };
+    a.scale = p.scale;
+    a.tint = p.tint;
+    if let Some(ph) = p.physics {
+        a.physics = ph;
     }
-}
-
-/// A placement or clone, as the host keeps it.
-#[derive(Debug, Clone, PartialEq)]
-struct Kept {
-    /// Its object in a file; a clone has none.
-    obj: Option<Obj>,
-    id: i32,
-    /// The deactivation buffer its file gives it, and its now.
-    buffer_loaded: f32,
-    buffer: f32,
-    waypoints: Vec<Value>,
-    removed: bool,
+    if let Some(s) = p.solid {
+        a.solid = s;
+    }
+    a
 }
 
 /// What a clone handle is asked for: the template it copies.
 pub type Spawner<'a> = dyn FnMut(Value) -> Handle + 'a;
 
+/// The ray caster's two points (`system.ray cast`'s start and end), metres.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Ray {
+    pub start: Vec3,
+    pub end: Vec3,
+}
+
 /// The engine state the scripts read and write (the module docs).
 #[derive(Resource, Debug)]
 pub struct ScriptWorld {
-    members: HashMap<MemberId, Member>,
-    ids: HashMap<Obj, i32>,
-    kept: HashMap<Handle, Kept>,
-    objects: HashMap<Obj, Handle>,
-    controllers: [Handle; 2],
-    physical: [Handle; 4],
-    portal: Handle,
+    pub(crate) members: HashMap<MemberId, Member>,
+    pub(crate) ids: HashMap<Obj, i32>,
+    /// Every actor the scripts reach by handle: the files' placements and the
+    /// clones the scripts made. A hero's place, turn and velocity are his
+    /// controller's ([`Engine::hero`]).
+    pub(crate) actors: HashMap<Handle, Actor>,
+    pub(crate) objects: HashMap<Obj, Handle>,
+    /// Every file placement's data, to make a clone of it from.
+    pub(crate) templates: HashMap<Obj, Placed>,
+    pub(crate) controllers: [Handle; 2],
+    pub(crate) physical: [Handle; 4],
+    pub(crate) portal: Handle,
+    /// `viewportinfo.default`: the gameplay camera, as one object.
+    pub(crate) viewport: Handle,
+    pub(crate) objs: Objects,
+    pub(crate) sequences: Vec<Sequence>,
+    /// Each template's animation palette: every slot's clip length,
+    /// seconds at 100 %, 0 where a slot is empty.
+    pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// The template whose clone is a hero, and the hero's handle: a spawn
+    /// of it answers with him.
+    pub(crate) hero_templates: HashMap<Obj, Handle>,
+    /// Each actor's attach nodes where they're set, in its own frame
+    /// (metres, +Z its facing); a node not set sits at its pivot.
+    pub(crate) nodes: HashMap<Handle, Vec<Vec3>>,
+    /// The pads as this step reads them, and as the step before did.
+    pub(crate) pads: [Pad; 2],
+    pub(crate) pads_before: [Pad; 2],
+    pub(crate) normalized: f32,
+    pub(crate) ray: Ray,
+    /// Clones of scripted templates the scripts made this step, with the
+    /// template: the embedder adds each as a placement running its script.
+    pub scripted: Vec<(Handle, Obj)>,
     time_scale: f32,
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
@@ -232,30 +309,36 @@ impl ScriptWorld {
     /// Over `files`, each placement under the handle `handles` gives its
     /// object, and the pads and portal under `objects`' seven handles.
     pub fn new(files: &Files, handles: &HashMap<Obj, Handle>, objects: [Handle; 7]) -> Self {
-        let mut kept = HashMap::new();
+        let mut actors = HashMap::new();
+        let mut templates = HashMap::new();
         for p in &files.placed {
+            templates.insert(p.obj, p.clone());
             if let Some(&h) = handles.get(&p.obj) {
-                kept.insert(
-                    h,
-                    Kept {
-                        obj: Some(p.obj),
-                        id: p.id,
-                        buffer_loaded: p.buffer,
-                        buffer: p.buffer,
-                        waypoints: p.waypoints.iter().map(|w| Value::Object(*w)).collect(),
-                        removed: false,
-                    },
-                );
+                actors.insert(h, actor_of(p));
             }
         }
+        let mut objs = Objects::default();
+        let viewport = objs.handle(Object::Viewport);
         Self {
             members: Member::table(),
             ids: files.ids.clone(),
-            kept,
+            actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
+            templates,
             controllers: [objects[0], objects[1]],
             physical: [objects[2], objects[3], objects[4], objects[5]],
             portal: objects[6],
+            viewport,
+            objs,
+            sequences: Vec::new(),
+            palettes: HashMap::new(),
+            hero_templates: HashMap::new(),
+            nodes: HashMap::new(),
+            pads: [Pad::default(); 2],
+            pads_before: [Pad::default(); 2],
+            normalized: 0.0,
+            ray: Ray::default(),
+            scripted: Vec::new(),
             time_scale: FULL_SPEED,
             load_level: Value::Null,
             requests: Vec::new(),
@@ -275,15 +358,61 @@ impl ScriptWorld {
         }
     }
 
+    /// The pads the next step reads: the step before's become the ones a
+    /// press is told from.
+    pub fn read_pads(&mut self, pads: [Pad; 2]) {
+        self.pads_before = self.pads;
+        self.pads = pads;
+    }
+
+    /// Each palette slot's clip length for `template`'s clones and itself.
+    pub fn set_palette(&mut self, template: Obj, lengths: Vec<f32>) {
+        self.palettes.insert(template, lengths);
+    }
+
+    /// Where `actor`'s attach nodes sit, in its own frame (metres, +Z its
+    /// facing), by index; one past the list, or never set, at its pivot.
+    /// Where on the model a node is through a clip isn't read yet: a caller
+    /// with a measured point sets it here.
+    pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<Vec3>) {
+        self.nodes.insert(actor, nodes);
+    }
+
+    /// A spawn of `template` makes `hero` the clone: the hero's actor, his
+    /// numbers from the template's file.
+    pub fn hero_template(&mut self, template: Obj, hero: Handle) {
+        self.hero_templates.insert(template, hero);
+    }
+
+    /// One frame of `dt` seconds for what the engine runs between the
+    /// scripts' ticks: the sequences playing and the actors they set going
+    /// moving.
+    pub fn advance(&mut self, dt: f32, engine: &mut dyn Engine) {
+        for s in &mut self.sequences {
+            s.advance(dt);
+        }
+        self.move_actors(dt, engine);
+    }
+
+    /// The actor under `h`, if the scripts reach one.
+    pub fn actor(&self, h: Handle) -> Option<&Actor> {
+        self.actors.get(&h)
+    }
+
+    /// The sequences started so far, in the order started.
+    pub fn sequences(&self) -> &[Sequence] {
+        &self.sequences
+    }
+
     /// Whether a remove took the placement or clone under `h` off.
     pub fn removed(&self, h: Handle) -> bool {
-        self.kept.get(&h).is_some_and(|k| k.removed)
+        self.actors.get(&h).is_some_and(|k| k.removed)
     }
 
     /// The handles of the clones the scripts have made, live or taken off.
     pub fn clones(&self) -> Vec<Handle> {
         let mut c: Vec<Handle> = self
-            .kept
+            .actors
             .iter()
             .filter(|(_, k)| k.obj.is_none())
             .map(|(h, _)| *h)
@@ -292,15 +421,7 @@ impl ScriptWorld {
         c
     }
 
-    fn handle(&self, v: Value) -> Option<Handle> {
-        match v {
-            Value::Entity(h) => Some(h),
-            Value::Object(o) => self.objects.get(&o).copied(),
-            _ => None,
-        }
-    }
-
-    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+    fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -314,11 +435,11 @@ impl ScriptWorld {
             Member::Controller(n) => Value::Entity(self.controllers[n]),
             Member::Physical(n) => Value::Entity(self.physical[n]),
             Member::Portal => Value::Entity(self.portal),
-            Member::Buffer => match on.and_then(|h| self.kept.get(&h)) {
+            Member::Buffer => match on.and_then(|h| self.actors.get(&h)) {
                 Some(k) => Value::Float(k.buffer),
                 None => return Err(HostFault::Nothing),
             },
-            Member::Id => match (on.and_then(|h| self.kept.get(&h)), at.receiver) {
+            Member::Id => match (on.and_then(|h| self.actors.get(&h)), at.receiver) {
                 (Some(k), _) => Value::Int(k.id),
                 (None, Some(Value::Object(o))) => match self.ids.get(&o) {
                     Some(&id) => Value::Int(id),
@@ -326,24 +447,18 @@ impl ScriptWorld {
                 },
                 _ => return Err(HostFault::Nothing),
             },
-            Member::Waypoints => return Err(HostFault::Nothing),
+            m => return self.get_member(at, m, engine),
         })
     }
 
-    fn elements(&mut self, at: &Access) -> Result<Vec<Value>, HostFault> {
-        match self.members.get(&at.member) {
-            Some(Member::Waypoints) => {
-                let on = at.receiver.and_then(|r| self.handle(r));
-                match on.and_then(|h| self.kept.get(&h)) {
-                    Some(k) => Ok(k.waypoints.clone()),
-                    None => Err(HostFault::Nothing),
-                }
-            }
-            _ => Err(HostFault::Unmodelled),
+    fn elements(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Vec<Value>, HostFault> {
+        match self.members.get(&at.member).copied() {
+            Some(m) => self.elements_of(at, m, engine),
+            None => Err(HostFault::Unmodelled),
         }
     }
 
-    fn set(&mut self, at: &Access, v: Value) -> Result<(), HostFault> {
+    fn set(&mut self, at: &Access, v: Value, engine: &mut dyn Engine) -> Result<(), HostFault> {
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -351,11 +466,11 @@ impl ScriptWorld {
         match (m, v) {
             (Member::TimeScale, Value::Float(f)) => self.time_scale = f,
             (Member::LoadLevel, v) => self.load_level = v,
-            (Member::Buffer, Value::Float(f)) => match on.and_then(|h| self.kept.get_mut(&h)) {
+            (Member::Buffer, Value::Float(f)) => match on.and_then(|h| self.actors.get_mut(&h)) {
                 Some(k) => k.buffer = f,
                 None => return Err(HostFault::Nothing),
             },
-            (Member::Id, Value::Int(i)) => match on.and_then(|h| self.kept.get_mut(&h)) {
+            (Member::Id, Value::Int(i)) => match on.and_then(|h| self.actors.get_mut(&h)) {
                 Some(k) => k.id = i,
                 None => match at.receiver {
                     Some(Value::Object(o)) if self.ids.contains_key(&o) => {
@@ -364,9 +479,23 @@ impl ScriptWorld {
                     _ => return Err(HostFault::Nothing),
                 },
             },
-            // The rest are read-only: the write goes nowhere, as the
-            // original's member with no setter.
-            _ => {}
+            // Read-only: the write goes nowhere, as the original's member
+            // with no setter.
+            (
+                Member::Platform
+                | Member::Configuration
+                | Member::GameLanguage
+                | Member::ConsoleLanguage
+                | Member::Controller(_)
+                | Member::Physical(_)
+                | Member::Portal
+                | Member::Waypoints
+                | Member::TimeScale
+                | Member::Buffer
+                | Member::Id,
+                _,
+            ) => {}
+            (m, v) => return self.set_member(at, m, v, engine),
         }
         Ok(())
     }
@@ -377,7 +506,7 @@ impl ScriptWorld {
         };
         let on = at.receiver.and_then(|r| self.handle(r));
         match m {
-            Member::Buffer => match on.and_then(|h| self.kept.get_mut(&h)) {
+            Member::Buffer => match on.and_then(|h| self.actors.get_mut(&h)) {
                 Some(k) => k.buffer = k.buffer_loaded,
                 None => return Err(HostFault::Nothing),
             },
@@ -387,12 +516,17 @@ impl ScriptWorld {
         Ok(())
     }
 
-    fn op(&mut self, call: &OpCall, spawn: &mut Spawner<'_>) -> Result<Answer, HostFault> {
+    fn op(
+        &mut self,
+        call: &OpCall,
+        spawn: &mut Spawner<'_>,
+        engine: &mut dyn Engine,
+    ) -> Result<Answer, HostFault> {
         let first = call.operands.first().and_then(|(_, v)| *v);
         let target = first.and_then(|v| self.handle(v));
         match call.class {
             Class::Control => Ok(match (first, target) {
-                (_, Some(h)) if self.kept.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
+                (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
                 (Some(v), Some(_)) => Answer::Run {
                     receiver: Some(v),
                     result: None,
@@ -408,66 +542,135 @@ impl ScriptWorld {
                 let Some(template) = first else {
                     return Ok(Answer::Skip);
                 };
-                let h = spawn(template);
-                let from = self
-                    .handle(template)
-                    .and_then(|t| self.kept.get(&t))
-                    .cloned();
-                let id = from.as_ref().map_or_else(
-                    || match template {
-                        Value::Object(o) => self.ids.get(&o).copied().unwrap_or(0),
-                        _ => 0,
-                    },
-                    |k| k.id,
-                );
-                self.kept.insert(
-                    h,
-                    Kept {
-                        obj: None,
-                        id,
-                        buffer_loaded: from.as_ref().map_or(0.0, |k| k.buffer_loaded),
-                        buffer: from.as_ref().map_or(0.0, |k| k.buffer),
-                        waypoints: Vec::new(),
-                        removed: false,
-                    },
-                );
-                let e = Value::Entity(h);
-                Ok(Answer::Run {
-                    receiver: Some(e),
-                    result: Some(e),
-                })
+                let named = |name: &str| {
+                    call.operands
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .and_then(|(_, v)| *v)
+                };
+                let at = named("_RHS");
+                let facing = named("_facingRHS").and_then(|v| v.as_f32());
+                Ok(self.spawn(template, at, facing, spawn, engine))
             }
             Class::Remove => {
-                if let Some(k) = target.and_then(|h| self.kept.get_mut(&h)) {
+                if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.removed = true;
                 }
                 Ok(Answer::Done)
             }
             Class::Reset => {
-                if let Some(k) = target.and_then(|h| self.kept.get_mut(&h)) {
+                if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
                 }
                 Ok(Answer::Done)
             }
-            Class::StopSequence => Ok(Answer::Done),
-            _ => Err(HostFault::Unmodelled),
+            _ => match self.op_hero(call, spawn, engine) {
+                Some(r) => r,
+                None => Err(HostFault::Unmodelled),
+            },
+        }
+    }
+
+    /// A clone of `template` at the place `at` names (its pivot), facing
+    /// `facing` when given, else the template's: the hero for a template a
+    /// hero stands for, else a new actor (its handle from `spawn`) with the
+    /// template's file numbers, or a clone's own when it copies a clone. A
+    /// scripted template's clone is listed for the embedder to run.
+    fn spawn(
+        &mut self,
+        template: Value,
+        at: Option<Value>,
+        facing: Option<f32>,
+        spawn: &mut Spawner<'_>,
+        engine: &mut dyn Engine,
+    ) -> Answer {
+        let source = match template {
+            Value::Object(o) => Some(o),
+            v => self
+                .handle(v)
+                .and_then(|h| self.actors.get(&h).and_then(|a| a.template.or(a.obj))),
+        };
+        let place = at.and_then(|v| self.point(v, engine));
+        let hero = source.and_then(|t| self.hero_templates.get(&t).copied());
+        let h = match hero {
+            Some(h) => h,
+            None => spawn(template),
+        };
+        let copied = self
+            .handle(template)
+            .and_then(|t| self.actors.get(&t))
+            .filter(|a| a.obj.is_none())
+            .cloned();
+        let mut a = match (copied, source.and_then(|t| self.templates.get(&t))) {
+            (Some(c), _) => c,
+            (None, Some(p)) => actor_of(p),
+            (None, None) => Actor::blank(),
+        };
+        a.obj = None;
+        a.template = source;
+        a.parent = template;
+        a.waypoints = Vec::new();
+        a.removed = false;
+        a.clones = Vec::new();
+        a.attach = Value::Null;
+        a.velocity = Vec3::ZERO;
+        a.launched = false;
+        a.contacts = Vec::new();
+        a.remembered = None;
+        if a.id == 0
+            && let Some(t) = source
+        {
+            a.id = self.ids.get(&t).copied().unwrap_or(0);
+        }
+        if let Some(p) = place {
+            a.position = p;
+        }
+        if let Some(f) = facing {
+            a.angles.facing = f;
+        }
+        a.origin = a.position;
+        self.actors.insert(h, a);
+        if let Some(hero) = engine.hero(h) {
+            if let Some(p) = place {
+                hero.pivot = p;
+            }
+            if let Some(f) = facing {
+                hero.facing = f.rem_euclid(360.0);
+            }
+        }
+        if let Some(t) = self.handle(template)
+            && let Some(ta) = self.actors.get_mut(&t)
+        {
+            ta.clones.push(h);
+        }
+        if let Some(t) = source
+            && self.templates.get(&t).is_some_and(|p| p.script.is_some())
+        {
+            self.scripted.push((h, t));
+        }
+        let e = Value::Entity(h);
+        Answer::Run {
+            receiver: Some(e),
+            result: Some(e),
         }
     }
 }
 
-/// [`Host`] over a [`ScriptWorld`], the session's generator and a spawner.
+/// [`Host`] over a [`ScriptWorld`], the [`Engine`] the TV's entities own,
+/// the session's generator and a spawner.
 pub struct WorldHost<'a, 's> {
     pub world: &'a mut ScriptWorld,
+    pub engine: &'a mut dyn Engine,
     pub generator: &'a mut Generator,
     pub spawn: &'a mut Spawner<'s>,
 }
 
 impl Host for WorldHost<'_, '_> {
     fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
-        self.world.get(at)
+        self.world.get(at, self.engine)
     }
     fn set(&mut self, at: &Access, value: Value) -> Result<(), HostFault> {
-        self.world.set(at, value)
+        self.world.set(at, value, self.engine)
     }
     fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
         self.world.reset(at)
@@ -476,10 +679,10 @@ impl Host for WorldHost<'_, '_> {
         self.generator.next_u32()
     }
     fn op(&mut self, call: &OpCall) -> Result<Answer, HostFault> {
-        self.world.op(call, self.spawn)
+        self.world.op(call, self.spawn, self.engine)
     }
     fn elements(&mut self, at: &Access) -> Result<Vec<Value>, HostFault> {
-        self.world.elements(at)
+        self.world.elements(at, self.engine)
     }
 }
 
@@ -522,6 +725,44 @@ pub fn config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
     members::register(&mut c.members, INIT_CHAIN);
     c.whitelist = Whitelist::with_first_ticks(&[], &EVERY_TICK, &GLOBAL_FIRST_TICKS);
+    c
+}
+
+/// `global.bld`'s placements AH.17 ticks every step: the UI's (its tick
+/// advances the combat timer every mover's update reads) and the movement
+/// update's (each tick moving the scripted movers).
+pub const GLOBAL_EVERY_TICK: [&str; 2] = ["/UI.ai", "movementUpdate.ai"];
+
+/// Eruptor's scripts (openspec AH.17): his definition and tuning actor, his
+/// own script on his clone, the eruption's and the magma ball's, every
+/// tick. His accolade and portal-entry scripts are macros only.
+pub const ERUPTOR_SCRIPTS: [&str; 5] = [
+    "009_Def_Eruptor.ai",
+    "009_Eruptor_Tuning.ai",
+    "/009_Eruptor.ai",
+    "009_LavaAttack.ai",
+    "009_MagmaBall.ai",
+];
+
+/// The VM's config for AH.17's run: AH.16's members and Eruptor's, the init
+/// chain's listing with `global.bld`'s UI and movement update every tick and
+/// Eruptor's scripts beside them.
+pub fn hero_config(mode: Mode) -> Config {
+    let mut c = Config::new(mode);
+    members::register(&mut c.members, INIT_CHAIN);
+    members::register(&mut c.members, members::HERO);
+    let first: Vec<&str> = GLOBAL_FIRST_TICKS
+        .iter()
+        .copied()
+        .filter(|s| !GLOBAL_EVERY_TICK.contains(s))
+        .collect();
+    let every: Vec<&str> = EVERY_TICK
+        .iter()
+        .chain(&GLOBAL_EVERY_TICK)
+        .chain(&ERUPTOR_SCRIPTS)
+        .copied()
+        .collect();
+    c.whitelist = Whitelist::with_first_ticks(&[], &every, &first);
     c
 }
 
@@ -568,6 +809,222 @@ pub fn init_chain(
     vm
 }
 
+/// The portal manager, whose macros the join's stand-in calls as its own
+/// tick would ([`join_request`], [`join_activate`]).
+pub const PORTAL_MANAGER: &str = "Spyro_PortalManager";
+
+/// The join's stand-in, its first half (openspec AH.17; decision 2's table,
+/// The join): what the portal and the portal manager do when a figure goes
+/// on the portal, by the original's own macros with only their scheduling
+/// ours. The portal manager asks for the figure's character file through
+/// `Portal - Load Portal Object Stream` with the first player's slot's
+/// loaded data (slot 0 of `portal control data.$loaded objects`), as the
+/// portal control's tag handling does; then the character file's running
+/// placements (its definition, its tuning actor) join the VM, listed for
+/// every tick, under `handles`: the definition's first tick registers the
+/// minion into that loaded data (`Portal - Define Minion`). The portal's tag,
+/// the level streaming and the entry beam aren't run (AJ's, AM's).
+pub fn join_request(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    files: &Files,
+    unit: u16,
+    handles: &HashMap<Obj, Handle>,
+) -> Result<Vec<PlacementId>, Halt> {
+    let pm = portal_manager(vm, host.world)?;
+    let loaded = slot_zero(vm)?;
+    vm.call_with(
+        Some(pm),
+        "Portal - Load Portal Object Stream",
+        &[("use loaded data", loaded)],
+        &[],
+        host,
+    )?;
+    let program = vm.program_arc();
+    let scripts: HashMap<(u16, &str), u32> = program
+        .scripts
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ((s.unit, s.name.as_str()), i as u32))
+        .collect();
+    let mut added = Vec::new();
+    for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+        let (Some(script), RUNNING) = (&p.script, p.activity_state) else {
+            continue;
+        };
+        let (Some(&h), Some(&sid)) = (handles.get(&p.obj), scripts.get(&(unit, script.as_str())))
+        else {
+            continue;
+        };
+        added.push(vm.add_at(h, &p.name, sid, p.obj));
+    }
+    Ok(added)
+}
+
+/// The join's second half, after the definition's first tick: the minion
+/// its definition registered becomes `hero` (a spawn of its template
+/// answers with him), and `Game - Activate/Deactivate Minion` runs as the
+/// portal manager's entry beam calls it (`Portal - Entry Activate Minion`):
+/// the minion, spawned where `hero` stands, for the first player's
+/// controller, the definition's minion description, no health restored, in
+/// a level transition. The minion's own script then joins the VM under
+/// `hero` (its template's, listed for every tick). Returns its placement.
+pub fn join_activate(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    hero: Handle,
+) -> Result<PlacementId, Halt> {
+    let pm = portal_manager(vm, host.world)?;
+    let loaded = slot_zero(vm)?;
+    let info = vm.field(loaded, "object info").unwrap_or(Value::Null);
+    let minion = vm.field(info, "spawned object").unwrap_or(Value::Null);
+    let desc = vm
+        .field(info, "minion additional info")
+        .unwrap_or(Value::Null);
+    let Some(template) = host.world.template_obj(minion) else {
+        return Err(outside(format!(
+            "the definition registered no minion template ({minion:?})"
+        )));
+    };
+    host.world.hero_template(template, hero);
+    let player = Value::Entity(host.world.controllers[0]);
+    vm.call_with(
+        Some(pm),
+        "Game - Activate/Deactivate Minion",
+        &[
+            ("minion", minion),
+            ("spawn location", Value::Entity(hero)),
+            ("player", player),
+            ("keep minion ref in player set", Value::Int(0)),
+            ("input minion data", desc),
+            ("restore hp", Value::Int(0)),
+            ("in level transition", Value::Int(1)),
+        ],
+        &[],
+        host,
+    )?;
+    let scripted = std::mem::take(&mut host.world.scripted);
+    let mut minion_placement = None;
+    let program = vm.program_arc();
+    for (h, t) in scripted {
+        let Some(sid) = host.world.script_of(t, &program) else {
+            continue;
+        };
+        let name = host.world.name_of(t).unwrap_or_default();
+        let id = vm.add(h, &name, sid);
+        if h == hero {
+            minion_placement = Some(id);
+        }
+    }
+    minion_placement.ok_or_else(|| outside("the activation spawned no minion".to_owned()))
+}
+
+/// Each clone of a scripted template the last step made, added to the VM
+/// running its template's script: what the original's scheduler ticks from
+/// the next frame (a hypothesis: where in a frame a new clone first ticks
+/// isn't read).
+pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
+    let program = vm.program_arc();
+    std::mem::take(&mut world.scripted)
+        .into_iter()
+        .filter_map(|(h, t)| {
+            let sid = world.script_of(t, &program)?;
+            let name = world.name_of(t).unwrap_or_default();
+            Some(vm.add(h, &name, sid))
+        })
+        .collect()
+}
+
+/// A slice of the player loop's native rule (AH.20's, decision 2's table):
+/// the portal manager's tick calls `Manage Projectiles` with its projectile
+/// control (the global `projectile control data` its STARTUP set), so what
+/// `Projectile - Fire Projectile` threw runs its midair logic, its hits and
+/// its detonation. Called once a step before the placements' ticks, where
+/// the portal manager's tick runs ahead of a joined hero's scripts.
+pub fn manage_projectiles(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
+    let pm = portal_manager(vm, host.world)?;
+    let g = vm
+        .program()
+        .global_named("projectile control data")
+        .ok_or_else(|| outside("no projectile control data".to_owned()))?;
+    let control = vm
+        .global(g)
+        .ok_or_else(|| outside("projectile control data reads nothing".to_owned()))?;
+    vm.call_with(
+        Some(pm),
+        "Manage Projectiles",
+        &[("control data", control)],
+        &[],
+        host,
+    )?;
+    Ok(())
+}
+
+fn outside(why: String) -> Halt {
+    Halt {
+        placement: None,
+        placement_name: "(the join)".to_owned(),
+        script: String::new(),
+        position: 0,
+        op: None,
+        reason: guac_script::Reason::Unsupported(why),
+    }
+}
+
+fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId, Halt> {
+    let h = world
+        .templates
+        .values()
+        .find(|p| p.name == PORTAL_MANAGER)
+        .and_then(|p| world.objects.get(&p.obj).copied())
+        .ok_or_else(|| outside(format!("no {PORTAL_MANAGER} placement")))?;
+    vm.placement_of(h)
+        .ok_or_else(|| outside(format!("{PORTAL_MANAGER} doesn't run")))
+}
+
+/// The first player's slot's loaded data.
+fn slot_zero(vm: &mut Vm) -> Result<Value, Halt> {
+    let g = vm
+        .program()
+        .global_named("portal control data")
+        .ok_or_else(|| outside("no portal control data".to_owned()))?;
+    let pcd = vm
+        .global(g)
+        .ok_or_else(|| outside("portal control data reads nothing".to_owned()))?;
+    vm.field(pcd, "loaded objects")
+        .and_then(|s| vm.set(s).and_then(|e| e.first().copied()))
+        .ok_or_else(|| outside("the portal has no loaded objects yet".to_owned()))
+}
+
+impl ScriptWorld {
+    /// The file object a value names as a template.
+    pub fn template_obj(&self, v: Value) -> Option<Obj> {
+        match v {
+            Value::Object(o) => Some(o),
+            v => {
+                let h = self.handle(v)?;
+                let a = self.actors.get(&h)?;
+                a.template.or(a.obj)
+            }
+        }
+    }
+
+    /// The script a template runs, in `program`.
+    pub fn script_of(&self, t: Obj, program: &Program) -> Option<u32> {
+        let script = self.templates.get(&t)?.script.as_ref()?;
+        program
+            .scripts
+            .iter()
+            .position(|s| s.unit == t.unit && &s.name == script)
+            .map(|i| i as u32)
+    }
+
+    /// A template's placement name.
+    pub fn name_of(&self, t: Obj) -> Option<String> {
+        self.templates.get(&t).map(|p| p.name.clone())
+    }
+}
+
 /// The VM steps in the TV.
 #[derive(Resource)]
 pub struct ScriptRuntime {
@@ -605,8 +1062,10 @@ pub fn step_scripts(mut runtime: ResMut<ScriptRuntime>, mut host: ScriptHost) {
     let commands = &mut host.commands;
     let mut spawn =
         |template: Value| -> Handle { commands.spawn(ScriptClone(template)).id().to_bits() };
+    let mut engine = NoEngine;
     let mut world_host = WorldHost {
         world: &mut host.world,
+        engine: &mut engine,
         generator,
         spawn: &mut spawn,
     };
@@ -724,13 +1183,10 @@ mod tests {
     fn world() -> (ScriptWorld, Handle, [Handle; 7]) {
         let files = Files {
             placed: vec![Placed {
-                obj: GRUNT,
-                name: "Grunt".into(),
-                script: Some("C:/x/Grunt.ai".into()),
-                activity_state: RUNNING,
                 id: 41,
                 buffer: 12.5,
                 waypoints: vec![NODE],
+                ..Placed::named(GRUNT, "Grunt", Some("C:/x/Grunt.ai"), RUNNING)
             }],
             ids: HashMap::from([(GRUNT, 41), (SPRITE, 77)]),
         };
@@ -777,25 +1233,32 @@ mod tests {
         );
         let (mut w, ..) = world();
         assert_eq!(
-            w.get(&at("system", "hardware platform", None)),
+            w.get(&at("system", "hardware platform", None), &mut NoEngine),
             Ok(Value::Int(PS3))
         );
         assert_eq!(
-            w.get(&at("system", "game configuration", None)),
+            w.get(&at("system", "game configuration", None), &mut NoEngine),
             Ok(Value::Int(GOLDEN_MASTER))
         );
         for name in ["game language", "console language"] {
-            assert_eq!(w.get(&at("system", name, None)), Ok(Value::Int(ENGLISH)));
+            assert_eq!(
+                w.get(&at("system", name, None), &mut NoEngine),
+                Ok(Value::Int(ENGLISH))
+            );
         }
         // Read-only: a write goes nowhere.
-        w.set(&at("system", "hardware platform", None), Value::Int(3))
-            .unwrap();
+        w.set(
+            &at("system", "hardware platform", None),
+            Value::Int(3),
+            &mut NoEngine,
+        )
+        .unwrap();
         assert_eq!(
-            w.get(&at("system", "hardware platform", None)),
+            w.get(&at("system", "hardware platform", None), &mut NoEngine),
             Ok(Value::Int(PS3))
         );
         assert_eq!(
-            w.get(&at("system", "pause state", None)),
+            w.get(&at("system", "pause state", None), &mut NoEngine),
             Err(HostFault::Unmodelled)
         );
     }
@@ -804,16 +1267,16 @@ mod tests {
     fn the_time_scale_keeps_a_write_and_a_level_asked_for_is_taken_at_the_steps_end() {
         let (mut w, ..) = world();
         let scale = at("system", "game time scale", None);
-        assert_eq!(w.get(&scale), Ok(Value::Float(FULL_SPEED)));
-        w.set(&scale, Value::Float(50.0)).unwrap();
-        assert_eq!(w.get(&scale), Ok(Value::Float(50.0)));
+        assert_eq!(w.get(&scale, &mut NoEngine), Ok(Value::Float(FULL_SPEED)));
+        w.set(&scale, Value::Float(50.0), &mut NoEngine).unwrap();
+        assert_eq!(w.get(&scale, &mut NoEngine), Ok(Value::Float(50.0)));
         let level = at("system", "load level", None);
-        assert_eq!(w.get(&level), Ok(Value::Null));
-        w.set(&level, Value::Object(SPRITE)).unwrap();
-        assert_eq!(w.get(&level), Ok(Value::Object(SPRITE)));
+        assert_eq!(w.get(&level, &mut NoEngine), Ok(Value::Null));
+        w.set(&level, Value::Object(SPRITE), &mut NoEngine).unwrap();
+        assert_eq!(w.get(&level, &mut NoEngine), Ok(Value::Object(SPRITE)));
         w.end_step();
         assert_eq!(w.requests, vec![Value::Object(SPRITE)]);
-        assert_eq!(w.get(&level), Ok(Value::Null));
+        assert_eq!(w.get(&level, &mut NoEngine), Ok(Value::Null));
         w.end_step();
         assert_eq!(w.requests.len(), 1, "taken once");
     }
@@ -823,38 +1286,65 @@ mod tests {
         let (mut w, grunt, _) = world();
         let buffer = |r| at("placement", "deactivation buffer", Some(r));
         for r in [Value::Entity(grunt), Value::Object(GRUNT)] {
-            assert_eq!(w.get(&buffer(r)), Ok(Value::Float(12.5)));
+            assert_eq!(w.get(&buffer(r), &mut NoEngine), Ok(Value::Float(12.5)));
             assert_eq!(
-                w.get(&at("abstractplacement", "id", Some(r))),
+                w.get(&at("abstractplacement", "id", Some(r)), &mut NoEngine),
                 Ok(Value::Int(41))
             );
         }
-        w.set(&buffer(Value::Entity(grunt)), Value::Float(3.0))
-            .unwrap();
-        assert_eq!(w.get(&buffer(Value::Object(GRUNT))), Ok(Value::Float(3.0)));
-        w.reset(&buffer(Value::Entity(grunt))).unwrap();
-        assert_eq!(w.get(&buffer(Value::Entity(grunt))), Ok(Value::Float(12.5)));
-        w.set(&buffer(Value::Entity(grunt)), Value::Float(3.0))
-            .unwrap();
+        w.set(
+            &buffer(Value::Entity(grunt)),
+            Value::Float(3.0),
+            &mut NoEngine,
+        )
+        .unwrap();
         assert_eq!(
-            w.op(&call(Class::Reset, Some(Value::Entity(grunt))), &mut |_| 0),
+            w.get(&buffer(Value::Object(GRUNT)), &mut NoEngine),
+            Ok(Value::Float(3.0))
+        );
+        w.reset(&buffer(Value::Entity(grunt))).unwrap();
+        assert_eq!(
+            w.get(&buffer(Value::Entity(grunt)), &mut NoEngine),
+            Ok(Value::Float(12.5))
+        );
+        w.set(
+            &buffer(Value::Entity(grunt)),
+            Value::Float(3.0),
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert_eq!(
+            w.op(
+                &call(Class::Reset, Some(Value::Entity(grunt))),
+                &mut |_| 0,
+                &mut NoEngine
+            ),
             Ok(Answer::Done)
         );
-        assert_eq!(w.get(&buffer(Value::Entity(grunt))), Ok(Value::Float(12.5)));
+        assert_eq!(
+            w.get(&buffer(Value::Entity(grunt)), &mut NoEngine),
+            Ok(Value::Float(12.5))
+        );
         // A sprite has only its `_ID`; nothing else is a placement.
         let sprite_id = at("spritematrixmeasurement", "id", Some(Value::Object(SPRITE)));
-        assert_eq!(w.get(&sprite_id), Ok(Value::Int(77)));
+        assert_eq!(w.get(&sprite_id, &mut NoEngine), Ok(Value::Int(77)));
         assert_eq!(
-            w.get(&buffer(Value::Object(SPRITE))),
+            w.get(&buffer(Value::Object(SPRITE)), &mut NoEngine),
             Err(HostFault::Nothing)
         );
         assert_eq!(
-            w.get(&at("abstractplacement", "id", Some(Value::Int(3)))),
+            w.get(
+                &at("abstractplacement", "id", Some(Value::Int(3))),
+                &mut NoEngine
+            ),
             Err(HostFault::Nothing)
         );
         let waypoints = at("actorinfo", "waypoints", Some(Value::Entity(grunt)));
-        assert_eq!(w.elements(&waypoints), Ok(vec![Value::Object(NODE)]));
-        assert_eq!(w.get(&waypoints), Err(HostFault::Nothing));
+        assert_eq!(
+            w.elements(&waypoints, &mut NoEngine),
+            Ok(vec![Value::Object(NODE)])
+        );
+        assert_eq!(w.get(&waypoints, &mut NoEngine), Err(HostFault::Nothing));
     }
 
     #[test]
@@ -870,13 +1360,13 @@ mod tests {
             ("scriptcontroller", "physical controller 4"),
             ("redoctaneperipheralsystemobject", "portal"),
         ] {
-            got.push(w.get(&at(ns, name, None)).unwrap());
+            got.push(w.get(&at(ns, name, None), &mut NoEngine).unwrap());
         }
         assert_eq!(got, objects.map(Value::Entity));
         // A tell on one runs its block with it.
         let pad = Value::Entity(objects[0]);
         assert_eq!(
-            w.op(&call(Class::Control, Some(pad)), &mut |_| 0),
+            w.op(&call(Class::Control, Some(pad)), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Run {
                 receiver: Some(pad),
                 result: None
@@ -894,7 +1384,11 @@ mod tests {
         };
         let clone = Value::Entity(900);
         assert_eq!(
-            w.op(&call(Class::Spawn, Some(Value::Object(GRUNT))), &mut spawn),
+            w.op(
+                &call(Class::Spawn, Some(Value::Object(GRUNT))),
+                &mut spawn,
+                &mut NoEngine
+            ),
             Ok(Answer::Run {
                 receiver: Some(clone),
                 result: Some(clone)
@@ -903,32 +1397,64 @@ mod tests {
         assert_eq!(made, vec![Value::Object(GRUNT)]);
         assert_eq!(w.clones(), vec![900]);
         assert_eq!(
-            w.get(&at("abstractplacement", "id", Some(clone))),
+            w.get(&at("abstractplacement", "id", Some(clone)), &mut NoEngine),
             Ok(Value::Int(41))
         );
         assert_eq!(
-            w.get(&at("placement", "deactivation buffer", Some(clone))),
+            w.get(
+                &at("placement", "deactivation buffer", Some(clone)),
+                &mut NoEngine
+            ),
             Ok(Value::Float(12.5))
         );
         let tell = call(Class::Control, Some(clone));
-        assert!(matches!(w.op(&tell, &mut |_| 0), Ok(Answer::Run { .. })));
+        assert!(matches!(
+            w.op(&tell, &mut |_| 0, &mut NoEngine),
+            Ok(Answer::Run { .. })
+        ));
         assert_eq!(
-            w.op(&call(Class::Remove, Some(clone)), &mut |_| 0),
+            w.op(&call(Class::Remove, Some(clone)), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Done)
         );
         assert!(w.removed(900));
         assert!(!w.removed(grunt));
-        assert_eq!(w.op(&tell, &mut |_| 0), Ok(Answer::Skip));
+        assert_eq!(w.op(&tell, &mut |_| 0, &mut NoEngine), Ok(Answer::Skip));
         assert_eq!(
-            w.op(&call(Class::Control, None), &mut |_| 0),
+            w.op(&call(Class::Control, None), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Skip)
         );
         assert_eq!(
-            w.op(&call(Class::StopSequence, Some(clone)), &mut |_| 0),
+            w.op(
+                &call(Class::StopSequence, Some(clone)),
+                &mut |_| 0,
+                &mut NoEngine
+            ),
             Ok(Answer::Done)
         );
+        // A sequence started on the placement plays (none of a clip the
+        // palette lacks: nothing to play, done at once).
+        let started = w.op(
+            &call(Class::StartSequence, Some(clone)),
+            &mut |_| 0,
+            &mut NoEngine,
+        );
+        assert!(
+            matches!(
+                started,
+                Ok(Answer::Run {
+                    receiver: None,
+                    result: Some(_)
+                })
+            ),
+            "{started:?}"
+        );
+        assert_eq!(w.sequences().len(), 1);
         assert_eq!(
-            w.op(&call(Class::StartSequence, Some(clone)), &mut |_| 0),
+            w.op(&call(Class::Displace, None), &mut |_| 0, &mut NoEngine),
+            Err(HostFault::Nothing)
+        );
+        assert_eq!(
+            w.op(&call(Class::CheckFov, None), &mut |_| 0, &mut NoEngine),
             Err(HostFault::Unmodelled)
         );
     }
@@ -941,13 +1467,9 @@ mod tests {
         assert!(app.world().get_resource::<ScriptRuntime>().is_none());
         let files = Files {
             placed: vec![Placed {
-                obj: GRUNT,
-                name: "Grunt".into(),
-                script: None,
-                activity_state: RUNNING,
                 id: 41,
                 buffer: 12.5,
-                waypoints: Vec::new(),
+                ..Placed::named(GRUNT, "Grunt", None, RUNNING)
             }],
             ids: HashMap::new(),
         };

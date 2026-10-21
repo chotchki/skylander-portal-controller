@@ -1,0 +1,1925 @@
+//! The engine members Eruptor's scripts reach (openspec AH.17, design
+//! decisions 4 and 21), answered by [`ScriptWorld`] over the actors it keeps
+//! and the [`Engine`] the TV's entities own: what each member reads and
+//! writes, in the units the original registers it with
+//! ([`guac_script::members::HERO`] has each one's class, units and range).
+//!
+//! Points a measurement is taken from (`positionmeasurement.* .@other`):
+//! an actor's pivot (a hero's, his controller's), an attach node (where the
+//! embedder set it in the actor's frame, else its pivot: where on the model
+//! a node sits through a clip isn't read yet, a stand-in), the ground under
+//! an actor (the ground finder's point), its origin, a reference's own
+//! point, the ray caster's two points and its contact.
+//!
+//! The engine's move for what the scripts set going ([`ScriptWorld::advance`]):
+//! a launched actor falls by its own gravity at its time scale, velocity
+//! first, then its solid is swept through the seam and stops at what it
+//! hits, its velocity slid along it; its contacts are what its solid touches
+//! where it ends (within [`TOUCH`]).
+//!
+//! Hypotheses here, each a reading the oracle hasn't settled:
+//! - `contactinfo.type` is the triangle's collision material byte, -1 with
+//!   no ground found (level 213's reachable ground is material 1, AG.7,
+//!   which no surface handler's type matches);
+//! - `positionmeasurement.separation` from a point is the vertical gap from
+//!   the bottom of the actor's solid (its pivot with none) down to it, in
+//!   feet, never under 0; from his own ground, a hero his support check
+//!   holds has none (his skin's 5 mm isn't a gap: Update Movers' band and
+//!   gravity act only over 0, and AG.38 saw neither on a supported frame);
+//! - a sweep stops at a creature's body as at a wall, though the ball's solid
+//!   doesn't meet actors (`interacts with actors` 0): the touch is what the
+//!   projectile manager's Targets check reads as `collision`; contacts with
+//!   another actor's body aren't `environment contacts`;
+//! - nothing rebounds (`collisioninfo.rebound` is 0 on what he throws);
+//! - a distance set from a point the actor sits on moves it nowhere;
+//! - a relative facing on an actor hung from the ground turns it in the
+//!   ground's plane, so its tilt reads the slope along that heading (what
+//!   Face and Move's push takes the slope's pitch from).
+
+use std::collections::HashMap;
+
+use guac_formats::script::Class;
+use guac_motion::seam::{BodyId, CAST_SLOP, Pose, Quat, Shape, Vec3};
+use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
+
+use crate::script_engine::{
+    Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object, Sequence,
+    direction, heading_of, normalized, pitch_of,
+};
+use crate::scripts::{ScriptWorld, Spawner};
+
+/// What a member answers, by what it reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Member {
+    // AH.16's: the console and the game, placements' numbers, the pads and
+    // the portal.
+    Platform,
+    Configuration,
+    GameLanguage,
+    ConsoleLanguage,
+    TimeScale,
+    LoadLevel,
+    Buffer,
+    Id,
+    Waypoints,
+    Controller(usize),
+    Physical(usize),
+    Portal,
+    // AH.17's.
+    Range,
+    Orientation,
+    Facing,
+    Tilt,
+    Roll,
+    RelativeFacing,
+    RelativeTilt,
+    RelativeRoll,
+    Scale,
+    ScaleUniform,
+    ScaleAxis(usize),
+    Tint,
+    Movement,
+    Physics(PhysicsField),
+    CollisionVolume,
+    Solid(SolidField),
+    Velocity,
+    Vector(VectorField),
+    ActorController,
+    AttachNodes,
+    AttachNode,
+    AttachedObjects,
+    Ground,
+    ContactType,
+    ContactNormal,
+    ContactMagnitude,
+    ContactIsTrigger,
+    Clones,
+    EnvironmentContacts,
+    Origin,
+    Remembered,
+    Parent,
+    Activator,
+    PlayingAnimations,
+    PlayingSounds,
+    Palette,
+    SeqTimeRemaining,
+    SeqPercentRemaining,
+    SeqRate,
+    SeqLooping,
+    SeqRawDuration,
+    Distance,
+    Heading,
+    Pitch,
+    VerticalOffset,
+    HorizontalDistance,
+    Separation,
+    Collision,
+    NormalizedAngle,
+    RayCast,
+    RayStart,
+    RayEnd,
+    RayHasContact,
+    Viewport,
+    InactiveController,
+    Pad(Button),
+    MainStick,
+    PressureState,
+    PressureValue,
+    StickX,
+    StickY,
+    StickHeading,
+    StickMagnitude,
+    StickConnection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PhysicsField {
+    GroundMaxSpeed,
+    GroundAcceleration,
+    GroundDeceleration,
+    GroundTurnRate,
+    AirMaxSpeed,
+    AirAcceleration,
+    AirDeceleration,
+    AirTurnRate,
+    GravityMaxSpeed,
+    GravityAcceleration,
+    JumpMaxSpeed,
+    JumpAcceleration,
+    JumpInitialSpeed,
+    MoveType,
+    TiltsWithGround,
+    TimeScale,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolidField {
+    Width,
+    Length,
+    Height,
+    Offset(usize),
+    Weight,
+    Rebound,
+    InteractsWithActors,
+    InteractsWithLevelMesh,
+    ActsAsActorSurface,
+    Shape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VectorField {
+    Length,
+    Heading,
+    Pitch,
+    VerticalDifference,
+    HorizontalLength,
+}
+
+impl Member {
+    /// Every member the host answers, by its import id.
+    pub(crate) fn table() -> HashMap<MemberId, Member> {
+        let mut t = HashMap::new();
+        let mut add = |ns: &str, name: &str, m: Member| {
+            t.insert(MemberId::named(ns, name), m);
+        };
+        add("system", "hardware platform", Member::Platform);
+        add("system", "game configuration", Member::Configuration);
+        add("system", "game language", Member::GameLanguage);
+        add("system", "console language", Member::ConsoleLanguage);
+        add("system", "game time scale", Member::TimeScale);
+        add("system", "load level", Member::LoadLevel);
+        add("placement", "deactivation buffer", Member::Buffer);
+        add("abstractplacement", "id", Member::Id);
+        add("spritematrixmeasurement", "id", Member::Id);
+        add("actorinfo", "waypoints", Member::Waypoints);
+        for n in 0..2 {
+            add(
+                "scriptcontroller",
+                &format!("controller {}", n + 1),
+                Member::Controller(n),
+            );
+        }
+        for n in 0..4 {
+            add(
+                "scriptcontroller",
+                &format!("physical controller {}", n + 1),
+                Member::Physical(n),
+            );
+        }
+        add("redoctaneperipheralsystemobject", "portal", Member::Portal);
+        add("placement", "activation range", Member::Range);
+        add("matrixmeasurement", "orientation", Member::Orientation);
+        add("orientationmeasurement", "facing", Member::Facing);
+        add("orientationmeasurement", "tilt", Member::Tilt);
+        add("orientationmeasurement", "roll", Member::Roll);
+        add(
+            "orientationmeasurement",
+            "relative facing",
+            Member::RelativeFacing,
+        );
+        add(
+            "orientationmeasurement",
+            "relative tilt",
+            Member::RelativeTilt,
+        );
+        add(
+            "orientationmeasurement",
+            "relative roll",
+            Member::RelativeRoll,
+        );
+        add("placement", "scale", Member::Scale);
+        add("scalemeasurement", "uniform", Member::ScaleUniform);
+        add("scalemeasurement", "x", Member::ScaleAxis(0));
+        add("scalemeasurement", "y", Member::ScaleAxis(1));
+        add("scalemeasurement", "z", Member::ScaleAxis(2));
+        add("placement", "tint", Member::Tint);
+        add("actorinfo", "movement", Member::Movement);
+        use PhysicsField as P;
+        for (name, f) in [
+            ("ground max speed", P::GroundMaxSpeed),
+            ("ground acceleration", P::GroundAcceleration),
+            ("ground deceleration", P::GroundDeceleration),
+            ("ground turn rate", P::GroundTurnRate),
+            ("air max speed", P::AirMaxSpeed),
+            ("air acceleration", P::AirAcceleration),
+            ("air deceleration", P::AirDeceleration),
+            ("air turn rate", P::AirTurnRate),
+            ("gravity max speed", P::GravityMaxSpeed),
+            ("gravity acceleration", P::GravityAcceleration),
+            ("jump max speed", P::JumpMaxSpeed),
+            ("jump acceleration", P::JumpAcceleration),
+            ("jump initial speed", P::JumpInitialSpeed),
+            ("move type", P::MoveType),
+            ("tilts with ground", P::TiltsWithGround),
+            ("time scale", P::TimeScale),
+        ] {
+            add("actorphysics", name, Member::Physics(f));
+        }
+        add("actorinfo", "collision volume", Member::CollisionVolume);
+        use SolidField as S;
+        for (name, f) in [
+            ("width", S::Width),
+            ("length", S::Length),
+            ("height", S::Height),
+            ("local x offset", S::Offset(0)),
+            ("local y offset", S::Offset(1)),
+            ("local z offset", S::Offset(2)),
+            ("weight", S::Weight),
+            ("rebound", S::Rebound),
+            ("interacts with actors", S::InteractsWithActors),
+            ("interacts with level mesh", S::InteractsWithLevelMesh),
+            ("acts as actor surface", S::ActsAsActorSurface),
+            ("shape", S::Shape),
+        ] {
+            add("collisioninfo", name, Member::Solid(f));
+        }
+        add("actorinfo", "velocity", Member::Velocity);
+        use VectorField as V;
+        for (name, f) in [
+            ("length", V::Length),
+            ("heading", V::Heading),
+            ("pitch", V::Pitch),
+            ("vertical difference", V::VerticalDifference),
+            ("horizontal length", V::HorizontalLength),
+        ] {
+            add("vectormeasurement", name, Member::Vector(f));
+        }
+        add("actorinfo", "controller", Member::ActorController);
+        add("actorinfo", "attach nodes", Member::AttachNodes);
+        add("abstractplacement", "attach node", Member::AttachNode);
+        add(
+            "abstractplacement",
+            "attached objects",
+            Member::AttachedObjects,
+        );
+        add("abstractplacement", "ground", Member::Ground);
+        add("contactinfo", "type", Member::ContactType);
+        add("contactinfo", "normal", Member::ContactNormal);
+        add("contactinfo", "magnitude", Member::ContactMagnitude);
+        add("contactinfo", "is trigger", Member::ContactIsTrigger);
+        add("abstractplacement", "clones", Member::Clones);
+        add(
+            "collisioninfo",
+            "environment contacts",
+            Member::EnvironmentContacts,
+        );
+        add("abstractplacement", "parent", Member::Parent);
+        add("abstractplacement", "origin", Member::Origin);
+        add("placementreference", "remembered", Member::Remembered);
+        add("abstractplacement", "activator", Member::Activator);
+        add("actorinfo", "playing animations", Member::PlayingAnimations);
+        add("actorinfo", "playing sounds", Member::PlayingSounds);
+        add("animationinfo", "animation palette", Member::Palette);
+        add("sequence", "time remaining", Member::SeqTimeRemaining);
+        add("sequence", "percent remaining", Member::SeqPercentRemaining);
+        add("sequence", "playback rate", Member::SeqRate);
+        add("sequence", "looping", Member::SeqLooping);
+        add("sequence", "raw duration", Member::SeqRawDuration);
+        add("positionmeasurement", "distance", Member::Distance);
+        add("positionmeasurement", "heading", Member::Heading);
+        add("positionmeasurement", "pitch", Member::Pitch);
+        add(
+            "positionmeasurement",
+            "vertical offset",
+            Member::VerticalOffset,
+        );
+        add(
+            "positionmeasurement",
+            "horizontal distance",
+            Member::HorizontalDistance,
+        );
+        add("positionmeasurement", "separation", Member::Separation);
+        add("positionmeasurement", "collision", Member::Collision);
+        add("system", "normalized angle", Member::NormalizedAngle);
+        add("system", "ray cast", Member::RayCast);
+        add("raycontact", "start", Member::RayStart);
+        add("raycontact", "end", Member::RayEnd);
+        add("raycontact", "has contact", Member::RayHasContact);
+        add("viewportinfo", "default", Member::Viewport);
+        add(
+            "scriptcontroller",
+            "inactive controller",
+            Member::InactiveController,
+        );
+        for n in 1..=4u8 {
+            add(
+                "scriptcontroller",
+                &format!("action {n}"),
+                Member::Pad(Button::Action(n)),
+            );
+        }
+        for (name, b) in [
+            ("accept button", Button::Accept),
+            ("cancel button", Button::Cancel),
+            ("alt button", Button::Alt),
+            ("pause button", Button::Pause),
+            ("start button", Button::Start),
+            ("select button", Button::Select),
+            ("dpad left", Button::DpadLeft),
+            ("dpad right", Button::DpadRight),
+            ("dpad up", Button::DpadUp),
+            ("dpad down", Button::DpadDown),
+        ] {
+            add("scriptcontroller", name, Member::Pad(b));
+        }
+        add("scriptcontroller", "main stick", Member::MainStick);
+        add("buttonmeasurement", "pressure state", Member::PressureState);
+        add("buttonmeasurement", "pressure value", Member::PressureValue);
+        add("joystickmeasurement", "x", Member::StickX);
+        add("joystickmeasurement", "y", Member::StickY);
+        add("joystickmeasurement", "heading", Member::StickHeading);
+        add("joystickmeasurement", "magnitude", Member::StickMagnitude);
+        add("joystickmeasurement", "connection", Member::StickConnection);
+        t
+    }
+}
+
+/// `pressure state`'s labels: just released, released, pressed, just
+/// pressed.
+fn pressure(was: bool, now: bool) -> i32 {
+    match (was, now) {
+        (true, false) => 0,
+        (false, false) => 1,
+        (true, true) => 2,
+        (false, true) => 3,
+    }
+}
+
+fn float(v: Value) -> Result<f32, HostFault> {
+    v.as_f32().ok_or(HostFault::Nothing)
+}
+
+impl ScriptWorld {
+    /// The handle a value stands for: an entity's, a file object's, a host
+    /// object's.
+    pub(crate) fn handle(&self, v: Value) -> Option<Handle> {
+        match v {
+            Value::Entity(h) => Some(h),
+            Value::Object(o) => self.objects.get(&o).copied(),
+            _ => None,
+        }
+    }
+
+    /// The host object a value names: `None` for an actor, a file object
+    /// no handle stands for, or a value that isn't an object.
+    fn object(&self, v: Option<Value>) -> Option<Object> {
+        let h = self.handle(v?)?;
+        self.objs.get(h)
+    }
+
+    /// The actor (or hero) a receiver names: `None` for a host object.
+    fn actor_of(&self, v: Option<Value>) -> Option<Handle> {
+        let h = self.handle(v?)?;
+        if self.objs.get(h).is_some() {
+            return None;
+        }
+        Some(h)
+    }
+
+    /// An actor's pivot, metres: a hero's from his controller.
+    pub(crate) fn position(&self, h: Handle, engine: &mut dyn Engine) -> Option<Vec3> {
+        if let Some(hero) = engine.hero(h) {
+            return Some(hero.pivot);
+        }
+        let a = self.actors.get(&h)?;
+        Some(a.position)
+    }
+
+    fn set_position(
+        &mut self,
+        h: Handle,
+        p: Vec3,
+        engine: &mut dyn Engine,
+    ) -> Result<(), HostFault> {
+        if let Some(hero) = engine.hero(h) {
+            hero.pivot = p;
+            return Ok(());
+        }
+        match self.actors.get_mut(&h) {
+            Some(a) => {
+                a.position = p;
+                Ok(())
+            }
+            None => Err(HostFault::Nothing),
+        }
+    }
+
+    /// The ground under an actor: the ground finder's point, its normal and
+    /// its material. A hero's is his footing's.
+    fn ground(&self, h: Handle, engine: &mut dyn Engine) -> Option<(Vec3, Vec3, Option<u8>)> {
+        if let Some(hero) = engine.hero(h) {
+            let height = hero.footing.height?;
+            let normal = hero.footing.ground.unwrap_or(Vec3::Y);
+            let point = hero.pivot - Vec3::Y * height;
+            return Some((point, normal, Some(1)));
+        }
+        let at = self.actors.get(&h)?.position;
+        let origin = at + Vec3::Y * 0.1;
+        let hit = guac_motion::ground::ray(engine.seam(), origin, Vec3::NEG_Y, 160.0, &[])
+            .or_else(|| guac_motion::ground::ray(engine.seam(), origin, Vec3::Y, 80.0, &[]))?;
+        let normal = if hit.normal.y < -0.05 {
+            -hit.normal
+        } else {
+            hit.normal
+        };
+        Some((hit.point, normal, hit.material))
+    }
+
+    /// Where a measurement taken from `v` is taken from.
+    pub(crate) fn point(&mut self, v: Value, engine: &mut dyn Engine) -> Option<Vec3> {
+        let h = self.handle(v)?;
+        match self.objs.get(h) {
+            None => self.position(h, engine),
+            Some(Object::Node(a, i)) => self.node(a, i, engine),
+            Some(Object::Facet(a, Facet::Ground)) => self.ground(a, engine).map(|g| g.0),
+            Some(Object::RayStart) => Some(self.ray.start),
+            Some(Object::RayEnd) => Some(self.ray.end),
+            Some(Object::RayCast) => self.ray_contact(engine).map(|c| c.0),
+            Some(Object::Origin(a)) => self.actors.get(&a).map(|k| k.origin),
+            Some(Object::Remembered(a)) => {
+                let kept = self.actors.get(&a).and_then(|k| k.remembered);
+                kept.or_else(|| self.position(a, engine))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attach node `i` of actor `a` in the level: its offset turned by the
+    /// actor's facing, from its pivot.
+    fn node(&self, a: Handle, i: u32, engine: &mut dyn Engine) -> Option<Vec3> {
+        let pivot = self.position(a, engine)?;
+        let Some(off) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) else {
+            return Some(pivot);
+        };
+        let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
+        Some(pivot + Quat::from_rotation_y(facing.to_radians()) * *off)
+    }
+
+    fn set_point(&mut self, v: Value, p: Vec3, engine: &mut dyn Engine) -> Result<(), HostFault> {
+        let h = self.handle(v).ok_or(HostFault::Nothing)?;
+        match self.objs.get(h) {
+            None => self.set_position(h, p, engine),
+            Some(Object::RayStart) => {
+                self.ray.start = p;
+                Ok(())
+            }
+            Some(Object::Remembered(a)) => {
+                let k = self.actors.get_mut(&a).ok_or(HostFault::Nothing)?;
+                k.remembered = Some(p);
+                Ok(())
+            }
+            Some(Object::RayEnd) => {
+                self.ray.end = p;
+                Ok(())
+            }
+            _ => Err(HostFault::Nothing),
+        }
+    }
+
+    /// The ray caster's contact between its two points, through the seam.
+    fn ray_contact(&self, engine: &mut dyn Engine) -> Option<(Vec3, Vec3)> {
+        self.ray_contact_full(engine).map(|(p, n, _)| (p, n))
+    }
+
+    fn ray_contact_full(&self, engine: &mut dyn Engine) -> Option<(Vec3, Vec3, Option<u8>)> {
+        let d = self.ray.end - self.ray.start;
+        let len = d.length();
+        if len <= 0.0 {
+            return None;
+        }
+        let hit = guac_motion::ground::ray(engine.seam(), self.ray.start, d, len, &[])?;
+        Some((hit.point, hit.normal, hit.material))
+    }
+
+    /// An actor's turn: a hero's facing his controller's; his tilt and roll
+    /// read 0 (his lean is the engine's, never the script's).
+    fn angles(&self, h: Handle, engine: &mut dyn Engine) -> Option<crate::script_engine::Angles> {
+        if h == self.objs_viewport() {
+            return Some(crate::script_engine::Angles {
+                facing: engine.view_heading(),
+                ..Default::default()
+            });
+        }
+        if let Some(hero) = engine.hero(h) {
+            return Some(crate::script_engine::Angles {
+                facing: hero.facing,
+                ..Default::default()
+            });
+        }
+        self.actors.get(&h).map(|a| a.angles)
+    }
+
+    fn objs_viewport(&self) -> Handle {
+        self.viewport
+    }
+
+    fn velocity(&self, h: Handle, engine: &mut dyn Engine) -> Option<Vec3> {
+        if let Some(hero) = engine.hero(h) {
+            return Some(hero.walk.velocity);
+        }
+        self.actors.get(&h).map(|a| a.velocity)
+    }
+
+    fn set_velocity(
+        &mut self,
+        h: Handle,
+        v: Vec3,
+        engine: &mut dyn Engine,
+    ) -> Result<(), HostFault> {
+        if let Some(hero) = engine.hero(h) {
+            hero.walk.velocity = v;
+            return Ok(());
+        }
+        match self.actors.get_mut(&h) {
+            Some(a) => {
+                a.velocity = v;
+                a.launched |= v != Vec3::ZERO;
+                Ok(())
+            }
+            None => Err(HostFault::Nothing),
+        }
+    }
+
+    /// The vector a `vectormeasurement` facet reads: an actor's velocity,
+    /// ft/s, or its ground's normal.
+    fn vector(&mut self, f: Object, engine: &mut dyn Engine) -> Option<Vec3> {
+        match f {
+            Object::Facet(h, Facet::Velocity) => self.velocity(h, engine),
+            Object::Normal(Normal::Ground(h)) => self.ground(h, engine).map(|g| g.1),
+            Object::Normal(Normal::Contact(h, i)) => self
+                .actors
+                .get(&h)
+                .and_then(|a| a.contacts.get(i as usize))
+                .map(|c| c.normal),
+            Object::Normal(Normal::Ray) => self.ray_contact(engine).map(|c| c.1),
+            _ => None,
+        }
+    }
+
+    /// What a `contactinfo` member reads on: the ground under an actor, one
+    /// of its environment contacts or the ray caster's contact; its point,
+    /// its normal's source and its material.
+    fn contact(
+        &mut self,
+        o: Option<Object>,
+        engine: &mut dyn Engine,
+    ) -> Option<(Normal, Option<u8>, bool)> {
+        match o? {
+            Object::Facet(h, Facet::Ground) => Some(match self.ground(h, engine) {
+                Some((_, _, m)) => (Normal::Ground(h), m, true),
+                None => (Normal::Ground(h), None, false),
+            }),
+            Object::Contact(h, i) => {
+                let c = self.actors.get(&h)?.contacts.get(i as usize).copied()?;
+                Some((Normal::Contact(h, i), c.material, true))
+            }
+            Object::RayCast => Some(match self.ray_contact_full(engine) {
+                Some((_, _, m)) => (Normal::Ray, m, true),
+                None => (Normal::Ray, None, false),
+            }),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn get_member(
+        &mut self,
+        at: &Access,
+        m: Member,
+        engine: &mut dyn Engine,
+    ) -> Result<Value, HostFault> {
+        let recv = at.receiver;
+        let actor = self.actor_of(recv);
+        let object = self.object(recv);
+        let other = |w: &mut Self, engine: &mut dyn Engine| -> Result<Vec3, HostFault> {
+            let o = at.other_point.ok_or(HostFault::Nothing)?;
+            w.point(o, engine).ok_or(HostFault::Nothing)
+        };
+        let me = |w: &mut Self, engine: &mut dyn Engine| -> Result<Vec3, HostFault> {
+            let r = recv.ok_or(HostFault::Nothing)?;
+            w.point(r, engine).ok_or(HostFault::Nothing)
+        };
+        Ok(match m {
+            Member::Range => Value::Float(
+                self.actors
+                    .get(&actor.ok_or(HostFault::Nothing)?)
+                    .ok_or(HostFault::Nothing)?
+                    .range,
+            ),
+            Member::Orientation => match recv {
+                Some(v) => {
+                    let h = self.handle(v).ok_or(HostFault::Nothing)?;
+                    self.objs.value(Object::Facet(h, Facet::Orientation))
+                }
+                None => return Err(HostFault::Nothing),
+            },
+            Member::Facing
+            | Member::RelativeFacing
+            | Member::Tilt
+            | Member::RelativeTilt
+            | Member::Roll
+            | Member::RelativeRoll => {
+                let Some(Object::Facet(h, Facet::Orientation)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let a = self.angles(h, engine).ok_or(HostFault::Nothing)?;
+                Value::Float(match m {
+                    Member::Facing | Member::RelativeFacing => a.facing,
+                    Member::Tilt | Member::RelativeTilt => a.tilt,
+                    _ => a.roll,
+                })
+            }
+            Member::Scale => self.facet(recv, Facet::Scale)?,
+            Member::ScaleUniform | Member::ScaleAxis(_) => {
+                let Some(Object::Facet(h, Facet::Scale)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = self.actors.get(&h).map_or([100.0; 3], |a| a.scale);
+                match m {
+                    Member::ScaleAxis(i) => Value::Float(s[i]),
+                    // aj-vm: the uniform getter fails unless x = y = z.
+                    _ if s[0] == s[1] && s[1] == s[2] => Value::Float(s[0]),
+                    _ => return Err(HostFault::Nothing),
+                }
+            }
+            Member::Tint => Value::Color(
+                self.actors
+                    .get(&actor.ok_or(HostFault::Nothing)?)
+                    .map_or(0x8080_80FF, |a| a.tint),
+            ),
+            Member::Movement => self.facet(recv, Facet::Movement)?,
+            Member::Physics(f) => {
+                let Some(Object::Facet(h, Facet::Movement)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let p = self.actors.get(&h).ok_or(HostFault::Nothing)?.physics;
+                use PhysicsField as P;
+                match f {
+                    P::GroundMaxSpeed => Value::Float(p.ground_max_speed),
+                    P::GroundAcceleration => Value::Float(p.ground_acceleration),
+                    P::GroundDeceleration => Value::Float(p.ground_deceleration),
+                    P::GroundTurnRate => Value::Float(p.ground_turn_rate),
+                    P::AirMaxSpeed => Value::Float(p.air_max_speed),
+                    P::AirAcceleration => Value::Float(p.air_acceleration),
+                    P::AirDeceleration => Value::Float(p.air_deceleration),
+                    P::AirTurnRate => Value::Float(p.air_turn_rate),
+                    P::GravityMaxSpeed => Value::Float(p.gravity_max_speed),
+                    P::GravityAcceleration => Value::Float(p.gravity_acceleration),
+                    P::JumpMaxSpeed => Value::Float(p.jump_max_speed),
+                    P::JumpAcceleration => Value::Float(p.jump_acceleration),
+                    P::JumpInitialSpeed => Value::Float(p.jump_initial_speed),
+                    P::MoveType => Value::Int(p.move_type),
+                    P::TiltsWithGround => Value::Int(p.tilts_with_ground),
+                    P::TimeScale => Value::Float(p.time_scale),
+                }
+            }
+            Member::CollisionVolume => self.facet(recv, Facet::Collision)?,
+            Member::Solid(f) => {
+                let Some(Object::Facet(h, Facet::Collision)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = self.actors.get(&h).ok_or(HostFault::Nothing)?.solid;
+                use SolidField as S;
+                match f {
+                    S::Width => Value::Float(s.width),
+                    S::Length => Value::Float(s.length),
+                    S::Height => Value::Float(s.height),
+                    S::Offset(i) => Value::Float(s.offset[i]),
+                    S::Weight => Value::Float(s.weight),
+                    S::Rebound => Value::Float(s.rebound),
+                    S::InteractsWithActors => Value::Int(s.interacts_with_actors),
+                    S::InteractsWithLevelMesh => Value::Int(s.interacts_with_level_mesh),
+                    S::ActsAsActorSurface => Value::Int(s.acts_as_actor_surface),
+                    S::Shape => Value::Int(s.shape),
+                }
+            }
+            Member::Velocity => self.facet(recv, Facet::Velocity)?,
+            Member::Vector(f) => {
+                let o = object.ok_or(HostFault::Nothing)?;
+                let v = self.vector(o, engine).ok_or(HostFault::Nothing)?;
+                use VectorField as V;
+                Value::Float(match f {
+                    V::Length => v.length(),
+                    V::Heading => heading_of(v),
+                    V::Pitch => pitch_of(v),
+                    V::VerticalDifference => v.y,
+                    V::HorizontalLength => v.x.hypot(v.z),
+                })
+            }
+            Member::ActorController => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.actors.get(&h).ok_or(HostFault::Nothing)?.controller
+            }
+            Member::AttachNode => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.actors.get(&h).ok_or(HostFault::Nothing)?.attach
+            }
+            Member::Ground => self.facet(recv, Facet::Ground)?,
+            Member::Origin => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.actors.get(&h).ok_or(HostFault::Nothing)?;
+                self.objs.value(Object::Origin(h))
+            }
+            Member::Remembered => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.objs.value(Object::Remembered(h))
+            }
+            Member::ContactType => {
+                let (_, m, found) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
+                Value::Int(if found { i32::from(m.unwrap_or(0)) } else { -1 })
+            }
+            Member::ContactNormal => {
+                let (n, _, _) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
+                self.objs.value(Object::Normal(n))
+            }
+            Member::ContactMagnitude => Value::Float(0.0),
+            Member::ContactIsTrigger => Value::Int(0),
+            Member::Parent => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.actors.get(&h).ok_or(HostFault::Nothing)?.parent
+            }
+            Member::Activator => recv.ok_or(HostFault::Nothing)?,
+            Member::SeqTimeRemaining
+            | Member::SeqPercentRemaining
+            | Member::SeqRate
+            | Member::SeqLooping
+            | Member::SeqRawDuration => {
+                let Some(Object::Sequence(i)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = self.sequences.get(i as usize).ok_or(HostFault::Nothing)?;
+                match m {
+                    Member::SeqTimeRemaining => Value::Float(s.time_remaining()),
+                    Member::SeqPercentRemaining => Value::Float(s.percent_remaining()),
+                    Member::SeqRate => Value::Float(s.rate),
+                    Member::SeqLooping => Value::Int(i32::from(s.looping)),
+                    _ => Value::Float(s.length),
+                }
+            }
+            Member::Distance => {
+                let (a, b) = (me(self, engine)?, other(self, engine)?);
+                let d = a - b;
+                Value::Float((d.length_squared() + f32::MIN_POSITIVE).sqrt() * FEET_PER_METRE)
+            }
+            Member::HorizontalDistance => {
+                let (a, b) = (me(self, engine)?, other(self, engine)?);
+                Value::Float((a.x - b.x).hypot(a.z - b.z) * FEET_PER_METRE)
+            }
+            Member::VerticalOffset => {
+                let (a, b) = (me(self, engine)?, other(self, engine)?);
+                Value::Float((a.y - b.y) * FEET_PER_METRE)
+            }
+            Member::Heading => {
+                let (a, b) = (me(self, engine)?, other(self, engine)?);
+                Value::Float(heading_of(a - b))
+            }
+            Member::Pitch => {
+                let (a, b) = (me(self, engine)?, other(self, engine)?);
+                Value::Float(pitch_of(a - b))
+            }
+            Member::Separation => {
+                // A hero his support check holds is touching what's under
+                // him: no gap, whatever his skin leaves (Update Movers' band
+                // and gravity act only while it's over 0, AG.38).
+                if let (Some(h), Some(o)) = (actor, at.other_point)
+                    && self.object(Some(o)) == Some(Object::Facet(h, Facet::Ground))
+                    && engine.hero(h).is_some_and(|hero| hero.footing.supported)
+                {
+                    return Ok(Value::Float(0.0));
+                }
+                let (a, b) = (me(self, engine)?, other(self, engine)?);
+                let low = actor.and_then(|h| self.bottom(h)).unwrap_or(a.y);
+                Value::Float(((low - b.y) * FEET_PER_METRE).max(0.0))
+            }
+            Member::NormalizedAngle => Value::Float(self.normalized),
+            Member::RayCast => self.objs.value(Object::RayCast),
+            Member::RayStart => self.objs.value(Object::RayStart),
+            Member::RayEnd => self.objs.value(Object::RayEnd),
+            Member::RayHasContact => Value::Int(i32::from(self.ray_contact(engine).is_some())),
+            Member::Viewport => Value::Entity(self.viewport),
+            Member::InactiveController => self.objs.value(Object::Inactive),
+            Member::Pad(b) => {
+                let pad = self.pad_of(recv).ok_or(HostFault::Nothing)?;
+                self.objs.value(Object::Button(pad, b))
+            }
+            Member::MainStick => {
+                let pad = self.pad_of(recv).ok_or(HostFault::Nothing)?;
+                self.objs.value(Object::Stick(pad))
+            }
+            Member::PressureState | Member::PressureValue => {
+                let Some(Object::Button(pad, b)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let held = |p: &crate::script_engine::Pad| match b {
+                    Button::Action(n) => {
+                        p.actions.get(usize::from(n) - 1).copied().unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                let (was, now) = if pad == u8::MAX {
+                    (false, false)
+                } else {
+                    let i = usize::from(pad);
+                    (
+                        self.pads_before.get(i).is_some_and(held),
+                        self.pads.get(i).is_some_and(held),
+                    )
+                };
+                match m {
+                    Member::PressureState => Value::Int(pressure(was, now)),
+                    _ => Value::Float(if now { 1.0 } else { 0.0 }),
+                }
+            }
+            Member::StickX
+            | Member::StickY
+            | Member::StickHeading
+            | Member::StickMagnitude
+            | Member::StickConnection => {
+                let Some(Object::Stick(pad)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let p = if pad == u8::MAX {
+                    crate::script_engine::Pad::default()
+                } else {
+                    self.pads.get(usize::from(pad)).copied().unwrap_or_default()
+                };
+                let push = p.stick.push(0.0);
+                match m {
+                    Member::StickX => Value::Float(p.stick.x),
+                    Member::StickY => Value::Float(p.stick.y),
+                    Member::StickHeading => {
+                        Value::Float(if push.held() { push.heading } else { 0.0 })
+                    }
+                    Member::StickMagnitude => Value::Float(push.strength),
+                    _ => Value::Int(i32::from(p.connected)),
+                }
+            }
+            // Sets are read whole through `elements`.
+            Member::AttachNodes
+            | Member::AttachedObjects
+            | Member::Clones
+            | Member::PlayingAnimations
+            | Member::PlayingSounds
+            | Member::Palette
+            | Member::EnvironmentContacts
+            | Member::Waypoints => return Err(HostFault::Nothing),
+            Member::Collision => {
+                let a = actor.ok_or(HostFault::Nothing)?;
+                let o = at.other_point.ok_or(HostFault::Nothing)?;
+                let b = self.handle(o).ok_or(HostFault::Nothing)?;
+                Value::Int(i32::from(self.touching(a, b, engine)?))
+            }
+            // AH.16's are answered by `ScriptWorld::get` before this.
+            _ => return Err(HostFault::Unmodelled),
+        })
+    }
+
+    /// A pad a controller object stands for: 0 and 1 for the two players'
+    /// controllers and the physical ones, `u8::MAX` for the inactive one.
+    fn pad_of(&self, v: Option<Value>) -> Option<u8> {
+        let h = self.handle(v?)?;
+        if let Some(i) = self.controllers.iter().position(|&c| c == h) {
+            return Some(i as u8);
+        }
+        if let Some(i) = self.physical.iter().position(|&c| c == h) {
+            return Some(i as u8);
+        }
+        if self.objs.get(h) == Some(Object::Inactive) {
+            return Some(u8::MAX);
+        }
+        None
+    }
+
+    fn facet(&mut self, recv: Option<Value>, f: Facet) -> Result<Value, HostFault> {
+        let h = self
+            .handle(recv.ok_or(HostFault::Nothing)?)
+            .ok_or(HostFault::Nothing)?;
+        Ok(self.objs.value(Object::Facet(h, f)))
+    }
+
+    pub(crate) fn set_member(
+        &mut self,
+        at: &Access,
+        m: Member,
+        v: Value,
+        engine: &mut dyn Engine,
+    ) -> Result<(), HostFault> {
+        let recv = at.receiver;
+        let actor = self.actor_of(recv);
+        let object = self.object(recv);
+        match m {
+            Member::Range => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.range = float(v)?;
+            }
+            Member::Facing
+            | Member::RelativeFacing
+            | Member::Tilt
+            | Member::RelativeTilt
+            | Member::Roll
+            | Member::RelativeRoll => {
+                let Some(Object::Facet(h, Facet::Orientation)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let x = float(v)?;
+                if let Some(hero) = engine.hero(h) {
+                    if matches!(m, Member::Facing | Member::RelativeFacing) {
+                        hero.facing = x.rem_euclid(360.0);
+                    }
+                    return Ok(());
+                }
+                let ground = match m {
+                    Member::RelativeFacing => self
+                        .actors
+                        .get(&h)
+                        .and_then(|a| self.object(Some(a.attach)))
+                        .and_then(|o| match o {
+                            Object::Facet(g, Facet::Ground) => Some(g),
+                            _ => None,
+                        }),
+                    _ => None,
+                };
+                let slope = match ground {
+                    Some(g) => self.ground(g, engine).map(|g| g.1),
+                    None => None,
+                };
+                let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
+                match m {
+                    Member::Facing => a.angles.facing = x,
+                    Member::RelativeFacing => {
+                        a.angles.facing = x;
+                        if let Some(n) = slope {
+                            let dir = guac_motion::walk::push_direction(x, Some(n));
+                            a.angles.tilt = pitch_of(dir);
+                        }
+                    }
+                    Member::Tilt | Member::RelativeTilt => a.angles.tilt = x,
+                    _ => a.angles.roll = x,
+                }
+            }
+            Member::ScaleUniform | Member::ScaleAxis(_) => {
+                let Some(Object::Facet(h, Facet::Scale)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let x = float(v)?;
+                let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
+                match m {
+                    Member::ScaleAxis(i) => a.scale[i] = x,
+                    _ => a.scale = [x; 3],
+                }
+            }
+            Member::Tint => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                if let Value::Color(c) = v {
+                    self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.tint = c;
+                }
+            }
+            Member::Physics(f) => {
+                let Some(Object::Facet(h, Facet::Movement)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let p = &mut self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.physics;
+                use PhysicsField as P;
+                match f {
+                    P::GroundMaxSpeed => p.ground_max_speed = float(v)?,
+                    P::GroundAcceleration => p.ground_acceleration = float(v)?,
+                    P::GroundDeceleration => p.ground_deceleration = float(v)?,
+                    P::GroundTurnRate => p.ground_turn_rate = float(v)?,
+                    P::AirMaxSpeed => p.air_max_speed = float(v)?,
+                    P::AirAcceleration => p.air_acceleration = float(v)?,
+                    P::AirDeceleration => p.air_deceleration = float(v)?,
+                    P::AirTurnRate => p.air_turn_rate = float(v)?,
+                    P::GravityMaxSpeed => p.gravity_max_speed = float(v)?,
+                    P::GravityAcceleration => p.gravity_acceleration = float(v)?,
+                    P::JumpMaxSpeed => p.jump_max_speed = float(v)?,
+                    P::JumpAcceleration => p.jump_acceleration = float(v)?,
+                    P::JumpInitialSpeed => p.jump_initial_speed = float(v)?,
+                    P::MoveType => p.move_type = v.as_i32().ok_or(HostFault::Nothing)?,
+                    P::TiltsWithGround => {
+                        p.tilts_with_ground = v.as_i32().ok_or(HostFault::Nothing)?
+                    }
+                    P::TimeScale => p.time_scale = float(v)?,
+                }
+            }
+            Member::Solid(f) => {
+                let Some(Object::Facet(h, Facet::Collision)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = &mut self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.solid;
+                use SolidField as S;
+                let i = || v.as_i32().ok_or(HostFault::Nothing);
+                match f {
+                    S::Width => s.width = float(v)?,
+                    S::Length => s.length = float(v)?,
+                    S::Height => s.height = float(v)?,
+                    S::Offset(k) => s.offset[k] = float(v)?,
+                    S::Weight => s.weight = float(v)?,
+                    S::Rebound => s.rebound = float(v)?,
+                    S::InteractsWithActors => s.interacts_with_actors = i()?,
+                    S::InteractsWithLevelMesh => s.interacts_with_level_mesh = i()?,
+                    S::ActsAsActorSurface => s.acts_as_actor_surface = i()?,
+                    S::Shape => s.shape = i()?,
+                }
+            }
+            Member::Vector(f) => {
+                let Some(Object::Facet(h, Facet::Velocity)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let x = float(v)?;
+                let mut u = self.velocity(h, engine).ok_or(HostFault::Nothing)?;
+                use VectorField as V;
+                match f {
+                    V::Length => {
+                        let l = u.length();
+                        u = if l > 0.0 { u * (x / l) } else { Vec3::ZERO };
+                    }
+                    V::Heading => {
+                        let a = u.x.hypot(u.z);
+                        let d = direction(x, 0.0);
+                        u = Vec3::new(d.x * a, u.y, d.z * a);
+                    }
+                    V::Pitch => u = direction(heading_of(u), x) * u.length(),
+                    V::VerticalDifference => u.y = x,
+                    V::HorizontalLength => {
+                        let a = u.x.hypot(u.z);
+                        if a > 0.0 {
+                            u.x *= x / a;
+                            u.z *= x / a;
+                        }
+                    }
+                }
+                self.set_velocity(h, u, engine)?;
+            }
+            Member::ActorController => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                self.actors
+                    .get_mut(&h)
+                    .ok_or(HostFault::Nothing)?
+                    .controller = v;
+            }
+            Member::AttachNode => {
+                let h = actor.ok_or(HostFault::Nothing)?;
+                // Hung from a node, an actor sits at it.
+                if let Some(at_node) = self.point(v, engine)
+                    && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)))
+                {
+                    self.set_position(h, at_node, engine)?;
+                }
+                if let Some(a) = self.actors.get_mut(&h) {
+                    a.attach = v;
+                }
+            }
+            Member::SeqRate | Member::SeqLooping | Member::SeqPercentRemaining => {
+                let Some(Object::Sequence(i)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = self
+                    .sequences
+                    .get_mut(i as usize)
+                    .ok_or(HostFault::Nothing)?;
+                match m {
+                    Member::SeqRate => s.rate = float(v)?,
+                    Member::SeqLooping => s.looping = v.as_i32().ok_or(HostFault::Nothing)? != 0,
+                    _ => s.time = s.length * (1.0 - float(v)? * 0.01),
+                }
+            }
+            Member::Distance
+            | Member::HorizontalDistance
+            | Member::VerticalOffset
+            | Member::Heading
+            | Member::Pitch => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                let o = at.other_point.ok_or(HostFault::Nothing)?;
+                let b = self.point(o, engine).ok_or(HostFault::Nothing)?;
+                let a = self.point(r, engine).ok_or(HostFault::Nothing)?;
+                let x = float(v)?;
+                let d = a - b;
+                let to = match m {
+                    Member::Distance => {
+                        let l = d.length();
+                        if l > 0.0 {
+                            b + d * (x * METRES_PER_FOOT / l)
+                        } else {
+                            b
+                        }
+                    }
+                    Member::HorizontalDistance => {
+                        let l = d.x.hypot(d.z);
+                        if l > 0.0 {
+                            let k = x * METRES_PER_FOOT / l;
+                            Vec3::new(b.x + d.x * k, a.y, b.z + d.z * k)
+                        } else {
+                            Vec3::new(b.x, a.y, b.z)
+                        }
+                    }
+                    Member::VerticalOffset => Vec3::new(a.x, b.y + x * METRES_PER_FOOT, a.z),
+                    Member::Heading => {
+                        let l = d.x.hypot(d.z);
+                        let u = direction(x, 0.0);
+                        Vec3::new(b.x + u.x * l, a.y, b.z + u.z * l)
+                    }
+                    _ => b + direction(heading_of(d), x) * d.length(),
+                };
+                self.set_point(r, to, engine)?;
+            }
+            Member::NormalizedAngle => self.normalized = normalized(float(v)?),
+            // The rest are read-only: a write goes nowhere, as the
+            // original's member with no setter.
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn elements_of(
+        &mut self,
+        at: &Access,
+        m: Member,
+        engine: &mut dyn Engine,
+    ) -> Result<Vec<Value>, HostFault> {
+        let recv = at.receiver;
+        Ok(match m {
+            Member::AttachNodes => {
+                let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                (0..NODES)
+                    .map(|i| self.objs.value(Object::Node(h, i)))
+                    .collect()
+            }
+            Member::AttachedObjects => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                self.actors
+                    .iter()
+                    .filter(|(_, a)| a.attach == r && !a.removed)
+                    .map(|(h, _)| Value::Entity(*h))
+                    .collect()
+            }
+            Member::Clones => {
+                let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                self.actors
+                    .get(&h)
+                    .map(|a| {
+                        a.clones
+                            .iter()
+                            .filter(|c| self.actors.get(c).is_some_and(|a| !a.removed))
+                            .map(|c| Value::Entity(*c))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            Member::PlayingAnimations => {
+                let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                self.sequences
+                    .iter()
+                    .filter(|s| s.actor == h && !s.done && !s.stopped && s.length > 0.0)
+                    .map(|s| s.template)
+                    .collect()
+            }
+            Member::PlayingSounds => Vec::new(),
+            // The level's and the props' contacts, not another actor's.
+            Member::EnvironmentContacts => {
+                let Some(Object::Facet(h, Facet::Collision)) = self.object(recv) else {
+                    return Err(HostFault::Nothing);
+                };
+                let level: Vec<u32> = self.actors.get(&h).map_or(Vec::new(), |a| {
+                    (0..a.contacts.len() as u32)
+                        .filter(|&i| engine.actor_of(a.contacts[i as usize].body).is_none())
+                        .collect()
+                });
+                level
+                    .into_iter()
+                    .map(|i| self.objs.value(Object::Contact(h, i)))
+                    .collect()
+            }
+            Member::Palette => {
+                // The running placement's, as the static member reads it.
+                let template = self.template_of(at.placement, engine);
+                let lengths = template.and_then(|t| self.palettes.get(&t).map(|p| (t, p.len())));
+                match lengths {
+                    Some((t, n)) => (0..n as u32)
+                        .map(|slot| self.objs.value(Object::Clip { template: t, slot }))
+                        .collect(),
+                    None => return Err(HostFault::Nothing),
+                }
+            }
+            Member::Waypoints => {
+                let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                self.actors
+                    .get(&h)
+                    .ok_or(HostFault::Nothing)?
+                    .waypoints
+                    .clone()
+            }
+            _ => return Err(HostFault::Unmodelled),
+        })
+    }
+
+    /// The template an actor was made from (itself for a file's).
+    fn template_of(&self, h: Handle, _engine: &mut dyn Engine) -> Option<Obj> {
+        let a = self.actors.get(&h)?;
+        a.template.or(a.obj)
+    }
+
+    /// A clip's length, seconds at 100 %: 0 for an empty slot or anything
+    /// that isn't a clip (a sound plays nothing here).
+    fn length_of(&self, v: Value) -> f32 {
+        match self.object(Some(v)) {
+            Some(Object::Clip { template, slot }) => self
+                .palettes
+                .get(&template)
+                .and_then(|p| p.get(slot as usize).copied())
+                .unwrap_or(0.0),
+            _ => 0.0,
+        }
+    }
+
+    /// The world ops AH.17's scripts reach past AH.16's: a sequence started
+    /// and stopped, a displacement. `None` for an op this doesn't answer.
+    pub(crate) fn op_hero(
+        &mut self,
+        call: &OpCall,
+        _spawn: &mut Spawner<'_>,
+        engine: &mut dyn Engine,
+    ) -> Option<Result<Answer, HostFault>> {
+        let first = call.operands.first().and_then(|(_, v)| *v);
+        Some(match call.class {
+            Class::StartSequence => {
+                let Some(template) = first else {
+                    return Some(Ok(Answer::Skip));
+                };
+                let Some(actor) = self.handle(call.receiver) else {
+                    return Some(Ok(Answer::Skip));
+                };
+                let length = self.length_of(template);
+                self.sequences.push(Sequence {
+                    actor,
+                    template,
+                    length,
+                    time: 0.0,
+                    rate: 100.0,
+                    looping: false,
+                    stopped: false,
+                    done: false,
+                });
+                let s = self
+                    .objs
+                    .value(Object::Sequence((self.sequences.len() - 1) as u32));
+                Ok(Answer::Run {
+                    receiver: None,
+                    result: Some(s),
+                })
+            }
+            Class::StopSequence => {
+                if let Some(Object::Sequence(i)) = self.object(first)
+                    && let Some(s) = self.sequences.get_mut(i as usize)
+                {
+                    s.stopped = true;
+                }
+                Ok(Answer::Done)
+            }
+            Class::Displace => {
+                let read = |name: &str| {
+                    call.operands
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .and_then(|(_, v)| *v)
+                        .and_then(|v| v.as_f32())
+                        .unwrap_or(0.0)
+                };
+                let mode = call
+                    .words
+                    .iter()
+                    .find(|(n, _)| *n == "_combineMode")
+                    .map_or(0, |(_, w)| *w);
+                let (len, head, pitch) = (read("_lenNP"), read("_headNP"), read("_pitchNP"));
+                let Some(target) = first else {
+                    return Some(Err(HostFault::Nothing));
+                };
+                Ok(
+                    match self.displace(target, mode, len, head, pitch, engine) {
+                        Ok(()) => Answer::Done,
+                        Err(e) => return Some(Err(e)),
+                    },
+                )
+            }
+            _ => return None,
+        })
+    }
+
+    /// OpDisplace: `len` feet along a heading and a pitch, added in the
+    /// world's axes (mode 0), set outright (1) or added turned by the
+    /// target's facing (2); on a velocity facet, ft/s.
+    fn displace(
+        &mut self,
+        target: Value,
+        mode: u32,
+        len: f32,
+        head: f32,
+        pitch: f32,
+        engine: &mut dyn Engine,
+    ) -> Result<(), HostFault> {
+        if let Some(Object::Facet(h, Facet::Velocity)) = self.object(Some(target)) {
+            let mut v = self.velocity(h, engine).ok_or(HostFault::Nothing)?;
+            let head = if mode == 2 {
+                head + self.angles(h, engine).map_or(0.0, |a| a.facing)
+            } else {
+                head
+            };
+            let d = direction(head, pitch) * len;
+            v = if mode == 1 { d } else { v + d };
+            return self.set_velocity(h, v, engine);
+        }
+        let at = self.point(target, engine).ok_or(HostFault::Nothing)?;
+        let head = if mode == 2 {
+            let h = self.handle(target).ok_or(HostFault::Nothing)?;
+            head + self.angles(h, engine).map_or(0.0, |a| a.facing)
+        } else {
+            head
+        };
+        let d = direction(head, pitch) * (len * METRES_PER_FOOT);
+        let to = if mode == 1 { d } else { at + d };
+        self.set_point(target, to, engine)
+    }
+}
+
+impl ScriptWorld {
+    /// The lowest point of an actor's solid, metres, as it's posed; `None`
+    /// for a hero (his pivot is his feet) or an actor with no solid.
+    fn bottom(&self, h: Handle) -> Option<f32> {
+        let a = self.actors.get(&h)?;
+        let solid = a.havok()?;
+        let reach = match solid.shape {
+            Shape::Sphere { radius } => radius,
+            Shape::Capsule {
+                radius,
+                half_segment,
+            } => radius + half_segment,
+            Shape::Box {
+                half_extents,
+                margin,
+            } => half_extents.y + margin,
+            Shape::Cylinder {
+                half_height,
+                margin,
+                ..
+            } => half_height + margin,
+        };
+        Some(a.position.y + solid.centre.y - reach)
+    }
+
+    /// Its solid as the seam's query shape, posed where it stands.
+    fn query(&self, h: Handle) -> Option<(Shape, Pose)> {
+        let a = self.actors.get(&h)?;
+        let solid = a.havok()?;
+        let rotation = guac_motion::solid::euler([a.angles.tilt, a.angles.facing, a.angles.roll]);
+        Some((
+            solid.grown(0.0),
+            solid.pose(Pose::new(a.position, rotation)),
+        ))
+    }
+
+    /// `positionmeasurement.collision`: whether two actors' solids touch,
+    /// one of them a body in the seam (a creature, a prop): the other's
+    /// last move stopped on it, or its solid overlaps it where it stands.
+    /// Two actors neither of which the seam holds aren't modelled.
+    fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
+        let pair = [(a, b), (b, a)];
+        let mut asked = false;
+        for (me, other) in pair {
+            let Some(body) = engine.body(other) else {
+                continue;
+            };
+            asked = true;
+            let stopped = self
+                .actors
+                .get(&me)
+                .is_some_and(|k| k.contacts.iter().any(|c| c.body == body));
+            if stopped {
+                return Ok(true);
+            }
+            if let Some((shape, pose)) = self.query(me)
+                && engine.seam().overlaps(&shape, pose, &[]).contains(&body)
+            {
+                return Ok(true);
+            }
+        }
+        if asked {
+            Ok(false)
+        } else {
+            Err(HostFault::Unmodelled)
+        }
+    }
+
+    /// The engine's move for the actors the scripts set going, a frame of
+    /// `dt` seconds: one hung from a node sits at it; one launched falls
+    /// under its own gravity at its time scale and, with a solid that meets
+    /// the level, sweeps it through the seam, stopping at what it hits and
+    /// sliding along it, its contacts there kept for
+    /// `collisioninfo.environment contacts`.
+    pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
+        let mut hung = Vec::new();
+        let mut flying = Vec::new();
+        for (&h, a) in &self.actors {
+            if a.removed {
+                continue;
+            }
+            if a.attach != Value::Null {
+                hung.push((h, a.attach));
+            } else if a.launched {
+                flying.push(h);
+            }
+        }
+        hung.sort_unstable_by_key(|k| k.0);
+        flying.sort_unstable();
+        for h in flying {
+            let Some(a) = self.actors.get(&h) else {
+                continue;
+            };
+            let dt = dt * a.physics.time_scale / 100.0;
+            let mut v = a.velocity;
+            if a.physics.gravity_acceleration > 0.0 {
+                v.y -= a.physics.gravity_acceleration * dt;
+                if a.physics.gravity_max_speed > 0.0 {
+                    v.y = v.y.max(-a.physics.gravity_max_speed);
+                }
+            }
+            let motion = v * (dt * METRES_PER_FOOT);
+            let rotation =
+                guac_motion::solid::euler([a.angles.tilt, a.angles.facing, a.angles.roll]);
+            let placed = Pose::new(a.position, rotation);
+            let solid = a.havok().filter(|_| a.solid.interacts_with_level_mesh != 0);
+            let mut at = a.position + motion;
+            let mut contacts = Vec::new();
+            if let Some(solid) = solid {
+                let shape = solid.grown(0.0);
+                let from = solid.pose(placed);
+                let own: Vec<BodyId> = engine.body(h).into_iter().collect();
+                if let Some(cast) = engine.seam().cast(&shape, from, motion, CAST_SLOP, &own) {
+                    at = a.position + motion * cast.fraction;
+                    for p in &cast.planes {
+                        let into = v.dot(p.normal);
+                        if into < 0.0 {
+                            v -= p.normal * into;
+                        }
+                    }
+                }
+                // What it touches where it ends up, at rest against it too.
+                let end = solid.pose(Pose::new(at, rotation));
+                for p in engine.seam().contacts(&shape, end, TOUCH, &own) {
+                    contacts.push(Contact {
+                        point: p.point,
+                        normal: p.normal,
+                        material: p.material,
+                        body: p.body,
+                    });
+                }
+            }
+            if let Some(a) = self.actors.get_mut(&h) {
+                a.position = at;
+                a.velocity = v;
+                a.contacts = contacts;
+            }
+        }
+        for (h, node) in hung {
+            if matches!(
+                self.object(Some(node)),
+                Some(Object::Facet(_, Facet::Ground))
+            ) {
+                continue;
+            }
+            if let Some(p) = self.point(node, engine)
+                && let Some(a) = self.actors.get_mut(&h)
+            {
+                a.position = p;
+            }
+        }
+    }
+}
+
+/// How near a solid counts as touching for its contacts: twice what a cast
+/// leaves between a shape and what stopped it.
+const TOUCH: f32 = 2.0 * CAST_SLOP;
+
+/// How many attach nodes an actor's set holds: the scripts index up to 13
+/// on a hero; which joint each is isn't read yet (a stand-in: a node sits
+/// where [`ScriptWorld::set_nodes`] put it, else at the actor's pivot).
+pub const NODES: u32 = 32;
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use guac_motion::hero::Hero;
+    use guac_motion::parry::ParryWorld;
+    use guac_motion::proxy::Surfaces;
+    use guac_motion::seam::{Body, BodyKind, Collider, PhysicsSeam};
+    use guac_motion::solid::MESH_RADIUS;
+    use guac_motion::tuning::{Tuning, eruptor_solid};
+    use guac_script::MemberId;
+
+    use super::*;
+    use crate::script_engine::{Actor, Pad, Physics, Solid};
+    use crate::scripts::{Files, headless_objects};
+
+    const BALL: Handle = 0x6000_0001;
+    const CHOMPY: Handle = 0x6000_0002;
+    const HERO: Handle = 0x6000_0003;
+    const STEP: f32 = 1.0 / 60.0;
+
+    /// A floor whose top is y = 0, a wall whose face is z = 2.5, and a
+    /// creature's capsule at x = 4: the parry side of the seam.
+    struct Bench {
+        world: ParryWorld,
+        hero: Option<Hero>,
+    }
+
+    impl Engine for Bench {
+        fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+            self.hero.as_mut().filter(|_| h == HERO)
+        }
+        fn heroes(&self) -> Vec<Handle> {
+            self.hero.iter().map(|_| HERO).collect()
+        }
+        fn seam(&self) -> &dyn PhysicsSeam {
+            &self.world
+        }
+        fn view_heading(&self) -> f32 {
+            0.0
+        }
+        fn pad(&self, _: usize) -> Pad {
+            Pad::default()
+        }
+        fn body(&self, actor: Handle) -> Option<BodyId> {
+            (actor == CHOMPY).then_some(BodyId(3))
+        }
+        fn actor_of(&self, body: BodyId) -> Option<Handle> {
+            (body == BodyId(3)).then_some(CHOMPY)
+        }
+    }
+
+    fn bench() -> Bench {
+        let convex = |id, kind, at: Vec3, shape| Body {
+            id: BodyId(id),
+            kind,
+            pose: Pose::at(at),
+            collider: Collider::Convex(shape),
+        };
+        let floor = Shape::Box {
+            half_extents: Vec3::new(20.0, 0.5, 20.0),
+            margin: 0.0,
+        };
+        let wall = Shape::Box {
+            half_extents: Vec3::new(1.0, 5.0, 0.5),
+            margin: 0.0,
+        };
+        let chompy = Shape::Capsule {
+            radius: 0.5,
+            half_segment: 0.5,
+        };
+        let world = ParryWorld::new(&[
+            convex(1, BodyKind::Static, Vec3::new(0.0, -0.5, 0.0), floor),
+            convex(2, BodyKind::Static, Vec3::new(0.0, 1.0, 3.0), wall),
+            convex(3, BodyKind::Kinematic, Vec3::new(4.0, 1.0, 3.0), chompy),
+        ])
+        .unwrap();
+        Bench { world, hero: None }
+    }
+
+    /// The lava ball's numbers (`009_LavaProjectile`): a 5 ft sphere whose
+    /// centre is its pivot, meeting the level, 200 ft/s² of gravity.
+    fn ball(at: Vec3, gravity: f32) -> Actor {
+        Actor {
+            position: at,
+            physics: Physics {
+                gravity_acceleration: gravity,
+                gravity_max_speed: 9999.0,
+                time_scale: 100.0,
+                ..Physics::default()
+            },
+            solid: Solid {
+                width: 5.0,
+                length: 3.0,
+                height: 6.0,
+                offset: [0.0, -0.762, 0.0],
+                interacts_with_level_mesh: 1,
+                shape: 3,
+                ..Solid::default()
+            },
+            ..Actor::blank()
+        }
+    }
+
+    fn world() -> ScriptWorld {
+        let files = Files {
+            placed: Vec::new(),
+            ids: HashMap::new(),
+        };
+        let handles = HashMap::new();
+        ScriptWorld::new(&files, &handles, headless_objects(&handles))
+    }
+
+    fn at(ns: &str, name: &str, receiver: Option<Value>, other: Option<Value>) -> Access {
+        Access {
+            placement: 1,
+            receiver,
+            member: MemberId::named(ns, name),
+            other_point: other,
+        }
+    }
+
+    fn fly(w: &mut ScriptWorld, e: &mut Bench, frames: u32) {
+        for _ in 0..frames {
+            w.advance(STEP, e);
+        }
+    }
+
+    #[test]
+    fn a_thrown_ball_falls_by_its_gravity_at_its_time_scale() {
+        let mut e = bench();
+        let mut w = world();
+        w.actors
+            .insert(BALL, ball(Vec3::new(-5.0, 5.0, -5.0), 200.0));
+        w.set_velocity(BALL, Vec3::new(0.0, 60.0, 0.0), &mut e)
+            .unwrap();
+        fly(&mut w, &mut e, 1);
+        let a = w.actor(BALL).unwrap();
+        assert!((a.velocity.y - (60.0 - 200.0 / 60.0)).abs() < 1e-4);
+        // Velocity first, then the move: 56.67 ft/s for a sixtieth.
+        let rise = (60.0 - 200.0 / 60.0) * STEP * METRES_PER_FOOT;
+        assert!((a.position.y - (5.0 + rise)).abs() < 1e-5);
+        // At half its time scale a frame is half as long.
+        w.actors.get_mut(&BALL).unwrap().physics.time_scale = 50.0;
+        let before = w.actor(BALL).unwrap().velocity.y;
+        fly(&mut w, &mut e, 1);
+        let after = w.actor(BALL).unwrap().velocity.y;
+        assert!((before - after - 100.0 / 60.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_balls_cast_stops_on_a_wall_and_the_wall_is_its_contact() {
+        let mut e = bench();
+        let mut w = world();
+        w.actors.insert(BALL, ball(Vec3::new(0.0, 1.5, 0.0), 0.0));
+        w.set_velocity(BALL, Vec3::new(0.0, 0.0, 30.0), &mut e)
+            .unwrap();
+        fly(&mut w, &mut e, 30);
+        let a = w.actor(BALL).unwrap();
+        // Its solid as the original builds it, 0.712 m, and the level's
+        // 5 cm skin: the centre stops 0.762 m short of the face.
+        let reach = a.havok().unwrap().grown(0.0);
+        let Shape::Sphere { radius } = reach else {
+            panic!("{reach:?}")
+        };
+        assert!((radius - (0.712 + MESH_RADIUS)).abs() < 1e-5);
+        assert!(
+            (a.position.z - (2.5 - radius)).abs() < 2e-3,
+            "{}",
+            a.position.z
+        );
+        assert_eq!(a.contacts.len(), 1);
+        let c = a.contacts[0];
+        assert_eq!(c.body, BodyId(2));
+        assert!(c.normal.dot(Vec3::NEG_Z) > 0.999);
+        // Slid along it: nothing left into the wall.
+        assert!(a.velocity.z.abs() < 1e-3);
+        let collision = w.objs.value(Object::Facet(BALL, Facet::Collision));
+        let contacts = w
+            .elements_of(
+                &at(
+                    "collisioninfo",
+                    "environment contacts",
+                    Some(collision),
+                    None,
+                ),
+                Member::EnvironmentContacts,
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(contacts.len(), 1);
+        let normal = w
+            .get_member(
+                &at("contactinfo", "normal", Some(contacts[0]), None),
+                Member::ContactNormal,
+                &mut e,
+            )
+            .unwrap();
+        let n = w.vector(w.object(Some(normal)).unwrap(), &mut e).unwrap();
+        assert!(n.dot(Vec3::NEG_Z) > 0.999);
+    }
+
+    #[test]
+    fn a_balls_cast_stops_on_a_creature_and_reads_as_its_collision() {
+        let mut e = bench();
+        let mut w = world();
+        w.actors.insert(BALL, ball(Vec3::new(4.0, 1.0, 0.0), 0.0));
+        w.actors.insert(CHOMPY, Actor::blank());
+        w.set_velocity(BALL, Vec3::new(0.0, 0.0, 30.0), &mut e)
+            .unwrap();
+        let collision = |w: &mut ScriptWorld, e: &mut Bench| {
+            w.get_member(
+                &at(
+                    "positionmeasurement",
+                    "collision",
+                    Some(Value::Entity(CHOMPY)),
+                    Some(Value::Entity(BALL)),
+                ),
+                Member::Collision,
+                e,
+            )
+        };
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)));
+        fly(&mut w, &mut e, 30);
+        let a = w.actor(BALL).unwrap();
+        // The capsule's face is 0.5 m from its axis at z = 3.
+        assert!(
+            (a.position.z - (2.5 - 0.762)).abs() < 2e-3,
+            "{}",
+            a.position.z
+        );
+        assert_eq!(a.contacts.first().map(|c| c.body), Some(BodyId(3)));
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(1)));
+        // Not the level's: no environment contact.
+        let facet = w.objs.value(Object::Facet(BALL, Facet::Collision));
+        let contacts = w
+            .elements_of(
+                &at("collisioninfo", "environment contacts", Some(facet), None),
+                Member::EnvironmentContacts,
+                &mut e,
+            )
+            .unwrap();
+        assert!(contacts.is_empty());
+        // Two actors the seam holds neither of aren't modelled.
+        w.actors
+            .insert(0x6000_0009, ball(Vec3::new(9.0, 1.0, 0.0), 0.0));
+        let neither = w.get_member(
+            &at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(0x6000_0009)),
+                Some(Value::Entity(BALL)),
+            ),
+            Member::Collision,
+            &mut e,
+        );
+        assert_eq!(neither, Err(HostFault::Unmodelled));
+    }
+
+    #[test]
+    fn separation_from_the_ground_is_the_gap_under_the_solid_in_feet() {
+        let mut e = bench();
+        let mut w = world();
+        // Centre 1 m up: the 0.712 m sphere's bottom is 0.288 m off the floor.
+        w.actors.insert(BALL, ball(Vec3::new(-5.0, 1.0, -5.0), 0.0));
+        let ground = w.objs.value(Object::Facet(BALL, Facet::Ground));
+        let gap = w
+            .get_member(
+                &at(
+                    "positionmeasurement",
+                    "separation",
+                    Some(Value::Entity(BALL)),
+                    Some(ground),
+                ),
+                Member::Separation,
+                &mut e,
+            )
+            .unwrap();
+        let Value::Float(ft) = gap else {
+            panic!("{gap:?}")
+        };
+        assert!((ft - 0.288 * FEET_PER_METRE).abs() < 1e-3, "{ft}");
+    }
+
+    #[test]
+    fn origin_stays_where_it_was_placed_and_a_reference_keeps_its_own_point() {
+        let mut e = bench();
+        let mut w = world();
+        let mut a = ball(Vec3::new(1.0, 2.0, 3.0), 0.0);
+        a.origin = a.position;
+        w.actors.insert(BALL, a);
+        w.set_velocity(BALL, Vec3::new(30.0, 0.0, 0.0), &mut e)
+            .unwrap();
+        fly(&mut w, &mut e, 10);
+        let origin = w
+            .get_member(
+                &at(
+                    "abstractplacement",
+                    "origin",
+                    Some(Value::Entity(BALL)),
+                    None,
+                ),
+                Member::Origin,
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(w.point(origin, &mut e), Some(Vec3::new(1.0, 2.0, 3.0)));
+        let kept = w
+            .get_member(
+                &at(
+                    "placementreference",
+                    "remembered",
+                    Some(Value::Entity(BALL)),
+                    None,
+                ),
+                Member::Remembered,
+                &mut e,
+            )
+            .unwrap();
+        let now = w.actor(BALL).unwrap().position;
+        assert_eq!(w.point(kept, &mut e), Some(now));
+        // Set 10 ft from the origin, it stays there while the ball moves on.
+        w.set_member(
+            &at("positionmeasurement", "distance", Some(kept), Some(origin)),
+            Member::Distance,
+            Value::Float(10.0),
+            &mut e,
+        )
+        .unwrap();
+        let p = w.point(kept, &mut e).unwrap();
+        assert!(((p - Vec3::new(1.0, 2.0, 3.0)).length() - 10.0 * METRES_PER_FOOT).abs() < 1e-5);
+        fly(&mut w, &mut e, 5);
+        assert_eq!(w.point(kept, &mut e), Some(p));
+    }
+
+    #[test]
+    fn the_scripts_are_the_one_writer_of_his_speed_turn_and_clip() {
+        let mut e = bench();
+        let mut hero = Hero::new(
+            eruptor_solid(),
+            Tuning::ERUPTOR,
+            Vec3::new(-5.0, 0.0, -5.0),
+            0.0,
+        );
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        // A script's write lands in his controller at once.
+        let walk = Vec3::new(0.0, 0.0, -21.5);
+        w.set_velocity(HERO, walk, &mut e).unwrap();
+        let turn = w.objs.value(Object::Facet(HERO, Facet::Orientation));
+        w.set_member(
+            &at("orientationmeasurement", "facing", Some(turn), None),
+            Member::Facing,
+            Value::Float(180.0),
+            &mut e,
+        )
+        .unwrap();
+        let h = e.hero.as_ref().unwrap();
+        assert_eq!(h.walk.velocity, walk);
+        assert_eq!(h.facing, 180.0);
+        // The engine's frames move him by it and neither speed him up nor
+        // turn him; no clip starts but a script's.
+        let start = h.pivot;
+        for _ in 0..30 {
+            let hero = e.hero.as_mut().unwrap();
+            hero.step_engine(&e.world, STEP, &[], Surfaces::NONE);
+            w.advance(STEP, &mut e);
+        }
+        let h = e.hero.as_ref().unwrap();
+        assert_eq!(h.walk.velocity, walk);
+        assert_eq!(h.facing, 180.0);
+        let moved = (h.pivot - start).length();
+        assert!(
+            (moved - 21.5 * METRES_PER_FOOT * 0.5).abs() < 1e-3,
+            "{moved}"
+        );
+        assert!(w.sequences().is_empty());
+    }
+}

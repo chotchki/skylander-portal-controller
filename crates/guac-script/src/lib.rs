@@ -188,17 +188,28 @@
 //! - `find variable` finds a variable by name and declaration (container and
 //!   contents type, a structure named through a stub being the structure) on
 //!   what its owner path names. On a placement the VM runs, that's its
-//!   locals, there once its STARTUP has run: a declared one is made as it's
-//!   first reached, as the original builds every declared local at STARTUP.
-//!   On anything else it's a table per owner. Filter 0 finds (the block runs
-//!   only with one found), 2 finds or makes, 3 finds and takes it off; the
-//!   variable is the op's result as a path element. Filters 1 and 4 and the
-//!   skip operand stop as unsupported: what they select is a reading not yet
-//!   settled.
-//! - A reference names a set, a structure, a number variable, or a part of a
+//!   locals: a declared one is made as it's first reached, as the original
+//!   builds every declared local with the list. Filter 0 finds (the block
+//!   runs only with one found), asking the owner for its list made if it has
+//!   none yet, so a placement whose STARTUP hasn't run yet has its declared
+//!   locals already (a reading of the original's search, which asks for the
+//!   list with that flag set for filter 0 alone: the portal manager's
+//!   STARTUP finds the portal control's `portal data` so, ticking before
+//!   it). Filter 1 finds in a list the owner already has, so nothing before
+//!   its STARTUP or another find made one (the same reading; the original's
+//!   other branch for filter 1 is for a name holding a pattern, which no
+//!   filter-1 name on the disc does). 2 finds or makes, 3 finds and takes it
+//!   off; the variable is the op's result as a path element. On anything
+//!   else it's a table per owner. Filter 4 and the skip operand stop as
+//!   unsupported: what they select is a reading not yet settled.
+//! - A reference names a set, a structure, a number variable, a part of a
 //!   packed value or a value cell's number (`setref r = s.first.screen
-//!   measurement.x`): written through `valuedereferencer`, that part changes.
-//!   `undefined` reads 0 as a number and as an object none.
+//!   measurement.x`), or a host member's number (`setref r = my.actorinfo.
+//!   movement.actorphysics.ground turn rate`, as the hero's movement data
+//!   keeps his): written through `valuedereferencer`, that part or member
+//!   changes; read, a host member's is asked anew. Two references to one
+//!   host member compare equal. `undefined` reads 0 as a number and as an
+//!   object none.
 //!
 //! # Values and arithmetic
 //!
@@ -261,7 +272,12 @@
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere); `.its`, the
 //!   member under test inside `find subset`; `.valuedereferencer`, the
 //!   object a reference names, as the place to write;
-//! - `setvariant.count`, `.first`, `.last` and `.random` on a set;
+//! - `setvariant.count`, `.first`, `.last` and `.random` on a set, and
+//!   `.next`, its elements in turn from the first, round again after the
+//!   last, a cursor per set (a reading: the original's sound sets read it
+//!   so; whether its order is shuffled isn't read);
+//! - `optoplevelbehavior.behavior`, the running placement's behaviour as the
+//!   object `set behavior` names (`if reference behavior == <Idle>`);
 //! - `system.cast to integer`, an integer cell: written, it truncates toward
 //!   0 (no rounding); read, it gives what was written;
 //! - `system.script timer`, the running placement's seconds of ticks, and
@@ -327,8 +343,7 @@
 //! stand-in: the eased slide over time isn't modelled yet).
 //!
 //! Not modelled yet: colour arithmetic and screen division (they stop as
-//! unsupported), `setvariant.next` and the set properties (unmodelled
-//! members); and, with no stop, a reference's type check against the stack's
+//! unsupported), the set properties (unmodelled members); and, with no stop, a reference's type check against the stack's
 //! edit type, `for each`'s shuffled order (any order that visits each member
 //! once) and the scheduler's placement groups and activity by distance (the
 //! embedder ticks placements in the order it adds them), so SHUTDOWN's

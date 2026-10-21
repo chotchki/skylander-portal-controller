@@ -192,8 +192,11 @@ impl Host for Engine {
     }
 }
 
+/// Filter 0 finds a declared local on a placement whose STARTUP hasn't run
+/// yet: asking for its list makes it (the portal manager's STARTUP finds the
+/// portal control's `portal data` so, ticking before it).
 #[test]
-fn find_variable_reaches_a_started_placements_declared_local() {
+fn find_variable_reaches_a_declared_local_before_its_placements_startup() {
     let mut owner_obj = None;
     let (p, obj) = program_and_objects(|w| {
         let shared = w.variable("shared", "ValueInfo", Some(INT));
@@ -254,15 +257,19 @@ fn find_variable_reaches_a_started_placements_declared_local() {
     let owner = vm.add_at(0x20, "Owner", 1, a);
     let mut host = Engine::default();
     vm.step(&mut host).unwrap();
-    assert_eq!(vm.local(finder, "seen"), None, "no list before STARTUP");
-    assert_eq!(vm.local(finder, "took"), None);
-    vm.step(&mut host).unwrap();
+    // The finder ticks first: filter 0 made the owner's list.
     assert_eq!(vm.local(owner, "shared"), Some(Value::Int(1)));
     assert_eq!(vm.local(finder, "seen"), Some(Value::Int(1)));
     assert_eq!(vm.local(finder, "took"), Some(Value::Int(1)));
     assert_eq!(vm.local(owner, "spare"), None, "taken off");
+    assert_eq!(
+        vm.local(owner, "other"),
+        Some(Value::Int(1)),
+        "its STARTUP kept it"
+    );
     vm.step(&mut host).unwrap();
     assert_eq!(vm.local(owner, "shared"), Some(Value::Int(2)));
+    assert_eq!(vm.local(finder, "seen"), Some(Value::Int(2)));
     assert_eq!(vm.local(finder, "took"), Some(Value::Int(2)));
     assert_eq!(
         vm.value_cell(None, MemberId::named("test", "wrong kind")),
@@ -319,7 +326,7 @@ fn find_variable_with_an_unmodelled_filter_stops_naming_it() {
                     "x",
                     "ValueInfo",
                     INT,
-                    1,
+                    4,
                     &[El::Member("optoplevelbehavior", "my")],
                 );
                 w.end_block(f);
@@ -331,8 +338,52 @@ fn find_variable_with_an_unmodelled_filter_stops_naming_it() {
     let halt = vm.tick(id, &mut Engine::default()).unwrap_err();
     assert_eq!(
         halt.reason,
-        Reason::Unsupported("find variable filter 1".into())
+        Reason::Unsupported("find variable filter 4".into())
     );
+}
+
+/// Filter 1 finds only in a list its owner already has: nothing on a
+/// placement before its STARTUP (or a filter-0 find) made one, then its
+/// declared local.
+#[test]
+fn find_variable_filter_1_finds_only_in_a_list_already_made() {
+    let mut owner_obj = None;
+    let (p, obj) = program_and_objects(|w| {
+        let shared = w.variable("shared", "ValueInfo", Some(INT));
+        let a = actor(w);
+        owner_obj = Some(a);
+        let seen = var(w, "seen");
+        script(
+            w,
+            "C:/tfb/Synthetic/Finder.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    let (f, _) = find(w, "shared", "ValueInfo", INT, 1, &[El::Local(a)]);
+                    w.inc(&[El::Local(seen)]);
+                    w.end_block(f);
+                });
+            },
+        );
+        let info = script(
+            w,
+            "C:/tfb/Synthetic/Owner.ai",
+            |_| {},
+            |_| {},
+            |w| behaviour(w, |_| {}),
+        );
+        w.declare(info, &[shared]);
+    });
+    let a = obj.at(owner_obj.unwrap());
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let finder = vm.add(0x10, "Finder", 0);
+    vm.add_at(0x20, "Owner", 1, a);
+    let mut host = Engine::default();
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(finder, "seen"), None, "no list before its STARTUP");
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(finder, "seen"), Some(Value::Int(1)));
 }
 
 #[test]
@@ -1239,4 +1290,82 @@ fn full_health_on_synthetic_bases_is_combats_rule_at_levels_1_to_15() {
     for (level, want) in [(1, 290), (2, 323), (6, 451), (10, 580), (15, 741)] {
         assert_eq!(full_health(290.0, level), want);
     }
+}
+
+#[test]
+fn next_reads_a_set_in_turn_and_behavior_is_the_running_behaviour() {
+    let p = program(|w| {
+        let names = w.variable("names", "ScriptSet", None);
+        let picks: Vec<Location> = (0..4)
+            .map(|i| w.variable(&format!("pick{i}"), "ScriptReference", None))
+            .collect();
+        let idle = var(w, "idle");
+        let battle = var(w, "battle");
+        let idle_op = w.op(Class::UserBehavior, "Idle");
+        let battle_op = w.op(Class::UserBehavior, "Battle");
+        frame(
+            w,
+            |w| {
+                for name in ["A", "B", "C"] {
+                    let lhs = w.stack(StackClass::Set, &[El::Local(names)]);
+                    let rhs = w.reference(&[El::Named("SpriteInfo", name)], None);
+                    let o = w.op(Class::ChangeMembership, "set [set]||to");
+                    w.refer(o, 0x1C, lhs);
+                    w.word(o, 0x20, 4);
+                    w.refer(o, 0x24, rhs);
+                    w.push(o);
+                }
+            },
+            |_| {},
+            |_| {},
+            |_| {},
+            |w| {
+                let b = w.push(idle_op);
+                for &pick in &picks {
+                    setref(
+                        w,
+                        &[El::Local(pick)],
+                        &[El::Local(names), El::Member("setvariant", "next")],
+                    );
+                }
+                for (op, count) in [(idle_op, idle), (battle_op, battle)] {
+                    let c = check_ref(
+                        w,
+                        &[El::Member("optoplevelbehavior", "behavior")],
+                        1,
+                        &[El::Local(op)],
+                    );
+                    w.inc(&[El::Local(count)]);
+                    w.end_block(c);
+                }
+                w.set_behavior(battle_op);
+                w.end_block(b);
+                let b = w.push(battle_op);
+                let c = check_ref(
+                    w,
+                    &[El::Member("optoplevelbehavior", "behavior")],
+                    1,
+                    &[El::Local(battle_op)],
+                );
+                w.inc(&[El::Local(battle)]);
+                w.end_block(c);
+                w.end_block(b);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    let pick = |i: usize| vm.local(id, &format!("pick{i}")).unwrap();
+    let names = vm.local(id, "names").unwrap();
+    let elems = vm.set(names).unwrap();
+    assert_eq!(elems.len(), 3);
+    // In the set's order from its first, then round again.
+    assert_eq!([pick(0), pick(1), pick(2)], [elems[0], elems[1], elems[2]]);
+    assert_eq!(pick(3), elems[0]);
+    assert_eq!(vm.local(id, "idle"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "battle"), None, "still idle this tick");
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "battle"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "idle"), Some(Value::Int(1)));
 }
