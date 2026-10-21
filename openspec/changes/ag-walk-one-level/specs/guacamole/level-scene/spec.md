@@ -88,36 +88,58 @@ With Giants picked and its level extracted, placing a character on the portal SH
 
 #### Scenario: Two characters before the start
 - **WHEN** Eruptor and then Tree Rex are placed before the level has started
-- **THEN** Eruptor's intro plays, then Tree Rex's, then the level shows with Eruptor as the hero and Tree Rex waiting
+- **THEN** Eruptor's intro plays, then Tree Rex's, then the TV holds under the too-many alert instead of showing the level, and once Tree Rex comes off the level shows with Eruptor at its start
 
 ### Requirement: One hero at a time
-While a hero is in the level, a character placed after it SHALL wait on the portal without joining the level. When the hero is removed, the character waiting longest SHALL take its place as the hero.
+While a hero is in the level, a second character placed SHALL hold the level, within 1.5 s, under a full-screen alert that there are too many Skylanders on the portal, the hero and the creatures still, until one comes off: the second taken off, the hero carries on from where he stopped; the hero taken off, the second arrives and comes in where the hero stood. Two characters on the portal when the level would start SHALL hold it the same way.
 
 #### Scenario: A second kid places a character
 - **WHEN** a second phone places Tree Rex while Eruptor walks the level
-- **THEN** Eruptor stays the only hero, and Tree Rex shows on the phones' portal but not in the level
+- **THEN** within 1.5 s the level holds under the too-many alert with Eruptor and the creatures still, and once Tree Rex comes off Eruptor carries on from where he stopped
 
 #### Scenario: The hero comes off with another waiting
-- **WHEN** Eruptor is removed while Tree Rex waits on the portal
-- **THEN** Tree Rex becomes the hero, coming in where the original brings in a replacement hero
+- **WHEN** Eruptor is removed while Tree Rex's placement holds the level
+- **THEN** Tree Rex arrives and comes in within 0.15 m of where Eruptor stood, facing his way within 0.2°, and the level carries on
 
 ### Requirement: Other figures leave the level as it is
-A magic item, an adventure-pack piece or a sidekick placed while the level shows SHALL change nothing in the level; it SHALL show only on the phones' portal.
+A magic item or a sidekick placed while the level shows SHALL play its arrival and then leave the hero and the level as they were, showing only on the phones' portal until guacamole runs the items' own scripts; an adventure-pack piece SHALL change nothing. A second magic item or sidekick on the portal (Giants counts a sidekick as a magic item) SHALL hold the level under an alert that there are too many magic items on the portal until one comes off.
 
 #### Scenario: An item mid-level
 - **WHEN** Sky-Iron Shield is placed while Eruptor walks the level
-- **THEN** the level carries on unchanged and the phones show the shield on the portal
+- **THEN** its arrival plays, then the level carries on with Eruptor where he was and the phones show the shield on the portal
+
+#### Scenario: A sidekick beside an item
+- **WHEN** Barkley is placed while Sky-Iron Shield is on the portal and Eruptor walks the level
+- **THEN** within 1.5 s the level holds under the too-many-magic-items alert, and once either comes off the level carries on
 
 ### Requirement: Removing the hero pauses the level
-When the hero is removed and no character waits, the level SHALL pause under a message asking for a Skylander on the portal. The next character placed SHALL become the hero where the original brings in a replacement, and the level SHALL carry on from where it paused rather than restart.
+When the hero is removed and no character waits, the level SHALL hold within 1.5 s, hidden behind a screen asking player 1 to put a Skylander on the portal, nothing in it moving. The next character placed SHALL arrive and come in where the hero stood when he came off, facing his way, and the level SHALL carry on from where it held rather than restart.
 
 #### Scenario: Swapping heroes
 - **WHEN** Eruptor is removed partway across the clearing and then Spyro is placed
-- **THEN** the level pauses under the message, then carries on with Spyro as the hero where the original brings a replacement in, the rest of the level as it was
+- **THEN** within 1.5 s the level holds behind the message with nothing moving, then Spyro arrives and comes in within 0.15 m of Eruptor's last place, facing his heading within 0.2°, the rest of the level as it was
+
+### Requirement: A character coming in arrives
+Each time a character becomes the hero after the level has started, and each time a magic item or a sidekick is placed while it shows, the TV SHALL first show that figure's arrival full screen, the level held meanwhile: the figure alone over its element's colours with its name, from within 1 s of the placement (or of the hero coming off, for a waiting character) for about 3 s, then the level again 5-8 s after it began. No intro SHALL play.
+
+#### Scenario: A replacement arrives
+- **WHEN** Eruptor has been taken off mid-level and Tree Rex is placed
+- **THEN** within 1 s Tree Rex's arrival shows him named over his element's colours, and 5-8 s after the placement the level shows again with Tree Rex in Eruptor's place
+
+### Requirement: A figure Giants can't use holds the level
+A figure Giants has no use for (a character from a later game, or a kind it doesn't know, such as a trap or a vehicle) placed at any time SHALL hold the TV, within 1.5 s, under a full-screen alert that a toy on the portal can't be used with this game, asking for it to be removed, the level and the figure untouched and the pad's buttons doing nothing; within 1 s of it coming off the TV SHALL show what it showed before.
+
+#### Scenario: A later game's character mid-level
+- **WHEN** Fryno is placed while Eruptor walks the level
+- **THEN** within 1.5 s the alert covers the TV with Eruptor and the creatures still, and within 1 s of Fryno coming off the level shows again with Eruptor where he stopped
+
+#### Scenario: A trap at the start
+- **WHEN** a trap is placed while the TV asks for a Skylander to start the level
+- **THEN** the alert covers the TV, and once the trap comes off the TV asks for a Skylander again
 
 ### Requirement: The level takes the TV
 While a level is showing, the TV SHALL show it full screen with the small join code in a corner and no figure cards.
 
-#### Scenario: Three figures on the portal
-- **WHEN** Eruptor walks the level with two more figures on the portal
+#### Scenario: A figure beside the hero
+- **WHEN** Eruptor walks the level with Sky-Iron Shield on the portal beside him
 - **THEN** the TV shows the level and the small join code, and no cards

@@ -163,6 +163,23 @@ usage:
       global.bld's exports read whole into vars-<label>.json, globals-<label>.json);
       with no hero at a pause the driver keeps the last look's pose, and each read
       writes every player's figure (players-<label>.json)
+  oracle session --out <dir> --plan <plan.ron> [--state <file>] [--attach <p1>]
+              [--boot-secs <n>] [--max-load <x>]
+      AG.6's session: a cold boot from the oracle home (a savestate with --state,
+      RECONNECTed and resumed at its pause), or the running oracle whose P1
+      socket --attach names (`oracle boot --hold`'s; left running), then the
+      plan's steps with the game running: Pad (a pad's buttons and sticks for so
+      many flips, scheduled ahead of the counter without a pause, on port 0 or
+      1), Wait, Secs, Opened (until the game opens a file whose path holds a
+      fragment), Shot and Shots (SCREENSHOTs while it runs), Read (the actors at
+      a pause a few flips on, then resumed), Load (a fresh copy of a .sky onto
+      the portal, or @<n> the n-th load's copy back), Clear, Reconnect and Note.
+      Every file the game opens is recorded with the flip STATE last read, P4's
+      portal events with them. Writes <dir> (new, outside every work tree):
+      record.json, run.txt (the timeline), the shots and reads, the figures as the
+      game left them (portal/) and RPCS3's log; the dev's RPCS3 dirs are checked
+      unchanged at the end, and whether the home's saves and trophies changed is
+      printed (a cold boot's new save is the point; restore the home after)
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
@@ -234,6 +251,7 @@ fn main() -> Result<()> {
         ["sweep", "list", "--pack", pack] => sweep_list(pack.as_ref()),
         ["sweep", "run", rest @ ..] => sweep_run(rest),
         ["goto", rest @ ..] => goto(rest),
+        ["session", rest @ ..] => session(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
         ["divergence", "report", rest @ ..] => divergence_report(rest),
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
@@ -273,6 +291,188 @@ fn fight_report(mut rest: &[&str]) -> Result<()> {
     let report = oracle_harness::fightlog::report(&rules, &dirs, &candidates, &out)?;
     print!("{}", report.text());
     println!("written to {}", out.display());
+    Ok(())
+}
+
+/// `oracle session` (AG.6).
+fn session(mut rest: &[&str]) -> Result<()> {
+    let (mut out, mut plan_file, mut state, mut attach) = (None, None, None, None);
+    let mut boot_wait = divergence::BOOT_WAIT;
+    let mut max_load = 32.0f64;
+    while let [flag, value, tail @ ..] = rest {
+        rest = tail;
+        match *flag {
+            "--out" => out = Some(PathBuf::from(value)),
+            "--plan" => plan_file = Some(PathBuf::from(value)),
+            "--state" => state = Some(PathBuf::from(value)),
+            "--attach" => attach = Some(PathBuf::from(value)),
+            "--boot-secs" => {
+                boot_wait = Duration::from_secs(value.parse().context("--boot-secs takes seconds")?)
+            }
+            "--max-load" => max_load = value.parse().context("--max-load takes a load")?,
+            _ => bail!("{USAGE}"),
+        }
+    }
+    if !rest.is_empty() {
+        bail!("{USAGE}");
+    }
+    let out = rrc_dump::output::refuse_repo_output(&out.context("--out <dir> is required")?)?;
+    if out.exists() {
+        bail!("{} exists: a session's dir is never reused", out.display());
+    }
+    let plan_file = plan_file.context("--plan <plan.ron> is required")?;
+    let plan = oracle_harness::session::SessionPlan::from_ron(
+        &std::fs::read_to_string(&plan_file)
+            .with_context(|| format!("reading {}", plan_file.display()))?,
+    )?;
+    let exe = required(env::ORACLE_EXE)?;
+    let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
+    let dev_dirs = dev_rpcs3_dirs(&home::real_home()?);
+    let before = Snapshot::take(&dev_dirs)?;
+    let carried_dirs = divergence::carried_dirs(&home.config_dir());
+    let carried = Snapshot::take(&carried_dirs)?;
+    let identity = Identity::of(&exe, &home.config_dir())?.line();
+    std::fs::create_dir_all(&out)?;
+    std::fs::write(out.join("plan.ron"), plan.to_ron())?;
+    let log = home.cache_dir().join("RPCS3.log");
+    let config_dir = home.config_dir();
+    let result = if let Some(p1) = &attach {
+        let run_dir = p1.parent().context("--attach takes the P1 socket's path")?;
+        let pine = run_dir.join(launch::PINE_SOCKET);
+        let target = oracle_harness::session::Target {
+            p1_socket: p1,
+            pine_socket: &pine,
+            config_dir: &config_dir,
+            log: &log,
+            tmp: run_dir,
+        };
+        let r = oracle_harness::session::run(&target, &plan, &identity, None, true, &out);
+        if let Ok(rec) = &r {
+            keep_session_copies(rec, &out)?;
+        }
+        let _ = std::fs::copy(&log, out.join("RPCS3.log"));
+        r
+    } else {
+        loop {
+            let host = divergence::Host::now();
+            match host.load_average {
+                Some([l1, ..]) if l1 > max_load => {
+                    println!("hold: 1-minute load {l1} over {max_load}; {}", host.uptime);
+                    std::thread::sleep(Duration::from_secs(30));
+                }
+                _ => break,
+            }
+        }
+        let launched = std::time::Instant::now();
+        let mut oracle = launch::boot(
+            &exe,
+            &home,
+            &BootOptions {
+                savestate: state.clone(),
+                borderless: true,
+                ..BootOptions::default()
+            },
+        )?;
+        let booted = if state.is_some() {
+            oracle.wait_paused(boot_wait).and_then(|s| {
+                oracle.driver().reconnect()?;
+                oracle.control().resume()?;
+                Ok(s)
+            })
+        } else {
+            oracle.wait_playable(boot_wait)
+        };
+        let r = booted.and_then(|s| {
+            println!(
+                "booted in {:.1} s: {} frames={}",
+                launched.elapsed().as_secs_f64(),
+                s.status,
+                s.frames
+            );
+            let run = oracle.run_paths().clone();
+            let target = oracle_harness::session::Target {
+                p1_socket: &run.p1_socket,
+                pine_socket: &run.pine_socket,
+                config_dir: &config_dir,
+                log: &log,
+                tmp: &run.tmp,
+            };
+            let r = oracle_harness::session::run(
+                &target,
+                &plan,
+                &identity,
+                state.as_deref(),
+                false,
+                &out,
+            );
+            if let Ok(rec) = &r {
+                keep_session_copies(rec, &out)?;
+            }
+            r
+        });
+        println!("shutdown: {:?}", oracle.shutdown()?);
+        let _ = std::fs::copy(&log, out.join("RPCS3.log"));
+        r
+    };
+    let record = result?;
+    println!(
+        "{} steps of {}, {} opens ({} movies, {} character archives), {} shots, wall {:.0} s{}",
+        record.steps.len(),
+        plan.steps.len(),
+        record.opens.len(),
+        record
+            .opens
+            .iter()
+            .filter(|o| o.kind == oracle_harness::session::OpenKind::Movie)
+            .count(),
+        record
+            .opens
+            .iter()
+            .filter(|o| o.kind == oracle_harness::session::OpenKind::Character)
+            .count(),
+        record.shots.len(),
+        record.wall_secs,
+        record
+            .error
+            .as_ref()
+            .map_or(String::new(), |e| format!("; stopped: {e}"))
+    );
+    let home_changed = carried.diff(&Snapshot::take(&carried_dirs)?);
+    if home_changed.is_empty() {
+        println!("the home's saves and trophies unchanged");
+    } else {
+        println!(
+            "the home's saves and trophies CHANGED ({} paths): {}",
+            home_changed.len(),
+            home_changed.join("; ")
+        );
+    }
+    let changed = before.diff(&Snapshot::take(&dev_dirs)?);
+    if !changed.is_empty() {
+        bail!(
+            "the dev's RPCS3 dirs changed during the run:\n{}",
+            changed.join("\n")
+        );
+    }
+    println!("the dev's RPCS3 dirs: {} entries, unchanged", before.len());
+    println!("written to {}", out.display());
+    Ok(())
+}
+
+/// Each load's copy as the game left it, into `<out>/portal/figure-<n>.sky`
+/// (the run dir goes at the shutdown).
+fn keep_session_copies(
+    rec: &oracle_harness::session::SessionRecord,
+    out: &std::path::Path,
+) -> Result<()> {
+    let dir = out.join("portal");
+    std::fs::create_dir_all(&dir)?;
+    for (n, (_, copy)) in rec.loads.iter().enumerate() {
+        let copy = std::path::Path::new(copy);
+        if copy.exists() {
+            std::fs::copy(copy, dir.join(format!("figure-{}.sky", n + 1)))?;
+        }
+    }
     Ok(())
 }
 

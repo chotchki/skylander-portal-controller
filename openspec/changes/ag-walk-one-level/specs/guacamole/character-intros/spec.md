@@ -11,18 +11,18 @@ When a figure whose character has an intro on the Giants disc is placed before t
 
 #### Scenario: Placed while the level runs
 - **WHEN** a phone places Tree Rex while Eruptor walks the level
-- **THEN** no intro plays or queues and the level carries on
+- **THEN** no intro plays or queues, and the level holds under the too-many alert as level-scene's One hero at a time says
 
 #### Scenario: Placed while the level is paused for a hero
 - **WHEN** Eruptor has been removed and the level waits for a Skylander, and Spyro is placed
-- **THEN** no intro plays and the level carries on with Spyro
+- **THEN** no intro plays: Spyro's arrival shows and the level carries on with Spyro
 
 ### Requirement: Intros queue, skip and stop
 A placement while an intro is playing SHALL queue its intro to play after the current one, in placement order. Removing a figure SHALL drop its intro if it hasn't started and stop it if it's playing. Any button on a connected game controller or any keyboard key SHALL skip the intro that's playing.
 
 #### Scenario: Two placements back to back
 - **WHEN** a second figure is placed while the first figure's intro is playing, before the level has started
-- **THEN** the second intro plays right after the first ends, and then the TV goes where the first's intro alone would have taken it: the level with the first figure as the hero when the first starts it, otherwise the portal view showing both cards
+- **THEN** the second intro plays right after the first ends, and then the TV goes where both placements take it: the too-many alert when both are characters, the level with the character as the hero when one of them is, otherwise the portal view showing both cards
 
 #### Scenario: Removed before its turn
 - **WHEN** a figure whose intro is queued is removed before its intro starts
