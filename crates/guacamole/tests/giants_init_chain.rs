@@ -616,6 +616,31 @@ fn computed_in_double_precision_the_numbers_arent_the_oracles() {
     };
     // Rounded it's the oracle's single: only the bits held tell them apart.
     assert_eq!((d as f32).to_bits(), 0x4300_5556);
+    // So with every one of them (AH.16's review): each value off is held
+    // as a double that rounds once to the oracle's single bits. On level
+    // 213's numbers the check catches double precision by the value held,
+    // not by a different rounding (the unit test's (1e8 + 1) − 1e8 is the
+    // case where the bits differ).
+    let mut doubles = Vec::new();
+    for (name, l) in LIVE_CELLS {
+        if let Some(Value::Double(d)) = run.try_global(name) {
+            let Value::Float(f) = live(l) else {
+                panic!("{name}: live {l}")
+            };
+            assert_eq!((d as f32).to_bits(), f.to_bits(), "{name}: {d}");
+            doubles.push(name.to_owned());
+        }
+    }
+    let ui = run.placement("Macros_UI");
+    let list = run.vm.local(ui, "EnemyStatsList").expect("EnemyStatsList");
+    for (e, (kind, _, lxp)) in run.elements(list).into_iter().zip(LIVE_STATS) {
+        if let Value::Double(d) = run.field(e, "xp") {
+            assert_eq!((d as f32).to_bits(), lxp.parse::<f32>().unwrap().to_bits());
+            doubles.push(format!("{kind} xp"));
+        }
+    }
+    assert_eq!(doubles.len(), off.len(), "{doubles:?} {off:?}");
+    println!("each off value a double rounding to the oracle's bits: {doubles:?}");
 }
 
 #[test]

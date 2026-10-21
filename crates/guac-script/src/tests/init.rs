@@ -138,6 +138,8 @@ struct Engine {
     next: u64,
     cells: HashMap<(String, MemberId), Value>,
     ops: Vec<(Class, Vec<Option<Value>>)>,
+    /// Each op's receiver, in order.
+    receivers: Vec<Value>,
     items: Vec<Value>,
 }
 
@@ -164,6 +166,7 @@ impl Host for Engine {
     fn op(&mut self, call: &OpCall) -> Result<Answer, HostFault> {
         self.ops
             .push((call.class, call.operands.iter().map(|(_, v)| *v).collect()));
+        self.receivers.push(call.receiver);
         let first = call.operands.first().and_then(|(_, v)| *v);
         Ok(match call.class {
             Class::Control => match first {
@@ -195,10 +198,11 @@ fn find_variable_reaches_a_started_placements_declared_local() {
     let (p, obj) = program_and_objects(|w| {
         let shared = w.variable("shared", "ValueInfo", Some(INT));
         let other = w.variable("other", "ValueInfo", Some(INT));
+        let spare = w.variable("spare", "ValueInfo", Some(INT));
         let a = actor(w);
         owner_obj = Some(a);
         // The finder, added first: its tick runs before the owner's.
-        let seen = var(w, "seen");
+        let (seen, took) = (var(w, "seen"), var(w, "took"));
         script(
             w,
             "C:/tfb/Synthetic/Finder.ai",
@@ -216,6 +220,11 @@ fn find_variable_reaches_a_started_placements_declared_local() {
                     let (g, _) = find(w, "shared", "ScriptSet", INT, 0, &[El::Local(a)]);
                     w.inc(&[El::Member("test", "wrong kind")]);
                     w.end_block(g);
+                    // Taken off: a declared local not made yet is made
+                    // for the block and gone after it.
+                    let (h, _) = find(w, "spare", "ValueInfo", INT, 3, &[El::Local(a)]);
+                    w.inc(&[El::Local(took)]);
+                    w.end_block(h);
                 });
             },
         );
@@ -230,12 +239,12 @@ fn find_variable_reaches_a_started_placements_declared_local() {
                 });
             },
         );
-        w.declare(info, &[shared, other]);
+        w.declare(info, &[shared, other, spare]);
     });
     let a = obj.at(owner_obj.unwrap());
     assert_eq!(
         p.scripts[1].declared.len(),
-        2,
+        3,
         "the master list's variables"
     );
     let mut c = Config::new(Mode::Strict);
@@ -246,11 +255,15 @@ fn find_variable_reaches_a_started_placements_declared_local() {
     let mut host = Engine::default();
     vm.step(&mut host).unwrap();
     assert_eq!(vm.local(finder, "seen"), None, "no list before STARTUP");
+    assert_eq!(vm.local(finder, "took"), None);
     vm.step(&mut host).unwrap();
     assert_eq!(vm.local(owner, "shared"), Some(Value::Int(1)));
     assert_eq!(vm.local(finder, "seen"), Some(Value::Int(1)));
+    assert_eq!(vm.local(finder, "took"), Some(Value::Int(1)));
+    assert_eq!(vm.local(owner, "spare"), None, "taken off");
     vm.step(&mut host).unwrap();
     assert_eq!(vm.local(owner, "shared"), Some(Value::Int(2)));
+    assert_eq!(vm.local(finder, "took"), Some(Value::Int(2)));
     assert_eq!(
         vm.value_cell(None, MemberId::named("test", "wrong kind")),
         None,
@@ -559,11 +572,19 @@ fn screen_positions_and_colours_are_read_and_written_by_their_parts() {
 fn a_spawned_structure_is_a_copy_the_block_runs_on() {
     let p = program(|w| {
         let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+        let (bp, boxed) = w.open(Class::DefineStructure, "Box");
+        let v = w.variable("v", "ValueInfo", Some(INT));
+        w.push(v);
+        w.end_block(bp);
         let (sp, def) = w.open(Class::DefineStructure, "Pair");
         let a = w.variable("a", "ValueInfo", Some(INT));
         w.push(a);
         let items = w.variable("items", "ScriptSet", Some("ValueInfo"));
         w.push(items);
+        // A structure inside it, copied too.
+        let inner = w.variable("inner", "ScriptStructure", None);
+        w.refer(inner, 0x24, boxed);
+        w.push(inner);
         w.end_block(sp);
         w.end_block(section);
         w.end("C:/tfb/Synthetic/Types.ai");
@@ -571,6 +592,7 @@ fn a_spawned_structure_is_a_copy_the_block_runs_on() {
         w.refer(pair, 0x24, def);
         let q = w.variable("q", "ScriptReference", None);
         let inside = var(w, "inside");
+        let thing = actor(w);
         idle(
             w,
             |_| {},
@@ -582,6 +604,7 @@ fn a_spawned_structure_is_a_copy_the_block_runs_on() {
                     El::Local(items),
                     El::Member("setvariant", "count"),
                 ]);
+                w.inc(&[El::Local(pair), El::Local(inner), El::Local(v)]);
                 let lhs = w.stack(StackClass::PlacementList, &[El::Local(pair)]);
                 let at = w.stack(StackClass::Position, &[]);
                 let zero = w.int(0);
@@ -596,15 +619,13 @@ fn a_spawned_structure_is_a_copy_the_block_runs_on() {
                     El::Local(items),
                     El::Member("setvariant", "count"),
                 ]);
-                // The block's receiver is the copy.
-                let c = check_ref(
-                    w,
-                    &[El::Member("optoplevelbehavior", "my")],
-                    1,
-                    &[El::Local(so)],
-                );
+                let three = w.int(3);
+                w.set(&[El::Local(so), El::Local(inner), El::Local(v)], three);
+                // The block's receiver is the copy: a world op in it goes
+                // to the host on it (`my` stays the placement).
+                let t = tell(w, &[El::Local(thing)]);
                 w.inc(&[El::Local(inside)]);
-                w.end_block(c);
+                w.end_block(t);
                 w.end_block(s);
                 setref(w, &[El::Local(q)], &[El::Local(so)]);
             },
@@ -614,14 +635,27 @@ fn a_spawned_structure_is_a_copy_the_block_runs_on() {
     let id = vm.add(HANDLE, "Thing", 1);
     let mut host = Engine::default();
     vm.tick(id, &mut host).unwrap();
-    assert!(host.ops.is_empty(), "the VM copies its own: {:?}", host.ops);
+    assert!(
+        host.ops.iter().all(|(class, _)| *class != Class::Spawn),
+        "the VM copies its own: {:?}",
+        host.ops
+    );
     let original = vm.local(id, "p").unwrap();
     let copy = vm.local(id, "q").unwrap();
+    assert_eq!(host.ops.len(), 1, "the tell: {:?}", host.ops);
+    assert_eq!(host.receivers, vec![vm.value(copy)], "on the copy");
     assert_ne!(vm.value(original), vm.value(copy));
     assert_eq!(vm.field(original, "a"), Some(Value::Int(1)));
     assert_eq!(vm.field(copy, "a"), Some(Value::Int(2)));
     let count = |v: Value| vm.set(vm.field(v, "items").unwrap()).unwrap().len();
     assert_eq!((count(original), count(copy)), (1, 2), "its own set");
+    let inner = |v: Value| vm.field(vm.field(v, "inner").unwrap(), "v");
+    assert_eq!(
+        (inner(original), inner(copy)),
+        (Some(Value::Int(1)), Some(Value::Int(3))),
+        "its own structure inside"
+    );
+    assert_eq!(vm.local(id, "inside"), Some(Value::Int(1)), "the tell ran");
 }
 
 #[test]
@@ -743,6 +777,13 @@ fn double_precision_carries_fractions_and_parts_from_the_originals_bits() {
     assert!((near - 128.333_336).abs() < 1e-6, "{near}");
     assert_eq!((near as f32).to_bits(), 0x4300_5556);
     assert_eq!(vm.local(id, "big"), Some(Value::Double(1.0)));
+    // Compared in double precision, within the scripts' tolerance as in
+    // single.
+    let compare = crate::value::compare;
+    let (a, b) = (Value::Double(1.0), Value::Double(1.000_05));
+    assert_eq!(compare(1, a, b), Some(true), "equal within 1e-4");
+    assert_eq!(compare(3, a, b), Some(false), "not less");
+    assert_eq!(compare(1, a, Value::Double(1.001)), Some(false));
 }
 
 #[test]
@@ -877,6 +918,46 @@ fn a_reset_puts_a_structure_back_and_asks_the_host_for_a_placement() {
         host.ops,
         vec![(Class::Reset, vec![Some(Value::Entity(HANDLE))])]
     );
+}
+
+/// A reset through a reference to a number puts that number back as a
+/// reset of the variable itself does, the reference kept (AH.16's review:
+/// it stopped as an unsupported reset of a constant).
+#[test]
+fn a_reset_through_a_reference_puts_back_the_number_it_names() {
+    let p = program(|w| {
+        let n = var(w, "n");
+        let r = w.variable("r", "ScriptReference", None);
+        // A file's number variable holding 9.
+        let f = w.b.object(0, "ValueInfo", 0x24);
+        w.text(f, 0x08, "file number");
+        w.meta_word(f, 0x1C, INT);
+        w.word(f, 0x20, 9);
+        let s = w.variable("s", "ScriptReference", None);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let five = w.int(5);
+                w.set(&[El::Local(n)], five);
+                setref(w, &[El::Local(r)], &[El::Local(n)]);
+                reset(w, &[El::Local(r)]);
+                setref(w, &[El::Local(s)], &[El::Local(f)]);
+                reset(w, &[El::Local(s)]);
+            },
+        );
+    });
+    let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    let g = p.global_named("file number").expect("a file variable");
+    assert_eq!(vm.global(g), Some(Value::Int(9)));
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "n"), Some(Value::Int(0)));
+    let r = vm.local(id, "r").unwrap();
+    assert!(matches!(r, Value::Cell(_)), "the reference kept: {r:?}");
+    assert_eq!(vm.global(g), Some(Value::Int(0)), "the file's number");
+    let s = vm.local(id, "s").unwrap();
+    assert!(matches!(s, Value::Object(_)), "the reference kept: {s:?}");
 }
 
 #[test]

@@ -2378,7 +2378,32 @@ impl Vm {
         match spot {
             // A reference resets what it names, the reference kept.
             Spot::Cell(c) if self.cells[c as usize].kind == CellKind::Reference => {
-                match self.peek(self.cells[c as usize].value) {
+                let named = self.cells[c as usize].value;
+                // A number it names (a run-time cell, or a file variable's)
+                // goes back as a reset of the variable itself puts it.
+                let number = match named {
+                    Value::Cell(v) if self.cells[v as usize].kind == CellKind::Value => {
+                        match self.cells[v as usize].value {
+                            // A set's element: the cell it names.
+                            Value::Cell(_) => None,
+                            _ => Some(v),
+                        }
+                    }
+                    Value::Object(o) => match self.program.global_of(o) {
+                        Some(g)
+                            if matches!(self.program.globals[g as usize].1, Global::Number(_)) =>
+                        {
+                            Some(self.global_cell(g)?)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(v) = number {
+                    self.reset_cell(v, 0);
+                    return Ok(());
+                }
+                match self.peek(named) {
                     Value::Null => Ok(()),
                     Value::Cell(v) => {
                         self.reset_cell(v, 0);

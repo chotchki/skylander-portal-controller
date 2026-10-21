@@ -85,8 +85,10 @@ pub const HIGH: f32 = 1.5;
 /// Where in their strides the walk and the run come back from a fall, of
 /// their loops.
 pub const LAND_START: f64 = 0.75;
-/// A slide is done this close to its time, seconds: a fixed step's rounding
-/// (Bevy's 1/60 s is 16,666,666 ns) leaves 12 steps a hair short of 0.2 s.
+/// A slide is done this close to its time, seconds: a guard for a step held
+/// a hair short (1/60 s as 16,666,666 ns would leave 12 steps short of
+/// 0.2 s). Bevy's 60 Hz fixed step is 16,666,667 ns and the recordings'
+/// steps never land within it, so nothing exercises it (AG.30's review).
 const SLACK: f64 = 1e-6;
 
 /// The walk's and the run's authored speeds, ft/s: what "Minion - Define
@@ -958,6 +960,31 @@ mod tests {
         assert_eq!(*l.air(), Air::Ground, "whole: the fall's gone");
         l.step(DT, fast);
         assert!(matches!(l.air(), Air::Falling(_)), "and another begins");
+    }
+
+    /// A fall begun while the idle still has weight (off an edge just after
+    /// setting off) takes its share from the idle too: the weights sum to 1.
+    #[test]
+    fn a_fall_takes_its_share_from_the_idle_too() {
+        let mut l = eruptor();
+        l.step(DT, on_ground(2.0));
+        l.step(DT, on_ground(4.0));
+        let fast = Frame {
+            speed: 25.0,
+            falling: 25.0,
+            height: Some(3.0),
+        };
+        l.step(DT, fast);
+        l.step(DT, fast);
+        for _ in 0..4 {
+            l.step(DT, fast);
+            let w = l.weights();
+            assert!(
+                w[0] > 0.0 && w[3] > 0.0,
+                "the idle in, the fall coming: {w:?}"
+            );
+            assert!(close(w.iter().sum::<f32>(), 1.0, 1e-6), "{w:?}");
+        }
     }
 
     /// Standing: the idle loop alone, at 100 %, frame after frame.
