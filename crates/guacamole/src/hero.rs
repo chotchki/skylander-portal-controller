@@ -826,7 +826,7 @@ mod tests {
             }
             ran += 1;
         }
-        assert_eq!(ran, 16);
+        assert_eq!(ran, 17);
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 

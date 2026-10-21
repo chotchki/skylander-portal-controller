@@ -29,6 +29,11 @@ fn head_on_he_stops_dead() {
 }
 
 #[test]
+fn put_down_under_an_overhang_he_stays() {
+    on_parry(scenarios::put_down_under_an_overhang_he_stays());
+}
+
+#[test]
 fn let_go_along_a_wall() {
     on_parry(scenarios::let_go_along_a_wall());
 }

@@ -980,7 +980,14 @@ fn enter(
         return;
     };
     let mut hero = Hero::new(solid, walker.tuning, at, facing);
-    hero.settle(&seam, &[]);
+    if replacing {
+        // Where the last one stood is a spot a hero fits: a settle's cast
+        // from a metre up could meet an overhang beside it first (the Mac
+        // run's second replacement came in 0.97 m up).
+        hero.stand(&seam, &[]);
+    } else {
+        hero.settle(&seam, &[]);
+    }
     let feet = hero.pivot;
     let Some(c) = play.candidate.as_mut() else {
         unreachable!("matched above")
@@ -2440,8 +2447,9 @@ mod tests {
     /// AG.29: the hero taken off with nothing else on the portal holds the
     /// level behind the call for a Skylander, no hero in it; an item placed
     /// then never answers it, nor a character that doesn't walk yet; the
-    /// next one that walks comes in where he stood, facing his way, and the
-    /// level carries on from where it held.
+    /// next one that walks comes in where he stood, facing his way, an
+    /// overhang beside the spot notwithstanding, and the level carries on
+    /// from where it held.
     #[test]
     fn removing_the_hero_holds_the_level_until_the_next_comes_in() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2512,6 +2520,28 @@ mod tests {
             assert!(app.world().resource::<Play>().hero().is_none());
         }
         clear(&mut app, 3);
+        // An overhang beside his spot, clear of a hero standing there and in
+        // reach of one dropped from a metre up: he's put down, not dropped.
+        let mut overhang = guac_motion::scenarios::Soup::default();
+        let (x, y, z) = (left.0.x, left.0.y + 1.845, left.0.z + 0.5);
+        overhang.quad(
+            [
+                Vec3::new(x - 2.0, y, z),
+                Vec3::new(x + 2.0, y, z),
+                Vec3::new(x + 2.0, y, z + 2.5),
+                Vec3::new(x - 2.0, y, z + 2.5),
+            ],
+            Vec3::NEG_Y,
+        );
+        let body = guac_motion::seam::Body {
+            id: guac_motion::seam::BodyId(0xa629),
+            kind: guac_motion::seam::BodyKind::Static,
+            pose: guac_motion::seam::Pose::IDENTITY,
+            collider: guac_motion::seam::Collider::Mesh(Arc::new(overhang.mesh())),
+        };
+        let mut commands = app.world_mut().commands();
+        crate::physics::spawn_body(&mut commands, &body).unwrap();
+        app.world_mut().flush();
         place(&mut app, 2, ERUPTOR, "Eruptor");
         until(&mut app, "the next one in", |a| mode(a) == Mode::Level);
         let now = hero(&app);

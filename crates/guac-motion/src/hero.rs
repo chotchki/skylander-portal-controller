@@ -195,6 +195,14 @@ impl Hero {
         self.look(seam, exclude, Surfaces::NONE, true, false, NOMINAL_STEP);
     }
 
+    /// Reads his footing where he stands, moving him by no cast: a hero put
+    /// down where another stood (AG.29's replacement), whose spot a cast from
+    /// above, as [`Self::settle`]'s, could meet an overhang or a slope beside
+    /// it first and set him on that.
+    pub fn stand(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) {
+        self.look(seam, exclude, Surfaces::NONE, true, false, NOMINAL_STEP);
+    }
+
     /// One game frame of `step` seconds in a world where nothing moves.
     pub fn step(&mut self, seam: &dyn PhysicsSeam, input: &Input, step: f32, exclude: &[BodyId]) {
         self.step_among(seam, input, step, exclude, Surfaces::NONE);

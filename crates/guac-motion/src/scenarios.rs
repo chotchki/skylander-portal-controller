@@ -352,7 +352,57 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         head_on_he_stops_dead(),
         let_go_along_a_wall(),
         the_gate_door_stops_him(),
+        put_down_under_an_overhang_he_stays(),
     ]
+}
+
+/// Open ground with an overhang's underside 1.85 m up, its edge 0.5 m along
+/// +z from the origin: clear of a hero standing at the origin, in reach of
+/// one dropped from a metre above it.
+pub fn overhung() -> Soup {
+    let mut soup = open_ground();
+    soup.quad(
+        [
+            Vec3::new(-2.0, 1.85, 0.5),
+            Vec3::new(2.0, 1.85, 0.5),
+            Vec3::new(2.0, 1.85, 3.0),
+            Vec3::new(-2.0, 1.85, 3.0),
+        ],
+        Vec3::NEG_Y,
+    );
+    soup
+}
+
+/// AG.29: a hero put down where another stood stays there, facing his way,
+/// supported, and stands still let go, under an overhang a settle's cast
+/// from a metre up meets first.
+pub fn put_down_under_an_overhang_he_stays() -> Scenario {
+    Scenario {
+        name: "put_down_under_an_overhang_he_stays",
+        bodies: bodies(&overhung(), &[]),
+        check: |seam| {
+            let at = Vec3::new(0.0, 0.005, 0.0);
+            let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, 30.0);
+            hero.stand(seam, &[]);
+            ensure!((hero.pivot - at).length() < 1e-4, "moved: {}", hero.pivot);
+            ensure!(hero.facing == 30.0, "{}", hero.facing);
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            let after = run(seam, &mut hero, 60, |_| Stick::CENTRED);
+            ensure!(
+                after.iter().all(|s| (s.pivot - at).length() < 1e-4),
+                "drifted: {:?}",
+                after.last().map(|s| s.pivot)
+            );
+            let mut dropped = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, 30.0);
+            dropped.settle(seam, &[]);
+            ensure!(
+                (dropped.pivot - at).length() > 0.1,
+                "a settle from a metre up met no overhang: {}",
+                dropped.pivot
+            );
+            Ok(())
+        },
+    }
 }
 
 /// Settled, he rides 5 mm over level ground, supported (AF.9's idle pivot
