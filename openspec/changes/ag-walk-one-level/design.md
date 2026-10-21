@@ -217,7 +217,7 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | gameplay-camera | Scenery in the way | AG.13 (its recordings), AG.17 |
 | pad-input | Two 8BitDo variants; The pause overlay on each 8BitDo; A second pad; The pad goes away | AG.20 (unit), AG.53 (the letters GameController names on the Mac, an Xbox-lettered pad's by unit test only: chotchki's 8BitDos are all one model, Nintendo-lettered, AG.5; the ids at the Windows/HTPC bring-up), AG.51 and AG.32 (chotchki's hands) |
 | pad-input | A stick resting off centre; Just past the dead zone; A pad guacamole doesn't know; Pause and resume | AG.20 |
-| pad-input | Pause and resume; The pad goes away (the overlay and the message over the level, held in view) | AG.50 (unit, e2e, the Mac offscreen), AG.66 (chotchki's eye in a window) |
+| pad-input | Pause and resume; The pad goes away (the overlay and the message over the level, held in view) | AG.50 (unit, e2e, the Mac offscreen), AG.67 (chotchki's eye in a window) |
 | pad-input | Full on both axes; Between the axes | AG.20 (read as sent), AG.49 (the corner against AG.5's gate: left as sent) |
 | pad-input | The 8BitDo's corner | AG.49 (AG.5's rim readings through the rule), AG.51 (chotchki's hands) |
 | pad-input | A tap between two frames | AG.53 (unit, through the router on a fake of GameController), AG.59 (the live check's tap inside a 250 ms frame) |
