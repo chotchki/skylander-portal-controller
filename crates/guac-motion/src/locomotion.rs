@@ -22,9 +22,11 @@
 //!   (the walk under a pure run, the run under a pure walk), and so do all
 //!   of them at rest as they fade. The idle and the fall play at 100 %.
 //! - **Standing and moving** switch by time. The frame the speed leaves 0
-//!   the idle slides out over 0.25 s and the walk restarts a quarter of the
-//!   way into its stride at 100 % for that frame; the frame it's back at 0
-//!   the idle restarts and slides in over 0.30 s. Each slide is eased (its
+//!   the idle slides out over 0.25 s, the walk restarts a quarter of the
+//!   way into its stride at 100 % for that frame and the run's rate is set
+//!   to the speed over its own (910 of AG.11's 968 set-offs, the rest at
+//!   edges where the body hadn't moved); the frame it's back at 0 the idle
+//!   restarts and slides in over 0.30 s. Each slide is eased (its
 //!   rate rising over the first 30 % of its time and falling over the last
 //!   30 %, `slide value`'s ease 15 and 15) and runs from where the last one
 //!   got to over its own full time.
@@ -448,6 +450,9 @@ impl Locomotion {
                     rate: 1.0,
                 };
             }
+            if self.loops.run.is_some() {
+                self.plays[Clip::Run.index()].rate = speed / self.gaits.run_speed;
+            }
         } else if !moving && self.moving {
             self.still = Slide {
                 from: self.still.value(),
@@ -662,6 +667,10 @@ mod tests {
         let mut l = eruptor();
         l.step(DT, on_ground(2.0));
         assert_eq!(l.play(Clip::Walk).rate, 1.0, "the set-off frame: 100 %");
+        assert!(
+            close(l.play(Clip::Run).rate, 2.0 / R, 1e-6),
+            "the run's at s/R"
+        );
         l.step(DT, on_ground(0.0683 / FOOT));
         assert!(close(l.play(Clip::Walk).rate, 0.0187, 1e-4), "creeping");
         l.step(DT, on_ground(3.2766 / FOOT));
