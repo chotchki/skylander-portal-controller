@@ -2156,9 +2156,12 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool, fighting: bo
     dir.write_output(&palette_rel, &ir.encode(&palette, dir, &palette_rel)?)?;
     let mut palettes = vec![palette_rel];
     if fighting {
-        // The walker's (AH.24): the made-up idle in the throw's slot at its
-        // half second and in the second attack's at two.
-        use guac_formats::script::builder::{ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT};
+        // The walker's (AH.24): the made-up idle in his arrival's slot at a
+        // tenth of a second, in the throw's at its half second and in the
+        // second attack's at two.
+        use guac_formats::script::builder::{
+            ATTACK_ARRIVAL_SLOT, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
+        };
         let slot = |slot: i32, duration: f32| guac_ir::palette::PaletteSlot {
             slot: slot as u16,
             name: None,
@@ -2178,7 +2181,11 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool, fighting: bo
             identity: identity.clone(),
             owner: WALKING_LOAD.into(),
             slots: 40,
-            entries: vec![slot(ATTACK_THROW_SLOT, 0.5), slot(ATTACK_SECOND_SLOT, 2.0)],
+            entries: vec![
+                slot(ATTACK_ARRIVAL_SLOT, 0.1),
+                slot(ATTACK_THROW_SLOT, 0.5),
+                slot(ATTACK_SECOND_SLOT, 2.0),
+            ],
             refused: Vec::new(),
         };
         let rel = ir.palette_path(WALKING_LOAD);

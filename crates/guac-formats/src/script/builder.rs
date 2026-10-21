@@ -609,6 +609,9 @@ pub struct Attack {
 /// second attack starts.
 pub const ATTACK_THROW_SLOT: i32 = 20;
 pub const ATTACK_SECOND_SLOT: i32 = 32;
+/// The slot [`attack`]'s minion starts on him at its STARTUP, his arrival,
+/// while it spawns [`ATTACK_HELPER`]: Eruptor's join does both at once.
+pub const ATTACK_ARRIVAL_SLOT: i32 = 6;
 /// The ball [`attack`]'s throw spawns: its template's name, how far over
 /// his pivot it starts (ft), its speed (ft/s), its pitch (degrees up) and
 /// the fall it takes (ft/s²).
@@ -619,6 +622,11 @@ pub const ATTACK_BALL_RISE: f32 = 5.0;
 pub const ATTACK_BALL_SPEED: f32 = 40.0;
 pub const ATTACK_BALL_PITCH: f32 = 45.0;
 pub const ATTACK_BALL_FALL: f32 = 200.0;
+/// The helper [`attack`]'s minion spawns at its STARTUP while his arrival
+/// plays, drawn with the ball's model and never moved: one of his file's
+/// helpers, not an attack (Eruptor's own `009_LavaCollider` draws an
+/// invisible model).
+pub const ATTACK_HELPER: &str = "009_LavaCollider";
 /// The hero's health and full health as [`attack`]'s minion sets them.
 pub const ATTACK_HEALTH: i32 = 120;
 pub const ATTACK_HEALTH_MAX: i32 = 150;
@@ -917,7 +925,8 @@ fn attack_global() -> Vec<u8> {
     b.build()
 }
 
-/// [`attack`]'s fighter entry: his definition, his minion and the ball.
+/// [`attack`]'s fighter entry: his definition, his minion, the ball and the
+/// helper.
 fn attack_fighter() -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
@@ -983,6 +992,10 @@ fn attack_fighter() -> Vec<u8> {
     let model = b.object(0, "tfbPhysicsModel", 0x30);
     crate::model::builder::info(&mut b, model, ATTACK_BALL_MODEL);
     b.pointer(at(ball, 0xDC), model);
+    let helper = actor_with(&mut b, ATTACK_HELPER, None, 5);
+    let helper_model = b.object(0, "tfbPhysicsModel", 0x30);
+    crate::model::builder::info(&mut b, helper_model, ATTACK_BALL_MODEL);
+    b.pointer(at(helper, 0xDC), helper_model);
     // His minion: the throw and the second attack's clip on the presses.
     let minion_script = {
         let mut w = Writer::new(&mut b);
@@ -1018,6 +1031,14 @@ fn attack_fighter() -> Vec<u8> {
                     &[El::Local(mine), El::Local(joined), El::Local(hp_max)],
                     full,
                 );
+                start_slot(w, clip, ATTACK_ARRIVAL_SLOT);
+                let facing = w.int(0);
+                let h = w.spawn(
+                    &[El::Local(helper)],
+                    &[El::Member("optoplevelbehavior", "my")],
+                    facing,
+                );
+                w.end_block(h);
             },
             |_| {},
             |w| {
@@ -1083,7 +1104,7 @@ fn attack_fighter() -> Vec<u8> {
         &mut b,
         root,
         blocks,
-        &[Some(definition), Some(minion), Some(ball)],
+        &[Some(definition), Some(minion), Some(ball), Some(helper)],
     );
     b.build()
 }

@@ -16,8 +16,9 @@
 //! every that many milliseconds of the TV's clock that the hero has moved
 //! while he walks the level (AG.21), at once (a walk doesn't settle), named
 //! for where he stands and the way he faces: a walk as a sequence; and
-//! (AH.24) at the same interval while anything his scripts spawned draws,
-//! named `attack` (a throw's ball in flight, an eruption). Off by default,
+//! (AH.24) at the same interval while anything his attacks spawned draws,
+//! named `attack` (a throw's ball in flight, an eruption's lava; not the
+//! helpers his join spawns). Off by default,
 //! since a shot's PNG is written on the frame's thread.
 
 use std::path::{Path, PathBuf};
@@ -254,7 +255,7 @@ fn snap(
     {
         let now = time.elapsed();
         let (at, from) = *walked.get_or_insert((now, pivot));
-        let attacking = clones.iter().any(|c| c.draws);
+        let attacking = clones.iter().any(|c| c.draws && c.attack);
         if now.saturating_sub(at) >= every && (attacking || pivot.distance(from) >= WALK_MOVED) {
             *walked = Some((now, pivot));
             state.seq += 1;

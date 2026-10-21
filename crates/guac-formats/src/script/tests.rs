@@ -586,11 +586,12 @@ fn lists_that_share_their_words_stop_at_the_entry_budget() {
 /// AH.24's synthetic attack reads back through the graph and the
 /// placements' reader: its global's portal manager running its script, the
 /// fighter's definition running and his minion and the ball templates, each
-/// under the script names the TV's whitelist runs, the ball naming its
-/// model; its init setup a file of one script and no placement.
+/// under the script names the TV's whitelist runs, the ball and the helper
+/// (no script) naming their model; its init setup a file of one script and
+/// no placement.
 #[test]
 fn the_synthetic_attack_reads_back() {
-    use super::builder::{ATTACK_BALL, ATTACK_BALL_MODEL, attack};
+    use super::builder::{ATTACK_BALL, ATTACK_BALL_MODEL, ATTACK_HELPER, attack};
     use crate::level::Placements;
     let a = attack();
     let scripts = |bytes: &[u8]| -> Vec<String> {
@@ -663,6 +664,12 @@ fn the_synthetic_attack_reads_back() {
                 4,
                 "009_Def_Eruptor.ai".to_owned(),
                 None
+            ),
+            (
+                ATTACK_HELPER.to_owned(),
+                5,
+                String::new(),
+                Some(ATTACK_BALL_MODEL.to_owned())
             ),
             (
                 ATTACK_BALL.to_owned(),

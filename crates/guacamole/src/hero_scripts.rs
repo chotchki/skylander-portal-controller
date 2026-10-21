@@ -257,9 +257,16 @@ pub(crate) struct ScriptSteps {
     sequences: usize,
     clones: HashSet<Handle>,
     gone: HashSet<Handle>,
+    /// The clones made while a clip his scripts started once he'd joined
+    /// played on him: his attacks' (a throw's ball, an eruption's lava), not
+    /// the level's or his join's, which plays his arrival's clip on him
+    /// while it spawns his helpers (Eruptor's `009_LavaCollider` draws the
+    /// original's invisible `design_inviso.mdl`).
+    attacks: HashSet<Handle>,
     /// The hero's clips playing, by index into the started sequences, with
-    /// their slots: logged as ended once played out or stopped.
-    playing: Vec<(usize, u32)>,
+    /// their slots and whether each started once he'd joined: logged as
+    /// ended once played out or stopped.
+    playing: Vec<(usize, u32, bool)>,
 }
 
 /// One step of the run as `/api/_test/tv/scripts` hands it out (AH.24):
@@ -400,6 +407,10 @@ fn step_scripts(
     log: Res<ScriptLog>,
 ) {
     let held = actions.take();
+    let settled = runs
+        .iter()
+        .next()
+        .is_some_and(|(_, r)| matches!(r.join, Join::Joined(_)));
     let walking = pads.seat().and_then(|s| s.walking()).is_some();
     let first = Pad {
         stick: input.0.stick,
@@ -527,16 +538,25 @@ fn step_scripts(
     };
     runtime.stopped.extend(stopped);
     if let Some(steps) = steps.as_deref_mut() {
-        record(&world, hero.map(Entity::to_bits), steps, &mut entry);
+        record(
+            &world,
+            hero.map(Entity::to_bits),
+            settled,
+            steps,
+            &mut entry,
+        );
     }
     log.push(entry);
 }
 
 /// What changed in `world` since the last step logged: the clips started on
-/// `hero`, the clones made and the clones taken off.
+/// `hero` (`settled` when he'd joined before this step), the clones made (an
+/// attack's while a clip started once he'd joined plays) and the clones
+/// taken off.
 fn record(
     world: &ScriptWorld,
     hero: Option<Handle>,
+    settled: bool,
     steps: &mut ScriptSteps,
     entry: &mut ScriptStep,
 ) {
@@ -552,7 +572,7 @@ fn record(
                 length: s.length,
                 rate: s.rate,
             });
-            steps.playing.push((i, slot));
+            steps.playing.push((i, slot, settled));
         }
     }
     steps.sequences = sequences.len();
@@ -570,6 +590,9 @@ fn record(
     for c in world.clones() {
         if steps.clones.insert(c) {
             entry.spawned.push(named(c));
+            if steps.playing.iter().any(|&(.., settled)| settled) {
+                steps.attacks.insert(c);
+            }
         }
         if world.removed(c) && steps.gone.insert(c) {
             entry.gone.push(named(c));
@@ -601,7 +624,7 @@ fn advance_scripts(
     };
     let sequences = world.sequences();
     let mut ended = Vec::new();
-    steps.playing.retain(|&(i, slot)| {
+    steps.playing.retain(|&(i, slot, _)| {
         let over = sequences.get(i).is_none_or(|s| s.done || s.stopped);
         if over {
             ended.push(slot);
@@ -621,6 +644,9 @@ pub(crate) struct CloneDrawn {
     /// Whether it draws anything (a template with no model, or one the
     /// spawn part doesn't hold, draws nothing).
     pub(crate) draws: bool,
+    /// Whether an attack of his made it (spawned while a clip his scripts
+    /// started played on him).
+    pub(crate) attack: bool,
 }
 
 /// Where a clone draws: its actor's place, its turn (AF.9's Euler angles)
@@ -640,6 +666,7 @@ fn draw_clones(
     mut commands: Commands,
     world: Res<ScriptWorld>,
     level: Res<Level>,
+    steps: Option<Res<ScriptSteps>>,
     mut clones: Query<(
         Entity,
         &ScriptClone,
@@ -663,6 +690,9 @@ fn draw_clones(
                 // A model whose effects draw nothing (its parts left out)
                 // draws nothing here either.
                 let draws = model.is_some_and(|parts| !parts.is_empty()) && !actor.removed;
+                let attack = steps
+                    .as_ref()
+                    .is_some_and(|s| s.attacks.contains(&entity.to_bits()));
                 commands.entity(entity).insert((
                     place,
                     TransformInterpolation,
@@ -671,7 +701,7 @@ fn draw_clones(
                     } else {
                         Visibility::Hidden
                     },
-                    CloneDrawn { draws },
+                    CloneDrawn { draws, attack },
                 ));
                 if let (Some(parts), true) = (model, draws) {
                     for (mesh, material) in parts {
@@ -690,7 +720,7 @@ fn draw_clones(
                     if d.draws {
                         commands
                             .entity(entity)
-                            .insert((Visibility::Hidden, CloneDrawn { draws: false }));
+                            .insert((Visibility::Hidden, CloneDrawn { draws: false, ..*d }));
                         commands.entity(entity).despawn_related::<Children>();
                     }
                 } else if *t != place {
@@ -748,8 +778,8 @@ pub(crate) mod tests {
     use std::path::Path;
 
     use guac_formats::script::builder::{
-        self as attack_builder, ATTACK_BALL, ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_SECOND_SLOT,
-        ATTACK_THROW_SLOT,
+        self as attack_builder, ATTACK_ARRIVAL_SLOT, ATTACK_BALL, ATTACK_HEALTH, ATTACK_HEALTH_MAX,
+        ATTACK_HELPER, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
     };
     use guac_motion::parry::ParryWorld;
     use guac_motion::scenarios;
@@ -846,6 +876,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .obj;
             let mut lengths = vec![0.0; 40];
+            lengths[ATTACK_ARRIVAL_SLOT as usize] = 0.1;
             lengths[ATTACK_THROW_SLOT as usize] = 0.5;
             lengths[ATTACK_SECOND_SLOT as usize] = 2.0;
             world.set_palette(template, lengths);
@@ -923,7 +954,9 @@ pub(crate) mod tests {
 
     /// The synthetic attack the e2e suite throws with runs through the
     /// TV's join and listing in strict mode: his minion joins with his
-    /// health and full health set; a press of his first attack starts
+    /// health and full health set, starts slot 6 on him and spawns his
+    /// helper, unmoved; a press
+    /// of his first attack starts
     /// slot 20 on him and spawns the ball over him, which flies up and on
     /// at 40 ft/s, falls by its 200 ft/s² onto the ground and is gone the
     /// step after it touches; his second attack starts slot 32.
@@ -943,6 +976,22 @@ pub(crate) mod tests {
         );
         assert_eq!(numbers.behaviour.as_deref(), Some("default"));
         let pivot = run.bench.heroes[&HERO].pivot;
+        let helpers: Vec<_> = run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|&c| c != HERO)
+            .filter_map(|c| run.world.actor(c))
+            .map(|a| {
+                let name = a.template.and_then(|t| run.world.template(t));
+                (name.map(|p| p.name.clone()), a.position, a.launched)
+            })
+            .collect();
+        assert_eq!(
+            helpers,
+            [(Some(ATTACK_HELPER.to_owned()), pivot, false)],
+            "his helper at his pivot"
+        );
         // Held a step: one throw.
         let before = run.world.clones().len();
         run.step([true, false, false, false]);
@@ -953,7 +1002,11 @@ pub(crate) mod tests {
             .filter(|q| q.actor == HERO)
             .filter_map(|q| run.world.clip_of(q).map(|(_, s)| s))
             .collect();
-        assert_eq!(slots, [ATTACK_THROW_SLOT as u32], "his throw's slot");
+        assert_eq!(
+            slots,
+            [ATTACK_ARRIVAL_SLOT as u32, ATTACK_THROW_SLOT as u32],
+            "his arrival's slot, then his throw's"
+        );
         let new: Vec<Handle> = run.world.clones().into_iter().skip(before).collect();
         assert_eq!(new.len(), 1, "one ball");
         let ball = new[0];

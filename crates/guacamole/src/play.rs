@@ -1347,12 +1347,12 @@ mod tests {
     }
 
     /// AH.24's extract beside [`play_app`]'s: the synthetic script part
-    /// (its attack), Eruptor's palette with the throw's slot and the second
-    /// attack's on the made-up skeleton, and the spawn part holding the
-    /// ball's model.
+    /// (its attack), Eruptor's palette with his arrival's slot, the throw's
+    /// and the second attack's on the made-up skeleton, and the spawn part
+    /// holding the ball's model.
     fn write_attack_parts(dir: &std::path::Path) {
         use guac_formats::script::builder::{
-            ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
+            ATTACK_ARRIVAL_SLOT, ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
         };
         use guac_ir::palette::{PaletteSlot, SlotEntry};
         crate::hero_scripts::tests::write_attack(dir);
@@ -1368,6 +1368,18 @@ mod tests {
             owner: "009_Eruptor".into(),
             slots: 40,
             entries: vec![
+                PaletteSlot {
+                    slot: ATTACK_ARRIVAL_SLOT as u16,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip("MadeUp_Arrival.ma", 0.1),
+                    },
+                },
                 PaletteSlot {
                     slot: ATTACK_THROW_SLOT as u16,
                     name: None,
@@ -1449,8 +1461,8 @@ mod tests {
     }
 
     /// The scripts' clones as entities: whether each draws, how many parts
-    /// hang under it and whether it's shown.
-    fn clones(app: &mut App) -> Vec<(bool, usize, Visibility)> {
+    /// hang under it, whether it's shown and whether an attack made it.
+    fn clones(app: &mut App) -> Vec<(bool, usize, Visibility, bool)> {
         let mut q = app.world_mut().query::<(
             &guacamole::scripts::ScriptClone,
             Option<&crate::hero_scripts::CloneDrawn>,
@@ -1463,6 +1475,7 @@ mod tests {
                     d.is_some_and(|d| d.draws),
                     c.map_or(0, |c| c.len()),
                     v.copied().unwrap_or(Visibility::Inherited),
+                    d.is_some_and(|d| d.attack),
                 )
             })
             .collect()
@@ -1471,10 +1484,11 @@ mod tests {
     /// AH.24: Eruptor, his scripts in the level's part, throws on the
     /// bottom button. His scripts join as he enters, his health and full
     /// health then off them (the synthetic minion's 120 of 150) and his
-    /// figure's experience and gold off the placement; the press starts his
-    /// throw's clip on him (drawn over his locomotion) and spawns the ball,
-    /// drawn from the spawn part's model, which flies, lands on the floor
-    /// and is hidden once gone; held, he throws once; his second attack's
+    /// figure's experience and gold off the placement, his helper drawn
+    /// and no attack's; the press starts his throw's clip on him (drawn
+    /// over his locomotion) and spawns the ball, drawn from the spawn
+    /// part's model and an attack's, which flies, lands on the floor and is
+    /// hidden once gone; held, he throws once; his second attack's
     /// button starts its clip. Leaving the level installs the scripts again.
     #[test]
     fn eruptor_throws_from_his_scripts_on_the_bottom_button() {
@@ -1532,6 +1546,12 @@ mod tests {
             (count(|s| &s.spawned), count(|s| &s.gone))
         };
         assert_eq!(spawned(&app), (0, 0));
+        app.update();
+        assert_eq!(
+            clones(&mut app),
+            [(true, 1, Visibility::Inherited, false)],
+            "his helper, drawn, no attack's"
+        );
         // One writer (design decision 5): his walk is his scripts', and the
         // synthetic minion's walk nothing, so the stick moves him nowhere.
         let still = hero(&app).pivot;
@@ -1550,9 +1570,13 @@ mod tests {
             app.update();
         }
         let throw = guac_formats::script::builder::ATTACK_THROW_SLOT as u32;
-        assert_eq!(throws(&app), [throw]);
+        let arrival = guac_formats::script::builder::ATTACK_ARRIVAL_SLOT as u32;
+        assert_eq!(throws(&app), [arrival, throw]);
         app.update();
-        let drawn: Vec<_> = clones(&mut app).into_iter().filter(|(d, ..)| *d).collect();
+        let drawn: Vec<_> = clones(&mut app)
+            .into_iter()
+            .filter(|&(d, .., attack)| d && attack)
+            .collect();
         assert_eq!(drawn.len(), 1, "{drawn:?}");
         assert_eq!(drawn[0].1, 1, "the model's one segment under it");
         let e = app.world().resource::<Play>().hero().unwrap();
@@ -1572,7 +1596,7 @@ mod tests {
         app.update();
         let hidden: Vec<_> = clones(&mut app)
             .into_iter()
-            .filter(|(_, parts, v)| *parts == 0 && *v == Visibility::Hidden)
+            .filter(|(_, parts, v, _)| *parts == 0 && *v == Visibility::Hidden)
             .collect();
         assert!(!hidden.is_empty(), "gone, hidden");
         for _ in 0..30 {
@@ -1586,7 +1610,7 @@ mod tests {
             app.update();
         }
         let second = guac_formats::script::builder::ATTACK_SECOND_SLOT as u32;
-        assert_eq!(throws(&app), [throw, second]);
+        assert_eq!(throws(&app), [arrival, throw, second]);
         // Leaving the level installs the run again, from its start.
         let steps = app
             .world()
