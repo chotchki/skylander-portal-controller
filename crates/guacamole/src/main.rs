@@ -240,11 +240,12 @@ fn posted_pads_only() -> bool {
 }
 
 /// Bevy's plugins for the TV: no log plugin (`logging::init` owns the global
-/// subscriber) and one source per pad (AG.53). On macOS that's
-/// GameController and gilrs is off: it reads nothing of an 8BitDo there
-/// (AG.5); it's still built in, through Bevy's `ui` collection, only its
-/// plugin is left out. Everywhere else gilrs. [`posted_pads_only`] leaves
-/// both out, so only `/api/_test/tv/pad`'s pads reach the TV.
+/// subscriber), [`TvPacing`] after Bevy's own (AG.55) and one source per pad
+/// (AG.53). On macOS that's GameController and gilrs is off: it reads
+/// nothing of an 8BitDo there (AG.5); it's still built in, through Bevy's
+/// `ui` collection, only its plugin is left out. Everywhere else gilrs.
+/// [`posted_pads_only`] leaves both out, so only `/api/_test/tv/pad`'s pads
+/// reach the TV.
 fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
     let plugins = DefaultPlugins
         .set(WindowPlugin {
@@ -252,11 +253,12 @@ fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
             ..default()
         })
         .disable::<LogPlugin>();
-    if posted_pads_only {
+    let plugins = if posted_pads_only {
         plugins.disable::<GilrsPlugin>()
     } else {
         native_pads(plugins)
-    }
+    };
+    plugins.add(TvPacing)
 }
 
 /// The platform's own pad source (AG.53): GameController on macOS, gilrs
@@ -330,7 +332,8 @@ fn pace_on_occlusion(
 
 /// The TV's pacing (AG.55): [`tv_updates`] from the start, and
 /// [`pace_on_occlusion`] in `First`. Its own plugin so the test runs the
-/// wiring the window runs.
+/// wiring the window runs, added by [`tv_plugins`] so a test sees the
+/// window get it.
 struct TvPacing;
 
 impl Plugin for TvPacing {
@@ -385,7 +388,7 @@ fn run_tv(
     exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
-    app.add_plugins((tv_plugins(mode, posted_pads_only()), TvPacing))
+    app.add_plugins(tv_plugins(mode, posted_pads_only()))
         .insert_resource(link)
         .insert_resource(PortalFeed(portal))
         .insert_resource(shelf)
@@ -680,6 +683,17 @@ mod tests {
             let posted = tv_plugins(mode, true);
             assert!(!reads_game_controller(&posted));
             assert!(!posted.enabled::<GilrsPlugin>());
+        }
+    }
+
+    /// AG.55 under AG.53: the TV gets [`TvPacing`] whichever pads it reads,
+    /// from [`tv_plugins`], the one group `run_tv` adds.
+    #[test]
+    fn the_tv_paces_itself_whichever_pads_it_reads() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            for posted in [false, true] {
+                assert!(tv_plugins(mode, posted).enabled::<TvPacing>());
+            }
         }
     }
 }

@@ -1628,7 +1628,8 @@ async fn pad_presses_leave_the_join_code_up() {
 }
 
 /// AG.20's test hook, in the real binary: a posted pad connects through
-/// Bevy's own gamepad systems beside gilrs, its move stick lands raw (a
+/// Bevy's own gamepad systems, the TV's only pad source under the harness's
+/// `GUAC_TEST_POSTED_PADS_ONLY` (AG.52, AG.53), its move stick lands raw (a
 /// first value inside Bevy's dead zone and under its change threshold
 /// included), the resolver gives a pad it can't place the position, the
 /// level's layer isn't up with no level, Start on the join code changes
