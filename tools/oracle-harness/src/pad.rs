@@ -60,6 +60,21 @@ impl Control {
     /// run that moved) leaves the host's input, not part of the script; the
     /// error says so when that clear fails too.
     pub fn load_script_at(&self, script: &InputScript, base: u64) -> Result<Loaded> {
+        self.send_script(script, base, true)
+    }
+
+    /// [`Control::load_script_at`] without its `PAD_CLEAR`: the script's lines
+    /// go in beside what's scheduled, so the flip the run is paused at keeps
+    /// the state the schedule already gives it. That flip's reads come after
+    /// the resume (AH.7's first drive: a clear at each pause handed every
+    /// paused flip to the host, and pausing every two flips let go of the
+    /// stick every other frame), so a run that pauses as it goes appends. A
+    /// failure part way clears both schedules, as a load's does.
+    pub fn append_script_at(&self, script: &InputScript, base: u64) -> Result<Loaded> {
+        self.send_script(script, base, false)
+    }
+
+    fn send_script(&self, script: &InputScript, base: u64, clear: bool) -> Result<Loaded> {
         let before = self.state()?;
         if before.status != "paused" {
             bail!(
@@ -74,7 +89,11 @@ impl Control {
                 before.frames
             );
         }
-        let mut verbs = vec![Verb::PadClear];
+        let mut verbs = if clear {
+            vec![Verb::PadClear]
+        } else {
+            Vec::new()
+        };
         verbs.extend(script_verbs(script, base)?);
         let sent = (|| {
             for (verb, reply) in verbs.iter().zip(self.verbs().send_all(&verbs)?) {
@@ -99,7 +118,7 @@ impl Control {
         Ok(Loaded {
             base,
             paused_at: before,
-            entries: verbs.len() - 1,
+            entries: verbs.len() - usize::from(clear),
         })
     }
 

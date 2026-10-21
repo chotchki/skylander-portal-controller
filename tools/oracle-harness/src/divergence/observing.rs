@@ -1,27 +1,41 @@
-//! Does an observer move the run (openspec AG.1, AG.34)? AF.11's
+//! Does an observer move the run (openspec AG.1, AG.34, AH.40)? AF.11's
 //! discriminators, the ones that told its set A (observed at the end only)
 //! from its set B (paused every 60 flips) where end positions can't (set A's
 //! own end spread is 1.48 m wide and splits at the gate's corner), read off a
 //! reference group, a candidate group of the same script and a paused group
-//! (AF.11's set B) at the end flip, and judged by AG.34's rule (a):
+//! (AF.11's set B) at the end flip, and judged by one of two rules
+//! ([`Choice`]), AH.40's (d) unless AG.34's (a) is asked for:
 //!
 //! - MT draws since F0: a pause added about 19 draws idle, and set B sat at
-//!   rank-sum z +3.17 idle and +2.65 walking. Agreeing means |z| < 2;
+//!   rank-sum z +3.17 idle and +2.65 walking. Agreeing means |z| < 2, by
+//!   both rules;
 //! - the camera's resting offset behind the hero in x (the hero's x less the
 //!   camera's): 3.05-3.23 m in AF.11's set A, 3.33-3.55 m in its set B;
 //! - where the hero of the slide outcome stops, in x and in z: set B's
 //!   stopped 5-7 cm short.
 //!
-//!   Each of these three agrees when the candidates' rank-sum |z| against the
+//!   (d): the camera and the slide's z agree when the candidates' rank-sum
+//!   |z| is under 2 against the reference AND 2 or more against the paused
+//!   group, so the candidates sit apart from the paused group as a group,
+//!   the test that tells the unwatched reference from it too (AH.5's set A
+//!   against AF.11's set B at -3.25 and -2.93). The slide's x is printed and
+//!   judges nothing: there set B's spread overlaps set A's own (AH.5's set A
+//!   against set B at z +1.90), so it can't tell a paused group from an
+//!   unwatched one.
+//!
+//!   (a): all three agree when the candidates' rank-sum |z| against the
 //!   reference is under 2 AND no candidate lies inside the paused group's
-//!   range. AG.1's letter (every candidate inside the reference's range) is
-//!   still counted and printed but judges nothing: two groups of 10 from one
-//!   run pass it about 1 time in 4 (both extremes of the 20 have to fall in
-//!   the reference, 9/38). On the slides' x the clearance is weak: set B's x
-//!   range overlaps set A's own (2 of AG.34's fresh set A's 8 slides and 1 of
-//!   AF.11's 7 lie inside it), so z and the camera carry the separation;
+//!   range. One replay at the edge of set B's range fails it, and the
+//!   unwatched set fails it against itself: AH.5's set A held a camera
+//!   (3.4182 m) and a slide's x (20.5344) inside set B's ranges, 2 of AG.34's
+//!   fresh set A's 8 slides and 1 of AF.11's 7 lie inside set B's x range.
+//!
+//!   AG.1's letter (every candidate inside the reference's range) is still
+//!   counted and printed but judges nothing: two groups of 10 from one run
+//!   pass it about 1 time in 4 (both extremes of the 20 have to fall in the
+//!   reference, 9/38);
 //! - the gate's two outcomes: when the reference holds both, the candidates
-//!   hold both.
+//!   hold both, by both rules.
 //!
 //! AF.11 found 15 of its 20 walks slid along the corner and stopped at x
 //! 20.52-20.64, z -85.12 to -85.22, and 5 turned free and stopped 1.3-1.7 m
@@ -32,6 +46,7 @@
 
 use std::fmt::Write as _;
 
+use anyhow::{Result, bail};
 use serde::Serialize;
 
 use super::report::rank_sum_z;
@@ -48,6 +63,55 @@ pub const SLIDE_RADIUS: f64 = 0.5;
 /// offset and -3.24 and +3.24 on the slides' stops (against AG.1's fresh set
 /// A).
 pub const Z_AGREE: f64 = 2.0;
+/// Under (d), the candidates sit apart from the paused group at this rank-sum
+/// |z| or more: AH.5's set O sat at -3.78 (the camera) and -3.24 (the slide's
+/// z) against AF.11's set B, its unwatched set A at -3.25 and -2.93.
+pub const Z_APART: f64 = 2.0;
+
+/// Which rule judges the candidates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub enum Choice {
+    /// AG.34's (a), chosen 2026-10-19: the camera's offset and both slide
+    /// stops by rank-sum against the reference and no candidate inside the
+    /// paused group's range.
+    A,
+    /// AH.40's (d), chosen 2026-10-20, what later observing checks use: the
+    /// camera's offset and the slide's stop z by rank-sum against the
+    /// reference and apart from the paused group by rank-sum, the slide's
+    /// stop x printed only.
+    #[default]
+    D,
+}
+
+impl Choice {
+    pub fn parse(text: &str) -> Result<Self> {
+        match text {
+            "a" | "A" => Ok(Choice::A),
+            "d" | "D" => Ok(Choice::D),
+            other => bail!("a rule is a (AG.34's) or d (AH.40's), not {other:?}"),
+        }
+    }
+
+    /// The camera's offset's, the slide's stop x's and its z's rules; the
+    /// draws are [`Rule::Rank`] under both.
+    fn rules(self) -> [Rule; 3] {
+        match self {
+            Choice::A => [Rule::RankClearOfPaused; 3],
+            Choice::D => [
+                Rule::RankApartFromPaused,
+                Rule::Printed,
+                Rule::RankApartFromPaused,
+            ],
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Choice::A => "AG.34's rule (a)",
+            Choice::D => "AH.40's rule (d)",
+        }
+    }
+}
 
 /// How a replay left the gate's corner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -68,15 +132,23 @@ impl Outcome {
     }
 }
 
-/// How a discriminator is judged (AG.34's rule (a)).
+/// How one discriminator is judged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Rule {
     /// Rank-sum |z| under [`Z_AGREE`] against the reference: the draws.
     Rank,
     /// [`Rule::Rank`], and no candidate inside the paused group's [min, max]:
-    /// the camera's offset and the slides' stops. Without a paused group's
-    /// values there's nothing to stay clear of, and it misses.
+    /// (a)'s camera offset and slide stops. Without a paused group's values
+    /// there's nothing to stay clear of, and it misses.
     RankClearOfPaused,
+    /// [`Rule::Rank`], and the candidates' rank-sum |z| against the paused
+    /// group at [`Z_APART`] or more: (d)'s camera offset and slide's stop z.
+    /// Without a paused group's values (or with every value equal) nothing
+    /// sets them apart, and it misses.
+    RankApartFromPaused,
+    /// Printed, judging nothing (its `agrees` always true): (d)'s slide's stop
+    /// x.
+    Printed,
 }
 
 /// One discriminator over the groups.
@@ -99,8 +171,13 @@ pub struct Discriminator {
     /// Mann-Whitney's z, the candidates against the reference: positive when
     /// the candidates sit higher, `None` when every value is equal.
     pub z: Option<f64>,
-    /// The same, the candidates against the paused group (printed).
+    /// The same, the candidates against the paused group: (d)'s second
+    /// clause, printed under (a).
     pub z_paused: Option<f64>,
+    /// The reference against the paused group (printed): how far apart the
+    /// unwatched group sits on its own, the separation (d) asks the
+    /// candidates to keep.
+    pub reference_z_paused: Option<f64>,
     pub rule: Rule,
     pub agrees: bool,
 }
@@ -123,18 +200,22 @@ impl Discriminator {
         let reference_band = Band::of(&reference);
         let paused_band = Band::of(&paused);
         let z = rank_sum_z(&reference, &candidate);
+        let z_paused = rank_sum_z(&paused, &candidate);
         let by_rank =
             !reference.is_empty() && !candidate.is_empty() && z.is_none_or(|z| z.abs() < Z_AGREE);
         let inside_paused = inside(paused_band, &candidate);
         let agrees = match rule {
             Rule::Rank => by_rank,
             Rule::RankClearOfPaused => by_rank && paused_band.is_some() && inside_paused == 0,
+            Rule::RankApartFromPaused => by_rank && z_paused.is_some_and(|z| z.abs() >= Z_APART),
+            Rule::Printed => true,
         };
         Self {
             name: name.to_owned(),
             candidate_band: Band::of(&candidate),
             inside: inside(reference_band, &candidate),
-            z_paused: rank_sum_z(&paused, &candidate),
+            z_paused,
+            reference_z_paused: rank_sum_z(&paused, &reference),
             reference,
             candidate,
             paused,
@@ -166,6 +247,8 @@ pub struct Discriminators {
     pub candidate: Set,
     /// The paused group's set (AF.11's B), `None` without one.
     pub paused: Option<Set>,
+    /// The rule judging them.
+    pub choice: Choice,
     pub end: u64,
     pub reference_labels: Vec<String>,
     pub candidate_labels: Vec<String>,
@@ -202,14 +285,16 @@ fn end_of(r: &ReplayRecord, end: u64) -> Option<End> {
 }
 
 impl Discriminators {
-    /// `reference`, `candidate` and `paused` read at `end`; replays without a
-    /// hero or a camera there are left out (and their labels with them).
+    /// `reference`, `candidate` and `paused` read at `end` and judged by
+    /// `choice`; replays without a hero or a camera there are left out (and
+    /// their labels with them).
     pub fn build(
         script: &str,
         reference: (Set, &[&ReplayRecord]),
         candidate: (Set, &[&ReplayRecord]),
         paused: Option<(Set, &[&ReplayRecord])>,
         end: u64,
+        choice: Choice,
     ) -> Self {
         let ends = |rs: &[&ReplayRecord]| -> Vec<End> {
             let mut v: Vec<End> = rs.iter().filter_map(|r| end_of(r, end)).collect();
@@ -224,14 +309,15 @@ impl Discriminators {
         let three = |name: &str, f: &dyn Fn(&End) -> Option<f64>, rule: Rule| {
             Discriminator::new(name, col(&re, f), col(&ce, f), col(&pe, f), rule)
         };
+        let [camera_rule, x_rule, z_rule] = choice.rules();
         let draws = three("MT draws since F0", &|e| e.draws, Rule::Rank);
         let camera_offset = three(
             "camera's offset behind the hero in x (m)",
             &|e| Some(e.hero[0] - e.camera[0]),
-            Rule::RankClearOfPaused,
+            camera_rule,
         );
         let outcome = |e: &End| Outcome::of(e.hero[0], e.hero[2]);
-        let slide_stop = [0, 2].map(|i| {
+        let slide_stop = [(0, x_rule), (2, z_rule)].map(|(i, rule)| {
             three(
                 if i == 0 {
                     "slide's stop x (m)"
@@ -239,7 +325,7 @@ impl Discriminators {
                     "slide's stop z (m)"
                 },
                 &|e| (outcome(e) == Outcome::Slide).then_some(e.hero[i]),
-                Rule::RankClearOfPaused,
+                rule,
             )
         });
         let (ro, co): (Vec<Outcome>, Vec<Outcome>) = (
@@ -258,6 +344,7 @@ impl Discriminators {
             reference: reference.0,
             candidate: candidate.0,
             paused: paused.map(|(set, _)| set),
+            choice,
             end,
             reference_labels: labels(&re),
             candidate_labels: labels(&ce),
@@ -270,7 +357,8 @@ impl Discriminators {
     }
 
     /// The candidates can't be told from the reference on anything AF.11 told
-    /// its sets apart by, and sit clear of the paused group on the ranges.
+    /// its sets apart by, and sit apart from the paused group (d) or clear of
+    /// its ranges (a). A printed discriminator agrees whatever it holds.
     pub fn agree(&self) -> bool {
         self.draws.agrees
             && self.camera_offset.agrees
@@ -284,12 +372,17 @@ impl Discriminators {
             .map_or("no paused set".to_owned(), |p| format!("set {p}"));
         let _ = writeln!(
             out,
-            "== {}: set {} against set {} at F0 + {}, clear of {paused}, AF.11's discriminators \
-             by AG.34's rule (a) ({}, {} and {} replays) ==",
+            "== {}: set {} against set {} at F0 + {}, {} {paused}, AF.11's discriminators by {} \
+             ({}, {} and {} replays) ==",
             self.script,
             self.candidate,
             self.reference,
             self.end,
+            match self.choice {
+                Choice::A => "clear of",
+                Choice::D => "apart from",
+            },
+            self.choice.name(),
             self.candidate_labels.len(),
             self.reference_labels.len(),
             self.paused_labels.len()
@@ -304,30 +397,39 @@ impl Discriminators {
             .into_iter()
             .chain(self.slide_stop.iter())
         {
+            let reference = self.reference;
             let rule = match d.rule {
                 Rule::Rank => format!("rank-sum |z| < {Z_AGREE}"),
                 Rule::RankClearOfPaused => {
                     format!("rank-sum |z| < {Z_AGREE} and none inside {paused}'s range")
                 }
+                Rule::RankApartFromPaused => format!(
+                    "rank-sum |z| < {Z_AGREE} against {reference} and |z| >= {Z_APART} against \
+                     {paused}"
+                ),
+                Rule::Printed => "printed".to_owned(),
+            };
+            let verdict = match (d.rule, d.agrees) {
+                (Rule::Printed, _) => "judges nothing",
+                (_, true) => "agrees",
+                (_, false) => "MISSES",
             };
             let _ = writeln!(
                 out,
-                "{}: {} {}; {} {}; {paused} {}; rank-sum z {} against {}, {} against {paused}; \
-                 {} of {} inside {}'s range, {} inside {paused}'s; {rule} -> {}",
+                "{}: {reference} {}; {} {}; {paused} {}; rank-sum z {} against {reference}, {} \
+                 against {paused} ({reference} against {paused} {}); {} of {} inside \
+                 {reference}'s range, {} inside {paused}'s; {rule} -> {verdict}",
                 d.name,
-                self.reference,
                 band(&d.reference_band),
                 self.candidate,
                 band(&d.candidate_band),
                 band(&d.paused_band),
                 z(d.z),
-                self.reference,
                 z(d.z_paused),
+                z(d.reference_z_paused),
                 d.inside,
                 d.candidate.len(),
-                self.reference,
                 d.inside_paused,
-                if d.agrees { "agrees" } else { "MISSES" }
             );
         }
         let count = |o: &[Outcome], k: Outcome| o.iter().filter(|&&x| x == k).count();
@@ -505,6 +607,7 @@ mod tests {
         a: &[ReplayRecord],
         w: &[ReplayRecord],
         b: Option<&[ReplayRecord]>,
+        choice: Choice,
     ) -> Discriminators {
         fn refs(v: &[ReplayRecord]) -> Vec<&ReplayRecord> {
             v.iter().collect()
@@ -517,12 +620,18 @@ mod tests {
             (Set::W, &w),
             b.as_deref().map(|b| (Set::B, b)),
             1_800,
+            choice,
         )
     }
 
-    /// Against the miniature set A, clear of the miniature set B.
+    /// Against the miniature set A, clear of the miniature set B, by (a).
     fn judge(w: &[ReplayRecord]) -> Discriminators {
-        judge_against(&set_a(), w, Some(&set_b()))
+        judge_against(&set_a(), w, Some(&set_b()), Choice::A)
+    }
+
+    /// The same groups by (d).
+    fn judge_d(w: &[ReplayRecord]) -> Discriminators {
+        judge_against(&set_a(), w, Some(&set_b()), Choice::D)
     }
 
     #[test]
@@ -555,6 +664,38 @@ mod tests {
         assert!(text.contains("every discriminator agrees"), "{text}");
         assert!(text.contains("clear of set B"), "{text}");
         assert!(text.contains("none inside set B's range"), "{text}");
+        // By (d) too: as far from set B as set A is.
+        let d = judge_d(&candidates(&like));
+        assert!(d.agree(), "{d:#?}");
+        assert_eq!(d.choice, Choice::D);
+        for (r, rule) in [
+            (&d.camera_offset, Rule::RankApartFromPaused),
+            (&d.slide_stop[0], Rule::Printed),
+            (&d.slide_stop[1], Rule::RankApartFromPaused),
+        ] {
+            // The slides' x sit above set B's here, the camera and z below.
+            assert_eq!(r.rule, rule);
+            assert!(r.z_paused.unwrap().abs() >= Z_APART, "{r:#?}");
+            assert!(r.reference_z_paused.unwrap().abs() >= Z_APART, "{r:#?}");
+        }
+        assert!(d.camera_offset.reference_z_paused.unwrap() < 0.0);
+        assert!(d.slide_stop[1].reference_z_paused.unwrap() < 0.0);
+        // The reference against the paused group, not the other way round.
+        assert_eq!(
+            d.camera_offset.reference_z_paused,
+            rank_sum_z(&d.camera_offset.paused, &d.camera_offset.reference)
+        );
+        let mut text = String::new();
+        d.write_text(&mut text);
+        assert!(text.contains("apart from set B"), "{text}");
+        assert!(text.contains("by AH.40's rule (d)"), "{text}");
+        assert!(text.contains("(A against set B -3.78)"), "{text}");
+        assert!(
+            text.contains("|z| < 2 against A and |z| >= 2 against set B -> agrees"),
+            "{text}"
+        );
+        assert!(text.contains("printed -> judges nothing"), "{text}");
+        assert!(text.contains("every discriminator agrees"), "{text}");
     }
 
     #[test]
@@ -624,6 +765,7 @@ mod tests {
             &slides,
             &candidates(&|i| (SLIDE, 3.1, 32_000 + u64::from(i))),
             Some(&set_b()),
+            Choice::A,
         );
         assert!(d.outcomes.agrees);
         // A replay without a camera at the end is left out.
@@ -634,7 +776,7 @@ mod tests {
 
     #[test]
     fn without_a_paused_group_the_ranges_cant_agree() {
-        let d = judge_against(&set_a(), &candidates(&like), None);
+        let d = judge_against(&set_a(), &candidates(&like), None, Choice::A);
         assert!(d.draws.agrees && d.outcomes.agrees);
         for r in [&d.camera_offset, &d.slide_stop[0], &d.slide_stop[1]] {
             assert!(!r.agrees && r.paused.is_empty() && r.paused_band.is_none());
@@ -647,13 +789,182 @@ mod tests {
         let free: Vec<ReplayRecord> = (0..10)
             .map(|i| replay(Set::B, i, FREE, 3.4, 34_000))
             .collect();
-        let d = judge_against(&set_a(), &candidates(&like), Some(&free));
+        let d = judge_against(&set_a(), &candidates(&like), Some(&free), Choice::A);
         assert!(d.camera_offset.agrees);
         assert!(
             d.slide_stop
                 .iter()
                 .all(|s| !s.agrees && s.paused.is_empty())
         );
+    }
+
+    #[test]
+    fn a_rule_is_a_or_d_and_d_is_the_default() {
+        assert_eq!(Choice::default(), Choice::D);
+        for (text, choice) in [
+            ("a", Choice::A),
+            ("A", Choice::A),
+            ("d", Choice::D),
+            ("D", Choice::D),
+        ] {
+            assert_eq!(Choice::parse(text).unwrap(), choice);
+        }
+        for text in ["", "b", "c", "(d)", "ad", "rank"] {
+            assert!(Choice::parse(text).is_err(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn rule_d_judges_by_rank_where_one_replay_at_set_bs_edge_fails_rule_a() {
+        // AH.5's walk-O-03, a slide's x inside set B's x range, and its set A's
+        // walk-A-05, a camera inside set B's offsets: each group still far
+        // from set B by rank.
+        let w = candidates(&|i| {
+            let (mut h, o, d) = like(i);
+            if i == 3 {
+                h[0] = 20.55;
+            }
+            (h, if i == 4 { 3.34 } else { o }, d)
+        });
+        let a = judge(&w);
+        assert!(!a.camera_offset.agrees && !a.slide_stop[0].agrees && !a.agree());
+        assert!(a.slide_stop[1].agrees && a.draws.agrees && a.outcomes.agrees);
+        let d = judge_d(&w);
+        assert!(d.agree(), "{d:#?}");
+        // Still counted and printed.
+        assert_eq!(
+            (d.camera_offset.inside_paused, d.slide_stop[0].inside_paused),
+            (1, 1)
+        );
+        assert!(d.camera_offset.z.unwrap().abs() < Z_AGREE);
+        assert!(d.camera_offset.z_paused.unwrap() <= -Z_APART);
+        assert!(d.slide_stop[1].z_paused.unwrap() <= -Z_APART);
+    }
+
+    #[test]
+    fn under_rule_d_the_slides_x_judges_nothing() {
+        // Every slide 20 cm past set A's in x: (a) misses by rank, (d) prints it.
+        let w = candidates(&|i| {
+            let (mut h, o, d) = like(i);
+            if Outcome::of(f64::from(h[0]), f64::from(h[2])) == Outcome::Slide {
+                h[0] += 0.2;
+            }
+            (h, o, d)
+        });
+        let a = judge(&w);
+        assert!(!a.slide_stop[0].agrees && a.slide_stop[0].z.unwrap() > Z_AGREE);
+        let d = judge_d(&w);
+        assert_eq!(d.slide_stop[0].rule, Rule::Printed);
+        assert!(d.slide_stop[0].z.unwrap() > Z_AGREE);
+        assert_eq!(d.slide_stop[0].candidate.len(), 8);
+        assert!(d.slide_stop[0].agrees && d.agree(), "{d:#?}");
+        let mut text = String::new();
+        d.write_text(&mut text);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("slide's stop x"))
+            .unwrap();
+        assert!(line.ends_with("printed -> judges nothing"), "{line}");
+    }
+
+    #[test]
+    fn apart_from_the_paused_group_means_a_rank_sum_z_of_2_or_more() {
+        // The paused group 1..10; three candidates topping `tops` of its values
+        // each and seven under them all, so U (the pairs a candidate tops) is
+        // their sum; the reference each candidate 1 cm up, |z| under 0.4.
+        let paused: Vec<f64> = (1..=10).map(f64::from).collect();
+        let group = |tops: [u32; 3], sign: f64| -> (Vec<f64>, Vec<f64>) {
+            let mut c: Vec<f64> = tops.iter().map(|&t| f64::from(t) + 0.5).collect();
+            c.extend((0..7).map(|i| -1.0 - f64::from(i)));
+            let r = c.iter().map(|v| (v + 0.01) * sign).collect();
+            (r, c.iter().map(|v| v * sign).collect())
+        };
+        let judge = |tops, sign: f64, paused: &[f64]| {
+            let (r, c) = group(tops, sign);
+            let p = paused.iter().map(|v| v * sign).collect();
+            Discriminator::new("x", r, c, p, Rule::RankApartFromPaused)
+        };
+        for sign in [1.0, -1.0] {
+            // U 23: z -2.04, apart; U 24: z -1.97, not (signs flipped above).
+            let d = judge([10, 9, 4], sign, &paused);
+            assert!((d.z_paused.unwrap() + 2.041 * sign).abs() < 1e-3, "{d:#?}");
+            assert!(d.z.unwrap().abs() < 0.4 && d.agrees, "{d:#?}");
+            let d = judge([10, 9, 5], sign, &paused);
+            assert!((d.z_paused.unwrap() + 1.965 * sign).abs() < 1e-3, "{d:#?}");
+            assert!(!d.agrees, "{d:#?}");
+        }
+        // The reference's own z against the paused group, printed: here the
+        // candidates' less the 1 cm.
+        let d = judge([10, 9, 4], 1.0, &paused);
+        assert!((d.reference_z_paused.unwrap() + 2.041).abs() < 1e-3);
+        // Apart from the paused group but off the reference: a miss by rank.
+        let (r, c) = group([10, 9, 4], 1.0);
+        let d = Discriminator::new(
+            "x",
+            r.iter().map(|v| v + 100.0).collect(),
+            c,
+            paused.clone(),
+            Rule::RankApartFromPaused,
+        );
+        assert!(d.z.unwrap() < -Z_AGREE && !d.agrees);
+        // No paused group, or every value equal: nothing sets them apart.
+        let (r, c) = group([1, 0, 0], 1.0);
+        let d = Discriminator::new("x", r, c, vec![], Rule::RankApartFromPaused);
+        assert!(d.z_paused.is_none() && d.reference_z_paused.is_none() && !d.agrees);
+        let d = Discriminator::new(
+            "x",
+            vec![3.1; 10],
+            vec![3.1; 10],
+            vec![3.1; 10],
+            Rule::RankApartFromPaused,
+        );
+        assert!(d.z.is_none() && d.z_paused.is_none() && !d.agrees);
+        // A printed one agrees whatever it holds.
+        let d = Discriminator::new("x", vec![1.0; 5], vec![9.0; 5], vec![], Rule::Printed);
+        assert!(d.z.unwrap() > Z_AGREE && d.agrees);
+    }
+
+    #[test]
+    fn under_rule_d_a_watched_set_paused_like_set_b_misses() {
+        // A reference and candidates that both sit with set B (as AF.11's set B
+        // judged against itself): nothing tells them apart by rank, and (d)
+        // misses on the camera and the slide's z, where the slide's x would
+        // have said nothing either way.
+        let as_set = |set: Set| -> Vec<ReplayRecord> {
+            set_b()
+                .into_iter()
+                .map(|mut r| {
+                    r.set = set;
+                    r
+                })
+                .collect()
+        };
+        let d = judge_against(&as_set(Set::A), &as_set(Set::W), Some(&set_b()), Choice::D);
+        assert!(d.draws.agrees && d.outcomes.agrees);
+        assert!(d.camera_offset.z.unwrap().abs() < Z_AGREE);
+        assert!(d.camera_offset.z_paused.unwrap().abs() < Z_APART);
+        assert!(!d.camera_offset.agrees && !d.slide_stop[1].agrees);
+        assert!(d.slide_stop[0].agrees && !d.agree());
+        // Without a paused group: the camera and the slide's z miss, the
+        // slide's x judges nothing.
+        let d = judge_against(&set_a(), &candidates(&like), None, Choice::D);
+        assert!(d.draws.agrees && d.outcomes.agrees && d.slide_stop[0].agrees);
+        assert!(!d.camera_offset.agrees && !d.slide_stop[1].agrees && !d.agree());
+        let mut text = String::new();
+        d.write_text(&mut text);
+        assert!(text.contains("apart from no paused set"), "{text}");
+        // The draws by rank alone, as under (a).
+        let d = judge_d(&candidates(&|i| {
+            let (h, o, d) = like(i);
+            (h, o, d + 3_000)
+        }));
+        assert!(!d.draws.agrees && d.draws.rule == Rule::Rank && !d.agree());
+        // Both outcomes asked of the candidates when the reference has both.
+        let d = judge_d(&candidates(&|i| {
+            let (_, o, d) = like(i);
+            (SLIDE, o, d)
+        }));
+        assert!(!d.outcomes.agrees && !d.agree());
     }
 
     #[test]
@@ -666,7 +977,7 @@ mod tests {
         assert_eq!(report.observing.len(), 1);
         let o = &report.observing[0];
         assert_eq!((o.reference, o.candidate, o.end), (Set::A, Set::W, 1_800));
-        assert_eq!(o.paused, None);
+        assert_eq!((o.paused, o.choice), (None, Choice::D));
         assert!(!o.agree());
         // Another measurement's set B (AF.11's, whose set A is ignored).
         let mut af11 = set_b();
@@ -675,7 +986,8 @@ mod tests {
             r.observations[1].camera.as_mut().unwrap().position[0] = 0.0;
             r
         }));
-        let report = crate::divergence::Report::build_with(&records, None, &af11).unwrap();
+        let report =
+            crate::divergence::Report::build_with(&records, None, &af11, Choice::A).unwrap();
         let o = &report.observing[0];
         assert_eq!((o.paused, o.paused_labels.len()), (Some(Set::B), 10));
         assert!(o.agree(), "{o:#?}");
@@ -684,6 +996,32 @@ mod tests {
                 .text()
                 .contains("set W against set A at F0 + 1800, clear of set B")
         );
+        assert_eq!(o.slide_stop[0].rule, Rule::RankClearOfPaused);
+        // The same by (d), the rule reaching every discriminator.
+        let report =
+            crate::divergence::Report::build_with(&records, None, &af11, Choice::D).unwrap();
+        let o = &report.observing[0];
+        assert_eq!((o.choice, o.slide_stop[0].rule), (Choice::D, Rule::Printed));
+        assert_eq!(o.camera_offset.rule, Rule::RankApartFromPaused);
+        assert!(o.agree(), "{o:#?}");
+        assert!(
+            report
+                .text()
+                .contains("set W against set A at F0 + 1800, apart from set B")
+        );
+        // A set O is judged as a set W is.
+        let chained: Vec<ReplayRecord> = set_a()
+            .into_iter()
+            .chain(w().into_iter().map(|mut r| {
+                r.set = Set::O;
+                r
+            }))
+            .collect();
+        let report =
+            crate::divergence::Report::build_with(&chained, None, &af11, Choice::D).unwrap();
+        let o = &report.observing[0];
+        assert_eq!((o.candidate, o.paused), (Set::O, Some(Set::B)));
+        assert!(o.agree(), "{o:#?}");
         // The measurement's own set B comes first.
         let mut own = records.clone();
         own.extend(set_b().into_iter().map(|mut r| {
@@ -697,12 +1035,15 @@ mod tests {
                 r
             })
             .collect();
-        let report = crate::divergence::Report::build_with(&own, None, &near).unwrap();
-        let o = &report.observing[0];
-        assert!(o.agree(), "{o:#?}");
-        assert!(o.camera_offset.paused_band.unwrap().min > 4.0);
+        for choice in [Choice::A, Choice::D] {
+            let report = crate::divergence::Report::build_with(&own, None, &near, choice).unwrap();
+            let o = &report.observing[0];
+            assert!(o.agree(), "{o:#?}");
+            assert!(o.camera_offset.paused_band.unwrap().min > 4.0);
+        }
         // No set W, no judging.
-        let report = crate::divergence::Report::build_with(&set_a(), None, &set_b()).unwrap();
+        let report =
+            crate::divergence::Report::build_with(&set_a(), None, &set_b(), Choice::D).unwrap();
         assert!(report.observing.is_empty());
     }
 }

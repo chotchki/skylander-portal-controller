@@ -686,6 +686,58 @@ fn a_second_load_replaces_the_first_script_whole() {
 }
 
 #[test]
+fn an_appended_script_goes_in_beside_the_last_and_the_paused_flip_keeps_its_state() {
+    // A run that pauses as it goes (AH.7's route driver): each pause appends
+    // the next stretch from the flip after, and the flip it's paused at reads
+    // what the last stretch left there, not the host.
+    let fake = spawn();
+    let host = pad(&[Button::Start], (128, 128), (128, 128)).ds3();
+    fake.set(|e| e.host = [host; 2]);
+    pause(&fake);
+    let east = InputScript::from_ron(
+        "(steps: [(at: 0, pads: {0: (buttons: [East]), 1: ()}), (at: 3, pads: {0: (left: (x: 0, y: 128))})])",
+    )
+    .unwrap();
+    let first = fake.control.load_script(&east).unwrap();
+    let held = fake.control.pause_at(first.base + 6, WAIT).unwrap();
+    let north = InputScript::from_ron("(steps: [(at: 0, pads: {0: (buttons: [North])})])").unwrap();
+    let appended = fake
+        .control
+        .append_script_at(&north, held.frames + 1)
+        .unwrap();
+    assert_eq!((appended.base, appended.entries), (held.frames + 1, 1));
+    let schedule = fake.emu.lock().unwrap().schedule.clone();
+    assert_eq!(schedule[0].len(), 3, "the first stretch's entries stay");
+    assert_eq!(schedule[1].len(), 1);
+    let at = |flip: u64| {
+        schedule[0]
+            .range(..=flip)
+            .next_back()
+            .map(|(_, p)| *p)
+            .unwrap()
+    };
+    let left = pad(&[], (0, 128), (128, 128)).ds3();
+    assert_eq!(
+        at(held.frames),
+        left,
+        "the paused flip keeps the last state"
+    );
+    let north_pad = pad(&[Button::North], (128, 128), (128, 128)).ds3();
+    assert_eq!(at(held.frames + 1), north_pad);
+    // Read through: the paused flip's read is the stick, the next North.
+    fake.control.pause_at(held.frames + 4, WAIT).unwrap();
+    let read = |flip| fake.control.pad_state(0, Some(flip)).unwrap().unwrap().pad;
+    assert_eq!(read(held.frames + 1), north_pad);
+    assert_ne!(read(held.frames + 1), host);
+    // An append that isn't ahead of the pause is refused like a load, and a
+    // load still clears what was appended.
+    let paused = fake.control.state().unwrap().frames;
+    assert!(fake.control.append_script_at(&north, paused).is_err());
+    fake.control.load_script(&north).unwrap();
+    assert_eq!(fake.emu.lock().unwrap().schedule[0].len(), 1);
+}
+
+#[test]
 fn the_loader_wants_a_pause_and_a_base_ahead_of_it() {
     let fake = spawn();
     let script = InputScript::from_ron("(steps: [(at: 0, pads: {0: ()})])").unwrap();

@@ -52,6 +52,10 @@ pub use report::{
     Report, Rng, RngCheckpoint, World, WorldCheckpoint, spearman,
 };
 pub use run::{BOOT_WAIT, Inputs, RECORDING_FILE, carried_dirs, pine_connect, run_replay};
+pub(crate) use run::{
+    FATAL, SILENT, STEP_WAIT, file_name, log_lines, read_watch, save_retrying, saved_in,
+    sha256_file,
+};
 
 /// The end flip's offset from F0: 30 s at 60 fps (design decision 7).
 pub const END: u64 = 1_800;

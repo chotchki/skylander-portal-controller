@@ -22,6 +22,7 @@ use guac_oracle::tolerance;
 use guac_oracle::trace::{Envelope, Horizon, Sample, Trace, TrajectoryTolerance};
 use serde::Serialize;
 
+use super::observing::Choice;
 use super::{Observation, ReplayRecord, Set, actors_file};
 use crate::actors::{ActorFrame, angle_from};
 
@@ -356,8 +357,8 @@ pub struct AcrossSets {
 pub struct Report {
     pub groups: Vec<Group>,
     pub across: Vec<AcrossSets>,
-    /// Set W against set A, per script with both, clear of its set B (AG.1,
-    /// AG.34).
+    /// Set W or O against set A, per script with both, judged against its set
+    /// B by the rule asked for (AG.1, AG.34, AH.40).
     pub observing: Vec<super::observing::Discriminators>,
 }
 
@@ -366,16 +367,18 @@ impl Report {
     /// the output dir, is where the actor frames and end shots are read from;
     /// without it the world and FLIP are left out.
     pub fn build(records: &[ReplayRecord], dir: Option<&Path>) -> Result<Self> {
-        Self::build_with(records, dir, &[])
+        Self::build_with(records, dir, &[], Choice::default())
     }
 
     /// [`Report::build`], with `paused`: another measurement's replays (AF.11's)
-    /// whose set B of a script keeps that script's set W clear of a paused run
-    /// (AG.34) where `records` hold no set B of it.
+    /// whose set B of a script is the paused group a script's set W or O is
+    /// judged against (AG.34, AH.40) where `records` hold no set B of it; and
+    /// `choice`, the rule judging them.
     pub fn build_with(
         records: &[ReplayRecord],
         dir: Option<&Path>,
         paused: &[ReplayRecord],
+        choice: Choice,
     ) -> Result<Self> {
         let mut by: BTreeMap<(String, Set), Vec<&ReplayRecord>> = BTreeMap::new();
         for r in records {
@@ -415,9 +418,9 @@ impl Report {
                 across.push(AcrossSets::build(a, b, &frames)?);
             }
         }
-        // Set W against set A on AF.11's discriminators, at the end flip both
-        // share, kept clear of the script's set B: this measurement's, else
-        // `paused`'s.
+        // Set W or O against set A on AF.11's discriminators, at the end flip
+        // both share, judged against the script's set B: this measurement's,
+        // else `paused`'s.
         let mut observing = Vec::new();
         for ((script, set), replays) in &by_set {
             if !matches!(set, Set::W | Set::O) {
@@ -438,6 +441,7 @@ impl Report {
                     (*set, replays),
                     paused,
                     end,
+                    choice,
                 ));
             }
         }

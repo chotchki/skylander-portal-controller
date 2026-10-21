@@ -9,6 +9,7 @@ use oracle_harness::actors::{self, ActorFrame};
 use oracle_harness::chains::{self, GiantsChains};
 use oracle_harness::control::Control;
 use oracle_harness::divergence::calibrate::{self, Reference};
+use oracle_harness::divergence::observing::Choice;
 use oracle_harness::divergence::{self, Inputs, Perturbation, Plan, ReplayRecord, Report, Set};
 use oracle_harness::env;
 use oracle_harness::home::{self, InitOptions, OracleHome};
@@ -16,6 +17,7 @@ use oracle_harness::identity::Identity;
 use oracle_harness::launch::{self, BootOptions};
 use oracle_harness::pine::PineClient;
 use oracle_harness::rng::{self, Hit, Peek};
+use oracle_harness::route;
 use oracle_harness::scan;
 use oracle_harness::snapshot::{Snapshot, dev_rpcs3_dirs};
 use oracle_harness::sweep;
@@ -128,6 +130,28 @@ usage:
       The home's saves, which the game writes when a new figure arrives, are copied
       to <dir>/home-pristine at the start and put back before any boot that finds
       them changed; the pack and the dev's RPCS3 dirs are checked unchanged at the end
+  oracle goto --out <dir> --route <route.ron> [--state <file>] [--figure <file>]
+              [--watch | --chains] [--ring <n>] [--knobs <knobs.ron>] [--boot-secs <n>]
+              [--max-load <x>]
+      AH.7's route driver: a fresh RPCS3 from the gameplay state ($GUAC_ORACLE_SAVESTATE
+      unless --state) with a fresh copy of the figure ($GUAC_ORACLE_FIGURE unless
+      --figure), F0 read (actors-f0.json, peek-f0.json, and with $GUAC_GIANTS_DUMP set
+      the fight's state, fight-f0.json, and AH.8's census of level 213's placements,
+      census-f0.json), then the route's steps closed loop: Via and Stop walk to a point
+      (pausing every few flips to read the hero and the camera and steer through O4),
+      Hold holds the stick toward a point for so many flips whatever he does, Face
+      turns him where he stands, Settle waits until he and the eye hold still, Press
+      and Wait run as one schedule, Shot and Read take a SCREENSHOT or the reads at the
+      pause; save: true takes a SAVESTATE at the end. With the dump and a watch, the
+      route's placements' wake state rides the watch per frame (route-frames.json),
+      and route-record.json puts the steps, what fired in order, what changed between
+      reads and the scripts that started beside the last read's.
+      --watch arms O5's watch on Giants' list at F0 (a ring of <n> (6000) records),
+      --chains O6's chains with it. Writes <dir> (new, outside every work tree):
+      record.json, route.json (every pause), input.ron (what port 0 held from F0 + 1,
+      for the headless runner), the reads, the shots, the ring and the end state.
+      Waits while the 1-minute load is over <max-load> (32) before the boot; the dev's
+      RPCS3 dirs and the home's saves and trophies are checked unchanged at the end
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
@@ -154,14 +178,17 @@ usage:
       counting as failed. <dir> must sit outside every work tree; the dev's RPCS3 dirs
       are checked unchanged at the end, and the home's saves and trophies (which a
       state's load doesn't put back) after every replay, a change stopping the run
-  oracle divergence report <dir> [--paused <dir>]
+  oracle divergence report <dir> [--paused <dir>] [--rule d|a] [--out <dir>]
       the numbers from <dir>'s records: per observable the spread at each checkpoint
       and the usable horizon by floor, the RNG distances, every actor by corpus, FLIP
-      between end shots, set A against set B at the end flip, set W against set A on
-      AF.11's discriminators by AG.34's rule (a) (rank-sum |z| < 2, and on the camera's
-      offset and the slides' stops no set W replay inside set B's range: <dir>'s set B
-      of the script, else --paused's, AF.11's measurement) and the spreads against the
-      host's load; written to <dir>/report.txt and report.json
+      between end shots, set A against set B at the end flip, set W or O against set A
+      on AF.11's discriminators judged against set B (<dir>'s set B of the script, else
+      --paused's, AF.11's measurement) and the spreads against the host's load; written
+      to <out> (<dir> by default)/report.txt and report.json. The rule: d (AH.40's, the
+      default) the draws by rank-sum |z| < 2 against set A, the camera's offset and the
+      slide's stop z by that and |z| >= 2 against set B, the slide's stop x printed
+      only; a (AG.34's) the draws by rank-sum, the camera's offset and both slide stops
+      by rank-sum and no replay inside set B's range
   oracle divergence calibrate <dir>
       AF.12's leave-one-out over <dir>'s groups with guac_oracle::tolerance's
       defaults: each replay against the envelope of the others inside the
@@ -186,11 +213,9 @@ fn main() -> Result<()> {
         ["watch", rest @ ..] => watch_cmd(rest),
         ["sweep", "list", "--pack", pack] => sweep_list(pack.as_ref()),
         ["sweep", "run", rest @ ..] => sweep_run(rest),
+        ["goto", rest @ ..] => goto(rest),
         ["divergence", "run", rest @ ..] => divergence_run(rest),
-        ["divergence", "report", dir] => divergence_report(dir.as_ref(), None),
-        ["divergence", "report", dir, "--paused", paused] => {
-            divergence_report(dir.as_ref(), Some(paused.as_ref()))
-        }
+        ["divergence", "report", rest @ ..] => divergence_report(rest),
         ["divergence", "calibrate", dir] => divergence_calibrate(dir.as_ref()),
         ["divergence", "check", rest @ ..] => divergence_check(rest),
         [verb, "--socket", socket, rest @ ..] => run_verb(verb, &PathBuf::from(socket), rest),
@@ -793,6 +818,200 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// AH.7's `oracle goto`: the route driven on a fresh RPCS3, as the usage says.
+fn goto(mut rest: &[&str]) -> Result<()> {
+    let (mut out, mut route, mut state, mut figure, mut knobs) = (None, None, None, None, None);
+    let (mut watch, mut chained) = (false, false);
+    let mut ring = 6_000u32;
+    let mut boot_wait = divergence::BOOT_WAIT;
+    let mut max_load = 32.0f64;
+    loop {
+        match rest {
+            [] => break,
+            ["--watch", tail @ ..] => {
+                watch = true;
+                rest = tail;
+            }
+            ["--chains", tail @ ..] => {
+                (watch, chained) = (true, true);
+                rest = tail;
+            }
+            [flag, value, tail @ ..] => {
+                rest = tail;
+                match *flag {
+                    "--out" => out = Some(PathBuf::from(value)),
+                    "--route" => route = Some(PathBuf::from(value)),
+                    "--state" => state = Some(PathBuf::from(value)),
+                    "--figure" => figure = Some(PathBuf::from(value)),
+                    "--knobs" => knobs = Some(PathBuf::from(value)),
+                    "--ring" => ring = value.parse().context("--ring takes a count")?,
+                    "--boot-secs" => {
+                        boot_wait =
+                            Duration::from_secs(value.parse().context("--boot-secs takes seconds")?)
+                    }
+                    "--max-load" => max_load = value.parse().context("--max-load takes a load")?,
+                    _ => bail!("{USAGE}"),
+                }
+            }
+            _ => bail!("{USAGE}"),
+        }
+    }
+    let out = rrc_dump::output::refuse_repo_output(&out.context("--out <dir> is required")?)?;
+    let route_file = route.context("--route <route.ron> is required")?;
+    let plan = route::RoutePlan::from_ron(
+        &std::fs::read_to_string(&route_file)
+            .with_context(|| format!("reading {}", route_file.display()))?,
+    )?;
+    let knobs = match knobs {
+        Some(k) => ron::from_str(&std::fs::read_to_string(&k)?).context("parsing the knobs")?,
+        None => route::Knobs::default(),
+    };
+    let state = match state {
+        Some(s) => s,
+        None => required("GUAC_ORACLE_SAVESTATE")?,
+    };
+    let figure = match figure {
+        Some(f) => f,
+        None => required("GUAC_ORACLE_FIGURE")?,
+    };
+    let (rows, disc) = match env::path(env::GIANTS_DUMP) {
+        Some(dump) => {
+            let usrdir = dump.join("PS3_GAME/USRDIR");
+            let progression = guac_extract::progression::read(
+                &usrdir,
+                guac_ir::DumpIdentity {
+                    title_id: "BLUS30968".into(),
+                    app_ver: "01.00".into(),
+                    manifest_hash: guac_ir::Sha256([0; 32]),
+                },
+            )?;
+            (
+                Some(oracle_harness::fight::Rows::of(&progression)?),
+                Some(route::census::Disc::read(&usrdir)?),
+            )
+        }
+        None => (None, None),
+    };
+    let exe = required(env::ORACLE_EXE)?;
+    let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
+    let dev_dirs = dev_rpcs3_dirs(&home::real_home()?);
+    let before = Snapshot::take(&dev_dirs)?;
+    let carried_dirs = divergence::carried_dirs(&home.config_dir());
+    let carried = Snapshot::take(&carried_dirs)?;
+    let figure_hash = sha256_hex(&figure)?;
+    let mut lines = vec![
+        Identity::of(&exe, &home.config_dir())?.line(),
+        format!(
+            "goto {}: home {}, state {} ({}), figure {} ({}), watch {watch}, chains {chained}, \
+             rows {}",
+            route_file.display(),
+            home.root().display(),
+            state.display(),
+            &sha256_hex(&state)?[..16],
+            figure.display(),
+            &figure_hash[..16],
+            rows.is_some()
+        ),
+    ];
+    loop {
+        let host = divergence::Host::now();
+        match host.load_average {
+            Some([l1, ..]) if l1 > max_load => {
+                let held = format!("hold: 1-minute load {l1} over {max_load}; {}", host.uptime);
+                println!("{held}");
+                lines.push(held);
+                std::thread::sleep(Duration::from_secs(30));
+            }
+            _ => {
+                lines.push(format!(
+                    "start: {}; screen locked {:?}",
+                    host.uptime, host.screen_locked
+                ));
+                break;
+            }
+        }
+    }
+    let inputs = route::session::Inputs {
+        exe: &exe,
+        home: &home,
+        state: &state,
+        figure: &figure,
+        boot_wait,
+        rows: rows.as_ref(),
+        disc: disc.as_ref(),
+        watch,
+        chains: chained,
+        ring,
+    };
+    let result = route::session::run(&inputs, &plan, knobs, &out);
+    match &result {
+        Ok(r) => lines.push(format!(
+            "{:?} after {} flips over {} looks; F0 {}, boot {:.1} s, wall {:.0} s; shots {}, reads \
+             {}; watch {}; state {}; silent {}{}; {} -> {}",
+            r.outcome,
+            r.flips,
+            r.looks,
+            r.f0,
+            r.boot_secs,
+            r.wall_secs,
+            r.shots.len(),
+            r.reads.len(),
+            r.watch.as_ref().map_or("none".into(), |w| format!(
+                "{} records, check {:?}",
+                w.held, w.check
+            )),
+            r.saved.as_ref().map_or_else(
+                || r.save_error.clone().unwrap_or_else(|| "not saved".into()),
+                |s| format!("{} at {} ({}…)", s.file, s.saved_at, &s.sha256[..16])
+            ),
+            r.silent,
+            if r.fatal.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; RPCS3 logged {} fatal error(s): {}",
+                    r.fatal.len(),
+                    r.fatal[0]
+                )
+            },
+            r.before.uptime,
+            r.after.uptime
+        )),
+        Err(e) => lines.push(format!("failed: {e:#}")),
+    }
+    let changed = before.diff(&Snapshot::take(&dev_dirs)?);
+    let home_changed = carried.diff(&Snapshot::take(&carried_dirs)?);
+    lines.push(format!(
+        "end: {}; the home's saves and trophies {}; the figure source {}; the dev's RPCS3 dirs {}",
+        divergence::Host::now().uptime,
+        if home_changed.is_empty() {
+            format!("unchanged, {} entries", carried.len())
+        } else {
+            format!("CHANGED:\n{}", home_changed.join("\n"))
+        },
+        if sha256_hex(&figure)? == figure_hash {
+            "unchanged"
+        } else {
+            "CHANGED"
+        },
+        if changed.is_empty() {
+            format!("unchanged, {} entries", before.len())
+        } else {
+            format!("CHANGED:\n{}", changed.join("\n"))
+        }
+    ));
+    for l in &lines[2..] {
+        println!("{l}");
+    }
+    if out.exists() {
+        std::fs::write(out.join("run.txt"), lines.join("\n") + "\n")?;
+    }
+    if !changed.is_empty() {
+        bail!("the dev's RPCS3 dirs changed during the drive");
+    }
+    result.map(|_| ())
+}
+
 /// AF.11's replays (see the usage).
 fn divergence_run(mut rest: &[&str]) -> Result<()> {
     let (mut out, mut state, mut figure, mut warmup) = (None, None, None, None);
@@ -1172,18 +1391,41 @@ fn summary(r: &ReplayRecord) -> String {
     )
 }
 
-fn divergence_report(dir: &std::path::Path, paused: Option<&std::path::Path>) -> Result<()> {
-    let dir = rrc_dump::output::refuse_repo_output(dir)?;
+fn divergence_report(rest: &[&str]) -> Result<()> {
+    let [dir, tail @ ..] = rest else {
+        bail!("{USAGE}");
+    };
+    let mut rest = tail;
+    let (mut paused, mut out, mut choice) = (None, None, Choice::default());
+    while let [flag, value, tail @ ..] = rest {
+        rest = tail;
+        match *flag {
+            "--paused" => paused = Some(PathBuf::from(value)),
+            "--rule" => choice = Choice::parse(value)?,
+            "--out" => out = Some(PathBuf::from(value)),
+            _ => bail!("{USAGE}"),
+        }
+    }
+    if !rest.is_empty() {
+        bail!("{USAGE}");
+    }
+    let dir = rrc_dump::output::refuse_repo_output(dir.as_ref())?;
+    // Another output dir keeps <dir>'s own report (another rule's) as it was.
+    let out = match out {
+        Some(o) => rrc_dump::output::refuse_repo_output(&o)?,
+        None => dir.clone(),
+    };
+    std::fs::create_dir_all(&out)?;
     let records = divergence::load_records(&dir)?;
     let paused = match paused {
-        Some(p) => divergence::load_records(p)?,
+        Some(p) => divergence::load_records(&p)?,
         None => Vec::new(),
     };
-    let report = Report::build_with(&records, Some(&dir), &paused)?;
+    let report = Report::build_with(&records, Some(&dir), &paused, choice)?;
     let text = report.text();
-    std::fs::write(dir.join("report.txt"), &text)?;
+    std::fs::write(out.join("report.txt"), &text)?;
     std::fs::write(
-        dir.join("report.json"),
+        out.join("report.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
     print!("{text}");

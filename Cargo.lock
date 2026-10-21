@@ -6700,6 +6700,7 @@ dependencies = [
  "guac-ir",
  "guac-oracle",
  "image",
+ "ron",
  "rrc-dump",
  "serde",
  "serde_json",

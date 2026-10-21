@@ -33,13 +33,13 @@ use crate::watch::{GiantsWatch, RawRecord, RingCheck, WatchFile};
 pub const BOOT_WAIT: Duration = Duration::from_secs(120);
 /// A shot, a save, a resume's pause: AF.5's live runs took up to 14 s for a
 /// save under a load average of 40.
-const STEP_WAIT: Duration = Duration::from_secs(180);
+pub(crate) const STEP_WAIT: Duration = Duration::from_secs(180);
 /// What RPCS3 logs when the template's silent audio took (AF.3's review).
-const SILENT: &[u8] = b"cellAudio initializing. Backend: Null";
+pub(crate) const SILENT: &[u8] = b"cellAudio initializing. Backend: Null";
 /// What RPCS3 logs when a guest thread dies: AF.11 saw the main PPU thread's
 /// lwmutex check fail on a savestate's restore, before any flip (then
 /// `STATE` stays at Start Paused's frame) or after the end state's reboot.
-const FATAL: &[u8] = b"Thread terminated due to fatal error";
+pub(crate) const FATAL: &[u8] = b"Thread terminated due to fatal error";
 
 /// What every replay of a measurement shares.
 pub struct Inputs<'a> {
@@ -268,7 +268,7 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
 /// AG.1's and AG.35's checks on it. A set O ring's records carry O6's chains
 /// after the list: split off, named through `pine` and written beside it
 /// ([`chains::CHAIN_FILE`] and the rest).
-fn read_watch(
+pub(crate) fn read_watch(
     control: &Control,
     watch: &GiantsWatch,
     chained: Option<&GiantsChains>,
@@ -401,19 +401,19 @@ pub(super) fn observation(
     }
 }
 
-struct SaveTries {
-    saved: Option<Saved>,
-    refusals: Vec<String>,
-    error: Option<String>,
+pub(crate) struct SaveTries {
+    pub(crate) saved: Option<Saved>,
+    pub(crate) refusals: Vec<String>,
+    pub(crate) error: Option<String>,
     /// `STATE`'s counter when the last `SAVESTATE` went out.
-    asked_at: Option<u64>,
+    pub(crate) asked_at: Option<u64>,
 }
 
 /// `SAVESTATE`, tried again [`SAVE_RETRY_FLIPS`] on when RPCS3 turns it down,
 /// up to [`SAVE_TRIES`] times; after that, or on any other failure, the
 /// replay keeps its observations and goes without an end state (unless the
 /// state was written and only its reboot failed: the caller finds the copy).
-fn save_retrying(control: &Control, dir: &Path) -> SaveTries {
+pub(crate) fn save_retrying(control: &Control, dir: &Path) -> SaveTries {
     let mut refusals = Vec::new();
     let fail = |refusals, error: String, asked_at| SaveTries {
         saved: None,
@@ -463,7 +463,7 @@ fn save_retrying(control: &Control, dir: &Path) -> SaveTries {
 }
 
 /// The state a save copied into a replay's dir, if one is there.
-fn saved_in(dir: &Path) -> Option<std::path::PathBuf> {
+pub(crate) fn saved_in(dir: &Path) -> Option<std::path::PathBuf> {
     fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -529,19 +529,19 @@ fn parse_loadavg(text: &str) -> Option<[f64; 3]> {
 }
 
 /// The lines of `log` holding `needle`, trimmed, lossily decoded.
-fn log_lines(log: &[u8], needle: &[u8]) -> Vec<String> {
+pub(crate) fn log_lines(log: &[u8], needle: &[u8]) -> Vec<String> {
     log.split(|&b| b == b'\n')
         .filter(|line| line.windows(needle.len()).any(|w| w == needle))
         .map(|line| String::from_utf8_lossy(line).trim().to_owned())
         .collect()
 }
 
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
 }
 
-fn sha256_file(path: &Path) -> Result<String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     Ok(hex(&Sha256::digest(bytes)))
 }
