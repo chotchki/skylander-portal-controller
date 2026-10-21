@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: The face buttons attack
-In a level, the bottom face position SHALL fire the hero's first attack, the left face position and both right shoulder buttons his second, and the right face position and both left shoulder buttons his third, the same position on every pad whatever its label; the top face position SHALL fire no attack, nor a third attack not yet bought (Eruptor's Magma Ball is upgrade 4). Each press SHALL fire one attack at most: holding a button attacks once.
+In a level, the bottom face position SHALL fire the hero's first attack, the left face position and both right shoulder buttons his second, and the right face position and both left shoulder buttons his third once it's bought (Eruptor's Magma Ball is upgrade 4), the same position on every pad whatever its label; the top face position SHALL fire no attack. Each press SHALL fire one attack at most: holding a button attacks once.
 
 #### Scenario: Two 8BitDo variants
 - **WHEN** the button in the first attack's position is pressed on the PC variant, then on the Switch variant

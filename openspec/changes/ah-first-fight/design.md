@@ -231,17 +231,18 @@ AH.0 requires this table complete.
 | figure-progress | Taken off straight after; No profile unlocked | AH.1 (unit), AH.23 (unit) |
 | figure-progress | One short of level 2 | AH.2 (the table), AH.23 (unit), AH.11 (the original's) |
 | figure-progress | At the caps | AH.1 (unit), AH.23 (unit), AH.11 (the original's) |
-| figure-progress | A minute in the level; Waiting on the portal | AH.11 (the original's), AH.23 (unit) |
+| figure-progress | A minute in the level; Waiting on the portal; Beaten and still on the portal | AH.11 (the original's), AH.23 (unit) |
 | figure-progress | Playtime while he plays | AH.1 (unit), AH.23 (unit) |
 | figure-progress | After the first fight; Never placed; A second phone watching; Setting a level; Her own Eruptor on the portal; Another profile's Eruptor on the portal; A sibling's figure; An edit straight after play; Reset, then placed | AH.1 (unit, the generation), AH.3 (unit and e2e) |
 | figure-progress | A slot reset in the level; A slot reset while waiting | AH.3 (unit), AH.23 (unit), AH.25 (e2e, the refusal) |
 | combat | Lava Lob; Many throws | AH.9, AH.11 (the roll's kind), AH.19 (unit), AH.30 (exact, rule) |
 | combat | Chompy bites on Eruptor | AH.10, AH.11 (the roll's kind), AH.19, AH.30 |
+| combat | Every hit critical; Armour of 200 | AH.11 (the original's), AH.19 (unit), AH.30 (rule) |
 | combat | Two bites at once; Eruptor bitten; A stunned Chompy hit again; A Chompy's bite; A second bite soon after; A sleeping Chompy | AH.10, AH.19, AH.25, AH.30 |
 | combat | A Giant bitten | AH.29 (headless, Tree Rex) |
 | combat | Eruptor at level 1 and at level 10; Standing after a bite | AH.4 (live), AH.16 (disc), AH.25 |
 | combat | Put back in the same level | AH.11, AH.20 (unit), AH.26 (e2e) |
-| combat | Tree Rex waiting; Placed again | AH.11, AH.26 (unit and e2e) |
+| combat | Tree Rex after him; Placed again | AH.11, AH.26 (unit and e2e) |
 | hero-attacks | A Chompy ahead; Nothing in range; The button held; Chompies all round; Bitten while erupting; Bitten as he winds up; From the press to the ball | AH.9, AH.10, AH.17, AH.24, AH.25, AH.30 |
 | hero-attacks | A character whose attacks don't run yet; Eruptor | AH.24, AH.29 |
 | hero-attacks | Tree Rex | AH.29 (in the oracle and headless) |
@@ -253,7 +254,8 @@ AH.0 requires this table complete.
 | pickups | A Chompy beaten; A big orb | AH.10, AH.20 (unit on the split), AH.30 |
 | pickups | Orbs by his feet; Orbs out of reach | AH.10, AH.20, AH.25, AH.30 |
 | pickups | The thousandth point | AH.11, AH.23 (unit), AH.25 |
-| pickups | A spinning coin on the walkway; Just dropped | AH.9, AH.11, AH.20, AH.27, AH.28 |
+| pickups | The shockwave | AH.11 (the original's), AH.19 (unit), AH.25 |
+| pickups | A spinning coin on the walkway; Just dropped; Down the line into the pit; Under him as it drops | AH.9, AH.11, AH.46 (the floor's length), AH.20, AH.27, AH.28 |
 | pickups | Two at once | AH.9 (the original's), AH.20 (unit), AH.27 |
 | breakables | A barrel by the ledge route; Five in a row; The coins' worth | AH.9, AH.21, AH.27, AH.30 |
 | breakables | Up to the walkway | AH.8, AH.21, AH.28 |
@@ -263,6 +265,8 @@ AH.0 requires this table complete.
 | tv-hud | Restart chapter; Another character instead | AH.11, AH.26 |
 | script-runtime | Chapter 1 at medium; A fresh profile | AH.4, AH.16, AH.25 |
 | script-runtime | Chompy bites; Two sessions | AH.11 (the roll's kind), AH.15 (unit), AH.30 |
+| script-runtime | Armour at its top; A critical chance of 100 | AH.11 (the original's), AH.15 (unit), AH.19 (unit) |
+| script-runtime | A fraction's top | AH.15 (unit) |
 | pad-input | Two 8BitDo variants; The second attack's position | AH.7 (the positions), AH.24 (unit), AH.31 (chotchki's hands) |
 | pad-input | The third attack's position; The top position | AH.7 and AH.41 (the original's, with no upgrades and with upgrade 4), AH.24 (unit) |
 | pad-input | A button held | AH.7, AH.9 and AH.41 (the original's), AH.24 (unit) |

@@ -2173,6 +2173,24 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             ["Battle".to_owned(), "default".to_owned()].into()
         );
+        // A behaviour cell freed since its record (AH.11: a hero beaten, its
+        // vtable cleared) is named by its address and the rest still resolve.
+        let freed = *resolved.behaviours.keys().next().unwrap();
+        let vtable_was = f.w.get32(freed);
+        f.w.put32(freed, 0);
+        let again = g.resolve_names(&mut f.w, &blocks).unwrap();
+        assert_eq!(
+            again.behaviours[&freed],
+            format!("freed behaviour {freed:#010x}")
+        );
+        assert_eq!(again.behaviours.len(), resolved.behaviours.len());
+        assert!(
+            again
+                .behaviours
+                .iter()
+                .all(|(c, n)| *c == freed || resolved.behaviours[c] == *n)
+        );
+        f.w.put32(freed, vtable_was);
         let (chain, _) = g.records(&watch, &records, &resolved).unwrap();
         assert_eq!(chain.len(), 3);
         let first = &chain[0];

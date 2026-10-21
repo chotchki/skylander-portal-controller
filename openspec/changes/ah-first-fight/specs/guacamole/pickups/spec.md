@@ -29,7 +29,7 @@ An orb come down within 20 ft (6.1 m) of a hero, measured across the ground (its
 - **THEN** its orbs stay where they came down, and fly to him once he walks within 20 ft of them
 
 ### Requirement: Levelling up
-When collected experience reaches the next level's threshold (level 2 at exactly 1,000) the hero SHALL level up that frame: a 2 s flourish, nothing hurting him for 142 frames (2.4 s), at whose end his health becomes the new level's full health, and 24 to 26 frames (0.4 s) in a shockwave doing 99 to each creature within 30 ft (9.1 m), which armour doesn't turn away. Past level 15's 96,500, experience SHALL change no level.
+When collected experience reaches the next level's threshold (level 2 at exactly 1,000) the hero SHALL level up that frame: a 2 s flourish, nothing hurting him for 142 frames (2.4 s), at whose end his health becomes the new level's full health, and 24 to 26 frames (0.42-0.47 s) in a shockwave doing 99 to each creature within 30 ft (9.1 m; hit at 28 ft, not at 34), which armour doesn't turn away. Past level 15's 96,500, experience SHALL change no level.
 
 #### Scenario: The thousandth point
 - **WHEN** Eruptor, bitten to 278 health and with 999 experience, collects a 1-point orb
@@ -55,8 +55,8 @@ A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.
 - **THEN** both reach him together, 0.48 s after the second was taken
 
 #### Scenario: Down the line into the pit
-- **WHEN** Eruptor goes down the five spinning coins' line above the pit
-- **THEN** each flies to him from under 12 ft, three of them reaching him together, and his gold rises by 5
+- **WHEN** Eruptor, past the first of the six spinning coins on the line above the pit, goes on down it
+- **THEN** each of the other five flies to him from under 12 ft, three of them reaching him together, and his gold rises by 5
 
 #### Scenario: Under him as it drops
 - **WHEN** a barrel breaks a metre from Eruptor and its coin starts within 12 ft of him

@@ -33,7 +33,7 @@ Experience and gold a hero collects SHALL be added to the figure of the profile 
 - **THEN** no profile's figure has gained that gold
 
 ### Requirement: Levels follow the original's experience table
-A figure's level SHALL be the original's for its total experience: level 2 from 1,000, then 2,200, 3,800, 6,000, 9,000, 13,000, 18,200, 24,800, 33,000, 42,700, 53,900, 66,600 and 80,800; level 15, the cap, from 96,500. Gold SHALL stop at 65,000, as the original stops it. Experience past 96,500 SHALL change nothing a kid sees: the original keeps counting it in the figure's data with the level held at 15, and guacamole keeps 96,500.
+A figure's level SHALL be the original's for its total experience: level 2 from 1,000, then 2,200, 3,800, 6,000, 9,000, 13,000, 18,200, 24,800, 33,000, 42,700, 53,900, 66,600 and 80,800; level 15, the cap, from 96,500. Gold SHALL stop at 65,000, as the original stops it. Experience past 96,500 SHALL change nothing a kid sees: the original keeps counting it in the figure's data (96,519 after 19 more 1-point orbs) with the level held at 15, and guacamole keeps 96,500.
 
 #### Scenario: One short of level 2
 - **WHEN** a figure with 999 experience collects a 1-point orb

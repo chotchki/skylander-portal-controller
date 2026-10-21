@@ -746,10 +746,14 @@ fn tree_of(
             (Some(Value::Reference { to: Some(to), .. }), _) => Some(*to),
             _ => None,
         };
+        // An object counts as met only once it's been read under: one first
+        // met where the depth runs out is read whole wherever it's met again
+        // higher up, not named as seen with nothing under it anywhere.
         if let Some(t) = target {
-            if !seen.insert(t) {
+            if seen.contains(&t) {
                 node.seen = true;
             } else if depth > 0 {
+                seen.insert(t);
                 let children: Result<Vec<Named>> = (|| {
                     let head = one(g, t, 4, &c.name)?;
                     Ok(match be32(&head, 0) {
@@ -1314,6 +1318,10 @@ mod tests {
         // A whole word.
         set_bit_field(&mut words, 5 * 32, 32, u32::MAX).unwrap();
         assert_eq!(words[5], u32::MAX);
+        // One bit over a word's end: word 6's top bit and word 7's bottom one.
+        set_bit_field(&mut words, 6 * 32 + 31, 2, 0b11).unwrap();
+        assert_eq!((words[6], words[7]), (0x8000_0000, 0x0000_0001));
+        assert_eq!(bit_field(&words, 6 * 32 + 31, 2, false).unwrap(), 0b11);
         // Refused: too wide a value, past the words, a width of 0 or over 32;
         // nothing written by a refusal.
         let before = words.clone();
@@ -1396,7 +1404,28 @@ mod tests {
         assert_eq!(one[0].under[0].name, "creature info");
         assert!(one[0].under.iter().all(|n| n.under.is_empty()));
         assert_eq!(one[1].under.len(), 2);
-        let _ = c.info;
+        // The creature info met first where depth 1 runs out (under the
+        // description), then again as a cell of its own: read whole there,
+        // not named as seen with nothing under it anywhere.
+        let info_again = fx::reference(&mut c.w, vtable::SCRIPT_REFERENCE, "info again", c.info);
+        let cells2 = [
+            cells[0].clone(),
+            Named {
+                at: info_again,
+                vtable: vtable::SCRIPT_REFERENCE,
+                name: "info again".into(),
+            },
+        ];
+        let two = tree(&mut c.w, &mut types, &cells2, 1);
+        let under_description = &two[0].under[0];
+        assert_eq!(under_description.name, "creature info");
+        assert!(under_description.under.is_empty() && !under_description.seen);
+        assert!(!two[1].seen, "{:?}", two[1]);
+        assert!(two[1].under.iter().any(|n| n.name == "hp"), "{:?}", two[1]);
+        // Met a third time, after it's been read: named as seen.
+        let cells3 = [cells2[0].clone(), cells2[1].clone(), cells2[1].clone()];
+        let three = tree(&mut c.w, &mut types, &cells3, 1);
+        assert!(!three[1].under.is_empty() && three[2].seen && three[2].under.is_empty());
     }
 
     #[test]

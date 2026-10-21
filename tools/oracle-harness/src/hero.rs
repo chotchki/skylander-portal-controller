@@ -75,7 +75,9 @@ impl Collision {
     /// its segment's half length (h - w) / 2, w and h in metres times the
     /// scale, so it spans h - 0.1 end to end (all 38 of AE.22's capsule
     /// heroes' phantoms); and, set upright (no angles), its centre h / 2 plus
-    /// the offset's y over the pivot (Tree Rex's, AG.12). A capsule laid down
+    /// the offset's y over the pivot (h / 2 checked on all 31 upright ones,
+    /// Tree Rex's among them, AG.12; none has an offset, so the offset's
+    /// part follows the sphere's rule unchecked). A capsule laid down
     /// (Bash's, Warnado's) sits otherwise, so it gets no centre.
     pub fn capsule(&self, scale: f32) -> Option<CapsuleSize> {
         if self.shape() != 2 {
