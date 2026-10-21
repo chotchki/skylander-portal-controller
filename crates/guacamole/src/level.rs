@@ -45,7 +45,7 @@
 //! remaster's camera into the TV's own target (the window, or the shots'
 //! image).
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -169,6 +169,9 @@ struct Built {
     /// The props (AG.25): each model's segments as (an index into `meshes`,
     /// past the level's own, and its material in `drawn.materials`).
     prop_models: Vec<Vec<(usize, u16)>>,
+    /// The spawn part's models (AH.24), by path: each one's segments as the
+    /// props' are, past theirs.
+    spawn_models: Vec<(String, Vec<(usize, u16)>)>,
     read: Duration,
     took: Duration,
 }
@@ -283,6 +286,47 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     drawn.materials.extend(props.materials.iter().cloned());
     // The meshes hold the props' vertices once built.
     walk.props.models.clear();
+    // What the scripts' clones draw (AH.24): the spawn part's models after
+    // the props', keyed in the same scene (the census's spawn table holds
+    // them). A part that doesn't read draws no clone; the level goes on.
+    let spawns = match read_spawns(source) {
+        Ok(m) => m,
+        Err(why) => {
+            warn!(reason = %why, "the spawn models didn't read: the scripts' clones draw nothing");
+            Vec::new()
+        }
+    };
+    let (spawned, spawn_ranges) = guacamole::props::models_drawn(&spawns);
+    let spawn_materials = drawn.materials.len();
+    for (k, m) in
+        arithmetic::keys(&spawned, &scene).map_err(|e| format!("the spawn models: {e}"))?
+    {
+        if !keys.iter().any(|(kept, _)| *kept == k) {
+            keys.push((k, spawn_materials + m));
+        }
+    }
+    let spawn_segments = level_segments + props.segments.len();
+    let spawn_offset = |m: u16| {
+        u16::try_from(spawn_materials + usize::from(m))
+            .map_err(|_| "past 65,536 materials with the spawn models'".to_owned())
+    };
+    let spawn_models = spawns
+        .iter()
+        .zip(&spawn_ranges)
+        .map(|(model, r)| {
+            let parts = r
+                .clone()
+                .map(|i| {
+                    Ok((
+                        spawn_segments + i,
+                        spawn_offset(spawned.segments[i].material)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok((model.path.clone(), parts))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    drawn.materials.extend(spawned.materials.iter().cloned());
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
         .materials
@@ -315,6 +359,11 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     for s in &props.segments {
         meshes.push(static_mesh(s).map_err(|e| format!("a prop's segment {}: {e}", s.source))?);
     }
+    for s in &spawned.segments {
+        meshes.push(
+            static_mesh(s).map_err(|e| format!("a spawn model's segment {}: {e}", s.source))?,
+        );
+    }
     let sky = drawn
         .sky
         .iter()
@@ -343,9 +392,25 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         sky,
         walk,
         prop_models,
+        spawn_models,
         read,
         took: started.elapsed(),
     })
+}
+
+/// The extract's spawn part (AH.22): every model each spawn archive's
+/// placements name, as props draw them.
+fn read_spawns(source: &LevelSource) -> Result<Vec<guacamole::props::PropModel>, String> {
+    let mut out = Vec::new();
+    for archive in guac_extract::scripts::spawn_archives() {
+        let rel = source.ir.spawn_path(&archive);
+        let spawns: guac_ir::spawn::SpawnModels = read_ir(source.ir, &source.dir.join(&rel))?;
+        if spawns.identity != source.identity {
+            return Err(format!("{rel} is another dump's"));
+        }
+        out.extend(guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))?);
+    }
+    Ok(out)
 }
 
 /// A segment with nothing in it but its material.
@@ -684,6 +749,9 @@ pub(crate) struct Loaded {
     bodies: Vec<Entity>,
     /// Its props, standing by where the hero is (AG.25).
     pub(crate) props: StandingProps,
+    /// The spawn part's models by path, each segment's mesh and material:
+    /// what the scripts' clones draw (AH.24).
+    spawns: HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>,
     /// Where the hero starts, before he's settled.
     pub(crate) start: Vec3,
     /// Materials lit with the level's but in the hero's scene
@@ -842,6 +910,14 @@ impl Level {
             Stage::Shown(l) => l.camera,
             _ => None,
         }
+    }
+
+    /// The spawn part's models by path, once the level's loaded: what the
+    /// scripts' clones draw (AH.24).
+    pub(crate) fn spawn_models(
+        &self,
+    ) -> Option<&HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>> {
+        self.stage.loaded().map(|l| &l.spawns)
     }
 
     /// The level's lights and fog, once loaded.
@@ -1120,14 +1196,16 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 program,
                 placements,
                 order,
+                fighters,
                 ..
             } = linked;
             commands.queue(move |world: &mut World| {
-                guacamole::scripts::install(
+                crate::hero_scripts::install(
                     world,
                     std::sync::Arc::new(program),
-                    &placements,
-                    &order,
+                    placements,
+                    order,
+                    fighters,
                 );
             });
         }
@@ -1311,6 +1389,22 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
     );
     // Standing by the start until a hero's step says where he is.
     props.stand(built.walk.start, &mut s.commands);
+    let spawns = built
+        .spawn_models
+        .iter()
+        .map(|(path, parts)| {
+            let parts = parts
+                .iter()
+                .map(|&(mesh, material)| {
+                    (
+                        mesh_handles[mesh].clone(),
+                        materials[usize::from(material)].clone(),
+                    )
+                })
+                .collect();
+            (path.clone(), parts)
+        })
+        .collect();
     Loaded {
         root,
         materials,
@@ -1323,6 +1417,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         shown_at: None,
         bodies,
         props,
+        spawns,
         start: built.walk.start,
         also: Vec::new(),
     }

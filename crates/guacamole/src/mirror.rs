@@ -10,7 +10,8 @@
 //! hero (AG.21) and his locomotion (AG.30) ride along,
 //! `/api/_test/tv/frames` hands out the TV's frame times for the stall check,
 //! `/api/_test/tv/gaits` his locomotion step by step (AG.30),
-//! `/api/_test/tv/drawn` the walk frame by frame as drawn (AG.55) and
+//! `/api/_test/tv/drawn` the walk frame by frame as drawn (AG.55),
+//! `/api/_test/tv/scripts` the scripts' run step by step (AH.24) and
 //! `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
 
 use std::collections::VecDeque;
@@ -31,7 +32,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
-use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroInput, HeroSystems};
+use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, HeroSystems};
+use crate::hero_scripts::{HeroRun, ScriptLog, ScriptStep};
 use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
@@ -116,6 +118,10 @@ pub struct InputShot {
     /// The walking pad's stick as the hero read it this frame, raw; none
     /// while no level shows.
     pub hero_stick: Option<[f32; 2]>,
+    /// The attacks the walking pad holds this frame (AH.24, pad-input's The
+    /// face buttons attack: the first, second, third and a fourth no
+    /// position raises yet); none while no level shows.
+    pub hero_actions: Option<[bool; 4]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -241,6 +247,7 @@ pub struct TvMirror(
     pub(crate) PostedPads,
     pub(crate) Arc<Mutex<GaitLog>>,
     pub(crate) Arc<Mutex<DrawnLog>>,
+    pub(crate) ScriptLog,
 );
 
 /// Pads `/api/_test/tv/pad` drives, 0 to 3.
@@ -259,6 +266,12 @@ pub(crate) enum PadAct {
     Stick(Vec2),
     /// Down for a frame, then up.
     Press(GamepadButton),
+    /// Down until released (AH.24: a held attack).
+    Hold(GamepadButton),
+    Release(GamepadButton),
+    /// Down a game step, then up a game step, this many times: a press
+    /// every other frame as the oracle's O4 schedules it (AH.9's `lobs`).
+    Pulse(GamepadButton, u32),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,8 +315,20 @@ fn pad_button(name: &str) -> Option<GamepadButton> {
         "down" => GamepadButton::DPadDown,
         "left" => GamepadButton::DPadLeft,
         "right" => GamepadButton::DPadRight,
+        "l1" => GamepadButton::LeftTrigger,
+        "r1" => GamepadButton::RightTrigger,
+        "l2" => GamepadButton::LeftTrigger2,
+        "r2" => GamepadButton::RightTrigger2,
         _ => return None,
     })
+}
+
+/// `{"button": .., "presses": ..}`: a pulse's button and how many presses.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PulseBody {
+    button: String,
+    presses: u32,
 }
 
 /// `POST /api/_test/tv/pad`'s body: a pad and one act.
@@ -316,6 +341,9 @@ struct PadBody {
     disconnect: bool,
     stick: Option<[f32; 2]>,
     press: Option<String>,
+    hold: Option<String>,
+    release: Option<String>,
+    pulse: Option<PulseBody>,
 }
 
 #[derive(Deserialize)]
@@ -337,6 +365,9 @@ impl PadBody {
             self.disconnect,
             self.stick.is_some(),
             self.press.is_some(),
+            self.hold.is_some(),
+            self.release.is_some(),
+            self.pulse.is_some(),
         ];
         if acts.iter().filter(|a| **a).count() != 1 {
             return None;
@@ -355,10 +386,67 @@ impl PadBody {
                 return None;
             }
             PadAct::Stick(Vec2::new(x, y))
+        } else if let Some(b) = self.hold {
+            PadAct::Hold(pad_button(&b)?)
+        } else if let Some(b) = self.release {
+            PadAct::Release(pad_button(&b)?)
+        } else if let Some(p) = self.pulse {
+            if p.presses == 0 || p.presses > MAX_PULSES {
+                return None;
+            }
+            PadAct::Pulse(pad_button(&p.button)?, p.presses)
         } else {
             PadAct::Press(pad_button(self.press.as_deref()?)?)
         };
         Some(PadPost { pad: self.pad, act })
+    }
+}
+
+/// The most presses one pulse takes: a minute of them.
+const MAX_PULSES: u32 = 1_800;
+
+/// Game steps run, counted for the pads' pulses.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct PadSteps(u64);
+
+fn count_pad_steps(mut steps: ResMut<PadSteps>) {
+    steps.0 += 1;
+}
+
+/// A pulse under way: its pad and button, the presses left, whether the
+/// button's down and the game step it last changed at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Pulse {
+    pad: Entity,
+    button: GamepadButton,
+    left: u32,
+    down: bool,
+    at: u64,
+}
+
+impl Pulse {
+    /// This frame's change, if any: a game step has read the last one, so
+    /// the button goes the other way; `None` once done and up.
+    fn turn(&mut self, steps: u64) -> Option<f32> {
+        if steps <= self.at {
+            return None;
+        }
+        if self.down {
+            self.down = false;
+            self.at = steps;
+            return Some(0.0);
+        }
+        if self.left == 0 {
+            return None;
+        }
+        self.left -= 1;
+        self.down = true;
+        self.at = steps;
+        Some(1.0)
+    }
+
+    fn done(&self) -> bool {
+        self.left == 0 && !self.down
     }
 }
 
@@ -370,11 +458,19 @@ impl PadBody {
 fn drive_posted_pads(
     mut commands: Commands,
     mirror: Res<TvMirror>,
+    steps: Res<PadSteps>,
     mut pads: Local<[Option<Entity>; TEST_PADS]>,
     mut up: Local<Vec<(Entity, GamepadButton)>>,
+    mut pulses: Local<Vec<Pulse>>,
     mut connections: MessageWriter<GamepadConnectionEvent>,
     mut raw: MessageWriter<RawGamepadEvent>,
 ) {
+    for pulse in pulses.iter_mut() {
+        if let Some(value) = pulse.turn(steps.0) {
+            raw.write(RawGamepadButtonChangedEvent::new(pulse.pad, pulse.button, value).into());
+        }
+    }
+    pulses.retain(|p| !p.done());
     if !up.is_empty() {
         for (pad, button) in up.drain(..) {
             raw.write(RawGamepadButtonChangedEvent::new(pad, button, 0.0).into());
@@ -427,6 +523,30 @@ fn drive_posted_pads(
                 raw.write(RawGamepadButtonChangedEvent::new(pad, button, 1.0).into());
                 up.push((pad, button));
                 return;
+            }
+            PadAct::Hold(button) => {
+                debug!(slot, ?button, "test pad holds");
+                raw.write(RawGamepadButtonChangedEvent::new(pad, button, 1.0).into());
+            }
+            PadAct::Release(button) => {
+                debug!(slot, ?button, "test pad lets go");
+                raw.write(RawGamepadButtonChangedEvent::new(pad, button, 0.0).into());
+            }
+            PadAct::Pulse(button, presses) => {
+                info!(
+                    slot,
+                    ?button,
+                    presses,
+                    "test pad pulses a press every other game step"
+                );
+                pulses.push(Pulse {
+                    pad,
+                    button,
+                    left: presses,
+                    down: false,
+                    // Its first press waits for the next step.
+                    at: steps.0,
+                });
             }
         }
     }
@@ -803,9 +923,15 @@ impl Plugin for Mirror {
     fn build(&self, app: &mut App) {
         app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout))
             .add_systems(Update, skip_asked.before(intro_player::play_intros))
+            .init_resource::<PadSteps>()
             .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
             .add_systems(FixedUpdate, log_gaits.after(HeroSystems::Gait))
+            .add_systems(FixedUpdate, count_pad_steps)
             .add_systems(Last, (log_frame, log_drawn));
+        // The scripts' run logs where the routes read.
+        if let Some(scripts) = app.world().get_resource::<TvMirror>().map(|m| m.7.clone()) {
+            app.insert_resource(scripts);
+        }
         let log = app.world().get_resource::<TvMirror>().map(|m| m.6.clone());
         if let (Some(log), Some(render)) = (log, app.get_sub_app_mut(bevy::render::RenderApp)) {
             render
@@ -843,6 +969,16 @@ fn log_frame(
     ]);
 }
 
+#[derive(Deserialize)]
+struct ScriptsQuery {
+    since: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct ScriptsBody {
+    steps: Vec<ScriptStep>,
+}
+
 /// `POST /api/_test/tv/press`'s body.
 #[derive(Deserialize)]
 struct PressBody {
@@ -866,8 +1002,14 @@ struct PressBody {
 /// the hero's locomotion step by step after step `since` (all of the
 /// current hero's without one) and the last step's number (AG.30). `GET
 /// /api/_test/tv/drawn?since=<frame>` hands out the walk's drawn frames
-/// after Bevy's frame `since` (AG.55). Generic so a test needs no
-/// `AppState`.
+/// after Bevy's frame `since` (AG.55). AH.24: the pad also takes `{"pad":
+/// 0, "hold": "west"}` (down until released), `{"pad": 0, "release":
+/// "west"}` and `{"pad": 0, "pulse": {"button": "south", "presses": 60}}`
+/// (down a game step, up a game step, that many times, 1 to 1,800), and the
+/// buttons l1, r1, l2 and r2 besides; `GET /api/_test/tv/scripts?since=<step>`
+/// hands out the scripts' run step by step after step `since`: the attacks
+/// read, the hero's join, the clips started on him, the clones made and
+/// taken off. Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
@@ -876,7 +1018,15 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
     let pads = mirror.4.clone();
     let gaits = mirror.5.clone();
     let drawn = mirror.6.clone();
+    let scripts = mirror.7.clone();
     axum::Router::new()
+        .route(
+            "/api/_test/tv/scripts",
+            axum::routing::get(move |q: axum::extract::Query<ScriptsQuery>| {
+                let steps = scripts.since(q.since.unwrap_or(0));
+                async move { axum::Json(ScriptsBody { steps }) }
+            }),
+        )
         .route(
             "/api/_test/tv/drawn",
             axum::routing::get(move |q: axum::extract::Query<DrawnQuery>| {
@@ -996,11 +1146,12 @@ fn walk(
 /// while the level shows, who walks, why it waits and its overlay as drawn.
 fn input_shot(
     intro_playing: bool,
-    (level, gamepads, overlays, glyphs): (
+    (level, gamepads, overlays, glyphs, actions): (
         Option<Res<LevelPads>>,
         Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
         Query<(Entity, &LevelOverlay)>,
         Query<&PromptGlyph>,
+        Option<Res<HeroActions>>,
     ),
     (children, texts, images, pips): (
         &Query<&Children>,
@@ -1050,6 +1201,7 @@ fn input_shot(
         }),
         overlay,
         hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
+        hero_actions: seat.and(actions.map(|a| a.held)),
     }
 }
 
@@ -1078,6 +1230,7 @@ fn mirror_tv(
             Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
             Query<(Entity, &LevelOverlay)>,
             Query<&PromptGlyph>,
+            Option<Res<HeroActions>>,
         ),
     ),
     (extraction, band_title, band_detail, bar): (
@@ -1099,6 +1252,7 @@ fn mirror_tv(
         play,
         heroes,
         cameras,
+        runtime,
     ): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
@@ -1110,8 +1264,9 @@ fn mirror_tv(
         Option<Res<Level>>,
         Option<Res<Prepare>>,
         Option<Res<Play>>,
-        Query<(&HeroBody, Option<&HeroGaits>)>,
+        Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         Query<(&Transform, &Projection), With<FollowCamera>>,
+        Option<Res<guacamole::scripts::ScriptRuntime>>,
     ),
 ) {
     let Some(current) = current else {
@@ -1244,7 +1399,9 @@ fn mirror_tv(
         (Some(play), Some(level_pads)) => play.mode(level_pads),
         _ => Mode::Portal,
     };
-    let hero = play.as_deref().and_then(|p| p.report(&heroes, &cameras));
+    let hero = play
+        .as_deref()
+        .and_then(|p| p.report(&heroes, &cameras, runtime.as_deref()));
     let input = input_shot(intro.is_some(), pads, (&children, &texts, &images, &pips));
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
@@ -1653,7 +1810,16 @@ mod tests {
             (r#"{"pad":0,"press":"jump"}"#, 400),
             (r#"{"pad":0,"press":"start","stick":[0,0]}"#, 400),
             (r#"{"pad":0}"#, 400),
-            (r#"{"pad":0,"hold":"south"}"#, 400),
+            (r#"{"pad":0,"jump":"south"}"#, 400),
+            // AH.24's: a held button, its release and a pulse.
+            (r#"{"pad":0,"hold":"south"}"#, 202),
+            (r#"{"pad":0,"release":"r2"}"#, 202),
+            (r#"{"pad":0,"hold":"jump"}"#, 400),
+            (r#"{"pad":0,"hold":"west","release":"west"}"#, 400),
+            (r#"{"pad":0,"pulse":{"button":"south","presses":60}}"#, 202),
+            (r#"{"pad":0,"pulse":{"button":"south","presses":0}}"#, 400),
+            (r#"{"pad":0,"pulse":{"button":"south","presses":1801}}"#, 400),
+            (r#"{"pad":0,"pulse":{"button":"jump","presses":2}}"#, 400),
             ("pad", 400),
         ] {
             assert_eq!(post(body).await, status, "{body}");

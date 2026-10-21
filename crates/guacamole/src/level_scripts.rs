@@ -23,10 +23,14 @@ use crate::scripts::Files;
 #[derive(Debug)]
 pub struct Linked {
     pub program: Program,
-    /// What the host reads off `global.bld`'s, `init_setup.bld`'s and the
-    /// level's files, and those units in the order their placements run.
+    /// What the host reads off `global.bld`'s, `init_setup.bld`'s, each
+    /// fighter's and the level's files, and the units whose placements run
+    /// from the level's start, in the order they run.
     pub placements: Files,
     pub order: Vec<u16>,
+    /// Each fighter's load file and its unit: his file's placements join the
+    /// run when he's the hero (openspec AH.24).
+    pub fighters: Vec<(String, u16)>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -106,12 +110,27 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         unit(&scripts::script_path(roster::INIT_SETUP))?,
         (files.len() - 1) as u16,
     ];
-    let units: Vec<(u16, &Igz<'_>)> = order.iter().map(|&u| (u, &parsed[u as usize])).collect();
+    let fighters: Vec<(String, u16)> = scripts::FIGHTERS
+        .iter()
+        .map(|f| {
+            Ok((
+                (*f).to_owned(),
+                unit(&scripts::script_path(&scripts::character_archive(f)))?,
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    let units: Vec<(u16, &Igz<'_>)> = order
+        .iter()
+        .copied()
+        .chain(fighters.iter().map(|(_, u)| *u))
+        .map(|u| (u, &parsed[u as usize]))
+        .collect();
     let placements = Files::read(&units).map_err(|e| format!("placements: {e}"))?;
     Ok(Linked {
         program,
         placements,
         order,
+        fighters,
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,

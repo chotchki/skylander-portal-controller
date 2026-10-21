@@ -391,41 +391,79 @@ impl Skeleton {
         match live.as_slice() {
             [] => self.reference_pose(),
             [(clip, t, _)] => clip.model_pose(self, *t),
-            _ => {
-                let total: f64 = live.iter().map(|(_, _, w)| w).sum();
-                let poses: Vec<(Vec<Qs>, f64)> = live
-                    .iter()
-                    .map(|(clip, t, w)| (clip.local_qs(self, *t), w / total))
-                    .collect();
-                let first = &poses[0].0;
-                let local: Vec<Qs> = (0..first.len())
-                    .map(|j| {
-                        let lead = first[j].r;
-                        let (mut t, mut r, mut s) = ([0.0; 3], [0.0; 4], [0.0; 3]);
-                        for (pose, w) in &poses {
-                            let q = &pose[j];
-                            let dot: f64 = (0..4).map(|i| lead[i] * q.r[i]).sum();
-                            let sign = if dot < 0.0 { -w } else { *w };
-                            for (acc, v) in t.iter_mut().zip(q.t) {
-                                *acc += w * v;
-                            }
-                            for (acc, v) in s.iter_mut().zip(q.s) {
-                                *acc += w * v;
-                            }
-                            for (acc, v) in r.iter_mut().zip(q.r) {
-                                *acc += sign * v;
-                            }
-                        }
-                        Qs {
-                            t,
-                            r: normalize(r),
-                            s,
-                        }
-                    })
-                    .collect();
-                self.compose(&local).iter().map(Qs::transform).collect()
+            _ => self
+                .compose(&self.blend_local(&live))
+                .iter()
+                .map(Qs::transform)
+                .collect(),
+        }
+    }
+
+    /// [`Skeleton::blend`] with `over` laid on top (openspec AH.24: a clip a
+    /// script plays over the hero's locomotion): each `(clip, seconds)` in
+    /// turn sets every joint it tracks to its own local transform at its
+    /// time, the joints it doesn't track left to what's under it, as the
+    /// palette says a partial clip plays; a clip tracking every joint is its
+    /// own pose there. A stand-in for the original's layer blend, whose
+    /// percent and type AH.49 reads off the palette.
+    pub fn blend_over(&self, clips: &[(&Clip, f64, f64)], over: &[(&Clip, f64)]) -> Vec<Transform> {
+        if over.is_empty() {
+            return self.blend(clips);
+        }
+        let live: Vec<&(&Clip, f64, f64)> = clips
+            .iter()
+            .filter(|(_, _, w)| *w > 0.0 && w.is_finite())
+            .collect();
+        let mut local = match live.as_slice() {
+            [] => self.joints.iter().map(|j| Qs::of(&j.reference)).collect(),
+            [(clip, t, _)] => clip.local_qs(self, *t),
+            _ => self.blend_local(&live),
+        };
+        for (clip, t) in over {
+            let frame = clip.frame_at(*t);
+            for tr in &clip.tracks {
+                if let Some(slot) = local.get_mut(usize::from(tr.joint)) {
+                    *slot = Clip::track_qs(tr, frame);
+                }
             }
         }
+        self.compose(&local).iter().map(Qs::transform).collect()
+    }
+
+    /// The local pose of two or more clips by weight ([`Skeleton::blend`]'s
+    /// rule).
+    fn blend_local(&self, live: &[&(&Clip, f64, f64)]) -> Vec<Qs> {
+        let total: f64 = live.iter().map(|(_, _, w)| w).sum();
+        let poses: Vec<(Vec<Qs>, f64)> = live
+            .iter()
+            .map(|(clip, t, w)| (clip.local_qs(self, *t), w / total))
+            .collect();
+        let first = &poses[0].0;
+        (0..first.len())
+            .map(|j| {
+                let lead = first[j].r;
+                let (mut t, mut r, mut s) = ([0.0; 3], [0.0; 4], [0.0; 3]);
+                for (pose, w) in &poses {
+                    let q = &pose[j];
+                    let dot: f64 = (0..4).map(|i| lead[i] * q.r[i]).sum();
+                    let sign = if dot < 0.0 { -w } else { *w };
+                    for (acc, v) in t.iter_mut().zip(q.t) {
+                        *acc += w * v;
+                    }
+                    for (acc, v) in s.iter_mut().zip(q.s) {
+                        *acc += w * v;
+                    }
+                    for (acc, v) in r.iter_mut().zip(q.r) {
+                        *acc += sign * v;
+                    }
+                }
+                Qs {
+                    t,
+                    r: normalize(r),
+                    s,
+                }
+            })
+            .collect()
     }
 }
 
@@ -747,6 +785,49 @@ mod tests {
             (p[0].rotation[1] - want).abs() < 1e-6,
             "{:?}",
             p[0].rotation
+        );
+    }
+
+    /// AH.24's layer: a clip laid over a blend sets the joints it tracks
+    /// and leaves the rest to the blend; one tracking every joint is its own
+    /// pose; none laid over is the blend itself.
+    #[test]
+    fn a_clip_laid_over_a_blend_sets_its_own_joints() {
+        let sk = skeleton();
+        let (walk, run) = (clip(), held());
+        let under = [(&walk, 0.05, 0.5), (&run, 0.0, 0.5)];
+        assert_eq!(sk.blend_over(&under, &[]), sk.blend(&under));
+        // An arm-only clip: the arm turns, the root stays the blend's.
+        let mut arm = held();
+        arm.tracks[0].joint = 1;
+        arm.tracks[0].translation.constant = [2.0, 0.0, 0.0];
+        let blend = sk.blend(&under);
+        let laid = sk.blend_over(&under, &[(&arm, 0.0)]);
+        assert_eq!(laid[0], blend[0], "the root is the blend's");
+        let arm_alone = sk.blend_over(&[], &[(&arm, 0.0)]);
+        assert_ne!(laid[1], blend[1], "the arm is the clip's");
+        // The arm's local transform is the clip's, composed onto the
+        // blend's root.
+        let local = arm.local_pose(&sk, 0.0);
+        let root = blend[0];
+        assert!(near(&[root.then(&local[1])], &[laid[1]], 1e-6));
+        // With nothing under it, the untracked root is at its reference.
+        assert_eq!(arm_alone[0], sk.reference_pose()[0]);
+        // A clip tracking every joint is its own pose over anything.
+        let mut whole = clip();
+        let mut arm_track = arm.tracks[0].clone();
+        arm_track.joint = 1;
+        whole.tracks.push(arm_track);
+        assert!(near(
+            &sk.blend_over(&under, &[(&whole, 0.05)]),
+            &whole.model_pose(&sk, 0.05),
+            1e-6
+        ));
+        // In turn: a later clip over an earlier one.
+        let again = sk.blend_over(&under, &[(&whole, 0.05), (&arm, 0.0)]);
+        assert_eq!(
+            again[1],
+            sk.blend_over(&[(&whole, 0.05, 1.0)], &[(&arm, 0.0)])[1]
         );
     }
 

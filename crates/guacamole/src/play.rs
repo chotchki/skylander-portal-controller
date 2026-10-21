@@ -46,6 +46,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::Model;
 use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
+use guac_ir::palette::Palette;
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_motion::camera::{CameraDef, GameCamera};
@@ -58,6 +59,7 @@ use guacamole::character::{
     spawn_character,
 };
 use guacamole::level_scene::{START_FACING, hero_scene};
+use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use guacamole::walkers::{self, Walker};
 use serde::Serialize;
 use skylander_core::SlotIndex;
@@ -67,6 +69,7 @@ use tracing::{info, warn};
 use crate::cards::{PortalCards, PortalChanged};
 use crate::driver::PortalChange;
 use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroPlugin, following, spawn_hero};
+use crate::hero_scripts::{self, HeroRun, Join, ScriptSource};
 use crate::intro::IntroQueue;
 use crate::level::{
     LEVEL_LAYER, Level, LevelCamera, LevelSystems, LitAlso, VIEW_ORDER, view_camera,
@@ -76,7 +79,7 @@ use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
 use crate::screen::TvScreen;
-use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero};
+use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero, read_ir};
 use crate::tv::{Current, Redrawn, TvCamera};
 use crate::warm::Warm;
 
@@ -140,13 +143,17 @@ impl HeroClips {
     }
 }
 
-/// His model and his locomotion's clips, read together off the shelf.
+/// His model, his locomotion's clips and his palette (every slot's clip,
+/// which his scripts play: AH.24), read together off the shelf.
 pub(crate) struct HeroModel {
     loaded: Loaded,
     clips: Arc<HeroClips>,
+    palette: Option<Arc<Palette>>,
 }
 
-/// `load`'s model and its hero side, on a task.
+/// `load`'s model, its hero side and its palette, on a task. A palette that
+/// doesn't read leaves his scripts' clips unplayed, logged; he walks all
+/// the same.
 fn read_hero_model(
     shelf: &Shelf,
     load: &str,
@@ -154,10 +161,31 @@ fn read_hero_model(
 ) -> Result<HeroModel, String> {
     let loaded = load_model(shelf, load, formats)?;
     let hero = read_hero(shelf, load).map_err(|e| format!("his hero side: {e}"))?;
+    let palette = match read_palette(shelf, load) {
+        Ok(p) => Some(Arc::new(p)),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his palette didn't read: the clips his scripts start play nothing");
+            None
+        }
+    };
     Ok(HeroModel {
         loaded,
         clips: Arc::new(HeroClips::of(hero)),
+        palette,
     })
+}
+
+/// `load`'s animation palette off the extract (AH.22's part).
+fn read_palette(shelf: &Shelf, load: &str) -> Result<Palette, String> {
+    let rel = shelf.ir.palette_path(load);
+    let palette: Palette = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if palette.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if palette.owner != load {
+        return Err(format!("{rel} holds {}'s palette", palette.owner));
+    }
+    Ok(palette)
 }
 
 /// The hero's model on its way to the level.
@@ -208,6 +236,8 @@ struct Inside {
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
     /// The TV's virtual clock when he came in, for his idle and scrolls.
     since: Duration,
+    /// His palette: the clips his scripts start play from it (AH.24).
+    palette: Option<Arc<Palette>>,
 }
 
 /// The walk: who's placed in what order, who walks and the level shown.
@@ -238,6 +268,21 @@ pub(crate) struct HeroReport {
     pub camera: Option<CameraReport>,
     /// In the level: his locomotion as its last step left it (AG.30).
     pub gait: Option<GaitReport>,
+    /// In the level (AH.24): his scripts' join (`asked`, `requested`,
+    /// `joined`, or `off` with why), none for a character whose scripts the
+    /// level's part doesn't hold, who walks on the stand-in.
+    pub scripts: Option<String>,
+    pub scripts_reason: Option<String>,
+    /// His health and full health as his scripts hold them, once they run,
+    /// and the behaviour his minion is in.
+    pub health: Option<i32>,
+    pub health_max: Option<i32>,
+    pub behaviour: Option<String>,
+    /// His figure's experience and gold as the TV holds them: the placing
+    /// profile's row as the placement read it (AH.1), 0 for a figure no
+    /// profile placed, until AH.23 hands the figure to his scripts.
+    pub experience: Option<u32>,
+    pub gold: Option<u32>,
 }
 
 /// His locomotion as `/api/_test/tv` reports it (AG.30): no clip is
@@ -347,15 +392,23 @@ impl Play {
     /// camera following him.
     pub(crate) fn report(
         &self,
-        bodies: &Query<(&HeroBody, Option<&HeroGaits>)>,
+        bodies: &Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
+        runtime: Option<&ScriptRuntime>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
         let body = self.inside.as_ref().and_then(|i| bodies.get(i.hero).ok());
-        let hero = body.map(|(b, _)| &b.hero);
+        let hero = body.map(|(b, ..)| &b.hero);
         let gait = body
-            .and_then(|(_, g)| g)
+            .and_then(|(_, g, _)| g)
             .map(|g| GaitReport::of(&g.locomotion));
+        let run = body.and_then(|(_, _, r)| r);
+        let numbers = match (run.map(|r| &r.join), runtime) {
+            (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(rt, *minion),
+            _ => hero_scripts::HeroNumbers::default(),
+        };
+        let progress = c.placement.owner.as_ref().map(|o| o.progress);
+        let inside = self.inside.is_some();
         let camera = self
             .inside
             .as_ref()
@@ -374,6 +427,16 @@ impl Play {
             heading: hero.map(|h| h.facing.rem_euclid(360.0)),
             camera,
             gait,
+            scripts: run.map(|r| r.join.name().to_owned()),
+            scripts_reason: run.and_then(|r| match &r.join {
+                Join::Off(why) => Some(why.clone()),
+                _ => None,
+            }),
+            health: numbers.health,
+            health_max: numbers.health_max,
+            behaviour: numbers.behaviour,
+            experience: inside.then(|| progress.map_or(0, |p| p.xp)),
+            gold: inside.then(|| progress.map_or(0, |p| p.gold)),
         })
     }
 }
@@ -567,6 +630,8 @@ fn leave(
     commands.entity(inside.camera).despawn();
     pads.hide();
     play.candidate = None;
+    // The scripts start over with the level's next entry (AH.24).
+    commands.queue(hero_scripts::reinstall);
 }
 
 /// What [`enter`] spawns with.
@@ -579,6 +644,8 @@ pub(crate) struct EnterSpawner<'w, 's> {
     materials: ResMut<'w, Assets<CharacterMaterial>>,
     time: Res<'w, Time>,
     redrawn: MessageWriter<'w, Redrawn>,
+    /// The level's script part, once linked: whether his scripts join.
+    source: Option<Res<'w, ScriptSource>>,
 }
 
 /// The TV into the level, once every condition holds: the hero settled at
@@ -651,10 +718,19 @@ fn enter(
         }
     };
     let clips = read.clips.clone();
+    let palette = read.palette.clone();
     let loops = clips.loops(&read.loaded.model);
     s.commands
         .entity(hero_entity)
         .insert(HeroGaits::new(Locomotion::new(walker.gaits, loops)));
+    // His own scripts, where the level's part holds them (AH.24).
+    hero_scripts::ask_join(
+        &mut s.commands,
+        hero_entity,
+        walker.load_file,
+        palette.clone(),
+        s.source.as_deref(),
+    );
     c.model = Model3d::Ready(read);
     let target = target.cloned().unwrap_or_default();
     let camera = s
@@ -688,6 +764,7 @@ fn enter(
         attachments: drawn.attachments,
         scrolling: drawn.scrolling,
         since: now,
+        palette,
     });
 }
 
@@ -825,6 +902,7 @@ fn pose_hero(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     reduced: Option<Res<ReducedMotion>>,
+    scripts: Option<Res<ScriptWorld>>,
     gaits: Query<&HeroGaits>,
     mut transforms: Query<&mut Transform>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
@@ -838,14 +916,15 @@ fn pose_hero(
     } else {
         time.elapsed().saturating_sub(inside.since).as_secs_f64()
     };
+    let step = (fixed.overstep_fraction(), fixed.timestep().as_secs_f64());
+    // What his scripts play on him (AH.24), each eased back from its time
+    // this step by what's left of the step at its rate, as his locomotion's.
+    let over: Vec<(&Clip, f64)> = match (scripts.as_deref(), inside.palette.as_deref()) {
+        (Some(world), Some(palette)) => script_clips(world, inside.hero, palette, step),
+        _ => Vec::new(),
+    };
     let pose = match gaits.get(inside.hero).ok() {
-        Some(g) => gait_pose(
-            &inside.model,
-            &inside.clips,
-            g,
-            (fixed.overstep_fraction(), fixed.timestep().as_secs_f64()),
-            still,
-        ),
+        Some(g) => gait_pose(&inside.model, &inside.clips, g, step, still, &over),
         None => guacamole::character::mesh::pose(&inside.model, seconds),
     };
     let carried = inside
@@ -882,6 +961,7 @@ fn gait_pose(
     gaits: &HeroGaits,
     (alpha, step): (f32, f64),
     held: bool,
+    over: &[(&Clip, f64)],
 ) -> Vec<Transform> {
     let drawn = drawn_clips(gaits, (alpha, step), held);
     let playing: Vec<(&Clip, f64, f64)> = locomotion::Clip::ALL
@@ -895,7 +975,28 @@ fn gait_pose(
             Some((clip, at, f64::from(weight)))
         })
         .collect();
-    guacamole::character::mesh::blended(model, &playing)
+    guacamole::character::mesh::blended_over(model, &playing, over)
+}
+
+/// The clips his scripts play on `hero` (AH.24), out of `palette`, each at
+/// its time `alpha` of the way from its last step to its next, a step
+/// `step` seconds long: its time this step less what's left of the step at
+/// its rate, none before 0. Oldest first, so a later one lies over it.
+pub(crate) fn script_clips<'p>(
+    world: &ScriptWorld,
+    hero: Entity,
+    palette: &'p Palette,
+    (alpha, step): (f32, f64),
+) -> Vec<(&'p Clip, f64)> {
+    let back = f64::from(1.0 - alpha) * step;
+    hero_scripts::playing_on(world, hero.to_bits())
+        .into_iter()
+        .filter_map(|(slot, time, rate)| {
+            let clip = palette.clip(u16::try_from(slot).ok()?)?;
+            let at = (f64::from(time) - back * f64::from(rate) * 0.01).max(0.0);
+            Some((clip, at))
+        })
+        .collect()
 }
 
 /// Each clip of his locomotion as drawn `alpha` of the way from its last

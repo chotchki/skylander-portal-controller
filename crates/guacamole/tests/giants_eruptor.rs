@@ -1097,3 +1097,62 @@ fn probe_nodes() {
 fn bevy_quat(q: [f32; 4]) -> guac_motion::seam::Quat {
     guac_motion::seam::Quat::from_array(q)
 }
+
+/// A development probe (AH.24): what a South and a West press spawn, each
+/// clone's template with its script and model, and his health and his
+/// figure's data as his scripts hold them.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_spawns() {
+    let mut run = joined();
+    let minion = run.minion.unwrap();
+    let mut nodes = vec![Vec3::ZERO; 9];
+    nodes[7] = Vec3::new(0.6011, 0.7710, 1.4838);
+    nodes[8] = Vec3::new(-0.6011, 0.7710, 1.4838);
+    run.world.set_nodes(HERO, nodes);
+    for (name, v) in [
+        ("description", "creature info"),
+        ("my Minion Description", "player joined data"),
+    ] {
+        let d = run.vm.local(minion, name);
+        println!("local {name}: {d:?}");
+        if let Some(d) = d {
+            let f = run.vm.field(d, v);
+            println!("  .{v}: {f:?}");
+            if let Some(f) = f {
+                for (n, x) in run.vm.fields(f) {
+                    println!("    .{n} = {x:?} -> {:?}", run.vm.value(x));
+                }
+            }
+        }
+    }
+    let seen = press(&mut run, "a1@10,a2@100", 300);
+    for s in &seen {
+        let a = run.world.actor(s.handle).unwrap();
+        let t = a
+            .template
+            .and_then(|t| run.files.placed.iter().find(|p| p.obj == t));
+        println!(
+            "step {} {} script {:?} model {:?} flew {} gone {:?} scale {:?}",
+            s.step,
+            s.name,
+            t.and_then(|p| p.script.clone()),
+            t.and_then(|p| p.model.clone()),
+            s.flight.len(),
+            s.gone.map(|g| g.0),
+            a.scale
+        );
+    }
+    for p in run.files.placed.iter().filter(|p| p.obj.unit == ERUPTOR) {
+        println!(
+            "placement {} state {} script {:?} model {:?}",
+            p.name, p.activity_state, p.script, p.model
+        );
+    }
+    for (i, q) in run.world.sequences().iter().enumerate() {
+        println!(
+            "seq {i}: actor {:#x} len {} rate {} done {}",
+            q.actor, q.length, q.rate, q.done
+        );
+    }
+}

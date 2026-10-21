@@ -99,6 +99,9 @@ pub struct Placed {
     pub range: f32,
     pub physics: Option<Physics>,
     pub solid: Option<Solid>,
+    /// Its model's path as its file names it, if it has one: what a clone of
+    /// it draws (openspec AH.24).
+    pub model: Option<String>,
 }
 
 impl Placed {
@@ -120,6 +123,7 @@ impl Placed {
             range: 0.0,
             physics: None,
             solid: None,
+            model: None,
         }
     }
 }
@@ -219,6 +223,7 @@ impl Files {
                     range: p.activation_range,
                     physics,
                     solid,
+                    model: placements.model_path(actor).map(str::to_owned),
                 });
             }
         }
@@ -397,6 +402,31 @@ impl ScriptWorld {
     /// The actor under `h`, if the scripts reach one.
     pub fn actor(&self, h: Handle) -> Option<&Actor> {
         self.actors.get(&h)
+    }
+
+    /// Each file placement's handle, by its object.
+    pub fn handles(&self) -> &HashMap<Obj, Handle> {
+        &self.objects
+    }
+
+    /// A file placement as its file holds it: what a clone of it copies.
+    pub fn template(&self, obj: Obj) -> Option<&Placed> {
+        self.templates.get(&obj)
+    }
+
+    /// The palette slot a started sequence plays (its template's object and
+    /// the slot), if it's a clip of one: a sound or anything else isn't.
+    pub fn clip_of(&self, s: &Sequence) -> Option<(Obj, u32)> {
+        match self.objs.get(self.handle(s.template)?)? {
+            Object::Clip { template, slot } => Some((template, slot)),
+            _ => None,
+        }
+    }
+
+    /// The pads the scripts read this step, as [`ScriptWorld::read_pads`]
+    /// left them.
+    pub fn pads(&self) -> [Pad; 2] {
+        self.pads
     }
 
     /// The sequences started so far, in the order started.
@@ -1089,8 +1119,22 @@ pub fn step_scripts(mut runtime: ResMut<ScriptRuntime>, mut host: ScriptHost) {
 /// Spawns an entity for every placement of `files` and the pads and the
 /// portal, and makes the run: what the TV does once a level's script part
 /// links, a run from an earlier link and its entities gone first. The
-/// generator is the session's, seeded from the clock.
+/// generator is the session's, seeded from the clock. AH.16's listing;
+/// [`install_with`] takes another.
 pub fn install(world: &mut World, program: Arc<Program>, files: &Files, order: &[u16]) {
+    install_with(world, program, files, order, config(Mode::Play));
+}
+
+/// [`install`] under `config`: the TV's is [`hero_config`]'s (openspec
+/// AH.24), the init chain's every tick with the UI's, the movement update's
+/// and a fighter's scripts beside them.
+pub fn install_with(
+    world: &mut World,
+    program: Arc<Program>,
+    files: &Files,
+    order: &[u16],
+    config: Config,
+) {
     let old: Vec<Entity> = world
         .query_filtered::<Entity, Or<(With<ScriptPlacement>, With<ScriptClone>, With<ScriptObject>)>>()
         .iter(world)
@@ -1113,7 +1157,7 @@ pub fn install(world: &mut World, program: Arc<Program>, files: &Files, order: &
         "portal",
     ];
     let objects = names.map(|n| world.spawn(ScriptObject(n)).id().to_bits());
-    let vm = init_chain(program, files, &handles, order, config(Mode::Play));
+    let vm = init_chain(program, files, &handles, order, config);
     world.insert_resource(ScriptWorld::new(files, &handles, objects));
     world.insert_resource(ScriptRuntime {
         vm,

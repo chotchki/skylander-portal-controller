@@ -243,6 +243,7 @@ mod tests {
             stick: Vec2::ZERO,
             pressed,
             held: [false; 4],
+            shoulders: [false; 4],
         };
         let seat = level.seat_mut().unwrap();
         seat.step(
