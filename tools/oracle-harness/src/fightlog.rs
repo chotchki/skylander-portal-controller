@@ -55,6 +55,13 @@ pub struct ReportRules {
     /// Twists searched between two records when counting draws.
     #[serde(default = "default_twists")]
     pub max_twists: u64,
+    /// Judge stamps past the anchor's horizon too, for every kind not in
+    /// `ordered`. Design decision 18 stamps only inside it; at anchor A the
+    /// generator parts 4 game frames from F0 (particles drawing on host
+    /// time) while no event a lob makes is timed by a roll (AH.9), so a
+    /// group can be calibrated both ways and the two compared.
+    #[serde(default)]
+    pub stamps_past_horizon: bool,
 }
 
 fn default_quantum() -> f64 {
@@ -241,7 +248,8 @@ impl GroupReport {
         let open = Judge {
             default: 0.0,
             floors: BTreeMap::new(),
-            horizon: Some(horizon.last_agreeing.map_or(0, |h| h as u32)),
+            horizon: (!rules.stamps_past_horizon)
+                .then(|| horizon.last_agreeing.map_or(0, |h| h as u32)),
             ordered: rules.ordered.clone(),
         };
         // Every kind the replays logged, 0 where none strayed.
@@ -296,10 +304,14 @@ impl GroupReport {
             out.push('\n');
         };
         line(format!(
-            "{} replays; horizon: agreeing through game frame {:?} since F0, parted at {:?}",
+            "{} replays; horizon: agreeing through game frame {:?} since F0, parted at {:?}; stamps judged {}",
             self.replays.len(),
             self.horizon.last_agreeing,
-            self.horizon.parted_at
+            self.horizon.parted_at,
+            match self.judge.horizon {
+                Some(h) => format!("through frame {h}"),
+                None => "everywhere".to_owned(),
+            }
         ));
         for r in &self.replays {
             line(format!(

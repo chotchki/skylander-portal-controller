@@ -19,13 +19,14 @@ const IDLE: u32 = 1;
 /// One replay from anchor A as the lob script makes it: South pressed at
 /// frame `press`, the throw layered over the idle for 20 frames, the ball
 /// listed from `ball` to `burst`, the barrel gone at `burst` and its coin's
-/// entry 2 frames later; the generator drawing 5 a frame through frame 30,
-/// then `late` a frame.
+/// entry 2 frames later; the generator drawing 5 a frame up to frame
+/// `part`, then `late` a frame.
 struct Script {
     press: u32,
     ball: u32,
     burst: u32,
     late: u64,
+    part: u32,
 }
 
 fn frame(k: u32, south: bool, throw: bool) -> Frame {
@@ -127,7 +128,7 @@ fn write(root: &Path, label: &str, s: &Script) -> PathBuf {
             }),
         });
         frames.push(f);
-        let n = if k < 30 { 5 } else { s.late };
+        let n = if k < s.part { 5 } else { s.late };
         for _ in 0..n {
             g.next_u32();
         }
@@ -228,6 +229,7 @@ fn rules() -> ReportRules {
         ordered: BTreeSet::new(),
         quantum: 0.005,
         max_twists: 100,
+        stamps_past_horizon: false,
     }
 }
 
@@ -239,6 +241,7 @@ fn a_groups_floors_pass_its_own_replays_and_fail_a_press_moved() {
         ball,
         burst,
         late,
+        part: 30,
     };
     // Four replays: one ball a frame late, one burst a frame late, the
     // generator parting after frame 30 in two of them.
@@ -307,6 +310,45 @@ fn a_groups_floors_pass_its_own_replays_and_fail_a_press_moved() {
     );
     let text = r.text();
     assert!(text.contains("candidate lob_shift3: fails"), "{text}");
+    // With the generator parting at frame 3 instead (anchor A's parts at 1
+    // to 4), every event lies past the horizon: nothing is stamped, every floor reads 0
+    // and the late press passes on order alone; judged past the horizon too,
+    // the floors come back and it fails again.
+    let early: Vec<PathBuf> = [(8, 20, 9), (9, 20, 7), (8, 21, 9), (8, 20, 7)]
+        .iter()
+        .enumerate()
+        .map(|(k, &(ball, burst, late))| {
+            let script = Script {
+                part: 2,
+                ..s(3, ball, burst, late)
+            };
+            write(tmp.path(), &format!("early-{k:02}"), &script)
+        })
+        .collect();
+    let build = |rules: &ReportRules| {
+        let g: Vec<Replay> = early.iter().map(|d| load(d, rules).unwrap()).collect();
+        GroupReport::build(&g, &[load(&late, rules).unwrap()], rules).unwrap()
+    };
+    let gated = build(&rules);
+    assert_eq!(
+        (gated.horizon.last_agreeing, gated.judge.horizon),
+        (Some(2), Some(2))
+    );
+    assert!(
+        gated.floors.values().all(|&v| v == 0.0),
+        "{:?}",
+        gated.floors
+    );
+    assert!(gated.candidates[0].1.passed);
+    let open = build(&ReportRules {
+        stamps_past_horizon: true,
+        ..rules.clone()
+    });
+    assert_eq!(open.judge.horizon, None);
+    assert_eq!(open.floors["spawn"], 0.02);
+    assert!(open.leave_one_out.iter().all(|j| j.passed));
+    assert!(!open.candidates[0].1.passed);
+    assert!(open.text().contains("stamps judged everywhere"));
 }
 
 #[test]
@@ -317,6 +359,7 @@ fn a_report_writes_beside_its_rules_and_refuses_a_dir_without_a_peek() {
         ball: 8,
         burst: 20,
         late: 9,
+        part: 30,
     };
     let dirs: Vec<PathBuf> = (0..3)
         .map(|k| write(tmp.path(), &format!("lob-{k:02}"), &s))
