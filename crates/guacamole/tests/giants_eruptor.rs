@@ -509,7 +509,7 @@ fn oracles_lob() -> Option<(Vec<Record>, Vec3)> {
 /// stay of the hero's in one behaviour with a change on both sides, its
 /// behaviour's longest. The records name a behaviour by its address only,
 /// so a limit found can't be matched to his scripts' names: one stops the
-/// test until a read maps it (none so far, AH.47 records the clones').
+/// test until a read maps it (none so far, AH.50 records the clones').
 fn ah9_limits() -> (Vec<StallLimit>, usize) {
     let mut read = 0;
     let mut longest: HashMap<i64, f32> = HashMap::new();
