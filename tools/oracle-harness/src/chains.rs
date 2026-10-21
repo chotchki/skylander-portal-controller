@@ -143,15 +143,19 @@ pub const CHOMPY_VARS: [(&str, &[&str]); 16] = [
     ),
 ];
 
-/// What [`HERO_STATE`] follows on the hero: his hurt state and its timer,
-/// his knockback's timer, resistance, last strength and heading, and the
-/// kills his player is credited with.
-pub const HERO_VARS: [(&str, &[&str]); 8] = [
+/// What [`HERO_STATE`] follows on the hero: his hurt state, its timer and
+/// the immunity after it, his knockback's timer, resistance, last strength
+/// and heading, and the kills his player is credited with.
+pub const HERO_VARS: [(&str, &[&str]); 9] = [
     ("hurt state", &["description", "state"]),
     ("mode", &["description", "state tracking", "mode"]),
     (
         "mode timer",
         &["description", "state tracking", "mode timer"],
+    ),
+    (
+        "immunity timer",
+        &["description", "state tracking", "immunity timer"],
     ),
     ("knockback timer", &["description", "knockback timer"]),
     (
@@ -2455,6 +2459,7 @@ mod tests {
         let tracking = [
             fx::int(w, &t, "mode", 1),
             fx::float(w, &t, "mode timer", 145.7316),
+            fx::float(w, &t, "immunity timer", 146.3316),
             fx::float(w, &t, "knockback current resist", 12.5),
             fx::float(w, &t, "knockback last knock strength", 25.0),
             fx::float(w, &t, "knockback last knock heading", 20.672),
@@ -2502,7 +2507,11 @@ mod tests {
         let machine = fx::structure(w, "stateMachine", &[machine]);
         let cooldown = fx::float(w, &t, "cooldown timer", 34.88);
         let end = fx::int(w, &t, "should end bite now", 1);
-        let hit = fx::set(w, "actors hit", &[hero_placement]);
+        // Who it bit: one in a list with room for four, so the count is
+        // the count and not the room.
+        let hit = fx::named(w, script::vtable::SCRIPT_SET, 0x20, "actors hit");
+        let bitten = w.list(script::vtable::SET_LIST, &[hero_placement], 4);
+        w.put32(hit + 0x18, bitten);
         let tracking = [
             fx::int(w, &t, "mode", 0),
             fx::float(w, &t, "mode timer", 0.0),
@@ -2681,6 +2690,7 @@ mod tests {
                 h["hurt state"],
                 h["mode"],
                 h["mode timer"],
+                h["immunity timer"],
                 h["knockback timer"],
                 h["knockback resist"],
                 h["knockback strength"],
@@ -2688,7 +2698,9 @@ mod tests {
                 h["enemies defeated"],
                 h["health"],
             ],
-            [1.0, 1.0, 145.7316, 227.537, 12.5, 25.0, 20.672, 3.0, 278.0]
+            [
+                1.0, 1.0, 145.7316, 146.3316, 227.537, 12.5, 25.0, 20.672, 3.0, 278.0
+            ]
         );
     }
 
