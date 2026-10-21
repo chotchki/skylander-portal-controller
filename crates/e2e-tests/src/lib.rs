@@ -617,6 +617,9 @@ fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, Child
         .env("BUILD_TOKEN", "e2e-test")
         // guacamole's intros play muted: nobody listens to an e2e run.
         .env("GUAC_MUTE", "1")
+        // guacamole's TV takes only the posted pads (`/api/_test/tv/pad`):
+        // a pad paired with the machine would walk the hero first (AG.52).
+        .env("GUAC_TEST_POSTED_PADS_ONLY", "1")
         .args([
             "run",
             "--manifest-path",

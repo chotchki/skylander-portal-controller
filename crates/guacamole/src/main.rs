@@ -45,9 +45,15 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bevy::app::PluginGroupBuilder;
+use bevy::gilrs::GilrsPlugin;
 use bevy::log::LogPlugin;
-use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
-use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
+use bevy::prelude::{
+    App, AppExit, DefaultPlugins, MessageReader, Plugin, PluginGroup, ResMut, Window, WindowPlugin,
+    default,
+};
+use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode, WindowOccluded};
+use bevy::winit::{UpdateMode, WinitSettings};
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::known::KnownDump;
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
@@ -224,6 +230,96 @@ fn test_known_dump() -> Option<KnownDump> {
     }
 }
 
+/// `GUAC_TEST_POSTED_PADS_ONLY` in the process env (any value), `test-hooks`
+/// builds only: the TV leaves real pads out, so a pad paired with the Mac
+/// can't walk the hero ahead of `/api/_test/tv/pad`'s (AG.52). The e2e
+/// harness sets it; a look build with a hand on a pad doesn't.
+fn posted_pads_only() -> bool {
+    cfg!(feature = "test-hooks") && std::env::var_os("GUAC_TEST_POSTED_PADS_ONLY").is_some()
+}
+
+/// Bevy's plugins for the TV: no log plugin (`logging::init` owns the global
+/// subscriber) and, for [`posted_pads_only`], no gilrs.
+fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(window(mode)),
+            ..default()
+        })
+        .disable::<LogPlugin>();
+    if posted_pads_only {
+        plugins.disable::<GilrsPlugin>()
+    } else {
+        plugins
+    }
+}
+
+/// The TV draws every frame the display takes, focused or not (AG.55):
+/// Bevy's default (`WinitSettings::game()`) updates an unfocused window
+/// only every 1/60 s off a timer, and the walk eased off that timer's
+/// uneven ticks judders against the display's even ones. Unfocused is the
+/// usual case: the phone and the pad drive the TV, not the window's keys.
+/// Unfocused waits at most [`UNFOCUSED_WAIT`] between updates, which a
+/// display's vsync outlasts up to 240 Hz, so it updates as continuously as
+/// focused, while a window nothing paces (occluded: macOS's lock screen)
+/// stops at 240 a second rather than spinning.
+fn tv_updates() -> WinitSettings {
+    WinitSettings {
+        focused_mode: UpdateMode::Continuous,
+        unfocused_mode: UpdateMode::reactive_low_power(UNFOCUSED_WAIT),
+    }
+}
+
+/// The longest an unfocused TV waits from one update's start to the next
+/// (an event wakes it sooner): 1/240 s, under a frame of any display up to
+/// 240 Hz, so the display's vsync paces it, not this timer.
+const UNFOCUSED_WAIT: Duration = Duration::from_nanos(4_166_667);
+
+/// How often the TV updates while its window is occluded: nothing of it
+/// shows and nothing paces its presents, so Bevy's unfocused 1/60 s rather
+/// than a spin (AG.55: occluded under the Mac's lock, the portal drew 895
+/// frames a second).
+const OCCLUDED_WAIT: Duration = Duration::from_nanos(16_666_667);
+
+fn occluded_updates() -> WinitSettings {
+    WinitSettings {
+        focused_mode: UpdateMode::reactive_low_power(OCCLUDED_WAIT),
+        unfocused_mode: UpdateMode::reactive_low_power(OCCLUDED_WAIT),
+    }
+}
+
+/// [`tv_updates`] while the window shows, [`occluded_updates`] while it's
+/// occluded, on winit's word.
+fn pace_on_occlusion(
+    mut heard: MessageReader<WindowOccluded>,
+    mut settings: ResMut<WinitSettings>,
+) {
+    let Some(last) = heard.read().last() else {
+        return;
+    };
+    *settings = if last.occluded {
+        occluded_updates()
+    } else {
+        tv_updates()
+    };
+    info!(
+        occluded = last.occluded,
+        "the TV's window occlusion changed"
+    );
+}
+
+/// The TV's pacing (AG.55): [`tv_updates`] from the start, and
+/// [`pace_on_occlusion`] in `First`. Its own plugin so the test runs the
+/// wiring the window runs.
+struct TvPacing;
+
+impl Plugin for TvPacing {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(tv_updates())
+            .add_systems(bevy::app::First, pace_on_occlusion);
+    }
+}
+
 /// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
@@ -269,35 +365,27 @@ fn run_tv(
     exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(window(mode)),
-                ..default()
-            })
-            // `logging::init` owns the global subscriber.
-            .disable::<LogPlugin>(),
-    )
-    .insert_resource(link)
-    .insert_resource(PortalFeed(portal))
-    .insert_resource(shelf)
-    .insert_resource(level)
-    .insert_resource(Setup(setup_view))
-    .insert_resource(Framing(mode))
-    .insert_resource(DataRoot(root))
-    .insert_resource(latency)
-    .add_plugins((
-        ServerBridge,
-        Tv,
-        input::InputRouter,
-        Picker,
-        extraction::ExtractPlugin,
-        intro_player::IntroPlugin,
-        physics::SeamPlugin,
-        play::PlayPlugin,
-        progress::ProgressPlugin,
-        guacamole::scripts::ScriptPlugin,
-    ));
+    app.add_plugins((tv_plugins(mode, posted_pads_only()), TvPacing))
+        .insert_resource(link)
+        .insert_resource(PortalFeed(portal))
+        .insert_resource(shelf)
+        .insert_resource(level)
+        .insert_resource(Setup(setup_view))
+        .insert_resource(Framing(mode))
+        .insert_resource(DataRoot(root))
+        .insert_resource(latency)
+        .add_plugins((
+            ServerBridge,
+            Tv,
+            input::InputRouter,
+            Picker,
+            extraction::ExtractPlugin,
+            intro_player::IntroPlugin,
+            physics::SeamPlugin,
+            play::PlayPlugin,
+            progress::ProgressPlugin,
+            guacamole::scripts::ScriptPlugin,
+        ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));
     }
@@ -454,4 +542,87 @@ fn exit_after_farewell(
             std::process::exit(0);
         })
         .expect("spawn the farewell thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AG.55: the TV updates continuously focused, and unfocused waits no
+    /// longer than a 240 Hz display's frame, where Bevy's default waits a
+    /// 60 Hz one's.
+    #[test]
+    fn the_tv_updates_every_frame_focused_or_not() {
+        let wait = |mode: UpdateMode| match mode {
+            UpdateMode::Continuous => Duration::ZERO,
+            UpdateMode::Reactive { wait, .. } => wait,
+        };
+        let s = tv_updates();
+        assert_eq!(s.focused_mode, UpdateMode::Continuous);
+        assert!(wait(s.unfocused_mode) <= Duration::from_secs_f64(1.0 / 240.0));
+        assert!(
+            wait(s.unfocused_mode) > Duration::ZERO,
+            "an occluded TV doesn't spin"
+        );
+        assert!(
+            wait(WinitSettings::default().unfocused_mode) >= Duration::from_secs_f64(1.0 / 61.0),
+            "Bevy's default throttles an unfocused window to 60"
+        );
+    }
+
+    /// AG.55: [`TvPacing`] over Bevy's default (`WinitPlugin` puts it
+    /// first) paces the TV by [`tv_updates`]; occluded, it updates every
+    /// 1/60 s; shown again, every frame.
+    #[test]
+    fn an_occluded_tv_updates_at_sixty() {
+        let mut app = App::new();
+        app.add_message::<WindowOccluded>()
+            .init_resource::<WinitSettings>()
+            .add_plugins(TvPacing);
+        app.update();
+        let s = app.world().resource::<WinitSettings>();
+        assert_eq!(s.focused_mode, UpdateMode::Continuous);
+        assert_eq!(
+            s.unfocused_mode,
+            UpdateMode::reactive_low_power(UNFOCUSED_WAIT)
+        );
+        let window = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(WindowOccluded {
+            window,
+            occluded: true,
+        });
+        app.update();
+        let s = app.world().resource::<WinitSettings>();
+        assert_eq!(
+            s.unfocused_mode,
+            UpdateMode::reactive_low_power(OCCLUDED_WAIT)
+        );
+        assert_eq!(
+            s.focused_mode,
+            UpdateMode::reactive_low_power(OCCLUDED_WAIT)
+        );
+        app.world_mut().write_message(WindowOccluded {
+            window,
+            occluded: false,
+        });
+        app.update();
+        let s = app.world().resource::<WinitSettings>();
+        assert_eq!(s.focused_mode, UpdateMode::Continuous);
+        assert_eq!(s.unfocused_mode, tv_updates().unfocused_mode);
+    }
+
+    /// AG.52: with the switch the TV builds without gilrs, so no real pad
+    /// connects; without it gilrs stays, as release has it. The log plugin
+    /// is out either way.
+    #[test]
+    fn posted_pads_only_leaves_gilrs_out() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            let posted = tv_plugins(mode, true);
+            assert!(!posted.enabled::<GilrsPlugin>());
+            assert!(!posted.enabled::<LogPlugin>());
+            let real = tv_plugins(mode, false);
+            assert!(real.enabled::<GilrsPlugin>());
+            assert!(!real.enabled::<LogPlugin>());
+        }
+    }
 }

@@ -335,6 +335,14 @@ impl Play {
         self.inside.as_ref().map(|i| i.hero)
     }
 
+    /// The hero's entity, the camera's and his joints', while the level
+    /// shows: what `/api/_test/tv/drawn` reads each frame (AG.55).
+    pub(crate) fn drawn(&self) -> Option<(Entity, Entity, &[Entity])> {
+        self.inside
+            .as_ref()
+            .map(|i| (i.hero, i.camera, i.joints.as_slice()))
+    }
+
     /// Who walks, or will once the level shows, where he stands and the
     /// camera following him.
     pub(crate) fn report(
@@ -393,6 +401,7 @@ impl Plugin for PlayPlugin {
                     leave,
                     enter,
                     pose_hero,
+                    rest_the_cards,
                 )
                     .chain()
                     .in_set(PlaySystems)
@@ -682,6 +691,30 @@ fn enter(
     });
 }
 
+/// The cards' turntables draw nothing while the level covers the portal
+/// view, and draw again once it's left (AG.55: Eruptor's card and its glow,
+/// drawn behind the level, took 1.6 ms of every 7.8 ms frame of the render
+/// world in the 1280x720 window): each card camera with its model up, and
+/// its glow camera, its child. A card still compiling keeps its camera.
+fn rest_the_cards(
+    play: Res<Play>,
+    turntables: Res<Turntables>,
+    children: Query<&Children>,
+    mut cameras: Query<&mut Camera>,
+) {
+    let draw = play.inside.is_none();
+    for card in turntables.card_cameras() {
+        let glows = children.get(card).into_iter().flat_map(|c| c.iter());
+        for e in std::iter::once(card).chain(glows) {
+            if let Ok(mut camera) = cameras.get_mut(e)
+                && camera.is_active != draw
+            {
+                camera.is_active = draw;
+            }
+        }
+    }
+}
+
 /// What [`draw_hero`] made.
 struct DrawnHero {
     model: Arc<Model>,
@@ -841,10 +874,8 @@ fn pose_hero(
 }
 
 /// His joints `alpha` of the way from his locomotion's last step to its
-/// next, a step `step` seconds long: the weights eased from the step
-/// before's, each clip its time this step less what's left of the step at
-/// its rate (from its restart, where it restarted), none before 0; the idle
-/// at its start when `held`.
+/// next, a step `step` seconds long, each clip where [`drawn_clips`] puts
+/// it.
 fn gait_pose(
     model: &Model,
     clips: &HeroClips,
@@ -852,27 +883,45 @@ fn gait_pose(
     (alpha, step): (f32, f64),
     held: bool,
 ) -> Vec<Transform> {
-    let now = gaits.locomotion.weights();
-    let back = f64::from(1.0 - alpha) * step;
+    let drawn = drawn_clips(gaits, (alpha, step), held);
     let playing: Vec<(&Clip, f64, f64)> = locomotion::Clip::ALL
         .iter()
-        .enumerate()
-        .filter_map(|(i, &gait)| {
+        .zip(drawn)
+        .filter_map(|(&gait, (at, weight))| {
             let clip = match gait {
                 locomotion::Clip::Idle => Some(&model.idle),
                 _ => clips.get(gait),
             }?;
-            let weight = gaits.before[i] + (now[i] - gaits.before[i]) * alpha;
-            let p = gaits.locomotion.play(gait);
-            let at = if held && gait == locomotion::Clip::Idle {
-                0.0
-            } else {
-                (p.time - back * f64::from(p.rate)).max(0.0)
-            };
             Some((clip, at, f64::from(weight)))
         })
         .collect();
     guacamole::character::mesh::blended(model, &playing)
+}
+
+/// Each clip of his locomotion as drawn `alpha` of the way from its last
+/// step to its next, a step `step` seconds long, in
+/// [`locomotion::Clip::ALL`]'s order: its time this step less what's left
+/// of the step at its rate (from its restart, where it restarted), none
+/// before 0, and its weight eased from the step before's; the idle at its
+/// start when `held`.
+pub(crate) fn drawn_clips(
+    gaits: &HeroGaits,
+    (alpha, step): (f32, f64),
+    held: bool,
+) -> [(f64, f32); 4] {
+    let now = gaits.locomotion.weights();
+    let back = f64::from(1.0 - alpha) * step;
+    std::array::from_fn(|i| {
+        let gait = locomotion::Clip::ALL[i];
+        let weight = gaits.before[i] + (now[i] - gaits.before[i]) * alpha;
+        let p = gaits.locomotion.play(gait);
+        let at = if held && gait == locomotion::Clip::Idle {
+            0.0
+        } else {
+            (p.time - back * f64::from(p.rate)).max(0.0)
+        };
+        (at, weight)
+    })
 }
 
 #[cfg(test)]
@@ -1531,6 +1580,118 @@ mod tests {
         }
         eprintln!("{between} display frames between steps with the weights moving");
         assert!(between >= 5, "{between}");
+    }
+
+    /// AG.55: at 144 and at 60 frames a second over the 60 Hz step, every
+    /// drawn frame of a run moves his drawn transform and the camera's by
+    /// the frame's share of the walk (no frame repeating the one before, none
+    /// a double step) and his run's drawn time by the frame times its rate.
+    /// His joints aren't read here (the made-up run holds one pose): his
+    /// pose's easing is `his_pose_eases_between_steps`'.
+    #[test]
+    fn every_drawn_frame_advances_him_the_camera_and_his_run_at_144_and_60() {
+        for rate in [144.0, 60.0] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, tx) = play_app(tmp.path());
+            tx.send(write_level(tmp.path(), &lights())).unwrap();
+            let pad = test_pad::connect(&mut app, None, None);
+            place(&mut app, 0, ERUPTOR, "Eruptor");
+            until(&mut app, "the level", |a| mode(a) == Mode::Level);
+            let frame = 1.0 / rate;
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+                frame,
+            )));
+            test_pad::stick(&mut app, pad, 0.0, 1.0);
+            // Into the run alone: his idle out 15 steps after he sets off.
+            for _ in 0..(40.0 * rate / 60.0) as usize {
+                app.update();
+            }
+            let drawn = |app: &App| {
+                let (hero, camera, _) = app.world().resource::<Play>().drawn().unwrap();
+                let t = |e: Entity| {
+                    app.world()
+                        .entity(e)
+                        .get::<Transform>()
+                        .unwrap()
+                        .translation
+                };
+                let fixed = app.world().resource::<Time<Fixed>>();
+                let alpha = fixed.overstep_fraction();
+                let step = fixed.timestep().as_secs_f64();
+                let g = app.world().entity(hero).get::<HeroGaits>().unwrap();
+                let run = drawn_clips(g, (alpha, step), false)[2];
+                let speed = g.locomotion.speed();
+                let rate = g.locomotion.play(locomotion::Clip::Run).rate;
+                (t(hero), t(camera), run, speed, rate)
+            };
+            let mut before = drawn(&app);
+            assert_eq!(gaits(&app).top(), locomotion::Clip::Run, "{rate} Hz");
+            for i in 0..(rate as usize) {
+                app.update();
+                let now = drawn(&app);
+                // 21.5 ft/s, metres, over the frame.
+                let share = f64::from(now.3) * 0.3048 * frame;
+                let moved = f64::from(now.0.distance(before.0));
+                let looked = f64::from(now.1.distance(before.1));
+                assert!(
+                    moved > 0.5 * share && moved < 1.5 * share,
+                    "{rate} Hz frame {i}: he moved {moved} m against {share}"
+                );
+                assert!(
+                    looked > 0.5 * share && looked < 1.5 * share,
+                    "{rate} Hz frame {i}: the camera moved {looked} m against {share}"
+                );
+                assert_eq!(now.2.1, 1.0, "{rate} Hz frame {i}: the run alone");
+                let ran = now.2.0 - before.2.0;
+                let want = frame * f64::from(now.4);
+                assert!(
+                    (ran - want).abs() < 1e-6,
+                    "{rate} Hz frame {i}: the run drew {ran} s on, not {want}"
+                );
+                before = now;
+            }
+        }
+    }
+
+    /// AG.55: his card's turntable and its glow camera draw on the portal
+    /// view, rest while he's inside and draw again when the level's left.
+    #[test]
+    fn the_cards_rest_behind_the_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        let active = |app: &mut App| -> Vec<bool> {
+            let cards: Vec<Entity> = app
+                .world()
+                .resource::<Turntables>()
+                .card_cameras()
+                .collect();
+            let mut out = Vec::new();
+            for card in cards {
+                let e = app.world().entity(card);
+                out.push(e.get::<Camera>().unwrap().is_active);
+                for glow in e.get::<Children>().into_iter().flat_map(|c| c.iter()) {
+                    if let Some(c) = app.world().entity(glow).get::<Camera>() {
+                        out.push(c.is_active);
+                    }
+                }
+            }
+            out
+        };
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "his card's model", |a| {
+            a.world().resource::<Turntables>().card_state(0)
+                == Some(crate::turntable::CardState::Model)
+        });
+        assert_eq!(active(&mut app), [true, true], "the card and its glow draw");
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        app.update();
+        assert_eq!(active(&mut app), [false, false], "behind the level");
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal);
+        assert_eq!(active(&mut app), [true, true], "the level left");
     }
 
     /// Without his hero side (a hand-made extract, or one cut short) he has

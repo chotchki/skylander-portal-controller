@@ -68,6 +68,13 @@ On the M3 Max, once the level shows, no TV frame SHALL take longer than 50 ms, i
 - **WHEN** chapter 1 loads and first shows on a Mac that has never drawn it, after the start got the graphics ready
 - **THEN** no frame of the load or the first show waits on a pipeline, and none takes longer than 50 ms
 
+### Requirement: The level draws at the display's rate
+While the level shows, the TV SHALL draw every frame its display shows, up to 240 Hz, whether its window has the focus or not, each frame moving the hero, his pose and the camera on from the last by the time between them, never repeating the last frame's picture of him or jumping two steps. Figure cards the level hides draw nothing.
+
+#### Scenario: Another app in front
+- **WHEN** Eruptor walks in the 1280x720 window on the Mac's 120 Hz screen while another app has the focus
+- **THEN** the TV draws 120 frames a second, and each one moves him, his pose and the camera on from the last
+
 ### Requirement: The first character placed walks into the level
 With Giants picked and its level extracted, placing a character on the portal SHALL take the TV into the level with that character as the hero, after its intro when one plays. A figure that isn't a character (a magic item, an adventure-pack piece or a sidekick) SHALL NOT start the level or become the hero.
 

@@ -205,7 +205,9 @@ own figure with no `slot_changed` on Alice's. AB.23's beat locks Bob,
 fills his saved slot with Alice's figure from the socket's session and
 checks his RESUME is refused with the phone's toast naming his figure
 and hers, and no `slot_changed` at all. Every guacamole the
-harness spawns plays its intros muted (`GUAC_MUTE=1`).
+harness spawns plays its intros muted (`GUAC_MUTE=1`) and takes only the
+pads `/api/_test/tv/pad` posts (`GUAC_TEST_POSTED_PADS_ONLY=1`, AG.52): a
+pad paired with the Mac never connects, so it can't walk the hero first.
 
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
 product-only: <why>` instead of failing:

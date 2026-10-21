@@ -453,7 +453,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   beside the known table and logged as a warning). Never `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
 - State goes under `./dev-data/guacamole/` (`db.sqlite`); logs go to `./logs/`, the same daily
   `server.log` the product's dev build writes. `GUAC_MUTE` (process env, not the file, dev builds only)
-  plays intros muted; the e2e harness sets it.
+  plays intros muted; the e2e harness sets it. `GUAC_TEST_POSTED_PADS_ONLY` (process env, `test-hooks`
+  builds only) builds the TV without gilrs, so only `/api/_test/tv/pad`'s pads connect and a pad paired
+  with the Mac can't walk the hero ahead of them (AG.52); the e2e harness sets it too.
 - `GUAC_SHOT_DIR=<dir>` (process env, dev builds only) renders the TV offscreen at `GUAC_SHOT_SIZE`
   (default 1920x1080) and saves a PNG each time it settles, with motion held still (`ReducedMotion`, The
   TV's UI). AA.8 checked its screens that way, because
@@ -1844,7 +1846,12 @@ albedo; that's re-art-direction, not a remaster. With one look, nothing keeps tw
 or swaps post stacks.
 
 Frame rate: logic runs in `FixedUpdate` at the original tick and rendering interpolates transforms
-between ticks, so 60 fps+ doesn't touch game logic. Adventure co-op is one shared camera with leashed
+between ticks, so 60 fps+ doesn't touch game logic. The TV draws at the display's rate focused or not
+(AG.55): Bevy's default updates an unfocused window off a 1/60 s timer, and the walk eased off that
+timer's uneven ticks judders against the display's even ones, so unfocused waits at most 1/240 s (a
+display's vsync outlasts that up to 240 Hz; an occluded window nothing paces stops there) and winit's
+occluded drops it to 1/60 s. Cards the level hides rest their turntables (1.6 ms of a 7.8 ms render
+frame in the 1280x720 window). Adventure co-op is one shared camera with leashed
 players, so parity needs no split screen.
 
 The floor is the Mac until the Windows/HTPC bring-up (Decisions, fourth batch): the M3 Max driving the

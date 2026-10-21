@@ -180,6 +180,15 @@ impl Turntables {
         }
     }
 
+    /// The cameras of the cards whose models are up, the warm's apart; each
+    /// one's glow camera is its child.
+    pub(crate) fn card_cameras(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.slots.iter().flatten().filter_map(|t| match &t.state {
+            State::Model(stage) => Some(stage.camera),
+            _ => None,
+        })
+    }
+
     /// What `slot`'s card shows; `None` for an empty slot.
     pub(crate) fn card_state(&self, slot: u8) -> Option<CardState> {
         let t = self.slots.get(usize::from(slot))?.as_ref()?;
