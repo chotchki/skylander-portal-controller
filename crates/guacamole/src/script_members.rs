@@ -1475,8 +1475,11 @@ impl ScriptWorld {
     /// path of waypoints, until within (beyond) the op's distance in feet
     /// across the ground; reached, the op's block runs and the engine has
     /// no destination. Along a path the actor walks to each waypoint in turn,
-    /// the block running as it reaches each (a reading: the engine keeps the
-    /// path's place per actor; the original's isn't read).
+    /// the block running as it reaches each and the next its destination in
+    /// the same frame (a reading: the engine keeps the path's place per
+    /// actor; AH.10's Norticus turns for the next waypoint the frame he
+    /// reaches one, never slowing, where a frame without a destination left
+    /// him 0.07 m and a frame behind by the cave mouth).
     fn op_move(&mut self, call: &OpCall, engine: &mut dyn Engine) -> Result<Answer, HostFault> {
         let named = |n: &str| {
             call.operands
@@ -1524,8 +1527,19 @@ impl ScriptWorld {
         };
         if done {
             w.aim = Aim::Still;
-            if path.is_some() && !last {
+            if let Some(p) = &path
+                && !last
+            {
                 w.along += 1;
+                let next = p[w.along];
+                if let Some(point) = self.point(next, engine)
+                    && let Some(w) = self
+                        .actors
+                        .get_mut(&mover)
+                        .and_then(|a| a.walker.as_deref_mut())
+                {
+                    w.aim = Aim::To(point);
+                }
             }
             return Ok(Answer::Run {
                 receiver: None,
@@ -1911,8 +1925,12 @@ impl ScriptWorld {
 
     /// The engine's frame for each awake creature not hung on a node: its
     /// controller body set where its scripts left it (made, or made again
-    /// when its scripts change its solid), then moved by the engine alone
-    /// or steered by this tick's aim, the aim spent.
+    /// when its scripts change its solid), then the engine's velocity model
+    /// with its movement numbers, fed this tick's aim (none when no script
+    /// asked: the deceleration still takes its share), and the move; the aim
+    /// spent. AH.10's Chompies show it: a lunge the scripts set at 35 ft/s
+    /// moves at 33.7 and slows through the recovery, and back in 'battle'
+    /// a `move to` speeds it up 1.33 ft/s a frame to 20.0.
     fn move_walkers(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walkers: Vec<Handle> = self
             .actors
@@ -1952,10 +1970,7 @@ impl ScriptWorld {
             b.pivot = position;
             b.facing = facing;
             b.walk.velocity = velocity;
-            match aim {
-                Aim::Still => b.step_engine(engine.seam(), dt, &own, Surfaces::NONE),
-                aim => b.step_steered(engine.seam(), &physics, aim, dt, &own, Surfaces::NONE),
-            }
+            b.step_steered(engine.seam(), &physics, aim, dt, &own, Surfaces::NONE);
             let (p, f, v) = (b.pivot, b.facing, b.walk.velocity);
             a.position = p;
             a.angles.facing = f;
@@ -2666,6 +2681,10 @@ mod fight_tests {
             );
             if matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }) {
                 reached.push(k);
+                if reached.len() == 1 {
+                    let aim = w.actor(C1).unwrap().walker.as_ref().unwrap().aim;
+                    assert_eq!(aim, Aim::To(Vec3::new(8.0, 0.0, 6.0)), "the next at once");
+                }
             }
             w.advance(STEP, &mut e);
         }
@@ -2746,7 +2765,7 @@ mod fight_tests {
     }
 
     #[test]
-    fn a_creatures_scripts_velocity_carries_it_along_the_ground() {
+    fn a_creatures_scripts_velocity_carries_it_along_the_ground_slowing() {
         let mut e = pit();
         let mut w = world();
         w.actors.insert(C1, chompy(Vec3::new(0.0, 0.0, 0.0), 0.0));
@@ -2757,8 +2776,11 @@ mod fight_tests {
             w.advance(STEP, &mut e);
         }
         let at = w.actor(C1).unwrap().position;
-        // Half a second at 20 ft/s, nothing slowing it: 3.048 m.
-        assert!((at.z - 10.0 * FOOT).abs() < 0.01, "{at}");
+        // With no destination the engine's model slows it by its ground
+        // deceleration, 80 ft/s^2 (a lunge's end so): 1.33 ft/s a frame,
+        // still after 15 frames and 2.33 ft.
+        assert!((at.z - 7.0 / 3.0 * FOOT).abs() < 0.005, "{at}");
+        assert_eq!(w.actor(C1).unwrap().velocity, Vec3::ZERO);
         assert!(at.y.abs() < 0.02, "{at}");
     }
 

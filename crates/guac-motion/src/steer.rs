@@ -41,9 +41,10 @@
 //! - the walk is re-aimed along the facing at its own length, level, then
 //!   laid along the ground (`FUN_00113ab8` and the ground projection after
 //!   it, read by name, not instruction by instruction);
-//! - an actor no destination steers keeps the velocity its scripts left it
-//!   (AH.10's Chompies close in at 20.0 ft/s, which the deceleration's
-//!   1.33 ft/s a frame would cut if the model ran on a mover).
+//! - the model runs on every actor it moves, steered or not, as the
+//!   original's runs on every actor with movement numbers: AH.10's Chompies
+//!   (no movers of the movement scripts') lunge at 33.7 ft/s from the 35
+//!   their scripts set and slow through the recovery after it.
 
 use crate::seam::Vec3;
 use crate::tuning::FOOT;

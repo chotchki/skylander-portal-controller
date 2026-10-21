@@ -1,9 +1,10 @@
 //! What AH.18's first fight needed of the VM, each rule on scripts built in
 //! code: a placement's tags, its declared locals listed once its STARTUP's
-//! tick is done, placements asleep, `find subset` measuring from its path's
-//! other point and reading a right side naming `its` per member, a roll up
-//! to a path's value, `undefined` holding no set, a host answering with a
-//! set of targets and a file's number set from outside.
+//! tick is done, placements asleep and ticking in the order they woke,
+//! `find subset` measuring from its path's other point and reading a right
+//! side naming `its` per member, a roll up to a path's value, `undefined`
+//! holding no set, a host answering with a set of targets, and a file's
+//! number or a structure's set from outside.
 
 use std::collections::HashMap;
 
@@ -115,6 +116,98 @@ fn an_asleep_placement_waits_and_wakes_where_it_was() {
     vm.step(&mut host).unwrap();
     assert_eq!(vm.local(id, "starts"), Some(Value::Int(1)));
     assert_eq!(vm.local(id, "ticks"), Some(Value::Int(3)));
+}
+
+/// A structure's number set from outside is what scripts read next (the
+/// combat manager's next alert put where a recorded state has it); a field
+/// it doesn't have, or a value that isn't a structure, takes nothing.
+#[test]
+fn a_structures_number_set_from_outside_is_read_next() {
+    let p = program(|w| {
+        let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+        let (sp, def) = w.open(Class::DefineStructure, "Control");
+        let next = w.variable("alert next time", "ValueInfo", Some(INT));
+        w.push(next);
+        w.end_block(sp);
+        w.end_block(section);
+        w.end("C:/tfb/Synthetic/Types.ai");
+        let b = w.variable("control", "ScriptStructure", None);
+        w.refer(b, 0x24, def);
+        let got = var(w, "got");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(INT, &[El::Local(b), El::Local(next)]);
+                w.set(&[El::Local(got)], v);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Manager", 1);
+    let mut host = Engine::default();
+    vm.tick(id, &mut host).unwrap();
+    assert_eq!(vm.local(id, "got"), Some(Value::Int(0)));
+    let control = vm.local(id, "control").unwrap();
+    assert!(vm.set_field(control, "alert next time", Value::Int(7)));
+    assert!(!vm.set_field(control, "no such field", Value::Int(7)));
+    assert!(!vm.set_field(Value::Int(3), "alert next time", Value::Int(7)));
+    vm.tick(id, &mut host).unwrap();
+    assert_eq!(vm.local(id, "got"), Some(Value::Int(7)));
+}
+
+/// Placements tick in the order they woke: the order added, one woken
+/// after every placement already awake, one kept awake staying put. Each
+/// reads a file's counter, then counts it on.
+#[test]
+fn a_placement_woken_ticks_after_those_already_awake() {
+    let p = program(|w| {
+        let f = w.b.object(0, "ValueInfo", 0x24);
+        w.text(f, 0x08, "Counter");
+        w.meta_word(f, 0x1C, INT);
+        w.word(f, 0x20, 0);
+        let seen = var(w, "seen");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(INT, &[El::Local(f)]);
+                w.set(&[El::Local(seen)], v);
+                w.inc(&[El::Local(f)]);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let ids = [
+        vm.add(0x10, "A", 0),
+        vm.add(0x20, "B", 0),
+        vm.add(0x30, "C", 0),
+    ];
+    let mut host = Engine::default();
+    let seen = |vm: &Vm| ids.map(|id| vm.local(id, "seen"));
+    vm.step(&mut host).unwrap();
+    assert_eq!(
+        seen(&vm),
+        [0, 1, 2].map(|n| Some(Value::Int(n))),
+        "as added"
+    );
+    vm.set_asleep(0x20, true);
+    vm.step(&mut host).unwrap();
+    assert_eq!(seen(&vm), [3, 1, 4].map(|n| Some(Value::Int(n))));
+    vm.set_asleep(0x20, false);
+    vm.step(&mut host).unwrap();
+    assert_eq!(
+        seen(&vm),
+        [5, 7, 6].map(|n| Some(Value::Int(n))),
+        "B woken last"
+    );
+    vm.set_asleep(0x10, false);
+    vm.step(&mut host).unwrap();
+    assert_eq!(
+        seen(&vm),
+        [8, 10, 9].map(|n| Some(Value::Int(n))),
+        "A kept awake"
+    );
 }
 
 /// Three things at 10, 20 and 30 the host keeps as `test.items`; each one's

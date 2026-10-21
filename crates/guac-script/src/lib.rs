@@ -41,6 +41,15 @@
 //! placement's `system.script timer` grows by the tick's seconds
 //! ([`Config::tick_seconds`], 1/60 s), so it reads 0 through the first.
 //!
+//! The embedder puts placements to sleep and wakes them by its activity
+//! rule ([`Vm::set_asleep`]); one asleep isn't ticked and keeps its state.
+//! Placements tick in the order they woke: those awake from the start in
+//! the order added, one woken after every placement already awake. A
+//! reading of AH.10's encounter end, which the order added misses by a
+//! frame both ways: Norticus (woken last) takes his scene the frame the
+//! last Chompy goes, and `Setup_001_Controller` (woken first) sees it and
+//! goes a frame later.
+//!
 //! `remove` takes a placement off: the rest of the tick it's in runs (a
 //! script taking itself off finishes its tick), then it's never ticked again
 //! and its started flag is cleared (AH.4's census shows level 213's
@@ -356,8 +365,8 @@
 //! unsupported), the set properties (unmodelled members); and, with no
 //! stop, a reference's type check against the stack's edit type,
 //! `for each`'s shuffled order (any order that visits each member once)
-//! and the scheduler's placement groups and activity by distance (the
-//! embedder ticks placements in the order it adds them), so SHUTDOWN's
+//! and the scheduler's placement groups (activity by distance is the
+//! embedder's, through [`Vm::set_asleep`]), so SHUTDOWN's
 //! restart isn't either: the original runs STARTUP again at once when an
 //! active placement's SHUTDOWN block falls through, where the VM ends the
 //! tick and starts it on the next.

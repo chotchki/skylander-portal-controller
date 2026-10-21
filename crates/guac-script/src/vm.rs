@@ -400,6 +400,9 @@ pub struct Vm {
     program: Arc<Program>,
     config: Config,
     placements: Vec<Placement>,
+    /// The tick order: the order added, a placement woken from sleep moved
+    /// after every one already awake.
+    order: Vec<PlacementId>,
     cells: Vec<Cell>,
     sets: Vec<SetObj>,
     structs: Vec<StructObj>,
@@ -449,6 +452,7 @@ impl Vm {
             program,
             config,
             placements: Vec::new(),
+            order: Vec::new(),
             cells: Vec::new(),
             sets: Vec::new(),
             structs: Vec::new(),
@@ -537,6 +541,7 @@ impl Vm {
             active: 0.0,
         });
         let id = (self.placements.len() - 1) as PlacementId;
+        self.order.push(id);
         self.handles.entry(handle).or_insert(id);
         // Variables `find variable` made on it before it ran become its
         // locals.
@@ -626,13 +631,19 @@ impl Vm {
 
     /// Puts the placement running under `handle` to sleep or wakes it
     /// (crate docs, The tick): an inactive placement isn't ticked and keeps
-    /// its state, its STARTUP running on its first tick awake. False when no
-    /// placement runs under it.
+    /// its state, its STARTUP running on its first tick awake; one woken
+    /// ticks after every placement already awake. False when no placement
+    /// runs under it.
     pub fn set_asleep(&mut self, handle: Handle, asleep: bool) -> bool {
         let Some(&id) = self.handles.get(&handle) else {
             return false;
         };
-        self.placements[id as usize].asleep = asleep;
+        let p = &mut self.placements[id as usize];
+        if p.asleep && !asleep {
+            self.order.retain(|&o| o != id);
+            self.order.push(id);
+        }
+        p.asleep = asleep;
         true
     }
 
@@ -760,6 +771,32 @@ impl Vm {
         }
     }
 
+    /// Sets a number field of the structure `v` holds or names: how an
+    /// embedder puts a recorded state's shared numbers in (the combat
+    /// manager's next alert at an anchor). False when the structure has no
+    /// number field of that name.
+    pub fn set_field(&mut self, v: Value, name: &str, value: Value) -> bool {
+        let Some(sym) = self.program.find_sym(name) else {
+            return false;
+        };
+        let Value::Struct(s) = self.peek(v) else {
+            return false;
+        };
+        let Some(c) = self
+            .structs
+            .get(s as usize)
+            .and_then(|st| st.fields.iter().find(|(n, _)| *n == sym))
+            .map(|(_, c)| *c)
+        else {
+            return false;
+        };
+        if self.cells[c as usize].kind != CellKind::Value {
+            return false;
+        }
+        self.write_cell(c, value, 0);
+        true
+    }
+
     /// What `v` holds when it names a cell or a file variable that has one
     /// (a set's number member, a reference's target); `v` itself otherwise.
     pub fn value(&self, v: Value) -> Value {
@@ -844,12 +881,13 @@ impl Vm {
             .unwrap_or_default()
     }
 
-    /// One logic tick: every placement that isn't inert or stopped, in the
-    /// order added. Strict mode returns the first stop; play mode records
-    /// it and runs the rest.
+    /// One logic tick: every placement that isn't inert, asleep or stopped,
+    /// in the tick order (crate docs, The tick). Strict mode returns the
+    /// first stop; play mode records it and runs the rest.
     pub fn step(&mut self, host: &mut dyn Host) -> Result<StepReport, Halt> {
         let mut report = StepReport::default();
-        for id in 0..self.placements.len() as PlacementId {
+        let order = self.order.clone();
+        for id in order {
             let p = &self.placements[id as usize];
             if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
                 continue;
