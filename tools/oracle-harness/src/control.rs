@@ -121,12 +121,35 @@ pub struct Saved {
     pub rebooted: EmuState,
 }
 
+/// A portal event P4 pushed (`PE cmd=<name>`), stamped with the `STATE` it
+/// came after on the same connection (AH.10: the figure's tag writes).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PortalSeen {
+    /// The command it names (`write`, `query`, `status` ...).
+    pub cmd: String,
+    /// The `STATE` read on the connection that carried it: P4 drains its
+    /// queue after each reply, so it was queued since the last `STATE` read
+    /// before this one.
+    pub status: String,
+    pub frames: u64,
+    /// Milliseconds since this control was made.
+    pub wall_ms: u64,
+}
+
+/// How long a `STATE` read waits on its connection for what P4 drains after
+/// the reply.
+pub const PORTAL_EVENT_LINGER: Duration = Duration::from_millis(25);
+
 pub struct Control {
     verbs: VerbClient,
     driver: IpcPortalDriver,
     outputs: Rpcs3Outputs,
     /// RPCS3's log (`RPCS3.log` in the home's cache dir), when the caller has it.
     log: Option<PathBuf>,
+    /// The portal events each `STATE` read caught, when asked for
+    /// ([`Control::with_portal_events`]).
+    portal_events: Option<std::sync::Mutex<Vec<PortalSeen>>>,
+    made: Instant,
 }
 
 impl Control {
@@ -140,7 +163,25 @@ impl Control {
             driver: IpcPortalDriver::with_path(p1_socket).with_timeout(Duration::from_secs(15)),
             outputs: Rpcs3Outputs::new(config_dir),
             log: None,
+            portal_events: None,
+            made: Instant::now(),
         }
+    }
+
+    /// Every `STATE` read waits [`PORTAL_EVENT_LINGER`] on its connection
+    /// after the reply and keeps the `PE` lines P4 pushes there, stamped with
+    /// that `STATE` ([`Control::portal_events`]).
+    pub fn with_portal_events(mut self) -> Self {
+        self.portal_events = Some(std::sync::Mutex::new(Vec::new()));
+        self
+    }
+
+    /// The portal events caught so far, oldest first.
+    pub fn portal_events(&self) -> Vec<PortalSeen> {
+        self.portal_events
+            .as_ref()
+            .map(|m| m.lock().map(|v| v.clone()).unwrap_or_default())
+            .unwrap_or_default()
     }
 
     /// RPCS3's log, so [`Control::savestate`] fails as soon as RPCS3 turns the
@@ -164,7 +205,31 @@ impl Control {
     }
 
     pub fn state(&self) -> Result<EmuState> {
-        self.driver.read_state()
+        let Some(events) = &self.portal_events else {
+            return self.driver.read_state();
+        };
+        let (line, pushed) = self
+            .verbs
+            .roundtrip_draining("STATE", PORTAL_EVENT_LINGER)?;
+        let state = skylander_rpcs3_control::ipc::proto::parse_state(&line)?;
+        if !pushed.is_empty() {
+            let wall_ms = self.made.elapsed().as_millis() as u64;
+            let mut seen = events
+                .lock()
+                .map_err(|_| anyhow::anyhow!("a poisoned event log"))?;
+            for p in pushed {
+                let cmd = skylander_rpcs3_control::ipc::proto::parse_portal_event(&p)
+                    .map(|e| e.cmd)
+                    .unwrap_or(p);
+                seen.push(PortalSeen {
+                    cmd,
+                    status: state.status.clone(),
+                    frames: state.frames,
+                    wall_ms,
+                });
+            }
+        }
+        Ok(state)
     }
 
     /// Polls `STATE` until `done` holds. A `STATE` that fails is retried (P1's
@@ -338,6 +403,65 @@ impl Control {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+
+    /// AH.10: with the event log on, a `STATE` read keeps the portal events
+    /// P4 pushed on its connection, before the reply and in the linger after
+    /// it, each stamped with that `STATE`; the reply alone stays the state,
+    /// and the log off reads nothing past the reply.
+    #[cfg(unix)]
+    #[test]
+    fn a_state_read_keeps_the_portal_events_pushed_on_its_connection() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir = std::env::temp_dir().join(format!("ah10-pe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("p1.sock");
+        let _ = std::fs::remove_file(&sock);
+        let listener = UnixListener::bind(&sock).unwrap();
+        let server = std::thread::spawn(move || {
+            for (frames, pushed) in [(7, true), (9, false)] {
+                let (stream, _) = listener.accept().unwrap();
+                let mut w = stream.try_clone().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream).read_line(&mut line).unwrap();
+                assert_eq!(line, "STATE\n");
+                if pushed {
+                    w.write_all(b"HB status=running frames=6 progr=0/0 seg=0/0\nPE cmd=query\n")
+                        .unwrap();
+                }
+                w.write_all(
+                    format!("OK status=running frames={frames} progr=0/0 seg=0/0\n").as_bytes(),
+                )
+                .unwrap();
+                if pushed {
+                    w.write_all(b"PE cmd=write\nPE cmd=status\n").unwrap();
+                }
+                std::thread::sleep(Duration::from_millis(80));
+            }
+        });
+        let control = Control::new(&sock, &dir).with_portal_events();
+        let s = control.state().unwrap();
+        assert_eq!((s.status.as_str(), s.frames), ("running", 7));
+        let s = control.state().unwrap();
+        assert_eq!(s.frames, 9);
+        server.join().unwrap();
+        let seen: Vec<(String, u64)> = control
+            .portal_events()
+            .into_iter()
+            .map(|e| (e.cmd, e.frames))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("query".to_owned(), 7),
+                ("write".to_owned(), 7),
+                ("status".to_owned(), 7)
+            ]
+        );
+        assert!(Control::new(&sock, &dir).portal_events().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     use rrc_dump::capture::{RegState, ReplayCommand};
     use rrc_dump::nv4097 as m;

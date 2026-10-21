@@ -85,6 +85,105 @@ pub const ACTORS: u8 = 0;
 pub const ORBS: u8 = 1;
 pub const LOOT: u8 = 2;
 pub const ANIMS: u8 = 3;
+/// AH.10: the four Chompies' script state past [`ACTORS`]' health and
+/// alerted flag ([`CHOMPY_VARS`]), and the hero's ([`HERO_VARS`]), each
+/// through the actor list again, keyed by name, every variable found by
+/// O6's search.
+pub const CREATURES: u8 = 4;
+pub const HERO_STATE: u8 = 5;
+
+/// What [`CREATURES`] follows on each Chompy, by label and path, as
+/// `Enemy_Chompy.ai` and the enemy system name them: the state machine's
+/// state and substate (the nip's steps: 0 and 1 its windup, 2 its hold, 3
+/// its lunge, 10 its recovery), its timer and scratch, the bite's cooldown,
+/// its end flag and who it has bitten this lunge (a set: its count), the
+/// hurt state, its timer and the immunity after it, the knockback's timer,
+/// resistance and last strength, who it's after and who told it.
+pub const CHOMPY_VARS: [(&str, &[&str]); 16] = [
+    ("nip", &["stateMachine", "state tracking", "state"]),
+    ("substate", &["stateMachine", "state tracking", "substate"]),
+    ("state timer", &["stateMachine", "state tracking", "timer"]),
+    (
+        "state scratch",
+        &["stateMachine", "state tracking", "scratch"],
+    ),
+    ("cooldown timer", &["cooldown timer"]),
+    ("should end bite now", &["should end bite now"]),
+    ("actors hit", &["actors hit"]),
+    ("hurt state", &["description", "state"]),
+    ("mode", &["description", "state tracking", "mode"]),
+    (
+        "mode timer",
+        &["description", "state tracking", "mode timer"],
+    ),
+    (
+        "immunity timer",
+        &["description", "state tracking", "immunity timer"],
+    ),
+    ("knockback timer", &["description", "knockback timer"]),
+    (
+        "knockback resist",
+        &["description", "state tracking", "knockback current resist"],
+    ),
+    (
+        "knockback strength",
+        &[
+            "description",
+            "state tracking",
+            "knockback last knock strength",
+        ],
+    ),
+    (
+        "target",
+        &["description", "attention parameters", "alerted target"],
+    ),
+    (
+        "communicator",
+        &["description", "attention parameters", "communicator"],
+    ),
+];
+
+/// What [`HERO_STATE`] follows on the hero: his hurt state and its timer,
+/// his knockback's timer, resistance, last strength and heading, and the
+/// kills his player is credited with.
+pub const HERO_VARS: [(&str, &[&str]); 8] = [
+    ("hurt state", &["description", "state"]),
+    ("mode", &["description", "state tracking", "mode"]),
+    (
+        "mode timer",
+        &["description", "state tracking", "mode timer"],
+    ),
+    ("knockback timer", &["description", "knockback timer"]),
+    (
+        "knockback resist",
+        &["description", "state tracking", "knockback current resist"],
+    ),
+    (
+        "knockback strength",
+        &[
+            "description",
+            "state tracking",
+            "knockback last knock strength",
+        ],
+    ),
+    (
+        "knockback heading",
+        &[
+            "description",
+            "state tracking",
+            "knockback last knock heading",
+        ],
+    ),
+    (
+        "enemies defeated",
+        &[
+            "my Minion Description",
+            "player joined data",
+            "player stat tracking",
+            "enemies defeated",
+        ],
+    ),
+];
 
 /// Items each chain keeps a record. AF.9's list held 162-182 actors in the
 /// clearing (AH.5's walks 166-199); the fight keeps the hero, 4 Chompies,
@@ -317,27 +416,150 @@ fn nested(outer: &str, by_reference: bool, inner: &str) -> Vec<Hop> {
     hops
 }
 
+/// What a followed variable's last cell is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Leaf {
+    /// A number: its type word and value.
+    Number,
+    /// A reference: the object it names, decoded against
+    /// [`GiantsChains::referents`].
+    Reference,
+    /// A set: its count.
+    Set,
+}
+
+/// One variable [`CREATURES`] or [`HERO_STATE`] follows, in range order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Followed {
+    pub label: String,
+    pub path: Vec<String>,
+    pub leaf: Leaf,
+}
+
+/// The hops from a corpus to the cell `path` names among `placement`'s
+/// variables, each step a structure held in place or one a reference names,
+/// as the pause holds them, and what the last cell is. Refused at the step
+/// that breaks.
+fn variable_hops(g: &mut impl Gather, placement: u32, path: &[&str]) -> Result<(Vec<Hop>, Leaf)> {
+    let Some((first, rest)) = path.split_first() else {
+        bail!("an empty path");
+    };
+    let mut cells = script::variables(g, placement)?
+        .with_context(|| format!("the placement at {placement:#010x} never started its script"))?;
+    let mut hops = vec![
+        Hop::at(CORPUS_PLACEMENT),
+        Hop::checked(PLACEMENT_LOCALS, script::vtable::OBJECT_LIST),
+        named(first),
+    ];
+    let mut cell = script::the(&cells, first, "the placement")?.clone();
+    let mut here = (*first).to_owned();
+    for step in rest {
+        let structure = match cell.vtable {
+            script::vtable::SCRIPT_STRUCTURE => cell.at,
+            script::vtable::SCRIPT_REFERENCE => {
+                hops.push(through_reference());
+                script::referent(g, &cell)?
+                    .with_context(|| format!("`{here}` is a null reference"))?
+            }
+            other => bail!("`{here}` has vtable {other:#010x}, which holds no cells"),
+        };
+        hops.extend(field(step));
+        cells = script::fields(g, structure, &here)?;
+        cell = script::the(&cells, step, &here)?.clone();
+        here = format!("{here}.{step}");
+    }
+    let leaf = match cell.vtable {
+        script::vtable::VALUE_INFO => Leaf::Number,
+        script::vtable::SCRIPT_REFERENCE | script::vtable::PLACEMENT_REFERENCE => Leaf::Reference,
+        script::vtable::SCRIPT_SET => Leaf::Set,
+        other => bail!("`{here}` has vtable {other:#010x}: no number, reference or set"),
+    };
+    Ok((hops, leaf))
+}
+
+/// The range a followed variable's cell is read through.
+fn followed_probe(mut hops: Vec<Hop>, leaf: Leaf) -> Probe {
+    match leaf {
+        Leaf::Number => Probe::new(hops, CELL_NUMBER, 8),
+        Leaf::Reference => Probe::new(hops, REFERENCE_OBJECT, 4),
+        Leaf::Set => {
+            hops.push(Hop::checked(CONTAINER_LIST, script::vtable::SET_LIST));
+            Probe::new(hops, LIST_COUNT, 4)
+        }
+    }
+}
+
+/// `vars` resolved on the first of `placements` whose script holds each
+/// path, each with its range; a path none holds is left out.
+fn follow_vars(
+    g: &mut impl Gather,
+    placements: &[u32],
+    vars: &[(&str, &[&str])],
+) -> Result<(Vec<Followed>, Vec<Probe>)> {
+    let mut followed = Vec::new();
+    let mut probes = Vec::new();
+    for (label, path) in vars {
+        let found = placements
+            .iter()
+            .find_map(|&p| variable_hops(g, p, path).ok());
+        if let Some((hops, leaf)) = found {
+            followed.push(Followed {
+                label: (*label).to_owned(),
+                path: path.iter().map(|s| (*s).to_owned()).collect(),
+                leaf,
+            });
+            probes.push(followed_probe(hops, leaf));
+        }
+    }
+    Ok((followed, probes))
+}
+
+/// The game's actor list from the application, its updater at
+/// `updater_index`.
+fn actor_list_path(updater_index: u32) -> Result<Vec<Hop>> {
+    let at = u16::try_from(4 * updater_index).context("the updater index")?;
+    Ok(vec![
+        Hop::checked(0, vtable::APPLICATION),
+        Hop::checked(INSIGHT, vtable::INSIGHT_CORE),
+        Hop::checked(UPDATERS, vtable::UPDATER_LIST),
+        Hop::at(LIST_ARRAY),
+        Hop::checked(at, vtable::ACTOR_UPDATE),
+        Hop::checked(ACTOR_UPDATE_LIST, vtable::GAME_ACTOR_LIST),
+    ])
+}
+
+/// A corpus's key: its placement's name, hashed.
+fn corpus_key() -> Key {
+    Key {
+        hops: vec![Hop::checked(CORPUS_PLACEMENT, vtable::ACTOR_INFO)],
+        off: PLACEMENT_NAME,
+        hashed: true,
+    }
+}
+
+/// The actor list kept to `names`, each corpus with `ranges`.
+fn followed_chain(updater_index: u32, names: &[&str], ranges: Vec<Probe>) -> Result<ChainSpec> {
+    Ok(ChainSpec {
+        items: names.len() as u32,
+        base: actors::APP,
+        path: actor_list_path(updater_index)?,
+        count: LIST_COUNT,
+        array: LIST_ARRAY,
+        key: corpus_key(),
+        values: names.iter().map(|n| name_hash(n)).collect(),
+        ranges,
+    })
+}
+
 /// The actor list's chain: the hero and every kind by name.
 fn actor_chain(updater_index: u32, values: Vec<u32>) -> Result<ChainSpec> {
-    let at = u16::try_from(4 * updater_index).context("the updater index")?;
     Ok(ChainSpec {
         items: ACTOR_ITEMS,
         base: actors::APP,
-        path: vec![
-            Hop::checked(0, vtable::APPLICATION),
-            Hop::checked(INSIGHT, vtable::INSIGHT_CORE),
-            Hop::checked(UPDATERS, vtable::UPDATER_LIST),
-            Hop::at(LIST_ARRAY),
-            Hop::checked(at, vtable::ACTOR_UPDATE),
-            Hop::checked(ACTOR_UPDATE_LIST, vtable::GAME_ACTOR_LIST),
-        ],
+        path: actor_list_path(updater_index)?,
         count: LIST_COUNT,
         array: LIST_ARRAY,
-        key: Key {
-            hops: vec![Hop::checked(CORPUS_PLACEMENT, vtable::ACTOR_INFO)],
-            off: PLACEMENT_NAME,
-            hashed: true,
-        },
+        key: corpus_key(),
         values,
         ranges: vec![
             Probe::new(vec![Hop::at(CORPUS_PLACEMENT)], PLACEMENT_MATRIX, 24),
@@ -505,6 +727,18 @@ pub struct GiantsChains {
     pub updater_index: u32,
     pub combat_control: u32,
     pub macros_ui: u32,
+    /// What [`CREATURES`] follows, in range order: none when no Chompy's
+    /// script had started at the resolve (AH.10).
+    #[serde(default)]
+    pub creature_vars: Vec<Followed>,
+    /// What [`HERO_STATE`] follows, in range order.
+    #[serde(default)]
+    pub hero_vars: Vec<Followed>,
+    /// The placements a followed reference is named by, in order: a
+    /// reference to the n-th (from 0) reads n + 1, a null one 0, any other
+    /// object -1. The hero's, then each Chompy's.
+    #[serde(default)]
+    pub referents: Vec<(String, u32)>,
 }
 
 impl GiantsChains {
@@ -565,10 +799,46 @@ impl GiantsChains {
         let combat_control = exports["combat control data"].at;
         let macros_ui = exports["Macros_UI"].at;
         let mut slots = BTreeMap::new();
-        slots.insert(ACTORS, actor_chain(updater_index as u32, values)?);
+        let actor_spec = actor_chain(updater_index as u32, values)?;
+        // AH.10: the Chompies' and the hero's script state, each path
+        // resolved on what the pause holds (a Chompy whose script never
+        // started holds none).
+        let listed = evaluate(&actor_spec, g)?;
+        let mut referents = vec![(HERO.to_owned(), watch.hero_placement)];
+        let mut chompies = Vec::new();
+        for name in CHOMPIES {
+            let at = actors.iter().position(|(_, n)| n == name).and_then(|v| {
+                listed
+                    .items
+                    .iter()
+                    .find(|i| i.value as usize == v)
+                    .and_then(|i| i.range(actor_range::PLACEMENT))
+                    .map(|b| be32(b, 0))
+            });
+            if let Some(p) = at {
+                referents.push((name.to_owned(), p));
+                chompies.push(p);
+            }
+        }
+        let (creature_vars, creature_probes) = follow_vars(g, &chompies, &CHOMPY_VARS)?;
+        let (hero_vars, hero_probes) = follow_vars(g, &[watch.hero_placement], &HERO_VARS)?;
+        slots.insert(ACTORS, actor_spec);
         slots.insert(ORBS, orb_chain(combat_control));
         slots.insert(LOOT, loot_chain(macros_ui));
         slots.insert(ANIMS, anim_chain(watch.hero_corpus));
+        if !creature_vars.is_empty() {
+            slots.insert(
+                CREATURES,
+                followed_chain(updater_index as u32, &CHOMPIES, creature_probes)?,
+            );
+        }
+        if !hero_vars.is_empty() {
+            let hero = &actors[0].1;
+            slots.insert(
+                HERO_STATE,
+                followed_chain(updater_index as u32, &[hero.as_str()], hero_probes)?,
+            );
+        }
         for (slot, spec) in &slots {
             if let Err(r) = spec.check() {
                 bail!("chain {slot} breaks O6's limits (ERR {})", r.wire());
@@ -586,7 +856,52 @@ impl GiantsChains {
             updater_index: updater_index as u32,
             combat_control,
             macros_ui,
+            creature_vars,
+            hero_vars,
+            referents,
         })
+    }
+
+    /// What [`CREATURES`] or [`HERO_STATE`] follows.
+    fn followed(&self, slot: u8) -> &[Followed] {
+        match slot {
+            CREATURES => &self.creature_vars,
+            HERO_STATE => &self.hero_vars,
+            _ => &[],
+        }
+    }
+
+    /// A followed item's variables by label: a number as its cell holds it,
+    /// a set's count, a reference by [`GiantsChains::referents`]; one that
+    /// didn't read is left out.
+    fn followed_vars(
+        &self,
+        slot: u8,
+        e: &ChainEntry,
+        resolved: &Resolved,
+    ) -> BTreeMap<String, f32> {
+        let mut out = BTreeMap::new();
+        for (r, f) in self.followed(slot).iter().enumerate() {
+            let Some(b) = e.range(r) else {
+                continue;
+            };
+            let v = match f.leaf {
+                Leaf::Number => resolved.number(b),
+                Leaf::Set => Some(be32(b, 0) as f32),
+                Leaf::Reference => Some(match be32(b, 0) {
+                    0 => 0.0,
+                    at => self
+                        .referents
+                        .iter()
+                        .position(|(_, p)| *p == at)
+                        .map_or(-1.0, |i| (i + 1) as f32),
+                }),
+            };
+            if let Some(v) = v {
+                out.insert(f.label.clone(), v);
+            }
+        }
+        out
     }
 
     /// The kinds by [`ACTORS`] value.
@@ -629,6 +944,18 @@ impl GiantsChains {
                 for i in &b.items {
                     types.extend(i.range(loot_range::WORTH).map(word));
                     names.extend(i.range(loot_range::NAME).map(word).filter(|&n| n != 0));
+                }
+            }
+            for slot in [CREATURES, HERO_STATE] {
+                let Some(b) = record.get(&slot) else {
+                    continue;
+                };
+                for i in &b.items {
+                    for (r, f) in self.followed(slot).iter().enumerate() {
+                        if f.leaf == Leaf::Number {
+                            types.extend(i.range(r).map(word));
+                        }
+                    }
                 }
             }
         }
@@ -726,6 +1053,7 @@ impl GiantsChains {
             let game_frame = game_frame(&watch.list, &o5)
                 .with_context(|| format!("the game frame at flip {}", o5.flip))?;
             let mut items = Vec::new();
+            let mut followed: Vec<(u32, BTreeMap<String, f32>)> = Vec::new();
             for (&slot, block) in &blocks {
                 // The clips ride beside the actors, not among them
                 // ([`GiantsChains::clips`]); a vector that didn't read loses
@@ -746,8 +1074,22 @@ impl GiantsChains {
                         ACTORS => self.actor(entry, resolved, &mut serials)?,
                         ORBS => orb(entry, resolved),
                         LOOT => loot(entry, resolved),
+                        // AH.10's followed variables join their actor's item.
+                        CREATURES | HERO_STATE => {
+                            followed
+                                .push((entry.address, self.followed_vars(slot, entry, resolved)));
+                            continue;
+                        }
                         other => bail!("no chain in slot {other}"),
                     });
+                }
+            }
+            for (address, vars) in followed {
+                if let Some(item) = items
+                    .iter_mut()
+                    .find(|i| i.address == address && (i.kind == HERO || i.placement.is_some()))
+                {
+                    item.vars.extend(vars);
                 }
             }
             let fight = watch.fight(&o5);
@@ -2087,6 +2429,282 @@ mod tests {
     }
 
     /// A block's bytes as O6 writes them.
+    /// AH.10's two chains on the fixture grown with a second Chompy running
+    /// the enemy system's state machine mid-lunge (its state machine a
+    /// structure held in place, its description behind a reference, who it
+    /// bit a set, who it's after and who told it references), a third whose
+    /// script never started, and the hero's description holding his hurt and
+    /// knockback state and his player's kill count.
+    #[test]
+    fn the_chompies_and_the_heros_script_state_ride_chains_of_their_own() {
+        let mut f = fixture();
+        let t = fx::Types {
+            int: f.types.int,
+            float: f.types.float,
+        };
+        let w = &mut f.w;
+        let hero_placement = w.get32(f.hero + 0x50);
+        let chompy1 = w.get32(f.chompy + 0x50);
+        // The hero: his description and his player's stats, in a list of
+        // his own.
+        let hp = fx::int(w, &t, "hp", 278);
+        let max = fx::int(w, &t, "hp max", 290);
+        let info = fx::structure(w, "", &[max, hp]);
+        let alerted = fx::int(w, &t, "alerted", 2);
+        let attention = fx::structure(w, "", &[alerted]);
+        let tracking = [
+            fx::int(w, &t, "mode", 1),
+            fx::float(w, &t, "mode timer", 145.7316),
+            fx::float(w, &t, "knockback current resist", 12.5),
+            fx::float(w, &t, "knockback last knock strength", 25.0),
+            fx::float(w, &t, "knockback last knock heading", 20.672),
+        ];
+        let tracking = fx::structure(w, "state tracking", &tracking);
+        let state = fx::int(w, &t, "state", 1);
+        let timer = fx::float(w, &t, "knockback timer", 227.537);
+        let refs = [
+            fx::reference(w, script::vtable::SCRIPT_REFERENCE, "creature info", info),
+            fx::reference(
+                w,
+                script::vtable::SCRIPT_REFERENCE,
+                "attention parameters",
+                attention,
+            ),
+        ];
+        let desc = fx::structure(w, "", &[state, tracking, timer, refs[0], refs[1]]);
+        let d = fx::reference(w, script::vtable::SCRIPT_REFERENCE, "description", desc);
+        let defeated = fx::int(w, &t, "enemies defeated", 3);
+        let stats = fx::structure(w, "player stat tracking", &[defeated]);
+        let joined = fx::structure(w, "", &[stats]);
+        let joined = fx::reference(
+            w,
+            script::vtable::SCRIPT_REFERENCE,
+            "player joined data",
+            joined,
+        );
+        let mine = fx::structure(w, "", &[joined]);
+        let mine = fx::reference(
+            w,
+            script::vtable::SCRIPT_REFERENCE,
+            "my Minion Description",
+            mine,
+        );
+        let locals = w.list(script::vtable::OBJECT_LIST, &[d, mine], 2);
+        w.put32(hero_placement + 0xB0, locals);
+        // Chompy(2) mid-lunge, its immunity timer left out.
+        let machine = [
+            fx::int(w, &t, "state", 3),
+            fx::int(w, &t, "substate", 0),
+            fx::float(w, &t, "timer", 33.9),
+            fx::int(w, &t, "scratch", 0),
+        ];
+        let machine = fx::structure(w, "state tracking", &machine);
+        let machine = fx::structure(w, "stateMachine", &[machine]);
+        let cooldown = fx::float(w, &t, "cooldown timer", 34.88);
+        let end = fx::int(w, &t, "should end bite now", 1);
+        let hit = fx::set(w, "actors hit", &[hero_placement]);
+        let tracking = [
+            fx::int(w, &t, "mode", 0),
+            fx::float(w, &t, "mode timer", 0.0),
+            fx::float(w, &t, "knockback current resist", 0.0),
+            fx::float(w, &t, "knockback last knock strength", 0.0),
+        ];
+        let tracking = fx::structure(w, "state tracking", &tracking);
+        let target = fx::reference(
+            w,
+            script::vtable::PLACEMENT_REFERENCE,
+            "alerted target",
+            hero_placement,
+        );
+        let told = fx::reference(
+            w,
+            script::vtable::PLACEMENT_REFERENCE,
+            "communicator",
+            chompy1,
+        );
+        let alerted = fx::int(w, &t, "alerted", 2);
+        let attention = fx::structure(w, "", &[alerted, target, told]);
+        let hp = fx::int(w, &t, "hp", 1);
+        let info = fx::structure(w, "", &[hp]);
+        let state = fx::int(w, &t, "state", 0);
+        let timer = fx::float(w, &t, "knockback timer", 0.0);
+        let refs = [
+            fx::reference(w, script::vtable::SCRIPT_REFERENCE, "creature info", info),
+            fx::reference(
+                w,
+                script::vtable::SCRIPT_REFERENCE,
+                "attention parameters",
+                attention,
+            ),
+        ];
+        let desc = fx::structure(w, "", &[state, tracking, timer, refs[0], refs[1]]);
+        let d = fx::reference(w, script::vtable::SCRIPT_REFERENCE, "description", desc);
+        let (chompy2, _) = scripted(
+            w,
+            "Enemy_Chompy(2)",
+            14.0,
+            "attack - nip",
+            &[machine, cooldown, end, hit, d],
+        );
+        let chompy3 = w
+            .actor(&Spec {
+                name: "Enemy_Chompy(3)".into(),
+                ..Spec::default()
+            })
+            .corpus;
+
+        let g = GiantsChains::resolve(&mut f.w, &f.watch, &kinds()).unwrap();
+        // Every path the second Chompy holds, its immunity timer left out;
+        // the first's paths broke at their first step, so each fell to the
+        // second.
+        let labels = |v: &[Followed]| v.iter().map(|f| f.label.clone()).collect::<Vec<_>>();
+        let want: Vec<String> = CHOMPY_VARS
+            .iter()
+            .map(|(l, _)| (*l).to_owned())
+            .filter(|l| l != "immunity timer")
+            .collect();
+        assert_eq!(labels(&g.creature_vars), want);
+        let leaf = |l: &str| g.creature_vars.iter().find(|f| f.label == l).unwrap().leaf;
+        assert_eq!(
+            [
+                leaf("nip"),
+                leaf("actors hit"),
+                leaf("target"),
+                leaf("communicator")
+            ],
+            [Leaf::Number, Leaf::Set, Leaf::Reference, Leaf::Reference]
+        );
+        let all: Vec<String> = HERO_VARS.iter().map(|(l, _)| (*l).to_owned()).collect();
+        assert_eq!(labels(&g.hero_vars), all);
+        assert_eq!(
+            g.referents
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>(),
+            [
+                HERO,
+                "Enemy_Chompy(1)",
+                "Enemy_Chompy(2)",
+                "Enemy_Chompy(3)"
+            ]
+        );
+        assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
+        for slot in [CREATURES, HERO_STATE] {
+            assert_eq!(g.chains.slots[&slot].check(), Ok(()));
+        }
+        // O6's walk: the first Chompy holds none of them, the second every
+        // one, the third no variables at all.
+        let creatures = evaluate(&g.chains.slots[&CREATURES], &mut f.w).unwrap();
+        let every = (1u32 << want.len()) - 1;
+        assert_eq!(
+            creatures
+                .items
+                .iter()
+                .map(|i| (i.address, i.missing))
+                .collect::<Vec<_>>(),
+            [(f.chompy, every), (chompy2, 0), (chompy3, every)]
+        );
+        let hero = evaluate(&g.chains.slots[&HERO_STATE], &mut f.w).unwrap();
+        assert_eq!((hero.items.len(), hero.items[0].missing), (1, 0));
+
+        // Two records: then the second's communicator null, its target a
+        // stranger.
+        let record = |f: &mut Fixture| {
+            let app = f.w.app;
+            let mut payload = f.w.gather(&[(app + 0x54, 0x14)]).unwrap()[0]
+                .clone()
+                .unwrap();
+            for spec in g.chains.slots.values() {
+                payload.extend(block_bytes(spec, &evaluate(spec, &mut f.w).unwrap()));
+            }
+            payload
+        };
+        let first = record(&mut f);
+        f.w.put32(told + 0x1C, 0);
+        f.w.put32(target + 0x1C, f.leaf);
+        f.w.put32(f.w.app + 0x5C, 5961);
+        let second = record(&mut f);
+        let records: Vec<WatchRecord> = [first, second]
+            .into_iter()
+            .enumerate()
+            .map(|(k, payload)| WatchRecord {
+                flip: 100 + k as u64,
+                host_us: 0,
+                missing: 0,
+                read: 0,
+                payload,
+            })
+            .collect();
+        let watch = GiantsWatch {
+            list: WatchList::new(vec![crate::watch::Field::new("app", f.w.app + 0x54, 0x14)])
+                .unwrap(),
+            ..f.watch.clone()
+        };
+        let blocks: Vec<BTreeMap<u8, ChainBlock>> = records
+            .iter()
+            .map(|r| g.chains.split(&watch.list, r).unwrap().1)
+            .collect();
+        let resolved = g.resolve_names(&mut f.w, &blocks).unwrap();
+        let (chain, _) = g.records(&watch, &records, &resolved).unwrap();
+        let item = |k: usize, name: &str| {
+            chain[k]
+                .items
+                .iter()
+                .find(|i| i.placement.as_deref() == Some(name))
+                .unwrap()
+                .vars
+                .clone()
+        };
+        let c2 = item(0, "Enemy_Chompy(2)");
+        assert_eq!(
+            [
+                c2["nip"],
+                c2["substate"],
+                c2["state timer"],
+                c2["cooldown timer"],
+                c2["should end bite now"],
+                c2["actors hit"],
+                c2["target"],
+                c2["communicator"],
+                c2["health"],
+            ],
+            [3.0, 0.0, 33.9, 34.88, 1.0, 1.0, 1.0, 2.0, 1.0]
+        );
+        let c2 = item(1, "Enemy_Chompy(2)");
+        assert_eq!((c2["target"], c2["communicator"]), (-1.0, 0.0));
+        // The first Chompy and the third carry ACTORS' cells alone.
+        assert!(!item(0, "Enemy_Chompy(1)").contains_key("nip"));
+        assert!(!item(0, "Enemy_Chompy(3)").contains_key("nip"));
+        let h = item(0, "009_Eruptor");
+        assert_eq!(
+            [
+                h["hurt state"],
+                h["mode"],
+                h["mode timer"],
+                h["knockback timer"],
+                h["knockback resist"],
+                h["knockback strength"],
+                h["knockback heading"],
+                h["enemies defeated"],
+                h["health"],
+            ],
+            [1.0, 1.0, 145.7316, 227.537, 12.5, 25.0, 20.672, 3.0, 278.0]
+        );
+    }
+
+    /// A fixture whose Chompies' scripts hold none of AH.10's paths (AF.8's
+    /// fresh state: their scripts never started) arms neither chain.
+    #[test]
+    fn no_chompy_or_hero_state_to_follow_arms_neither_chain() {
+        let mut f = fixture();
+        let g = GiantsChains::resolve(&mut f.w, &f.watch, &kinds()).unwrap();
+        assert!(g.creature_vars.is_empty() && g.hero_vars.is_empty());
+        assert_eq!(
+            g.chains.slots.keys().copied().collect::<Vec<_>>(),
+            [ACTORS, ORBS, LOOT, ANIMS]
+        );
+    }
+
     fn block_bytes(spec: &ChainSpec, b: &ChainBlock) -> Vec<u8> {
         let mut out = vec![0u8; spec.bytes()];
         let kept = b.items.len() as u32;

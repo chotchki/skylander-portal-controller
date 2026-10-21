@@ -151,6 +151,9 @@ fn write(root: &Path, label: &str, s: &Script) -> PathBuf {
             updater_index: 3,
             combat_control: 0,
             macros_ui: 0,
+            creature_vars: Vec::new(),
+            hero_vars: Vec::new(),
+            referents: Vec::new(),
         },
         resolved: Resolved {
             clip_names: BTreeMap::from([
@@ -382,4 +385,22 @@ fn a_report_writes_beside_its_rules_and_refuses_a_dir_without_a_peek() {
     assert_eq!(round_up(1.0 / 60.0, 0.005), 0.02);
     assert_eq!(round_up(0.0, 0.005), 0.0);
     assert_eq!(round_up(0.01, 0.005), 0.01);
+}
+
+/// AH.10: a clip the end pause named nothing for (the hurt reaction a bite
+/// lays over the hero's blend) goes by its id, and a named one keeps its name.
+#[test]
+fn every_clip_a_recording_carries_is_named() {
+    let mut names = Names::default();
+    names.clips.insert(IDLE, "Eruptor_Idle.ma".to_owned());
+    let mut frames = vec![frame(0, false, false), frame(1, false, true)];
+    frames[1].clips[1].id = 0x3094_5A70;
+    name_every_clip(&mut names, &Recording::new(frames).unwrap());
+    assert_eq!(
+        names.clips,
+        BTreeMap::from([
+            (IDLE, "Eruptor_Idle.ma".to_owned()),
+            (0x3094_5A70, "clip 0x30945a70".to_owned()),
+        ])
+    );
 }

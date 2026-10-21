@@ -132,7 +132,7 @@ usage:
       them changed; the pack and the dev's RPCS3 dirs are checked unchanged at the end
   oracle goto --out <dir> --route <route.ron> [--state <file>] [--figure <file>]
               [--watch | --chains] [--ring <n>] [--knobs <knobs.ron>] [--boot-secs <n>]
-              [--max-load <x>]
+              [--max-load <x>] [--seed <n>] [--poke <placement>:<path>=<value>]...
       AH.7's route driver: a fresh RPCS3 from the gameplay state ($GUAC_ORACLE_SAVESTATE
       unless --state) with a fresh copy of the figure ($GUAC_ORACLE_FIGURE unless
       --figure), F0 read (actors-f0.json, peek-f0.json, and with $GUAC_GIANTS_DUMP set
@@ -151,7 +151,10 @@ usage:
       record.json, route.json (every pause), input.ron (what port 0 held from F0 + 1,
       for the headless runner), the reads, the shots, the ring and the end state.
       Waits while the 1-minute load is over <max-load> (32) before the boot; the dev's
-      RPCS3 dirs and the home's saves and trophies are checked unchanged at the end
+      RPCS3 dirs and the home's saves and trophies are checked unchanged at the end.
+      --seed (AH.10) writes sgenrand(<n>) into the game's generator at F0, as
+      `rng seed` does, before F0 is read; each --poke sets a placement's script
+      variable (a number, its path dotted) at F0 after the seed
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
@@ -873,6 +876,8 @@ fn goto(mut rest: &[&str]) -> Result<()> {
     let mut ring = 6_000u32;
     let mut boot_wait = divergence::BOOT_WAIT;
     let mut max_load = 32.0f64;
+    let mut seed = None;
+    let mut pokes = Vec::new();
     loop {
         match rest {
             [] => break,
@@ -898,6 +903,8 @@ fn goto(mut rest: &[&str]) -> Result<()> {
                             Duration::from_secs(value.parse().context("--boot-secs takes seconds")?)
                     }
                     "--max-load" => max_load = value.parse().context("--max-load takes a load")?,
+                    "--seed" => seed = Some(value.parse().context("--seed takes a u32")?),
+                    "--poke" => pokes.push(route::session::Poke::parse(value)?),
                     _ => bail!("{USAGE}"),
                 }
             }
@@ -990,6 +997,8 @@ fn goto(mut rest: &[&str]) -> Result<()> {
         watch,
         chains: chained,
         ring,
+        seed,
+        pokes: &pokes,
     };
     let result = route::session::run(&inputs, &plan, knobs, &out);
     match &result {

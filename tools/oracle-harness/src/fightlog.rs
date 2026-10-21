@@ -113,6 +113,21 @@ pub fn names(file: &ChainFile, records: &[ChainRecord]) -> Names {
     out
 }
 
+/// Every clip the recording's frames carry named: one the end pause named
+/// nothing for (AH.10: the hurt reaction a bite lays over the blend reads no
+/// `tfbPhysicsAnimation` name) goes by its id, as the end pause names one
+/// whose name won't read.
+pub fn name_every_clip(names: &mut Names, recording: &Recording) {
+    for frame in recording.frames() {
+        for c in &frame.clips {
+            names
+                .clips
+                .entry(c.id)
+                .or_insert_with(|| format!("clip {:#010x}", c.id));
+        }
+    }
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     serde_json::from_str(
         &fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
@@ -131,7 +146,9 @@ pub fn load(dir: &Path, rules: &ReportRules) -> Result<Replay> {
         .find(|p| p.exists())
         .with_context(|| format!("no F0 peek in {}", dir.display()))?;
     let peek: Peek = read_json(&peek_at)?;
-    let trace = fight_trace(&recording, &records, &names(&file, &records), &rules.spawns)
+    let mut named = names(&file, &records);
+    name_every_clip(&mut named, &recording);
+    let trace = fight_trace(&recording, &records, &named, &rules.spawns)
         .with_context(|| format!("the trace of {}", dir.display()))?;
     let draws = draws(&trace, &peek.mt, rules.max_twists)
         .with_context(|| format!("the draws of {}", dir.display()))?;

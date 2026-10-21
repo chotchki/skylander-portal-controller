@@ -1232,6 +1232,17 @@ impl VerbClient {
         Ok(roundtrip(&self.path, self.timeout, &[request])?.remove(0))
     }
 
+    /// `request`'s reply, then for `linger` more what P1 pushes after it on
+    /// the same connection (P4 drains its portal events right after a reply):
+    /// the reply and every `PE` line seen, before it or after, in order.
+    pub fn roundtrip_draining(
+        &self,
+        request: &str,
+        linger: Duration,
+    ) -> Result<(String, Vec<String>)> {
+        roundtrip_draining(&self.path, self.timeout, request, linger)
+    }
+
     /// `verbs` in order on ONE connection, each reply read before the next
     /// request goes (P1 answers a connection's lines in order): a schedule of
     /// hundreds of `PAD` lines without a connection, and an RPCS3 thread, each.
@@ -1285,6 +1296,71 @@ fn roundtrip(path: &Path, timeout: Duration, requests: &[&str]) -> Result<Vec<St
 
 #[cfg(not(unix))]
 fn roundtrip(_path: &Path, _timeout: Duration, _requests: &[&str]) -> Result<Vec<String>> {
+    bail!("the oracle is Mac only until the Windows/HTPC bring-up")
+}
+
+/// [`VerbClient::roundtrip_draining`].
+#[cfg(unix)]
+fn roundtrip_draining(
+    path: &Path,
+    timeout: Duration,
+    request: &str,
+    linger: Duration,
+) -> Result<(String, Vec<String>)> {
+    use std::io::{BufRead, BufReader, ErrorKind, Write};
+    use std::os::unix::net::UnixStream;
+
+    use skylander_rpcs3_control::ipc::proto::{is_heartbeat, is_portal_event};
+
+    let stream = UnixStream::connect(path)
+        .with_context(|| format!("connecting to P1 at {}", path.display()))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    let mut writer = stream.try_clone()?;
+    let lingering = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
+    writer.write_all(format!("{}\n", request.trim_end()).as_bytes())?;
+    let mut events = Vec::new();
+    let mut line = String::new();
+    let reply = loop {
+        line.clear();
+        if reader.read_line(&mut line).context("reading P1's reply")? == 0 {
+            bail!("P1 closed the connection before replying to {request:?}");
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if is_portal_event(trimmed) {
+            events.push(trimmed.to_owned());
+        } else if !(trimmed.is_empty() || is_heartbeat(trimmed)) {
+            break trimmed.to_owned();
+        }
+    };
+    if !linger.is_zero() {
+        lingering.set_read_timeout(Some(linger))?;
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches(['\r', '\n']);
+                    if is_portal_event(trimmed) {
+                        events.push(trimmed.to_owned());
+                    }
+                }
+                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => break,
+                Err(e) => return Err(e).context("reading what P1 pushed after a reply"),
+            }
+        }
+    }
+    Ok((reply, events))
+}
+
+#[cfg(not(unix))]
+fn roundtrip_draining(
+    _path: &Path,
+    _timeout: Duration,
+    _request: &str,
+    _linger: Duration,
+) -> Result<(String, Vec<String>)> {
     bail!("the oracle is Mac only until the Windows/HTPC bring-up")
 }
 

@@ -64,6 +64,105 @@ pub struct Inputs<'a> {
     pub chains: bool,
     /// The ring's records.
     pub ring: u32,
+    /// `sgenrand(seed)` written into the game's generator at F0, before
+    /// anything is read or runs (AH.10's reseeded replays, `rng seed`'s
+    /// write); none leaves the state's own.
+    pub seed: Option<u32>,
+    /// Script variables set at F0, after the seed and before F0's reads
+    /// (AH.10's stagings).
+    pub pokes: &'a [Poke],
+}
+
+/// A placement's script variable set at F0 before anything runs:
+/// `<placement>:<path, dotted>=<value>`, the placement one the actor list
+/// holds, the cell a number (an integer cell takes the value truncated).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Poke {
+    pub placement: String,
+    pub path: Vec<String>,
+    pub value: f64,
+}
+
+impl Poke {
+    pub fn parse(text: &str) -> Result<Self> {
+        let (placement, rest) = text
+            .split_once(':')
+            .with_context(|| format!("{text:?}: a poke is <placement>:<path>=<value>"))?;
+        let (path, value) = rest
+            .rsplit_once('=')
+            .with_context(|| format!("{text:?}: a poke is <placement>:<path>=<value>"))?;
+        let path: Vec<String> = path.split('.').map(str::to_owned).collect();
+        if placement.is_empty() || path.iter().any(String::is_empty) {
+            bail!("{text:?}: an empty placement or step");
+        }
+        let value: f64 = value
+            .parse()
+            .with_context(|| format!("{text:?}: {value:?} isn't a number"))?;
+        if !value.is_finite() {
+            bail!("{text:?}: {value} isn't finite");
+        }
+        Ok(Self {
+            placement: placement.to_owned(),
+            path,
+            value,
+        })
+    }
+}
+
+/// A poke as it went: the cell and what it held before and after.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PokeDone {
+    pub poke: Poke,
+    pub cell: u32,
+    pub before: crate::script::Number,
+    pub after: crate::script::Number,
+}
+
+/// The bytes a number cell's value word takes for `value`, by the cell's
+/// kind.
+pub fn poked_word(was: crate::script::Number, value: f64) -> (crate::script::Number, [u8; 4]) {
+    match was {
+        crate::script::Number::Float(_) => {
+            let v = value as f32;
+            (crate::script::Number::Float(v), v.to_bits().to_be_bytes())
+        }
+        crate::script::Number::Int(_) => {
+            let v = value.trunc() as i32;
+            (crate::script::Number::Int(v), v.to_be_bytes())
+        }
+    }
+}
+
+/// `poke` written through PINE at the pause the run is in, read back.
+fn poke(pine: &mut PineClient, frame: &ActorFrame, poke: &Poke) -> Result<PokeDone> {
+    let actor = frame
+        .actors
+        .iter()
+        .find(|a| a.name.as_deref() == Some(poke.placement.as_str()))
+        .with_context(|| format!("no `{}` on the actor list", poke.placement))?;
+    let cells = crate::script::variables(pine, actor.placement)?
+        .with_context(|| format!("`{}` never started its script", poke.placement))?;
+    let path: Vec<&str> = poke.path.iter().map(String::as_str).collect();
+    let mut types = crate::script::Types::default();
+    let (cell, before) =
+        crate::script::number_at(pine, &mut types, &cells, &path, &poke.placement)?;
+    let (after, bytes) = poked_word(before, poke.value);
+    pine.write_paused(cell.at + 0x20, &bytes)
+        .with_context(|| format!("writing {}:{}", poke.placement, poke.path.join(".")))?;
+    let read = crate::script::number(pine, &mut types, cell.at, "the poked cell")?;
+    if read != after {
+        bail!(
+            "{}:{} reads {read:?} after writing {after:?}",
+            poke.placement,
+            poke.path.join(".")
+        );
+    }
+    Ok(PokeDone {
+        poke: poke.clone(),
+        cell: cell.at,
+        before,
+        after,
+    })
 }
 
 /// A `SCREENSHOT` by its plan label, with the flip it shows, the file it was
@@ -105,6 +204,12 @@ pub struct GotoRecord {
     pub state: String,
     pub state_sha256: String,
     pub figure_sha256: String,
+    /// The seed written at F0, if any ([`Inputs::seed`]).
+    #[serde(default)]
+    pub seed: Option<u32>,
+    /// The pokes written at F0 ([`Inputs::pokes`]).
+    #[serde(default)]
+    pub pokes: Vec<PokeDone>,
     pub before: Host,
     pub after: Host,
     pub boot_secs: f64,
@@ -284,6 +389,8 @@ pub fn run(inputs: &Inputs, plan: &RoutePlan, knobs: Knobs, out: &Path) -> Resul
         state: file_name(inputs.state),
         state_sha256,
         figure_sha256,
+        seed: inputs.seed,
+        pokes: d.pokes,
         before,
         after: Host::now(),
         boot_secs: d.boot_secs,
@@ -309,6 +416,7 @@ pub fn run(inputs: &Inputs, plan: &RoutePlan, knobs: Knobs, out: &Path) -> Resul
 
 struct Driven {
     boot_secs: f64,
+    pokes: Vec<PokeDone>,
     trace: Trace,
     shots: Vec<ShotTaken>,
     reads: Vec<ReadTaken>,
@@ -338,7 +446,9 @@ fn drive_live(
     )?;
     let held = oracle.wait_paused(inputs.boot_wait)?;
     let boot_secs = launched.elapsed().as_secs_f64();
-    let control = oracle.control();
+    // P4's portal events ride the drive's `STATE` reads (AH.10: the tag
+    // writes), into `portal-events.json` at the end.
+    let control = oracle.control().with_portal_events();
     control.driver().reconnect()?;
     let copy = oracle.run_paths().tmp.join("figure.sky");
     fs::copy(inputs.figure, &copy)
@@ -351,6 +461,18 @@ fn drive_live(
     rng::check_title(&mut pine)?;
     if control.state()?.frames != held.frames {
         bail!("the run moved off Start Paused's pause before F0 was read");
+    }
+    // A reseeded replay's generator, as `oracle rng seed` writes it, before
+    // F0's reads (its peek then counts draws from the seed).
+    if let Some(seed) = inputs.seed {
+        rng::seed(&mut pine, seed).with_context(|| format!("seeding the generator with {seed}"))?;
+    }
+    let mut pokes = Vec::with_capacity(inputs.pokes.len());
+    if !inputs.pokes.is_empty() {
+        let frame = actors::read_frame(&mut pine).context("the actors for the pokes")?;
+        for p in inputs.pokes {
+            pokes.push(poke(&mut pine, &frame, p)?);
+        }
     }
     // The route's placements per frame need the fight's cells to ride on
     // (AH.4's watch) and the disc to find them.
@@ -415,6 +537,11 @@ fn drive_live(
         ),
         None => None,
     };
+    let path = rrc_dump::output::refuse_repo_output(&dir.join(PORTAL_EVENTS_FILE))?;
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&control.portal_events())?,
+    )?;
     // The route's record: its steps, what fired per frame (named while PINE
     // is still open), what changed between reads, the scripts that started.
     if inputs.disc.is_some() {
@@ -456,6 +583,7 @@ fn drive_live(
     let shutdown = format!("{:?}", oracle.shutdown()?);
     Ok(Driven {
         boot_secs,
+        pokes,
         trace,
         shots,
         reads,
@@ -470,6 +598,10 @@ fn drive_live(
 /// The route's placements' wake state per frame, beside the record
 /// (`route-frames.json`).
 pub const ROUTE_FRAMES_FILE: &str = "route-frames.json";
+
+/// P4's portal events the drive's `STATE` reads caught, each stamped with its
+/// `STATE` ([`crate::control::PortalSeen`]).
+pub const PORTAL_EVENTS_FILE: &str = "portal-events.json";
 
 /// One record of a route's watch: the game frame, the hero's pivot, the
 /// fight's cells and each watched placement's wake state
@@ -658,6 +790,56 @@ mod tests {
     use super::*;
     use crate::fight::Trigger;
     use crate::level::SectionBase;
+    use crate::script::Number;
+
+    /// AH.10's pokes: a placement, a dotted path through names with spaces,
+    /// a number; anything else refused.
+    #[test]
+    fn a_poke_reads_its_placement_path_and_value_and_refuses_the_rest() {
+        let p = Poke::parse("Enemy_Chompy(2):description.creature info.hp=100").unwrap();
+        assert_eq!(
+            p,
+            Poke {
+                placement: "Enemy_Chompy(2)".into(),
+                path: vec!["description".into(), "creature info".into(), "hp".into()],
+                value: 100.0,
+            }
+        );
+        // The value is what follows the last `=`; a path may hold a colon's
+        // worth of nothing else.
+        let q = Poke::parse("a:b.c=-2.5").unwrap();
+        assert_eq!((q.path.len(), q.value), (2, -2.5));
+        for bad in [
+            "no colon=1",
+            "a:b.c",
+            ":b=1",
+            "a:=1",
+            "a:b..c=1",
+            "a:b=x",
+            "a:b=inf",
+            "a:b=NaN",
+        ] {
+            assert!(Poke::parse(bad).is_err(), "{bad} should be refused");
+        }
+    }
+
+    /// An integer cell takes the value truncated toward zero, a float cell
+    /// the nearest single.
+    #[test]
+    fn a_poked_word_takes_its_cells_kind() {
+        assert_eq!(
+            poked_word(Number::Int(1), 100.0),
+            (Number::Int(100), 100i32.to_be_bytes())
+        );
+        assert_eq!(
+            poked_word(Number::Int(1), -2.9),
+            (Number::Int(-2), (-2i32).to_be_bytes())
+        );
+        assert_eq!(
+            poked_word(Number::Float(0.0), 0.1),
+            (Number::Float(0.1), 0.1f32.to_bits().to_be_bytes())
+        );
+    }
 
     fn trigger(name: &str, fired: Option<bool>) -> Trigger {
         Trigger {
