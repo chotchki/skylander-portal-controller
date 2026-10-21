@@ -1699,8 +1699,8 @@ mod tests {
     /// AG.29: an alert reads back as drawn, its lines, full screen, the
     /// corner join code beside it; the screen's tree hidden under the level
     /// (AG.50) draws none of its cards or join lines, while the corner's
-    /// join code stands over it. The alert gone, the corner goes with the
-    /// level's end.
+    /// join code stands over it. The alert gone, the corner stays over the
+    /// level and goes with its end.
     #[test]
     fn an_alert_and_the_corner_join_code_read_back_and_a_hidden_screen_draws_no_card() {
         use crate::play::{Alert, Play};
@@ -1760,6 +1760,15 @@ mod tests {
         );
         assert_eq!((shot.players, shot.join_address.as_deref()), (None, None));
         assert!(shot.join_corner);
+
+        // The alert gone, the level still shown: the corner alone.
+        app.insert_resource(Play::started_for_tests(Entity::PLACEHOLDER));
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().clone();
+        assert!(shot.alert.is_none(), "{:?}", shot.alert);
+        assert!(shot.join_corner, "the join code over the level alone");
 
         // No alert and no level: neither drawn.
         app.insert_resource(Play::default());
