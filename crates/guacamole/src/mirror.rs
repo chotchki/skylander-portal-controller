@@ -35,7 +35,7 @@ use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::level::{Level, LevelReport};
-use crate::pad::{LevelPads, Pause, labels};
+use crate::pad::{FacesPrinted, LevelPads, Pause, labels};
 use crate::pause::{LevelOverlay, PromptGlyph};
 use crate::play::{HeroReport, Mode, Play};
 use crate::prepare::{Prepare, PrepareReport};
@@ -634,7 +634,7 @@ fn input_shot(
     intro_playing: bool,
     (level, gamepads, overlays, glyphs): (
         Option<Res<LevelPads>>,
-        Query<(&Gamepad, Option<&Name>)>,
+        Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
         Query<(Entity, &LevelOverlay)>,
         Query<&PromptGlyph>,
     ),
@@ -653,13 +653,13 @@ fn input_shot(
         .order()
         .iter()
         .filter_map(|e| gamepads.get(*e).ok().map(|g| (*e, g)))
-        .map(|(entity, (pad, name))| {
+        .map(|(entity, (pad, name, printed))| {
             let stick = pad.left_stick();
             PadShot {
                 name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
                 vendor: pad.vendor_id(),
                 product: pad.product_id(),
-                labels: labels(pad).name().to_owned(),
+                labels: labels(pad, printed).name().to_owned(),
                 stick: [stick.x, stick.y],
                 walking: seat.and_then(|s| s.walking()) == Some(entity),
             }
@@ -711,7 +711,7 @@ fn mirror_tv(
         Query<&FocusId>,
         (
             Option<Res<LevelPads>>,
-            Query<(&Gamepad, Option<&Name>)>,
+            Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
             Query<(Entity, &LevelOverlay)>,
             Query<&PromptGlyph>,
         ),

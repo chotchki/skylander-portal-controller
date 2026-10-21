@@ -2,7 +2,7 @@
 
 ## Purpose
 
-How guacamole reads a game pad in a level and names its buttons on the TV: buttons by position, the original's stick dead zone, which pad walks the hero and prompts that show the label printed on the pad in the player's hands.
+How guacamole reads a game pad in a level and names its buttons on the TV: buttons by position, every press however short, the original's stick dead zone, which pad walks the hero, prompts that show the label printed on the pad in the player's hands and Home kept from macOS.
 
 ## ADDED Requirements
 
@@ -12,6 +12,13 @@ In a level, guacamole SHALL read a pad's four face buttons by position (bottom, 
 #### Scenario: Two 8BitDo variants
 - **WHEN** the level is paused and the bottom face button is pressed on the PC variant (A printed there), then it's paused again and the bottom face button is pressed on the Switch variant (B printed there)
 - **THEN** both presses resume the level
+
+### Requirement: Every press counts
+A press on a pad SHALL count however short it is, a press and its release between two of the TV's frames included.
+
+#### Scenario: A tap between two frames
+- **WHEN** the level is paused and the bottom face button is pressed and let go between two of the TV's frames
+- **THEN** the level resumes
 
 ### Requirement: The move stick's dead zone
 The left stick SHALL read each axis as centred while it's a quarter of its travel or less off centre (32 of the 128 steps either side), and past that count from nothing to full at full travel, so a push between the axes walks the hero nearer the closer axis than the stick points. Its strength SHALL be the two axes' combined length, capped at full; the hero's top speed scales with it.
@@ -32,6 +39,10 @@ The left stick SHALL read each axis as centred while it's a quarter of its trave
 - **WHEN** the left stick reads 49 of its 128 steps to the right and 118 forward, a round-gate pad pushed to its rim 22.55° off forward
 - **THEN** the hero walks 11.18° off forward at 91.32 % of his top speed
 
+#### Scenario: The 8BitDo's corner
+- **WHEN** the 8BitDo's left stick is pushed into a corner on the Mac, its gate's rim there about 0.8 of full travel on each axis
+- **THEN** the hero walks at his top speed
+
 ### Requirement: One pad walks the hero
 The hero SHALL follow the first pad connected; another pad's stick and face buttons SHALL NOT move him. When that pad disconnects, or none is connected when the level starts, the level SHALL wait under a message asking for a controller, and a press on any connected pad SHALL make it the hero's and carry on.
 
@@ -44,7 +55,7 @@ The hero SHALL follow the first pad connected; another pad's stick and face butt
 - **THEN** the level pauses under the message, then carries on with the other pad walking him
 
 ### Requirement: Prompts name the button printed on the pad
-Where the TV names a pad button, it SHALL show the label printed at that position on the player's pad: Xbox-style on a PC-layout pad (A at the bottom, B on the right), Nintendo-style on a Switch-layout pad (B at the bottom, A on the right). For a pad it can't identify it SHALL show the button's position, never a PlayStation symbol or another pad's label.
+Where the TV names a pad button, it SHALL show the label printed at that position on the player's pad: Xbox-style on a PC-layout pad (A at the bottom, B on the right), Nintendo-style on a Switch-layout pad (B at the bottom, A on the right). On the Mac a pad's layout SHALL be the letters macOS names its face buttons by. For a pad it can't identify it SHALL show the button's position, never a PlayStation symbol or another pad's label.
 
 #### Scenario: The pause overlay on each 8BitDo
 - **WHEN** the level is paused from the PC variant, then from the Switch variant
@@ -60,3 +71,10 @@ Start on any connected pad SHALL pause the level under an overlay naming the but
 #### Scenario: Pause and resume
 - **WHEN** Start is pressed while Eruptor walks, then the bottom face button
 - **THEN** everything stops under the overlay, then carries on from where it stopped
+
+### Requirement: Home stays with the game
+On the Mac, while guacamole is in front, a pad's Home button SHALL NOT open macOS's game overlay or another app, and SHALL change nothing while the hero walks.
+
+#### Scenario: Home while Eruptor walks
+- **WHEN** Home is pressed on the 8BitDo while Eruptor walks on the Mac
+- **THEN** he walks on as before and macOS's Games app doesn't open

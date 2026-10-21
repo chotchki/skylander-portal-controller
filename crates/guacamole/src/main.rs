@@ -269,34 +269,39 @@ fn run_tv(
     exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(window(mode)),
-                ..default()
-            })
-            // `logging::init` owns the global subscriber.
-            .disable::<LogPlugin>(),
-    )
-    .insert_resource(link)
-    .insert_resource(PortalFeed(portal))
-    .insert_resource(shelf)
-    .insert_resource(level)
-    .insert_resource(Setup(setup_view))
-    .insert_resource(Framing(mode))
-    .insert_resource(DataRoot(root))
-    .insert_resource(latency)
-    .add_plugins((
-        ServerBridge,
-        Tv,
-        input::InputRouter,
-        Picker,
-        extraction::ExtractPlugin,
-        intro_player::IntroPlugin,
-        physics::SeamPlugin,
-        play::PlayPlugin,
-        progress::ProgressPlugin,
-    ));
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(window(mode)),
+            ..default()
+        })
+        // `logging::init` owns the global subscriber.
+        .disable::<LogPlugin>();
+    // One source per pad (AG.53): on macOS GameController reads them, and
+    // gilrs, which reads nothing of an 8BitDo there (AG.5), stays off.
+    #[cfg(target_os = "macos")]
+    let plugins = plugins.disable::<bevy::gilrs::GilrsPlugin>();
+    app.add_plugins(plugins);
+    #[cfg(target_os = "macos")]
+    app.add_plugins(guacamole::game_controller::GameControllerPads);
+    app.insert_resource(link)
+        .insert_resource(PortalFeed(portal))
+        .insert_resource(shelf)
+        .insert_resource(level)
+        .insert_resource(Setup(setup_view))
+        .insert_resource(Framing(mode))
+        .insert_resource(DataRoot(root))
+        .insert_resource(latency)
+        .add_plugins((
+            ServerBridge,
+            Tv,
+            input::InputRouter,
+            Picker,
+            extraction::ExtractPlugin,
+            intro_player::IntroPlugin,
+            physics::SeamPlugin,
+            play::PlayPlugin,
+            progress::ProgressPlugin,
+        ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));
     }

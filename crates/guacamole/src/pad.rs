@@ -4,8 +4,9 @@
 //!
 //! - The move stick reads raw: Bevy's dead zone and change threshold are off
 //!   for both left-stick axes on every pad ([`raw_stick`], set by
-//!   [`read_sticks_raw`]), so the value a pad stores is the last one gilrs
-//!   sent (bevy_gilrs builds gilrs without its own filters). The original's
+//!   [`read_sticks_raw`]), so the value a pad stores is the last one its
+//!   source sent (GameController's float on macOS; elsewhere gilrs's, which
+//!   bevy_gilrs builds without its own filters). The original's
 //!   per-axis dead zone, rescale and cap, and the direction against the view's
 //!   heading, are `guac-motion`'s ([`guac_motion::stick`]), inside the
 //!   hero's step.
@@ -18,24 +19,30 @@
 //! - Face buttons by position: the walking pad's bottom, right, left and top
 //!   as the hero's input holds them, whatever is printed on them.
 //! - Prompts name the label printed on the pad in hand ([`labels`],
-//!   [`prompt`]): Xbox letters on a pad the table knows as a PC layout,
-//!   Nintendo's on a Switch layout, the button's position for any other. The
-//!   table is empty until AG.5 reads the 8BitDo ids, so every pad gets the
-//!   position glyph meanwhile, which names no label it can't back (design
-//!   Open question 5's (b)).
+//!   [`prompt`]): Xbox letters on a PC layout, Nintendo's on a Switch
+//!   layout, the button's position for any other. On macOS the pads come
+//!   from GameController (AG.53, [`guacamole::game_controller`]) without
+//!   ids, and the letters are the ones Apple names each position's element
+//!   by ([`FacesPrinted`]): AG.5 found the 8BitDo's printing matches them
+//!   position for position. Elsewhere the id table decides, empty until the
+//!   Windows/HTPC bring-up reads the 8BitDo's ids through gilrs there, so a
+//!   pad gets the position glyph meanwhile, which names no label it can't
+//!   back (design Open question 5's (b)).
 //!
-//! Hypothesis, until AG.5 measures the 8BitDo's gate: a full push into a
-//! corner reads as the pad sends it, the gate not squared. On a round gate
-//! the rim's diagonal reads about 0.707 an axis, which the dead zone turns
-//! into 0.862 of top speed; pad-input's Between the axes is that rim read as
-//! is (49 and 118 of 128 at 22.55° off forward).
+//! The corner, settled for the 8BitDo on macOS (AG.49): GameController
+//! reads each axis to exactly 1 at full travel and its rim square-ish (about
+//! 0.80 an axis at 45°), so a full diagonal's push caps at 1 and walks at
+//! top speed. pad-input's Between the axes is a round gate's rim read as is
+//! (49 and 118 of 128 at 22.55° off forward), the value a pad that reads
+//! round would send.
 
 use bevy::input::gamepad::{AxisSettings, Gamepad, GamepadAxis, GamepadButton, GamepadSettings};
 use bevy::prelude::*;
 use guac_motion::stick::Stick;
+pub(crate) use guacamole::game_controller::FacesPrinted;
 use tracing::info;
 
-/// Both left-stick axes as gilrs sends them: the live zone the whole travel,
+/// Both left-stick axes as the pad sends them: the live zone the whole travel,
 /// no dead zone, every change kept (Bevy's defaults: a dead zone of 0.05
 /// either side and changes under 0.01 dropped).
 pub(crate) fn raw_stick() -> AxisSettings {
@@ -348,16 +355,8 @@ impl LevelPads {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Labels {
     /// A at the bottom, B on the right, X on the left, Y at the top.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first pads join the table with AG.5 (AG.49)")
-    )]
     Xbox,
     /// B at the bottom, A on the right, Y on the left, X at the top.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first pads join the table with AG.5 (AG.49)")
-    )]
     Nintendo,
     /// A pad the table doesn't place: the button's position, drawn.
     Position,
@@ -373,8 +372,8 @@ impl Labels {
     }
 }
 
-/// A pad AG.5 identified: the vendor and product ids gilrs reports for it on
-/// the Mac, and the labels printed on it.
+/// A pad identified by the vendor and product ids gilrs reports for it, and
+/// the labels printed on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Printed {
     pub(crate) vendor: u16,
@@ -382,8 +381,11 @@ pub(crate) struct Printed {
     pub(crate) labels: Labels,
 }
 
-/// AG.5's table. Empty until its probe reads the 8BitDo Ultimate 2's ids,
-/// wired and wireless, in both variants (AG.49).
+/// The id table, for pads gilrs reads (every platform but macOS). Empty: AG.5
+/// found the 8BitDo Ultimate 2 unreadable through gilrs on the Mac (its
+/// dongle and cable have no HID interface there, and over Bluetooth gilrs
+/// reads nothing), so its rows come from gilrs on XInput at the Windows/HTPC
+/// bring-up (openspec/backlog.md).
 pub(crate) const PRINTED: &[Printed] = &[];
 
 /// The labels on a pad with these ids, by `table`; [`Labels::Position`] for
@@ -398,9 +400,25 @@ pub(crate) fn labels_in(table: &[Printed], vendor: Option<u16>, product: Option<
         .map_or(Labels::Position, |p| p.labels)
 }
 
-/// The labels on `pad`, by AG.5's table.
-pub(crate) fn labels(pad: &Gamepad) -> Labels {
-    labels_in(PRINTED, pad.vendor_id(), pad.product_id())
+/// The labels the letters a platform read off the pad name, bottom, right,
+/// left and top: Xbox's or Nintendo's when all four are exactly one of
+/// them, else the position (a PlayStation pad's shapes, a pad Apple names
+/// no letters on, a mix).
+pub(crate) fn labels_printed(faces: [Option<char>; 4]) -> Labels {
+    match faces {
+        [Some('A'), Some('B'), Some('X'), Some('Y')] => Labels::Xbox,
+        [Some('B'), Some('A'), Some('Y'), Some('X')] => Labels::Nintendo,
+        _ => Labels::Position,
+    }
+}
+
+/// The labels on `pad`: by the letters read off it where its source gives
+/// them (GameController on macOS), else by the id table.
+pub(crate) fn labels(pad: &Gamepad, printed: Option<&FacesPrinted>) -> Labels {
+    match printed {
+        Some(FacesPrinted(faces)) => labels_printed(*faces),
+        None => labels_in(PRINTED, pad.vendor_id(), pad.product_id()),
+    }
 }
 
 /// What the TV names a button by: the letter printed on it, or its
@@ -908,5 +926,190 @@ mod tests {
         app.update();
         let pads = app.world().resource::<LevelPads>();
         assert_eq!(pads.seat().and_then(Seat::walking), Some(high));
+    }
+
+    /// The labels from the letters a platform read off the pad: Xbox's or
+    /// Nintendo's only when all four are exactly one of them; and they win
+    /// over the id table, which stays the source without them.
+    #[test]
+    fn labels_from_the_letters_read_off_the_pad() {
+        let at = |s: &str| {
+            let mut c = s.chars().map(|c| (c != '-').then_some(c));
+            [(); 4].map(|_| c.next().flatten())
+        };
+        assert_eq!(labels_printed(at("ABXY")), Labels::Xbox);
+        assert_eq!(labels_printed(at("BAYX")), Labels::Nintendo);
+        for other in ["----", "ABYX", "BAXY", "AB-Y", "XYAB"] {
+            assert_eq!(labels_printed(at(other)), Labels::Position, "{other}");
+        }
+        let mut world = World::new();
+        let pad = world.spawn(Gamepad::default()).id();
+        let gamepad = world.get::<Gamepad>(pad).unwrap();
+        assert_eq!(labels(gamepad, None), Labels::Position, "no ids");
+        assert_eq!(
+            labels(gamepad, Some(&FacesPrinted(at("BAYX")))),
+            Labels::Nintendo
+        );
+        assert_eq!(
+            prompt(
+                labels(gamepad, Some(&FacesPrinted(at("BAYX")))),
+                Face::South
+            ),
+            Prompt::Letter("B")
+        );
+    }
+
+    /// GameController's pads (AG.53) through the router, on a fake of the
+    /// framework: the first connected walks; its letters name the overlay's
+    /// prompt (a Switch Pro's bottom button is B); and a press and release
+    /// of its bottom button inside one frame resumes the level as a press.
+    mod game_controller {
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+        use std::rc::Rc;
+
+        use guacamole::game_controller::{Controllers, Element, Glyph, Opened, PadState, install};
+
+        use super::super::*;
+        use crate::pause;
+
+        /// Pads by key, each with its category and queued readings.
+        #[derive(Clone, Default)]
+        struct Fake(Rc<RefCell<Vec<(u64, &'static str, VecDeque<PadState>)>>>);
+
+        impl Controllers for Fake {
+            fn connected(&mut self) -> Vec<u64> {
+                self.0.borrow().iter().map(|p| p.0).collect()
+            }
+            fn open(&mut self, key: u64) -> Option<Opened> {
+                let category = self.0.borrow().iter().find(|p| p.0 == key)?.1;
+                Some(Opened {
+                    name: format!("pad {key}"),
+                    category: category.into(),
+                    glyphs: ["a", "b", "x", "y"].map(|l| Glyph {
+                        symbol: Some(format!("{l}.circle")),
+                        localized: None,
+                    }),
+                    state: PadState::default(),
+                })
+            }
+            fn queue(&mut self, _: u64, _: usize) -> bool {
+                true
+            }
+            fn claim_home(&mut self, _: u64) -> bool {
+                true
+            }
+            fn next_state(&mut self, key: u64) -> Option<PadState> {
+                let mut pads = self.0.borrow_mut();
+                pads.iter_mut().find(|p| p.0 == key)?.2.pop_front()
+            }
+            fn close(&mut self, _: u64) {}
+        }
+
+        impl Fake {
+            fn connect(&self, key: u64, category: &'static str) {
+                self.0.borrow_mut().push((key, category, VecDeque::new()));
+            }
+            fn send(&self, key: u64, state: PadState) {
+                let mut pads = self.0.borrow_mut();
+                pads.iter_mut()
+                    .find(|p| p.0 == key)
+                    .unwrap()
+                    .2
+                    .push_back(state);
+            }
+        }
+
+        fn app(fake: &Fake) -> App {
+            let mut app = App::new();
+            app.add_plugins((
+                MinimalPlugins,
+                bevy::input::InputPlugin,
+                crate::input::InputRouter,
+            ));
+            install(&mut app, Box::new(fake.clone()));
+            app
+        }
+
+        fn entity_of(app: &mut App, name: &str) -> Entity {
+            app.world_mut()
+                .query::<(Entity, &Name)>()
+                .iter(app.world())
+                .find(|(_, n)| n.as_str() == name)
+                .map(|(e, _)| e)
+                .unwrap()
+        }
+
+        #[test]
+        fn game_controller_pads_walk_pause_and_resume_through_the_router() {
+            let fake = Fake::default();
+            let mut app = app(&fake);
+            fake.connect(1, "Switch Pro Controller");
+            app.update();
+            fake.connect(2, "Xbox One");
+            app.update();
+            let (switch, xbox) = (entity_of(&mut app, "pad 1"), entity_of(&mut app, "pad 2"));
+            assert_eq!(app.world().resource::<LevelPads>().order(), [switch, xbox]);
+            app.world_mut().resource_mut::<LevelPads>().show();
+            app.update();
+            let walking = |app: &App| {
+                let pads = app.world().resource::<LevelPads>();
+                pads.seat().and_then(Seat::walking)
+            };
+            assert_eq!(walking(&app), Some(switch), "the first connected walks");
+
+            // The stick lands raw, as Apple sends it.
+            fake.send(
+                1,
+                PadState {
+                    left: Vec2::new(0.004, 0.8027),
+                    ..default()
+                },
+            );
+            app.update();
+            let seat = |app: &App| app.world().resource::<LevelPads>().seat().unwrap().clone();
+            assert_eq!(seat(&app).last().stick, Stick::new(0.004, 0.8027));
+
+            // Start (Apple's Menu) on the Xbox pad pauses; the prompt is the
+            // bottom button as printed on it.
+            fake.send(2, PadState::default().with(Element::Menu, true));
+            fake.send(2, PadState::default());
+            app.update();
+            assert_eq!(seat(&app).pause(), Some(Pause::Start { by: xbox }));
+            let labels_of = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(Entity, &Gamepad, Option<&FacesPrinted>)>();
+                let found: Vec<(Entity, Labels)> = q
+                    .iter(app.world())
+                    .map(|(e, g, p)| (e, labels(g, p)))
+                    .collect();
+                move |pad: Entity| found.iter().find(|(e, _)| *e == pad).unwrap().1
+            };
+            let of = labels_of(&mut app);
+            let level = app.world().resource::<LevelPads>();
+            assert_eq!(
+                pause::wanted(level, &of),
+                Some(pause::LevelOverlay::Paused(Prompt::Letter("A")))
+            );
+            assert_eq!(of(switch), Labels::Nintendo);
+
+            // A tap of the Switch Pro's bottom button (Apple's B) inside one
+            // frame resumes.
+            fake.send(1, PadState::default().with(Element::B, true));
+            fake.send(1, PadState::default());
+            app.update();
+            assert_eq!(seat(&app).pause(), None, "the sub-frame tap resumed");
+
+            // Paused from the Switch Pro: B.
+            fake.send(1, PadState::default().with(Element::Menu, true));
+            app.update();
+            let of = labels_of(&mut app);
+            let level = app.world().resource::<LevelPads>();
+            assert_eq!(
+                pause::wanted(level, &of),
+                Some(pause::LevelOverlay::Paused(Prompt::Letter("B")))
+            );
+        }
     }
 }

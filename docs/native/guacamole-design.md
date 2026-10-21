@@ -1901,11 +1901,24 @@ the pad in the player's hands.
   shortcut, so Guacamole sees the real device instead of Steam's virtual pad. Telling the variants apart
   is probably SDL3-class identification, vendor and product id against a gamepad database (SDL3 picks a
   pad's face labels that way). Bevy's `Gamepad` does carry the vendor and product id its gilrs backend
-  reports; whether that's enough to tell the two 8BitDo variants apart is unverified on the Mac and on
-  Windows. If it isn't, this doc's fallback was a glyph-set choice in settings; what the prompts show
-  then is chotchki's call, AG's Open question 5 (a settings choice, one per pad, or a position glyph that
-  claims no label), asked only if AG.5's probe finds the two alike.
-- What the Home button does in Guacamole is open (Open question 1).
+  reports; whether that's enough to tell the 8BitDo apart from an Xbox-lettered pad on Windows is the
+  bring-up's to check. If it isn't, this doc's fallback was a glyph-set choice in settings; what the
+  prompts show then is chotchki's call, AG's Open question 5 (a settings choice, one per pad, or a
+  position glyph that claims no label).
+- On the Mac the pads come from Apple's GameController.framework, not gilrs (AG.53,
+  [`game_controller.rs`](../../crates/guacamole/src/game_controller.rs)). AG.5 (2026-10-20, chotchki's one
+  8BitDo Ultimate 2, Nintendo letters printed) found its dongle and cable present XInput, which nothing
+  on macOS reads, and over Bluetooth it's a Switch Pro that gilrs connects and then reads nothing of,
+  while GameController reads every element. So on macOS bevy_gilrs is off (one source per pad), a
+  `NonSend` system drains each pad's input-state queue into Bevy's own gamepad stream every frame (a tap
+  inside one frame still counts), faces map by position per product category (the Switch Pro measured:
+  Apple's B at the bottom), and a prompt's letter is the one Apple names the element at that position by,
+  which matches the 8BitDo's printing position for position. No ids reach Bevy there, so the id table is
+  gilrs's, for Windows.
+- What the Home button does in Guacamole is open (Open question 1). For now it does nothing (chotchki,
+  2026-10-20): on the Mac guacamole turns off Home's system gesture, which otherwise opens macOS's Games
+  app, so a press arrives and is ignored; a switch-games or exit screen is a backlog idea (the Home menu
+  line).
 - Hardware checks ("all non-urgent testing"):
   - On the Mac, with any `guacamole` build: does each variant show up with an identity Guacamole can map
     to the right glyphs, and does Home reach Guacamole? This half moved into AG as its first input box
