@@ -71,7 +71,7 @@ A hero SHALL turn to face the way he walks, the short way, at 1440°/s × S for 
 - **THEN** in each frame his walk sits over 21.5 ft/s plus 1e-4 ft/s it steers, 6-8° a frame, and a walk that stays over meets the door's face; under it, or cut back to 21.5 ft/s by a frame off the ground, it turns at once and he walks free
 
 ### Requirement: Walls
-A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, and slide him along it at his walking speed times 1 − 0.1235 × (1 − sin θ), θ the push's angle from head-on, from 2° on; let go, he slows along it as on open ground. Nearer head-on he SHALL creep along it at the push's share of his speed (0.12 m/s at 1.06°) and, within 0.15°, stop dead the frame he meets it and stay while the stick holds.
+A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, and slide him along it at his walking speed times 1 − 0.1235 × (1 − sin θ), θ the push's angle from head-on, from 2° on; let go, he slows along it as on open ground. Nearer head-on he SHALL creep along it at the push's share of his speed (0.12 m/s at 1.06°) and, within 0.15°, stop dead the frame he meets it and stay while the stick holds. None SHALL slow his walk: pushed against one he runs on the spot.
 
 #### Scenario: Along a wall
 - **WHEN** Eruptor walks at full stick into the wall behind the start at 2°, 5°, 10°, 20°, 45° and 70° from head-on
@@ -84,6 +84,10 @@ A wall or a solid prop SHALL hold a hero 5 mm off its face, never lifting him, a
 #### Scenario: Head-on
 - **WHEN** Eruptor walks at full stick straight into the wall behind the start, or into the gate's door
 - **THEN** he stops dead the frame he reaches it, 5 mm off its face (at the door his pivot 1.4781 m from its middle), and stays there while the stick holds
+
+#### Scenario: Held against it
+- **WHEN** Eruptor is held at full stick into the wall behind the start for 4.5 s head-on, run into it from 9 m off, or slid along it at 20° into its east corner
+- **THEN** his walk stays at 21.5 ft/s against it (a frame at 20.1-20.3 where it creeps past the tolerance), he runs on the spot with his run at 102.4 % and its stride running on, and let go he slows on the spot as on open ground, his run giving way to his walk over 7 frames
 
 #### Scenario: Into the corner by the gate
 - **WHEN** the stick and frame steps of an oracle recording walk Eruptor into the corner by the gate
@@ -154,6 +158,14 @@ A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his
 - **WHEN** Eruptor walks at full stick into the wall behind the start, past which the level holds nothing
 - **THEN** he walks up to it and slides along it as he does along any wall, never stopped short of it
 
+#### Scenario: Past the gate's door's end
+- **WHEN** Eruptor walks at full stick from the start into the gate's door and slides east along it
+- **THEN** past its end, over the bridge's foot, he stops dead at (19.70-19.72, −83.69..−83.70), his walk read at its slope's share of 21.5 ft/s that frame (2.2-2.7 ft/s); the stick held, every second frame's push is let through and zeroed again, 9-10 times over 0.30-0.34 s, each read at 0.12-0.15 ft/s, until he has drifted back far enough that the point it looks at slower than 2 ft/s leaves the space under the door (its face within 0.5 mm)
+
+#### Scenario: Into the corner of the wall behind the start
+- **WHEN** Eruptor slides along the wall behind the start at 20° from head-on into its east corner, past which the level holds nothing
+- **THEN** he runs on the spot in the corner, and the frame the point ahead clears the wall's end the probe stops him for that frame; the next he sets off again from rest
+
 #### Scenario: Where the ledge route lets him off
 - **WHEN** Eruptor walks at full stick at the ledge route's edge over the corridor, head-on, 17°-70° east of head-on or 34°-64° west of it, or creeps at it under 2 ft/s
 - **THEN** head-on and east of head-on he walks off anywhere along it from its west end, and 42° west of it only from 0.65 m along it, where his pivot crosses the edge before the next frame's probe stops him dead over it, so he slips down the cliff for 0.9-1.0 s with his walk held at 0; creeping 5.5° east of head-on he walks off 0.78 m along it
@@ -204,7 +216,7 @@ A hero SHALL NOT jump: no button lifts a hero off the ground, as in the original
 - **THEN** he stays on the ground
 
 ### Requirement: Idle, walk and run
-A hero SHALL stand in his idle and move in his walk and run, mixed by the speed he walks at: all walk to 12 ft/s (3.658 m/s), all run from 21 ft/s (6.401 m/s), in proportion between, each playing at that speed over its own (in the mix the walk at 100-160 %, the run in step with it). Setting off SHALL take him off the idle over 0.25 s and coming to rest back onto it over 0.30 s, eased in and out. Falling faster than 20 ft/s SHALL blend in his fall over 0.2 s, out over 0.12 s once he's down.
+A hero SHALL stand in his idle and move in his walk and run mixed by the speed he walks at: all walk to 12 ft/s (3.658 m/s), all run from 21 ft/s (6.401 m/s), linear between, each at that speed over its own (mixed, the walk at 100-160 %, the run in step). Setting off SHALL take him off the idle over 0.25 s, coming to rest back over 0.30 s, eased; a push an edge stops SHALL restart his walk, not set him off. Falling past 20 ft/s SHALL blend in his fall over 0.2 s, out over 0.12 s once down.
 
 #### Scenario: Off at full stick
 - **WHEN** the stick is pushed fully over with Eruptor standing on level ground
@@ -219,8 +231,16 @@ A hero SHALL stand in his idle and move in his walk and run, mixed by the speed 
 - **THEN** his run gives way to his walk as he slows, all walk 0.10-0.14 s later and at rest 0.25-0.27 s later; from the frame after he's at rest his idle comes back over 0.30 s, slow at first and last, whole 0.57-0.60 s after the let-go, his walk keeping its last rate as it fades
 
 #### Scenario: Into a wall
-- **WHEN** Eruptor walks at full stick straight into the wall behind the start, or into the gate's door
-- **THEN** he runs on the spot, his run playing at 102.4 %
+- **WHEN** Eruptor walks at full stick straight into the wall behind the start, or into the gate's door, and the stick holds there for up to 4.5 s
+- **THEN** he runs on the spot, his run playing at 102.4 % with its stride running on and never restarting
+
+#### Scenario: Let go from a long run
+- **WHEN** the stick is let go after 1.25 s or 9 s of Eruptor at top speed
+- **THEN** under the pure run his walk has played on at the last mix's rate (144-147 %), out of step with the run, and the first frame of the mix the run jumps to the walk's place in its stride, 0.03-0.41 of its cycle at 89-92 % of the weight
+
+#### Scenario: Held at an edge with the stick pushed
+- **WHEN** Eruptor slides along the gate's door at full stick to its end over the bridge's foot, where the edge probe stops him, and the stick stays held
+- **THEN** his run gives way to his walk the frame he stops; from the next his idle comes back over 0.30 s, eased, unbroken by the pushes the probe lets through and zeroes again, each of which restarts his walk a quarter into its stride, so it holds there as it fades
 
 #### Scenario: His fall
 - **WHEN** Eruptor walks off the ledge route's edge into the corridor

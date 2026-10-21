@@ -263,6 +263,8 @@ pub(crate) struct GaitReport {
     pub air: String,
     /// The stand/move switch's side.
     pub moving: bool,
+    /// His last step's edge probe held him (AG.58).
+    pub held: bool,
     /// Game steps since he came in.
     pub step: u64,
 }
@@ -281,6 +283,7 @@ impl GaitReport {
             ],
             air: l.air().name().to_owned(),
             moving: l.moving(),
+            held: l.held(),
             step: l.steps(),
         }
     }

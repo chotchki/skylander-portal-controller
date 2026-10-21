@@ -30,6 +30,15 @@
 //!   rate rising over the first 30 % of its time and falling over the last
 //!   30 %, `slide value`'s ease 15 and 15) and runs from where the last one
 //!   got to over its own full time.
+//! - **Held at an edge** (AG.58). A frame whose push the edge probe zeroed
+//!   ([`Frame::held`]) reads only the walk's vertical part, a slope's share
+//!   of the push (0.12-0.15 ft/s at the bridge's foot), and doesn't set him
+//!   off: the walk restarts a quarter in and the run's rate is set, but the
+//!   idle's slide in carries on. With the stick held there the probe lets
+//!   every second frame's push through and zeroes it again, so the walk's
+//!   stride holds at a quarter as it fades (AG.58's three door runs: the
+//!   idle's own weight on the eased 0.30 s slide from the frame after the
+//!   stop to 1e-7 on every record, 9-10 such restarts each).
 //! - **The fall.** A frame reads the move and the height the frame before
 //!   left. Down faster than 20 ft/s with his pivot 1.5 ft or more over the
 //!   ground below (or over none), and no fall playing, everything above
@@ -52,10 +61,11 @@
 //!   on Eruptor, his 1 + 0.6 × the share to 1.07e-5 % over all 4,583 mix
 //!   records): a constant 0.6 reads the same until another character's
 //!   recording (AG.27);
-//! - where the edge probe holds him with the stick still pushed (37 of
-//!   AG.11's stops), his walk is zeroed before the speed is read, so he
-//!   stops: the walk's weight follows the 0.30 s slide there as AG.11
-//!   recorded, while the original's idle and run flip each frame;
+//! - which pose the original shows while held at an edge: its records flip
+//!   each frame, one with the idle at 100 beside a walk at the rest of the
+//!   idle's own weight, the next with the run at the walk's weight; the
+//!   stand-in draws the idle at its own weight and no run (AG.58), and its
+//!   idle plays on where the original's time steps back a frame each push;
 //! - the fall clip takes what the gaits give up (the weights summing to 1)
 //!   and plays from its start at 100 %, looping: its weight, time and rate
 //!   aren't in any recording (AG.54 names them);
@@ -284,6 +294,9 @@ pub struct Frame {
     /// His pivot over the ground below after the move, metres; `None` over
     /// none. The next frame's fall reads it with `falling`.
     pub height: Option<f32>,
+    /// The edge probe zeroed his walk across the ground this frame, so
+    /// `speed` is its vertical part alone ([`crate::hero::Hero::probe_held`]).
+    pub held: bool,
 }
 
 impl Frame {
@@ -293,6 +306,7 @@ impl Frame {
             speed: hero.gait_speed,
             falling: -hero.velocity.y / FOOT,
             height: hero.footing.height,
+            held: hero.probe_held,
         }
     }
 }
@@ -310,6 +324,8 @@ pub struct Locomotion {
     air: Air,
     run_share: f32,
     speed: f32,
+    /// The last frame's edge probe held him ([`Frame::held`]).
+    held: bool,
     /// The frame before's move down, ft/s, and the height it left him at,
     /// metres: the fall reads them.
     fell: f32,
@@ -334,6 +350,7 @@ impl Locomotion {
             air: Air::Ground,
             run_share: 0.0,
             speed: 0.0,
+            held: false,
             fell: 0.0,
             was: None,
             steps: 0,
@@ -370,6 +387,12 @@ impl Locomotion {
     /// The run's share of the gaits the last frame read.
     pub fn run_share(&self) -> f32 {
         self.run_share
+    }
+
+    /// The last frame's edge probe held him, so its speed was his walk's
+    /// vertical part alone.
+    pub fn held(&self) -> bool {
+        self.held
     }
 
     /// He's on the moving side of the stand/move switch.
@@ -439,13 +462,19 @@ impl Locomotion {
         let mut set_off = false;
         if moving && !self.moving {
             set_off = true;
-            self.still = Slide {
-                from: self.still.value(),
-                to: 0.0,
-                time: SET_OFF,
-                ease: EASE,
-                elapsed: 0.0,
-            };
+            // Held at an edge, the push that frame's probe zeroed leaves a
+            // speed only on a slope: the walk restarts and the run's rate is
+            // set as at any set-off, but he stays on the stood side, so the
+            // idle's slide in carries on (AG.58).
+            if !frame.held {
+                self.still = Slide {
+                    from: self.still.value(),
+                    to: 0.0,
+                    time: SET_OFF,
+                    ease: EASE,
+                    elapsed: 0.0,
+                };
+            }
             if let Some(walk) = self.loops.walk {
                 self.plays[Clip::Walk.index()] = Play {
                     time: WALK_START * f64::from(walk),
@@ -465,7 +494,9 @@ impl Locomotion {
             };
             self.plays[Clip::Idle.index()] = Play::START;
         }
-        self.moving = moving;
+        if !(set_off && frame.held) {
+            self.moving = moving;
+        }
 
         let share = match (self.loops.walk, self.loops.run) {
             (Some(_), None) => 0.0,
@@ -500,6 +531,7 @@ impl Locomotion {
 
         self.run_share = share;
         self.speed = speed;
+        self.held = frame.held;
         self.fell = frame.falling;
         self.was = frame.height;
         self.steps += 1;
@@ -574,6 +606,7 @@ mod tests {
             speed,
             falling: 0.0,
             height: Some(0.005),
+            held: false,
         }
     }
 
@@ -866,6 +899,7 @@ mod tests {
             speed: 21.5f32.hypot(falling),
             falling,
             height: Some(height),
+            held: false,
         };
         let mut l = eruptor();
         for _ in 0..30 {
@@ -937,6 +971,7 @@ mod tests {
             speed: 30.0,
             falling: 22.0,
             height: Some(0.5),
+            held: false,
         };
         let mut l = eruptor();
         l.step(DT, on_ground(21.5));
@@ -973,6 +1008,7 @@ mod tests {
             speed: 25.0,
             falling: 25.0,
             height: Some(3.0),
+            held: false,
         };
         l.step(DT, fast);
         l.step(DT, fast);
@@ -1022,6 +1058,7 @@ mod tests {
                     speed: 21.5,
                     falling: 40.0,
                     height: None,
+                    held: false,
                 },
             );
         }

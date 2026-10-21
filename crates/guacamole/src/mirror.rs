@@ -506,6 +506,11 @@ pub(crate) struct GaitStep {
     pub rates: [f32; 2],
     pub clip: &'static str,
     pub air: &'static str,
+    /// The stand/move switch's side after the step.
+    pub moving: bool,
+    /// The step's edge probe held him, so the speed it read is his walk's
+    /// vertical part alone (AG.58).
+    pub held: bool,
 }
 
 /// The hero's locomotion step by step, oldest first; a hero coming in
@@ -582,6 +587,8 @@ fn log_gaits(
             ],
             clip: l.top().name(),
             air: l.air().name(),
+            moving: l.moving(),
+            held: l.held(),
         });
 }
 
@@ -1618,6 +1625,8 @@ mod tests {
             rates: [1.0, 1.0],
             clip,
             air: "ground",
+            moving: n > 1,
+            held: false,
         };
         let get = |since: &'static str| {
             let routes = routes::<()>(&mirror);

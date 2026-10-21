@@ -149,12 +149,15 @@ off. The walking fixture carries a hero side too (openspec AG.30: walk,
 run and falling clips on the synthetic skeleton, each holding its top
 joint at its own `E2E_GAIT_X`), and the mirror's `hero.gait` (the
 heaviest `clip`, the `speed_ft` his walk read, `run_share`, `weights`
-idle, walk, run and fall, the walk's and run's `rates`, `air`) shows him
+idle, walk, run and fall, the walk's and run's `rates`, `air`, the
+stand/move switch's side `moving`, and `held`, whether his last step's
+edge probe zeroed his walk across the ground: AG.58) shows him
 in his idle at the start, running pushed along the wall at full stick
 (21.5 ft/s, the run at 102.4 %) and back in his idle let go;
 `GET /api/_test/tv/gaits?since=<step>` (`gaits_tv`) hands out every
 step's (`step`, the fixed clock's `time`, the `stick` and its
-`strength`, `speed_ft`, `run_share`, `weights`, `rates`, `clip`, `air`)
+`strength`, `speed_ft`, `run_share`, `weights`, `rates`, `clip`, `air`,
+`moving`, `held`)
 after `since` with the last step's number as `now`, and the test checks
 each step's run share is AG.11's of its speed. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
