@@ -204,15 +204,35 @@ A hero SHALL NOT jump: no button lifts a hero off the ground, as in the original
 - **THEN** he stays on the ground
 
 ### Requirement: Idle, walk and run
-A hero SHALL stand in his own idle animations, drawn from the set the original plays for him standing (not necessarily the one it picks at that moment), and move in his own walk or run animation, switching between them at the speeds the original does, his steps keeping pace with how fast he moves.
+A hero SHALL stand in his idle and move in his walk and run, mixed by the speed he walks at: all walk to 12 ft/s (3.658 m/s), all run from 21 ft/s (6.401 m/s), in proportion between, each playing at that speed over its own (in the mix the walk at 100-160 %, the run in step with it). Setting off SHALL take him off the idle over 0.25 s and coming to rest back onto it over 0.30 s, eased in and out. Falling faster than 20 ft/s SHALL blend in his fall over 0.2 s, out over 0.12 s once he's down.
 
-#### Scenario: Speeding up
-- **WHEN** Eruptor goes from rest to top speed
-- **THEN** he goes from his idle into his walk and run as the original's Eruptor does at those speeds, his feet keeping pace with the ground
+#### Scenario: Off at full stick
+- **WHEN** the stick is pushed fully over with Eruptor standing on level ground
+- **THEN** his idle gives way over 0.25 s of game time, slow at first and last, to his walk, which starts a quarter of the way into its stride; his run joins 0.065-0.069 s after he first moves and has it all 0.115-0.135 s after, playing at 102.4 %
+
+#### Scenario: Half stick and creeping
+- **WHEN** Eruptor walks on level ground at half stick, or creeps at 0.068 m/s
+- **THEN** he walks with no run, his walk playing at 89.6 % and 1.9 %, and leaves his idle as he does at full stick
+
+#### Scenario: Coming to rest
+- **WHEN** the stick is let go with Eruptor at top speed on level ground
+- **THEN** his run gives way to his walk as he slows, all walk 0.10-0.14 s later and at rest 0.25-0.27 s later; from the frame after he's at rest his idle comes back over 0.30 s, slow at first and last, whole 0.57-0.60 s after the let-go, his walk keeping its last rate as it fades
+
+#### Scenario: Into a wall
+- **WHEN** Eruptor walks at full stick straight into the wall behind the start, or into the gate's door
+- **THEN** he runs on the spot, his run playing at 102.4 %
+
+#### Scenario: His fall
+- **WHEN** Eruptor walks off the ledge route's edge into the corridor
+- **THEN** the frame after he first falls faster than 20 ft/s his fall comes in over 0.2 s, his run fading under it, with no landing animation after; once it's wholly in, his run comes back over 0.12 s from the frame after he's within half a foot of the ground
+
+#### Scenario: A drop under 20 ft/s
+- **WHEN** Eruptor walks off the ledge route's edge where the corridor's slope is 0.6 m or less below it
+- **THEN** he never falls faster than 20 ft/s and runs on through it with no fall
 
 #### Scenario: Standing
 - **WHEN** Eruptor stands at the level's start for a minute
-- **THEN** every idle he plays is one the original's Eruptor plays standing there
+- **THEN** he plays his idle loop throughout and no other animation
 
 ### Requirement: The same walk at any frame rate
 A hero SHALL cover the same ground in the same game time whatever the TV's frame rate, the game stepping 60 times a second, as the original does at full speed.
