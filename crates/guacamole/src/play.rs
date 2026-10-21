@@ -1532,6 +1532,16 @@ mod tests {
             (count(|s| &s.spawned), count(|s| &s.gone))
         };
         assert_eq!(spawned(&app), (0, 0));
+        // One writer (design decision 5): his walk is his scripts', and the
+        // synthetic minion's walk nothing, so the stick moves him nowhere.
+        let still = hero(&app).pivot;
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(hero(&app).pivot, still, "the stick isn't his walk's writer");
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        app.update();
         // Held: one throw, its clip on him and the ball drawn in flight.
         test_pad::button(&mut app, pad, GamepadButton::South, true);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1552,6 +1562,9 @@ mod tests {
             1,
             "his throw plays on him"
         );
+        // Drawn over his idle: the made-up throw holds the top joint at the
+        // walk clip's x, where his idle sways it between 0 and 0.5.
+        assert!((top_x(&app) - WALK_X).abs() < 1e-4, "{}", top_x(&app));
         while spawned(&app).1 == 0 {
             assert!(Instant::now() < deadline, "the ball never landed");
             app.update();
