@@ -582,3 +582,94 @@ fn lists_that_share_their_words_stop_at_the_entry_budget() {
     assert_eq!(e.field, "_count");
     assert!(matches!(e.kind, ErrorKind::OutOfRange { .. }), "{e}");
 }
+
+/// AH.24's synthetic attack reads back through the graph and the
+/// placements' reader: its global's portal manager running its script, the
+/// fighter's definition running and his minion and the ball templates, each
+/// under the script names the TV's whitelist runs, the ball naming its
+/// model; its init setup a file of one script and no placement.
+#[test]
+fn the_synthetic_attack_reads_back() {
+    use super::builder::{ATTACK_BALL, ATTACK_BALL_MODEL, attack};
+    use crate::level::Placements;
+    let a = attack();
+    let scripts = |bytes: &[u8]| -> Vec<String> {
+        let igz = Igz::parse(bytes).unwrap();
+        Graph::read(&igz)
+            .unwrap()
+            .scripts
+            .iter()
+            .map(|s| {
+                s.name
+                    .unwrap_or_default()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    };
+    assert_eq!(scripts(&a.global), ["Spyro_PortalManager.ai"]);
+    assert_eq!(scripts(&a.init_setup), ["Init_Setup_Synthetic.ai"]);
+    let mut fighter = scripts(&a.fighter);
+    fighter.sort();
+    assert_eq!(
+        fighter,
+        ["009_Def_Eruptor.ai", "009_Eruptor.ai", "009_MagmaBall.ai"]
+    );
+    let placed = |bytes: &[u8]| -> Vec<(String, u32, String, Option<String>)> {
+        let igz = Igz::parse(bytes).unwrap();
+        let p = Placements::read(&igz).unwrap();
+        p.actors
+            .iter()
+            .map(|a| {
+                (
+                    a.name().unwrap_or_default().to_owned(),
+                    a.placement().placement.activity_state,
+                    a.script
+                        .unwrap_or_default()
+                        .rsplit('/')
+                        .next()
+                        .unwrap()
+                        .to_owned(),
+                    p.model_path(a).map(str::to_owned),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        placed(&a.global),
+        [(
+            "Spyro_PortalManager".to_owned(),
+            4,
+            "Spyro_PortalManager.ai".to_owned(),
+            None
+        )]
+    );
+    assert!(placed(&a.init_setup).is_empty());
+    let mut fighter = placed(&a.fighter);
+    fighter.sort();
+    assert_eq!(
+        fighter,
+        [
+            (
+                "009_Eruptor".to_owned(),
+                5,
+                "009_Eruptor.ai".to_owned(),
+                None
+            ),
+            (
+                "009_Eruptor_Def".to_owned(),
+                4,
+                "009_Def_Eruptor.ai".to_owned(),
+                None
+            ),
+            (
+                ATTACK_BALL.to_owned(),
+                5,
+                "009_MagmaBall.ai".to_owned(),
+                Some(ATTACK_BALL_MODEL.to_owned())
+            ),
+        ]
+    );
+}

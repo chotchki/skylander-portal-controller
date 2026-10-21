@@ -1815,18 +1815,19 @@ mod tests {
             (r#"{"pad":0,"press":"start","stick":[0,0]}"#, 400),
             (r#"{"pad":0}"#, 400),
             (r#"{"pad":0,"jump":"south"}"#, 400),
-            // AH.24's: a held button, its release and a pulse.
-            (r#"{"pad":0,"hold":"south"}"#, 202),
-            (r#"{"pad":0,"release":"r2"}"#, 202),
-            (r#"{"pad":0,"hold":"jump"}"#, 400),
-            (r#"{"pad":0,"hold":"west","release":"west"}"#, 400),
-            (r#"{"pad":0,"pulse":{"button":"south","presses":60}}"#, 202),
-            (r#"{"pad":0,"pulse":{"button":"south","presses":0}}"#, 400),
+            // AH.24's: a held button, its release and a pulse (on a pad
+            // never connected, so the run below never sees them).
+            (r#"{"pad":3,"hold":"south"}"#, 202),
+            (r#"{"pad":3,"release":"r2"}"#, 202),
+            (r#"{"pad":3,"hold":"jump"}"#, 400),
+            (r#"{"pad":3,"hold":"west","release":"west"}"#, 400),
+            (r#"{"pad":3,"pulse":{"button":"south","presses":60}}"#, 202),
+            (r#"{"pad":3,"pulse":{"button":"south","presses":0}}"#, 400),
             (
-                r#"{"pad":0,"pulse":{"button":"south","presses":1801}}"#,
+                r#"{"pad":3,"pulse":{"button":"south","presses":1801}}"#,
                 400,
             ),
-            (r#"{"pad":0,"pulse":{"button":"jump","presses":2}}"#, 400),
+            (r#"{"pad":3,"pulse":{"button":"jump","presses":2}}"#, 400),
             ("pad", 400),
         ] {
             assert_eq!(post(body).await, status, "{body}");
@@ -1909,6 +1910,87 @@ mod tests {
             ("another", Some(11720))
         );
         assert_eq!(shot.hero_stick, Some([0.0, 1.0]));
+    }
+
+    /// AH.24: a posted pad's button held until released, read as held by
+    /// Bevy's own systems; a pulse down a game step and up the next, each
+    /// press read by one step as the hero's attack and no more, that many
+    /// times.
+    #[test]
+    fn a_posted_pad_holds_and_pulses_by_game_steps() {
+        use crate::hero::HeroActions;
+        let mirror = TvMirror::default();
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::input::InputPlugin,
+            crate::input::InputRouter,
+        ))
+        .init_resource::<HeroActions>()
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f64(1.0 / 60.0),
+        ))
+        .init_resource::<PadSteps>()
+        .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
+        .add_systems(FixedUpdate, count_pad_steps);
+        app.insert_resource(mirror.clone());
+        // Each game step reads the attacks as the scripts' step does.
+        #[derive(Resource, Default)]
+        struct Read(Vec<[bool; 4]>);
+        app.init_resource::<Read>().add_systems(
+            FixedUpdate,
+            |mut a: ResMut<HeroActions>, mut read: ResMut<Read>| {
+                let now = a.take();
+                read.0.push(now);
+            },
+        );
+        let push = |act: PadAct| mirror.4.push(PadPost { pad: 0, act });
+        push(PadAct::Connect {
+            name: "pulse pad".into(),
+            vendor: None,
+            product: None,
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<crate::pad::LevelPads>()
+            .show();
+        for _ in 0..3 {
+            app.update();
+        }
+        let pad = {
+            let mut q = app.world_mut().query::<(Entity, &Gamepad)>();
+            q.iter(app.world()).next().unwrap().0
+        };
+        let held = |app: &App, b| app.world().get::<Gamepad>(pad).unwrap().pressed(b);
+        push(PadAct::Hold(GamepadButton::West));
+        for _ in 0..5 {
+            app.update();
+            assert!(held(&app, GamepadButton::West));
+        }
+        push(PadAct::Release(GamepadButton::West));
+        app.update();
+        assert!(!held(&app, GamepadButton::West));
+        let from = app.world().resource::<Read>().0.len();
+        push(PadAct::Pulse(GamepadButton::South, 3));
+        for _ in 0..12 {
+            app.update();
+        }
+        let read = &app.world().resource::<Read>().0[from..];
+        let south: Vec<bool> = read.iter().map(|a| a[0]).collect();
+        assert_eq!(
+            south.iter().filter(|s| **s).count(),
+            3,
+            "three presses: {south:?}"
+        );
+        let first = south.iter().position(|s| *s).unwrap();
+        assert_eq!(
+            &south[first..first + 5],
+            [true, false, true, false, true],
+            "every other step: {south:?}"
+        );
     }
 
     /// AP.5: `south` is queued and the router takes it as the screen's

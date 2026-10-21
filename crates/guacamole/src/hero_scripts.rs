@@ -945,6 +945,7 @@ pub(crate) mod tests {
         let pivot = run.bench.heroes[&HERO].pivot;
         // Held a step: one throw.
         let before = run.world.clones().len();
+        run.step([true, false, false, false]);
         let slots: Vec<u32> = run
             .world
             .sequences()
