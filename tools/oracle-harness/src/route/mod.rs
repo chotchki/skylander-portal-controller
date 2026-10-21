@@ -71,7 +71,7 @@ pub enum Step {
         off: f64,
     },
     /// The pad at rest until his pivot and the camera's eye have held still
-    /// over `flips` flips.
+    /// over `flips` flips, looked at from the step's own first look on.
     Settle { flips: u64 },
     /// The stick held full toward `toward` for `flips` flips, then let go, as
     /// part of the schedule the presses and waits around it make, so no pause
@@ -636,9 +636,12 @@ impl Driver {
                 }
                 Step::Settle { flips } => {
                     if self.held_still(seen) {
-                        let since = *self
-                            .still_since
-                            .get_or_insert(self.last.as_ref().map_or(seen.flip, |l| l.flip));
+                        // Counted from the step's first look at the earliest:
+                        // the look before it can sit a press's or a wait's run
+                        // back, and saw nothing of what moved in between.
+                        let since = *self.still_since.get_or_insert(
+                            self.last.as_ref().map_or(seen.flip, |l| l.flip).max(began),
+                        );
                         if seen.flip - since >= flips {
                             self.advance();
                             continue;

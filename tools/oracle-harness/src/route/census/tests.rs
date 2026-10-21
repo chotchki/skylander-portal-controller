@@ -295,6 +295,41 @@ fn what_changed_between_two_reads_and_the_scripts_that_started() {
     assert!(RouteRecord::scripts_between(&after, &after).is_empty());
 }
 
+#[test]
+fn a_started_flag_alone_is_a_change_and_a_clock_alone_ran() {
+    let mut l = level();
+    let frame = actors::read(&mut l.w).unwrap();
+    let before = read(&mut l.w, &frame, &l.disc, &[]).unwrap();
+    // Its STARTUP ran and nothing else of it moved: a change, and its script
+    // started.
+    let activate = HEAP + l.disc.offsets()["Activate_Norticus and Chompies"];
+    l.w.put32(activate + 0x1C, 0x8);
+    // A placement with no script whose clock started: it ran, under no
+    // script, and isn't a change.
+    let sheep = HEAP + l.disc.offsets()["Sheep_1"];
+    l.w.putf(sheep + 0xB4, 0.05);
+    let after = read(&mut l.w, &frame, &l.disc, &[]).unwrap();
+    let changes = after.changes_since(&before);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].name, "Activate_Norticus and Chompies");
+    assert_eq!(
+        (&changes[0].from, &changes[0].to),
+        (&(2, false, None), &(2, true, None))
+    );
+    assert_eq!(
+        RouteRecord::scripts_between(&before, &after),
+        [
+            ("(no script)".to_owned(), vec!["Sheep_1".to_owned()]),
+            (
+                "Activate_Norticus_Chompies.ai".to_owned(),
+                vec!["Activate_Norticus and Chompies".to_owned()]
+            ),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
 fn wake(state: u32, behaviour: u32, secs: f32) -> Wake {
     Wake {
         activity_state: state,

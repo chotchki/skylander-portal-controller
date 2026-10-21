@@ -706,15 +706,6 @@ fn a_tilt_goes_in_with_the_presses_and_waits_around_it_as_one_schedule() {
 #[test]
 fn settle_waits_for_the_eye_as_well_as_him() {
     let mut fake = Fake::new(SPAWN, 15.0);
-    let route = plan(vec![
-        Step::Press {
-            buttons: [Button::South].into(),
-            flips: 1,
-        },
-        Step::Read {
-            label: "moved".into(),
-        },
-    ]);
     // Moved off, then the view swung: he's still at once, the eye isn't.
     let walk = plan(vec![via(14.0, -93.0), Step::Settle { flips: 30 }]);
     let trace = drive(&mut fake, &walk, Knobs::default()).unwrap();
@@ -730,10 +721,140 @@ fn settle_waits_for_the_eye_as_well_as_him() {
     let end = trace.looks.last().unwrap().seen;
     let before = trace.looks[trace.looks.len() - 2].seen;
     assert!((end.eye[0] - before.eye[0]).abs() <= 1e-3);
-    // And a settle that follows nothing moving ends after its flips.
+    // A settle in a still world ends once it has seen its flips of stillness.
     let mut still = Fake::new(SPAWN, 15.0);
-    let trace = drive(&mut still, &route, Knobs::default()).unwrap();
+    let trace = drive(
+        &mut still,
+        &plan(vec![Step::Settle { flips: 30 }]),
+        Knobs::default(),
+    )
+    .unwrap();
     assert_eq!(trace.outcome, Outcome::Done);
+    assert_eq!(trace.flips, 30);
+    // Straight after a run of 100 flips it never looked inside, it still
+    // sees its 30 from its own first look: the look before the press saw
+    // nothing of what the run did.
+    let mut after = Fake::new(SPAWN, 15.0);
+    let trace = drive(
+        &mut after,
+        &plan(vec![
+            Step::Press {
+                buttons: [Button::South].into(),
+                flips: 1,
+            },
+            Step::Wait { flips: 99 },
+            Step::Settle { flips: 30 },
+        ]),
+        Knobs::default(),
+    )
+    .unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    assert_eq!(trace.flips, 100 + 30);
+}
+
+#[test]
+fn a_turn_that_never_comes_round_is_given_up_at_its_own_budget() {
+    // A world that undoes every tap: the face is given up past its 300
+    // flips, well inside a step's 3,600.
+    struct Stiff<'a>(&'a mut Fake);
+    impl Session for Stiff<'_> {
+        fn look(&mut self) -> Result<(u64, ActorFrame)> {
+            self.0.look()
+        }
+        fn run(&mut self, script: &InputScript, flips: u64) -> Result<()> {
+            let (pos, facing) = (self.0.pos, self.0.facing);
+            self.0.run(script, flips)?;
+            (self.0.pos, self.0.facing, self.0.vel) = (pos, facing, [0.0; 2]);
+            self.0.write();
+            Ok(())
+        }
+        fn shot(&mut self, label: &str) -> Result<()> {
+            self.0.shot(label)
+        }
+        fn read(&mut self, label: &str, frame: &ActorFrame) -> Result<()> {
+            self.0.read(label, frame)
+        }
+    }
+    let mut fake = Fake::new(SPAWN, 15.0);
+    let west = Point { x: 0.0, z: SPAWN.z };
+    let trace = drive(
+        &mut Stiff(&mut fake),
+        &plan(vec![Step::Face {
+            toward: west,
+            within: 0.5,
+            off: 0.0,
+        }]),
+        Knobs::default(),
+    )
+    .unwrap();
+    let Outcome::Stuck(Stuck::Budget {
+        step,
+        budget,
+        began,
+        flip,
+        ..
+    }) = trace.outcome
+    else {
+        panic!("{:?}", trace.outcome);
+    };
+    assert_eq!((step, budget, began), (0, 300, 2));
+    assert!(flip - began > 300 && flip - began <= 303, "{flip}");
+}
+
+#[test]
+fn a_run_that_pauses_anywhere_but_where_it_was_sent_is_refused() {
+    struct Late<'a>(&'a mut Fake);
+    impl Session for Late<'_> {
+        fn look(&mut self) -> Result<(u64, ActorFrame)> {
+            self.0.look()
+        }
+        fn run(&mut self, script: &InputScript, flips: u64) -> Result<()> {
+            self.0.run(script, flips)?;
+            self.0.step(&PadState::default());
+            Ok(())
+        }
+        fn shot(&mut self, label: &str) -> Result<()> {
+            self.0.shot(label)
+        }
+        fn read(&mut self, label: &str, frame: &ActorFrame) -> Result<()> {
+            self.0.read(label, frame)
+        }
+    }
+    let mut fake = Fake::new(SPAWN, 15.0);
+    let e = drive(
+        &mut Late(&mut fake),
+        &plan(vec![Step::Wait { flips: 10 }]),
+        Knobs::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{e:#}").contains("paused at 13, not at 12"),
+        "{e:#}"
+    );
+}
+
+#[test]
+fn the_recorded_input_only_goes_forward_and_leaves_repeats_out() {
+    let pad = |b: Button| PadState {
+        buttons: [b].into(),
+        ..PadState::default()
+    };
+    let mut input = vec![(5, pad(Button::South))];
+    // Another state at the same flip, or an earlier one, is refused...
+    assert!(record(&mut input, 5, &[(0, pad(Button::West))]).is_err());
+    assert!(record(&mut input, 3, &[(0, pad(Button::West))]).is_err());
+    assert_eq!(input, vec![(5, pad(Button::South))]);
+    // ...a repeat of the state before is left out and a change kept.
+    record(
+        &mut input,
+        6,
+        &[(0, pad(Button::South)), (2, PadState::default())],
+    )
+    .unwrap();
+    assert_eq!(
+        input,
+        vec![(5, pad(Button::South)), (8, PadState::default())]
+    );
 }
 
 #[test]
@@ -869,4 +990,42 @@ fn the_drivers_decisions_on_looks_made_by_hand() {
     };
     assert_eq!(began, 2);
     assert!(flip - began > k.budget && flip - began <= k.budget + 10);
+    // A long walk that keeps gaining is never given up however long it
+    // takes: patience counts from the last 0.2 m gained, not the first look
+    // (0.15 m a look, so every other look gains less than that).
+    let mut d = Driver::new(plan(vec![via(0.0, -93.0)]), k);
+    for i in 0..100u64 {
+        let x = 60.0 - 0.15 * i as f64;
+        assert!(
+            d.next(&look(2 + 8 * i, x, -93.0, 1.9, 0.0)).is_ok(),
+            "look {i}"
+        );
+    }
+    // Half a metre off a stop: let go above 1.1 × 3 m/s for each metre left
+    // to the radius's half (1.485 m/s here), the stick held under it.
+    let mut d = Driver::new(stop.clone(), k);
+    assert!(is_rest(&d.next(&look(2, 0.5, -93.0, 1.5, 0.0)).unwrap()));
+    let mut d = Driver::new(stop.clone(), k);
+    assert!(!is_rest(&d.next(&look(2, 0.5, -93.0, 1.4, 0.0)).unwrap()));
+    // Inside the radius, his pivot not moved but a velocity reading: still
+    // moving, so he's let slide; at 0 the stop is done.
+    let mut d = Driver::new(stop.clone(), k);
+    assert!(is_rest(&d.next(&look(2, 0.05, -93.0, 0.5, 0.0)).unwrap()));
+    assert_eq!(
+        d.next(&look(4, 0.05, -93.0, 0.0, 0.0)).unwrap(),
+        Order::Done
+    );
+    // Pushing against something, his pivot and the eye fixed but his
+    // velocity reading: not still, however long; the ten flips up to the
+    // first look reading 0 settle it.
+    let mut d = Driver::new(plan(vec![Step::Settle { flips: 10 }]), k);
+    for i in 0..5u64 {
+        assert!(is_rest(
+            &d.next(&look(2 + 10 * i, 0.0, -93.0, 0.5, 0.0)).unwrap()
+        ));
+    }
+    assert_eq!(
+        d.next(&look(52, 0.0, -93.0, 0.0, 0.0)).unwrap(),
+        Order::Done
+    );
 }

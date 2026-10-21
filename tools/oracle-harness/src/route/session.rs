@@ -625,3 +625,147 @@ fn route_record(
         anchor,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Look, Point, Seen, Step};
+    use super::*;
+    use crate::fight::Trigger;
+    use crate::level::SectionBase;
+
+    fn trigger(name: &str, fired: Option<bool>) -> Trigger {
+        Trigger {
+            name: name.to_owned(),
+            placement: 0x3000_0000,
+            activity_state: 1,
+            started: false,
+            active_seconds: 0.0,
+            range: 20.0,
+            fired,
+        }
+    }
+
+    fn census(flip: u64, triggers: Vec<Trigger>) -> Census {
+        Census {
+            flip,
+            game_frame: 5_960 + flip as u32,
+            base: SectionBase {
+                base: 0x3000_0000,
+                votes: 3,
+                dissent: 0,
+            },
+            briefs: Vec::new(),
+            triggers,
+            whole: Vec::new(),
+        }
+    }
+
+    fn seen(flip: u64, x: f64) -> Seen {
+        Seen {
+            flip,
+            game_frame: 5_960 + flip as u32,
+            pivot: [x, 43.4, -93.4],
+            facing: 90.0,
+            velocity: [0.0; 3],
+            view: 15.0,
+            eye: [0.0; 3],
+        }
+    }
+
+    fn read(label: &str, flip: u64) -> ReadTaken {
+        ReadTaken {
+            label: label.to_owned(),
+            flip,
+            game_frame: 5_960 + flip as u32,
+            hero: "009_Eruptor".to_owned(),
+            seed: Some(10_554),
+            drawn: Some(133_619),
+            fight: true,
+            census_ms: Some(40.0),
+        }
+    }
+
+    #[test]
+    fn the_anchors_reads_name_the_range_triggers_fired_there_and_where_he_stood() {
+        let plan = RoutePlan {
+            steps: vec![
+                Step::Via {
+                    to: Point { x: 20.0, z: -93.4 },
+                    radius: 1.0,
+                },
+                Step::Read {
+                    label: "anchor".into(),
+                },
+            ],
+            save: true,
+        };
+        let look = |flip, x, step, did: &str| Look {
+            seen: seen(flip, x),
+            step,
+            did: did.to_owned(),
+        };
+        let trace = Trace {
+            f0: 2,
+            looks: vec![
+                look(2, 10.0, 0, "walk"),
+                look(10, 15.0, 0, "walk"),
+                look(18, 19.5, 1, "read anchor"),
+                look(18, 19.5, 2, "done"),
+            ],
+            input: None,
+            input_ron: String::new(),
+            flips: 16,
+            outcome: Outcome::Done,
+        };
+        // Fired at the anchor: the range trigger that has been active, not
+        // one asleep and not one without a range (awake from the level's
+        // start, decided by its controller).
+        let censuses = vec![
+            (
+                "f0".to_owned(),
+                census(
+                    2,
+                    vec![
+                        trigger("Setup_001_Trigger", Some(false)),
+                        trigger("Setup_003_Trigger(1)", None),
+                    ],
+                ),
+            ),
+            (
+                "anchor".to_owned(),
+                census(
+                    18,
+                    vec![
+                        trigger("Setup_001_Trigger", Some(true)),
+                        trigger("Setup_003_Trigger(1)", None),
+                        trigger("Activate_Norticus and Chompies", Some(false)),
+                    ],
+                ),
+            ),
+        ];
+        let reads = vec![read("f0", 2), read("anchor", 18)];
+        let r = route_record("oracle", &plan, &trace, &censuses, &reads, Vec::new());
+        let a = r.anchor.as_ref().unwrap();
+        assert_eq!(a.fired, vec!["Setup_001_Trigger".to_owned()]);
+        assert_eq!(
+            (a.label.as_str(), a.flip, a.game_frame, a.pivot[0]),
+            ("anchor", 18, 5_978, 19.5)
+        );
+        assert_eq!(
+            a.files,
+            [
+                "actors-anchor.json",
+                "peek-anchor.json",
+                "fight-anchor.json",
+                "census-anchor.json"
+            ]
+        );
+        assert_eq!((a.seed, a.drawn), (Some(10_554), Some(133_619)));
+        assert_eq!(r.changes.len(), 1);
+        assert_eq!(
+            (r.changes[0].0.as_str(), r.changes[0].1.as_str()),
+            ("f0", "anchor")
+        );
+        assert_eq!(r.steps.len(), 3);
+    }
+}

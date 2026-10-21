@@ -818,7 +818,6 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// AF.11's replays (see the usage).
 /// AH.7's `oracle goto`: the route driven on a fresh RPCS3, as the usage says.
 fn goto(mut rest: &[&str]) -> Result<()> {
     let (mut out, mut route, mut state, mut figure, mut knobs) = (None, None, None, None, None);
@@ -1013,6 +1012,7 @@ fn goto(mut rest: &[&str]) -> Result<()> {
     result.map(|_| ())
 }
 
+/// AF.11's replays (see the usage).
 fn divergence_run(mut rest: &[&str]) -> Result<()> {
     let (mut out, mut state, mut figure, mut warmup) = (None, None, None, None);
     let mut scripts = vec!["idle".to_owned(), "walk".to_owned()];
