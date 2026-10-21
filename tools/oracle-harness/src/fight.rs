@@ -114,6 +114,25 @@ pub struct Rows {
     pub playtime: (u32, u32),
     /// The experience each level starts at, level 1's first.
     pub level_xp: Vec<u32>,
+    /// Each upgrade's bit in the area's stream by its number, from the
+    /// upgrade bits' row (`pp_Flags1_UpgradeBits`, one bit a member, upgrade
+    /// n the member `pp_Upgrade(n)`; AH.41). Empty when the tables have no
+    /// such row.
+    #[serde(default)]
+    pub upgrades: BTreeMap<u8, u32>,
+}
+
+/// The upgrade bits' row: one bit for each of its members.
+pub const UPGRADE_BITS: &str = "pp_Flags1_UpgradeBits";
+
+/// Upgrade n's member among the upgrade bits' members: `pp_Upgrade(n)`.
+fn upgrade_number(member: &str) -> Option<u8> {
+    member
+        .strip_prefix("pp_Upgrade(")?
+        .strip_suffix(')')?
+        .parse()
+        .ok()
+        .filter(|&n| n > 0)
 }
 
 impl Rows {
@@ -139,6 +158,26 @@ impl Rows {
             .find(|s| s.param == "pp_Exp" && s.kind == SaveKind::Plain)
             .map(|s| s.limit)
             .filter(|&l| l > 0);
+        let mut upgrades = BTreeMap::new();
+        if let Some(row) = p
+            .save_params
+            .iter()
+            .find(|s| s.param == UPGRADE_BITS && s.kind == SaveKind::Plain)
+        {
+            if row.width != 1 {
+                bail!(
+                    "AH.2's `{UPGRADE_BITS}` row is {} bits a member, not 1",
+                    row.width
+                );
+            }
+            for f in &row.fields {
+                if let Some(n) = f.member.as_deref().and_then(upgrade_number)
+                    && upgrades.insert(n, 32 * f.word + f.bit).is_some()
+                {
+                    bail!("AH.2's `{UPGRADE_BITS}` row names pp_Upgrade({n}) twice");
+                }
+            }
+        }
         Ok(Self {
             experience: need("pp_Exp")?,
             spillover: at("pp_Exp", SaveKind::Spillover),
@@ -146,7 +185,17 @@ impl Rows {
             gold: need("pp_Money")?,
             playtime: need("pp_CumulativeTime")?,
             level_xp: p.level_xp.clone(),
+            upgrades,
         })
+    }
+
+    /// The upgrades whose bits are set in the area's words, in order.
+    pub fn owned(&self, words: &[u32]) -> Vec<u8> {
+        self.upgrades
+            .iter()
+            .filter(|&(_, &bit)| bit_field(words, bit, 1, false).is_ok_and(|v| v == 1))
+            .map(|(&n, _)| n)
+            .collect()
     }
 
     /// The words the rows read: each value's first and, when it runs on,
@@ -194,7 +243,8 @@ impl Rows {
     /// `words` with one value set (AH.11's figure pokes): experience as a
     /// total, the first area up to [`Rows::experience_limit`] and the rest in
     /// the spillover, as the game's own rows split it; gold or playtime as
-    /// they are. Refused for a total the areas can't hold.
+    /// they are; an upgrade's bit alone (AH.41). Refused for a total the areas
+    /// can't hold, or an upgrade the rows don't name or set to more than 1.
     pub fn set(&self, words: &mut [u32], field: FigureField, value: u32) -> Result<()> {
         let put = |words: &mut [u32], (bit, width): (u32, u32), v: u32| {
             script::set_bit_field(words, bit, width, v)
@@ -210,6 +260,16 @@ impl Rows {
             },
             FigureField::Gold => put(words, self.gold, value),
             FigureField::Playtime => put(words, self.playtime, value),
+            FigureField::Upgrade(n) => {
+                if value > 1 {
+                    bail!("upgrade {n}'s bit is 0 or 1, not {value}");
+                }
+                let bit = *self
+                    .upgrades
+                    .get(&n)
+                    .with_context(|| format!("AH.2's rows have no pp_Upgrade({n})"))?;
+                put(words, (bit, 1), value)
+            }
         }
     }
 
@@ -232,6 +292,9 @@ pub struct Figure {
     pub gold: u32,
     pub playtime_secs: u32,
     pub level: u32,
+    /// The upgrades it has bought, by number, through [`Rows::upgrades`].
+    #[serde(default)]
+    pub upgrades: Vec<u8>,
 }
 
 /// The figure's data from its `tag data` structure through `rows`: refused
@@ -261,6 +324,7 @@ pub fn figure(
         }
     }
     let (experience, gold, playtime_secs) = rows.values(|i| words.get(i as usize).copied())?;
+    let upgrades = rows.owned(&words);
     Ok(Figure {
         tag_data,
         words,
@@ -269,6 +333,7 @@ pub fn figure(
         gold,
         playtime_secs,
         level: rows.level(experience),
+        upgrades,
     })
 }
 
@@ -1031,6 +1096,32 @@ pub(crate) mod fixture {
         }
     }
 
+    /// The upgrade bits' row as AH.2 reads Giants' (AH.41): word 4's bits
+    /// 0-9, the path and its choice, then upgrades 1-8.
+    pub fn upgrade_bits() -> SaveParam {
+        let members = [
+            "pp__UpgradePath".to_owned(),
+            "pp__UpgradePath_Choice".to_owned(),
+        ]
+        .into_iter()
+        .chain((1..=8).map(|n| format!("pp_Upgrade({n})")));
+        SaveParam {
+            param: super::UPGRADE_BITS.into(),
+            kind: SaveKind::Plain,
+            fields: members
+                .enumerate()
+                .map(|(i, m)| SaveField {
+                    word: 4,
+                    bit: i as u32,
+                    member: Some(m),
+                })
+                .collect(),
+            width: 1,
+            bits_per_field: 0,
+            limit: 0,
+        }
+    }
+
     /// Giants' tables as AH.2 reads them, the rows the readers use.
     pub fn progression() -> Progression {
         Progression {
@@ -1047,6 +1138,7 @@ pub(crate) mod fixture {
                 row("pp_Exp", SaveKind::Plain, 0, 0, 24, 33000),
                 row("pp_Money", SaveKind::Plain, 0, 24, 16, 65535),
                 row("pp_CumulativeTime", SaveKind::Plain, 1, 8, 32, 0),
+                upgrade_bits(),
                 row("pp_Hat", SaveKind::Plain, 5, 0, 16, 45),
                 row("pp_Exp", SaveKind::Spillover, 28, 24, 16, 63500),
             ],
@@ -1099,6 +1191,8 @@ pub(crate) mod fixture {
         words[2] = secs >> 24;
         words[28] = (spill & 0xFF) << 24;
         words[29] = spill >> 8;
+        // The PS3's platform bit and upgrade 4 bought (AH.41).
+        words[4] = 0x0400_0020;
         let cells: Vec<u32> = words
             .iter()
             .map(|&v| fx::int(&mut w, &t, "", v as i32))
@@ -1382,6 +1476,69 @@ mod tests {
         assert_eq!(bit_field(&w1, 0, 24, false).unwrap(), 40_000);
     }
 
+    /// AH.41's upgrade poke: upgrade n's bit from the upgrade bits' row,
+    /// set alone with the word's other bits kept, read back as bought.
+    #[test]
+    fn an_upgrades_bit_comes_from_the_row_and_is_set_alone() {
+        let r = rows();
+        // Upgrade n at word 4's bit n + 1, after the path and its choice.
+        assert_eq!(
+            r.upgrades.iter().map(|(&n, &b)| (n, b)).collect::<Vec<_>>(),
+            (1..=8)
+                .map(|n| (n, 4 * 32 + 1 + u32::from(n)))
+                .collect::<Vec<_>>()
+        );
+        let mut words = vec![0u32; 44];
+        // The platform bit a PS3 sets (word 4's bit 26) stays put.
+        words[4] = 0x0400_0000;
+        r.set(&mut words, FigureField::Gold, 17).unwrap();
+        assert_eq!(r.owned(&words), Vec::<u8>::new());
+        r.set(&mut words, FigureField::Upgrade(4), 1).unwrap();
+        assert_eq!(words[4], 0x0400_0020);
+        assert_eq!(r.owned(&words), [4]);
+        assert_eq!(r.values(|i| words.get(i as usize).copied()).unwrap().1, 17);
+        r.set(&mut words, FigureField::Upgrade(8), 1).unwrap();
+        assert_eq!((words[4], r.owned(&words)), (0x0400_0220, vec![4, 8]));
+        // Its neighbours either side stay as they were.
+        r.set(&mut words, FigureField::Upgrade(5), 1).unwrap();
+        r.set(&mut words, FigureField::Upgrade(3), 1).unwrap();
+        r.set(&mut words, FigureField::Upgrade(4), 0).unwrap();
+        assert_eq!((words[4], r.owned(&words)), (0x0400_0250, vec![3, 5, 8]));
+        r.set(&mut words, FigureField::Upgrade(4), 1).unwrap();
+        assert_eq!(r.owned(&words), [3, 4, 5, 8]);
+        r.set(&mut words, FigureField::Upgrade(3), 0).unwrap();
+        r.set(&mut words, FigureField::Upgrade(5), 0).unwrap();
+        r.set(&mut words, FigureField::Upgrade(4), 0).unwrap();
+        assert_eq!((words[4], r.owned(&words)), (0x0400_0200, vec![8]));
+        // Refused: an upgrade the row doesn't name, a bit set to 2.
+        assert!(err(r.set(&mut words, FigureField::Upgrade(9), 1)).contains("pp_Upgrade(9)"));
+        assert!(err(r.set(&mut words, FigureField::Upgrade(1), 2)).contains("0 or 1"));
+        assert_eq!(words[4], 0x0400_0200);
+        // Without the row there's nothing to set; a row of wider members, or
+        // one naming an upgrade twice, is refused.
+        let mut p = progression();
+        p.save_params.retain(|s| s.param != UPGRADE_BITS);
+        let bare = Rows::of(&p).unwrap();
+        assert!(bare.upgrades.is_empty());
+        assert!(bare.set(&mut words, FigureField::Upgrade(4), 1).is_err());
+        let mut p = progression();
+        p.save_params[3].width = 2;
+        assert!(err(Rows::of(&p)).contains("2 bits a member"));
+        let mut p = progression();
+        p.save_params[3].fields[2].member = Some("pp_Upgrade(2)".into());
+        assert!(err(Rows::of(&p)).contains("pp_Upgrade(2) twice"));
+        // Members that aren't upgrades (the path, a fresh slot) number none.
+        for (m, n) in [
+            ("pp_Upgrade(4)", Some(4)),
+            ("pp_Upgrade(0)", None),
+            ("pp__UpgradePath", None),
+            ("pp_Upgrade(x)", None),
+            ("pp_Upgrade(4", None),
+        ] {
+            assert_eq!(upgrade_number(m), n, "{m}");
+        }
+    }
+
     #[test]
     fn the_whole_state_reads_field_for_field() {
         // 40,000 experience: 33,000 in the first area and 7,000 spilled over.
@@ -1404,6 +1561,7 @@ mod tests {
             (fig.experience, fig.gold, fig.playtime_secs, fig.level),
             (40_000, 298, 0x0100_0004, 10)
         );
+        assert_eq!(fig.upgrades, [4]);
         assert_eq!(
             s.difficulty,
             ConsoleValue {

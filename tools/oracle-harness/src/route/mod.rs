@@ -78,6 +78,18 @@ pub enum Step {
     /// falls inside it (AH.8: an anchor's opening step). It's aimed from where
     /// he stands, against the view, at the look that schedule starts from.
     Tilt { toward: Point, flips: u64 },
+    /// The right stick held at the bytes (`x`, `y`) for `flips` flips (0 and
+    /// 255 its travel's ends, 128 centred) with the left stick toward
+    /// `toward` as [`Step::Tilt`] aims it, or centred without one, then both
+    /// let go, in the same schedule as the presses and waits around it
+    /// (AH.41, for AG.28: what the right stick does to the view).
+    RightStick {
+        x: u8,
+        y: u8,
+        flips: u64,
+        #[serde(default)]
+        toward: Option<Point>,
+    },
     /// These buttons held for `flips` flips, the stick centred, then let go.
     Press {
         buttons: BTreeSet<Button>,
@@ -122,14 +134,17 @@ pub enum Step {
     Globals { names: Vec<String>, label: String },
 }
 
-/// The three values AH.2's rows read off a figure's save area, the ones the
-/// caps and the level-up are measured on.
+/// The values AH.2's rows read off a figure's save area: the three the caps
+/// and the level-up are measured on, and an upgrade's bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FigureField {
     /// The total, both areas.
     Experience,
     Gold,
     Playtime,
+    /// Upgrade n's bit (`pp_Upgrade(n)` among the upgrade bits' members,
+    /// AH.41): 1 bought, 0 not.
+    Upgrade(u8),
 }
 
 impl Step {
@@ -200,6 +215,11 @@ impl RoutePlan {
                         bail!("step {i}: a stick toward a point for at least a flip, not {step:?}");
                     }
                 }
+                Step::RightStick { flips, toward, .. } => {
+                    if *flips == 0 || toward.is_some_and(|t| !t.x.is_finite() || !t.z.is_finite()) {
+                        bail!("step {i}: the right stick held for at least a flip, not {step:?}");
+                    }
+                }
                 Step::Face {
                     toward,
                     within,
@@ -264,7 +284,14 @@ impl RoutePlan {
                         bail!("step {i}: a poke names a placement, a dotted path and a number");
                     }
                 }
-                Step::Figure { .. } | Step::Reconnect => {}
+                Step::Figure { field, value } => {
+                    if let FigureField::Upgrade(n) = field
+                        && (*n == 0 || *value > 1)
+                    {
+                        bail!("step {i}: an upgrade is numbered from 1 and set to 0 or 1");
+                    }
+                }
+                Step::Reconnect => {}
                 Step::Portal { slot, figure } => {
                     if *slot >= 8 || figure.as_ref().is_some_and(String::is_empty) {
                         bail!("step {i}: a portal step's slot is 0-7 and its figure a path");
@@ -751,7 +778,10 @@ impl Driver {
                     }
                     return Ok(run(rest(), flips.min(10)));
                 }
-                Step::Press { .. } | Step::Wait { .. } | Step::Tilt { .. } => {
+                Step::Press { .. }
+                | Step::Wait { .. }
+                | Step::Tilt { .. }
+                | Step::RightStick { .. } => {
                     // A run of presses, tilts and waits goes in as one
                     // schedule, so no pause falls between a press and what
                     // follows it.
@@ -765,6 +795,26 @@ impl Driver {
                                 match schedule.last_mut() {
                                     Some((o, pad)) if *o == at => *pad = tilted,
                                     _ => schedule.push((at, tilted)),
+                                }
+                                schedule.push((at + flips, rest()));
+                                at += flips;
+                            }
+                            Step::RightStick {
+                                x,
+                                y,
+                                flips,
+                                toward,
+                            } => {
+                                let held = PadState {
+                                    left: toward.map_or(Stick::CENTRED, |t| {
+                                        stick_toward(seen.bearing(t), seen.view, 1.0)
+                                    }),
+                                    right: Stick { x: *x, y: *y },
+                                    ..PadState::default()
+                                };
+                                match schedule.last_mut() {
+                                    Some((o, pad)) if *o == at => *pad = held,
+                                    _ => schedule.push((at, held)),
                                 }
                                 schedule.push((at + flips, rest()));
                                 at += flips;
@@ -1032,6 +1082,9 @@ pub fn describe(pad: &PadState) -> String {
     } else {
         format!("stick ({}, {})", pad.left.x, pad.left.y)
     };
+    if !pad.right.is_centred() {
+        s.push_str(&format!(" right ({}, {})", pad.right.x, pad.right.y));
+    }
     for b in &pad.buttons {
         s.push_str(&format!(" {b:?}"));
     }

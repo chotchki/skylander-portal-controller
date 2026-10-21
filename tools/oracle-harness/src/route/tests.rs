@@ -855,6 +855,67 @@ fn a_tilt_goes_in_with_the_presses_and_waits_around_it_as_one_schedule() {
     }
 }
 
+/// AH.41, for AG.28: the right stick held with the left at rest, then with
+/// the left aimed as a tilt is, in one schedule with the waits around them.
+#[test]
+fn a_right_stick_goes_in_with_the_left_at_rest_or_aimed_as_one_schedule() {
+    let mut fake = Fake::new(SPAWN, 15.0);
+    let to = Point { x: 20.0, z: -93.4 };
+    let route = plan(vec![
+        Step::RightStick {
+            x: 255,
+            y: 128,
+            flips: 12,
+            toward: None,
+        },
+        Step::Wait { flips: 8 },
+        Step::RightStick {
+            x: 128,
+            y: 0,
+            flips: 10,
+            toward: Some(to),
+        },
+        Step::Read {
+            label: "end".into(),
+        },
+    ]);
+    let trace = drive(&mut fake, &route, Knobs::default()).unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    // One run of 30 flips, the read at its end.
+    assert_eq!(fake.runs, vec![(3, 30)]);
+    assert_eq!(fake.reads, vec![("end".to_owned(), 32)]);
+    let walked = stick_toward(heading_deg(to.x - SPAWN.x, to.z - SPAWN.z), 15.0, 1.0);
+    for (k, pad) in fake.held.iter().enumerate() {
+        let (left, right) = match k {
+            0..12 => (Stick::CENTRED, Stick { x: 255, y: 128 }),
+            20..30 => (walked, Stick { x: 128, y: 0 }),
+            _ => (Stick::CENTRED, Stick::CENTRED),
+        };
+        assert_eq!((pad.left, pad.right), (left, right), "flip {k}");
+        assert!(pad.buttons.is_empty(), "flip {k}");
+    }
+    // The first stretch left him where he stood; the second walked him.
+    assert!(fake.pos[0] > SPAWN.x + 0.5, "{:?}", fake.pos);
+    let script = trace.input.unwrap();
+    assert_eq!(
+        script.state_at(0, 5).unwrap().right,
+        Stick { x: 255, y: 128 }
+    );
+    assert_eq!(
+        script.state_at(0, 25).unwrap().right,
+        Stick { x: 128, y: 0 }
+    );
+    assert!(script.state_at(0, 15).unwrap().right.is_centred());
+    // The looks say what was held.
+    assert!(
+        trace.looks[0]
+            .did
+            .starts_with("+0 rest right (255, 128), +12 rest, +20 stick"),
+        "{}",
+        trace.looks[0].did
+    );
+}
+
 #[test]
 fn settle_waits_for_the_eye_as_well_as_him() {
     let mut fake = Fake::new(SPAWN, 15.0);
@@ -1030,11 +1091,40 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
             Reconnect,
             Vars(placement: "009_Eruptor", label: "anchor"),
             Globals(names: ["portal save control"], label: "anchor"),
+            Figure(field: Upgrade(4), value: 1),
+            RightStick(x: 255, y: 128, flips: 120),
+            RightStick(x: 128, y: 0, flips: 120, toward: Some((x: 21.6, z: -89.6))),
         ],
         save: true,
     )"#;
     let plan = RoutePlan::from_ron(text).unwrap();
-    assert_eq!(plan.steps.len(), 17);
+    assert_eq!(plan.steps.len(), 20);
+    assert_eq!(
+        plan.steps[17],
+        Step::Figure {
+            field: FigureField::Upgrade(4),
+            value: 1
+        }
+    );
+    assert!(plan.steps[17].acts() && !plan.steps[18].acts() && !plan.steps[19].acts());
+    assert_eq!(
+        plan.steps[18],
+        Step::RightStick {
+            x: 255,
+            y: 128,
+            flips: 120,
+            toward: None
+        }
+    );
+    assert_eq!(
+        plan.steps[19],
+        Step::RightStick {
+            x: 128,
+            y: 0,
+            flips: 120,
+            toward: Some(Point { x: 21.6, z: -89.6 })
+        }
+    );
     assert_eq!(
         plan.steps[11],
         Step::Figure {
@@ -1049,7 +1139,7 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
             figure: Some("/figures/Tree Rex.sky".into())
         }
     );
-    assert!(plan.steps[10..].iter().all(Step::acts));
+    assert!(plan.steps[10..18].iter().all(Step::acts));
     assert!(!plan.steps[..10].iter().any(Step::acts));
     assert_eq!(
         plan.steps[9],
@@ -1096,6 +1186,11 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
         "(steps: [Poke(placement: \"x\", path: \"a..b\", value: 1.0)])",
         "(steps: [Poke(placement: \"x\", path: \"\", value: 1.0)])",
         "(steps: [Figure(field: Level, value: 2)])",
+        "(steps: [Figure(field: Upgrade(0), value: 1)])",
+        "(steps: [Figure(field: Upgrade(4), value: 2)])",
+        "(steps: [RightStick(x: 0, y: 128, flips: 0)])",
+        "(steps: [RightStick(x: 256, y: 128, flips: 3)])",
+        "(steps: [RightStick(x: 0, flips: 3)])",
         "(steps: [Portal(slot: 8, figure: None)])",
         "(steps: [Portal(slot: 0, figure: Some(\"\"))])",
         "(steps: [Vars(placement: \"x\", label: \"a b\")])",

@@ -174,6 +174,20 @@ pub struct FigurePoke {
     pub hero: Option<String>,
     pub before: FigureSeen,
     pub after: FigureSeen,
+    /// Each word of the save area the poke wrote (AH.41: where an upgrade's
+    /// bit went).
+    #[serde(default)]
+    pub writes: Vec<WordWritten>,
+}
+
+/// One save-area word a figure poke wrote: its index, the address its value
+/// sits at, and the word before and after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordWritten {
+    pub word: usize,
+    pub at: u32,
+    pub before: u32,
+    pub after: u32,
 }
 
 /// The hero's figure and the cells beside it, as a figure poke saw them.
@@ -183,6 +197,9 @@ pub struct FigureSeen {
     pub gold: u32,
     pub playtime_secs: u32,
     pub level: u32,
+    /// The upgrades bought, by number (AH.41).
+    #[serde(default)]
+    pub upgrades: Vec<u8>,
     pub words: Vec<u32>,
     pub exp_target: crate::script::Number,
     pub health: crate::script::Number,
@@ -196,6 +213,7 @@ impl FigureSeen {
             gold: h.figure.gold,
             playtime_secs: h.figure.playtime_secs,
             level: h.figure.level,
+            upgrades: h.figure.upgrades.clone(),
             words: h.figure.words.clone(),
             exp_target: h.exp_target,
             health: h.health,
@@ -219,10 +237,18 @@ fn figure_poke(
     let before = fight::hero(pine, &mut types, hero.placement, rows)?;
     let mut words = before.figure.words.clone();
     rows.set(&mut words, field, value)?;
+    let mut writes = Vec::new();
     for (i, (&new, &old)) in words.iter().zip(&before.figure.words).enumerate() {
         if new != old {
-            pine.write_paused(before.figure.cells[i] + 0x20, &new.to_be_bytes())
+            let at = before.figure.cells[i] + 0x20;
+            pine.write_paused(at, &new.to_be_bytes())
                 .with_context(|| format!("writing word {i} of the save area"))?;
+            writes.push(WordWritten {
+                word: i,
+                at,
+                before: old,
+                after: new,
+            });
         }
     }
     let after = fight::hero(pine, &mut types, hero.placement, rows)?;
@@ -239,6 +265,7 @@ fn figure_poke(
         hero: hero.name.clone(),
         before: FigureSeen::of(&before),
         after: FigureSeen::of(&after),
+        writes,
     })
 }
 
@@ -303,6 +330,10 @@ pub struct GotoRecord {
     /// whether it read the same after.
     #[serde(default)]
     pub sources: Vec<(String, String, bool)>,
+    /// The portal's copies as the game left them at the last pause, kept in
+    /// `portal/` ([`keep_portal_copies`]), each with its SHA-256.
+    #[serde(default)]
+    pub portal_copies: Vec<(String, String)>,
     pub before: Host,
     pub after: Host,
     pub boot_secs: f64,
@@ -668,6 +699,7 @@ pub fn run(inputs: &Inputs, plan: &RoutePlan, knobs: Knobs, out: &Path) -> Resul
         pokes: d.pokes,
         acts: d.acts,
         sources: d.sources,
+        portal_copies: d.portal_copies,
         before,
         after: Host::now(),
         boot_secs: d.boot_secs,
@@ -698,6 +730,7 @@ struct Driven {
     pokes: Vec<PokeDone>,
     acts: Vec<ActDone>,
     sources: Vec<(String, String, bool)>,
+    portal_copies: Vec<(String, String)>,
     trace: Trace,
     shots: Vec<ShotTaken>,
     reads: Vec<ReadTaken>,
@@ -841,6 +874,15 @@ fn drive_live(
         &path,
         serde_json::to_string_pretty(&control.portal_events())?,
     )?;
+    // The figures on the portal as the game's tag writes left them, before
+    // the run dir goes (AH.41).
+    let portal_copies = keep_portal_copies(&oracle.run_paths().tmp, dir).unwrap_or_else(|e| {
+        let _ = fs::write(
+            dir.join("portal-copies.error.txt"),
+            format!("keeping the portal's copies: {e:#}\n"),
+        );
+        Vec::new()
+    });
     // The route's record: its steps, what fired per frame (named while PINE
     // is still open), what changed between reads, the scripts that started.
     if inputs.disc.is_some() {
@@ -903,6 +945,7 @@ fn drive_live(
         pokes,
         acts,
         sources,
+        portal_copies,
         trace,
         shots,
         reads,
@@ -912,6 +955,33 @@ fn drive_live(
         save_error,
         shutdown,
     })
+}
+
+/// The portal's copies of the figures a drive loaded (`figure.sky` at F0,
+/// `figure-<n>.sky` for the n-th portal step's), as the game's tag writes
+/// left them in `tmp`, copied into `<dir>/portal/` with their SHA-256s, by
+/// name (AH.41: an upgrade's bit as the game itself wrote it). None, no dir.
+pub fn keep_portal_copies(tmp: &Path, dir: &Path) -> Result<Vec<(String, String)>> {
+    let mut names: Vec<String> = fs::read_dir(tmp)
+        .with_context(|| format!("listing {}", tmp.display()))?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("figure") && n.ends_with(".sky"))
+        .collect();
+    names.sort();
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let out = rrc_dump::output::refuse_repo_output(&dir.join("portal"))?;
+    fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
+    names
+        .into_iter()
+        .map(|n| {
+            let to = out.join(&n);
+            fs::copy(tmp.join(&n), &to).with_context(|| format!("copying {n}"))?;
+            let sha = sha256_file(&to)?;
+            Ok((n, sha))
+        })
+        .collect()
 }
 
 /// The route's placements' wake state per frame, beside the record
@@ -1114,6 +1184,44 @@ mod tests {
     use crate::fight::Trigger;
     use crate::level::SectionBase;
     use crate::script::Number;
+
+    /// AH.41: the portal's copies, F0's and each portal step's, kept by name
+    /// with their hashes; nothing else in the run dir, and no dir for none.
+    #[test]
+    fn the_portals_copies_are_kept_by_name_and_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("figure.sky"), [1u8; 1024]).unwrap();
+        fs::write(tmp.path().join("figure-2.sky"), [2u8; 1024]).unwrap();
+        fs::write(tmp.path().join("figure-1.sky"), [3u8; 1024]).unwrap();
+        for other in ["p1.sock", "BLUS30968_1_1.SAVESTAT.zst", "figure.txt"] {
+            fs::write(tmp.path().join(other), b"x").unwrap();
+        }
+        let kept = keep_portal_copies(tmp.path(), out.path()).unwrap();
+        let names: Vec<&str> = kept.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["figure-1.sky", "figure-2.sky", "figure.sky"]);
+        for (n, sha) in &kept {
+            let copy = out.path().join("portal").join(n);
+            assert_eq!(
+                fs::read(&copy).unwrap(),
+                fs::read(tmp.path().join(n)).unwrap()
+            );
+            assert_eq!(*sha, sha256_file(&copy).unwrap());
+        }
+        assert_ne!(kept[0].1, kept[1].1);
+        assert_eq!(fs::read_dir(out.path().join("portal")).unwrap().count(), 3);
+        // A run that loaded nothing keeps nothing and makes no dir.
+        let empty = tempfile::tempdir().unwrap();
+        let out2 = tempfile::tempdir().unwrap();
+        assert!(
+            keep_portal_copies(empty.path(), out2.path())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!out2.path().join("portal").exists());
+        // A run dir that's gone is an error the drive records, not a panic.
+        assert!(keep_portal_copies(&empty.path().join("gone"), out2.path()).is_err());
+    }
 
     /// AH.10's pokes: a placement, a dotted path through names with spaces,
     /// a number; anything else refused.

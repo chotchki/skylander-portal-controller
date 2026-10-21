@@ -264,7 +264,8 @@ AH.0 requires this table complete.
 | script-runtime | Chapter 1 at medium; A fresh profile | AH.4, AH.16, AH.25 |
 | script-runtime | Chompy bites; Two sessions | AH.11 (the roll's kind), AH.15 (unit), AH.30 |
 | pad-input | Two 8BitDo variants; The second attack's position | AH.7 (the positions), AH.24 (unit), AH.31 (chotchki's hands) |
-| pad-input | A button held | AH.7 and AH.9 (the original's), AH.24 (unit) |
+| pad-input | The third attack's position; The top position | AH.7 and AH.41 (the original's, with no upgrades and with upgrade 4), AH.24 (unit) |
+| pad-input | A button held | AH.7, AH.9 and AH.41 (the original's), AH.24 (unit) |
 | figure-cards | (REMOVED: Figure progress is not shown or edited yet) | AH.3 (`figure_details_have_no_progress_and_stats_and_reset_are_off` rewritten) |
 
 **21. The VM's boundary with the ECS: queries for state, messages for engine work, no copy.**
