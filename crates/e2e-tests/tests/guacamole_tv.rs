@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 use skylander_e2e_tests::{
     E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, E2E_START,
     E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, gaits_tv, guacamole_only,
-    inject_load_outcomes, inject_profile, pad_tv, press_tv, set_session_profile, tv, wait_for_tv,
+    inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv,
+    wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -947,6 +948,187 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     .await
     .expect("let go, back in his idle");
     assert_eq!(snap["hero"]["gait"]["clip"], "idle");
+    phone.close().await.unwrap();
+}
+
+/// The scripts' steps after `since`, until `done` holds over them, up to
+/// `timeout`; all of them then.
+async fn scripts_until(
+    url: &str,
+    since: u64,
+    timeout: Duration,
+    done: impl Fn(&[Value]) -> bool,
+) -> Vec<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let log = scripts_tv(url, since).await.unwrap();
+        let steps = log["steps"].as_array().cloned().unwrap_or_default();
+        if done(&steps) {
+            return steps;
+        }
+        assert!(Instant::now() < deadline, "the scripts' steps: {log}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The names of what the steps spawned, or took off.
+fn named(steps: &[Value], what: &str) -> Vec<String> {
+    steps
+        .iter()
+        .flat_map(|s| s[what].as_array().cloned().unwrap_or_default())
+        .map(|c| c["name"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// The palette slots the steps started on the hero.
+fn started(steps: &[Value]) -> Vec<u64> {
+    steps
+        .iter()
+        .flat_map(|s| s["started"].as_array().cloned().unwrap_or_default())
+        .filter_map(|q| q["slot"].as_u64())
+        .collect()
+}
+
+/// AH.24: a press throws, as `/api/_test/tv` reports. Over AH.24's synthetic
+/// attack (written with AH.13's writer, our numbers): placed and taken over
+/// by a posted pad, Eruptor's scripts join and his health reads off them
+/// (120 of 150) with his figure's experience and gold (0, a fresh one); the
+/// bottom button starts his throw's clip and spawns the ball, which falls
+/// onto the made-up floor and is taken off; held it throws once, the
+/// attack held reading in the input's; a right shoulder starts the second
+/// attack's clip; the top button does nothing.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_press_throws_from_his_scripts() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_fighting().expect("spawn guacamole");
+    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready" && !s["level"]["scripts"].is_null()
+    })
+    .await
+    .expect("the level and its scripts");
+    assert_eq!(snap["level"]["scripts"]["scripts"], E2E_SCRIPTS);
+    place_named(&phone, "Eruptor").await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] == "paused"
+    })
+    .await
+    .expect("the level waits for a pad");
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "east"}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level" && s["hero"]["scripts"] == "joined"
+    })
+    .await
+    .expect("his scripts join");
+    let hero = &snap["hero"];
+    assert_eq!(
+        (&hero["health"], &hero["health_max"]),
+        (&json!(120), &json!(150)),
+        "{hero}"
+    );
+    assert_eq!(
+        (&hero["experience"], &hero["gold"]),
+        (&json!(0), &json!(0)),
+        "{hero}"
+    );
+    assert_eq!(
+        snap["input"]["hero_actions"],
+        json!([false, false, false, false])
+    );
+
+    // A press: the throw's clip, the ball, and the ball off once it lands.
+    let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
+        .as_u64()
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    let steps = scripts_until(&server.url, since, Duration::from_secs(5), |s| {
+        named(s, "gone").iter().any(|n| n == "009_LavaProjectile")
+    })
+    .await;
+    assert_eq!(started(&steps), [20], "his throw's slot");
+    assert_eq!(named(&steps, "spawned"), ["009_LavaProjectile"]);
+    let spawned_at = steps
+        .iter()
+        .find(|s| !s["spawned"].as_array().unwrap().is_empty())
+        .unwrap()["step"]
+        .as_u64()
+        .unwrap();
+    let thrown_at = steps
+        .iter()
+        .find(|s| !s["started"].as_array().unwrap().is_empty())
+        .unwrap()["step"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(spawned_at, thrown_at, "the ball with the press's step");
+    let gone = steps
+        .iter()
+        .flat_map(|s| s["gone"].as_array().cloned().unwrap_or_default())
+        .find(|c| c["name"] == "009_LavaProjectile")
+        .unwrap();
+    let y = gone["at"][1].as_f64().unwrap();
+    let above = y - f64::from(E2E_FLOOR);
+    assert!(
+        above < 0.6,
+        "the ball came down on the floor: {above} m over it"
+    );
+
+    // Held: one throw, the attack held as the input reads it.
+    let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
+        .as_u64()
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "hold": "south"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["input"]["hero_actions"] == json!([true, false, false, false])
+    })
+    .await
+    .expect("the attack held");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    pad_tv(&server.url, json!({"pad": 0, "release": "south"}))
+        .await
+        .unwrap();
+    let steps = scripts_until(&server.url, since, Duration::from_secs(5), |s| {
+        named(s, "gone").iter().any(|n| n == "009_LavaProjectile")
+    })
+    .await;
+    assert_eq!(started(&steps), [20], "held, one throw");
+
+    // A right shoulder: the second attack's clip. The top button: nothing.
+    let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
+        .as_u64()
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "r1"}))
+        .await
+        .unwrap();
+    let steps = scripts_until(&server.url, since, Duration::from_secs(5), |s| {
+        !started(s).is_empty()
+    })
+    .await;
+    assert_eq!(started(&steps), [32]);
+    let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
+        .as_u64()
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "north"}))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let steps = scripts_until(&server.url, since, Duration::from_secs(1), |_| true).await;
+    assert!(started(&steps).is_empty() && named(&steps, "spawned").is_empty());
     phone.close().await.unwrap();
 }
 

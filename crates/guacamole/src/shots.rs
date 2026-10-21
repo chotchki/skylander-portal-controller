@@ -15,8 +15,10 @@
 //! turn one run per angle. With `GUAC_SHOT_WALK=<ms>` too, a shot is taken
 //! every that many milliseconds of the TV's clock that the hero has moved
 //! while he walks the level (AG.21), at once (a walk doesn't settle), named
-//! for where he stands and the way he faces: a walk as a sequence. Off by
-//! default, since a shot's PNG is written on the frame's thread.
+//! for where he stands and the way he faces: a walk as a sequence; and
+//! (AH.24) at the same interval while anything his scripts spawned draws,
+//! named `attack` (a throw's ball in flight, an eruption). Off by default,
+//! since a shot's PNG is written on the frame's thread.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -222,7 +224,12 @@ fn snap(
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
     mut redrawn: MessageReader<Redrawn>,
-    (play, heroes, time): (Option<Res<Play>>, Query<&HeroBody>, Res<Time>),
+    (play, heroes, time, clones): (
+        Option<Res<Play>>,
+        Query<&HeroBody>,
+        Res<Time>,
+        Query<&crate::hero_scripts::CloneDrawn>,
+    ),
     mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
     let redrew = redrawn.read().count() > 0;
@@ -247,12 +254,14 @@ fn snap(
     {
         let now = time.elapsed();
         let (at, from) = *walked.get_or_insert((now, pivot));
-        if now.saturating_sub(at) >= every && pivot.distance(from) >= WALK_MOVED {
+        let attacking = clones.iter().any(|c| c.draws);
+        if now.saturating_sub(at) >= every && (attacking || pivot.distance(from) >= WALK_MOVED) {
             *walked = Some((now, pivot));
             state.seq += 1;
             let name = format!(
-                "{:02}-walk-{:.2}_{:.2}_{:.2}-facing-{:.0}.png",
+                "{:02}-{}-{:.2}_{:.2}_{:.2}-facing-{:.0}.png",
                 state.seq,
+                if attacking { "attack" } else { "walk" },
                 pivot.x,
                 pivot.y,
                 pivot.z,

@@ -257,6 +257,9 @@ pub(crate) struct ScriptSteps {
     sequences: usize,
     clones: HashSet<Handle>,
     gone: HashSet<Handle>,
+    /// The hero's clips playing, by index into the started sequences, with
+    /// their slots: logged as ended once played out or stopped.
+    playing: Vec<(usize, u32)>,
 }
 
 /// One step of the run as `/api/_test/tv/scripts` hands it out (AH.24):
@@ -273,6 +276,9 @@ pub(crate) struct ScriptStep {
     /// Clips started on the hero this step: palette slot, length (s at
     /// 100 %) and rate (percent).
     pub started: Vec<Started>,
+    /// The palette slots of his clips that played out (or were stopped)
+    /// over this step's engine frame.
+    pub ended: Vec<u32>,
     /// Clones made this step, by their template's name, where.
     pub spawned: Vec<Spawned>,
     /// Clones taken off this step.
@@ -308,6 +314,15 @@ impl ScriptLog {
             log.pop_front();
         }
         log.push_back(step);
+    }
+
+    /// The last step logged; 0 with none.
+    pub(crate) fn last(&self) -> u64 {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .back()
+            .map_or(0, |s| s.step)
     }
 
     /// The steps after `since`, oldest first.
@@ -526,7 +541,8 @@ fn record(
     entry: &mut ScriptStep,
 ) {
     let sequences = world.sequences();
-    for s in &sequences[steps.sequences.min(sequences.len())..] {
+    let from = steps.sequences.min(sequences.len());
+    for (i, s) in sequences.iter().enumerate().skip(from) {
         if Some(s.actor) != hero {
             continue;
         }
@@ -536,6 +552,7 @@ fn record(
                 length: s.length,
                 rate: s.rate,
             });
+            steps.playing.push((i, slot));
         }
     }
     steps.sequences = sequences.len();
@@ -568,6 +585,8 @@ fn advance_scripts(
     seam: AvianSeam,
     cameras: Query<&FollowCamera>,
     mut heroes: Query<(Entity, &'static mut HeroBody)>,
+    steps: Option<ResMut<ScriptSteps>>,
+    log: Res<ScriptLog>,
 ) {
     let view = view_heading(&cameras);
     let mut engine = TvEngine {
@@ -576,6 +595,24 @@ fn advance_scripts(
         view,
     };
     world.advance(time.delta_secs(), &mut engine);
+    // His clips that played out over this frame, onto this step's entry.
+    let Some(mut steps) = steps else {
+        return;
+    };
+    let sequences = world.sequences();
+    let mut ended = Vec::new();
+    steps.playing.retain(|&(i, slot)| {
+        let over = sequences.get(i).is_none_or(|s| s.done || s.stopped);
+        if over {
+            ended.push(slot);
+        }
+        !over
+    });
+    if !ended.is_empty()
+        && let Some(entry) = log.0.lock().unwrap_or_else(|e| e.into_inner()).back_mut()
+    {
+        entry.ended.extend(ended);
+    }
 }
 
 /// A clone drawn: its model's parts hang under it.
@@ -623,7 +660,9 @@ fn draw_clones(
                     .and_then(|t| world.template(t))
                     .and_then(|p| p.model.as_deref())
                     .and_then(|m| models.and_then(|ms| ms.get(m)));
-                let draws = model.is_some() && !actor.removed;
+                // A model whose effects draw nothing (its parts left out)
+                // draws nothing here either.
+                let draws = model.is_some_and(|parts| !parts.is_empty()) && !actor.removed;
                 commands.entity(entity).insert((
                     place,
                     TransformInterpolation,

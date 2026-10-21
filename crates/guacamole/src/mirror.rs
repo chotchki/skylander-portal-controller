@@ -976,6 +976,8 @@ struct ScriptsQuery {
 
 #[derive(Serialize)]
 struct ScriptsBody {
+    /// The last step logged, 0 with none.
+    last: u64,
     steps: Vec<ScriptStep>,
 }
 
@@ -1007,9 +1009,10 @@ struct PressBody {
 /// "west"}` and `{"pad": 0, "pulse": {"button": "south", "presses": 60}}`
 /// (down a game step, up a game step, that many times, 1 to 1,800), and the
 /// buttons l1, r1, l2 and r2 besides; `GET /api/_test/tv/scripts?since=<step>`
-/// hands out the scripts' run step by step after step `since`: the attacks
-/// read, the hero's join, the clips started on him, the clones made and
-/// taken off. Generic so a test needs no `AppState`.
+/// hands out the scripts' run step by step after step `since` (all of the
+/// run's without one) and the last step's number: the attacks read, the
+/// hero's join, the clips started on him, the clones made and taken off.
+/// Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
@@ -1024,7 +1027,8 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
             "/api/_test/tv/scripts",
             axum::routing::get(move |q: axum::extract::Query<ScriptsQuery>| {
                 let steps = scripts.since(q.since.unwrap_or(0));
-                async move { axum::Json(ScriptsBody { steps }) }
+                let last = scripts.last();
+                async move { axum::Json(ScriptsBody { last, steps }) }
             }),
         )
         .route(

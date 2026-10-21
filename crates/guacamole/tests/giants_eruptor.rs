@@ -1156,3 +1156,36 @@ fn probe_spawns() {
         );
     }
 }
+
+/// A development probe (AH.24): the eruption's clones step by step after
+/// they spawn: where each is, its scale, what it hangs from, its velocity.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_eruption() {
+    let mut run = joined();
+    let before = run.world.clones();
+    for k in 0..200u32 {
+        run.bench.pads[0] = scripted("a2@5", k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        if !(48..=60).contains(&k) && k % 20 != 0 {
+            continue;
+        }
+        for c in run.world.clones() {
+            if before.contains(&c) {
+                continue;
+            }
+            let a = run.world.actor(c).unwrap();
+            let name = a
+                .template
+                .and_then(|t| run.world.name_of(t))
+                .unwrap_or_default();
+            if !name.starts_with("009_Lava") {
+                continue;
+            }
+            println!(
+                "step {k} {name} {c:#x} at {:?} scale {:?} angles {:?} attach {:?} v {:?} launched {} removed {}",
+                a.position, a.scale, a.angles, a.attach, a.velocity, a.launched, a.removed
+            );
+        }
+    }
+}
