@@ -30,7 +30,7 @@ use guac_motion::scenarios;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{COMBAT, HERO as HERO_MEMBERS, INIT_CHAIN};
 
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
@@ -151,6 +151,9 @@ impl Run {
     fn step(&mut self) -> Result<(), Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
+        let slid = self.with_host(|vm, host| vm.slide(host))?;
+        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        scripts::portal_manager_clock(&mut self.vm, &self.world)?;
         if self.minion.is_some() {
             self.with_host(scripts::manage_projectiles)?;
         }
@@ -596,6 +599,7 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
         INIT_CHAIN
             .iter()
             .chain(HERO_MEMBERS)
+            .chain(COMBAT)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

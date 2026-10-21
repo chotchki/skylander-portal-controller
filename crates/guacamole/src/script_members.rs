@@ -2448,17 +2448,17 @@ mod fight_tests {
     use crate::script_engine::{Actor, Pad, Physics, Solid, Walker};
     use crate::scripts::{Files, headless_objects};
 
-    const C1: Handle = 0x6100_0001;
+    pub(super) const C1: Handle = 0x6100_0001;
     const C2: Handle = 0x6100_0002;
     const C3: Handle = 0x6100_0003;
     const HERO: Handle = 0x6100_0010;
-    const STEP: f32 = 1.0 / 60.0;
+    pub(super) const STEP: f32 = 1.0 / 60.0;
     const WP: Obj = Obj { unit: 9, index: 1 };
     const WP2: Obj = Obj { unit: 9, index: 2 };
 
     /// Open level ground whose top is y = 0; the hero and the creatures
     /// bodies in it as the embedder keeps them.
-    struct Pit {
+    pub(super) struct Pit {
         world: ParryWorld,
         hero: Option<Hero>,
         bodies: HashMap<Handle, BodyId>,
@@ -2491,7 +2491,7 @@ mod fight_tests {
         }
     }
 
-    fn pit() -> Pit {
+    pub(super) fn pit() -> Pit {
         let floor = Body {
             id: BodyId(1),
             kind: BodyKind::Static,
@@ -2511,7 +2511,7 @@ mod fight_tests {
     /// A chapter 1 Chompy as its STARTUP leaves it: a 6 x 3 x 3 ft sphere
     /// meeting the level and actors, 20 ft/s, 160 up, 80 down, 720°/s, a
     /// creature the engine walks.
-    fn chompy(at: Vec3, facing: f32) -> Actor {
+    pub(super) fn chompy(at: Vec3, facing: f32) -> Actor {
         let mut a = Actor::blank();
         a.position = at;
         a.angles.facing = facing;
@@ -2551,7 +2551,7 @@ mod fight_tests {
         a
     }
 
-    fn world() -> ScriptWorld {
+    pub(super) fn world() -> ScriptWorld {
         let files = Files {
             placed: Vec::new(),
             ids: HashMap::new(),
@@ -3049,5 +3049,412 @@ mod fight_tests {
         );
         assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
         assert_eq!(e.hero.as_ref().unwrap().facing, 270.0);
+    }
+}
+
+/// What AH.19's hurt chain asks of the VM and the host, on a synthetic
+/// chain written in code the hurt chain's way (our numbers): a hit's
+/// damage, a critical by a fraction rolled 0-100 under a chance, a hit
+/// turned away by a whole number rolled 0-100 under half the armour, a
+/// push (the creature's deceleration put to 0 and slid back to 600 over
+/// the knock time with ease out 50, its velocity displaced 80 ft/s along a
+/// heading, its resistance up half the strength, the push ended at its
+/// time) carried by guac-motion's controller on the parry twin, and a kill
+/// taking it off.
+#[cfg(test)]
+mod hurt_tests {
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph};
+    use guac_motion::tuning::FOOT;
+    use guac_script::{Generator, Mode, Program, Role, Unit, Value, Vm, Whitelist};
+
+    use super::fight_tests::{C1, Pit, STEP, chompy, pit, world};
+    use super::*;
+    use crate::scripts::{WorldHost, headless_spawner};
+
+    const INT: &str = "IntMeasurement";
+    const FLOAT: &str = "FloatMeasurement";
+
+    fn my() -> El<'static> {
+        El::Member("optoplevelbehavior", "my")
+    }
+
+    fn decel() -> [El<'static>; 4] {
+        [
+            my(),
+            El::Member("actorinfo", "movement"),
+            El::Member("actorphysics", "ground deceleration"),
+            El::Null,
+        ]
+    }
+
+    /// The synthetic chain: a creature whose every tick ends its push once
+    /// its time is up, then takes a hit when `go` reads 1.
+    fn chain() -> Arc<Program> {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let v = |w: &mut Writer<'_>, n: &str, c: &str| w.variable(n, "ValueInfo", Some(c));
+            let go = v(&mut w, "go", INT);
+            let hp = v(&mut w, "hp", FLOAT);
+            let armor = v(&mut w, "armor", INT);
+            let chance = v(&mut w, "chance", INT);
+            let damage = v(&mut w, "damage", FLOAT);
+            let strength = v(&mut w, "strength", INT);
+            let heading = v(&mut w, "heading", FLOAT);
+            let resist = v(&mut w, "resist", FLOAT);
+            let end = v(&mut w, "knock end", FLOAT);
+            let roll = v(&mut w, "roll", FLOAT);
+            let t = v(&mut w, "knock time", FLOAT);
+            let (crits, turned, kills, hits) = (
+                v(&mut w, "crits", INT),
+                v(&mut w, "turned", INT),
+                v(&mut w, "kills", INT),
+                v(&mut w, "hits", INT),
+            );
+            let timer = [El::Member("system", "script timer")];
+            let decel = decel();
+            let decel = &decel[..3];
+            w.script(
+                "C:/tfb/Synthetic/Hurt.ai",
+                |_| {},
+                |_| {},
+                |w| {
+                    let body = w.behaviour("idle");
+                    // The push's end: its deceleration back, the creature
+                    // stopped, as the combat manager's clear leaves it.
+                    let zero = w.int(0);
+                    let pushing = w.check(&[El::Local(end)], 4, zero);
+                    let at = w.rhs(FLOAT, &[El::Local(end)]);
+                    let due = w.check(&timer, 2, at);
+                    let eighty = w.int(80);
+                    w.set(decel, eighty);
+                    let still = w.group(&[my(), El::Member("actorinfo", "velocity")], None);
+                    let o = w.op(Class::Displace, "displace");
+                    let (l, h, pt) = (w.float(0.0), w.float(0.0), w.float(0.0));
+                    w.refer(o, 0x1C, still);
+                    // Combine 1 sets it: to nothing.
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, l);
+                    w.refer(o, 0x28, h);
+                    w.refer(o, 0x2C, pt);
+                    w.push(o);
+                    let zero = w.int(0);
+                    w.set(&[El::Local(end)], zero);
+                    w.end_block(due);
+                    w.end_block(pushing);
+                    // A hit when asked.
+                    let one = w.int(1);
+                    let asked = w.check(&[El::Local(go)], 1, one);
+                    let zero = w.int(0);
+                    w.set(&[El::Local(go)], zero);
+                    w.inc(&[El::Local(hits)]);
+                    // Critical: the chance less a fraction rolled 0-100.
+                    let c = w.rhs(INT, &[El::Local(chance)]);
+                    let r = w.literal(FLOAT, 100f32.to_bits(), true);
+                    let e = w.expr(c, Some((1, r)));
+                    w.set(&[El::Local(roll)], e);
+                    let zero = w.int(0);
+                    let crit = w.check(&[El::Local(roll)], 4, zero);
+                    let d = w.rhs(FLOAT, &[El::Local(damage)]);
+                    let half = w.float(0.5);
+                    let e = w.expr(d, Some((2, half)));
+                    w.set(&[El::Member("system", "cast to integer")], e);
+                    let d = w.rhs(FLOAT, &[El::Local(damage)]);
+                    let cast = w.rhs(INT, &[El::Member("system", "cast to integer")]);
+                    let e = w.expr(d, Some((0, cast)));
+                    w.set(&[El::Local(damage)], e);
+                    w.inc(&[El::Local(crits)]);
+                    w.end_block(crit);
+                    // Armour: half of it less a whole number rolled 0-100.
+                    let a = w.rhs(INT, &[El::Local(armor)]);
+                    let half = w.float(0.5);
+                    let a = w.expr(a, Some((2, half)));
+                    let r = w.literal(INT, 100, true);
+                    let e = w.expr(a, Some((1, r)));
+                    w.set(&[El::Local(roll)], e);
+                    let zero = w.int(0);
+                    let away = w.check(&[El::Local(roll)], 4, zero);
+                    w.inc(&[El::Local(turned)]);
+                    w.flow_end();
+                    w.end_block(away);
+                    // The damage, and a kill at none left.
+                    let h = w.rhs(FLOAT, &[El::Local(hp)]);
+                    let d = w.rhs(FLOAT, &[El::Local(damage)]);
+                    let e = w.expr(h, Some((1, d)));
+                    w.set(&[El::Local(hp)], e);
+                    let zero = w.int(0);
+                    let dead = w.check(&[El::Local(hp)], 0, zero);
+                    w.inc(&[El::Local(kills)]);
+                    w.remove(&[my()]);
+                    w.flow_end();
+                    w.end_block(dead);
+                    // The push: (strength - resistance) / 100 x 0.6 s, at
+                    // least 0.125.
+                    let s = w.rhs(INT, &[El::Local(strength)]);
+                    let r = w.rhs(FLOAT, &[El::Local(resist)]);
+                    let e = w.expr(s, Some((1, r)));
+                    let hundred = w.float(100.0);
+                    let e = w.expr(e, Some((3, hundred)));
+                    let k = w.float(0.6);
+                    let e = w.expr(e, Some((2, k)));
+                    w.set(&[El::Local(t)], e);
+                    let floor = w.float(0.125);
+                    let short = w.check(&[El::Local(t)], 3, floor);
+                    let floor = w.float(0.125);
+                    w.set(&[El::Local(t)], floor);
+                    w.end_block(short);
+                    let r = w.rhs(FLOAT, &[El::Local(resist)]);
+                    let s = w.rhs(INT, &[El::Local(strength)]);
+                    let half = w.float(0.5);
+                    let s = w.expr(s, Some((2, half)));
+                    let e = w.expr(r, Some((0, s)));
+                    w.set(&[El::Local(resist)], e);
+                    let zero = w.int(0);
+                    w.set(decel, zero);
+                    let lhs = w.value(decel);
+                    let to = w.int(600);
+                    let secs = w.rhs(FLOAT, &[El::Local(t)]);
+                    let (out, in_) = (w.int(50), w.int(0));
+                    let (sp, so) = w.open(Class::SlideValue, "slide value");
+                    w.refer(so, 0x1C, lhs);
+                    w.refer(so, 0x20, to);
+                    w.refer(so, 0x24, secs);
+                    w.refer(so, 0x28, out);
+                    w.refer(so, 0x2C, in_);
+                    w.end_block(sp);
+                    let target = w.group(&[my(), El::Member("actorinfo", "velocity")], None);
+                    let o = w.op(Class::Displace, "displace");
+                    let len = w.int(80);
+                    let head = w.rhs(FLOAT, &[El::Local(heading)]);
+                    let pitch = w.int(0);
+                    w.refer(o, 0x1C, target);
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, len);
+                    w.refer(o, 0x28, head);
+                    w.refer(o, 0x2C, pitch);
+                    w.push(o);
+                    let now = w.rhs(FLOAT, &timer);
+                    let tt = w.rhs(FLOAT, &[El::Local(t)]);
+                    let e = w.expr(now, Some((0, tt)));
+                    w.set(&[El::Local(end)], e);
+                    w.end_block(asked);
+                    w.end_block(body);
+                },
+            );
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "synthetic",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    /// The chain's creature on the twin's open ground, its locals set, and
+    /// a step: the frame's slides, its tick, then the engine's frame.
+    struct Bench {
+        vm: Vm,
+        world: ScriptWorld,
+        pit: Pit,
+        generator: Generator,
+        id: guac_script::PlacementId,
+    }
+
+    impl Bench {
+        fn new(seed: u32) -> Bench {
+            let mut config = crate::scripts::fight_config(Mode::Strict);
+            config.whitelist = Whitelist::All;
+            let mut vm = Vm::new(chain(), config);
+            let id = vm.add(C1, "Chompy", 0);
+            let mut world = world();
+            world.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+            let mut b = Bench {
+                vm,
+                world,
+                pit: pit(),
+                generator: Generator::seeded(seed),
+                id,
+            };
+            for (n, v) in [
+                ("hp", Value::Float(20.0)),
+                ("damage", Value::Float(8.0)),
+                ("strength", Value::Int(25)),
+                ("heading", Value::Float(0.0)),
+                ("resist", Value::Float(4.0)),
+            ] {
+                assert!(b.vm.set_local(id, n, v));
+            }
+            b
+        }
+
+        fn set(&mut self, n: &str, v: Value) {
+            assert!(self.vm.set_local(self.id, n, v));
+        }
+
+        fn int(&self, n: &str) -> i32 {
+            self.vm
+                .local(self.id, n)
+                .and_then(|v| v.as_i32())
+                .unwrap_or(0)
+        }
+
+        fn float(&self, n: &str) -> f32 {
+            self.vm
+                .local(self.id, n)
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0)
+        }
+
+        /// The step, and the creature's speed across the ground after it
+        /// (ft/s).
+        fn step(&mut self) -> f32 {
+            let mut spawn = headless_spawner(1 << 40);
+            {
+                let mut host = WorldHost {
+                    world: &mut self.world,
+                    engine: &mut self.pit,
+                    generator: &mut self.generator,
+                    spawn: &mut spawn,
+                };
+                self.vm.slide(&mut host).unwrap();
+                self.vm.step(&mut host).unwrap();
+            }
+            self.world.end_step();
+            self.world.advance(STEP, &mut self.pit);
+            let a = self.world.actor(C1).unwrap();
+            Vec3::new(a.velocity.x, 0.0, a.velocity.z).length()
+        }
+
+        fn hit(&mut self) -> Vec<f32> {
+            self.set("go", Value::Int(1));
+            let mut speeds = vec![self.step()];
+            while self.float("knock end") > 0.0 {
+                speeds.push(self.step());
+                assert!(speeds.len() < 60, "a push that never ends");
+            }
+            speeds
+        }
+    }
+
+    /// A hit's damage and its push: 8 off 20, no critical at a chance of 0,
+    /// none turned away with no armour; 80 ft/s along its heading from the
+    /// hit's own frame (the creature's velocity, as the engine path has a
+    /// Chompy's), slowing as the slide brings its deceleration in from
+    /// nothing as x², for its knock time from the strength less the
+    /// resistance, (25 - 4) / 100 x 0.6 = 0.126 s: 8 frames, then still; its
+    /// resistance up half the strength. A second push on that resistance
+    /// takes the floor, 0.125 s.
+    #[test]
+    fn a_hit_hurts_and_pushes_for_its_strength_less_the_resistance() {
+        let mut b = Bench::new(7);
+        let speeds = b.hit();
+        assert_eq!(b.float("hp"), 12.0);
+        assert_eq!((b.int("crits"), b.int("turned")), (0, 0));
+        assert!((b.float("knock time") - 0.126).abs() < 1e-6);
+        assert!((b.float("resist") - 16.5).abs() < 1e-6);
+        // 80 ft/s the frame it's hit, then each frame the slid
+        // deceleration, 600 x (k / 60 / 0.126)^2, off it.
+        assert!((speeds[0] - 80.0).abs() < 1e-3, "{speeds:?}");
+        let mut want = 80.0f32;
+        for (k, v) in speeds.iter().enumerate().skip(1).take(7) {
+            let x = k as f32 * STEP / 0.126;
+            want -= 600.0 * x * x * STEP;
+            assert!((v - want).abs() < 0.05, "frame {k}: {v} against {want}");
+        }
+        assert_eq!(
+            speeds.len(),
+            9,
+            "8 frames moving, still the ninth: {speeds:?}"
+        );
+        assert_eq!(*speeds.last().unwrap(), 0.0);
+        let moved = b.world.actor(C1).unwrap().position;
+        assert!(moved.z > 2.0 * FOOT && moved.x.abs() < 1e-3, "{moved}");
+        // The second: (25 - 16.5) / 100 x 0.6 = 0.051 s, under the floor.
+        let speeds = b.hit();
+        assert!((b.float("knock time") - 0.125).abs() < 1e-6);
+        assert_eq!(speeds.len(), 9, "{speeds:?}");
+        assert_eq!(b.float("hp"), 4.0);
+    }
+
+    /// A critical: at a chance of 100 every hit adds half its damage,
+    /// rounded down, 8 to 12, as long as the roll isn't the top (one in
+    /// 2^25); a chance of 6 lands one in about 17, exactly when the roll is
+    /// under 6.
+    #[test]
+    fn a_critical_adds_half_and_lands_when_the_roll_is_under_the_chance() {
+        let mut b = Bench::new(11);
+        b.set("chance", Value::Int(100));
+        b.set("hp", Value::Float(1000.0));
+        b.hit();
+        assert_eq!(b.float("hp"), 988.0);
+        assert_eq!(b.int("crits"), 1);
+        let mut crits = 0;
+        for n in 0..300 {
+            let mut b = Bench::new(100 + n);
+            b.set("chance", Value::Int(6));
+            let first = b.generator.clone().next_u32();
+            let roll = guac_script::random_literal(Value::Float(100.0), first)
+                .unwrap()
+                .as_f32()
+                .unwrap();
+            b.hit();
+            let critical = 6.0 - roll > 0.0;
+            assert_eq!(b.int("crits"), i32::from(critical), "roll {roll}");
+            assert_eq!(b.float("hp"), if critical { 8.0 } else { 12.0 });
+            crits += i32::from(critical);
+        }
+        assert!((5..=40).contains(&crits), "{crits}");
+    }
+
+    /// Armour turns a hit away whole: no damage, no push, the creature
+    /// still; at 200 it lands only on the roll's top.
+    #[test]
+    fn a_turned_away_hit_takes_nothing_and_pushes_nothing() {
+        let mut b = Bench::new(3);
+        b.set("armor", Value::Int(200));
+        let first = b.generator.clone().next_u32();
+        let roll = guac_script::random_literal(Value::Int(100), first)
+            .unwrap()
+            .as_i32()
+            .unwrap();
+        assert!(roll < 100, "the seed's roll isn't the top");
+        b.set("go", Value::Int(1));
+        assert_eq!(b.step(), 0.0);
+        assert_eq!(b.int("turned"), 1);
+        assert_eq!(b.float("hp"), 20.0);
+        assert_eq!(b.float("knock end"), 0.0, "no push");
+        let at = b.world.actor(C1).unwrap().position;
+        assert_eq!(
+            (at.x, at.z),
+            (0.0, 0.0),
+            "not moved across the ground: {at}"
+        );
+    }
+
+    /// A kill: the third 8 takes 20 to -4, and the creature is taken off,
+    /// its script ended.
+    #[test]
+    fn a_kill_takes_the_creature_off() {
+        let mut b = Bench::new(5);
+        b.hit();
+        b.hit();
+        b.set("go", Value::Int(1));
+        b.step();
+        assert_eq!(b.float("hp"), -4.0);
+        assert_eq!(b.int("kills"), 1);
+        assert!(b.vm.removed(b.id));
+        assert!(b.world.removed(C1));
+        b.set("go", Value::Int(1));
+        b.step();
+        assert_eq!(b.int("hits"), 3, "its script ended with it");
     }
 }

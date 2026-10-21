@@ -17,7 +17,11 @@
 //! op, operand and object a list reaches gets an id, `global.bld` imports
 //! resolve through the export ids (bootstrap's roots first), and a macro or
 //! structure *stub* (a definition in no list) resolves by name to the
-//! definition of that name that sits in a list. A script's `_masterVarList`
+//! definition of that name that sits in a list; read as a value, a stub is
+//! that definition, so two files naming one macro name one object (AH.19:
+//! Eruptor's file names `State - On Fire` through a stub, and a Chompy's
+//! list of states holds `global.bld`'s definition; the original's lookup
+//! of the state finds it, AH.10's lob stunning a Chompy). A script's `_masterVarList`
 //! is linked too: the variables a placement's locals are built from. A
 //! *placement* is one thing in the world running one script: the VM keeps,
 //! per placement, whether its STARTUP has run, its current behaviour, its
@@ -40,6 +44,9 @@
 //! the script on later ticks through members. After each tick the
 //! placement's `system.script timer` grows by the tick's seconds
 //! ([`Config::tick_seconds`], 1/60 s), so it reads 0 through the first.
+//!
+//! Before the frame's scripts the sliders step, once ([`Vm::slide`]; Slides
+//! below).
 //!
 //! The embedder puts placements to sleep and wakes them by its activity
 //! rule ([`Vm::set_asleep`]); one asleep isn't ticked and keeps its state.
@@ -288,7 +295,8 @@
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
-//!   into it too, and a membership check of it skips); `.its`, the
+//!   into it too, and a membership check or a `find subset` of it skips);
+//!   `.its`, the
 //!   member under test inside `find subset`; `.valuedereferencer`, the
 //!   object a reference names, as the place to write;
 //! - `setvariant.count`, `.first`, `.last` and `.random` on a set, and
@@ -299,8 +307,9 @@
 //!   object `set behavior` names (`if reference behavior == <Idle>`);
 //! - `system.cast to integer`, an integer cell: written, it truncates toward
 //!   0 (no rounding); read, it gives what was written;
-//! - `system.script timer`, the running placement's seconds of ticks, and
-//!   `system.frame rate scale`, the tick's seconds times 60;
+//! - `system.script timer`, the running placement's seconds of ticks (a
+//!   tick the embedder runs natively for one counts too, [`Vm::count_tick`]),
+//!   and `system.frame rate scale`, the tick's seconds times 60;
 //! - a packed value's parts, wherever the value lives (a cell, a value cell
 //!   or a host member, read and written back whole):
 //!   `screenmeasurement.x` and `.y`, the high and low halves in sixteenths,
@@ -322,6 +331,39 @@
 //! receiver, a member the host answers with nothing) fails quietly as the
 //! original's does: a write drops, a check skips. [`members`] lists the
 //! members as the original registers them and who keeps each here.
+//!
+//! # Slides
+//!
+//! `slide value` eases its place from what it holds to its target over its
+//! seconds, by a *slider* of a pool of [`SLIDERS`] (aj-vm's 400). The
+//! slider is the op's result, read in its block (`setref ... = <slide>`),
+//! and its block runs. Once a frame before the scripts each running slider
+//! moves a tick's seconds times its playback rate over 100, and writes its
+//! place `from + (to - from) * e(x)`, `x` the share of its time gone and
+//! `e` the ease ([`eased`]): the rate of change rising linearly over the
+//! first `out × 0.02` of the time, falling over the last `in × 0.02`, both
+//! scaled down to fit when they'd overlap. A slide begun this frame first
+//! moves in the next; at its time's end it lands on its target and ends.
+//! Numbers slide in single precision, a packed colour channel by channel, a
+//! screen position half by half.
+//!
+//! - With every slider running, a time that isn't over 0, or values that
+//!   don't slide, it lands on its target at once and skips its block, as
+//!   the original does with its pool full.
+//! - A script's own write to a place a slide is easing ends the slide, and
+//!   a new slide on the place takes over from the old (a reading of AH.10's
+//!   pushes: a hero's hurt reaction puts his deceleration back to 80 ft/s²
+//!   while a push's slide eases it in from nothing, and 80 holds; on a
+//!   Chompy, whose push slides the engine's deceleration and whose reaction
+//!   puts back the script's own, the slide runs on).
+//! - A slider's `sequence.time remaining` and `.percent remaining` read
+//!   what's left of this pass, and written set it (0 lands it next frame);
+//!   `.playback rate` (percent) speeds it; `.looping` and `.playback mode`
+//!   (one way, ping pong) make it start again at its end, or come back the
+//!   way it went, and never end on its own; `.raw duration` reads its
+//!   time; `slider.ignores time scales` is kept, no time scale being
+//!   modelled for it to ignore. `stop` on a slider ends it where its place
+//!   stands. Any other member of a slider is unmodelled.
 //!
 //! # Modes, the budget and the whitelist
 //!
@@ -357,9 +399,7 @@
 //! receiver, the copy the op's result; a reset of a structure, a set or what
 //! a reference names puts it back to its defaults, the reference kept (a
 //! reading: `EnemySystem_` resets its action references, then nulls them);
-//! a slide sets its target to where it would end at once and skips its
-//! block, as the original does when its pool of 400 sliders is full (a
-//! stand-in: the eased slide over time isn't modelled yet).
+//! and slides, with their sliders (Slides).
 //!
 //! Not modelled yet: colour arithmetic and screen division (they stop as
 //! unsupported), the set properties (unmodelled members); and, with no
@@ -377,6 +417,7 @@ mod generator;
 mod host;
 pub mod members;
 mod program;
+mod slide;
 mod stall;
 mod value;
 mod vm;
@@ -394,10 +435,11 @@ pub use program::{
     Literal, LiteralClass, Obj, OpId, OpInfo, Operand, OperandId, Param, Program, Role, ScriptId,
     ScriptInfo, Sym, Tag, Unit,
 };
+pub use slide::{between, eased};
 pub use stall::{Stall, StallDetector, StallLimit};
 pub use value::{Value, arith, arith_in, compare, convert, random_literal};
 pub use vm::{
-    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, PlacementId, Precision, Reason,
+    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, PlacementId, Precision, Reason, SLIDERS,
     StepReport, TICK_SECONDS, Vm,
 };
 pub use whitelist::{Listed, Whitelist};

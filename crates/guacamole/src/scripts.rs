@@ -926,6 +926,8 @@ pub fn hero_config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
     members::register(&mut c.members, INIT_CHAIN);
     members::register(&mut c.members, members::HERO);
+    // A slider's own members (AH.19): his attacks' and the HUD's slides.
+    members::register(&mut c.members, members::COMBAT);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
         .copied()
@@ -1190,6 +1192,27 @@ pub fn manage_combat(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Ha
     Ok(())
 }
 
+/// The head of the portal manager's tick (openspec AH.19; the player
+/// loop's native rule, AH.20's): its `script timer local` set to its
+/// `system.script timer`, as its PRESCRIPT does before the death sequence
+/// and the combat manager, then its clock a tick on, the tick being ours.
+/// The state system times a creature's immunity to a new state (1 s after
+/// its last ends) against that local, so without it a hero's hurt reaction
+/// never comes again. Called once a step, first in the loop.
+pub fn portal_manager_clock(vm: &mut Vm, world: &ScriptWorld) -> Result<(), Halt> {
+    let pm = portal_manager(vm, world)?;
+    // Until its first tick (its STARTUP) has run, the VM ticks it itself.
+    if !vm.is_held(pm) {
+        return Ok(());
+    }
+    let now = vm.active_seconds(pm).unwrap_or(0.0);
+    // False only when no op of the program names the local: nothing reads
+    // it then (a synthetic portal manager's).
+    vm.set_local(pm, "script timer local", Value::Float(now));
+    vm.count_tick(pm);
+    Ok(())
+}
+
 fn outside(why: String) -> Halt {
     Halt {
         placement: None,
@@ -1201,13 +1224,18 @@ fn outside(why: String) -> Halt {
     }
 }
 
-fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId, Halt> {
-    let h = world
+/// The portal manager's handle.
+fn portal_manager_handle(world: &ScriptWorld) -> Result<Handle, Halt> {
+    world
         .templates
         .values()
         .find(|p| p.name == PORTAL_MANAGER)
         .and_then(|p| world.objects.get(&p.obj).copied())
-        .ok_or_else(|| outside(format!("no {PORTAL_MANAGER} placement")))?;
+        .ok_or_else(|| outside(format!("no {PORTAL_MANAGER} placement")))
+}
+
+fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId, Halt> {
+    let h = portal_manager_handle(world)?;
     vm.placement_of(h)
         .ok_or_else(|| outside(format!("{PORTAL_MANAGER} doesn't run")))
 }

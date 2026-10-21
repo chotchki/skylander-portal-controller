@@ -40,6 +40,9 @@ pub enum Value {
     /// set element's `screenmeasurement.x`): an index into the VM's bound
     /// places, read and written through `valuedereferencer`.
     Bound(u32),
+    /// A slider: what `slide value` hands its block, an index into the VM's
+    /// sliders (crate docs, Slides).
+    Slider(u32),
 }
 
 impl Value {

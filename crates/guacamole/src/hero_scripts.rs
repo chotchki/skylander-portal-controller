@@ -429,6 +429,23 @@ fn step_scripts(
     };
     let mut stopped: Vec<Halt> = Vec::new();
     let mut off: Option<String> = None;
+    // The frame's slides, once before any script this step (openspec
+    // AH.19), then the portal manager's clock, the head of its tick.
+    {
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator,
+            spawn: &mut spawn,
+        };
+        match vm.slide(&mut host) {
+            Ok(r) => stopped.extend(r.stopped),
+            Err(h) => stopped.push(h),
+        }
+    }
+    if let Err(h) = scripts::portal_manager_clock(vm, &world) {
+        stopped.push(h);
+    }
     // The minion activates at the step after his file's placements joined,
     // before anything of this step: AH.17's order.
     if let (Some(h), Some(r)) = (hero, run.as_deref_mut())

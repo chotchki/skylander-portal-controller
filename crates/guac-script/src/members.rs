@@ -1958,6 +1958,34 @@ pub const CREATURES: &[Registered] = &[
     ),
 ];
 
+/// What AH.19's hurt and kill chain reach past [`INIT_CHAIN`], [`HERO`] and
+/// [`CREATURES`]: a slider's own members, the VM's (crate docs, Slides). A
+/// push eases its target's deceleration through a slider and the hurt
+/// flash and health bar's sprite shakes loop theirs; the rest of a
+/// slider's (`time remaining`, `percent remaining`, `playback rate`,
+/// `looping`, `raw duration`) are a sequence's too, registered as the
+/// hero's sequences have them, and the VM answers them on a slider first.
+pub const COMBAT: &[Registered] = &[
+    m(
+        "sequence",
+        "playback mode",
+        "EnumMeasurement",
+        "one way|ping pong",
+        0.0,
+        1.0,
+        Vm,
+    ),
+    m(
+        "slider",
+        "ignores time scales",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Vm,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2043,7 +2071,7 @@ mod tests {
             }
         }
         // The fight's members are none of the earlier tables'.
-        for r in CREATURES {
+        for r in CREATURES.iter().chain(COMBAT) {
             assert!(
                 find(INIT_CHAIN, r.namespace, r.name).is_none(),
                 "{}",
@@ -2055,7 +2083,7 @@ mod tests {
         let hero = HERO
             .iter()
             .filter(|r| find(INIT_CHAIN, r.namespace, r.name).is_none());
-        for r in INIT_CHAIN.iter().chain(hero).chain(CREATURES) {
+        for r in INIT_CHAIN.iter().chain(hero).chain(CREATURES).chain(COMBAT) {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -2076,11 +2104,12 @@ mod tests {
         register(&mut members, INIT_CHAIN);
         register(&mut members, HERO);
         register(&mut members, CREATURES);
+        register(&mut members, COMBAT);
         // The hero's entry wins where both tables name a member.
         let init = INIT_CHAIN
             .iter()
             .filter(|r| find(HERO, r.namespace, r.name).is_none());
-        for r in init.chain(HERO).chain(CREATURES) {
+        for r in init.chain(HERO).chain(CREATURES).chain(COMBAT) {
             assert_eq!(r.kind(), kind_of(r), "{}", r.path());
             let id = MemberId::named(r.namespace, r.name);
             match r.keeper {
@@ -2116,6 +2145,7 @@ mod tests {
             .iter()
             .chain(HERO)
             .chain(CREATURES)
+            .chain(COMBAT)
             .filter(labelled)
         {
             let n = r.units.split('|').count();
@@ -2240,6 +2270,37 @@ mod tests {
         let layered = find(HERO, "animationinfo", "is layered").unwrap();
         assert_eq!(layered.spec().default, Value::Int(0));
         assert_eq!(layered.keeper, Keeper::Cell);
+    }
+
+    /// A slider's own members, the VM's: named as the registry spells them,
+    /// enums by their labels, and none a host or a cell answers.
+    #[test]
+    fn a_sliders_members_are_the_vms_by_their_labels() {
+        let mode = find(COMBAT, "sequence", "playback mode").unwrap();
+        assert_eq!(mode.keeper, Keeper::Vm);
+        assert_eq!(label(&mode, "ping pong"), Some(Value::Int(1)));
+        assert_eq!(label(&mode, "one way"), Some(Value::Int(0)));
+        let ignores = find(COMBAT, "slider", "ignores time scales").unwrap();
+        assert_eq!(ignores.keeper, Keeper::Vm);
+        assert_eq!(label(&ignores, "true"), Some(Value::Int(1)));
+        let mut members = Members::new();
+        register(&mut members, COMBAT);
+        for r in COMBAT {
+            let id = MemberId::named(r.namespace, r.name);
+            assert!(members.get(id).is_none(), "{}", r.path());
+            assert_eq!(members.name(id), r.path());
+        }
+        // The sequence members a slider shares with the hero's sequences
+        // stay his table's, the host's for a sequence.
+        for name in [
+            "time remaining",
+            "percent remaining",
+            "playback rate",
+            "looping",
+        ] {
+            let r = find(HERO, "sequence", name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(r.keeper, Keeper::Host, "{name}");
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@ use crate::*;
 mod creatures;
 mod hero;
 mod init;
+mod slides;
 
 const INT: &str = "IntMeasurement";
 const HANDLE: Handle = 0x51;

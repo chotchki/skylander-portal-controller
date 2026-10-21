@@ -11,9 +11,18 @@
 //!
 //! `cargo test -p guacamole --release --test giants_chompy -- --ignored --nocapture --test-threads=1`
 //!
-//! A dev aid, not a check: `AH18_LIVE_TABLE=<aj-vm's live member table>`
+//! AH.19's are the hurt and kill chain's: bites pushing him by his
+//! resistance and his hurt reaction, a turned-away bite, a Lava Lob's kill,
+//! a stunned Chompy hit again (a lob staging and the disc's own `Combat -
+//! Hurt Creature` on a schedule), a bite in his eruption and the chain's
+//! rolls over 1,000 calls a case.
+//!
+//! Dev aids, not checks: `AH18_LIVE_TABLE=<aj-vm's live member table>`
 //! answers every member the registry doesn't hold with a value cell of its
-//! registered type and prints which the run reached.
+//! registered type and prints which the run reached; in a fight,
+//! `AH19_TRACE=<steps from F0>` with `AH19_TRACE_OUT=<file outside the
+//! tree>` writes that step's ops as script and position, and `AH19_BALLS`
+//! prints what flies from F0 + 85 to F0 + 150.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -30,10 +39,10 @@ use guac_motion::proxy::Surfaces;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{CREATURES, HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{COMBAT, CREATURES, HERO as HERO_MEMBERS, INIT_CHAIN};
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
-    Stall, StallDetector, StallLimit, Unit, Value, Vm,
+    Stall, StallDetector, StallLimit, Unit, Value, Vm, random_literal,
 };
 use guacamole::level_scene;
 use guacamole::script_engine::{Engine, FEET_PER_METRE, Pad};
@@ -214,6 +223,9 @@ impl Run {
         for (h, active) in self.world.activity(&mut self.bench) {
             self.vm.set_asleep(h, !active);
         }
+        let slid = self.with_host(|vm, host| vm.slide(host))?;
+        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        scripts::portal_manager_clock(&mut self.vm, &self.world)?;
         if self.minion.is_some() {
             self.with_host(scripts::manage_combat)?;
             self.with_host(scripts::manage_projectiles)?;
@@ -923,6 +935,17 @@ struct Script {
     /// The scene's end set 5 s into Norticus' scene (the cutscene manager
     /// isn't on the whitelist).
     scene_end: bool,
+    /// AH.10's `stun` staging (openspec AH.19): the four's health and full
+    /// health set to 100 at F0, then South down a step and up a step 90
+    /// times from F0 + 120.
+    stun: bool,
+    /// The four's health and full health set to 100 at F0 and nothing
+    /// else (AH.10's `erupt_bit`).
+    stun_health: bool,
+    /// AH.11's pokes (openspec AH.19): his critical chance (`total crit`)
+    /// and his armour set at F0.
+    crit: Option<i32>,
+    armour: Option<i32>,
     /// Steps past the opening's start.
     steps: u32,
 }
@@ -943,6 +966,30 @@ struct ChompySnap {
     /// `$description.$creature info.$invulnerable`.
     invulnerable: i32,
     gone: bool,
+    /// The hurt chain's numbers on it (openspec AH.19).
+    hurt: Hurt,
+    /// `$description.$creature info.$hp`.
+    health: f32,
+    /// Across the ground, m/s.
+    speed: f32,
+    /// How many its lunge has bitten (`actors hit`).
+    bitten: usize,
+}
+
+/// What the hurt chain keeps on a creature's description (openspec AH.19,
+/// the oracle harness's chain paths): its knockback's timer (the game time
+/// it ends), resistance and last strength, its hurt reaction's mode (1 while
+/// it runs) and the hurt state.
+#[derive(Debug, Clone, Copy, Default)]
+struct Hurt {
+    knock_timer: f32,
+    resist: f32,
+    strength: f32,
+    mode: i32,
+    mode_timer: f32,
+    state: i32,
+    /// `$creature info.$invulnerable`.
+    invulnerable: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -951,6 +998,14 @@ struct Snap {
     k: i64,
     hero: Vec3,
     health: f32,
+    /// His walk across the ground, m/s, and the hurt chain's numbers on him.
+    hero_speed: f32,
+    hero_hurt: Hurt,
+    /// `combat control data`'s game timer: the clock a knockback's timer
+    /// counts on.
+    game_timer: f32,
+    /// His player's `enemies defeated`.
+    defeated: i32,
     chompies: Vec<ChompySnap>,
     norticus: (Option<String>, Vec3, bool),
     controller: Option<String>,
@@ -982,6 +1037,60 @@ fn path(run: &Run, id: PlacementId, local: &str, fields: &[&str]) -> Option<Valu
 }
 
 impl Run {
+    /// The first player's joined data's `minion description` (his total
+    /// critical chance, armour and the rest his description sums).
+    fn minion_description(&mut self) -> Value {
+        let g = self
+            .vm
+            .program()
+            .global_named("portal control data")
+            .unwrap();
+        let pcd = self.vm.global(g).map(|v| self.vm.value(v)).unwrap();
+        let joined = self
+            .vm
+            .field(pcd, "player joined data")
+            .map(|v| self.vm.value(v))
+            .unwrap();
+        let first = self.vm.set(joined).unwrap()[0];
+        let first = self.vm.value(first);
+        self.vm
+            .field(first, "minion description")
+            .map(|v| self.vm.value(v))
+            .unwrap()
+    }
+
+    /// `combat control data`'s game timer.
+    fn game_timer(&self) -> f32 {
+        let Some(g) = self.vm.program().global_named("combat control data") else {
+            return 0.0;
+        };
+        let Some(c) = self.vm.global_peek(g) else {
+            return 0.0;
+        };
+        self.vm
+            .field(c, "game timer")
+            .and_then(|v| self.vm.value(v).as_f32())
+            .unwrap_or(0.0)
+    }
+
+    /// The hurt chain's numbers on a placement's `description`.
+    fn hurt(&self, id: PlacementId) -> Hurt {
+        let f = |fields: &[&str]| {
+            path(self, id, "description", fields)
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0)
+        };
+        Hurt {
+            knock_timer: f(&["knockback timer"]),
+            resist: f(&["state tracking", "knockback current resist"]),
+            strength: f(&["state tracking", "knockback last knock strength"]),
+            mode: f(&["state tracking", "mode"]) as i32,
+            mode_timer: f(&["state tracking", "mode timer"]),
+            state: f(&["state"]) as i32,
+            invulnerable: f(&["creature info", "invulnerable"]) as i32,
+        }
+    }
+
     fn snap(&self, k: i64) -> Snap {
         let chompies = CHOMPIES
             .iter()
@@ -1022,6 +1131,16 @@ impl Run {
                         path(self, id, "description", &["creature info", "invulnerable"]),
                     ),
                     gone: self.vm.removed(id),
+                    hurt: self.hurt(id),
+                    health: path(self, id, "description", &["creature info", "hp"])
+                        .and_then(|v| v.as_f32())
+                        .unwrap_or(0.0),
+                    speed: Vec3::new(a.velocity.x, 0.0, a.velocity.z).length() / FEET_PER_METRE,
+                    bitten: self
+                        .vm
+                        .local(id, "actors hit")
+                        .and_then(|v| self.vm.set(self.vm.value(v)).map(<[Value]>::len))
+                        .unwrap_or(0),
                 }
             })
             .collect();
@@ -1032,6 +1151,28 @@ impl Run {
             k,
             hero: self.hero().pivot,
             health: self.health().unwrap_or(0.0),
+            hero_speed: {
+                let v = self.hero().walk.velocity;
+                Vec3::new(v.x, 0.0, v.z).length() / FEET_PER_METRE
+            },
+            hero_hurt: self.minion.map(|m| self.hurt(m)).unwrap_or_default(),
+            game_timer: self.game_timer(),
+            defeated: self
+                .minion
+                .and_then(|m| {
+                    path(
+                        self,
+                        m,
+                        "my Minion Description",
+                        &[
+                            "player joined data",
+                            "player stat tracking",
+                            "enemies defeated",
+                        ],
+                    )
+                })
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0) as i32,
             chompies,
             norticus: (
                 self.vm.behaviour(nid).map(str::to_owned),
@@ -1072,6 +1213,37 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
                 run.set_at(name, Vec3::from_array(at), facing);
             }
             run.alert_in(FIRST_ALERT);
+            let m = run.minion.unwrap();
+            if let Some(crit) = script.crit {
+                let d = run.minion_description();
+                assert!(run.vm.set_field(d, "total crit", Value::Int(crit)));
+            }
+            if let Some(armour) = script.armour {
+                let c = path(&run, m, "description", &["creature info"]).unwrap();
+                assert!(run.vm.set_field(c, "armor", Value::Int(armour)));
+            }
+            if script.stun || script.stun_health {
+                for n in CHOMPIES {
+                    let id = run.placement(n);
+                    let d = run
+                        .vm
+                        .local(id, "description")
+                        .map(|v| run.vm.value(v))
+                        .unwrap();
+                    let c = run
+                        .vm
+                        .field(d, "creature info")
+                        .map(|v| run.vm.value(v))
+                        .unwrap();
+                    assert!(run.vm.set_field(c, "hp", Value::Int(100)));
+                    let cp = run
+                        .vm
+                        .field(c, "character parameters")
+                        .map(|v| run.vm.value(v))
+                        .unwrap();
+                    assert!(run.vm.set_field(cp, "hp max", Value::Int(100)));
+                }
+            }
             let to = run.at("Enemy_Chompy(2)") - run.hero().pivot;
             run.bench.view = guacamole::script_engine::heading_of(to);
         }
@@ -1087,7 +1259,8 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
             run.bench.heroes.get_mut(&HERO).unwrap().facing =
                 guacamole::script_engine::heading_of(to).rem_euclid(360.0);
         }
-        pad.actions[0] = at(script.lob);
+        pad.actions[0] =
+            at(script.lob) || script.stun && (120..300).contains(&f) && (f - 120) % 2 == 0;
         pad.actions[1] = at(script.erupt)
             || script
                 .erupt_every
@@ -1103,7 +1276,49 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
                 }
             }
         }
+        // A dev aid: `AH19_BALLS` prints what flies each step from F0 + 85
+        // to F0 + 150 and where the Chompies stand.
+        if std::env::var("AH19_BALLS").is_ok() && (85..150).contains(&f) {
+            let flying: Vec<String> = run
+                .world
+                .clones()
+                .into_iter()
+                .filter_map(|h| {
+                    let a = run.world.actor(h)?;
+                    (a.launched && !a.removed)
+                        .then(|| format!("{} {:.3}", run.world.name(h), a.position))
+                })
+                .collect();
+            let chompies: Vec<String> = CHOMPIES
+                .iter()
+                .map(|n| format!("{n} {:.3}", run.at(n)))
+                .collect();
+            println!(
+                "F0 + {f}: flying {flying:?}; hero {:.3}; {chompies:?}",
+                run.hero().pivot
+            );
+        }
+        // A dev aid: `AH19_TRACE=<steps from F0>` writes that step's ops,
+        // each as script and position, to `AH19_TRACE_OUT`.
+        let traced = std::env::var("AH19_TRACE")
+            .ok()
+            .and_then(|t| t.parse::<i64>().ok())
+            == Some(f);
+        if traced {
+            run.vm.trace(Some(2_000_000));
+        }
         run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        if traced {
+            let program = run.vm.program_arc();
+            let ops = run.vm.traced();
+            run.vm.trace(None);
+            let text: String = ops
+                .iter()
+                .map(|(s, at)| format!("{} {at}\n", program.scripts[*s as usize].name))
+                .collect();
+            let out = std::env::var("AH19_TRACE_OUT").expect("AH19_TRACE_OUT");
+            std::fs::write(out, text).unwrap();
+        }
         if f >= -1 {
             snaps.push(run.snap(f));
         }
@@ -1456,9 +1671,15 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     }
     let cost = snaps[0].health - snaps.last().unwrap().health;
     println!("bites {bites:?}; standing still to F0 + 900 cost {cost}");
-    // AH.10: standing still to F0 + 900 cost 73-104 over its 20 drives.
+    // AH.10: standing still to F0 + 900 cost 73-104 over its 20 drives,
+    // four Chompies at him in each; 50 in `still_p1` (the opening a flip
+    // late, four) and 89 in `still_p2` (two late, three). Three come at him
+    // here (anchor B's wander for (2) isn't set), and since AH.19 a bite's
+    // push carries him the original's 3 m clear, so it costs what three
+    // make of it: 4-8 bites, 50-104 (the 22 drives' range).
     assert!(!bites.is_empty(), "no bite landed");
-    assert!((73.0..=104.0).contains(&cost), "{cost}");
+    assert!((4..=8).contains(&bites.len()), "{bites:?}");
+    assert!((50.0..=104.0).contains(&cost), "{cost}");
     let (limits, read) = ah10_limits();
     assert_eq!(read, 40);
     let stalled = stalls(&snaps, &limits);
@@ -1481,13 +1702,25 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
 /// resolves, half a frame over for counting in whole frames; and how many
 /// drives it read.
 fn ah10_limits() -> (Vec<StallLimit>, usize) {
+    ah10_limits_from(&["ah10-main-1792553632"], |_| true)
+}
+
+/// [`ah10_limits`] over the drives in AH.10's capture folders `folders`
+/// that `keep` takes, by name (AH.19: the stun and eruption stagings give
+/// a stunned Chompy's 'disabled').
+fn ah10_limits_from(folders: &[&str], keep: impl Fn(&str) -> bool) -> (Vec<StallLimit>, usize) {
     let root = env_or_dotenv("GUAC_CAPTURE_DIR").expect("GUAC_CAPTURE_DIR: AH.10's recordings");
-    let main = Path::new(&root).join("BLUS30968/ah10-main-1792553632");
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&main)
-        .unwrap_or_else(|e| panic!("{}: {e}", main.display()))
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.join("chain-records.json").is_file())
-        .collect();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for f in folders {
+        let main = Path::new(&root).join("BLUS30968").join(f);
+        dirs.extend(
+            std::fs::read_dir(&main)
+                .unwrap_or_else(|e| panic!("{}: {e}", main.display()))
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.join("chain-records.json").is_file())
+                .filter(|p| keep(&p.file_name().unwrap().to_string_lossy())),
+        );
+    }
     dirs.sort();
     let json = |p: PathBuf| -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap()
@@ -1581,6 +1814,7 @@ fn the_fight_ends_with_norticus_walking_into_the_cave() {
         erupt_every: Some(700),
         scene_end: true,
         steps: 1450,
+        ..Script::default()
     });
     println!("{} snaps in {:.2?}", snaps.len(), started.elapsed());
     let mut last_gone = None;
@@ -1690,11 +1924,18 @@ fn the_fight_ends_with_norticus_walking_into_the_cave() {
     );
     assert_eq!(advance - go, 300, "the scene's end set 5 s in");
     // AH.10: 'End' 121 frames on in all 20 fights, at x 15.80-15.85 and z
-    // -29.880 to -29.894; his gone 0.47-0.50 s after it waits on the slide
-    // of his alpha over 0.5 s, which lands at once here (AH.49).
+    // -29.880 to -29.894; his gone 0.47-0.50 s after it, the slide of his
+    // alpha over 0.5 s to 0 (AH.19's slides over time; the review's reader:
+    // 27-30 frames).
     assert_eq!(end - advance, 121);
     assert!((15.79..=15.86).contains(&mouth.x), "{mouth:?}");
     assert!((-29.90..=-29.87).contains(&mouth.z), "{mouth:?}");
+    let gone = norticus
+        .iter()
+        .find(|n| n.0.as_deref() == Some("(gone)"))
+        .map(|n| n.1 - end)
+        .expect("he goes");
+    assert!((27..=30).contains(&gone), "{gone}");
     let stalled = stalls(&snaps, &limits);
     println!("stalls: {stalled:?}");
     assert!(stalled.is_empty());
@@ -1718,6 +1959,7 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
         erupt_every: Some(700),
         scene_end: true,
         steps: 1450,
+        ..Script::default()
     });
     assert!(snaps.len() > 600);
     let name = |m: &MemberId| run.vm.config().members.name(*m);
@@ -1726,6 +1968,7 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .iter()
             .chain(HERO_MEMBERS)
             .chain(CREATURES)
+            .chain(COMBAT)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -1819,4 +2062,800 @@ fn probe_clip_lengths() {
     let read =
         guac_extract::models::read(&part[3], "009_Eruptor", identity(), Some(&globals)).unwrap();
     show(&read.palette, &[20, 21, 32]);
+}
+
+/// A development probe (openspec AH.19): standing still from anchor B,
+/// each step a bite lands or a push runs, his health, walk and the hurt
+/// chain's numbers on him; `AH19_LOB` adds AH.10's lob and eruption.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_the_pushes() {
+    println!("load before: {}", load());
+    let lob = std::env::var("AH19_LOB").is_ok();
+    let stun = std::env::var("AH19_STUN").is_ok();
+    let number = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<i32>().ok());
+    let (run, snaps) = fight(Script {
+        lob: lob.then_some(90),
+        erupt: lob.then_some(160),
+        stun,
+        crit: number("AH19_CRIT"),
+        armour: number("AH19_ARMOUR"),
+        steps: if stun { 600 } else { 900 },
+        ..Script::default()
+    });
+    for (i, w) in snaps.windows(2).enumerate() {
+        let (a, b) = (&w[0], &w[1]);
+        if b.health != a.health {
+            println!("F0 + {}: his health {} -> {}", b.k, a.health, b.health);
+            for s in &snaps[i..(i + 12).min(snaps.len())] {
+                println!(
+                    "   F0 + {:4}: speed {:7.3} res {:7.3} kt {:9.4} ks {:6.2} mode {} mt {:9.4} state {}",
+                    s.k,
+                    s.hero_speed,
+                    s.hero_hurt.resist,
+                    s.hero_hurt.knock_timer,
+                    s.hero_hurt.strength,
+                    s.hero_hurt.mode,
+                    s.hero_hurt.mode_timer,
+                    s.hero_hurt.state
+                );
+            }
+        }
+        for (c, name) in CHOMPIES.iter().enumerate() {
+            let (x, y) = (&a.chompies[c], &b.chompies[c]);
+            if y.health != x.health {
+                println!(
+                    "  {} F0 + {}: health {} -> {}",
+                    name, b.k, x.health, y.health
+                );
+                for s in &snaps[i..(i + 13).min(snaps.len())] {
+                    let y = &s.chompies[c];
+                    println!(
+                        "     F0 + {:4}: speed {:7.3} res {:7.3} kt {:9.4} ks {:6.2} mode {} mt {:9.4} state {} beh {:?}",
+                        s.k,
+                        y.speed,
+                        y.hurt.resist,
+                        y.hurt.knock_timer,
+                        y.hurt.strength,
+                        y.hurt.mode,
+                        y.hurt.mode_timer,
+                        y.hurt.state,
+                        y.beh
+                    );
+                }
+            }
+        }
+    }
+    let registered = |m: &MemberId| {
+        INIT_CHAIN
+            .iter()
+            .chain(HERO_MEMBERS)
+            .chain(CREATURES)
+            .chain(COMBAT)
+            .any(|r| MemberId::named(r.namespace, r.name) == *m)
+            || guac_script::Builtin::of(*m).is_some()
+    };
+    let mut past: Vec<String> = run
+        .vm
+        .uses()
+        .iter()
+        .filter(|(m, _)| !registered(m))
+        .map(|(m, (r, w))| format!("{} r{r} w{w}", run.vm.config().members.name(*m)))
+        .collect();
+    past.sort();
+    println!("asked, unregistered: {past:#?}");
+    println!("load after: {}", load());
+}
+
+// ---- AH.19: the hurt and kill chain on the VM ----------------------------
+
+/// A push as the snaps show it: the step its knockback began (the timer
+/// set or set again), its knock time (the timer less the game time when it
+/// was set: the step's, for a hurt in a placement's tick after the UI's
+/// moved it; for one in the projectile manager, the step before's, the
+/// native player loop running ahead of the UI's tick here, AH.57), the
+/// resistance before and after, and the speed each step from it until the
+/// timer is cleared.
+#[derive(Debug, Clone)]
+struct Push {
+    k: i64,
+    knock: f32,
+    /// The knock time against the step before's game time.
+    knock_before: f32,
+    resist_before: f32,
+    resist_after: f32,
+    speeds: Vec<f32>,
+}
+
+/// The pushes in `snaps` of whatever `of` reads from a step.
+fn pushes(snaps: &[Snap], of: impl Fn(&Snap) -> (Hurt, f32)) -> Vec<Push> {
+    let mut out: Vec<Push> = Vec::new();
+    for (i, w) in snaps.windows(2).enumerate() {
+        let ((a, _), (b, _)) = (of(&w[0]), of(&w[1]));
+        if b.knock_timer > 0.0 && b.knock_timer != a.knock_timer {
+            let speeds = snaps[i + 1..]
+                .iter()
+                .take_while(|s| of(s).0.knock_timer == b.knock_timer)
+                .map(|s| of(s).1)
+                .collect();
+            out.push(Push {
+                k: w[1].k,
+                knock: b.knock_timer - w[1].game_timer,
+                knock_before: b.knock_timer - w[0].game_timer,
+                resist_before: a.resist,
+                resist_after: b.resist,
+                speeds,
+            });
+        }
+    }
+    out
+}
+
+/// Each step his health fell: the step and what it cost.
+fn bites_of(snaps: &[Snap]) -> Vec<(i64, f32)> {
+    snaps
+        .windows(2)
+        .filter(|w| w[1].health < w[0].health)
+        .map(|w| (w[1].k, w[0].health - w[1].health))
+        .collect()
+}
+
+/// A step's speed `d` m/s off what an 80 ft/s push slowed by `decel` ft/s²
+/// for `frames` frames reads.
+fn slowed(frames: usize, decel: f32) -> f32 {
+    (80.0 - decel * frames as f32 / 60.0) / FEET_PER_METRE
+}
+
+/// Bites push him by his resistance, as AH.10 recorded (combat: Knockback,
+/// No grace after a hit): 0.13125 s at 24.4 m/s with none, 0.125 with
+/// some, his resistance up 12.5 a bite and gone 1.63-1.65 s after a lone
+/// one; his hurt reaction 0.6 s, the push slowing 80 ft/s² while it runs
+/// (his deceleration put back by it) and eased from nothing to 600 ft/s²
+/// over the push without it (a bite inside his reaction's window). The push
+/// moves him from the step after the bite, 8 steps as AH.10's 8 frames
+/// from the bite's own: the mover update ticks before the Chompies here
+/// (AH.57).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
+    println!("load before: {}", load());
+    let (_, snaps) = fight(Script {
+        steps: 900,
+        ..Script::default()
+    });
+    let bites = bites_of(&snaps);
+    let pushes = pushes(&snaps, |s| (s.hero_hurt, s.hero_speed));
+    println!("bites {bites:?}");
+    assert!(bites.len() >= 4, "{bites:?}");
+    for (k, cost) in &bites {
+        assert!((11.0..=14.0).contains(cost), "F0 + {k}: {cost}");
+    }
+    let mut lone = 0;
+    let mut reacted = 0;
+    let mut eased = 0;
+    for p in &pushes {
+        println!(
+            "push at F0 + {}: knock {:.5} s, resistance {:.3} -> {:.3}, {} steps: {:?}",
+            p.k,
+            p.knock,
+            p.resist_before,
+            p.resist_after,
+            p.speeds.len(),
+            p.speeds
+        );
+        assert!(bites.iter().any(|b| b.0 == p.k), "a push with no bite");
+        let want = ((25.0 - p.resist_before) / 100.0 * 0.525).max(0.125);
+        assert!((p.knock - want).abs() < 2e-4, "{} against {want}", p.knock);
+        if p.resist_before == 0.0 {
+            assert!((p.knock - 0.13125).abs() < 2e-4);
+        } else {
+            assert!((p.knock - 0.125).abs() < 2e-4);
+        }
+        // His resistance rises by half the strength, 12.5, on what the
+        // combat manager's falling left of it that step.
+        let rose = p.resist_after - p.resist_before;
+        if p.resist_before == 0.0 {
+            assert!((rose - 12.5).abs() < 1e-3, "{rose}");
+        } else {
+            assert!((12.3..=12.501).contains(&rose), "{rose}");
+        }
+        // Still the step of the bite, moving from the next.
+        let at = snaps.iter().position(|s| s.k == p.k).unwrap();
+        assert!(snaps[at].hero_speed < 1e-3);
+        let s = &p.speeds[1..];
+        let reaction = snaps[at + 1].hero_hurt.mode == 1 && snaps[at].hero_hurt.mode == 0;
+        // Into a wall a push stops after a frame (AH.10): only open-ground
+        // pushes are held to their profile.
+        if s.iter().filter(|v| **v > 1.0).count() < 7 {
+            continue;
+        }
+        assert_eq!(s.len(), 8, "8 steps moving");
+        if reaction {
+            reacted += 1;
+            // The first step slows by the push's slide (its first 60th of
+            // 0.13125 s of x²: 9.7 ft/s²), then 80 ft/s² a step: AH.10's
+            // 23.956-21.535 m/s from its second frame, each a frame early.
+            assert!((s[0] - slowed(1, 600.0 * (1.0 / 7.875f32).powi(2))).abs() < 0.01);
+            // The ground's slope under him can take a little off the
+            // across-the-ground speed of a step: within 0.2 m/s.
+            for (j, v) in s.iter().enumerate().skip(1) {
+                let want = s[0] - (80.0 / FEET_PER_METRE) * j as f32 / 60.0;
+                assert!((v - want).abs() < 0.2, "step {j}: {v} against {want}");
+            }
+            let level = s
+                .iter()
+                .enumerate()
+                .skip(1)
+                .filter(|(j, v)| {
+                    (**v - (s[0] - (80.0 / FEET_PER_METRE) * *j as f32 / 60.0)).abs() < 0.01
+                })
+                .count();
+            assert!(level >= 5, "{s:?}");
+        } else {
+            eased += 1;
+            // AH.10's 24.330, 24.121, 23.664, 22.794, 21.374, 19.482,
+            // 16.939 m/s: the decel slid in as x².
+            for w in s.windows(3) {
+                assert!(w[0] - w[1] < w[1] - w[2] + 1e-3, "{s:?}");
+            }
+            assert!((s[0] - 24.33).abs() < 0.02, "{}", s[0]);
+            assert!((s[6] - 16.9).abs() < 0.3, "{}", s[6]);
+        }
+        // A lone push: nothing more for 1.7 s.
+        if p.resist_before == 0.0 && !pushes.iter().any(|q| q.k > p.k && q.k <= p.k + 102) {
+            let gone = snaps[at..]
+                .iter()
+                .find(|s| s.hero_hurt.resist == 0.0)
+                .map(|s| (s.k - p.k) as f32 / 60.0);
+            println!("  lone: resistance gone {gone:?} s on");
+            let gone = gone.expect("its resistance falls back");
+            assert!((1.62..=1.66).contains(&gone), "{gone}");
+            lone += 1;
+        }
+    }
+    assert!(lone > 0, "a lone push");
+    assert!(reacted > 0, "a push in his reaction");
+    // His hurt reaction: 0.6 s of his script's time (AH.10: 0.581-0.585 s,
+    // 36-37 frames), none started by a bite inside it or within about a
+    // second of its end.
+    let mut runs: Vec<(i64, i64)> = Vec::new();
+    for w in snaps.windows(2) {
+        if w[1].hero_hurt.mode == 1 && w[0].hero_hurt.mode != 1 {
+            runs.push((w[1].k, i64::MAX));
+        }
+        if w[1].hero_hurt.mode != 1
+            && w[0].hero_hurt.mode == 1
+            && let Some(r) = runs.last_mut()
+        {
+            r.1 = w[1].k;
+        }
+    }
+    println!("his reactions {runs:?}; eased pushes {eased}");
+    for &(a, b) in &runs {
+        if b == i64::MAX {
+            continue;
+        }
+        assert!((35..=37).contains(&(b - a)), "{a}..{b}");
+    }
+    for &(k, _) in &bites {
+        let inside = runs.iter().any(|&(a, b)| k >= a && k < b);
+        let soon = runs
+            .iter()
+            .any(|&(_, b)| b != i64::MAX && k >= b && k < b + 58);
+        let started = runs.iter().any(|&(a, _)| a == k + 1);
+        if inside || soon {
+            assert!(!started, "a bite at F0 + {k} started his reaction");
+        }
+    }
+    println!("load after: {}", load());
+}
+
+/// Armour turns a bite away whole (combat: Armour can turn a hit away):
+/// with his armour at 200 a bite lands only on the roll's top, so standing
+/// still bites reach him and take nothing, and nothing pushes him or starts
+/// his reaction (AH.10's turned-away bites).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_turned_away_bite_neither_hurts_nor_pushes() {
+    println!("load before: {}", load());
+    let (_, snaps) = fight(Script {
+        armour: Some(200),
+        steps: 900,
+        ..Script::default()
+    });
+    let bitten: usize = snaps
+        .windows(2)
+        .map(|w| {
+            (0..4)
+                .map(|c| {
+                    w[1].chompies[c]
+                        .bitten
+                        .saturating_sub(w[0].chompies[c].bitten)
+                })
+                .sum::<usize>()
+        })
+        .sum();
+    let bites = bites_of(&snaps);
+    let pushes = pushes(&snaps, |s| (s.hero_hurt, s.hero_speed));
+    println!(
+        "{bitten} bites reached him; {bites:?} landed; pushes {}",
+        pushes.len()
+    );
+    assert!(bitten >= 3, "bites reach him");
+    assert_eq!(
+        pushes.len(),
+        bites.len(),
+        "a push only with a bite that lands"
+    );
+    assert!(bites.len() < bitten, "most are turned away");
+    // His reaction starts the step after a bite that lands, never else.
+    assert!(
+        snaps
+            .windows(2)
+            .filter(|w| !bites.iter().any(|b| b.0 == w[1].k - 1))
+            .all(|w| !(w[1].hero_hurt.mode == 1 && w[0].hero_hurt.mode == 0)),
+        "a reaction with no bite landing"
+    );
+    println!("load after: {}", load());
+}
+
+/// A Lava Lob beats the Chompies its burst reaches (creatures: One Lava
+/// Lob; combat: A hit does its attack's damage): each 1 -> 0 at the step
+/// it lands, 'death' then, gone 0.8 s on, his player credited each. Thrown
+/// at F0 + 20, it lands among the four while they stand noticing him;
+/// AH.10's at F0 + 90 lands short of where ours does (AH.58).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_lava_lob_beats_the_chompies_its_burst_reaches() {
+    println!("load before: {}", load());
+    let (_, snaps) = fight(Script {
+        lob: Some(20),
+        steps: 300,
+        ..Script::default()
+    });
+    let hit = snaps
+        .windows(2)
+        .find(|w| (0..4).any(|c| w[1].chompies[c].health < w[0].chompies[c].health))
+        .expect("the lob lands");
+    let k = hit[1].k;
+    let beaten: Vec<usize> = (0..4)
+        .filter(|&c| hit[0].chompies[c].health == 1.0 && hit[1].chompies[c].health <= 0.0)
+        .collect();
+    println!(
+        "the lob lands at F0 + {k}: {:?} beaten, defeated {} -> {}",
+        beaten.iter().map(|&c| CHOMPIES[c]).collect::<Vec<_>>(),
+        hit[0].defeated,
+        hit[1].defeated
+    );
+    assert!(!beaten.is_empty());
+    assert_eq!(hit[1].defeated - hit[0].defeated, beaten.len() as i32);
+    for &c in &beaten {
+        assert_eq!(hit[1].chompies[c].beh.as_deref(), Some("death"));
+        // A lob does 8, 12 critical: either takes the 1.
+        assert!(
+            hit[1].chompies[c].health == -7.0
+                || hit[1].chompies[c].health == -11.0
+                || hit[1].chompies[c].health == 0.0,
+            "{}",
+            hit[1].chompies[c].health
+        );
+        let gone = snaps
+            .iter()
+            .find(|s| s.k > k && s.chompies[c].gone)
+            .map(|s| s.k - k)
+            .expect("gone");
+        assert!((48..=50).contains(&gone), "{gone}");
+    }
+    println!("load after: {}", load());
+}
+
+/// A stunned Chompy hit again (AH.10's `stun` staging: the four's health
+/// poked to 100, a lob every 20 steps): each lob hurts for 8 (12
+/// critical); the first stuns it 0.6 s ('disabled'), a lob inside the stun
+/// doesn't start it again, nor one within a second of its end or too weak
+/// to push it; a lob pushes it 0.15 s from 24.4 m/s at the hit, slowing
+/// (eased) to about 17 m/s at its ninth step. Our push runs a tenth step
+/// (the combat manager's knockback check before the game timer moves here:
+/// AH.57).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
+fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
+    println!("load before: {}", load());
+    let (limits, read) =
+        ah10_limits_from(&["ah10-main-1792553632", "ah10-staged-1792556887"], |n| {
+            !n.starts_with("still_p") && !n.starts_with("fight_")
+        });
+    println!("AH.10's {read} drives");
+    let (_, snaps) = fight(Script {
+        stun: true,
+        steps: 600,
+        ..Script::default()
+    });
+    let mut hits = 0;
+    let mut stuns = 0;
+    for (c, name) in CHOMPIES.iter().enumerate() {
+        let pushes = pushes(&snaps, |s| (s.chompies[c].hurt, s.chompies[c].speed));
+        for (i, w) in snaps.windows(2).enumerate() {
+            let (a, b) = (&w[0].chompies[c], &w[1].chompies[c]);
+            if b.health >= a.health {
+                continue;
+            }
+            hits += 1;
+            let k = w[1].k;
+            let lost = a.health - b.health;
+            assert!(lost == 8.0 || lost == 12.0, "{} F0 + {k}: {lost}", name);
+            let push = pushes.iter().find(|p| p.k == k);
+            let stunned = b.hurt.mode == 1 && a.hurt.mode != 1;
+            let since_end = snaps[..=i]
+                .windows(2)
+                .rev()
+                .find(|x| x[0].chompies[c].hurt.mode == 1 && x[1].chompies[c].hurt.mode != 1)
+                .map(|x| (k - x[1].k) as f32 / 60.0);
+            println!(
+                "{} F0 + {k}: -{lost}, resist {:.2}, push {:?}, stunned {stunned} (in one {}, {since_end:?} s after the last)",
+                name,
+                a.hurt.resist,
+                push.map(|p| (p.knock_before, p.speeds.len())),
+                a.hurt.mode == 1
+            );
+            if a.hurt.mode == 1 {
+                assert!(!stunned);
+                assert_eq!(b.hurt.mode_timer, a.hurt.mode_timer, "not started again");
+            } else if since_end.is_some_and(|t| t < 1.0) || a.hurt.resist >= 25.0 {
+                assert!(!stunned, "within 1 s of its end or too weak to push it");
+            } else {
+                assert!(stunned);
+                assert_eq!(b.beh.as_deref(), Some("disabled"));
+                stuns += 1;
+                let end = snaps[i + 1..]
+                    .iter()
+                    .find(|s| s.chompies[c].hurt.mode != 1)
+                    .map(|s| s.k - k)
+                    .expect("its stun ends");
+                assert!((35..=37).contains(&end), "{end}");
+            }
+            if a.hurt.resist < 25.0 {
+                let p = push.expect("a push");
+                let want = ((25.0 - a.hurt.resist) / 100.0 * 0.6).max(0.125);
+                assert!(
+                    (p.knock_before - want).abs() < 2e-4,
+                    "{} against {want}",
+                    p.knock_before
+                );
+                if a.hurt.resist == 0.0 && p.speeds.iter().all(|v| *v > 1.0) {
+                    assert!((p.speeds[0] - 24.384).abs() < 1e-3);
+                    assert_eq!(p.speeds.len(), 10, "{:?}", p.speeds);
+                    assert!((16.4..=17.2).contains(&p.speeds[8]), "{:?}", p.speeds);
+                }
+            } else {
+                assert!(push.is_none(), "too weak to push it");
+            }
+        }
+    }
+    println!("{hits} hits, {stuns} stuns");
+    assert!(hits >= 6 && stuns >= 2);
+    let stalled = stalls(&snaps, &limits);
+    assert!(stalled.is_empty(), "{stalled:?}");
+    println!("load after: {}", load());
+}
+
+/// In his eruption (combat: Armour can turn a hit away): a bite in its
+/// wind-up hurts him without a push or his reaction; one once it's out
+/// takes nothing (AH.10's `erupt_bit`: his invulnerable flag on from the
+/// eruption's spawn, 43 steps into its clip, to the clip's end). The four
+/// poked to 100 so they live through it, West every 2 s from F0 + 150.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
+    println!("load before: {}", load());
+    let (_, snaps) = fight(Script {
+        stun_health: true,
+        erupt_every: Some(150),
+        steps: 900,
+        ..Script::default()
+    });
+    // Each eruption's invulnerable window, and its wind-up the 43 steps
+    // before (AH.17: the lava 43 steps into the clip).
+    let mut windows: Vec<(i64, i64)> = Vec::new();
+    for w in snaps.windows(2) {
+        if w[1].hero_hurt.invulnerable > 0 && w[0].hero_hurt.invulnerable == 0 {
+            windows.push((w[1].k, i64::MAX));
+        }
+        if w[1].hero_hurt.invulnerable == 0
+            && w[0].hero_hurt.invulnerable > 0
+            && let Some(x) = windows.last_mut()
+        {
+            x.1 = w[1].k;
+        }
+    }
+    println!("invulnerable {windows:?}");
+    assert!(windows.len() >= 3, "eruptions");
+    for &(a, b) in &windows {
+        if b != i64::MAX {
+            // From the lava's spawn to the clip's end: 86 - 43 steps.
+            assert!((42..=44).contains(&(b - a)), "{a}..{b}");
+        }
+    }
+    let mut wind_up = 0;
+    let mut out = 0;
+    for w in snaps.windows(2) {
+        let reached: usize = (0..4)
+            .map(|c| {
+                w[1].chompies[c]
+                    .bitten
+                    .saturating_sub(w[0].chompies[c].bitten)
+            })
+            .sum();
+        if reached == 0 {
+            continue;
+        }
+        let k = w[1].k;
+        let lost = w[0].health - w[1].health;
+        let pushed = w[1].hero_hurt.knock_timer != w[0].hero_hurt.knock_timer;
+        let reaction = w[1].hero_hurt.mode == 1 && w[0].hero_hurt.mode == 0;
+        let inside = windows.iter().any(|&(a, b)| k >= a && k < b);
+        let before = windows.iter().any(|&(a, _)| k >= a - 43 && k < a);
+        println!(
+            "F0 + {k}: {reached} reached him, -{lost}, pushed {pushed}, reaction {reaction}, out {inside}, wind-up {before}"
+        );
+        if inside {
+            out += 1;
+            assert_eq!(lost, 0.0, "nothing while it's out");
+            assert!(!pushed && !reaction);
+        } else if before {
+            wind_up += 1;
+            assert!(lost >= 11.0, "it hurts");
+            assert!(
+                !pushed && !reaction,
+                "no push and no reaction in its wind-up"
+            );
+        }
+    }
+    println!("{wind_up} in a wind-up, {out} with one out");
+    assert!(wind_up + out > 0, "a bite in an eruption");
+    println!("load after: {}", load());
+}
+
+/// The hurt chain's rolls (combat: A hit does its attack's damage, Armour
+/// can turn a hit away; script-runtime: Random rolls), the disc's own
+/// `Combat - Hurt Creature` called 1,000 times a case over the session's
+/// generator, each call's first draw read beforehand: Eruptor's Lava Lob on
+/// a Chompy critical exactly when its roll is under his chance of 6
+/// (37-83 of 1,000), every one at a chance of 100 (12 each); a Chompy's
+/// bite on him turned away exactly when its roll is under his armour's
+/// half, 3 (14-46), and at armour 200 landing only on a roll of 100 (1-20).
+/// The calls run back to back, no step between, so nothing the fight does
+/// meanwhile (a Chompy walking off the pit's edge to its death) moves the
+/// numbers.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_hurt_chains_rolls_come_out_as_the_originals() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let (mut run, _) = fight(Script {
+        steps: 30,
+        ..Script::default()
+    });
+    let m = run.minion.unwrap();
+    let him = HERO;
+    let (chompy, _) = run.placed("Enemy_Chompy(1)");
+    let cid = run.placement("Enemy_Chompy(1)");
+    let his_info = path(&run, m, "description", &["creature info"]).unwrap();
+    let owner = his_info;
+    let its_info = path(&run, cid, "description", &["creature info"]).unwrap();
+    let set_hp = |run: &mut Run, info: Value| {
+        assert!(run.vm.set_field(info, "hp", Value::Int(1_000_000)));
+        let cp = run
+            .vm
+            .field(info, "character parameters")
+            .map(|v| run.vm.value(v))
+            .unwrap();
+        assert!(run.vm.set_field(cp, "hp max", Value::Int(1_000_000)));
+    };
+    set_hp(&mut run, its_info);
+    set_hp(&mut run, his_info);
+    let hp = |run: &Run, info: Value| {
+        run.vm
+            .field(info, "hp")
+            .and_then(|v| run.vm.value(v).as_f32())
+            .unwrap()
+    };
+    let armour = run.vm.field(his_info, "armor").map(|v| run.vm.value(v));
+    println!("his armour {armour:?}");
+    assert_eq!(armour.and_then(|v| v.as_f32()), Some(6.0));
+    let hurt = |run: &mut Run, args: &[(&str, Value)], target: Value| -> (f32, u32) {
+        let first = run.generator.clone().next_u32();
+        let before = hp(run, target);
+        run.with_host(|vm, host| vm.call_with(Some(m), "Combat - Hurt Creature", args, &[], host))
+            .unwrap_or_else(|h| panic!("{h}"));
+        let lost = before - hp(run, target);
+        (lost, first)
+    };
+    let lob = || {
+        vec![
+            ("damage", Value::Float(8.0)),
+            ("target", Value::Entity(chompy)),
+            ("hurt owner info", owner),
+            ("critical hit", Value::Int(-1)),
+            ("knockback strength", Value::Int(0)),
+            ("hurt location actor", Value::Entity(him)),
+        ]
+    };
+    // His critical chance as his joined data sums it.
+    let total_crit = |run: &mut Run, crit: i32| {
+        let d = run.minion_description();
+        assert!(run.vm.set_field(d, "total crit", Value::Int(crit)));
+    };
+    for chance in [6, 100] {
+        total_crit(&mut run, chance);
+        let mut crits = 0;
+        for _ in 0..1000 {
+            let (lost, first) = hurt(&mut run, &lob(), its_info);
+            let roll = random_literal(Value::Float(100.0), first)
+                .unwrap()
+                .as_f32()
+                .unwrap();
+            let critical = chance as f32 - roll > 0.0;
+            if lost != if critical { 12.0 } else { 8.0 } {
+                let d = path(&run, cid, "description", &[]).unwrap();
+                println!(
+                    "{:?} behaviour {:?} removed {} hp {}; description {:?}",
+                    CHOMPIES[0],
+                    run.vm.behaviour(cid),
+                    run.vm.removed(cid),
+                    hp(&run, its_info),
+                    run.vm.fields(d)
+                );
+                println!("info {:?}", run.vm.fields(its_info));
+            }
+            assert_eq!(lost, if critical { 12.0 } else { 8.0 }, "roll {roll}");
+            crits += i32::from(critical);
+        }
+        println!("crit chance {chance}: {crits} of 1,000 critical");
+        if chance == 6 {
+            assert!((37..=83).contains(&crits), "{crits}");
+        } else {
+            assert_eq!(crits, 1000);
+        }
+    }
+    let bite = vec![
+        ("damage", Value::Float(11.0)),
+        ("target", Value::Entity(him)),
+        ("critical hit", Value::Int(-1)),
+        ("knockback strength", Value::Int(25)),
+        ("hurt location actor", Value::Entity(chompy)),
+    ];
+    for armour in [6, 200] {
+        assert!(run.vm.set_field(his_info, "armor", Value::Int(armour)));
+        let mut away = 0;
+        for _ in 0..1000 {
+            let (lost, first) = hurt(&mut run, &bite, his_info);
+            let roll = random_literal(Value::Int(100), first)
+                .unwrap()
+                .as_f32()
+                .unwrap();
+            let turned = armour as f32 * 0.5 - roll > 0.0;
+            assert_eq!(lost, if turned { 0.0 } else { 11.0 }, "roll {roll}");
+            away += i32::from(turned);
+        }
+        println!("armour {armour}: {away} of 1,000 turned away");
+        if armour == 6 {
+            assert!((14..=46).contains(&away), "{away}");
+        } else {
+            assert!((980..=999).contains(&away), "{away}");
+        }
+    }
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
+/// A Chompy hit on a schedule (combat: No grace after a hit, Knockback),
+/// the disc's own `Combat - Hurt Creature` called with a Lava Lob's
+/// numbers (8, On Fire at 50, strength 25, his creature info the owner)
+/// at set steps, the Chompy's health poked to 100: the first hit stuns it
+/// 0.6 s; one inside a stun doesn't start it again; one within a second of
+/// its end stuns nothing; hits there build its resistance past 25, and one
+/// after that second, too weak to push it, neither pushes nor stuns; one
+/// with the resistance gone stuns again; each push its knock time from the
+/// strength less the resistance, 0.15 s at none (AH.10's `stun` staging).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
+    println!("load before: {}", load());
+    let (mut run, _) = fight(Script {
+        stun_health: true,
+        steps: 30,
+        ..Script::default()
+    });
+    let m = run.minion.unwrap();
+    let owner = path(&run, m, "description", &["creature info"]).unwrap();
+    let (chompy, _) = run.placed("Enemy_Chompy(2)");
+    let on_fire = {
+        let p = run.vm.program_arc();
+        let d = p.macro_named("State - On Fire").expect("On Fire");
+        Value::Object(p.defs[p.resolve(d).unwrap() as usize].obj)
+    };
+    let args = [
+        ("damage", Value::Float(8.0)),
+        ("target", Value::Entity(chompy)),
+        ("damage state", on_fire),
+        ("damage state magnitude", Value::Int(50)),
+        ("knockback strength", Value::Int(25)),
+        ("hurt owner info", owner),
+        ("hurt location actor", Value::Entity(HERO)),
+    ];
+    // A stun at 27; 66 inside the second after it ends; 90, 94 and 98 in
+    // that second too, building its resistance past 25 with no stun; 135,
+    // out of both, too weak; 250 a stun again, 253 inside it; 420 fresh.
+    let schedule = [27u32, 66, 90, 94, 98, 135, 250, 253, 420];
+    let mut snaps = vec![run.snap(0)];
+    for k in 1..=480u32 {
+        if schedule.contains(&k) {
+            run.with_host(|vm, host| {
+                vm.call_with(Some(m), "Combat - Hurt Creature", &args, &[], host)
+            })
+            .unwrap_or_else(|h| panic!("{h}"));
+        }
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+        snaps.push(run.snap(k as i64));
+    }
+    let c = 1;
+    let pushes = pushes(&snaps, |s| (s.chompies[c].hurt, s.chompies[c].speed));
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, w) in snaps.windows(2).enumerate() {
+        let (a, b) = (&w[0].chompies[c], &w[1].chompies[c]);
+        if b.health >= a.health {
+            continue;
+        }
+        let k = w[1].k;
+        let push = pushes.iter().find(|p| p.k == k);
+        let stunned = b.hurt.mode == 1 && a.hurt.mode != 1;
+        let since_end = snaps[..=i]
+            .windows(2)
+            .rev()
+            .find(|x| x[0].chompies[c].hurt.mode == 1 && x[1].chompies[c].hurt.mode != 1)
+            .map(|x| (k - x[1].k) as f32 / 60.0);
+        println!(
+            "F0 + {k}: -{}, resist {:.2}, push {:?}, stunned {stunned} (in one {}, {since_end:?} s after the last)",
+            a.health - b.health,
+            a.hurt.resist,
+            push.map(|p| (p.knock_before, p.speeds.len())),
+            a.hurt.mode == 1
+        );
+        assert_eq!(a.health - b.health, 8.0);
+        if a.hurt.mode == 1 {
+            seen.insert("inside");
+            assert!(!stunned);
+            assert_eq!(b.hurt.mode_timer, a.hurt.mode_timer, "not started again");
+        } else if since_end.is_some_and(|t| t < 1.0) {
+            seen.insert("within 1 s");
+            assert!(!stunned);
+        } else if a.hurt.resist >= 25.0 {
+            seen.insert("too weak");
+            assert!(!stunned && push.is_none());
+        } else {
+            seen.insert("stunned");
+            assert!(stunned);
+            assert_eq!(b.beh.as_deref(), Some("disabled"));
+            let end = snaps[i + 1..]
+                .iter()
+                .find(|s| s.chompies[c].hurt.mode != 1)
+                .map(|s| s.k - k)
+                .expect("its stun ends");
+            assert!((35..=37).contains(&end), "{end}");
+        }
+        if a.hurt.resist < 25.0 {
+            // Called ahead of the step: the game time it set the timer on
+            // is the step before's.
+            let p = push.expect("a push");
+            let want = ((25.0 - a.hurt.resist) / 100.0 * 0.6).max(0.125);
+            assert!(
+                (p.knock_before - want).abs() < 2e-4,
+                "{} against {want}",
+                p.knock_before
+            );
+        }
+    }
+    println!("cases {seen:?}");
+    assert_eq!(seen.len(), 4, "every case staged");
+    println!("load after: {}", load());
 }
