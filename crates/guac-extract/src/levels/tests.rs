@@ -343,6 +343,9 @@ fn collision_placements_and_lights_read_as_stored() {
     );
     let states: Vec<u32> = p.actors.iter().map(|a| a.activity_state).collect();
     assert_eq!(states, [4, 4, 5, 4]);
+    // The builder gives every placement a 160 ft range (AG.25 keeps it).
+    let ranges: Vec<f32> = p.actors.iter().map(|a| a.activation_range).collect();
+    assert_eq!(ranges, [160.0; 4]);
 
     let l = lights(igz, LEVEL, identity()).unwrap().ir;
     let names: Vec<&str> = l.directional.iter().map(|d| d.name.as_str()).collect();

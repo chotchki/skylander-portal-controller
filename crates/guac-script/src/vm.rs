@@ -187,6 +187,8 @@ struct Cell {
 struct SetObj {
     elems: Vec<Value>,
     elem: Option<Contents>,
+    /// Where `next` reads from.
+    next: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +288,9 @@ enum Spot {
         member: MemberId,
         /// A value cell's slot.
         cell: Option<u32>,
+        /// The path's `_otherPoint`, read as the path was walked: what a
+        /// distance or a heading on it is measured from.
+        other: Option<Value>,
     },
     /// A part of a packed screen position or colour, read from and written
     /// back through the place that holds it (crate docs, Members).
@@ -304,6 +309,7 @@ enum Base {
         receiver: Option<Value>,
         member: MemberId,
         cell: Option<u32>,
+        other: Option<Value>,
     },
 }
 
@@ -316,10 +322,12 @@ impl Base {
                 receiver,
                 member,
                 cell,
+                other,
             } => Spot::Member {
                 receiver,
                 member,
                 cell,
+                other,
             },
         }
     }
@@ -384,6 +392,18 @@ pub struct Vm {
     log: Vec<LogLine>,
     executed: u64,
     run: Run,
+    /// [`Vm::call_with`]'s returns: read from the callee's frame as its
+    /// body returns, before the frame resets.
+    capture: Option<Capture>,
+    /// [`Vm::trace`]: each op executed, up to a cap.
+    trace: Option<(usize, Vec<(ScriptId, u32)>)>,
+}
+
+#[derive(Debug, Clone)]
+struct Capture {
+    def: DefId,
+    names: Vec<Option<Sym>>,
+    values: Vec<Option<Value>>,
 }
 
 impl Vm {
@@ -414,6 +434,8 @@ impl Vm {
             call_sites: HashMap::new(),
             log: Vec::new(),
             executed: 0,
+            capture: None,
+            trace: None,
             run: Run {
                 placement: None,
                 ctx: 0,
@@ -433,6 +455,11 @@ impl Vm {
 
     pub fn program(&self) -> &Program {
         &self.program
+    }
+
+    /// The program, shared: what an embedder holds while it adds to the VM.
+    pub fn program_arc(&self) -> Arc<Program> {
+        Arc::clone(&self.program)
     }
 
     pub fn config(&self) -> &Config {
@@ -573,6 +600,30 @@ impl Vm {
         }
     }
 
+    /// The running placement's behaviour as the object `set behavior`
+    /// names; nothing outside a placement or before its first.
+    fn current_behaviour(&self) -> Value {
+        let Some(p) = self
+            .run
+            .placement
+            .and_then(|id| self.placements.get(id as usize))
+        else {
+            return Value::Null;
+        };
+        let op = p.behaviour.and_then(|pos| {
+            self.program
+                .scripts
+                .get(p.script as usize)?
+                .ops
+                .get(pos as usize)
+                .copied()
+        });
+        match op {
+            Some(op) => Value::Object(self.program.op_info[op as usize].obj),
+            None => Value::Null,
+        }
+    }
+
     /// The placement's current behaviour, by name as lowercased.
     pub fn behaviour(&self, id: PlacementId) -> Option<&str> {
         let p = self.placements.get(id as usize)?;
@@ -706,6 +757,21 @@ impl Vm {
         std::mem::take(&mut self.log)
     }
 
+    /// Records each op executed from here on, as (script, position), up to
+    /// `cap` of them (`None` stops recording): a tool's view of what a
+    /// tick ran.
+    pub fn trace(&mut self, cap: Option<usize>) {
+        self.trace = cap.map(|c| (c, Vec::new()));
+    }
+
+    /// What [`Vm::trace`] has recorded, taken.
+    pub fn traced(&mut self) -> Vec<(ScriptId, u32)> {
+        self.trace
+            .as_mut()
+            .map(|(_, t)| std::mem::take(t))
+            .unwrap_or_default()
+    }
+
     /// One logic tick: every placement that isn't inert or stopped, in the
     /// order added. Strict mode returns the first stop; play mode records
     /// it and runs the rest.
@@ -760,9 +826,58 @@ impl Vm {
         name: &str,
         host: &mut dyn Host,
     ) -> Result<u32, Halt> {
+        self.call_with(placement, name, &[], &[], host)
+            .map(|(ops, _)| ops)
+    }
+
+    /// [`Vm::call`] with arguments, as a native caller makes one (a stand-in
+    /// that only schedules the original's macros): each `(parameter,
+    /// value)` written into the callee's frame as a use op's parameter
+    /// binds it, by the parameter its own INTERFACE declares under that
+    /// name (any case), a set copied whole; a parameter left out reads 0,
+    /// nothing or an empty set. After the body returns, each of `returns`
+    /// is read from the callee's frame before it resets, as a caller's
+    /// after-return code reads what a call returned (`None` for one the
+    /// body never made). Returns the ops executed and those values.
+    pub fn call_with(
+        &mut self,
+        placement: Option<PlacementId>,
+        name: &str,
+        args: &[(&str, Value)],
+        returns: &[&str],
+        host: &mut dyn Host,
+    ) -> Result<(u32, Vec<Option<Value>>), Halt> {
         let Some(def) = self.program.macro_named(name) else {
             return Err(self.halt_outside(Reason::Unsupported(format!("no macro {name:?}"))));
         };
+        let arc = Arc::clone(&self.program);
+        for &(param, value) in args {
+            let Some(p) = own_parameter(&arc, def, param) else {
+                return Err(self.halt_outside(Reason::Unsupported(format!(
+                    "{name:?} declares no parameter {param:?}"
+                ))));
+            };
+            let cell = match self.frame_cell(def, p.name, p.decl) {
+                Ok(c) => c,
+                Err(_) => {
+                    return Err(self.halt_outside(Reason::Unsupported(format!(
+                        "{name:?}'s parameter {param:?} can't hold a value"
+                    ))));
+                }
+            };
+            if self.cells[cell as usize].kind != CellKind::Set {
+                self.reset_cell(cell, 0);
+            }
+            self.write_cell(cell, value, 0);
+        }
+        self.capture = Some(Capture {
+            def,
+            names: returns
+                .iter()
+                .map(|r| own_parameter(&arc, def, r).map(|p| p.name))
+                .collect(),
+            values: Vec::new(),
+        });
         let receiver = placement
             .and_then(|p| self.placements.get(p as usize))
             .map_or(Value::Null, |p| Value::Entity(p.handle));
@@ -777,14 +892,19 @@ impl Vm {
             op: self.program.defs[def as usize].op,
             kind: BlockKind::Root,
         });
-        let arc = Arc::clone(&self.program);
         let result = match self.enter(&arc, def) {
             Ok(()) => self.execute(host),
             Err(f) => Err(f),
         };
         let ops = self.run.ops;
-        match self.finish(result)? {
-            None => Ok(ops),
+        let finished = self.finish(result);
+        let captured = self.capture.take().map(|c| c.values).unwrap_or_default();
+        match finished? {
+            None => {
+                let mut values = captured;
+                values.resize(returns.len(), None);
+                Ok((ops, values))
+            }
             Some(halt) => Err(halt),
         }
     }
@@ -911,6 +1031,11 @@ impl Vm {
             }
             self.run.at = self.run.pc;
             self.run.at_op = Some(op);
+            if let Some((cap, ops)) = self.trace.as_mut()
+                && ops.len() < *cap
+            {
+                ops.push((self.run.ctx, self.run.pc));
+            }
             self.run.pc += 1;
             match self.exec(program, op, host) {
                 Ok(()) => {}
@@ -1017,6 +1142,21 @@ impl Vm {
         if top.kind == BlockKind::Root {
             self.run.blocks.pop();
             if let Some(call) = self.run.calls.pop() {
+                if let Some(c) = self.capture.as_mut()
+                    && c.def == call.def
+                {
+                    let names = c.names.clone();
+                    let values = names
+                        .iter()
+                        .map(|n| {
+                            let cell = (*n).and_then(|n| self.frames.get(&call.def)?.get(&n))?;
+                            Some(self.cells[*cell as usize].value)
+                        })
+                        .collect();
+                    if let Some(c) = self.capture.as_mut() {
+                        c.values = values;
+                    }
+                }
                 self.close_call(call.def);
             }
             self.run.pc = END;
@@ -1158,7 +1298,7 @@ impl Vm {
                     .path(program, *lhs, host)
                     .and_then(|s| self.read(s, host));
                 let l = match l {
-                    Ok(v) => self.deref(v),
+                    Ok(v) => self.deref_with(v, host)?,
                     Err(Fault::Nothing) => return Err(Fault::Nothing),
                     Err(f) => return Err(f),
                 };
@@ -1297,7 +1437,7 @@ impl Vm {
         }
         let key = (recv(owner), name, decl);
         let cell = match (filter, self.found.get(&key).copied()) {
-            (0, found) => found,
+            (0 | 1, found) => found,
             (2, Some(c)) => Some(c),
             (2, None) => {
                 let c = self.new_cell(decl, None, 0)?;
@@ -1573,8 +1713,8 @@ impl Vm {
             if !ok {
                 continue;
             }
-            let v = match self.read(spot, host) {
-                Ok(v) => self.deref(v),
+            let v = match self.read(spot, host).and_then(|v| self.deref_with(v, host)) {
+                Ok(v) => v,
                 Err(Fault::Nothing) => continue,
                 Err(f) => {
                     self.run.its = saved_its;
@@ -1793,7 +1933,19 @@ impl Vm {
             Ok(c)
         };
         Ok(match filter {
-            0 => match existing {
+            // Filter 0 asks the owner for its variable list, made if it has
+            // none yet: a declared local is there before the placement's
+            // own STARTUP has run (the portal manager's STARTUP finds the
+            // portal control's `portal data` so, ticking before it).
+            0 => {
+                self.placements[pid as usize].listed = true;
+                match existing {
+                    Some(c) => Some(c),
+                    None if declared => Some(make(self)?),
+                    None => None,
+                }
+            }
+            1 => match existing {
                 Some(c) if listed => Some(c),
                 None if listed && declared => Some(make(self)?),
                 _ => None,
@@ -2024,6 +2176,7 @@ impl Vm {
                             .and_then(|id| self.placements.get(id as usize))
                             .map_or(0.0, |p| p.active),
                     ))),
+                    Some(Builtin::Behaviour) => Ok(Spot::Const(self.current_behaviour())),
                     Some(b) => unsupported(format!("{} heading a path", b.name())),
                     None => self.member(None, m, Recv::Head),
                 }
@@ -2074,10 +2227,12 @@ impl Vm {
                             receiver,
                             member,
                             cell,
+                            other,
                         } => Base::Member {
                             receiver,
                             member,
                             cell,
+                            other,
                         },
                         other => match self.read(other, host)? {
                             Value::Cell(c) => Base::Cell(c),
@@ -2098,7 +2253,11 @@ impl Vm {
                 match Builtin::of(m) {
                     Some(Builtin::ValueDereferencer) => self.dereferencer(prev, host),
                     Some(
-                        b @ (Builtin::Count | Builtin::First | Builtin::Last | Builtin::Random),
+                        b @ (Builtin::Count
+                        | Builtin::First
+                        | Builtin::Last
+                        | Builtin::Random
+                        | Builtin::Next),
                     ) => {
                         let v = self.read(prev, host)?;
                         let Value::Set(s) = self.materialize(v) else {
@@ -2116,6 +2275,16 @@ impl Vm {
                             }
                             Builtin::Last => {
                                 Spot::Const(elems.last().copied().unwrap_or(Value::Null))
+                            }
+                            Builtin::Next => {
+                                let set = &mut self.sets[s as usize];
+                                if set.elems.is_empty() {
+                                    Spot::Const(Value::Null)
+                                } else {
+                                    let i = set.next % set.elems.len();
+                                    set.next = i + 1;
+                                    Spot::Const(set.elems[i])
+                                }
                             }
                             _ => {
                                 if elems.is_empty() {
@@ -2204,15 +2373,16 @@ impl Vm {
             receiver,
             member: m,
             cell,
+            other: self.run.other_point,
         })
     }
 
-    fn access(&self, receiver: Option<Value>, member: MemberId) -> Access {
+    fn access(&self, receiver: Option<Value>, member: MemberId, other: Option<Value>) -> Access {
         Access {
             placement: self.my_handle(),
             receiver,
             member,
-            other_point: self.run.other_point,
+            other_point: other,
         }
     }
 
@@ -2235,9 +2405,10 @@ impl Vm {
                 receiver,
                 member,
                 cell: None,
+                other,
             } => {
                 self.uses.entry(member).or_default().0 += 1;
-                let at = self.access(receiver, member);
+                let at = self.access(receiver, member, other);
                 if self
                     .config
                     .members
@@ -2294,15 +2465,12 @@ impl Vm {
                 None => Value::Cell(c),
             });
         }
-        // A part of a packed value the VM keeps, or a number a value cell
-        // keeps: the place itself, so a write through it lands there.
+        // A part of a packed value the VM keeps, or a number a member holds
+        // (a value cell's or the host's): the place itself, so a write
+        // through it lands there and a read reads it there.
         let bindable = match spot {
             Spot::Packed { base, .. } => !matches!(base, Base::Member { cell: None, .. }),
-            Spot::Member {
-                member,
-                cell: Some(_),
-                ..
-            } => self.config.members.get(member).is_some_and(|(s, _)| {
+            Spot::Member { member, .. } => self.config.members.get(member).is_some_and(|(s, _)| {
                 matches!(s.kind, Kind::Int | Kind::Float | Kind::Color | Kind::Screen)
             }),
             _ => false,
@@ -2346,6 +2514,7 @@ impl Vm {
                 receiver,
                 member,
                 cell,
+                other,
             } => {
                 let Some((spec, _)) = self.config.members.get(member) else {
                     return Err(Fault::Member(member));
@@ -2365,7 +2534,7 @@ impl Vm {
                         self.value_cell_values[slot as usize] = v;
                         Ok(())
                     }
-                    None => match host.set(&self.access(receiver, member), v) {
+                    None => match host.set(&self.access(receiver, member, other), v) {
                         Ok(()) | Err(HostFault::Nothing) => Ok(()),
                         Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
                     },
@@ -2420,6 +2589,7 @@ impl Vm {
                 receiver,
                 member,
                 cell,
+                other,
             } => match cell {
                 Some(slot) => {
                     let default = self
@@ -2430,7 +2600,7 @@ impl Vm {
                     self.value_cell_values[slot as usize] = default;
                     Ok(())
                 }
-                None => match host.reset(&self.access(receiver, member)) {
+                None => match host.reset(&self.access(receiver, member, other)) {
                     Ok(()) | Err(HostFault::Nothing) => Ok(()),
                     Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
                 },
@@ -2520,7 +2690,7 @@ impl Vm {
                 }
                 let spot = self.path(program, Some(o), host)?;
                 let v = self.read(spot, host)?;
-                Ok(self.deref(v))
+                self.deref_with(v, host)
             }
             None => unsupported("an operand past the program"),
         }
@@ -2587,8 +2757,19 @@ impl Vm {
         }
     }
 
-    /// What a bound place holds, read without the host (a bound place is
-    /// one the VM keeps).
+    /// [`Vm::deref`], a bound host member read through the host.
+    fn deref_with(&mut self, v: Value, host: &mut dyn Host) -> Result<Value, Fault> {
+        if let Value::Bound(b) = v
+            && let Some(&spot @ Spot::Member { cell: None, .. }) = self.bound.get(b as usize)
+        {
+            let v = self.read(spot, host)?;
+            return Ok(self.deref(v));
+        }
+        Ok(self.deref(v))
+    }
+
+    /// What a bound place holds, read without the host (a bound place the
+    /// VM keeps; a host member's reads none here, [`Vm::deref_with`]'s).
     fn peek_bound(&self, b: u32) -> Option<Value> {
         let whole = |base: Base| -> Option<Value> {
             let v = match base {
@@ -2639,6 +2820,11 @@ impl Vm {
     /// `if reference` codes 1 and 5: the same object, a file variable and
     /// its cell counting as one.
     fn same(&mut self, a: Value, b: Value) -> bool {
+        if let (Value::Bound(x), Value::Bound(y)) = (a, b) {
+            // Bound places compare by what they name (aj-vm: a bound value
+            // compares by its fields).
+            return self.bound.get(x as usize) == self.bound.get(y as usize);
+        }
         a == b || (!a.is_number() && self.materialize(a) == self.materialize(b))
     }
 
@@ -2684,6 +2870,7 @@ impl Vm {
                 self.sets.push(SetObj {
                     elems: Vec::new(),
                     elem: Some(contents),
+                    next: 0,
                 });
                 Value::Set((self.sets.len() - 1) as u32)
             }
@@ -2771,6 +2958,7 @@ impl Vm {
                 self.sets.push(SetObj {
                     elems,
                     elem: Some(*elem),
+                    next: 0,
                 });
                 (CellKind::Set, Value::Set((self.sets.len() - 1) as u32))
             }
@@ -3190,6 +3378,24 @@ fn declares(program: &Program, def: DefId, op: OpId) -> bool {
     let n = program.branch(iface) as usize;
     ops.get(pos + 2..=pos + 1 + n)
         .is_some_and(|params| params.contains(&op))
+}
+
+/// The parameter `def`'s own INTERFACE declares under `name`, any case.
+fn own_parameter(program: &Program, def: DefId, name: &str) -> Option<Param> {
+    let (sid, pos) = program.defs.get(def as usize)?.placed?;
+    let ops = &program.scripts.get(sid as usize)?.ops;
+    let pos = pos as usize;
+    let &iface = ops.get(pos + 1)?;
+    if program.ops[iface as usize] != Ins::Interface {
+        return None;
+    }
+    let n = program.branch(iface) as usize;
+    ops.get(pos + 2..=pos + 1 + n)?
+        .iter()
+        .find_map(|&o| match &program.ops[o as usize] {
+            Ins::Parameter(p) if program.sym(p.name).eq_ignore_ascii_case(name) => Some(*p),
+            _ => None,
+        })
 }
 
 /// The callee's name for a parameter: its own, else the one the callee's

@@ -31,6 +31,7 @@ use guac_script::{
     Builtin, Config, Elem, Generator, Halt, Handle, Ins, MemberId, Mode, Operand, OperandId,
     PlacementId, Precision, Program, Role, Unit, Value, Vm, Whitelist,
 };
+use guacamole::script_engine::NoEngine;
 use guacamole::scripts::{
     self, EVERY_TICK, Files, GLOBAL_FIRST_TICKS, ScriptRuntime, ScriptWorld, WorldHost,
     headless_handles, headless_objects, headless_spawner,
@@ -151,8 +152,10 @@ impl Run {
     fn with_host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
         let mut spawn = headless_spawner(self.next);
         let t = {
+            let mut engine = NoEngine;
             let mut host = WorldHost {
                 world: &mut self.world,
+                engine: &mut engine,
                 generator: &mut self.generator,
                 spawn: &mut spawn,
             };

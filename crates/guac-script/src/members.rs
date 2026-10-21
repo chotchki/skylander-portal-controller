@@ -693,6 +693,1165 @@ pub const INIT_CHAIN: &[Registered] = &[
         0.0,
         Cell,
     ),
+    // Reached since AH.17's reading of `find variable`'s filter 0 links the
+    // portal manager's joined data at its STARTUP: the join prompt's check
+    // of the controllers no player holds.
+    m(
+        "scriptcontroller",
+        "main stick",
+        "JoystickMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "joystickmeasurement",
+        "connection",
+        "EnumMeasurement",
+        "disconnected|connected|distressed",
+        0.0,
+        2.0,
+        Host,
+    ),
+];
+
+/// Every engine member Eruptor's scripts reach past [`INIT_CHAIN`]'s: the
+/// host's (an actor's place, turn, scale, movement numbers, solid and
+/// velocity, its ground, nodes, clones, contacts and sequences, the
+/// measurements between two points, the ray caster, the camera and the
+/// pads; what each answers is guacamole's `script_members`) and the value
+/// cells his throws and eruptions set (openspec AH.17). Four take over
+/// init-chain cells the host now answers.
+pub const HERO: &[Registered] = &[
+    m(
+        "placement",
+        "activation range",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "matrixmeasurement",
+        "orientation",
+        "OrientationMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "orientationmeasurement",
+        "facing",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "orientationmeasurement",
+        "tilt",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "orientationmeasurement",
+        "roll",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "orientationmeasurement",
+        "relative facing",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "orientationmeasurement",
+        "relative tilt",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "orientationmeasurement",
+        "relative roll",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m("placement", "scale", "ScaleMeasurement", "", 0.0, 0.0, Host),
+    m(
+        "scalemeasurement",
+        "uniform",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scalemeasurement",
+        "x",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scalemeasurement",
+        "y",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scalemeasurement",
+        "z",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m("placement", "tint", "ColorMeasurement", "", 0.0, 0.0, Host),
+    m(
+        "actorinfo",
+        "movement",
+        "tfbScriptObject",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "ground max speed",
+        "FloatMeasurement",
+        "ft. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "ground acceleration",
+        "FloatMeasurement",
+        "ft. / (sec. * sec.)",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "ground deceleration",
+        "FloatMeasurement",
+        "ft. / (sec. * sec.)",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "ground turn rate",
+        "FloatMeasurement",
+        "deg. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "air max speed",
+        "FloatMeasurement",
+        "ft. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "air acceleration",
+        "FloatMeasurement",
+        "ft. / (sec. * sec.)",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "air deceleration",
+        "FloatMeasurement",
+        "ft. / (sec. * sec.)",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "air turn rate",
+        "FloatMeasurement",
+        "deg. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "gravity max speed",
+        "FloatMeasurement",
+        "ft. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "gravity acceleration",
+        "FloatMeasurement",
+        "ft. / (sec. * sec.)",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "jump max speed",
+        "FloatMeasurement",
+        "ft. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "jump acceleration",
+        "FloatMeasurement",
+        "ft. / (sec. * sec.)",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "jump initial speed",
+        "FloatMeasurement",
+        "ft. / sec.",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "move type",
+        "EnumMeasurement",
+        "on foot|wheeled|unconstrained|physical",
+        0.0,
+        3.0,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "tilts with ground",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "actorphysics",
+        "time scale",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorinfo",
+        "collision volume",
+        "tfbScriptObject",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "width",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "length",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "height",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "local x offset",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "local y offset",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "local z offset",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "weight",
+        "FloatMeasurement",
+        "pounds",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "rebound",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "interacts with actors",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "interacts with level mesh",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "acts as actor surface",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "collisioninfo",
+        "shape",
+        "EnumMeasurement",
+        "none|box|capsule|sphere|cylinder|mesh",
+        0.0,
+        5.0,
+        Host,
+    ),
+    m(
+        "actorinfo",
+        "velocity",
+        "VectorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "vectormeasurement",
+        "length",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "vectormeasurement",
+        "heading",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "vectormeasurement",
+        "pitch",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "vectormeasurement",
+        "vertical difference",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "vectormeasurement",
+        "horizontal length",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "actorinfo",
+        "controller",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "actorinfo",
+        "attach nodes",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "attach node",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "attached objects",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "ground",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m("contactinfo", "type", "IntMeasurement", "", 0.0, 0.0, Host),
+    m(
+        "contactinfo",
+        "normal",
+        "VectorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "contactinfo",
+        "magnitude",
+        "FloatMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "contactinfo",
+        "is trigger",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "clones",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "parent",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "activator",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "actorinfo",
+        "playing animations",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "actorinfo",
+        "playing sounds",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "animationinfo",
+        "animation palette",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "sequence",
+        "time remaining",
+        "FloatMeasurement",
+        "seconds",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "sequence",
+        "percent remaining",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "sequence",
+        "playback rate",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "sequence",
+        "looping",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "sequence",
+        "raw duration",
+        "FloatMeasurement",
+        "seconds",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "distance",
+        "PairedFloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "heading",
+        "PairedFloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "pitch",
+        "PairedFloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "vertical offset",
+        "PairedFloatMeasurement",
+        "feet",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "horizontal distance",
+        "PairedFloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "separation",
+        "PairedFloatMeasurement",
+        "feet",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "positionmeasurement",
+        "collision",
+        "PairedEnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "system",
+        "normalized angle",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m("system", "ray cast", "ReferenceVariant", "", 0.0, 0.0, Host),
+    m("raycontact", "start", "RayEndPoint", "", 0.0, 0.0, Host),
+    m("raycontact", "end", "RayEndPoint", "", 0.0, 0.0, Host),
+    m(
+        "raycontact",
+        "has contact",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "viewportinfo",
+        "default",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "inactive controller",
+        "tfbPS3Controller",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "action 1",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "action 2",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "action 3",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "action 4",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "accept button",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "cancel button",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "alt button",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "pause button",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "start button",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "select button",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "dpad left",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "dpad right",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "dpad up",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "scriptcontroller",
+        "dpad down",
+        "ButtonMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "buttonmeasurement",
+        "pressure state",
+        "EnumMeasurement",
+        "just released|released|pressed|just pressed",
+        0.0,
+        3.0,
+        Host,
+    ),
+    m(
+        "buttonmeasurement",
+        "pressure value",
+        "FloatMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "joystickmeasurement",
+        "x",
+        "FloatMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "joystickmeasurement",
+        "y",
+        "FloatMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "joystickmeasurement",
+        "heading",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "joystickmeasurement",
+        "magnitude",
+        "FloatMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // What a throw and an eruption reach past the walk: a projectile's
+    // contacts and where it set off from, a reference's own point.
+    m(
+        "collisioninfo",
+        "environment contacts",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "abstractplacement",
+        "origin",
+        "MatrixMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "placementreference",
+        "remembered",
+        "MatrixMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // Cosmetic: the HUD's sprites, lights, bloom, shadows, particles' generators.
+    m(
+        "actorinfo",
+        "bloom intensity",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "placement",
+        "shadow cast",
+        "EnumMeasurement",
+        "none|normal|no fade",
+        0.0,
+        2.0,
+        Cell,
+    ),
+    m(
+        "particleinfo",
+        "generators",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "ambient color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "diffuse color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "specular color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "multiplier",
+        "FloatMeasurement",
+        "",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "constant attenuation factor",
+        "FloatMeasurement",
+        "",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "linear attenuation factor",
+        "FloatMeasurement",
+        "",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+    m(
+        "lightinfo",
+        "quadratic attenuation factor",
+        "FloatMeasurement",
+        "",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "blend mode",
+        "EnumMeasurement",
+        "opaque|crossfade|additive|cuts out|gets",
+        0.0,
+        7.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "justify",
+        "EnumMeasurement",
+        "left|center|right",
+        0.0,
+        2.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "natural size",
+        "ScreenMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "numeric value",
+        "SpriteValueMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "point size",
+        "IntMeasurement",
+        "pixels",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "replace color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "screen location",
+        "ScreenMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m("spriteinfo", "text", "ReferenceVariant", "", 0.0, 0.0, Cell),
+    m(
+        "spriteinfo",
+        "texture flip",
+        "EnumMeasurement",
+        "none|horizontal|vertical|both",
+        0.0,
+        3.0,
+        Cell,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "orientation",
+        "OrientationMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "parent",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "system",
+        "object namer",
+        "NameExtractor",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    // A clip's flags, per clip, as the locomotion script writes them; the
+    // file's own aren't read (each reads 0, a base clip, until written).
+    m(
+        "animationinfo",
+        "is layered",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m(
+        "animationinfo",
+        "type",
+        "EnumMeasurement",
+        "Base|Partial|Additive",
+        0.0,
+        2.0,
+        Cell,
+    ),
 ];
 
 /// `system.game language`'s and `console language`'s labels: English is 6.
@@ -746,8 +1905,14 @@ mod tests {
     /// The kind a write converts as, by registered class.
     fn kind_of(r: &Registered) -> Kind {
         match (r.class, r.keeper) {
-            ("FloatMeasurement", _) => Kind::Float,
-            ("IntMeasurement" | "EnumMeasurement", _) => Kind::Int,
+            ("FloatMeasurement" | "PairedFloatMeasurement", _) => Kind::Float,
+            (
+                "IntMeasurement"
+                | "EnumMeasurement"
+                | "PairedEnumMeasurement"
+                | "ButtonMeasurement",
+                _,
+            ) => Kind::Int,
             ("ColorMeasurement", _) => Kind::Color,
             ("ScreenMeasurement", _) => Kind::Screen,
             ("SetVariant", Keeper::Host) => Kind::Set,
@@ -757,8 +1922,27 @@ mod tests {
 
     #[test]
     fn every_member_is_named_once_as_the_registry_spells_it() {
+        // A member both tables name is a cell of the init chain's the hero's
+        // host takes over, registered the same.
+        for r in HERO {
+            if let Some(i) = find(INIT_CHAIN, r.namespace, r.name) {
+                assert_eq!(
+                    (i.keeper, r.keeper),
+                    (Keeper::Cell, Keeper::Host),
+                    "{}",
+                    r.path()
+                );
+                assert_eq!(
+                    (i.class, i.units, i.min, i.max),
+                    (r.class, r.units, r.min, r.max)
+                );
+            }
+        }
         let mut seen = HashSet::new();
-        for r in INIT_CHAIN {
+        let hero = HERO
+            .iter()
+            .filter(|r| find(INIT_CHAIN, r.namespace, r.name).is_none());
+        for r in INIT_CHAIN.iter().chain(hero) {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -777,7 +1961,12 @@ mod tests {
     fn each_member_registers_with_its_class_range_and_keeper() {
         let mut members = Members::new();
         register(&mut members, INIT_CHAIN);
-        for r in INIT_CHAIN {
+        register(&mut members, HERO);
+        // The hero's entry wins where both tables name a member.
+        let init = INIT_CHAIN
+            .iter()
+            .filter(|r| find(HERO, r.namespace, r.name).is_none());
+        for r in init.chain(HERO) {
             assert_eq!(r.kind(), kind_of(r), "{}", r.path());
             let id = MemberId::named(r.namespace, r.name);
             match r.keeper {
@@ -802,7 +1991,14 @@ mod tests {
 
     #[test]
     fn an_enums_range_is_its_labels() {
-        for r in INIT_CHAIN.iter().filter(|r| r.units.contains('|')) {
+        // The registry's labels for a sprite's blend mode stop at five of
+        // its eight values.
+        let labelled = |r: &&Registered| {
+            r.units.contains('|')
+                && r.class == "EnumMeasurement"
+                && r.path() != "spriteinfo.blend mode"
+        };
+        for r in INIT_CHAIN.iter().chain(HERO).filter(labelled) {
             let n = r.units.split('|').count();
             assert_eq!(r.class, "EnumMeasurement", "{}", r.path());
             assert_eq!((r.min, r.max), (0.0, (n - 1) as f32), "{}", r.path());
@@ -877,5 +2073,53 @@ mod tests {
         assert_eq!(visible.spec().default, Value::Int(0));
         assert_eq!(colour.spec().default, Value::Color(0));
         assert_eq!(light.spec().default, Value::Null);
+    }
+
+    #[test]
+    fn heros_members_convert_by_their_units_and_range() {
+        // Feet and degrees per second keep a float, never under 0, open on top.
+        let speed = find(HERO, "actorphysics", "ground max speed").unwrap();
+        assert_eq!(speed.units, "ft. / sec.");
+        assert_eq!(
+            convert(&speed.spec(), Value::Int(20)),
+            Some(Value::Float(20.0))
+        );
+        assert_eq!(
+            convert(&speed.spec(), Value::Float(-1.0)),
+            Some(Value::Float(0.0))
+        );
+        let turn = find(HERO, "actorphysics", "ground turn rate").unwrap();
+        assert_eq!(turn.units, "deg. / sec.");
+        assert_eq!(
+            convert(&turn.spec(), Value::Float(1e12)),
+            Some(Value::Float(OPEN))
+        );
+        // Gravity's registered range is open both ways.
+        let gravity = find(HERO, "actorphysics", "gravity acceleration").unwrap();
+        assert_eq!(
+            convert(&gravity.spec(), Value::Float(-200.0)),
+            Some(Value::Float(-200.0))
+        );
+        // A percent with a top clamps there.
+        let bloom = find(HERO, "actorinfo", "bloom intensity").unwrap();
+        assert_eq!(
+            convert(&bloom.spec(), Value::Int(250)),
+            Some(Value::Int(100))
+        );
+        // A button's state by its labels, the way the original lists them.
+        let state = find(HERO, "buttonmeasurement", "pressure state").unwrap();
+        assert_eq!(label(&state, "just pressed"), Some(Value::Int(3)));
+        assert_eq!(label(&state, "just released"), Some(Value::Int(0)));
+        // An object member takes only an object; a velocity is the host's
+        // vector, never a number.
+        let velocity = find(HERO, "actorinfo", "velocity").unwrap();
+        assert_eq!(convert(&velocity.spec(), Value::Float(3.0)), None);
+        let contacts = find(HERO, "collisioninfo", "environment contacts").unwrap();
+        assert_eq!(contacts.kind(), Kind::Set);
+        assert_eq!(contacts.keeper, Keeper::Host);
+        // A clip's flags read 0, a base clip, until written.
+        let layered = find(HERO, "animationinfo", "is layered").unwrap();
+        assert_eq!(layered.spec().default, Value::Int(0));
+        assert_eq!(layered.keeper, Keeper::Cell);
     }
 }

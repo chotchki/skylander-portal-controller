@@ -191,10 +191,16 @@ pub enum Builtin {
     /// `system.frame rate scale`: the tick's seconds times 60, 1 at the
     /// game's full rate.
     FrameRateScale,
+    /// `optoplevelbehavior.behavior`: the running placement's behaviour, as
+    /// the object a `set behavior` names.
+    Behaviour,
+    /// `setvariant.next`: the set's elements in turn, from the first,
+    /// round again after the last.
+    Next,
 }
 
 impl Builtin {
-    const ALL: [Builtin; 12] = [
+    const ALL: [Builtin; 14] = [
         Builtin::My,
         Builtin::Null,
         Builtin::Undefined,
@@ -207,6 +213,8 @@ impl Builtin {
         Builtin::CastToInteger,
         Builtin::ScriptTimer,
         Builtin::FrameRateScale,
+        Builtin::Behaviour,
+        Builtin::Next,
     ];
 
     pub fn name(self) -> &'static str {
@@ -223,6 +231,8 @@ impl Builtin {
             Builtin::CastToInteger => "system.cast to integer",
             Builtin::ScriptTimer => "system.script timer",
             Builtin::FrameRateScale => "system.frame rate scale",
+            Builtin::Behaviour => "optoplevelbehavior.behavior",
+            Builtin::Next => "setvariant.next",
         }
     }
 

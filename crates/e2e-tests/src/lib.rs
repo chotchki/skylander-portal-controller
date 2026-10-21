@@ -1789,6 +1789,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
                         movement: None,
                         waypoints: Some(0),
                         activity_state: 4,
+                        activation_range: 0.0,
                     }],
                     waypoints: vec![vec![Waypoint {
                         name: "wp0".into(),

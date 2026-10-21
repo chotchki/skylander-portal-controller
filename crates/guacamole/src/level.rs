@@ -67,11 +67,12 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::intros::IrFormat;
-use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, SCENE};
+use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
+use guac_motion::seam::BodyKind;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
     CharacterMaterial, CharacterUniform, ShadowLookup, reference_material, remaster, static_mesh,
@@ -81,10 +82,12 @@ use guacamole::level_scene::{
     fresh_state_transform, fresh_state_view, hero_scene, view_scene, world_scene,
 };
 use guacamole::level_scripts;
+use guacamole::props::{LeftOut, LevelProps, Prop};
 use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::extraction::Extraction;
+use crate::hero::{HeroBody, HeroSystems};
 use crate::motion::ReducedMotion;
 use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
@@ -163,26 +166,35 @@ struct Built {
     /// The sky's bounds, for the log: (min, max).
     sky: Option<(Vec3, Vec3)>,
     walk: Walk,
+    /// The props (AG.25): each model's segments as (an index into `meshes`,
+    /// past the level's own, and its material in `drawn.materials`).
+    prop_models: Vec<Vec<(usize, u16)>>,
     read: Duration,
     took: Duration,
 }
 
-/// What walking the level takes: its solids, built off the frame, and
-/// where the hero starts.
+/// What walking the level takes: its solids, built off the frame, where
+/// the hero starts, and the props that stand by where he is (AG.25), each
+/// one's solid built off the frame too.
 struct Walk {
     bodies: Vec<PreparedBody>,
     triangles: usize,
     start: Vec3,
+    props: LevelProps,
+    prop_bodies: Vec<Option<PreparedBody>>,
 }
 
-/// The collision and placements parts as the walk takes them: the
-/// collision's meshes built into colliders, the start's waypoint found.
+/// The collision, placements and props parts as the walk takes them: the
+/// collision's meshes built into colliders, the start's waypoint found, the
+/// placements' props and their solids.
 fn read_walk(source: &LevelSource, part: impl Fn(&str) -> PathBuf) -> Result<Walk, String> {
     let collision: guac_ir::level::Collision = read_ir(source.ir, &part(COLLISION))?;
     let placements: guac_ir::level::Placements = read_ir(source.ir, &part(PLACEMENTS))?;
+    let props: guac_ir::level::Props = read_ir(source.ir, &part(PROPS))?;
     for (what, identity, level) in [
         ("collision", &collision.identity, &collision.level),
         ("placements", &placements.identity, &placements.level),
+        ("props", &props.identity, &props.level),
     ] {
         if *identity != source.identity || *level != source.level {
             return Err(format!("the {what} part is another dump's or level's"));
@@ -195,10 +207,23 @@ fn read_walk(source: &LevelSource, part: impl Fn(&str) -> PathBuf) -> Result<Wal
         .iter()
         .map(|b| PreparedBody::new(b).map_err(|e| format!("the collision: {e}")))
         .collect::<Result<_, _>>()?;
+    let props = LevelProps::new(&props, &placements).map_err(|e| format!("the props: {e}"))?;
+    let prop_bodies = props
+        .props
+        .iter()
+        .map(|p| {
+            p.body
+                .as_ref()
+                .map(|b| PreparedBody::new(b).map_err(|e| format!("{}'s solid: {e}", p.name)))
+                .transpose()
+        })
+        .collect::<Result<_, _>>()?;
     Ok(Walk {
         bodies,
         triangles,
         start,
+        props,
+        prop_bodies,
     })
 }
 
@@ -222,15 +247,42 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         }
     }
     let read = started.elapsed();
-    let walk = read_walk(source, part)?;
+    let mut walk = read_walk(source, part)?;
     // The census's level table is held to this derivation on the disc
     // (`tests/giants_census.rs`).
     let AtStart {
         mut drawn,
         lights,
         fog,
-        keys,
+        mut keys,
     } = arithmetic::at_start(scene, &lights, &atmosphere).map_err(|e| e.to_string())?;
+    // The props' models draw beside the level: their materials after its
+    // own, their keys in its scene (the census's props table holds them,
+    // `tests/giants_census.rs`), their meshes after its segments'.
+    let level_materials = drawn.materials.len();
+    let (props, prop_ranges) = walk.props.drawn();
+    let scene = level_scene(&lights, &fog);
+    for (k, m) in arithmetic::keys(&props, &scene).map_err(|e| format!("the props: {e}"))? {
+        if !keys.iter().any(|(kept, _)| *kept == k) {
+            keys.push((k, level_materials + m));
+        }
+    }
+    let offset = |m: u16| {
+        u16::try_from(level_materials + usize::from(m))
+            .map_err(|_| "past 65,536 materials with the props'".to_owned())
+    };
+    let level_segments = drawn.segments.len();
+    let prop_models = prop_ranges
+        .iter()
+        .map(|r| {
+            r.clone()
+                .map(|i| Ok((level_segments + i, offset(props.segments[i].material)?)))
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    drawn.materials.extend(props.materials.iter().cloned());
+    // The meshes hold the props' vertices once built.
+    walk.props.models.clear();
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
         .materials
@@ -254,12 +306,15 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             .map_err(|e| format!("{}: {e}", slot.texture))?;
         images.push((key, image));
     }
-    let meshes = drawn
+    let mut meshes = drawn
         .segments
         .iter()
         .enumerate()
         .map(|(i, s)| static_mesh(s).map_err(|e| format!("segment {}: {e}", drawn.sources[i])))
         .collect::<Result<Vec<_>, _>>()?;
+    for s in &props.segments {
+        meshes.push(static_mesh(s).map_err(|e| format!("a prop's segment {}: {e}", s.source))?);
+    }
     let sky = drawn
         .sky
         .iter()
@@ -287,6 +342,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         fog,
         sky,
         walk,
+        prop_models,
         read,
         took: started.elapsed(),
     })
@@ -385,6 +441,8 @@ pub(crate) struct LevelReport {
     /// The collision's triangles, and where the hero starts (AG.21).
     pub triangles: usize,
     pub start: Option<[f32; 3]>,
+    /// Its props: what can stand, what does where the hero is (AG.25).
+    pub props: Option<PropsReport>,
     /// Textures, meshes and materials not resident yet; keys not compiled.
     pub not_resident: usize,
     pub keys_waiting: usize,
@@ -405,6 +463,175 @@ pub(crate) struct LevelReport {
     /// What stopped it: the reading task's error, a part's file or the
     /// lights it lacks.
     pub reason: Option<String>,
+}
+
+/// What `/api/_test/tv` reports of the level's props (AG.25).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct PropsReport {
+    /// Placements that can stand, the models they draw, and those that
+    /// stand where the hero is (or at the start, before he's in): drawn,
+    /// solid (kinematic) and sensing (sensors), each standing one by name.
+    pub props: usize,
+    pub models: usize,
+    pub standing: usize,
+    pub drawn: usize,
+    pub solid: usize,
+    pub sensors: usize,
+    pub names: Vec<String>,
+    /// Where the rule measured from last.
+    pub at: Option<[f32; 3]>,
+    /// The placements left out, by why (template, creature, by script,
+    /// nothing to stand, a state no level file holds), and the props whose
+    /// model draws nothing.
+    pub templates: usize,
+    pub creatures: usize,
+    pub by_script: usize,
+    pub nothing: usize,
+    pub state: usize,
+    pub undrawn: usize,
+}
+
+/// A level's props on the TV (AG.25): each one's draw (hidden under the
+/// level's root until it stands) and solid (in Avian's world only while it
+/// stands), stood up and taken down as the hero comes within its range and
+/// leaves it.
+pub(crate) struct StandingProps {
+    props: Vec<Prop>,
+    /// Per prop: the entity its model hangs under, if it draws.
+    draws: Vec<Option<Entity>>,
+    /// Per prop: its solid, ready to spawn, and its entity while it stands.
+    bodies: Vec<Option<PreparedBody>>,
+    spawned: Vec<Option<Entity>>,
+    standing: Vec<bool>,
+    report: PropsReport,
+}
+
+impl StandingProps {
+    fn new(
+        walk: &mut Walk,
+        models: &[Vec<(usize, u16)>],
+        meshes: &[Handle<Mesh>],
+        materials: &[Handle<CharacterMaterial>],
+        root: Entity,
+        commands: &mut Commands,
+    ) -> Self {
+        let props = std::mem::take(&mut walk.props.props);
+        let left = |why: LeftOut| {
+            walk.props
+                .left_out
+                .iter()
+                .filter(|(_, w)| *w == why)
+                .count()
+        };
+        let report = PropsReport {
+            props: props.len(),
+            models: models.len(),
+            templates: left(LeftOut::Template),
+            creatures: left(LeftOut::Creature),
+            by_script: left(LeftOut::ByScript),
+            nothing: left(LeftOut::Nothing),
+            state: left(LeftOut::State),
+            undrawn: walk.props.undrawn.len(),
+            ..Default::default()
+        };
+        let draws = props
+            .iter()
+            .map(|p| {
+                let model = &models[p.model?];
+                let parent = commands
+                    .spawn((
+                        Name::new(format!("prop {}", p.name)),
+                        p.transform,
+                        Visibility::Hidden,
+                        ChildOf(root),
+                    ))
+                    .id();
+                for &(mesh, material) in model {
+                    commands.spawn((
+                        Mesh3d(meshes[mesh].clone()),
+                        MeshMaterial3d(materials[usize::from(material)].clone()),
+                        Transform::IDENTITY,
+                        RenderLayers::layer(LEVEL_LAYER),
+                        ChildOf(parent),
+                    ));
+                }
+                Some(parent)
+            })
+            .collect();
+        let n = props.len();
+        Self {
+            props,
+            draws,
+            bodies: std::mem::take(&mut walk.prop_bodies),
+            spawned: vec![None; n],
+            standing: vec![false; n],
+            report,
+        }
+    }
+
+    /// Stands up the props within range of `at` and takes down the rest:
+    /// each one's draw shown or hidden, its solid spawned into Avian's world
+    /// or despawned from it.
+    pub(crate) fn stand(&mut self, at: Vec3, commands: &mut Commands) {
+        self.report.at = Some(at.to_array());
+        let mut changed = false;
+        for (i, p) in self.props.iter().enumerate() {
+            let stands = p.stands(at);
+            if stands == self.standing[i] {
+                continue;
+            }
+            changed = true;
+            self.standing[i] = stands;
+            if let Some(draw) = self.draws[i] {
+                commands.entity(draw).insert(if stands {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                });
+            }
+            if stands {
+                self.spawned[i] = self.bodies[i].clone().map(|b| b.spawn(commands));
+            } else if let Some(body) = self.spawned[i].take() {
+                commands.entity(body).despawn();
+            }
+        }
+        if changed {
+            let standing: Vec<usize> = (0..self.props.len())
+                .filter(|&i| self.standing[i])
+                .collect();
+            let kind = |i: &usize| self.props[*i].body.as_ref().map(|b| b.kind);
+            let r = &mut self.report;
+            r.standing = standing.len();
+            r.drawn = standing
+                .iter()
+                .filter(|&&i| self.draws[i].is_some())
+                .count();
+            r.solid = standing
+                .iter()
+                .filter(|i| kind(i) == Some(BodyKind::Kinematic))
+                .count();
+            r.sensors = standing
+                .iter()
+                .filter(|i| kind(i) == Some(BodyKind::Sensor))
+                .count();
+            r.names = standing
+                .iter()
+                .map(|&i| self.props[i].name.clone())
+                .collect();
+        }
+    }
+
+    /// Every solid standing, for a new load to take away.
+    fn despawn(&mut self, commands: &mut Commands) {
+        for body in self.spawned.iter_mut().filter_map(Option::take) {
+            commands.entity(body).despawn();
+        }
+        self.standing.fill(false);
+    }
+
+    pub(crate) fn report(&self) -> &PropsReport {
+        &self.report
+    }
 }
 
 /// What `/api/_test/tv` reports of the level's script part (AH.22).
@@ -455,6 +682,8 @@ pub(crate) struct Loaded {
     shown_at: Option<Duration>,
     /// Its solids, spawned with it.
     bodies: Vec<Entity>,
+    /// Its props, standing by where the hero is (AG.25).
+    pub(crate) props: StandingProps,
     /// Where the hero starts, before he's settled.
     pub(crate) start: Vec3,
     /// Materials lit with the level's but in the hero's scene
@@ -536,8 +765,16 @@ impl Level {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn report(&self) -> &LevelReport {
         &self.report
+    }
+
+    /// The report, with the props as they stand now.
+    pub(crate) fn snapshot(&self) -> LevelReport {
+        let mut r = self.report.clone();
+        r.props = self.stage.loaded().map(|l| l.props.report().clone());
+        r
     }
 
     /// The level, once the renderer has it.
@@ -679,6 +916,8 @@ impl Plugin for LevelPlugin {
                     .in_set(LevelSystems)
                     .after(crate::turntable::TurntableSystems),
             )
+            // The props stand by where the hero is as his step begins.
+            .add_systems(FixedUpdate, stand_props.before(HeroSystems::Step))
             // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,
@@ -715,6 +954,9 @@ fn receive_level(
         for body in &old.bodies {
             commands.entity(*body).despawn();
         }
+    }
+    if let Some(old) = level.stage.loaded_mut() {
+        old.props.despawn(&mut commands);
     }
     // Its handles go with it, so what it left pending never turns up.
     *watch.lock() = Pending::default();
@@ -1014,6 +1256,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         fog,
         ..
     } = up;
+    let level_meshes = built.drawn.segments.len();
     let bodies: Vec<Entity> = std::mem::take(&mut built.walk.bodies)
         .into_iter()
         .map(|b| b.spawn(&mut s.commands))
@@ -1026,9 +1269,14 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
             Visibility::Hidden,
         ))
         .id();
-    for (seg, mesh) in built.drawn.segments.iter().zip(mesh_handles) {
+    for (seg, mesh) in built
+        .drawn
+        .segments
+        .iter()
+        .zip(&mesh_handles[..level_meshes])
+    {
         s.commands.spawn((
-            Mesh3d(mesh),
+            Mesh3d(mesh.clone()),
             MeshMaterial3d(materials[usize::from(seg.material)].clone()),
             Transform::IDENTITY,
             RenderLayers::layer(LEVEL_LAYER),
@@ -1053,6 +1301,16 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         .filter(|(_, m)| !m.scrolls.is_empty())
         .map(|(i, m)| (i, m.scrolls.clone()))
         .collect();
+    let mut props = StandingProps::new(
+        &mut built.walk,
+        &built.prop_models,
+        &mesh_handles,
+        &materials,
+        root,
+        &mut s.commands,
+    );
+    // Standing by the start until a hero's step says where he is.
+    props.stand(built.walk.start, &mut s.commands);
     Loaded {
         root,
         materials,
@@ -1064,9 +1322,21 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         camera: None,
         shown_at: None,
         bodies,
+        props,
         start: built.walk.start,
         also: Vec::new(),
     }
+}
+
+/// Each fixed step before the hero's (AG.25): the props stand by where he
+/// stands as the step begins, so his step meets the solids the original's
+/// would; before he's in, by the level's start.
+fn stand_props(mut commands: Commands, mut level: ResMut<Level>, heroes: Query<&HeroBody>) {
+    let Some(loaded) = level.stage.loaded_mut() else {
+        return;
+    };
+    let at = heroes.iter().next().map_or(loaded.start, |h| h.hero.pivot);
+    loaded.props.stand(at, &mut commands);
 }
 
 /// The camera the level is drawn from into `target` at `order`: the
@@ -1532,6 +1802,7 @@ pub(crate) mod tests {
                 movement: None,
                 waypoints: Some(0),
                 activity_state: 4,
+                activation_range: 0.0,
             }],
             waypoints: vec![vec![guac_ir::level::Waypoint {
                 name: "wp0".into(),
@@ -1551,6 +1822,37 @@ pub(crate) mod tests {
             guac_ir::to_ron(&placements).unwrap(),
         )
         .unwrap();
+        // No props.
+        write_props(dir, Vec::new(), Vec::new());
+    }
+
+    /// The props part holding `models`, and the placements part with
+    /// `actors` after [`write_walk`]'s `213_Init_Location`.
+    pub(crate) fn write_props(
+        dir: &Path,
+        models: Vec<guac_ir::level::Prop>,
+        actors: Vec<guac_ir::level::Placement>,
+    ) {
+        let ir = IrFormat::Ron;
+        let props = guac_ir::level::Props {
+            identity: identity(),
+            level: LEVEL.into(),
+            props: models,
+            refused: Vec::new(),
+        };
+        std::fs::write(
+            dir.join(ir.level_path(LEVEL, PROPS)),
+            guac_ir::to_ron(&props).unwrap(),
+        )
+        .unwrap();
+        if actors.is_empty() {
+            return;
+        }
+        let path = dir.join(ir.level_path(LEVEL, PLACEMENTS));
+        let mut placements: guac_ir::level::Placements =
+            guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        placements.actors.extend(actors);
+        std::fs::write(path, guac_ir::to_ron(&placements).unwrap()).unwrap();
     }
 
     /// The turntables' test app with the level loader, fed `source`.
@@ -1754,6 +2056,253 @@ pub(crate) mod tests {
         *watch.lock() = Pending::default();
         let pipelines = app.world().resource::<PipelineWatch>().clone();
         until(&mut app, &["ready"], |_| pipelines.compile_all());
+    }
+
+    /// AG.25: the props as entities. At the start the gourd 4.5 m off
+    /// stands, drawn and solid; the coin 49.25 m off doesn't, past its
+    /// 160 ft (48.768 m); a template, a creature and a placement its script
+    /// wakes have no entity at all. A hero 90 m on along x stands the coin up
+    /// and takes the gourd down, its solid out of Avian's world; gone, the
+    /// props stand by the start again.
+    #[test]
+    fn the_props_stand_by_the_rule_as_entities() {
+        use guac_ir::actor::{Shape, Solid};
+        use guacamole::props::PROP_BODIES;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let scene: guac_ir::level::Scene = guac_ir::from_ron(
+            &std::fs::read_to_string(tmp.path().join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+        )
+        .unwrap();
+        // The gourd on the ground's material and shape, a key the level
+        // draws; the coin on the sky's, fogged as the sky isn't: a key of
+        // its own.
+        let materials = &scene.scenes[0].materials;
+        let plain = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let bare = MeshShape {
+            uv_sets: 1,
+            tangents: false,
+            ..plain
+        };
+        let model = |path: &str, skinned: bool, material: usize, shape| guac_ir::level::Prop {
+            path: path.into(),
+            skeleton: skinned.then(|| model::Skeleton { joints: Vec::new() }),
+            materials: vec![materials[material].clone()],
+            segments: vec![segment(0, shape, 0.0)],
+            idle: None,
+        };
+        let solid = |shape, size: [f32; 3]| Solid {
+            shape,
+            solid: true,
+            world: true,
+            actor_surface: false,
+            offset: [0.0; 3],
+            rotation: [0.0; 3],
+            width: size[0],
+            height: size[1],
+            length: size[2],
+            weight: 1.0,
+            rebound: 0.0,
+        };
+        let actor = |object,
+                     name: &str,
+                     state,
+                     range,
+                     dx: f32,
+                     model: &str,
+                     solid,
+                     script: Option<&str>| {
+            guac_ir::level::Placement {
+                object,
+                id: 0,
+                name: name.into(),
+                script: script.map(str::to_owned),
+                position: [START[0] + dx, START[1], START[2]],
+                rotation: [0.0; 3],
+                scale: [100.0; 3],
+                model: Some(model.into()),
+                solid: Some(solid),
+                movement: None,
+                waypoints: None,
+                activity_state: state,
+                activation_range: range,
+            }
+        };
+        let sphere = solid(Shape::Sphere, [7.25, 6.5, 3.0]);
+        write_props(
+            tmp.path(),
+            vec![
+                model("gourd.mdl", false, 0, plain),
+                model("coin.mdl", false, 2, bare),
+                model("chompy.mdl", true, 0, plain),
+            ],
+            vec![
+                actor(20, "gourd", 4, 160.0, 4.5, "gourd.mdl", sphere, None),
+                actor(
+                    21,
+                    "coin",
+                    4,
+                    160.0,
+                    49.25,
+                    "coin.mdl",
+                    solid(Shape::None, [3.0, 6.0, 3.0]),
+                    Some("Placed_Loot_Spinning.ai"),
+                ),
+                actor(22, "template", 5, 160.0, 1.0, "gourd.mdl", sphere, None),
+                actor(
+                    23,
+                    "chompy",
+                    4,
+                    260.0,
+                    3.0,
+                    "chompy.mdl",
+                    solid(Shape::Capsule, [3.0, 6.0, 3.0]),
+                    Some("S2_Enemy_Chompy.ai"),
+                ),
+                actor(
+                    24,
+                    "fence",
+                    4,
+                    0.0,
+                    2.0,
+                    "gourd.mdl",
+                    solid(Shape::Box, [23.0, 18.0, 3.0]),
+                    Some("WoodFence_Spawner.ai"),
+                ),
+            ],
+        );
+        let mut app = level_app(tmp.path(), source, false);
+        // Avian's side of the seam, so a ray says what its world holds.
+        app.add_plugins(crate::physics::SeamPlugin);
+        app.finish();
+        app.cleanup();
+        until(&mut app, &["ready"], |_| {});
+        // What a ray straight down onto the gourd meets in Avian's world,
+        // once a fixed step's physics schedule has run.
+        let down_on_the_gourd = |app: &mut App| {
+            use guac_motion::seam::PhysicsSeam;
+            let mut state =
+                bevy::ecs::system::SystemState::<crate::physics::AvianSeam>::new(app.world_mut());
+            let seam = state.get(app.world()).unwrap();
+            let at = Vec3::new(START[0] + 4.5, START[1] + 10.0, START[2]);
+            seam.ray(at, -Vec3::Y, 20.0, &[]).map(|h| h.body.0)
+        };
+        let props = |app: &App| {
+            app.world()
+                .resource::<Level>()
+                .snapshot()
+                .props
+                .expect("the props' report")
+        };
+        let r = props(&app);
+        // By script: the fence and `213_Init_Location`.
+        assert_eq!(
+            (r.props, r.models, r.templates, r.creatures, r.by_script),
+            (2, 2, 1, 1, 2),
+            "{r:?}"
+        );
+        assert_eq!((r.standing, r.drawn, r.solid, r.sensors), (1, 1, 1, 0));
+        // Every model's keys, standing or not: the level's three and the
+        // coin's, asked of the warm before it shows.
+        app.update();
+        let asked: HashSet<WarmKey> = app
+            .world()
+            .resource::<Warm>()
+            .level_listed()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!((report(&app).keys, asked.len()), (4, 4));
+        assert_eq!(r.names, ["gourd"]);
+        let shown = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&Name, &Visibility, &Children)>();
+            let mut out: Vec<(String, bool)> = q
+                .iter(app.world())
+                .filter(|(n, ..)| n.as_str().starts_with("prop "))
+                .map(|(n, v, c)| {
+                    assert_eq!(c.len(), 1, "its one segment");
+                    (n.as_str().to_owned(), *v == Visibility::Inherited)
+                })
+                .collect();
+            out.sort();
+            out
+        };
+        let bodies = |app: &mut App| {
+            let mut q = app.world_mut().query::<&crate::physics::SeamBody>();
+            let mut ids: Vec<u32> = q.iter(app.world()).map(|b| b.id.0).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(
+            shown(&mut app),
+            [
+                ("prop coin".to_owned(), false),
+                ("prop gourd".to_owned(), true)
+            ]
+        );
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 20]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while down_on_the_gourd(&mut app) != Some(PROP_BODIES + 20) {
+            assert!(
+                Instant::now() < deadline,
+                "the gourd never in Avian's world"
+            );
+            app.update();
+        }
+
+        // A hero 90 m on: the coin 40.75 m off stands, the gourd 85.5 m off
+        // doesn't, its solid gone with it.
+        let at = Vec3::new(START[0] + 90.0, START[1], START[2]);
+        let hero = app
+            .world_mut()
+            .spawn(crate::hero::HeroBody {
+                hero: guac_motion::hero::Hero::new(
+                    guac_motion::scenarios::eruptor_solid(),
+                    guac_motion::tuning::Tuning::ERUPTOR,
+                    at,
+                    0.0,
+                ),
+                exclude: Vec::new(),
+                before: at,
+            })
+            .id();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while props(&app).at != Some(at.to_array()) {
+            assert!(Instant::now() < deadline, "no fixed step stood the props");
+            app.update();
+        }
+        app.update();
+        assert_eq!(props(&app).names, ["coin"]);
+        assert_eq!(
+            shown(&mut app),
+            [
+                ("prop coin".to_owned(), true),
+                ("prop gourd".to_owned(), false)
+            ]
+        );
+        assert_eq!(bodies(&mut app), [1], "the coin's solid has no shape");
+        assert_eq!(
+            down_on_the_gourd(&mut app),
+            Some(1),
+            "the floor, the gourd gone"
+        );
+
+        app.world_mut().despawn(hero);
+        let start = app.world().resource::<Level>().loaded().unwrap().start;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while props(&app).at != Some(start.to_array()) {
+            assert!(Instant::now() < deadline, "no fixed step stood the props");
+            app.update();
+        }
+        app.update();
+        assert_eq!(props(&app).names, ["gourd"]);
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 20]);
+        assert_eq!(down_on_the_gourd(&mut app), Some(PROP_BODIES + 20));
     }
 
     /// AG.21: the level's solids come and go with it. A new source's load

@@ -1,15 +1,17 @@
 //! The pipelines the TV draws Giants 01.00 with, as numbers (openspec AE.25,
 //! AG.43): every key the roster's figures draw on a card (AE.5's census of
 //! the character models, with what each carries fresh since AE.23) and
-//! every key chapter 1 draws (AG.19's), so a first start can compile them
-//! before any extraction, when nothing of the disc is read yet.
+//! every key chapter 1 draws (AG.19's) with its props (AG.25's), so a first
+//! start can compile them before any extraction, when nothing of the disc
+//! is read yet.
 //!
 //! Which of the code's keys a part draws is the disc's: a key is a material
 //! key ([`MaterialKey`]: the masks as drawn, the render states) on a mesh
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
-//! static parts they carry) and its chapter 1 another 55. So the tables
+//! static parts they carry) and its chapter 1 another 55, its props 32
+//! more. So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on
 //! `GUAC_GIANTS_DUMP`) holds them equal to what the extractor's readers and
@@ -238,6 +240,45 @@ pub const LEVEL: &[Row] = &[
     row(0x0c9c, 0x349c, O, true, false, true, 2, true, true),
 ];
 
+/// Every key chapter 1's props draw (AG.25) that [`LEVEL`] doesn't hold:
+/// the models of the placements that can stand there (a template, a
+/// creature or one its script wakes draws nothing yet), in the level's
+/// scene at AF's fresh state, each once.
+pub const LEVEL_PROPS: &[Row] = &[
+    row(0x0434, 0x1434, O, true, false, false, 1, true, true),
+    row(0x0c00, 0x2400, A, false, false, false, 1, true, false),
+    row(0x0c00, 0x2400, A, false, true, false, 1, true, false),
+    row(0x0c00, 0x3400, O, true, false, false, 1, true, true),
+    row(0x0c01, 0x3401, ADD, false, true, false, 2, true, true),
+    row(0x0c04, 0x3404, O, true, false, false, 1, true, true),
+    row(0x0c06, 0x3406, O, true, false, false, 2, true, true),
+    row(0x0c14, 0x3414, O, true, false, false, 1, true, true),
+    row(0x0c20, 0x2420, O, true, false, false, 1, true, false),
+    row(0x0c20, 0x3420, O, true, false, false, 1, true, true),
+    row(0x0c20, 0x3420, O, true, true, false, 1, true, true),
+    row(0x0c22, 0x3422, O, true, false, false, 2, true, true),
+    row(0x0c23, 0x2423, O, true, false, false, 3, true, false),
+    row(0x0c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x0c24, 0x3424, O, true, false, false, 1, true, true),
+    row(0x0c24, 0x3424, O, true, true, false, 1, true, true),
+    row(0x0c24, 0x3424, A, true, true, true, 1, true, true),
+    row(0x0c26, 0x3426, O, true, false, false, 2, true, true),
+    row(0x0c28, 0x3428, O, true, true, false, 1, true, true),
+    row(0x0c28, 0x3428, A, false, true, false, 1, true, true),
+    row(0x0c34, 0x3434, O, true, false, false, 1, true, true),
+    row(0x0c34, 0x3434, O, true, true, false, 1, true, true),
+    row(0x0c38, 0x2438, O, true, false, false, 1, true, false),
+    row(0x0c38, 0x2438, A, true, false, false, 1, true, false),
+    row(0x0c38, 0x3438, O, true, false, false, 1, true, true),
+    row(0x0c38, 0x3438, A, false, false, false, 1, true, true),
+    row(0x0c39, 0x3439, O, true, false, false, 2, true, true),
+    row(0x0c3c, 0x243c, O, true, false, false, 1, true, false),
+    row(0x0c3c, 0x343c, O, true, false, false, 1, true, true),
+    row(0x0c3c, 0x343c, O, true, true, false, 1, true, true),
+    row(0x0c3c, 0x343c, A, true, false, false, 1, true, true),
+    row(0x0c3d, 0x343d, O, true, false, false, 2, true, true),
+];
+
 /// Every key the 01.00 roster's figures draw on a card on a static mesh
 /// (the turntable's scene), each once: the unskinned parts they carry
 /// fresh (AE.23), each drawn under its bone or its parent part.
@@ -276,9 +317,12 @@ pub fn turntable_keys() -> Vec<WarmKey> {
     out
 }
 
-/// [`LEVEL`]'s keys: a level's segments are static, in world space.
+/// [`LEVEL`]'s keys, then [`LEVEL_PROPS`]'s: a level's segments and its
+/// props' are static.
 pub fn level_keys() -> Vec<WarmKey> {
-    keys(LEVEL, false)
+    let mut out = keys(LEVEL, false);
+    out.extend(keys(LEVEL_PROPS, false));
+    out
 }
 
 fn keys(rows: &[Row], skinned: bool) -> Vec<WarmKey> {
@@ -402,6 +446,7 @@ mod tests {
             (TURNTABLE, true, 33),
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 55),
+            (LEVEL_PROPS, false, 32),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -418,12 +463,12 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55);
+        assert_eq!(every.len(), 33 + 24 + 55 + 32);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()
         );
-        assert_eq!(level_keys().len(), LEVEL.len());
+        assert_eq!(level_keys().len(), LEVEL.len() + LEVEL_PROPS.len());
     }
 
     /// The tables as the scenes they were counted in draw them: the cards'

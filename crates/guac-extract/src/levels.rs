@@ -503,6 +503,7 @@ pub fn placements(
                 movement: a.parameters.as_ref().map(models::movement),
                 waypoints: a.info.waypoints.and_then(|l| lists.get(&l).copied()),
                 activity_state: at.activity_state,
+                activation_range: a.placement().activation_range,
             }
         })
         .collect();

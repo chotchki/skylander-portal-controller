@@ -390,6 +390,103 @@ mod tests {
         assert!(by_hand.pivot.distance(START) > 5.0);
     }
 
+    /// AG.25: the gate's door and a gourd, built as the props build them
+    /// off their placements, stop him on Avian's side of the seam where they
+    /// do on parry's, step for step: head-on into the door his pivot
+    /// 1.4781 m from its middle (AG.7) within the millimetre his 5 mm keep
+    /// makes of its 4.1, into the gourd just past touching.
+    #[test]
+    fn the_door_and_a_gourd_stop_him_through_avian_as_on_parry() {
+        use guac_ir::actor::{Shape as IrShape, Solid as IrSolid};
+        use guac_ir::level::Placement;
+        let solid = |object, at: [f32; 3], heading, shape, size: [f32; 3], turn| {
+            let p = Placement {
+                object,
+                id: 0,
+                name: String::new(),
+                script: None,
+                position: at,
+                rotation: [0.0, heading, 0.0],
+                scale: [100.0; 3],
+                model: None,
+                solid: None,
+                movement: None,
+                waypoints: None,
+                activity_state: 4,
+                activation_range: 160.0,
+            };
+            let info = IrSolid {
+                shape,
+                solid: true,
+                world: true,
+                actor_surface: false,
+                offset: [0.0; 3],
+                rotation: [0.0, turn, 0.0],
+                width: size[0],
+                height: size[1],
+                length: size[2],
+                weight: 1.0,
+                rebound: 0.0,
+            };
+            guacamole::props::solid(&p, &info).unwrap()
+        };
+        let mut bodies = open_ground();
+        bodies.push(solid(
+            1,
+            [0.0, 0.0, 5.0],
+            180.0,
+            IrShape::Box,
+            [4.0, 21.0, 34.0],
+            90.0,
+        ));
+        bodies.push(solid(
+            2,
+            [-8.0, 0.0, 5.0],
+            0.0,
+            IrShape::Sphere,
+            [7.25, 6.5, 3.0],
+            0.0,
+        ));
+        let parry = ParryWorld::new(&bodies).unwrap();
+        let input = HeroInput(Input::stick(stick(1.0, -15.0), 15.0));
+        for (start, check) in [
+            (Vec3::new(2.0, 1.0, 0.0), 0),
+            (Vec3::new(-8.0, 1.0, 0.0), 1),
+        ] {
+            let mut app = headless(1.0 / 60.0, &bodies);
+            app.world_mut().remove_resource::<WalkScript>();
+            app.insert_resource(input);
+            let entity = spawn_eruptor(&mut app, start, 0.0);
+            let mut by_hand = eruptor(&parry, start, 0.0);
+            let mut worst = 0.0f32;
+            for k in 0..90 {
+                app.update();
+                assert_eq!(steps(&app), k + 1);
+                by_hand.step(&parry, &input.0, (1.0f64 / 60.0) as f32, &[]);
+                worst = worst.max((hero_of(&app, entity).pivot - by_hand.pivot).length());
+            }
+            let hero = hero_of(&app, entity);
+            eprintln!(
+                "Avian against parry into prop {check}: {worst:e} m at worst, at {}",
+                hero.pivot
+            );
+            assert!(worst < 1e-5, "{worst}");
+            assert_eq!(hero.velocity, Vec3::ZERO);
+            if check == 0 {
+                let from_middle = 5.0 - hero.pivot.z;
+                assert!((from_middle - 1.4781).abs() < 1.5e-3, "{from_middle}");
+            } else {
+                let centres =
+                    (hero.pivot + Vec3::Y * 0.9144).distance(Vec3::new(-8.0, 1.1049, 5.0));
+                let touching = 1.0549 + 0.8644;
+                assert!(
+                    centres > touching && centres - touching < 0.006,
+                    "{centres}"
+                );
+            }
+        }
+    }
+
     /// The same path at any display rate: at 30, 60 and 144 Hz the hero is
     /// where the same 120 steps leave him, to the bit, and his drawn
     /// transform eases between the last two steps by how far the display is

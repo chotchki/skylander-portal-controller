@@ -613,13 +613,28 @@ pub enum AtStart {
 /// level file doesn't hold (anything but UNMANAGED or TEMPLATE).
 pub fn at_start(placement: &Placement<'_>, hero: [f32; 3]) -> Option<AtStart> {
     let p = &placement.placement;
-    match ActivityState::from_raw(p.activity_state)? {
+    at_start_of(
+        p.activity_state,
+        placement.activation_range,
+        p.init_matrix.position,
+        hero,
+    )
+}
+
+/// [`at_start`] on a placement's fields as a level file stores them: its
+/// `_activityState`, its `_activationRange` in feet and its `_initMatrix`
+/// position in metres (what the extract keeps of a placement, AG.25).
+pub fn at_start_of(
+    activity_state: u32,
+    activation_range: f32,
+    position: [f32; 3],
+    hero: [f32; 3],
+) -> Option<AtStart> {
+    match ActivityState::from_raw(activity_state)? {
         ActivityState::Template => Some(AtStart::Template),
-        ActivityState::Unmanaged if placement.activation_range > 0.0 => {
-            let d2: f32 = (0..3)
-                .map(|i| (p.init_matrix.position[i] - hero[i]).powi(2))
-                .sum();
-            let range = placement.activation_range * FOOT;
+        ActivityState::Unmanaged if activation_range > 0.0 => {
+            let d2: f32 = (0..3).map(|i| (position[i] - hero[i]).powi(2)).sum();
+            let range = activation_range * FOOT;
             Some(if d2 <= range * range {
                 AtStart::Active
             } else {

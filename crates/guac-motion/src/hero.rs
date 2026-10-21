@@ -227,7 +227,39 @@ impl Hero {
         self.gait_speed = self.walk.velocity.length();
         self.walk
             .update_movers(push.held(), &self.footing, &tuning, before);
+        self.engine(seam, step, exclude, surfaces);
+        self.steps = [step, before];
+    }
 
+    /// One game frame of the engine alone, for a hero whose walk Giants' own
+    /// scripts keep on the VM (openspec AH.17, AH design decision 5: one
+    /// writer): [`Hero::walk`]'s velocity is what the movement script last
+    /// handed the engine (its `actorinfo.velocity`, ft/s) and his facing is
+    /// the script's to set. Nothing here turns him, pushes or slows the walk
+    /// or probes an edge; the walk is laid along the ground while he's on it,
+    /// moved through the cast-and-slide over this frame's `step`, then the
+    /// support check, the ground finder, the snap and the lean.
+    pub fn step_engine(
+        &mut self,
+        seam: &dyn PhysicsSeam,
+        step: f32,
+        exclude: &[BodyId],
+        surfaces: &Surfaces,
+    ) {
+        let [before, _] = self.steps;
+        self.gait_speed = self.walk.velocity.length();
+        self.engine(seam, step, exclude, surfaces);
+        self.steps = [step, before];
+    }
+
+    /// The engine's part of a frame: the walk moved and looked after.
+    fn engine(
+        &mut self,
+        seam: &dyn PhysicsSeam,
+        step: f32,
+        exclude: &[BodyId],
+        surfaces: &Surfaces,
+    ) {
         let v = self.walk.velocity * FOOT;
         let n = self.footing.ground.unwrap_or(Vec3::Y);
         let walking = self.footing.supported && n.y >= LEAVE_NORMAL && n.dot(v) <= LEAVE_SPEED;
@@ -244,7 +276,6 @@ impl Hero {
         self.pivot = moved.pivot;
         self.velocity = (self.pivot - start) / step;
         self.look(seam, exclude, surfaces, walking, airborne, step);
-        self.steps = [step, before];
     }
 
     /// The engine's look after a move: the support check, the ground finder,

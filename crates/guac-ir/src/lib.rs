@@ -55,8 +55,11 @@ use serde::{Deserialize, Serialize};
 /// ([`level::Atmosphere`]), written beside v4 on a parallel branch, is a
 /// new part in a file of its own, so v5 holds: an extract without the part
 /// adds it alone. AH.22's palettes ([`palette`]) and spawn models
-/// ([`spawn`]) are new records in files of their own too, so v5 holds.
-pub const IR_VERSION: u32 = 5;
+/// ([`spawn`]) are new records in files of their own too, so v5 holds. v6
+/// (AG.25) gives a level's placement its activation range
+/// ([`level::Placement::activation_range`]), which a v5 placements file
+/// can't say, so a v5 extract redoes itself.
+pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IrError {
@@ -405,7 +408,7 @@ mod tests {
     #[test]
     fn ron_carries_the_version_and_a_hex_hash() {
         let text = to_ron(&identity()).unwrap();
-        assert!(text.contains("ir_version: 5"), "{text}");
+        assert!(text.contains("ir_version: 6"), "{text}");
         assert!(
             text.contains(&format!("\"{}\"", identity().manifest_hash)),
             "{text}"
@@ -422,12 +425,12 @@ mod tests {
     fn another_ir_version_is_refused_in_ron() {
         let text = to_ron(&identity())
             .unwrap()
-            .replace("ir_version: 5", "ir_version: 3");
+            .replace("ir_version: 6", "ir_version: 3");
         assert!(matches!(
             from_ron::<DumpIdentity>(&text),
             Err(IrError::VersionMismatch {
                 found: 3,
-                expected: 5
+                expected: 6
             })
         ));
     }
@@ -441,19 +444,19 @@ mod tests {
             from_ron::<DumpIdentity>(text),
             Err(IrError::VersionMismatch {
                 found: 3,
-                expected: 5
+                expected: 6
             })
         ));
         // No version, a stray field, or no body: refused as malformed.
         let body = to_ron(&identity()).unwrap();
-        let unversioned = body.replace("ir_version: 5,", "");
+        let unversioned = body.replace("ir_version: 6,", "");
         assert!(matches!(
             from_ron::<DumpIdentity>(&unversioned),
             Err(IrError::RonSpanned(_))
         ));
-        let stray = body.replace("ir_version: 5,", "ir_version: 5, extra: 5,");
+        let stray = body.replace("ir_version: 6,", "ir_version: 6, extra: 5,");
         assert!(from_ron::<DumpIdentity>(&stray).is_err());
-        assert!(from_ron::<DumpIdentity>("(ir_version: 5)").is_err());
+        assert!(from_ron::<DumpIdentity>("(ir_version: 6)").is_err());
     }
 
     #[test]
@@ -465,7 +468,7 @@ mod tests {
             from_postcard::<DumpIdentity>(&bytes),
             Err(IrError::VersionMismatch {
                 found: 0,
-                expected: 5
+                expected: 6
             })
         ));
     }
