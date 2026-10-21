@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::rejection::JsonRejection;
-use bevy::camera::Projection;
+use bevy::camera::{Projection, RenderTarget};
 use bevy::input::InputSystems;
 use bevy::input::gamepad::{
     GamepadButton, GamepadConnection, GamepadConnectionEvent, RawGamepadAxisChangedEvent,
@@ -26,7 +26,7 @@ use bevy::input::gamepad::{
 };
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
-use bevy::ui::{ComputedNode, UiGlobalTransform, UiSystems};
+use bevy::ui::{ComputedNode, ComputedUiTargetCamera, UiGlobalTransform, UiSystems};
 use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
@@ -36,9 +36,9 @@ use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
-use crate::level::{Level, LevelReport};
+use crate::level::{Level, LevelCamera, LevelReport, draws_over};
 use crate::pad::{FacesPrinted, LevelPads, Pause, labels};
-use crate::pause::{LevelOverlay, PromptGlyph};
+use crate::pause::{LevelOverlay, PromptGlyph, ShownAt};
 use crate::play::{HeroReport, Mode, Play};
 use crate::prepare::{Prepare, PrepareReport};
 use crate::screen::TvScreen;
@@ -139,6 +139,12 @@ pub struct OverlayShot {
     pub texts: Vec<String>,
     /// The drawn prompt: `A`, `B` ... or `position:south`.
     pub prompt: Option<String>,
+    /// It draws over the level's camera (AG.50): its camera after the
+    /// level's on one target, cleared to no colour and laid over
+    /// ([`crate::level::draws_over`]); false with no level camera.
+    pub over_level: bool,
+    /// When it was spawned, on the frame log's clock (`/api/_test/tv/frames`).
+    pub shown_ms: Option<f64>,
 }
 
 /// A queued intro, from `IntroQueue`.
@@ -992,15 +998,36 @@ fn walk(
     }
 }
 
+/// The overlays as the mirror reads them: each one's root, when it was
+/// spawned and the camera its UI draws through.
+type Overlays<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static LevelOverlay,
+        Option<&'static ShownAt>,
+        Option<&'static ComputedUiTargetCamera>,
+    ),
+>;
+
+/// Every camera with its target, and the level's.
+type OverlayCameras<'w, 's> = (
+    Query<'w, 's, (&'static Camera, Option<&'static RenderTarget>)>,
+    Query<'w, 's, Entity, With<LevelCamera>>,
+);
+
 /// The pads in the order they connected, the layer that takes them, and
-/// while the level shows, who walks, why it waits and its overlay as drawn.
+/// while the level shows, who walks, why it waits and its overlay as drawn,
+/// over the level's camera or not.
 fn input_shot(
     intro_playing: bool,
-    (level, gamepads, overlays, glyphs): (
+    (level, gamepads, overlays, glyphs, (cameras, level_cameras)): (
         Option<Res<LevelPads>>,
         Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
-        Query<(Entity, &LevelOverlay)>,
+        Overlays,
         Query<&PromptGlyph>,
+        OverlayCameras,
     ),
     (children, texts, images, pips): (
         &Query<&Children>,
@@ -1029,13 +1056,24 @@ fn input_shot(
             }
         })
         .collect();
-    let overlay = overlays.iter().next().map(|(root, kind)| {
+    let overlay = overlays.iter().next().map(|(root, kind, at, target)| {
         let mut found = (Vec::new(), false, None);
         walk(root, children, texts, images, pips, &mut found);
+        let ui = target
+            .and_then(ComputedUiTargetCamera::get)
+            .and_then(|c| cameras.get(c).ok());
+        let over_level = ui.is_some_and(|ui| {
+            level_cameras
+                .iter()
+                .filter_map(|c| cameras.get(c).ok())
+                .any(|level| draws_over(ui, level))
+        });
         OverlayShot {
             kind: kind.name().to_owned(),
             texts: found.0,
             prompt: glyphs.iter().next().map(|g| g.0.name()),
+            over_level,
+            shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
         }
     });
     InputShot {
@@ -1076,8 +1114,9 @@ fn mirror_tv(
         (
             Option<Res<LevelPads>>,
             Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
-            Query<(Entity, &LevelOverlay)>,
+            Overlays,
             Query<&PromptGlyph>,
+            OverlayCameras,
         ),
     ),
     (extraction, band_title, band_detail, bar): (
@@ -1625,6 +1664,8 @@ mod tests {
     /// systems, so its stick lands raw, and with the level shown that pad
     /// walks, Start pauses under the overlay as drawn, losing the pad brings
     /// the controller message, and another pad's press carries on with it.
+    /// AG.50: both overlays draw over the level's camera, and at AG.21's
+    /// order (the level's camera after the TV's) the mirror says they don't.
     #[tokio::test]
     async fn posted_pads_drive_the_level_as_a_hand_would() {
         use tower::ServiceExt;
@@ -1660,7 +1701,9 @@ mod tests {
         }
 
         let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
-        app.insert_resource(mirror.clone()).add_plugins(Mirror);
+        app.insert_resource(mirror.clone())
+            .add_plugins(Mirror)
+            .add_systems(PostUpdate, crate::level::tv_over_level);
         let until = |app: &mut App, what: &str, done: &dyn Fn(&InputShot) -> bool| {
             for _ in 0..30 {
                 app.update();
@@ -1686,9 +1729,17 @@ mod tests {
         );
         assert_eq!(shot.hero_stick, None);
 
+        // The level shows, its camera on the TV's target as the walk's is.
         app.world_mut()
             .resource_mut::<crate::pad::LevelPads>()
             .show();
+        let level_camera = app
+            .world_mut()
+            .spawn((
+                crate::level::view_camera(RenderTarget::default(), crate::level::VIEW_ORDER),
+                LevelCamera,
+            ))
+            .id();
         let shot = until(&mut app, "walking", &|s| s.pads[0].walking);
         assert_eq!(shot.layer, "level");
         assert_eq!(shot.hero_stick, Some([0.26, -0.25]));
@@ -1697,13 +1748,17 @@ mod tests {
         assert_eq!(post(r#"{"pad":0,"press":"start"}"#).await, 202);
         let shot = until(&mut app, "paused", &|s| s.overlay.is_some());
         assert_eq!(shot.pause.as_deref(), Some("start"));
+        let overlay = shot.overlay.unwrap();
+        assert!(overlay.shown_ms.is_some(), "{overlay:?}");
         assert_eq!(
-            shot.overlay,
-            Some(OverlayShot {
+            overlay,
+            OverlayShot {
                 kind: "paused".into(),
                 texts: vec!["Paused".into(), "Press".into(), "to play on".into()],
                 prompt: Some("position:south".into()),
-            })
+                over_level: true,
+                shown_ms: overlay.shown_ms,
+            }
         );
 
         assert_eq!(post(r#"{"pad":0,"disconnect":true}"#).await, 202);
@@ -1714,10 +1769,26 @@ mod tests {
         let shot = until(&mut app, "its message", &|s| {
             s.overlay.as_ref().is_some_and(|o| o.kind == "controller")
         });
+        let overlay = shot.overlay.unwrap();
         assert_eq!(
-            shot.overlay.unwrap().texts,
+            overlay.texts,
             ["Connect a controller", "then press any button on it"]
         );
+        assert!(overlay.over_level, "the message over the level");
+        // AG.21's order, the level's camera after the TV's replacing it,
+        // covered both; the mirror says so.
+        app.world_mut()
+            .get_mut::<Camera>(level_camera)
+            .unwrap()
+            .order = 1;
+        let shot = until(&mut app, "covered", &|s| {
+            s.overlay.as_ref().is_some_and(|o| !o.over_level)
+        });
+        assert_eq!(shot.overlay.unwrap().kind, "controller");
+        app.world_mut()
+            .get_mut::<Camera>(level_camera)
+            .unwrap()
+            .order = crate::level::VIEW_ORDER;
 
         for body in [
             r#"{"pad":1,"connect":{"name":"another","vendor":11720,"product":1}}"#,

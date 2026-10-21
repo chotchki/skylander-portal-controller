@@ -12,15 +12,18 @@
 //!   as printed on the pad that paused ([`crate::pad::prompt`]); the
 //!   controller message asks for a pad and a press.
 //!
-//! Both are TV UI over everything but an intro. How the TV's UI draws over
-//! the level is the level camera's (AG.21's, AG.50): the dev entry's camera
-//! replaces the whole frame, so nothing of the TV's shows over it yet.
+//! Both are TV UI over everything but an intro, and the TV's UI draws over
+//! the level (AG.50, [`crate::level::tv_over_level`]): the level's camera
+//! comes first on the TV's target and the TV's lays its UI over it, so the
+//! level shows dimmed under the overlay, held where it stopped. Under the
+//! level's camera, as AG.21 left them, the controller message never showed
+//! and a held pose read as a freeze (AG.51).
 
 use bevy::prelude::*;
 
 use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, prompt};
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::{Pen, TvAssets};
+use crate::tv::{Pen, Redrawn, TvAssets};
 
 /// Under an intro's overlay (1,000), over everything else.
 const OVERLAY_Z: i32 = 900;
@@ -52,6 +55,11 @@ impl LevelOverlay {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PromptGlyph(pub(crate) Prompt);
 
+/// When an overlay was spawned, on `Time<Real>`'s clock (the frame log's),
+/// for the mirror.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ShownAt(pub(crate) std::time::Duration);
+
 /// The overlay the level's state asks for: Start's names the resume button
 /// as printed on the pad that paused, by `labels_of`.
 pub(crate) fn wanted(
@@ -65,14 +73,14 @@ pub(crate) fn wanted(
 }
 
 /// Spawns the overlay the level's state asks for and despawns one it no
-/// longer does. Needs the TV's font and theme; the headless tests without
-/// them draw nothing.
+/// longer does, telling the shots ([`Redrawn::Overlay`]). Needs the TV's
+/// font and theme; the headless tests without them draw nothing.
 pub(crate) fn show_overlay(
     mut commands: Commands,
     pads: Res<LevelPads>,
     gamepads: Query<(&Gamepad, Option<&FacesPrinted>)>,
-    assets: Option<Res<TvAssets>>,
-    theme: Option<Res<TvTheme>>,
+    (assets, theme, time): (Option<Res<TvAssets>>, Option<Res<TvTheme>>, Res<Time<Real>>),
+    mut redrawn: MessageWriter<Redrawn>,
     mut shown: Local<Option<(LevelOverlay, Entity)>>,
 ) {
     let want = wanted(&pads, |pad| {
@@ -87,13 +95,16 @@ pub(crate) fn show_overlay(
         && let Ok(mut overlay) = commands.get_entity(entity)
     {
         overlay.despawn();
+        redrawn.write(Redrawn::Overlay);
     }
     let (Some(want), Some(assets), Some(theme)) = (want, assets, theme) else {
         return;
     };
     let pen = Pen::new(&assets, &theme);
     let entity = spawn(&mut commands, &pen, want);
+    commands.entity(entity).insert(ShownAt(time.elapsed()));
     *shown = Some((want, entity));
+    redrawn.write(Redrawn::Overlay);
 }
 
 fn spawn(commands: &mut Commands, pen: &Pen, overlay: LevelOverlay) -> Entity {

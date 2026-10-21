@@ -10,6 +10,8 @@
 //! must be outside any git checkout (the extract root's rule, design decision
 //! 5); one inside is refused and nothing shot. A folder that isn't there is
 //! made, and a shot that doesn't land is logged as an error (openspec AE.29).
+//! The level's overlays (AG.50) arm one as they come and go, named for the
+//! one showing.
 //! A card's turning model holds its idle's first pose at `GUAC_SHOT_YAW`
 //! degrees of its turn (default 0, facing the camera), so a walk can shoot a
 //! turn one run per angle. With `GUAC_SHOT_WALK=<ms>` too, a shot is taken
@@ -32,6 +34,7 @@ use crate::extraction::Extraction;
 use crate::hero::HeroBody;
 use crate::intro::IntroQueue;
 use crate::motion::ReducedMotion;
+use crate::pause::LevelOverlay;
 use crate::play::Play;
 use crate::turntable::FrozenYaw;
 use crate::tv::{Current, Redrawn, TvCamera};
@@ -222,7 +225,12 @@ fn snap(
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
     mut redrawn: MessageReader<Redrawn>,
-    (play, heroes, time): (Option<Res<Play>>, Query<&HeroBody>, Res<Time>),
+    (play, heroes, time, overlays): (
+        Option<Res<Play>>,
+        Query<&HeroBody>,
+        Res<Time>,
+        Query<&LevelOverlay>,
+    ),
     mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
     let redrew = redrawn.read().count() > 0;
@@ -279,8 +287,13 @@ fn snap(
         .and_then(|q| q.playing())
         .map(|e| format!("-intro-{}", e.movie))
         .unwrap_or_default();
+    let overlay = overlays
+        .iter()
+        .next()
+        .map(|o| format!("-overlay-{}", o.name()))
+        .unwrap_or_default();
     let name = format!(
-        "{:02}-{screen}-{}cards-{extract}{intro}.png",
+        "{:02}-{screen}-{}cards-{extract}{intro}{overlay}.png",
         state.seq,
         cards.cards().count()
     );

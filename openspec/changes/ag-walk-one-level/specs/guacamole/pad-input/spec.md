@@ -44,7 +44,7 @@ The left stick SHALL read each axis as centred while it's a quarter of its trave
 - **THEN** the hero walks at his top speed
 
 ### Requirement: One pad walks the hero
-The hero SHALL follow the first pad connected; another pad's stick and face buttons SHALL NOT move him. When that pad disconnects, or none is connected when the level starts, the level SHALL wait under a message asking for a controller, and a press on any connected pad SHALL make it the hero's and carry on.
+The hero SHALL follow the first pad connected; another pad's stick and face buttons SHALL NOT move him. When that pad disconnects, or none is connected when the level starts, the level SHALL wait under a message asking for a controller, drawn over the level held in view, and a press on any connected pad SHALL make it the hero's and carry on.
 
 #### Scenario: A second pad
 - **WHEN** a second pad's stick is pushed while Eruptor walks under the first's
@@ -52,7 +52,7 @@ The hero SHALL follow the first pad connected; another pad's stick and face butt
 
 #### Scenario: The pad goes away
 - **WHEN** the pad walking Eruptor is switched off, then a button is pressed on the other
-- **THEN** the level pauses under the message, then carries on with the other pad walking him
+- **THEN** the level pauses, Eruptor held in view under the message, then carries on with the other pad walking him
 
 ### Requirement: Prompts name the button printed on the pad
 Where the TV names a pad button, it SHALL show the label printed at that position on the player's pad: Xbox-style on a PC-layout pad (A at the bottom, B on the right), Nintendo-style on a Switch-layout pad (B at the bottom, A on the right). On the Mac a pad's layout SHALL be the letters macOS names its face buttons by. For a pad it can't identify it SHALL show the button's position, never a PlayStation symbol or another pad's label.
@@ -66,11 +66,11 @@ Where the TV names a pad button, it SHALL show the label printed at that positio
 - **THEN** the overlay shows the bottom position, not a letter or a PlayStation symbol
 
 ### Requirement: Start pauses the level
-Start on any connected pad SHALL pause the level under an overlay naming the button that resumes it, and nothing in the level SHALL move while it's paused. The bottom face button or Start on any connected pad SHALL resume it.
+Start on any connected pad SHALL pause the level under an overlay naming the button that resumes it, drawn over the level held in view, and nothing in the level SHALL move while it's paused. The bottom face button or Start on any connected pad SHALL resume it.
 
 #### Scenario: Pause and resume
 - **WHEN** Start is pressed while Eruptor walks, then the bottom face button
-- **THEN** everything stops under the overlay, then carries on from where it stopped
+- **THEN** everything stops in view under the overlay, then carries on from where it stopped
 
 ### Requirement: Home does nothing in a level
 A pad's Home button SHALL change nothing while the hero walks. Keeping Home from macOS, which on the Mac still opens its Games app on it, is the backlog's Home menu line, not this.

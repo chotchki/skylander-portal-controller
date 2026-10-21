@@ -1996,6 +1996,11 @@ press:
   screen hears nothing. Otherwise the screen hears `TvInput`s. The level shows once the first figure
   placed that walks has entered it ([`play.rs`](../../crates/guacamole/src/play.rs), AG.21), and the
   hero's fixed step reads the walking pad's stick against the following camera's view.
+- The level draws under the TV's UI (AG.50, `level::tv_over_level`): its camera first on the TV's target,
+  the TV's after it, which while the level shows clears to no colour, hides its screen and lays its UI
+  over the level with a premultiplied write (`level::TV_OVER`). So Start's overlay, the controller
+  message and an intro land on the level in `GlobalZIndex` order, and the start's pass, whose stand-in
+  level output sits under the TV the same way, compiles that write before the first screen.
 - Mapping is positional, as Controllers has it: South activates (`act_on_input` triggers `Activate` on the
   focused button and holds `Pressed` on it while South is down), East is Back (it closes the error
   screens), Mode is Home (nothing until Open question 1 is answered), and the D-pad, the arrows and the

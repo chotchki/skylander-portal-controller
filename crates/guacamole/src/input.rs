@@ -325,6 +325,8 @@ impl Plugin for InputRouter {
         // Console-style: the focus ring shows from the start (a mouse press
         // hides it, the next pad or key input brings it back).
         app.add_message::<TvInput>()
+            // The overlays tell the shots when they come and go.
+            .add_message::<crate::tv::Redrawn>()
             .insert_resource(InputFocusVisible(true))
             .init_resource::<LevelPads>()
             // Between a pad's connection and its first axis event, so its
