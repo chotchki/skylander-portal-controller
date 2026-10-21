@@ -26,9 +26,9 @@
 //!   feet, never under 0; from his own ground, a hero his support check
 //!   holds has none (his skin's 5 mm isn't a gap: Update Movers' band and
 //!   gravity act only over 0, and AG.38 saw neither on a supported frame);
-//!   from another actor with a solid, the gap between the two solids (AH.18:
-//!   a Chompy nips at 10 ft from a hero, AH.10's middles 14.7-15.2 ft apart
-//!   with both radii 2.84 ft);
+//!   from another actor with a solid, the gap between the two solids as
+//!   authored (AH.18: a Chompy nips at 10 ft from a hero, AH.10's middles
+//!   14.7-15.2 ft apart, both 3 ft spheres);
 //! - a sweep stops at a creature's body as at a wall, though the ball's solid
 //!   doesn't meet actors (`interacts with actors` 0): the touch is what the
 //!   projectile manager's Targets check reads as `collision`; contacts with
@@ -876,7 +876,8 @@ impl ScriptWorld {
                     return Ok(Value::Float(0.0));
                 }
                 // From another actor's body: the gap between the two solids
-                // (a Chompy nips at 10 ft of it, AH.10's middles 15 ft apart).
+                // as authored (a Chompy nips at 10 ft of it, AH.10's middles
+                // 15 ft apart).
                 if let (Some(h), Some(o)) = (actor, at.other_point)
                     && let Some(b) = self.actor_of(Some(o))
                     && b != h
@@ -1744,10 +1745,9 @@ impl ScriptWorld {
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
-        // Two solids within both their convex radii of each other touch,
-        // as Havok's do (AH.18: AH.10's 68 bites read at 5.54-6.01 ft
-        // between the middles of two 2.84 ft spheres, gaps of -0.04 to
-        // 0.10 m).
+        // Two solids within a centimetre of each other touch (AH.18:
+        // AH.10's 68 bites read at 5.54-6.01 ft between the middles of two
+        // 3 ft spheres, gaps of -0.14 to +0.003 m).
         let near = match (self.query(a, engine), self.query(b, engine)) {
             (Some((sa, pa)), Some((sb, pb))) => {
                 guac_motion::parry::gap(&sa, pa, &sb, pb) <= CONTACT_REACH
@@ -1985,9 +1985,10 @@ fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
 /// leaves between a shape and what stopped it.
 const TOUCH: f32 = 2.0 * CAST_SLOP;
 
-/// How near two actors' solids touch, metres: both their convex radii
-/// (Havok's 0.05 m each), what `positionmeasurement.collision` reads.
-pub const CONTACT_REACH: f32 = 2.0 * guac_motion::solid::MESH_RADIUS;
+/// How near two actors' solids touch, metres, what
+/// `positionmeasurement.collision` and `collisioninfo.contacts with me` read:
+/// a centimetre (AH.10's bites at most 0.003 m apart, a hypothesis past it).
+pub const CONTACT_REACH: f32 = 0.01;
 
 /// How many attach nodes an actor's set holds: the scripts index up to 13
 /// on a hero; which joint each is isn't read yet (a stand-in: a node sits
@@ -2408,5 +2409,524 @@ mod tests {
             "{moved}"
         );
         assert!(w.sequences().is_empty());
+    }
+}
+
+/// What chapter 1's first fight reaches of the host (openspec AH.18), on the
+/// parry side of the seam over open ground: creatures walked by their
+/// scripts' velocity and steered by `move to`, `move from` and `turn to`,
+/// `teleport to`, `check fov`, separation, collision and contacts between
+/// two actors' solids, a play's index operand, and the engine's sets of
+/// placements asleep and taken off.
+#[cfg(test)]
+mod fight_tests {
+    use std::collections::HashMap;
+
+    use guac_formats::script::Class;
+    use guac_motion::hero::Hero;
+    use guac_motion::parry::ParryWorld;
+    use guac_motion::seam::{Body, BodyKind, Collider, PhysicsSeam};
+    use guac_motion::tuning::{FOOT, Tuning, eruptor_solid};
+    use guac_script::{Answer, MemberId, Obj, OpCall};
+
+    use super::*;
+    use crate::script_engine::{Actor, Pad, Physics, Solid, Walker};
+    use crate::scripts::{Files, headless_objects};
+
+    const C1: Handle = 0x6100_0001;
+    const C2: Handle = 0x6100_0002;
+    const C3: Handle = 0x6100_0003;
+    const HERO: Handle = 0x6100_0010;
+    const STEP: f32 = 1.0 / 60.0;
+    const WP: Obj = Obj { unit: 9, index: 1 };
+    const WP2: Obj = Obj { unit: 9, index: 2 };
+
+    /// Open level ground whose top is y = 0; the hero and the creatures
+    /// bodies in it as the embedder keeps them.
+    struct Pit {
+        world: ParryWorld,
+        hero: Option<Hero>,
+        bodies: HashMap<Handle, BodyId>,
+    }
+
+    impl Engine for Pit {
+        fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+            self.hero.as_mut().filter(|_| h == HERO)
+        }
+        fn heroes(&self) -> Vec<Handle> {
+            self.hero.iter().map(|_| HERO).collect()
+        }
+        fn seam(&self) -> &dyn PhysicsSeam {
+            &self.world
+        }
+        fn view_heading(&self) -> f32 {
+            0.0
+        }
+        fn pad(&self, _: usize) -> Pad {
+            Pad::default()
+        }
+        fn body(&self, actor: Handle) -> Option<BodyId> {
+            self.bodies.get(&actor).copied()
+        }
+        fn actor_of(&self, body: BodyId) -> Option<Handle> {
+            self.bodies
+                .iter()
+                .find(|(_, b)| **b == body)
+                .map(|(h, _)| *h)
+        }
+    }
+
+    fn pit() -> Pit {
+        let floor = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, -0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(40.0, 0.5, 40.0),
+                margin: 0.0,
+            }),
+        };
+        Pit {
+            world: ParryWorld::new(&[floor]).unwrap(),
+            hero: None,
+            bodies: HashMap::new(),
+        }
+    }
+
+    /// A chapter 1 Chompy as its STARTUP leaves it: a 6 x 3 x 3 ft sphere
+    /// meeting the level and actors, 20 ft/s, 160 up, 80 down, 720°/s, a
+    /// creature the engine walks.
+    fn chompy(at: Vec3, facing: f32) -> Actor {
+        let mut a = Actor::blank();
+        a.position = at;
+        a.angles.facing = facing;
+        a.obj = Some(Obj {
+            unit: 4,
+            index: at.x.to_bits(),
+        });
+        a.managed = true;
+        a.physics = Physics {
+            ground_max_speed: 20.0,
+            ground_acceleration: 160.0,
+            ground_deceleration: 80.0,
+            ground_turn_rate: 720.0,
+            air_max_speed: 20.0,
+            air_acceleration: 160.0,
+            air_deceleration: 80.0,
+            air_turn_rate: 720.0,
+            gravity_acceleration: -1.0,
+            gravity_max_speed: -1.0,
+            time_scale: 100.0,
+            ..Physics::default()
+        };
+        a.solid = Solid {
+            width: 6.0,
+            length: 3.0,
+            height: 3.0,
+            interacts_with_level_mesh: 1,
+            interacts_with_actors: 1,
+            shape: 3,
+            ..Solid::default()
+        };
+        a.walker = Some(Box::new(Walker {
+            body: None,
+            aim: guac_motion::steer::Aim::Still,
+            along: 0,
+        }));
+        a
+    }
+
+    fn world() -> ScriptWorld {
+        let files = Files {
+            placed: Vec::new(),
+            ids: HashMap::new(),
+            points: HashMap::from([
+                (WP, Vec3::new(8.0, 0.0, -6.0)),
+                (WP2, Vec3::new(8.0, 0.0, 6.0)),
+            ]),
+        };
+        let handles = HashMap::new();
+        ScriptWorld::new(&files, &handles, headless_objects(&handles))
+    }
+
+    fn op(
+        class: Class,
+        receiver: Handle,
+        operands: Vec<(&'static str, Option<Value>)>,
+        sets: Vec<(&'static str, Vec<Value>)>,
+    ) -> OpCall {
+        OpCall {
+            placement: receiver,
+            receiver: Value::Entity(receiver),
+            class,
+            operands,
+            words: vec![("_dir", 0), ("_relOperator", 0)],
+            sets,
+        }
+    }
+
+    fn ask(w: &mut ScriptWorld, e: &mut Pit, call: &OpCall) -> Answer {
+        w.op(call, &mut |_| 0, e).unwrap()
+    }
+
+    fn get(
+        w: &mut ScriptWorld,
+        e: &mut Pit,
+        ns: &str,
+        name: &str,
+        on: Handle,
+        other: Handle,
+    ) -> Value {
+        w.get(
+            &Access {
+                placement: on,
+                receiver: Some(Value::Entity(on)),
+                member: MemberId::named(ns, name),
+                other_point: Some(Value::Entity(other)),
+            },
+            e,
+        )
+        .unwrap()
+    }
+
+    fn move_to(target: Value, within: i32) -> OpCall {
+        op(
+            Class::MoveTo,
+            C1,
+            vec![
+                ("_indexRHS", None),
+                ("_LHS", Some(target)),
+                ("_RHS", Some(Value::Int(within))),
+                ("_NP", None),
+            ],
+            Vec::new(),
+        )
+    }
+
+    fn wrap(d: f32) -> f32 {
+        (d + 180.0).rem_euclid(360.0) - 180.0
+    }
+
+    #[test]
+    fn a_chompy_moved_to_a_point_reaches_it_at_its_speed_and_turn_rate() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::new(0.0, 0.0, 0.0), 0.0));
+        let goal = Vec3::new(8.0, 0.0, -6.0);
+        let mut frames = 0;
+        let mut last = (Vec3::ZERO, 0.0f32);
+        let mut top = 0.0f32;
+        loop {
+            match ask(&mut w, &mut e, &move_to(Value::Object(WP), 5)) {
+                Answer::Run { .. } => break,
+                Answer::Done => {}
+                other => panic!("{other:?}"),
+            }
+            w.advance(STEP, &mut e);
+            frames += 1;
+            let a = w.actor(C1).unwrap();
+            let across = Vec3::new(a.position.x - last.0.x, 0.0, a.position.z - last.0.z);
+            if frames > 1 {
+                top = top.max(across.length() / STEP / FOOT);
+                let turned = wrap(a.angles.facing - last.1).abs();
+                assert!(turned <= 12.0 + 1e-3, "frame {frames}: {turned}°");
+            }
+            last = (a.position, a.angles.facing);
+            assert!(frames < 200, "never got there: {:?}", a.position);
+        }
+        // AH.10's 20 ft/s and 12° a frame; within 5 ft of it across the
+        // ground, the engine has no destination.
+        assert!(top <= 20.0 + 1e-3 && top > 19.9, "{top}");
+        let at = w.actor(C1).unwrap().position;
+        assert!(Vec3::new(at.x - goal.x, 0.0, at.z - goal.z).length() <= 5.0 * FOOT);
+        assert!((92..=100).contains(&frames), "{frames}");
+        assert!(at.y.abs() < 0.02, "on the ground: {at}");
+        let w2 = w.actor(C1).unwrap().walker.as_ref().unwrap();
+        assert_eq!(w2.aim, guac_motion::steer::Aim::Still);
+    }
+
+    #[test]
+    fn along_a_path_it_walks_to_each_waypoint_in_turn() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::new(0.0, 0.0, 0.0), 0.0));
+        let path = vec![Value::Object(WP), Value::Object(WP2)];
+        let mut reached = Vec::new();
+        for k in 0..400 {
+            let call = op(
+                Class::MoveTo,
+                C1,
+                vec![
+                    ("_indexRHS", None),
+                    ("_LHS", Some(Value::Null)),
+                    ("_RHS", Some(Value::Int(2))),
+                    ("_NP", None),
+                ],
+                vec![("_LHS", path.clone())],
+            );
+            if matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }) {
+                reached.push(k);
+            }
+            w.advance(STEP, &mut e);
+        }
+        let along = w.actor(C1).unwrap().walker.as_ref().unwrap().along;
+        assert_eq!(along, 1, "on the last waypoint");
+        assert!(!reached.is_empty());
+        let at = w.actor(C1).unwrap().position;
+        assert!(
+            (at - Vec3::new(8.0, at.y, 6.0)).length() <= 2.0 * FOOT,
+            "{at}"
+        );
+    }
+
+    #[test]
+    fn moved_from_a_point_it_goes_until_beyond() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::new(8.0, 0.0, -3.0), 0.0));
+        let mut done = None;
+        for k in 0..200 {
+            let call = op(
+                Class::MoveFrom,
+                C1,
+                vec![
+                    ("_indexRHS", None),
+                    ("_LHS", Some(Value::Object(WP))),
+                    ("_RHS", Some(Value::Int(20))),
+                    ("_NP", None),
+                ],
+                Vec::new(),
+            );
+            if matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }) {
+                done = Some(k);
+                break;
+            }
+            w.advance(STEP, &mut e);
+        }
+        assert!(done.is_some());
+        let at = w.actor(C1).unwrap().position;
+        assert!(Vec3::new(at.x - 8.0, 0.0, at.z + 6.0).length() >= 20.0 * FOOT);
+    }
+
+    #[test]
+    fn turned_to_a_facing_it_turns_in_place_at_its_rate() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::new(0.0, 0.0, 0.0), 0.0));
+        let at = w.actor(C1).unwrap().position;
+        let turn = |f: f32| {
+            op(
+                Class::TurnTo,
+                C1,
+                vec![("_facingRHS", Some(Value::Float(f))), ("_NP", None)],
+                Vec::new(),
+            )
+        };
+        let mut facings = Vec::new();
+        let mut ran = None;
+        for k in 0..12 {
+            if matches!(ask(&mut w, &mut e, &turn(60.0)), Answer::Run { .. }) {
+                ran = Some(k);
+                break;
+            }
+            w.advance(STEP, &mut e);
+            facings.push(w.actor(C1).unwrap().angles.facing);
+        }
+        assert!((facings[0] - 12.0).abs() < 1e-3, "{facings:?}");
+        assert_eq!(ran, Some(5), "facing it after 5 frames: {facings:?}");
+        assert!((w.actor(C1).unwrap().position - at).length() < 0.02);
+        // Anything the engine doesn't walk turns at once.
+        let mut prop = Actor::blank();
+        prop.angles.facing = 10.0;
+        w.actors.insert(C2, prop);
+        let mut call = turn(90.0);
+        call.receiver = Value::Entity(C2);
+        assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
+        assert_eq!(w.actor(C2).unwrap().angles.facing, 90.0);
+    }
+
+    #[test]
+    fn a_creatures_scripts_velocity_carries_it_along_the_ground() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::new(0.0, 0.0, 0.0), 0.0));
+        w.set_velocity(C1, Vec3::new(0.0, 0.0, 20.0), &mut e)
+            .unwrap();
+        assert!(!w.actor(C1).unwrap().launched, "a creature walks");
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        let at = w.actor(C1).unwrap().position;
+        // Half a second at 20 ft/s, nothing slowing it: 3.048 m.
+        assert!((at.z - 10.0 * FOOT).abs() < 0.01, "{at}");
+        assert!(at.y.abs() < 0.02, "{at}");
+    }
+
+    #[test]
+    fn separation_collision_and_contacts_are_between_the_solids() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        e.bodies.insert(HERO, BodyId(9));
+        let mut w = world();
+        // Both 3 ft spheres as authored (the seam holds them 0.05 m in).
+        let r = 3.0 * FOOT;
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        // 5 m apart at the same height: 5 - 2r between the spheres.
+        w.actors
+            .insert(C1, chompy(pivot + Vec3::new(0.0, 0.0, 5.0), 0.0));
+        let sep = get(
+            &mut w,
+            &mut e,
+            "positionmeasurement",
+            "separation",
+            C1,
+            HERO,
+        );
+        let want = (5.0 - 2.0 * r) * FEET_PER_METRE;
+        assert!(
+            (sep.as_f32().unwrap() - want).abs() < 0.01,
+            "{sep:?} {want}"
+        );
+        // Within a centimetre they touch; past it they don't.
+        for (gap, touches) in [(0.008f32, 1), (0.012, 0)] {
+            w.actors.get_mut(&C1).unwrap().position = pivot + Vec3::new(0.0, 0.0, 2.0 * r + gap);
+            let c = get(&mut w, &mut e, "positionmeasurement", "collision", HERO, C1);
+            assert_eq!(c, Value::Int(touches), "gap {gap}");
+        }
+        // Contacts with the hero: a Chompy 5 mm off and one 2 mm off,
+        // nearest first; one 3 m off isn't.
+        w.actors.get_mut(&C1).unwrap().position = pivot + Vec3::new(0.0, 0.0, 2.0 * r + 0.005);
+        w.actors.insert(
+            C2,
+            chompy(pivot + Vec3::new(2.0 * r + 0.002, 0.0, 0.0), 0.0),
+        );
+        w.actors
+            .insert(C3, chompy(pivot + Vec3::new(-3.0, 0.0, 0.0), 0.0));
+        let facet = w.objs.value(Object::Facet(HERO, Facet::Collision));
+        let contacts = w
+            .elements(
+                &Access {
+                    placement: HERO,
+                    receiver: Some(facet),
+                    member: MemberId::named("collisioninfo", "contacts with me"),
+                    other_point: None,
+                },
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(contacts, vec![Value::Entity(C2), Value::Entity(C1)]);
+    }
+
+    #[test]
+    fn check_fov_finds_whats_in_its_cone_by_distance_nearest_first() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        // Ahead at 3 m and 1 m; off to the side at 90°; ahead but 20 m off.
+        w.actors.insert(C2, chompy(Vec3::new(0.0, 0.0, 3.0), 0.0));
+        w.actors.insert(C3, chompy(Vec3::new(0.0, 0.0, 1.0), 0.0));
+        let side = 0x6100_0020;
+        let far = 0x6100_0021;
+        w.actors.insert(side, chompy(Vec3::new(3.0, 0.0, 0.0), 0.0));
+        w.actors.insert(far, chompy(Vec3::new(0.0, 0.0, 20.0), 0.0));
+        let call = op(
+            Class::CheckFov,
+            C1,
+            vec![
+                ("_RHSfacing", Some(Value::Float(0.0))),
+                ("_RHSfov", Some(Value::Int(90))),
+                ("_fromLHS", Some(Value::Entity(C1))),
+                ("_LHS", Some(Value::Null)),
+                ("_RHS", Some(Value::Int(15))),
+            ],
+            vec![("_LHS", [C2, C3, side, far].map(Value::Entity).to_vec())],
+        );
+        assert_eq!(
+            ask(&mut w, &mut e, &call),
+            Answer::Found(vec![Value::Entity(C3), Value::Entity(C2)])
+        );
+    }
+
+    #[test]
+    fn teleport_to_sets_the_hero_or_an_actor_at_a_point() {
+        let mut e = pit();
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0));
+        let mut w = world();
+        let mut call = op(
+            Class::TeleportTo,
+            HERO,
+            vec![
+                ("_LHS", Some(Value::Object(WP))),
+                ("_facingRHS", Some(Value::Float(-90.0))),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(ask(&mut w, &mut e, &call), Answer::Done);
+        let hero = e.hero.as_ref().unwrap();
+        assert_eq!(hero.pivot, Vec3::new(8.0, 0.0, -6.0));
+        assert_eq!(hero.facing, 270.0);
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        call.receiver = Value::Entity(C1);
+        assert_eq!(ask(&mut w, &mut e, &call), Answer::Done);
+        let a = w.actor(C1).unwrap();
+        assert_eq!(
+            (a.position, a.angles.facing),
+            (Vec3::new(8.0, 0.0, -6.0), -90.0)
+        );
+    }
+
+    #[test]
+    fn a_plays_index_operand_picks_its_slot_of_the_set() {
+        let mut e = pit();
+        let mut w = world();
+        let template = Obj { unit: 4, index: 77 };
+        w.set_palette(template, vec![1.6, 1.0, 0.0, 0.4]);
+        let mut c = chompy(Vec3::ZERO, 0.0);
+        c.obj = Some(template);
+        w.actors.insert(C1, c);
+        let clips: Vec<Value> = (0..4)
+            .map(|slot| w.objs.value(Object::Clip { template, slot }))
+            .collect();
+        let call = op(
+            Class::StartSequence,
+            C1,
+            vec![
+                ("_LHS", Some(Value::Null)),
+                ("_indexRHS", Some(Value::Int(3))),
+            ],
+            vec![("_LHS", clips.clone())],
+        );
+        assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
+        let s = w.sequences().last().unwrap();
+        assert_eq!((s.template, s.length), (clips[3], 0.4));
+    }
+
+    #[test]
+    fn the_engines_sets_hold_whats_asleep_and_whats_taken_off() {
+        let mut e = pit();
+        let mut w = world();
+        let mut a = chompy(Vec3::ZERO, 0.0);
+        a.active = false;
+        w.actors.insert(C1, a);
+        w.actors.insert(C2, chompy(Vec3::ONE, 0.0));
+        let mut gone = chompy(Vec3::NEG_ONE, 0.0);
+        gone.removed = true;
+        w.actors.insert(C3, gone);
+        let set = |w: &mut ScriptWorld, e: &mut Pit, name: &str| {
+            w.elements(
+                &Access {
+                    placement: 1,
+                    receiver: None,
+                    member: MemberId::named("actorinfo", name),
+                    other_point: None,
+                },
+                e,
+            )
+            .unwrap()
+        };
+        assert_eq!(set(&mut w, &mut e, "inactive"), vec![Value::Entity(C1)]);
+        assert_eq!(set(&mut w, &mut e, "removed"), vec![Value::Entity(C3)]);
     }
 }

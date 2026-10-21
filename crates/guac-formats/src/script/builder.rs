@@ -452,6 +452,30 @@ impl<'b> Writer<'b> {
         info
     }
 
+    /// Gives the placement written at `placement` tags (openspec AH.18):
+    /// its `_tagList` a `TagList` whose `_initialTags` hold one `OpParameter`
+    /// per `(name, container, contents, value)`, as level files hold a
+    /// placement's (a Chompy's `notice player radius`).
+    pub fn tags(&mut self, placement: Location, tags: &[(&str, &str, &str, Location)]) {
+        let list = self.b.object(0, "TagList", 0x28);
+        self.path(list, &[]);
+        let n = tags.len() as u32;
+        self.word(list, 0x1C, n);
+        let data = self
+            .b
+            .memory_ref(at(list, 0x20), self.blocks, &vec![0; 4 * n as usize], 0);
+        for (i, (name, container, contents, value)) in tags.iter().enumerate() {
+            let p = self.b.object(0, "OpParameter", 0x38);
+            self.text(p, 0x1C, name);
+            self.class_word(p, 0x20, container);
+            self.meta_word(p, 0x24, contents);
+            self.word(p, 0x28, u32::MAX);
+            self.refer(p, 0x30, *value);
+            self.b.pointer(at(data, 4 * i as u32), p);
+        }
+        self.refer(placement, 0x18, list);
+    }
+
     /// Gives the script `info` (from [`Writer::end`]) a `_masterVarList`
     /// declaring `vars`, the variables a placement's locals are built from.
     pub fn declare(&mut self, info: Location, vars: &[Location]) {

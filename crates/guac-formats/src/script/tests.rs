@@ -680,3 +680,57 @@ fn the_synthetic_attack_reads_back() {
         ]
     );
 }
+
+/// A placement's tags (openspec AH.18): its `_tagList` a `TagList` whose
+/// `_initialTags` hold each `OpParameter`, read back field for field, the
+/// list's own elements empty as level files hold them.
+#[test]
+fn a_placements_tags_read_back_field_for_field() {
+    use crate::igz::layouts::{Layout, ObjectRef, OpParameter, TagList};
+    let mut b = IgzBuilder::new();
+    let (placement, values) = {
+        let mut w = Writer::new(&mut b);
+        let placement = w.b.object(0, "tfbActorInfo", 0xF8);
+        let thirty = w.int(30);
+        let fifty = w.int(50);
+        w.tags(
+            placement,
+            &[
+                (
+                    "notice player radius",
+                    "ValueInfo",
+                    "IntMeasurement",
+                    thirty,
+                ),
+                ("communicate range", "ValueInfo", "IntMeasurement", fifty),
+            ],
+        );
+        (placement, [thirty, fifty])
+    };
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let p = index(&igz, placement);
+    let at = igz.objects()[p].field(0x18).unwrap();
+    let crate::igz::Ref::Object(t) = igz.reference(at, "_tagList").unwrap() else {
+        panic!("no tag list");
+    };
+    let list = TagList::read(&igz, t).unwrap();
+    assert_eq!(list.list.count, 0, "the list's own elements are run-time");
+    assert_eq!(list.initial_tags.count, 2);
+    assert_eq!(list.tags, Vec::<usize>::new());
+    let read: Vec<(Option<&str>, ObjectRef<'_>)> = list
+        .initial
+        .iter()
+        .map(|&k| {
+            let tag = OpParameter::read(&igz, k).unwrap();
+            assert_eq!(tag.var.index, -1);
+            (tag.var.name, tag.rhs)
+        })
+        .collect();
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].0, Some("notice player radius"));
+    assert_eq!(read[1].0, Some("communicate range"));
+    for ((_, rhs), v) in read.iter().zip(values) {
+        assert_eq!(*rhs, ObjectRef::Object(index(&igz, v)));
+    }
+}

@@ -14,7 +14,7 @@ const FLOAT: &str = "FloatMeasurement";
 
 /// A script with STARTUP, an empty SHUTDOWN and MACROS, PRESCRIPT's own
 /// ops and its behaviours; returns its info for [`Writer::declare`].
-fn script(
+pub(super) fn script(
     w: &mut Writer<'_>,
     name: &str,
     startup: impl FnOnce(&mut Writer<'_>),
@@ -36,7 +36,7 @@ fn script(
 }
 
 /// One behaviour, `idle`, holding `body`.
-fn behaviour(w: &mut Writer<'_>, body: impl FnOnce(&mut Writer<'_>)) {
+pub(super) fn behaviour(w: &mut Writer<'_>, body: impl FnOnce(&mut Writer<'_>)) {
     let b = w.behaviour("idle");
     body(w);
     w.end_block(b);
@@ -44,7 +44,7 @@ fn behaviour(w: &mut Writer<'_>, body: impl FnOnce(&mut Writer<'_>)) {
 
 /// `find variable <name>` of `container` (`contents`) with `filter`, owned
 /// by what `owner` names; its block left open.
-fn find(
+pub(super) fn find(
     w: &mut Writer<'_>,
     name: &str,
     container: &str,
@@ -92,13 +92,13 @@ fn tell(w: &mut Writer<'_>, what: &[El<'_>]) -> usize {
 }
 
 /// A plain object of the file standing for a placement (an actor).
-fn actor(w: &mut Writer<'_>) -> Location {
+pub(super) fn actor(w: &mut Writer<'_>) -> Location {
     w.b.object(0, "tfbActorInfo", 0xF8)
 }
 
 /// [`program`], and how to name the file's objects: each written object's
 /// [`Obj`] by where it was written.
-fn program_and_objects(build: impl FnOnce(&mut Writer<'_>)) -> (Arc<Program>, Objects) {
+pub(super) fn program_and_objects(build: impl FnOnce(&mut Writer<'_>)) -> (Arc<Program>, Objects) {
     let mut b = IgzBuilder::new();
     build(&mut Writer::new(&mut b));
     let bytes = b.build();
@@ -115,10 +115,10 @@ fn program_and_objects(build: impl FnOnce(&mut Writer<'_>)) -> (Arc<Program>, Ob
 }
 
 /// Where each of a file's objects was written, in index order.
-struct Objects(Vec<Location>);
+pub(super) struct Objects(Vec<Location>);
 
 impl Objects {
-    fn at(&self, l: Location) -> Obj {
+    pub(super) fn at(&self, l: Location) -> Obj {
         Obj {
             unit: 0,
             index: self
@@ -134,7 +134,7 @@ impl Objects {
 /// (a fresh handle), removals, resets and stops; keeps `test` members in
 /// a map and the engine set `test.items`.
 #[derive(Default)]
-struct Engine {
+pub(super) struct Engine {
     next: u64,
     cells: HashMap<(String, MemberId), Value>,
     ops: Vec<(Class, Vec<Option<Value>>)>,

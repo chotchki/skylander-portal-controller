@@ -587,7 +587,7 @@ impl ScriptWorld {
         c
     }
 
-    fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
+    pub(crate) fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -617,7 +617,11 @@ impl ScriptWorld {
         })
     }
 
-    fn elements(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Vec<Value>, HostFault> {
+    pub(crate) fn elements(
+        &mut self,
+        at: &Access,
+        engine: &mut dyn Engine,
+    ) -> Result<Vec<Value>, HostFault> {
         match self.members.get(&at.member).copied() {
             Some(m) => self.elements_of(at, m, engine),
             None => Err(HostFault::Unmodelled),
@@ -687,7 +691,7 @@ impl ScriptWorld {
         Ok(())
     }
 
-    fn op(
+    pub(crate) fn op(
         &mut self,
         call: &OpCall,
         spawn: &mut Spawner<'_>,
@@ -1410,9 +1414,11 @@ pub fn headless_spawner(start: Handle) -> impl FnMut(Value) -> Handle {
 
 #[cfg(test)]
 mod tests {
+    use guac_motion::hero::Hero;
     use guac_script::members::{find, label};
 
     use super::*;
+    use crate::script_engine::Pad;
 
     const GRUNT: Obj = Obj { unit: 4, index: 7 };
     const SPRITE: Obj = Obj { unit: 4, index: 9 };
@@ -1695,9 +1701,11 @@ mod tests {
             w.op(&call(Class::Displace, None), &mut |_| 0, &mut NoEngine),
             Err(HostFault::Nothing)
         );
+        // A field of view with nothing to look from is a path through
+        // nothing (AH.18 answers the op).
         assert_eq!(
             w.op(&call(Class::CheckFov, None), &mut |_| 0, &mut NoEngine),
-            Err(HostFault::Unmodelled)
+            Err(HostFault::Nothing)
         );
     }
 
@@ -1737,6 +1745,276 @@ mod tests {
 
     fn scripts_installed(app: &mut App, files: &Files) {
         install(app.world_mut(), Arc::new(Program::default()), files, &[4]);
+    }
+
+    #[test]
+    fn the_activity_rule_wakes_by_range_and_holds_to_its_buffer() {
+        // A range: awake within it, staying awake out to it plus the buffer.
+        assert!(awake(20.0, 1.0, false, Some(19.9)));
+        assert!(!awake(20.0, 1.0, false, Some(20.5)));
+        assert!(awake(20.0, 1.0, true, Some(20.5)));
+        assert!(!awake(20.0, 1.0, true, Some(21.1)));
+        assert!(!awake(20.0, 1.0, true, None), "no hero");
+        // No range: awake with a buffer of 0, else its scripts' to wake.
+        assert!(awake(0.0, 0.0, false, None));
+        assert!(!awake(0.0, 1.0, true, Some(0.0)));
+        // Over a world: the Grunt's 30 ft from a hero 9 m off (29.5 ft).
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (30.0, 1.0, true);
+        let mut hero = him(Vec3::new(9.0, 0.0, 0.0));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)]);
+        hero.0.pivot.x = 9.4;
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)], "its buffer");
+        hero.0.pivot.x = 10.0;
+        assert_eq!(w.activity(&mut hero), vec![(grunt, false)]);
+        let inactive = at("actorinfo", "inactive", None);
+        assert_eq!(
+            w.elements(&inactive, &mut hero),
+            Ok(vec![Value::Entity(grunt)])
+        );
+    }
+
+    /// A hero standing where the test puts him, over nothing.
+    struct Him(Hero, guac_motion::parry::ParryWorld);
+
+    fn him(at: Vec3) -> Him {
+        Him(
+            Hero::new(
+                guac_motion::tuning::eruptor_solid(),
+                guac_motion::tuning::Tuning::ERUPTOR,
+                at,
+                0.0,
+            ),
+            guac_motion::parry::ParryWorld::new(&[]).unwrap(),
+        )
+    }
+
+    const HIM: Handle = 0x7000_0000;
+
+    impl Engine for Him {
+        fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+            (h == HIM).then_some(&mut self.0)
+        }
+        fn heroes(&self) -> Vec<Handle> {
+            vec![HIM]
+        }
+        fn seam(&self) -> &dyn guac_motion::seam::PhysicsSeam {
+            &self.1
+        }
+        fn view_heading(&self) -> f32 {
+            0.0
+        }
+        fn pad(&self, _: usize) -> Pad {
+            Pad::default()
+        }
+    }
+
+    #[test]
+    fn a_script_waking_a_placement_off_the_whitelist_is_listed_once() {
+        let (mut w, grunt, _) = world();
+        let by = 0x0004_0000_0063;
+        w.actors.get_mut(&grunt).unwrap().buffer = 1.0;
+        w.set_inert([grunt]);
+        let buffer = Access {
+            placement: by,
+            ..at(
+                "placement",
+                "deactivation buffer",
+                Some(Value::Entity(grunt)),
+            )
+        };
+        // A buffer of 2 leaves it asleep: nothing woken.
+        w.set(&buffer, Value::Float(2.0), &mut NoEngine).unwrap();
+        assert!(w.woken.is_empty());
+        // 0 with no range wakes it: listed, by the waker's name.
+        w.set(&buffer, Value::Float(0.0), &mut NoEngine).unwrap();
+        assert_eq!(
+            w.woken,
+            vec![Woken {
+                placement: grunt,
+                name: "Grunt".to_owned(),
+                by: String::new(),
+            }]
+        );
+        // A range on it again: listed once.
+        let range = Access {
+            placement: by,
+            ..at("placement", "activation range", Some(Value::Entity(grunt)))
+        };
+        w.set(&range, Value::Float(160.0), &mut NoEngine).unwrap();
+        assert_eq!(w.woken.len(), 1);
+        // One the whitelist runs isn't listed.
+        let (mut w, grunt, _) = world();
+        w.actors.get_mut(&grunt).unwrap().buffer = 1.0;
+        let buffer = at(
+            "placement",
+            "deactivation buffer",
+            Some(Value::Entity(grunt)),
+        );
+        w.set(&buffer, Value::Float(0.0), &mut NoEngine).unwrap();
+        assert!(w.woken.is_empty());
+    }
+
+    #[test]
+    fn the_fight_lists_setup_001s_chompies_by_name_and_no_others() {
+        let c = fight_config(Mode::Play);
+        let chompy = "C:/tfb/Content/Levels/_Enemies/Chompy/scripts/S2_Enemy_Chompy.ai";
+        for n in 1..=4 {
+            assert!(c.whitelist.lists(&format!("Enemy_Chompy({n})"), chompy));
+        }
+        assert!(!c.whitelist.lists("Enemy_Chompy(11)", chompy));
+        assert!(
+            c.whitelist
+                .lists("Setup_001_Controller", "C:/x/Setup_001_Controller.ai")
+        );
+        assert!(
+            !c.whitelist
+                .lists("Setup_002_Controller", "C:/x/Setup_002_Controller.ai")
+        );
+        assert!(
+            c.whitelist
+                .lists("EnemySystem_", "C:/x/_EnemySystem_Functions.ai")
+        );
+        assert!(
+            c.whitelist
+                .lists("movementUpdate", "C:/x/movementUpdate.ai")
+        );
+        assert!(
+            !c.whitelist
+                .lists("Eon_4_help_Norticus", "C:/x/Pan_Show_Norticu.ai")
+        );
+        for r in members::CREATURES {
+            assert!(
+                c.members
+                    .get(MemberId::named(r.namespace, r.name))
+                    .is_some()
+            );
+        }
+    }
+
+    /// Setup_001's 7 ft rule from a recorded state (AH.8's anchor B and the
+    /// route's scaffold): a controller waiting for a minion within 7 ft of
+    /// its first Chompy's height stays put while the hero stands 26 ft above
+    /// on the pit's rim, and moves on once he's down on its floor.
+    #[test]
+    fn an_encounter_from_a_recorded_state_wakes_on_the_7_ft_rule() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_formats::script::{Graph, StackClass};
+        use guac_script::{Role, Unit};
+
+        let mut b = IgzBuilder::new();
+        let objects;
+        {
+            let mut w = Writer::new(&mut b);
+            let hero = w.b.object(0, "tfbActorInfo", 0xF8);
+            let chompy = w.b.object(0, "tfbActorInfo", 0xF8);
+            let controller = w.b.object(0, "tfbActorInfo", 0xF8);
+            objects = [hero, chompy, controller];
+            let minions = w.variable("minions", "ScriptSet", None);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let lhs = w.stack(StackClass::Set, &[El::Local(minions)]);
+            let rhs = w.reference(&[El::Local(hero)], None);
+            let o = w.op(Class::ChangeMembership, "set [set]||to");
+            w.refer(o, 0x1C, lhs);
+            w.word(o, 0x20, 0);
+            w.refer(o, 0x24, rhs);
+            w.push(o);
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (macros, _) = w.open(Class::MacroSection, "MACROS");
+            w.end_block(macros);
+            w.end_block(pre);
+            let intro = w.op(Class::UserBehavior, "Chompy - Intro");
+            let wait = w.behaviour("Wait For Minion");
+            let path = w.stack(
+                StackClass::Value,
+                &[
+                    El::Local(minions),
+                    El::Null,
+                    El::Member("positionmeasurement", "vertical offset"),
+                ],
+            );
+            let from = w.reference(&[El::Local(chompy)], None);
+            w.refer(path, 0x18, from);
+            let seven = w.int(7);
+            let (fs_at, fs) = w.open(Class::FindSubSet, "find subset|of||||subset");
+            w.refer(fs, 0x1C, path);
+            w.word(fs, 0x20, 0);
+            w.refer(fs, 0x24, seven);
+            w.set_behavior(intro);
+            w.end_block(fs_at);
+            w.end_block(wait);
+            let at_intro = w.push(intro);
+            w.end_block(at_intro);
+            w.end("C:/tfb/Synthetic/Setup_001_Controller.ai");
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let obj = |l| Obj {
+            unit: 0,
+            index: igz.object_at(l).unwrap().0 as u32,
+        };
+        let [hero, chompy, controller] = objects.map(obj);
+        // Where AH.8's anchor B has `Enemy_Chompy(1)`.
+        let files = Files {
+            placed: vec![
+                Placed {
+                    position: [4.5213137, 22.374975, -23.117332],
+                    ..Placed::named(chompy, "Enemy_Chompy(1)", None, RUNNING)
+                },
+                Placed::named(hero, "Hero", None, RUNNING),
+                Placed::named(
+                    controller,
+                    "Setup_001_Controller",
+                    Some("C:/tfb/Synthetic/Setup_001_Controller.ai"),
+                    RUNNING,
+                ),
+            ],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+        };
+        let mut handles = headless_handles(&files);
+        handles.insert(hero, HIM);
+        let mut c = fight_config(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let id = vm.placement_of(handles[&controller]).unwrap();
+        // The route's scaffold at the pit's rim, then landed on its floor.
+        let rim = Vec3::new(10.67, 30.35, -1.93);
+        let floor = Vec3::new(7.27, 22.39, -7.56);
+        let mut him = him(rim);
+        let mut generator = Generator::seeded(1);
+        let mut spawn = headless_spawner(1 << 40);
+        let mut step = |vm: &mut Vm, world: &mut ScriptWorld, him: &mut Him| {
+            let mut host = WorldHost {
+                world,
+                engine: him,
+                generator: &mut generator,
+                spawn: &mut spawn,
+            };
+            vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+        };
+        for _ in 0..30 {
+            step(&mut vm, &mut world, &mut him);
+        }
+        assert_eq!(vm.behaviour(id), Some("wait for minion"), "26 ft above");
+        him.0.pivot = floor;
+        step(&mut vm, &mut world, &mut him);
+        step(&mut vm, &mut world, &mut him);
+        assert_eq!(vm.behaviour(id), Some("chompy - intro"));
     }
 
     #[test]
