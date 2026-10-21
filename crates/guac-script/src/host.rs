@@ -35,8 +35,11 @@ pub enum Kind {
     Float,
     Color,
     Screen,
-    /// An object or set.
+    /// An object.
     Reference,
+    /// A set the engine keeps (an actor's waypoints): read whole through
+    /// [`Host::elements`], never written.
+    Set,
     /// Takes whatever it's given (the VM's own cells).
     Any,
 }
@@ -59,7 +62,7 @@ impl MemberSpec {
             Kind::Float => Value::Float(0.0),
             Kind::Color => Value::Color(0),
             Kind::Screen => Value::Screen(0),
-            Kind::Reference | Kind::Any => Value::Null,
+            Kind::Reference | Kind::Set | Kind::Any => Value::Null,
         };
         Self {
             kind,
@@ -182,10 +185,16 @@ pub enum Builtin {
     Last,
     Random,
     CastToInteger,
+    /// `system.script timer`: the running placement's seconds of logic
+    /// ticks so far (its `_activeTime`).
+    ScriptTimer,
+    /// `system.frame rate scale`: the tick's seconds times 60, 1 at the
+    /// game's full rate.
+    FrameRateScale,
 }
 
 impl Builtin {
-    const ALL: [Builtin; 10] = [
+    const ALL: [Builtin; 12] = [
         Builtin::My,
         Builtin::Null,
         Builtin::Undefined,
@@ -196,6 +205,8 @@ impl Builtin {
         Builtin::Last,
         Builtin::Random,
         Builtin::CastToInteger,
+        Builtin::ScriptTimer,
+        Builtin::FrameRateScale,
     ];
 
     pub fn name(self) -> &'static str {
@@ -210,6 +221,8 @@ impl Builtin {
             Builtin::Last => "setvariant.last",
             Builtin::Random => "setvariant.random",
             Builtin::CastToInteger => "system.cast to integer",
+            Builtin::ScriptTimer => "system.script timer",
+            Builtin::FrameRateScale => "system.frame rate scale",
         }
     }
 
@@ -293,9 +306,16 @@ pub trait Host {
     /// (decision 11).
     fn draw(&mut self) -> u32;
 
-    /// A world op or `find variable`. The default leaves it unmodelled.
+    /// A world op. The default leaves it unmodelled.
     fn op(&mut self, call: &OpCall) -> Result<Answer, HostFault> {
         let _ = call;
+        Err(HostFault::Unmodelled)
+    }
+
+    /// A [`Kind::Set`] member's members, as the engine holds them now.
+    /// The default leaves it unmodelled.
+    fn elements(&mut self, at: &Access) -> Result<Vec<Value>, HostFault> {
+        let _ = at;
         Err(HostFault::Unmodelled)
     }
 }

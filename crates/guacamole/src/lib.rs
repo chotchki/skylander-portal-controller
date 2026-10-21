@@ -8,4 +8,5 @@ pub mod census;
 pub mod character;
 pub mod level_scene;
 pub mod level_scripts;
+pub mod scripts;
 pub mod walkers;

@@ -168,6 +168,19 @@ pub fn pose(model: &Model, seconds: f64) -> Vec<Transform> {
         .collect()
 }
 
+/// Every joint's model-space transform with several clips playing at once,
+/// each at its own time in seconds and weight (AG.30's locomotion: the
+/// idle, walk, run and fall on `model`'s skeleton), through `guac-ir`'s
+/// blend.
+pub fn blended(model: &Model, clips: &[(&guac_ir::clip::Clip, f64, f64)]) -> Vec<Transform> {
+    model
+        .skeleton
+        .blend(clips)
+        .iter()
+        .map(joint_transform)
+        .collect()
+}
+
 /// What [`spawn_character`] made.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpawnedCharacter {

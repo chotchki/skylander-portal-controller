@@ -17,6 +17,10 @@
 //! - [`tuning`]: Eruptor's numbers, in the script's feet;
 //! - [`clock`]: the fixed 1/60 s step against the display's.
 //!
+//! The locomotion stand-in beside it ([`locomotion`], AG.30): the clips'
+//! weights, times and rates from the speed the controller's walk reads and
+//! his fall (AG.11).
+//!
 //! The gameplay camera beside it ([`camera`], AG.17): the follow point, the
 //! camera target, the views and a transition plane's blend; and, behind the
 //! `runner` feature, the headless runner that steps both from an AF.7 input
@@ -36,6 +40,7 @@ pub mod conformance;
 pub mod edge;
 pub mod ground;
 pub mod hero;
+pub mod locomotion;
 pub mod parry;
 pub mod proxy;
 #[cfg(feature = "runner")]

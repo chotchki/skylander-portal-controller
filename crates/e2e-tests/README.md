@@ -145,7 +145,18 @@ figure, load file, his model's way to the level, and in it his `position`,
 settled 5 mm above the floor, the camera at camera 0's rest pose off his
 feet, waiting for a pad; a posted pad's press takes him over and its
 stick walks him along the camera's 15° to the wall, which holds him 5 mm
-off. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
+off. The walking fixture carries a hero side too (openspec AG.30: walk,
+run and falling clips on the synthetic skeleton, each holding its top
+joint at its own `E2E_GAIT_X`), and the mirror's `hero.gait` (the
+heaviest `clip`, the `speed_ft` his walk read, `run_share`, `weights`
+idle, walk, run and fall, the walk's and run's `rates`, `air`) shows him
+in his idle at the start, running pushed along the wall at full stick
+(21.5 ft/s, the run at 102.4 %) and back in his idle let go;
+`GET /api/_test/tv/gaits?since=<step>` (`gaits_tv`) hands out every
+step's (`step`, the fixed clock's `time`, the `stick` and its
+`strength`, `speed_ft`, `run_share`, `weights`, `rates`, `clip`, `air`)
+after `since` with the last step's number as `now`, and the test checks
+each step's run share is AG.11's of its speed. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
 and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame
 log, `[ended_ms, took_ms, pipelines_compiled]` per frame after

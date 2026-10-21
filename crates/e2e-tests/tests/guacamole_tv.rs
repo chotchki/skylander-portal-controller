@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
     E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, E2E_START,
-    E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only,
+    E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, gaits_tv, guacamole_only,
     inject_load_outcomes, inject_profile, pad_tv, press_tv, set_session_profile, tv, wait_for_tv,
 };
 
@@ -783,6 +783,9 @@ fn hero_at(snap: &Value) -> [f64; 3] {
 /// it waits for one, a press on a posted pad takes him over, and its stick
 /// walks him against the camera's view (15°) until the made-up level's wall
 /// holds him 5 mm off it (his 0.8644 m sphere, the triangles' 0.05 m).
+/// AG.30: he stands in his idle, runs pushed along the wall at full stick
+/// (his walk at 21.5 ft/s, the run at 102.4 %), every step's run share the
+/// speed's that step, and comes back to his idle let go.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn placing_a_character_enters_the_level_at_its_start() {
@@ -830,6 +833,12 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     assert_eq!(hero["load_file"], "009_Eruptor", "{hero}");
     assert_eq!(hero["slot"], 1);
     assert_eq!(hero["heading"], 0.0);
+    assert_eq!(hero["gait"]["clip"], "idle", "{hero}");
+    assert_eq!(
+        hero["gait"]["weights"],
+        json!([1.0, 0.0, 0.0, 0.0]),
+        "{hero}"
+    );
     let at = hero_at(&snap);
     assert_eq!(
         (at[0], at[2]),
@@ -889,9 +898,46 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     let p = hero_at(&snap);
     let gap = wall - (p[2] + 0.8644 + 0.05);
     assert!((gap - 0.005).abs() < 2e-3, "{gap} m off the wall at {p:?}");
+    // Pushed along it at full stick his walk holds 21.5 ft/s: he runs.
+    let gait = &snap["hero"]["gait"];
+    let num = |v: &Value| v.as_f64().unwrap_or(f64::NAN);
+    assert_eq!(gait["clip"], "run", "{gait}");
+    assert_eq!(gait["weights"], json!([0.0, 0.0, 1.0, 0.0]), "{gait}");
+    assert!((num(&gait["speed_ft"]) - 21.5).abs() < 1e-3, "{gait}");
+    assert!(
+        (num(&gait["rates"][1]) - 21.5 / 21.0017).abs() < 1e-3,
+        "{gait}"
+    );
+    // Step by step, the run's share is the speed's that step: all walk to
+    // 12.0019 ft/s, all run from 21.0017.
+    let log = gaits_tv(&server.url, 0).await.unwrap();
+    let steps = log["steps"].as_array().unwrap();
+    assert!(steps.len() > 60, "{} steps", steps.len());
+    let (walk, run) = (3.658 * 3.281, 6.401 * 3.281);
+    for step in steps {
+        let speed = num(&step["speed_ft"]);
+        let share = ((speed - walk) / (run - walk)).clamp(0.0, 1.0);
+        assert!((num(&step["run_share"]) - share).abs() < 1e-4, "{step}");
+        let total: f64 = (0..4).map(|i| num(&step["weights"][i])).sum();
+        assert!((total - 1.0).abs() < 1e-5, "{step}");
+    }
+    // The walk had him alone before the run joined (his idle the heaviest
+    // through a full-stick set-off: it slides out over 0.25 s).
+    assert!(
+        steps.iter().any(|s| num(&s["speed_ft"]) > 0.0
+            && num(&s["weights"][1]) > 0.0
+            && num(&s["weights"][2]) == 0.0),
+        "he walked first"
+    );
     pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 0.0]}))
         .await
         .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["hero"]["gait"]["weights"][0] == 1.0
+    })
+    .await
+    .expect("let go, back in his idle");
+    assert_eq!(snap["hero"]["gait"]["clip"], "idle");
     phone.close().await.unwrap();
 }
 

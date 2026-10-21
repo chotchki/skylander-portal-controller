@@ -8,6 +8,7 @@
 //! in [`crate::level_scene::hero_scene`]: the keys the census's card tables
 //! hold, so the start's pass has compiled them (`tests/giants_census.rs`).
 
+use guac_motion::locomotion::Gaits;
 use guac_motion::solid::{HavokSolid, SolidInfo};
 use guac_motion::tuning::{self, Tuning};
 
@@ -21,6 +22,9 @@ pub struct Walker {
     pub shape: SolidInfo,
     /// Its scale in the level, which its solid and its drawn model take.
     pub scale: f32,
+    /// Its walk's and run's authored speeds, which its locomotion mixes
+    /// them by (AG.30; every character's off its scripts is AG.27's).
+    pub gaits: Gaits,
 }
 
 impl Walker {
@@ -31,12 +35,14 @@ impl Walker {
 }
 
 /// Every character that walks: Eruptor on AG.8's numbers (21.5 ft/s,
-/// 1440°/s, a 4 x 6 x 3 ft sphere at 150 %).
+/// 1440°/s, a 4 x 6 x 3 ft sphere at 150 %) and AG.11's gaits (walk 3.658,
+/// run 6.401 m/s).
 pub const WALKERS: &[Walker] = &[Walker {
     load_file: "009_Eruptor",
     tuning: Tuning::ERUPTOR,
     shape: tuning::ERUPTOR_SHAPE,
     scale: tuning::ERUPTOR_SCALE,
+    gaits: Gaits::ERUPTOR,
 }];
 
 /// `None` for a character that keeps the portal view.
@@ -54,6 +60,7 @@ mod tests {
         assert_eq!(eruptor.tuning, Tuning::ERUPTOR);
         assert_eq!(eruptor.solid(), Some(tuning::eruptor_solid()));
         assert_eq!(eruptor.scale, 1.5);
+        assert_eq!(eruptor.gaits, Gaits::ERUPTOR);
         assert!(walker("070_TreeRex").is_none());
         assert!(walker("009_e2e").is_none());
         assert_eq!(WALKERS.len(), 1);

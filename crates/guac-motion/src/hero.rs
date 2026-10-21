@@ -6,7 +6,8 @@
 //!    toward it, and unless the edge probe holds his controller off, the walk
 //!    turns and is pushed;
 //! 2. the edge probe ([`crate::edge`]), which can zero the walk's across part
-//!    before he moves and hold the controller off;
+//!    before he moves and hold the controller off; the walk's length here is
+//!    the speed his locomotion reads ([`Hero::gait_speed`], AG.30);
 //! 3. Update Movers ([`crate::walk`]): the slowing, the stop, the band,
 //!    gravity, the landing;
 //! 4. the engine: the walk in m/s, laid along the ground while he's on it
@@ -99,6 +100,10 @@ pub struct Hero {
     pub velocity: Vec3,
     /// The edge probe holds his controller off.
     pub held_off: bool,
+    /// His walk's length, ft/s, after this frame's push and the edge probe
+    /// and before its slowing: the speed his locomotion mixes his gaits by
+    /// (AG.11, [`crate::locomotion`]).
+    pub gait_speed: f32,
     /// The steps one and two frames before the next.
     steps: [f32; 2],
     solid: HavokSolid,
@@ -121,6 +126,7 @@ impl Hero {
             },
             velocity: Vec3::ZERO,
             held_off: false,
+            gait_speed: 0.0,
             steps: [NOMINAL_STEP; 2],
             solid,
             tuning,
@@ -218,6 +224,7 @@ impl Hero {
                 self.held_off = true;
             }
         }
+        self.gait_speed = self.walk.velocity.length();
         self.walk
             .update_movers(push.held(), &self.footing, &tuning, before);
 

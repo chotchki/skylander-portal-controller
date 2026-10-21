@@ -2,24 +2,31 @@
 //! entries the extract holds as the disc does (`bootstrap.bld`'s,
 //! `global.bld`'s, `init_setup.bld`'s, each fighter's and the level's own),
 //! parsed by `guac-formats` and linked into one `guac-script` program on
-//! the level's reading task, behind the portal like the rest of the load.
-//! Nothing runs it yet: AH.16 keeps the program for the VM, and until then
-//! a level reports what it linked and how long it took. One that won't
-//! load leaves the level drawn without it, the reason reported.
+//! the level's reading task, behind the portal like the rest of the load,
+//! with what the host reads off the files (AH.16, [`crate::scripts::Files`]):
+//! the TV installs the run from them ([`crate::scripts::install`]). A level
+//! reports what it linked and how long it took; one that won't load leaves
+//! the level drawn without it, the reason reported.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use guac_extract::{levels, scripts};
+use guac_extract::{levels, roster, scripts};
 use guac_formats::igz::Igz;
 use guac_formats::script::Graph;
 use guac_script::{Program, Role, Unit};
+
+use crate::scripts::Files;
 
 /// A level's script part linked, with what the load cost: the level's
 /// reading task makes one beside the parts it draws.
 #[derive(Debug)]
 pub struct Linked {
     pub program: Program,
+    /// What the host reads off `global.bld`'s, `init_setup.bld`'s and the
+    /// level's files, and those units in the order their placements run.
+    pub placements: Files,
+    pub order: Vec<u16>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -84,8 +91,27 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         })
         .collect();
     let program = Program::link(&units).map_err(|e| e.to_string())?;
+    // global.bld's placements run first (the init setup writes through the
+    // references their STARTUPs set), then init_setup.bld's, then the
+    // level's.
+    let unit = |rel: &str| {
+        files
+            .iter()
+            .position(|(r, _)| r == rel)
+            .map(|u| u as u16)
+            .ok_or_else(|| format!("{rel}: not in the part"))
+    };
+    let order = vec![
+        unit(&scripts::script_path(roster::GLOBAL))?,
+        unit(&scripts::script_path(roster::INIT_SETUP))?,
+        (files.len() - 1) as u16,
+    ];
+    let units: Vec<(u16, &Igz<'_>)> = order.iter().map(|&u| (u, &parsed[u as usize])).collect();
+    let placements = Files::read(&units).map_err(|e| format!("placements: {e}"))?;
     Ok(Linked {
         program,
+        placements,
+        order,
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,

@@ -7,9 +7,10 @@
 //! focused choice is `InputFocus`'s entity's `FocusId`. The turntables'
 //! warm (AE.14), the level's load (AG.19), the start's pass (AE.25), the
 //! pads as the level's layer reads them (AG.20) and the walk's mode and
-//! hero (AG.21) ride along,
-//! `/api/_test/tv/frames` hands out the TV's frame times for the stall check
-//! and `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
+//! hero (AG.21) and his locomotion (AG.30) ride along,
+//! `/api/_test/tv/frames` hands out the TV's frame times for the stall check,
+//! `/api/_test/tv/gaits` his locomotion step by step (AG.30) and
+//! `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
-use crate::hero::{FollowCamera, HeroBody};
+use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroInput, HeroSystems};
 use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
@@ -228,7 +229,8 @@ pub struct PipShot {
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
-/// presses posted for the input router, the frame log and the posted pads.
+/// presses posted for the input router, the frame log, the posted pads and
+/// the gait log.
 #[derive(Resource, Clone, Default)]
 pub struct TvMirror(
     pub Arc<Mutex<TvSnapshot>>,
@@ -236,6 +238,7 @@ pub struct TvMirror(
     pub(crate) PostedPresses,
     pub(crate) Arc<Mutex<FrameLog>>,
     pub(crate) PostedPads,
+    pub(crate) Arc<Mutex<GaitLog>>,
 );
 
 /// Pads `/api/_test/tv/pad` drives, 0 to 3.
@@ -474,6 +477,106 @@ struct FramesQuery {
     since_ms: Option<f64>,
 }
 
+/// One game step of the hero's locomotion (AG.30), as the step left it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct GaitStep {
+    /// Steps since he came in, from 1.
+    pub step: u64,
+    /// The fixed clock at the step, seconds.
+    pub time: f64,
+    /// The walking pad's stick as the step read it, raw, and its strength
+    /// past the dead zone.
+    pub stick: [f32; 2],
+    pub strength: f32,
+    /// The speed the step read (his walk after its push, before its
+    /// slowing), ft/s.
+    pub speed_ft: f32,
+    pub run_share: f32,
+    /// Idle, walk, run and fall.
+    pub weights: [f32; 4],
+    /// The walk's and the run's rates.
+    pub rates: [f32; 2],
+    pub clip: &'static str,
+    pub air: &'static str,
+}
+
+/// The hero's locomotion step by step, oldest first; a hero coming in
+/// starts it again.
+#[derive(Debug, Default)]
+pub(crate) struct GaitLog {
+    steps: VecDeque<GaitStep>,
+}
+
+impl GaitLog {
+    fn push(&mut self, step: GaitStep) {
+        if step.step == 1 {
+            self.steps.clear();
+        }
+        if self.steps.len() == FRAMES_KEPT {
+            self.steps.pop_front();
+        }
+        self.steps.push_back(step);
+    }
+
+    /// Steps after `since`, and the last one's number.
+    fn since(&self, since: u64) -> GaitsBody {
+        GaitsBody {
+            now: self.steps.back().map_or(0, |s| s.step),
+            steps: self
+                .steps
+                .iter()
+                .filter(|s| s.step > since)
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+/// `GET /api/_test/tv/gaits`' body.
+#[derive(Debug, Serialize, PartialEq)]
+struct GaitsBody {
+    now: u64,
+    steps: Vec<GaitStep>,
+}
+
+#[derive(Deserialize)]
+struct GaitsQuery {
+    since: Option<u64>,
+}
+
+/// Each hero's locomotion step into the gait log, after it ran.
+fn log_gaits(
+    time: Res<Time>,
+    mirror: Res<TvMirror>,
+    input: Option<Res<HeroInput>>,
+    heroes: Query<&HeroGaits>,
+) {
+    let Some(g) = heroes.iter().next() else {
+        return;
+    };
+    let l = &g.locomotion;
+    let stick = input.map_or(guac_motion::stick::Stick::CENTRED, |i| i.0.stick);
+    mirror
+        .5
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(GaitStep {
+            step: l.steps(),
+            time: time.elapsed_secs_f64(),
+            stick: [stick.x, stick.y],
+            strength: stick.push(0.0).strength,
+            speed_ft: l.speed(),
+            run_share: l.run_share(),
+            weights: l.weights(),
+            rates: [
+                l.play(guac_motion::locomotion::Clip::Walk).rate,
+                l.play(guac_motion::locomotion::Clip::Run).rate,
+            ],
+            clip: l.top().name(),
+            air: l.air().name(),
+        });
+}
+
 pub struct Mirror;
 
 impl Plugin for Mirror {
@@ -481,6 +584,7 @@ impl Plugin for Mirror {
         app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout))
             .add_systems(Update, skip_asked.before(intro_player::play_intros))
             .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
+            .add_systems(FixedUpdate, log_gaits.after(HeroSystems::Gait))
             .add_systems(Last, log_frame);
     }
 }
@@ -525,13 +629,17 @@ struct PressBody {
 /// select, mode or a D-pad direction; down a frame, then up); anything else
 /// is a 400. `GET /api/_test/tv/frames?since_ms=<ms>` hands out the frame
 /// log after `since_ms` of the TV's real time (all of it without one) and
-/// the last frame's end. Generic so a test needs no `AppState`.
+/// the last frame's end. `GET /api/_test/tv/gaits?since=<step>` hands out
+/// the hero's locomotion step by step after step `since` (all of the
+/// current hero's without one) and the last step's number (AG.30). Generic
+/// so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
     let presses = mirror.2.clone();
     let frames = mirror.3.clone();
     let pads = mirror.4.clone();
+    let gaits = mirror.5.clone();
     axum::Router::new()
         .route(
             "/api/_test/tv/pad",
@@ -555,6 +663,16 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .since(q.since_ms.unwrap_or(f64::NEG_INFINITY));
+                async move { axum::Json(body) }
+            }),
+        )
+        .route(
+            "/api/_test/tv/gaits",
+            axum::routing::get(move |q: axum::extract::Query<GaitsQuery>| {
+                let body = gaits
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .since(q.since.unwrap_or(0));
                 async move { axum::Json(body) }
             }),
         )
@@ -746,7 +864,7 @@ fn mirror_tv(
         Option<Res<Level>>,
         Option<Res<Prepare>>,
         Option<Res<Play>>,
-        Query<&HeroBody>,
+        Query<(&HeroBody, Option<&HeroGaits>)>,
         Query<(&Transform, &Projection), With<FollowCamera>>,
     ),
 ) {
@@ -1160,6 +1278,64 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), 202);
         assert_eq!(mirror.1.load(Ordering::Relaxed), 1);
+    }
+
+    /// AG.30: `/api/_test/tv/gaits` hands out the hero's locomotion steps
+    /// after the one asked for, and a hero coming in starts the log again.
+    #[tokio::test]
+    async fn the_gait_log_hands_out_steps_after_one() {
+        use tower::ServiceExt;
+        let mirror = TvMirror::default();
+        let step = |n: u64, clip: &'static str| GaitStep {
+            step: n,
+            time: n as f64 / 60.0,
+            stick: [0.0, 1.0],
+            strength: 1.0,
+            speed_ft: 2.6667 * n as f32,
+            run_share: 0.0,
+            weights: [1.0, 0.0, 0.0, 0.0],
+            rates: [1.0, 1.0],
+            clip,
+            air: "ground",
+        };
+        let get = |since: &'static str| {
+            let routes = routes::<()>(&mirror);
+            async move {
+                let response = routes
+                    .oneshot(
+                        axum::http::Request::get(format!("/api/_test/tv/gaits{since}"))
+                            .body(axum::body::Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), 200);
+                let body = http_body_util::BodyExt::collect(response.into_body())
+                    .await
+                    .unwrap()
+                    .to_bytes();
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+            }
+        };
+        assert_eq!(get("").await, serde_json::json!({"now": 0, "steps": []}));
+        for n in 1..=3 {
+            mirror.5.lock().unwrap().push(step(n, "idle"));
+        }
+        let json = get("?since=1").await;
+        assert_eq!(json["now"], 3);
+        let steps = json["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["step"], 2);
+        assert_eq!(steps[0]["clip"], "idle");
+        assert_eq!(steps[1]["weights"], serde_json::json!([1.0, 0.0, 0.0, 0.0]));
+        assert_eq!(get("").await["steps"].as_array().unwrap().len(), 3);
+        mirror.5.lock().unwrap().push(step(1, "walk"));
+        let json = get("").await;
+        assert_eq!(
+            (json["now"].clone(), json["steps"][0]["clip"].clone()),
+            (1.into(), "walk".into())
+        );
+        assert_eq!(json["steps"].as_array().unwrap().len(), 1);
     }
 
     /// AG.20: `/api/_test/tv/pad` takes one act a body for pads 0 to 3 and
