@@ -59,6 +59,7 @@ use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_REACH, SUPPORT_GAP};
 use crate::proxy::{self, AIRBORNE_SHARE, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy, Surfaces};
 use crate::seam::{BodyId, PhysicsSeam, Quat, Vec3};
 use crate::solid::HavokSolid;
+use crate::steer;
 use crate::stick::Stick;
 use crate::tuning::{FOOT, NOMINAL_STEP, Tuning};
 use crate::walk::{Footing, Walk, turn_facing};
@@ -137,6 +138,14 @@ impl Hero {
             solid,
             tuning,
         }
+    }
+
+    /// An actor moved by the engine alone (a creature, an NPC: openspec
+    /// AH.18) at rest with its pivot at `pivot`, upright, facing `facing`:
+    /// its walk is its scripts' ([`Hero::step_engine`]) or the engine's own
+    /// steering ([`Hero::step_steered`]), so it has no tuning of a hero's.
+    pub fn actor(solid: HavokSolid, pivot: Vec3, facing: f32) -> Hero {
+        Hero::new(solid, Tuning::NONE, pivot, facing)
     }
 
     pub fn tuning(&self) -> &Tuning {
@@ -259,6 +268,38 @@ impl Hero {
         self.gait_speed = self.walk.velocity.length();
         self.engine(seam, step, exclude, surfaces);
         self.steps = [step, before];
+    }
+
+    /// One game frame of an actor no stick drives (openspec AH.18, AH design
+    /// decision 4): its walk and facing from the engine's own steering
+    /// ([`crate::steer::step`]) with its movement numbers `physics` fed
+    /// `aim`, then the engine as [`Hero::step_engine`] has it. The hero's own
+    /// frame ([`Hero::step`]) never comes here.
+    pub fn step_steered(
+        &mut self,
+        seam: &dyn PhysicsSeam,
+        physics: &steer::Physics,
+        aim: steer::Aim,
+        step: f32,
+        exclude: &[BodyId],
+        surfaces: &Surfaces,
+    ) {
+        let frame = steer::step(
+            steer::Frame {
+                velocity: self.walk.velocity * FOOT,
+                facing: self.facing,
+                airborne: false,
+            },
+            physics,
+            aim,
+            self.pivot,
+            self.footing.ground,
+            self.footing.supported,
+            step,
+        );
+        self.walk.velocity = frame.velocity / FOOT;
+        self.facing = frame.facing;
+        self.step_engine(seam, step, exclude, surfaces);
     }
 
     /// The engine's part of a frame: the walk moved and looked after.

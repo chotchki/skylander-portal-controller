@@ -43,7 +43,7 @@ use std::sync::Arc;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use guac_formats::igz::Igz;
-use guac_formats::igz::layouts::{ActorWaypointList, Layout, is_a};
+use guac_formats::igz::layouts::{ActorWaypoint, ActorWaypointList, Layout, is_a};
 use guac_formats::level::Placements;
 use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
@@ -99,6 +99,9 @@ pub struct Placed {
     pub range: f32,
     pub physics: Option<Physics>,
     pub solid: Option<Solid>,
+    /// Its model's path as its file names it, if it has one: what a clone of
+    /// it draws (openspec AH.24).
+    pub model: Option<String>,
 }
 
 impl Placed {
@@ -120,6 +123,7 @@ impl Placed {
             range: 0.0,
             physics: None,
             solid: None,
+            model: None,
         }
     }
 }
@@ -131,6 +135,9 @@ pub struct Files {
     pub placed: Vec<Placed>,
     /// Every placement's `_ID`, sprites and lights included.
     pub ids: HashMap<Obj, i32>,
+    /// Every waypoint's place in the level, metres (openspec AH.18: what a
+    /// `move to` along a path walks to and a measurement is taken from).
+    pub points: HashMap<Obj, Vec3>,
 }
 
 impl Files {
@@ -149,6 +156,18 @@ impl Files {
                             index: index as u32,
                         },
                         id,
+                    );
+                }
+            }
+            for (index, o) in igz.objects().iter().enumerate() {
+                if is_a(igz.type_name(o), ActorWaypoint::TYPE) {
+                    let w = ActorWaypoint::read(igz, index).map_err(|e| e.to_string())?;
+                    out.points.insert(
+                        Obj {
+                            unit,
+                            index: index as u32,
+                        },
+                        Vec3::from_array(w.init_matrix.position),
                     );
                 }
             }
@@ -219,6 +238,7 @@ impl Files {
                     range: p.activation_range,
                     physics,
                     solid,
+                    model: placements.model_path(actor).map(str::to_owned),
                 });
             }
         }
@@ -226,9 +246,27 @@ impl Files {
     }
 }
 
+/// Whether a managed placement is awake (openspec AH.18, AG.7's rule with
+/// the buffer read as the original's hysteresis): one with an activation
+/// range is awake while a hero is within it (3D, feet, from his pivot) and
+/// stays awake out to the range plus its deactivation buffer; one with no
+/// range is awake when its buffer is 0 too and asleep otherwise, its
+/// scripts' to wake (a script giving it a range or a buffer of 0). `hero`
+/// is the nearest hero's distance in feet, `None` with none.
+pub fn awake(range: f32, buffer: f32, was: bool, hero: Option<f32>) -> bool {
+    if range <= 0.0 {
+        return buffer <= 0.0;
+    }
+    match hero {
+        Some(d) => d <= range || (was && d <= range + buffer),
+        None => false,
+    }
+}
+
 /// An actor made from a file's placement: where and how its file has it.
 fn actor_of(p: &Placed) -> Actor {
     let mut a = Actor::blank();
+    a.managed = p.activity_state == RUNNING;
     a.obj = Some(p.obj);
     a.id = p.id;
     a.buffer_loaded = p.buffer;
@@ -275,6 +313,8 @@ pub struct ScriptWorld {
     pub(crate) objects: HashMap<Obj, Handle>,
     /// Every file placement's data, to make a clone of it from.
     pub(crate) templates: HashMap<Obj, Placed>,
+    /// Every waypoint's place, metres.
+    pub(crate) points: HashMap<Obj, Vec3>,
     pub(crate) controllers: [Handle; 2],
     pub(crate) physical: [Handle; 4],
     pub(crate) portal: Handle,
@@ -303,6 +343,22 @@ pub struct ScriptWorld {
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
+    /// The placements the VM leaves inert, off the whitelist (design
+    /// decision 6): a script waking one is logged and listed in `woken`.
+    pub(crate) inert: std::collections::HashSet<Handle>,
+    /// Each placement off the whitelist a whitelisted script woke, in the
+    /// order woken: what it was, and whose script woke it.
+    pub woken: Vec<Woken>,
+}
+
+/// A placement off the whitelist a whitelisted script woke (design decision
+/// 6): it stays as it was, inert, logged and listed here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Woken {
+    pub placement: Handle,
+    pub name: String,
+    /// The placement whose script woke it.
+    pub by: String,
 }
 
 impl ScriptWorld {
@@ -325,6 +381,7 @@ impl ScriptWorld {
             actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
+            points: files.points.clone(),
             controllers: [objects[0], objects[1]],
             physical: [objects[2], objects[3], objects[4], objects[5]],
             portal: objects[6],
@@ -342,7 +399,73 @@ impl ScriptWorld {
             time_scale: FULL_SPEED,
             load_level: Value::Null,
             requests: Vec::new(),
+            inert: Default::default(),
+            woken: Vec::new(),
         }
+    }
+
+    /// The placements the VM leaves inert: a script waking one is listed.
+    pub fn set_inert(&mut self, inert: impl IntoIterator<Item = Handle>) {
+        self.inert = inert.into_iter().collect();
+    }
+
+    /// Each managed placement's activity this step, by the activity rule
+    /// ([`awake`]) from the heroes' pivots as the step begins, in handle
+    /// order: what the embedder wakes and puts to sleep in the VM.
+    pub fn activity(&mut self, engine: &mut dyn Engine) -> Vec<(Handle, bool)> {
+        let heroes: Vec<Vec3> = engine
+            .heroes()
+            .into_iter()
+            .filter_map(|h| engine.hero(h).map(|x| x.pivot))
+            .collect();
+        let mut out = Vec::new();
+        for (&h, a) in &mut self.actors {
+            if !a.managed || a.removed {
+                continue;
+            }
+            let d = heroes
+                .iter()
+                .map(|p| (*p - a.position).length() * crate::script_engine::FEET_PER_METRE)
+                .reduce(f32::min);
+            a.active = awake(a.range, a.buffer, a.active, d);
+            out.push((h, a.active));
+        }
+        out.sort_unstable_by_key(|k| k.0);
+        out
+    }
+
+    /// A placement's name: its file's, or its template's for a clone.
+    pub fn name(&self, h: Handle) -> String {
+        self.actors
+            .get(&h)
+            .and_then(|a| a.obj.or(a.template))
+            .and_then(|o| self.templates.get(&o))
+            .map_or_else(String::new, |p| p.name.clone())
+    }
+
+    /// A range or buffer `by`'s script wrote on `h`: an inert placement it
+    /// leaves awake by the activity rule is woken off the whitelist, logged
+    /// and listed (once).
+    pub(crate) fn note_wake(&mut self, h: Handle, by: Handle) {
+        if !self.inert.contains(&h) || self.woken.iter().any(|w| w.placement == h) {
+            return;
+        }
+        let Some(a) = self.actors.get(&h) else {
+            return;
+        };
+        // A range gives it to the activity rule (it wakes when a hero comes
+        // within it), a buffer of 0 with none wakes it now: either way the
+        // script has woken it.
+        if a.range <= 0.0 && a.buffer > 0.0 {
+            return;
+        }
+        let (name, by) = (self.name(h), self.name(by));
+        warn!(placement = %name, woken_by = %by, "a script woke a placement off the whitelist; it stays inert");
+        self.woken.push(Woken {
+            placement: h,
+            name,
+            by,
+        });
     }
 
     /// The end of a step: a level a script asked for is taken, and reads
@@ -368,6 +491,24 @@ impl ScriptWorld {
     /// Each palette slot's clip length for `template`'s clones and itself.
     pub fn set_palette(&mut self, template: Obj, lengths: Vec<f32>) {
         self.palettes.insert(template, lengths);
+    }
+
+    /// The palette's clip lengths `template` has, if any.
+    pub fn palette(&self, template: Obj) -> Option<&[f32]> {
+        self.palettes.get(&template).map(Vec::as_slice)
+    }
+
+    /// An actor set down at `at` facing `facing`, at rest, as a recorded
+    /// state has it (a scripted test's or the dev entry's). False for no
+    /// such actor.
+    pub fn place(&mut self, h: Handle, at: Vec3, facing: f32) -> bool {
+        let Some(a) = self.actors.get_mut(&h) else {
+            return false;
+        };
+        a.position = at;
+        a.angles.facing = facing;
+        a.velocity = Vec3::ZERO;
+        true
     }
 
     /// Where `actor`'s attach nodes sit, in its own frame (metres, +Z its
@@ -399,6 +540,31 @@ impl ScriptWorld {
         self.actors.get(&h)
     }
 
+    /// Each file placement's handle, by its object.
+    pub fn handles(&self) -> &HashMap<Obj, Handle> {
+        &self.objects
+    }
+
+    /// A file placement as its file holds it: what a clone of it copies.
+    pub fn template(&self, obj: Obj) -> Option<&Placed> {
+        self.templates.get(&obj)
+    }
+
+    /// The palette slot a started sequence plays (its template's object and
+    /// the slot), if it's a clip of one: a sound or anything else isn't.
+    pub fn clip_of(&self, s: &Sequence) -> Option<(Obj, u32)> {
+        match self.objs.get(self.handle(s.template)?)? {
+            Object::Clip { template, slot } => Some((template, slot)),
+            _ => None,
+        }
+    }
+
+    /// The pads the scripts read this step, as [`ScriptWorld::read_pads`]
+    /// left them.
+    pub fn pads(&self) -> [Pad; 2] {
+        self.pads
+    }
+
     /// The sequences started so far, in the order started.
     pub fn sequences(&self) -> &[Sequence] {
         &self.sequences
@@ -421,7 +587,7 @@ impl ScriptWorld {
         c
     }
 
-    fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
+    pub(crate) fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -451,7 +617,11 @@ impl ScriptWorld {
         })
     }
 
-    fn elements(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Vec<Value>, HostFault> {
+    pub(crate) fn elements(
+        &mut self,
+        at: &Access,
+        engine: &mut dyn Engine,
+    ) -> Result<Vec<Value>, HostFault> {
         match self.members.get(&at.member).copied() {
             Some(m) => self.elements_of(at, m, engine),
             None => Err(HostFault::Unmodelled),
@@ -467,7 +637,12 @@ impl ScriptWorld {
             (Member::TimeScale, Value::Float(f)) => self.time_scale = f,
             (Member::LoadLevel, v) => self.load_level = v,
             (Member::Buffer, Value::Float(f)) => match on.and_then(|h| self.actors.get_mut(&h)) {
-                Some(k) => k.buffer = f,
+                Some(k) => {
+                    k.buffer = f;
+                    if let Some(h) = on {
+                        self.note_wake(h, at.placement);
+                    }
+                }
                 None => return Err(HostFault::Nothing),
             },
             (Member::Id, Value::Int(i)) => match on.and_then(|h| self.actors.get_mut(&h)) {
@@ -516,7 +691,7 @@ impl ScriptWorld {
         Ok(())
     }
 
-    fn op(
+    pub(crate) fn op(
         &mut self,
         call: &OpCall,
         spawn: &mut Spawner<'_>,
@@ -766,6 +941,36 @@ pub fn hero_config(mode: Mode) -> Config {
     c
 }
 
+/// Chapter 1's first fight (openspec AH.18, design decisions 2 and 6): the
+/// four Chompies Setup_001 wakes, its controller, Norticus as far as the
+/// encounter reaches him (his scene's placement, the trigger that wakes him
+/// and the far-off Norticus and Chompies it takes off) by placement name,
+/// so the pit's other Chompies running the same script stay inert.
+pub const FIRST_FIGHT: [&str; 11] = [
+    "Enemy_Chompy(1)",
+    "Enemy_Chompy(2)",
+    "Enemy_Chompy(3)",
+    "Enemy_Chompy(4)",
+    "Setup_001_Controller",
+    "1.NPC_Norticus_First_Encounter",
+    "Activate_Norticus and Chompies",
+    "Norticus_First_Encounter(1)",
+    "Chompie_Dummies(4)",
+    "Chompie_Dummies(5)",
+    "Chompie_Dummies(6)",
+];
+
+/// The VM's config for AH.18's run: AH.17's with the first fight's
+/// placements and the members they reach.
+pub fn fight_config(mode: Mode) -> Config {
+    let mut c = hero_config(mode);
+    members::register(&mut c.members, members::CREATURES);
+    if let Whitelist::Only { placements, .. } = &mut c.whitelist {
+        placements.extend(FIRST_FIGHT.iter().map(|s| (*s).to_owned()));
+    }
+    c
+}
+
 /// The VM over `program` with every running placement of `files` added in
 /// file order (`global.bld`'s, then `init_setup.bld`'s, then the level's,
 /// by `order`'s units), each under the handle `handles` gives its object;
@@ -960,6 +1165,31 @@ pub fn manage_projectiles(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(
     Ok(())
 }
 
+/// Another slice of the player loop's native rule (openspec AH.18; AH.20
+/// owns the loop): the portal manager's tick calls `Combat - Manage Combat`
+/// with the global `combat control data` once a step, just before `Manage
+/// Projectiles`, so every 0.25 s of game time each creature within its
+/// notice range of a player is alerted and calls the others in range, and a
+/// knockback that's run its time ends.
+pub fn manage_combat(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
+    let pm = portal_manager(vm, host.world)?;
+    let g = vm
+        .program()
+        .global_named("combat control data")
+        .ok_or_else(|| outside("no combat control data".to_owned()))?;
+    let control = vm
+        .global(g)
+        .ok_or_else(|| outside("combat control data reads nothing".to_owned()))?;
+    vm.call_with(
+        Some(pm),
+        "Combat - Manage Combat",
+        &[("combat control data", control)],
+        &[],
+        host,
+    )?;
+    Ok(())
+}
+
 fn outside(why: String) -> Halt {
     Halt {
         placement: None,
@@ -1089,8 +1319,22 @@ pub fn step_scripts(mut runtime: ResMut<ScriptRuntime>, mut host: ScriptHost) {
 /// Spawns an entity for every placement of `files` and the pads and the
 /// portal, and makes the run: what the TV does once a level's script part
 /// links, a run from an earlier link and its entities gone first. The
-/// generator is the session's, seeded from the clock.
+/// generator is the session's, seeded from the clock. AH.16's listing;
+/// [`install_with`] takes another.
 pub fn install(world: &mut World, program: Arc<Program>, files: &Files, order: &[u16]) {
+    install_with(world, program, files, order, config(Mode::Play));
+}
+
+/// [`install`] under `config`: the TV's is [`hero_config`]'s (openspec
+/// AH.24), the init chain's every tick with the UI's, the movement update's
+/// and a fighter's scripts beside them.
+pub fn install_with(
+    world: &mut World,
+    program: Arc<Program>,
+    files: &Files,
+    order: &[u16],
+    config: Config,
+) {
     let old: Vec<Entity> = world
         .query_filtered::<Entity, Or<(With<ScriptPlacement>, With<ScriptClone>, With<ScriptObject>)>>()
         .iter(world)
@@ -1113,7 +1357,7 @@ pub fn install(world: &mut World, program: Arc<Program>, files: &Files, order: &
         "portal",
     ];
     let objects = names.map(|n| world.spawn(ScriptObject(n)).id().to_bits());
-    let vm = init_chain(program, files, &handles, order, config(Mode::Play));
+    let vm = init_chain(program, files, &handles, order, config);
     world.insert_resource(ScriptWorld::new(files, &handles, objects));
     world.insert_resource(ScriptRuntime {
         vm,
@@ -1170,9 +1414,11 @@ pub fn headless_spawner(start: Handle) -> impl FnMut(Value) -> Handle {
 
 #[cfg(test)]
 mod tests {
+    use guac_motion::hero::Hero;
     use guac_script::members::{find, label};
 
     use super::*;
+    use crate::script_engine::Pad;
 
     const GRUNT: Obj = Obj { unit: 4, index: 7 };
     const SPRITE: Obj = Obj { unit: 4, index: 9 };
@@ -1189,6 +1435,7 @@ mod tests {
                 ..Placed::named(GRUNT, "Grunt", Some("C:/x/Grunt.ai"), RUNNING)
             }],
             ids: HashMap::from([(GRUNT, 41), (SPRITE, 77)]),
+            points: HashMap::new(),
         };
         let handles = headless_handles(&files);
         let objects = headless_objects(&handles);
@@ -1212,6 +1459,7 @@ mod tests {
             class,
             operands: vec![("_LHS", first)],
             words: Vec::new(),
+            sets: Vec::new(),
         }
     }
 
@@ -1453,9 +1701,11 @@ mod tests {
             w.op(&call(Class::Displace, None), &mut |_| 0, &mut NoEngine),
             Err(HostFault::Nothing)
         );
+        // A field of view with nothing to look from is a path through
+        // nothing (AH.18 answers the op).
         assert_eq!(
             w.op(&call(Class::CheckFov, None), &mut |_| 0, &mut NoEngine),
-            Err(HostFault::Unmodelled)
+            Err(HostFault::Nothing)
         );
     }
 
@@ -1472,6 +1722,7 @@ mod tests {
                 ..Placed::named(GRUNT, "Grunt", None, RUNNING)
             }],
             ids: HashMap::new(),
+            points: HashMap::new(),
         };
         let objects = |app: &mut App| {
             let w = app.world_mut();
@@ -1494,6 +1745,276 @@ mod tests {
 
     fn scripts_installed(app: &mut App, files: &Files) {
         install(app.world_mut(), Arc::new(Program::default()), files, &[4]);
+    }
+
+    #[test]
+    fn the_activity_rule_wakes_by_range_and_holds_to_its_buffer() {
+        // A range: awake within it, staying awake out to it plus the buffer.
+        assert!(awake(20.0, 1.0, false, Some(19.9)));
+        assert!(!awake(20.0, 1.0, false, Some(20.5)));
+        assert!(awake(20.0, 1.0, true, Some(20.5)));
+        assert!(!awake(20.0, 1.0, true, Some(21.1)));
+        assert!(!awake(20.0, 1.0, true, None), "no hero");
+        // No range: awake with a buffer of 0, else its scripts' to wake.
+        assert!(awake(0.0, 0.0, false, None));
+        assert!(!awake(0.0, 1.0, true, Some(0.0)));
+        // Over a world: the Grunt's 30 ft from a hero 9 m off (29.5 ft).
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (30.0, 1.0, true);
+        let mut hero = him(Vec3::new(9.0, 0.0, 0.0));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)]);
+        hero.0.pivot.x = 9.4;
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)], "its buffer");
+        hero.0.pivot.x = 10.0;
+        assert_eq!(w.activity(&mut hero), vec![(grunt, false)]);
+        let inactive = at("actorinfo", "inactive", None);
+        assert_eq!(
+            w.elements(&inactive, &mut hero),
+            Ok(vec![Value::Entity(grunt)])
+        );
+    }
+
+    /// A hero standing where the test puts him, over nothing.
+    struct Him(Hero, guac_motion::parry::ParryWorld);
+
+    fn him(at: Vec3) -> Him {
+        Him(
+            Hero::new(
+                guac_motion::tuning::eruptor_solid(),
+                guac_motion::tuning::Tuning::ERUPTOR,
+                at,
+                0.0,
+            ),
+            guac_motion::parry::ParryWorld::new(&[]).unwrap(),
+        )
+    }
+
+    const HIM: Handle = 0x7000_0000;
+
+    impl Engine for Him {
+        fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+            (h == HIM).then_some(&mut self.0)
+        }
+        fn heroes(&self) -> Vec<Handle> {
+            vec![HIM]
+        }
+        fn seam(&self) -> &dyn guac_motion::seam::PhysicsSeam {
+            &self.1
+        }
+        fn view_heading(&self) -> f32 {
+            0.0
+        }
+        fn pad(&self, _: usize) -> Pad {
+            Pad::default()
+        }
+    }
+
+    #[test]
+    fn a_script_waking_a_placement_off_the_whitelist_is_listed_once() {
+        let (mut w, grunt, _) = world();
+        let by = 0x0004_0000_0063;
+        w.actors.get_mut(&grunt).unwrap().buffer = 1.0;
+        w.set_inert([grunt]);
+        let buffer = Access {
+            placement: by,
+            ..at(
+                "placement",
+                "deactivation buffer",
+                Some(Value::Entity(grunt)),
+            )
+        };
+        // A buffer of 2 leaves it asleep: nothing woken.
+        w.set(&buffer, Value::Float(2.0), &mut NoEngine).unwrap();
+        assert!(w.woken.is_empty());
+        // 0 with no range wakes it: listed, by the waker's name.
+        w.set(&buffer, Value::Float(0.0), &mut NoEngine).unwrap();
+        assert_eq!(
+            w.woken,
+            vec![Woken {
+                placement: grunt,
+                name: "Grunt".to_owned(),
+                by: String::new(),
+            }]
+        );
+        // A range on it again: listed once.
+        let range = Access {
+            placement: by,
+            ..at("placement", "activation range", Some(Value::Entity(grunt)))
+        };
+        w.set(&range, Value::Float(160.0), &mut NoEngine).unwrap();
+        assert_eq!(w.woken.len(), 1);
+        // One the whitelist runs isn't listed.
+        let (mut w, grunt, _) = world();
+        w.actors.get_mut(&grunt).unwrap().buffer = 1.0;
+        let buffer = at(
+            "placement",
+            "deactivation buffer",
+            Some(Value::Entity(grunt)),
+        );
+        w.set(&buffer, Value::Float(0.0), &mut NoEngine).unwrap();
+        assert!(w.woken.is_empty());
+    }
+
+    #[test]
+    fn the_fight_lists_setup_001s_chompies_by_name_and_no_others() {
+        let c = fight_config(Mode::Play);
+        let chompy = "C:/tfb/Content/Levels/_Enemies/Chompy/scripts/S2_Enemy_Chompy.ai";
+        for n in 1..=4 {
+            assert!(c.whitelist.lists(&format!("Enemy_Chompy({n})"), chompy));
+        }
+        assert!(!c.whitelist.lists("Enemy_Chompy(11)", chompy));
+        assert!(
+            c.whitelist
+                .lists("Setup_001_Controller", "C:/x/Setup_001_Controller.ai")
+        );
+        assert!(
+            !c.whitelist
+                .lists("Setup_002_Controller", "C:/x/Setup_002_Controller.ai")
+        );
+        assert!(
+            c.whitelist
+                .lists("EnemySystem_", "C:/x/_EnemySystem_Functions.ai")
+        );
+        assert!(
+            c.whitelist
+                .lists("movementUpdate", "C:/x/movementUpdate.ai")
+        );
+        assert!(
+            !c.whitelist
+                .lists("Eon_4_help_Norticus", "C:/x/Pan_Show_Norticu.ai")
+        );
+        for r in members::CREATURES {
+            assert!(
+                c.members
+                    .get(MemberId::named(r.namespace, r.name))
+                    .is_some()
+            );
+        }
+    }
+
+    /// Setup_001's 7 ft rule from a recorded state (AH.8's anchor B and the
+    /// route's scaffold): a controller waiting for a minion within 7 ft of
+    /// its first Chompy's height stays put while the hero stands 26 ft above
+    /// on the pit's rim, and moves on once he's down on its floor.
+    #[test]
+    fn an_encounter_from_a_recorded_state_wakes_on_the_7_ft_rule() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_formats::script::{Graph, StackClass};
+        use guac_script::{Role, Unit};
+
+        let mut b = IgzBuilder::new();
+        let objects;
+        {
+            let mut w = Writer::new(&mut b);
+            let hero = w.b.object(0, "tfbActorInfo", 0xF8);
+            let chompy = w.b.object(0, "tfbActorInfo", 0xF8);
+            let controller = w.b.object(0, "tfbActorInfo", 0xF8);
+            objects = [hero, chompy, controller];
+            let minions = w.variable("minions", "ScriptSet", None);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let lhs = w.stack(StackClass::Set, &[El::Local(minions)]);
+            let rhs = w.reference(&[El::Local(hero)], None);
+            let o = w.op(Class::ChangeMembership, "set [set]||to");
+            w.refer(o, 0x1C, lhs);
+            w.word(o, 0x20, 0);
+            w.refer(o, 0x24, rhs);
+            w.push(o);
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (macros, _) = w.open(Class::MacroSection, "MACROS");
+            w.end_block(macros);
+            w.end_block(pre);
+            let intro = w.op(Class::UserBehavior, "Chompy - Intro");
+            let wait = w.behaviour("Wait For Minion");
+            let path = w.stack(
+                StackClass::Value,
+                &[
+                    El::Local(minions),
+                    El::Null,
+                    El::Member("positionmeasurement", "vertical offset"),
+                ],
+            );
+            let from = w.reference(&[El::Local(chompy)], None);
+            w.refer(path, 0x18, from);
+            let seven = w.int(7);
+            let (fs_at, fs) = w.open(Class::FindSubSet, "find subset|of||||subset");
+            w.refer(fs, 0x1C, path);
+            w.word(fs, 0x20, 0);
+            w.refer(fs, 0x24, seven);
+            w.set_behavior(intro);
+            w.end_block(fs_at);
+            w.end_block(wait);
+            let at_intro = w.push(intro);
+            w.end_block(at_intro);
+            w.end("C:/tfb/Synthetic/Setup_001_Controller.ai");
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let obj = |l| Obj {
+            unit: 0,
+            index: igz.object_at(l).unwrap().0 as u32,
+        };
+        let [hero, chompy, controller] = objects.map(obj);
+        // Where AH.8's anchor B has `Enemy_Chompy(1)`.
+        let files = Files {
+            placed: vec![
+                Placed {
+                    position: [4.5213137, 22.374975, -23.117332],
+                    ..Placed::named(chompy, "Enemy_Chompy(1)", None, RUNNING)
+                },
+                Placed::named(hero, "Hero", None, RUNNING),
+                Placed::named(
+                    controller,
+                    "Setup_001_Controller",
+                    Some("C:/tfb/Synthetic/Setup_001_Controller.ai"),
+                    RUNNING,
+                ),
+            ],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+        };
+        let mut handles = headless_handles(&files);
+        handles.insert(hero, HIM);
+        let mut c = fight_config(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let id = vm.placement_of(handles[&controller]).unwrap();
+        // The route's scaffold at the pit's rim, then landed on its floor.
+        let rim = Vec3::new(10.67, 30.35, -1.93);
+        let floor = Vec3::new(7.27, 22.39, -7.56);
+        let mut him = him(rim);
+        let mut generator = Generator::seeded(1);
+        let mut spawn = headless_spawner(1 << 40);
+        let mut step = |vm: &mut Vm, world: &mut ScriptWorld, him: &mut Him| {
+            let mut host = WorldHost {
+                world,
+                engine: him,
+                generator: &mut generator,
+                spawn: &mut spawn,
+            };
+            vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+        };
+        for _ in 0..30 {
+            step(&mut vm, &mut world, &mut him);
+        }
+        assert_eq!(vm.behaviour(id), Some("wait for minion"), "26 ft above");
+        him.0.pivot = floor;
+        step(&mut vm, &mut world, &mut him);
+        step(&mut vm, &mut world, &mut him);
+        assert_eq!(vm.behaviour(id), Some("chompy - intro"));
     }
 
     #[test]

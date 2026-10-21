@@ -10,7 +10,7 @@
 //! Only the classes the toy table needs have layouts; the reader names any
 //! other op by its type alone.
 
-use super::{DataList, Info, Layout, ObjectRef, TypeRef, View};
+use super::{DataList, Info, Layout, ObjectRef, TypeRef, Vector, View};
 use crate::FormatError;
 
 /// `_branchPC` 0xFFFF: `flow end`, which pops every block of its context.
@@ -235,6 +235,89 @@ impl<'a> Layout<'a> for Variable<'a> {
 
     fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
         Self::fields(v)
+    }
+}
+
+/// `OpParameter`: size 0x38, one of a placement's tags (openspec AH.18): a
+/// variable its scripts find on it by name (a Chompy's `notice player
+/// radius`), with its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpParameter<'a> {
+    pub var: Variable<'a>,
+    pub combine_op: u32,
+    /// The value: an RHS stack.
+    pub rhs: ObjectRef<'a>,
+    pub index_rhs: ObjectRef<'a>,
+}
+
+impl OpParameter<'_> {
+    pub const COMBINE_OP: u32 = 0x2C;
+    pub const RHS: u32 = 0x30;
+    pub const INDEX_RHS: u32 = 0x34;
+}
+
+impl<'a> Layout<'a> for OpParameter<'a> {
+    const TYPE: &'static str = "OpParameter";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            var: Variable::fields(v)?,
+            combine_op: v.u32(Self::COMBINE_OP, "_combineOp")?,
+            rhs: v.object_ref(Self::RHS, "_RHS")?,
+            index_rhs: v.object_ref(Self::INDEX_RHS, "_indexRHS")?,
+        })
+    }
+}
+
+/// `TagList`: size 0x28, through `ScriptVariantList`: a placement's tags,
+/// each an [`OpParameter`] (openspec AH.18): the list's own elements (its
+/// run-time variables) and `_initialTags`, the vector a file fills;
+/// `_templateVarList` is read raw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagList<'a> {
+    pub list: DataList<'a>,
+    /// Indexes of the list's `OpParameter` objects.
+    pub tags: Vec<usize>,
+    pub template_var_list: ObjectRef<'a>,
+    pub initial_tags: Vector<'a>,
+    /// Indexes of `_initialTags`' `OpParameter` objects, in order.
+    pub initial: Vec<usize>,
+}
+
+impl TagList<'_> {
+    pub const TEMPLATE_VAR_LIST: u32 = 0x18;
+    pub const INITIAL_TAGS: u32 = 0x1C;
+}
+
+impl<'a> Layout<'a> for TagList<'a> {
+    const TYPE: &'static str = "TagList";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        let list = DataList::fields(v)?;
+        let tags = v
+            .elements(&list, Some(OpParameter::TYPE))?
+            .into_iter()
+            .flatten()
+            .collect();
+        let template_var_list = v.object_ref(Self::TEMPLATE_VAR_LIST, "_templateVarList")?;
+        let initial_tags = v.vector(Self::INITIAL_TAGS, "_initialTags")?;
+        let as_list = DataList {
+            count: i32::try_from(initial_tags.count).unwrap_or(i32::MAX),
+            capacity: i32::try_from(initial_tags.count).unwrap_or(i32::MAX),
+            data: initial_tags.data,
+        };
+        let initial = v
+            .elements(&as_list, Some(OpParameter::TYPE))?
+            .into_iter()
+            .flatten()
+            .collect();
+        Ok(Self {
+            list,
+            tags,
+            template_var_list,
+            initial_tags,
+            initial,
+        })
     }
 }
 

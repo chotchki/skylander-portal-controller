@@ -49,6 +49,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::Model;
 use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
+use guac_ir::palette::Palette;
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_motion::camera::{CameraDef, GameCamera};
@@ -61,6 +62,7 @@ use guacamole::character::{
     spawn_character,
 };
 use guacamole::level_scene::{START_FACING, hero_scene};
+use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use guacamole::walkers::{self, Walker};
 use serde::Serialize;
 use skylander_core::SlotIndex;
@@ -70,6 +72,7 @@ use tracing::{info, warn};
 use crate::cards::{PortalCards, PortalChanged};
 use crate::driver::PortalChange;
 use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroPlugin, following, spawn_hero};
+use crate::hero_scripts::{self, HeroRun, Join, ScriptSource};
 use crate::intro::IntroQueue;
 use crate::level::{
     LEVEL_LAYER, Level, LevelCamera, LevelSystems, LitAlso, VIEW_ORDER, view_camera,
@@ -79,7 +82,7 @@ use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
 use crate::screen::TvScreen;
-use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero};
+use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero, read_ir};
 use crate::tv::{Current, Redrawn, TvCamera};
 use crate::warm::Warm;
 
@@ -143,13 +146,17 @@ impl HeroClips {
     }
 }
 
-/// His model and his locomotion's clips, read together off the shelf.
+/// His model, his locomotion's clips and his palette (every slot's clip,
+/// which his scripts play: AH.24), read together off the shelf.
 pub(crate) struct HeroModel {
     loaded: Loaded,
     clips: Arc<HeroClips>,
+    palette: Option<Arc<Palette>>,
 }
 
-/// `load`'s model and its hero side, on a task.
+/// `load`'s model, its hero side and its palette, on a task. A palette that
+/// doesn't read leaves his scripts' clips unplayed, logged; he walks all
+/// the same.
 fn read_hero_model(
     shelf: &Shelf,
     load: &str,
@@ -157,10 +164,31 @@ fn read_hero_model(
 ) -> Result<HeroModel, String> {
     let loaded = load_model(shelf, load, formats)?;
     let hero = read_hero(shelf, load).map_err(|e| format!("his hero side: {e}"))?;
+    let palette = match read_palette(shelf, load) {
+        Ok(p) => Some(Arc::new(p)),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his palette didn't read: the clips his scripts start play nothing");
+            None
+        }
+    };
     Ok(HeroModel {
         loaded,
         clips: Arc::new(HeroClips::of(hero)),
+        palette,
     })
+}
+
+/// `load`'s animation palette off the extract (AH.22's part).
+fn read_palette(shelf: &Shelf, load: &str) -> Result<Palette, String> {
+    let rel = shelf.ir.palette_path(load);
+    let palette: Palette = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if palette.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if palette.owner != load {
+        return Err(format!("{rel} holds {}'s palette", palette.owner));
+    }
+    Ok(palette)
 }
 
 /// The hero's model on its way to the level.
@@ -211,6 +239,8 @@ struct Inside {
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
     /// The TV's virtual clock when he came in, for his idle and scrolls.
     since: Duration,
+    /// His palette: the clips his scripts start play from it (AH.24).
+    palette: Option<Arc<Palette>>,
 }
 
 /// The walk: who's placed in what order, who walks and the level shown.
@@ -241,6 +271,21 @@ pub(crate) struct HeroReport {
     pub camera: Option<CameraReport>,
     /// In the level: his locomotion as its last step left it (AG.30).
     pub gait: Option<GaitReport>,
+    /// In the level (AH.24): his scripts' join (`asked`, `requested`,
+    /// `joined`, or `off` with why), none for a character whose scripts the
+    /// level's part doesn't hold, who walks on the stand-in.
+    pub scripts: Option<String>,
+    pub scripts_reason: Option<String>,
+    /// His health and full health as his scripts hold them, once they run,
+    /// and the behaviour his minion is in.
+    pub health: Option<i32>,
+    pub health_max: Option<i32>,
+    pub behaviour: Option<String>,
+    /// His figure's experience and gold as the TV holds them: the placing
+    /// profile's row as the placement read it (AH.1), 0 for a figure no
+    /// profile placed, until AH.23 hands the figure to his scripts.
+    pub experience: Option<u32>,
+    pub gold: Option<u32>,
 }
 
 /// His locomotion as `/api/_test/tv` reports it (AG.30): no clip is
@@ -353,15 +398,23 @@ impl Play {
     /// camera following him.
     pub(crate) fn report(
         &self,
-        bodies: &Query<(&HeroBody, Option<&HeroGaits>)>,
+        bodies: &Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
+        runtime: Option<&ScriptRuntime>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
         let body = self.inside.as_ref().and_then(|i| bodies.get(i.hero).ok());
-        let hero = body.map(|(b, _)| &b.hero);
+        let hero = body.map(|(b, ..)| &b.hero);
         let gait = body
-            .and_then(|(_, g)| g)
+            .and_then(|(_, g, _)| g)
             .map(|g| GaitReport::of(&g.locomotion));
+        let run = body.and_then(|(_, _, r)| r);
+        let numbers = match (run.map(|r| &r.join), runtime) {
+            (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(&rt.vm, *minion),
+            _ => hero_scripts::HeroNumbers::default(),
+        };
+        let progress = c.placement.owner.as_ref().map(|o| o.progress);
+        let inside = self.inside.is_some();
         let camera = self
             .inside
             .as_ref()
@@ -380,6 +433,16 @@ impl Play {
             heading: hero.map(|h| h.facing.rem_euclid(360.0)),
             camera,
             gait,
+            scripts: run.map(|r| r.join.name().to_owned()),
+            scripts_reason: run.and_then(|r| match &r.join {
+                Join::Off(why) => Some(why.clone()),
+                _ => None,
+            }),
+            health: numbers.health,
+            health_max: numbers.health_max,
+            behaviour: numbers.behaviour,
+            experience: inside.then(|| progress.map_or(0, |p| p.xp)),
+            gold: inside.then(|| progress.map_or(0, |p| p.gold)),
         })
     }
 }
@@ -573,6 +636,8 @@ fn leave(
     commands.entity(inside.camera).despawn();
     pads.hide();
     play.candidate = None;
+    // The scripts start over with the level's next entry (AH.24).
+    commands.queue(hero_scripts::reinstall);
 }
 
 /// What [`enter`] spawns with.
@@ -585,6 +650,8 @@ pub(crate) struct EnterSpawner<'w, 's> {
     materials: ResMut<'w, Assets<CharacterMaterial>>,
     time: Res<'w, Time>,
     redrawn: MessageWriter<'w, Redrawn>,
+    /// The level's script part, once linked: whether his scripts join.
+    source: Option<Res<'w, ScriptSource>>,
 }
 
 /// The TV into the level, once every condition holds: the hero settled at
@@ -657,10 +724,19 @@ fn enter(
         }
     };
     let clips = read.clips.clone();
+    let palette = read.palette.clone();
     let loops = clips.loops(&read.loaded.model);
     s.commands
         .entity(hero_entity)
         .insert(HeroGaits::new(Locomotion::new(walker.gaits, loops)));
+    // His own scripts, where the level's part holds them (AH.24).
+    hero_scripts::ask_join(
+        &mut s.commands,
+        hero_entity,
+        walker.load_file,
+        palette.clone(),
+        s.source.as_deref(),
+    );
     c.model = Model3d::Ready(read);
     let target = target.cloned().unwrap_or_default();
     let camera = s
@@ -694,6 +770,7 @@ fn enter(
         attachments: drawn.attachments,
         scrolling: drawn.scrolling,
         since: now,
+        palette,
     });
 }
 
@@ -831,6 +908,7 @@ fn pose_hero(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     reduced: Option<Res<ReducedMotion>>,
+    scripts: Option<Res<ScriptWorld>>,
     gaits: Query<&HeroGaits>,
     mut transforms: Query<&mut Transform>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
@@ -844,14 +922,15 @@ fn pose_hero(
     } else {
         time.elapsed().saturating_sub(inside.since).as_secs_f64()
     };
+    let step = (fixed.overstep_fraction(), fixed.timestep().as_secs_f64());
+    // What his scripts play on him (AH.24), each eased back from its time
+    // this step by what's left of the step at its rate, as his locomotion's.
+    let over: Vec<(&Clip, f64)> = match (scripts.as_deref(), inside.palette.as_deref()) {
+        (Some(world), Some(palette)) => script_clips(world, inside.hero, palette, step),
+        _ => Vec::new(),
+    };
     let pose = match gaits.get(inside.hero).ok() {
-        Some(g) => gait_pose(
-            &inside.model,
-            &inside.clips,
-            g,
-            (fixed.overstep_fraction(), fixed.timestep().as_secs_f64()),
-            still,
-        ),
+        Some(g) => gait_pose(&inside.model, &inside.clips, g, step, still, &over),
         None => guacamole::character::mesh::pose(&inside.model, seconds),
     };
     let carried = inside
@@ -888,6 +967,7 @@ fn gait_pose(
     gaits: &HeroGaits,
     (alpha, step): (f32, f64),
     held: bool,
+    over: &[(&Clip, f64)],
 ) -> Vec<Transform> {
     let drawn = drawn_clips(gaits, (alpha, step), held);
     let playing: Vec<(&Clip, f64, f64)> = locomotion::Clip::ALL
@@ -901,7 +981,28 @@ fn gait_pose(
             Some((clip, at, f64::from(weight)))
         })
         .collect();
-    guacamole::character::mesh::blended(model, &playing)
+    guacamole::character::mesh::blended_over(model, &playing, over)
+}
+
+/// The clips his scripts play on `hero` (AH.24), out of `palette`, each at
+/// its time `alpha` of the way from its last step to its next, a step
+/// `step` seconds long: its time this step less what's left of the step at
+/// its rate, none before 0. Oldest first, so a later one lies over it.
+pub(crate) fn script_clips<'p>(
+    world: &ScriptWorld,
+    hero: Entity,
+    palette: &'p Palette,
+    (alpha, step): (f32, f64),
+) -> Vec<(&'p Clip, f64)> {
+    let back = f64::from(1.0 - alpha) * step;
+    hero_scripts::playing_on(world, hero.to_bits())
+        .into_iter()
+        .filter_map(|(slot, time, rate)| {
+            let clip = palette.clip(u16::try_from(slot).ok()?)?;
+            let at = (f64::from(time) - back * f64::from(rate) * 0.01).max(0.0);
+            Some((clip, at))
+        })
+        .collect()
 }
 
 /// Each clip of his locomotion as drawn `alpha` of the way from its last
@@ -1053,7 +1154,12 @@ mod tests {
         app.add_message::<Redrawn>()
             .add_message::<PortalChanged>()
             .add_plugins((bevy::input::InputPlugin, crate::input::InputRouter))
-            .add_plugins((LevelPlugin, SeamPlugin, PlayPlugin))
+            .add_plugins((
+                LevelPlugin,
+                SeamPlugin,
+                PlayPlugin,
+                crate::hero_scripts::HeroScriptsPlugin,
+            ))
             .init_resource::<IntroQueue>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
                 1.0 / 60.0,
@@ -1104,9 +1210,10 @@ mod tests {
         while !done(app) {
             assert!(
                 Instant::now() < deadline,
-                "{what}: still {:?}, the level {}, the hero's model {:?}",
+                "{what}: still {:?}, the level {} ({:?}), the hero's model {:?}",
                 mode(app),
                 level_state(app),
+                app.world().resource::<Level>().report().reason,
                 hero_model(app)
             );
             app.update();
@@ -1256,6 +1363,391 @@ mod tests {
                 .all(|w| *w == guacamole::character::LIGHTS_IN_WORLD),
             "{frames:?}"
         );
+    }
+
+    /// AH.24's extract beside [`play_app`]'s: the synthetic script part
+    /// (its attack), Eruptor's palette with his arrival's slot, the throw's
+    /// and the second attack's on the made-up skeleton, and the spawn part
+    /// holding the ball's model.
+    fn write_attack_parts(dir: &std::path::Path) {
+        use guac_formats::script::builder::{
+            ATTACK_ARRIVAL_SLOT, ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
+        };
+        use guac_ir::palette::{PaletteSlot, SlotEntry};
+        crate::hero_scripts::tests::write_attack(dir);
+        let side = hero_side("009_Eruptor");
+        let walk = side.locomotion.walk.unwrap().clip;
+        let clip = |name: &str, duration: f32| Clip {
+            name: name.into(),
+            duration,
+            ..walk.clone()
+        };
+        let palette = Palette {
+            identity: crate::turntable::tests::identity(),
+            owner: "009_Eruptor".into(),
+            slots: 40,
+            entries: vec![
+                PaletteSlot {
+                    slot: ATTACK_ARRIVAL_SLOT as u16,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip("MadeUp_Arrival.ma", 0.1),
+                    },
+                },
+                PaletteSlot {
+                    slot: ATTACK_THROW_SLOT as u16,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: true,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip("MadeUp_Throw.ma", 0.5),
+                    },
+                },
+                PaletteSlot {
+                    slot: ATTACK_SECOND_SLOT as u16,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip("MadeUp_Eruption.ma", 2.0),
+                    },
+                },
+            ],
+            refused: Vec::new(),
+        };
+        let rel = IrFormat::Ron.palette_path("009_Eruptor");
+        std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(rel), guac_ir::to_ron(&palette).unwrap()).unwrap();
+        let key = guacamole::census::SPAWNS[0].key(false).unwrap();
+        let material = guacamole::census::material_for(&key);
+        // Its textures, one 4x4 BC1 block of one colour each: built here.
+        let ktx2 = guac_formats::texture::Texture {
+            format: guac_formats::texture::Format::Bc1RgbaUnorm,
+            width: 4,
+            height: 4,
+            levels: vec![vec![0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0]],
+        }
+        .to_ktx2();
+        for t in &material.textures {
+            let path = dir.join(&t.texture);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &ktx2).unwrap();
+        }
+        let mut segment = key.mesh.triangle(0);
+        segment.positions = vec![[0.0, 0.0, 0.1], [0.1, 0.0, 0.1], [0.0, 0.1, 0.1]];
+        for archive in guac_extract::scripts::spawn_archives() {
+            let props = if archive.contains("009_eruptor") {
+                vec![guac_ir::level::Prop {
+                    path: ATTACK_BALL_MODEL.into(),
+                    skeleton: None,
+                    materials: vec![guac_ir::level::LevelMaterial::Multi2(material.clone())],
+                    segments: vec![segment.clone()],
+                    idle: None,
+                }]
+            } else {
+                Vec::new()
+            };
+            let spawns = guac_ir::spawn::SpawnModels {
+                identity: crate::turntable::tests::identity(),
+                archive: archive.clone(),
+                props,
+                refused: Vec::new(),
+            };
+            let rel = IrFormat::Ron.spawn_path(&archive);
+            std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(rel), guac_ir::to_ron(&spawns).unwrap()).unwrap();
+        }
+    }
+
+    /// The hero's join, once he's in.
+    fn join(app: &App) -> Option<String> {
+        let e = app.world().resource::<Play>().hero()?;
+        app.world()
+            .entity(e)
+            .get::<HeroRun>()
+            .map(|r| r.join.name().to_owned())
+    }
+
+    /// The scripts' clones as entities: whether each draws, how many parts
+    /// hang under it, whether it's shown and whether an attack made it.
+    fn clones(app: &mut App) -> Vec<(bool, usize, Visibility, bool)> {
+        let mut q = app.world_mut().query::<(
+            &guacamole::scripts::ScriptClone,
+            Option<&crate::hero_scripts::CloneDrawn>,
+            Option<&Children>,
+            Option<&Visibility>,
+        )>();
+        q.iter(app.world())
+            .map(|(_, d, c, v)| {
+                (
+                    d.is_some_and(|d| d.draws),
+                    c.map_or(0, |c| c.len()),
+                    v.copied().unwrap_or(Visibility::Inherited),
+                    d.is_some_and(|d| d.attack),
+                )
+            })
+            .collect()
+    }
+
+    /// AH.24: Eruptor, his scripts in the level's part, throws on the
+    /// bottom button. His scripts join as he enters, his health and full
+    /// health then off them (the synthetic minion's 120 of 150) and his
+    /// figure's experience and gold off the placement, his helper drawn
+    /// and no attack's; the press starts his throw's clip on him (drawn
+    /// over his locomotion) and spawns the ball, drawn from the spawn
+    /// part's model and an attack's, which flies, lands on the floor and is
+    /// hidden once gone; held, he throws once; his second attack's
+    /// button starts its clip. Leaving the level installs the scripts again.
+    #[test]
+    fn eruptor_throws_from_his_scripts_on_the_bottom_button() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready"
+                && a.world()
+                    .contains_resource::<guacamole::scripts::ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let numbers = |app: &App| {
+            let e = app.world().resource::<Play>().hero().unwrap();
+            let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+            let rt = app.world().resource::<guacamole::scripts::ScriptRuntime>();
+            match run.join {
+                Join::Joined(m) => crate::hero_scripts::hero_numbers(&rt.vm, m),
+                _ => Default::default(),
+            }
+        };
+        let n = numbers(&app);
+        assert_eq!(
+            (n.health, n.health_max),
+            (
+                Some(guac_formats::script::builder::ATTACK_HEALTH),
+                Some(guac_formats::script::builder::ATTACK_HEALTH_MAX)
+            )
+        );
+        let throws = |app: &App| -> Vec<u32> {
+            let log = app.world().resource::<crate::hero_scripts::ScriptLog>();
+            log.since(0)
+                .iter()
+                .flat_map(|s| s.started.iter().map(|q| q.slot))
+                .collect()
+        };
+        let spawned = |app: &App| -> (usize, usize) {
+            let log = app.world().resource::<crate::hero_scripts::ScriptLog>();
+            let steps = log.since(0);
+            let count =
+                |f: fn(&crate::hero_scripts::ScriptStep) -> &Vec<crate::hero_scripts::Spawned>| {
+                    steps
+                        .iter()
+                        .flat_map(f)
+                        .filter(|c| c.name == guac_formats::script::builder::ATTACK_BALL)
+                        .count()
+                };
+            (count(|s| &s.spawned), count(|s| &s.gone))
+        };
+        assert_eq!(spawned(&app), (0, 0));
+        app.update();
+        assert_eq!(
+            clones(&mut app),
+            [(true, 1, Visibility::Inherited, false)],
+            "his helper, drawn, no attack's"
+        );
+        // One writer (design decision 5): his walk is his scripts', and the
+        // synthetic minion's walk nothing, so the stick moves him nowhere.
+        let still = hero(&app).pivot;
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(hero(&app).pivot, still, "the stick isn't his walk's writer");
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        app.update();
+        // Held: one throw, its clip on him and the ball drawn in flight.
+        test_pad::button(&mut app, pad, GamepadButton::South, true);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while spawned(&app).0 == 0 {
+            assert!(Instant::now() < deadline, "no ball");
+            app.update();
+        }
+        let throw = guac_formats::script::builder::ATTACK_THROW_SLOT as u32;
+        let arrival = guac_formats::script::builder::ATTACK_ARRIVAL_SLOT as u32;
+        assert_eq!(throws(&app), [arrival, throw]);
+        app.update();
+        let drawn: Vec<_> = clones(&mut app)
+            .into_iter()
+            .filter(|&(d, .., attack)| d && attack)
+            .collect();
+        assert_eq!(drawn.len(), 1, "{drawn:?}");
+        assert_eq!(drawn[0].1, 1, "the model's one segment under it");
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let world = app.world().resource::<ScriptWorld>();
+        assert_eq!(
+            crate::hero_scripts::playing_on(world, e.to_bits()).len(),
+            1,
+            "his throw plays on him"
+        );
+        // Drawn over his idle: the made-up throw holds the top joint at the
+        // walk clip's x, where his idle sways it between 0 and 0.5.
+        assert!((top_x(&app) - WALK_X).abs() < 1e-4, "{}", top_x(&app));
+        while spawned(&app).1 == 0 {
+            assert!(Instant::now() < deadline, "the ball never landed");
+            app.update();
+        }
+        app.update();
+        let hidden: Vec<_> = clones(&mut app)
+            .into_iter()
+            .filter(|(_, parts, v, _)| *parts == 0 && *v == Visibility::Hidden)
+            .collect();
+        assert!(!hidden.is_empty(), "gone, hidden");
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(spawned(&app), (1, 1), "held: one throw");
+        test_pad::button(&mut app, pad, GamepadButton::South, false);
+        // The second attack's button (a right shoulder): its clip.
+        test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+        for _ in 0..3 {
+            app.update();
+        }
+        let second = guac_formats::script::builder::ATTACK_SECOND_SLOT as u32;
+        assert_eq!(throws(&app), [arrival, throw, second]);
+        // Leaving the level installs the run again, from its start.
+        let steps = app
+            .world()
+            .resource::<guacamole::scripts::ScriptRuntime>()
+            .steps;
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        until(&mut app, "the portal again", |a| mode(a) == Mode::Portal);
+        app.update();
+        let after = app
+            .world()
+            .resource::<guacamole::scripts::ScriptRuntime>()
+            .steps;
+        assert!(after < steps, "{after} steps after leaving, {steps} before");
+    }
+
+    /// The review of AH.24: a hero whose scripts went off after joining (a
+    /// join that failed, his script stopped in play) walks on the stand-in
+    /// and his attack buttons do nothing, though his file's placements the
+    /// VM still ticks would throw on them: no clip, no clone.
+    #[test]
+    fn a_hero_whose_scripts_went_off_does_nothing_on_the_attack_buttons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready"
+                && a.world()
+                    .contains_resource::<guacamole::scripts::ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let e = app.world().resource::<Play>().hero().unwrap();
+        app.world_mut()
+            .entity_mut(e)
+            .get_mut::<HeroRun>()
+            .unwrap()
+            .join = Join::Off("the test put him on the stand-in".into());
+        app.world_mut()
+            .entity_mut(e)
+            .remove::<crate::hero::ScriptedHero>();
+        let log = |app: &App| {
+            let steps = app
+                .world()
+                .resource::<crate::hero_scripts::ScriptLog>()
+                .since(0);
+            let started = steps.iter().map(|s| s.started.len()).sum::<usize>();
+            let spawned = steps.iter().map(|s| s.spawned.len()).sum::<usize>();
+            (started, spawned)
+        };
+        let before = log(&app);
+        for button in [
+            GamepadButton::South,
+            GamepadButton::West,
+            GamepadButton::RightTrigger,
+        ] {
+            test_pad::press(&mut app, pad, button);
+            for _ in 0..10 {
+                app.update();
+            }
+        }
+        test_pad::button(&mut app, pad, GamepadButton::South, true);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert_eq!(log(&app), before, "no clip and no clone off");
+        assert_eq!(join(&app).as_deref(), Some("off"));
+    }
+
+    /// AH.24: a character whose attacks don't run (here no script part
+    /// linked) walks on the stand-in, and its attack buttons do nothing:
+    /// no join, no clip, no clone.
+    #[test]
+    fn a_character_whose_attacks_dont_run_does_nothing_on_the_attack_buttons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "walking", |a| mode(a) == Mode::Level);
+        assert_eq!(join(&app), None, "no scripts to join");
+        for button in [
+            GamepadButton::South,
+            GamepadButton::West,
+            GamepadButton::East,
+            GamepadButton::RightTrigger,
+            GamepadButton::LeftTrigger2,
+        ] {
+            test_pad::press(&mut app, pad, button);
+            for _ in 0..10 {
+                app.update();
+            }
+        }
+        assert!(clones(&mut app).is_empty());
+        assert!(
+            app.world()
+                .resource::<crate::hero_scripts::ScriptLog>()
+                .since(0)
+                .is_empty()
+        );
+        // The stick still walks him.
+        let from = hero(&app).pivot;
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(hero(&app).pivot.distance(from) > 1.0);
     }
 
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first

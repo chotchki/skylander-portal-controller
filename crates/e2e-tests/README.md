@@ -159,7 +159,28 @@ step's (`step`, the fixed clock's `time`, the `stick` and its
 `strength`, `speed_ft`, `run_share`, `weights`, `rates`, `clip`, `air`,
 `moving`, `held`)
 after `since` with the last step's number as `now`, and the test checks
-each step's run share is AG.11's of its speed. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
+each step's run share is AG.11's of its speed.
+`a_press_throws_from_his_scripts` (openspec AH.24) runs over
+`TestServer::spawn_guacamole_fighting`, the walking fixture with AH.24's
+synthetic attack as the script part (`guac_formats::script::builder::attack`,
+written with AH.13's graph writer, our numbers: a portal manager whose
+macros the join calls, the walker's definition and minion, and a ball
+whose script takes it off once it touches the level) and the walker's
+palette holding the throw's slot (20) and the second attack's (32): his
+scripts join as a posted pad takes him over (the mirror's `hero.scripts`
+`joined`, `health` 120 of `health_max` 150 off them, `experience` and `gold`
+0); `GET /api/_test/tv/scripts?since=<step>` (`scripts_tv`) hands out the
+scripts' run step by step after `since` (each step's `actions` read,
+`started` and `ended` clips on the hero, `spawned` and `gone` clones by
+their template's name and place) with the last step as `last`, and the
+test reads a press of South starting slot 20 and spawning
+`009_LavaProjectile`, taken off once it lands on the made-up floor; South
+held (`{"pad": 0, "hold": "south"}`, then `release`) throwing once, the
+input's `hero_actions` reading the first attack held; a right shoulder
+(`r1`) starting slot 32; and North starting nothing. The pad hook's
+`pulse` (`{"button": .., "presses": n}`, down a game step and up the next,
+n times) is the Mac run's every-other-frame press, not this test's.
+The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
 and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame
 log, `[ended_ms, took_ms, pipelines_compiled]` per frame after

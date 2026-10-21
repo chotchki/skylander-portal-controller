@@ -181,6 +181,22 @@ pub fn blended(model: &Model, clips: &[(&guac_ir::clip::Clip, f64, f64)]) -> Vec
         .collect()
 }
 
+/// [`blended`] with the clips `over` laid on top, each at its own time in
+/// seconds (openspec AH.24: what the hero's scripts play over his
+/// locomotion), through `guac-ir`'s [`guac_ir::model::Skeleton::blend_over`].
+pub fn blended_over(
+    model: &Model,
+    clips: &[(&guac_ir::clip::Clip, f64, f64)],
+    over: &[(&guac_ir::clip::Clip, f64)],
+) -> Vec<Transform> {
+    model
+        .skeleton
+        .blend_over(clips, over)
+        .iter()
+        .map(joint_transform)
+        .collect()
+}
+
 /// What [`spawn_character`] made.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpawnedCharacter {

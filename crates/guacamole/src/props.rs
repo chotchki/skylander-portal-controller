@@ -203,25 +203,55 @@ impl LevelProps {
     /// Every model's drawn part in one list, the models in order, their
     /// materials numbered across them, and each model's segments in it.
     pub fn drawn(&self) -> (Drawn, Vec<Range<usize>>) {
-        let mut all = Drawn::default();
-        let mut ranges = Vec::with_capacity(self.models.len());
-        for m in &self.models {
-            let from = all.segments.len();
-            all.append(m.drawn.clone());
-            ranges.push(from..all.segments.len());
-        }
-        (all, ranges)
+        models_drawn(&self.models)
     }
 
     /// Every key the props' models draw in `scene`, each once: what the
     /// warm compiles beside the level's.
     pub fn keys(&self, scene: &Scene) -> Result<Vec<WarmKey>, LevelError> {
-        let (drawn, _) = self.drawn();
-        Ok(level_scene::keys(&drawn, scene)?
-            .into_iter()
-            .map(|(k, _)| k)
-            .collect())
+        models_keys(&self.models, scene)
     }
+}
+
+/// The models the extract's spawn part holds for one archive (AH.22), as a
+/// prop draws its own (openspec AH.24: what a clone of a template naming
+/// one draws): each static model's tfbmulti2 segments on their materials,
+/// the other effects' left out as a level's are; a skinned one draws
+/// nothing here.
+pub fn spawn_models(spawns: &guac_ir::spawn::SpawnModels) -> Result<Vec<PropModel>, LevelError> {
+    spawns
+        .props
+        .iter()
+        .filter(|p| p.skeleton.is_none())
+        .map(|p| {
+            Ok(PropModel {
+                path: p.path.clone(),
+                drawn: model_drawn(p)?,
+            })
+        })
+        .collect()
+}
+
+/// `models` in one list, the models in order, their materials numbered
+/// across them, and each model's segments in it: as [`LevelProps::drawn`].
+pub fn models_drawn(models: &[PropModel]) -> (Drawn, Vec<Range<usize>>) {
+    let mut all = Drawn::default();
+    let mut ranges = Vec::with_capacity(models.len());
+    for m in models {
+        let from = all.segments.len();
+        all.append(m.drawn.clone());
+        ranges.push(from..all.segments.len());
+    }
+    (all, ranges)
+}
+
+/// Every key `models` draw in `scene`, each once.
+pub fn models_keys(models: &[PropModel], scene: &Scene) -> Result<Vec<WarmKey>, LevelError> {
+    let (drawn, _) = models_drawn(models);
+    Ok(level_scene::keys(&drawn, scene)?
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect())
 }
 
 /// A static prop's drawn part, as a scene's: its tfbmulti2 segments on

@@ -53,6 +53,19 @@ pub struct Tuning {
 }
 
 impl Tuning {
+    /// No walk of its own: what an actor the engine alone moves carries
+    /// ([`crate::hero::Hero::actor`]); nothing reads it there.
+    pub const NONE: Tuning = Tuning {
+        max_speed: 0.0,
+        push: 0.0,
+        let_go: 0.0,
+        air_let_go: 0.0,
+        turn_rate: 0.0,
+        gravity: 0.0,
+        terminal: 0.0,
+        width: 0.0,
+    };
+
     /// Eruptor in chapter 1 with no hat and no heroics: 21.5 ft/s, 160 ft/s²
     /// up, 80 down (50 in the air), 1440°/s (AG.8, AG.38, AG.39); 136.21 ft/s²
     /// off the ground (AG.10) to 120 ft/s (as read: no fall in reach is long

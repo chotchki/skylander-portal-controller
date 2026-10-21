@@ -14,6 +14,12 @@
 //! clips' weights, times and rates from the speed his step's walk read and
 //! his fall, which [`crate::play`] poses his model by.
 //!
+//! A hero whose own scripts run (AH.24, [`ScriptedHero`]; AH design decision
+//! 5, one writer) steps on the engine alone: his walk and his facing are
+//! what his scripts on the VM left, read before his step
+//! ([`crate::hero_scripts`]), and nothing here turns or pushes him. Any
+//! other walks on the stick by AG.16's controller, the stand-in.
+//!
 //! Ordering: Avian refits its trees for a moved kinematic body when its
 //! physics schedule runs (`FixedPostUpdate`), so a body moved in `FixedUpdate`
 //! before the hero's step would be met where it stood the step before, where
@@ -43,6 +49,7 @@ impl Plugin for HeroPlugin {
         app.insert_resource(Time::<Fixed>::from_hz(STEP_HZ))
             .add_plugins(TransformInterpolationPlugin::default())
             .init_resource::<HeroInput>()
+            .init_resource::<HeroActions>()
             .init_resource::<MovingSolids>()
             .add_systems(
                 FixedUpdate,
@@ -82,6 +89,43 @@ impl Default for HeroInput {
         Self(Input::stick(Stick::CENTRED, 0.0))
     }
 }
+
+/// The attacks the walking pad holds (AH.24, [`crate::pad::actions`]), and
+/// those pressed since a game step last read them, so a press shorter than
+/// a step (a display frame at over 60 a second, or a press and release
+/// inside one frame) still reaches the scripts as a press (pad-input's Every
+/// press counts).
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub(crate) struct HeroActions {
+    /// Held this frame.
+    pub(crate) held: [bool; 4],
+    /// Held or pressed since a step last read them.
+    latched: [bool; 4],
+}
+
+impl HeroActions {
+    /// A frame of the level's layer: the attacks held now and those whose
+    /// buttons went down.
+    pub(crate) fn frame(&mut self, held: [bool; 4], tapped: [bool; 4]) {
+        self.held = held;
+        for ((latched, held), tapped) in self.latched.iter_mut().zip(held).zip(tapped) {
+            *latched |= held || tapped;
+        }
+    }
+
+    /// What a game step reads: each attack held now or pressed since a
+    /// step last read them; those kept for it are then let go.
+    pub(crate) fn take(&mut self) -> [bool; 4] {
+        let out = std::array::from_fn(|i| self.held[i] || self.latched[i]);
+        self.latched = [false; 4];
+        out
+    }
+}
+
+/// A hero whose own scripts run (AH.24): his step is the engine's alone, his
+/// walk and facing his scripts' (AH design decision 5, one writer).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScriptedHero;
 
 /// How fast each kinematic solid went over its last move, kept by whoever
 /// moves it ([`Surfaces`]).
@@ -184,21 +228,25 @@ fn step_heroes(
     moving: Res<MovingSolids>,
     time: Res<Time>,
     cameras: Query<&FollowCamera>,
-    mut heroes: Query<(&mut HeroBody, &mut Transform), Without<FollowCamera>>,
+    mut heroes: Query<(&mut HeroBody, &mut Transform, Has<ScriptedHero>), Without<FollowCamera>>,
 ) {
     let step = time.delta_secs();
     let mut input = input.0;
     if let Some(follow) = cameras.iter().next() {
         input.view_heading = follow.camera.view().heading();
     }
-    for (mut body, mut transform) in &mut heroes {
+    for (mut body, mut transform, scripted) in &mut heroes {
         let HeroBody {
             hero,
             exclude,
             before,
         } = &mut *body;
         *before = hero.pivot;
-        hero.step_among(&seam, &input, step, exclude, &moving.0);
+        if scripted {
+            hero.step_engine(&seam, step, exclude, &moving.0);
+        } else {
+            hero.step_among(&seam, &input, step, exclude, &moving.0);
+        }
         *transform = placed(hero);
     }
 }
@@ -806,6 +854,31 @@ mod tests {
         app.world_mut().resource_mut::<LevelPads>().hide();
         app.update();
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    }
+
+    /// AH.24: a step reads each attack held now or pressed since the step
+    /// before read them, so a press no step saw still reaches the next; a
+    /// held one every step; one let go before any step read it once.
+    #[test]
+    fn a_step_reads_each_press_once_and_each_hold_throughout() {
+        let mut a = HeroActions::default();
+        assert_eq!(a.take(), [false; 4]);
+        // Down a frame, up the next, no step between.
+        a.frame([true, false, false, false], [true, false, false, false]);
+        a.frame([false; 4], [false; 4]);
+        assert_eq!(a.take(), [true, false, false, false]);
+        assert_eq!(a.take(), [false; 4], "once");
+        // Tapped inside a frame: never held.
+        a.frame([false; 4], [false, true, false, false]);
+        assert_eq!(a.take(), [false, true, false, false]);
+        // Held across steps, two steps in one frame included.
+        a.frame([false, false, true, false], [false, false, true, false]);
+        assert_eq!(a.take(), [false, false, true, false]);
+        assert_eq!(a.take(), [false, false, true, false]);
+        a.frame([false, false, true, false], [false; 4]);
+        assert_eq!(a.take(), [false, false, true, false]);
+        a.frame([false; 4], [false; 4]);
+        assert_eq!(a.take(), [false; 4], "let go");
     }
 
     /// AG.16's Verify: the controller's open-ground and wall cases, each in

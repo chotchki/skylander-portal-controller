@@ -1854,6 +1854,110 @@ pub const HERO: &[Registered] = &[
     ),
 ];
 
+/// Every engine member chapter 1's first fight reaches past [`INIT_CHAIN`]'s
+/// and [`HERO`]'s (openspec AH.18): the four Chompies' script, Setup_001's
+/// controller, Norticus as far as the encounter reaches him, the level's
+/// enemy system and `global.bld`'s mover update over the fight.
+pub const CREATURES: &[Registered] = &[
+    // The host's: the engine's sets of placements asleep and taken off, and
+    // the actors whose solids touch one's.
+    m("actorinfo", "inactive", "SetVariant", "", 0.0, 0.0, Host),
+    m("actorinfo", "removed", "SetVariant", "", 0.0, 0.0, Host),
+    m(
+        "collisioninfo",
+        "contacts with me",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // Value cells: what's drawn (a hurt's tint, shadows, a cutscene's view)
+    // and what a sound or a cutscene the whitelist doesn't run reads.
+    m(
+        "placement",
+        "shadow receive",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "replace color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "replace color percentage",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "draw behind enabled",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m("actorinfo", "npcs", "SetVariant", "", 0.0, 0.0, Cell),
+    m(
+        "spriteinfo",
+        "replace color percentage",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "clonedsequence",
+        "parent",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "animationinfo",
+        "ambient",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "viewportinfo",
+        "view converter",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "viewportinfo",
+        "field of view",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        180.0,
+        Cell,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -1938,11 +2042,20 @@ mod tests {
                 );
             }
         }
+        // The fight's members are none of the earlier tables'.
+        for r in CREATURES {
+            assert!(
+                find(INIT_CHAIN, r.namespace, r.name).is_none(),
+                "{}",
+                r.path()
+            );
+            assert!(find(HERO, r.namespace, r.name).is_none(), "{}", r.path());
+        }
         let mut seen = HashSet::new();
         let hero = HERO
             .iter()
             .filter(|r| find(INIT_CHAIN, r.namespace, r.name).is_none());
-        for r in INIT_CHAIN.iter().chain(hero) {
+        for r in INIT_CHAIN.iter().chain(hero).chain(CREATURES) {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -1962,11 +2075,12 @@ mod tests {
         let mut members = Members::new();
         register(&mut members, INIT_CHAIN);
         register(&mut members, HERO);
+        register(&mut members, CREATURES);
         // The hero's entry wins where both tables name a member.
         let init = INIT_CHAIN
             .iter()
             .filter(|r| find(HERO, r.namespace, r.name).is_none());
-        for r in init.chain(HERO) {
+        for r in init.chain(HERO).chain(CREATURES) {
             assert_eq!(r.kind(), kind_of(r), "{}", r.path());
             let id = MemberId::named(r.namespace, r.name);
             match r.keeper {
@@ -1998,7 +2112,12 @@ mod tests {
                 && r.class == "EnumMeasurement"
                 && r.path() != "spriteinfo.blend mode"
         };
-        for r in INIT_CHAIN.iter().chain(HERO).filter(labelled) {
+        for r in INIT_CHAIN
+            .iter()
+            .chain(HERO)
+            .chain(CREATURES)
+            .filter(labelled)
+        {
             let n = r.units.split('|').count();
             assert_eq!(r.class, "EnumMeasurement", "{}", r.path());
             assert_eq!((r.min, r.max), (0.0, (n - 1) as f32), "{}", r.path());
@@ -2121,5 +2240,45 @@ mod tests {
         let layered = find(HERO, "animationinfo", "is layered").unwrap();
         assert_eq!(layered.spec().default, Value::Int(0));
         assert_eq!(layered.keeper, Keeper::Cell);
+    }
+
+    #[test]
+    fn the_fights_members_convert_by_their_units_and_range() {
+        // The engine's sets the host keeps read whole, never written.
+        for name in ["inactive", "removed"] {
+            let set = find(CREATURES, "actorinfo", name).unwrap();
+            assert_eq!((set.kind(), set.keeper), (Kind::Set, Keeper::Host));
+        }
+        let contacts = find(CREATURES, "collisioninfo", "contacts with me").unwrap();
+        assert_eq!(contacts.kind(), Kind::Set);
+        // A set the whitelist's scripts only name stands as a cell reading
+        // nothing, not a set.
+        let npcs = find(CREATURES, "actorinfo", "npcs").unwrap();
+        assert_eq!((npcs.kind(), npcs.keeper), (Kind::Reference, Keeper::Cell));
+        // A hurt's tint: a percent clamped at its top, a colour packed.
+        let tint = find(CREATURES, "actorinfo", "replace color percentage").unwrap();
+        assert_eq!(tint.units, "percent");
+        assert_eq!(
+            convert(&tint.spec(), Value::Int(250)),
+            Some(Value::Int(100))
+        );
+        let colour = find(CREATURES, "actorinfo", "replace color").unwrap();
+        assert_eq!(colour.kind(), Kind::Color);
+        assert_eq!(convert(&colour.spec(), Value::Int(3)), None);
+        // The camera's field of view in degrees, 0 to 180.
+        let fov = find(CREATURES, "viewportinfo", "field of view").unwrap();
+        assert_eq!(
+            convert(&fov.spec(), Value::Float(200.0)),
+            Some(Value::Float(180.0))
+        );
+        // A shadow's flag by its labels.
+        let shadow = find(CREATURES, "placement", "shadow receive").unwrap();
+        assert_eq!(label(&shadow, "true"), Some(Value::Int(1)));
+        // What a sequence came from and an ambient clip read nothing until
+        // written: references.
+        for (ns, name) in [("clonedsequence", "parent"), ("animationinfo", "ambient")] {
+            let r = find(CREATURES, ns, name).unwrap();
+            assert_eq!((r.kind(), r.spec().default), (Kind::Reference, Value::Null));
+        }
     }
 }

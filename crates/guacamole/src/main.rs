@@ -13,6 +13,7 @@ mod cli;
 mod driver;
 mod extraction;
 mod hero;
+mod hero_scripts;
 mod input;
 mod intro;
 mod intro_player;
@@ -407,7 +408,7 @@ fn run_tv(
             physics::SeamPlugin,
             play::PlayPlugin,
             progress::ProgressPlugin,
-            guacamole::scripts::ScriptPlugin,
+            hero_scripts::HeroScriptsPlugin,
         ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));

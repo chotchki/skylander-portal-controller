@@ -46,8 +46,8 @@ pub use level::{SceneInfo, SpatialNode, Transform, UserInfo};
 pub use material::{AlphaTextureUnitIdAttr, AttrList, TextureAttr2, TextureBindAttr2};
 pub use ops::{
     BRANCH_END, NO_OPERATOR, OpChangeMembership, OpCode, OpCodeList, OpDefineMacro, OpLoopValue,
-    OpMacroInterface, OpMacroParameter, OpUseMacro, RhsReferenceStack, RhsValueStack, ScriptInfo,
-    Stack, ValueRhsVariant, Variable,
+    OpMacroInterface, OpMacroParameter, OpParameter, OpUseMacro, RhsReferenceStack, RhsValueStack,
+    ScriptInfo, Stack, TagList, ValueRhsVariant, Variable,
 };
 pub use placement::{
     ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, BoneAttachInfo,
@@ -183,6 +183,10 @@ pub const TYPES: &[TypeDef] = &[
     def("ActorParameters", "ModelParameters", 0x4C),
     def("ActorWaypoint", "AbstractAttachNode", 0x38),
     def("ActorWaypointList", "ScriptObjectList", 0x18),
+    // A placement's tags (openspec AH.18): the variables its scripts find on
+    // it by name, each an `OpParameter` with its value.
+    def("ScriptVariantList", "ScriptObjectList", 0x1C),
+    def("TagList", "ScriptVariantList", 0x28),
     // The clip table; only AnimationInfo's own fields are read.
     def("ScriptObjectList", "igObjectList", 0x18),
     def("AnimationStack", "ScriptObjectList", 0x18),

@@ -3,7 +3,8 @@
 //! fresh figure of it carries, AE.23) and every key chapter 1 draws, read off
 //! `GUAC_GIANTS_DUMP` through the extractor's own readers (in memory, no
 //! extract written) and keyed by the TV's own derivation (the warm's for a
-//! card, the level loader's for chapter 1 and its props), equal to
+//! card, the level loader's for chapter 1, its props and what its scripts
+//! spawn), equal to
 //! `guacamole::census`'s tables. A table that drifts prints the rows the
 //! dump gives, in the table's syntax. And every character that walks
 //! (AG.21), drawn in the level as the hero, keys nothing the card tables
@@ -114,14 +115,37 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
     cards
 }
 
-/// What chapter 1 keys: its own segments', its props', how many materials
-/// they draw, and the scene the hero draws in there.
+/// What chapter 1 keys: its own segments', its props', what its scripts
+/// spawn, how many materials they draw, and the scene the hero draws in
+/// there.
 struct Chapter1 {
     keys: Vec<WarmKey>,
     props: Vec<WarmKey>,
+    spawns: Vec<WarmKey>,
     materials: usize,
     prop_models: usize,
+    spawn_models: usize,
     hero: Scene,
+}
+
+/// The spawn part's models (AH.22) off the dump through the extractor's own
+/// reader, every spawn archive's, a character's body left out, as the TV
+/// draws them (AH.24).
+fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
+    let usrdir = dump.join("PS3_GAME/USRDIR");
+    let mut out = Vec::new();
+    for archive in guac_extract::scripts::spawn_archives() {
+        let entry = guac_extract::scripts::entry(&usrdir, &archive)
+            .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let igz = Igz::parse(&entry).unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let body = guac_extract::scripts::body(&igz, &archive);
+        let read = guac_extract::scripts::spawn_models(&igz, &archive, identity(), body)
+            .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        out.extend(
+            guacamole::props::spawn_models(&read.ir).unwrap_or_else(|e| panic!("{archive}: {e}")),
+        );
+    }
+    out
 }
 
 /// Every key chapter 1 draws, as the level loader keys it (through its own
@@ -154,11 +178,14 @@ fn level_keys(dump: &Path) -> Chapter1 {
     let view = level_scene::view_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let props = LevelProps::new(&props, &placements).expect("chapter 1's props");
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
+    let spawned = spawn_models(dump);
     Chapter1 {
         keys: start.keys.into_iter().map(|(k, _)| k).collect(),
         props: props.keys(&view).expect("the props' keys"),
+        spawns: guacamole::props::models_keys(&spawned, &view).expect("the spawn models' keys"),
         materials: start.drawn.materials.len(),
         prop_models: props.models.len(),
+        spawn_models: spawned.len(),
         hero,
     }
 }
@@ -202,8 +229,10 @@ fn the_census_is_the_discs() {
     let Chapter1 {
         keys: level,
         props,
+        spawns,
         materials,
         prop_models,
+        spawn_models,
         hero: hero_scene,
     } = level_keys(&dump);
     let level_took = started.elapsed();
@@ -213,6 +242,20 @@ fn the_census_is_the_discs() {
         .filter(|k| !census::LEVEL.contains(&Row::of(k)))
         .copied()
         .collect();
+    // What the scripts spawn keys past the level's and its props' (AH.24).
+    let spawns_beyond: Vec<WarmKey> = spawns
+        .iter()
+        .filter(|k| {
+            let r = Row::of(k);
+            !census::LEVEL.contains(&r) && !census::LEVEL_PROPS.contains(&r)
+        })
+        .copied()
+        .collect();
+    eprintln!(
+        "what the scripts spawn: {} keys off {spawn_models} models, {} past the level's and its props'",
+        spawns.len(),
+        spawns_beyond.len()
+    );
     let started = Instant::now();
     let cards = card_keys(&dump, &hero_scene);
     let cards_took = started.elapsed();
@@ -240,6 +283,12 @@ fn the_census_is_the_discs() {
             "chapter 1's props",
             &props_beyond,
             census::LEVEL_PROPS,
+            false,
+        ),
+        check(
+            "what the scripts spawn",
+            &spawns_beyond,
+            census::SPAWNS,
             false,
         ),
     ];
@@ -296,5 +345,10 @@ fn the_census_is_the_discs() {
         (prop_models, props.len(), props_beyond.len()),
         (46, 41, 32),
         "chapter 1's props: the models that can stand, their keys, those past the level's"
+    );
+    assert_eq!(
+        (spawn_models, spawns.len(), spawns_beyond.len()),
+        (13, 10, 5),
+        "what the scripts spawn: the spawn part's models, their keys, those past the level's and its props'"
     );
 }

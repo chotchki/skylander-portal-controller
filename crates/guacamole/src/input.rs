@@ -32,7 +32,7 @@ use bevy::ui::{InteractionDisabled, Pressed};
 use bevy::ui_widgets::{Activate, Button};
 use tracing::{debug, info};
 
-use crate::hero::HeroInput;
+use crate::hero::{HeroActions, HeroInput};
 use crate::intro::{IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay};
 use crate::mirror::TvMirror;
@@ -357,6 +357,7 @@ fn route_input(
     mut visible: Option<ResMut<InputFocusVisible>>,
     mut level: ResMut<LevelPads>,
     hero: Option<ResMut<HeroInput>>,
+    actions: Option<ResMut<HeroActions>>,
     mut out: MessageWriter<TvInput>,
 ) {
     let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
@@ -391,6 +392,16 @@ fn route_input(
         }
         (_, None) => None,
     };
+    if let (Some(walked), Some(mut actions)) = (walked, actions) {
+        let next = {
+            let mut a = *actions;
+            a.frame(walked.actions(), walked.tapped());
+            a
+        };
+        if *actions != next {
+            *actions = next;
+        }
+    }
     if let (Some(walked), Some(mut hero)) = (walked, hero)
         && (hero.0.stick, hero.0.buttons) != (walked.stick, walked.buttons)
     {

@@ -769,6 +769,176 @@ fn west_erupts_43_steps_into_the_clip_for_1_867_s() {
     println!("load after: {}", load());
 }
 
+/// The pad at step `k` with action `n` (1 or 2) pressed every other step
+/// over [from, to): down on `from`, `from + 2`, ..., up between (AH.9's
+/// `lobs` and `erupts`, O4's schedule).
+fn pulsed(n: usize, from: u32, to: u32, k: u32) -> Pad {
+    let mut pad = Pad {
+        connected: true,
+        ..Pad::default()
+    };
+    pad.actions[n - 1] = (from..to).contains(&k) && (k - from).is_multiple_of(2);
+    pad
+}
+
+/// The steps each clip of `rate` on him started on and the steps each
+/// ended on (done or stopped after that step's engine frame), from step 0
+/// of `pads`.
+fn clip_steps(run: &mut Run, rate: f32, steps: u32, pads: impl Fn(u32) -> Pad) -> ClipSteps {
+    let mut out = ClipSteps::default();
+    let mut seen = run.world.sequences().len();
+    let mut playing: Vec<usize> = Vec::new();
+    let before = run.world.clones();
+    let mut clones: Vec<Handle> = Vec::new();
+    for k in 0..steps {
+        run.bench.pads[0] = pads(k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let sequences = run.world.sequences();
+        for (i, s) in sequences.iter().enumerate().skip(seen) {
+            if s.actor == HERO && s.rate == rate {
+                out.started.push(k);
+                playing.push(i);
+            }
+        }
+        seen = sequences.len();
+        playing.retain(|&i| {
+            let s = &sequences[i];
+            let over = s.done || s.stopped;
+            if over {
+                out.ended.push(k);
+            }
+            !over
+        });
+        for c in run.world.clones() {
+            if before.contains(&c) || clones.contains(&c) {
+                continue;
+            }
+            clones.push(c);
+            let name = run
+                .world
+                .actor(c)
+                .and_then(|a| a.template)
+                .and_then(|t| run.world.name_of(t))
+                .unwrap_or_default();
+            out.spawned.push((k, name));
+        }
+    }
+    out
+}
+
+#[derive(Debug, Default)]
+struct ClipSteps {
+    started: Vec<u32>,
+    ended: Vec<u32>,
+    /// Each clone made: the step and its template's name.
+    spawned: Vec<(u32, String)>,
+}
+
+/// AH.9's cadences, headless (the AH.24 review): South pressed every other
+/// step throws every 20 steps, hands in turn, each ball 4 steps into its
+/// throw (AH.9's `lobs`: 20 game frames apart in 41 of 50 gaps, 22 in the
+/// rest, never fewer; the ball 4 frames into the throw in all 60); West
+/// pressed every other step erupts again 59 to 61 steps after the last
+/// eruption's clip ended, its eruption 43 steps into the clip (AH.9's
+/// `erupts`: 59 or 61 frames after, 43 in all 30); held, each fires once
+/// (AH.7's 2 s of South, AH.9's `hold_west`).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
+    println!("load before: {}", load());
+    let hands = |run: &mut Run| {
+        let mut nodes = vec![Vec3::ZERO; 9];
+        nodes[7] = Vec3::new(0.6011, 0.7710, 1.4838);
+        nodes[8] = Vec3::new(-0.6011, 0.7710, 1.4838);
+        run.world.set_nodes(HERO, nodes);
+    };
+    let mut run = joined();
+    hands(&mut run);
+    let lobs = clip_steps(&mut run, 150.0, 300, |k| pulsed(1, 10, 130, k));
+    let gaps: Vec<u32> = lobs.started.windows(2).map(|w| w[1] - w[0]).collect();
+    let balls: Vec<u32> = lobs
+        .spawned
+        .iter()
+        .filter(|s| s.1 == "009_LavaProjectile")
+        .map(|s| s.0)
+        .collect();
+    let into: Vec<i64> = lobs
+        .started
+        .iter()
+        .map(|&t| {
+            balls
+                .iter()
+                .find(|&&b| b >= t)
+                .map_or(-1, |&b| (b - t) as i64)
+        })
+        .collect();
+    let slots: Vec<f32> = run
+        .world
+        .sequences()
+        .iter()
+        .filter(|s| s.actor == HERO && s.rate == 150.0)
+        .map(|s| s.length)
+        .collect();
+    println!(
+        "South every other step from step 10 to 130: throws at {:?}, gaps {gaps:?}, balls at \
+         {balls:?} ({into:?} into their throws), clip lengths {slots:?}",
+        lobs.started
+    );
+    assert_eq!(lobs.started.len(), 6, "six throws in the two seconds");
+    assert!(gaps.iter().all(|&g| g == 20 || g == 22), "{gaps:?}");
+    assert!(into.iter().all(|&i| i == 4), "{into:?}");
+    assert_eq!(balls.len(), lobs.started.len());
+
+    let mut run = joined();
+    hands(&mut run);
+    let erupts = clip_steps(&mut run, 140.0, 330, |k| pulsed(2, 10, 310, k));
+    let after: Vec<u32> = erupts
+        .started
+        .iter()
+        .skip(1)
+        .map(|&s| s - erupts.ended.iter().filter(|&&e| e < s).max().unwrap())
+        .collect();
+    let eruptions: Vec<u32> = erupts
+        .spawned
+        .iter()
+        .filter(|s| s.1 == "009_LavaAttack")
+        .map(|s| s.0)
+        .collect();
+    println!(
+        "West every other step from step 10 to 310: eruptions' clips at {:?}, ended {:?}, the next \
+         {after:?} steps after the last ended; eruptions at {eruptions:?}",
+        erupts.started, erupts.ended
+    );
+    assert_eq!(erupts.started.len(), 3, "three in five seconds");
+    assert!(after.iter().all(|&a| (59..=61).contains(&a)), "{after:?}");
+    for (s, e) in erupts.started.iter().zip(&eruptions) {
+        assert_eq!(e - s, 43, "the eruption 43 steps into its clip");
+    }
+
+    // Held: one of each.
+    let mut run = joined();
+    hands(&mut run);
+    let held = clip_steps(&mut run, 150.0, 140, |k| {
+        let mut pad = pulsed(1, 0, 0, k);
+        pad.actions[0] = (10..130).contains(&k);
+        pad
+    });
+    let mut run = joined();
+    hands(&mut run);
+    let held_west = clip_steps(&mut run, 140.0, 320, |k| {
+        let mut pad = pulsed(2, 0, 0, k);
+        pad.actions[1] = (10..310).contains(&k);
+        pad
+    });
+    println!(
+        "South held 2 s: throws at {:?}; West held 5 s: eruptions at {:?}",
+        held.started, held_west.started
+    );
+    assert_eq!(held.started.len(), 1);
+    assert_eq!(held_west.started.len(), 1);
+    println!("load after: {}", load());
+}
+
 /// hero-movement's Top speed and Turning with his scripts driving him on
 /// the parry twin's open ground, as AG.4's scenarios hold the stand-in to:
 /// 90 % of top speed 0.1167 s from his first move, 6.553 m a game second
@@ -1096,4 +1266,96 @@ fn probe_nodes() {
 
 fn bevy_quat(q: [f32; 4]) -> guac_motion::seam::Quat {
     guac_motion::seam::Quat::from_array(q)
+}
+
+/// A development probe (AH.24): what a South and a West press spawn, each
+/// clone's template with its script and model, and his health and his
+/// figure's data as his scripts hold them.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_spawns() {
+    let mut run = joined();
+    let minion = run.minion.unwrap();
+    let mut nodes = vec![Vec3::ZERO; 9];
+    nodes[7] = Vec3::new(0.6011, 0.7710, 1.4838);
+    nodes[8] = Vec3::new(-0.6011, 0.7710, 1.4838);
+    run.world.set_nodes(HERO, nodes);
+    for (name, v) in [
+        ("description", "creature info"),
+        ("my Minion Description", "player joined data"),
+    ] {
+        let d = run.vm.local(minion, name);
+        println!("local {name}: {d:?}");
+        if let Some(d) = d {
+            let f = run.vm.field(d, v);
+            println!("  .{v}: {f:?}");
+            if let Some(f) = f {
+                for (n, x) in run.vm.fields(f) {
+                    println!("    .{n} = {x:?} -> {:?}", run.vm.value(x));
+                }
+            }
+        }
+    }
+    let seen = press(&mut run, "a1@10,a2@100", 300);
+    for s in &seen {
+        let a = run.world.actor(s.handle).unwrap();
+        let t = a
+            .template
+            .and_then(|t| run.files.placed.iter().find(|p| p.obj == t));
+        println!(
+            "step {} {} script {:?} model {:?} flew {} gone {:?} scale {:?}",
+            s.step,
+            s.name,
+            t.and_then(|p| p.script.clone()),
+            t.and_then(|p| p.model.clone()),
+            s.flight.len(),
+            s.gone.map(|g| g.0),
+            a.scale
+        );
+    }
+    for p in run.files.placed.iter().filter(|p| p.obj.unit == ERUPTOR) {
+        println!(
+            "placement {} state {} script {:?} model {:?}",
+            p.name, p.activity_state, p.script, p.model
+        );
+    }
+    for (i, q) in run.world.sequences().iter().enumerate() {
+        println!(
+            "seq {i}: actor {:#x} len {} rate {} done {}",
+            q.actor, q.length, q.rate, q.done
+        );
+    }
+}
+
+/// A development probe (AH.24): the eruption's clones step by step after
+/// they spawn: where each is, its scale, what it hangs from, its velocity.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_eruption() {
+    let mut run = joined();
+    let before = run.world.clones();
+    for k in 0..200u32 {
+        run.bench.pads[0] = scripted("a2@5", k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        if !(48..=60).contains(&k) && k % 20 != 0 {
+            continue;
+        }
+        for c in run.world.clones() {
+            if before.contains(&c) {
+                continue;
+            }
+            let a = run.world.actor(c).unwrap();
+            let name = a
+                .template
+                .and_then(|t| run.world.name_of(t))
+                .unwrap_or_default();
+            if !name.starts_with("009_Lava") {
+                continue;
+            }
+            println!(
+                "step {k} {name} {c:#x} at {:?} scale {:?} angles {:?} attach {:?} v {:?} launched {} removed {}",
+                a.position, a.scale, a.angles, a.attach, a.velocity, a.launched, a.removed
+            );
+        }
+    }
 }

@@ -17,7 +17,11 @@
 //!   controller message until a press on any pad makes that pad the hero's.
 //!   Select and Home do nothing.
 //! - Face buttons by position: the walking pad's bottom, right, left and top
-//!   as the hero's input holds them, whatever is printed on them.
+//!   as the hero's input holds them, whatever is printed on them; with the
+//!   shoulders, the attacks his scripts read ([`actions`], AH.24: the bottom
+//!   position the first, the left and both right shoulders the second, the
+//!   right and both left shoulders the third, the top none), each press
+//!   kept until a game step has read it ([`crate::hero::HeroActions`]).
 //! - Prompts name the label printed on the pad in hand ([`labels`],
 //!   [`prompt`]): Xbox letters on a PC layout, Nintendo's on a Switch
 //!   layout, the button's position for any other. On macOS the pads come
@@ -100,6 +104,40 @@ impl Face {
     }
 }
 
+/// The shoulder buttons where they sit: the left and right bumpers (L1,
+/// R1), then the triggers under them (L2, R2), as Bevy names them.
+pub(crate) const SHOULDERS: [GamepadButton; 4] = [
+    GamepadButton::LeftTrigger,
+    GamepadButton::RightTrigger,
+    GamepadButton::LeftTrigger2,
+    GamepadButton::RightTrigger2,
+];
+
+/// Every button the hero reads: [`Face::ALL`]'s, then [`SHOULDERS`].
+pub(crate) const HERO_BUTTONS: [GamepadButton; 8] = [
+    GamepadButton::South,
+    GamepadButton::East,
+    GamepadButton::West,
+    GamepadButton::North,
+    GamepadButton::LeftTrigger,
+    GamepadButton::RightTrigger,
+    GamepadButton::LeftTrigger2,
+    GamepadButton::RightTrigger2,
+];
+
+/// The attacks the buttons fire, by position (pad-input's The face buttons
+/// attack, AH.7's and AH.41's table): the bottom face the first; the left
+/// face and both right shoulders the second; the right face and both left
+/// shoulders the third (Eruptor's Magma Ball, upgrade 4's); the top face
+/// none. `faces` in [`Face::ALL`]'s order, `shoulders` in [`SHOULDERS`]'.
+/// The top position raises no action here: which, if any, the original's
+/// engine reads it as (AH.8's cannon fires on it) isn't read yet.
+pub(crate) fn actions(faces: [bool; 4], shoulders: [bool; 4]) -> [bool; 4] {
+    let [south, east, west, _north] = faces;
+    let [l1, r1, l2, r2] = shoulders;
+    [south, west || r1 || r2, east || l1 || l2, false]
+}
+
 /// One pad's frame as the layer reads it.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PadFrame<Id> {
@@ -110,6 +148,8 @@ pub(crate) struct PadFrame<Id> {
     pub(crate) pressed: Vec<GamepadButton>,
     /// The face buttons held, in [`Face::ALL`]'s order.
     pub(crate) held: [bool; 4],
+    /// The shoulders held, in [`SHOULDERS`]' order.
+    pub(crate) shoulders: [bool; 4],
 }
 
 impl PadFrame<Entity> {
@@ -119,7 +159,21 @@ impl PadFrame<Entity> {
             stick: pad.left_stick(),
             pressed: pad.get_just_pressed().copied().collect(),
             held: Face::ALL.map(|f| pad.pressed(f.button())),
+            shoulders: SHOULDERS.map(|b| pad.pressed(b)),
         }
+    }
+}
+
+impl<Id> PadFrame<Id> {
+    /// The hero's buttons held, in [`HERO_BUTTONS`]' order.
+    fn hero_held(&self) -> [bool; 8] {
+        std::array::from_fn(|i| {
+            if i < 4 {
+                self.held[i]
+            } else {
+                self.shoulders[i - 4]
+            }
+        })
     }
 }
 
@@ -135,13 +189,32 @@ pub(crate) struct HeroPad {
     pub(crate) stick: Stick,
     /// The face buttons held, in [`Face::ALL`]'s order.
     pub(crate) buttons: [bool; 4],
+    /// The shoulders held, in [`SHOULDERS`]' order.
+    pub(crate) shoulders: [bool; 4],
+    /// The buttons that went down this frame, in [`HERO_BUTTONS`]' order:
+    /// a press and its release inside one frame shows here and nowhere else
+    /// (pad-input's Every press counts).
+    pub(crate) taps: [bool; 8],
 }
 
 impl HeroPad {
     pub(crate) const STILL: HeroPad = HeroPad {
         stick: Stick::CENTRED,
         buttons: [false; 4],
+        shoulders: [false; 4],
+        taps: [false; 8],
     };
+
+    /// The attacks held ([`actions`]).
+    pub(crate) fn actions(&self) -> [bool; 4] {
+        actions(self.buttons, self.shoulders)
+    }
+
+    /// The attacks whose buttons went down this frame.
+    pub(crate) fn tapped(&self) -> [bool; 4] {
+        let t = self.taps;
+        actions([t[0], t[1], t[2], t[3]], [t[4], t[5], t[6], t[7]])
+    }
 }
 
 /// Why the level waits.
@@ -160,10 +233,10 @@ pub(crate) struct Seat<Id> {
     walking: Option<Id>,
     pause: Option<Pause<Id>>,
     begun: bool,
-    /// The walking pad's faces still down from a press a layer took (the
-    /// resume, the take-over, an intro's skip): kept from the hero until
-    /// each is let go.
-    swallowed: [bool; 4],
+    /// The walking pad's buttons ([`HERO_BUTTONS`]) still down from a press
+    /// a layer took (the resume, the take-over, an intro's skip): kept from
+    /// the hero until each is let go.
+    swallowed: [bool; 8],
     /// What the hero read the frame before.
     last: HeroPad,
 }
@@ -175,7 +248,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
             walking: None,
             pause: None,
             begun: false,
-            swallowed: [false; 4],
+            swallowed: [false; 8],
             last: HeroPad::STILL,
         }
     }
@@ -199,6 +272,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
     /// frame were due before the press, and from the next none run.
     pub(crate) fn step(&mut self, pads: &[PadFrame<Id>]) -> HeroPad {
         let was_running = self.begun && self.pause.is_none();
+        let seated = self.walking;
         if !self.begun {
             self.begun = true;
             match pads.first() {
@@ -234,7 +308,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
                     info!(pad = ?pad.id, "the level carries on");
                     self.pause = None;
                     if let Some(walking) = self.walking_frame(pads) {
-                        self.swallowed = walking.held;
+                        self.swallowed = walking.hero_held();
                     }
                 }
             }
@@ -247,17 +321,31 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
         }
         let walking = self.walking_frame(pads).cloned();
         if let Some(walking) = &walking {
-            for (swallowed, held) in self.swallowed.iter_mut().zip(walking.held) {
+            for (swallowed, held) in self.swallowed.iter_mut().zip(walking.hero_held()) {
                 *swallowed &= held;
             }
         }
+        // A frame the layer took a press in (the resume, the take-over)
+        // taps nothing of the hero's: that press was the layer's.
+        let took = !was_running || seated != self.walking;
         let out = match (self.pause, walking) {
-            (Some(_), _) if was_running => self.last,
-            (Some(_), _) | (None, None) => HeroPad::STILL,
-            (None, Some(walking)) => HeroPad {
-                stick: Stick::new(walking.stick.x, walking.stick.y),
-                buttons: std::array::from_fn(|i| walking.held[i] && !self.swallowed[i]),
+            (Some(_), _) if was_running => HeroPad {
+                taps: [false; 8],
+                ..self.last
             },
+            (Some(_), _) | (None, None) => HeroPad::STILL,
+            (None, Some(walking)) => {
+                let held = walking.hero_held();
+                let kept = |i: usize| held[i] && !self.swallowed[i];
+                HeroPad {
+                    stick: Stick::new(walking.stick.x, walking.stick.y),
+                    buttons: std::array::from_fn(kept),
+                    shoulders: std::array::from_fn(|i| kept(i + 4)),
+                    taps: std::array::from_fn(|i| {
+                        !took && !self.swallowed[i] && walking.pressed(HERO_BUTTONS[i])
+                    }),
+                }
+            }
         };
         self.last = out;
         out
@@ -268,7 +356,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
     /// go and pressed again.
     pub(crate) fn swallow(&mut self, pads: &[PadFrame<Id>]) {
         if let Some(walking) = self.walking_frame(pads) {
-            self.swallowed = walking.held;
+            self.swallowed = walking.hero_held();
         }
         self.last = HeroPad::STILL;
     }
@@ -276,7 +364,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
     fn take_seat(&mut self, pad: &PadFrame<Id>) {
         self.walking = Some(pad.id);
         self.pause = None;
-        self.swallowed = pad.held;
+        self.swallowed = pad.hero_held();
     }
 
     fn walking_frame<'a>(&self, pads: &'a [PadFrame<Id>]) -> Option<&'a PadFrame<Id>> {
@@ -534,6 +622,7 @@ mod tests {
             stick: Vec2::ZERO,
             pressed: Vec::new(),
             held: [false; 4],
+            shoulders: [false; 4],
         }
     }
 
@@ -548,6 +637,9 @@ mod tests {
         frame.pressed.push(button);
         if let Some(i) = Face::ALL.iter().position(|f| f.button() == button) {
             frame.held[i] = true;
+        }
+        if let Some(i) = SHOULDERS.iter().position(|b| *b == button) {
+            frame.shoulders[i] = true;
         }
         frame
     }
@@ -988,6 +1080,143 @@ mod tests {
             ),
             Prompt::Letter("B")
         );
+    }
+
+    /// AH.24's attack buttons by position, through the seat: the bottom
+    /// face the first attack; the left face and both right shoulders the
+    /// second; the right face and both left shoulders the third; the top
+    /// face none. Another pad's reach no one; a press the layer took
+    /// (the resume) stays off them until let go, as the faces do.
+    #[test]
+    fn the_attack_buttons_by_position() {
+        let mut seat = walking(&[pad(A), pad(B)]);
+        let hold = |button: GamepadButton| {
+            let mut f = pad(A);
+            if let Some(i) = Face::ALL.iter().position(|x| x.button() == button) {
+                f.held[i] = true;
+            }
+            if let Some(i) = SHOULDERS.iter().position(|b| *b == button) {
+                f.shoulders[i] = true;
+            }
+            f
+        };
+        for (button, want) in [
+            (GamepadButton::South, [true, false, false, false]),
+            (GamepadButton::West, [false, true, false, false]),
+            (GamepadButton::RightTrigger, [false, true, false, false]),
+            (GamepadButton::RightTrigger2, [false, true, false, false]),
+            (GamepadButton::East, [false, false, true, false]),
+            (GamepadButton::LeftTrigger, [false, false, true, false]),
+            (GamepadButton::LeftTrigger2, [false, false, true, false]),
+            (GamepadButton::North, [false; 4]),
+        ] {
+            let out = seat.step(&[hold(button), pad(B)]);
+            assert_eq!(out.actions(), want, "{button:?} held");
+            seat.step(&[pad(A), pad(B)]);
+            let out = seat.step(&[pressing(pad(A), button), pad(B)]);
+            assert_eq!(out.tapped(), want, "{button:?} going down");
+            let out = seat.step(&[pad(A), pad(B)]);
+            assert_eq!((out.actions(), out.tapped()), ([false; 4], [false; 4]));
+        }
+        // Another pad's buttons fire no one's attacks.
+        let all = SHOULDERS
+            .into_iter()
+            .chain(Face::ALL.map(Face::button))
+            .fold(pad(B), pressing);
+        let out = seat.step(&[pad(A), all]);
+        assert_eq!((out.actions(), out.tapped()), ([false; 4], [false; 4]));
+        // A tap inside a frame: down and up between two frames, never held.
+        let mut tap = pad(A);
+        tap.pressed.push(GamepadButton::RightTrigger);
+        let out = seat.step(&[tap, pad(B)]);
+        assert_eq!(
+            (out.actions(), out.tapped()),
+            ([false; 4], [false, true, false, false])
+        );
+        // The resume's press is the layer's: no attack, held or tapped.
+        seat.step(&[pressing(pad(A), GamepadButton::Start), pad(B)]);
+        let out = seat.step(&[pressing(pad(A), GamepadButton::South), pad(B)]);
+        assert_eq!(seat.pause(), None);
+        assert_eq!((out.actions(), out.tapped()), ([false; 4], [false; 4]));
+        let out = seat.step(&[hold(GamepadButton::South), pad(B)]);
+        assert_eq!(out.actions(), [false; 4], "swallowed until let go");
+        // A resume tapped inside a frame (down and up, never held) is the
+        // layer's too, though nothing's left held to swallow.
+        seat.step(&[pad(A), pad(B)]);
+        seat.step(&[pressing(pad(A), GamepadButton::Start), pad(B)]);
+        let mut tap = pad(A);
+        tap.pressed.push(GamepadButton::South);
+        let out = seat.step(&[tap, pad(B)]);
+        assert_eq!(seat.pause(), None);
+        assert_eq!(out.tapped(), [false; 4], "the resume's tap");
+    }
+
+    /// AH.24's attack buttons on both 8BitDo variants through the router,
+    /// each its pad's letters read off it as GameController names them: the
+    /// PC variant's (A at the bottom) and the Switch variant's (B at the
+    /// bottom) give the same attacks by position, each press reaching a game
+    /// step however short (pad-input's Every press counts).
+    #[test]
+    fn the_attack_buttons_by_position_on_both_8bitdo_layouts() {
+        use crate::hero::HeroActions;
+        let letters = |s: &str| {
+            let mut c = s.chars();
+            [(); 4].map(|_| c.next())
+        };
+        for (variant, faces, want_labels) in [
+            ("PC", letters("ABXY"), Labels::Xbox),
+            ("Switch", letters("BAYX"), Labels::Nintendo),
+        ] {
+            let mut app = App::new();
+            app.add_plugins((
+                MinimalPlugins,
+                bevy::input::InputPlugin,
+                crate::input::InputRouter,
+            ))
+            .init_resource::<HeroActions>();
+            let id = test_pad::connect(&mut app, None, None);
+            app.world_mut().entity_mut(id).insert(FacesPrinted(faces));
+            app.update();
+            app.world_mut().resource_mut::<LevelPads>().show();
+            app.update();
+            let printed = app.world().get::<FacesPrinted>(id).copied();
+            let gamepad = app.world().get::<Gamepad>(id).unwrap();
+            assert_eq!(labels(gamepad, printed.as_ref()), want_labels, "{variant}");
+            let take = |app: &mut App| app.world_mut().resource_mut::<HeroActions>().take();
+            take(&mut app);
+            for (button, want) in [
+                (GamepadButton::South, [true, false, false, false]),
+                (GamepadButton::West, [false, true, false, false]),
+                (GamepadButton::RightTrigger, [false, true, false, false]),
+                (GamepadButton::RightTrigger2, [false, true, false, false]),
+                (GamepadButton::East, [false, false, true, false]),
+                (GamepadButton::LeftTrigger, [false, false, true, false]),
+                (GamepadButton::LeftTrigger2, [false, false, true, false]),
+                (GamepadButton::North, [false; 4]),
+            ] {
+                // Down for a frame no step reads, up the next: the step
+                // after still reads it once.
+                test_pad::press(&mut app, id, button);
+                app.update();
+                assert_eq!(take(&mut app), want, "{variant} {button:?}");
+                assert_eq!(take(&mut app), [false; 4], "{variant} {button:?}, once");
+                // Down and up inside one frame: a press all the same.
+                test_pad::button(&mut app, id, button, true);
+                test_pad::button(&mut app, id, button, false);
+                app.update();
+                assert_eq!(take(&mut app), want, "{variant} {button:?} tapped");
+            }
+            // Held: every step after a frame reads it while it's down (the
+            // TV's order: the layer in the frame, then its steps).
+            test_pad::button(&mut app, id, GamepadButton::South, true);
+            for _ in 0..3 {
+                app.update();
+                assert_eq!(take(&mut app), [true, false, false, false]);
+            }
+            test_pad::button(&mut app, id, GamepadButton::South, false);
+            app.update();
+            assert_eq!(take(&mut app), [false; 4], "let go");
+        }
     }
 
     /// GameController's pads (AG.53) through the router, on a fake of the

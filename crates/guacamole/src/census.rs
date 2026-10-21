@@ -1,7 +1,8 @@
 //! The pipelines the TV draws Giants 01.00 with, as numbers (openspec AE.25,
 //! AG.43): every key the roster's figures draw on a card (AE.5's census of
 //! the character models, with what each carries fresh since AE.23) and
-//! every key chapter 1 draws (AG.19's) with its props (AG.25's), so a first
+//! every key chapter 1 draws (AG.19's) with its props (AG.25's) and what its
+//! scripts spawn (AH.24's), so a first
 //! start can compile them before any extraction, when nothing of the disc
 //! is read yet.
 //!
@@ -11,7 +12,7 @@
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
 //! static parts they carry) and its chapter 1 another 55, its props 32
-//! more. So the tables
+//! more, what its scripts spawn 5 more. So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on
 //! `GUAC_GIANTS_DUMP`) holds them equal to what the extractor's readers and
@@ -279,6 +280,20 @@ pub const LEVEL_PROPS: &[Row] = &[
     row(0x0c3d, 0x343d, O, true, false, false, 2, true, true),
 ];
 
+/// Every key what the fight's scripts spawn draws (AH.24) that [`LEVEL`]
+/// and [`LEVEL_PROPS`] don't hold: the models the extract's spawn part
+/// holds for `global.bld` and each fighter's archive (AH.22; Eruptor's ball,
+/// its splash and his eruption's blobs among them, `global.bld`'s all
+/// refused until AH.39), in the level's scene at AF's fresh state, each
+/// once.
+pub const SPAWNS: &[Row] = &[
+    row(0x0c00, 0x2400, O, true, false, false, 1, true, false),
+    row(0x0c00, 0x2400, A, true, false, false, 1, true, false),
+    row(0x0c00, 0x2400, ADD, false, false, false, 1, true, false),
+    row(0x0c00, 0x3400, A, false, false, false, 1, true, true),
+    row(0x0c01, 0x3401, O, true, false, false, 2, true, true),
+];
+
 /// Every key the 01.00 roster's figures draw on a card on a static mesh
 /// (the turntable's scene), each once: the unskinned parts they carry
 /// fresh (AE.23), each drawn under its bone or its parent part.
@@ -317,11 +332,12 @@ pub fn turntable_keys() -> Vec<WarmKey> {
     out
 }
 
-/// [`LEVEL`]'s keys, then [`LEVEL_PROPS`]'s: a level's segments and its
-/// props' are static.
+/// [`LEVEL`]'s keys, then [`LEVEL_PROPS`]' and [`SPAWNS`]': a level's
+/// segments, its props' and what its scripts spawn are static.
 pub fn level_keys() -> Vec<WarmKey> {
     let mut out = keys(LEVEL, false);
     out.extend(keys(LEVEL_PROPS, false));
+    out.extend(keys(SPAWNS, false));
     out
 }
 
@@ -447,6 +463,7 @@ mod tests {
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 55),
             (LEVEL_PROPS, false, 32),
+            (SPAWNS, false, 5),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -463,12 +480,15 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 32);
+        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 5);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()
         );
-        assert_eq!(level_keys().len(), LEVEL.len() + LEVEL_PROPS.len());
+        assert_eq!(
+            level_keys().len(),
+            LEVEL.len() + LEVEL_PROPS.len() + SPAWNS.len()
+        );
     }
 
     /// The tables as the scenes they were counted in draw them: the cards'

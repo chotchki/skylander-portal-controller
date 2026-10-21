@@ -283,9 +283,12 @@ pub struct OpCall {
     pub operands: Vec<(&'static str, Option<Value>)>,
     /// Each enum field by registry name (`_combineMode`, `_dir`, `_filter`).
     pub words: Vec<(&'static str, u32)>,
+    /// Each operand that reads as a set, its members in order (a path of
+    /// waypoints, the targets a field of view looks for).
+    pub sets: Vec<(&'static str, Vec<Value>)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Answer {
     /// The op ran; a branch op's block is skipped.
     Done,
@@ -299,6 +302,10 @@ pub enum Answer {
     /// The op found no target: a branch op skips its block, any other does
     /// nothing.
     Skip,
+    /// A branch op's targets (a field-of-view check's, nearest first): with
+    /// any, the block runs and the op reads as a set of them on a path; with
+    /// none, it skips.
+    Found(Vec<Value>),
 }
 
 /// The engine, as the VM reaches it.

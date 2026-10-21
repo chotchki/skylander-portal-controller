@@ -582,3 +582,155 @@ fn lists_that_share_their_words_stop_at_the_entry_budget() {
     assert_eq!(e.field, "_count");
     assert!(matches!(e.kind, ErrorKind::OutOfRange { .. }), "{e}");
 }
+
+/// AH.24's synthetic attack reads back through the graph and the
+/// placements' reader: its global's portal manager running its script, the
+/// fighter's definition running and his minion and the ball templates, each
+/// under the script names the TV's whitelist runs, the ball and the helper
+/// (no script) naming their model; its init setup a file of one script and
+/// no placement.
+#[test]
+fn the_synthetic_attack_reads_back() {
+    use super::builder::{ATTACK_BALL, ATTACK_BALL_MODEL, ATTACK_HELPER, attack};
+    use crate::level::Placements;
+    let a = attack();
+    let scripts = |bytes: &[u8]| -> Vec<String> {
+        let igz = Igz::parse(bytes).unwrap();
+        Graph::read(&igz)
+            .unwrap()
+            .scripts
+            .iter()
+            .map(|s| {
+                s.name
+                    .unwrap_or_default()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    };
+    assert_eq!(scripts(&a.global), ["Spyro_PortalManager.ai"]);
+    assert_eq!(scripts(&a.init_setup), ["Init_Setup_Synthetic.ai"]);
+    let mut fighter = scripts(&a.fighter);
+    fighter.sort();
+    assert_eq!(
+        fighter,
+        ["009_Def_Eruptor.ai", "009_Eruptor.ai", "009_MagmaBall.ai"]
+    );
+    let placed = |bytes: &[u8]| -> Vec<(String, u32, String, Option<String>)> {
+        let igz = Igz::parse(bytes).unwrap();
+        let p = Placements::read(&igz).unwrap();
+        p.actors
+            .iter()
+            .map(|a| {
+                (
+                    a.name().unwrap_or_default().to_owned(),
+                    a.placement().placement.activity_state,
+                    a.script
+                        .unwrap_or_default()
+                        .rsplit('/')
+                        .next()
+                        .unwrap()
+                        .to_owned(),
+                    p.model_path(a).map(str::to_owned),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        placed(&a.global),
+        [(
+            "Spyro_PortalManager".to_owned(),
+            4,
+            "Spyro_PortalManager.ai".to_owned(),
+            None
+        )]
+    );
+    assert!(placed(&a.init_setup).is_empty());
+    let mut fighter = placed(&a.fighter);
+    fighter.sort();
+    assert_eq!(
+        fighter,
+        [
+            (
+                "009_Eruptor".to_owned(),
+                5,
+                "009_Eruptor.ai".to_owned(),
+                None
+            ),
+            (
+                "009_Eruptor_Def".to_owned(),
+                4,
+                "009_Def_Eruptor.ai".to_owned(),
+                None
+            ),
+            (
+                ATTACK_HELPER.to_owned(),
+                5,
+                String::new(),
+                Some(ATTACK_BALL_MODEL.to_owned())
+            ),
+            (
+                ATTACK_BALL.to_owned(),
+                5,
+                "009_MagmaBall.ai".to_owned(),
+                Some(ATTACK_BALL_MODEL.to_owned())
+            ),
+        ]
+    );
+}
+
+/// A placement's tags (openspec AH.18): its `_tagList` a `TagList` whose
+/// `_initialTags` hold each `OpParameter`, read back field for field, the
+/// list's own elements empty as level files hold them.
+#[test]
+fn a_placements_tags_read_back_field_for_field() {
+    use crate::igz::layouts::{Layout, ObjectRef, OpParameter, TagList};
+    let mut b = IgzBuilder::new();
+    let (placement, values) = {
+        let mut w = Writer::new(&mut b);
+        let placement = w.b.object(0, "tfbActorInfo", 0xF8);
+        let thirty = w.int(30);
+        let fifty = w.int(50);
+        w.tags(
+            placement,
+            &[
+                (
+                    "notice player radius",
+                    "ValueInfo",
+                    "IntMeasurement",
+                    thirty,
+                ),
+                ("communicate range", "ValueInfo", "IntMeasurement", fifty),
+            ],
+        );
+        (placement, [thirty, fifty])
+    };
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let p = index(&igz, placement);
+    let at = igz.objects()[p].field(0x18).unwrap();
+    let crate::igz::Ref::Object(t) = igz.reference(at, "_tagList").unwrap() else {
+        panic!("no tag list");
+    };
+    let list = TagList::read(&igz, t).unwrap();
+    assert_eq!(list.list.count, 0, "the list's own elements are run-time");
+    assert_eq!(list.initial_tags.count, 2);
+    assert_eq!(list.tags, Vec::<usize>::new());
+    let read: Vec<(Option<&str>, ObjectRef<'_>)> = list
+        .initial
+        .iter()
+        .map(|&k| {
+            let tag = OpParameter::read(&igz, k).unwrap();
+            assert_eq!(tag.var.index, -1);
+            (tag.var.name, tag.rhs)
+        })
+        .collect();
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[0].0, Some("notice player radius"));
+    assert_eq!(read[1].0, Some("communicate range"));
+    for ((_, rhs), v) in read.iter().zip(values) {
+        assert_eq!(*rhs, ObjectRef::Object(index(&igz, v)));
+    }
+}

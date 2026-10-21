@@ -149,6 +149,16 @@ impl TestServer {
         Self::spawn_guacamole_over(tmp, &dumps, &env)
     }
 
+    /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level and
+    /// fights on its scripts (openspec AH.24): AH.24's synthetic attack in
+    /// the script part ([`IntroFixture::build_fighting_in`]), no intros.
+    pub fn spawn_guacamole_fighting() -> Result<Self> {
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let fixture = IntroFixture::build_fighting_in(&tmp.path().join("giants"))?;
+        let (dumps, env) = (fixture.dumps.clone(), fixture.env());
+        Self::spawn_guacamole_over(tmp, &dumps, &env)
+    }
+
     /// guacamole over `fixture`'s Giants dump and finished extract, the dump
     /// trusted through `GUAC_TEST_KNOWN_DUMP` (openspec AB.11).
     pub fn spawn_guacamole_with_intros(fixture: &IntroFixture) -> Result<Self> {
@@ -1507,7 +1517,23 @@ impl IntroFixture {
         Self::build_with(dir, intros, true)
     }
 
+    /// [`Self::build_walking_in`] with no intros and AH.24's synthetic
+    /// attack as the script part, the walker's palette holding its throw's
+    /// and its second attack's slots: [`E2E_WALKER`] fights on its scripts.
+    pub fn build_fighting_in(dir: &Path) -> Result<Self> {
+        Self::build_with_fight(dir, &[], true, true)
+    }
+
     fn build_with(dir: &Path, intros: &[FixtureIntro], walking: bool) -> Result<Self> {
+        Self::build_with_fight(dir, intros, walking, false)
+    }
+
+    fn build_with_fight(
+        dir: &Path,
+        intros: &[FixtureIntro],
+        walking: bool,
+        fighting: bool,
+    ) -> Result<Self> {
         use guac_extract::intros::{self, IrFormat};
         use guac_extract::known::KnownDump;
         use guac_extract::transcode::TARGET;
@@ -1559,9 +1585,9 @@ impl IntroFixture {
         intros::write(&mut opened.dir, &table, IrFormat::Ron)?;
         write_roster(&mut opened.dir, walking)?;
         write_progression(&mut opened.dir)?;
-        write_models(&mut opened.dir, walking)?;
+        write_models(&mut opened.dir, walking, fighting)?;
         write_level(&mut opened.dir)?;
-        write_scripts(&mut opened.dir)?;
+        write_scripts(&mut opened.dir, fighting)?;
 
         // Only the intros need ffmpeg.
         let ffmpeg = match intros {
@@ -1870,25 +1896,35 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
 
 /// How many scripts [`write_scripts`] and [`write_level`]'s entries link
 /// into (AH.22): the roster builder's portal manager and three Init_Setup
-/// scripts, and AH.13's creature as the fighter's and the level's.
+/// scripts, and AH.13's creature as the fighter's and the level's. AH.24's
+/// fighting fixture links six too: the attack's portal manager, its init
+/// setup's one, the fighter's three and the level's creature.
 pub const E2E_SCRIPTS: usize = 6;
 
 /// The fight's script data as the script stage leaves it (AH.22), both
 /// parts recorded: the roster builder's bootstrap, global and init_setup
-/// entries and AH.13's creature as the fighter's, built here, and spawn
-/// models of none.
-fn write_scripts(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+/// entries and AH.13's creature as the fighter's, built here, or with
+/// `fighting` AH.24's synthetic attack's global, init_setup and fighter's
+/// entries beside the roster's bootstrap; and spawn models of none.
+fn write_scripts(dir: &mut guac_extract::IdentityDir, fighting: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::scripts;
 
     let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
     let (creature, _) = guac_formats::script::builder::creature();
+    let attack = guac_formats::script::builder::attack();
+    let entries = if fighting {
+        [
+            &d.bootstrap,
+            &attack.global,
+            &attack.init_setup,
+            &attack.fighter,
+        ]
+    } else {
+        [&d.bootstrap, &d.global, &d.init_setup, &creature]
+    };
     let mut files = Vec::new();
-    for (archive, bytes) in
-        scripts::archives()
-            .iter()
-            .zip([&d.bootstrap, &d.global, &d.init_setup, &creature])
-    {
+    for (archive, bytes) in scripts::archives().iter().zip(entries) {
         let rel = scripts::script_path(archive);
         dir.write_output(&rel, bytes)?;
         files.push(rel);
@@ -1954,7 +1990,7 @@ const WALKING_LOAD: &str = "009_Eruptor";
 /// What the model stage leaves for [`E2E_MODELLED`] and [`E2E_DAMAGED`]: the
 /// first's model and texture, the second's model file cut short, and the
 /// rig. Every number made up here.
-fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()> {
+fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool, fighting: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_formats::texture::{Format, Texture};
     use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
@@ -2120,7 +2156,45 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
     };
     let palette_rel = ir.palette_path(&model.load_file);
     dir.write_output(&palette_rel, &ir.encode(&palette, dir, &palette_rel)?)?;
-    dir.record_part(guac_extract::models::PALETTES, vec![palette_rel])?;
+    let mut palettes = vec![palette_rel];
+    if fighting {
+        // The walker's (AH.24): the made-up idle in his arrival's slot at a
+        // tenth of a second, in the throw's at its half second and in the
+        // second attack's at two.
+        use guac_formats::script::builder::{
+            ATTACK_ARRIVAL_SLOT, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
+        };
+        let slot = |slot: i32, duration: f32| guac_ir::palette::PaletteSlot {
+            slot: slot as u16,
+            name: None,
+            label: None,
+            entry: guac_ir::palette::SlotEntry::Clip {
+                additive: false,
+                partial: false,
+                layered: false,
+                motion_extraction: 0,
+                clip: guac_ir::clip::Clip {
+                    duration,
+                    ..model.idle.clone()
+                },
+            },
+        };
+        let walker = guac_ir::palette::Palette {
+            identity: identity.clone(),
+            owner: WALKING_LOAD.into(),
+            slots: 40,
+            entries: vec![
+                slot(ATTACK_ARRIVAL_SLOT, 0.1),
+                slot(ATTACK_THROW_SLOT, 0.5),
+                slot(ATTACK_SECOND_SLOT, 2.0),
+            ],
+            refused: Vec::new(),
+        };
+        let rel = ir.palette_path(WALKING_LOAD);
+        dir.write_output(&rel, &ir.encode(&walker, dir, &rel)?)?;
+        palettes.push(rel);
+    }
+    dir.record_part(guac_extract::models::PALETTES, palettes)?;
     // The damaged one: the same file cut off halfway.
     let damaged = ir.model_path(&load_file(E2E_DAMAGED));
     dir.write_output(&damaged, &bytes[..bytes.len() / 2])?;
@@ -2239,6 +2313,19 @@ pub async fn gaits_tv(base: &str, since: u64) -> Result<serde_json::Value> {
         .await?;
     if !resp.status().is_success() {
         bail!("/api/_test/tv/gaits returned {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+/// The scripts' run step by step after step `since`
+/// (`/api/_test/tv/scripts`, openspec AH.24): `{"last": .., "steps": [..]}`.
+pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/_test/tv/scripts?since={since}"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/scripts returned {}", resp.status());
     }
     Ok(resp.json().await?)
 }
