@@ -33,8 +33,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{Projection, RenderTarget};
 use bevy::image::CompressedImageFormats;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
@@ -170,6 +170,44 @@ pub(crate) struct HeroReport {
     /// frame, metres, and the way he faces, degrees.
     pub position: Option<[f32; 3]>,
     pub heading: Option<f32>,
+    /// In the level: the camera it shows through, as drawn.
+    pub camera: Option<CameraReport>,
+}
+
+/// The level's camera as the TV draws it: its eased transform and its
+/// picture, so the rest pose can be read off the TV (gameplay-camera's The
+/// camera starts behind the hero).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct CameraReport {
+    /// Where it stands, the level's frame, metres.
+    pub eye: [f32; 3],
+    /// The way it looks across the ground (degrees, 0 along +z and 90 along
+    /// +x, as his heading) and above level (degrees, negative down).
+    pub heading: f32,
+    pub pitch: f32,
+    /// The picture: its height in degrees, the near plane and the far clip
+    /// in metres.
+    pub fov_y: f32,
+    pub near: f32,
+    pub far: f32,
+}
+
+impl CameraReport {
+    /// `None` for a camera that isn't a perspective one.
+    pub(crate) fn of(transform: &Transform, projection: &Projection) -> Option<Self> {
+        let Projection::Perspective(p) = projection else {
+            return None;
+        };
+        let f = transform.forward();
+        Some(Self {
+            eye: transform.translation.to_array(),
+            heading: f.x.atan2(f.z).to_degrees().rem_euclid(360.0),
+            pitch: f.y.atan2(f.x.hypot(f.z)).to_degrees(),
+            fov_y: p.fov.to_degrees(),
+            near: p.near,
+            far: p.far,
+        })
+    }
 }
 
 impl Play {
@@ -188,14 +226,24 @@ impl Play {
         self.inside.as_ref().map(|i| i.hero)
     }
 
-    /// Who walks, or will once the level shows, and where he stands.
-    pub(crate) fn report(&self, bodies: &Query<&HeroBody>) -> Option<HeroReport> {
+    /// Who walks, or will once the level shows, where he stands and the
+    /// camera following him.
+    pub(crate) fn report(
+        &self,
+        bodies: &Query<&HeroBody>,
+        cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
+    ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
         let hero = self
             .inside
             .as_ref()
             .and_then(|i| bodies.get(i.hero).ok())
             .map(|b| &b.hero);
+        let camera = self
+            .inside
+            .as_ref()
+            .and_then(|i| cameras.get(i.camera).ok())
+            .and_then(|(t, p)| CameraReport::of(t, p));
         Some(HeroReport {
             slot: c.slot.as_u8() + 1,
             figure_id: c.placement.figure_id.as_str().to_owned(),
@@ -207,6 +255,7 @@ impl Play {
             },
             position: hero.map(|h| h.pivot.to_array()),
             heading: hero.map(|h| h.facing.rem_euclid(360.0)),
+            camera,
         })
     }
 }
@@ -905,6 +954,22 @@ mod tests {
         assert!((off - want).length() < 1e-4, "{off}");
         assert!((v.heading() - 15.0).abs() < 1e-4, "{}", v.heading());
         assert!((v.pitch() + 23.360138).abs() < 1e-4, "{}", v.pitch());
+        // The camera the TV draws through stands there too: its transform
+        // the eye looking at the aim, its picture camera 0's (53.96° top to
+        // bottom, 0.1 m to its 800 ft far clip).
+        let mut cameras = app
+            .world_mut()
+            .query_filtered::<(&Transform, &Projection), With<FollowCamera>>();
+        let (t, p) = cameras.single(app.world()).unwrap();
+        let drawn = CameraReport::of(t, p).expect("a perspective camera");
+        let off = Vec3::from_array(drawn.eye) - h.pivot;
+        assert!((off - want).length() < 1e-4, "{drawn:?}");
+        assert!((drawn.heading - 15.0).abs() < 1e-3, "{drawn:?}");
+        assert!((drawn.pitch + 23.360138).abs() < 1e-3, "{drawn:?}");
+        assert!((drawn.fov_y - 53.96).abs() < 1e-3, "{drawn:?}");
+        assert!((drawn.fov_y - v.fov_y).abs() < 1e-4, "{drawn:?}");
+        assert_eq!(drawn.near, guac_motion::camera::NEAR);
+        assert!((drawn.far - 243.84).abs() < 1e-4, "{drawn:?}");
         // Drawn: his model on him at his scale, its parts on the level's
         // layer, its idle posing the joints.
         let entity = app.world().resource::<Play>().hero().unwrap();
@@ -960,6 +1025,85 @@ mod tests {
             .resource_mut::<IntroQueue>()
             .apply(crate::intro::IntroEvent::Skip);
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    }
+
+    /// level-scene's The first character placed walks into the level: of
+    /// two figures that walk placed in one frame, the one placed first is
+    /// the hero, not the one in the lower slot nor the one placed last.
+    #[test]
+    fn the_first_placed_of_two_walkers_is_the_hero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
+        assert_eq!(c.slot.as_u8(), 2, "the first placed");
+    }
+
+    /// The start's pass holds the TV's screens (AE.25): while it runs the
+    /// level isn't entered, his model and the level ready or not; once it's
+    /// done he walks in.
+    #[test]
+    fn the_starts_pass_holds_the_level_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        app.insert_resource(Prepare::new(true));
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "his model", |a| hero_model(a) == Some("ready"));
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Portal, "the pass runs");
+        }
+        app.insert_resource(Prepare::new(false));
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    }
+
+    /// His idle loops on the TV's clock while he walks, and holds its start
+    /// under reduced motion.
+    #[test]
+    fn under_reduced_motion_his_idle_holds_its_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        let joints = |app: &App| -> Vec<Transform> {
+            let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
+            inside
+                .joints
+                .iter()
+                .map(|j| *app.world().entity(*j).get::<Transform>().unwrap())
+                .collect()
+        };
+        let model = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .model
+            .clone();
+        let n = joints(&app).len();
+        let at_start: Vec<Transform> = guacamole::character::mesh::pose(&model, 0.0)
+            .into_iter()
+            .take(n)
+            .collect();
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(mode(&app), Mode::Level, "walking: {pad:?}");
+        assert_ne!(joints(&app), at_start, "the idle plays");
+        app.insert_resource(ReducedMotion(true));
+        for _ in 0..20 {
+            app.update();
+            assert_eq!(joints(&app), at_start, "held at its start");
+        }
     }
 
     /// Taken off before the level shows, he never walks in; placed again,

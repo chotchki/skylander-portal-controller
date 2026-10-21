@@ -880,4 +880,33 @@ mod tests {
             assert_eq!(stick(&app), Vec2::new(x, y));
         }
     }
+
+    /// "The first pad connected" by when it connected, through the router:
+    /// the pad whose entity sorts first goes away and comes back (bevy_gilrs
+    /// keeps its entity), so it's behind the one that stayed, which walks.
+    #[test]
+    fn the_pad_connected_longest_walks_whatever_its_entity() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::input::InputPlugin,
+            crate::input::InputRouter,
+        ));
+        let one = test_pad::connect(&mut app, None, None);
+        app.update();
+        let two = test_pad::connect(&mut app, None, None);
+        app.update();
+        let (low, high) = (one.min(two), one.max(two));
+        test_pad::disconnect(&mut app, low);
+        app.update();
+        assert_eq!(app.world().resource::<LevelPads>().order(), [high]);
+        test_pad::reconnect(&mut app, low, None, None);
+        app.update();
+        app.update();
+        assert_eq!(app.world().resource::<LevelPads>().order(), [high, low]);
+        app.world_mut().resource_mut::<LevelPads>().show();
+        app.update();
+        let pads = app.world().resource::<LevelPads>();
+        assert_eq!(pads.seat().and_then(Seat::walking), Some(high));
+    }
 }

@@ -837,6 +837,20 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     );
     let above = at[1] - f64::from(E2E_FLOOR);
     assert!((above - 0.005).abs() < 1e-3, "{above} m above the floor");
+    // The camera the TV draws through, at camera 0's rest pose off his feet
+    // (gameplay-camera's The camera starts behind the hero).
+    let camera = &hero["camera"];
+    let eye = [0, 1, 2].map(|i| camera["eye"][i].as_f64().unwrap_or(f64::NAN));
+    let off = [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]];
+    for (got, want) in off.iter().zip([-3.679547, 8.883567, -13.732257]) {
+        assert!((got - want).abs() < 1e-3, "the eye off his feet: {camera}");
+    }
+    let num = |k: &str| camera[k].as_f64().unwrap_or(f64::NAN);
+    assert!((num("heading") - 15.0).abs() < 1e-3, "{camera}");
+    assert!((num("pitch") + 23.360138).abs() < 1e-3, "{camera}");
+    assert!((num("fov_y") - 53.96).abs() < 1e-3, "{camera}");
+    assert!((num("near") - 0.1).abs() < 1e-6, "{camera}");
+    assert!((num("far") - 243.84).abs() < 1e-3, "{camera}");
 
     // A press on a posted pad takes him over; its stick walks him.
     pad_tv(

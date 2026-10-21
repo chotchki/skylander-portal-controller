@@ -58,7 +58,8 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
         return pair(p.x, p.y);
     }
     // The material's index in its model plus one, which the lane puts in
-    // the uniform's spare word; 0 is the clear colour.
+    // `misc.w` (the colour pass's lights' frame, read by no probe); 0 is the
+    // clear colour.
     if probe == 1 {
         return pair(p.z, character.misc.w);
     }

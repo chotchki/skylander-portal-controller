@@ -1741,6 +1741,81 @@ pub(crate) mod tests {
         until(&mut app, &["ready"], |_| pipelines.compile_all());
     }
 
+    /// AG.21: the level's solids come and go with it. A new source's load
+    /// takes the old one's static bodies out of Avian's world, so the hero
+    /// never stands on a level that's gone.
+    #[test]
+    fn a_new_load_takes_the_old_levels_solids_with_it() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = write_level(a.path(), &lights());
+        let second = write_level(b.path(), &lights());
+        let mut app = level_app(a.path(), first, false);
+        until(&mut app, &["ready"], |_| {});
+        let bodies = |app: &mut App| {
+            let mut q = app.world_mut().query::<&crate::physics::SeamBody>();
+            q.iter(app.world()).count()
+        };
+        assert_eq!(bodies(&mut app), 1, "write_walk's one mesh");
+        assert_eq!(report(&app).triangles, 4);
+        let (tx, feed) = level_channel();
+        tx.send(second).unwrap();
+        app.insert_resource(feed);
+        app.update();
+        assert_eq!(state(&app), "reading");
+        assert_eq!(bodies(&mut app), 0, "the old level's gone");
+        until(&mut app, &["ready"], |_| {});
+        assert_eq!(bodies(&mut app), 1);
+    }
+
+    /// AG.21: the walk's collision and placements parts are held to the
+    /// dump and level as the drawn parts are, and a level without
+    /// `213_Init_Location`'s waypoint has no start.
+    #[test]
+    fn the_walks_parts_are_this_dumps_and_levels() {
+        use guac_ir::level::{Collision, Placements};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let path = |part| tmp.path().join(source.ir.level_path(LEVEL, part));
+        let collision: Collision =
+            guac_ir::from_ron(&std::fs::read_to_string(path(COLLISION)).unwrap()).unwrap();
+        let placements: Placements =
+            guac_ir::from_ron(&std::fs::read_to_string(path(PLACEMENTS)).unwrap()).unwrap();
+        let read = || read_level(&source, CompressedImageFormats::BC).err();
+        assert_eq!(read(), None);
+        let write = |part, ron: String| std::fs::write(path(part), ron).unwrap();
+
+        let mut other = collision.clone();
+        other.identity.manifest_hash = Sha256([9; 32]);
+        write(COLLISION, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the collision part is another dump's or level's")
+        );
+        let mut other = collision.clone();
+        other.level = "level_999".into();
+        write(COLLISION, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the collision part is another dump's or level's")
+        );
+        write(COLLISION, guac_ir::to_ron(&collision).unwrap());
+
+        let mut other = placements.clone();
+        other.identity.manifest_hash = Sha256([9; 32]);
+        write(PLACEMENTS, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the placements part is another dump's or level's")
+        );
+        let mut other = placements.clone();
+        other.actors[0].name = "213_Not_Init".into();
+        write(PLACEMENTS, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the level has no 213_Init_Location with a waypoint")
+        );
+    }
+
     fn asset<A: Asset>(n: u128) -> AssetId<A> {
         AssetId::Uuid {
             uuid: bevy::asset::uuid::Uuid::from_u128(n),

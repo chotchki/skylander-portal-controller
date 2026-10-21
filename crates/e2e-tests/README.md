@@ -140,9 +140,10 @@ enters the level), whose made-up chapter 1 is a floor ending at a wall
 `E2E_WALL` (6 m) ahead of `213_Init_Location`'s first waypoint
 (`E2E_START`). Placing him takes the TV into the level: the mirror's
 `mode` (`portal`, `level`, or `paused` while it waits) and `hero` (slot,
-figure, load file, his model's way to the level, and in it his `position`
-and `heading`) show him at the start facing 0°, settled 5 mm above the
-floor, waiting for a pad; a posted pad's press takes him over and its
+figure, load file, his model's way to the level, and in it his `position`,
+`heading` and the `camera` as drawn) show him at the start facing 0°,
+settled 5 mm above the floor, the camera at camera 0's rest pose off his
+feet, waiting for a pad; a posted pad's press takes him over and its
 stick walks him along the camera's 15° to the wall, which holds him 5 mm
 off. The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),

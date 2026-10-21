@@ -184,7 +184,7 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | level-scene | The start's fog and lights | AG.13 (its capture), AG.41 |
 | level-scene | Placed right after the pick | AG.21 (unit), AG.19 (the load time) |
 | level-scene | New scenery comes into view | AG.19, AG.21, AG.23, AG.42 (the first show) |
-| level-scene | The first time a Mac draws the level | AG.43 and AG.42 (AE.25's cold run), AG.44 |
+| level-scene | The first time a Mac draws the level | AG.43 and AG.42 (AE.25's cold run), AG.44 (offscreen), AG.52 (in a window) |
 | level-scene | Eruptor first | AG.21 (e2e) |
 | level-scene | An item first; Two characters before the start; A second kid places a character; The hero comes off with another waiting; An item mid-level; Swapping heroes; Three figures on the portal | AG.29 (unit and e2e, on AG.6's sessions) |
 | hero-movement | Forward at the start; Left at the start; From rest at the start | AG.16, AG.18 |
@@ -207,7 +207,8 @@ Every scenario AG's deltas add or modify, and the box whose test or recorded che
 | gameplay-camera | Forward after a switch | AG.28 |
 | gameplay-camera | Scenery in the way | AG.13 (its recordings), AG.17 |
 | pad-input | Two 8BitDo variants; The pause overlay on each 8BitDo; A second pad; The pad goes away | AG.20 (unit), AG.49 (the table's ids), AG.32 (chotchki's hands) |
-| pad-input | A stick resting off centre; Just past the dead zone; Full on both axes; Between the axes; A pad guacamole doesn't know; Pause and resume | AG.20 |
+| pad-input | A stick resting off centre; Just past the dead zone; A pad guacamole doesn't know; Pause and resume | AG.20 |
+| pad-input | Full on both axes; Between the axes | AG.20 (read as sent, a hypothesis), AG.49 (the corner against the measured gate) |
 | character-intros | A Giants character | AG.21, AG.29 |
 | character-intros | Placed while the level runs; Placed while the level is paused for a hero; Two placements back to back | AG.29 |
 | character-intros | Removed before its turn; Skipped with the controller; Placed during extraction | AB's tests, unchanged in behaviour; AG.20 (a skip over the level layer), AG.29 (the level case) |

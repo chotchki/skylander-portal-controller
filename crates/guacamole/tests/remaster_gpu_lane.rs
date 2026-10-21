@@ -430,8 +430,9 @@ impl From<&ProbeMaterial> for ProbeKey {
 }
 
 impl ProbeMaterial {
-    /// `m`'s probe `probe`, its uniform's spare word the material's index
-    /// plus one.
+    /// `m`'s probe `probe`, its uniform's `misc.w` the material's index plus
+    /// one. The colour pass reads that word as the lights' frame (AG.21);
+    /// no probe pass lights anything, so here it's free.
     fn new(m: &CharacterMaterial, index: usize, probe: u32) -> Self {
         let mut uniform = m.uniform;
         uniform.misc.w = (index + 1) as f32;

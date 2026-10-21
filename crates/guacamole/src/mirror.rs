@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::rejection::JsonRejection;
+use bevy::camera::Projection;
 use bevy::input::InputSystems;
 use bevy::input::gamepad::{
     GamepadButton, GamepadConnection, GamepadConnectionEvent, RawGamepadAxisChangedEvent,
@@ -28,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
-use crate::hero::HeroBody;
+use crate::hero::{FollowCamera, HeroBody};
 use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
@@ -721,7 +722,20 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos, turntables, plates, warm, level, prepare, play, heroes): (
+    (
+        queue,
+        player,
+        overlays,
+        videos,
+        turntables,
+        plates,
+        warm,
+        level,
+        prepare,
+        play,
+        heroes,
+        cameras,
+    ): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
@@ -733,6 +747,7 @@ fn mirror_tv(
         Option<Res<Prepare>>,
         Option<Res<Play>>,
         Query<&HeroBody>,
+        Query<(&Transform, &Projection), With<FollowCamera>>,
     ),
 ) {
     let Some(current) = current else {
@@ -865,7 +880,7 @@ fn mirror_tv(
         (Some(play), Some(level_pads)) => play.mode(level_pads),
         _ => Mode::Portal,
     };
-    let hero = play.as_deref().and_then(|p| p.report(&heroes));
+    let hero = play.as_deref().and_then(|p| p.report(&heroes, &cameras));
     let input = input_shot(intro.is_some(), pads, (&children, &texts, &images, &pips));
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
