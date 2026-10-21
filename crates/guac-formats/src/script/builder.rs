@@ -613,6 +613,8 @@ pub const ATTACK_SECOND_SLOT: i32 = 32;
 /// his pivot it starts (ft), its speed (ft/s), its pitch (degrees up) and
 /// the fall it takes (ft/s²).
 pub const ATTACK_BALL: &str = "009_LavaProjectile";
+/// The model the ball's template names: what a spawn part draws it with.
+pub const ATTACK_BALL_MODEL: &str = "C:/tfb/Content/Models/Objects/Synthetic_Ball.mdl";
 pub const ATTACK_BALL_RISE: f32 = 5.0;
 pub const ATTACK_BALL_SPEED: f32 = 40.0;
 pub const ATTACK_BALL_PITCH: f32 = 45.0;
@@ -978,6 +980,9 @@ fn attack_fighter() -> Vec<u8> {
     b.put_bytes(at(parameters, 0x0C), &movement);
     b.put_bytes(at(parameters, 0x48), &1.0f32.to_be_bytes());
     b.pointer(at(ball, 0xE0), parameters);
+    let model = b.object(0, "tfbPhysicsModel", 0x30);
+    crate::model::builder::info(&mut b, model, ATTACK_BALL_MODEL);
+    b.pointer(at(ball, 0xDC), model);
     // His minion: the throw and the second attack's clip on the presses.
     let minion_script = {
         let mut w = Writer::new(&mut b);

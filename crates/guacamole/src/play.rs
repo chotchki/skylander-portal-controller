@@ -1148,7 +1148,12 @@ mod tests {
         app.add_message::<Redrawn>()
             .add_message::<PortalChanged>()
             .add_plugins((bevy::input::InputPlugin, crate::input::InputRouter))
-            .add_plugins((LevelPlugin, SeamPlugin, PlayPlugin))
+            .add_plugins((
+                LevelPlugin,
+                SeamPlugin,
+                PlayPlugin,
+                crate::hero_scripts::HeroScriptsPlugin,
+            ))
             .init_resource::<IntroQueue>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
                 1.0 / 60.0,
@@ -1199,9 +1204,10 @@ mod tests {
         while !done(app) {
             assert!(
                 Instant::now() < deadline,
-                "{what}: still {:?}, the level {}, the hero's model {:?}",
+                "{what}: still {:?}, the level {} ({:?}), the hero's model {:?}",
                 mode(app),
                 level_state(app),
+                app.world().resource::<Level>().report().reason,
                 hero_model(app)
             );
             app.update();
@@ -1338,6 +1344,292 @@ mod tests {
                 .all(|w| *w == guacamole::character::LIGHTS_IN_WORLD),
             "{frames:?}"
         );
+    }
+
+    /// AH.24's extract beside [`play_app`]'s: the synthetic script part
+    /// (its attack), Eruptor's palette with the throw's slot and the second
+    /// attack's on the made-up skeleton, and the spawn part holding the
+    /// ball's model.
+    fn write_attack_parts(dir: &std::path::Path) {
+        use guac_formats::script::builder::{
+            ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
+        };
+        use guac_ir::palette::{PaletteSlot, SlotEntry};
+        crate::hero_scripts::tests::write_attack(dir);
+        let side = hero_side("009_Eruptor");
+        let walk = side.locomotion.walk.unwrap().clip;
+        let clip = |name: &str, duration: f32| Clip {
+            name: name.into(),
+            duration,
+            ..walk.clone()
+        };
+        let palette = Palette {
+            identity: crate::turntable::tests::identity(),
+            owner: "009_Eruptor".into(),
+            slots: 40,
+            entries: vec![
+                PaletteSlot {
+                    slot: ATTACK_THROW_SLOT as u16,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: true,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip("MadeUp_Throw.ma", 0.5),
+                    },
+                },
+                PaletteSlot {
+                    slot: ATTACK_SECOND_SLOT as u16,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip("MadeUp_Eruption.ma", 2.0),
+                    },
+                },
+            ],
+            refused: Vec::new(),
+        };
+        let rel = IrFormat::Ron.palette_path("009_Eruptor");
+        std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(rel), guac_ir::to_ron(&palette).unwrap()).unwrap();
+        let key = guacamole::census::SPAWNS[0].key(false).unwrap();
+        let material = guacamole::census::material_for(&key);
+        // Its textures, one 4x4 BC1 block of one colour each: built here.
+        let ktx2 = guac_formats::texture::Texture {
+            format: guac_formats::texture::Format::Bc1RgbaUnorm,
+            width: 4,
+            height: 4,
+            levels: vec![vec![0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0]],
+        }
+        .to_ktx2();
+        for t in &material.textures {
+            let path = dir.join(&t.texture);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &ktx2).unwrap();
+        }
+        let mut segment = key.mesh.triangle(0);
+        segment.positions = vec![[0.0, 0.0, 0.1], [0.1, 0.0, 0.1], [0.0, 0.1, 0.1]];
+        for archive in guac_extract::scripts::spawn_archives() {
+            let props = if archive.contains("009_eruptor") {
+                vec![guac_ir::level::Prop {
+                    path: ATTACK_BALL_MODEL.into(),
+                    skeleton: None,
+                    materials: vec![guac_ir::level::LevelMaterial::Multi2(material.clone())],
+                    segments: vec![segment.clone()],
+                    idle: None,
+                }]
+            } else {
+                Vec::new()
+            };
+            let spawns = guac_ir::spawn::SpawnModels {
+                identity: crate::turntable::tests::identity(),
+                archive: archive.clone(),
+                props,
+                refused: Vec::new(),
+            };
+            let rel = IrFormat::Ron.spawn_path(&archive);
+            std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
+            std::fs::write(dir.join(rel), guac_ir::to_ron(&spawns).unwrap()).unwrap();
+        }
+    }
+
+    /// The hero's join, once he's in.
+    fn join(app: &App) -> Option<String> {
+        let e = app.world().resource::<Play>().hero()?;
+        app.world()
+            .entity(e)
+            .get::<HeroRun>()
+            .map(|r| r.join.name().to_owned())
+    }
+
+    /// The scripts' clones as entities: whether each draws, how many parts
+    /// hang under it and whether it's shown.
+    fn clones(app: &mut App) -> Vec<(bool, usize, Visibility)> {
+        let mut q = app.world_mut().query::<(
+            &guacamole::scripts::ScriptClone,
+            Option<&crate::hero_scripts::CloneDrawn>,
+            Option<&Children>,
+            Option<&Visibility>,
+        )>();
+        q.iter(app.world())
+            .map(|(_, d, c, v)| {
+                (
+                    d.is_some_and(|d| d.draws),
+                    c.map_or(0, |c| c.len()),
+                    v.copied().unwrap_or(Visibility::Inherited),
+                )
+            })
+            .collect()
+    }
+
+    /// AH.24: Eruptor, his scripts in the level's part, throws on the
+    /// bottom button. His scripts join as he enters, his health and full
+    /// health then off them (the synthetic minion's 120 of 150) and his
+    /// figure's experience and gold off the placement; the press starts his
+    /// throw's clip on him (drawn over his locomotion) and spawns the ball,
+    /// drawn from the spawn part's model, which flies, lands on the floor
+    /// and is hidden once gone; held, he throws once; his second attack's
+    /// button starts its clip. Leaving the level installs the scripts again.
+    #[test]
+    fn eruptor_throws_from_his_scripts_on_the_bottom_button() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready"
+                && a.world()
+                    .contains_resource::<guacamole::scripts::ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let numbers = |app: &App| {
+            let e = app.world().resource::<Play>().hero().unwrap();
+            let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+            let rt = app.world().resource::<guacamole::scripts::ScriptRuntime>();
+            match run.join {
+                Join::Joined(m) => crate::hero_scripts::hero_numbers(&rt.vm, m),
+                _ => Default::default(),
+            }
+        };
+        let n = numbers(&app);
+        assert_eq!(
+            (n.health, n.health_max),
+            (
+                Some(guac_formats::script::builder::ATTACK_HEALTH),
+                Some(guac_formats::script::builder::ATTACK_HEALTH_MAX)
+            )
+        );
+        let throws = |app: &App| -> Vec<u32> {
+            let log = app.world().resource::<crate::hero_scripts::ScriptLog>();
+            log.since(0)
+                .iter()
+                .flat_map(|s| s.started.iter().map(|q| q.slot))
+                .collect()
+        };
+        let spawned = |app: &App| -> (usize, usize) {
+            let log = app.world().resource::<crate::hero_scripts::ScriptLog>();
+            let steps = log.since(0);
+            let count =
+                |f: fn(&crate::hero_scripts::ScriptStep) -> &Vec<crate::hero_scripts::Spawned>| {
+                    steps
+                        .iter()
+                        .flat_map(f)
+                        .filter(|c| c.name == guac_formats::script::builder::ATTACK_BALL)
+                        .count()
+                };
+            (count(|s| &s.spawned), count(|s| &s.gone))
+        };
+        assert_eq!(spawned(&app), (0, 0));
+        // Held: one throw, its clip on him and the ball drawn in flight.
+        test_pad::button(&mut app, pad, GamepadButton::South, true);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while spawned(&app).0 == 0 {
+            assert!(Instant::now() < deadline, "no ball");
+            app.update();
+        }
+        let throw = guac_formats::script::builder::ATTACK_THROW_SLOT as u32;
+        assert_eq!(throws(&app), [throw]);
+        app.update();
+        let drawn: Vec<_> = clones(&mut app).into_iter().filter(|(d, ..)| *d).collect();
+        assert_eq!(drawn.len(), 1, "{drawn:?}");
+        assert_eq!(drawn[0].1, 1, "the model's one segment under it");
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let world = app.world().resource::<ScriptWorld>();
+        assert_eq!(
+            crate::hero_scripts::playing_on(world, e.to_bits()).len(),
+            1,
+            "his throw plays on him"
+        );
+        while spawned(&app).1 == 0 {
+            assert!(Instant::now() < deadline, "the ball never landed");
+            app.update();
+        }
+        app.update();
+        let hidden: Vec<_> = clones(&mut app)
+            .into_iter()
+            .filter(|(_, parts, v)| *parts == 0 && *v == Visibility::Hidden)
+            .collect();
+        assert!(!hidden.is_empty(), "gone, hidden");
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(spawned(&app), (1, 1), "held: one throw");
+        test_pad::button(&mut app, pad, GamepadButton::South, false);
+        // The second attack's button (a right shoulder): its clip.
+        test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+        for _ in 0..3 {
+            app.update();
+        }
+        let second = guac_formats::script::builder::ATTACK_SECOND_SLOT as u32;
+        assert_eq!(throws(&app), [throw, second]);
+        // Leaving the level installs the run again, from its start.
+        let steps = app
+            .world()
+            .resource::<guacamole::scripts::ScriptRuntime>()
+            .steps;
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        until(&mut app, "the portal again", |a| mode(a) == Mode::Portal);
+        app.update();
+        let after = app
+            .world()
+            .resource::<guacamole::scripts::ScriptRuntime>()
+            .steps;
+        assert!(after < steps, "{after} steps after leaving, {steps} before");
+    }
+
+    /// AH.24: a character whose attacks don't run (here no script part
+    /// linked) walks on the stand-in, and its attack buttons do nothing:
+    /// no join, no clip, no clone.
+    #[test]
+    fn a_character_whose_attacks_dont_run_does_nothing_on_the_attack_buttons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "walking", |a| mode(a) == Mode::Level);
+        assert_eq!(join(&app), None, "no scripts to join");
+        for button in [
+            GamepadButton::South,
+            GamepadButton::West,
+            GamepadButton::East,
+            GamepadButton::RightTrigger,
+            GamepadButton::LeftTrigger2,
+        ] {
+            test_pad::press(&mut app, pad, button);
+            for _ in 0..10 {
+                app.update();
+            }
+        }
+        assert!(clones(&mut app).is_empty());
+        assert!(
+            app.world()
+                .resource::<crate::hero_scripts::ScriptLog>()
+                .since(0)
+                .is_empty()
+        );
+        // The stick still walks him.
+        let from = hero(&app).pivot;
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(hero(&app).pivot.distance(from) > 1.0);
     }
 
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first

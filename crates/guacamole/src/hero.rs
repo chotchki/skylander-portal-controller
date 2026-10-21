@@ -856,6 +856,31 @@ mod tests {
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     }
 
+    /// AH.24: a step reads each attack held now or pressed since the step
+    /// before read them, so a press no step saw still reaches the next; a
+    /// held one every step; one let go before any step read it once.
+    #[test]
+    fn a_step_reads_each_press_once_and_each_hold_throughout() {
+        let mut a = HeroActions::default();
+        assert_eq!(a.take(), [false; 4]);
+        // Down a frame, up the next, no step between.
+        a.frame([true, false, false, false], [true, false, false, false]);
+        a.frame([false; 4], [false; 4]);
+        assert_eq!(a.take(), [true, false, false, false]);
+        assert_eq!(a.take(), [false; 4], "once");
+        // Tapped inside a frame: never held.
+        a.frame([false; 4], [false, true, false, false]);
+        assert_eq!(a.take(), [false, true, false, false]);
+        // Held across steps, two steps in one frame included.
+        a.frame([false, false, true, false], [false, false, true, false]);
+        assert_eq!(a.take(), [false, false, true, false]);
+        assert_eq!(a.take(), [false, false, true, false]);
+        a.frame([false, false, true, false], [false; 4]);
+        assert_eq!(a.take(), [false, false, true, false]);
+        a.frame([false; 4], [false; 4]);
+        assert_eq!(a.take(), [false; 4], "let go");
+    }
+
     /// AG.16's Verify: the controller's open-ground and wall cases, each in
     /// its world on Avian's side of the seam, headless.
     #[test]
