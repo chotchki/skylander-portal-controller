@@ -666,8 +666,7 @@ fn draw_clones(
 /// The hero's numbers as his scripts hold them (AH.24's report): his health
 /// (`description.creature info.hp`) and full health (`player joined data`'s
 /// `hp max`), and the behaviour his minion runs.
-pub(crate) fn hero_numbers(runtime: &ScriptRuntime, minion: PlacementId) -> HeroNumbers {
-    let vm = &runtime.vm;
+pub(crate) fn hero_numbers(vm: &guac_script::Vm, minion: PlacementId) -> HeroNumbers {
     let int = |v: Option<Value>| match v.map(|v| vm.value(v)) {
         Some(Value::Int(i)) => Some(i),
         Some(Value::Float(f)) => Some(f as i32),
@@ -702,4 +701,256 @@ pub(crate) fn playing_on(world: &ScriptWorld, hero: Handle) -> Vec<(u32, f32, f3
         .filter(|s| s.actor == hero && !s.done && !s.stopped && s.length > 0.0)
         .filter_map(|s| world.clip_of(s).map(|(_, slot)| (slot, s.time, s.rate)))
         .collect()
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    use guac_formats::script::builder::{
+        self as attack_builder, ATTACK_BALL, ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_SECOND_SLOT,
+        ATTACK_THROW_SLOT,
+    };
+    use guac_motion::parry::ParryWorld;
+    use guac_motion::scenarios;
+    use guac_script::{Generator, Vm};
+    use guacamole::level_scripts;
+    use guacamole::scripts::{headless_handles, headless_objects};
+
+    use super::*;
+
+    pub(crate) const LEVEL: &str = "level_213_tutotial";
+
+    /// AH.24's synthetic script part in an extract at `dir`: the roster
+    /// builder's bootstrap entry, AH.24's attack (global, init_setup and the
+    /// fighter's) and AH.13's creature as the level's, at the paths the TV
+    /// links them from.
+    pub(crate) fn write_attack(dir: &Path) {
+        let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
+        let a = attack_builder::attack();
+        let (creature, _) = attack_builder::creature();
+        let bytes = [
+            &d.bootstrap,
+            &a.global,
+            &a.init_setup,
+            &a.fighter,
+            &creature,
+        ];
+        for ((rel, _), bytes) in level_scripts::files(LEVEL).iter().zip(bytes) {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+    }
+
+    /// A headless engine: heroes on the parry twin's open ground.
+    struct Bench {
+        heroes: HashMap<Handle, Hero>,
+        world: ParryWorld,
+    }
+
+    impl Engine for Bench {
+        fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+            self.heroes.get_mut(&h)
+        }
+        fn heroes(&self) -> Vec<Handle> {
+            self.heroes.keys().copied().collect()
+        }
+        fn seam(&self) -> &dyn PhysicsSeam {
+            &self.world
+        }
+        fn view_heading(&self) -> f32 {
+            0.0
+        }
+        fn pad(&self, _: usize) -> Pad {
+            Pad::default()
+        }
+    }
+
+    const HERO: Handle = 0x7000_0000;
+
+    /// The synthetic part linked as the TV links it, run headless in strict
+    /// mode with the TV's listing.
+    struct Headless {
+        vm: Vm,
+        world: ScriptWorld,
+        bench: Bench,
+        generator: Generator,
+        files: Files,
+        fighter: u16,
+        next: Handle,
+    }
+
+    impl Headless {
+        fn new() -> Self {
+            let tmp = tempfile::tempdir().unwrap();
+            write_attack(tmp.path());
+            let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+            let files = linked.placements;
+            let handles = headless_handles(&files);
+            let objects = headless_objects(&handles);
+            let vm = scripts::init_chain(
+                Arc::new(linked.program),
+                &files,
+                &handles,
+                &linked.order,
+                hero_config(Mode::Strict),
+            );
+            let mut world = ScriptWorld::new(&files, &handles, objects);
+            // His palette as the TV sets it from his: the throw half a
+            // second, the second attack two.
+            let template = files
+                .placed
+                .iter()
+                .find(|p| p.name == "009_Eruptor")
+                .unwrap()
+                .obj;
+            let mut lengths = vec![0.0; 40];
+            lengths[ATTACK_THROW_SLOT as usize] = 0.5;
+            lengths[ATTACK_SECOND_SLOT as usize] = 2.0;
+            world.set_palette(template, lengths);
+            let ground = scenarios::bodies(&scenarios::open_ground(), &[]);
+            let parry = ParryWorld::new(&ground).unwrap();
+            let hero = scenarios::eruptor(&parry, Vec3::new(0.0, 1.0, 0.0), 0.0);
+            let fighter = linked
+                .fighters
+                .iter()
+                .find(|(f, _)| f == "009_Eruptor")
+                .unwrap()
+                .1;
+            Self {
+                vm,
+                world,
+                bench: Bench {
+                    heroes: HashMap::from([(HERO, hero)]),
+                    world: parry,
+                },
+                generator: Generator::seeded(5489),
+                files,
+                fighter,
+                next: objects[6].max(HERO) + 1,
+            }
+        }
+
+        fn host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
+            let mut spawn = scripts::headless_spawner(self.next);
+            let t = {
+                let mut host = WorldHost {
+                    world: &mut self.world,
+                    engine: &mut self.bench,
+                    generator: &mut self.generator,
+                    spawn: &mut spawn,
+                };
+                f(&mut self.vm, &mut host)
+            };
+            self.next = spawn(Value::Null);
+            t
+        }
+
+        /// One step as the TV's: the pads, the projectiles, every tick, the
+        /// clones added, the hero's engine step, the engine's frame.
+        fn step(&mut self, actions: [bool; 4]) {
+            self.world.read_pads([
+                Pad {
+                    actions,
+                    connected: true,
+                    ..Pad::default()
+                },
+                Pad::default(),
+            ]);
+            let r = self.host(|vm, host| vm.step(host));
+            self.world.end_step();
+            scripts::add_scripted(&mut self.vm, &mut self.world);
+            r.unwrap_or_else(|h| panic!("{h}"));
+            let dt = 1.0 / 60.0;
+            for hero in self.bench.heroes.values_mut() {
+                hero.step_engine(&self.bench.world, dt, &[], &Default::default());
+            }
+            self.world.advance(dt, &mut self.bench);
+        }
+
+        fn join(&mut self) -> PlacementId {
+            let files = self.files.clone();
+            let unit = self.fighter;
+            let handles = self.world.handles().clone();
+            self.host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))
+                .unwrap_or_else(|h| panic!("{h}"));
+            self.step([false; 4]);
+            self.host(|vm, host| scripts::join_activate(vm, host, HERO))
+                .unwrap_or_else(|h| panic!("{h}"))
+        }
+    }
+
+    /// The synthetic attack the e2e suite throws with runs through the
+    /// TV's join and listing in strict mode: his minion joins with his
+    /// health and full health set; a press of his first attack starts
+    /// slot 20 on him and spawns the ball over him, which flies up and on
+    /// at 40 ft/s, falls by its 200 ft/s² onto the ground and is gone the
+    /// step after it touches; his second attack starts slot 32.
+    #[test]
+    fn the_synthetic_attack_throws_through_the_join() {
+        let mut run = Headless::new();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let minion = run.join();
+        for _ in 0..3 {
+            run.step([false; 4]);
+        }
+        let numbers = hero_numbers(&run.vm, minion);
+        assert_eq!(
+            (numbers.health, numbers.health_max),
+            (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX))
+        );
+        assert_eq!(numbers.behaviour.as_deref(), Some("default"));
+        let pivot = run.bench.heroes[&HERO].pivot;
+        // Held a step: one throw.
+        let before = run.world.clones().len();
+        let slots: Vec<u32> = run
+            .world
+            .sequences()
+            .iter()
+            .filter(|q| q.actor == HERO)
+            .filter_map(|q| run.world.clip_of(q).map(|(_, s)| s))
+            .collect();
+        assert_eq!(slots, [ATTACK_THROW_SLOT as u32], "his throw's slot");
+        let new: Vec<Handle> = run.world.clones().into_iter().skip(before).collect();
+        assert_eq!(new.len(), 1, "one ball");
+        let ball = new[0];
+        let a = run.world.actor(ball).unwrap();
+        let name = a
+            .template
+            .and_then(|t| run.world.template(t))
+            .map(|p| p.name.clone());
+        assert_eq!(name.as_deref(), Some(ATTACK_BALL));
+        assert!(a.launched, "sent flying");
+        let up = (a.position.y - pivot.y) / guacamole::script_engine::METRES_PER_FOOT;
+        assert!(up > 4.0 && up < 6.0, "{up} ft over his pivot");
+        // Holding on throws no more; it lands and is gone.
+        let mut gone = None;
+        for k in 0..120 {
+            run.step([true, false, false, false]);
+            if run.world.removed(ball) {
+                gone = Some(k);
+                break;
+            }
+        }
+        let a = run.world.actor(ball).unwrap();
+        assert!(gone.is_some(), "it never landed: {:?}", a.position);
+        let across = Vec3::new(a.position.x - pivot.x, 0.0, a.position.z - pivot.z).length();
+        assert!(across > 1.0, "{across} m ahead");
+        assert_eq!(
+            run.world.clones().len(),
+            before + 1,
+            "held, no second throw"
+        );
+        // The second attack's press: its slot.
+        run.step([false; 4]);
+        run.step([false, true, false, false]);
+        let last = run.world.sequences().last().unwrap();
+        assert_eq!(
+            run.world.clip_of(last).map(|(_, s)| s),
+            Some(ATTACK_SECOND_SLOT as u32)
+        );
+    }
 }

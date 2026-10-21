@@ -1818,7 +1818,10 @@ mod tests {
             (r#"{"pad":0,"hold":"west","release":"west"}"#, 400),
             (r#"{"pad":0,"pulse":{"button":"south","presses":60}}"#, 202),
             (r#"{"pad":0,"pulse":{"button":"south","presses":0}}"#, 400),
-            (r#"{"pad":0,"pulse":{"button":"south","presses":1801}}"#, 400),
+            (
+                r#"{"pad":0,"pulse":{"button":"south","presses":1801}}"#,
+                400,
+            ),
             (r#"{"pad":0,"pulse":{"button":"jump","presses":2}}"#, 400),
             ("pad", 400),
         ] {

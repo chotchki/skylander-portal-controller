@@ -404,7 +404,7 @@ impl Play {
             .map(|g| GaitReport::of(&g.locomotion));
         let run = body.and_then(|(_, _, r)| r);
         let numbers = match (run.map(|r| &r.join), runtime) {
-            (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(rt, *minion),
+            (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(&rt.vm, *minion),
             _ => hero_scripts::HeroNumbers::default(),
         };
         let progress = c.placement.owner.as_ref().map(|o| o.progress);
