@@ -57,9 +57,9 @@ pub struct ReportRules {
     pub max_twists: u64,
     /// Judge stamps past the anchor's horizon too, for every kind not in
     /// `ordered`. Design decision 18 stamps only inside it; at anchor A the
-    /// generator parts 4 game frames from F0 (particles drawing on host
-    /// time) while no event a lob makes is timed by a roll (AH.9), so a
-    /// group can be calibrated both ways and the two compared.
+    /// generator parts 1 to 4 game frames from F0, by script (particles
+    /// drawing on host time), while no event a lob makes is timed by a roll
+    /// (AH.9), so a group can be calibrated both ways and the two compared.
     #[serde(default)]
     pub stamps_past_horizon: bool,
 }

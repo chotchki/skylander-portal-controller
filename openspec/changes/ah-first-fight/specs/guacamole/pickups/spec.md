@@ -18,7 +18,7 @@ A beaten creature's experience, times the save's experience multiplier (1 on a f
 - **THEN** the first orb comes out worth 25 between 207 and 288 times, and worth 50 otherwise
 
 ### Requirement: A hero collects orbs
-An orb come down within 20 ft (6.1 m) of a hero, measured in space, SHALL fly to him at 55 ft/s (16.8 m/s) from that frame on, and its worth SHALL be added to his figure when it arrives, times the level's difficulty multiplier, which is 1 throughout chapter 1. An orb still in the air SHALL NOT fly, however near. One arriving while he's pushed or off the ground SHALL count as any other.
+An orb come down within 20 ft (6.1 m) of a hero, measured across the ground (its height over him not counted), SHALL fly to him at 55 ft/s (16.8 m/s) from that frame on, and its worth SHALL be added to his figure when it arrives, times the level's difficulty multiplier, which is 1 throughout chapter 1. An orb still in the air SHALL NOT fly, however near. One arriving while he's pushed or off the ground SHALL count as any other.
 
 #### Scenario: Orbs by his feet
 - **WHEN** a Chompy is beaten 10 ft from Eruptor
@@ -36,7 +36,7 @@ When collected experience reaches the next level's threshold the hero SHALL leve
 - **THEN** he is level 2 with 323 health (his full health there) and a bite in the next instant does nothing
 
 ### Requirement: Coins
-A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.7 m) of him in space and at least 0.7 s old; it SHALL slide in over 0.48 s and add its worth to his figure's gold as it reaches him, one taken while another still slides starting both slides again. A dropped coin SHALL pop up 3 to 5.5 m where it breaks out and fall back. Each spinning coin on chapter 1's walkway and above the pit SHALL be worth 1.
+A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.7 m) of him in space and at least 0.7 s old; it SHALL slide in over 0.48 s and add its worth to his figure's gold as it reaches him, one taken while another still slides starting both slides again. A dropped coin SHALL pop up 2.8 to 5.6 m where it breaks out and fall back. Each spinning coin on chapter 1's walkway and above the pit SHALL be worth 1.
 
 #### Scenario: A spinning coin on the walkway
 - **WHEN** Eruptor walks within 12 ft of a spinning coin on the walkway

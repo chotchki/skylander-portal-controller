@@ -385,6 +385,8 @@ fn a_report_writes_beside_its_rules_and_refuses_a_dir_without_a_peek() {
     assert_eq!(round_up(1.0 / 60.0, 0.005), 0.02);
     assert_eq!(round_up(0.0, 0.005), 0.0);
     assert_eq!(round_up(0.01, 0.005), 0.01);
+    // 0.035 / 0.005 is 7.000000000000001 in doubles: still 7 quanta.
+    assert_eq!(round_up(0.035, 0.005), 0.035);
 }
 
 /// AH.10: a clip the end pause named nothing for (the hurt reaction a bite

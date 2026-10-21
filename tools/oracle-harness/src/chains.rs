@@ -740,7 +740,8 @@ pub struct GiantsChains {
     pub hero_vars: Vec<Followed>,
     /// The placements a followed reference is named by, in order: a
     /// reference to the n-th (from 0) reads n + 1, a null one 0, any other
-    /// object -1. The hero's, then each Chompy's.
+    /// object -1. The hero's, then each of [`CHOMPIES`]' in order, 0 for one
+    /// the actor list didn't hold at the resolve.
     #[serde(default)]
     pub referents: Vec<(String, u32)>,
 }
@@ -819,10 +820,11 @@ impl GiantsChains {
                     .and_then(|i| i.range(actor_range::PLACEMENT))
                     .map(|b| be32(b, 0))
             });
-            if let Some(p) = at {
-                referents.push((name.to_owned(), p));
-                chompies.push(p);
-            }
+            // One the list doesn't hold keeps its place at 0, which no
+            // reference read past a null matches, so `Enemy_Chompy(n)` reads
+            // n + 1 whichever are missing.
+            referents.push((name.to_owned(), at.unwrap_or(0)));
+            chompies.extend(at);
         }
         let (creature_vars, creature_probes) = follow_vars(g, &chompies, &CHOMPY_VARS)?;
         let (hero_vars, hero_probes) = follow_vars(g, &[watch.hero_placement], &HERO_VARS)?;
@@ -2272,6 +2274,7 @@ mod tests {
             frame(1, Vec::new()),
             frame(2, Vec::new()),
             frame(3, vec![idle]),
+            frame(4, Vec::new()),
         ])
         .unwrap();
         let chain = vec![
@@ -2279,16 +2282,18 @@ mod tests {
             Some(vec![idle, clip(0x3090_D000, 0.42)]),
             None,
             Some(Vec::new()),
+            Some(Vec::new()),
         ];
         let (filled, n) = fill_clips(rec.clone(), &chain).unwrap();
         assert_eq!(n, 1);
         let f = filled.frames();
         // O5's own clips stay; a dropped frame takes the chain's, or stays
-        // empty where the chain didn't read.
+        // empty (and uncounted) where the chain didn't read or read none.
         assert_eq!(f[0].clips, [idle]);
         assert_eq!(f[1].clips, chain[1].clone().unwrap());
         assert!(f[2].clips.is_empty());
         assert_eq!(f[3].clips, [idle]);
+        assert!(f[4].clips.is_empty());
         // The counts have to line up.
         assert!(fill_clips(rec, &chain[..3]).is_err());
     }
@@ -2594,9 +2599,14 @@ mod tests {
                 HERO,
                 "Enemy_Chompy(1)",
                 "Enemy_Chompy(2)",
-                "Enemy_Chompy(3)"
+                "Enemy_Chompy(3)",
+                "Enemy_Chompy(4)"
             ]
         );
+        // The fixture has no fourth Chompy: it keeps its place, at 0, so the
+        // others read the same whichever is missing.
+        assert_eq!(g.referents[4].1, 0);
+        assert!(g.referents[..4].iter().all(|(_, p)| *p != 0));
         assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
         for slot in [CREATURES, HERO_STATE] {
             assert_eq!(g.chains.slots[&slot].check(), Ok(()));

@@ -32,11 +32,11 @@ An alerted Chompy SHALL wait a time drawn evenly from 0 up to 0.5 s, play its no
 - **THEN** it starts for him between 0.75 and 1.3 s later and never runs faster than 20 ft/s
 
 ### Requirement: A Chompy bites
-A Chompy whose body is within 10 ft (3 m) of a hero's, 2 s or more after its last bite ended, SHALL wind up (0.32 s), hold (0.3 s) and lunge along its facing at 34 ft/s (10.3 m/s) for up to 0.4 s, biting the first hero or ally it touches once for 11, 12, 13 or 14 at medium, each as likely, stopping there, then recover (0.57 s); its 2 s start when it's done.
+A Chompy whose body is within 10 ft (3 m) of a hero's, 2 s or more after its last bite ended, SHALL wind up (0.3 s), hold (0.3 s) and lunge along its facing at 34 ft/s (10.3 m/s) for up to 0.4 s, biting the first hero or ally it touches once for 11, 12, 13 or 14 at medium, each as likely, stopping there, then recover (0.57 s); its 2 s start when it's done.
 
 #### Scenario: Standing still beside a Chompy
 - **WHEN** Eruptor stands still within 15 ft of an awake Chompy for 10 s
-- **THEN** each of its bites that hurts him does 11 to 14, and no two of its windups start less than 3.2 s apart
+- **THEN** each of its bites that hurts him does 11 to 14, and no two of its windups start less than 192 frames (3.2 s) apart
 
 #### Scenario: Many bites
 - **WHEN** 1,000 Chompy bites do damage to Eruptor at medium
@@ -54,7 +54,7 @@ Every 0.25 s each creature within its notice range of a hero SHALL be alerted: 3
 - **THEN** the others within 60 ft of it are alerted with it
 
 ### Requirement: A beaten creature
-A creature with no health left SHALL stop blocking at once, play its fall and fade out, gone 0.8 s later, and its experience SHALL start coming out where it fell the next frame.
+A creature with no health left SHALL stop blocking at once, play its fall and fade out, gone 0.8 s later, and its experience SHALL start coming out where it fell within two frames, two orbs a frame, one beaten with others waiting its turn.
 
 #### Scenario: A Chompy beaten
 - **WHEN** a Chompy's health runs out

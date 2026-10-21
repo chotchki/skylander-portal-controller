@@ -7,7 +7,7 @@ What a hero's attacks do under the buttons, starting with Eruptor's first two wi
 ## ADDED Requirements
 
 ### Requirement: Eruptor's Lava Lob
-Eruptor's first attack SHALL lob a lava ball from one hand, then the other, 3° to that side of his facing and 65° up, turning him to the nearest creature, barrel, pot or gourd within 60 ft (18.3 m) and 37° either side and landing on it, else straight ahead at 80 ft/s (24.4 m/s). It SHALL burst where it lands, doing 8 to each unshielded creature with its middle within 10 ft (3 m) and breaking the barrels, pots and gourds around it, up to 3.4 m off. A throw SHALL start at most every 0.333 s.
+Eruptor's first attack SHALL lob a lava ball from each hand in turn, 3° to that side of his facing and 65° up, turning him to the nearest creature, barrel, pot or gourd within 60 ft (18.3 m) and 37° either side and landing on it, else straight ahead at 80 ft/s (24.4 m/s). It SHALL burst where it lands, doing 8 to each unshielded creature with its middle within 10 ft (3 m) and breaking the barrels, pots and gourds around it, up to 3.4 m off. A throw SHALL start at most every 20 frames (0.333 s).
 
 #### Scenario: A Chompy ahead
 - **WHEN** Eruptor throws with an awake Chompy 20 ft ahead of him
@@ -23,10 +23,10 @@ Eruptor's first attack SHALL lob a lava ball from one hand, then the other, 3° 
 
 #### Scenario: Pressed again and again
 - **WHEN** the button for his first attack goes down every other frame for 2 s
-- **THEN** he throws 6 times, his hands taking turns, each throw starting 0.333 s or more after the last
+- **THEN** he throws 6 times, his hands taking turns, each throw starting 20 frames (0.333 s) or more after the last
 
 ### Requirement: Eruptor's Eruption
-Eruptor's second attack SHALL play his eruption, 2 s at 1.4 times its speed (1.42 s), and erupt around him once half has played: its reach growing from 5 to 20 ft (1.5 to 6.1 m) over 0.5 s, held until 1.1 s and gone at 1.6 s, doing 8 to each creature inside every 0.333 s and breaking each barrel, pot and gourd it reaches. Nothing SHALL hurt him from its appearing to his eruption's last frame; a hit before SHALL land. He SHALL NOT erupt in the air, nor again until 1 s after one ends.
+Eruptor's second attack SHALL play his eruption, 2 s at 1.4 times its speed (1.42 s), and erupt around him once half has played: its reach growing from 5 to 20 ft (1.5 to 6.1 m) over 0.5 s, held until 1.1 s and gone at 1.6 s, doing 8 to each creature inside every 0.333 s and breaking each barrel, pot and gourd it reaches. Nothing SHALL hurt him from its appearing until a frame before his eruption ends; a hit before SHALL land. He SHALL NOT erupt in the air, nor again until 1 s after one ends.
 
 #### Scenario: Chompies all round
 - **WHEN** Eruptor erupts with four awake Chompies within 15 ft of him

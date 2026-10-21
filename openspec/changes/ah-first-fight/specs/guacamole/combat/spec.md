@@ -44,11 +44,11 @@ A hit SHALL land whenever it reaches a target that can be hurt: after a hit ther
 - **THEN** he flashes for 0.2 s and the stick still walks him
 
 ### Requirement: Knockback
-A hit that knocks back SHALL push its target at 80 ft/s (24.4 m/s) for (its strength less the target's resistance) / 100 × 0.6 s for a creature, or × 0.525 s for a hero, never under 0.125 s. Each push SHALL raise the target's resistance by half its strength, to at most 100, falling back to none within 1.6 s of a lone push, slowly at first; a push SHALL be refused while a stronger one acts. A target whose resistance outweighs a hit's strength SHALL NOT move.
+A hit that knocks back SHALL push its target from 80 ft/s (24.4 m/s), slowing as it goes, for (its strength less the target's resistance) / 100 × 0.6 s for a creature, or × 0.525 s for a hero, never under 0.125 s. Each push SHALL raise the target's resistance by half its strength, to at most 100, falling back to none within 1.6 s of a lone push, slowly at first; a push SHALL be refused while a stronger one acts. A target whose resistance outweighs a hit's strength SHALL NOT move.
 
 #### Scenario: A Chompy's bite
 - **WHEN** a Chompy's bite lands on Eruptor after a while unhurt
-- **THEN** he's pushed away from it for 0.13 s (8 frames)
+- **THEN** he's pushed away from it for 0.13 s (8 frames), from 24.4 m/s slowing to about 21.5 m/s
 
 #### Scenario: A second bite soon after
 - **WHEN** a second Chompy's bite lands on Eruptor 0.2 s after the first
