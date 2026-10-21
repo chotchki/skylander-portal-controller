@@ -58,7 +58,7 @@
 //!   recorded, while the original's idle and run flip each frame;
 //! - the fall clip takes what the gaits give up (the weights summing to 1)
 //!   and plays from its start at 100 %, looping: its weight, time and rate
-//!   aren't in any recording (AG.53 names them);
+//!   aren't in any recording (AG.54 names them);
 //! - no landing clip: Eruptor has none (AG.14, AG.11), and the one Tree Rex
 //!   and 22 others have waits for a walker that plays it (AG.27).
 
