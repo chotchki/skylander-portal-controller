@@ -11,8 +11,10 @@
 //!   model read with every pipeline it draws compiled. Until then the portal
 //!   view holds.
 //! - What: he stands at `213_Init_Location`'s first waypoint facing 0°,
-//!   settled onto the level's collision, his idle looping on AE's
-//!   evaluator; the camera at camera 0's rest pose follows him on AG.17's
+//!   settled onto the level's collision, posed on AE's evaluator by his
+//!   locomotion (AG.30: his idle, walk, run and fall by the weights
+//!   [`crate::hero::HeroGaits`] steps, his hero side's clips read with his
+//!   model); the camera at camera 0's rest pose follows him on AG.17's
 //!   chain, no triggers ([`crate::hero`]); the level's input layer takes
 //!   the pads ([`crate::pad`]). The camera is the level's
 //!   ([`crate::level::view_camera`]: its output onto the TV's target with
@@ -42,11 +44,13 @@ use bevy::render::renderer::RenderDevice;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::Model;
+use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_motion::camera::{CameraDef, GameCamera};
 use guac_motion::hero::Hero;
+use guac_motion::locomotion::{self, Locomotion, Loops};
 use guacamole::character::attach::{self, SpawnedAttachments};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
@@ -62,7 +66,7 @@ use tracing::{info, warn};
 
 use crate::cards::{PortalCards, PortalChanged};
 use crate::driver::PortalChange;
-use crate::hero::{FollowCamera, HeroBody, HeroPlugin, following, spawn_hero};
+use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroPlugin, following, spawn_hero};
 use crate::intro::IntroQueue;
 use crate::level::{
     LEVEL_LAYER, Level, LevelCamera, LevelSystems, LitAlso, VIEW_ORDER, view_camera,
@@ -72,7 +76,7 @@ use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
 use crate::screen::TvScreen;
-use crate::turntable::{Loaded, Turntables, load_model};
+use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero};
 use crate::tv::{Current, Redrawn, TvCamera};
 use crate::warm::Warm;
 
@@ -97,17 +101,76 @@ impl Mode {
     }
 }
 
+/// The clips his locomotion plays beside his model's idle: his hero side's
+/// walk, run and falling (AG.14), on his model's skeleton.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HeroClips {
+    pub(crate) walk: Option<Clip>,
+    pub(crate) run: Option<Clip>,
+    pub(crate) fall: Option<Clip>,
+}
+
+impl HeroClips {
+    fn of(hero: guac_ir::hero::Hero) -> Self {
+        let l = hero.locomotion;
+        Self {
+            walk: l.walk.map(|s| s.clip),
+            run: l.run.map(|s| s.clip),
+            fall: l.falling.map(|s| s.clip),
+        }
+    }
+
+    /// The loops [`Locomotion`] keeps, the idle's from `model`.
+    fn loops(&self, model: &Model) -> Loops {
+        Loops {
+            idle: model.idle.duration,
+            walk: self.walk.as_ref().map(|c| c.duration),
+            run: self.run.as_ref().map(|c| c.duration),
+            fall: self.fall.as_ref().map(|c| c.duration),
+        }
+    }
+
+    fn get(&self, gait: locomotion::Clip) -> Option<&Clip> {
+        match gait {
+            locomotion::Clip::Idle => None,
+            locomotion::Clip::Walk => self.walk.as_ref(),
+            locomotion::Clip::Run => self.run.as_ref(),
+            locomotion::Clip::Fall => self.fall.as_ref(),
+        }
+    }
+}
+
+/// His model and his locomotion's clips, read together off the shelf.
+pub(crate) struct HeroModel {
+    loaded: Loaded,
+    clips: Arc<HeroClips>,
+}
+
+/// `load`'s model and its hero side, on a task.
+fn read_hero_model(
+    shelf: &Shelf,
+    load: &str,
+    formats: CompressedImageFormats,
+) -> Result<HeroModel, String> {
+    let loaded = load_model(shelf, load, formats)?;
+    let hero = read_hero(shelf, load).map_err(|e| format!("his hero side: {e}"))?;
+    Ok(HeroModel {
+        loaded,
+        clips: Arc::new(HeroClips::of(hero)),
+    })
+}
+
 /// The hero's model on its way to the level.
 enum Model3d {
     /// No shelf yet to read it off.
     Shelfless,
-    Reading(Task<Result<Loaded, String>>),
+    Reading(Task<Result<HeroModel, String>>),
     /// Read; waiting for the warm to compile what it draws with.
     Compiling {
-        loaded: Box<Loaded>,
+        model: Box<HeroModel>,
         keys: Vec<WarmKey>,
     },
-    Ready(Box<Loaded>),
+    Ready(Box<HeroModel>),
     /// Why it can't walk: the level isn't entered for it.
     Failed(String),
 }
@@ -138,6 +201,7 @@ struct Inside {
     hero: Entity,
     camera: Entity,
     model: Arc<Model>,
+    clips: Arc<HeroClips>,
     joints: Vec<Entity>,
     attachments: SpawnedAttachments,
     /// Parts with scroll tracks, and their materials.
@@ -172,6 +236,51 @@ pub(crate) struct HeroReport {
     pub heading: Option<f32>,
     /// In the level: the camera it shows through, as drawn.
     pub camera: Option<CameraReport>,
+    /// In the level: his locomotion as its last step left it (AG.30).
+    pub gait: Option<GaitReport>,
+}
+
+/// His locomotion as `/api/_test/tv` reports it (AG.30): no clip is
+/// picked, so every clip's weight, and the heaviest.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct GaitReport {
+    /// The heaviest: `idle`, `walk`, `run` or `fall`.
+    pub clip: String,
+    /// What his last step read: his walk's length after its push and
+    /// before its slowing, ft/s and m/s.
+    pub speed_ft: f32,
+    pub speed: f32,
+    /// The run's share of the walk and run.
+    pub run_share: f32,
+    /// Idle, walk, run and fall, summing to 1.
+    pub weights: [f32; 4],
+    /// The walk's and the run's playback rates, 1 their authored speed.
+    pub rates: [f32; 2],
+    /// `ground`, `falling` or `landing`.
+    pub air: String,
+    /// The stand/move switch's side.
+    pub moving: bool,
+    /// Game steps since he came in.
+    pub step: u64,
+}
+
+impl GaitReport {
+    pub(crate) fn of(l: &Locomotion) -> Self {
+        Self {
+            clip: l.top().name().to_owned(),
+            speed_ft: l.speed(),
+            speed: l.speed() * guac_motion::tuning::FOOT,
+            run_share: l.run_share(),
+            weights: l.weights(),
+            rates: [
+                l.play(locomotion::Clip::Walk).rate,
+                l.play(locomotion::Clip::Run).rate,
+            ],
+            air: l.air().name().to_owned(),
+            moving: l.moving(),
+            step: l.steps(),
+        }
+    }
 }
 
 /// The level's camera as the TV draws it: its eased transform and its
@@ -230,15 +339,15 @@ impl Play {
     /// camera following him.
     pub(crate) fn report(
         &self,
-        bodies: &Query<&HeroBody>,
+        bodies: &Query<(&HeroBody, Option<&HeroGaits>)>,
         cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
-        let hero = self
-            .inside
-            .as_ref()
-            .and_then(|i| bodies.get(i.hero).ok())
-            .map(|b| &b.hero);
+        let body = self.inside.as_ref().and_then(|i| bodies.get(i.hero).ok());
+        let hero = body.map(|(b, _)| &b.hero);
+        let gait = body
+            .and_then(|(_, g)| g)
+            .map(|g| GaitReport::of(&g.locomotion));
         let camera = self
             .inside
             .as_ref()
@@ -256,6 +365,7 @@ impl Play {
             position: hero.map(|h| h.pivot.to_array()),
             heading: hero.map(|h| h.facing.rem_euclid(360.0)),
             camera,
+            gait,
         })
     }
 }
@@ -378,40 +488,43 @@ fn load_hero(
                 let load = c.load_file.clone();
                 Model3d::Reading(
                     AsyncComputeTaskPool::get()
-                        .spawn(async move { load_model(&shelf, &load, formats) }),
+                        .spawn(async move { read_hero_model(&shelf, &load, formats) }),
                 )
             }
         }
         Model3d::Reading(task) => match check_ready(task) {
             None => return,
             Some(Err(why)) => Model3d::Failed(why),
-            Some(Ok(loaded)) => match warm::keys(&loaded.model, &key_scene()) {
+            Some(Ok(read)) => match warm::keys(&read.loaded.model, &key_scene()) {
                 Err(why) => Model3d::Failed(why.to_string()),
                 Ok(keys) => {
                     let scene = key_scene();
                     if !warm.covers(keys.iter().map(|(k, _)| k)) {
-                        warm.ask(&loaded.model, &keys, &scene);
+                        warm.ask(&read.loaded.model, &keys, &scene);
                     }
                     info!(
                         load_file = %c.load_file,
                         keys = keys.len(),
-                        read_ms = loaded.took.as_millis() as u64,
+                        read_ms = read.loaded.took.as_millis() as u64,
+                        walk = read.clips.walk.as_ref().map(|c| c.name.as_str()),
+                        run = read.clips.run.as_ref().map(|c| c.name.as_str()),
+                        fall = read.clips.fall.as_ref().map(|c| c.name.as_str()),
                         "the hero's model read"
                     );
                     Model3d::Compiling {
-                        loaded: Box::new(loaded),
+                        model: Box::new(read),
                         keys: keys.into_iter().map(|(k, _)| k).collect(),
                     }
                 }
             },
         },
         Model3d::Compiling { keys, .. } if warm.covers(keys.iter()) => {
-            let Model3d::Compiling { loaded, .. } =
+            let Model3d::Compiling { model, .. } =
                 std::mem::replace(&mut c.model, Model3d::Shelfless)
             else {
                 unreachable!("matched as compiling")
             };
-            Model3d::Ready(loaded)
+            Model3d::Ready(model)
         }
         _ => return,
     };
@@ -509,7 +622,7 @@ fn enter(
     let Some(c) = play.candidate.as_mut() else {
         unreachable!("matched above")
     };
-    let Model3d::Ready(loaded) = std::mem::replace(&mut c.model, Model3d::Shelfless) else {
+    let Model3d::Ready(read) = std::mem::replace(&mut c.model, Model3d::Shelfless) else {
         unreachable!("matched as ready")
     };
     let follow = FollowCamera {
@@ -519,7 +632,7 @@ fn enter(
     // In the world's frame, as the level's lights are.
     let scene = hero_scene(&lights, &fog, Mat4::IDENTITY);
     let hero_entity = spawn_hero(&mut s.commands, hero);
-    let drawn = match draw_hero(&mut s, hero_entity, walker, &loaded, &scene) {
+    let drawn = match draw_hero(&mut s, hero_entity, walker, &read.loaded, &scene) {
         Ok(drawn) => drawn,
         Err(why) => {
             warn!(load_file = walker.load_file, reason = %why, "the hero's model can't be drawn; the portal view stays");
@@ -528,7 +641,12 @@ fn enter(
             return;
         }
     };
-    c.model = Model3d::Ready(loaded);
+    let clips = read.clips.clone();
+    let loops = clips.loops(&read.loaded.model);
+    s.commands
+        .entity(hero_entity)
+        .insert(HeroGaits::new(Locomotion::new(walker.gaits, loops)));
+    c.model = Model3d::Ready(read);
     let target = target.cloned().unwrap_or_default();
     let camera = s
         .commands
@@ -556,6 +674,7 @@ fn enter(
         hero: hero_entity,
         camera,
         model: drawn.model,
+        clips,
         joints: drawn.joints,
         attachments: drawn.attachments,
         scrolling: drawn.scrolling,
@@ -660,25 +779,41 @@ fn draw_hero(
     })
 }
 
-/// His idle, looped on the TV's virtual clock (so it holds while the level
-/// waits), and his scrolling parts; under reduced motion both hold their
-/// start. Locomotion is AG.30's.
+/// His pose (AG.30): his locomotion's clips at their weights and times,
+/// eased between fixed steps as his transform is (each weight from the step
+/// before's toward this one's, each clip's time back from this step's by
+/// what's left of the step at its rate), so it holds while the level waits;
+/// his scrolling parts and what he carries on the TV's virtual clock since
+/// he came in. Under reduced motion his idle and his scrolls hold their
+/// start, standing or walking.
 fn pose_hero(
     play: Res<Play>,
     time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
     reduced: Option<Res<ReducedMotion>>,
+    gaits: Query<&HeroGaits>,
     mut transforms: Query<&mut Transform>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
     let Some(inside) = play.inside.as_ref() else {
         return;
     };
-    let seconds = if reduced.is_some_and(|r| r.0) {
+    let still = reduced.is_some_and(|r| r.0);
+    let seconds = if still {
         0.0
     } else {
         time.elapsed().saturating_sub(inside.since).as_secs_f64()
     };
-    let pose = guacamole::character::mesh::pose(&inside.model, seconds);
+    let pose = match gaits.get(inside.hero).ok().filter(|_| !still) {
+        Some(g) => gait_pose(
+            &inside.model,
+            &inside.clips,
+            g,
+            fixed.overstep_fraction(),
+            fixed.timestep().as_secs_f64(),
+        ),
+        None => guacamole::character::mesh::pose(&inside.model, seconds),
+    };
     let carried = inside
         .model
         .attachments
@@ -704,6 +839,36 @@ fn pose_hero(
     }
 }
 
+/// His joints `alpha` of the way from his locomotion's last step to its
+/// next, a step `step` seconds long: the weights eased from the step
+/// before's, each clip its time this step less what's left of the step at
+/// its rate (from its restart, where it restarted), none before 0.
+fn gait_pose(
+    model: &Model,
+    clips: &HeroClips,
+    gaits: &HeroGaits,
+    alpha: f32,
+    step: f64,
+) -> Vec<Transform> {
+    let now = gaits.locomotion.weights();
+    let back = f64::from(1.0 - alpha) * step;
+    let playing: Vec<(&Clip, f64, f64)> = locomotion::Clip::ALL
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &gait)| {
+            let clip = match gait {
+                locomotion::Clip::Idle => Some(&model.idle),
+                _ => clips.get(gait),
+            }?;
+            let weight = gaits.before[i] + (now[i] - gaits.before[i]) * alpha;
+            let p = gaits.locomotion.play(gait);
+            let at = (p.time - back * f64::from(p.rate)).max(0.0);
+            Some((clip, at, f64::from(weight)))
+        })
+        .collect();
+    guacamole::character::mesh::blended(model, &playing)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
@@ -722,13 +887,104 @@ mod tests {
 
     const ERUPTOR: u32 = 9;
 
+    /// Where the made-up hero side holds the top joint along x in the walk,
+    /// the run and the fall: a pose tells their weights. The idle sways it
+    /// from 0 to 0.5 over its second.
+    const WALK_X: f32 = 1.0;
+    const RUN_X: f32 = 2.0;
+    const FALL_X: f32 = 3.0;
+
+    /// A made-up hero side for `load` on the turntables' made-up model's
+    /// skeleton: its walk, run and falling clips Eruptor's lengths (1.0667,
+    /// 0.6667 and 0.8 s), each holding the top joint at its own x.
+    pub(crate) fn hero_side(load: &str) -> guac_ir::hero::Hero {
+        use guac_ir::actor::{Movement, Shape, Solid};
+        use guac_ir::clip::{RotationTrack, Track, VecTrack};
+        use guac_ir::hero::{Locomotion, SlotClip};
+        let slot = |slot: u16, name: &str, duration: f32, x: f32| {
+            Some(SlotClip {
+                slot,
+                label: None,
+                clip: Clip {
+                    name: name.into(),
+                    duration,
+                    frame_duration: 1.0 / 30.0,
+                    frames: (duration * 30.0).round() as u32 + 1,
+                    tracks: vec![Track {
+                        joint: 1,
+                        translation: VecTrack {
+                            constant: [x, 2.0, 0.0],
+                            spline: None,
+                        },
+                        rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+                        scale: VecTrack {
+                            constant: [1.0; 3],
+                            spline: None,
+                        },
+                    }],
+                },
+            })
+        };
+        guac_ir::hero::Hero {
+            identity: crate::turntable::tests::identity(),
+            load_file: load.into(),
+            actor: load.into(),
+            scale: [100.0; 3],
+            solid: Solid {
+                shape: Shape::Sphere,
+                solid: true,
+                world: true,
+                actor_surface: false,
+                offset: [0.0; 3],
+                rotation: [0.0; 3],
+                width: 4.0,
+                height: 6.0,
+                length: 3.0,
+                weight: 10.0,
+                rebound: 0.0,
+            },
+            movement: Movement {
+                ground_max_speed: 18.0,
+                ground_acceleration: 160.0,
+                ground_deceleration: 80.0,
+                ground_turn_rate: 360.0,
+                air_max_speed: 30.0,
+                air_acceleration: 160.0,
+                air_deceleration: 20.0,
+                air_turn_rate: 360.0,
+                gravity_max_speed: 120.0,
+                gravity_acceleration: 128.0,
+                jump_max_speed: 0.0,
+                jump_acceleration: 0.0,
+                jump_initial_speed: 0.0,
+                motion_type: 0,
+                tilts_with_ground: true,
+                time_scale: 1.0,
+            },
+            locomotion: Locomotion {
+                walk: slot(1, "MadeUp_Walk.ma", 1.0667, WALK_X),
+                jog: None,
+                run: slot(3, "MadeUp_Run.ma", 0.6667, RUN_X),
+                falling: slot(57, "MadeUp_Falling.ma", 0.8, FALL_X),
+                landing: None,
+            },
+        }
+    }
+
     /// The turntables' made-up extract with Eruptor's load file on toy 9,
-    /// a made-up model of its own, and a chapter 1 on [`write_level`]'s
-    /// walk; the TV on the portal view.
+    /// a made-up model and hero side of its own, and a chapter 1 on
+    /// [`write_level`]'s walk; the TV on the portal view.
     fn play_app(dir: &std::path::Path) -> (App, crate::level::LevelSender) {
         let mut shelf = extract(dir);
         let ron = guac_ir::to_ron(&model("009_Eruptor")).unwrap();
         std::fs::write(dir.join(IrFormat::Ron.model_path("009_Eruptor")), ron).unwrap();
+        let hero = IrFormat::Ron.hero_path("009_Eruptor");
+        std::fs::create_dir_all(dir.join(&hero).parent().unwrap()).unwrap();
+        std::fs::write(
+            dir.join(hero),
+            guac_ir::to_ron(&hero_side("009_Eruptor")).unwrap(),
+        )
+        .unwrap();
         shelf
             .loads
             .insert(format!("{ERUPTOR:06x}-0000"), "009_Eruptor".into());
@@ -1103,6 +1359,187 @@ mod tests {
         for _ in 0..20 {
             app.update();
             assert_eq!(joints(&app), at_start, "held at its start");
+        }
+        // Walking too: no gait plays under reduced motion.
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..40 {
+            app.update();
+            assert_eq!(joints(&app), at_start, "held while he walks");
+        }
+        assert_eq!(gaits(&app).top(), locomotion::Clip::Run);
+    }
+
+    fn gaits(app: &App) -> Locomotion {
+        let e = app.world().resource::<Play>().hero().expect("in the level");
+        let g = app.world().entity(e).get::<HeroGaits>().expect("his gaits");
+        g.locomotion.clone()
+    }
+
+    /// The top joint's x as drawn: the weights times each clip's x, the
+    /// idle's sway its own.
+    fn top_x(app: &App) -> f32 {
+        let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
+        let joint = inside.joints[1];
+        app.world()
+            .entity(joint)
+            .get::<Transform>()
+            .unwrap()
+            .translation
+            .x
+    }
+
+    /// The idle's sway at `t` seconds: 0 to 0.5 over its looped second.
+    fn idle_x(t: f64) -> f32 {
+        let frame = (t.rem_euclid(1.0) * 30.0).min(30.0);
+        (0.5 * frame / 30.0) as f32
+    }
+
+    /// AG.30 on the TV: standing he plays his idle alone; the stick full on
+    /// takes him off it over 0.25 s (15 steps) while the walk and then the
+    /// run take over, the run joining the fifth step he moves and alone
+    /// from the eighth, playing at 102.4 % as he runs; let go, he's back in
+    /// his idle whole 35 steps on, his walk keeping its last rate as it
+    /// fades. Each step's weights pose his model: at a step's end the drawn
+    /// top joint is the step before's weights on each clip (the drawn pose
+    /// eases a step behind, as his transform does).
+    #[test]
+    fn his_locomotion_takes_him_from_his_idle_to_his_run_and_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        for _ in 0..30 {
+            app.update();
+        }
+        let g = gaits(&app);
+        assert_eq!(g.weights(), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(g.top(), locomotion::Clip::Idle);
+        let idle_t = g.play(locomotion::Clip::Idle).time - 1.0 / 60.0;
+        assert!(
+            (top_x(&app) - idle_x(idle_t)).abs() < 1e-5,
+            "{}",
+            top_x(&app)
+        );
+
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        let mut steps = Vec::new();
+        for _ in 0..40 {
+            app.update();
+            let g = gaits(&app);
+            steps.push((g.weights(), g.speed(), top_x(&app)));
+        }
+        let moved = steps.iter().position(|s| s.1 > 0.0).unwrap();
+        let joins = steps.iter().position(|s| s.0[2] > 0.0).unwrap();
+        let alone = steps
+            .iter()
+            .position(|s| s.0[1] == 0.0 && s.0[2] > 0.0)
+            .unwrap();
+        let idle_out = steps.iter().position(|s| s.0[0] == 0.0).unwrap();
+        eprintln!("moved {moved}, the run joins {joins}, alone {alone}, the idle out {idle_out}");
+        assert_eq!((joins - moved, alone - moved, idle_out - moved), (4, 7, 15));
+        let g = gaits(&app);
+        assert_eq!(g.top(), locomotion::Clip::Run);
+        assert!((g.speed() - 21.5).abs() < 1e-4, "{}", g.speed());
+        assert!((g.play(locomotion::Clip::Run).rate - 1.0237).abs() < 1e-3);
+        assert!((top_x(&app) - RUN_X).abs() < 1e-5, "{}", top_x(&app));
+        // Mid set-off the drawn pose is the step before's weights.
+        let (w, _, x) = steps[moved + 6];
+        let (before, ..) = steps[moved + 5];
+        let walk_or_run = before[1] * WALK_X + before[2] * RUN_X;
+        assert!(w[0] > 0.0 && w[2] > 0.0, "{w:?}");
+        assert!(
+            x > walk_or_run && x < walk_or_run + 0.5 * before[0],
+            "{x} {before:?}"
+        );
+
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        let mut back = Vec::new();
+        for _ in 0..40 {
+            app.update();
+            let g = gaits(&app);
+            back.push((g.weights(), g.play(locomotion::Clip::Walk).rate));
+        }
+        let whole = back.iter().position(|s| s.0[0] == 1.0).unwrap();
+        let all_walk = back.iter().position(|s| s.0[2] == 0.0).unwrap();
+        eprintln!("let go: all walk {all_walk}, the idle whole {whole} steps on");
+        assert_eq!(all_walk, 8);
+        assert_eq!(whole, 35);
+        let rest = back.iter().position(|s| s.1 == back[whole].1).unwrap();
+        assert!(back[rest..=whole].iter().all(|s| s.1 == back[rest].1));
+        app.update();
+        assert_eq!(gaits(&app).top(), locomotion::Clip::Idle);
+    }
+
+    /// His pose between steps, at 144 Hz: each weight eased from the step
+    /// before's toward this one's by how far the display is into the next
+    /// step, each clip back from its time by what's left of the step.
+    #[test]
+    fn his_pose_eases_between_steps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1.0 / 144.0,
+        )));
+        for _ in 0..10 {
+            app.update();
+        }
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        let mut between = 0;
+        for _ in 0..30 {
+            app.update();
+            let alpha = app.world().resource::<Time<Fixed>>().overstep_fraction();
+            let step = app
+                .world()
+                .resource::<Time<Fixed>>()
+                .timestep()
+                .as_secs_f64();
+            let e = app.world().resource::<Play>().hero().unwrap();
+            let g = app.world().entity(e).get::<HeroGaits>().unwrap();
+            let now = g.locomotion.weights();
+            let w: Vec<f32> = (0..4)
+                .map(|i| g.before[i] + (now[i] - g.before[i]) * alpha)
+                .collect();
+            let idle = g.locomotion.play(locomotion::Clip::Idle);
+            let t = (idle.time - f64::from(1.0 - alpha) * step * f64::from(idle.rate)).max(0.0);
+            let want = w[0] * idle_x(t) + w[1] * WALK_X + w[2] * RUN_X + w[3] * FALL_X;
+            assert!(
+                (top_x(&app) - want).abs() < 1e-4,
+                "{} {want} {w:?}",
+                top_x(&app)
+            );
+            if alpha > 0.05 && alpha < 0.95 && g.before != now {
+                between += 1;
+            }
+        }
+        eprintln!("{between} display frames between steps with the weights moving");
+        assert!(between >= 5, "{between}");
+    }
+
+    /// Without his hero side (a hand-made extract, or one cut short) he has
+    /// no clips to walk in: the portal view holds and says why.
+    #[test]
+    fn without_his_hero_side_the_portal_view_holds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        std::fs::remove_file(tmp.path().join(IrFormat::Ron.hero_path("009_Eruptor"))).unwrap();
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "his model", |a| hero_model(a) == Some("failed"));
+        let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
+        let Model3d::Failed(why) = &c.model else {
+            unreachable!("failed")
+        };
+        assert!(why.starts_with("his hero side: 009_Eruptor.ron:"), "{why}");
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Portal);
         }
     }
 

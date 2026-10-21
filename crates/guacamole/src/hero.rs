@@ -10,7 +10,9 @@
 //! through a switch). AG.21 puts [`HeroPlugin`] on the TV
 //! ([`crate::play`]), [`crate::pad`]'s layer feeds [`HeroInput`] and the
 //! level's camera is the [`FollowCamera`]'s entity; the tests here run it
-//! headless.
+//! headless. His locomotion steps after him (AG.30, [`HeroGaits`]): the
+//! clips' weights, times and rates from the speed his step's walk read and
+//! his fall, which [`crate::play`] poses his model by.
 //!
 //! Ordering: Avian refits its trees for a moved kinematic body when its
 //! physics schedule runs (`FixedPostUpdate`), so a body moved in `FixedUpdate`
@@ -24,6 +26,7 @@ use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
 use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
+use guac_motion::locomotion::{Frame, Locomotion};
 use guac_motion::proxy::Surfaces;
 use guac_motion::seam::BodyId;
 use guac_motion::stick::Stick;
@@ -45,10 +48,17 @@ impl Plugin for HeroPlugin {
                 FixedUpdate,
                 (
                     step_heroes.in_set(HeroSystems::Step),
+                    step_gaits.in_set(HeroSystems::Gait),
                     step_cameras.in_set(HeroSystems::Camera),
                 ),
             )
-            .configure_sets(FixedUpdate, HeroSystems::Camera.after(HeroSystems::Step));
+            .configure_sets(
+                FixedUpdate,
+                (
+                    HeroSystems::Gait.after(HeroSystems::Step),
+                    HeroSystems::Camera.after(HeroSystems::Step),
+                ),
+            );
     }
 }
 
@@ -56,6 +66,8 @@ impl Plugin for HeroPlugin {
 pub(crate) enum HeroSystems {
     /// Every hero's frame; kinematic movers run after it.
     Step,
+    /// His locomotion's frame, on what his step left (AG.30).
+    Gait,
     /// The gameplay camera's frame, after the hero's.
     Camera,
 }
@@ -84,6 +96,22 @@ pub(crate) struct HeroBody {
     /// His pivot as his last step began: where the camera's step reads his
     /// feet.
     pub(crate) before: Vec3,
+}
+
+/// A hero's locomotion (AG.30): the stand-in stepped after him, and the
+/// weights the step before left, so his pose eases between steps as his
+/// transform does.
+#[derive(Component, Debug, Clone)]
+pub(crate) struct HeroGaits {
+    pub(crate) locomotion: Locomotion,
+    pub(crate) before: [f32; 4],
+}
+
+impl HeroGaits {
+    pub(crate) fn new(locomotion: Locomotion) -> Self {
+        let before = locomotion.weights();
+        Self { locomotion, before }
+    }
 }
 
 /// The gameplay camera following the hero, and the level's transition
@@ -172,6 +200,17 @@ fn step_heroes(
         *before = hero.pivot;
         hero.step_among(&seam, &input, step, exclude, &moving.0);
         *transform = placed(hero);
+    }
+}
+
+/// One game frame of each hero's locomotion, on the speed his step's walk
+/// read and his move and footing after it.
+fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut HeroGaits)>) {
+    let step = time.delta_secs();
+    for (body, mut gaits) in &mut heroes {
+        let gaits = &mut *gaits;
+        gaits.before = gaits.locomotion.weights();
+        gaits.locomotion.step(step, Frame::of(&body.hero));
     }
 }
 

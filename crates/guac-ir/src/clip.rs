@@ -12,8 +12,9 @@
 //! one takes over from the other: each joint's local transform is blended
 //! linearly by the incoming clip's weight, which rises from 0 to 1 over the
 //! switch time ([`crossfade_weight`], [`Skeleton::crossfade`]). How the
-//! original blends one is AC's open item; AG.11's recording says how close
-//! this is.
+//! original blends one is AC's open item: AC.13's one capture mid-crossfade
+//! fits this blend to 1.35e-4 rad (AG.11). [`Skeleton::blend`] takes any
+//! number of clips by weight the same way (AG.30's locomotion).
 
 use serde::{Deserialize, Serialize};
 
@@ -372,6 +373,60 @@ impl Skeleton {
         let local: Vec<Qs> = a.iter().zip(&b).map(|(a, b)| a.blend(b, weight)).collect();
         self.compose(&local).iter().map(Qs::transform).collect()
     }
+
+    /// The model-space pose of several clips at once, each at its own time
+    /// in seconds and its own weight (AG.30: the locomotion's idle, walk,
+    /// run and fall): each joint's local transforms averaged by weight over
+    /// the weights' total (translation and scale linearly, rotations as
+    /// 4-vectors turned onto the first's hemisphere, summed and normalized),
+    /// then composed onto parents. A clip of no weight plays no part, one
+    /// with all of it is its own pose exactly, two are
+    /// [`Skeleton::crossfade`] to float rounding, and none is the reference
+    /// pose.
+    pub fn blend(&self, clips: &[(&Clip, f64, f64)]) -> Vec<Transform> {
+        let live: Vec<&(&Clip, f64, f64)> = clips
+            .iter()
+            .filter(|(_, _, w)| *w > 0.0 && w.is_finite())
+            .collect();
+        match live.as_slice() {
+            [] => self.reference_pose(),
+            [(clip, t, _)] => clip.model_pose(self, *t),
+            _ => {
+                let total: f64 = live.iter().map(|(_, _, w)| w).sum();
+                let poses: Vec<(Vec<Qs>, f64)> = live
+                    .iter()
+                    .map(|(clip, t, w)| (clip.local_qs(self, *t), w / total))
+                    .collect();
+                let first = &poses[0].0;
+                let local: Vec<Qs> = (0..first.len())
+                    .map(|j| {
+                        let lead = first[j].r;
+                        let (mut t, mut r, mut s) = ([0.0; 3], [0.0; 4], [0.0; 3]);
+                        for (pose, w) in &poses {
+                            let q = &pose[j];
+                            let dot: f64 = (0..4).map(|i| lead[i] * q.r[i]).sum();
+                            let sign = if dot < 0.0 { -w } else { *w };
+                            for (acc, v) in t.iter_mut().zip(q.t) {
+                                *acc += w * v;
+                            }
+                            for (acc, v) in s.iter_mut().zip(q.s) {
+                                *acc += w * v;
+                            }
+                            for (acc, v) in r.iter_mut().zip(q.r) {
+                                *acc += sign * v;
+                            }
+                        }
+                        Qs {
+                            t,
+                            r: normalize(r),
+                            s,
+                        }
+                    })
+                    .collect();
+                self.compose(&local).iter().map(Qs::transform).collect()
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -648,6 +703,51 @@ mod tests {
             let b = turned.blend(&other, 0.5);
             assert!(near(&[b], &[turned], 1e-7), "{b:?}");
         }
+    }
+
+    /// AG.30's blend of several clips: one with all the weight is its own
+    /// pose exactly, none the reference pose, two the crossfade, the weights
+    /// taken over their total, and three the weighted mean.
+    #[test]
+    fn a_blend_of_clips_by_weight() {
+        let sk = skeleton();
+        let (walk, run) = (clip(), held());
+        let (tw, tr) = (0.05, 0.0);
+        assert_eq!(sk.blend(&[(&walk, tw, 1.0)]), walk.model_pose(&sk, tw));
+        assert_eq!(
+            sk.blend(&[(&walk, tw, 0.0), (&run, tr, 0.7), (&walk, 0.0, f64::NAN)]),
+            run.model_pose(&sk, tr),
+            "no weight, or none that's a number, plays no part"
+        );
+        assert_eq!(sk.blend(&[]), sk.reference_pose());
+        assert_eq!(sk.blend(&[(&walk, tw, 0.0)]), sk.reference_pose());
+        for w in [0.1, 0.25, 0.5, 0.75, 0.9] {
+            let two = sk.blend(&[(&walk, tw, 1.0 - w), (&run, tr, w)]);
+            let fade = sk.crossfade((&walk, tw), (&run, tr), w);
+            assert!(near(&two, &fade, 1e-6), "{w}: {two:?} {fade:?}");
+            let scaled = sk.blend(&[(&walk, tw, 4.0 * (1.0 - w)), (&run, tr, 4.0 * w)]);
+            assert!(near(&scaled, &fade, 1e-6), "{w}: over the total");
+        }
+        // A rotation of the other sign blends the short way round.
+        let mut flipped = held();
+        flipped.tracks[0].rotation = RotationTrack::Constant([0.0, 0.0, 0.0, -1.0]);
+        let a = sk.blend(&[(&walk, tw, 0.5), (&flipped, tr, 0.5)]);
+        let b = sk.crossfade((&walk, tw), (&run, tr), 0.5);
+        assert!(near(&a, &b, 1e-6), "{a:?} {b:?}");
+        // Three: the root at the weighted mean height (1.5, 4.5 and the
+        // walk's start at 0), turned and scaled by the same weights.
+        let p = sk.blend(&[(&walk, tw, 0.5), (&run, tr, 0.25), (&walk, 0.0, 0.25)]);
+        let y = 0.5 * 1.5 + 0.25 * 4.5 + 0.25 * 0.0;
+        assert!(close(p[0].translation, [0.5, y, 0.0]), "{p:?}");
+        assert!(close(p[0].scale, [0.875; 3]), "{p:?}");
+        let (s8, c8) = (std::f64::consts::PI / 8.0).sin_cos();
+        let (qy, qw) = (0.5 * s8, 0.5 * c8 + 0.25 + 0.25);
+        let want = (qy / qy.hypot(qw)) as f32;
+        assert!(
+            (p[0].rotation[1] - want).abs() < 1e-6,
+            "{:?}",
+            p[0].rotation
+        );
     }
 
     #[test]

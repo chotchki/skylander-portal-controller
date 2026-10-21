@@ -2088,6 +2088,9 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
         };
         let rel = ir.model_path(WALKING_LOAD);
         dir.write_output(&rel, &ir.encode(&walker, dir, &rel)?)?;
+        let hero = walking_hero(identity.clone());
+        let rel = ir.hero_path(WALKING_LOAD);
+        dir.write_output(&rel, &ir.encode(&hero, dir, &rel)?)?;
     }
     // Its palette (AH.22): the idle alone, in slot 0.
     let palette = guac_ir::palette::Palette {
@@ -2135,6 +2138,102 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
     let bytes = ir.encode(&rig, dir, ir.rig_path())?;
     dir.write_output(ir.rig_path(), &bytes)?;
     Ok(())
+}
+
+/// Where the walking fixture's hero side holds its top joint along x in the
+/// walk, the run and the fall (AG.30): the e2e reads his locomotion's
+/// weights off `/api/_test/tv`, and these make them show on the model.
+pub const E2E_GAIT_X: [f32; 3] = [0.3, 0.6, 0.9];
+
+/// The walking fixture's hero side (AG.14's record, AG.30 plays it): walk,
+/// run and falling clips on the e2e model's skeleton, Eruptor's lengths
+/// (1.0667, 0.6667 and 0.8 s), each holding the top joint at its
+/// [`E2E_GAIT_X`]; the solid and movement Eruptor's disc ones. Made up.
+fn walking_hero(identity: guac_ir::DumpIdentity) -> guac_ir::hero::Hero {
+    use guac_ir::actor::{Movement, Shape, Solid};
+    use guac_ir::clip::{Clip, RotationTrack, Track, VecTrack};
+    use guac_ir::hero::{Hero, Locomotion, SlotClip};
+    let slot = |slot: u16, name: &str, duration: f32, x: f32| {
+        Some(SlotClip {
+            slot,
+            label: None,
+            clip: Clip {
+                name: name.into(),
+                duration,
+                frame_duration: 1.0 / 30.0,
+                frames: (duration * 30.0).round() as u32 + 1,
+                tracks: vec![Track {
+                    joint: 1,
+                    translation: VecTrack {
+                        constant: [x, 1.0, 0.0],
+                        spline: None,
+                    },
+                    rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+                    scale: VecTrack {
+                        constant: [1.0; 3],
+                        spline: None,
+                    },
+                }],
+            },
+        })
+    };
+    Hero {
+        identity,
+        load_file: WALKING_LOAD.into(),
+        actor: WALKING_LOAD.into(),
+        scale: [100.0; 3],
+        solid: Solid {
+            shape: Shape::Sphere,
+            solid: true,
+            world: true,
+            actor_surface: false,
+            offset: [0.0; 3],
+            rotation: [0.0; 3],
+            width: 4.0,
+            height: 6.0,
+            length: 3.0,
+            weight: 10.0,
+            rebound: 0.0,
+        },
+        movement: Movement {
+            ground_max_speed: 18.0,
+            ground_acceleration: 160.0,
+            ground_deceleration: 80.0,
+            ground_turn_rate: 360.0,
+            air_max_speed: 30.0,
+            air_acceleration: 160.0,
+            air_deceleration: 20.0,
+            air_turn_rate: 360.0,
+            gravity_max_speed: 120.0,
+            gravity_acceleration: 128.0,
+            jump_max_speed: 0.0,
+            jump_acceleration: 0.0,
+            jump_initial_speed: 0.0,
+            motion_type: 0,
+            tilts_with_ground: true,
+            time_scale: 1.0,
+        },
+        locomotion: Locomotion {
+            walk: slot(1, "E2e_Walk.ma", 1.0667, E2E_GAIT_X[0]),
+            jog: None,
+            run: slot(3, "E2e_Run.ma", 0.6667, E2E_GAIT_X[1]),
+            falling: slot(57, "E2e_Falling.ma", 0.8, E2E_GAIT_X[2]),
+            landing: None,
+        },
+    }
+}
+
+/// guacamole's `GET /api/_test/tv/gaits?since=<step>`: the hero's
+/// locomotion step by step after `since` (AG.30), `{"now", "steps"}`.
+pub async fn gaits_tv(base: &str, since: u64) -> Result<serde_json::Value> {
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/api/_test/tv/gaits?since={since}"))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/gaits returned {}", resp.status());
+    }
+    Ok(resp.json().await?)
 }
 
 /// Skips the intro the TV is playing, as a key would (`/api/_test/tv/skip`).

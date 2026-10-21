@@ -99,6 +99,10 @@ pub struct Hero {
     pub velocity: Vec3,
     /// The edge probe holds his controller off.
     pub held_off: bool,
+    /// His walk's length, ft/s, after this frame's push and the edge probe
+    /// and before its slowing: the speed his locomotion mixes his gaits by
+    /// (AG.11, [`crate::locomotion`]).
+    pub gait_speed: f32,
     /// The steps one and two frames before the next.
     steps: [f32; 2],
     solid: HavokSolid,
@@ -121,6 +125,7 @@ impl Hero {
             },
             velocity: Vec3::ZERO,
             held_off: false,
+            gait_speed: 0.0,
             steps: [NOMINAL_STEP; 2],
             solid,
             tuning,
@@ -218,6 +223,7 @@ impl Hero {
                 self.held_off = true;
             }
         }
+        self.gait_speed = self.walk.velocity.length();
         self.walk
             .update_movers(push.held(), &self.footing, &tuning, before);
 

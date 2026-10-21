@@ -491,6 +491,20 @@ pub(crate) fn read_model(shelf: &Shelf, load: &str) -> Result<Model, String> {
     Ok(model)
 }
 
+/// `load`'s hero side off the shelf's extract (AG.14: its locomotion clips,
+/// solid and disc movement), checked to be that load file's on that dump.
+pub(crate) fn read_hero(shelf: &Shelf, load: &str) -> Result<guac_ir::hero::Hero, String> {
+    let rel = shelf.ir.hero_path(load);
+    let hero: guac_ir::hero::Hero = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if hero.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if hero.load_file != load {
+        return Err(format!("{rel} holds {}'s hero side", hero.load_file));
+    }
+    Ok(hero)
+}
+
 /// A relative path of plain names, so a model can't send the loader outside
 /// its extract.
 pub(crate) fn plain(rel: &str) -> bool {
