@@ -1846,7 +1846,12 @@ albedo; that's re-art-direction, not a remaster. With one look, nothing keeps tw
 or swaps post stacks.
 
 Frame rate: logic runs in `FixedUpdate` at the original tick and rendering interpolates transforms
-between ticks, so 60 fps+ doesn't touch game logic. Adventure co-op is one shared camera with leashed
+between ticks, so 60 fps+ doesn't touch game logic. The TV draws at the display's rate focused or not
+(AG.55): Bevy's default updates an unfocused window off a 1/60 s timer, and the walk eased off that
+timer's uneven ticks judders against the display's even ones, so unfocused waits at most 1/240 s (a
+display's vsync outlasts that up to 240 Hz; an occluded window nothing paces stops there) and winit's
+occluded drops it to 1/60 s. Cards the level hides rest their turntables (1.6 ms of a 7.8 ms render
+frame in the 1280x720 window). Adventure co-op is one shared camera with leashed
 players, so parity needs no split screen.
 
 The floor is the Mac until the Windows/HTPC bring-up (Decisions, fourth batch): the M3 Max driving the

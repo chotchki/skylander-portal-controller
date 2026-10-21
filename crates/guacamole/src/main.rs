@@ -48,8 +48,11 @@ use anyhow::{Context, Result};
 use bevy::app::PluginGroupBuilder;
 use bevy::gilrs::GilrsPlugin;
 use bevy::log::LogPlugin;
-use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
-use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
+use bevy::prelude::{
+    App, AppExit, DefaultPlugins, MessageReader, PluginGroup, ResMut, Window, WindowPlugin, default,
+};
+use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode, WindowOccluded};
+use bevy::winit::{UpdateMode, WinitSettings};
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::known::KnownDump;
 use guac_server::boot::{BootOptions, BuiltDriver, Catalogue, ServerHandles, boot};
@@ -250,6 +253,58 @@ fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
     }
 }
 
+/// The TV draws every frame the display takes, focused or not (AG.55):
+/// Bevy's default (`WinitSettings::game()`) updates an unfocused window
+/// only every 1/60 s off a timer, and the walk eased off that timer's
+/// uneven ticks judders against the display's even ones. Unfocused is the
+/// usual case: the phone and the pad drive the TV, not the window's keys.
+/// Unfocused waits at most [`UNFOCUSED_FLOOR`] between updates, which a
+/// display's vsync outlasts up to 240 Hz, so it updates as continuously as
+/// focused, while a window nothing paces (occluded: macOS's lock screen)
+/// stops at 240 a second rather than spinning.
+fn tv_updates() -> WinitSettings {
+    WinitSettings {
+        focused_mode: UpdateMode::Continuous,
+        unfocused_mode: UpdateMode::reactive_low_power(UNFOCUSED_FLOOR),
+    }
+}
+
+/// The shortest wait between an unfocused TV's updates: 1/240 s.
+const UNFOCUSED_FLOOR: Duration = Duration::from_nanos(4_166_667);
+
+/// How often the TV updates while its window is occluded: nothing of it
+/// shows and nothing paces its presents, so Bevy's unfocused 1/60 s rather
+/// than a spin (AG.55: occluded under the Mac's lock, the portal drew 895
+/// frames a second).
+const OCCLUDED_WAIT: Duration = Duration::from_nanos(16_666_667);
+
+fn occluded_updates() -> WinitSettings {
+    WinitSettings {
+        focused_mode: UpdateMode::reactive_low_power(OCCLUDED_WAIT),
+        unfocused_mode: UpdateMode::reactive_low_power(OCCLUDED_WAIT),
+    }
+}
+
+/// [`tv_updates`] while the window shows, [`occluded_updates`] while it's
+/// occluded, on winit's word.
+fn pace_on_occlusion(
+    mut heard: MessageReader<WindowOccluded>,
+    mut settings: ResMut<WinitSettings>,
+) {
+    let Some(last) = heard.read().last() else {
+        return;
+    };
+    *settings = if last.occluded {
+        occluded_updates()
+    } else {
+        tv_updates()
+    };
+    info!(
+        occluded = last.occluded,
+        "the TV's window occlusion changed"
+    );
+}
+
 /// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
@@ -296,6 +351,8 @@ fn run_tv(
 
     let mut app = App::new();
     app.add_plugins(tv_plugins(mode, posted_pads_only()))
+        .insert_resource(tv_updates())
+        .add_systems(bevy::app::First, pace_on_occlusion)
         .insert_resource(link)
         .insert_resource(PortalFeed(portal))
         .insert_resource(shelf)
@@ -477,6 +534,61 @@ fn exit_after_farewell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AG.55: the TV updates continuously focused, and unfocused waits no
+    /// longer than a 240 Hz display's frame, where Bevy's default waits a
+    /// 60 Hz one's.
+    #[test]
+    fn the_tv_updates_every_frame_focused_or_not() {
+        let wait = |mode: UpdateMode| match mode {
+            UpdateMode::Continuous => Duration::ZERO,
+            UpdateMode::Reactive { wait, .. } => wait,
+        };
+        let s = tv_updates();
+        assert_eq!(s.focused_mode, UpdateMode::Continuous);
+        assert!(wait(s.unfocused_mode) <= Duration::from_secs_f64(1.0 / 240.0));
+        assert!(
+            wait(s.unfocused_mode) > Duration::ZERO,
+            "an occluded TV doesn't spin"
+        );
+        assert!(
+            wait(WinitSettings::default().unfocused_mode) >= Duration::from_secs_f64(1.0 / 61.0),
+            "Bevy's default throttles an unfocused window to 60"
+        );
+    }
+
+    /// AG.55: occluded, the TV updates every 1/60 s; shown again, every
+    /// frame.
+    #[test]
+    fn an_occluded_tv_updates_at_sixty() {
+        let mut app = App::new();
+        app.add_message::<WindowOccluded>()
+            .insert_resource(tv_updates())
+            .add_systems(bevy::app::Update, pace_on_occlusion);
+        let window = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(WindowOccluded {
+            window,
+            occluded: true,
+        });
+        app.update();
+        let s = app.world().resource::<WinitSettings>();
+        assert_eq!(
+            s.unfocused_mode,
+            UpdateMode::reactive_low_power(OCCLUDED_WAIT)
+        );
+        assert_eq!(
+            s.focused_mode,
+            UpdateMode::reactive_low_power(OCCLUDED_WAIT)
+        );
+        app.world_mut().write_message(WindowOccluded {
+            window,
+            occluded: false,
+        });
+        app.update();
+        let s = app.world().resource::<WinitSettings>();
+        assert_eq!(s.focused_mode, UpdateMode::Continuous);
+        assert_eq!(s.unfocused_mode, tv_updates().unfocused_mode);
+    }
 
     /// AG.52: with the switch the TV builds without gilrs, so no real pad
     /// connects; without it gilrs stays, as release has it. The log plugin

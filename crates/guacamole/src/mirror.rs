@@ -9,7 +9,8 @@
 //! pads as the level's layer reads them (AG.20) and the walk's mode and
 //! hero (AG.21) and his locomotion (AG.30) ride along,
 //! `/api/_test/tv/frames` hands out the TV's frame times for the stall check,
-//! `/api/_test/tv/gaits` his locomotion step by step (AG.30) and
+//! `/api/_test/tv/gaits` his locomotion step by step (AG.30),
+//! `/api/_test/tv/drawn` the walk frame by frame as drawn (AG.55) and
 //! `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
 
 use std::collections::VecDeque;
@@ -229,8 +230,8 @@ pub struct PipShot {
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
-/// presses posted for the input router, the frame log, the posted pads and
-/// the gait log.
+/// presses posted for the input router, the frame log, the posted pads,
+/// the gait log and the drawn log.
 #[derive(Resource, Clone, Default)]
 pub struct TvMirror(
     pub Arc<Mutex<TvSnapshot>>,
@@ -239,6 +240,7 @@ pub struct TvMirror(
     pub(crate) Arc<Mutex<FrameLog>>,
     pub(crate) PostedPads,
     pub(crate) Arc<Mutex<GaitLog>>,
+    pub(crate) Arc<Mutex<DrawnLog>>,
 );
 
 /// Pads `/api/_test/tv/pad` drives, 0 to 3.
@@ -577,6 +579,224 @@ fn log_gaits(
         });
 }
 
+/// One drawn frame of the walk (AG.55), as `Last` finds it: the frame's
+/// clocks, the fixed steps run so far and the overstep the drawing eased
+/// by, the hero's drawn transform and his step's pivot, the camera's drawn
+/// transform, each clip's drawn time and weight and how far his joints
+/// moved since the frame before.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct DrawnFrame {
+    /// Bevy's frame count.
+    pub frame: u32,
+    /// `Time<Real>` at the frame, and the virtual clock's delta, ms.
+    pub real_ms: f64,
+    pub delta_ms: f64,
+    /// The main world's work on the frame: from its clock's update to
+    /// `Last`, ms.
+    pub work_ms: f64,
+    /// When `Last` ran, ms on the log's own clock (the presents' clock).
+    pub at_ms: f64,
+    /// His locomotion's steps since he came in.
+    pub steps: u64,
+    /// `Time<Fixed>`'s overstep fraction.
+    pub overstep: f32,
+    /// Translation, then rotation x, y, z, w.
+    pub hero: [f32; 7],
+    /// His pivot as his last step left it.
+    pub pivot: [f32; 3],
+    pub camera: [f32; 7],
+    /// Idle, walk, run and fall: time in seconds and weight.
+    pub clips: [[f64; 2]; 4],
+    /// Over every joint, metres moved plus radians turned since the frame
+    /// before.
+    pub pose_moved: f32,
+    /// Cameras drawing this frame.
+    pub cameras: usize,
+    /// Character materials changed since the frame before (each one is
+    /// prepared again for the GPU).
+    pub materials_changed: usize,
+}
+
+/// The walk's drawn frames, oldest first, and when the render world began
+/// and finished each frame (its presents scheduled by the finish), on the
+/// log's own clock.
+#[derive(Debug)]
+pub(crate) struct DrawnLog {
+    frames: VecDeque<DrawnFrame>,
+    /// The render world's frames: began and finished, ms.
+    presents: VecDeque<[f64; 2]>,
+    base: std::time::Instant,
+}
+
+impl Default for DrawnLog {
+    fn default() -> Self {
+        Self {
+            frames: VecDeque::new(),
+            presents: VecDeque::new(),
+            base: std::time::Instant::now(),
+        }
+    }
+}
+
+impl DrawnLog {
+    fn ms(&self, at: std::time::Instant) -> f64 {
+        at.saturating_duration_since(self.base).as_secs_f64() * 1e3
+    }
+
+    fn present(&mut self, began: std::time::Instant, at: std::time::Instant) {
+        if self.presents.len() == FRAMES_KEPT {
+            self.presents.pop_front();
+        }
+        let span = [self.ms(began), self.ms(at)];
+        self.presents.push_back(span);
+    }
+
+    fn push(&mut self, frame: DrawnFrame) {
+        if self.frames.len() == FRAMES_KEPT {
+            self.frames.pop_front();
+        }
+        self.frames.push_back(frame);
+    }
+
+    fn since(&self, since: u32) -> DrawnBody {
+        let frames: Vec<DrawnFrame> = self
+            .frames
+            .iter()
+            .filter(|f| f.frame > since)
+            .cloned()
+            .collect();
+        let from = frames.first().map_or(f64::INFINITY, |f| f.at_ms);
+        DrawnBody {
+            presents: self
+                .presents
+                .iter()
+                .filter(|p| p[1] >= from)
+                .copied()
+                .collect(),
+            frames,
+        }
+    }
+}
+
+/// `GET /api/_test/tv/drawn`' body.
+#[derive(Debug, Serialize, PartialEq)]
+struct DrawnBody {
+    frames: Vec<DrawnFrame>,
+    /// From the first frame's `at_ms` on: when each render frame began
+    /// and finished.
+    presents: Vec<[f64; 2]>,
+}
+
+/// The drawn log in the render world, and when its frame began.
+#[derive(Resource)]
+struct PresentLog(Arc<Mutex<DrawnLog>>, Option<std::time::Instant>);
+
+/// When the render world began this frame.
+fn log_render_began(mut log: ResMut<PresentLog>) {
+    log.1 = Some(std::time::Instant::now());
+}
+
+/// When the render world finished this frame, into the drawn log.
+fn log_present(log: Res<PresentLog>) {
+    let now = std::time::Instant::now();
+    let began = log.1.unwrap_or(now);
+    log.0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .present(began, now);
+}
+
+#[derive(Deserialize)]
+struct DrawnQuery {
+    since: Option<u32>,
+}
+
+/// A transform as its translation, then its rotation's x, y, z and w.
+fn seven(t: &Transform) -> [f32; 7] {
+    let [x, y, z] = t.translation.to_array();
+    let [a, b, c, d] = t.rotation.to_array();
+    [x, y, z, a, b, c, d]
+}
+
+/// This frame of the walk into the drawn log, while the level shows.
+fn log_drawn(
+    count: Res<bevy::diagnostic::FrameCount>,
+    real: Res<Time<Real>>,
+    time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
+    play: Option<Res<Play>>,
+    reduced: Option<Res<crate::motion::ReducedMotion>>,
+    mirror: Res<TvMirror>,
+    (bodies, transforms, cameras): (
+        Query<(&HeroBody, &HeroGaits)>,
+        Query<&Transform>,
+        Query<&Camera>,
+    ),
+    mut before: Local<Vec<Transform>>,
+    changed: Option<MessageReader<AssetEvent<guacamole::character::material::CharacterMaterial>>>,
+) {
+    let materials_changed = changed.map_or(0, |mut c| {
+        c.read()
+            .filter(|e| matches!(e, AssetEvent::Modified { .. }))
+            .count()
+    });
+    let Some((hero, camera, joints)) = play.as_ref().and_then(|p| p.drawn()) else {
+        before.clear();
+        return;
+    };
+    let (Ok((body, gaits)), Ok(drawn), Ok(view)) = (
+        bodies.get(hero),
+        transforms.get(hero),
+        transforms.get(camera),
+    ) else {
+        return;
+    };
+    let held = reduced.is_some_and(|r| r.0);
+    let clips = crate::play::drawn_clips(
+        gaits,
+        (fixed.overstep_fraction(), fixed.timestep().as_secs_f64()),
+        held,
+    );
+    let pose: Vec<Transform> = joints
+        .iter()
+        .filter_map(|j| transforms.get(*j).ok().copied())
+        .collect();
+    let pose_moved = if before.len() == pose.len() {
+        before
+            .iter()
+            .zip(&pose)
+            .map(|(a, b)| {
+                a.translation.distance(b.translation) + a.rotation.angle_between(b.rotation)
+            })
+            .sum()
+    } else {
+        f32::NAN
+    };
+    *before = pose;
+    let now = std::time::Instant::now();
+    let work_ms = real.last_update().map_or(f64::NAN, |at| {
+        now.saturating_duration_since(at).as_secs_f64() * 1e3
+    });
+    let mut log = mirror.6.lock().unwrap_or_else(|e| e.into_inner());
+    let at_ms = log.ms(now);
+    log.push(DrawnFrame {
+        frame: count.0,
+        real_ms: real.elapsed().as_secs_f64() * 1e3,
+        delta_ms: time.delta().as_secs_f64() * 1e3,
+        work_ms,
+        at_ms,
+        steps: gaits.locomotion.steps(),
+        overstep: fixed.overstep_fraction(),
+        hero: seven(drawn),
+        pivot: body.hero.pivot.to_array(),
+        camera: seven(view),
+        clips: clips.map(|(at, w)| [at, f64::from(w)]),
+        pose_moved,
+        cameras: cameras.iter().filter(|c| c.is_active).count(),
+        materials_changed,
+    });
+}
+
 pub struct Mirror;
 
 impl Plugin for Mirror {
@@ -585,7 +805,20 @@ impl Plugin for Mirror {
             .add_systems(Update, skip_asked.before(intro_player::play_intros))
             .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
             .add_systems(FixedUpdate, log_gaits.after(HeroSystems::Gait))
-            .add_systems(Last, log_frame);
+            .add_systems(Last, (log_frame, log_drawn));
+        let log = app.world().get_resource::<TvMirror>().map(|m| m.6.clone());
+        if let (Some(log), Some(render)) = (log, app.get_sub_app_mut(bevy::render::RenderApp)) {
+            render
+                .insert_resource(PresentLog(log, None))
+                .add_systems(
+                    bevy::render::Render,
+                    log_render_began.in_set(bevy::render::RenderSystems::ExtractCommands),
+                )
+                .add_systems(
+                    bevy::render::Render,
+                    log_present.in_set(bevy::render::RenderSystems::Cleanup),
+                );
+        }
     }
 }
 
@@ -631,8 +864,10 @@ struct PressBody {
 /// log after `since_ms` of the TV's real time (all of it without one) and
 /// the last frame's end. `GET /api/_test/tv/gaits?since=<step>` hands out
 /// the hero's locomotion step by step after step `since` (all of the
-/// current hero's without one) and the last step's number (AG.30). Generic
-/// so a test needs no `AppState`.
+/// current hero's without one) and the last step's number (AG.30). `GET
+/// /api/_test/tv/drawn?since=<frame>` hands out the walk's drawn frames
+/// after Bevy's frame `since` (AG.55). Generic so a test needs no
+/// `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
@@ -640,7 +875,18 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
     let frames = mirror.3.clone();
     let pads = mirror.4.clone();
     let gaits = mirror.5.clone();
+    let drawn = mirror.6.clone();
     axum::Router::new()
+        .route(
+            "/api/_test/tv/drawn",
+            axum::routing::get(move |q: axum::extract::Query<DrawnQuery>| {
+                let body = drawn
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .since(q.since.unwrap_or(0));
+                async move { axum::Json(body) }
+            }),
+        )
         .route(
             "/api/_test/tv/pad",
             axum::routing::post(move |body: Result<axum::Json<PadBody>, JsonRejection>| {
@@ -1064,6 +1310,42 @@ mod tests {
         TvScreen::Portal {
             game: "Skylanders: Giants".into(),
         }
+    }
+
+    /// AG.55: the drawn log hands out the frames after the one asked for,
+    /// and the render world's frames from the first of them on.
+    #[test]
+    fn the_drawn_log_hands_out_frames_after_and_their_renders() {
+        let mut log = DrawnLog::default();
+        let frame = |n: u32, at_ms: f64| DrawnFrame {
+            frame: n,
+            real_ms: at_ms,
+            delta_ms: 8.0,
+            work_ms: 1.0,
+            at_ms,
+            steps: u64::from(n),
+            overstep: 0.5,
+            hero: [0.0; 7],
+            pivot: [0.0; 3],
+            camera: [0.0; 7],
+            clips: [[0.0; 2]; 4],
+            pose_moved: 0.0,
+            cameras: 2,
+            materials_changed: 0,
+        };
+        let base = log.base;
+        let at = |ms: u64| base + std::time::Duration::from_millis(ms);
+        for (n, ms) in [(1, 10), (2, 18), (3, 26)] {
+            log.push(frame(n, ms as f64));
+            log.present(at(ms + 1), at(ms + 6));
+        }
+        let body = log.since(1);
+        assert_eq!(
+            body.frames.iter().map(|f| f.frame).collect::<Vec<_>>(),
+            [2, 3]
+        );
+        assert_eq!(body.presents, [[19.0, 24.0], [27.0, 32.0]]);
+        assert!(log.since(3).frames.is_empty() && log.since(3).presents.is_empty());
     }
 
     #[test]
