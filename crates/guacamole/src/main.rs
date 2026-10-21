@@ -45,6 +45,8 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bevy::app::PluginGroupBuilder;
+use bevy::gilrs::GilrsPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
 use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
@@ -269,18 +271,7 @@ fn run_tv(
     exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
-    let plugins = DefaultPlugins
-        .set(WindowPlugin {
-            primary_window: Some(window(mode)),
-            ..default()
-        })
-        // `logging::init` owns the global subscriber.
-        .disable::<LogPlugin>();
-    // One source per pad (AG.53): on macOS GameController reads them, and
-    // gilrs, which reads nothing of an 8BitDo there (AG.5), stays off.
-    #[cfg(target_os = "macos")]
-    let plugins = plugins.disable::<bevy::gilrs::GilrsPlugin>();
-    app.add_plugins(plugins);
+    app.add_plugins(tv_plugins(mode));
     #[cfg(target_os = "macos")]
     app.add_plugins(guacamole::game_controller::GameControllerPads);
     app.insert_resource(link)
@@ -380,6 +371,25 @@ fn failed_link(message: String) -> ServerLink {
     }
 }
 
+/// Bevy's plugins for the TV: no log plugin (`logging::init` owns the global
+/// subscriber) and, on macOS, no gilrs. One source per pad (AG.53): there
+/// GameController reads the pads (`run_tv` adds it) and gilrs reads nothing
+/// of an 8BitDo (AG.5). gilrs is still built in there, through Bevy's `ui`
+/// collection; only its plugin is left out.
+fn tv_plugins(mode: WindowMode) -> PluginGroupBuilder {
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(window(mode)),
+            ..default()
+        })
+        .disable::<LogPlugin>();
+    if cfg!(target_os = "macos") {
+        plugins.disable::<GilrsPlugin>()
+    } else {
+        plugins
+    }
+}
+
 fn window(mode: WindowMode) -> Window {
     let title = "guacamole".to_string();
     match mode {
@@ -458,4 +468,20 @@ fn exit_after_farewell(
             std::process::exit(0);
         })
         .expect("spawn the farewell thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AG.53: gilrs reads the pads everywhere but macOS, where
+    /// GameController does; the log plugin is out either way.
+    #[test]
+    fn gilrs_reads_the_pads_everywhere_but_macos() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            let plugins = tv_plugins(mode);
+            assert_eq!(plugins.enabled::<GilrsPlugin>(), !cfg!(target_os = "macos"));
+            assert!(!plugins.enabled::<LogPlugin>());
+        }
+    }
 }

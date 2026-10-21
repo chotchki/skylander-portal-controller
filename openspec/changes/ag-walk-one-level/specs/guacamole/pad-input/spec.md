@@ -2,7 +2,7 @@
 
 ## Purpose
 
-How guacamole reads a game pad in a level and names its buttons on the TV: buttons by position, every press however short, the original's stick dead zone, which pad walks the hero, prompts that show the label printed on the pad in the player's hands and Home kept from macOS.
+How guacamole reads a game pad in a level and names its buttons on the TV: buttons by position, every press however short, the original's stick dead zone, which pad walks the hero, prompts that show the label printed on the pad in the player's hands and Home doing nothing.
 
 ## ADDED Requirements
 
@@ -72,9 +72,9 @@ Start on any connected pad SHALL pause the level under an overlay naming the but
 - **WHEN** Start is pressed while Eruptor walks, then the bottom face button
 - **THEN** everything stops under the overlay, then carries on from where it stopped
 
-### Requirement: Home stays with the game
-On the Mac, while guacamole is in front, a pad's Home button SHALL NOT open macOS's game overlay or another app, and SHALL change nothing while the hero walks.
+### Requirement: Home does nothing in a level
+A pad's Home button SHALL change nothing while the hero walks. Keeping Home from macOS, which on the Mac still opens its Games app on it, is the backlog's Home menu line, not this.
 
 #### Scenario: Home while Eruptor walks
-- **WHEN** Home is pressed on the 8BitDo while Eruptor walks on the Mac
-- **THEN** he walks on as before and macOS's Games app doesn't open
+- **WHEN** Home is pressed on the 8BitDo while Eruptor walks
+- **THEN** he walks on as before

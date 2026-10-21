@@ -1887,10 +1887,10 @@ every 0.x release breaks API (0.20's switch to WESL broke every custom shader wr
 Verdict: Guacamole reads the real pad, maps by position and shows the label printed at that position on
 the pad in the player's hands.
 
-- chotchki's pads are 8BitDo Ultimate 2s in both variants, PC and Switch. Same four face positions,
-  different labels: the PC variant prints Xbox-style (A at the bottom, B on the right) and the Switch
-  variant Nintendo-style (B at the bottom, A on the right). That's from the published layouts, checked
-  against the pads in hand with the hardware checks below.
+- chotchki's pads are 8BitDo Ultimate 2s, all one model (AG.5, 2026-10-20: "all my ultimate 2
+  controllers are identical"), printed Nintendo-style (B at the bottom, A on the right). The plan
+  assumed a second, PC variant printed Xbox-style (A at the bottom, B on the right); none is in the
+  house, so an Xbox-lettered pad's prompts are checked by unit test only.
 - Mapping is positional, because the original's controls are positional. Bevy already names face buttons
   by position (`GamepadButton::South`, `East`, `West`, `North`), so the game binds positions and only the
   prompt glyphs change per pad. Never the PS3's glyphs.
@@ -1898,7 +1898,7 @@ the pad in the player's hands.
   of 32 of 128 counts, scaled linearly to full past it, so a push up to 14 deg off forward walks straight
   forward (measured through the oracle, AF.9 and AF.12; The oracle, Actors and the stick).
 - On the HTPC (the bring-up), Steam Input passthrough is the decision: Steam Input off on the `guacamole`
-  shortcut, so Guacamole sees the real device instead of Steam's virtual pad. Telling the variants apart
+  shortcut, so Guacamole sees the real device instead of Steam's virtual pad. Telling pads' labels apart
   is probably SDL3-class identification, vendor and product id against a gamepad database (SDL3 picks a
   pad's face labels that way). Bevy's `Gamepad` does carry the vendor and product id its gilrs backend
   reports; whether that's enough to tell the 8BitDo apart from an Xbox-lettered pad on Windows is the
@@ -1909,16 +1909,16 @@ the pad in the player's hands.
   [`game_controller.rs`](../../crates/guacamole/src/game_controller.rs)). AG.5 (2026-10-20, chotchki's one
   8BitDo Ultimate 2, Nintendo letters printed) found its dongle and cable present XInput, which nothing
   on macOS reads, and over Bluetooth it's a Switch Pro that gilrs connects and then reads nothing of,
-  while GameController reads every element. So on macOS bevy_gilrs is off (one source per pad), a
-  `NonSend` system drains each pad's input-state queue into Bevy's own gamepad stream every frame (a tap
-  inside one frame still counts), faces map by position per product category (the Switch Pro measured:
-  Apple's B at the bottom), and a prompt's letter is the one Apple names the element at that position by,
-  which matches the 8BitDo's printing position for position. No ids reach Bevy there, so the id table is
-  gilrs's, for Windows.
+  while GameController reads every element. So on macOS bevy_gilrs's plugin is left out (one source per
+  pad; the crate is still built in, through Bevy's `ui` collection), a `NonSend` system drains each pad's
+  input-state queue into Bevy's own gamepad stream every frame (a tap inside one frame still counts),
+  faces map by position per product category (the Switch Pro measured: Apple's B at the bottom), and a
+  prompt's letter is the one Apple names the element at that position by, which matches the 8BitDo's
+  printing position for position. No ids reach Bevy there, so the id table is gilrs's, for Windows.
 - What the Home button does in Guacamole is open (Open question 1). For now it does nothing (chotchki,
-  2026-10-20): on the Mac guacamole turns off Home's system gesture, which otherwise opens macOS's Games
-  app, so a press arrives and is ignored; a switch-games or exit screen is a backlog idea (the Home menu
-  line).
+  2026-10-20). It doesn't keep Home from macOS: guacamole asks for Home's system gesture off, a
+  preference Apple says the system needn't respect, and at AG.51 macOS still opened its Games app on
+  Home. Keeping it from macOS and a switch-games or exit screen are the backlog's Home menu line.
 - Hardware checks ("all non-urgent testing"):
   - On the Mac, with any `guacamole` build: does each variant show up with an identity Guacamole can map
     to the right glyphs, and does Home reach Guacamole? This half moved into AG as its first input box

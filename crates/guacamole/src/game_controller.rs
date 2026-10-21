@@ -3,8 +3,9 @@
 //! 8BitDo Ultimate 2 over Bluetooth on the Mac and then reads nothing (and
 //! neither its dongle nor its cable has a HID interface there), while
 //! GameController reads every element of the Bluetooth pad. So on macOS this
-//! is the pad source and gilrs is off, one source per pad; gilrs stays the
-//! source everywhere else.
+//! is the pad source and gilrs is off, one source per pad (its plugin isn't
+//! added; the crate is still built in, through Bevy's `ui` collection);
+//! gilrs stays the source everywhere else.
 //!
 //! It feeds Bevy's own gamepad stream as bevy_gilrs and `/api/_test/tv/pad`
 //! do (a `GamepadConnectionEvent` and `RawGamepadEvent`s before Bevy's input
@@ -21,10 +22,14 @@
 //! - No press lost between frames: each pad's input-state queue is drained
 //!   in order every frame, so a press and its release inside one frame both
 //!   reach Bevy and the router sees the press. A pad without the queue (an
-//!   OS before it) is read once a frame instead, and says so in the log.
-//! - Home is claimed from macOS (its system gesture off, so the Games app no
-//!   longer opens while guacamole is in front) and does nothing (chotchki,
-//!   2026-10-20).
+//!   OS before it) is read once a frame instead, and says so in the log. The
+//!   one loss: what a pad sent in the frame it disconnects, which Bevy drops
+//!   for a gone pad anyway (bevy_gilrs's pads the same).
+//! - Home does nothing in guacamole (chotchki, 2026-10-20). Its system
+//!   gesture is asked off on every pad, a preference Apple says the system
+//!   needn't respect, and macOS doesn't: at AG.51 the Games app opened on
+//!   Home with the ask in place. Keeping Home from macOS is the backlog's
+//!   Home menu line.
 //! - The letters Apple names the face elements by, per position
 //!   ([`FacesPrinted`]), for the prompt resolver.
 //!
@@ -262,9 +267,11 @@ pub trait Controllers {
     /// Buffer its readings, `depth` at most, for [`Controllers::next_state`];
     /// false where the OS has no queue and the reading is taken once a call.
     fn queue(&mut self, key: u64, depth: usize) -> bool;
-    /// Turn off its Home button's system gesture; false for a pad without
-    /// Home.
-    fn claim_home(&mut self, key: u64) -> bool;
+    /// Ask the system to leave its Home button's gesture off, a preference
+    /// macOS may ignore (it did at AG.51). None for a pad without Home, else
+    /// whether the system still reports Home bound to a gesture after the
+    /// ask.
+    fn ask_home_gesture_off(&mut self, key: u64) -> Option<bool>;
     /// The oldest reading buffered since the last call, or none once drained.
     fn next_state(&mut self, key: u64) -> Option<PadState>;
     /// Let go of a controller that's no longer connected (the key may come
@@ -273,7 +280,9 @@ pub trait Controllers {
 }
 
 /// Readings each pad buffers between frames: about two seconds of a
-/// Bluetooth pad's reports, so a long frame (a level's load) loses nothing.
+/// Bluetooth pad's reports (AG.5's logs: a change every 15-16 ms while it
+/// moves), so a long frame (a level's load) loses nothing. Past it the
+/// framework drops the oldest.
 pub const QUEUE_DEPTH: usize = 128;
 
 /// The most readings one pad hands over in a frame: past the queue's depth
@@ -358,14 +367,18 @@ impl GcPads {
                 i.and_then(|i| opened.glyphs[i].letter())
             }));
             let queued = self.controllers.queue(key, QUEUE_DEPTH);
-            let home = self.controllers.claim_home(key);
+            let home = match self.controllers.ask_home_gesture_off(key) {
+                None => "no Home",
+                Some(false) => "gesture asked off, macOS reports it unbound",
+                Some(true) => "gesture asked off, macOS reports it still bound",
+            };
             info!(
                 pad = ?entity,
                 name = %opened.name,
                 category = %opened.category,
                 layout = layout.measured.unwrap_or("Apple's default, unmeasured"),
                 faces = ?faces.0,
-                home_claimed = home,
+                home,
                 queued,
                 "GameController pad connected"
             );
@@ -510,10 +523,12 @@ mod tests {
     use super::*;
 
     /// A controller the fake hands out: what it tells, what it holds and
-    /// queues, and what the backend asked of it, for the asserts.
+    /// queues, and what the backend asked of it, for the asserts. Kept once
+    /// it disconnects, so its closes can be counted.
     #[derive(Debug, Clone)]
     struct FakePad {
         key: u64,
+        connected: bool,
         name: String,
         category: String,
         glyphs: [Glyph; 4],
@@ -523,7 +538,7 @@ mod tests {
         state: PadState,
         queued: VecDeque<PadState>,
         depth: Option<usize>,
-        home_gesture_off: bool,
+        home_asked: bool,
         /// Without a queue: the reading last handed out, as the framework's
         /// polled source keeps it.
         polled: Option<PadState>,
@@ -559,22 +574,29 @@ mod tests {
             self.connect_pad(pad);
         }
 
+        /// `pad` connecting; one gone with its key is forgotten.
         fn connect_pad(&self, pad: FakePad) {
-            self.0.borrow_mut().push(pad);
+            let mut pads = self.0.borrow_mut();
+            pads.retain(|p| p.key != pad.key);
+            pads.push(pad);
         }
 
         fn disconnect(&self, key: u64) {
-            self.0.borrow_mut().retain(|p| p.key != key);
+            self.with(key, |p| p.connected = false);
         }
 
-        /// A reading the pad sends: buffered for the next frame, or where
-        /// the pad has no queue, its state now.
+        /// A reading the pad sends: buffered for the next frame, the oldest
+        /// dropped past the depth asked for (as the framework drops them),
+        /// or where the pad has no queue, its state now.
         fn send(&self, key: u64, state: PadState) {
             let mut pads = self.0.borrow_mut();
             let pad = pads.iter_mut().find(|p| p.key == key).unwrap();
             pad.state = state;
-            if pad.has_queue && pad.depth.is_some() {
+            if let (true, Some(depth)) = (pad.has_queue, pad.depth) {
                 pad.queued.push_back(state);
+                while pad.queued.len() > depth {
+                    pad.queued.pop_front();
+                }
             }
         }
 
@@ -594,7 +616,12 @@ mod tests {
 
     impl Controllers for Fake {
         fn connected(&mut self) -> Vec<u64> {
-            self.0.borrow().iter().map(|p| p.key).collect()
+            self.0
+                .borrow()
+                .iter()
+                .filter(|p| p.connected)
+                .map(|p| p.key)
+                .collect()
         }
 
         fn open(&mut self, key: u64) -> Option<Opened> {
@@ -618,12 +645,12 @@ mod tests {
             .unwrap_or(false)
         }
 
-        fn claim_home(&mut self, key: u64) -> bool {
+        fn ask_home_gesture_off(&mut self, key: u64) -> Option<bool> {
             self.with(key, |p| {
-                p.home_gesture_off = p.has_home;
-                p.has_home
+                p.home_asked = p.has_home;
+                p.has_home.then_some(false)
             })
-            .unwrap_or(false)
+            .flatten()
         }
 
         fn next_state(&mut self, key: u64) -> Option<PadState> {
@@ -660,7 +687,7 @@ mod tests {
 
     /// A pad's connection: its entity, name and the letters printed at each
     /// position, by its category's layout; the framework asked to buffer
-    /// and to give up Home; a disconnection, closed once.
+    /// and to leave Home's gesture off; a disconnection, closed once.
     #[test]
     fn connect_and_disconnect() {
         let fake = Fake::default();
@@ -679,12 +706,14 @@ mod tests {
         );
         let opened = fake.pad(7);
         assert_eq!(opened.depth, Some(QUEUE_DEPTH));
-        assert!(opened.home_gesture_off, "Home's gesture is off");
+        assert!(opened.home_asked, "Home's gesture asked off");
         assert_eq!(polled(&mut pads, &mut spawn), [], "opened once");
         assert_eq!(fake.pad(7).opened, 1);
+        assert_eq!(fake.pad(7).closed, 0);
         fake.disconnect(7);
         assert_eq!(polled(&mut pads, &mut spawn), [PadEvent::Disconnected(pad)]);
         assert_eq!(polled(&mut pads, &mut spawn), []);
+        assert_eq!(fake.pad(7).closed, 1, "let go of once");
         // It comes back as a new controller: a new entity, at the back.
         fake.connect(7, "Switch Pro Controller");
         assert!(matches!(
@@ -915,6 +944,49 @@ mod tests {
         assert!(!gamepad.just_pressed(GamepadButton::South), "once");
     }
 
+    /// A long frame (a level's load, a hitch) loses nothing the queue holds:
+    /// 1.8 s of a Bluetooth pad's reports at AG.5's 15 ms, a tap of the
+    /// bottom button each two of them, all reach Bevy in order at the next
+    /// frame; past the queue's depth the oldest go, as the framework drops
+    /// them.
+    #[test]
+    fn a_long_frame_keeps_every_reading_the_queue_holds() {
+        let fake = Fake::default();
+        let mut pads = GcPads::new(Box::new(fake.clone()));
+        let mut spawn = entities();
+        fake.connect(1, "Switch Pro Controller");
+        polled(&mut pads, &mut spawn);
+        let pad = Entity::from_raw_u32(1).unwrap();
+        let taps = 60;
+        for _ in 0..taps {
+            fake.send(1, PadState::default().with(Element::B, true));
+            fake.send(1, PadState::default());
+        }
+        let events = polled(&mut pads, &mut spawn);
+        let want: Vec<PadEvent> = (0..taps)
+            .flat_map(|_| {
+                [
+                    PadEvent::Button(pad, GamepadButton::South, 1.0),
+                    PadEvent::Button(pad, GamepadButton::South, 0.0),
+                ]
+            })
+            .collect();
+        assert_eq!(events, want, "every tap, in order");
+        // Past the depth: the two oldest readings go, the newest stay.
+        for i in 0..QUEUE_DEPTH + 2 {
+            fake.send(1, PadState::default().with(Element::B, i % 2 == 0));
+        }
+        let events = polled(&mut pads, &mut spawn);
+        assert_eq!(events.len(), QUEUE_DEPTH);
+        assert_eq!(
+            (events[0].clone(), events[QUEUE_DEPTH - 1].clone()),
+            (
+                PadEvent::Button(pad, GamepadButton::South, 1.0),
+                PadEvent::Button(pad, GamepadButton::South, 0.0)
+            )
+        );
+    }
+
     /// Through Bevy: a connection makes a `Gamepad` with Apple's vendor
     /// name, no ids and the letters printed per position beside it; its
     /// sticks and buttons land; a disconnection takes the `Gamepad` off and
@@ -963,15 +1035,22 @@ mod tests {
         app.update();
         assert_eq!(fake.pad(5).opened, 1, "asked once");
         fake.disconnect(1);
+        fake.disconnect(5);
         app.update();
         assert!(app.world().get::<Gamepad>(pad).is_none());
         assert!(app.world().get_entity(pad).is_ok(), "the entity stays");
+        assert_eq!(
+            (fake.pad(1).closed, fake.pad(5).closed),
+            (1, 1),
+            "both let go of"
+        );
     }
 
-    /// Home's system gesture is turned off on every pad that has a Home
-    /// button, as it connects; a pad without one is left as it is.
+    /// Home's system gesture is asked off on every pad that has a Home
+    /// button, as it connects (whether macOS honours it is its own: AG.51
+    /// saw it not); a pad without one is left as it is.
     #[test]
-    fn home_is_claimed_from_the_system_on_each_pad() {
+    fn home_gesture_asked_off_on_each_pad() {
         let fake = Fake::default();
         let mut pads = GcPads::new(Box::new(fake.clone()));
         let mut spawn = entities();
@@ -980,8 +1059,8 @@ mod tests {
         no_home.has_home = false;
         fake.connect_pad(no_home);
         polled(&mut pads, &mut spawn);
-        assert!(fake.pad(1).home_gesture_off);
-        assert!(!fake.pad(2).home_gesture_off);
+        assert!(fake.pad(1).home_asked);
+        assert!(!fake.pad(2).home_asked);
         // Home then does what any button does: a press, Mode.
         fake.send(1, PadState::default().with(Element::Home, true));
         assert_eq!(
@@ -1043,6 +1122,7 @@ mod tests {
         fn pad_template(&self, key: u64) -> FakePad {
             FakePad {
                 key,
+                connected: true,
                 name: format!("pad {key}"),
                 category: "Switch Pro Controller".into(),
                 glyphs: apple_glyphs(),
@@ -1052,7 +1132,7 @@ mod tests {
                 state: PadState::default(),
                 queued: VecDeque::new(),
                 depth: None,
-                home_gesture_off: false,
+                home_asked: false,
                 polled: None,
                 opened: 0,
                 closed: 0,

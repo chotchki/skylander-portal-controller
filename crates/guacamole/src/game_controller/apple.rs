@@ -99,7 +99,8 @@ pub struct Framework {
 
 impl Framework {
     /// Pads read whether or not guacamole's window is in front, as gilrs
-    /// reads them on Windows; Home's claim holds while it's in front.
+    /// reads them on Windows (the TV is usually unfocused: the phone and the
+    /// pad drive it).
     pub fn new() -> Self {
         // SAFETY: a class property, set on the main thread before any read.
         unsafe { GCController::setShouldMonitorBackgroundEvents(true) };
@@ -210,19 +211,18 @@ impl Controllers for Framework {
         true
     }
 
-    fn claim_home(&mut self, key: u64) -> bool {
-        let Some(pad) = self.pads.get(&key) else {
-            return false;
-        };
-        // SAFETY: a property on one of the controller's elements.
+    /// The profile's Home element's preferred gesture state set to disabled,
+    /// then what the system reports of its binding. Apple documents the
+    /// preference as one the system needn't respect; at AG.51 macOS opened
+    /// its Games app on Home with it set (the backlog's Home menu line).
+    fn ask_home_gesture_off(&mut self, key: u64) -> Option<bool> {
+        let pad = self.pads.get(&key)?;
+        // SAFETY: properties on one of the controller's elements.
         unsafe {
-            let Some(home) =
-                button_name(Element::Home).and_then(|n| pad.profile.buttons().objectForKey(n))
-            else {
-                return false;
-            };
+            let home =
+                button_name(Element::Home).and_then(|n| pad.profile.buttons().objectForKey(n))?;
             home.setPreferredSystemGestureState(GCSystemGestureState::Disabled);
-            home.preferredSystemGestureState() == GCSystemGestureState::Disabled
+            Some(home.isBoundToSystemGesture())
         }
     }
 

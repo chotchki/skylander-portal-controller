@@ -606,10 +606,13 @@ mod tests {
 
     /// AG.49's corner, against AG.5's gate (the 8BitDo over Bluetooth
     /// through GameController, 2026-10-20): each axis reads exactly 1 at
-    /// full travel and the rim's diagonals about 0.80 an axis, so a full
+    /// full travel and the rim's diagonals 0.78-0.80 an axis, so a full
     /// diagonal's push caps at 1. The readings are AG.5's guided log's
-    /// farthest rim reading in each diagonal 15° bin, and its four held
-    /// corners' last readings; each walks at top speed.
+    /// farthest rim reading in each diagonal 15° bin (centred on 45°, 135°,
+    /// 225° and 315°), and the one corner window whose last reading sits in
+    /// its corner (the other three, the presses lagging a window, end 18-24°
+    /// off the diagonal with an axis at 1, which pushes 1 on any gate); each
+    /// walks at top speed.
     #[test]
     fn the_8bitdos_measured_corners_walk_at_top_speed() {
         for (x, y) in [
@@ -618,11 +621,8 @@ mod tests {
             (-0.7037, 0.8654),
             (-0.8708, -0.6805),
             (0.8813, -0.6854),
-            // The held corners' last readings.
-            (1.0, 0.4530),
-            (0.5017, -0.9916),
+            // The down-left window's last reading, at 219.0°.
             (-0.8573, -0.6953),
-            (-0.3804, 1.0),
         ] {
             assert_eq!(push_of(x, y).strength, 1.0, "({x}, {y})");
         }
@@ -1027,8 +1027,8 @@ mod tests {
             fn queue(&mut self, _: u64, _: usize) -> bool {
                 true
             }
-            fn claim_home(&mut self, _: u64) -> bool {
-                true
+            fn ask_home_gesture_off(&mut self, _: u64) -> Option<bool> {
+                Some(false)
             }
             fn next_state(&mut self, key: u64) -> Option<PadState> {
                 let mut pads = self.0.borrow_mut();
@@ -1141,6 +1141,49 @@ mod tests {
                 pause::wanted(level, &of),
                 Some(pause::LevelOverlay::Paused(Prompt::Letter("B")))
             );
+        }
+
+        /// The letters reach what the TV draws and what `/api/_test/tv`
+        /// reads, not only `pause::wanted`: on the TV's own app with the
+        /// mirror, a Switch Pro over GameController lists as Nintendo and
+        /// Start's overlay as drawn names B.
+        #[test]
+        fn the_letters_reach_the_drawn_overlay_and_the_mirror() {
+            use guac_server::config::WindowMode;
+
+            use crate::cards::PortalCards;
+            use crate::mirror::{InputShot, Mirror, TvMirror};
+            use crate::tv::layout_tests::portal_app;
+
+            let fake = Fake::default();
+            let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+            install(&mut app, Box::new(fake.clone()));
+            let mirror = TvMirror::default();
+            app.insert_resource(mirror.clone()).add_plugins(Mirror);
+            let until = |app: &mut App, what: &str, done: &dyn Fn(&InputShot) -> bool| {
+                for _ in 0..30 {
+                    app.update();
+                    let shot = mirror.0.lock().unwrap().input.clone();
+                    if done(&shot) {
+                        return shot;
+                    }
+                }
+                panic!("{what}: {:#?}", mirror.0.lock().unwrap().input);
+            };
+            fake.connect(1, "Switch Pro Controller");
+            let shot = until(&mut app, "connected", &|s| !s.pads.is_empty());
+            assert_eq!(
+                (shot.pads[0].name.as_str(), shot.pads[0].labels.as_str()),
+                ("pad 1", "nintendo")
+            );
+            app.world_mut().resource_mut::<LevelPads>().show();
+            until(&mut app, "walking", &|s| s.pads[0].walking);
+            fake.send(1, PadState::default().with(Element::Menu, true));
+            fake.send(1, PadState::default());
+            let shot = until(&mut app, "paused", &|s| s.overlay.is_some());
+            let overlay = shot.overlay.unwrap();
+            assert_eq!(overlay.kind, "paused");
+            assert_eq!(overlay.prompt.as_deref(), Some("B"));
         }
     }
 }
