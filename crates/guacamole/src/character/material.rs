@@ -32,15 +32,24 @@ use super::mesh::ATTRIBUTE_UV_2;
 /// The shader, embedded by [`super::CharacterShadingPlugin`].
 pub const SHADER: &str = "embedded://guacamole/character/shading.wesl";
 
+/// `misc.w` for lights in view space: a turntable's rig, fixed to its camera,
+/// as the scene gives them.
+pub const LIGHTS_IN_VIEW: f32 = 0.0;
+/// `misc.w` for lights in the world's frame, which the shader turns by the
+/// view it draws for: a level's (AG.21), so a camera that moves rewrites no
+/// material.
+pub const LIGHTS_IN_WORLD: f32 = 1.0;
+
 /// The material's uniform, in the shader's `Character` layout.
 #[derive(Debug, Clone, Copy, PartialEq, ShaderType)]
 pub struct CharacterUniform {
-    /// Each directional light's way of travel, view space.
+    /// Each directional light's way of travel, view space (the world's
+    /// when `misc.w` is [`LIGHTS_IN_WORLD`]).
     pub light_travel: [Vec4; 3],
     pub light_ambient: [Vec4; 3],
     pub light_diffuse: [Vec4; 3],
     pub light_specular: [Vec4; 3],
-    /// View space.
+    /// View space, as `light_travel` is.
     pub point_position: [Vec4; 3],
     pub point_colour: [Vec4; 3],
     /// x the falloff's term over (d + 0.001), y its term over (d + 0.001)².
@@ -56,7 +65,8 @@ pub struct CharacterUniform {
     pub shadow_v: Vec4,
     /// x the shadow mode, y the alpha test's reference, z the glow: its
     /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
-    /// shader takes it).
+    /// shader takes it), w the lights' frame ([`LIGHTS_IN_VIEW`] or
+    /// [`LIGHTS_IN_WORLD`]).
     pub misc: Vec4,
     /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength (or the
     /// gloss map's, which takes its place), w the rim's.
@@ -138,7 +148,7 @@ impl CharacterUniform {
                     Glow::Amount(a) => a,
                     Glow::LayerAlpha => -1.0,
                 },
-                0.0,
+                LIGHTS_IN_VIEW,
             ),
             fixed_alpha: Vec4::new(
                 material.first.fixed_alpha,
@@ -159,6 +169,14 @@ impl CharacterUniform {
             uv_u,
             uv_v,
         }
+    }
+
+    /// The uniform with its lights read in the world's frame
+    /// ([`LIGHTS_IN_WORLD`]): for a scene whose light travels and point-light
+    /// positions are the world's.
+    pub fn lit_in_world(mut self) -> Self {
+        self.misc.w = LIGHTS_IN_WORLD;
+        self
     }
 
     /// The sets' transforms as the shader's `uv_u` and `uv_v` rows; a scroll
@@ -841,6 +859,18 @@ mod tests {
         assert_eq!(u.uv_u[1], Vec4::new(2.0, 0.0, 0.5, 0.0));
         assert_eq!(u.uv_v[1], Vec4::new(0.0, 3.0, 0.25, 0.0));
         assert_eq!(u.uv_u[0], Vec4::new(1.0, 0.0, 0.0, 0.0));
+        // The lights' frame: the scene's view space unless read in the
+        // world's (a level's, AG.21), which changes nothing else.
+        let world = u.lit_in_world();
+        assert_eq!((u.misc.w, world.misc.w), (LIGHTS_IN_VIEW, LIGHTS_IN_WORLD));
+        assert_eq!(world.misc.truncate(), u.misc.truncate());
+        assert_eq!(
+            CharacterUniform {
+                misc: u.misc,
+                ..world
+            },
+            u
+        );
     }
 
     #[test]

@@ -5,15 +5,23 @@
 //! Copied from the resources that feed the tree: the screen, game, message,
 //! Setup's lists, each card's figure and owner ids, and the intro queue. The
 //! focused choice is `InputFocus`'s entity's `FocusId`. The turntables'
-//! warm (AE.14), the level's load (AG.19) and the start's pass (AE.25)
-//! ride along, and `/api/_test/tv/frames` hands out the TV's frame times
-//! for the stall check.
+//! warm (AE.14), the level's load (AG.19), the start's pass (AE.25), the
+//! pads as the level's layer reads them (AG.20) and the walk's mode and
+//! hero (AG.21) ride along,
+//! `/api/_test/tv/frames` hands out the TV's frame times for the stall check
+//! and `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::rejection::JsonRejection;
+use bevy::camera::Projection;
+use bevy::input::InputSystems;
+use bevy::input::gamepad::{
+    GamepadButton, GamepadConnection, GamepadConnectionEvent, RawGamepadAxisChangedEvent,
+    RawGamepadButtonChangedEvent, RawGamepadEvent,
+};
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform, UiSystems};
@@ -21,10 +29,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
+use crate::hero::{FollowCamera, HeroBody};
+use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
 use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
 use crate::level::{Level, LevelReport};
+use crate::pad::{LevelPads, Pause, labels};
+use crate::pause::{LevelOverlay, PromptGlyph};
+use crate::play::{HeroReport, Mode, Play};
 use crate::prepare::{Prepare, PrepareReport};
 use crate::screen::TvScreen;
 use crate::turntable::{CardPlate, CardState, Turntables};
@@ -77,6 +90,53 @@ pub struct TvSnapshot {
     pub level: Option<LevelReport>,
     /// The start's pass (AE.25); none without it.
     pub prepare: Option<PrepareReport>,
+    /// The pads and the level's layer (AG.20).
+    pub input: InputShot,
+    /// Where the TV is (AG.21): `portal` (its own screens), `level`, or
+    /// `paused` (the level waiting, Start's or for a pad).
+    pub mode: String,
+    /// The hero, once a figure that walks is placed: who, his model's way
+    /// to the level and, in it, where he stands and faces.
+    pub hero: Option<HeroReport>,
+}
+
+/// The pads as the router reads them, and the level's layer (AG.20).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct InputShot {
+    /// Who takes the pads: `intro`, `level` or `screen`.
+    pub layer: String,
+    /// Connected, in the order they connected.
+    pub pads: Vec<PadShot>,
+    /// While the level shows and waits: `start` or `controller`.
+    pub pause: Option<String>,
+    /// The waiting level's overlay as drawn.
+    pub overlay: Option<OverlayShot>,
+    /// The walking pad's stick as the hero read it this frame, raw; none
+    /// while no level shows.
+    pub hero_stick: Option<[f32; 2]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PadShot {
+    pub name: String,
+    pub vendor: Option<u16>,
+    pub product: Option<u16>,
+    /// The resolver's pick: `xbox`, `nintendo` or `position`.
+    pub labels: String,
+    /// The left stick as stored, raw.
+    pub stick: [f32; 2],
+    /// This pad walks the hero.
+    pub walking: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OverlayShot {
+    /// `paused` or `controller`.
+    pub kind: String,
+    /// Every line drawn on it, top to bottom.
+    pub texts: Vec<String>,
+    /// The drawn prompt: `A`, `B` ... or `position:south`.
+    pub prompt: Option<String>,
 }
 
 /// A queued intro, from `IntroQueue`.
@@ -168,14 +228,204 @@ pub struct PipShot {
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
-/// presses posted for the input router and the frame log.
+/// presses posted for the input router, the frame log and the posted pads.
 #[derive(Resource, Clone, Default)]
 pub struct TvMirror(
     pub Arc<Mutex<TvSnapshot>>,
     pub Arc<AtomicUsize>,
     pub(crate) PostedPresses,
     pub(crate) Arc<Mutex<FrameLog>>,
+    pub(crate) PostedPads,
 );
+
+/// Pads `/api/_test/tv/pad` drives, 0 to 3.
+pub(crate) const TEST_PADS: usize = 4;
+
+/// What a posted pad does.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PadAct {
+    Connect {
+        name: String,
+        vendor: Option<u16>,
+        product: Option<u16>,
+    },
+    Disconnect,
+    /// The left stick held there, raw, until the next.
+    Stick(Vec2),
+    /// Down for a frame, then up.
+    Press(GamepadButton),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PadPost {
+    pub(crate) pad: usize,
+    pub(crate) act: PadAct,
+}
+
+/// Pad acts posted over HTTP, waiting for [`drive_posted_pads`].
+#[derive(Clone, Default)]
+pub(crate) struct PostedPads(Arc<Mutex<VecDeque<PadPost>>>);
+
+impl PostedPads {
+    fn push(&self, post: PadPost) {
+        let mut queue = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if queue.len() == POSTED_PADS_MAX {
+            queue.pop_front();
+        }
+        queue.push_back(post);
+    }
+
+    fn pop(&self) -> Option<PadPost> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
+    }
+}
+
+/// Pad acts waiting; more than this and the oldest go.
+const POSTED_PADS_MAX: usize = 256;
+
+/// A button by the name `/api/_test/tv/pad` takes.
+fn pad_button(name: &str) -> Option<GamepadButton> {
+    Some(match name {
+        "south" => GamepadButton::South,
+        "east" => GamepadButton::East,
+        "west" => GamepadButton::West,
+        "north" => GamepadButton::North,
+        "start" => GamepadButton::Start,
+        "select" => GamepadButton::Select,
+        "mode" => GamepadButton::Mode,
+        "up" => GamepadButton::DPadUp,
+        "down" => GamepadButton::DPadDown,
+        "left" => GamepadButton::DPadLeft,
+        "right" => GamepadButton::DPadRight,
+        _ => return None,
+    })
+}
+
+/// `POST /api/_test/tv/pad`'s body: a pad and one act.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PadBody {
+    pad: usize,
+    connect: Option<ConnectBody>,
+    #[serde(default)]
+    disconnect: bool,
+    stick: Option<[f32; 2]>,
+    press: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConnectBody {
+    name: Option<String>,
+    vendor: Option<u16>,
+    product: Option<u16>,
+}
+
+impl PadBody {
+    /// The act, if the body names exactly one and it's one a pad can do.
+    fn post(self) -> Option<PadPost> {
+        if self.pad >= TEST_PADS {
+            return None;
+        }
+        let acts = [
+            self.connect.is_some(),
+            self.disconnect,
+            self.stick.is_some(),
+            self.press.is_some(),
+        ];
+        if acts.iter().filter(|a| **a).count() != 1 {
+            return None;
+        }
+        let act = if let Some(c) = self.connect {
+            PadAct::Connect {
+                name: c.name.unwrap_or_else(|| "guacamole test pad".into()),
+                vendor: c.vendor,
+                product: c.product,
+            }
+        } else if self.disconnect {
+            PadAct::Disconnect
+        } else if let Some([x, y]) = self.stick {
+            let travel = |v: f32| v.is_finite() && (-1.0..=1.0).contains(&v);
+            if !(travel(x) && travel(y)) {
+                return None;
+            }
+            PadAct::Stick(Vec2::new(x, y))
+        } else {
+            PadAct::Press(pad_button(self.press.as_deref()?)?)
+        };
+        Some(PadPost { pad: self.pad, act })
+    }
+}
+
+/// The posted pads, as gilrs would send them: a connection, the stick's two
+/// axes, a press down for a frame and up the next (nothing else that frame,
+/// so the next act waits behind it), through Bevy's own gamepad systems
+/// and so through each pad's settings. A pad's entity outlives its
+/// disconnection, as bevy_gilrs keeps a real one's.
+fn drive_posted_pads(
+    mut commands: Commands,
+    mirror: Res<TvMirror>,
+    mut pads: Local<[Option<Entity>; TEST_PADS]>,
+    mut up: Local<Vec<(Entity, GamepadButton)>>,
+    mut connections: MessageWriter<GamepadConnectionEvent>,
+    mut raw: MessageWriter<RawGamepadEvent>,
+) {
+    if !up.is_empty() {
+        for (pad, button) in up.drain(..) {
+            raw.write(RawGamepadButtonChangedEvent::new(pad, button, 0.0).into());
+        }
+        return;
+    }
+    while let Some(PadPost { pad: slot, act }) = mirror.4.pop() {
+        if let PadAct::Connect {
+            name,
+            vendor,
+            product,
+        } = act
+        {
+            let pad = *pads[slot].get_or_insert_with(|| commands.spawn_empty().id());
+            info!(slot, ?pad, %name, ?vendor, ?product, "test pad connects");
+            let event = GamepadConnectionEvent::new(
+                pad,
+                GamepadConnection::Connected {
+                    name,
+                    vendor_id: vendor,
+                    product_id: product,
+                },
+            );
+            raw.write(event.clone().into());
+            connections.write(event);
+            continue;
+        }
+        let Some(pad) = pads[slot] else {
+            warn!(slot, ?act, "test pad never connected: ignored");
+            continue;
+        };
+        match act {
+            PadAct::Connect { .. } => unreachable!("handled above"),
+            PadAct::Disconnect => {
+                info!(slot, ?pad, "test pad disconnects");
+                let event = GamepadConnectionEvent::new(pad, GamepadConnection::Disconnected);
+                raw.write(event.clone().into());
+                connections.write(event);
+            }
+            PadAct::Stick(v) => {
+                for (axis, value) in [
+                    (GamepadAxis::LeftStickX, v.x),
+                    (GamepadAxis::LeftStickY, v.y),
+                ] {
+                    raw.write(RawGamepadAxisChangedEvent::new(pad, axis, value).into());
+                }
+            }
+            PadAct::Press(button) => {
+                debug!(slot, ?button, "test pad press");
+                raw.write(RawGamepadButtonChangedEvent::new(pad, button, 1.0).into());
+                up.push((pad, button));
+                return;
+            }
+        }
+    }
+}
 
 /// Frames the log keeps: over half an hour at 60 a second.
 const FRAMES_KEPT: usize = 120_000;
@@ -230,6 +480,7 @@ impl Plugin for Mirror {
     fn build(&self, app: &mut App) {
         app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout))
             .add_systems(Update, skip_asked.before(intro_player::play_intros))
+            .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
             .add_systems(Last, log_frame);
     }
 }
@@ -266,15 +517,37 @@ struct PressBody {
 /// with nobody at the keyboard; `POST /api/_test/tv/press` hands the input
 /// router a press (`{"button": "south"}`: south, east, mode, up, down, left
 /// or right; anything else is a 400). A test hook, not a phone remote.
-/// `GET /api/_test/tv/frames?since_ms=<ms>` hands out the frame log after
-/// `since_ms` of the TV's real time (all of it without one) and the last
-/// frame's end. Generic so a test needs no `AppState`.
+/// `POST /api/_test/tv/pad` drives one of four pads as a hand would, one act
+/// a body: `{"pad": 0, "connect": {"name": .., "vendor": .., "product":
+/// ..}}` (each optional), `{"pad": 0, "disconnect": true}`, `{"pad": 0,
+/// "stick": [x, y]}` (the left stick, raw, each −1 to 1, held until the
+/// next) or `{"pad": 0, "press": "start"}` (south, east, west, north, start,
+/// select, mode or a D-pad direction; down a frame, then up); anything else
+/// is a 400. `GET /api/_test/tv/frames?since_ms=<ms>` hands out the frame
+/// log after `since_ms` of the TV's real time (all of it without one) and
+/// the last frame's end. Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
     let skips = mirror.1.clone();
     let presses = mirror.2.clone();
     let frames = mirror.3.clone();
+    let pads = mirror.4.clone();
     axum::Router::new()
+        .route(
+            "/api/_test/tv/pad",
+            axum::routing::post(move |body: Result<axum::Json<PadBody>, JsonRejection>| {
+                let posted = body
+                    .ok()
+                    .and_then(|axum::Json(b)| b.post())
+                    .map(|post| pads.push(post));
+                async move {
+                    match posted {
+                        Some(()) => axum::http::StatusCode::ACCEPTED,
+                        None => axum::http::StatusCode::BAD_REQUEST,
+                    }
+                }
+            }),
+        )
         .route(
             "/api/_test/tv/frames",
             axum::routing::get(move |q: axum::extract::Query<FramesQuery>| {
@@ -355,6 +628,67 @@ fn walk(
     }
 }
 
+/// The pads in the order they connected, the layer that takes them, and
+/// while the level shows, who walks, why it waits and its overlay as drawn.
+fn input_shot(
+    intro_playing: bool,
+    (level, gamepads, overlays, glyphs): (
+        Option<Res<LevelPads>>,
+        Query<(&Gamepad, Option<&Name>)>,
+        Query<(Entity, &LevelOverlay)>,
+        Query<&PromptGlyph>,
+    ),
+    (children, texts, images, pips): (
+        &Query<&Children>,
+        &Query<&Text>,
+        &Query<(), With<ImageNode>>,
+        &Query<(&Pip, &BackgroundColor)>,
+    ),
+) -> InputShot {
+    let Some(level) = level else {
+        return InputShot::default();
+    };
+    let seat = level.seat();
+    let pads = level
+        .order()
+        .iter()
+        .filter_map(|e| gamepads.get(*e).ok().map(|g| (*e, g)))
+        .map(|(entity, (pad, name))| {
+            let stick = pad.left_stick();
+            PadShot {
+                name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
+                vendor: pad.vendor_id(),
+                product: pad.product_id(),
+                labels: labels(pad).name().to_owned(),
+                stick: [stick.x, stick.y],
+                walking: seat.and_then(|s| s.walking()) == Some(entity),
+            }
+        })
+        .collect();
+    let overlay = overlays.iter().next().map(|(root, kind)| {
+        let mut found = (Vec::new(), false, None);
+        walk(root, children, texts, images, pips, &mut found);
+        OverlayShot {
+            kind: kind.name().to_owned(),
+            texts: found.0,
+            prompt: glyphs.iter().next().map(|g| g.0.name()),
+        }
+    });
+    InputShot {
+        layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
+        pads,
+        pause: seat.and_then(|s| s.pause()).map(|p| {
+            match p {
+                Pause::Start { .. } => "start",
+                Pause::NoPad => "controller",
+            }
+            .to_owned()
+        }),
+        overlay,
+        hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
+    }
+}
+
 fn mirror_tv(
     mirror: Res<TvMirror>,
     current: Option<Res<Current>>,
@@ -369,12 +703,18 @@ fn mirror_tv(
     texts: Query<&Text>,
     images: Query<(), With<ImageNode>>,
     pips: Query<(&Pip, &BackgroundColor)>,
-    (players_line, address, qr, input_focus, choices): (
+    (players_line, address, qr, input_focus, choices, pads): (
         Query<&Text, With<PlayersLine>>,
         Query<&Text, With<JoinAddress>>,
         Query<&ImageNode, With<JoinQr>>,
         Option<Res<InputFocus>>,
         Query<&FocusId>,
+        (
+            Option<Res<LevelPads>>,
+            Query<(&Gamepad, Option<&Name>)>,
+            Query<(Entity, &LevelOverlay)>,
+            Query<&PromptGlyph>,
+        ),
     ),
     (extraction, band_title, band_detail, bar): (
         Option<Res<Extraction>>,
@@ -382,7 +722,20 @@ fn mirror_tv(
         Query<&Text, With<ExtractDetail>>,
         Query<&ExtractBar>,
     ),
-    (queue, player, overlays, videos, turntables, plates, warm, level, prepare): (
+    (
+        queue,
+        player,
+        overlays,
+        videos,
+        turntables,
+        plates,
+        warm,
+        level,
+        prepare,
+        play,
+        heroes,
+        cameras,
+    ): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
         Query<(&ComputedNode, &UiGlobalTransform), With<IntroOverlay>>,
@@ -392,6 +745,9 @@ fn mirror_tv(
         Option<Res<Warm>>,
         Option<Res<Level>>,
         Option<Res<Prepare>>,
+        Option<Res<Play>>,
+        Query<&HeroBody>,
+        Query<(&Transform, &Projection), With<FollowCamera>>,
     ),
 ) {
     let Some(current) = current else {
@@ -520,6 +876,12 @@ fn mirror_tv(
         .as_ref()
         .map(|q| q.queued().map(QueuedShot::from).collect())
         .unwrap_or_default();
+    let mode = match (play.as_deref(), pads.0.as_deref()) {
+        (Some(play), Some(level_pads)) => play.mode(level_pads),
+        _ => Mode::Portal,
+    };
+    let hero = play.as_deref().and_then(|p| p.report(&heroes, &cameras));
+    let input = input_shot(intro.is_some(), pads, (&children, &texts, &images, &pips));
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
         game,
@@ -550,6 +912,9 @@ fn mirror_tv(
         warm: warm.map(|w| w.report().clone()),
         level: level.map(|l| l.report().clone()),
         prepare: prepare.map(|p| p.report().clone()),
+        input,
+        mode: mode.name().to_owned(),
+        hero,
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
@@ -795,6 +1160,124 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), 202);
         assert_eq!(mirror.1.load(Ordering::Relaxed), 1);
+    }
+
+    /// AG.20: `/api/_test/tv/pad` takes one act a body for pads 0 to 3 and
+    /// refuses the rest; the acts drive a pad through Bevy's own gamepad
+    /// systems, so its stick lands raw, and with the level shown that pad
+    /// walks, Start pauses under the overlay as drawn, losing the pad brings
+    /// the controller message, and another pad's press carries on with it.
+    #[tokio::test]
+    async fn posted_pads_drive_the_level_as_a_hand_would() {
+        use tower::ServiceExt;
+        let mirror = TvMirror::default();
+        let routes = routes::<()>(&mirror);
+        let post = |body: &'static str| {
+            let routes = routes.clone();
+            async move {
+                routes
+                    .oneshot(
+                        axum::http::Request::post("/api/_test/tv/pad")
+                            .header("content-type", "application/json")
+                            .body(axum::body::Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+        for (body, status) in [
+            (r#"{"pad":0,"connect":{}}"#, 202),
+            (r#"{"pad":0,"stick":[0.26,-0.25]}"#, 202),
+            (r#"{"pad":4,"connect":{}}"#, 400),
+            (r#"{"pad":0,"stick":[1.5,0]}"#, 400),
+            (r#"{"pad":0,"press":"jump"}"#, 400),
+            (r#"{"pad":0,"press":"start","stick":[0,0]}"#, 400),
+            (r#"{"pad":0}"#, 400),
+            (r#"{"pad":0,"hold":"south"}"#, 400),
+            ("pad", 400),
+        ] {
+            assert_eq!(post(body).await, status, "{body}");
+        }
+
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+        app.insert_resource(mirror.clone()).add_plugins(Mirror);
+        let until = |app: &mut App, what: &str, done: &dyn Fn(&InputShot) -> bool| {
+            for _ in 0..30 {
+                app.update();
+                let shot = mirror.0.lock().unwrap().input.clone();
+                if done(&shot) {
+                    return shot;
+                }
+            }
+            panic!("{what}: {:#?}", mirror.0.lock().unwrap().input);
+        };
+        let shot = until(&mut app, "connected", &|s| !s.pads.is_empty());
+        assert_eq!(shot.layer, "screen");
+        assert_eq!(
+            shot.pads,
+            [PadShot {
+                name: "guacamole test pad".into(),
+                vendor: None,
+                product: None,
+                labels: "position".into(),
+                stick: [0.26, -0.25],
+                walking: false,
+            }]
+        );
+        assert_eq!(shot.hero_stick, None);
+
+        app.world_mut()
+            .resource_mut::<crate::pad::LevelPads>()
+            .show();
+        let shot = until(&mut app, "walking", &|s| s.pads[0].walking);
+        assert_eq!(shot.layer, "level");
+        assert_eq!(shot.hero_stick, Some([0.26, -0.25]));
+        assert_eq!((shot.pause, shot.overlay), (None, None));
+
+        assert_eq!(post(r#"{"pad":0,"press":"start"}"#).await, 202);
+        let shot = until(&mut app, "paused", &|s| s.overlay.is_some());
+        assert_eq!(shot.pause.as_deref(), Some("start"));
+        assert_eq!(
+            shot.overlay,
+            Some(OverlayShot {
+                kind: "paused".into(),
+                texts: vec!["Paused".into(), "Press".into(), "to play on".into()],
+                prompt: Some("position:south".into()),
+            })
+        );
+
+        assert_eq!(post(r#"{"pad":0,"disconnect":true}"#).await, 202);
+        let shot = until(&mut app, "lost", &|s| {
+            s.pause.as_deref() == Some("controller")
+        });
+        assert!(shot.pads.is_empty());
+        let shot = until(&mut app, "its message", &|s| {
+            s.overlay.as_ref().is_some_and(|o| o.kind == "controller")
+        });
+        assert_eq!(
+            shot.overlay.unwrap().texts,
+            ["Connect a controller", "then press any button on it"]
+        );
+
+        for body in [
+            r#"{"pad":1,"connect":{"name":"another","vendor":11720,"product":1}}"#,
+            r#"{"pad":1,"stick":[0,1]}"#,
+            r#"{"pad":1,"press":"east"}"#,
+        ] {
+            assert_eq!(post(body).await, 202, "{body}");
+        }
+        let shot = until(&mut app, "taken over", &|s| {
+            s.pause.is_none() && s.overlay.is_none()
+        });
+        assert_eq!(shot.pads.len(), 1);
+        assert!(shot.pads[0].walking);
+        assert_eq!(
+            (shot.pads[0].name.as_str(), shot.pads[0].vendor),
+            ("another", Some(11720))
+        );
+        assert_eq!(shot.hero_stick, Some([0.0, 1.0]));
     }
 
     /// AP.5: `south` is queued and the router takes it as the screen's

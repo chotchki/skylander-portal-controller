@@ -15,9 +15,9 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, GIANTS_SERIAL, Phone,
-    TestServer, fire_kaos_swap, guacamole_only, inject_load_outcomes, inject_profile, press_tv,
-    set_session_profile, tv, wait_for_tv,
+    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, E2E_START,
+    E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, guacamole_only,
+    inject_load_outcomes, inject_profile, pad_tv, press_tv, set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -769,6 +769,132 @@ async fn the_pick_loads_the_level_behind_the_portal() {
     phone.close().await.unwrap();
 }
 
+/// The hero's pivot off `/api/_test/tv`.
+fn hero_at(snap: &Value) -> [f64; 3] {
+    let p = &snap["hero"]["position"];
+    [0, 1, 2].map(|i| {
+        p[i].as_f64()
+            .unwrap_or_else(|| panic!("no position: {snap}"))
+    })
+}
+
+/// AG.21: with the level loaded, placing Eruptor takes the TV into it with
+/// him at the start, facing 0°, settled on the floor (5 mm up); with no pad
+/// it waits for one, a press on a posted pad takes him over, and its stick
+/// walks him against the camera's view (15°) until the made-up level's wall
+/// holds him 5 mm off it (his 0.8644 m sphere, the triangles' 0.05 m).
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn placing_a_character_enters_the_level_at_its_start() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_walking().expect("spawn guacamole");
+    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready" || s["level"]["state"] == "failed"
+    })
+    .await
+    .expect("the level loads");
+    assert_eq!(snap["level"]["state"], "ready", "{}", snap["level"]);
+    assert_eq!(snap["mode"], "portal");
+    let start = snap["level"]["start"].clone();
+    for (i, want) in E2E_START.iter().enumerate() {
+        let read = start[i].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            (read - f64::from(*want)).abs() < 1e-5,
+            "the waypoint, read: {}",
+            snap["level"]
+        );
+    }
+    assert_eq!(snap["level"]["triangles"], 4);
+
+    place_named(&phone, "Eruptor").await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] != "portal"
+    })
+    .await
+    .expect("the TV enters the level");
+    // No pad: the level waits for one from its first frame of input.
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["mode"] == "paused"
+    })
+    .await
+    .expect("the level waits for a pad");
+    assert_eq!(snap["input"]["pause"], "controller");
+    assert_eq!(snap["input"]["layer"], "level");
+    assert_eq!(snap["level"]["shown"], true);
+    assert_eq!(snap["screen"], "Portal");
+    let hero = &snap["hero"];
+    assert_eq!(hero["load_file"], "009_Eruptor", "{hero}");
+    assert_eq!(hero["slot"], 1);
+    assert_eq!(hero["heading"], 0.0);
+    let at = hero_at(&snap);
+    assert_eq!(
+        (at[0], at[2]),
+        (start[0].as_f64().unwrap(), start[2].as_f64().unwrap())
+    );
+    let above = at[1] - f64::from(E2E_FLOOR);
+    assert!((above - 0.005).abs() < 1e-3, "{above} m above the floor");
+    // The camera the TV draws through, at camera 0's rest pose off his feet
+    // (gameplay-camera's The camera starts behind the hero).
+    let camera = &hero["camera"];
+    let eye = [0, 1, 2].map(|i| camera["eye"][i].as_f64().unwrap_or(f64::NAN));
+    let off = [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]];
+    for (got, want) in off.iter().zip([-3.679547, 8.883567, -13.732257]) {
+        assert!((got - want).abs() < 1e-3, "the eye off his feet: {camera}");
+    }
+    let num = |k: &str| camera[k].as_f64().unwrap_or(f64::NAN);
+    assert!((num("heading") - 15.0).abs() < 1e-3, "{camera}");
+    assert!((num("pitch") + 23.360138).abs() < 1e-3, "{camera}");
+    assert!((num("fov_y") - 53.96).abs() < 1e-3, "{camera}");
+    assert!((num("near") - 0.1).abs() < 1e-6, "{camera}");
+    assert!((num("far") - 243.84).abs() < 1e-3, "{camera}");
+
+    // A press on a posted pad takes him over; its stick walks him.
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level"
+    })
+    .await
+    .expect("the pad takes him over");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 1.0]}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        let p = hero_at(s);
+        (p[2] - at[2]).hypot(p[0] - at[0]) > 1.0
+    })
+    .await
+    .expect("he walks");
+    let p = hero_at(&snap);
+    let heading = (p[0] - at[0]).atan2(p[2] - at[2]).to_degrees();
+    assert!((heading - 15.0).abs() < 0.5, "along the view: {heading}°");
+    // On to the wall, then along it: he never goes past 5 mm off it.
+    let wall = f64::from(E2E_START[2] + E2E_WALL);
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(8), |s| {
+        hero_at(s)[0] - at[0] > 3.0
+    })
+    .await
+    .expect("he slides along the wall");
+    let p = hero_at(&snap);
+    let gap = wall - (p[2] + 0.8644 + 0.05);
+    assert!((gap - 0.005).abs() < 2e-3, "{gap} m off the wall at {p:?}");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 0.0]}))
+        .await
+        .unwrap();
+    phone.close().await.unwrap();
+}
+
 /// A damaged model leaves its card on the portrait, says why on the TV's
 /// mirror and in the log, and the modelled figure beside it still turns.
 #[tokio::test(flavor = "current_thread")]
@@ -1453,6 +1579,61 @@ async fn pad_presses_leave_the_join_code_up() {
     for field in ["join_address", "players"] {
         assert_eq!(after[field], before[field], "{field}");
     }
+}
+
+/// AG.20's test hook, in the real binary: a posted pad connects through
+/// Bevy's own gamepad systems beside gilrs, its move stick lands raw (a
+/// first value inside Bevy's dead zone and under its change threshold
+/// included), the resolver gives a pad it can't place the position, the
+/// level's layer isn't up with no level, Start on the join code changes
+/// nothing, and the pad goes away when posted off.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_posted_pad_reads_raw() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["screen"] == "Join"
+    })
+    .await
+    .unwrap();
+    for body in [
+        json!({"pad": 0, "connect": {"name": "e2e pad", "vendor": 11720, "product": 1}}),
+        json!({"pad": 0, "stick": [0.26, -0.004]}),
+    ] {
+        pad_tv(&server.url, body).await.unwrap();
+    }
+    let (shot, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["input"]["pads"][0]["stick"] == json!([0.26, -0.004])
+    })
+    .await
+    .unwrap();
+    let pad = &shot["input"]["pads"][0];
+    assert_eq!(pad["name"], "e2e pad", "{shot}");
+    assert_eq!(
+        (&pad["vendor"], &pad["product"]),
+        (&json!(11720), &json!(1))
+    );
+    assert_eq!(pad["labels"], "position", "{shot}");
+    assert_eq!(pad["walking"], false, "no level, no walking pad");
+    assert_eq!(shot["input"]["layer"], "screen");
+    assert_eq!(shot["input"]["hero_stick"], Value::Null);
+
+    pad_tv(&server.url, json!({"pad": 0, "press": "start"}))
+        .await
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "disconnect": true}))
+        .await
+        .unwrap();
+    let (shot, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["input"]["pads"] == json!([])
+    })
+    .await
+    .unwrap();
+    assert_eq!(shot["screen"], "Join", "{shot}");
+    assert_eq!(shot["input"]["pause"], Value::Null);
 }
 
 #[tokio::test(flavor = "current_thread")]

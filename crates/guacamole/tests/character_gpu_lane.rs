@@ -1327,6 +1327,27 @@ fn probe_case(srgb: bool) -> Case {
 #[derive(Resource)]
 struct Plan {
     cases: Arc<Vec<Case>>,
+    /// Where the camera and the quads stand, the lights handed over in the
+    /// world's frame (`CharacterUniform::lit_in_world`, AG.21); `None`, both
+    /// at the identity with the lights in view space.
+    frame: Option<Transform>,
+}
+
+/// `scene` with its lights in the world's frame of a camera standing at
+/// `frame`: each directional light's travel turned and each point light's
+/// position moved from the camera's view space, what a level hands the
+/// shader (AG.21). The model shades the view-space scene.
+fn in_world(scene: &Scene, frame: &Transform) -> Scene {
+    let mut world = scene.clone();
+    for light in &mut world.lights {
+        light.travel = (frame.rotation * bevy::math::Vec3::from_array(light.travel)).to_array();
+    }
+    for point in &mut world.point_lights {
+        point.position = frame
+            .transform_point(bevy::math::Vec3::from_array(point.position))
+            .to_array();
+    }
+    world
 }
 
 #[derive(Resource, Default)]
@@ -1347,6 +1368,7 @@ fn setup(
     mut materials: ResMut<Assets<CharacterMaterial>>,
     mut targets: ResMut<Targets>,
 ) {
+    let frame = plan.frame.unwrap_or(Transform::IDENTITY);
     for (n, case) in plan.cases.iter().enumerate() {
         let layer = RenderLayers::from_layers(&[n + 1]);
         let handles: Vec<Handle<CharacterMaterial>> = case
@@ -1365,22 +1387,29 @@ fn setup(
                     rim: add(&v.maps.rim),
                     shadow: add(&v.maps.shadow),
                 };
-                let m = CharacterMaterial::new(
+                let scene = match &plan.frame {
+                    Some(frame) => in_world(&v.scene, frame),
+                    None => v.scene.clone(),
+                };
+                let mut m = CharacterMaterial::new(
                     case.key,
                     &v.material,
-                    &v.scene,
+                    &scene,
                     shadow_lookup(),
                     v.alpha_reference,
                     textures,
                 )
                 .expect("a material");
+                if plan.frame.is_some() {
+                    m.uniform = m.uniform.lit_in_world();
+                }
                 materials.add(m)
             })
             .collect();
         let spawned = spawn_character(
             &mut commands,
             &quad_model(case),
-            Transform::IDENTITY,
+            frame,
             0.0,
             &mut meshes,
             &mut bindposes,
@@ -1412,7 +1441,7 @@ fn setup(
                 far: 1000.0,
                 ..OrthographicProjection::default_3d()
             }),
-            Transform::IDENTITY,
+            frame,
             Hdr,
             Tonemapping::None,
             DebandDither::Disabled,
@@ -1549,7 +1578,7 @@ fn index(pixel: [u32; 2]) -> usize {
 }
 
 /// Renders every case and returns each target's pixels.
-fn render(cases: Arc<Vec<Case>>) -> Vec<Vec<[f32; 4]>> {
+fn render(cases: Arc<Vec<Case>>, frame: Option<Transform>) -> Vec<Vec<[f32; 4]>> {
     let outcome = Outcome::default();
     let mut app = App::new();
     app.add_plugins((
@@ -1567,7 +1596,7 @@ fn render(cases: Arc<Vec<Case>>) -> Vec<Vec<[f32; 4]>> {
         ScheduleRunnerPlugin::run_loop(Duration::from_millis(1)),
         CharacterShadingPlugin,
     ))
-    .insert_resource(Plan { cases })
+    .insert_resource(Plan { cases, frame })
     .insert_resource(Targets::default())
     .insert_resource(Captured::default())
     .insert_resource(outcome.clone())
@@ -1754,6 +1783,12 @@ fn describe(key: &MaterialKey) -> String {
 ///    against the model on exact decodes: the end-to-end distance, which
 ///    the decode accounts for, recorded.
 fn lane(label: &str, keys: Vec<MaterialKey>, seed: u64, bound: f32) {
+    lane_in(label, keys, seed, bound, None);
+}
+
+/// [`lane`], the camera and the quads standing at `frame` with the lights
+/// handed over in the world's frame when there's one.
+fn lane_in(label: &str, keys: Vec<MaterialKey>, seed: u64, bound: f32, frame: Option<Transform>) {
     let start = Instant::now();
     let mut rng = Rng(seed);
     let mut shading: Option<Summary> = None;
@@ -1782,7 +1817,7 @@ fn lane(label: &str, keys: Vec<MaterialKey>, seed: u64, bound: f32) {
         cases.extend(halved);
         cases.extend(eight);
         let cases = Arc::new(cases);
-        let shots = render(cases.clone());
+        let shots = render(cases.clone(), frame);
         let n = chunk.len();
         let pass = |from: usize| -> Vec<(&Case, &Vec<[f32; 4]>)> {
             cases[from..from + n]
@@ -2163,6 +2198,30 @@ fn every_scene_and_layer_matches_the_reference_model() {
 #[ignore = "GPU lane: run on the Mac (AG.22)"]
 fn the_gloss_map_matches_the_reference_model() {
     lane("gloss", gloss_keys(), 0xA622_0001, 1.0);
+}
+
+/// A level's lights in the world's frame (AG.21): the camera and the quads
+/// stand turned 37° about (1, 2, 3) and moved, so every view-space input is
+/// as before, while the uniform holds the lights' travels and the point
+/// lights' positions in the world's frame for the shader to turn by its
+/// view. Every term that reads a light (directional, normal map, spec map,
+/// point lights), in the census's keys with every scene switch on and the
+/// layer keys, against the same view-space model.
+#[test]
+#[ignore = "GPU lane: run on the Mac (AG.21)"]
+fn lights_in_the_worlds_frame_match_the_reference_model() {
+    let mut keys = drawn(&[SceneBits {
+        shadows: true,
+        fog: true,
+        point_lights: 3,
+    }]);
+    keys.extend(layer_keys());
+    let frame =
+        Transform::from_xyz(3.0, -2.0, 5.0).with_rotation(bevy::math::Quat::from_axis_angle(
+            bevy::math::Vec3::new(1.0, 2.0, 3.0).normalize(),
+            37f32.to_radians(),
+        ));
+    lane_in("world frame", keys, 0xA621_0001, 1.0, Some(frame));
 }
 
 #[test]

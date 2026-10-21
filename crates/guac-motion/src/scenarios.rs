@@ -194,18 +194,9 @@ pub fn bodies(soup: &Soup, solids: &[(BodyId, HavokSolid, Pose)]) -> Vec<Body> {
     bodies
 }
 
-/// Eruptor's solid: a 4 x 6 x 3 ft sphere at 150 %.
+/// Eruptor's solid: a 4 x 6 x 3 ft sphere at 150 % ([`crate::tuning`]'s).
 pub fn eruptor_solid() -> HavokSolid {
-    SolidInfo {
-        kind: SolidKind::Sphere,
-        offset: [0.0; 3],
-        rotation: [0.0; 3],
-        width: 4.0,
-        height: 6.0,
-        length: 3.0,
-    }
-    .havok([150.0; 3])
-    .expect("a sphere has a shape")
+    crate::tuning::eruptor_solid()
 }
 
 /// Eruptor settled at `at` (x and z; y is where he's dropped from) facing

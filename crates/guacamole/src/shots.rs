@@ -12,7 +12,11 @@
 //! made, and a shot that doesn't land is logged as an error (openspec AE.29).
 //! A card's turning model holds its idle's first pose at `GUAC_SHOT_YAW`
 //! degrees of its turn (default 0, facing the camera), so a walk can shoot a
-//! turn one run per angle.
+//! turn one run per angle. With `GUAC_SHOT_WALK=<ms>` too, a shot is taken
+//! every that many milliseconds of the TV's clock that the hero has moved
+//! while he walks the level (AG.21), at once (a walk doesn't settle), named
+//! for where he stands and the way he faces: a walk as a sequence. Off by
+//! default, since a shot's PNG is written on the frame's thread.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -25,13 +29,18 @@ use tracing::{error, info};
 
 use crate::cards::PortalCards;
 use crate::extraction::Extraction;
+use crate::hero::HeroBody;
 use crate::intro::IntroQueue;
 use crate::motion::ReducedMotion;
+use crate::play::Play;
 use crate::turntable::FrozenYaw;
 use crate::tv::{Current, Redrawn, TvCamera};
 
 /// Long enough for a redrawn tree's layout and portraits to reach the GPU.
 const SETTLE: Duration = Duration::from_millis(750);
+
+/// He has moved since the last walk shot once he's this far from it, m.
+const WALK_MOVED: f32 = 0.01;
 
 pub struct Shots;
 
@@ -65,11 +74,16 @@ impl Plugin for Shots {
             .ok()
             .and_then(|s| parse_yaw(&s))
             .unwrap_or(0.0);
-        info!(dir = %dir.display(), %size, yaw, "rendering offscreen, a screenshot per TV change");
+        let walk = std::env::var("GUAC_SHOT_WALK")
+            .ok()
+            .and_then(|s| parse_every(&s));
+        info!(dir = %dir.display(), %size, yaw, walk_ms = walk.map(|w| w.as_millis() as u64),
+            "rendering offscreen, a screenshot per TV change");
         app.insert_resource(FrozenYaw(yaw.to_radians()));
         app.insert_resource(ShotState {
             dir,
             size,
+            walk,
             target: None,
             seq: 0,
             due: None,
@@ -85,6 +99,8 @@ impl Plugin for Shots {
 struct ShotState {
     dir: PathBuf,
     size: UVec2,
+    /// `GUAC_SHOT_WALK`: a shot this often while the hero walks.
+    walk: Option<Duration>,
     target: Option<Handle<Image>>,
     seq: u32,
     due: Option<Instant>,
@@ -156,6 +172,15 @@ fn parse_size(s: &str) -> Option<UVec2> {
     Some(UVec2::new(w.trim().parse().ok()?, h.trim().parse().ok()?))
 }
 
+/// `GUAC_SHOT_WALK`'s milliseconds, over 0.
+fn parse_every(s: &str) -> Option<Duration> {
+    s.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+}
+
 /// `GUAC_SHOT_YAW`'s degrees, finite.
 fn parse_yaw(s: &str) -> Option<f32> {
     s.trim().parse::<f32>().ok().filter(|d| d.is_finite())
@@ -197,6 +222,8 @@ fn snap(
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
     mut redrawn: MessageReader<Redrawn>,
+    (play, heroes, time): (Option<Res<Play>>, Query<&HeroBody>, Res<Time>),
+    mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
     let redrew = redrawn.read().count() > 0;
     let Some(current) = current else {
@@ -210,6 +237,35 @@ fn snap(
     let Some(target) = state.target.clone() else {
         return;
     };
+    let hero = play
+        .as_deref()
+        .and_then(Play::hero)
+        .and_then(|e| heroes.get(e).ok())
+        .map(|b| (b.hero.pivot, b.hero.facing));
+    if state.due.is_none()
+        && let (Some(every), Some((pivot, facing))) = (state.walk, hero)
+    {
+        let now = time.elapsed();
+        let (at, from) = *walked.get_or_insert((now, pivot));
+        if now.saturating_sub(at) >= every && pivot.distance(from) >= WALK_MOVED {
+            *walked = Some((now, pivot));
+            state.seq += 1;
+            let name = format!(
+                "{:02}-walk-{:.2}_{:.2}_{:.2}-facing-{:.0}.png",
+                state.seq,
+                pivot.x,
+                pivot.y,
+                pivot.z,
+                facing.rem_euclid(360.0)
+            );
+            let path = state.dir.join(name);
+            info!(path = %path.display(), "walk screenshot requested");
+            commands
+                .spawn(Screenshot::image(target))
+                .observe(store(path));
+            return;
+        }
+    }
     if state.due.is_none_or(|due| Instant::now() < due) {
         return;
     }
@@ -244,6 +300,14 @@ mod tests {
         assert_eq!(parse_size("3840x2160"), Some(UVec2::new(3840, 2160)));
         assert_eq!(parse_size("1920 x 1080"), Some(UVec2::new(1920, 1080)));
         assert_eq!(parse_size("big"), None);
+    }
+
+    #[test]
+    fn walk_shot_intervals_parse() {
+        assert_eq!(parse_every(" 500 "), Some(Duration::from_millis(500)));
+        assert_eq!(parse_every("0"), None);
+        assert_eq!(parse_every("-5"), None);
+        assert_eq!(parse_every("often"), None);
     }
 
     #[test]
@@ -309,6 +373,7 @@ mod tests {
         app.insert_resource(ShotState {
             dir: tmp.path().to_path_buf(),
             size: UVec2::new(2, 2),
+            walk: None,
             target: None,
             seq: 0,
             due: None,

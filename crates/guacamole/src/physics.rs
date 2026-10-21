@@ -21,14 +21,6 @@
 //! same parry call Avian's wrapper makes, through guac-motion's
 //! `planes_against`.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "AG.16's controller and AG.21's level are the seam's first callers; until then its tests are"
-    )
-)]
-
 use std::sync::Arc;
 
 use avian3d::parry::bounding_volume::BoundingVolume;
@@ -127,44 +119,80 @@ pub(crate) fn mesh_collider(mesh: &Mesh) -> Collider {
     )
 }
 
-/// Spawns a seam body: a static rigid body, a kinematic one, or a kinematic
-/// sensor. The `Transform` is there for Avian's collider scale (read off the
-/// `GlobalTransform` on insert), never as the body's pose. Refuses what
-/// `ParryWorld::new` refuses for one body (a pose or a convex size that isn't
-/// finite), so bad extracted data is an error here, not a panic or a NaN in
-/// Avian's trees; keeping ids unique is the caller's, as it builds the list.
-pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Result<Entity, WorldError> {
-    check_body(body)?;
-    let (collider, mesh) = match &body.collider {
-        SeamCollider::Convex(shape) => (convex_collider(shape), None),
-        SeamCollider::Mesh(mesh) => (mesh_collider(mesh), Some(mesh.clone())),
-    };
-    let rigid = match body.kind {
-        BodyKind::Static => RigidBody::Static,
-        BodyKind::Kinematic | BodyKind::Sensor => RigidBody::Kinematic,
-    };
-    let mut entity = commands.spawn((
-        SeamBody {
-            id: body.id,
-            kind: body.kind,
-            mesh,
-        },
-        rigid,
-        collider,
-        Position(body.pose.position),
-        Rotation(body.pose.rotation),
-        Transform::default(),
-    ));
-    if body.kind == BodyKind::Sensor {
-        entity.insert(Sensor);
+/// A seam body checked and its Avian collider built, ready to spawn: built
+/// off the frame when it's a level's mesh ([`PreparedBody::new`] on a task),
+/// since a trimesh with its internal edges fixed costs its triangles' worth.
+#[derive(Clone)]
+pub(crate) struct PreparedBody {
+    body: SeamBody,
+    pose: Pose,
+    collider: Collider,
+}
+
+impl PreparedBody {
+    /// Refuses what `ParryWorld::new` refuses for one body (a pose or a
+    /// convex size that isn't finite), so bad extracted data is an error
+    /// here, not a panic or a NaN in Avian's trees; keeping ids unique is the
+    /// caller's, as it builds the list.
+    pub(crate) fn new(body: &Body) -> Result<Self, WorldError> {
+        check_body(body)?;
+        let (collider, mesh) = match &body.collider {
+            SeamCollider::Convex(shape) => (convex_collider(shape), None),
+            SeamCollider::Mesh(mesh) => (mesh_collider(mesh), Some(mesh.clone())),
+        };
+        Ok(Self {
+            body: SeamBody {
+                id: body.id,
+                kind: body.kind,
+                mesh,
+            },
+            pose: body.pose,
+            collider,
+        })
     }
-    Ok(entity.id())
+
+    /// Spawns it: a static rigid body, a kinematic one, or a kinematic
+    /// sensor. The `Transform` is there for Avian's collider scale (read off
+    /// the `GlobalTransform` on insert), never as the body's pose.
+    pub(crate) fn spawn(self, commands: &mut Commands) -> Entity {
+        let rigid = match self.body.kind {
+            BodyKind::Static => RigidBody::Static,
+            BodyKind::Kinematic | BodyKind::Sensor => RigidBody::Kinematic,
+        };
+        let sensor = self.body.kind == BodyKind::Sensor;
+        let mut entity = commands.spawn((
+            self.body,
+            rigid,
+            self.collider,
+            Position(self.pose.position),
+            Rotation(self.pose.rotation),
+            Transform::default(),
+        ));
+        if sensor {
+            entity.insert(Sensor);
+        }
+        entity.id()
+    }
+}
+
+/// Spawns a seam body at once ([`PreparedBody`]'s checks and kinds): the
+/// tests' worlds; the level's are prepared off the frame.
+#[cfg(test)]
+pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Result<Entity, WorldError> {
+    Ok(PreparedBody::new(body)?.spawn(commands))
 }
 
 /// Moves a kinematic body or sensor, refusing as `ParryWorld::set_pose` does
 /// (no such body, a static one, a pose that isn't finite). Queries see it
 /// there once the physics schedule has run (it refits the collider trees),
 /// where `ParryWorld` sees it at once.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "nothing in the level moves yet: AG.25's props are its first callers"
+    )
+)]
 pub(crate) fn set_pose(
     bodies: &mut Query<(&SeamBody, &mut Position, &mut Rotation)>,
     id: BodyId,

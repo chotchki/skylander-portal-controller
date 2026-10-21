@@ -20,18 +20,30 @@
 //! - Fog and light: the atmospheric zone the level's definition sets up at
 //!   its start (AG.41) lights it and sets the [`LevelFog`] resource, which
 //!   every material's fog term reads; a change relights them all
-//!   ([`light_level`]).
+//!   ([`light_level`]). The lights are handed to the shader in the world's
+//!   frame, which it turns by the view it draws for (AG.21,
+//!   [`CharacterUniform::lit_in_world`]), so the camera following the hero
+//!   rewrites no material: lit in view space, every frame it moved rewrote
+//!   all 471 of chapter 1's.
 //! - Scripts (AH.22): the level's script part, parsed and linked on a task
 //!   of its own beside the reading one ([`guacamole::level_scripts`]), so it
 //!   adds nothing to the time the level takes to show; the level is drawn
 //!   whether it links or not, and the report says which and what it cost.
 //!   Nothing runs the program yet (AH.16).
+//! - The walk (AG.21): the collision and placements parts are read on the
+//!   same task, the collision built into Avian colliders there
+//!   ([`PreparedBody`]) and spawned with the level, where the hero's queries
+//!   find them at once (Avian puts a collider in its trees, its bounds
+//!   computed, as it's inserted); where the hero starts is
+//!   `213_Init_Location`'s first waypoint.
 //!
-//! Nothing shows it in the product yet (AG.21 and AG.29 take the TV into
-//! it). The dev entry does: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build,
-//! the level covers the TV once it's ready, drawn at AF's fresh-state camera
-//! by the remaster's camera into the TV's own target (the window, or the
-//! shots' image).
+//! The first character placed takes the TV into it ([`crate::play`]): its
+//! camera shows the level ([`Level::show`]) and the hero's materials are lit
+//! with the level's ([`Level::light_also`]). The dev entry does without a
+//! hero: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build, the level covers
+//! the TV once it's ready, drawn at AF's fresh-state camera by the
+//! remaster's camera into the TV's own target (the window, or the shots'
+//! image).
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -55,7 +67,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::intros::IrFormat;
-use guac_extract::levels::{ATMOSPHERE, LEVELS, LIGHTS, SCENE};
+use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, SCENE};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
@@ -66,7 +78,7 @@ use guacamole::character::{
 };
 use guacamole::level_scene::{
     self as arithmetic, AtStart, Drawn, LevelFog, LevelLights, fresh_state_projection,
-    fresh_state_transform, fresh_state_view, view_scene,
+    fresh_state_transform, fresh_state_view, hero_scene, view_scene, world_scene,
 };
 use guacamole::level_scripts;
 use serde::Serialize;
@@ -74,6 +86,7 @@ use tracing::{info, warn};
 
 use crate::extraction::Extraction;
 use crate::motion::ReducedMotion;
+use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
 use crate::tv::{Redrawn, TvCamera};
 use crate::warm::Warm;
@@ -118,8 +131,9 @@ pub fn level_channel() -> (LevelSender, LevelFeed) {
 /// The render layer the level draws on: clear of the default one the TV's
 /// cameras see and of the turntables' (16 up).
 pub(crate) const LEVEL_LAYER: usize = 2;
-/// The dev view's camera draws after the TV's own (order 0), over it.
-const VIEW_ORDER: isize = 1;
+/// The level's camera (the dev view's, the walk's) draws after the TV's own
+/// (order 0), over it.
+pub(crate) const VIEW_ORDER: isize = 1;
 /// How it writes over the TV: replacing it. Bevy alpha-blends a second
 /// camera on a target by default, and the level's opaque parts write the
 /// alpha their maps hold, so the portal would show through them.
@@ -148,8 +162,44 @@ struct Built {
     fog: LevelFog,
     /// The sky's bounds, for the log: (min, max).
     sky: Option<(Vec3, Vec3)>,
+    walk: Walk,
     read: Duration,
     took: Duration,
+}
+
+/// What walking the level takes: its solids, built off the frame, and
+/// where the hero starts.
+struct Walk {
+    bodies: Vec<PreparedBody>,
+    triangles: usize,
+    start: Vec3,
+}
+
+/// The collision and placements parts as the walk takes them: the
+/// collision's meshes built into colliders, the start's waypoint found.
+fn read_walk(source: &LevelSource, part: impl Fn(&str) -> PathBuf) -> Result<Walk, String> {
+    let collision: guac_ir::level::Collision = read_ir(source.ir, &part(COLLISION))?;
+    let placements: guac_ir::level::Placements = read_ir(source.ir, &part(PLACEMENTS))?;
+    for (what, identity, level) in [
+        ("collision", &collision.identity, &collision.level),
+        ("placements", &placements.identity, &placements.level),
+    ] {
+        if *identity != source.identity || *level != source.level {
+            return Err(format!("the {what} part is another dump's or level's"));
+        }
+    }
+    let start = arithmetic::start_point(&placements).map_err(|e| e.to_string())?;
+    let solids = arithmetic::solids(&collision).map_err(|e| e.to_string())?;
+    let triangles = collision.meshes.iter().map(|m| m.triangles.len()).sum();
+    let bodies = solids
+        .iter()
+        .map(|b| PreparedBody::new(b).map_err(|e| format!("the collision: {e}")))
+        .collect::<Result<_, _>>()?;
+    Ok(Walk {
+        bodies,
+        triangles,
+        start,
+    })
 }
 
 /// Reads `source`'s level for drawing: its scene, lights and atmosphere
@@ -172,6 +222,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         }
     }
     let read = started.elapsed();
+    let walk = read_walk(source, part)?;
     // The census's level table is held to this derivation on the disc
     // (`tests/giants_census.rs`).
     let AtStart {
@@ -235,6 +286,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         lights,
         fog,
         sky,
+        walk,
         read,
         took: started.elapsed(),
     })
@@ -330,6 +382,9 @@ pub(crate) struct LevelReport {
     pub left_out: usize,
     pub segments_left_out: usize,
     pub sky_segments: usize,
+    /// The collision's triangles, and where the hero starts (AG.21).
+    pub triangles: usize,
+    pub start: Option<[f32; 3]>,
     /// Textures, meshes and materials not resident yet; keys not compiled.
     pub not_resident: usize,
     pub keys_waiting: usize,
@@ -339,6 +394,8 @@ pub(crate) struct LevelReport {
     pub built_ms: Option<u64>,
     pub uploaded_ms: Option<u64>,
     pub ready_ms: Option<u64>,
+    /// Times every material was lit again (a camera's move, a fog change).
+    pub relit: u64,
     /// From the Giants pick to ready.
     pub pick_to_ready_ms: Option<u64>,
     pub shown: bool,
@@ -392,12 +449,25 @@ pub(crate) struct Loaded {
     scrolling: Vec<(usize, Vec<Scroll>)>,
     lights: LevelLights,
     pub(crate) keys: Vec<WarmKey>,
-    /// The camera the uniforms are lit for, as `view_from_world`, and the
-    /// fog.
-    lit_for: Mat4,
+    /// The fog the uniforms are lit with.
     lit_fog: LevelFog,
     camera: Option<Entity>,
     shown_at: Option<Duration>,
+    /// Its solids, spawned with it.
+    bodies: Vec<Entity>,
+    /// Where the hero starts, before he's settled.
+    pub(crate) start: Vec3,
+    /// Materials lit with the level's but in the hero's scene
+    /// ([`Level::light_also`]).
+    also: Vec<LitAlso>,
+}
+
+/// A material outside the level lit with it: the hero's, in
+/// [`hero_scene`], relit when the level's are.
+pub(crate) struct LitAlso {
+    pub(crate) material: Handle<CharacterMaterial>,
+    pub(crate) reference: guac_ir::shading::Material,
+    pub(crate) alpha: f32,
 }
 
 enum Stage {
@@ -485,14 +555,98 @@ impl Level {
         self.report.reason = Some(why);
         self.stage = Stage::Failed;
     }
+
+    /// The ready level, its solids spawned: what the hero can be spawned
+    /// into.
+    pub(crate) fn walkable(&self) -> Option<&Loaded> {
+        match &self.stage {
+            Stage::Ready(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    /// Shows the ready level through `camera`, which draws its layer: its
+    /// entities visible from this frame. False when it isn't ready.
+    pub(crate) fn show(&mut self, commands: &mut Commands, camera: Entity, at: Duration) -> bool {
+        let Stage::Ready(mut loaded) = std::mem::replace(&mut self.stage, Stage::Idle) else {
+            return false;
+        };
+        commands.entity(loaded.root).insert(Visibility::Inherited);
+        loaded.camera = Some(camera);
+        loaded.shown_at = Some(at);
+        self.stage = Stage::Shown(loaded);
+        self.report.shown = true;
+        self.report.state = "shown".into();
+        true
+    }
+
+    /// The level shown through `camera` hidden again, ready to show; the
+    /// materials lit with it besides its own dropped. The camera is its
+    /// owner's to despawn.
+    pub(crate) fn hide(&mut self, commands: &mut Commands, camera: Entity) {
+        if self.shown_through() != Some(camera) {
+            return;
+        }
+        let Stage::Shown(mut loaded) = std::mem::replace(&mut self.stage, Stage::Idle) else {
+            unreachable!("shown through a camera")
+        };
+        commands.entity(loaded.root).insert(Visibility::Hidden);
+        loaded.camera = None;
+        loaded.shown_at = None;
+        loaded.also.clear();
+        self.stage = Stage::Ready(loaded);
+        self.report.shown = false;
+        self.report.state = "ready".into();
+    }
+
+    /// The camera the level shows through, while it shows.
+    pub(crate) fn shown_through(&self) -> Option<Entity> {
+        match &self.stage {
+            Stage::Shown(l) => l.camera,
+            _ => None,
+        }
+    }
+
+    /// The level's lights and fog, once loaded.
+    pub(crate) fn lighting(&self) -> Option<(&LevelLights, LevelFog)> {
+        self.stage.loaded().map(|l| (&l.lights, l.lit_fog))
+    }
+
+    /// Lights `materials` with the level from now on, in the hero's scene
+    /// ([`hero_scene`]) in the world's frame: at once, then again whenever
+    /// the level's are.
+    pub(crate) fn light_also(
+        &mut self,
+        materials: Vec<LitAlso>,
+        assets: &mut Assets<CharacterMaterial>,
+    ) {
+        let Some(loaded) = self.stage.loaded_mut() else {
+            return;
+        };
+        let scene = hero_scene(&loaded.lights, &loaded.lit_fog, Mat4::IDENTITY);
+        relight(&materials, &scene, assets);
+        loaded.also.extend(materials);
+    }
+}
+
+/// `materials`' uniforms lit in `scene`, the world's frame, each
+/// texture-coordinate transform kept.
+fn relight(materials: &[LitAlso], scene: &Scene, assets: &mut Assets<CharacterMaterial>) {
+    for lit in materials {
+        if let Some(mut m) = assets.get_mut(&lit.material) {
+            let rows = (m.uniform.uv_u, m.uniform.uv_v);
+            m.uniform = CharacterUniform::new(&lit.reference, scene, ShadowLookup::NONE, lit.alpha)
+                .lit_in_world();
+            (m.uniform.uv_u, m.uniform.uv_v) = rows;
+        }
+    }
 }
 
 /// `GUAC_LEVEL_VIEW` (`dev-tools` builds): show the level once it's ready.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct LevelView(pub(crate) bool);
 
-/// Marks the camera the level is drawn from, the one its materials are lit
-/// for ([`light_level`]).
+/// Marks the camera the level is drawn from.
 #[derive(Component, Debug)]
 pub(crate) struct LevelCamera;
 
@@ -525,14 +679,10 @@ impl Plugin for LevelPlugin {
                     .in_set(LevelSystems)
                     .after(crate::turntable::TurntableSystems),
             )
-            // After the camera's transform has propagated, so a camera
-            // spawned or moved this frame lights it from where it stands, and
-            // before the assets' events go out, so the frame draws it lit.
+            // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,
-                light_level
-                    .after(bevy::transform::TransformSystems::Propagate)
-                    .before(bevy::asset::AssetEventSystems),
+                light_level.before(bevy::asset::AssetEventSystems),
             );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -561,6 +711,9 @@ fn receive_level(
         commands.entity(old.root).despawn();
         if let Some(camera) = old.camera {
             commands.entity(camera).despawn();
+        }
+        for body in &old.bodies {
+            commands.entity(*body).despawn();
         }
     }
     // Its handles go with it, so what it left pending never turns up.
@@ -622,6 +775,8 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                     segments_left_out = built.drawn.left_out_segments,
                     sky_segments = built.drawn.sky.len(),
                     sky = ?built.sky,
+                    triangles = built.walk.triangles,
+                    start = ?built.walk.start,
                     lights_left_out = ?built.lights.left_out,
                     fog = ?built.fog,
                     read_ms = built.read.as_millis() as u64,
@@ -636,6 +791,8 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                 r.left_out = built.drawn.left_out_materials;
                 r.segments_left_out = built.drawn.left_out_segments;
                 r.sky_segments = built.drawn.sky.len();
+                r.triangles = built.walk.triangles;
+                r.start = Some(built.walk.start.to_array());
                 r.read_ms = Some(built.read.as_millis() as u64);
                 r.built_ms = since.map(|d| d.as_millis() as u64);
                 // The start's fog is the TV's; the warm compiles the keys
@@ -787,7 +944,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     if bytes > 0 {
         return false;
     }
-    let scene = level_scene(&up.built.lights, &up.fog);
+    let scene = world_scene(&up.built.lights, &up.fog);
     let start = up.materials.len();
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
     for m in &up.built.drawn.materials[start..end] {
@@ -807,7 +964,10 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         // task, so this can't refuse one; a material that does draws as
         // Bevy's default rather than fail the level.
         let material = match CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, texture) {
-            Ok(material) => s.materials.add(material),
+            Ok(mut material) => {
+                material.uniform = material.uniform.lit_in_world();
+                s.materials.add(material)
+            }
             Err(e) => {
                 warn!(material = %m.name, reason = %e, "a level material didn't build");
                 Handle::default()
@@ -833,12 +993,16 @@ fn mesh_bytes(mesh: &Mesh) -> usize {
 /// The level's entities, hidden under one root on the level's layer.
 fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
     let Uploading {
-        built,
+        mut built,
         mesh_handles,
         materials,
         fog,
         ..
     } = up;
+    let bodies: Vec<Entity> = std::mem::take(&mut built.walk.bodies)
+        .into_iter()
+        .map(|b| b.spawn(&mut s.commands))
+        .collect();
     let root = s
         .commands
         .spawn((
@@ -881,10 +1045,12 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         scrolling,
         lights: built.lights,
         keys: built.keys.iter().map(|(k, _)| *k).collect(),
-        lit_for: fresh_state_view(),
         lit_fog: fog,
         camera: None,
         shown_at: None,
+        bodies,
+        start: built.walk.start,
+        also: Vec::new(),
     }
 }
 
@@ -925,9 +1091,6 @@ fn show_level(
         return;
     };
     let target = target.cloned().unwrap_or_default();
-    let Stage::Ready(mut loaded) = std::mem::replace(&mut level.stage, Stage::Idle) else {
-        unreachable!("matched as ready")
-    };
     let camera = commands
         .spawn((
             view_camera(target, VIEW_ORDER),
@@ -936,49 +1099,48 @@ fn show_level(
             Name::new("level view"),
         ))
         .id();
-    commands.entity(loaded.root).insert(Visibility::Inherited);
-    loaded.camera = Some(camera);
-    loaded.shown_at = Some(time.elapsed());
-    level.stage = Stage::Shown(loaded);
-    level.report.shown = true;
-    level.report.state = "shown".into();
+    level.show(&mut commands, camera, time.elapsed());
     info!(level = ?level.report.level, "the level shows (GUAC_LEVEL_VIEW)");
     redrawn.write(Redrawn::Level);
 }
 
-/// The materials light in view space: when the level's camera moves, or the
-/// fog changes, every material's uniform is lit again (from where the
-/// camera now stands; with none, from where it was lit for). In
-/// `PostUpdate`, after transforms propagate: a camera spawned this frame
-/// still holds the identity before that, and lighting for it would light
-/// the frame it first shows wrong and rewrite every material twice.
+/// A fog change relights every material: the level's in its scene, the
+/// hero's in his ([`Level::light_also`]), each in the world's frame, which
+/// the shader turns by the view it draws for, so a camera that moves
+/// rewrites none (lit in view space, a following camera rewrote all of
+/// chapter 1's 471 every frame it moved, and every frame at rest too, since
+/// the eased camera's rotation jitters by float noise).
 fn light_level(
     mut level: ResMut<Level>,
     fog: Res<LevelFog>,
-    cameras: Query<&GlobalTransform, With<LevelCamera>>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
+    let level = &mut *level;
     let Some(loaded) = level.stage.loaded_mut() else {
         return;
     };
-    let view = cameras
-        .single()
-        .map_or(loaded.lit_for, |c| c.to_matrix().inverse());
-    if view.abs_diff_eq(loaded.lit_for, 1e-6) && *fog == loaded.lit_fog {
+    if *fog == loaded.lit_fog {
         return;
     }
-    (loaded.lit_for, loaded.lit_fog) = (view, *fog);
-    let scene = view_scene(&loaded.lights, &fog, view);
+    loaded.lit_fog = *fog;
+    level.report.relit += 1;
+    let scene = world_scene(&loaded.lights, &fog);
     for (h, reference) in loaded.materials.iter().zip(&loaded.reference) {
         let Some((reference, alpha)) = reference else {
             continue;
         };
         if let Some(mut m) = materials.get_mut(h) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
-            m.uniform = CharacterUniform::new(reference, &scene, ShadowLookup::NONE, *alpha);
+            m.uniform =
+                CharacterUniform::new(reference, &scene, ShadowLookup::NONE, *alpha).lit_in_world();
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
     }
+    relight(
+        &loaded.also,
+        &hero_scene(&loaded.lights, &fog, Mat4::IDENTITY),
+        &mut materials,
+    );
 }
 
 /// Parts with a scroll track slide their texture coordinates from the
@@ -1008,7 +1170,7 @@ fn scroll_level(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::turntable::tests::{app, extract, identity};
     use crate::warm::PipelineWatch;
@@ -1094,7 +1256,7 @@ mod tests {
     }
 
     /// Made-up lights at the world rig's angles, and a point light.
-    fn lights() -> Lights {
+    pub(crate) fn lights() -> Lights {
         Lights {
             identity: identity(),
             level: LEVEL.into(),
@@ -1160,7 +1322,7 @@ mod tests {
     /// A made-up chapter 1 beside `extract`'s models: a ground layered and
     /// normal-mapped on two mesh shapes, a scrolling sky, and grass, which
     /// isn't drawn; its five textures.
-    fn write_level(dir: &Path, lights: &Lights) -> LevelSource {
+    pub(crate) fn write_level(dir: &Path, lights: &Lights) -> LevelSource {
         let plain = MeshShape {
             uv_sets: 2,
             tangents: true,
@@ -1281,6 +1443,7 @@ mod tests {
             guac_ir::to_ron(&atmosphere()).unwrap(),
         )
         .unwrap();
+        write_walk(dir);
         // A 4x4 BC1 block of one colour: built here, none of the disc's.
         let ktx2 = Texture {
             format: Format::Bc1RgbaUnorm,
@@ -1302,8 +1465,81 @@ mod tests {
         }
     }
 
+    /// Where [`write_walk`]'s hero starts, and its floor's height.
+    pub(crate) const START: [f32; 3] = [10.0, 40.0, -90.0];
+    pub(crate) const FLOOR: f32 = 39.99;
+
+    /// How far ahead of the start, along +z, the wall stands.
+    pub(crate) const WALL: f32 = 6.0;
+
+    /// The walk's two parts beside a made-up level: a 40 m wide floor under
+    /// the start, ending [`WALL`] ahead of it along +z at a 3 m wall that
+    /// shares its edge (level 213's mesh is indexed the same way), and
+    /// `213_Init_Location` with its first waypoint at the start.
+    pub(crate) fn write_walk(dir: &Path) {
+        let ir = IrFormat::Ron;
+        let [x, z] = [START[0], START[2]];
+        let wall_z = z + WALL;
+        let floor = guac_ir::level::CollisionMesh {
+            world: "Levels/Test/Test_ART_MASTER.ma".into(),
+            vertices: vec![
+                [x - 20.0, FLOOR, z - 20.0],
+                [x + 20.0, FLOOR, z - 20.0],
+                [x + 20.0, FLOOR, wall_z],
+                [x - 20.0, FLOOR, wall_z],
+                [x + 20.0, FLOOR + 3.0, wall_z],
+                [x - 20.0, FLOOR + 3.0, wall_z],
+            ],
+            // Up, then the wall's face toward the start (-z).
+            triangles: vec![[0, 2, 1], [0, 3, 2], [3, 4, 2], [3, 5, 4]],
+            materials: vec![1; 4],
+            radius: 0.05,
+            welding: 4,
+        };
+        let collision = guac_ir::level::Collision {
+            identity: identity(),
+            level: LEVEL.into(),
+            meshes: vec![floor],
+        };
+        let placements = guac_ir::level::Placements {
+            identity: identity(),
+            level: LEVEL.into(),
+            actors: vec![guac_ir::level::Placement {
+                object: 1,
+                id: 0,
+                name: guacamole::level_scene::START_PLACEMENT.into(),
+                script: None,
+                position: [0.0; 3],
+                rotation: [0.0; 3],
+                scale: [100.0; 3],
+                model: None,
+                solid: None,
+                movement: None,
+                waypoints: Some(0),
+                activity_state: 4,
+            }],
+            waypoints: vec![vec![guac_ir::level::Waypoint {
+                name: "wp0".into(),
+                position: START,
+                rotation: [0.0; 3],
+                height: 0.0,
+            }]],
+        };
+        std::fs::create_dir_all(dir.join("levels").join(LEVEL)).unwrap();
+        std::fs::write(
+            dir.join(ir.level_path(LEVEL, COLLISION)),
+            guac_ir::to_ron(&collision).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(ir.level_path(LEVEL, PLACEMENTS)),
+            guac_ir::to_ron(&placements).unwrap(),
+        )
+        .unwrap();
+    }
+
     /// The turntables' test app with the level loader, fed `source`.
-    fn level_app(dir: &Path, source: LevelSource, gpu: bool) -> App {
+    pub(crate) fn level_app(dir: &Path, source: LevelSource, gpu: bool) -> App {
         let mut app = app(extract(dir));
         app.add_message::<Redrawn>().add_plugins(LevelPlugin);
         if gpu {
@@ -1505,6 +1741,81 @@ mod tests {
         until(&mut app, &["ready"], |_| pipelines.compile_all());
     }
 
+    /// AG.21: the level's solids come and go with it. A new source's load
+    /// takes the old one's static bodies out of Avian's world, so the hero
+    /// never stands on a level that's gone.
+    #[test]
+    fn a_new_load_takes_the_old_levels_solids_with_it() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = write_level(a.path(), &lights());
+        let second = write_level(b.path(), &lights());
+        let mut app = level_app(a.path(), first, false);
+        until(&mut app, &["ready"], |_| {});
+        let bodies = |app: &mut App| {
+            let mut q = app.world_mut().query::<&crate::physics::SeamBody>();
+            q.iter(app.world()).count()
+        };
+        assert_eq!(bodies(&mut app), 1, "write_walk's one mesh");
+        assert_eq!(report(&app).triangles, 4);
+        let (tx, feed) = level_channel();
+        tx.send(second).unwrap();
+        app.insert_resource(feed);
+        app.update();
+        assert_eq!(state(&app), "reading");
+        assert_eq!(bodies(&mut app), 0, "the old level's gone");
+        until(&mut app, &["ready"], |_| {});
+        assert_eq!(bodies(&mut app), 1);
+    }
+
+    /// AG.21: the walk's collision and placements parts are held to the
+    /// dump and level as the drawn parts are, and a level without
+    /// `213_Init_Location`'s waypoint has no start.
+    #[test]
+    fn the_walks_parts_are_this_dumps_and_levels() {
+        use guac_ir::level::{Collision, Placements};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let path = |part| tmp.path().join(source.ir.level_path(LEVEL, part));
+        let collision: Collision =
+            guac_ir::from_ron(&std::fs::read_to_string(path(COLLISION)).unwrap()).unwrap();
+        let placements: Placements =
+            guac_ir::from_ron(&std::fs::read_to_string(path(PLACEMENTS)).unwrap()).unwrap();
+        let read = || read_level(&source, CompressedImageFormats::BC).err();
+        assert_eq!(read(), None);
+        let write = |part, ron: String| std::fs::write(path(part), ron).unwrap();
+
+        let mut other = collision.clone();
+        other.identity.manifest_hash = Sha256([9; 32]);
+        write(COLLISION, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the collision part is another dump's or level's")
+        );
+        let mut other = collision.clone();
+        other.level = "level_999".into();
+        write(COLLISION, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the collision part is another dump's or level's")
+        );
+        write(COLLISION, guac_ir::to_ron(&collision).unwrap());
+
+        let mut other = placements.clone();
+        other.identity.manifest_hash = Sha256([9; 32]);
+        write(PLACEMENTS, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the placements part is another dump's or level's")
+        );
+        let mut other = placements.clone();
+        other.actors[0].name = "213_Not_Init".into();
+        write(PLACEMENTS, guac_ir::to_ron(&other).unwrap());
+        assert_eq!(
+            read().as_deref(),
+            Some("the level has no 213_Init_Location with a waypoint")
+        );
+    }
+
     fn asset<A: Asset>(n: u128) -> AssetId<A> {
         AssetId::Uuid {
             uuid: bevy::asset::uuid::Uuid::from_u128(n),
@@ -1584,11 +1895,7 @@ mod tests {
         };
         app.insert_resource(fog);
         app.update();
-        let lit = view_scene(
-            &level_lights(&l, &zone()).unwrap(),
-            &fog,
-            fresh_state_transform().to_matrix().inverse(),
-        );
+        let lit = world_scene(&level_lights(&l, &zone()).unwrap(), &fog);
         for (u, _) in uniforms(&app) {
             assert_eq!(u.fog_range, Vec4::new(30.0, 300.0, 0.0, 0.0));
             assert_eq!(
@@ -1600,7 +1907,9 @@ mod tests {
                     .truncate()
                     .abs_diff_eq(Vec3::from_array(lit.lights[0].travel), 1e-6)
             );
+            assert_eq!(u.misc.w, guacamole::character::LIGHTS_IN_WORLD);
         }
+        assert_eq!(app.world().resource::<Level>().report().relit, 1);
     }
 
     /// AG.19: the keys the level asks the warm for are exactly the keys its
@@ -1720,7 +2029,7 @@ mod tests {
     /// material from where it stands. Under reduced motion a scroll holds
     /// its start.
     #[test]
-    fn the_dev_view_shows_the_level_and_a_moved_camera_relights_it() {
+    fn the_dev_view_shows_the_level_lit_in_the_world_and_a_moved_camera_relights_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let l = lights();
         let source = write_level(tmp.path(), &l);
@@ -1744,25 +2053,29 @@ mod tests {
                 .resource::<Assets<CharacterMaterial>>()
                 .get(&materials[0])
                 .unwrap();
-            m.uniform.light_travel[0].truncate()
+            (m.uniform.light_travel[0].truncate(), m.uniform.misc.w)
         };
-        let at = |t: &Transform| {
-            view_scene(&lit, &LevelFog::NONE, t.to_matrix().inverse()).lights[0].travel
+        // Lit in the world's frame, which the shader turns by its view.
+        let world = || {
+            (
+                Vec3::from_array(world_scene(&lit, &LevelFog::NONE).lights[0].travel),
+                guacamole::character::LIGHTS_IN_WORLD,
+            )
         };
-        // The frame it shows is lit for the fresh state's camera, not for
-        // the new camera's transform before it has propagated, and rewrites
-        // no material to get there (the sky's scroll aside).
-        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&fresh_state_transform())), 1e-6));
-        let rewritten = app
-            .world()
-            .resource::<Messages<AssetEvent<CharacterMaterial>>>()
-            .iter_current_update_messages()
-            .any(|e| {
-                *e == AssetEvent::Modified {
-                    id: materials[0].id(),
-                }
-            });
-        assert!(!rewritten, "the show frame relit the level");
+        let rewritten = |app: &App| {
+            app.world()
+                .resource::<Messages<AssetEvent<CharacterMaterial>>>()
+                .iter_current_update_messages()
+                .any(|e| {
+                    *e == AssetEvent::Modified {
+                        id: materials[0].id(),
+                    }
+                })
+        };
+        let (t, w) = travel(&app);
+        assert!(t.abs_diff_eq(world().0, 1e-6) && w == world().1, "{t} {w}");
+        // The frame it shows rewrites no material (the sky's scroll aside).
+        assert!(!rewritten(&app), "the show frame relit the level");
         app.update();
         assert_eq!(
             app.world().get::<Visibility>(root),
@@ -1787,8 +2100,9 @@ mod tests {
             Some(&RenderLayers::layer(LEVEL_LAYER))
         );
         assert!(app.world().resource::<Level>().report().shown);
-        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&fresh_state_transform())), 1e-6));
-        // Turned to face the other way: the key light's travel turns too.
+        // Turned to face the other way: nothing is lit again, since the
+        // shader turns the world's lights by the view it draws for (AG.21).
+        let relit = app.world().resource::<Level>().report().relit;
         let moved = Transform::from_xyz(0.0, 50.0, 0.0).looking_to(Vec3::NEG_Z, Vec3::Y);
         *app.world_mut().get_mut::<Transform>(camera).unwrap() = moved;
         let sky_rows = |app: &App| {
@@ -1800,8 +2114,10 @@ mod tests {
             (m.uniform.uv_u, m.uniform.uv_v)
         };
         app.update();
+        assert!(!rewritten(&app), "a moved camera relit the level");
         app.update();
-        assert!(travel(&app).abs_diff_eq(Vec3::from_array(at(&moved)), 1e-6));
+        assert_eq!(app.world().resource::<Level>().report().relit, relit);
+        assert_eq!(travel(&app), (world().0, world().1));
         // The sky's u slides from half a texture along, its track's start,
         // not the identity's 0.
         let (u, _) = sky_rows(&app);

@@ -1,12 +1,13 @@
 //! The TV's one input router (openspec AP, design decision 2). `route_input`
 //! reads every pad, the keys the widgets don't take (the arrows, Esc,
 //! NumpadEnter) and the presses posted to `/api/_test/tv/press`, then hands
-//! the frame to the top layer only: an intro playing over the portal takes
-//! any button or key as its skip and nothing under it sees the press;
-//! otherwise the screen gets it as [`TvInput`]s. Mapping is positional (the
-//! design doc's Controllers): South activates, East goes back, Mode is Home
-//! (nothing yet), the D-pad, the arrows and the left stick move, held ones
-//! repeating per [`NavRepeat`].
+//! the frame to the top layer only: an intro playing over the portal or the
+//! level takes any button or key as its skip and nothing under it sees the
+//! press; while the level shows, its layer takes the pads ([`crate::pad`],
+//! AG.20) and the screen hears nothing; otherwise the screen gets it as
+//! [`TvInput`]s. Mapping is positional (the design doc's Controllers): South
+//! activates, East goes back, Mode is Home (nothing yet), the D-pad, the
+//! arrows and the left stick move, held ones repeating per [`NavRepeat`].
 //!
 //! Enter and Space are never mapped: `bevy_ui_widgets`' button takes them
 //! from the focused entity, so nothing activates twice.
@@ -20,7 +21,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::input::InputSystems;
-use bevy::input::gamepad::{Gamepad, GamepadButton};
+use bevy::input::gamepad::{
+    Gamepad, GamepadButton, gamepad_connection_system, gamepad_event_processing_system,
+};
 use bevy::input_focus::{AutoFocus, FocusCause, InputFocus, InputFocusVisible};
 use bevy::math::CompassOctant;
 use bevy::prelude::*;
@@ -29,9 +32,12 @@ use bevy::ui::{InteractionDisabled, Pressed};
 use bevy::ui_widgets::{Activate, Button};
 use tracing::{debug, info};
 
+use crate::hero::HeroInput;
 use crate::intro::{IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay};
 use crate::mirror::TvMirror;
+use crate::pad::{self, HeroPad, LevelPads};
+use crate::pause;
 use crate::tv::Current;
 
 /// Long enough that a tap is one move; a hold starts repeating after it.
@@ -141,9 +147,11 @@ pub(crate) struct Frame {
 /// Who takes a frame's input: the top layer, and only it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Layer {
-    /// An intro over the portal: any button or key skips it.
+    /// An intro over the portal or the level: any button or key skips it.
     Intro,
-    // A modal goes here, between the two, once one exists.
+    // A modal goes here, under the intro, once one exists.
+    /// The level (AG.20): its own read of the pads.
+    Level,
     /// The screen's own choices.
     Screen,
 }
@@ -152,16 +160,28 @@ pub(crate) enum Layer {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Taken {
     Skip,
+    /// The level reads the pads itself ([`crate::pad::Seat`]).
+    Level,
     Screen(Vec<TvInput>),
     Nothing,
 }
 
 impl Layer {
-    pub(crate) fn top(intro_playing: bool) -> Self {
+    pub(crate) fn top(intro_playing: bool, level_shows: bool) -> Self {
         if intro_playing {
             Self::Intro
+        } else if level_shows {
+            Self::Level
         } else {
             Self::Screen
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Intro => "intro",
+            Self::Level => "level",
+            Self::Screen => "screen",
         }
     }
 
@@ -171,6 +191,7 @@ impl Layer {
             // A stick move is no button: it neither skips nor reaches the screen.
             Self::Intro if frame.pressed => Taken::Skip,
             Self::Intro => Taken::Nothing,
+            Self::Level => Taken::Level,
             Self::Screen if frame.inputs.is_empty() => Taken::Nothing,
             Self::Screen => Taken::Screen(frame.inputs),
         }
@@ -305,26 +326,39 @@ impl Plugin for InputRouter {
         // hides it, the next pad or key input brings it back).
         app.add_message::<TvInput>()
             .insert_resource(InputFocusVisible(true))
+            .init_resource::<LevelPads>()
+            // Between a pad's connection and its first axis event, so its
+            // move stick reads raw from that event on.
             .add_systems(
                 PreUpdate,
-                (route_input, keep_focus, act_on_input)
+                pad::read_sticks_raw
+                    .after(gamepad_connection_system)
+                    .before(gamepad_event_processing_system),
+            )
+            .add_systems(
+                PreUpdate,
+                (route_input, pause::hold_time, keep_focus, act_on_input)
                     .chain()
                     .after(InputSystems),
-            );
+            )
+            .add_systems(Update, pause::show_overlay);
     }
 }
 
 fn route_input(
     time: Res<Time>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
-    pads: Query<&Gamepad>,
+    pads: Query<(Entity, &Gamepad)>,
     mirror: Option<Res<TvMirror>>,
     mut repeat: Local<NavRepeat>,
     mut queue: Option<ResMut<IntroQueue>>,
     mut visible: Option<ResMut<InputFocusVisible>>,
+    mut level: ResMut<LevelPads>,
+    hero: Option<ResMut<HeroInput>>,
     mut out: MessageWriter<TvInput>,
 ) {
-    let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter());
+    let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
+    let level_pads = level.frames(pads.iter());
     let moved = repeat.step(dpad, stick, time.elapsed());
     frame.inputs.extend(moved.map(TvInput::Move));
     if let Some(press) = mirror.and_then(|m| m.2.pop()) {
@@ -340,9 +374,26 @@ fn route_input(
     }
 
     let playing = queue.as_ref().is_some_and(|q| q.playing().is_some());
-    let layer = Layer::top(playing);
-    if layer == Layer::Intro {
+    let layer = Layer::top(playing, level.shows());
+    if layer != Layer::Screen {
         repeat.swallow();
+    }
+    // The hero reads the walking pad only while the level's layer is on top;
+    // under an intro, nothing, and a face held through its skip stays his
+    // only once let go.
+    let walked = match (layer, level.seat_mut()) {
+        (Layer::Level, Some(seat)) => Some(seat.step(&level_pads)),
+        (_, Some(seat)) => {
+            seat.swallow(&level_pads);
+            Some(HeroPad::STILL)
+        }
+        (_, None) => None,
+    };
+    if let (Some(walked), Some(mut hero)) = (walked, hero)
+        && (hero.0.stick, hero.0.buttons) != (walked.stick, walked.buttons)
+    {
+        hero.0.stick = walked.stick;
+        hero.0.buttons = walked.buttons;
     }
     match layer.take(frame) {
         Taken::Skip => {
@@ -357,7 +408,7 @@ fn route_input(
                 out.write(input);
             }
         }
-        Taken::Nothing => {}
+        Taken::Level | Taken::Nothing => {}
     }
 }
 
@@ -642,13 +693,18 @@ mod tests {
 
     #[test]
     fn the_top_layer_takes_the_press_and_nothing_under_it_sees_it() {
-        // South during an intro skips it and reaches no screen.
-        assert_eq!(Layer::top(true), Layer::Intro);
-        assert_eq!(Layer::top(true).take(south()), Taken::Skip);
+        // South during an intro skips it and reaches no screen, over the
+        // level too.
+        assert_eq!(Layer::top(true, false), Layer::Intro);
+        assert_eq!(Layer::top(true, true), Layer::Intro);
+        assert_eq!(Layer::top(true, false).take(south()), Taken::Skip);
         assert_eq!(
-            Layer::top(false).take(south()),
+            Layer::top(false, false).take(south()),
             Taken::Screen(vec![TvInput::Activate])
         );
+        // The level reads the pads itself: the screen hears nothing.
+        assert_eq!(Layer::top(false, true), Layer::Level);
+        assert_eq!(Layer::Level.take(south()), Taken::Level);
         // A stick move is no button: it doesn't skip, and doesn't move under it.
         let stick = Frame {
             pressed: false,
