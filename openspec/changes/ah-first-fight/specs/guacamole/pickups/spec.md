@@ -36,12 +36,16 @@ When collected experience reaches the next level's threshold the hero SHALL leve
 - **THEN** he is level 2 with 323 health (his full health there) and a bite in the next instant does nothing
 
 ### Requirement: Coins
-A coin SHALL be collectable from 0.7 s after it appears, flying over 0.48 s to a hero within 12 ft (3.7 m) of it, and never to one outside its own range, its worth added to that hero's figure's gold when it arrives: 1 for each spinning coin on chapter 1's walkway and above the pit.
+A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.7 m) of him in space and at least 0.7 s old; it SHALL slide in over 0.48 s and add its worth to his figure's gold as it reaches him, one taken while another still slides starting both slides again. A dropped coin SHALL pop up 3 to 5.5 m where it breaks out and fall back. Each spinning coin on chapter 1's walkway and above the pit SHALL be worth 1.
 
 #### Scenario: A spinning coin on the walkway
 - **WHEN** Eruptor walks within 12 ft of a spinning coin on the walkway
 - **THEN** it flies to him over 0.48 s and his figure has 1 more gold
 
 #### Scenario: Just dropped
-- **WHEN** a coin drops at Eruptor's feet
-- **THEN** it flies to him no sooner than 0.7 s after it appeared
+- **WHEN** a barrel 3 m from Eruptor breaks and drops a coin
+- **THEN** it pops up, falls back and flies to him 0.9 to 1.5 s after it appeared, his gold rising as it reaches him
+
+#### Scenario: Two at once
+- **WHEN** two coins are taken 0.25 s apart
+- **THEN** both reach him together, 0.48 s after the second was taken

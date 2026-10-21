@@ -1705,7 +1705,10 @@ mod tests {
                 remaining: 0.788_604,
             }
         );
-        assert_eq!((clips[1].id, clips[1].rate), (0x3090_B960, 5.817_651));
+        assert_eq!(
+            (clips[1].id, clips[1].weight, clips[1].rate),
+            (0x3090_B960, 0.0, 5.817_651)
+        );
         // A hero with no animation block: the list's link breaks, no items.
         f.w.put32(f.hero + 0x7C, 0);
         let none = evaluate(&g.chains.slots[&ANIMS], &mut f.w).unwrap();
@@ -1863,7 +1866,10 @@ mod tests {
         assert_eq!(ids(&clips[0]), [0x3090_C890, 0x3090_B960]);
         assert_eq!(ids(&clips[1]), ids(&clips[0]));
         assert_eq!(ids(&clips[2]), [0x3090_C890, 0x3090_B960, 0x3090_D000]);
-        assert_eq!((clips[2][2].rate, clips[2][2].remaining), (150.0, 0.42));
+        assert_eq!(
+            (clips[2][2].weight, clips[2][2].rate, clips[2][2].remaining),
+            (100.0, 150.0, 0.42)
+        );
         assert_eq!(
             resolved.clip_names.values().cloned().collect::<Vec<_>>(),
             [CLIPS[1].0, CLIPS[0].0, CLIPS[2].0]
