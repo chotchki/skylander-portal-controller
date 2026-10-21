@@ -70,6 +70,35 @@ impl Collision {
         let w = self.width * FOOT * s;
         Some(((w - SHRINK) / 2.0, w / 2.0 + self.position[1] * s))
     }
+
+    /// For a capsule, metres at `scale` percent: its radius (w - 0.1) / 2 and
+    /// its segment's half length (h - w) / 2, w and h in metres times the
+    /// scale, so it spans h - 0.1 end to end (all 38 of AE.22's capsule
+    /// heroes' phantoms); and, set upright (no angles), its centre h / 2 plus
+    /// the offset's y over the pivot (h / 2 checked on all 31 upright ones,
+    /// Tree Rex's among them, AG.12; none has an offset, so the offset's
+    /// part follows the sphere's rule unchecked). A capsule laid down
+    /// (Bash's, Warnado's) sits otherwise, so it gets no centre.
+    pub fn capsule(&self, scale: f32) -> Option<CapsuleSize> {
+        if self.shape() != 2 {
+            return None;
+        }
+        let s = scale / 100.0;
+        let (w, h) = (self.width * FOOT * s, self.height * FOOT * s);
+        Some(CapsuleSize {
+            radius: (w - SHRINK) / 2.0,
+            half_segment: (h - w) / 2.0,
+            centre_up: (self.angles == [0.0; 3]).then(|| h / 2.0 + self.position[1] * s),
+        })
+    }
+}
+
+/// A capsule `CollisionInfo`'s solid ([`Collision::capsule`]), metres.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CapsuleSize {
+    pub radius: f32,
+    pub half_segment: f32,
+    pub centre_up: Option<f32>,
 }
 
 /// An `ActorParameters`, as stored: feet, feet per second (squared) and
@@ -284,6 +313,51 @@ mod tests {
                 ..c
             }
             .sphere(150.0)
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_capsules_solid_is_its_sizes_less_the_shrink_and_upright_it_stands_on_its_end() {
+        // Tree Rex as AE.22 read him: 14 x 21.25 x 3 ft at 100 %, properties
+        // 0x1A, no offset; his phantom a capsule of radius 2.0836 m, ends
+        // 1.1049 m either side of a centre 3.2385 m up.
+        let rex = Collision {
+            address: 0x36B4_E0AC,
+            properties: 0x1A,
+            position: [0.0; 3],
+            angles: [0.0; 3],
+            width: 14.0,
+            height: 21.25,
+            length: 3.0,
+            weight: 10.0,
+            rebound: 0.0,
+        };
+        let c = rex.capsule(100.0).unwrap();
+        assert!((c.radius - 2.0836).abs() < 1e-6, "{c:?}");
+        assert!((c.half_segment - 1.1049).abs() < 1e-6, "{c:?}");
+        assert!((c.centre_up.unwrap() - 3.2385).abs() < 1e-6, "{c:?}");
+        assert!(rex.sphere(100.0).is_none());
+        // Bash laid down (angles 90, offset 0.9144 up and 1.524 on, 120 %):
+        // the same sizes rule (1.04728 and 0.73152), no centre claimed.
+        let bash = Collision {
+            width: 6.0,
+            height: 10.0,
+            angles: [90.0, 0.0, 0.0],
+            position: [0.0, 0.9144, 1.524],
+            ..rex
+        };
+        let b = bash.capsule(120.0).unwrap();
+        assert!((b.radius - 1.04728).abs() < 1e-6, "{b:?}");
+        assert!((b.half_segment - 0.73152).abs() < 1e-6, "{b:?}");
+        assert_eq!(b.centre_up, None);
+        // A sphere isn't a capsule.
+        assert!(
+            Collision {
+                properties: 0x1B,
+                ..rex
+            }
+            .capsule(100.0)
             .is_none()
         );
     }

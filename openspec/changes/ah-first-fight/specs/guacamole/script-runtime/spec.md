@@ -14,11 +14,19 @@ The values the original's scripts compute SHALL come out the same in guacamole f
 - **THEN** a Chompy has 1 health, bites from 11 and gives 4 experience, and a near enemy's share of the level's experience is 128.333, as the original's running game holds them
 
 ### Requirement: Random rolls
-Every roll the game makes SHALL cover the original's range the way the original does: a whole number from 0 to N with both ends, uniform, or a fraction from 0 to N with the draw rounded to single precision before it scales, as the original rounds it, so N itself comes up once in 2^25 draws. Two sessions SHALL NOT roll the same sequence.
+Every roll the game makes SHALL cover the original's range the way the original does: a whole number from 0 to N with both ends, uniform, or a fraction from 0 to N with the draw rounded to single precision before it scales, as the original rounds it, so N itself comes up once in 2^25 draws. Armour's roll is a whole number (armour 200: 2 of 711 bites landed in the oracle) and a critical hit's a fraction (a chance of 100: 846 of 846 hits critical). Two sessions SHALL NOT roll the same sequence.
 
 #### Scenario: Chompy bites
 - **WHEN** Chompies' bites do damage 1,000 times at medium
 - **THEN** each of 11, 12, 13 and 14 comes up between 209 and 291 times, and nothing else does
+
+#### Scenario: Armour at its top
+- **WHEN** Eruptor's armour is 200 and Chompies bite him 1,000 times
+- **THEN** a bite lands only when its whole-number roll is 100, between 1 and 20 times
+
+#### Scenario: A critical chance of 100
+- **WHEN** Eruptor's critical chance is 100 and his Lava Lobs hit 1,000 times
+- **THEN** every hit is critical
 
 #### Scenario: A fraction's top
 - **WHEN** a fraction roll of 0.5 draws one of the generator's 128 highest numbers

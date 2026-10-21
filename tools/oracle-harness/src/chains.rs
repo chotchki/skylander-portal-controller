@@ -240,16 +240,18 @@ pub const BREAKABLES: [&str; 16] = [
 ];
 /// The templates in Eruptor's archive whose clones his attacks make (the
 /// actors among `009_eruptor.bld`'s placements: the lava ball, its upgrade,
-/// the fire blob and its splash, the eruption and its volcano), each with
-/// the kind its clones go by, so a trace tells a ball from the splash
-/// under his hand (AH.9).
-pub const ERUPTOR_SPAWNS: [(&str, &str); 6] = [
+/// the fire blob and its splash, the eruption and its volcano, and upgrade
+/// 4's Magma Ball and its impact, AH.41), each with the kind its clones go
+/// by, so a trace tells a ball from the splash under his hand (AH.9).
+pub const ERUPTOR_SPAWNS: [(&str, &str); 8] = [
     ("lava_ball", "009_LavaProjectile"),
     ("lava_ball_upgrade", "009_LavaProjectileUpgrade"),
     ("fire_blob", "009_FireBlob"),
     ("fire_blob_splash", "009_FireBlobSplash"),
     ("eruption", "009_LavaAttack"),
     ("mini_volcano", "009_MiniVolcano"),
+    ("magma_ball", "009_MagmaBall"),
+    ("magma_ball_impact", "009_MagmaBall_Impact"),
 ];
 
 /// The currency art `Loot - Get Loot` clones a dropped coin from (level
@@ -257,6 +259,21 @@ pub const ERUPTOR_SPAWNS: [(&str, &str); 6] = [
 /// uncommon in AH.9's drops), so a coin's actor rides [`ACTORS`] from its
 /// spawn through its slide to the hero, after its loot entry has gone.
 pub const COIN_ART: [&str; 5] = ["1_Coin", "2_Coin(1)", "3_Coin(2)", "4_Coin(3)", "5_Coin(1)"];
+
+/// The spinning coins AH.8's route takes, on the walkway's west drop and the
+/// six down into the pit (AH.11): each placement rides [`ACTORS`] through the
+/// slide its loot entry leaves before.
+pub const SPINNING_COINS: [&str; 9] = [
+    "Coin_spinning",
+    "Coin_spinning_0",
+    "Coin_spinning_0(1)",
+    "Coin_spinning(1)",
+    "Coin_spinning(2)",
+    "Coin_spinning(3)",
+    "Coin_spinning(4)",
+    "Coin_spinning(5)",
+    "Coin_spinning(6)",
+];
 
 /// The debris templates in level 213 for the breakables in reach (its
 /// placements named so beside `barrel_b_intact`, `pottery_*` and `gourd_*`).
@@ -283,6 +300,7 @@ pub fn fight_kinds() -> Vec<(String, Vec<String>)> {
         ("breakable".into(), owned(&BREAKABLES)),
         ("debris".into(), owned(&DEBRIS)),
         ("coin_art".into(), owned(&COIN_ART)),
+        ("spinning_coin".into(), owned(&SPINNING_COINS)),
     ]
     .into_iter()
     .chain(
@@ -998,15 +1016,29 @@ impl GiantsChains {
             };
             out.float_types.insert(ty, kind);
         }
+        // A cell or a name freed since its record (AH.11: a hero beaten, a
+        // figure taken off) is named by its address rather than failing the
+        // whole ring.
         for cell in cells {
-            let head = one(g, cell, 0x0C, "a behaviour cell")?;
-            actors::expect_vtable(&head, script::vtable::USER_BEHAVIOR, cell, "OpUserBehavior")?;
-            let name = one(g, be32(&head, 0x08), 64, "a behaviour's name")?;
-            out.behaviours.insert(cell, c_string(&name));
+            let name = one(g, cell, 0x0C, "a behaviour cell").and_then(|head| {
+                actors::expect_vtable(
+                    &head,
+                    script::vtable::USER_BEHAVIOR,
+                    cell,
+                    "OpUserBehavior",
+                )?;
+                one(g, be32(&head, 0x08), 64, "a behaviour's name").map(|n| c_string(&n))
+            });
+            out.behaviours.insert(
+                cell,
+                name.unwrap_or_else(|_| format!("freed behaviour {cell:#010x}")),
+            );
         }
         for at in names {
-            let name = one(g, at, 64, "a loot actor's name")?;
-            out.loot_names.insert(at, c_string(&name));
+            let name = one(g, at, 64, "a loot actor's name")
+                .map(|n| c_string(&n))
+                .unwrap_or_else(|_| format!("freed name {at:#010x}"));
+            out.loot_names.insert(at, name);
         }
         Ok(out)
     }
@@ -1963,7 +1995,7 @@ mod tests {
         assert_eq!(g.updater_index, 1);
         assert_eq!(g.actors[0], (HERO.to_owned(), "009_Eruptor".to_owned()));
         assert_eq!(g.kind(1), Some("chompy"));
-        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 6 + 1);
+        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 9 + 8 + 1);
         assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
         let actors = evaluate(&g.chains.slots[&ACTORS], &mut f.w).unwrap();
         // The hero, the Chompy, the barrel, the leaf and the dropped coin's
@@ -1989,7 +2021,9 @@ mod tests {
                 "fire_blob",
                 "fire_blob_splash",
                 "eruption",
-                "mini_volcano"
+                "mini_volcano",
+                "magma_ball",
+                "magma_ball_impact"
             ]
         );
         let hero = &actors.items[0];
@@ -2139,6 +2173,24 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             ["Battle".to_owned(), "default".to_owned()].into()
         );
+        // A behaviour cell freed since its record (AH.11: a hero beaten, its
+        // vtable cleared) is named by its address and the rest still resolve.
+        let freed = *resolved.behaviours.keys().next().unwrap();
+        let vtable_was = f.w.get32(freed);
+        f.w.put32(freed, 0);
+        let again = g.resolve_names(&mut f.w, &blocks).unwrap();
+        assert_eq!(
+            again.behaviours[&freed],
+            format!("freed behaviour {freed:#010x}")
+        );
+        assert_eq!(again.behaviours.len(), resolved.behaviours.len());
+        assert!(
+            again
+                .behaviours
+                .iter()
+                .all(|(c, n)| *c == freed || resolved.behaviours[c] == *n)
+        );
+        f.w.put32(freed, vtable_was);
         let (chain, _) = g.records(&watch, &records, &resolved).unwrap();
         assert_eq!(chain.len(), 3);
         let first = &chain[0];

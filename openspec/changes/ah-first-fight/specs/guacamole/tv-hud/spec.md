@@ -22,12 +22,12 @@ While a level shows, the TV SHALL show the hero's health against his full health
 - **THEN** the TV warns that his health is low
 
 ### Requirement: No character left
-When the hero is beaten and no character waits on the portal, the level SHALL pause under a screen asking for another character, with one choice, Restart chapter, which starts the level again from its start with every figure's experience and gold kept. Placing a character not beaten in the level SHALL carry on instead.
+When the hero is beaten and no character waits on the portal, the level SHALL pause under a screen asking for the beaten figure to be taken off, then for another character, offering Restart chapter from about 5 s on, behind a yes-or-no check starting on no. Restart SHALL start the level again from its start, its breakables and creatures back, the beaten figure in at full health and every figure's experience and gold kept. Placing a character not beaten in the level SHALL carry on instead.
 
 #### Scenario: Restart chapter
-- **WHEN** Eruptor is beaten with no character waiting and Restart chapter is chosen
-- **THEN** the level starts again from its start with Eruptor as the hero, his experience and gold as they were
+- **WHEN** Eruptor is beaten with no character waiting and Restart chapter is chosen and confirmed
+- **THEN** the level starts again from its start with Eruptor as the hero at full health, his experience and gold as they were
 
 #### Scenario: Another character instead
-- **WHEN** Eruptor is beaten with no character waiting and Spyro is placed
+- **WHEN** Eruptor is beaten with no character waiting, is taken off and Spyro is placed
 - **THEN** the level carries on with Spyro as the hero

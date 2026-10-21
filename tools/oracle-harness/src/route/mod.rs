@@ -78,6 +78,18 @@ pub enum Step {
     /// falls inside it (AH.8: an anchor's opening step). It's aimed from where
     /// he stands, against the view, at the look that schedule starts from.
     Tilt { toward: Point, flips: u64 },
+    /// The right stick held at the bytes (`x`, `y`) for `flips` flips (0 and
+    /// 255 its travel's ends, 128 centred) with the left stick toward
+    /// `toward` as [`Step::Tilt`] aims it, or centred without one, then both
+    /// let go, in the same schedule as the presses and waits around it
+    /// (AH.41, for AG.28: what the right stick does to the view).
+    RightStick {
+        x: u8,
+        y: u8,
+        flips: u64,
+        #[serde(default)]
+        toward: Option<Point>,
+    },
     /// These buttons held for `flips` flips, the stick centred, then let go.
     Press {
         buttons: BTreeSet<Button>,
@@ -90,6 +102,73 @@ pub enum Step {
     /// The actors, the generator and the fight's state read at the pause,
     /// named by `label`.
     Read { label: String },
+    /// A placement's script number set at the pause (AH.11), `path` dotted
+    /// through its variables as `oracle goto --poke` takes it, the hero's
+    /// placement among them; what it held before and after is recorded.
+    Poke {
+        placement: String,
+        path: String,
+        value: f64,
+    },
+    /// One of the hero's figure's values set at the pause in its save area,
+    /// through AH.2's rows (AH.11): experience as a total, split over the two
+    /// areas as the rows' limit splits it, gold or playtime. Recorded with the
+    /// values before and after.
+    Figure { field: FigureField, value: u32 },
+    /// P1 at the pause (AH.11): a fresh copy of the `.sky` at `figure`
+    /// loaded onto the portal (the emulator picks the slot), or `slot`
+    /// cleared when there's no figure. The source is checked unchanged.
+    /// `@f0` puts back the copy loaded at F0 and `@<n>` the n-th portal
+    /// step's, as the game last wrote it.
+    Portal { slot: u8, figure: Option<String> },
+    /// P5's `RECONNECT` at the pause (AH.11): a state's restored USB thread
+    /// goes quiet after F0's (AE.22), and the game talks to the portal again,
+    /// re-reading what's on it, only after one made once the run runs.
+    Reconnect,
+    /// A placement's variables read whole at the pause, through structures,
+    /// references and sets, into `vars-<label>.json`.
+    Vars { placement: String, label: String },
+    /// `global.bld`'s exports by name read whole at the pause, as [`Step::Vars`]
+    /// reads a placement's, into `globals-<label>.json` (AH.11: the portal
+    /// save control playtime is counted on).
+    Globals { names: Vec<String>, label: String },
+}
+
+/// The values AH.2's rows read off a figure's save area: the three the caps
+/// and the level-up are measured on, and an upgrade's bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FigureField {
+    /// The total, both areas.
+    Experience,
+    Gold,
+    Playtime,
+    /// Upgrade n's bit (`pp_Upgrade(n)` among the upgrade bits' members,
+    /// AH.41): 1 bought, 0 not.
+    Upgrade(u8),
+}
+
+impl Step {
+    /// Whether the step acts on the paused run (AH.11's steps) rather than
+    /// driving, shooting or reading.
+    pub fn acts(&self) -> bool {
+        matches!(
+            self,
+            Step::Poke { .. }
+                | Step::Figure { .. }
+                | Step::Portal { .. }
+                | Step::Reconnect
+                | Step::Vars { .. }
+                | Step::Globals { .. }
+        )
+    }
+}
+
+/// A file label: letters, digits, '_' and '.'.
+fn label_ok(label: &str) -> bool {
+    !label.is_empty()
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
 }
 
 /// A route: its steps in order, and whether the run is saved where it ends.
@@ -136,6 +215,11 @@ impl RoutePlan {
                         bail!("step {i}: a stick toward a point for at least a flip, not {step:?}");
                     }
                 }
+                Step::RightStick { flips, toward, .. } => {
+                    if *flips == 0 || toward.is_some_and(|t| !t.x.is_finite() || !t.z.is_finite()) {
+                        bail!("step {i}: the right stick held for at least a flip, not {step:?}");
+                    }
+                }
                 Step::Face {
                     toward,
                     within,
@@ -155,22 +239,62 @@ impl RoutePlan {
                         bail!("step {i}: a press holds a button for at least a flip");
                     }
                 }
-                Step::Shot { label } | Step::Read { label } => {
-                    if label.is_empty()
-                        || !label
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-                    {
+                Step::Shot { label }
+                | Step::Read { label }
+                | Step::Vars { label, .. }
+                | Step::Globals { label, .. } => {
+                    if !label_ok(label) {
                         bail!("step {i}: a label is letters, digits, '_' and '.', not {label:?}");
                     }
                     if label == "f0" {
                         bail!("step {i}: \"f0\" is the session's own read at F0");
                     }
-                    // A shot and a read write different files, so they may
-                    // share a label; two of a kind may not.
-                    let kind = matches!(step, Step::Shot { .. });
+                    // A shot, a read and a dump write different files, so
+                    // they may share a label; two of a kind may not.
+                    let kind = match step {
+                        Step::Shot { .. } => 0,
+                        Step::Read { .. } => 1,
+                        Step::Vars { .. } => 2,
+                        _ => 3,
+                    };
                     if !labels.insert((kind, label.clone())) {
                         bail!("step {i}: the label {label:?} is used twice");
+                    }
+                    if let Step::Vars { placement, .. } = step
+                        && placement.is_empty()
+                    {
+                        bail!("step {i}: a dump names its placement");
+                    }
+                    if let Step::Globals { names, .. } = step
+                        && (names.is_empty() || names.iter().any(String::is_empty))
+                    {
+                        bail!("step {i}: a dump of globals names them");
+                    }
+                }
+                Step::Poke {
+                    placement,
+                    path,
+                    value,
+                } => {
+                    if placement.is_empty()
+                        || path.is_empty()
+                        || path.split('.').any(str::is_empty)
+                        || !value.is_finite()
+                    {
+                        bail!("step {i}: a poke names a placement, a dotted path and a number");
+                    }
+                }
+                Step::Figure { field, value } => {
+                    if let FigureField::Upgrade(n) = field
+                        && (*n == 0 || *value > 1)
+                    {
+                        bail!("step {i}: an upgrade is numbered from 1 and set to 0 or 1");
+                    }
+                }
+                Step::Reconnect => {}
+                Step::Portal { slot, figure } => {
+                    if *slot >= 8 || figure.as_ref().is_some_and(String::is_empty) {
+                        bail!("step {i}: a portal step's slot is 0-7 and its figure a path");
                     }
                 }
             }
@@ -332,10 +456,11 @@ pub struct Seen {
 }
 
 impl Seen {
-    /// The hero (the one skinned actor a pad drives) and the camera off a
-    /// frame read at the pause at `flip`.
+    /// The hero (the skinned actor the lowest pad drives: player 1 when a
+    /// second figure has joined) and the camera off a frame read at the pause
+    /// at `flip`.
     pub fn of(flip: u64, frame: &ActorFrame) -> Result<Self> {
-        let hero = frame.hero()?;
+        let hero = frame.player_one()?;
         let camera = frame.camera.as_ref().context("the frame has no camera")?;
         let f = |v: [f32; 3]| v.map(f64::from);
         Ok(Self {
@@ -377,6 +502,8 @@ pub enum Order {
     },
     Shot(String),
     Read(String),
+    /// One of AH.11's steps, carried out at the pause ([`Step::acts`]).
+    Act(Step),
     Done,
 }
 
@@ -651,7 +778,10 @@ impl Driver {
                     }
                     return Ok(run(rest(), flips.min(10)));
                 }
-                Step::Press { .. } | Step::Wait { .. } | Step::Tilt { .. } => {
+                Step::Press { .. }
+                | Step::Wait { .. }
+                | Step::Tilt { .. }
+                | Step::RightStick { .. } => {
                     // A run of presses, tilts and waits goes in as one
                     // schedule, so no pause falls between a press and what
                     // follows it.
@@ -665,6 +795,26 @@ impl Driver {
                                 match schedule.last_mut() {
                                     Some((o, pad)) if *o == at => *pad = tilted,
                                     _ => schedule.push((at, tilted)),
+                                }
+                                schedule.push((at + flips, rest()));
+                                at += flips;
+                            }
+                            Step::RightStick {
+                                x,
+                                y,
+                                flips,
+                                toward,
+                            } => {
+                                let held = PadState {
+                                    left: toward.map_or(Stick::CENTRED, |t| {
+                                        stick_toward(seen.bearing(t), seen.view, 1.0)
+                                    }),
+                                    right: Stick { x: *x, y: *y },
+                                    ..PadState::default()
+                                };
+                                match schedule.last_mut() {
+                                    Some((o, pad)) if *o == at => *pad = held,
+                                    _ => schedule.push((at, held)),
                                 }
                                 schedule.push((at + flips, rest()));
                                 at += flips;
@@ -708,6 +858,15 @@ impl Driver {
                     self.advance();
                     return Ok(Order::Read(label));
                 }
+                Step::Poke { .. }
+                | Step::Figure { .. }
+                | Step::Portal { .. }
+                | Step::Reconnect
+                | Step::Vars { .. }
+                | Step::Globals { .. } => {
+                    self.advance();
+                    return Ok(Order::Act(step));
+                }
             }
         }
     }
@@ -723,6 +882,12 @@ pub trait Session {
     fn run(&mut self, script: &InputScript, flips: u64) -> Result<()>;
     fn shot(&mut self, label: &str) -> Result<()>;
     fn read(&mut self, label: &str, frame: &ActorFrame) -> Result<()>;
+    /// One of AH.11's steps at the pause, `frame` read there. A session that
+    /// can't act refuses.
+    fn act(&mut self, step: &Step, frame: &ActorFrame) -> Result<()> {
+        let _ = frame;
+        bail!("this session can't carry out {step:?}")
+    }
 }
 
 /// One pause: what was read and what was done there.
@@ -839,8 +1004,20 @@ pub fn drive(session: &mut impl Session, plan: &RoutePlan, knobs: Knobs) -> Resu
     let mut input: Vec<(u64, PadState)> = Vec::new();
     let (mut flip, mut frame) = session.look()?;
     let f0 = flip;
+    let mut last_seen: Option<Seen> = None;
     let outcome = loop {
-        let seen = Seen::of(flip, &frame)?;
+        // No hero at a pause (AH.11: one beaten, or none placed yet) keeps the
+        // last look's pose: only steps that don't walk him make sense then.
+        let seen = match (Seen::of(flip, &frame), last_seen) {
+            (Ok(s), _) => s,
+            (Err(_), Some(last)) => Seen {
+                flip,
+                game_frame: frame.game_frame,
+                ..last
+            },
+            (Err(e), None) => return Err(e),
+        };
+        last_seen = Some(seen);
         let step = driver.step();
         let order = match driver.next(&seen) {
             Ok(order) => order,
@@ -864,6 +1041,7 @@ pub fn drive(session: &mut impl Session, plan: &RoutePlan, knobs: Knobs) -> Resu
             ),
             Order::Shot(l) => format!("shot {l}"),
             Order::Read(l) => format!("read {l}"),
+            Order::Act(s) => format!("act {s:?}"),
             Order::Done => "done".into(),
         };
         looks.push(Look { seen, step, did });
@@ -882,6 +1060,7 @@ pub fn drive(session: &mut impl Session, plan: &RoutePlan, knobs: Knobs) -> Resu
             }
             Order::Shot(label) => session.shot(&label)?,
             Order::Read(label) => session.read(&label, &frame)?,
+            Order::Act(step) => session.act(&step, &frame)?,
             Order::Done => break Outcome::Done,
         }
     };
@@ -903,6 +1082,9 @@ pub fn describe(pad: &PadState) -> String {
     } else {
         format!("stick ({}, {})", pad.left.x, pad.left.y)
     };
+    if !pad.right.is_centred() {
+        s.push_str(&format!(" right ({}, {})", pad.right.x, pad.right.y));
+    }
     for b in &pad.buttons {
         s.push_str(&format!(" {b:?}"));
     }

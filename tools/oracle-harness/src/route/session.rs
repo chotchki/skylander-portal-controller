@@ -24,7 +24,7 @@ use skylander_core::SlotIndex;
 use skylander_rpcs3_control::PortalDriver;
 
 use super::census::{self, Census, Disc, RouteRecord, Wake};
-use super::{Knobs, Outcome, RoutePlan, Session, Trace, drive};
+use super::{FigureField, Knobs, Outcome, RoutePlan, Session, Step, Trace, drive};
 use crate::actors::{self, ActorFrame};
 use crate::chains::{self, GiantsChains};
 use crate::control::Control;
@@ -165,6 +165,119 @@ fn poke(pine: &mut PineClient, frame: &ActorFrame, poke: &Poke) -> Result<PokeDo
     })
 }
 
+/// A figure value set at a pause (AH.11), through AH.2's rows: the hero's
+/// figure before and after, and his health and next level's threshold.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FigurePoke {
+    pub field: FigureField,
+    pub value: u32,
+    pub hero: Option<String>,
+    pub before: FigureSeen,
+    pub after: FigureSeen,
+    /// Each word of the save area the poke wrote (AH.41: where an upgrade's
+    /// bit went).
+    #[serde(default)]
+    pub writes: Vec<WordWritten>,
+}
+
+/// One save-area word a figure poke wrote: its index, the address its value
+/// sits at, and the word before and after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordWritten {
+    pub word: usize,
+    pub at: u32,
+    pub before: u32,
+    pub after: u32,
+}
+
+/// The hero's figure and the cells beside it, as a figure poke saw them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FigureSeen {
+    pub experience: u32,
+    pub gold: u32,
+    pub playtime_secs: u32,
+    pub level: u32,
+    /// The upgrades bought, by number (AH.41).
+    #[serde(default)]
+    pub upgrades: Vec<u8>,
+    pub words: Vec<u32>,
+    pub exp_target: crate::script::Number,
+    pub health: crate::script::Number,
+    pub health_max: crate::script::Number,
+}
+
+impl FigureSeen {
+    fn of(h: &fight::Hero) -> Self {
+        Self {
+            experience: h.figure.experience,
+            gold: h.figure.gold,
+            playtime_secs: h.figure.playtime_secs,
+            level: h.figure.level,
+            upgrades: h.figure.upgrades.clone(),
+            words: h.figure.words.clone(),
+            exp_target: h.exp_target,
+            health: h.health,
+            health_max: h.health_max,
+        }
+    }
+}
+
+/// `field` of the hero's figure set to `value` at the pause the run is in,
+/// each word it changes written through PINE, read back.
+fn figure_poke(
+    pine: &mut PineClient,
+    frame: &ActorFrame,
+    rows: &Rows,
+    field: FigureField,
+    value: u32,
+) -> Result<FigurePoke> {
+    crate::rng::check_title(pine)?;
+    let hero = frame.player_one()?;
+    let mut types = crate::script::Types::default();
+    let before = fight::hero(pine, &mut types, hero.placement, rows)?;
+    let mut words = before.figure.words.clone();
+    rows.set(&mut words, field, value)?;
+    let mut writes = Vec::new();
+    for (i, (&new, &old)) in words.iter().zip(&before.figure.words).enumerate() {
+        if new != old {
+            let at = before.figure.cells[i] + 0x20;
+            pine.write_paused(at, &new.to_be_bytes())
+                .with_context(|| format!("writing word {i} of the save area"))?;
+            writes.push(WordWritten {
+                word: i,
+                at,
+                before: old,
+                after: new,
+            });
+        }
+    }
+    let after = fight::hero(pine, &mut types, hero.placement, rows)?;
+    if after.figure.words != words {
+        bail!(
+            "the save area reads {:?} after writing {words:?}",
+            after.figure.words
+        );
+    }
+    crate::level::still_paused(pine, "the figure poke")?;
+    Ok(FigurePoke {
+        field,
+        value,
+        hero: hero.name.clone(),
+        before: FigureSeen::of(&before),
+        after: FigureSeen::of(&after),
+        writes,
+    })
+}
+
+/// One of AH.11's steps as it went: where, what, and what it changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActDone {
+    pub flip: u64,
+    pub game_frame: u32,
+    pub step: String,
+    pub detail: serde_json::Value,
+}
+
 /// A `SCREENSHOT` by its plan label, with the flip it shows, the file it was
 /// copied to and its pixels' hash.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -194,6 +307,11 @@ pub struct ReadTaken {
     /// reader: whether a break leaves anything solid, AH.9), or why not.
     #[serde(default)]
     pub solids: Option<Result<usize, String>>,
+    /// The hero's own numbers read too (`hero-<label>.json`, AG.8's reader:
+    /// his scale, `CollisionInfo`, `ActorParameters` and solid; AG.12: the
+    /// figure LOADed in Eruptor's place), summed up, or why not.
+    #[serde(default)]
+    pub tuning: Option<Result<String, String>>,
 }
 
 /// One drive's record (`record.json`).
@@ -210,6 +328,17 @@ pub struct GotoRecord {
     /// The pokes written at F0 ([`Inputs::pokes`]).
     #[serde(default)]
     pub pokes: Vec<PokeDone>,
+    /// AH.11's steps carried out at pauses, in order.
+    #[serde(default)]
+    pub acts: Vec<ActDone>,
+    /// Each `.sky` a portal step loaded, with its SHA-256 before the drive and
+    /// whether it read the same after.
+    #[serde(default)]
+    pub sources: Vec<(String, String, bool)>,
+    /// The portal's copies as the game left them at the last pause, kept in
+    /// `portal/` ([`keep_portal_copies`]), each with its SHA-256.
+    #[serde(default)]
+    pub portal_copies: Vec<(String, String)>,
     pub before: Host,
     pub after: Host,
     pub boot_secs: f64,
@@ -221,6 +350,9 @@ pub struct GotoRecord {
     pub shots: Vec<ShotTaken>,
     pub reads: Vec<ReadTaken>,
     pub watch: Option<WatchRun>,
+    /// Why the ring didn't read, when it didn't.
+    #[serde(default)]
+    pub watch_error: Option<String>,
     pub saved: Option<EndState>,
     pub save_refusals: Vec<String>,
     pub save_error: Option<String>,
@@ -241,6 +373,11 @@ pub struct Live<'a> {
     shots: Vec<ShotTaken>,
     reads: Vec<ReadTaken>,
     censuses: Vec<(String, Census)>,
+    /// The run's temp dir, where a portal step's copies go.
+    tmp: PathBuf,
+    acts: Vec<ActDone>,
+    /// Each portal step's source and its SHA-256 then.
+    sources: Vec<(PathBuf, String)>,
 }
 
 impl Live<'_> {
@@ -299,7 +436,8 @@ impl Session for Live<'_> {
         peek.flip = Some(flip);
         peek.write(&self.dir.join(format!("peek-{label}.json")))?;
         let origin = peek.origin(rng::ORIGIN_TWISTS);
-        let hero = frame.hero()?;
+        // No hero (AH.11: one beaten) reads the rest; two take player 1.
+        let hero = frame.player_one().ok();
         let census_ms = match (self.rows, self.disc) {
             (Some(_), Some(disc)) => {
                 let t = Instant::now();
@@ -314,18 +452,51 @@ impl Session for Live<'_> {
             }
             _ => None,
         };
-        let fight = match self.rows {
-            Some(rows) => {
-                let state = fight::read_paused(&mut self.pine, hero.placement, rows)
-                    .with_context(|| format!("the fight's state at {flip}"))?;
-                let path = rrc_dump::output::refuse_repo_output(
-                    &self.dir.join(format!("fight-{label}.json")),
-                )?;
-                fs::write(&path, serde_json::to_string_pretty(&state)?)?;
-                true
+        let fight = match (self.rows, hero) {
+            (Some(rows), Some(hero)) => {
+                match fight::read_paused(&mut self.pine, hero.placement, rows) {
+                    Ok(state) => {
+                        let path = rrc_dump::output::refuse_repo_output(
+                            &self.dir.join(format!("fight-{label}.json")),
+                        )?;
+                        fs::write(&path, serde_json::to_string_pretty(&state)?)?;
+                        true
+                    }
+                    // A hero leaving or coming in (AH.11) can break the
+                    // chain; the rest of the read stands.
+                    Err(e) => {
+                        let path = rrc_dump::output::refuse_repo_output(
+                            &self.dir.join(format!("fight-{label}.error.txt")),
+                        )?;
+                        fs::write(&path, format!("{e:#}\n"))?;
+                        false
+                    }
+                }
             }
-            None => false,
+            _ => false,
         };
+        // Every player's figure (AH.11: a second figure in beside the hero,
+        // its playtime), each as a hero reads, or why not.
+        if let Some(rows) = self.rows {
+            let mut types = crate::script::Types::default();
+            let players: Vec<serde_json::Value> = frame
+                .players()
+                .map(|a| {
+                    let read = fight::hero(&mut self.pine, &mut types, a.placement, rows);
+                    serde_json::json!({
+                        "name": a.name,
+                        "pad": a.pad,
+                        "placement": a.placement,
+                        "hero": read.as_ref().ok(),
+                        "error": read.as_ref().err().map(|e| format!("{e:#}")),
+                    })
+                })
+                .collect();
+            let path = rrc_dump::output::refuse_repo_output(
+                &self.dir.join(format!("players-{label}.json")),
+            )?;
+            fs::write(&path, serde_json::to_string_pretty(&players)?)?;
+        }
         let solids = match crate::level::read_solids(&mut self.pine, frame) {
             Ok(s) => {
                 let path = rrc_dump::output::refuse_repo_output(
@@ -336,19 +507,191 @@ impl Session for Live<'_> {
             }
             Err(e) => Err(format!("{e:#}")),
         };
+        // His scale, collision and parameters, when there's one hero (AG.12).
+        let tuning = match crate::hero::read_paused(&mut self.pine, frame) {
+            Ok(h) => {
+                let path = rrc_dump::output::refuse_repo_output(
+                    &self.dir.join(format!("hero-{label}.json")),
+                )?;
+                fs::write(&path, serde_json::to_string_pretty(&h)?)?;
+                Ok(tuning_summary(&h))
+            }
+            Err(e) => Err(format!("{e:#}")),
+        };
         self.reads.push(ReadTaken {
             label: label.to_owned(),
             flip,
             game_frame: frame.game_frame,
-            hero: hero.summary(),
+            hero: hero.map_or_else(|| "none".to_owned(), |h| h.summary()),
             seed: origin.map(|o| o.seed),
             drawn: origin.map(|o| o.draws),
             fight,
             census_ms,
             solids: Some(solids),
+            tuning: Some(tuning),
         });
         Ok(())
     }
+
+    fn act(&mut self, step: &Step, frame: &ActorFrame) -> Result<()> {
+        let flip = self.paused()?;
+        let detail = match step {
+            Step::Poke {
+                placement,
+                path,
+                value,
+            } => {
+                let p = Poke {
+                    placement: placement.clone(),
+                    path: path.split('.').map(str::to_owned).collect(),
+                    value: *value,
+                };
+                crate::rng::check_title(&mut self.pine)?;
+                serde_json::to_value(poke(&mut self.pine, frame, &p)?)?
+            }
+            Step::Figure { field, value } => {
+                let rows = self
+                    .rows
+                    .context("a figure poke needs AH.2's rows ($GUAC_GIANTS_DUMP)")?;
+                serde_json::to_value(figure_poke(&mut self.pine, frame, rows, *field, *value)?)?
+            }
+            Step::Portal { slot, figure } => {
+                let slot_index =
+                    SlotIndex::new(*slot).map_err(|e| anyhow::anyhow!("slot {slot}: {e:?}"))?;
+                let loaded = match figure {
+                    // `@f0` puts back the copy loaded at F0, `@<n>` the n-th
+                    // portal step's copy: the same figure, with whatever the
+                    // game wrote to it since (AH.11), not a fresh one.
+                    Some(again) if again.starts_with('@') => {
+                        let copy = match &again[1..] {
+                            "f0" => self.tmp.join("figure.sky"),
+                            n => self.tmp.join(format!(
+                                "figure-{}.sky",
+                                n.parse::<usize>().with_context(|| {
+                                    format!("{again:?}: @f0 or @<the portal step's copy>")
+                                })?
+                            )),
+                        };
+                        if !copy.exists() {
+                            bail!("{again:?}: no {} to put back", copy.display());
+                        }
+                        let sha = sha256_file(&copy)?;
+                        self.control.driver().load(slot_index, &copy)?;
+                        Some((format!("{again} ({})", copy.display()), sha))
+                    }
+                    Some(src) => {
+                        let src = PathBuf::from(src);
+                        let sha = sha256_file(&src)?;
+                        let copy = launch::figure_copy(
+                            &self.tmp,
+                            &format!("figure-{}.sky", self.sources.len() + 1),
+                            &src,
+                        )?;
+                        self.control.driver().load(slot_index, &copy)?;
+                        self.sources.push((src.clone(), sha.clone()));
+                        Some((src.display().to_string(), sha))
+                    }
+                    None => {
+                        self.control.driver().clear(slot_index)?;
+                        None
+                    }
+                };
+                let slots = self.control.driver().read_slots()?;
+                serde_json::json!({
+                    "slot": slot,
+                    "loaded": loaded,
+                    "slots": slots.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>(),
+                })
+            }
+            Step::Reconnect => {
+                self.control.driver().reconnect()?;
+                serde_json::json!({ "reconnect": "OK" })
+            }
+            Step::Vars { placement, label } => {
+                crate::rng::check_title(&mut self.pine)?;
+                let actor = frame
+                    .actors
+                    .iter()
+                    .find(|a| a.name.as_deref() == Some(placement.as_str()))
+                    .with_context(|| format!("no `{placement}` on the actor list"))?;
+                let cells = crate::script::variables(&mut self.pine, actor.placement)?
+                    .with_context(|| format!("`{placement}` never started its script"))?;
+                let mut types = crate::script::Types::default();
+                let nodes = crate::script::tree(
+                    &mut self.pine,
+                    &mut types,
+                    &cells,
+                    crate::script::TREE_DEPTH,
+                );
+                crate::level::still_paused(&mut self.pine, "the dump")?;
+                let path = rrc_dump::output::refuse_repo_output(
+                    &self.dir.join(format!("vars-{label}.json")),
+                )?;
+                fs::write(&path, serde_json::to_string_pretty(&nodes)?)?;
+                serde_json::json!({ "placement": placement, "file": file_name(&path), "cells": cells.len() })
+            }
+            Step::Globals { names, label } => {
+                crate::rng::check_title(&mut self.pine)?;
+                let wanted: Vec<&str> = names.iter().map(String::as_str).collect();
+                let found = crate::script::exports(&mut self.pine, crate::script::GLOBAL, &wanted)?;
+                let cells: Vec<crate::script::Named> = found
+                    .iter()
+                    .map(|(name, e)| crate::script::Named {
+                        at: e.at,
+                        vtable: e.vtable,
+                        name: name.clone(),
+                    })
+                    .collect();
+                let mut types = crate::script::Types::default();
+                let nodes = crate::script::tree(
+                    &mut self.pine,
+                    &mut types,
+                    &cells,
+                    crate::script::TREE_DEPTH,
+                );
+                crate::level::still_paused(&mut self.pine, "the globals' dump")?;
+                let path = rrc_dump::output::refuse_repo_output(
+                    &self.dir.join(format!("globals-{label}.json")),
+                )?;
+                fs::write(&path, serde_json::to_string_pretty(&nodes)?)?;
+                serde_json::json!({ "names": names, "file": file_name(&path), "found": cells.len() })
+            }
+            other => bail!("{other:?} isn't one of AH.11's steps"),
+        };
+        self.acts.push(ActDone {
+            flip,
+            game_frame: frame.game_frame,
+            step: format!("{step:?}"),
+            detail,
+        });
+        Ok(())
+    }
+}
+
+/// A hero's own numbers in a line: his scale, his `CollisionInfo`'s shape and
+/// sizes, and the ground speed, turn rate and motion type his
+/// `ActorParameters` hold.
+pub fn tuning_summary(h: &crate::hero::Hero) -> String {
+    let collision = h.collision.map_or("no CollisionInfo".to_owned(), |c| {
+        format!(
+            "shape {} {} x {} x {} ft",
+            c.shape(),
+            c.width,
+            c.height,
+            c.length
+        )
+    });
+    let parameters = h.parameters.map_or("no ActorParameters".to_owned(), |p| {
+        format!(
+            "ground {} ft/s {} deg/s, motion type {}",
+            p.ground_max_speed, p.ground_turn_rate, p.motion_type
+        )
+    });
+    format!(
+        "{} scale {:?}, {collision}, {parameters}",
+        h.name.as_deref().unwrap_or("?"),
+        h.scale
+    )
 }
 
 /// Drives `plan` on a fresh RPCS3 into `out` (new, outside every work tree)
@@ -391,6 +734,9 @@ pub fn run(inputs: &Inputs, plan: &RoutePlan, knobs: Knobs, out: &Path) -> Resul
         figure_sha256,
         seed: inputs.seed,
         pokes: d.pokes,
+        acts: d.acts,
+        sources: d.sources,
+        portal_copies: d.portal_copies,
         before,
         after: Host::now(),
         boot_secs: d.boot_secs,
@@ -401,6 +747,7 @@ pub fn run(inputs: &Inputs, plan: &RoutePlan, knobs: Knobs, out: &Path) -> Resul
         shots: d.shots,
         reads: d.reads,
         watch: d.watch,
+        watch_error: d.watch_error,
         saved: d.saved,
         save_refusals: d.save_refusals,
         save_error: d.save_error,
@@ -416,7 +763,11 @@ pub fn run(inputs: &Inputs, plan: &RoutePlan, knobs: Knobs, out: &Path) -> Resul
 
 struct Driven {
     boot_secs: f64,
+    watch_error: Option<String>,
     pokes: Vec<PokeDone>,
+    acts: Vec<ActDone>,
+    sources: Vec<(String, String, bool)>,
+    portal_copies: Vec<(String, String)>,
     trace: Trace,
     shots: Vec<ShotTaken>,
     reads: Vec<ReadTaken>,
@@ -450,9 +801,7 @@ fn drive_live(
     // writes), into `portal-events.json` at the end.
     let control = oracle.control().with_portal_events();
     control.driver().reconnect()?;
-    let copy = oracle.run_paths().tmp.join("figure.sky");
-    fs::copy(inputs.figure, &copy)
-        .with_context(|| format!("copying {}", inputs.figure.display()))?;
+    let copy = launch::figure_copy(&oracle.run_paths().tmp, "figure.sky", inputs.figure)?;
     control
         .driver()
         .load(SlotIndex::new(0).expect("slot 0"), &copy)?;
@@ -514,52 +863,96 @@ fn drive_live(
         shots: Vec::new(),
         reads: Vec::new(),
         censuses: Vec::new(),
+        tmp: oracle.run_paths().tmp.clone(),
+        acts: Vec::new(),
+        sources: Vec::new(),
     };
     // F0 is read before anything runs, as every replay's is.
     let (_, f0_frame) = live.look()?;
     live.read("f0", &f0_frame)?;
-    let trace = drive(&mut live, plan, knobs)?;
-    let path = rrc_dump::output::refuse_repo_output(&dir.join("route.json"))?;
-    fs::write(&path, serde_json::to_string_pretty(&trace)?)?;
-    fs::write(dir.join("input.ron"), &trace.input_ron)?;
+    // A drive that fails part way (AH.11: an act the emulator refuses) still
+    // reads its ring and portal events below before the error is returned.
+    let driven = drive(&mut live, plan, knobs);
+    if let Ok(trace) = &driven {
+        let path = rrc_dump::output::refuse_repo_output(&dir.join("route.json"))?;
+        fs::write(&path, serde_json::to_string_pretty(trace)?)?;
+        fs::write(dir.join("input.ron"), &trace.input_ron)?;
+    }
     let Live {
         control,
         mut pine,
         shots,
         reads,
         censuses,
+        acts,
+        sources,
         ..
     } = live;
-    let watch = match &watched {
-        Some((w, c)) => Some(
-            read_watch(&control, w, c.as_ref(), &mut pine, identity, dir)
-                .context("reading the watch")?,
-        ),
-        None => None,
+    let sources = sources
+        .into_iter()
+        .map(|(p, sha)| {
+            let same = sha256_file(&p).is_ok_and(|now| now == sha);
+            (p.display().to_string(), sha, same)
+        })
+        .collect();
+    // A ring that won't read whole (AH.11: a hero leaving takes O5's ranges
+    // with him) is kept as its error; the drive's other outputs stand.
+    let (watch, watch_error) = match &watched {
+        Some((w, c)) => match read_watch(&control, w, c.as_ref(), &mut pine, identity, dir) {
+            Ok(r) => (Some(r), None),
+            Err(e) => (None, Some(format!("reading the watch: {e:#}"))),
+        },
+        None => (None, None),
     };
     let path = rrc_dump::output::refuse_repo_output(&dir.join(PORTAL_EVENTS_FILE))?;
     fs::write(
         &path,
         serde_json::to_string_pretty(&control.portal_events())?,
     )?;
+    // The figures on the portal as the game's tag writes left them, before
+    // the run dir goes (AH.41).
+    let portal_copies = keep_portal_copies(&oracle.run_paths().tmp, dir).unwrap_or_else(|e| {
+        let _ = fs::write(
+            dir.join("portal-copies.error.txt"),
+            format!("keeping the portal's copies: {e:#}\n"),
+        );
+        Vec::new()
+    });
     // The route's record: its steps, what fired per frame (named while PINE
     // is still open), what changed between reads, the scripts that started.
     if inputs.disc.is_some() {
-        let fired = match (&watched, &route_watch) {
-            (Some(_), Some(_)) => {
-                let (frames, fired) = route_frames(&dir.join(WatchFile::FILE), &mut pine)
-                    .context("the route's frames")?;
-                let path = rrc_dump::output::refuse_repo_output(&dir.join(ROUTE_FRAMES_FILE))?;
-                fs::write(&path, serde_json::to_string(&frames)?)?;
-                fired
-            }
+        let fired = match (&watch, &route_watch) {
+            (Some(_), Some(_)) => match route_frames(&dir.join(WatchFile::FILE), &mut pine) {
+                Ok((frames, fired)) => {
+                    let path = rrc_dump::output::refuse_repo_output(&dir.join(ROUTE_FRAMES_FILE))?;
+                    fs::write(&path, serde_json::to_string(&frames)?)?;
+                    fired
+                }
+                Err(e) => {
+                    let path =
+                        rrc_dump::output::refuse_repo_output(&dir.join("route-frames.error.txt"))?;
+                    fs::write(&path, format!("the route's frames: {e:#}\n"))?;
+                    Vec::new()
+                }
+            },
             _ => Vec::new(),
         };
-        let record = route_record(identity, plan, &trace, &censuses, &reads, fired);
-        record.write(dir)?;
+        if let Ok(trace) = &driven {
+            let record = route_record(identity, plan, trace, &censuses, &reads, fired);
+            record.write(dir)?;
+        }
     }
     // A held PINE connection hangs a save and the shutdown (AF.8).
     drop(pine);
+    let trace = match driven {
+        Ok(trace) => trace,
+        Err(e) => {
+            let path = rrc_dump::output::refuse_repo_output(&dir.join("drive-error.txt"))?;
+            fs::write(&path, format!("{e:#}\n"))?;
+            let _ = oracle.shutdown();
+            return Err(e);
+        }
+    };
     let (saved, save_refusals, save_error) = if plan.save && trace.outcome == Outcome::Done {
         let tried = save_retrying(&control, dir);
         let written = match (&tried.saved, tried.asked_at) {
@@ -583,7 +976,11 @@ fn drive_live(
     let shutdown = format!("{:?}", oracle.shutdown()?);
     Ok(Driven {
         boot_secs,
+        watch_error,
         pokes,
+        acts,
+        sources,
+        portal_copies,
         trace,
         shots,
         reads,
@@ -593,6 +990,33 @@ fn drive_live(
         save_error,
         shutdown,
     })
+}
+
+/// The portal's copies of the figures a drive loaded (`figure.sky` at F0,
+/// `figure-<n>.sky` for the n-th portal step's), as the game's tag writes
+/// left them in `tmp`, copied into `<dir>/portal/` with their SHA-256s, by
+/// name (AH.41: an upgrade's bit as the game itself wrote it). None, no dir.
+pub fn keep_portal_copies(tmp: &Path, dir: &Path) -> Result<Vec<(String, String)>> {
+    let mut names: Vec<String> = fs::read_dir(tmp)
+        .with_context(|| format!("listing {}", tmp.display()))?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("figure") && n.ends_with(".sky"))
+        .collect();
+    names.sort();
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let out = rrc_dump::output::refuse_repo_output(&dir.join("portal"))?;
+    fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
+    names
+        .into_iter()
+        .map(|n| {
+            let to = out.join(&n);
+            fs::copy(tmp.join(&n), &to).with_context(|| format!("copying {n}"))?;
+            let sha = sha256_file(&to)?;
+            Ok((n, sha))
+        })
+        .collect()
 }
 
 /// The route's placements' wake state per frame, beside the record
@@ -615,6 +1039,9 @@ pub struct FrameLine {
     pub health: crate::script::Number,
     pub experience: u32,
     pub gold: u32,
+    /// The figure's playtime, seconds, off the same words (AH.11).
+    #[serde(default)]
+    pub playtime_secs: u32,
     pub loot: crate::script::Number,
     /// The hero's invulnerable flag and the uncommon and rare loot counts,
     /// when the watch holds them (AH.9).
@@ -672,10 +1099,10 @@ fn route_frames(
                 record.flip
             );
         }
-        let f = file
-            .watch
-            .fight(&record)
-            .with_context(|| format!("the fight's cells at flip {} didn't read", record.flip))?;
+        // A record whose cells don't read (AH.11: the hero gone) is left out.
+        let Some(f) = file.watch.fight(&record) else {
+            continue;
+        };
         lines.push(FrameLine {
             flip: record.flip,
             read: frame.read,
@@ -684,6 +1111,7 @@ fn route_frames(
             health: f.health,
             experience: f.experience,
             gold: f.gold,
+            playtime_secs: f.playtime_secs,
             loot: f.loot,
             invulnerable: Some(f.invulnerable),
             loot_uncommon: f.loot_uncommon,
@@ -792,6 +1220,44 @@ mod tests {
     use crate::level::SectionBase;
     use crate::script::Number;
 
+    /// AH.41: the portal's copies, F0's and each portal step's, kept by name
+    /// with their hashes; nothing else in the run dir, and no dir for none.
+    #[test]
+    fn the_portals_copies_are_kept_by_name_and_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("figure.sky"), [1u8; 1024]).unwrap();
+        fs::write(tmp.path().join("figure-2.sky"), [2u8; 1024]).unwrap();
+        fs::write(tmp.path().join("figure-1.sky"), [3u8; 1024]).unwrap();
+        for other in ["p1.sock", "BLUS30968_1_1.SAVESTAT.zst", "figure.txt"] {
+            fs::write(tmp.path().join(other), b"x").unwrap();
+        }
+        let kept = keep_portal_copies(tmp.path(), out.path()).unwrap();
+        let names: Vec<&str> = kept.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["figure-1.sky", "figure-2.sky", "figure.sky"]);
+        for (n, sha) in &kept {
+            let copy = out.path().join("portal").join(n);
+            assert_eq!(
+                fs::read(&copy).unwrap(),
+                fs::read(tmp.path().join(n)).unwrap()
+            );
+            assert_eq!(*sha, sha256_file(&copy).unwrap());
+        }
+        assert_ne!(kept[0].1, kept[1].1);
+        assert_eq!(fs::read_dir(out.path().join("portal")).unwrap().count(), 3);
+        // A run that loaded nothing keeps nothing and makes no dir.
+        let empty = tempfile::tempdir().unwrap();
+        let out2 = tempfile::tempdir().unwrap();
+        assert!(
+            keep_portal_copies(empty.path(), out2.path())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!out2.path().join("portal").exists());
+        // A run dir that's gone is an error the drive records, not a panic.
+        assert!(keep_portal_copies(&empty.path().join("gone"), out2.path()).is_err());
+    }
+
     /// AH.10's pokes: a placement, a dotted path through names with spaces,
     /// a number; anything else refused.
     #[test]
@@ -891,7 +1357,56 @@ mod tests {
             fight: true,
             census_ms: Some(40.0),
             solids: Some(Ok(64)),
+            tuning: None,
         }
+    }
+
+    #[test]
+    fn a_heros_tuning_sums_up_his_shape_sizes_speed_and_turn() {
+        let h = crate::hero::Hero {
+            name: Some("112_TitanLife".into()),
+            corpus: 0x36B5_2C30,
+            placement: 0x36B4_DF04,
+            scale: [100.0; 3],
+            collision: Some(crate::hero::Collision {
+                address: 0x36B4_E0AC,
+                properties: 0x1A,
+                position: [0.0; 3],
+                angles: [0.0; 3],
+                width: 14.0,
+                height: 21.25,
+                length: 3.0,
+                weight: 10.0,
+                rebound: 0.0,
+            }),
+            parameters: None,
+            solid: None,
+        };
+        assert_eq!(
+            tuning_summary(&h),
+            "112_TitanLife scale [100.0, 100.0, 100.0], shape 2 14 x 21.25 x 3 ft, no ActorParameters"
+        );
+        // His disc parameters (ag-levels' read): the ground's, not the air's.
+        let mut b = vec![0u8; 0x4C];
+        for (at, v) in [(0x0C, 25.0f32), (0x18, 1440.0), (0x1C, 30.0), (0x28, 360.0)] {
+            b[at..at + 4].copy_from_slice(&v.to_be_bytes());
+        }
+        b[0x43] = 0;
+        let h = crate::hero::Hero {
+            parameters: Some(crate::hero::Parameters::decode(0x36B4_E05C, &b)),
+            collision: None,
+            ..h
+        };
+        assert_eq!(
+            tuning_summary(&h),
+            "112_TitanLife scale [100.0, 100.0, 100.0], no CollisionInfo, ground 25 ft/s 1440 deg/s, \
+             motion type 0"
+        );
+        // A read written before AG.12 has no tuning.
+        let old = r#"{"label":"f0","flip":2,"game_frame":5962,"hero":"009_Eruptor","seed":10554,
+            "drawn":1,"fight":true}"#;
+        let r: ReadTaken = serde_json::from_str(old).unwrap();
+        assert_eq!(r.tuning, None);
     }
 
     #[test]

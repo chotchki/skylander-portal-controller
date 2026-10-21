@@ -154,7 +154,15 @@ usage:
       RPCS3 dirs and the home's saves and trophies are checked unchanged at the end.
       --seed (AH.10) writes sgenrand(<n>) into the game's generator at F0, as
       `rng seed` does, before F0 is read; each --poke sets a placement's script
-      variable (a number, its path dotted) at F0 after the seed
+      variable (a number, its path dotted) at F0 after the seed. AH.11's steps act
+      at the pause they fall on, each recorded in record.json's acts with what it
+      changed: Poke (a placement's script number), Figure (the hero's figure's
+      experience, gold or playtime through AH.2's rows), Portal (a fresh copy of a
+      .sky loaded, or a slot cleared), Reconnect (P5's RECONNECT, so a restored
+      game talks to the portal again), Vars and Globals (a placement's variables or
+      global.bld's exports read whole into vars-<label>.json, globals-<label>.json);
+      with no hero at a pause the driver keeps the last look's pose, and each read
+      writes every player's figure (players-<label>.json)
   oracle divergence run --out <dir> [--scripts idle,walk|<file.ron>,...] [--sets A,B]
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]

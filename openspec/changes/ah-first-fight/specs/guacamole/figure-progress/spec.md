@@ -33,26 +33,30 @@ Experience and gold a hero collects SHALL be added to the figure of the profile 
 - **THEN** no profile's figure has gained that gold
 
 ### Requirement: Levels follow the original's experience table
-A figure's level SHALL be the original's for its total experience: level 2 from 1,000, then 2,200, 3,800, 6,000, 9,000, 13,000, 18,200, 24,800, 33,000, 42,700, 53,900, 66,600 and 80,800; level 15, the cap, from 96,500. Experience SHALL stop at 96,500 and gold at 65,000, as the original stops them.
+A figure's level SHALL be the original's for its total experience: level 2 from 1,000, then 2,200, 3,800, 6,000, 9,000, 13,000, 18,200, 24,800, 33,000, 42,700, 53,900, 66,600 and 80,800; level 15, the cap, from 96,500. Gold SHALL stop at 65,000, as the original stops it. Experience past 96,500 SHALL change nothing a kid sees: the original keeps counting it in the figure's data (96,519 after 19 more 1-point orbs) with the level held at 15, and guacamole keeps 96,500.
 
 #### Scenario: One short of level 2
 - **WHEN** a figure with 999 experience collects a 1-point orb
 - **THEN** it is level 2 with 1,000 experience
 
 #### Scenario: At the caps
-- **WHEN** a figure with 96,500 experience and 64,999 gold collects a 5-point orb and a 2-gold coin
-- **THEN** it keeps 96,500 experience and has 65,000 gold
+- **WHEN** a figure with 96,499 experience and 64,999 gold collects five 1-point orbs and coins worth 2 and 1
+- **THEN** it is level 15 with its full health there and has 65,000 gold
 
 ### Requirement: Playtime counts the time in play
-A figure's playtime SHALL grow by the time it spends as the hero in a level that isn't paused, by what the original counts for a figure waiting on the portal, and by nothing while the level is paused.
+A figure's playtime SHALL grow by the time it spends on the portal while a level shows, as the original counts it: in play, in the pause menu and on the screen of a beaten hero alike, each figure on the portal counting its own.
 
 #### Scenario: A minute in the level
 - **WHEN** Eruptor walks the level as the hero for a minute, then the level is paused for a minute
-- **THEN** his playtime has grown by one minute, as the original's would
+- **THEN** his playtime has grown by two minutes, as the original's would
 
 #### Scenario: Waiting on the portal
 - **WHEN** Tree Rex waits on the portal for a minute while Eruptor walks the level
-- **THEN** Tree Rex's playtime has grown as the original's waiting figure's does
+- **THEN** each one's playtime has grown by a minute
+
+#### Scenario: Beaten and still on the portal
+- **WHEN** Eruptor is beaten and stays on the portal a minute before he's taken off
+- **THEN** his playtime has grown by that minute
 
 ### Requirement: The phone shows a figure's progress
 On a phone with a profile unlocked, a figure's details in guacamole SHALL show that profile's level, gold and playtime for it, and a figure the profile has never placed as never placed. A change to the level or gold, in play or from another phone, SHALL show on every phone showing it within 1 second. Playtime SHALL show at most a minute behind while the figure is in a level, and exactly once it leaves.

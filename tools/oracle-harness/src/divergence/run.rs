@@ -153,9 +153,7 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
     let f0 = held.frames;
     let control = oracle.control();
     control.driver().reconnect()?;
-    let copy = oracle.run_paths().tmp.join("figure.sky");
-    fs::copy(inputs.figure, &copy)
-        .with_context(|| format!("copying {}", inputs.figure.display()))?;
+    let copy = launch::figure_copy(&oracle.run_paths().tmp, "figure.sky", inputs.figure)?;
     control
         .driver()
         .load(SlotIndex::new(0).expect("slot 0"), &copy)?;

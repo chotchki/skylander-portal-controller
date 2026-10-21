@@ -260,8 +260,7 @@ fn drive(inputs: &Inputs, figure: &SweepFigure, source: &Path, dir: &Path) -> Re
         .is_some_and(|n| n.eq_ignore_ascii_case(&figure.load_file));
 
     control.driver().reconnect()?;
-    let copy = oracle.run_paths().tmp.join("figure.sky");
-    fs::copy(source, &copy).with_context(|| format!("copying {}", source.display()))?;
+    let copy = launch::figure_copy(&oracle.run_paths().tmp, "figure.sky", source)?;
     control
         .driver()
         .load(SlotIndex::new(0).expect("slot 0"), &copy)?;
