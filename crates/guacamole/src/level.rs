@@ -2319,11 +2319,26 @@ pub(crate) mod tests {
             app.world().get::<Visibility>(screen),
             Some(&Visibility::Inherited)
         );
-        // Over the TV, or on another target, it's nothing under the TV.
+        // Over the TV, switched off, or on another target, it's nothing
+        // under the TV.
         app.world_mut().get_mut::<Camera>(output).unwrap().order = 1;
         app.update();
         assert_eq!(writes(app.world().get::<Camera>(tv).unwrap()), Some(None));
         app.world_mut().get_mut::<Camera>(output).unwrap().order = -10;
+        app.world_mut().get_mut::<Camera>(output).unwrap().is_active = false;
+        app.update();
+        assert_eq!(
+            writes(app.world().get::<Camera>(tv).unwrap()),
+            Some(None),
+            "switched off"
+        );
+        app.world_mut().get_mut::<Camera>(output).unwrap().is_active = true;
+        app.update();
+        assert_eq!(
+            writes(app.world().get::<Camera>(tv).unwrap()),
+            Some(Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING)),
+            "drawing again"
+        );
         app.world_mut()
             .entity_mut(output)
             .insert(RenderTarget::Image(Handle::default().into()));

@@ -822,7 +822,9 @@ images his captured frames bind is exactly what RSX was given, level for level (
 - Rows are stored bottom up, OpenGL's lower-left origin (AE.31). On every image whose way up shows (the 123
   portraits, the PS3 triangle glyph, the level-up arrow, the level-select shots with their sky under the
   ground) the first stored row is the bottom, and the left and right arrows still point left and right, so
-  it's a flip, not a turn. RSX samples that first row at v = 0 (AC.15 and AC.21 below bind the stored bytes
+  it's a flip, not a turn. The game's own frame agrees: on an oracle screenshot its HUD draws Eruptor's
+  portrait with the last stored row on top (the decode reversed correlates 0.992 with it, as stored 0.668,
+  AE.31's review). RSX samples that first row at v = 0 (AC.15 and AC.21 below bind the stored bytes
   unchanged, his portrait among them), so KTX2 keeps the stored order and the disc's UVs read what the
   original does. Only an image file reverses the rows: the portraits' PNGs, whose stored order put every
   figure on the phone upside down until AE.31.

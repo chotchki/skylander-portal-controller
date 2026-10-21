@@ -41,7 +41,7 @@ Each figure SHALL show the element the disc gives it, except that a magic item o
 
 #### Scenario: Portraits the right way up
 - **WHEN** the phone's collection or a card on the TV shows Eruptor's portrait
-- **THEN** his eyes are above his grin, as on the game's own collection screen
+- **THEN** his eyes are above his grin, as the game's own HUD draws that portrait in play
 
 #### Scenario: The four characters the wiki data lacked
 - **WHEN** the collection lists Dino-Rang, Wham-Shell, Drill Sergeant and Jet-Vac
