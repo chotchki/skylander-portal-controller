@@ -1586,6 +1586,8 @@ mod tests {
     /// drawn frame of a run moves his drawn transform and the camera's by
     /// the frame's share of the walk (no frame repeating the one before, none
     /// a double step) and his run's drawn time by the frame times its rate.
+    /// His joints aren't read here (the made-up run holds one pose): his
+    /// pose's easing is `his_pose_eases_between_steps`'.
     #[test]
     fn every_drawn_frame_advances_him_the_camera_and_his_run_at_144_and_60() {
         for rate in [144.0, 60.0] {

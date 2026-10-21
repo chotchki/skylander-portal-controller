@@ -49,7 +49,8 @@ use bevy::app::PluginGroupBuilder;
 use bevy::gilrs::GilrsPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::{
-    App, AppExit, DefaultPlugins, MessageReader, PluginGroup, ResMut, Window, WindowPlugin, default,
+    App, AppExit, DefaultPlugins, MessageReader, Plugin, PluginGroup, ResMut, Window, WindowPlugin,
+    default,
 };
 use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode, WindowOccluded};
 use bevy::winit::{UpdateMode, WinitSettings};
@@ -258,19 +259,21 @@ fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
 /// only every 1/60 s off a timer, and the walk eased off that timer's
 /// uneven ticks judders against the display's even ones. Unfocused is the
 /// usual case: the phone and the pad drive the TV, not the window's keys.
-/// Unfocused waits at most [`UNFOCUSED_FLOOR`] between updates, which a
+/// Unfocused waits at most [`UNFOCUSED_WAIT`] between updates, which a
 /// display's vsync outlasts up to 240 Hz, so it updates as continuously as
 /// focused, while a window nothing paces (occluded: macOS's lock screen)
 /// stops at 240 a second rather than spinning.
 fn tv_updates() -> WinitSettings {
     WinitSettings {
         focused_mode: UpdateMode::Continuous,
-        unfocused_mode: UpdateMode::reactive_low_power(UNFOCUSED_FLOOR),
+        unfocused_mode: UpdateMode::reactive_low_power(UNFOCUSED_WAIT),
     }
 }
 
-/// The shortest wait between an unfocused TV's updates: 1/240 s.
-const UNFOCUSED_FLOOR: Duration = Duration::from_nanos(4_166_667);
+/// The longest an unfocused TV waits from one update's start to the next
+/// (an event wakes it sooner): 1/240 s, under a frame of any display up to
+/// 240 Hz, so the display's vsync paces it, not this timer.
+const UNFOCUSED_WAIT: Duration = Duration::from_nanos(4_166_667);
 
 /// How often the TV updates while its window is occluded: nothing of it
 /// shows and nothing paces its presents, so Bevy's unfocused 1/60 s rather
@@ -303,6 +306,18 @@ fn pace_on_occlusion(
         occluded = last.occluded,
         "the TV's window occlusion changed"
     );
+}
+
+/// The TV's pacing (AG.55): [`tv_updates`] from the start, and
+/// [`pace_on_occlusion`] in `First`. Its own plugin so the test runs the
+/// wiring the window runs.
+struct TvPacing;
+
+impl Plugin for TvPacing {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(tv_updates())
+            .add_systems(bevy::app::First, pace_on_occlusion);
+    }
 }
 
 /// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
@@ -350,9 +365,7 @@ fn run_tv(
     exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
-    app.add_plugins(tv_plugins(mode, posted_pads_only()))
-        .insert_resource(tv_updates())
-        .add_systems(bevy::app::First, pace_on_occlusion)
+    app.add_plugins((tv_plugins(mode, posted_pads_only()), TvPacing))
         .insert_resource(link)
         .insert_resource(PortalFeed(portal))
         .insert_resource(shelf)
@@ -557,14 +570,22 @@ mod tests {
         );
     }
 
-    /// AG.55: occluded, the TV updates every 1/60 s; shown again, every
-    /// frame.
+    /// AG.55: [`TvPacing`] over Bevy's default (`WinitPlugin` puts it
+    /// first) paces the TV by [`tv_updates`]; occluded, it updates every
+    /// 1/60 s; shown again, every frame.
     #[test]
     fn an_occluded_tv_updates_at_sixty() {
         let mut app = App::new();
         app.add_message::<WindowOccluded>()
-            .insert_resource(tv_updates())
-            .add_systems(bevy::app::Update, pace_on_occlusion);
+            .init_resource::<WinitSettings>()
+            .add_plugins(TvPacing);
+        app.update();
+        let s = app.world().resource::<WinitSettings>();
+        assert_eq!(s.focused_mode, UpdateMode::Continuous);
+        assert_eq!(
+            s.unfocused_mode,
+            UpdateMode::reactive_low_power(UNFOCUSED_WAIT)
+        );
         let window = app.world_mut().spawn_empty().id();
         app.world_mut().write_message(WindowOccluded {
             window,
