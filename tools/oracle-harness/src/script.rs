@@ -1388,10 +1388,14 @@ mod tests {
         );
         // The description met again: named, nothing under it.
         assert!(nodes[2].seen && nodes[2].under.is_empty());
-        // Depth 0: the cells alone.
+        // Depth 0: the cells alone; depth 1: one level under them, no more.
         let flat = tree(&mut c.w, &mut types, &cells, 0);
         assert!(flat.iter().all(|n| n.under.is_empty()));
         assert_eq!(flat.len(), 3);
+        let one = tree(&mut c.w, &mut types, &cells, 1);
+        assert_eq!(one[0].under[0].name, "creature info");
+        assert!(one[0].under.iter().all(|n| n.under.is_empty()));
+        assert_eq!(one[1].under.len(), 2);
         let _ = c.info;
     }
 

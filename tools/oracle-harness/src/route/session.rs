@@ -511,6 +511,26 @@ impl Session for Live<'_> {
                 let slot_index =
                     SlotIndex::new(*slot).map_err(|e| anyhow::anyhow!("slot {slot}: {e:?}"))?;
                 let loaded = match figure {
+                    // `@f0` puts back the copy loaded at F0, `@<n>` the n-th
+                    // portal step's copy: the same figure, with whatever the
+                    // game wrote to it since (AH.11), not a fresh one.
+                    Some(again) if again.starts_with('@') => {
+                        let copy = match &again[1..] {
+                            "f0" => self.tmp.join("figure.sky"),
+                            n => self.tmp.join(format!(
+                                "figure-{}.sky",
+                                n.parse::<usize>().with_context(|| {
+                                    format!("{again:?}: @f0 or @<the portal step's copy>")
+                                })?
+                            )),
+                        };
+                        if !copy.exists() {
+                            bail!("{again:?}: no {} to put back", copy.display());
+                        }
+                        let sha = sha256_file(&copy)?;
+                        self.control.driver().load(slot_index, &copy)?;
+                        Some((format!("{again} ({})", copy.display()), sha))
+                    }
                     Some(src) => {
                         let src = PathBuf::from(src);
                         let sha = sha256_file(&src)?;
@@ -519,6 +539,12 @@ impl Session for Live<'_> {
                             .join(format!("figure-{}.sky", self.sources.len() + 1));
                         fs::copy(&src, &copy)
                             .with_context(|| format!("copying {}", src.display()))?;
+                        // RPCS3 opens a figure read-write: a copy of a read-only
+                        // source would be refused (`open_failed`).
+                        let mut perms = fs::metadata(&copy)?.permissions();
+                        #[allow(clippy::permissions_set_readonly_false)]
+                        perms.set_readonly(false);
+                        fs::set_permissions(&copy, perms)?;
                         self.control.driver().load(slot_index, &copy)?;
                         self.sources.push((src.clone(), sha.clone()));
                         Some((src.display().to_string(), sha))
@@ -776,10 +802,14 @@ fn drive_live(
     // F0 is read before anything runs, as every replay's is.
     let (_, f0_frame) = live.look()?;
     live.read("f0", &f0_frame)?;
-    let trace = drive(&mut live, plan, knobs)?;
-    let path = rrc_dump::output::refuse_repo_output(&dir.join("route.json"))?;
-    fs::write(&path, serde_json::to_string_pretty(&trace)?)?;
-    fs::write(dir.join("input.ron"), &trace.input_ron)?;
+    // A drive that fails part way (AH.11: an act the emulator refuses) still
+    // reads its ring and portal events below before the error is returned.
+    let driven = drive(&mut live, plan, knobs);
+    if let Ok(trace) = &driven {
+        let path = rrc_dump::output::refuse_repo_output(&dir.join("route.json"))?;
+        fs::write(&path, serde_json::to_string_pretty(trace)?)?;
+        fs::write(dir.join("input.ron"), &trace.input_ron)?;
+    }
     let Live {
         control,
         mut pine,
@@ -830,11 +860,22 @@ fn drive_live(
             },
             _ => Vec::new(),
         };
-        let record = route_record(identity, plan, &trace, &censuses, &reads, fired);
-        record.write(dir)?;
+        if let Ok(trace) = &driven {
+            let record = route_record(identity, plan, trace, &censuses, &reads, fired);
+            record.write(dir)?;
+        }
     }
     // A held PINE connection hangs a save and the shutdown (AF.8).
     drop(pine);
+    let trace = match driven {
+        Ok(trace) => trace,
+        Err(e) => {
+            let path = rrc_dump::output::refuse_repo_output(&dir.join("drive-error.txt"))?;
+            fs::write(&path, format!("{e:#}\n"))?;
+            let _ = oracle.shutdown();
+            return Err(e);
+        }
+    };
     let (saved, save_refusals, save_error) = if plan.save && trace.outcome == Outcome::Done {
         let tried = save_retrying(&control, dir);
         let written = match (&tried.saved, tried.asked_at) {

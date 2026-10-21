@@ -106,6 +106,8 @@ pub enum Step {
     /// P1 at the pause (AH.11): a fresh copy of the `.sky` at `figure`
     /// loaded onto the portal (the emulator picks the slot), or `slot`
     /// cleared when there's no figure. The source is checked unchanged.
+    /// `@f0` puts back the copy loaded at F0 and `@<n>` the n-th portal
+    /// step's, as the game last wrote it.
     Portal { slot: u8, figure: Option<String> },
     /// P5's `RECONNECT` at the pause (AH.11): a state's restored USB thread
     /// goes quiet after F0's (AE.22), and the game talks to the portal again,
