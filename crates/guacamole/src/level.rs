@@ -2074,18 +2074,26 @@ pub(crate) mod tests {
             &std::fs::read_to_string(tmp.path().join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
         )
         .unwrap();
-        let ground = scene.scenes[0].materials[0].clone();
+        // The gourd on the ground's material and shape, a key the level
+        // draws; the coin on the sky's, fogged as the sky isn't: a key of
+        // its own.
+        let materials = &scene.scenes[0].materials;
         let plain = MeshShape {
             uv_sets: 2,
             tangents: true,
             colours: false,
             skinned: false,
         };
-        let model = |path: &str, skinned: bool| guac_ir::level::Prop {
+        let bare = MeshShape {
+            uv_sets: 1,
+            tangents: false,
+            ..plain
+        };
+        let model = |path: &str, skinned: bool, material: usize, shape| guac_ir::level::Prop {
             path: path.into(),
             skeleton: skinned.then(|| model::Skeleton { joints: Vec::new() }),
-            materials: vec![ground.clone()],
-            segments: vec![segment(0, plain, 0.0)],
+            materials: vec![materials[material].clone()],
+            segments: vec![segment(0, shape, 0.0)],
             idle: None,
         };
         let solid = |shape, size: [f32; 3]| Solid {
@@ -2128,7 +2136,11 @@ pub(crate) mod tests {
         let sphere = solid(Shape::Sphere, [7.25, 6.5, 3.0]);
         write_props(
             tmp.path(),
-            vec![model("gourd.mdl", false), model("chompy.mdl", true)],
+            vec![
+                model("gourd.mdl", false, 0, plain),
+                model("coin.mdl", false, 2, bare),
+                model("chompy.mdl", true, 0, plain),
+            ],
             vec![
                 actor(20, "gourd", 4, 160.0, 4.5, "gourd.mdl", sphere, None),
                 actor(
@@ -2137,7 +2149,7 @@ pub(crate) mod tests {
                     4,
                     160.0,
                     49.25,
-                    "gourd.mdl",
+                    "coin.mdl",
                     solid(Shape::None, [3.0, 6.0, 3.0]),
                     Some("Placed_Loot_Spinning.ai"),
                 ),
@@ -2191,10 +2203,21 @@ pub(crate) mod tests {
         // By script: the fence and `213_Init_Location`.
         assert_eq!(
             (r.props, r.models, r.templates, r.creatures, r.by_script),
-            (2, 1, 1, 1, 2),
+            (2, 2, 1, 1, 2),
             "{r:?}"
         );
         assert_eq!((r.standing, r.drawn, r.solid, r.sensors), (1, 1, 1, 0));
+        // Every model's keys, standing or not: the level's three and the
+        // coin's, asked of the warm before it shows.
+        app.update();
+        let asked: HashSet<WarmKey> = app
+            .world()
+            .resource::<Warm>()
+            .level_listed()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!((report(&app).keys, asked.len()), (4, 4));
         assert_eq!(r.names, ["gourd"]);
         let shown = |app: &mut App| {
             let mut q = app.world_mut().query::<(&Name, &Visibility, &Children)>();
