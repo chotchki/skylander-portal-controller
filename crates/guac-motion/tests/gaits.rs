@@ -87,6 +87,14 @@ fn speed(a: &Record, b: &Record) -> (f32, bool) {
     (walk.velocity.length(), !held(ma) && !held(mb))
 }
 
+/// The edge probe held his controller off at the record's frame (the
+/// mover's "controller inactive" where the watch held it).
+fn held_at_edge(f: &Record) -> bool {
+    f.mover
+        .as_ref()
+        .is_some_and(|m| field(m, "controller inactive") != 0.0)
+}
+
 /// The weights' and the rates' agreement over one kind of record.
 #[derive(Default)]
 struct Agreement {
@@ -157,7 +165,31 @@ struct Tally {
     misses: Vec<String>,
 }
 
-fn replay(name: &str, frames: &[Record], falls: bool, tally: &mut Tally) {
+/// A record's idle weight and the run's share of the gaits, where it shows
+/// one. Held at an edge with the stick pushed (AG.58's door runs, AG.36's,
+/// the gate's), the records flip each frame: one shows the idle at 100
+/// beside a walk at the rest of the idle's own weight, the next the idle at
+/// its weight and the run at the walk's, its share 0 (the speed read is a
+/// slope's share of a push, 0.14 ft/s). Both flips turn up where the probe
+/// holds nothing too (AG.9's `walk` coming to rest, the first record of a
+/// set-off from the corner's stop in AG.58's `w58_angle`), so every record is
+/// read this way: read only on held records, AG.11's walk-speed records
+/// within 1e-3 fall from 19,287 to 19,231 and AG.58's from 5,800 to 5,798.
+/// Elsewhere a record holds the gaits either as the rest of the idle or as
+/// their own split of 100.
+fn held_weights(rec: &[f32]) -> (f32, Option<f32>) {
+    let [idle, walk, run] = [rec[0], rec[1], rec[2]];
+    if idle == 1.0 && walk > 0.0 && walk < 1.0 && run == 0.0 {
+        return (1.0 - walk, Some(0.0));
+    }
+    if walk > 0.0 && (run - walk).abs() < 1e-4 && (idle + walk - 1.0).abs() < 2e-3 {
+        return (idle, Some(0.0));
+    }
+    let share = (walk + run > 0.01).then(|| run / (walk + run));
+    (idle, share)
+}
+
+fn replay(name: &str, frames: &[Record], falls: bool, count_held: bool, tally: &mut Tally) {
     let at_rest = |f: &Record| f.hero.velocity == [0.0; 3];
     let Some(k0) = (1..frames.len()).find(|&k| {
         at_rest(&frames[k])
@@ -180,6 +212,7 @@ fn replay(name: &str, frames: &[Record], falls: bool, tally: &mut Tally) {
             speed: s,
             falling: -b.hero.velocity[1] / FOOT,
             height: footing(b).and_then(|f| f.height),
+            held: held_at_edge(b),
         };
         let was = *l.air();
         l.step(a.clock.step(), frame);
@@ -201,11 +234,14 @@ fn replay(name: &str, frames: &[Record], falls: bool, tally: &mut Tally) {
         }
         let mine = l.weights();
         let rec: Vec<f32> = b.clips[..3].iter().map(|c| c.weight / 100.0).collect();
-        let mut miss = (mine[0] - rec[0]).abs();
-        if rec[1] + rec[2] > 0.01 && mine[1] + mine[2] > 0.01 {
-            miss = miss.max((l.run_share() - rec[2] / (rec[1] + rec[2])).abs());
+        let (idle, share) = held_weights(&rec);
+        let mut miss = (mine[0] - idle).abs();
+        if let Some(share) = share
+            && mine[1] + mine[2] > 0.01
+        {
+            miss = miss.max((l.run_share() - share).abs());
         }
-        let kind = if own {
+        let kind = if own || (count_held && a.mover.is_some() && b.mover.is_some()) {
             &mut tally.walk
         } else {
             &mut tally.body
@@ -272,6 +308,7 @@ fn the_stand_in_against_ag11s_recordings() {
                 &format!("{run}/{name}"),
                 &frames(&dir),
                 FALLS.contains(&run),
+                false,
                 &mut tally,
             );
         }
@@ -288,22 +325,51 @@ fn the_stand_in_against_ag11s_recordings() {
     assert_eq!(replays, 244);
     assert_eq!((tally.falls, tally.falls_in), (48, 48));
     assert_eq!(tally.gone.get(&0), Some(&47), "{:?}", tally.gone);
-    // On the walk's own speed every record within 1e-3 but AG.11's two
-    // known partings: `g38_m049`'s uphill dead stop, whose idle comes back
-    // two records late, and the gate's edge-probe hold, where the
-    // original's idle and run flip each record (the stand-in follows the
-    // walk's fade there, a hypothesis); every rate within 0.1 %.
+    // On the walk's own speed every record within 1e-3 but AG.11's one
+    // known parting, `g38_m049`'s uphill dead stop, whose idle comes back
+    // two records late; every rate within 0.1 %. The gate's edge-probe hold
+    // parted too until AG.58: the probe's flicker set the stand-in off while
+    // the original's idle kept coming back.
     let w = &tally.walk;
     assert!(w.records > 19_000, "{}", w.records);
-    let known = [
-        "ag38-switch-1792509065/a/g38_m049-W",
-        "ag38-switch-1792509065/gate/walk-W",
-    ];
+    let known = ["ag38-switch-1792509065/a/g38_m049-W"];
     let other: Vec<_> = w
         .missed
         .iter()
         .filter(|(s, _)| !known.contains(&s.as_str()))
         .collect();
     assert!(other.is_empty(), "{other:?}");
+    assert_eq!(w.rates_within, w.rates);
+}
+
+/// AG.58's 13 set O recordings (`ag58-wall-1792597650`: the wall behind the
+/// start held into, run into and slid along at 20° into its corner; the
+/// gate's door slid along to its end over the bridge's foot, where the edge
+/// probe stops him and flickers with the stick held; let-gos from a 1.25 s
+/// and a 9 s run), every record on the walk's own speed, the probe's holds
+/// included: the stand-in's idle weight and run share against the
+/// original's, both of its flips read (`held_weights`), and the rates.
+#[test]
+#[ignore]
+fn the_stand_in_against_ag58s_recordings() {
+    let mut tally = Tally::default();
+    let mut replays = 0;
+    for (name, dir) in replay_dirs("ag58-wall-1792597650") {
+        replays += 1;
+        replay(
+            &format!("ag58/{name}"),
+            &frames(&dir),
+            false,
+            true,
+            &mut tally,
+        );
+    }
+    tally.walk.print("the walk's own speed");
+    tally.body.print("the body's speed");
+    assert_eq!(replays, 13);
+    let w = &tally.walk;
+    assert!(w.records > 5_000, "{}", w.records);
+    assert_eq!(tally.body.records, 0);
+    assert!(w.missed.is_empty(), "{:?}", w.missed);
     assert_eq!(w.rates_within, w.rates);
 }

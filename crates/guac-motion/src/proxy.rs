@@ -30,7 +30,17 @@
 //! keep-contact tolerance as a guess); a moving surface ([`Surfaces`])
 //! counted in the dedupe and pushing him along its normal at its own speed,
 //! its cast still against its pose at the step's start (read; no body moves
-//! in M2's world); the [`RECOVERY`] speed off a plane he's inside.
+//! in M2's world); the [`RECOVERY`] speed off a plane he's inside; and
+//! (AG.48) that a plane a cast stops him on without moving him (met at a
+//! glance on a rounded edge, where his keep off the plane at the cast's
+//! stop lies behind him) limits the rest of the step's solves as a touching
+//! one does: as read, the original's solve takes every plane its manifold
+//! holds, the cast's hits among them. Without it a hero falling past an
+//! edge he grazes hangs there; with it, AG.36's `l_off135` W-00 leaves the
+//! ledge route's edge 1.2 cm off its recording at record 109 where it had
+//! stalled 11.2 cm short, then parts from it in the air as W-01 always did
+//! (up to 57 cm, where the stall had kept it within 25 cm), resting 21.7 cm
+//! off theirs against 7.6 before. No other replay moves.
 
 use std::collections::BTreeMap;
 
@@ -191,6 +201,8 @@ impl Proxy<'_> {
         let mut v = velocity;
         let mut remaining = step;
         let mut seen = Vec::new();
+        // Planes a cast stopped him on without moving him.
+        let mut met: Vec<(BodyId, Option<u32>)> = Vec::new();
         for _ in 0..MAX_CASTS {
             if remaining <= MIN_TIME {
                 break;
@@ -201,10 +213,14 @@ impl Proxy<'_> {
             }
             // A plane short of touching limits nothing: the cast meets it,
             // and from there it's touching (the original's solver moves him
-            // freely until a plane is reached, then slides).
+            // freely until a plane is reached, then slides). Unless the cast
+            // can't bring him nearer: against a rounded edge (an open edge,
+            // AG.48) met at a glance, his keep off the plane where the cast
+            // stops lies behind where he is, so the plane limits the solve
+            // as if touching and he slides on round it.
             let limits: Vec<Limit> = planes
                 .iter()
-                .filter(|p| p.distance <= TOUCHING)
+                .filter(|p| p.distance <= TOUCHING || met.contains(&(p.body, p.triangle)))
                 .map(|p| Limit {
                     normal: p.normal,
                     // A moving surface carries him with it along its normal.
@@ -236,12 +252,12 @@ impl Proxy<'_> {
             let dir = motion / len;
             // The plane the cast ran into most squarely, and how far short of
             // it the cast stopped: he stops KEEP off it along its normal.
-            let (facing, short) = hit
+            let (facing, short, squarest) = hit
                 .planes
                 .iter()
-                .map(|p| (-dir.dot(p.normal), p.distance))
+                .map(|p| (-dir.dot(p.normal), p.distance, Some((p.body, p.triangle))))
                 .fold(
-                    (0.0f32, 0.0f32),
+                    (0.0f32, 0.0f32, None),
                     |best, p| if p.0 > best.0 { p } else { best },
                 );
             let back = if facing > 1e-3 {
@@ -250,6 +266,14 @@ impl Proxy<'_> {
                 0.0
             };
             let travel = (hit.distance - back).clamp(0.0, len);
+            if travel <= 0.0
+                && let Some(plane) = squarest
+                && !met.contains(&plane)
+            {
+                met.push(plane);
+                v = solved;
+                continue;
+            }
             pos += dir * travel;
             remaining *= 1.0 - travel / len;
             v = solved;

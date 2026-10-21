@@ -37,6 +37,8 @@ use oracle::*;
 struct Step {
     k: usize,
     pivot: Vec3,
+    /// His up axis, his shape's centre 0.9144 m along it from the pivot.
+    up: Vec3,
     velocity: Vec3,
     walk: Vec3,
     supported: bool,
@@ -99,6 +101,7 @@ fn run(world: &ParryWorld, frames: &[Frame], s: usize, until: usize) -> Vec<Step
         out.push(Step {
             k,
             pivot: hero.pivot,
+            up: hero.up,
             velocity: hero.velocity,
             walk: hero.walk.velocity,
             supported: hero.footing.supported,
@@ -455,10 +458,118 @@ fn ag39_falls_from_their_second_free_record() {
         "{falls} falls, {held} within 1.1e-3 m/s while free and {landed} landing within a record of theirs; {free_ok} of {free_records} free records within 1.1e-3 m/s; parted: {parted:#?}"
     );
     assert!(
-        falls >= 40 && held >= 29 && landed >= 34,
+        falls >= 40 && held >= 31 && landed >= 38,
         "{falls} {held} {landed}"
     );
-    assert!(free_ok >= 190, "{free_ok} of {free_records}");
+    assert!(free_ok >= 194, "{free_ok} of {free_records}");
+}
+
+/// Eruptor's shape: a 0.8644 m sphere, 0.9144 m with the level mesh's own
+/// 0.05 m, centred 0.9144 m up his up axis.
+const REACH: f32 = 0.9144;
+
+/// AG.48: AG.39's `air/g39_air_rel` (let go) and `g39_air_rev` (reversed)
+/// replays, 2 each, from their second free record: each slides round the
+/// open edge under the ledge route (triangle 2920's upper edge, which no
+/// other triangle has) and lands within a record of theirs, never hanging
+/// in the air (every frame before it lands moves him over 1 mm) and never
+/// behind a face of the level, where the mesh's one-sided contacts give
+/// nothing; theirs too.
+#[test]
+#[ignore]
+fn ag48_round_the_open_edge_under_the_ledge_route() {
+    let bodies = level_213();
+    let world = ParryWorld::new(&bodies).unwrap();
+    let mesh = mesh_of(&bodies);
+    let mut seen = 0;
+    for (name, frames) in recordings(AG39) {
+        if !(name.starts_with("air/g39_air_rel-") || name.starts_with("air/g39_air_rev-")) {
+            continue;
+        }
+        let k = (3..frames.len())
+            .find(|&k| free(&frames[k]) && free(&frames[k - 1]) && !free(&frames[k - 2]))
+            .unwrap();
+        let land = (k..frames.len())
+            .find(|&j| footing(&frames[j]).is_some_and(|f| f.supported))
+            .unwrap();
+        let steps = run(&world, &frames, k, land + 5);
+        let ours = steps.iter().find(|s| s.supported).map(|s| s.k);
+        let mut last = Vec3::from(frames[k].hero.position);
+        let mut edge = 0;
+        for s in steps.iter().take_while(|s| !s.supported) {
+            assert!(
+                (s.pivot - last).length() > 1e-3,
+                "{name}: hung at record {} at {}",
+                s.k,
+                s.pivot
+            );
+            last = s.pivot;
+            let centre = s.pivot + s.up * REACH;
+            assert_eq!(behind_a_face(&mesh, centre, REACH), None, "{name} {}", s.k);
+            let corners = mesh.corners(2920).unwrap();
+            edge += usize::from(
+                (centre - nearest_on_triangle(centre, corners)).length() < REACH + 0.02,
+            );
+        }
+        for f in &frames[k..=land] {
+            let up = euler(f.hero.rotation) * Vec3::Y;
+            let centre = Vec3::from(f.hero.position) + up * REACH;
+            assert_eq!(behind_a_face(&mesh, centre, REACH), None, "theirs: {name}");
+        }
+        let at = steps.iter().find(|s| s.k == land).unwrap();
+        eprintln!(
+            "{name} from record {k}: within 2 cm of the overhang for {edge} records; lands at ours {ours:?} theirs {land}, {:.4} m off theirs there",
+            (at.pivot - Vec3::from(frames[land].hero.position)).length()
+        );
+        assert!(edge >= 3, "{name}: never met the overhang's edge");
+        assert!(
+            ours.is_some_and(|o| o.abs_diff(land) <= 1),
+            "{name}: lands at {ours:?}, theirs {land}"
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, 4);
+}
+
+/// AG.48: let go at the ledge route's west end (AG.39's `g39_w_rel30` W-00
+/// and `g39_w_rel60` W-00 and W-01), theirs stop on the overhang's open edge
+/// below it, held up by it at 41.6-45.0° below them, and stay. Seeded where
+/// theirs first rests there, ours stays held 120 records, supported at the
+/// end and within 5 cm of where it started (theirs creep 0-2.2 cm down the
+/// edge in that time).
+#[test]
+#[ignore]
+fn ag48_held_on_the_open_edge() {
+    let world = level();
+    let mut seen = 0;
+    for (name, frames) in recordings(AG39) {
+        if !matches!(
+            name.as_str(),
+            "a/g39_w_rel30-W-00" | "a/g39_w_rel60-W-00" | "a/g39_w_rel60-W-01"
+        ) {
+            continue;
+        }
+        // Their first record at rest on the edge with two at rest before it.
+        let s = (190..frames.len() - 1)
+            .find(|&j| {
+                (j - 2..=j).all(|i| moved(&frames, i).length() < 1e-4)
+                    && footing(&frames[j]).is_some_and(|f| f.supported)
+            })
+            .unwrap();
+        let steps = run(&world, &frames, s, s + 120);
+        let from = Vec3::from(frames[s].hero.position);
+        let end = steps.last().unwrap();
+        let drift = (end.pivot - from).length();
+        eprintln!(
+            "{name} from record {s}: ours supported {} at record {}, {drift:.4} m from where it started; theirs {:.4} m",
+            end.supported,
+            end.k,
+            (Vec3::from(frames[end.k].hero.position) - from).length()
+        );
+        assert!(end.supported && drift < 0.05, "{name}: {end:?}");
+        seen += 1;
+    }
+    assert_eq!(seen, 3);
 }
 
 /// AG.39's walks off the ledge route (the 48 of 54 that are 0.4 ft up after

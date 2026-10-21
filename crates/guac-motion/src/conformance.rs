@@ -372,6 +372,7 @@ pub fn cases() -> Vec<Case> {
         mesh_back(),
         ray_sides(),
         zero_motion(),
+        an_open_edge_holds_off_its_edge(),
     ]
 }
 
@@ -1088,6 +1089,85 @@ fn zero_motion() -> Case {
             no_cast(&a[0])?;
             if a[1] != Answer::Ray(None) {
                 return Err(format!("want no ray, got {:?}", a[1]));
+            }
+            Ok(())
+        },
+    }
+}
+
+/// A face leaning out 4.8° over a drop, its top edge open (no other triangle
+/// has it), as the overhang under the ledge route's west end is (AG.48): a
+/// sphere past the top edge gets the edge's own plane, its normal from the
+/// edge's nearest point to the sphere and its gap the true one; past the
+/// edge's end, the end's; in front of the face, the face's; behind the face,
+/// nothing, as anywhere else on a mesh.
+fn an_open_edge_holds_off_its_edge() -> Case {
+    let (mut v, mut t) = (Vec::new(), Vec::new());
+    quad(
+        &mut v,
+        &mut t,
+        [
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::new(0.0, 0.0, 2.0),
+            Vec3::new(-0.25, -3.0, 2.0),
+            Vec3::new(-0.25, -3.0, -2.0),
+        ],
+        Vec3::X,
+    );
+    Case {
+        name: "an_open_edge_holds_off_its_edge",
+        bodies: vec![mesh_body(FLOOR.0, Pose::IDENTITY, v, t, vec![5, 6])],
+        moves: vec![],
+        queries: vec![
+            contacts(sphere(0.45), Vec3::new(0.3, 0.4, 0.5), 0.1),
+            contacts(sphere(0.45), Vec3::new(0.3, 0.4, 2.3), 0.2),
+            contacts(sphere(0.45), Vec3::new(0.5, -1.0, 0.0), 0.2),
+            contacts(sphere(0.45), Vec3::new(-0.3, 0.4, 0.5), 0.1),
+        ],
+        expect: |a| {
+            let one = |i: usize| -> Result<ContactPlane, String> {
+                match planes(&a[i])? {
+                    [p] if (p.body, p.triangle, p.material) == (FLOOR, Some(0), Some(5)) => Ok(*p),
+                    other => Err(format!(
+                        "query {i}: want triangle 0's one plane, got {other:?}"
+                    )),
+                }
+            };
+            let edge = one(0)?;
+            close_v(
+                "past the edge, normal",
+                edge.normal,
+                Vec3::new(0.6, 0.8, 0.0),
+                TOL,
+            )?;
+            close_v(
+                "past the edge, point",
+                edge.point,
+                Vec3::new(0.0, 0.0, 0.5),
+                TOL,
+            )?;
+            close("past the edge, gap", edge.distance, 0.05, TOL)?;
+            let end = one(1)?;
+            let to = Vec3::new(0.3, 0.4, 0.3);
+            close_v("past its end, normal", end.normal, to.normalize(), TOL)?;
+            close_v(
+                "past its end, point",
+                end.point,
+                Vec3::new(0.0, 0.0, 2.0),
+                TOL,
+            )?;
+            close("past its end, gap", end.distance, to.length() - 0.45, TOL)?;
+            let face = one(2)?;
+            let n = Vec3::new(3.0, -0.25, 0.0).normalize();
+            close_v("the face, normal", face.normal, n, TOL)?;
+            close(
+                "the face, gap",
+                face.distance,
+                Vec3::new(0.5, -1.0, 0.0).dot(n) - 0.45,
+                TOL,
+            )?;
+            if !planes(&a[3])?.is_empty() {
+                return Err(format!("behind the face, want nothing, got {:?}", a[3]));
             }
             Ok(())
         },

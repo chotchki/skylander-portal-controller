@@ -303,3 +303,62 @@ pub fn with_placements_213<R>(f: impl FnOnce(&Placements<'_>) -> R) -> R {
     let placements = Placements::read(&igz).unwrap();
     f(&placements)
 }
+
+/// The level's triangle mesh among [`level_213`]'s bodies.
+pub fn mesh_of(bodies: &[Body]) -> Arc<Mesh> {
+    bodies
+        .iter()
+        .find_map(|b| match (&b.id, &b.collider) {
+            (&LEVEL, Collider::Mesh(m)) => Some(m.clone()),
+            _ => None,
+        })
+        .expect("the level's mesh")
+}
+
+/// The point of triangle a-b-c nearest `p`.
+pub fn nearest_on_triangle(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
+    let (ab, ac, ap) = (b - a, c - a, p - a);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = p - b;
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        return a + ab * (d1 / (d1 - d3));
+    }
+    let cp = p - c;
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        return a + ac * (d2 / (d2 - d6));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 {
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    }
+    let denom = 1.0 / (va + vb + vc);
+    a + ab * (vb * denom) + ac * (vc * denom)
+}
+
+/// A triangle his shape (centred at `centre`, `radius` with the mesh's own
+/// 0.05 m) overlaps from behind: its nearest point within the radius and
+/// his centre more than 1 cm behind its plane. Where a mesh's one-sided
+/// contacts give nothing and casts stop on its back, so a hero there hangs
+/// (AG.48).
+pub fn behind_a_face(mesh: &Mesh, centre: Vec3, radius: f32) -> Option<u32> {
+    (0..mesh.triangles().len() as u32).find(|&t| {
+        let (Some(corners), Some(face)) = (mesh.corners(t), mesh.face_normal(t)) else {
+            return false;
+        };
+        let near = nearest_on_triangle(centre, corners);
+        (centre - near).length() < radius - 1e-3 && (centre - corners[0]).dot(face) < -0.01
+    })
+}

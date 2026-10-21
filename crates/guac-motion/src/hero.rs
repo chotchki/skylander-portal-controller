@@ -100,6 +100,11 @@ pub struct Hero {
     pub velocity: Vec3,
     /// The edge probe holds his controller off.
     pub held_off: bool,
+    /// This frame's edge probe found no ground and zeroed his walk across
+    /// the ground before it was read: what [`Hero::gait_speed`] holds of it
+    /// is the walk's vertical part alone (AG.58; [`crate::locomotion`]
+    /// doesn't let such a frame set him off).
+    pub probe_held: bool,
     /// His walk's length, ft/s, after this frame's push and the edge probe
     /// and before its slowing: the speed his locomotion mixes his gaits by
     /// (AG.11, [`crate::locomotion`]).
@@ -126,6 +131,7 @@ impl Hero {
             },
             velocity: Vec3::ZERO,
             held_off: false,
+            probe_held: false,
             gait_speed: 0.0,
             steps: [NOMINAL_STEP; 2],
             solid,
@@ -215,6 +221,7 @@ impl Hero {
             self.walk
                 .face_and_move(push, &self.footing, &tuning, two_before);
         }
+        self.probe_held = false;
         if let Some(point) = edge::point(self.pivot, self.walk.velocity, push, &tuning) {
             if edge::walkable(seam, self.pivot, point, exclude) {
                 self.held_off = false;
@@ -222,6 +229,7 @@ impl Hero {
                 self.walk.velocity.x = 0.0;
                 self.walk.velocity.z = 0.0;
                 self.held_off = true;
+                self.probe_held = true;
             }
         }
         self.gait_speed = self.walk.velocity.length();
@@ -247,6 +255,7 @@ impl Hero {
         surfaces: &Surfaces,
     ) {
         let [before, _] = self.steps;
+        self.probe_held = false;
         self.gait_speed = self.walk.velocity.length();
         self.engine(seam, step, exclude, surfaces);
         self.steps = [step, before];

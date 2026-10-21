@@ -13,7 +13,7 @@ use parry3d::query::{
     self, ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher, Ray, RayCast,
     ShapeCastOptions,
 };
-use parry3d::shape::{SharedShape, TriMeshFlags};
+use parry3d::shape::{SharedShape, TriMeshFlags, Triangle};
 
 use crate::seam::{
     Body, BodyId, BodyKind, CAST_SLOP, Cast, Collider, ContactPlane, Mesh, PhysicsSeam, Pose,
@@ -193,7 +193,9 @@ pub struct Solid<'a> {
 /// The planes one solid gives a shape: one per manifold (per triangle on a
 /// mesh), its deepest point. The same parry call Avian's
 /// `contact_query::contact_manifolds` makes, keeping the triangle that
-/// Avian's wrapper drops.
+/// Avian's wrapper drops; on a mesh, a triangle whose nearest point to the
+/// shape lies on an open edge gives that edge's own plane instead
+/// ([`open_edge_planes`], AG.48).
 pub fn planes_against(
     solid: &Solid,
     shape: &SharedShape,
@@ -208,6 +210,7 @@ pub fn planes_against(
         mesh,
     } = *solid;
     let pos12 = body_pose.inv_mul(at);
+    let start = out.len();
     let mut manifolds: Vec<ContactManifold<(), ()>> = Vec::new();
     if DefaultQueryDispatcher
         .contact_manifolds(
@@ -251,6 +254,91 @@ pub fn planes_against(
             normal,
             point,
             distance: deepest.dist,
+        });
+    }
+    if let Some(mesh) = mesh {
+        open_edge_planes(body, body_pose, mesh, shape, &pos12, distance, start, out);
+    }
+}
+
+/// An open edge (one only a single triangle has) as the original's proxy
+/// meets it (AG.48: AG.39's falls past the cliff under the ledge route and
+/// its let-gos stopped on it): his shape is held off the edge's nearest point
+/// to it, the plane's normal running from there to him, square to the edge
+/// (or from the end's vertex), however far round the edge he is in front of
+/// the triangle, its distance his true gap. Parry's internal-edge fix has no
+/// neighbour to give such an edge's cone, so it bends the normal onto the
+/// face and, once the face no longer lies under him, drops the contact while
+/// the cast still stops on the edge, which left the hero hung there in the
+/// air. So each triangle with an open edge in reach is met as a lone
+/// triangle, and where its nearest point to the shape lies on an open edge
+/// and its normal faces the triangle's front, that plane replaces whatever
+/// the mesh gave for the triangle. Behind the triangle nothing changes (one
+/// side, as every other contact on the mesh: a hypothesis, nothing recorded
+/// went behind one).
+#[allow(clippy::too_many_arguments)]
+fn open_edge_planes(
+    body: BodyId,
+    body_pose: &PPose,
+    mesh: &Mesh,
+    shape: &SharedShape,
+    pos12: &PPose,
+    distance: f32,
+    start: usize,
+    out: &mut Vec<ContactPlane>,
+) {
+    if mesh.open_triangles().is_empty() {
+        return;
+    }
+    let reach = shape.compute_aabb(pos12).loosened(distance.max(0.0));
+    for &(t, [low, high]) in mesh.open_triangles() {
+        if !reach.intersects(&Aabb::new(low, high)) {
+            continue;
+        }
+        let (Some(corners), Some(face)) = (mesh.corners(t), mesh.face_normal(t)) else {
+            continue;
+        };
+        let triangle = Triangle::new(corners[0], corners[1], corners[2]);
+        let Ok(Some(contact)) = query::contact(
+            &PPose::IDENTITY,
+            &triangle,
+            pos12,
+            shape.as_ref(),
+            distance.max(0.0),
+        ) else {
+            continue;
+        };
+        let local_normal = contact.normal1;
+        if !local_normal.is_normalized() || local_normal.dot(face) < 0.0 {
+            continue;
+        }
+        let point = contact.point1;
+        let on_open = (0..3).any(|e| {
+            mesh.open(t, e) && {
+                let (a, b) = (corners[e], corners[(e + 1) % 3]);
+                let ab = b - a;
+                let along = ((point - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                (a + ab * along - point).length() <= ON_EDGE
+            }
+        });
+        if !on_open {
+            continue;
+        }
+        let mut k = start;
+        while k < out.len() {
+            if out[k].body == body && out[k].triangle == Some(t) {
+                out.remove(k);
+            } else {
+                k += 1;
+            }
+        }
+        out.push(ContactPlane {
+            body,
+            triangle: Some(t),
+            material: mesh.material(t),
+            normal: body_pose.rotation * local_normal,
+            point: body_pose.transform_point(point),
+            distance: contact.dist,
         });
     }
 }

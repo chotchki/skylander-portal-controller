@@ -7,6 +7,7 @@ mod common;
 
 use common::*;
 use guac_motion::hero::Input;
+use guac_motion::scenarios;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_motion::tuning::FOOT;
@@ -299,4 +300,17 @@ fn let_go_on_a_slope() {
             assert!((1.32..=2.54).contains(&last), "{last}");
         }
     }
+}
+
+/// Falling and landing's open edge (AG.48), on parry: dropped 0.8 m out
+/// from an overhang's open top edge he slides round it and lands below,
+/// moving every frame; 0.45 m out it holds him up.
+#[test]
+fn round_an_open_edge_he_falls_on() {
+    on_parry(scenarios::round_an_open_edge_he_falls_on());
+}
+
+#[test]
+fn an_open_edge_within_45_holds_him_up() {
+    on_parry(scenarios::an_open_edge_within_45_holds_him_up());
 }
