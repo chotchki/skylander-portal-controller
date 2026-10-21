@@ -1386,6 +1386,22 @@ mod tests {
             tuning_summary(&h),
             "112_TitanLife scale [100.0, 100.0, 100.0], shape 2 14 x 21.25 x 3 ft, no ActorParameters"
         );
+        // His disc parameters (ag-levels' read): the ground's, not the air's.
+        let mut b = vec![0u8; 0x4C];
+        for (at, v) in [(0x0C, 25.0f32), (0x18, 1440.0), (0x1C, 30.0), (0x28, 360.0)] {
+            b[at..at + 4].copy_from_slice(&v.to_be_bytes());
+        }
+        b[0x43] = 0;
+        let h = crate::hero::Hero {
+            parameters: Some(crate::hero::Parameters::decode(0x36B4_E05C, &b)),
+            collision: None,
+            ..h
+        };
+        assert_eq!(
+            tuning_summary(&h),
+            "112_TitanLife scale [100.0, 100.0, 100.0], no CollisionInfo, ground 25 ft/s 1440 deg/s, \
+             motion type 0"
+        );
         // A read written before AG.12 has no tuning.
         let old = r#"{"label":"f0","flip":2,"game_frame":5962,"hero":"009_Eruptor","seed":10554,
             "drawn":1,"fight":true}"#;

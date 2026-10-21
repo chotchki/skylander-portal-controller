@@ -691,6 +691,10 @@ mod tests {
             0o444
         );
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        // A portal step's copy keeps its own name beside F0's.
+        let second = figure_copy(&run.tmp, "figure-2.sky", &source).unwrap();
+        assert_eq!(second, run.tmp.join("figure-2.sky"));
+        assert!(copy.exists() && second.exists());
 
         let err =
             figure_copy(&run.tmp, "figure-1.sky", &src_dir.path().join("none.sky")).unwrap_err();
