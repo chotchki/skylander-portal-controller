@@ -853,16 +853,19 @@ mod tests {
                 kind: "lava_ball".into(),
                 parents: vec![HERO.into()],
                 radius: 2.0,
+                within: 1,
             },
             SpawnRule {
                 kind: "coin".into(),
                 parents: vec!["barrel".into()],
                 radius: 2.0,
+                within: 1,
             },
             SpawnRule {
                 kind: "orb".into(),
                 parents: vec!["chompy".into()],
                 radius: 2.0,
+                within: 1,
             },
         ]
     }

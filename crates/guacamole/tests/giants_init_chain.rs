@@ -382,8 +382,8 @@ fn the_init_chain_runs_600_ticks_strict_on_the_members_it_reaches() {
         .iter()
         .filter(|r| r.keeper == Keeper::Cell)
         .count();
-    println!("value cells {cells}, {cells_read} read by a whitelisted branch; AH.12's ceiling 322");
-    assert!(reached <= 322, "past AH.12's ceiling: {reached}");
+    println!("value cells {cells}, {cells_read} read by a whitelisted branch; AH.34's ceiling 324");
+    assert!(reached <= 324, "past AH.34's ceiling: {reached}");
 
     // Who ran: of global.bld's 17, 13 held after their first tick and 4
     // off by their own removes in it; the init setup and the level's

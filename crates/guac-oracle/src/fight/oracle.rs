@@ -25,7 +25,7 @@
 //! under [`Alignment::Earlier`], records paired by `_curFrame`, a lost or
 //! repeated game frame refused.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +153,27 @@ pub fn fight_trace(
             )?),
             _ => None,
         };
+        // Every clip in the blend, by the same names (an attack layered over
+        // the idle at its weight plays without topping it).
+        let playing = if names.clips.is_empty() {
+            BTreeSet::new()
+        } else {
+            frame
+                .clips
+                .iter()
+                .filter(|c| c.weight > 0.0)
+                .map(|c| {
+                    names
+                        .clips
+                        .get(&c.id)
+                        .cloned()
+                        .ok_or(MetricError::UnknownClip {
+                            id: c.id,
+                            frame: at,
+                        })
+                })
+                .collect::<Result<_, _>>()?
+        };
         let mut hero = Actor {
             id: 0,
             kind: HERO.into(),
@@ -162,6 +183,7 @@ pub fn fight_trace(
             velocity,
             behaviour: None,
             clip,
+            playing,
             vars: BTreeMap::new(),
         };
         let mut actors = Vec::with_capacity(record.items.len() + 1);
@@ -210,6 +232,7 @@ pub fn fight_trace(
                 velocity,
                 behaviour,
                 clip: None,
+                playing: BTreeSet::new(),
                 vars,
             });
         }
@@ -390,6 +413,49 @@ pub(crate) mod tests {
                 address: 0x8000_1000
             })
         );
+    }
+
+    #[test]
+    fn the_heros_blend_names_every_clip_that_plays_and_the_top_one() {
+        use crate::recording::Clip;
+        let clip = |id, weight| Clip {
+            id,
+            weight,
+            rate: 100.0,
+            period: 0.5,
+            remaining: 0.25,
+        };
+        let mut frames: Vec<Frame> = (0..2).map(|k| record(k, NOMINAL, 0.0, false)).collect();
+        // The idle alone, then the throw layered over it at the same weight
+        // with the walk faded out.
+        frames[0].clips = vec![clip(1, 100.0), clip(2, 0.0)];
+        frames[1].clips = vec![clip(1, 100.0), clip(2, 0.0), clip(3, 100.0)];
+        let recording = Recording::new(frames.clone()).unwrap();
+        let items = vec![Vec::new(), Vec::new()];
+        let mut n = names();
+        n.clips = BTreeMap::from([
+            (1, "Idle".into()),
+            (2, "Walk".into()),
+            (3, "RunAttackLeft".into()),
+        ]);
+        let trace = fight_trace(&recording, &chained(&frames, items.clone()), &n, &[]).unwrap();
+        let h = trace.track(HERO).unwrap();
+        let playing = |k| h.at(k).unwrap().playing.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(playing(0), ["Idle"]);
+        assert_eq!(playing(1), ["Idle", "RunAttackLeft"]);
+        // The first of equal weights tops the blend.
+        assert_eq!(h.at(1).unwrap().clip.as_deref(), Some("Idle"));
+        let throw = super::super::ticks::Cue::Playing(vec!["RunAttackLeft".into()]);
+        assert_eq!(h.entries(&throw), [1]);
+        // A clip in the blend the names don't hold is refused, even under the
+        // top one; with no clip names nothing is named.
+        n.clips.remove(&3);
+        assert_eq!(
+            fight_trace(&recording, &chained(&frames, items.clone()), &n, &[]),
+            Err(MetricError::UnknownClip { id: 3, frame: 1 })
+        );
+        let trace = fight_trace(&recording, &chained(&frames, items), &names(), &[]).unwrap();
+        assert!(trace.track(HERO).unwrap().at(1).unwrap().playing.is_empty());
     }
 
     #[test]

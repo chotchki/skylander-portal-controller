@@ -280,13 +280,13 @@ pub(crate) fn read_watch(
     let mut ring = control.watch_read()?;
     let (pads, reads) = control.pad_readback(watch.port, &ring.flips())?;
     let read_ms = t.elapsed().as_secs_f64() * 1e3;
-    let chain = match chained {
+    let (chain, clips) = match chained {
         Some(c) => {
-            let (own, run, _) = c.write_outputs(watch, &ring.records, pine, identity, dir)?;
-            ring.records = own;
-            Some(run)
+            let written = c.write_outputs(watch, &ring.records, pine, identity, dir)?;
+            ring.records = written.o5;
+            (Some(written.run), Some(written.clips))
         }
-        None => None,
+        None => (None, None),
     };
     let file = WatchFile {
         identity: identity.to_owned(),
@@ -301,6 +301,16 @@ pub(crate) fn read_watch(
     };
     file.write(&dir.join(WatchFile::FILE))?;
     let recording = watch.recording(&ring.records, &file.pads)?;
+    let frames_without_clips = recording
+        .frames()
+        .iter()
+        .filter(|f| f.clips.is_empty())
+        .count();
+    // O6's clips where O5's list dropped them (AH.9).
+    let (recording, clips_from_chain) = match &clips {
+        Some(c) => crate::chains::fill_clips(recording, c)?,
+        None => (recording, 0),
+    };
     let path = rrc_dump::output::refuse_repo_output(&dir.join(RECORDING_FILE))?;
     fs::write(
         &path,
@@ -316,11 +326,8 @@ pub(crate) fn read_watch(
         fields: watch.list.fields().len(),
         armed: ring.summary.armed,
         check: RingCheck::of(&recording, &ring.records, &file.reads),
-        frames_without_clips: recording
-            .frames()
-            .iter()
-            .filter(|f| f.clips.is_empty())
-            .count(),
+        frames_without_clips,
+        clips_from_chain,
         read_ms,
         chain,
     })

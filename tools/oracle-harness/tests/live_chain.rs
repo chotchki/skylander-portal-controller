@@ -295,7 +295,12 @@ fn the_chains_ride_a_walk_every_game_frame_without_a_pause() {
     }
     let t = Instant::now();
     let ring = control.watch_read().unwrap();
-    let (own, run, decoded) = giants
+    let chains::Written {
+        o5: own,
+        run,
+        decoded,
+        ..
+    } = giants
         .write_outputs(&watch, &ring.records, &mut pine, &identity, &out)
         .unwrap();
     let read_ms = t.elapsed().as_secs_f64() * 1e3;

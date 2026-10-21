@@ -18,37 +18,41 @@ A hit SHALL do its attack's damage to a target that still has health, the same a
 - **THEN** a throw is critical exactly when its roll is under 6, and between 37 and 83 of them are
 
 ### Requirement: Armour can turn a hit away
-A hit on a hero SHALL be turned away whole, doing nothing, when half his armour is more than a roll from 0 to 100 (script-runtime: Random rolls); Eruptor's armour at level 1 is 6. Nothing SHALL hurt a hero while he can't be hurt, as while he erupts.
+A hit on a hero SHALL be turned away whole, doing nothing, when half his armour is more than a roll from 0 to 100 (script-runtime: Random rolls); Eruptor's armour at level 1 is 6. Nothing SHALL hurt a hero while he can't be hurt, as while his eruption is out; a hit during his eruption's wind-up SHALL hurt him but neither push him nor start his hurt reaction. A hit turned away SHALL neither push him nor start it.
 
 #### Scenario: Chompy bites on Eruptor
 - **WHEN** 1,000 Chompy bites land on Eruptor at level 1 with the game's generator seeded
 - **THEN** a bite is turned away exactly when its roll is under 3, and between 14 and 46 of them are
 
 ### Requirement: No grace after a hit
-A hit SHALL land whenever it reaches a target that can be hurt: after a hit there SHALL be no time the target can't be hurt, only the attacker's own wait before hitting that target again. A hurt creature SHALL be unable to act for 0.6 s, a second hit in that time starting it again only if the original's does. A hero hit in the adventure SHALL flash for 0.2 s and, unless he's a Giant, lose control for 0.6 s.
+A hit SHALL land whenever it reaches a target that can be hurt: after a hit there SHALL be no time it can't be hurt. A hurt creature SHALL be stunned for 0.6 s, a hit in it not starting it again, nor one within 1 s of its end or too weak to push it. A hero's hurt reaction SHALL take the same 0.6 s and the same rule; he SHALL flash for 0.2 s and, unless he's a Giant, lose the stick only while his push lasts.
 
 #### Scenario: Two bites at once
 - **WHEN** two Chompies' bites reach Eruptor in the same moment
 - **THEN** he takes both
 
 #### Scenario: Eruptor bitten
-- **WHEN** a Chompy's bite lands on Eruptor
-- **THEN** he flashes for 0.2 s and the stick does nothing for 0.6 s
+- **WHEN** a Chompy's bite lands on Eruptor while the stick is held
+- **THEN** he flashes for 0.2 s, the stick does nothing while he's pushed (0.13 s) and walks him again from the next frame
+
+#### Scenario: A stunned Chompy hit again
+- **WHEN** a Chompy with health to spare, stunned by a Lava Lob, takes another 0.45 s later
+- **THEN** it takes the damage and its stun still ends 0.6 s after the first
 
 #### Scenario: A Giant bitten
 - **WHEN** a Chompy's bite lands on Tree Rex
 - **THEN** he flashes for 0.2 s and the stick still walks him
 
 ### Requirement: Knockback
-A hit that knocks back SHALL push its target at 80 ft/s (24.4 m/s) for (its strength less the target's resistance) / 100 × 0.6 s for a creature, or × 0.525 s for a hero, never under 0.125 s. Each push SHALL raise the target's resistance by half its strength, to at most 100, falling back over time as the original's does, and SHALL be refused while a stronger push still acts. A target whose resistance outweighs a hit's strength SHALL NOT move.
+A hit that knocks back SHALL push its target from 80 ft/s (24.4 m/s), slowing as it goes, for (its strength less the target's resistance) / 100 × 0.6 s for a creature, or × 0.525 s for a hero, never under 0.125 s. Each push SHALL raise the target's resistance by half its strength, to at most 100, falling back to none within 1.6 s of a lone push, slowly at first; a push SHALL be refused while a stronger one acts. A target whose resistance outweighs a hit's strength SHALL NOT move.
 
 #### Scenario: A Chompy's bite
 - **WHEN** a Chompy's bite lands on Eruptor after a while unhurt
-- **THEN** he's pushed away from it for 0.13 s
+- **THEN** he's pushed away from it for 0.13 s (8 frames), from 24.4 m/s slowing to about 21.5 m/s
 
 #### Scenario: A second bite soon after
 - **WHEN** a second Chompy's bite lands on Eruptor 0.2 s after the first
-- **THEN** he's pushed for less than 0.13 s, by what the first left of his resistance as the original's leaves it
+- **THEN** he's pushed for 0.125 s, the least a push lasts, the first having left him 12.5 resistance
 
 #### Scenario: A sleeping Chompy
 - **WHEN** Eruptor's Lava Lob bursts beside a Chompy still asleep in the pit
