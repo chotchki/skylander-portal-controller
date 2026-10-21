@@ -18,7 +18,7 @@
 
 use bevy::prelude::*;
 
-use crate::pad::{Face, Labels, LevelPads, Pause, Prompt, labels, prompt};
+use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, prompt};
 use crate::theme::{Role, Step, TvTheme};
 use crate::tv::{Pen, TvAssets};
 
@@ -70,13 +70,15 @@ pub(crate) fn wanted(
 pub(crate) fn show_overlay(
     mut commands: Commands,
     pads: Res<LevelPads>,
-    gamepads: Query<&Gamepad>,
+    gamepads: Query<(&Gamepad, Option<&FacesPrinted>)>,
     assets: Option<Res<TvAssets>>,
     theme: Option<Res<TvTheme>>,
     mut shown: Local<Option<(LevelOverlay, Entity)>>,
 ) {
     let want = wanted(&pads, |pad| {
-        gamepads.get(pad).map_or(Labels::Position, labels)
+        gamepads
+            .get(pad)
+            .map_or(Labels::Position, |(pad, printed)| labels(pad, printed))
     });
     if shown.map(|(o, _)| o) == want {
         return;

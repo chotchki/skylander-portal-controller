@@ -87,6 +87,46 @@ bevy_transform_interpolation = { version = "0.6", default-features = false, feat
 # version bevy_image already pulls.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Pads on macOS through Apple's GameController framework (openspec AG.53):
+# AG.5 found gilrs connects an 8BitDo over Bluetooth there and reads nothing,
+# while GameController reads every element. The objc2 family at the versions
+# the tree already locks (objc2 0.6, its framework crates 0.3, block2 0.6);
+# gilrs stays the pad source everywhere else.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSDate",
+    "NSRunLoop",
+    "NSString",
+] }
+block2 = { version = "0.6.1", default-features = false, features = ["std"] }
+objc2-game-controller = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "GCAxis2DInput",
+    "GCButtonElement",
+    "GCController",
+    "GCControllerAxisInput",
+    "GCControllerButtonInput",
+    "GCControllerDirectionPad",
+    "GCControllerElement",
+    "GCControllerInput",
+    "GCDevice",
+    "GCDevicePhysicalInput",
+    "GCDevicePhysicalInputState",
+    "GCDevicePhysicalInputStateDiff",
+    "GCDirectionPadElement",
+    "GCExtendedGamepad",
+    "GCInputNames",
+    "GCLinearInput",
+    "GCPhysicalInputElement",
+    "GCPhysicalInputProfile",
+    "GCPressedStateInput",
+    "GCTypes",
+] }
+
 [dev-dependencies]
 # The seam's shared test table, run through the Avian side (physics.rs).
 guac-motion = { path = "../guac-motion", features = ["conformance"] }
@@ -97,6 +137,8 @@ serde_json = { workspace = true }
 tempfile = "3"
 # The builders (SfoBuilder, the sample disc) for the setup and extraction tests.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# The live GameController check prints the backend's own log lines.
+tracing-subscriber = { workspace = true }
 
 # The dev viewer (openspec AC.10, AE.10): Eruptor in the remaster or on
 # `StandardMaterial`, at an oracle frame's camera; `test` runs its unit tests
@@ -104,6 +146,12 @@ guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 [[example]]
 name = "hero_view"
 test = true
+
+# AG.53's live check runs on the main thread, where GameController delivers
+# its connections, so it's its own harness; it skips unless `-- --ignored`.
+[[test]]
+name = "live_gamecontroller"
+harness = false
 
 [features]
 default = ["dev-tools"]

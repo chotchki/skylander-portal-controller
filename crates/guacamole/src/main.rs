@@ -231,15 +231,20 @@ fn test_known_dump() -> Option<KnownDump> {
 }
 
 /// `GUAC_TEST_POSTED_PADS_ONLY` in the process env (any value), `test-hooks`
-/// builds only: the TV leaves real pads out, so a pad paired with the Mac
-/// can't walk the hero ahead of `/api/_test/tv/pad`'s (AG.52). The e2e
-/// harness sets it; a look build with a hand on a pad doesn't.
+/// builds only: the TV leaves real pads out (gilrs and, on macOS,
+/// GameController), so a pad paired with the Mac can't walk the hero ahead
+/// of `/api/_test/tv/pad`'s (AG.52). The e2e harness sets it; a look build
+/// with a hand on a pad doesn't.
 fn posted_pads_only() -> bool {
     cfg!(feature = "test-hooks") && std::env::var_os("GUAC_TEST_POSTED_PADS_ONLY").is_some()
 }
 
 /// Bevy's plugins for the TV: no log plugin (`logging::init` owns the global
-/// subscriber) and, for [`posted_pads_only`], no gilrs.
+/// subscriber) and one source per pad (AG.53). On macOS that's
+/// GameController and gilrs is off: it reads nothing of an 8BitDo there
+/// (AG.5); it's still built in, through Bevy's `ui` collection, only its
+/// plugin is left out. Everywhere else gilrs. [`posted_pads_only`] leaves
+/// both out, so only `/api/_test/tv/pad`'s pads reach the TV.
 fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
     let plugins = DefaultPlugins
         .set(WindowPlugin {
@@ -250,8 +255,23 @@ fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
     if posted_pads_only {
         plugins.disable::<GilrsPlugin>()
     } else {
-        plugins
+        native_pads(plugins)
     }
+}
+
+/// The platform's own pad source (AG.53): GameController on macOS, gilrs
+/// off beside it.
+#[cfg(target_os = "macos")]
+fn native_pads(plugins: PluginGroupBuilder) -> PluginGroupBuilder {
+    plugins
+        .disable::<GilrsPlugin>()
+        .add(guacamole::game_controller::GameControllerPads)
+}
+
+/// The platform's own pad source: gilrs, already in Bevy's group.
+#[cfg(not(target_os = "macos"))]
+fn native_pads(plugins: PluginGroupBuilder) -> PluginGroupBuilder {
+    plugins
 }
 
 /// The TV draws every frame the display takes, focused or not (AG.55):
@@ -611,9 +631,10 @@ mod tests {
         assert_eq!(s.unfocused_mode, tv_updates().unfocused_mode);
     }
 
-    /// AG.52: with the switch the TV builds without gilrs, so no real pad
-    /// connects; without it gilrs stays, as release has it. The log plugin
-    /// is out either way.
+    /// AG.52 and AG.53: with the switch the TV builds without gilrs, so no
+    /// real pad connects; without it gilrs stays everywhere but macOS, where
+    /// GameController reads the pads instead. The log plugin is out either
+    /// way.
     #[test]
     fn posted_pads_only_leaves_gilrs_out() {
         for mode in [WindowMode::Desktop, WindowMode::Tv] {
@@ -621,8 +642,44 @@ mod tests {
             assert!(!posted.enabled::<GilrsPlugin>());
             assert!(!posted.enabled::<LogPlugin>());
             let real = tv_plugins(mode, false);
-            assert!(real.enabled::<GilrsPlugin>());
+            assert_eq!(real.enabled::<GilrsPlugin>(), !cfg!(target_os = "macos"));
             assert!(!real.enabled::<LogPlugin>());
+        }
+    }
+
+    /// Whether the TV's group reads pads through GameController; nothing
+    /// off macOS, where the plugin doesn't exist.
+    #[cfg(target_os = "macos")]
+    fn reads_game_controller(plugins: &PluginGroupBuilder) -> bool {
+        plugins.enabled::<guacamole::game_controller::GameControllerPads>()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn reads_game_controller(_: &PluginGroupBuilder) -> bool {
+        false
+    }
+
+    /// AG.53: gilrs reads the pads everywhere but macOS, where
+    /// GameController does, one source per pad; the log plugin is out
+    /// either way.
+    #[test]
+    fn gilrs_reads_the_pads_everywhere_but_macos() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            let plugins = tv_plugins(mode, false);
+            assert_eq!(plugins.enabled::<GilrsPlugin>(), !cfg!(target_os = "macos"));
+            assert_eq!(reads_game_controller(&plugins), cfg!(target_os = "macos"));
+            assert!(!plugins.enabled::<LogPlugin>());
+        }
+    }
+
+    /// AG.52 over AG.53: the switch keeps GameController's pads out too, so
+    /// a pad paired with the Mac reaches the TV through neither source.
+    #[test]
+    fn posted_pads_only_leaves_game_controller_out() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            let posted = tv_plugins(mode, true);
+            assert!(!reads_game_controller(&posted));
+            assert!(!posted.enabled::<GilrsPlugin>());
         }
     }
 }

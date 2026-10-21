@@ -4,8 +4,9 @@
 //!
 //! - The move stick reads raw: Bevy's dead zone and change threshold are off
 //!   for both left-stick axes on every pad ([`raw_stick`], set by
-//!   [`read_sticks_raw`]), so the value a pad stores is the last one gilrs
-//!   sent (bevy_gilrs builds gilrs without its own filters). The original's
+//!   [`read_sticks_raw`]), so the value a pad stores is the last one its
+//!   source sent (GameController's float on macOS; elsewhere gilrs's, which
+//!   bevy_gilrs builds without its own filters). The original's
 //!   per-axis dead zone, rescale and cap, and the direction against the view's
 //!   heading, are `guac-motion`'s ([`guac_motion::stick`]), inside the
 //!   hero's step.
@@ -18,24 +19,30 @@
 //! - Face buttons by position: the walking pad's bottom, right, left and top
 //!   as the hero's input holds them, whatever is printed on them.
 //! - Prompts name the label printed on the pad in hand ([`labels`],
-//!   [`prompt`]): Xbox letters on a pad the table knows as a PC layout,
-//!   Nintendo's on a Switch layout, the button's position for any other. The
-//!   table is empty until AG.5 reads the 8BitDo ids, so every pad gets the
-//!   position glyph meanwhile, which names no label it can't back (design
-//!   Open question 5's (b)).
+//!   [`prompt`]): Xbox letters on a PC layout, Nintendo's on a Switch
+//!   layout, the button's position for any other. On macOS the pads come
+//!   from GameController (AG.53, [`guacamole::game_controller`]) without
+//!   ids, and the letters are the ones Apple names each position's element
+//!   by ([`FacesPrinted`]): AG.5 found the 8BitDo's printing matches them
+//!   position for position. Elsewhere the id table decides, empty until the
+//!   Windows/HTPC bring-up reads the 8BitDo's ids through gilrs there, so a
+//!   pad gets the position glyph meanwhile, which names no label it can't
+//!   back (design Open question 5's (b)).
 //!
-//! Hypothesis, until AG.5 measures the 8BitDo's gate: a full push into a
-//! corner reads as the pad sends it, the gate not squared. On a round gate
-//! the rim's diagonal reads about 0.707 an axis, which the dead zone turns
-//! into 0.862 of top speed; pad-input's Between the axes is that rim read as
-//! is (49 and 118 of 128 at 22.55° off forward).
+//! The corner, settled for the 8BitDo on macOS (AG.49): GameController
+//! reads each axis to exactly 1 at full travel and its rim square-ish (about
+//! 0.80 an axis at 45°), so a full diagonal's push caps at 1 and walks at
+//! top speed. pad-input's Between the axes is a round gate's rim read as is
+//! (49 and 118 of 128 at 22.55° off forward), the value a pad that reads
+//! round would send.
 
 use bevy::input::gamepad::{AxisSettings, Gamepad, GamepadAxis, GamepadButton, GamepadSettings};
 use bevy::prelude::*;
 use guac_motion::stick::Stick;
+pub(crate) use guacamole::game_controller::FacesPrinted;
 use tracing::info;
 
-/// Both left-stick axes as gilrs sends them: the live zone the whole travel,
+/// Both left-stick axes as the pad sends them: the live zone the whole travel,
 /// no dead zone, every change kept (Bevy's defaults: a dead zone of 0.05
 /// either side and changes under 0.01 dropped).
 pub(crate) fn raw_stick() -> AxisSettings {
@@ -348,16 +355,8 @@ impl LevelPads {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Labels {
     /// A at the bottom, B on the right, X on the left, Y at the top.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first pads join the table with AG.5 (AG.49)")
-    )]
     Xbox,
     /// B at the bottom, A on the right, Y on the left, X at the top.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first pads join the table with AG.5 (AG.49)")
-    )]
     Nintendo,
     /// A pad the table doesn't place: the button's position, drawn.
     Position,
@@ -373,8 +372,8 @@ impl Labels {
     }
 }
 
-/// A pad AG.5 identified: the vendor and product ids gilrs reports for it on
-/// the Mac, and the labels printed on it.
+/// A pad identified by the vendor and product ids gilrs reports for it, and
+/// the labels printed on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Printed {
     pub(crate) vendor: u16,
@@ -382,8 +381,11 @@ pub(crate) struct Printed {
     pub(crate) labels: Labels,
 }
 
-/// AG.5's table. Empty until its probe reads the 8BitDo Ultimate 2's ids,
-/// wired and wireless, in both variants (AG.49).
+/// The id table, for pads gilrs reads (every platform but macOS). Empty: AG.5
+/// found the 8BitDo Ultimate 2 unreadable through gilrs on the Mac (its
+/// dongle and cable have no HID interface there, and over Bluetooth gilrs
+/// reads nothing), so its rows come from gilrs on XInput at the Windows/HTPC
+/// bring-up (openspec/backlog.md).
 pub(crate) const PRINTED: &[Printed] = &[];
 
 /// The labels on a pad with these ids, by `table`; [`Labels::Position`] for
@@ -398,9 +400,25 @@ pub(crate) fn labels_in(table: &[Printed], vendor: Option<u16>, product: Option<
         .map_or(Labels::Position, |p| p.labels)
 }
 
-/// The labels on `pad`, by AG.5's table.
-pub(crate) fn labels(pad: &Gamepad) -> Labels {
-    labels_in(PRINTED, pad.vendor_id(), pad.product_id())
+/// The labels the letters a platform read off the pad name, bottom, right,
+/// left and top: Xbox's or Nintendo's when all four are exactly one of
+/// them, else the position (a PlayStation pad's shapes, a pad Apple names
+/// no letters on, a mix).
+pub(crate) fn labels_printed(faces: [Option<char>; 4]) -> Labels {
+    match faces {
+        [Some('A'), Some('B'), Some('X'), Some('Y')] => Labels::Xbox,
+        [Some('B'), Some('A'), Some('Y'), Some('X')] => Labels::Nintendo,
+        _ => Labels::Position,
+    }
+}
+
+/// The labels on `pad`: by the letters read off it where its source gives
+/// them (GameController on macOS), else by the id table.
+pub(crate) fn labels(pad: &Gamepad, printed: Option<&FacesPrinted>) -> Labels {
+    match printed {
+        Some(FacesPrinted(faces)) => labels_printed(*faces),
+        None => labels_in(PRINTED, pad.vendor_id(), pad.product_id()),
+    }
 }
 
 /// What the TV names a button by: the letter printed on it, or its
@@ -578,11 +596,42 @@ mod tests {
         for corner in [Vec2::ONE, -Vec2::ONE, Vec2::new(1.0, -1.0)] {
             assert_eq!(push_of(corner.x, corner.y).strength, 1.0, "{corner}");
         }
-        // The hypothesis: a round gate's rim read as is, its diagonal at
-        // 0.862 of top speed.
+        // A round gate's rim read as is walks its diagonal at 0.862 of top
+        // speed (pad-input's Between the axes); the 8BitDo's square-ish one
+        // is the test below.
         let rim = std::f32::consts::FRAC_1_SQRT_2;
         let diagonal = push_of(rim, rim).strength;
         assert!((diagonal - 0.8619).abs() < 1e-4, "{diagonal}");
+    }
+
+    /// AG.49's corner, against AG.5's gate (the 8BitDo over Bluetooth
+    /// through GameController, 2026-10-20): each axis reads exactly 1 at
+    /// full travel and the rim's diagonals 0.78-0.80 an axis, so a full
+    /// diagonal's push caps at 1. The readings are AG.5's guided log's
+    /// farthest rim reading in each diagonal 15° bin (centred on 45°, 135°,
+    /// 225° and 315°), and the one corner window whose last reading sits in
+    /// its corner (the other three, the presses lagging a window, end 18-24°
+    /// off the diagonal with an axis at 1, which pushes 1 on any gate); each
+    /// walks at top speed.
+    #[test]
+    fn the_8bitdos_measured_corners_walk_at_top_speed() {
+        for (x, y) in [
+            // The diagonal bins' farthest rim readings.
+            (0.7538, 0.8366),
+            (-0.7037, 0.8654),
+            (-0.8708, -0.6805),
+            (0.8813, -0.6854),
+            // The down-left window's last reading, at 219.0°.
+            (-0.8573, -0.6953),
+        ] {
+            assert_eq!(push_of(x, y).strength, 1.0, "({x}, {y})");
+        }
+        // The rim at 45° itself, about 0.80 an axis: full speed too.
+        assert_eq!(push_of(0.80, 0.80).strength, 1.0);
+        // Where it stops being full: a 45° push under 0.7803 an axis.
+        let edge = 0.25 + 0.75 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!(push_of(edge + 1e-4, edge + 1e-4).strength == 1.0);
+        assert!(push_of(edge - 1e-3, edge - 1e-3).strength < 1.0);
     }
 
     /// The stick against the view: forward along it, left at its +90°,
@@ -908,5 +957,233 @@ mod tests {
         app.update();
         let pads = app.world().resource::<LevelPads>();
         assert_eq!(pads.seat().and_then(Seat::walking), Some(high));
+    }
+
+    /// The labels from the letters a platform read off the pad: Xbox's or
+    /// Nintendo's only when all four are exactly one of them; and they win
+    /// over the id table, which stays the source without them.
+    #[test]
+    fn labels_from_the_letters_read_off_the_pad() {
+        let at = |s: &str| {
+            let mut c = s.chars().map(|c| (c != '-').then_some(c));
+            [(); 4].map(|_| c.next().flatten())
+        };
+        assert_eq!(labels_printed(at("ABXY")), Labels::Xbox);
+        assert_eq!(labels_printed(at("BAYX")), Labels::Nintendo);
+        for other in ["----", "ABYX", "BAXY", "AB-Y", "XYAB"] {
+            assert_eq!(labels_printed(at(other)), Labels::Position, "{other}");
+        }
+        let mut world = World::new();
+        let pad = world.spawn(Gamepad::default()).id();
+        let gamepad = world.get::<Gamepad>(pad).unwrap();
+        assert_eq!(labels(gamepad, None), Labels::Position, "no ids");
+        assert_eq!(
+            labels(gamepad, Some(&FacesPrinted(at("BAYX")))),
+            Labels::Nintendo
+        );
+        assert_eq!(
+            prompt(
+                labels(gamepad, Some(&FacesPrinted(at("BAYX")))),
+                Face::South
+            ),
+            Prompt::Letter("B")
+        );
+    }
+
+    /// GameController's pads (AG.53) through the router, on a fake of the
+    /// framework: the first connected walks; its letters name the overlay's
+    /// prompt (a Switch Pro's bottom button is B); and a press and release
+    /// of its bottom button inside one frame resumes the level as a press.
+    mod game_controller {
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+        use std::rc::Rc;
+
+        use guacamole::game_controller::{Controllers, Element, Glyph, Opened, PadState, install};
+
+        use super::super::*;
+        use crate::pause;
+
+        /// Pads by key, each with its category and queued readings.
+        #[derive(Clone, Default)]
+        struct Fake(Rc<RefCell<Vec<(u64, &'static str, VecDeque<PadState>)>>>);
+
+        impl Controllers for Fake {
+            fn connected(&mut self) -> Vec<u64> {
+                self.0.borrow().iter().map(|p| p.0).collect()
+            }
+            fn open(&mut self, key: u64) -> Option<Opened> {
+                let category = self.0.borrow().iter().find(|p| p.0 == key)?.1;
+                Some(Opened {
+                    name: format!("pad {key}"),
+                    category: category.into(),
+                    glyphs: ["a", "b", "x", "y"].map(|l| Glyph {
+                        symbol: Some(format!("{l}.circle")),
+                        localized: None,
+                    }),
+                    state: PadState::default(),
+                })
+            }
+            fn queue(&mut self, _: u64, _: usize) -> bool {
+                true
+            }
+            fn ask_home_gesture_off(&mut self, _: u64) -> Option<bool> {
+                Some(false)
+            }
+            fn next_state(&mut self, key: u64) -> Option<PadState> {
+                let mut pads = self.0.borrow_mut();
+                pads.iter_mut().find(|p| p.0 == key)?.2.pop_front()
+            }
+            fn close(&mut self, _: u64) {}
+        }
+
+        impl Fake {
+            fn connect(&self, key: u64, category: &'static str) {
+                self.0.borrow_mut().push((key, category, VecDeque::new()));
+            }
+            fn send(&self, key: u64, state: PadState) {
+                let mut pads = self.0.borrow_mut();
+                pads.iter_mut()
+                    .find(|p| p.0 == key)
+                    .unwrap()
+                    .2
+                    .push_back(state);
+            }
+        }
+
+        fn app(fake: &Fake) -> App {
+            let mut app = App::new();
+            app.add_plugins((
+                MinimalPlugins,
+                bevy::input::InputPlugin,
+                crate::input::InputRouter,
+            ));
+            install(&mut app, Box::new(fake.clone()));
+            app
+        }
+
+        fn entity_of(app: &mut App, name: &str) -> Entity {
+            app.world_mut()
+                .query::<(Entity, &Name)>()
+                .iter(app.world())
+                .find(|(_, n)| n.as_str() == name)
+                .map(|(e, _)| e)
+                .unwrap()
+        }
+
+        #[test]
+        fn game_controller_pads_walk_pause_and_resume_through_the_router() {
+            let fake = Fake::default();
+            let mut app = app(&fake);
+            fake.connect(1, "Switch Pro Controller");
+            app.update();
+            fake.connect(2, "Xbox One");
+            app.update();
+            let (switch, xbox) = (entity_of(&mut app, "pad 1"), entity_of(&mut app, "pad 2"));
+            assert_eq!(app.world().resource::<LevelPads>().order(), [switch, xbox]);
+            app.world_mut().resource_mut::<LevelPads>().show();
+            app.update();
+            let walking = |app: &App| {
+                let pads = app.world().resource::<LevelPads>();
+                pads.seat().and_then(Seat::walking)
+            };
+            assert_eq!(walking(&app), Some(switch), "the first connected walks");
+
+            // The stick lands raw, as Apple sends it.
+            fake.send(
+                1,
+                PadState {
+                    left: Vec2::new(0.004, 0.8027),
+                    ..default()
+                },
+            );
+            app.update();
+            let seat = |app: &App| app.world().resource::<LevelPads>().seat().unwrap().clone();
+            assert_eq!(seat(&app).last().stick, Stick::new(0.004, 0.8027));
+
+            // Start (Apple's Menu) on the Xbox pad pauses; the prompt is the
+            // bottom button as printed on it.
+            fake.send(2, PadState::default().with(Element::Menu, true));
+            fake.send(2, PadState::default());
+            app.update();
+            assert_eq!(seat(&app).pause(), Some(Pause::Start { by: xbox }));
+            let labels_of = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(Entity, &Gamepad, Option<&FacesPrinted>)>();
+                let found: Vec<(Entity, Labels)> = q
+                    .iter(app.world())
+                    .map(|(e, g, p)| (e, labels(g, p)))
+                    .collect();
+                move |pad: Entity| found.iter().find(|(e, _)| *e == pad).unwrap().1
+            };
+            let of = labels_of(&mut app);
+            let level = app.world().resource::<LevelPads>();
+            assert_eq!(
+                pause::wanted(level, &of),
+                Some(pause::LevelOverlay::Paused(Prompt::Letter("A")))
+            );
+            assert_eq!(of(switch), Labels::Nintendo);
+
+            // A tap of the Switch Pro's bottom button (Apple's B) inside one
+            // frame resumes.
+            fake.send(1, PadState::default().with(Element::B, true));
+            fake.send(1, PadState::default());
+            app.update();
+            assert_eq!(seat(&app).pause(), None, "the sub-frame tap resumed");
+
+            // Paused from the Switch Pro: B.
+            fake.send(1, PadState::default().with(Element::Menu, true));
+            app.update();
+            let of = labels_of(&mut app);
+            let level = app.world().resource::<LevelPads>();
+            assert_eq!(
+                pause::wanted(level, &of),
+                Some(pause::LevelOverlay::Paused(Prompt::Letter("B")))
+            );
+        }
+
+        /// The letters reach what the TV draws and what `/api/_test/tv`
+        /// reads, not only `pause::wanted`: on the TV's own app with the
+        /// mirror, a Switch Pro over GameController lists as Nintendo and
+        /// Start's overlay as drawn names B.
+        #[test]
+        fn the_letters_reach_the_drawn_overlay_and_the_mirror() {
+            use guac_server::config::WindowMode;
+
+            use crate::cards::PortalCards;
+            use crate::mirror::{InputShot, Mirror, TvMirror};
+            use crate::tv::layout_tests::portal_app;
+
+            let fake = Fake::default();
+            let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
+            install(&mut app, Box::new(fake.clone()));
+            let mirror = TvMirror::default();
+            app.insert_resource(mirror.clone()).add_plugins(Mirror);
+            let until = |app: &mut App, what: &str, done: &dyn Fn(&InputShot) -> bool| {
+                for _ in 0..30 {
+                    app.update();
+                    let shot = mirror.0.lock().unwrap().input.clone();
+                    if done(&shot) {
+                        return shot;
+                    }
+                }
+                panic!("{what}: {:#?}", mirror.0.lock().unwrap().input);
+            };
+            fake.connect(1, "Switch Pro Controller");
+            let shot = until(&mut app, "connected", &|s| !s.pads.is_empty());
+            assert_eq!(
+                (shot.pads[0].name.as_str(), shot.pads[0].labels.as_str()),
+                ("pad 1", "nintendo")
+            );
+            app.world_mut().resource_mut::<LevelPads>().show();
+            until(&mut app, "walking", &|s| s.pads[0].walking);
+            fake.send(1, PadState::default().with(Element::Menu, true));
+            fake.send(1, PadState::default());
+            let shot = until(&mut app, "paused", &|s| s.overlay.is_some());
+            let overlay = shot.overlay.unwrap();
+            assert_eq!(overlay.kind, "paused");
+            assert_eq!(overlay.prompt.as_deref(), Some("B"));
+        }
     }
 }
