@@ -596,11 +596,42 @@ mod tests {
         for corner in [Vec2::ONE, -Vec2::ONE, Vec2::new(1.0, -1.0)] {
             assert_eq!(push_of(corner.x, corner.y).strength, 1.0, "{corner}");
         }
-        // The hypothesis: a round gate's rim read as is, its diagonal at
-        // 0.862 of top speed.
+        // A round gate's rim read as is walks its diagonal at 0.862 of top
+        // speed (pad-input's Between the axes); the 8BitDo's square-ish one
+        // is the test below.
         let rim = std::f32::consts::FRAC_1_SQRT_2;
         let diagonal = push_of(rim, rim).strength;
         assert!((diagonal - 0.8619).abs() < 1e-4, "{diagonal}");
+    }
+
+    /// AG.49's corner, against AG.5's gate (the 8BitDo over Bluetooth
+    /// through GameController, 2026-10-20): each axis reads exactly 1 at
+    /// full travel and the rim's diagonals about 0.80 an axis, so a full
+    /// diagonal's push caps at 1. The readings are AG.5's guided log's
+    /// farthest rim reading in each diagonal 15° bin, and its four held
+    /// corners' last readings; each walks at top speed.
+    #[test]
+    fn the_8bitdos_measured_corners_walk_at_top_speed() {
+        for (x, y) in [
+            // The diagonal bins' farthest rim readings.
+            (0.7538, 0.8366),
+            (-0.7037, 0.8654),
+            (-0.8708, -0.6805),
+            (0.8813, -0.6854),
+            // The held corners' last readings.
+            (1.0, 0.4530),
+            (0.5017, -0.9916),
+            (-0.8573, -0.6953),
+            (-0.3804, 1.0),
+        ] {
+            assert_eq!(push_of(x, y).strength, 1.0, "({x}, {y})");
+        }
+        // The rim at 45° itself, about 0.80 an axis: full speed too.
+        assert_eq!(push_of(0.80, 0.80).strength, 1.0);
+        // Where it stops being full: a 45° push under 0.7803 an axis.
+        let edge = 0.25 + 0.75 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!(push_of(edge + 1e-4, edge + 1e-4).strength == 1.0);
+        assert!(push_of(edge - 1e-3, edge - 1e-3).strength < 1.0);
     }
 
     /// The stick against the view: forward along it, left at its +90°,

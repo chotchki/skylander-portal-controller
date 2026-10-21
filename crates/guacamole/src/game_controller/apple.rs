@@ -198,8 +198,13 @@ impl Controllers for Framework {
             // there so the framework has someone to buffer for.
             let handler: RcBlock<dyn Fn(NonNull<Input>)> = RcBlock::new(|_: NonNull<Input>| {});
             input.setInputStateAvailableHandler(Some(&handler));
-            // Readings from here on: whatever queued before is stale.
-            while input.nextInputState().is_some() {}
+            // Readings from here on: whatever queued before is stale (at
+            // most a queue's worth, against a framework that never runs dry).
+            for _ in 0..depth {
+                if input.nextInputState().is_none() {
+                    break;
+                }
+            }
             pad.source = Source::Queue(input);
         }
         true
