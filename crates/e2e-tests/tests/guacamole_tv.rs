@@ -921,7 +921,14 @@ async fn placing_a_character_enters_the_level_at_its_start() {
         let total: f64 = (0..4).map(|i| num(&step["weights"][i])).sum();
         assert!((total - 1.0).abs() < 1e-5, "{step}");
     }
-    assert!(steps.iter().any(|s| s["clip"] == "walk"), "he walked first");
+    // The walk had him alone before the run joined (his idle the heaviest
+    // through a full-stick set-off: it slides out over 0.25 s).
+    assert!(
+        steps.iter().any(|s| num(&s["speed_ft"]) > 0.0
+            && num(&s["weights"][1]) > 0.0
+            && num(&s["weights"][2]) == 0.0),
+        "he walked first"
+    );
     pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 0.0]}))
         .await
         .unwrap();
