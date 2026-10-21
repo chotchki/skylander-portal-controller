@@ -11,7 +11,8 @@
 //! A dev aid, not a check: `AH17_LIVE_TABLE=<aj-vm's live member table>`
 //! answers every member the registry doesn't hold with a value cell of its
 //! registered type and prints which the run reached, so a run lists what's
-//! left to model instead of stopping at the first.
+//! left to model instead of stopping at the first; `AH17_USES=1` prints
+//! every member the members test's run read or wrote, with the counts.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -627,6 +628,18 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
         asked.len()
     );
     println!("reached: {all:?}");
+    if std::env::var("AH17_USES").is_ok() {
+        let mut u: Vec<(String, u64, u64)> = run
+            .vm
+            .uses()
+            .iter()
+            .map(|(m, (r, w))| (name(m), *r, *w))
+            .collect();
+        u.sort();
+        for (n, r, w) in u {
+            println!("  uses {n}: reads {r} writes {w}");
+        }
+    }
     println!("load after: {}", load());
     assert!(past.is_empty(), "{past:?}");
     assert!(

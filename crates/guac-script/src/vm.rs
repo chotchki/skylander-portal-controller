@@ -600,7 +600,6 @@ impl Vm {
         }
     }
 
-    /// The placement's current behaviour, by name as lowercased.
     /// The running placement's behaviour as the object `set behavior`
     /// names; nothing outside a placement or before its first.
     fn current_behaviour(&self) -> Value {
@@ -625,6 +624,7 @@ impl Vm {
         }
     }
 
+    /// The placement's current behaviour, by name as lowercased.
     pub fn behaviour(&self, id: PlacementId) -> Option<&str> {
         let p = self.placements.get(id as usize)?;
         let pos = p.behaviour?;

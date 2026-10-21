@@ -343,9 +343,10 @@
 //! stand-in: the eased slide over time isn't modelled yet).
 //!
 //! Not modelled yet: colour arithmetic and screen division (they stop as
-//! unsupported), the set properties (unmodelled members); and, with no stop, a reference's type check against the stack's
-//! edit type, `for each`'s shuffled order (any order that visits each member
-//! once) and the scheduler's placement groups and activity by distance (the
+//! unsupported), the set properties (unmodelled members); and, with no
+//! stop, a reference's type check against the stack's edit type,
+//! `for each`'s shuffled order (any order that visits each member once)
+//! and the scheduler's placement groups and activity by distance (the
 //! embedder ticks placements in the order it adds them), so SHUTDOWN's
 //! restart isn't either: the original runs STARTUP again at once when an
 //! active placement's SHUTDOWN block falls through, where the VM ends the

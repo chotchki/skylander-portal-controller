@@ -65,6 +65,9 @@ pub struct Solid {
     pub width: f32,
     pub length: f32,
     pub height: f32,
+    /// Metres, as its file's `_transform` keeps it; the `local * offset`
+    /// members read and write it in feet (the original's getter multiplies
+    /// by 3.28084, its setter by 0.3048).
     pub offset: [f32; 3],
     pub weight: f32,
     pub rebound: f32,

@@ -13,6 +13,7 @@ use guac_formats::script::{Class, Graph, StackClass};
 
 use crate::*;
 
+mod hero;
 mod init;
 
 const INT: &str = "IntMeasurement";

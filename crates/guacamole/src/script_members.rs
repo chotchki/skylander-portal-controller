@@ -723,7 +723,7 @@ impl ScriptWorld {
                     S::Width => Value::Float(s.width),
                     S::Length => Value::Float(s.length),
                     S::Height => Value::Float(s.height),
-                    S::Offset(i) => Value::Float(s.offset[i]),
+                    S::Offset(i) => Value::Float(s.offset[i] * FEET_PER_METRE),
                     S::Weight => Value::Float(s.weight),
                     S::Rebound => Value::Float(s.rebound),
                     S::InteractsWithActors => Value::Int(s.interacts_with_actors),
@@ -1051,7 +1051,7 @@ impl ScriptWorld {
                     S::Width => s.width = float(v)?,
                     S::Length => s.length = float(v)?,
                     S::Height => s.height = float(v)?,
-                    S::Offset(k) => s.offset[k] = float(v)?,
+                    S::Offset(k) => s.offset[k] = float(v)? * METRES_PER_FOOT,
                     S::Weight => s.weight = float(v)?,
                     S::Rebound => s.rebound = float(v)?,
                     S::InteractsWithActors => s.interacts_with_actors = i()?,
@@ -1799,6 +1799,40 @@ mod tests {
             &mut e,
         );
         assert_eq!(neither, Err(HostFault::Unmodelled));
+    }
+
+    /// A solid's offset is metres in its file and feet at its members, as
+    /// the original's getter (× 3.28084) and setter (× 0.3048) convert:
+    /// the ball's −0.762 m reads −2.5 ft, and 1 ft written puts its centre
+    /// 0.3048 m over its pivot plus its half width.
+    #[test]
+    fn a_solids_offset_reads_and_writes_in_feet() {
+        let mut e = bench();
+        let mut w = world();
+        w.actors.insert(BALL, ball(Vec3::new(0.0, 1.0, 0.0), 0.0));
+        let facet = w.objs.value(Object::Facet(BALL, Facet::Collision));
+        let y = at("collisioninfo", "local y offset", Some(facet), None);
+        let read = w
+            .get_member(&y, Member::Solid(SolidField::Offset(1)), &mut e)
+            .unwrap();
+        let Value::Float(ft) = read else {
+            panic!("{read:?}")
+        };
+        assert!((ft + 2.5).abs() < 1e-4, "{ft}");
+        w.set_member(
+            &y,
+            Member::Solid(SolidField::Offset(1)),
+            Value::Float(1.0),
+            &mut e,
+        )
+        .unwrap();
+        let a = w.actor(BALL).unwrap();
+        assert!((a.solid.offset[1] - METRES_PER_FOOT).abs() < 1e-6);
+        let centre = a.havok().unwrap().centre.y;
+        assert!(
+            (centre - (0.762 + METRES_PER_FOOT)).abs() < 1e-5,
+            "{centre}"
+        );
     }
 
     #[test]
