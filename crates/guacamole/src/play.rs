@@ -2304,6 +2304,12 @@ mod tests {
         );
         // Before the start, items beside a character change nothing.
         assert_eq!(judge(&lineup(&[(0, true)], 2, 0), false, None, true), None);
+        // Too many of both: too many Skylanders first (our order: AG.6 never
+        // put both on at once).
+        assert_eq!(
+            judge(&lineup(&[(0, true), (1, true)], 2, 0), true, hero, false),
+            Some(Alert::TooManySkylanders)
+        );
     }
 
     /// Two characters hold the start only once the level would show.
@@ -2584,6 +2590,33 @@ mod tests {
             assert_eq!(alert(&app), Some(Alert::PlaceSkylander));
             assert_eq!(mode(&app), Mode::Held);
         }
+    }
+
+    /// AG.29: a figure placed over the hero's own slot takes him off as a
+    /// removal does: he leaves where he stood, and with only a character
+    /// that doesn't walk yet on the portal the level calls for a Skylander.
+    #[test]
+    fn a_figure_placed_over_the_heros_slot_takes_him_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        place(&mut app, 0, ONE, "One");
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        assert_eq!(mode(&app), Mode::Held);
+        assert!(app.world().resource::<Play>().hero().is_none());
+        let mut heroes = app.world_mut().query::<&HeroBody>();
+        assert_eq!(heroes.iter(app.world()).count(), 0, "he's gone");
+        assert!(
+            app.world()
+                .resource::<Play>()
+                .inside
+                .as_ref()
+                .unwrap()
+                .left
+                .is_some(),
+            "where he stood kept"
+        );
     }
 
     /// AG.29: every figure off holds the level; Start does nothing under the

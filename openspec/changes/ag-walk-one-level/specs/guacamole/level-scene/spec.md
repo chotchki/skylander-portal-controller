@@ -113,21 +113,21 @@ A magic item or a sidekick placed while the level shows SHALL play its arrival a
 - **THEN** within 1.5 s the level holds under the too-many-magic-items alert, and once either comes off the level carries on
 
 ### Requirement: Removing the hero pauses the level
-When the hero is removed and no character waits, the level SHALL hold within 1.5 s, hidden behind a screen asking player 1 to put a Skylander on the portal, nothing in it moving. The next character placed SHALL arrive and come in where the hero stood when he came off, facing his way, and the level SHALL carry on from where it held rather than restart.
+When the hero is removed with no other character on the portal, the level SHALL hold within 1.5 s, hidden behind a screen asking player 1 to put a Skylander on the portal, nothing in it moving. The next character placed SHALL arrive and come in where the hero stood when he came off, facing his way, and the level SHALL carry on from where it held rather than restart.
 
 #### Scenario: Swapping heroes
 - **WHEN** Eruptor is removed partway across the clearing and then Spyro is placed
 - **THEN** within 1.5 s the level holds behind the message with nothing moving, then Spyro arrives and comes in within 0.15 m of Eruptor's last place, facing his heading within 0.2°, the rest of the level as it was
 
 ### Requirement: A character coming in arrives
-Each time a character becomes the hero after the level has started, and each time a magic item or a sidekick is placed while it shows, the TV SHALL first show that figure's arrival full screen, the level held meanwhile: the figure alone over its element's colours with its name, from within 1 s of the placement (or of the hero coming off, for a waiting character) for about 3 s, then the level again 5-8 s after it began. No intro SHALL play.
+Each time a character becomes the hero after the level has started, and each time a magic item or a sidekick is placed while it shows, the TV SHALL first show that figure's arrival full screen, the level held meanwhile: the figure alone over its element's colours with its name for about 3 s, from within 1.5 s of what brought it in (its placement, or the hero coming off for one the too-many alert held), then the level again 5-8 s after that. No intro SHALL play.
 
 #### Scenario: A replacement arrives
 - **WHEN** Eruptor has been taken off mid-level and Tree Rex is placed
-- **THEN** within 1 s Tree Rex's arrival shows him named over his element's colours, and 5-8 s after the placement the level shows again with Tree Rex in Eruptor's place
+- **THEN** within 1.5 s Tree Rex's arrival shows him named over his element's colours, and 5-8 s after the placement the level shows again with Tree Rex in Eruptor's place
 
 ### Requirement: A figure Giants can't use holds the level
-A figure Giants has no use for (a character from a later game, or a kind it doesn't know, such as a trap or a vehicle) placed at any time SHALL hold the TV, within 1.5 s, under a full-screen alert that a toy on the portal can't be used with this game, asking for it to be removed, the level and the figure untouched and the pad's buttons doing nothing; within 1 s of it coming off the TV SHALL show what it showed before.
+A figure Giants has no use for (a character from a later game, or a kind it doesn't know, such as a trap or a vehicle) placed at any time SHALL hold the TV within 1.5 s and, within 2.5 s, cover it with a full-screen alert that a toy on the portal can't be used with this game, asking for it to be removed, the level and the figure untouched and the pad's stick and bottom button doing nothing; within 1 s of it coming off the TV SHALL show what it showed before.
 
 #### Scenario: A later game's character mid-level
 - **WHEN** Fryno is placed while Eruptor walks the level

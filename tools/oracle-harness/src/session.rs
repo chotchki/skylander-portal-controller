@@ -197,6 +197,27 @@ impl SessionPlan {
         }
         Ok(())
     }
+
+    /// Refuses an [`Step::Again`] whose file sits under any of `roots`: the
+    /// game writes a figure it loads as it stands, and the dev's RPCS3 dirs
+    /// (the figure pack among them) are read only. A [`Step::Load`] copies
+    /// first, so its source may sit anywhere.
+    pub fn refuse_writes_under(&self, roots: &[PathBuf]) -> Result<()> {
+        let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        for (i, step) in self.steps.iter().enumerate() {
+            let Step::Again { copy } = step else {
+                continue;
+            };
+            let at = real(Path::new(copy));
+            if let Some(root) = roots.iter().map(|r| real(r)).find(|r| at.starts_with(r)) {
+                bail!(
+                    "step {i} ({step:?}): {copy} is under {}, which the game would write",
+                    root.display()
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The two `PAD` lines a [`Step::Pad`] sends: `pad` from `base`, the rest at
@@ -854,6 +875,44 @@ mod tests {
             fig.display().to_string()
         );
         assert!(plan(&ahead).is_err(), "@2 before the second load");
+    }
+
+    /// A put-back loaded as it stands is written by the game: none under the
+    /// dev's RPCS3 dirs (the pack among them), by any path that resolves
+    /// there; a fresh copy's source may sit anywhere.
+    #[test]
+    fn a_put_back_under_the_devs_rpcs3_dirs_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dev = tmp.path().join("rpcs3");
+        let pack = dev.join("game_discs/pack");
+        fs::create_dir_all(&pack).unwrap();
+        let inside = pack.join("Eruptor.sky");
+        fs::write(&inside, [0u8; 16]).unwrap();
+        let outside = tmp.path().join("copy.sky");
+        fs::write(&outside, [0u8; 16]).unwrap();
+        let roots = [dev.clone()];
+        let again = |p: &Path| {
+            plan(&format!(
+                "(steps: [Again(copy: {:?})])",
+                p.display().to_string()
+            ))
+        };
+        let refused = again(&inside)
+            .unwrap()
+            .refuse_writes_under(&roots)
+            .unwrap_err();
+        assert!(format!("{refused:#}").contains("step 0"), "{refused:#}");
+        let dotted = dev.join("game_discs/../game_discs/pack/Eruptor.sky");
+        assert!(again(&dotted).unwrap().refuse_writes_under(&roots).is_err());
+        again(&outside)
+            .unwrap()
+            .refuse_writes_under(&roots)
+            .unwrap();
+        let load = plan(&format!(
+            "(steps: [Load(figure: {:?})])",
+            inside.display().to_string()
+        ));
+        load.unwrap().refuse_writes_under(&roots).unwrap();
     }
 
     #[test]

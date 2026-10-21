@@ -173,9 +173,11 @@ usage:
       1), Wait, Secs, Opened (until the game opens a file whose path holds a
       fragment), Shot and Shots (SCREENSHOTs while it runs), Read (the actors at
       a pause a few flips on, then resumed), Load (a fresh copy of a .sky onto
-      the portal, or @<n> the n-th load's copy back), Clear, Reconnect and Note.
-      Every file the game opens is recorded with the flip STATE last read, P4's
-      portal events with them. Writes <dir> (new, outside every work tree):
+      the portal, or @<n> the n-th load's copy back), Again (a file loaded as it
+      stands, which the game writes, so never one under the dev's RPCS3 dirs),
+      Clear, Reconnect and Note. Every file the game opens is recorded with the
+      flip STATE last read, P4's portal events with them. Writes <dir> (new,
+      outside every work tree):
       record.json, run.txt (the timeline), the shots and reads, the figures as the
       game left them (portal/) and RPCS3's log; the dev's RPCS3 dirs are checked
       unchanged at the end, and whether the home's saves and trophies changed is
@@ -328,6 +330,7 @@ fn session(mut rest: &[&str]) -> Result<()> {
     let exe = required(env::ORACLE_EXE)?;
     let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
     let dev_dirs = dev_rpcs3_dirs(&home::real_home()?);
+    plan.refuse_writes_under(&dev_dirs)?;
     let before = Snapshot::take(&dev_dirs)?;
     let carried_dirs = divergence::carried_dirs(&home.config_dir());
     let carried = Snapshot::take(&carried_dirs)?;

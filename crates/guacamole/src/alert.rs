@@ -245,4 +245,18 @@ mod tests {
             "{call}"
         );
     }
+
+    /// The stack over the level: the pause overlays, then an alert over
+    /// them, the small join code over the alert so another kid can still
+    /// join, and an intro over all of it.
+    #[test]
+    fn an_alert_covers_the_pause_overlays_and_the_join_code_stays_on_top() {
+        let stack = [
+            crate::pause::OVERLAY_Z,
+            ALERT_Z,
+            CORNER_Z,
+            crate::intro_player::OVERLAY_Z,
+        ];
+        assert!(stack.windows(2).all(|w| w[0] < w[1]), "{stack:?}");
+    }
 }

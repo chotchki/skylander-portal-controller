@@ -25,8 +25,9 @@ use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, p
 use crate::theme::{Role, Step, TvTheme};
 use crate::tv::{Pen, Redrawn, TvAssets};
 
-/// Under an intro's overlay (1,000), over everything else.
-const OVERLAY_Z: i32 = 900;
+/// Under an intro's overlay (1,000) and the portal's alerts, over everything
+/// else.
+pub(crate) const OVERLAY_Z: i32 = 900;
 
 /// The prompt glyph's side, and a position dot's, in design px.
 const GLYPH: f32 = 56.0;

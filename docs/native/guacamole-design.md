@@ -2005,7 +2005,8 @@ press:
   placed that walks has entered it ([`play.rs`](../../crates/guacamole/src/play.rs), AG.21), and the
   hero's fixed step reads the walking pad's stick against the following camera's view. While the portal
   holds the level (AG.29: a portal alert, or no hero in it) the layer keeps the pads from everyone,
-  Start included, and `Time<Virtual>` stops as it does for a pause.
+  Start included (the original opens its pause menu on Start under the call for a Skylander, AH.11:
+  AG.76), and `Time<Virtual>` stops as it does for a pause.
 - The portal's alerts ([`alert.rs`](../../crates/guacamole/src/alert.rs), AG.29, AG.63, AG.73): too many
   Skylanders, too many magic items, a toy Giants can't use and the call for a Skylander once the hero
   comes off, each full screen and opaque, as the original hides the level behind its own (AG.6, AG.64),

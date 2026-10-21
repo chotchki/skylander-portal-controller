@@ -44,7 +44,7 @@ const END_GRACE: Duration = Duration::from_secs(2);
 const OPEN_WITHIN: Duration = Duration::from_secs(10);
 
 /// Over the portal screen, whose cards keep changing under it.
-const OVERLAY_Z: i32 = 1_000;
+pub(crate) const OVERLAY_Z: i32 = 1_000;
 
 /// The intro's video held back by this (`output_latency_ms` in settings).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]

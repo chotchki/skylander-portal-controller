@@ -853,6 +853,46 @@ mod tests {
         }
     }
 
+    /// The portal holding the level (AG.29): the frame it begins reads the
+    /// frame before, as a pause's does; from the next the hero reads nothing
+    /// and Start pauses nothing; once it ends the stick walks at once, and a
+    /// face held through it stays off him until let go and pressed again.
+    #[test]
+    fn the_portal_holding_the_level() {
+        let mut seat = walking(&[pushed(A, 0.0, 1.0)]);
+        let before = seat.step(&[pushed(A, 0.0, 1.0)]);
+        let first = seat.hold(&[holding(pushed(A, 1.0, 0.0), Face::South)]);
+        assert_eq!(
+            first, before,
+            "the frame the hold begins reads the frame before"
+        );
+        for frame in [
+            pushed(A, 1.0, 0.0),
+            pressing(
+                holding(pushed(A, 1.0, 0.0), Face::South),
+                GamepadButton::Start,
+            ),
+        ] {
+            assert_eq!(seat.hold(&[frame]), HeroPad::STILL);
+        }
+        assert_eq!(seat.pause(), None, "Start under the hold paused nothing");
+        let out = seat.step(&[holding(pushed(A, 1.0, 0.0), Face::South)]);
+        assert_eq!(
+            out.stick,
+            Stick::new(1.0, 0.0),
+            "the stick walks once it ends"
+        );
+        assert_eq!(
+            out.buttons, [false; 4],
+            "the face held through it stays off"
+        );
+        seat.step(&[pushed(A, 1.0, 0.0)]);
+        assert_eq!(
+            seat.step(&[holding(pad(A), Face::South)]).buttons,
+            [true, false, false, false]
+        );
+    }
+
     /// A press taken by a layer above stays off the hero until let go.
     #[test]
     fn a_swallowed_press_stays_off_until_let_go() {
