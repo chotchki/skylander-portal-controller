@@ -1140,6 +1140,15 @@ mod tests {
         assert_eq!((out.actions(), out.tapped()), ([false; 4], [false; 4]));
         let out = seat.step(&[hold(GamepadButton::South), pad(B)]);
         assert_eq!(out.actions(), [false; 4], "swallowed until let go");
+        // A resume tapped inside a frame (down and up, never held) is the
+        // layer's too, though nothing's left held to swallow.
+        seat.step(&[pad(A), pad(B)]);
+        seat.step(&[pressing(pad(A), GamepadButton::Start), pad(B)]);
+        let mut tap = pad(A);
+        tap.pressed.push(GamepadButton::South);
+        let out = seat.step(&[tap, pad(B)]);
+        assert_eq!(seat.pause(), None);
+        assert_eq!(out.tapped(), [false; 4], "the resume's tap");
     }
 
     /// AH.24's attack buttons on both 8BitDo variants through the router,
