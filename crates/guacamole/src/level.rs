@@ -40,10 +40,16 @@
 //! The first character placed takes the TV into it ([`crate::play`]): its
 //! camera shows the level ([`Level::show`]) and the hero's materials are lit
 //! with the level's ([`Level::light_also`]). The dev entry does without a
-//! hero: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build, the level covers
+//! hero: with `GUAC_LEVEL_VIEW` set in a `dev-tools` build, the level fills
 //! the TV once it's ready, drawn at AF's fresh-state camera by the
 //! remaster's camera into the TV's own target (the window, or the shots'
 //! image).
+//!
+//! Either way the level draws under the TV's UI (AG.50, [`tv_over_level`]):
+//! its camera comes first on the TV's target, the TV's own after it with the
+//! screen under the level hidden and nothing cleared in, so what TV UI shows
+//! while the level does (Start's overlay, the controller message, an intro)
+//! lands on the level, in `GlobalZIndex` order as anywhere else on the TV.
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -91,7 +97,7 @@ use crate::hero::{HeroBody, HeroSystems};
 use crate::motion::ReducedMotion;
 use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
-use crate::tv::{Redrawn, TvCamera};
+use crate::tv::{Redrawn, ScreenRoot, TvCamera};
 use crate::warm::Warm;
 
 /// Where a level's extract is: what the extraction sends once the level's
@@ -134,14 +140,29 @@ pub fn level_channel() -> (LevelSender, LevelFeed) {
 /// The render layer the level draws on: clear of the default one the TV's
 /// cameras see and of the turntables' (16 up).
 pub(crate) const LEVEL_LAYER: usize = 2;
-/// The level's camera (the dev view's, the walk's) draws after the TV's own
-/// (order 0), over it.
-pub(crate) const VIEW_ORDER: isize = 1;
-/// How it writes over the TV: replacing it. Bevy alpha-blends a second
-/// camera on a target by default, and the level's opaque parts write the
-/// alpha their maps hold, so the portal would show through them.
+/// The level's camera (the dev view's, the walk's) draws before the TV's own
+/// ([`crate::tv::TV_ORDER`]), under its UI (AG.50): at order 1 it covered Start's
+/// overlay and the controller message, so a paused level read as a hang.
+/// Clear of the turntables' -1 and -2 and the titles' -1, though those draw
+/// into images of their own.
+pub(crate) const VIEW_ORDER: isize = -3;
+/// How it writes onto the TV's target: replacing what's there. It's the
+/// first camera there, where Bevy would pick that write itself; named, it's
+/// one pipeline whatever the order, the one the start's pass compiles. The
+/// level's opaque parts write the alpha their maps hold, so a blend would
+/// let the target's last frame show through them.
 const VIEW_OUTPUT: CameraOutputMode = CameraOutputMode::Write {
     blend_state: Some(BlendState::REPLACE),
+    clear_color: ClearColorConfig::None,
+};
+/// How the TV's camera writes over a level output under it (AG.50): laid
+/// over, not replacing. bevy_ui blends each node over the last on a target
+/// the TV clears to no colour at all, so the target holds colours already
+/// weighted by their cover, which is what a premultiplied write expects;
+/// Bevy's own pick for a second camera (plain alpha blending) weighs them
+/// twice, a text edge at half cover landing at a quarter.
+pub(crate) const TV_OVER: CameraOutputMode = CameraOutputMode::Write {
+    blend_state: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
     clear_color: ClearColorConfig::None,
 };
 /// Texture and mesh bytes handed to the renderer a frame.
@@ -922,6 +943,11 @@ impl Plugin for LevelPlugin {
             .add_systems(
                 PostUpdate,
                 light_level.before(bevy::asset::AssetEventSystems),
+            )
+            .add_systems(
+                PostUpdate,
+                tv_over_level
+                    .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -1340,10 +1366,12 @@ fn stand_props(mut commands: Commands, mut level: ResMut<Level>, heroes: Query<&
 }
 
 /// The camera the level is drawn from into `target` at `order`: the
-/// remaster's at AF's fresh-state camera, writing over what's there
-/// ([`VIEW_OUTPUT`]). The dev entry's over the TV; the start's pass draws
-/// one under it ([`crate::prepare`]), so the output's pipeline for the TV's
-/// target and that write is compiled before the level first shows (AG.42).
+/// remaster's at AF's fresh-state camera, replacing what's there
+/// ([`VIEW_OUTPUT`]). The walk's and the dev entry's under the TV; the
+/// start's pass draws one under it too ([`crate::prepare`]), so the output's
+/// pipeline for the TV's target and that write, and the TV's own write over
+/// it ([`TV_OVER`]), are compiled before the level first shows (AG.42,
+/// AG.50).
 pub(crate) fn view_camera(target: RenderTarget, order: isize) -> impl Bundle {
     (
         remaster::camera(),
@@ -1356,11 +1384,125 @@ pub(crate) fn view_camera(target: RenderTarget, order: isize) -> impl Bundle {
         target,
         Projection::Perspective(fresh_state_projection()),
         fresh_state_transform(),
+        LevelOutput,
     )
 }
 
+/// Marks a camera writing the level's output onto a target
+/// ([`view_camera`]): the level's own, and the start's pass's stand-in.
+#[derive(Component, Debug, Default)]
+pub(crate) struct LevelOutput;
+
+/// The TV's UI over the level (AG.50; design decision 13: the level takes
+/// the cards' place on the TV, which keeps its join code): whenever a level
+/// output draws under the TV's camera on its target, the TV writes over it
+/// ([`TV_OVER`]); while the level itself shows there, the TV also clears to
+/// no colour and hides its screen (the sky, the portal's header and cards),
+/// so only TV UI shown on purpose lands on the level. Start's overlay and
+/// the controller message do ([`crate::pause`]), as an intro would; the
+/// level's small join code is AG.29's. Before the visibility pass, so the
+/// frame the level shows or goes draws the TV the right way.
+pub(crate) fn tv_over_level(
+    outputs: Query<(&Camera, Option<&RenderTarget>, Has<LevelCamera>), With<LevelOutput>>,
+    mut tv: Query<(&mut Camera, Option<&RenderTarget>), (With<TvCamera>, Without<LevelOutput>)>,
+    mut screens: Query<&mut Visibility, With<ScreenRoot>>,
+) {
+    let Ok((mut camera, target)) = tv.single_mut() else {
+        return;
+    };
+    let mut under = false;
+    let mut level = false;
+    for (output, at, is_level) in &outputs {
+        if output.is_active && output.order < camera.order && same_target(at, target) {
+            under = true;
+            level |= is_level;
+        }
+    }
+    let output = if under {
+        TV_OVER
+    } else {
+        CameraOutputMode::default()
+    };
+    if !same_output(&camera.output_mode, &output) {
+        camera.output_mode = output;
+    }
+    let clear = if level {
+        ClearColorConfig::Custom(Color::NONE)
+    } else {
+        ClearColorConfig::Default
+    };
+    if !same_clear(&camera.clear_color, &clear) {
+        camera.clear_color = clear;
+    }
+    let shown = if level {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut screen in &mut screens {
+        screen.set_if_neq(shown);
+    }
+}
+
+/// Whether UI drawn through the camera `ui` shows over the level drawn
+/// through the camera `level` (AG.50): both drawing, on one target, `ui`
+/// after it, cleared to no colour and laid over rather than replacing. The
+/// rule [`tv_over_level`] keeps for the TV; the mirror reports it.
+pub(crate) fn draws_over(
+    (ui, ui_target): (&Camera, Option<&RenderTarget>),
+    (level, level_target): (&Camera, Option<&RenderTarget>),
+) -> bool {
+    let clear = matches!(ui.clear_color, ClearColorConfig::Custom(c) if c.alpha() == 0.0);
+    let laid_over = match ui.output_mode {
+        CameraOutputMode::Write { blend_state, .. } => blend_state != Some(BlendState::REPLACE),
+        CameraOutputMode::Skip => false,
+    };
+    ui.is_active
+        && level.is_active
+        && ui.order > level.order
+        && same_target(ui_target, level_target)
+        && clear
+        && laid_over
+}
+
+/// One target, a camera without one on the primary window as Bevy has it.
+fn same_target(a: Option<&RenderTarget>, b: Option<&RenderTarget>) -> bool {
+    let normal = |t: Option<&RenderTarget>| {
+        t.cloned()
+            .unwrap_or_default()
+            .normalize(Some(Entity::PLACEHOLDER))
+    };
+    normal(a) == normal(b)
+}
+
+fn same_clear(a: &ClearColorConfig, b: &ClearColorConfig) -> bool {
+    match (a, b) {
+        (ClearColorConfig::Default, ClearColorConfig::Default)
+        | (ClearColorConfig::None, ClearColorConfig::None) => true,
+        (ClearColorConfig::Custom(a), ClearColorConfig::Custom(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn same_output(a: &CameraOutputMode, b: &CameraOutputMode) -> bool {
+    match (a, b) {
+        (CameraOutputMode::Skip, CameraOutputMode::Skip) => true,
+        (
+            CameraOutputMode::Write {
+                blend_state: a,
+                clear_color: ca,
+            },
+            CameraOutputMode::Write {
+                blend_state: b,
+                clear_color: cb,
+            },
+        ) => a == b && same_clear(ca, cb),
+        _ => false,
+    }
+}
+
 /// The dev entry: once the level is ready, the remaster's camera at AF's
-/// fresh-state camera, drawing the level over the TV into its target.
+/// fresh-state camera, drawing the level into the TV's target under its UI.
 fn show_level(
     mut commands: Commands,
     view: Res<LevelView>,
@@ -1458,6 +1600,7 @@ fn scroll_level(
 pub(crate) mod tests {
     use super::*;
     use crate::turntable::tests::{app, extract, identity};
+    use crate::tv::TV_ORDER;
     use crate::warm::PipelineWatch;
     use guac_formats::texture::{Format, Texture};
     use guac_ir::level::{
@@ -2588,6 +2731,215 @@ pub(crate) mod tests {
         assert!(why.starts_with("atmosphere.ron: "), "{why}");
     }
 
+    /// The TV's camera and its target, as [`draws_over`] takes them.
+    fn tv_camera(app: &mut App) -> (Camera, Option<RenderTarget>) {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(&Camera, Option<&RenderTarget>), With<TvCamera>>();
+        let (c, t) = q.single(world).unwrap();
+        (c.clone(), t.cloned())
+    }
+
+    fn camera_of(app: &App, camera: Entity) -> (Camera, Option<RenderTarget>) {
+        let e = app.world().entity(camera);
+        (
+            e.get::<Camera>().unwrap().clone(),
+            e.get::<RenderTarget>().cloned(),
+        )
+    }
+
+    fn over(
+        (ui, ui_at): &(Camera, Option<RenderTarget>),
+        (l, l_at): &(Camera, Option<RenderTarget>),
+    ) -> bool {
+        draws_over((ui, ui_at.as_ref()), (l, l_at.as_ref()))
+    }
+
+    fn writes(camera: &Camera) -> Option<Option<BlendState>> {
+        match camera.output_mode {
+            CameraOutputMode::Write { blend_state, .. } => Some(blend_state),
+            CameraOutputMode::Skip => None,
+        }
+    }
+
+    /// AG.50: while the level shows, the TV's camera comes after the level's
+    /// on one target, clears to no colour and lays its UI over the level,
+    /// its screen hidden, so Start's overlay and the controller message land
+    /// on the level; with the level gone, the TV is as it was. At AG.21's
+    /// order (the level's camera after the TV's, replacing it) it covered
+    /// them, and `draws_over` says so.
+    #[test]
+    fn the_tvs_ui_draws_over_the_level_and_its_screen_comes_back_after() {
+        use bevy::ecs::system::RunSystemOnce;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        app.insert_resource(LevelView(true));
+        app.world_mut().spawn((
+            Camera2d,
+            Camera {
+                order: TV_ORDER,
+                ..default()
+            },
+            TvCamera,
+        ));
+        let screen = app
+            .world_mut()
+            .spawn((ScreenRoot, Visibility::default()))
+            .id();
+        app.update();
+        let (tv, _) = tv_camera(&mut app);
+        assert_eq!(writes(&tv), Some(None), "alone, Bevy's own write");
+        assert!(matches!(tv.clear_color, ClearColorConfig::Default));
+
+        until(&mut app, &["shown"], |_| {});
+        app.update();
+        let camera = app.world().resource::<Level>().shown_through().unwrap();
+        let level = camera_of(&app, camera);
+        let tv = tv_camera(&mut app);
+        assert!(
+            level.0.order < tv.0.order,
+            "the level's camera under the TV's"
+        );
+        assert_eq!(VIEW_ORDER, level.0.order);
+        assert!(same_target(level.1.as_ref(), tv.1.as_ref()));
+        assert_eq!(
+            writes(&tv.0),
+            Some(Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING)),
+            "laid over the level"
+        );
+        assert!(matches!(tv.0.clear_color, ClearColorConfig::Custom(c) if c == Color::NONE));
+        assert!(over(&tv, &level), "the TV's UI over the level");
+        assert_eq!(
+            app.world().get::<Visibility>(screen),
+            Some(&Visibility::Hidden),
+            "the screen under the level hidden"
+        );
+
+        // AG.21's order: the level's camera after the TV's, replacing it.
+        let mut covered = level.clone();
+        covered.0.order = 1;
+        assert!(!over(&tv, &covered), "covered again");
+
+        // Gone (the dev entry off, or it shows the level again).
+        app.insert_resource(LevelView(false));
+        app.world_mut()
+            .run_system_once(move |mut commands: Commands, mut l: ResMut<Level>| {
+                l.hide(&mut commands, camera);
+                commands.entity(camera).despawn();
+            })
+            .unwrap();
+        app.update();
+        let (tv, _) = tv_camera(&mut app);
+        assert_eq!(writes(&tv), Some(None), "alone again");
+        assert!(matches!(tv.clear_color, ClearColorConfig::Default));
+        assert_eq!(
+            app.world().get::<Visibility>(screen),
+            Some(&Visibility::Inherited)
+        );
+    }
+
+    /// The start's pass draws a level output under the TV with nothing of
+    /// the level showing: the TV writes over it as it does over the level
+    /// (the pipeline the pass compiles for it), its screen opaque and up.
+    #[test]
+    fn under_the_passs_output_the_tv_writes_as_over_the_level_and_shows_its_screen() {
+        let mut app = App::new();
+        app.add_systems(PostUpdate, tv_over_level);
+        let tv = app
+            .world_mut()
+            .spawn((Camera::default(), RenderTarget::default(), TvCamera))
+            .id();
+        let screen = app
+            .world_mut()
+            .spawn((ScreenRoot, Visibility::default()))
+            .id();
+        let output = app
+            .world_mut()
+            .spawn(view_camera(RenderTarget::default(), -10))
+            .id();
+        app.update();
+        let c = app.world().get::<Camera>(tv).unwrap();
+        assert_eq!(
+            writes(c),
+            Some(Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING))
+        );
+        assert!(matches!(c.clear_color, ClearColorConfig::Default));
+        assert_eq!(
+            app.world().get::<Visibility>(screen),
+            Some(&Visibility::Inherited)
+        );
+        // Over the TV, switched off, or on another target, it's nothing
+        // under the TV.
+        app.world_mut().get_mut::<Camera>(output).unwrap().order = 1;
+        app.update();
+        assert_eq!(writes(app.world().get::<Camera>(tv).unwrap()), Some(None));
+        app.world_mut().get_mut::<Camera>(output).unwrap().order = -10;
+        app.world_mut().get_mut::<Camera>(output).unwrap().is_active = false;
+        app.update();
+        assert_eq!(
+            writes(app.world().get::<Camera>(tv).unwrap()),
+            Some(None),
+            "switched off"
+        );
+        app.world_mut().get_mut::<Camera>(output).unwrap().is_active = true;
+        app.update();
+        assert_eq!(
+            writes(app.world().get::<Camera>(tv).unwrap()),
+            Some(Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING)),
+            "drawing again"
+        );
+        app.world_mut()
+            .entity_mut(output)
+            .insert(RenderTarget::Image(Handle::default().into()));
+        app.update();
+        assert_eq!(writes(app.world().get::<Camera>(tv).unwrap()), Some(None));
+    }
+
+    /// The rule the mirror reports: UI shows over the level only drawn
+    /// after it, on its target, cleared to no colour and laid over.
+    #[test]
+    fn ui_draws_over_the_level_only_after_it_on_its_target_laid_over_nothing() {
+        let level = (
+            Camera {
+                order: VIEW_ORDER,
+                output_mode: VIEW_OUTPUT,
+                ..default()
+            },
+            None,
+        );
+        let tv = (
+            Camera {
+                order: TV_ORDER,
+                clear_color: ClearColorConfig::Custom(Color::NONE),
+                output_mode: TV_OVER,
+                ..default()
+            },
+            Some(RenderTarget::default()),
+        );
+        assert!(over(&tv, &level));
+        let with = |f: &dyn Fn(&mut Camera)| {
+            let mut t = tv.clone();
+            f(&mut t.0);
+            over(&t, &level)
+        };
+        assert!(!with(&|c| c.order = VIEW_ORDER - 1), "drawn first");
+        assert!(
+            !with(&|c| c.clear_color = ClearColorConfig::Default),
+            "an opaque clear"
+        );
+        assert!(!with(&|c| c.output_mode = VIEW_OUTPUT), "replacing");
+        assert!(!with(&|c| c.is_active = false));
+        assert!(
+            with(&|c| c.output_mode = CameraOutputMode::default()),
+            "Bevy's own write after another camera blends"
+        );
+        let elsewhere = (
+            tv.0.clone(),
+            Some(RenderTarget::Image(Handle::default().into())),
+        );
+        assert!(!over(&elsewhere, &level), "another target");
+    }
+
     /// The dev entry: once ready, the level shows from AF's fresh-state
     /// camera over the TV, lit for it; moved, the camera relights every
     /// material from where it stands. Under reduced motion a scroll holds
@@ -2656,7 +3008,7 @@ pub(crate) mod tests {
                     ..
                 }
             ),
-            "it replaces the TV, not blends over it"
+            "it replaces what's on the target, not blends over it"
         );
         assert_eq!(c.get::<Transform>(), Some(&fresh_state_transform()));
         assert_eq!(

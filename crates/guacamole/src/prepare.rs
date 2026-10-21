@@ -19,8 +19,10 @@
 //! - a card's UI pipelines: a card drawn offscreen by a camera of its own
 //!   ([`crate::tv::spawn_sample_card`]);
 //! - the level camera's output to the TV's target, with the write the level
-//!   draws over the TV with ([`crate::level::view_camera`]), drawn under
-//!   the TV's own so it shows nothing;
+//!   draws with ([`crate::level::view_camera`]), under the TV's own as the
+//!   level is, so the TV writes over it as it does over the level
+//!   ([`crate::level::TV_OVER`], AG.50, the write its overlays reach the TV
+//!   by) and the pass shows nothing of it;
 //! - then, those extras gone, the TV's own output alone for
 //!   [`EXTRA_FRAMES`] frames, the write it takes once nothing sits under it
 //!   (AE.30).
@@ -72,9 +74,10 @@ const SLOW: Duration = Duration::from_millis(50);
 /// Frames the offscreen card and the level's output stay up (the card's
 /// layout, its images and its first draw), and then frames the TV draws
 /// alone before the pass lets it go: with the output camera under it the
-/// TV's own output is a blended write, and alone it's another pipeline
-/// (Bevy picks the write by a camera's place on its target), which would
-/// otherwise compile in the first frame after the pass (AE.30).
+/// TV's own output is the write it lays over the level with
+/// ([`crate::level::TV_OVER`]), and alone it's Bevy's replacing one,
+/// another pipeline, which would otherwise compile in the first frame after
+/// the pass (AE.30).
 const EXTRA_FRAMES: u32 = 4;
 
 /// How long the pass waits on pipelines it didn't ask for (the card's, the
@@ -459,9 +462,15 @@ mod tests {
         let mut app = app(extract(tmp.path()));
         app.insert_resource(Warm::new(true));
         app.insert_resource(Prepare::new(true));
-        app.add_systems(Update, (begin, step).chain().after(TurntableSystems));
+        app.add_systems(Update, (begin, step).chain().after(TurntableSystems))
+            .add_systems(PostUpdate, level::tv_over_level);
         // A TV camera to read the target off.
-        app.world_mut().spawn((Camera2d, TvCamera));
+        let tv = app.world_mut().spawn((Camera2d, TvCamera)).id();
+        // How the TV writes onto its target: Bevy's own pick when alone.
+        let writes = |app: &App| match app.world().get::<Camera>(tv).unwrap().output_mode {
+            bevy::camera::CameraOutputMode::Write { blend_state, .. } => blend_state,
+            bevy::camera::CameraOutputMode::Skip => panic!("the TV skips its write"),
+        };
         app.update();
         let total = census::turntable_keys().len() + census::level_keys().len();
         {
@@ -470,6 +479,13 @@ mod tests {
             assert_eq!(p.report().keys, total);
             assert_eq!(p.extras.len(), 1, "the output camera (no TV assets here)");
         }
+        // The level's output under it: the TV writes over it as it will over
+        // the level (AG.50), so that's the pipeline the pass compiles.
+        let over = match level::TV_OVER {
+            bevy::camera::CameraOutputMode::Write { blend_state, .. } => blend_state,
+            bevy::camera::CameraOutputMode::Skip => unreachable!(),
+        };
+        assert_eq!(writes(&app), over);
         // Quick frames, nothing compiled: the batches grow and the pass
         // holds the TV.
         for _ in 0..20 {
@@ -492,6 +508,7 @@ mod tests {
             if p.preparing() && p.extras.is_empty() {
                 alone += 1;
                 assert!(app.world().get_entity(output).is_err(), "the output gone");
+                assert_eq!(writes(&app), None, "alone, its own write");
             }
         }
         assert!(!compiling(&app));

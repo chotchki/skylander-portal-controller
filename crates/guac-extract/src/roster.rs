@@ -38,6 +38,10 @@ pub const COLLECTION: &str = "misc/ui_collection_champions.bld";
 pub const LEVEL: &str = "level.bld";
 /// Where the portraits go in the extract, one `<figure id>.png` each.
 pub const PORTRAIT_DIR: &str = "portraits";
+/// The extract-wide part ([`crate::PARTS`]) recording the portraits once
+/// they're written top row first (AE.31), so an extract whose portraits went
+/// in upside down resumes for them.
+pub const PORTRAITS: &str = "portraits";
 
 /// A figure's portrait as the disc holds it: its file in the extract and the
 /// sprite's image, untiled.
@@ -229,14 +233,15 @@ pub fn base_names(roster: &Roster) -> BTreeMap<u32, String> {
 }
 
 /// `portrait` as the PNG the phone and the TV show: level 0 decoded to
-/// straight 8-bit RGBA.
+/// straight 8-bit RGBA, top row first. The disc stores it bottom row first,
+/// so its stored order is upside down (AE.31).
 pub fn png(portrait: &Portrait) -> Result<Vec<u8>> {
     let refused = |e: &dyn ToString| ExtractError::RosterUnreadable {
         path: PathBuf::from(&portrait.path),
         reason: e.to_string(),
     };
     let t = &portrait.texture;
-    let rgba = t.rgba8(0).map_err(|e| refused(&e))?;
+    let rgba = t.rgba8_top_down(0).map_err(|e| refused(&e))?;
     let mut out = Vec::new();
     let mut encoder = ::png::Encoder::new(&mut out, t.width, t.height);
     encoder.set_color(::png::ColorType::Rgba);
@@ -327,6 +332,43 @@ mod tests {
         assert!(e.to_string().contains("no English pack"), "{e}");
     }
 
+    /// One opaque BC3 block, every texel the RGB565 colour `c0`.
+    fn bc3_block(c0: u16) -> Vec<u8> {
+        let mut block = vec![255, 255, 0, 0, 0, 0, 0, 0];
+        block.extend(c0.to_le_bytes());
+        block.extend([0; 6]);
+        block
+    }
+
+    #[test]
+    fn a_portraits_png_is_the_right_way_up() {
+        // Stored as the disc stores every image, bottom row first (AE.31):
+        // the first block row (red) is the portrait's foot, the second
+        // (blue) its head, so the PNG opens on blue.
+        let portrait = Portrait {
+            path: "portraits/000009-0000.png".into(),
+            texture: Texture {
+                format: guac_formats::texture::Format::Bc3Unorm,
+                width: 4,
+                height: 8,
+                levels: vec![[bc3_block(0xF800), bc3_block(0x001F)].concat()],
+            },
+        };
+        let bytes = png(&portrait).unwrap();
+        let mut reader = ::png::Decoder::new(std::io::Cursor::new(&bytes))
+            .read_info()
+            .unwrap();
+        let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut rgba).unwrap();
+        assert_eq!((info.width, info.height), (4, 8));
+        let row = |y: usize| rgba[y * 16..][..16].to_vec();
+        let (red, blue) = ([255, 0, 0, 255], [0, 0, 255, 255]);
+        for y in 0..4 {
+            assert_eq!(row(y), blue.repeat(4), "row {y}: the head on top");
+            assert_eq!(row(7 - y), red.repeat(4), "row {}: the foot below", 7 - y);
+        }
+    }
+
     #[test]
     fn every_portrait_comes_with_its_image_and_decodes_to_a_png() {
         let (r, portraits) = sources().roster_and_portraits(identity()).unwrap();
@@ -351,7 +393,7 @@ mod tests {
                 "{}",
                 p.path
             );
-            assert_eq!(rgba, p.texture.rgba8(0).unwrap(), "{}", p.path);
+            assert_eq!(rgba, p.texture.rgba8_top_down(0).unwrap(), "{}", p.path);
         }
         // A level that won't decode names the portrait.
         let mut broken = portraits[0].clone();

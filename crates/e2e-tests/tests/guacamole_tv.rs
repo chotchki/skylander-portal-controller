@@ -794,7 +794,8 @@ fn hero_at(snap: &Value) -> [f64; 3] {
 /// holds him 5 mm off it (his 0.8644 m sphere, the triangles' 0.05 m).
 /// AG.30: he stands in his idle, runs pushed along the wall at full stick
 /// (his walk at 21.5 ft/s, the run at 102.4 %), every step's run share the
-/// speed's that step, and comes back to his idle let go.
+/// speed's that step, and comes back to his idle let go. AG.50: the
+/// controller message and Start's overlay draw over the level's camera.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn placing_a_character_enters_the_level_at_its_start() {
@@ -837,6 +838,17 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     assert_eq!(snap["input"]["pause"], "controller");
     assert_eq!(snap["input"]["layer"], "level");
     assert_eq!(snap["level"]["shown"], true);
+    // Its message over the level, not under it (AG.50).
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["input"]["overlay"]["kind"] == "controller"
+    })
+    .await
+    .expect("the controller message");
+    assert_eq!(
+        snap["input"]["overlay"]["over_level"], true,
+        "{}",
+        snap["input"]
+    );
     assert_eq!(snap["screen"], "Portal");
     let hero = &snap["hero"];
     assert_eq!(hero["load_file"], "009_Eruptor", "{hero}");
@@ -885,6 +897,30 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     })
     .await
     .expect("the pad takes him over");
+    // Start pauses under its overlay, over the level too; the bottom button
+    // plays on.
+    pad_tv(&server.url, json!({"pad": 0, "press": "start"}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["input"]["overlay"]["kind"] == "paused"
+    })
+    .await
+    .expect("Start's overlay");
+    assert_eq!(snap["mode"], "paused");
+    assert_eq!(
+        snap["input"]["overlay"]["over_level"], true,
+        "{}",
+        snap["input"]
+    );
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level" && s["input"]["overlay"].is_null()
+    })
+    .await
+    .expect("the bottom button plays on");
     pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 1.0]}))
         .await
         .unwrap();

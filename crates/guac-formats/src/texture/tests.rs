@@ -545,6 +545,47 @@ fn blocks_land_in_rows_and_partial_blocks_crop() {
 }
 
 #[test]
+fn samplers_keep_the_stored_rows_and_an_image_file_gets_them_top_down() {
+    // 4x8 stored as the disc stores it, bottom up (AE.31): the first block
+    // row (red) is the image's foot, the second (blue) its head.
+    let level = [bc1(0xF800, 0, [0; 16]), bc1(0x001F, 0, [0; 16])].concat();
+    let t = texture(Format::Bc1RgbaUnorm, 4, 8, level.clone());
+    let (red, blue) = ([255, 0, 0, 255], [0, 0, 255, 255]);
+    // What a sampler reads at v = 0 is the first stored row, as on RSX: the
+    // GPU lanes' texels and the KTX2 models and levels sample keep it first.
+    let stored = t.rgba8(0).unwrap();
+    assert_eq!([px(&stored, 4, 0, 0), px(&stored, 4, 0, 7)], [red, blue]);
+    let file = t.to_ktx2();
+    let r = ktx2::Reader::new(&file[..]).unwrap();
+    assert_eq!(r.levels().next().unwrap().data, &level[..]);
+    // The image file's top row is the last stored row, each row whole.
+    let image = t.rgba8_top_down(0).unwrap();
+    assert_eq!([px(&image, 4, 0, 0), px(&image, 4, 0, 7)], [blue, red]);
+    let rows = |rgba: &[u8]| rgba.as_chunks::<16>().0.to_vec();
+    let mut reversed = rows(&stored);
+    reversed.reverse();
+    assert_eq!(rows(&image), reversed);
+    // A mip is reversed at its own width: red on stored row 0, blue below.
+    let mut rows_differ = [1u8; 16];
+    rows_differ[..4].fill(0);
+    let t = Texture {
+        format: Format::Bc1RgbaUnorm,
+        width: 8,
+        height: 8,
+        levels: vec![vec![0; 32], bc1(0xF800, 0x001F, rows_differ)],
+    };
+    let image = t.rgba8_top_down(1).unwrap();
+    assert_eq!(image.len(), 4 * 4 * 4);
+    assert_eq!([px(&image, 4, 3, 0), px(&image, 4, 3, 3)], [blue, red]);
+    // L8 too, row for row.
+    let t = texture(Format::R8Unorm, 3, 2, vec![0, 128, 255, 10, 20, 30]);
+    let image = t.rgba8_top_down(0).unwrap();
+    let grey: Vec<u8> = image.as_chunks::<4>().0.iter().map(|p| p[0]).collect();
+    assert_eq!(grey, [10, 20, 30, 0, 128, 255]);
+    assert_eq!(t.rgba8_top_down(1).unwrap_err().field, "levels");
+}
+
+#[test]
 fn l8_reads_as_grey_and_short_levels_are_refused() {
     let t = texture(Format::R8Unorm, 3, 1, vec![0, 128, 255]);
     assert_eq!(

@@ -819,6 +819,15 @@ images his captured frames bind is exactly what RSX was given, level for level (
   identical rows after the unswizzle and not as stored.
 - Blocks are already in BC byte order, so the endian fix is the identity: read little-endian, 18,101,440
   of 18,101,440 DXT5 colour blocks with distinct endpoints are four-colour.
+- Rows are stored bottom up, OpenGL's lower-left origin (AE.31). On every image whose way up shows (the 123
+  portraits, the PS3 triangle glyph, the level-up arrow, the level-select shots with their sky under the
+  ground) the first stored row is the bottom, and the left and right arrows still point left and right, so
+  it's a flip, not a turn. The game's own frame agrees: on an oracle screenshot its HUD draws Eruptor's
+  portrait with the last stored row on top (the decode reversed correlates 0.992 with it, as stored 0.668,
+  AE.31's review). RSX samples that first row at v = 0 (AC.15 and AC.21 below bind the stored bytes
+  unchanged, his portrait among them), so KTX2 keeps the stored order and the disc's UVs read what the
+  original does. Only an image file reverses the rows: the portraits' PNGs, whose stored order put every
+  figure on the phone upside down until AE.31.
 - Confirmed in the June savestate's RSX state: 1,092 resident `igImage2` are byte-identical to their file
   blocks and equal level for level after our untile, and 22 texture-unit states over 18 `_tile` DXT images
   (seen across the ring's draws, on units 0 and 1 only) show the linear bit CLEAR (swizzled) with kind,
@@ -1989,6 +1998,11 @@ press:
   screen hears nothing. Otherwise the screen hears `TvInput`s. The level shows once the first figure
   placed that walks has entered it ([`play.rs`](../../crates/guacamole/src/play.rs), AG.21), and the
   hero's fixed step reads the walking pad's stick against the following camera's view.
+- The level draws under the TV's UI (AG.50, `level::tv_over_level`): its camera first on the TV's target,
+  the TV's after it, which while the level shows clears to no colour, hides its screen and lays its UI
+  over the level with a premultiplied write (`level::TV_OVER`). So Start's overlay, the controller
+  message and an intro land on the level in `GlobalZIndex` order, and the start's pass, whose stand-in
+  level output sits under the TV the same way, compiles that write before the first screen.
 - Mapping is positional, as Controllers has it: South activates (`act_on_input` triggers `Activate` on the
   focused button and holds `Pressed` on it while South is down), East is Back (it closes the error
   screens), Mode is Home (nothing until Open question 1 is answered), and the D-pad, the arrows and the

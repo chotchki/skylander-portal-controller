@@ -266,6 +266,10 @@ impl BandShape {
 #[derive(Component, Debug)]
 pub(crate) struct TvCamera;
 
+/// The TV camera's order: last on its target, so its UI lands over the level
+/// drawn under it ([`crate::level::VIEW_ORDER`], AG.50).
+pub(crate) const TV_ORDER: isize = 0;
+
 /// Marks a screen's root node, spawned when its [`TvState`] is entered and
 /// despawned with everything under it when it's left.
 #[derive(Component)]
@@ -285,8 +289,12 @@ pub(crate) enum Redrawn {
     Text,
     /// A choice's focus look turned on or off (`look`).
     Focus,
-    /// The level came up over the TV (the dev entry, AG.19).
+    /// The level came up under the TV's UI (the dev entry, AG.19; the walk,
+    /// AG.21).
     Level,
+    /// The level's overlay (Start's, the controller message) came or went
+    /// (AG.50).
+    Overlay,
 }
 
 /// The `Update` systems that redraw part of a screen in place.
@@ -497,7 +505,15 @@ fn tv_assets(world: &mut World) -> TvAssets {
 /// The default UI camera by name, so no camera added later (a title's, AE's
 /// 3D one) can take the TV's UI.
 fn spawn_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, TvCamera, IsDefaultUiCamera));
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: TV_ORDER,
+            ..default()
+        },
+        TvCamera,
+        IsDefaultUiCamera,
+    ));
 }
 
 /// The state follows `Current`'s screen, which `poll_status` sets from
@@ -865,7 +881,7 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
                 report.0 = REPORT_AFTER_FRAMES;
             }
             Redrawn::Screen(_) => report.0 = 0,
-            Redrawn::Text | Redrawn::Focus | Redrawn::Level => {}
+            Redrawn::Text | Redrawn::Focus | Redrawn::Level | Redrawn::Overlay => {}
         }
     }
 }
@@ -1932,6 +1948,45 @@ mod tests {
             .add_systems(Update, click_or_beat_closes);
         app.update();
         app.should_exit().is_some()
+    }
+
+    /// AE.31: the extract's portrait through the card's loader keeps its
+    /// rows, so a portrait the disc stores bottom row first reaches the card
+    /// with its head on top.
+    #[test]
+    fn a_cards_portrait_is_the_right_way_up() {
+        use guac_extract::roster::{Portrait, png};
+        use guac_formats::texture::{Format, Texture};
+        // One opaque BC3 block, every texel the RGB565 colour `c0`.
+        let block = |c0: u16| {
+            let mut b = vec![255, 255, 0, 0, 0, 0, 0, 0];
+            b.extend(c0.to_le_bytes());
+            b.extend([0; 6]);
+            b
+        };
+        // Stored as the disc stores it: red, first, is the foot; blue the head.
+        let portrait = Portrait {
+            path: "portraits/000009-0000.png".into(),
+            texture: Texture {
+                format: Format::Bc3Unorm,
+                width: 4,
+                height: 8,
+                levels: vec![[block(0xF800), block(0x001F)].concat()],
+            },
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("000009-0000.png");
+        std::fs::write(&path, png(&portrait).unwrap()).unwrap();
+        let mut images = Assets::<Image>::default();
+        let handle = Portraits::default()
+            .get(&path, &mut images)
+            .expect("the portrait loads");
+        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        assert_eq!(data.len(), 4 * 8 * 4);
+        for x in 0..4 {
+            assert_eq!(data[x * 4..][..4], [0, 0, 255, 255], "top row, x {x}");
+            assert_eq!(data[(7 * 4 + x) * 4..][..4], [255, 0, 0, 255], "bottom row");
+        }
     }
 
     #[test]

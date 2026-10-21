@@ -18,8 +18,10 @@
 //!   chain, no triggers ([`crate::hero`]); the level's input layer takes
 //!   the pads ([`crate::pad`]). The camera is the level's
 //!   ([`crate::level::view_camera`]: its output onto the TV's target with
-//!   the replacing write the start's pass compiled, AG.44), so the level
-//!   covers the whole TV.
+//!   the replacing write the start's pass compiled, AG.44), first on the
+//!   target, so the level fills the TV under its UI
+//!   ([`crate::level::tv_over_level`], AG.50): the portal view hidden,
+//!   Start's overlay and the controller message laid over the level.
 //! - He's drawn in the level's lights and fog without its point light
 //!   ([`guacamole::level_scene::hero_scene`]), so his keys are the ones the
 //!   start's pass compiled from the census for his card; any that aren't
@@ -30,7 +32,8 @@
 //! The TV leaves the level when it leaves the portal view (the game
 //! quit, a server error) or the level gives way to another load. What a
 //! removal, a second character, an item or an intro does once the level
-//! shows is AG.29's.
+//! shows is AG.29's; an intro that plays meanwhile shows over the level, as
+//! TV UI does since AG.50.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -1062,7 +1065,7 @@ mod tests {
         // Avian's plugins finish building here, as `App::run` would.
         app.finish();
         app.cleanup();
-        app.world_mut().spawn(TvCamera);
+        app.world_mut().spawn((Camera2d, TvCamera));
         let (tx, feed) = level_channel();
         app.insert_resource(feed);
         (app, tx)
@@ -1124,9 +1127,9 @@ mod tests {
 
     /// AG.21: placing Eruptor, the level loaded, takes the TV into it: the
     /// level shows through the following camera on the TV's target with the
-    /// level's replacing write, the pads go to the level's layer, and the
-    /// first pad walks him against the camera's view until the wall stops
-    /// him.
+    /// level's replacing write, under the TV's UI (AG.50), the pads go to the
+    /// level's layer, and the first pad walks him against the camera's view
+    /// until the wall stops him.
     #[test]
     fn a_character_placed_enters() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1157,6 +1160,19 @@ mod tests {
             entity.get::<RenderLayers>(),
             Some(&RenderLayers::layer(LEVEL_LAYER))
         );
+        // The TV's UI over it: its camera after the level's on one target,
+        // laid over it, so Start's overlay and the controller message show.
+        let level_target = entity.get::<RenderTarget>().cloned();
+        let c = c.clone();
+        let mut tv = app
+            .world_mut()
+            .query_filtered::<(&Camera, Option<&RenderTarget>), With<TvCamera>>();
+        let (tv, tv_target) = tv.single(app.world()).unwrap();
+        assert!(c.order < tv.order, "{} under {}", c.order, tv.order);
+        assert!(crate::level::draws_over(
+            (tv, tv_target),
+            (&c, level_target.as_ref())
+        ));
 
         // The first pad, pushed forward: along the view's 15° until the
         // wall 6 m ahead along +z holds him 5 mm off it.
