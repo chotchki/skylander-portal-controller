@@ -219,6 +219,11 @@ checks everything else.
   Nothing flows back to the original games or to RPCS3.
 - The phone can edit a figure's progress (level and gold, plus reset to fresh), which the original never
   offered. It edits rows in the store, not a file.
+- At the cap a figure's experience stays at 96,500 and wherever the phone or the TV shows its level or
+  experience it reads MAX, as the later games show it (chotchki, 2026-10-21: "show 'MAX' when the cap is
+  reached"). Giants keeps counting past the cap on the toy and never takes it back (a Restart Chapter, the
+  save loaded again and the figure taken off and put back all kept 96,506-96,508, AH.52), and shows MAX
+  only on its HUD's experience bar beside "Level 15".
 - Story saves belong to profiles: one save per profile per game and no slot picker. The profile that
   starts the game plays on its own save.
 - Trophies become per-profile achievements stored with the profile instead of PSN trophies. Names and
@@ -1571,8 +1576,9 @@ drawn) boots only on the `09d602fd5` copy (AF.6 read PINE in it); every savestat
   with the horizons above and chotchki wants it.
 - A per-frame state stream (P9) and asset loads with the guest's return address (FSTRACE) wait for the
   rungs that need them; PINE already covers bulk peeks, so no MEMSNAP verb.
-- A second player in play: port 1 reads every flip (AF.7), but no run has put a second figure in a scene
-  (AI's).
+- A second player measured in play: port 1 reads every flip (AF.7), and AG.6 joined one (a second figure
+  on the portal holds single-player play under "too many Skylanders" until pad 1's South joins it), but
+  no run has measured co-op itself (AL's, AI's).
 - Windows: the HTPC's oracle build, PINE over TCP and its divergence runs are the Windows/HTPC bring-up's
   ([`openspec/backlog.md`](../../openspec/backlog.md)).
 
@@ -1997,7 +2003,21 @@ press:
   AG.20: the first pad connected walks the hero, Start pauses, a lost pad waits for a press) and the
   screen hears nothing. Otherwise the screen hears `TvInput`s. The level shows once the first figure
   placed that walks has entered it ([`play.rs`](../../crates/guacamole/src/play.rs), AG.21), and the
-  hero's fixed step reads the walking pad's stick against the following camera's view.
+  hero's fixed step reads the walking pad's stick against the following camera's view. While the portal
+  holds the level (AG.29: a portal alert, or no hero in it) the layer keeps the pads from everyone,
+  Start included (the original opens its pause menu on Start under the call for a Skylander, AH.11:
+  AG.76), and `Time<Virtual>` stops as it does for a pause: no script step runs, and no attack pressed
+  before or under the hold reaches the hero's scripts after it (AH.24's attacks; past the hold's first
+  frame `HeroActions` lets them go). The hero taken off takes his scripts with him: the run is installed
+  again from the level's part, and the hero who comes in where he stood joins it as the first did, a
+  stand-in for the original's own swap that holds while his are the only scripts the TV runs (the
+  backlog's hero-swap line).
+- The portal's alerts ([`alert.rs`](../../crates/guacamole/src/alert.rs), AG.29, AG.63, AG.73): too many
+  Skylanders, too many magic items, a toy Giants can't use and the call for a Skylander once the hero
+  comes off, each full screen and opaque, as the original hides the level behind its own (AG.6, AG.64),
+  ruled by `play::judge` off the extract's roster. TV UI at 940, over the pause overlays' 900; the
+  small join code stands in the corner at 960 whenever the level or an alert covers the portal view's
+  header, so another kid can still join; an intro's 1,000 stays on top.
 - The level draws under the TV's UI (AG.50, `level::tv_over_level`): its camera first on the TV's target,
   the TV's after it, which while the level shows clears to no colour, hides its screen and lays its UI
   over the level with a premultiplied write (`level::TV_OVER`). So Start's overlay, the controller

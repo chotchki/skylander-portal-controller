@@ -333,7 +333,8 @@ pub fn router(state: Arc<AppState>, _phone_dist: std::path::PathBuf) -> Router {
             .route("/api/_test/layout/:profile_id", get(layout_testhook))
             .route("/api/_test/fire_kaos_taunt", post(fire_kaos_taunt_testhook))
             .route("/api/_test/fire_kaos_swap", post(fire_kaos_swap_testhook))
-            .route("/api/_test/fire_takeover", post(fire_takeover_testhook));
+            .route("/api/_test/fire_takeover", post(fire_takeover_testhook))
+            .route("/api/_test/foreign_figure", post(foreign_figure_testhook));
     }
 
     // Static phone SPA (PLAN 7.1). Serves out of the embedded
@@ -1528,6 +1529,50 @@ enum InjectLoadOutcome {
     FileInUse { message: Option<String> },
     QtModal { message: String },
     Timeout,
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Deserialize)]
+struct ForeignFigureBody {
+    figure_id: FigureId,
+    name: String,
+}
+
+/// `POST /api/_test/foreign_figure` (`{"figure_id": "0001c2-0000", "name":
+/// "Fryno"}`): lists a figure from a later game beside the roster's, so a
+/// phone can place a toy Giants can't use (openspec AG.73); guacamole's
+/// catalogue is the disc's roster, which holds none. 202 once listed, 400
+/// for an id that isn't a toy type and variant, 409 for one already listed.
+/// The list a roster landing publishes later replaces it.
+#[cfg(feature = "test-hooks")]
+async fn foreign_figure_testhook(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<ForeignFigureBody>,
+) -> Response {
+    if body.figure_id.subtype_parts().is_none() {
+        return (StatusCode::BAD_REQUEST, "not a toy type + variant id").into_response();
+    }
+    let figure = skylander_core::Figure {
+        id: body.figure_id.clone(),
+        canonical_name: body.name.clone(),
+        variant_group: body.name,
+        variant_tag: "base".into(),
+        game: skylander_core::GameOfOrigin::SwapForce,
+        element: None,
+        category: skylander_core::Category::Figure,
+        vehicle_terrain: None,
+        sky_path: std::path::PathBuf::new(),
+        element_icon_path: None,
+        tag_identity: None,
+    };
+    match state.figures.now().with_foreign(figure) {
+        Some(set) => {
+            state.figures.publish(set);
+            info!(figure_id = %body.figure_id, "test hook: a foreign figure listed");
+            (StatusCode::ACCEPTED, "listed").into_response()
+        }
+        None => (StatusCode::CONFLICT, "already listed").into_response(),
+    }
 }
 
 #[cfg(feature = "test-hooks")]

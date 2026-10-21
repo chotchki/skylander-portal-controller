@@ -7,6 +7,7 @@
 //! Threading: the main thread runs Bevy; `guac_server::boot` runs the server
 //! and driver worker on its own tokio thread.
 
+mod alert;
 mod card_motion;
 mod cards;
 mod cli;
@@ -407,6 +408,7 @@ fn run_tv(
             intro_player::IntroPlugin,
             physics::SeamPlugin,
             play::PlayPlugin,
+            alert::AlertPlugin,
             progress::ProgressPlugin,
             hero_scripts::HeroScriptsPlugin,
         ));

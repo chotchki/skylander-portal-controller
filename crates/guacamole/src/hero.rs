@@ -120,6 +120,14 @@ impl HeroActions {
         self.latched = [false; 4];
         out
     }
+
+    /// The portal holds the level past its first frame (AG.29): nothing
+    /// held or pressed before it is kept for a step after it, so no attack
+    /// reaches the scripts from under an alert, however few steps its first
+    /// frame ran.
+    pub(crate) fn release(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// A hero whose own scripts run (AH.24): his step is the engine's alone, his
@@ -899,7 +907,7 @@ mod tests {
             }
             ran += 1;
         }
-        assert_eq!(ran, 16);
+        assert_eq!(ran, 17);
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 

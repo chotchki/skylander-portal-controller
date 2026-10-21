@@ -44,7 +44,7 @@ const END_GRACE: Duration = Duration::from_secs(2);
 const OPEN_WITHIN: Duration = Duration::from_secs(10);
 
 /// Over the portal screen, whose cards keep changing under it.
-const OVERLAY_Z: i32 = 1_000;
+pub(crate) const OVERLAY_Z: i32 = 1_000;
 
 /// The intro's video held back by this (`output_latency_ms` in settings).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,19 +265,22 @@ pub(crate) fn apply(queue: &mut ResMut<IntroQueue>, event: IntroEvent) {
 
 /// Placements and removals into the queue; a skip comes from the input
 /// router (`input.rs`). A placement made before the extract is ready has no
-/// movie, so it stays a card.
+/// movie, so it stays a card, and one made once the level has started plays
+/// none (character-intros, AG.6: the original plays no intro in gameplay).
 fn queue_intros(
     mut heard: MessageReader<PortalChanged>,
     current: Option<Res<Current>>,
     library: Option<Res<IntroLibrary>>,
+    play: Option<Res<crate::play::Play>>,
     mut queue: ResMut<IntroQueue>,
 ) {
+    let started = play.is_some_and(|p| p.started());
     for PortalChanged(change) in heard.read() {
         let event = match change {
             PortalChange::Placed { slot, placement } => IntroEvent::Placed {
                 slot: *slot,
                 figure_id: placement.figure_id.as_str().to_string(),
-                movie: intro::movie_for(library.as_deref(), placement),
+                movie: intro::movie_for(library.as_deref(), placement).filter(|_| !started),
             },
             PortalChange::Cleared { slot } => IntroEvent::Cleared { slot: *slot },
         };
@@ -911,6 +914,34 @@ mod tests {
             assert_eq!(shot.cards.len(), 1);
             assert_eq!(shot.cards[0].figure_id, "000009-0000");
             assert!(shot.intro_queue.is_empty());
+        }
+
+        /// character-intros (AG.6, AG.29): once the level has started no
+        /// placement plays or queues an intro; before it, one does.
+        #[test]
+        fn no_intro_once_the_level_has_started() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut tv = tv(Some(library(
+                tmp.path(),
+                &[("eruptor", 10), ("ignitor", 10)],
+            )));
+            tv.app
+                .world_mut()
+                .insert_resource(crate::play::Play::started_for_tests(Entity::PLACEHOLDER));
+            tv.place(0, "000009-0000");
+            for _ in 0..10 {
+                tv.app.update();
+                let queue = tv.app.world().resource::<IntroQueue>();
+                assert!(queue.playing().is_none() && queue.queued().next().is_none());
+            }
+            assert_eq!(tv.movie(), None);
+            tv.app
+                .world_mut()
+                .insert_resource(crate::play::Play::default());
+            tv.place(1, "00000a-0000");
+            tv.until("ignitor's intro", |s| {
+                s.intro.as_ref().is_some_and(|i| i.movie == "ignitor")
+            });
         }
 
         #[test]

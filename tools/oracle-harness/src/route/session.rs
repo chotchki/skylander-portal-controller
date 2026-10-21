@@ -201,7 +201,8 @@ pub struct FigureSeen {
     #[serde(default)]
     pub upgrades: Vec<u8>,
     pub words: Vec<u32>,
-    pub exp_target: crate::script::Number,
+    /// None at the cap (AH.52).
+    pub exp_target: Option<crate::script::Number>,
     pub health: crate::script::Number,
     pub health_max: crate::script::Number,
 }

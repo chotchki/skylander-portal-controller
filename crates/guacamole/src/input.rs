@@ -381,10 +381,18 @@ fn route_input(
     if layer != Layer::Screen {
         repeat.swallow();
     }
-    // The hero reads the walking pad only while the level's layer is on top;
-    // under an intro, nothing, and a face held through its skip stays his
-    // only once let go.
+    // The hero reads the walking pad only while the level's layer is on top
+    // and the portal doesn't hold the level (AG.29); under an intro or a
+    // hold, nothing, and a face held through it stays his only once let go.
+    let held = level.held();
+    let mut release = false;
     let walked = match (layer, level.seat_mut()) {
+        (Layer::Level, Some(seat)) if held => {
+            // Past the hold's first frame no attack is kept for a step
+            // after it (AH.24's attacks under AG.29's hold).
+            release = seat.holding();
+            Some(seat.hold(&level_pads))
+        }
         (Layer::Level, Some(seat)) => Some(seat.step(&level_pads)),
         (_, Some(seat)) => {
             seat.swallow(&level_pads);
@@ -395,7 +403,11 @@ fn route_input(
     if let (Some(walked), Some(mut actions)) = (walked, actions) {
         let next = {
             let mut a = *actions;
-            a.frame(walked.actions(), walked.tapped());
+            if release {
+                a.release();
+            } else {
+                a.frame(walked.actions(), walked.tapped());
+            }
             a
         };
         if *actions != next {

@@ -233,9 +233,11 @@ pub(crate) struct Seat<Id> {
     walking: Option<Id>,
     pause: Option<Pause<Id>>,
     begun: bool,
+    /// The portal held the level the frame before ([`Self::hold`]).
+    holding: bool,
     /// The walking pad's buttons ([`HERO_BUTTONS`]) still down from a press
-    /// a layer took (the resume, the take-over, an intro's skip): kept from
-    /// the hero until each is let go.
+    /// a layer took (the resume, the take-over, an intro's skip) or held
+    /// through the portal's hold: kept from the hero until each is let go.
     swallowed: [bool; 8],
     /// What the hero read the frame before.
     last: HeroPad,
@@ -248,6 +250,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
             walking: None,
             pause: None,
             begun: false,
+            holding: false,
             swallowed: [false; 8],
             last: HeroPad::STILL,
         }
@@ -271,7 +274,9 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
     /// to wait he reads what he read the frame before: the steps due this
     /// frame were due before the press, and from the next none run.
     pub(crate) fn step(&mut self, pads: &[PadFrame<Id>]) -> HeroPad {
-        let was_running = self.begun && self.pause.is_none();
+        let unpaused = self.begun && self.pause.is_none();
+        let was_running = unpaused && !self.holding;
+        self.holding = false;
         let seated = self.walking;
         if !self.begun {
             self.begun = true;
@@ -326,8 +331,9 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
             }
         }
         // A frame the layer took a press in (the resume, the take-over)
-        // taps nothing of the hero's: that press was the layer's.
-        let took = !was_running || seated != self.walking;
+        // taps nothing of the hero's: that press was the layer's. The
+        // portal's hold ending took none.
+        let took = !unpaused || seated != self.walking;
         let out = match (self.pause, walking) {
             (Some(_), _) if was_running => HeroPad {
                 taps: [false; 8],
@@ -358,7 +364,39 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
         if let Some(walking) = self.walking_frame(pads) {
             self.swallowed = walking.hero_held();
         }
+        self.holding = false;
         self.last = HeroPad::STILL;
+    }
+
+    /// The portal holds the level (AG.29: an alert, or no hero in it): no
+    /// pad walks the hero, attacks, pauses or takes him over, and the
+    /// walking pad's buttons held now stay his only once let go and pressed
+    /// again. The frame the hold begins he reads what he read the frame
+    /// before, held but not tapped, as a pause's first frame does: the steps
+    /// due then were due before it.
+    pub(crate) fn hold(&mut self, pads: &[PadFrame<Id>]) -> HeroPad {
+        let was_running = self.begun && self.pause.is_none() && !self.holding;
+        self.holding = true;
+        if let Some(walking) = self.walking_frame(pads) {
+            self.swallowed = walking.hero_held();
+        }
+        let out = if was_running {
+            HeroPad {
+                taps: [false; 8],
+                ..self.last
+            }
+        } else {
+            HeroPad::STILL
+        };
+        self.last = out;
+        out
+    }
+
+    /// The portal held the level the frame before: past a hold's first
+    /// frame, what the hero held or pressed before it reaches no step
+    /// ([`crate::hero::HeroActions::release`]).
+    pub(crate) fn holding(&self) -> bool {
+        self.holding
     }
 
     fn take_seat(&mut self, pad: &PadFrame<Id>) {
@@ -379,6 +417,8 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
 pub(crate) struct LevelPads {
     order: Vec<Entity>,
     seat: Option<Seat<Entity>>,
+    /// The portal holds the level ([`crate::play`]'s alerts, or no hero).
+    held: bool,
 }
 
 impl LevelPads {
@@ -393,6 +433,17 @@ impl LevelPads {
     /// The level gave the TV back.
     pub(crate) fn hide(&mut self) {
         self.seat = None;
+        self.held = false;
+    }
+
+    /// The portal holds the level, or lets it go: while held the router
+    /// hands the seat [`Seat::hold`] and the level's clock stops.
+    pub(crate) fn hold(&mut self, held: bool) {
+        self.held = held && self.seat.is_some();
+    }
+
+    pub(crate) fn held(&self) -> bool {
+        self.held
     }
 
     pub(crate) fn shows(&self) -> bool {
@@ -407,9 +458,15 @@ impl LevelPads {
         self.seat.as_mut()
     }
 
-    /// The level shows and waits: its clock stops ([`crate::pause`]).
+    /// The level shows and waits for Start or a pad.
     pub(crate) fn paused(&self) -> bool {
         self.seat.as_ref().is_some_and(|s| s.pause.is_some())
+    }
+
+    /// The level shows and stands still, paused or held: its clock stops
+    /// ([`crate::pause::hold_time`]).
+    pub(crate) fn waiting(&self) -> bool {
+        self.paused() || self.held
     }
 
     /// This frame's pads, the connected ones in the order they connected
@@ -899,6 +956,147 @@ mod tests {
             let out = seat.step(&[pressing(pushed(A, 0.3, 0.9), button)]);
             assert_eq!((out, seat.pause()), (before, None), "{button:?}");
         }
+    }
+
+    /// The portal holding the level (AG.29): the frame it begins reads the
+    /// frame before, as a pause's does; from the next the hero reads nothing
+    /// and Start pauses nothing; once it ends the stick walks at once, and a
+    /// face held through it stays off him until let go and pressed again.
+    #[test]
+    fn the_portal_holding_the_level() {
+        let mut seat = walking(&[pushed(A, 0.0, 1.0)]);
+        let before = seat.step(&[pushed(A, 0.0, 1.0)]);
+        let first = seat.hold(&[holding(pushed(A, 1.0, 0.0), Face::South)]);
+        assert_eq!(
+            first, before,
+            "the frame the hold begins reads the frame before"
+        );
+        for frame in [
+            pushed(A, 1.0, 0.0),
+            pressing(
+                holding(pushed(A, 1.0, 0.0), Face::South),
+                GamepadButton::Start,
+            ),
+        ] {
+            assert_eq!(seat.hold(&[frame]), HeroPad::STILL);
+        }
+        assert_eq!(seat.pause(), None, "Start under the hold paused nothing");
+        let out = seat.step(&[holding(pushed(A, 1.0, 0.0), Face::South)]);
+        assert_eq!(
+            out.stick,
+            Stick::new(1.0, 0.0),
+            "the stick walks once it ends"
+        );
+        assert_eq!(
+            out.buttons, [false; 4],
+            "the face held through it stays off"
+        );
+        seat.step(&[pushed(A, 1.0, 0.0)]);
+        assert_eq!(
+            seat.step(&[holding(pad(A), Face::South)]).buttons,
+            [true, false, false, false]
+        );
+    }
+
+    /// AG.29's hold over AH.24's attack buttons: the frame it begins reads
+    /// the frame before's held attacks but none of its taps; under it no
+    /// press, face or shoulder, held or tapped inside a frame, is an attack;
+    /// a button held through it stays off once it ends until let go and
+    /// pressed again, while a tap the frame it ends is the hero's.
+    #[test]
+    fn the_portal_holding_the_level_keeps_the_attacks_off() {
+        let mut seat = walking(&[pad(A)]);
+        let before = seat.step(&[pressing(pad(A), GamepadButton::South)]);
+        assert_eq!(before.tapped(), [true, false, false, false]);
+        let first = seat.hold(&[holding(pad(A), Face::South)]);
+        assert_eq!(
+            (first.actions(), first.tapped()),
+            ([true, false, false, false], [false; 4]),
+            "the first frame: the frame before's hold, not its tap"
+        );
+        for button in [
+            GamepadButton::South,
+            GamepadButton::West,
+            GamepadButton::East,
+            GamepadButton::RightTrigger,
+            GamepadButton::LeftTrigger2,
+        ] {
+            let out = seat.hold(&[pressing(pad(A), button)]);
+            assert_eq!((out.actions(), out.tapped()), ([false; 4], [false; 4]));
+            let mut tap = pad(A);
+            tap.pressed.push(button);
+            let out = seat.hold(&[tap]);
+            assert_eq!(
+                (out.actions(), out.tapped()),
+                ([false; 4], [false; 4]),
+                "{button:?} tapped under the hold"
+            );
+        }
+        let mut right = pad(A);
+        right.shoulders[1] = true;
+        seat.hold(&[right.clone()]);
+        let out = seat.step(&[right]);
+        assert_eq!(out.actions(), [false; 4], "held through it: off");
+        let out = seat.step(&[pad(A)]);
+        assert_eq!(out.actions(), [false; 4]);
+        let out = seat.step(&[pressing(pad(A), GamepadButton::RightTrigger)]);
+        assert_eq!(out.actions(), [false, true, false, false], "pressed again");
+        // A tap the frame a hold ends is a press of the hero's.
+        seat.hold(&[pad(A)]);
+        seat.hold(&[pad(A)]);
+        let mut tap = pad(A);
+        tap.pressed.push(GamepadButton::South);
+        assert_eq!(seat.step(&[tap]).tapped(), [true, false, false, false]);
+    }
+
+    /// AG.29's hold through the router: a press no step read before the
+    /// hold began, or a button held into it, is let go past its first frame
+    /// (a 120 Hz display runs no step in half its frames), so no attack
+    /// reaches a step after it; none pressed under it either, and once it
+    /// ends a fresh press does.
+    #[test]
+    fn nothing_from_before_or_under_the_hold_reaches_a_step_after_it() {
+        use crate::hero::HeroActions;
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::input::InputPlugin,
+            crate::input::InputRouter,
+        ))
+        .init_resource::<HeroActions>();
+        let id = test_pad::connect(&mut app, None, None);
+        app.update();
+        app.world_mut().resource_mut::<LevelPads>().show();
+        app.update();
+        let take = |app: &mut App| app.world_mut().resource_mut::<HeroActions>().take();
+        let hold = |app: &mut App, on: bool| app.world_mut().resource_mut::<LevelPads>().hold(on);
+        take(&mut app);
+        // Down, no step reads it; the hold's first frame keeps it for the
+        // steps due then, and the next lets it go.
+        test_pad::button(&mut app, id, GamepadButton::South, true);
+        app.update();
+        hold(&mut app, true);
+        app.update();
+        app.update();
+        assert_eq!(take(&mut app), [false; 4], "let go under the hold");
+        test_pad::button(&mut app, id, GamepadButton::South, false);
+        app.update();
+        test_pad::press(&mut app, id, GamepadButton::RightTrigger);
+        app.update();
+        test_pad::button(&mut app, id, GamepadButton::West, true);
+        test_pad::button(&mut app, id, GamepadButton::West, false);
+        app.update();
+        assert_eq!(take(&mut app), [false; 4], "pressed under the hold");
+        test_pad::button(&mut app, id, GamepadButton::East, true);
+        app.update();
+        hold(&mut app, false);
+        app.update();
+        assert_eq!(take(&mut app), [false; 4], "held through it");
+        test_pad::button(&mut app, id, GamepadButton::East, false);
+        app.update();
+        test_pad::press(&mut app, id, GamepadButton::South);
+        app.update();
+        assert_eq!(take(&mut app), [true, false, false, false], "a fresh press");
     }
 
     /// A press taken by a layer above stays off the hero until let go.

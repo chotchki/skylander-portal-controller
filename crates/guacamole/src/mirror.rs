@@ -30,6 +30,7 @@ use bevy::prelude::*;
 use bevy::ui::{ComputedNode, ComputedUiTargetCamera, UiGlobalTransform, UiSystems};
 use serde::{Deserialize, Serialize};
 
+use crate::alert::{AlertScreen, CornerJoin, CornerQr};
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
 use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, HeroSystems};
@@ -47,7 +48,8 @@ use crate::screen::TvScreen;
 use crate::turntable::{CardPlate, CardState, Turntables};
 use crate::tv::{
     CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
-    JoinQr, Pip, PlayersLine, Setup, TvAssets, TvCamera, contains, node_rect, safe_area,
+    JoinQr, Pip, PlayersLine, ScreenRoot, Setup, TvAssets, TvCamera, contains, node_rect,
+    safe_area,
 };
 use crate::warm::{PipelineWatch, Warm, WarmReport};
 
@@ -96,12 +98,35 @@ pub struct TvSnapshot {
     pub prepare: Option<PrepareReport>,
     /// The pads and the level's layer (AG.20).
     pub input: InputShot,
-    /// Where the TV is (AG.21): `portal` (its own screens), `level`, or
-    /// `paused` (the level waiting, Start's or for a pad).
+    /// Where the TV is (AG.21): `portal` (its own screens), `level`,
+    /// `paused` (the level waiting, Start's or for a pad) or `held` (the
+    /// portal holding it: an alert, or no hero in it; AG.29).
     pub mode: String,
     /// The hero, once a figure that walks is placed: who, his model's way
     /// to the level and, in it, where he stands and faces.
     pub hero: Option<HeroReport>,
+    /// The portal's alert as drawn (AG.29, AG.63, AG.73).
+    pub alert: Option<AlertShot>,
+    /// The small join code drawn in the corner over the level or an alert
+    /// (AG.29); `join_qr` counts its QR too.
+    pub join_corner: bool,
+}
+
+/// The portal's alert as drawn.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AlertShot {
+    /// `wrong_toy`, `too_many_skylanders`, `too_many_items` or
+    /// `place_a_skylander`.
+    pub kind: String,
+    /// Its lines, top to bottom.
+    pub texts: Vec<String>,
+    /// It covers the whole window.
+    pub full_screen: bool,
+    /// Over the level's camera, as an overlay is ([`draws_over`]); false
+    /// with no level camera.
+    pub over_level: bool,
+    /// When it was spawned, on the frame log's clock.
+    pub shown_ms: Option<f64>,
 }
 
 /// The pads as the router reads them, and the level's layer (AG.20).
@@ -1172,6 +1197,27 @@ type Overlays<'w, 's> = Query<
     ),
 >;
 
+/// What the portal draws over the screen's tree (AG.29): the screen roots'
+/// visibility, the alert with its lines' root, when it came and its camera,
+/// and the corner join code and its QR.
+type PortalDrawn<'w, 's> = (
+    Query<'w, 's, &'static Visibility, With<ScreenRoot>>,
+    Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static AlertScreen,
+            Option<&'static ShownAt>,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static ComputedUiTargetCamera>,
+        ),
+    >,
+    Query<'w, 's, &'static ImageNode, With<CornerQr>>,
+    Query<'w, 's, (), With<CornerJoin>>,
+);
+
 /// Every camera with its target, and the level's.
 type OverlayCameras<'w, 's> = (
     Query<'w, 's, (&'static Camera, Option<&'static RenderTarget>)>,
@@ -1268,7 +1314,7 @@ fn mirror_tv(
     texts: Query<&Text>,
     images: Query<(), With<ImageNode>>,
     pips: Query<(&Pip, &BackgroundColor)>,
-    (players_line, address, qr, input_focus, choices, pads): (
+    (players_line, address, qr, input_focus, choices, pads, portal_drawn): (
         Query<&Text, With<PlayersLine>>,
         Query<&Text, With<JoinAddress>>,
         Query<&ImageNode, With<JoinQr>>,
@@ -1282,6 +1328,7 @@ fn mirror_tv(
             OverlayCameras,
             Option<Res<HeroActions>>,
         ),
+        PortalDrawn,
     ),
     (extraction, band_title, band_detail, bar): (
         Option<Res<Extraction>>,
@@ -1328,8 +1375,13 @@ fn mirror_tv(
         .and_then(Camera::physical_target_size)
         .unwrap_or_default();
     let safe = safe_area(size.x, size.y, framing.0);
+    let (screens, alerts, corner_qrs, corners) = portal_drawn;
+    // The screen's tree hidden (the level over it, AG.50) draws none of its
+    // cards, lines or QR.
+    let screen_shown = screens.iter().all(|v| *v != Visibility::Hidden);
     let mut drawn: Vec<(CardShot, Rect)> = cards
         .iter()
+        .filter(|_| screen_shown)
         .map(|(entity, slot, node, at)| {
             let mut found = (Vec::new(), false, None);
             walk(entity, &children, &texts, &images, &pips, &mut found);
@@ -1384,7 +1436,11 @@ fn mirror_tv(
         .flat_map(|(i, (_, a))| drawn[i + 1..].iter().map(move |(_, b)| (*a, *b)))
         .filter(|(a, b)| !a.intersect(*b).is_empty())
         .count();
-    let mut empty_slots: Vec<u8> = empties.iter().map(|e| e.0 + 1).collect();
+    let mut empty_slots: Vec<u8> = empties
+        .iter()
+        .filter(|_| screen_shown)
+        .map(|e| e.0 + 1)
+        .collect();
     empty_slots.sort();
     let (game, message) = match &current.screen {
         TvScreen::Portal { game } => (Some(game.clone()), None),
@@ -1452,6 +1508,36 @@ fn mirror_tv(
     let hero = play
         .as_deref()
         .and_then(|p| p.report(&heroes, &cameras, runtime.as_deref()));
+    let alert = alerts
+        .iter()
+        .next()
+        .map(|(root, kind, at, node, place, target)| {
+            let mut found = (Vec::new(), false, None);
+            walk(root, &children, &texts, &images, &pips, &mut found);
+            let r = node_rect(node, place);
+            let (overlay_cameras, level_cameras) = &pads.4;
+            let ui = target
+                .and_then(ComputedUiTargetCamera::get)
+                .and_then(|c| overlay_cameras.get(c).ok());
+            AlertShot {
+                kind: kind.0.name().to_owned(),
+                texts: found.0,
+                full_screen: (r.min - window.min).abs().max_element() <= 1.0
+                    && (r.max - window.max).abs().max_element() <= 1.0,
+                over_level: ui.is_some_and(|ui| {
+                    level_cameras
+                        .iter()
+                        .filter_map(|c| overlay_cameras.get(c).ok())
+                        .any(|level| draws_over(ui, level))
+                }),
+                shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
+            }
+        });
+    let qr_handle = assets.and_then(|a| a.qr.clone());
+    let join_qr = qr_handle.is_some_and(|handle| {
+        (screen_shown && qr.iter().any(|image| image.image == handle))
+            || corner_qrs.iter().any(|image| image.image == handle)
+    });
     let input = input_shot(intro.is_some(), pads, (&children, &texts, &images, &pips));
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
@@ -1460,11 +1546,14 @@ fn mirror_tv(
         players: players_line
             .iter()
             .next()
+            .filter(|_| screen_shown)
             .and_then(|t| t.0.split_whitespace().next()?.parse().ok()),
-        join_address: address.iter().next().map(|t| t.0.clone()),
-        join_qr: assets
-            .and_then(|a| a.qr.clone())
-            .is_some_and(|handle| qr.iter().any(|image| image.image == handle)),
+        join_address: address
+            .iter()
+            .next()
+            .filter(|_| screen_shown)
+            .map(|t| t.0.clone()),
+        join_qr,
         found: setup.0.found_titles.clone(),
         folders: setup.0.folders.clone(),
         problems: setup.0.problems.clone(),
@@ -1486,6 +1575,8 @@ fn mirror_tv(
         input,
         mode: mode.name().to_owned(),
         hero,
+        alert,
+        join_corner: !corners.is_empty(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
@@ -1603,6 +1694,80 @@ mod tests {
                 .iter()
                 .all(|c| c.rect[2] > 0.0 && c.rect[3] > 0.0)
         );
+    }
+
+    /// AG.29: an alert reads back as drawn, its lines, full screen, the
+    /// corner join code beside it; the screen's tree hidden under the level
+    /// (AG.50) draws none of its cards or join lines, while the corner's
+    /// join code stands over it. The alert gone, the corner goes with the
+    /// level's end.
+    #[test]
+    fn an_alert_and_the_corner_join_code_read_back_and_a_hidden_screen_draws_no_card() {
+        use crate::play::{Alert, Play};
+        let cards = PortalCards::default().reduce([
+            PortalChange::Placed {
+                slot: SlotIndex::new(0).unwrap(),
+                placement: placement("Eruptor", Some("#e8423f")),
+            },
+            PortalChange::Placed {
+                slot: SlotIndex::new(5).unwrap(),
+                placement: placement("Tree Rex", None),
+            },
+        ]);
+        let mut app = portal_app(1920, 1080, WindowMode::Tv, cards);
+        app.world_mut().resource_mut::<Current>().screen = giants();
+        let mirror = TvMirror::default();
+        app.insert_resource(mirror.clone())
+            .insert_resource(Play::alerting_for_tests(Alert::TooManySkylanders, None))
+            .add_plugins((Mirror, crate::alert::AlertPlugin));
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().clone();
+        let alert = shot.alert.as_ref().expect("the alert");
+        assert_eq!(alert.kind, "too_many_skylanders");
+        assert_eq!(
+            alert.texts,
+            crate::alert::lines(Alert::TooManySkylanders).map(str::to_owned)
+        );
+        assert!(alert.full_screen, "{alert:?}");
+        assert!(!alert.over_level, "no level camera");
+        assert!(alert.shown_ms.is_some());
+        assert!(shot.join_corner, "the join code over the alert");
+        assert_eq!(shot.cards.len(), 2, "under it, the portal view's cards");
+        assert_eq!(shot.players, Some(2));
+
+        // The level over the screen: its tree hidden, the hero off.
+        let mut roots = app
+            .world_mut()
+            .query_filtered::<&mut Visibility, With<crate::tv::ScreenRoot>>();
+        for mut v in roots.iter_mut(app.world_mut()) {
+            *v = Visibility::Hidden;
+        }
+        app.insert_resource(Play::alerting_for_tests(
+            Alert::PlaceSkylander,
+            Some(Entity::PLACEHOLDER),
+        ));
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().clone();
+        assert_eq!(shot.alert.as_ref().unwrap().kind, "place_a_skylander");
+        assert!(
+            shot.cards.is_empty() && shot.empty_slots.is_empty(),
+            "{:?}",
+            shot.cards
+        );
+        assert_eq!((shot.players, shot.join_address.as_deref()), (None, None));
+        assert!(shot.join_corner);
+
+        // No alert and no level: neither drawn.
+        app.insert_resource(Play::default());
+        for _ in 0..3 {
+            app.update();
+        }
+        let shot = mirror.0.lock().unwrap().clone();
+        assert!(shot.alert.is_none() && !shot.join_corner);
     }
 
     #[test]

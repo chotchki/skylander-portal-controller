@@ -208,7 +208,8 @@ fn state_lines(rec: &mut Record, s: &FightState) {
         num(h.health_max),
         num(h.invulnerable),
         h.player,
-        num(h.exp_target)
+        h.exp_target
+            .map_or_else(|| "none (the cap)".to_owned(), num)
     ));
     rec.line(format!(
         "  figure (tag data {:#010x}, {} save words): experience {}, gold {}, playtime {} s, \

@@ -21,7 +21,8 @@
 //! point and leaves it still there, closed loop, for a state to be saved
 //! ([`route`], AH.7), and the fight's metrics over a group of the oracle's
 //! replays with the event floors AF.12's method gives them ([`fightlog`],
-//! AH.9).
+//! AH.9), and a session of figures placed and taken off through menus and a
+//! level, every file the game opens stamped with the flip ([`session`], AG.6).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -54,6 +55,7 @@ pub mod route;
 pub mod rpcs3_log;
 pub mod scan;
 pub mod script;
+pub mod session;
 pub mod snapshot;
 pub mod sweep;
 pub mod template;

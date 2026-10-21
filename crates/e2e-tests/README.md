@@ -139,7 +139,7 @@ other fixture he keeps his portrait, so no other test's placement of him
 enters the level), whose made-up chapter 1 is a floor ending at a wall
 `E2E_WALL` (6 m) ahead of `213_Init_Location`'s first waypoint
 (`E2E_START`). Placing him takes the TV into the level: the mirror's
-`mode` (`portal`, `level`, or `paused` while it waits) and `hero` (slot,
+`mode` (`portal`, `level`, `paused` while it waits, or `held` while the portal holds it) and `hero` (slot,
 figure, load file, his model's way to the level, and in it his `position`,
 `heading` and the `camera` as drawn) show him at the start facing 0°,
 settled 5 mm above the floor, the camera at camera 0's rest pose off his
@@ -180,6 +180,31 @@ input's `hero_actions` reading the first attack held; a right shoulder
 (`r1`) starting slot 32; and North starting nothing. The pad hook's
 `pulse` (`{"button": .., "presses": n}`, down a game step and up the next,
 n times) is the Mac run's every-other-frame press, not this test's.
+Two more run over the walking fixture (openspec AG.29, AG.63, AG.73):
+the mirror's `alert`
+(`kind` `wrong_toy`, `too_many_skylanders`, `too_many_items` or
+`place_a_skylander`, its `texts`, `full_screen`, `over_level`,
+`shown_ms`), `join_corner` (the small join code over the level or an
+alert) and `mode` `held` (the portal holding the level).
+`the_portal_holds_the_level_and_a_hero_comes_back_in` places an item
+first, two characters before the start, then, with two phones, Bob's
+Eruptor beside Alice's mid-walk, Alice's off (Bob's comes in where she
+stood) and Bob's off (the call for a Skylander); the mirror lists no
+cards while the level hides the screen.
+`a_toy_giants_cant_use_holds_the_tv_until_it_comes_off` lists a later
+game's figure through `POST /api/_test/foreign_figure`
+(`{"figure_id": .., "name": ..}`; guacamole's own catalogue is the
+disc's roster, which holds none) and places it at the start and
+mid-walk.
+`an_alert_holds_his_attacks_and_the_next_hero_joins_his_scripts` runs
+both together over the fighting fixture: with his scripts joined, Tree
+Rex beside him holds the level and the scripts' log takes no step while
+the pad presses and holds South (`hold`), a right shoulder and Start, the
+input's `hero_actions` all off; South held through the hold throws
+nothing once it ends until let go and pressed again; Eruptor off and
+placed again comes in where he stood, his scripts joined again (the log's
+`step` counts on across the run installed again at his take-off) and
+throwing.
 The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
 and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame

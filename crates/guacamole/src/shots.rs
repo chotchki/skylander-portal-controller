@@ -10,8 +10,8 @@
 //! must be outside any git checkout (the extract root's rule, design decision
 //! 5); one inside is refused and nothing shot. A folder that isn't there is
 //! made, and a shot that doesn't land is logged as an error (openspec AE.29).
-//! The level's overlays (AG.50) arm one as they come and go, named for the
-//! one showing.
+//! The level's overlays (AG.50) and the portal's alerts (AG.29) arm one as
+//! they come and go, named for the one showing.
 //! A card's turning model holds its idle's first pose at `GUAC_SHOT_YAW`
 //! degrees of its turn (default 0, facing the camera), so a walk can shoot a
 //! turn one run per angle. With `GUAC_SHOT_WALK=<ms>` too, a shot is taken
@@ -32,6 +32,7 @@ use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
 use tracing::{error, info};
 
+use crate::alert::AlertScreen;
 use crate::cards::PortalCards;
 use crate::extraction::Extraction;
 use crate::hero::HeroBody;
@@ -228,12 +229,12 @@ fn snap(
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
     mut redrawn: MessageReader<Redrawn>,
-    (play, heroes, time, overlays, clones): (
+    (play, heroes, time, overlays, (alerts, clones)): (
         Option<Res<Play>>,
         Query<&HeroBody>,
         Res<Time>,
         Query<&LevelOverlay>,
-        Query<&crate::hero_scripts::CloneDrawn>,
+        (Query<&AlertScreen>, Query<&crate::hero_scripts::CloneDrawn>),
     ),
     mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
@@ -298,8 +299,13 @@ fn snap(
         .next()
         .map(|o| format!("-overlay-{}", o.name()))
         .unwrap_or_default();
+    let alert = alerts
+        .iter()
+        .next()
+        .map(|a| format!("-alert-{}", a.0.name()))
+        .unwrap_or_default();
     let name = format!(
-        "{:02}-{screen}-{}cards-{extract}{intro}{overlay}.png",
+        "{:02}-{screen}-{}cards-{extract}{intro}{overlay}{alert}.png",
         state.seq,
         cards.cards().count()
     );

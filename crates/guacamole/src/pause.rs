@@ -25,8 +25,9 @@ use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, p
 use crate::theme::{Role, Step, TvTheme};
 use crate::tv::{Pen, Redrawn, TvAssets};
 
-/// Under an intro's overlay (1,000), over everything else.
-const OVERLAY_Z: i32 = 900;
+/// Under an intro's overlay (1,000) and the portal's alerts, over everything
+/// else.
+pub(crate) const OVERLAY_Z: i32 = 900;
 
 /// The prompt glyph's side, and a position dot's, in design px.
 const GLYPH: f32 = 56.0;
@@ -220,14 +221,14 @@ fn dot_at(face: Face) -> (f32, f32) {
     }
 }
 
-/// Stops the level's clock while it waits and starts it again after; a
-/// pause it didn't make it leaves alone.
+/// Stops the level's clock while it waits or the portal holds it, and
+/// starts it again after; a pause it didn't make it leaves alone.
 pub(crate) fn hold_time(
     pads: Res<LevelPads>,
     mut time: ResMut<Time<Virtual>>,
     mut held: Local<bool>,
 ) {
-    let wait = pads.paused();
+    let wait = pads.waiting();
     if wait && !*held {
         time.pause();
         *held = true;

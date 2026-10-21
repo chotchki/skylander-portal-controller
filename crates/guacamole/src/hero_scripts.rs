@@ -36,7 +36,13 @@
 //!   row "A node's place on the model".
 //!
 //! Leaving the level installs the run again from the part, the level's
-//! start as the next entry finds it.
+//! start as the next entry finds it; so does the hero coming off the portal
+//! mid-level (AG.29, [`crate::play`]): his minion and what his scripts
+//! spawned go with him, and the hero who comes in where he stood joins the
+//! fresh run as the first did, once it has made [`INIT_STEPS`]. That stands
+//! in for the original's own swap (the portal manager deactivating his
+//! minion, the level's scripts running on), which nothing on the TV needs
+//! while the hero's are the only scripts it runs (decision 6).
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -122,10 +128,18 @@ pub(crate) fn reinstall(world: &mut World) {
     info!("the scripts installed again for the level's next entry");
 }
 
+/// The steps a run makes before a hero's file joins it: the init chain's
+/// two, as AH.17's headless runs make them (the portal's loaded objects are
+/// set by then). The run on the portal view has made them long before the
+/// first hero comes in; a run his take-off installed again (AG.29) has
+/// made none when the next one does, the level held meanwhile.
+pub(crate) const INIT_STEPS: u64 = 2;
+
 /// Where a hero's join is.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Join {
-    /// Placed and in: his file's placements join at the next step.
+    /// Placed and in: his file's placements join at the next step once the
+    /// run has made [`INIT_STEPS`].
     Asked,
     /// His file's placements in; his minion activates at the next step.
     Requested,
@@ -275,7 +289,8 @@ pub(crate) struct ScriptSteps {
 /// hero, what they spawned and what they took off.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub(crate) struct ScriptStep {
-    /// The run's step, from 1.
+    /// The log's step, from 1, counting on across the run's installs
+    /// (leaving the level, the hero taken off: AG.29).
     pub step: u64,
     pub actions: [bool; 4],
     /// The hero's join: `asked`, `requested`, `joined` or `off`; none
@@ -419,6 +434,7 @@ fn step_scripts(
         Some((e, r)) => (Some(e), Some(r)),
         None => (None, None),
     };
+    let ran = runtime.steps;
     let ScriptRuntime { vm, generator, .. } = &mut *runtime;
     let mut spawn =
         |template: Value| -> Handle { commands.spawn(ScriptClone(template)).id().to_bits() };
@@ -454,7 +470,7 @@ fn step_scripts(
     }
     let files = source.as_ref().map(|s| &s.files);
     let asked = match (hero, run.as_deref()) {
-        (Some(_), Some(r)) if r.join == Join::Asked => Some(r.unit),
+        (Some(_), Some(r)) if r.join == Join::Asked && ran >= INIT_STEPS => Some(r.unit),
         _ => None,
     };
     if let (Some(unit), Some(files)) = (asked, files) {
@@ -537,7 +553,10 @@ fn step_scripts(
         r.join = Join::Off(why);
         commands.entity(e).remove::<ScriptedHero>();
     }
-    let step = runtime.steps;
+    // The log's own count, on across the run's installs: a run installed
+    // again mid-level (AG.29's take-off) starts its steps from 1, and a
+    // reader's `since` would skip them.
+    let step = log.last() + 1;
     let mut entry = ScriptStep {
         step,
         actions: held,

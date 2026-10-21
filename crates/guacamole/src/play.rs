@@ -30,10 +30,34 @@
 //!   rewrite none of his materials.
 //!
 //! The TV leaves the level when it leaves the portal view (the game
-//! quit, a server error) or the level gives way to another load. What a
-//! removal, a second character, an item or an intro does once the level
-//! shows is AG.29's; an intro that plays meanwhile shows over the level, as
-//! TV UI does since AG.50.
+//! quit, a server error) or the level gives way to another load.
+//!
+//! The portal and the level (AG.29, with AG.63's too-many hold and AG.73's
+//! wrong-toy alert; level-scene's One hero at a time, Removing the hero
+//! pauses the level and A figure Giants can't use holds the level): what a
+//! figure is comes off the extract's roster ([`kind`]), and [`judge`] says
+//! which alert the portal asks for, drawn full screen by [`crate::alert`].
+//! - A second character beside the hero, or two on the portal when the
+//!   level would start, holds it under the too-many alert until one comes
+//!   off; the hero taken off, the other comes in where he stood.
+//! - The hero taken off with no character left holds the level behind the
+//!   place-a-Skylander screen; the next character placed comes in where he
+//!   stood, facing his way, and the level carries on from where it held.
+//! - A second magic item or sidekick holds it under the too-many-items
+//!   alert; one alone, or an adventure-pack piece, changes nothing.
+//! - A toy Giants can't use holds the portal view or the level under the
+//!   wrong-toy alert until it comes off.
+//! - While the level holds, `Time<Virtual>` stops and the pads move no one
+//!   ([`LevelPads::hold`]): no step runs, so nothing reaches his scripts,
+//!   and no attack pressed before or under the hold is kept for a step
+//!   after it ([`crate::hero::HeroActions::release`]). No intro plays once
+//!   the level has started ([`crate::intro_player`]).
+//! - The hero taken off takes his scripts with him: the run starts over
+//!   from the level's part ([`crate::hero_scripts::reinstall`]), and the
+//!   next hero in joins it as the first did (AH.24's join), his scripts
+//!   the one writer of his walk from then on.
+//! - A character that doesn't walk yet (AG.27) counts as one on the portal
+//!   but can't come in: alone, it leaves the level asking for a Skylander.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,12 +70,12 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
-use guac_ir::Model;
 use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
 use guac_ir::palette::Palette;
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
+use guac_ir::{Category, Model};
 use guac_motion::camera::{CameraDef, GameCamera};
 use guac_motion::hero::Hero;
 use guac_motion::locomotion::{self, Locomotion, Loops};
@@ -95,6 +119,8 @@ pub(crate) enum Mode {
     Level,
     /// The level, waiting (Start, or no pad walking the hero).
     Paused,
+    /// The level, held by the portal (AG.29): an alert, or no hero in it.
+    Held,
 }
 
 impl Mode {
@@ -103,8 +129,136 @@ impl Mode {
             Mode::Portal => "portal",
             Mode::Level => "level",
             Mode::Paused => "paused",
+            Mode::Held => "held",
         }
     }
+}
+
+/// What a figure on the portal is to Giants, by the extract's roster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// A Skylander: a figure or a Giant.
+    Character,
+    /// A magic item, or a sidekick, which Giants counts as one (AG.6's
+    /// Barkley beside the cannon).
+    MagicItem,
+    /// An adventure pack's piece: counted toward nothing, it changes nothing
+    /// (its location is AM's).
+    Pack,
+    /// Off Giants' roster: a later game's character, a trap, a vehicle.
+    Unusable,
+}
+
+/// A figure the roster doesn't hold is one Giants can't use: the roster is
+/// the whole of what the disc knows.
+pub(crate) fn kind(shelf: &Shelf, figure_id: &str) -> Kind {
+    match shelf.kinds.get(figure_id) {
+        Some(Category::Figure | Category::Giant) => Kind::Character,
+        Some(Category::Item | Category::Sidekick) => Kind::MagicItem,
+        Some(Category::AdventurePack) => Kind::Pack,
+        None => Kind::Unusable,
+    }
+}
+
+/// The portal as the flow reads it: its characters in the order they were
+/// placed, each with whether it can come in as the hero (a figure that walks,
+/// AG.27's until every character does), and how many magic items and toys
+/// Giants can't use stand beside them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Lineup {
+    pub(crate) characters: Vec<(SlotIndex, bool)>,
+    pub(crate) magic: usize,
+    pub(crate) unusable: usize,
+}
+
+impl Lineup {
+    /// `order`'s slots read off `cards` by `shelf`'s roster.
+    fn of(order: &[SlotIndex], cards: &PortalCards, shelf: &Shelf) -> Self {
+        let mut lineup = Self::default();
+        for slot in order {
+            let Some(placement) = cards.slots[slot.as_usize()].as_ref() else {
+                continue;
+            };
+            let id = placement.figure_id.as_str();
+            match kind(shelf, id) {
+                Kind::Character => {
+                    let walks = shelf
+                        .loads
+                        .get(id)
+                        .is_some_and(|load| walkers::walker(load).is_some());
+                    lineup.characters.push((*slot, walks));
+                }
+                Kind::MagicItem => lineup.magic += 1,
+                Kind::Pack => {}
+                Kind::Unusable => lineup.unusable += 1,
+            }
+        }
+        lineup
+    }
+}
+
+/// What the portal shows over the TV, full screen (level-scene's portal
+/// alerts; [`crate::alert`] draws them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Alert {
+    /// A toy Giants can't use is on the portal (AG.73).
+    WrongToy,
+    /// A second character beside the hero, or two when the level would
+    /// start (AG.63).
+    TooManySkylanders,
+    /// A second magic item or sidekick while the level shows.
+    TooManyItems,
+    /// The hero came off and no character can take his place.
+    PlaceSkylander,
+}
+
+impl Alert {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Alert::WrongToy => "wrong_toy",
+            Alert::TooManySkylanders => "too_many_skylanders",
+            Alert::TooManyItems => "too_many_items",
+            Alert::PlaceSkylander => "place_a_skylander",
+        }
+    }
+}
+
+/// The alert `lineup` asks for. `inside`: the level has started (shown,
+/// paused or held); `hero`: his slot while he's in it; `would_start`: before
+/// the start, the level would show now but for the portal. A toy Giants
+/// can't use comes first, then too many characters, then too many magic
+/// items, then the call for a Skylander.
+pub(crate) fn judge(
+    lineup: &Lineup,
+    inside: bool,
+    hero: Option<SlotIndex>,
+    would_start: bool,
+) -> Option<Alert> {
+    if lineup.unusable > 0 {
+        return Some(Alert::WrongToy);
+    }
+    if !inside {
+        return (would_start && lineup.characters.len() >= 2).then_some(Alert::TooManySkylanders);
+    }
+    let others: Vec<bool> = lineup
+        .characters
+        .iter()
+        .filter(|(slot, _)| Some(*slot) != hero)
+        .map(|(_, walks)| *walks)
+        .collect();
+    let too_many = match hero {
+        Some(_) => !others.is_empty(),
+        None => others.len() >= 2,
+    };
+    if too_many {
+        return Some(Alert::TooManySkylanders);
+    }
+    if lineup.magic >= 2 {
+        return Some(Alert::TooManyItems);
+    }
+    // A lone character that walks comes in without a screen (its arrival is
+    // AG.72's); one that doesn't walk yet can't, so the call stays up.
+    (hero.is_none() && !others.first().is_some_and(|walks| *walks)).then_some(Alert::PlaceSkylander)
 }
 
 /// The clips his locomotion plays beside his model's idle: his hero side's
@@ -227,29 +381,42 @@ struct Candidate {
     model: Model3d,
 }
 
-/// The level shown with the hero in it.
-struct Inside {
+/// The hero in the level and what draws him.
+struct OnStage {
     hero: Entity,
-    camera: Entity,
     model: Arc<Model>,
     clips: Arc<HeroClips>,
     joints: Vec<Entity>,
     attachments: SpawnedAttachments,
     /// Parts with scroll tracks, and their materials.
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
+    /// His materials the level lights, which it stops lighting when he
+    /// leaves.
+    lit: Vec<Handle<CharacterMaterial>>,
     /// The TV's virtual clock when he came in, for his idle and scrolls.
     since: Duration,
     /// His palette: the clips his scripts start play from it (AH.24).
     palette: Option<Arc<Palette>>,
 }
 
-/// The walk: who's placed in what order, who walks and the level shown.
+/// The level shown, the hero in it or not.
+struct Inside {
+    camera: Entity,
+    hero: Option<OnStage>,
+    /// Where the last hero stood and the way he faced as he came off: where
+    /// the next one comes in (AG.6's replacements: within 0.15 m and 0.18°).
+    left: Option<(Vec3, f32)>,
+}
+
+/// The walk: who's placed in what order, who walks, the level shown and the
+/// portal's alert.
 #[derive(Resource, Default)]
 pub(crate) struct Play {
     /// Occupied slots in the order their figures were placed.
     order: Vec<SlotIndex>,
     candidate: Option<Candidate>,
     inside: Option<Inside>,
+    alert: Option<Alert>,
 }
 
 /// What `/api/_test/tv` reports of the walk.
@@ -371,27 +538,45 @@ impl CameraReport {
 }
 
 impl Play {
-    /// The TV's mode: the level's, paused while it waits.
+    /// The TV's mode: the level's, held while the portal holds it, paused
+    /// while it waits for Start or a pad.
     pub(crate) fn mode(&self, pads: &LevelPads) -> Mode {
-        match (&self.inside, pads.paused()) {
-            (None, _) => Mode::Portal,
-            (Some(_), false) => Mode::Level,
-            (Some(_), true) => Mode::Paused,
+        match &self.inside {
+            None => Mode::Portal,
+            Some(_) if pads.held() => Mode::Held,
+            Some(_) if pads.paused() => Mode::Paused,
+            Some(_) => Mode::Level,
         }
     }
 
-    /// The hero's entity, while the level shows: the walk's shots'.
-    #[cfg(any(test, feature = "dev-tools"))]
-    pub(crate) fn hero(&self) -> Option<Entity> {
-        self.inside.as_ref().map(|i| i.hero)
+    /// The level has started: shown, paused or held. No intro plays from
+    /// then on (character-intros).
+    pub(crate) fn started(&self) -> bool {
+        self.inside.is_some()
     }
 
-    /// The hero's entity, the camera's and his joints', while the level
-    /// shows: what `/api/_test/tv/drawn` reads each frame (AG.55).
+    /// What [`crate::alert`] draws full screen and the mirror reports, as
+    /// [`judge`] last ruled.
+    pub(crate) fn alert(&self) -> Option<Alert> {
+        self.alert
+    }
+
+    fn on_stage(&self) -> Option<&OnStage> {
+        self.inside.as_ref()?.hero.as_ref()
+    }
+
+    /// The hero's entity, while he's in the level: the walk's shots'.
+    #[cfg(any(test, feature = "dev-tools"))]
+    pub(crate) fn hero(&self) -> Option<Entity> {
+        self.on_stage().map(|h| h.hero)
+    }
+
+    /// The hero's entity, the camera's and his joints', while he's in the
+    /// level: what `/api/_test/tv/drawn` reads each frame (AG.55).
     pub(crate) fn drawn(&self) -> Option<(Entity, Entity, &[Entity])> {
-        self.inside
-            .as_ref()
-            .map(|i| (i.hero, i.camera, i.joints.as_slice()))
+        let inside = self.inside.as_ref()?;
+        let h = inside.hero.as_ref()?;
+        Some((h.hero, inside.camera, h.joints.as_slice()))
     }
 
     /// Who walks, or will once the level shows, where he stands and the
@@ -403,7 +588,7 @@ impl Play {
         runtime: Option<&ScriptRuntime>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
-        let body = self.inside.as_ref().and_then(|i| bodies.get(i.hero).ok());
+        let body = self.on_stage().and_then(|h| bodies.get(h.hero).ok());
         let hero = body.map(|(b, ..)| &b.hero);
         let gait = body
             .and_then(|(_, g, _)| g)
@@ -414,7 +599,9 @@ impl Play {
             _ => hero_scripts::HeroNumbers::default(),
         };
         let progress = c.placement.owner.as_ref().map(|o| o.progress);
-        let inside = self.inside.is_some();
+        // In the level with him in it: not while the portal holds it with
+        // no hero (AG.29), when a replacement is only the hero-to-be.
+        let inside = self.on_stage().is_some();
         let camera = self
             .inside
             .as_ref()
@@ -447,6 +634,33 @@ impl Play {
     }
 }
 
+#[cfg(test)]
+impl Play {
+    /// The level started with no hero in it, seen through `camera`: for the
+    /// tests of what reads [`Play::started`].
+    pub(crate) fn started_for_tests(camera: Entity) -> Self {
+        Self {
+            inside: Some(Inside {
+                camera,
+                hero: None,
+                left: None,
+            }),
+            ..default()
+        }
+    }
+
+    /// `alert` ruled, the level started or not, as [`judge_portal`] leaves
+    /// it: for the tests of what draws and reports it.
+    pub(crate) fn alerting_for_tests(alert: Alert, started: Option<Entity>) -> Self {
+        let mut play = match started {
+            Some(camera) => Self::started_for_tests(camera),
+            None => Self::default(),
+        };
+        play.alert = Some(alert);
+        play
+    }
+}
+
 /// The walk's systems, after the level's.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PlaySystems;
@@ -468,6 +682,7 @@ impl Plugin for PlayPlugin {
                     choose_hero,
                     load_hero,
                     leave,
+                    judge_portal,
                     enter,
                     pose_hero,
                     rest_the_cards,
@@ -479,10 +694,17 @@ impl Plugin for PlayPlugin {
     }
 }
 
-/// The slots in the order their figures were placed; the waiting hero
-/// dropped when his figure leaves or another replaces it before the level
-/// shows (after, that's AG.29's).
-fn follow_portal(mut heard: MessageReader<PortalChanged>, mut play: ResMut<Play>) {
+/// The slots in the order their figures were placed. The hero's figure
+/// leaving the portal, or another placed over it, drops him: before the
+/// level shows he never walks in; in it he leaves where he stands
+/// ([`take_off`]).
+fn follow_portal(
+    mut heard: MessageReader<PortalChanged>,
+    mut play: ResMut<Play>,
+    mut level: ResMut<Level>,
+    mut commands: Commands,
+    bodies: Query<&HeroBody>,
+) {
     for PortalChanged(change) in heard.read() {
         let slot = match change {
             PortalChange::Placed { slot, .. } | PortalChange::Cleared { slot } => *slot,
@@ -491,15 +713,60 @@ fn follow_portal(mut heard: MessageReader<PortalChanged>, mut play: ResMut<Play>
         if matches!(change, PortalChange::Placed { .. }) {
             play.order.push(slot);
         }
-        if play.inside.is_none() && play.candidate.as_ref().is_some_and(|c| c.slot == slot) {
-            info!(slot = slot.display(), "the waiting hero left the portal");
-            play.candidate = None;
+        if !play.candidate.as_ref().is_some_and(|c| c.slot == slot) {
+            continue;
+        }
+        play.candidate = None;
+        match play.inside.as_mut() {
+            None => info!(slot = slot.display(), "the waiting hero left the portal"),
+            Some(inside) => take_off(inside, &mut level, &mut commands, &bodies, slot),
         }
     }
 }
 
-/// The first figure placed that walks is the hero, once the shelf says
-/// which character each figure is.
+/// The hero off the portal mid-level: his entity and drawn model go, the
+/// level stops lighting his materials, and where he stood and the way he
+/// faced are kept for the next one in. His scripts go with him: the run is
+/// installed again from the level's part, his minion and everything his
+/// scripts spawned gone, for the next one's join (AH.24). The level holds
+/// from the next [`judge_portal`] (no hero in it).
+fn take_off(
+    inside: &mut Inside,
+    level: &mut Level,
+    commands: &mut Commands,
+    bodies: &Query<&HeroBody>,
+    slot: SlotIndex,
+) {
+    let Some(gone) = inside.hero.take() else {
+        return;
+    };
+    if let Ok(body) = bodies.get(gone.hero) {
+        inside.left = Some((body.hero.pivot, body.hero.facing));
+    }
+    level.forget(&gone.lit);
+    commands.entity(gone.hero).despawn();
+    commands.queue(hero_scripts::reinstall);
+    info!(slot = slot.display(), left = ?inside.left, "the hero left the portal: the level holds");
+}
+
+/// `slot`'s figure as the hero-to-be, if it walks.
+fn candidate(slot: SlotIndex, cards: &PortalCards, shelf: &Shelf) -> Option<Candidate> {
+    let placement = cards.slots[slot.as_usize()].as_ref()?;
+    let load = shelf.loads.get(placement.figure_id.as_str())?;
+    let walker = walkers::walker(load)?;
+    Some(Candidate {
+        slot,
+        placement: placement.clone(),
+        load_file: load.clone(),
+        walker,
+        model: Model3d::Shelfless,
+    })
+}
+
+/// Who walks next, once the shelf says which character each figure is:
+/// before the level shows, the first figure placed that walks; in it with no
+/// hero, the one character on the portal if it walks (two hold it under the
+/// too-many alert, [`judge`]).
 fn choose_hero(cards: Res<PortalCards>, turntables: Res<Turntables>, mut play: ResMut<Play>) {
     if play.candidate.is_some() {
         return;
@@ -507,24 +774,26 @@ fn choose_hero(cards: Res<PortalCards>, turntables: Res<Turntables>, mut play: R
     let Some(shelf) = turntables.shelf() else {
         return;
     };
-    let chosen = play.order.iter().find_map(|slot| {
-        let placement = cards.slots[slot.as_usize()].as_ref()?;
-        let load = shelf.loads.get(placement.figure_id.as_str())?;
-        let walker = walkers::walker(load)?;
-        Some(Candidate {
-            slot: *slot,
-            placement: placement.clone(),
-            load_file: load.clone(),
-            walker,
-            model: Model3d::Shelfless,
-        })
-    });
+    let chosen = match &play.inside {
+        None => play
+            .order
+            .iter()
+            .find_map(|slot| candidate(*slot, &cards, shelf)),
+        Some(inside) if inside.hero.is_none() => {
+            match Lineup::of(&play.order, &cards, shelf).characters.as_slice() {
+                [(slot, true)] => candidate(*slot, &cards, shelf),
+                _ => None,
+            }
+        }
+        Some(_) => None,
+    };
     if let Some(c) = chosen {
         info!(
             slot = c.slot.display(),
             figure = %c.placement.name,
             load_file = %c.load_file,
-            "the hero, once the level shows"
+            in_level = play.inside.is_some(),
+            "the hero, once his model is ready"
         );
         play.candidate = Some(c);
     }
@@ -613,7 +882,8 @@ fn load_hero(
 }
 
 /// The level gone from under the hero, or the TV off the portal view: the
-/// hero, his camera and the pads' level layer go, the level hidden again.
+/// hero, his camera and the pads' level layer go, the level hidden again,
+/// the alert with them.
 fn leave(
     mut commands: Commands,
     mut play: ResMut<Play>,
@@ -632,12 +902,82 @@ fn leave(
     info!(on_portal, shown, "the TV leaves the level");
     let inside = play.inside.take().expect("checked above");
     level.hide(&mut commands, inside.camera);
-    commands.entity(inside.hero).despawn();
+    if let Some(hero) = inside.hero {
+        commands.entity(hero.hero).despawn();
+    }
     commands.entity(inside.camera).despawn();
     pads.hide();
     play.candidate = None;
+    play.alert = None;
     // The scripts start over with the level's next entry (AH.24).
     commands.queue(hero_scripts::reinstall);
+}
+
+/// Before the level has started, the TV would enter it now but for the
+/// portal: the hero-to-be's model ready with its keys, no intro playing or
+/// waiting, the start's pass done and the level ready with its solids. The
+/// TV on the portal view is the caller's to check.
+fn would_enter(
+    play: &Play,
+    level: &Level,
+    prepare: Option<&Prepare>,
+    queue: Option<&IntroQueue>,
+) -> bool {
+    let ready = play
+        .candidate
+        .as_ref()
+        .is_some_and(|c| matches!(c.model, Model3d::Ready(_)));
+    let preparing = prepare.is_some_and(|p| p.preparing());
+    let intros = queue.is_some_and(|q| q.playing().is_some() || q.queued().next().is_some());
+    ready && !preparing && !intros && level.walkable().is_some()
+}
+
+/// The portal's alert ([`judge`]) on the portal view and over the level, and
+/// the level held ([`LevelPads::hold`]) while one shows or no hero is in it.
+/// A replacement whose model can't be drawn counts as one that can't come
+/// in, so the call for a Skylander stays up.
+fn judge_portal(
+    mut play: ResMut<Play>,
+    cards: Res<PortalCards>,
+    turntables: Res<Turntables>,
+    level: Res<Level>,
+    current: Option<Res<Current>>,
+    (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
+    mut pads: ResMut<LevelPads>,
+) {
+    let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
+    let alert = match turntables.shelf().filter(|_| on_portal) {
+        Some(shelf) => {
+            let mut lineup = Lineup::of(&play.order, &cards, shelf);
+            if let Some(c) = play.candidate.as_ref()
+                && matches!(c.model, Model3d::Failed(_))
+            {
+                for (slot, walks) in &mut lineup.characters {
+                    *walks &= *slot != c.slot;
+                }
+            }
+            let hero = play.on_stage().and(play.candidate.as_ref()).map(|c| c.slot);
+            let would_start = play.inside.is_none()
+                && would_enter(&play, &level, prepare.as_deref(), queue.as_deref());
+            judge(&lineup, play.inside.is_some(), hero, would_start)
+        }
+        None => None,
+    };
+    if play.alert != alert {
+        info!(
+            alert = alert.map(Alert::name),
+            was = play.alert.map(Alert::name),
+            "the portal's alert"
+        );
+        play.alert = alert;
+    }
+    let held = play
+        .inside
+        .as_ref()
+        .is_some_and(|i| alert.is_some() || i.hero.is_none());
+    if pads.held() != held {
+        pads.hold(held);
+    }
 }
 
 /// What [`enter`] spawns with.
@@ -654,22 +994,27 @@ pub(crate) struct EnterSpawner<'w, 's> {
     source: Option<Res<'w, ScriptSource>>,
 }
 
-/// The TV into the level, once every condition holds: the hero settled at
-/// the start, his model on him, the camera following, the pads the level's.
+/// The hero into the level once every condition holds and the portal asks
+/// for nothing: at the start, the TV entering the level with him (the
+/// camera following, the pads the level's); or, the level held with no hero
+/// in it, where the last one stood and the way he faced, the level carrying
+/// on from where it held (level-scene's Removing the hero pauses the
+/// level).
 fn enter(
     mut play: ResMut<Play>,
     mut level: ResMut<Level>,
     mut pads: ResMut<LevelPads>,
     seam: AvianSeam,
     current: Option<Res<Current>>,
-    prepare: Option<Res<Prepare>>,
-    queue: Option<Res<IntroQueue>>,
+    (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     tv: Query<Option<&RenderTarget>, With<TvCamera>>,
     mut s: EnterSpawner,
 ) {
-    if play.inside.is_some() {
-        return;
-    }
+    let replacing = match &play.inside {
+        None => false,
+        Some(inside) if inside.hero.is_none() => true,
+        Some(_) => return,
+    };
     let Some(Candidate {
         walker,
         model: Model3d::Ready(_),
@@ -679,17 +1024,31 @@ fn enter(
         return;
     };
     let walker = *walker;
-    let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
-    let preparing = prepare.is_some_and(|p| p.preparing());
-    let intros = queue.is_some_and(|q| q.playing().is_some() || q.queued().next().is_some());
-    if !on_portal || preparing || intros {
+    if play.alert.is_some() {
         return;
     }
-    let Ok(target) = tv.single() else {
-        return;
-    };
-    let Some(start) = level.walkable().map(|l| l.start) else {
-        return;
+    let (at, facing, target) = if replacing {
+        let Some((at, facing)) = play.inside.as_ref().and_then(|i| i.left) else {
+            warn!("no place the last hero left: the level holds");
+            return;
+        };
+        (at, facing, None)
+    } else {
+        let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
+        if !on_portal || !would_enter(&play, &level, prepare.as_deref(), queue.as_deref()) {
+            return;
+        }
+        let Ok(target) = tv.single() else {
+            return;
+        };
+        let Some(start) = level.walkable().map(|l| l.start) else {
+            return;
+        };
+        (
+            start,
+            START_FACING,
+            Some(target.cloned().unwrap_or_default()),
+        )
     };
     let Some((lights, fog)) = level.lighting().map(|(l, f)| (l.clone(), f)) else {
         return;
@@ -698,8 +1057,15 @@ fn enter(
         warn!(load_file = walker.load_file, "the walker has no solid");
         return;
     };
-    let mut hero = Hero::new(solid, walker.tuning, start, START_FACING);
-    hero.settle(&seam, &[]);
+    let mut hero = Hero::new(solid, walker.tuning, at, facing);
+    if replacing {
+        // Where the last one stood is a spot a hero fits: a settle's cast
+        // from a metre up could meet an overhang beside it first (the Mac
+        // run's second replacement came in 0.97 m up).
+        hero.stand(&seam, &[]);
+    } else {
+        hero.settle(&seam, &[]);
+    }
     let feet = hero.pivot;
     let Some(c) = play.candidate.as_mut() else {
         unreachable!("matched above")
@@ -707,17 +1073,13 @@ fn enter(
     let Model3d::Ready(read) = std::mem::replace(&mut c.model, Model3d::Shelfless) else {
         unreachable!("matched as ready")
     };
-    let follow = FollowCamera {
-        camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
-        planes: Vec::new(),
-    };
     // In the world's frame, as the level's lights are.
     let scene = hero_scene(&lights, &fog, Mat4::IDENTITY);
     let hero_entity = spawn_hero(&mut s.commands, hero);
     let drawn = match draw_hero(&mut s, hero_entity, walker, &read.loaded, &scene) {
         Ok(drawn) => drawn,
         Err(why) => {
-            warn!(load_file = walker.load_file, reason = %why, "the hero's model can't be drawn; the portal view stays");
+            warn!(load_file = walker.load_file, reason = %why, "the hero's model can't be drawn; he stays out");
             s.commands.entity(hero_entity).despawn();
             c.model = Model3d::Failed(why);
             return;
@@ -729,7 +1091,9 @@ fn enter(
     s.commands
         .entity(hero_entity)
         .insert(HeroGaits::new(Locomotion::new(walker.gaits, loops)));
-    // His own scripts, where the level's part holds them (AH.24).
+    // His own scripts, where the level's part holds them (AH.24): at the
+    // start, and for a replacement into the run his predecessor's take-off
+    // installed again.
     hero_scripts::ask_join(
         &mut s.commands,
         hero_entity,
@@ -738,7 +1102,38 @@ fn enter(
         s.source.as_deref(),
     );
     c.model = Model3d::Ready(read);
-    let target = target.cloned().unwrap_or_default();
+    let now = s.time.elapsed();
+    let lit = drawn.lit.iter().map(|l| l.material.clone()).collect();
+    level.light_also(drawn.lit, &mut s.materials);
+    let on_stage = OnStage {
+        hero: hero_entity,
+        model: drawn.model,
+        clips,
+        joints: drawn.joints,
+        attachments: drawn.attachments,
+        scrolling: drawn.scrolling,
+        lit,
+        since: now,
+        palette,
+    };
+    s.redrawn.write(Redrawn::Level);
+    let Some(target) = target else {
+        info!(
+            load_file = walker.load_file,
+            at = ?at,
+            feet = ?feet,
+            facing,
+            "a hero comes in where the last one stood"
+        );
+        if let Some(inside) = play.inside.as_mut() {
+            inside.hero = Some(on_stage);
+        }
+        return;
+    };
+    let follow = FollowCamera {
+        camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
+        planes: Vec::new(),
+    };
     let camera = s
         .commands
         .spawn((
@@ -749,28 +1144,19 @@ fn enter(
         ))
         .insert(following(follow))
         .id();
-    let now = s.time.elapsed();
     level.show(&mut s.commands, camera, now);
-    level.light_also(drawn.lit, &mut s.materials);
     pads.show();
-    s.redrawn.write(Redrawn::Level);
     info!(
         load_file = walker.load_file,
-        start = ?start,
+        start = ?at,
         feet = ?feet,
-        facing = START_FACING,
+        facing,
         "the TV enters the level"
     );
     play.inside = Some(Inside {
-        hero: hero_entity,
         camera,
-        model: drawn.model,
-        clips,
-        joints: drawn.joints,
-        attachments: drawn.attachments,
-        scrolling: drawn.scrolling,
-        since: now,
-        palette,
+        hero: Some(on_stage),
+        left: None,
     });
 }
 
@@ -913,7 +1299,7 @@ fn pose_hero(
     mut transforms: Query<&mut Transform>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
-    let Some(inside) = play.inside.as_ref() else {
+    let Some(inside) = play.on_stage() else {
         return;
     };
     let still = reduced.is_some_and(|r| r.0);
@@ -1048,6 +1434,13 @@ mod tests {
     use crate::turntable::tests::{app, extract, model, placed};
 
     const ERUPTOR: u32 = 9;
+    /// The made-up extract's: a character that doesn't walk, a magic item.
+    const ONE: u32 = 1;
+    const ITEM: u32 = 5;
+    /// Added to the roster by [`play_app`].
+    const SIDEKICK: u32 = 6;
+    /// On no roster: a figure Giants can't use (a later game's).
+    const FRYNO: u32 = 0x1c2;
 
     /// Where the made-up hero side holds the top joint along x in the walk,
     /// the run and the fall: a pose tells their weights. The idle sways it
@@ -1150,6 +1543,14 @@ mod tests {
         shelf
             .loads
             .insert(format!("{ERUPTOR:06x}-0000"), "009_Eruptor".into());
+        // On the roster beside the made-up extract's: Eruptor, and a
+        // sidekick, which Giants counts as a magic item.
+        shelf
+            .kinds
+            .insert(format!("{ERUPTOR:06x}-0000"), Category::Figure);
+        shelf
+            .kinds
+            .insert(format!("{SIDEKICK:06x}-0000"), Category::Sidekick);
         let mut app = app(shelf);
         app.add_message::<Redrawn>()
             .add_message::<PortalChanged>()
@@ -1184,6 +1585,18 @@ mod tests {
         let change = placed(slot, toy, name);
         crate::turntable::tests::set(app, [change.clone()]);
         app.world_mut().write_message(PortalChanged(change));
+    }
+
+    fn clear(app: &mut App, slot: u8) {
+        let change = PortalChange::Cleared {
+            slot: SlotIndex::new(slot).unwrap(),
+        };
+        crate::turntable::tests::set(app, [change.clone()]);
+        app.world_mut().write_message(PortalChanged(change));
+    }
+
+    fn alert(app: &App) -> Option<Alert> {
+        app.world().resource::<Play>().alert()
     }
 
     fn mode(app: &App) -> Mode {
@@ -1750,6 +2163,245 @@ mod tests {
         assert!(hero(&app).pivot.distance(from) > 1.0);
     }
 
+    // ---- AG.29 over AH.24: the portal's holds and his scripts ------------
+
+    /// Eruptor in the level on AH.24's synthetic part, his scripts joined:
+    /// the app and the pad that took him over.
+    fn joined_eruptor(tmp: &std::path::Path) -> (App, Entity) {
+        let (mut app, tx) = play_app(tmp);
+        write_attack_parts(tmp);
+        tx.send(write_level(tmp, &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        (app, pad)
+    }
+
+    /// The scripts' log's last step.
+    fn log_last(app: &App) -> u64 {
+        app.world()
+            .resource::<crate::hero_scripts::ScriptLog>()
+            .last()
+    }
+
+    /// The steps the run has made since it was installed.
+    fn run_steps(app: &App) -> u64 {
+        app.world().resource::<ScriptRuntime>().steps
+    }
+
+    /// What the scripts did after the log's step `since`: the palette slots
+    /// started on the hero, and how many clones were made and taken off.
+    fn attacks_since(app: &App, since: u64) -> (Vec<u32>, usize, usize) {
+        let steps = app
+            .world()
+            .resource::<crate::hero_scripts::ScriptLog>()
+            .since(since);
+        (
+            steps
+                .iter()
+                .flat_map(|s| s.started.iter().map(|q| q.slot))
+                .collect(),
+            steps.iter().map(|s| s.spawned.len()).sum(),
+            steps.iter().map(|s| s.gone.len()).sum(),
+        )
+    }
+
+    /// AG.29 over AH.24: every alert's hold keeps his attacks from his
+    /// scripts. Eruptor joined, each alert in turn (a toy Giants can't use,
+    /// a second character, a second magic item) holds the level: the run
+    /// makes no step, Start pauses nothing, and the attack buttons pressed
+    /// under it, tapped inside a frame or held through it start no clip and
+    /// spawn nothing, under it or once it's off; a fresh press then throws.
+    #[test]
+    fn every_alerts_hold_keeps_his_attacks_from_his_scripts() {
+        use guac_formats::script::builder::ATTACK_THROW_SLOT;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = joined_eruptor(tmp.path());
+        let throw = ATTACK_THROW_SLOT as u32;
+        let holds: [(&[(u8, u32, &str)], Alert); 3] = [
+            (&[(7, FRYNO, "Fryno")], Alert::WrongToy),
+            (&[(3, ONE, "One")], Alert::TooManySkylanders),
+            (
+                &[(5, ITEM, "Five"), (6, SIDEKICK, "Six")],
+                Alert::TooManyItems,
+            ),
+        ];
+        for (figures, want) in holds {
+            for &(slot, toy, name) in figures {
+                place(&mut app, slot, toy, name);
+            }
+            until(&mut app, "the hold", |a| {
+                mode(a) == Mode::Held && alert(a) == Some(want)
+            });
+            // The hold's first frame runs the steps already due (AG.20).
+            app.update();
+            let (since, steps) = (log_last(&app), run_steps(&app));
+            for button in [
+                GamepadButton::South,
+                GamepadButton::West,
+                GamepadButton::RightTrigger,
+                GamepadButton::Start,
+            ] {
+                test_pad::press(&mut app, pad, button);
+                app.update();
+            }
+            test_pad::button(&mut app, pad, GamepadButton::East, true);
+            test_pad::button(&mut app, pad, GamepadButton::East, false);
+            app.update();
+            test_pad::button(&mut app, pad, GamepadButton::South, true);
+            for _ in 0..30 {
+                app.update();
+            }
+            assert_eq!(mode(&app), Mode::Held);
+            assert_eq!(
+                app.world().resource::<LevelPads>().seat().unwrap().pause(),
+                None,
+                "{want:?}: Start paused nothing"
+            );
+            assert_eq!(run_steps(&app), steps, "{want:?}: no step under it");
+            assert_eq!(attacks_since(&app, since), (vec![], 0, 0), "{want:?}");
+            for &(slot, ..) in figures {
+                clear(&mut app, slot);
+            }
+            until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+            for _ in 0..40 {
+                app.update();
+            }
+            assert!(run_steps(&app) > steps + 30, "{want:?}: the run on again");
+            assert_eq!(
+                attacks_since(&app, since).0,
+                Vec::<u32>::new(),
+                "{want:?}: South held through it throws nothing"
+            );
+            assert_eq!(attacks_since(&app, since).1, 0, "{want:?}");
+            test_pad::button(&mut app, pad, GamepadButton::South, false);
+            app.update();
+            test_pad::press(&mut app, pad, GamepadButton::South);
+            until(&mut app, "a fresh press throws", |a| {
+                attacks_since(a, since).0 == [throw] && attacks_since(a, since).2 == 1
+            });
+            for _ in 0..40 {
+                app.update();
+            }
+        }
+    }
+
+    /// AG.29 over AH.24: the hero taken off takes his scripts with him (the
+    /// run installed again, his helper gone, no step while the level holds
+    /// past its first frame), and Eruptor placed again comes in where he
+    /// stood and joins the fresh run as the first did, once it has made the
+    /// init chain's two steps: his health and full health off his scripts,
+    /// his helper drawn again (one), his walk his scripts' (the stick moves
+    /// him nowhere) and the bottom button throws. The TV's hero, the one
+    /// whose scripts run and the one his scripts move are the same entity.
+    #[test]
+    fn the_hero_in_where_the_last_stood_joins_his_scripts() {
+        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_THROW_SLOT};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = joined_eruptor(tmp.path());
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(clones(&mut app).len(), 1, "his helper");
+        let first = app.world().resource::<Play>().hero().unwrap();
+        let stood = hero(&app).pivot;
+        let before = run_steps(&app);
+        let since = log_last(&app);
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        app.update();
+        let held = run_steps(&app);
+        assert!(
+            held < before,
+            "installed again: {held} steps, {before} before"
+        );
+        for _ in 0..10 {
+            app.update();
+        }
+        assert_eq!(run_steps(&app), held, "no step under the hold");
+        assert!(clones(&mut app).is_empty(), "his helper went with him");
+        let mut runs = app.world_mut().query::<&HeroRun>();
+        assert_eq!(runs.iter(app.world()).count(), 0);
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "his scripts again", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let next = app.world().resource::<Play>().hero().unwrap();
+        assert_ne!(next, first);
+        assert!(hero(&app).pivot.distance(stood) < 1e-3, "where he stood");
+        let mut runs = app.world_mut().query::<(Entity, &HeroRun)>();
+        let runs: Vec<Entity> = runs.iter(app.world()).map(|(e, _)| e).collect();
+        assert_eq!(runs, [next], "one run, on the TV's hero");
+        assert!(
+            app.world()
+                .entity(next)
+                .contains::<crate::hero::ScriptedHero>()
+        );
+        let joins: Vec<Option<&str>> = app
+            .world()
+            .resource::<crate::hero_scripts::ScriptLog>()
+            .since(since)
+            .iter()
+            .map(|s| s.join)
+            .collect();
+        // The old run's last steps, then the fresh run's before his file's
+        // placements joined it.
+        let waited = joins
+            .iter()
+            .skip_while(|j| **j == Some("joined"))
+            .take_while(|j| **j != Some("requested"))
+            .count();
+        assert!(
+            waited as u64 >= crate::hero_scripts::INIT_STEPS,
+            "his file joined after the fresh run's init chain: {joins:?}"
+        );
+        let run = app.world().entity(next).get::<HeroRun>().unwrap().clone();
+        let Join::Joined(minion) = run.join else {
+            unreachable!("joined above")
+        };
+        let numbers =
+            crate::hero_scripts::hero_numbers(&app.world().resource::<ScriptRuntime>().vm, minion);
+        assert_eq!(
+            (numbers.health, numbers.health_max),
+            (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX))
+        );
+        app.update();
+        assert_eq!(
+            clones(&mut app),
+            [(true, 1, Visibility::Inherited, false)],
+            "his helper again, one"
+        );
+        // His scripts the one writer: the stick moves him nowhere.
+        let still = hero(&app).pivot;
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(hero(&app).pivot, still, "the stick isn't his walk's writer");
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        let since = log_last(&app);
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "his throw", |a| {
+            attacks_since(a, since).0 == [ATTACK_THROW_SLOT as u32]
+                && attacks_since(a, since).1 == 1
+        });
+        let world = app.world().resource::<ScriptWorld>();
+        assert_eq!(
+            crate::hero_scripts::playing_on(world, next.to_bits()).len(),
+            1,
+            "his throw plays on the TV's hero"
+        );
+    }
+
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
     /// waypoint facing 0°, settled 5 mm above the floor, drawn there at his
     /// 150 %; the camera at camera 0's rest pose off his feet (55 ft at 32°
@@ -1849,9 +2501,12 @@ mod tests {
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
     }
 
-    /// level-scene's The first character placed walks into the level: of
-    /// two figures that walk placed in one frame, the one placed first is
-    /// the hero, not the one in the lower slot nor the one placed last.
+    /// level-scene's The first character placed walks into the level and
+    /// Two characters before the start: of two figures that walk placed in
+    /// one frame, the one placed first is the hero-to-be, not the one in the
+    /// lower slot nor the one placed last; two on the portal hold the portal
+    /// view under the too-many alert instead of the level, and once the
+    /// other comes off he walks in.
     #[test]
     fn the_first_placed_of_two_walkers_is_the_hero() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1860,9 +2515,24 @@ mod tests {
         until(&mut app, "the level", |a| level_state(a) == "ready");
         place(&mut app, 2, ERUPTOR, "Eruptor");
         place(&mut app, 0, ERUPTOR, "Eruptor");
-        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        until(&mut app, "the alert", |a| {
+            alert(a) == Some(Alert::TooManySkylanders)
+        });
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Portal, "held on the portal view");
+        }
         let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
         assert_eq!(c.slot.as_u8(), 2, "the first placed");
+        clear(&mut app, 0);
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        assert_eq!(alert(&app), None);
+        let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
+        assert_eq!(c.slot.as_u8(), 2);
+        assert_eq!(
+            (hero(&app).pivot.x, hero(&app).pivot.z),
+            (START[0], START[2])
+        );
     }
 
     /// The start's pass holds the TV's screens (AE.25): while it runs the
@@ -1896,7 +2566,7 @@ mod tests {
         place(&mut app, 0, ERUPTOR, "Eruptor");
         until(&mut app, "the level", |a| mode(a) == Mode::Level);
         let joints = |app: &App| -> Vec<Transform> {
-            let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
+            let inside = app.world().resource::<Play>().on_stage().unwrap();
             inside
                 .joints
                 .iter()
@@ -1906,8 +2576,7 @@ mod tests {
         let model = app
             .world()
             .resource::<Play>()
-            .inside
-            .as_ref()
+            .on_stage()
             .unwrap()
             .model
             .clone();
@@ -1950,7 +2619,7 @@ mod tests {
     /// The top joint's x as drawn: the weights times each clip's x, the
     /// idle's sway its own.
     fn top_x(app: &App) -> f32 {
-        let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
+        let inside = app.world().resource::<Play>().on_stage().unwrap();
         let joint = inside.joints[1];
         app.world()
             .entity(joint)
@@ -2252,21 +2921,29 @@ mod tests {
     }
 
     /// Open question 1's (a) until AG.27: a character that doesn't walk yet,
-    /// placed first, keeps the portal view; Eruptor placed after it walks
-    /// in. The TV leaving the portal view leaves the level, hidden again.
+    /// placed first, keeps the portal view; Eruptor placed beside it holds
+    /// the portal view under the too-many alert (two characters when the
+    /// level would start), and walks in once it comes off. The TV leaving
+    /// the portal view leaves the level, hidden again.
     #[test]
     fn another_character_keeps_the_portal_view_and_leaving_the_portal_leaves_the_level() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, tx) = play_app(tmp.path());
         tx.send(write_level(tmp.path(), &lights())).unwrap();
         until(&mut app, "the level", |a| level_state(a) == "ready");
-        place(&mut app, 0, 1, "One");
+        place(&mut app, 0, ONE, "One");
         for _ in 0..60 {
             app.update();
         }
         assert_eq!(mode(&app), Mode::Portal);
+        assert_eq!(alert(&app), None, "no level would start");
         assert!(app.world().resource::<Play>().candidate.is_none());
         place(&mut app, 1, ERUPTOR, "Eruptor");
+        until(&mut app, "the alert", |a| {
+            alert(a) == Some(Alert::TooManySkylanders)
+        });
+        assert_eq!(mode(&app), Mode::Portal);
+        clear(&mut app, 0);
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
         let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
         assert_eq!(c.slot.as_u8(), 1);
@@ -2274,11 +2951,574 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(mode(&app), Mode::Portal);
+        assert_eq!(alert(&app), None);
         assert_eq!(level_state(&app), "ready", "hidden, ready to show again");
         assert!(!app.world().resource::<LevelPads>().shows());
+        assert!(!app.world().resource::<LevelPads>().held());
         let mut heroes = app.world_mut().query::<&HeroBody>();
         assert_eq!(heroes.iter(app.world()).count(), 0);
         let mut cameras = app.world_mut().query::<&FollowCamera>();
         assert_eq!(cameras.iter(app.world()).count(), 0);
+    }
+
+    // ---- AG.29, AG.63, AG.73: the portal and the level -------------------
+
+    fn slot(n: u8) -> SlotIndex {
+        SlotIndex::new(n).unwrap()
+    }
+
+    /// A lineup of `characters` (slot, walks), `magic` items and
+    /// `unusable` toys.
+    fn lineup(characters: &[(u8, bool)], magic: usize, unusable: usize) -> Lineup {
+        Lineup {
+            characters: characters.iter().map(|(s, w)| (slot(*s), *w)).collect(),
+            magic,
+            unusable,
+        }
+    }
+
+    /// The roster's categories as the flow reads them: figures and Giants
+    /// are characters, items and sidekicks magic items, an adventure piece
+    /// a pack, and a figure the roster doesn't hold one Giants can't use.
+    #[test]
+    fn the_roster_says_what_each_figure_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut shelf = crate::turntable::tests::extract(tmp.path());
+        shelf.kinds.insert("000006-0000".into(), Category::Sidekick);
+        shelf
+            .kinds
+            .insert("000007-0000".into(), Category::AdventurePack);
+        for (id, want) in [
+            ("000001-0000", Kind::Character),
+            ("000002-0000", Kind::Character),
+            ("000005-0000", Kind::MagicItem),
+            ("000006-0000", Kind::MagicItem),
+            ("000007-0000", Kind::Pack),
+            ("0001c2-0000", Kind::Unusable),
+        ] {
+            assert_eq!(kind(&shelf, id), want, "{id}");
+        }
+    }
+
+    /// AG.63's hold, ruled: in the level a second character beside the hero
+    /// holds it, and so do two with the hero off; one off ends it; the hero
+    /// off with one that walks left lets him come in, with one that doesn't
+    /// (AG.27) or none it calls for a Skylander.
+    #[test]
+    fn a_second_character_holds_and_one_off_ends_it() {
+        let hero = Some(slot(0));
+        assert_eq!(judge(&lineup(&[(0, true)], 0, 0), true, hero, false), None);
+        for second in [true, false] {
+            assert_eq!(
+                judge(&lineup(&[(0, true), (3, second)], 0, 0), true, hero, false),
+                Some(Alert::TooManySkylanders),
+                "walks: {second}"
+            );
+        }
+        // The hero off, the other in.
+        assert_eq!(judge(&lineup(&[(3, true)], 0, 0), true, None, false), None);
+        assert_eq!(
+            judge(&lineup(&[(3, true), (5, true)], 0, 0), true, None, false),
+            Some(Alert::TooManySkylanders)
+        );
+        assert_eq!(
+            judge(&lineup(&[(3, false)], 0, 0), true, None, false),
+            Some(Alert::PlaceSkylander)
+        );
+        assert_eq!(
+            judge(&lineup(&[], 0, 0), true, None, false),
+            Some(Alert::PlaceSkylander)
+        );
+    }
+
+    /// Items, adventure-pack pieces and sidekicks never hold the level for
+    /// too many Skylanders and never answer the call for one; a second
+    /// magic item (a sidekick counted as one) holds it under its own alert.
+    #[test]
+    fn items_packs_and_sidekicks_never_hold_it_for_too_many_skylanders() {
+        let hero = Some(slot(0));
+        assert_eq!(judge(&lineup(&[(0, true)], 1, 0), true, hero, false), None);
+        assert_eq!(
+            judge(&lineup(&[(0, true)], 2, 0), true, hero, false),
+            Some(Alert::TooManyItems)
+        );
+        assert_eq!(
+            judge(&lineup(&[], 1, 0), true, None, false),
+            Some(Alert::PlaceSkylander)
+        );
+        // Before the start, items beside a character change nothing.
+        assert_eq!(judge(&lineup(&[(0, true)], 2, 0), false, None, true), None);
+        // Too many of both: too many Skylanders first (our order: AG.6 never
+        // put both on at once).
+        assert_eq!(
+            judge(&lineup(&[(0, true), (1, true)], 2, 0), true, hero, false),
+            Some(Alert::TooManySkylanders)
+        );
+    }
+
+    /// Two characters hold the start only once the level would show.
+    #[test]
+    fn two_before_the_start_hold_once_the_level_would_start() {
+        let two = lineup(&[(0, true), (1, false)], 0, 0);
+        assert_eq!(judge(&two, false, None, false), None);
+        assert_eq!(
+            judge(&two, false, None, true),
+            Some(Alert::TooManySkylanders)
+        );
+        assert_eq!(judge(&lineup(&[(0, true)], 0, 0), false, None, true), None);
+    }
+
+    /// AG.73 ruled: a toy Giants can't use holds whatever shows, before the
+    /// start or in the level, before every other alert.
+    #[test]
+    fn a_toy_giants_cant_use_comes_first() {
+        let hero = Some(slot(0));
+        for (l, inside, hero, start) in [
+            (lineup(&[], 0, 1), false, None, false),
+            (lineup(&[(0, true)], 0, 1), false, None, true),
+            (lineup(&[(0, true)], 0, 1), true, hero, false),
+            (lineup(&[(0, true), (1, true)], 2, 1), true, hero, false),
+            (lineup(&[], 0, 1), true, None, false),
+        ] {
+            assert_eq!(
+                judge(&l, inside, hero, start),
+                Some(Alert::WrongToy),
+                "{l:?}"
+            );
+        }
+    }
+
+    /// Eruptor walking the level, the first pad pushed forward: the app, the
+    /// pad and his pivot.
+    fn walking(tmp: &std::path::Path) -> (App, Entity) {
+        let (mut app, tx) = play_app(tmp);
+        tx.send(write_level(tmp, &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..20 {
+            app.update();
+        }
+        (app, pad)
+    }
+
+    /// The level stands still: from the frame after the hold began (that
+    /// frame still runs the steps already due, as a pause's does, AG.20)
+    /// and over `frames` frames, his pivot and the virtual clock don't move,
+    /// the stick held as it is.
+    fn stands_still(app: &mut App, frames: usize) -> Vec3 {
+        app.update();
+        let at = hero(app).pivot;
+        let clock = app.world().resource::<Time<Virtual>>().elapsed();
+        for _ in 0..frames {
+            app.update();
+            assert_eq!(hero(app).pivot, at, "he moved under the hold");
+        }
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        assert_eq!(app.world().resource::<Time<Virtual>>().elapsed(), clock);
+        at
+    }
+
+    /// AG.63: a second character placed beside the walking hero holds the
+    /// level under the too-many alert, him and the clock still, the stick
+    /// still pushed; once it comes off he carries on from where he stopped.
+    /// No intro is asked for (the level has started).
+    #[test]
+    fn a_second_character_holds_the_level_until_it_comes_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        place(&mut app, 3, ONE, "One");
+        until(&mut app, "the hold", |a| mode(a) == Mode::Held);
+        assert_eq!(alert(&app), Some(Alert::TooManySkylanders));
+        assert!(app.world().resource::<Play>().started());
+        let at = stands_still(&mut app, 30);
+        clear(&mut app, 3);
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        assert_eq!(alert(&app), None);
+        for _ in 0..10 {
+            app.update();
+        }
+        let on = hero(&app).pivot;
+        assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
+        assert!(on.distance(at) < 3.0, "from where he stopped: {at} -> {on}");
+    }
+
+    /// AG.63: with a second Eruptor holding the level, the hero taken off
+    /// brings the other in where he stood and the way he faced, the camera
+    /// the same, and the level carries on.
+    #[test]
+    fn the_hero_off_brings_the_other_in_where_he_stood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        // A turn first, so his facing isn't the start's.
+        test_pad::stick(&mut app, pad, 1.0, 0.0);
+        for _ in 0..20 {
+            app.update();
+        }
+        let camera = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .camera;
+        place(&mut app, 4, ERUPTOR, "Eruptor");
+        until(&mut app, "the hold", |a| {
+            alert(a) == Some(Alert::TooManySkylanders)
+        });
+        stands_still(&mut app, 5);
+        let left = hero(&app);
+        clear(&mut app, 0);
+        until(&mut app, "the other in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+                && a.world()
+                    .resource::<Play>()
+                    .candidate
+                    .as_ref()
+                    .is_some_and(|c| c.slot.as_u8() == 4)
+        });
+        let now = hero(&app);
+        eprintln!(
+            "left at {} facing {}, in at {} facing {}",
+            left.pivot, left.facing, now.pivot, now.facing
+        );
+        assert!(now.pivot.distance(left.pivot) < 1e-3, "{}", now.pivot);
+        assert_eq!(now.facing, left.facing);
+        assert_ne!(left.facing, START_FACING);
+        let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
+        assert_eq!(inside.camera, camera, "the same camera");
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        assert_eq!(alert(&app), None);
+        let mut heroes = app.world_mut().query::<&HeroBody>();
+        assert_eq!(heroes.iter(app.world()).count(), 1, "one hero");
+    }
+
+    /// AG.29: the hero taken off with nothing else on the portal holds the
+    /// level behind the call for a Skylander, no hero in it; an item placed
+    /// then never answers it, nor a character that doesn't walk yet; the
+    /// next one that walks comes in where he stood, facing his way, an
+    /// overhang beside the spot notwithstanding, and the level carries on
+    /// from where it held.
+    #[test]
+    fn removing_the_hero_holds_the_level_until_the_next_comes_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        let camera = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .camera;
+        let level_lit = app
+            .world()
+            .resource::<Level>()
+            .loaded()
+            .unwrap()
+            .also_count();
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        assert_eq!(mode(&app), Mode::Held);
+        assert!(app.world().resource::<Play>().hero().is_none());
+        let mut heroes = app.world_mut().query::<&HeroBody>();
+        assert_eq!(heroes.iter(app.world()).count(), 0, "he's gone");
+        assert_eq!(
+            app.world()
+                .resource::<Level>()
+                .loaded()
+                .unwrap()
+                .also_count(),
+            0,
+            "his {level_lit} materials no longer lit with the level"
+        );
+        assert!(
+            app.world().resource::<Level>().report().shown,
+            "still shown"
+        );
+        let left = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .left
+            .unwrap();
+        app.update();
+        let clock = app.world().resource::<Time<Virtual>>().elapsed();
+        place(&mut app, 5, ITEM, "Five");
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(
+                alert(&app),
+                Some(Alert::PlaceSkylander),
+                "an item isn't a hero"
+            );
+        }
+        assert_eq!(
+            app.world().resource::<Time<Virtual>>().elapsed(),
+            clock,
+            "held"
+        );
+        // A character that doesn't walk yet (AG.27) can't answer it either.
+        place(&mut app, 3, ONE, "One");
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(alert(&app), Some(Alert::PlaceSkylander), "One doesn't walk");
+            assert!(app.world().resource::<Play>().hero().is_none());
+        }
+        clear(&mut app, 3);
+        // An overhang beside his spot, clear of a hero standing there and in
+        // reach of one dropped from a metre up: he's put down, not dropped.
+        let mut overhang = guac_motion::scenarios::Soup::default();
+        let (x, y, z) = (left.0.x, left.0.y + 1.845, left.0.z + 0.5);
+        overhang.quad(
+            [
+                Vec3::new(x - 2.0, y, z),
+                Vec3::new(x + 2.0, y, z),
+                Vec3::new(x + 2.0, y, z + 2.5),
+                Vec3::new(x - 2.0, y, z + 2.5),
+            ],
+            Vec3::NEG_Y,
+        );
+        let body = guac_motion::seam::Body {
+            id: guac_motion::seam::BodyId(0xa629),
+            kind: guac_motion::seam::BodyKind::Static,
+            pose: guac_motion::seam::Pose::IDENTITY,
+            collider: guac_motion::seam::Collider::Mesh(Arc::new(overhang.mesh())),
+        };
+        let mut commands = app.world_mut().commands();
+        crate::physics::spawn_body(&mut commands, &body).unwrap();
+        app.world_mut().flush();
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the next one in", |a| mode(a) == Mode::Level);
+        let now = hero(&app);
+        assert!(
+            now.pivot.distance(left.0) < 1e-3,
+            "{} against {}",
+            now.pivot,
+            left.0
+        );
+        assert_eq!(now.facing, left.1);
+        let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
+        assert_eq!(inside.camera, camera, "the level carries on");
+        assert_eq!(
+            app.world()
+                .resource::<Level>()
+                .loaded()
+                .unwrap()
+                .also_count(),
+            level_lit,
+            "his materials lit with the level"
+        );
+    }
+
+    /// AG.29: a replacement whose model can't be drawn (his hero side gone
+    /// from the extract) can't come in, so the call for a Skylander stays up
+    /// rather than a hold with nothing on it.
+    #[test]
+    fn a_replacement_that_cant_be_drawn_leaves_the_call_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        std::fs::remove_file(tmp.path().join(IrFormat::Ron.hero_path("009_Eruptor"))).unwrap();
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "his model", |a| hero_model(a) == Some("failed"));
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(alert(&app), Some(Alert::PlaceSkylander));
+            assert_eq!(mode(&app), Mode::Held);
+        }
+    }
+
+    /// AG.29: a figure placed over the hero's own slot takes him off as a
+    /// removal does: he leaves where he stood, and with only a character
+    /// that doesn't walk yet on the portal the level calls for a Skylander.
+    #[test]
+    fn a_figure_placed_over_the_heros_slot_takes_him_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        place(&mut app, 0, ONE, "One");
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        assert_eq!(mode(&app), Mode::Held);
+        assert!(app.world().resource::<Play>().hero().is_none());
+        let mut heroes = app.world_mut().query::<&HeroBody>();
+        assert_eq!(heroes.iter(app.world()).count(), 0, "he's gone");
+        assert!(
+            app.world()
+                .resource::<Play>()
+                .inside
+                .as_ref()
+                .unwrap()
+                .left
+                .is_some(),
+            "where he stood kept"
+        );
+    }
+
+    /// AG.29: every figure off holds the level; Start does nothing under the
+    /// call; the TV stays in the level.
+    #[test]
+    fn remove_all_holds_and_start_does_nothing_under_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        place(&mut app, 5, ITEM, "Five");
+        for _ in 0..5 {
+            app.update();
+        }
+        clear(&mut app, 0);
+        clear(&mut app, 5);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(mode(&app), Mode::Held);
+        let seat = app.world().resource::<LevelPads>().seat().unwrap().pause();
+        assert_eq!(seat, None, "Start under the hold paused nothing");
+        assert!(app.world().resource::<Level>().report().shown);
+    }
+
+    /// AG.29: an item placed first never starts the level or becomes the
+    /// hero; Eruptor after it does, beside it.
+    #[test]
+    fn an_item_first_never_starts_the_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ITEM, "Five");
+        place(&mut app, 1, SIDEKICK, "Six");
+        for _ in 0..60 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Portal);
+            assert_eq!(alert(&app), None);
+        }
+        assert!(app.world().resource::<Play>().candidate.is_none());
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
+        assert_eq!(c.slot.as_u8(), 2);
+    }
+
+    /// AG.29: an item placed mid-level changes nothing: no alert, he walks
+    /// on; a sidekick beside it is a second magic item and holds the level
+    /// under the too-many-items alert until one comes off.
+    #[test]
+    fn an_item_mid_level_changes_nothing_and_a_second_holds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        place(&mut app, 5, ITEM, "Five");
+        let from = hero(&app).pivot;
+        for _ in 0..20 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Level);
+            assert_eq!(alert(&app), None);
+        }
+        assert!(hero(&app).pivot.distance(from) > 0.1, "he walks on");
+        place(&mut app, 6, SIDEKICK, "Six");
+        until(&mut app, "the hold", |a| {
+            alert(a) == Some(Alert::TooManyItems)
+        });
+        assert_eq!(mode(&app), Mode::Held);
+        stands_still(&mut app, 20);
+        clear(&mut app, 5);
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+    }
+
+    /// AG.73: a toy Giants can't use, placed mid-level, holds it under the
+    /// wrong-toy alert, him unmoved and the pad's buttons doing nothing;
+    /// taken off, he walks on.
+    #[test]
+    fn a_toy_giants_cant_use_holds_the_level_until_it_comes_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        place(&mut app, 7, FRYNO, "Fryno");
+        until(&mut app, "the alert", |a| alert(a) == Some(Alert::WrongToy));
+        assert_eq!(mode(&app), Mode::Held);
+        for button in [GamepadButton::Start, GamepadButton::South] {
+            test_pad::press(&mut app, pad, button);
+        }
+        let at = stands_still(&mut app, 30);
+        assert_eq!(
+            app.world().resource::<LevelPads>().seat().unwrap().pause(),
+            None
+        );
+        clear(&mut app, 7);
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(hero(&app).pivot.distance(at) > 0.1, "he walks on");
+    }
+
+    /// AG.73 at the start: the toy holds the portal view under its alert,
+    /// Eruptor placed beside it doesn't enter while it's there, and he does
+    /// once it's off.
+    #[test]
+    fn a_toy_giants_cant_use_holds_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, FRYNO, "Fryno");
+        until(&mut app, "the alert", |a| alert(a) == Some(Alert::WrongToy));
+        place(&mut app, 1, ERUPTOR, "Eruptor");
+        until(&mut app, "his model", |a| hero_model(a) == Some("ready"));
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Portal, "held on the portal view");
+            assert_eq!(alert(&app), Some(Alert::WrongToy));
+        }
+        clear(&mut app, 0);
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        assert_eq!(alert(&app), None);
+    }
+
+    /// AG.29, intros: two characters before the start both play their intros
+    /// in order and only then does the too-many alert show, the level not
+    /// entered; once one comes off the other walks in.
+    #[test]
+    fn two_before_the_start_wait_for_their_intros_then_hold() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        place(&mut app, 1, ONE, "One");
+        for (slot, toy, movie) in [(0, ERUPTOR, "eruptor"), (1, ONE, "one")] {
+            app.world_mut()
+                .resource_mut::<IntroQueue>()
+                .apply(crate::intro::IntroEvent::Placed {
+                    slot: SlotIndex::new(slot).unwrap(),
+                    figure_id: format!("{toy:06x}-0000"),
+                    movie: Some(movie.into()),
+                });
+        }
+        until(&mut app, "his model", |a| hero_model(a) == Some("ready"));
+        for skip in 0..2 {
+            for _ in 0..20 {
+                app.update();
+                assert_eq!(alert(&app), None, "intro {skip} plays");
+            }
+            app.world_mut()
+                .resource_mut::<IntroQueue>()
+                .apply(crate::intro::IntroEvent::Skip);
+        }
+        until(&mut app, "the alert", |a| {
+            alert(a) == Some(Alert::TooManySkylanders)
+        });
+        assert_eq!(mode(&app), Mode::Portal);
+        clear(&mut app, 1);
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
     }
 }

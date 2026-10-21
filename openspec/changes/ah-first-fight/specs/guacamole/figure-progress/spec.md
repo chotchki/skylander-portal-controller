@@ -33,7 +33,7 @@ Experience and gold a hero collects SHALL be added to the figure of the profile 
 - **THEN** no profile's figure has gained that gold
 
 ### Requirement: Levels follow the original's experience table
-A figure's level SHALL be the original's for its total experience: level 2 from 1,000, then 2,200, 3,800, 6,000, 9,000, 13,000, 18,200, 24,800, 33,000, 42,700, 53,900, 66,600 and 80,800; level 15, the cap, from 96,500. Gold SHALL stop at 65,000, as the original stops it. Experience past 96,500 SHALL change nothing a kid sees: the original keeps counting it in the figure's data (96,519 after 19 more 1-point orbs) with the level held at 15, and guacamole keeps 96,500.
+A figure's level SHALL be the original's for its total experience: level 2 from 1,000, then 2,200, 3,800, 6,000, 9,000, 13,000, 18,200, 24,800, 33,000, 42,700, 53,900, 66,600 and 80,800; level 15, the cap, from 96,500. At the cap its experience SHALL stay at 96,500 and, wherever the phone or the TV shows its level or experience, SHALL read MAX. Gold SHALL stop at 65,000, as the original stops it.
 
 #### Scenario: One short of level 2
 - **WHEN** a figure with 999 experience collects a 1-point orb
@@ -41,17 +41,21 @@ A figure's level SHALL be the original's for its total experience: level 2 from 
 
 #### Scenario: At the caps
 - **WHEN** a figure with 96,499 experience and 64,999 gold collects five 1-point orbs and coins worth 2 and 1
-- **THEN** it is level 15 with its full health there and has 65,000 gold
+- **THEN** it is level 15 with its full health there, 96,500 experience and 65,000 gold, and the phone shows its level as MAX
+
+#### Scenario: One short of the cap
+- **WHEN** the phone shows a figure with 96,499 experience
+- **THEN** it shows level 14 and the experience it has toward 96,500, not MAX
 
 ### Requirement: Playtime counts the time in play
-A figure's playtime SHALL grow by the time it spends on the portal while a level shows, as the original counts it: in play, in the pause menu and on the screen of a beaten hero alike, each figure on the portal counting its own.
+A figure's playtime SHALL grow by the time it spends on the portal while a level shows, as the original counts it: in play, in the pause menu, under the too-many alert and on the screen of a beaten hero alike, each figure on the portal counting its own.
 
 #### Scenario: A minute in the level
 - **WHEN** Eruptor walks the level as the hero for a minute, then the level is paused for a minute
 - **THEN** his playtime has grown by two minutes, as the original's would
 
-#### Scenario: Waiting on the portal
-- **WHEN** Tree Rex waits on the portal for a minute while Eruptor walks the level
+#### Scenario: Held beside the hero
+- **WHEN** Tree Rex is placed beside Eruptor in the level and the too-many alert holds it for a minute
 - **THEN** each one's playtime has grown by a minute
 
 #### Scenario: Beaten and still on the portal
@@ -111,6 +115,6 @@ Resetting a figure to fresh from the phone SHALL drop that profile's progress fo
 - **WHEN** the slot holding Alice's Eruptor, the hero in the level, is reset to fresh
 - **THEN** the phone says he's in the level and his progress is unchanged
 
-#### Scenario: A slot reset while waiting
-- **WHEN** the slot holding Alice's level 10 Tree Rex, waiting on the portal while Eruptor walks the level, is reset to fresh
-- **THEN** her phone shows Tree Rex at level 1 with no gold, and he comes into the level at level 1
+#### Scenario: A slot reset under the too-many alert
+- **WHEN** the slot holding Alice's level 10 Tree Rex, placed beside Eruptor in the level and held under the too-many alert, is reset to fresh
+- **THEN** her phone shows Tree Rex at level 1 with no gold, and once Eruptor comes off Tree Rex comes into the level at level 1

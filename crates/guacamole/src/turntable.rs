@@ -78,6 +78,10 @@ pub struct Shelf {
     /// Figure id → its character load file, for the roster's figures and
     /// Giants (items, adventure packs and sidekicks keep portraits in AE).
     pub loads: HashMap<String, String>,
+    /// Figure id → its category, for every figure on the roster: what the
+    /// portal's flow tells characters, magic items and toys the game can't
+    /// use apart by (AG.29, AG.63, AG.73).
+    pub kinds: HashMap<String, Category>,
     /// Load files the model stage reported, with why.
     pub failed: HashMap<String, String>,
     /// The sprite rig (`ir/rig`), or why it didn't read.
@@ -93,6 +97,11 @@ impl Shelf {
             .filter(|f| matches!(f.category, Category::Figure | Category::Giant))
             .map(|f| (f.id(), f.load_file.clone()))
             .collect();
+        let kinds = roster
+            .figures
+            .iter()
+            .map(|f| (f.id(), f.category))
+            .collect();
         let rig = read_ir::<Rig>(ir, &dir.join(ir.rig_path())).and_then(|rig| {
             (rig.identity == roster.identity)
                 .then_some(rig)
@@ -103,6 +112,7 @@ impl Shelf {
             ir,
             identity: roster.identity.clone(),
             loads,
+            kinds,
             failed: failed
                 .iter()
                 .map(|f| (f.load_file.clone(), f.reason.clone()))
