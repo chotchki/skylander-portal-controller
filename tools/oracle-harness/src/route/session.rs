@@ -307,6 +307,11 @@ pub struct ReadTaken {
     /// reader: whether a break leaves anything solid, AH.9), or why not.
     #[serde(default)]
     pub solids: Option<Result<usize, String>>,
+    /// The hero's own numbers read too (`hero-<label>.json`, AG.8's reader:
+    /// his scale, `CollisionInfo`, `ActorParameters` and solid; AG.12: the
+    /// figure LOADed in Eruptor's place), summed up, or why not.
+    #[serde(default)]
+    pub tuning: Option<Result<String, String>>,
 }
 
 /// One drive's record (`record.json`).
@@ -502,6 +507,17 @@ impl Session for Live<'_> {
             }
             Err(e) => Err(format!("{e:#}")),
         };
+        // His scale, collision and parameters, when there's one hero (AG.12).
+        let tuning = match crate::hero::read_paused(&mut self.pine, frame) {
+            Ok(h) => {
+                let path = rrc_dump::output::refuse_repo_output(
+                    &self.dir.join(format!("hero-{label}.json")),
+                )?;
+                fs::write(&path, serde_json::to_string_pretty(&h)?)?;
+                Ok(tuning_summary(&h))
+            }
+            Err(e) => Err(format!("{e:#}")),
+        };
         self.reads.push(ReadTaken {
             label: label.to_owned(),
             flip,
@@ -512,6 +528,7 @@ impl Session for Live<'_> {
             fight,
             census_ms,
             solids: Some(solids),
+            tuning: Some(tuning),
         });
         Ok(())
     }
@@ -565,17 +582,11 @@ impl Session for Live<'_> {
                     Some(src) => {
                         let src = PathBuf::from(src);
                         let sha = sha256_file(&src)?;
-                        let copy = self
-                            .tmp
-                            .join(format!("figure-{}.sky", self.sources.len() + 1));
-                        fs::copy(&src, &copy)
-                            .with_context(|| format!("copying {}", src.display()))?;
-                        // RPCS3 opens a figure read-write: a copy of a read-only
-                        // source would be refused (`open_failed`).
-                        let mut perms = fs::metadata(&copy)?.permissions();
-                        #[allow(clippy::permissions_set_readonly_false)]
-                        perms.set_readonly(false);
-                        fs::set_permissions(&copy, perms)?;
+                        let copy = launch::figure_copy(
+                            &self.tmp,
+                            &format!("figure-{}.sky", self.sources.len() + 1),
+                            &src,
+                        )?;
                         self.control.driver().load(slot_index, &copy)?;
                         self.sources.push((src.clone(), sha.clone()));
                         Some((src.display().to_string(), sha))
@@ -655,6 +666,32 @@ impl Session for Live<'_> {
         });
         Ok(())
     }
+}
+
+/// A hero's own numbers in a line: his scale, his `CollisionInfo`'s shape and
+/// sizes, and the ground speed, turn rate and motion type his
+/// `ActorParameters` hold.
+pub fn tuning_summary(h: &crate::hero::Hero) -> String {
+    let collision = h.collision.map_or("no CollisionInfo".to_owned(), |c| {
+        format!(
+            "shape {} {} x {} x {} ft",
+            c.shape(),
+            c.width,
+            c.height,
+            c.length
+        )
+    });
+    let parameters = h.parameters.map_or("no ActorParameters".to_owned(), |p| {
+        format!(
+            "ground {} ft/s {} deg/s, motion type {}",
+            p.ground_max_speed, p.ground_turn_rate, p.motion_type
+        )
+    });
+    format!(
+        "{} scale {:?}, {collision}, {parameters}",
+        h.name.as_deref().unwrap_or("?"),
+        h.scale
+    )
 }
 
 /// Drives `plan` on a fresh RPCS3 into `out` (new, outside every work tree)
@@ -764,9 +801,7 @@ fn drive_live(
     // writes), into `portal-events.json` at the end.
     let control = oracle.control().with_portal_events();
     control.driver().reconnect()?;
-    let copy = oracle.run_paths().tmp.join("figure.sky");
-    fs::copy(inputs.figure, &copy)
-        .with_context(|| format!("copying {}", inputs.figure.display()))?;
+    let copy = launch::figure_copy(&oracle.run_paths().tmp, "figure.sky", inputs.figure)?;
     control
         .driver()
         .load(SlotIndex::new(0).expect("slot 0"), &copy)?;
@@ -1322,7 +1357,40 @@ mod tests {
             fight: true,
             census_ms: Some(40.0),
             solids: Some(Ok(64)),
+            tuning: None,
         }
+    }
+
+    #[test]
+    fn a_heros_tuning_sums_up_his_shape_sizes_speed_and_turn() {
+        let h = crate::hero::Hero {
+            name: Some("112_TitanLife".into()),
+            corpus: 0x36B5_2C30,
+            placement: 0x36B4_DF04,
+            scale: [100.0; 3],
+            collision: Some(crate::hero::Collision {
+                address: 0x36B4_E0AC,
+                properties: 0x1A,
+                position: [0.0; 3],
+                angles: [0.0; 3],
+                width: 14.0,
+                height: 21.25,
+                length: 3.0,
+                weight: 10.0,
+                rebound: 0.0,
+            }),
+            parameters: None,
+            solid: None,
+        };
+        assert_eq!(
+            tuning_summary(&h),
+            "112_TitanLife scale [100.0, 100.0, 100.0], shape 2 14 x 21.25 x 3 ft, no ActorParameters"
+        );
+        // A read written before AG.12 has no tuning.
+        let old = r#"{"label":"f0","flip":2,"game_frame":5962,"hero":"009_Eruptor","seed":10554,
+            "drawn":1,"fight":true}"#;
+        let r: ReadTaken = serde_json::from_str(old).unwrap();
+        assert_eq!(r.tuning, None);
     }
 
     #[test]

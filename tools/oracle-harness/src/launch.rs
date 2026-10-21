@@ -117,6 +117,20 @@ impl RunPaths {
     }
 }
 
+/// A fresh copy of the figure `source` as `dir/name` (a run dir), writable
+/// whatever the source's mode: RPCS3 opens a figure read-write and refuses a
+/// read-only one (`open_failed`, AH.11), and a figure kept read only outside
+/// the run dir (AG.12's Tree Rex) is never written itself.
+pub fn figure_copy(dir: &Path, name: &str, source: &Path) -> Result<PathBuf> {
+    let copy = dir.join(name);
+    std::fs::copy(source, &copy).with_context(|| format!("copying {}", source.display()))?;
+    let mut perms = std::fs::metadata(&copy)?.permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&copy, perms)?;
+    Ok(copy)
+}
+
 /// The argv and env for one boot. Pure apart from resolving the run dir's
 /// physical path, which the apart check compares with the home's.
 pub fn spec(
@@ -653,6 +667,34 @@ mod tests {
         // RPCS3 on this machine holds it): nothing is left either way.
         assert!(boot(&exe, &home, &opts).is_err());
         assert_eq!(leftovers(), 0);
+    }
+
+    #[test]
+    fn a_read_only_figure_goes_in_as_a_writable_copy_and_stays_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = short_base();
+        let run = RunPaths::create(base.path()).unwrap();
+        let src_dir = tempfile::tempdir().unwrap();
+        let source = src_dir.path().join("Tree Rex.sky");
+        let bytes: Vec<u8> = (0..1024u32).map(|i| (i * 7) as u8).collect();
+        std::fs::write(&source, &bytes).unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let copy = figure_copy(&run.tmp, "figure.sky", &source).unwrap();
+        assert_eq!(copy, run.tmp.join("figure.sky"));
+        assert_eq!(std::fs::read(&copy).unwrap(), bytes);
+        assert!(!std::fs::metadata(&copy).unwrap().permissions().readonly());
+        // Writable as RPCS3 opens it.
+        std::fs::OpenOptions::new().write(true).open(&copy).unwrap();
+        assert_eq!(
+            std::fs::metadata(&source).unwrap().permissions().mode() & 0o777,
+            0o444
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+
+        let err =
+            figure_copy(&run.tmp, "figure-1.sky", &src_dir.path().join("none.sky")).unwrap_err();
+        assert!(format!("{err:#}").contains("none.sky"), "{err:#}");
     }
 
     #[test]
