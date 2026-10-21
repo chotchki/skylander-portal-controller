@@ -453,7 +453,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   beside the known table and logged as a warning). Never `RPCS3_EXE` or `FIRMWARE_PACK_ROOT`.
 - State goes under `./dev-data/guacamole/` (`db.sqlite`); logs go to `./logs/`, the same daily
   `server.log` the product's dev build writes. `GUAC_MUTE` (process env, not the file, dev builds only)
-  plays intros muted; the e2e harness sets it.
+  plays intros muted; the e2e harness sets it. `GUAC_TEST_POSTED_PADS_ONLY` (process env, `test-hooks`
+  builds only) builds the TV without gilrs, so only `/api/_test/tv/pad`'s pads connect and a pad paired
+  with the Mac can't walk the hero ahead of them (AG.52); the e2e harness sets it too.
 - `GUAC_SHOT_DIR=<dir>` (process env, dev builds only) renders the TV offscreen at `GUAC_SHOT_SIZE`
   (default 1920x1080) and saves a PNG each time it settles, with motion held still (`ReducedMotion`, The
   TV's UI). AA.8 checked its screens that way, because

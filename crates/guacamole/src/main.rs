@@ -45,6 +45,8 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use bevy::app::PluginGroupBuilder;
+use bevy::gilrs::GilrsPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::{App, AppExit, DefaultPlugins, PluginGroup, Window, WindowPlugin, default};
 use bevy::window::{MonitorSelection, WindowMode as BevyWindowMode};
@@ -224,6 +226,30 @@ fn test_known_dump() -> Option<KnownDump> {
     }
 }
 
+/// `GUAC_TEST_POSTED_PADS_ONLY` in the process env (any value), `test-hooks`
+/// builds only: the TV leaves real pads out, so a pad paired with the Mac
+/// can't walk the hero ahead of `/api/_test/tv/pad`'s (AG.52). The e2e
+/// harness sets it; a look build with a hand on a pad doesn't.
+fn posted_pads_only() -> bool {
+    cfg!(feature = "test-hooks") && std::env::var_os("GUAC_TEST_POSTED_PADS_ONLY").is_some()
+}
+
+/// Bevy's plugins for the TV: no log plugin (`logging::init` owns the global
+/// subscriber) and, for [`posted_pads_only`], no gilrs.
+fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(window(mode)),
+            ..default()
+        })
+        .disable::<LogPlugin>();
+    if posted_pads_only {
+        plugins.disable::<GilrsPlugin>()
+    } else {
+        plugins
+    }
+}
+
 /// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
@@ -269,35 +295,27 @@ fn run_tv(
     exit_after_farewell(link.status.clone(), progress.clone());
 
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(window(mode)),
-                ..default()
-            })
-            // `logging::init` owns the global subscriber.
-            .disable::<LogPlugin>(),
-    )
-    .insert_resource(link)
-    .insert_resource(PortalFeed(portal))
-    .insert_resource(shelf)
-    .insert_resource(level)
-    .insert_resource(Setup(setup_view))
-    .insert_resource(Framing(mode))
-    .insert_resource(DataRoot(root))
-    .insert_resource(latency)
-    .add_plugins((
-        ServerBridge,
-        Tv,
-        input::InputRouter,
-        Picker,
-        extraction::ExtractPlugin,
-        intro_player::IntroPlugin,
-        physics::SeamPlugin,
-        play::PlayPlugin,
-        progress::ProgressPlugin,
-        guacamole::scripts::ScriptPlugin,
-    ));
+    app.add_plugins(tv_plugins(mode, posted_pads_only()))
+        .insert_resource(link)
+        .insert_resource(PortalFeed(portal))
+        .insert_resource(shelf)
+        .insert_resource(level)
+        .insert_resource(Setup(setup_view))
+        .insert_resource(Framing(mode))
+        .insert_resource(DataRoot(root))
+        .insert_resource(latency)
+        .add_plugins((
+            ServerBridge,
+            Tv,
+            input::InputRouter,
+            Picker,
+            extraction::ExtractPlugin,
+            intro_player::IntroPlugin,
+            physics::SeamPlugin,
+            play::PlayPlugin,
+            progress::ProgressPlugin,
+            guacamole::scripts::ScriptPlugin,
+        ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));
     }
@@ -454,4 +472,24 @@ fn exit_after_farewell(
             std::process::exit(0);
         })
         .expect("spawn the farewell thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AG.52: with the switch the TV builds without gilrs, so no real pad
+    /// connects; without it gilrs stays, as release has it. The log plugin
+    /// is out either way.
+    #[test]
+    fn posted_pads_only_leaves_gilrs_out() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            let posted = tv_plugins(mode, true);
+            assert!(!posted.enabled::<GilrsPlugin>());
+            assert!(!posted.enabled::<LogPlugin>());
+            let real = tv_plugins(mode, false);
+            assert!(real.enabled::<GilrsPlugin>());
+            assert!(!real.enabled::<LogPlugin>());
+        }
+    }
 }
