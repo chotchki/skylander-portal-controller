@@ -20,9 +20,9 @@ use std::sync::Mutex;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
 use guac_extract::levels::{self, LEVELS, PARTS};
-use guac_extract::scripts;
 use guac_extract::stages::{self, Event, Files};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
+use guac_extract::{roster, scripts};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::level::builder::{StageSpec, stage_level, stage_sample};
 use guac_formats::model::builder as model;
@@ -1310,6 +1310,84 @@ fn each_of_the_fights_parts_resumes_alone() {
         (1, ENTRIES - 1)
     );
     assert_eq!(sc.spawn_files.written, 1);
+}
+
+/// A portrait as the roster stage wrote it before AE.31: the stored rows,
+/// bottom row first, as the PNG's rows, so upside down.
+fn upside_down_png(t: &guac_formats::texture::Texture) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, t.width, t.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    writer.write_image_data(&t.rgba8(0).unwrap()).unwrap();
+    writer.finish().unwrap();
+    out
+}
+
+/// An extract finished before AE.31 (its portraits upside down, no
+/// `portraits` part) isn't current; the next run rewrites the portraits the
+/// right way up, writes nothing else, records the part and is current.
+#[test]
+fn upside_down_portraits_resume_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let m = opened.dir.manifest();
+    let (_, portraits) =
+        guac_extract::roster::read_with_portraits(&s.dump, m.identity.clone()).unwrap();
+    assert_eq!(portraits.len(), FIGURES);
+    let mut recorded: Vec<&str> = m.parts[roster::PORTRAITS]
+        .iter()
+        .map(String::as_str)
+        .collect();
+    recorded.sort_unstable();
+    let mut paths: Vec<&str> = portraits.iter().map(|p| p.path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(recorded, paths);
+    // Back to what AE.3's stage left: each portrait's stored rows as written.
+    let mut flipped = 0;
+    for p in &portraits {
+        let old = upside_down_png(&p.texture);
+        flipped += usize::from(old != roster::png(p).unwrap());
+        opened.dir.write_output(&p.path, &old).unwrap();
+    }
+    assert!(
+        flipped > 0,
+        "the sample's portraits all read the same both ways up"
+    );
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["parts"]
+        .as_object_mut()
+        .unwrap()
+        .remove(roster::PORTRAITS)
+        .unwrap();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(done.roster.files.written, flipped);
+    let others = done.progression.files.written
+        + done.models.files.written
+        + done.models.palettes.files.written
+        + done.levels.files.written
+        + done.scripts.files.written;
+    assert_eq!(others, 0);
+    assert_eq!(done.intros.unwrap().summary.transcoded, 0);
+    for p in &portraits {
+        let on_disk = fs::read(dir.join(&p.path)).unwrap();
+        assert_eq!(on_disk, roster::png(p).unwrap(), "{}", p.path);
+    }
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
 }
 
 /// A level whose scripts don't read (AG.3's sample names one with no op

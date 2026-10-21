@@ -819,6 +819,13 @@ images his captured frames bind is exactly what RSX was given, level for level (
   identical rows after the unswizzle and not as stored.
 - Blocks are already in BC byte order, so the endian fix is the identity: read little-endian, 18,101,440
   of 18,101,440 DXT5 colour blocks with distinct endpoints are four-colour.
+- Rows are stored bottom up, OpenGL's lower-left origin (AE.31). On every image whose way up shows (the 123
+  portraits, the PS3 triangle glyph, the level-up arrow, the level-select shots with their sky under the
+  ground) the first stored row is the bottom, and the left and right arrows still point left and right, so
+  it's a flip, not a turn. RSX samples that first row at v = 0 (AC.15 and AC.21 below bind the stored bytes
+  unchanged, his portrait among them), so KTX2 keeps the stored order and the disc's UVs read what the
+  original does. Only an image file reverses the rows: the portraits' PNGs, whose stored order put every
+  figure on the phone upside down until AE.31.
 - Confirmed in the June savestate's RSX state: 1,092 resident `igImage2` are byte-identical to their file
   blocks and equal level for level after our untile, and 22 texture-unit states over 18 `_tile` DXT images
   (seen across the ring's draws, on units 0 and 1 only) show the linear bit CLEAR (swizzled) with kind,

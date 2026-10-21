@@ -29,7 +29,7 @@ Each figure's name SHALL be the disc's own English text for it. A figure the dis
 - **THEN** they're named "Series 2 Whirlwind" and "LightCore Hex"
 
 ### Requirement: Elements and portraits come from the disc
-Each figure SHALL show the element the disc gives it, except that a magic item or adventure-pack piece carrying the disc's default element value SHALL show none. Every figure SHALL have a portrait, the disc's own collection-screen portrait for that figure.
+Each figure SHALL show the element the disc gives it, except that a magic item or adventure-pack piece carrying the disc's default element value SHALL show none. Every figure SHALL have a portrait, the disc's own collection-screen portrait for that figure, the right way up as the game draws it.
 
 #### Scenario: Eruptor
 - **WHEN** the collection lists Eruptor
@@ -38,6 +38,10 @@ Each figure SHALL show the element the disc gives it, except that a magic item o
 #### Scenario: A magic item
 - **WHEN** the collection lists Anvil Rain
 - **THEN** it shows its own portrait and no element
+
+#### Scenario: Portraits the right way up
+- **WHEN** the phone's collection or a card on the TV shows Eruptor's portrait
+- **THEN** his eyes are above his grin, as on the game's own collection screen
 
 #### Scenario: The four characters the wiki data lacked
 - **WHEN** the collection lists Dino-Rang, Wham-Shell, Drill Sergeant and Jet-Vac

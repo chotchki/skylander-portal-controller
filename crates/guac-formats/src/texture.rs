@@ -7,6 +7,12 @@
 //! - RSX ignores the swizzle for DXT, so blocks run in rows either way;
 //!   uncompressed texels are Morton-ordered under it ([`morton`]).
 //! - Blocks are already in BC byte order, so the endian fix is the identity.
+//! - Rows are stored bottom up (OpenGL's lower-left origin): on every disc
+//!   image whose way up shows (portraits, button glyphs, arrows, level-select
+//!   shots) the first stored row is the bottom (AE.31). RSX samples that row
+//!   at v = 0 (AC.15, AC.21), so KTX2 keeps the stored order and models and
+//!   levels sample what the original does; only an image file, top row
+//!   first, reverses them ([`Texture::rgba8_top_down`]).
 //!
 //! [`Texture::rgba8`] decodes a level for what can't take BC blocks, the
 //! phone's portraits (AE.3).
@@ -107,7 +113,8 @@ const fn meta(name: &'static str, format: Format, tiled: bool) -> MetaImage {
     }
 }
 
-/// An image ready for KTX2: level 0 first, each in rows of blocks, top down.
+/// An image ready for KTX2: level 0 first, each in rows of blocks as the
+/// disc stores them, bottom row first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Texture {
     pub format: Format,
@@ -315,9 +322,12 @@ impl Texture {
         ktx::write(self)
     }
 
-    /// Level `level` decoded to straight RGBA8 rows, top down ([`bc`]'s
-    /// rules; L8 as grey, alpha 255). Refused past the last level or when the
-    /// level is shorter than its size, which only a hand-built `Texture` can be.
+    /// Level `level` decoded to straight RGBA8 rows in the stored order,
+    /// bottom row first ([`bc`]'s rules; L8 as grey, alpha 255): texel
+    /// (x, y) is what a sampler reads at (x / width, y / height), as the GPU
+    /// lanes want. An image file wants [`Self::rgba8_top_down`]. Refused past
+    /// the last level or when the level is shorter than its size, which only
+    /// a hand-built `Texture` can be.
     pub fn rgba8(&self, level: usize) -> Result<Vec<u8>, FormatError> {
         let Some(data) = self.levels.get(level) else {
             let kind = ErrorKind::OutOfRange {
@@ -341,5 +351,13 @@ impl Texture {
             };
             FormatError::new(FORMAT, "_data", 0, kind)
         })
+    }
+
+    /// [`Self::rgba8`] with its rows reversed, top row first: the image as a
+    /// PNG holds it and the game draws it (AE.31, the portraits).
+    pub fn rgba8_top_down(&self, level: usize) -> Result<Vec<u8>, FormatError> {
+        let rgba = self.rgba8(level)?;
+        let row = level_dim(self.width, level as u32) as usize * 4;
+        Ok(rgba.chunks_exact(row).rev().flatten().copied().collect())
     }
 }

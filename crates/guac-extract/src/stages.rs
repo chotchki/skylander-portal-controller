@@ -845,7 +845,8 @@ fn encoded<T: serde::Serialize>(
 }
 
 /// The roster off the dump `dir` names, into `ir/roster.<ron|postcard>`,
-/// then each figure's portrait into `portraits/<figure id>.png`.
+/// then each figure's portrait into `portraits/<figure id>.png`, the right
+/// way up, recorded as [`roster::PORTRAITS`] (AE.31).
 pub fn roster_stage(
     dir: &mut IdentityDir,
     ir: IrFormat,
@@ -865,6 +866,8 @@ pub fn roster_stage(
         put(dir, &p.path, &roster::png(p)?, &mut files)?;
         send(Event::Portraits { done: i + 1, total });
     }
+    let written = portraits.iter().map(|p| p.path.clone()).collect();
+    dir.record_part(roster::PORTRAITS, written)?;
     Ok(RosterStage {
         roster: Arc::new(roster),
         files,

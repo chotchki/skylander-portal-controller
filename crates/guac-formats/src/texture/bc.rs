@@ -1,17 +1,17 @@
-//! One level to straight RGBA8 rows (openspec AE.3), what a PNG portrait
-//! holds. The usual reference rules: 565 endpoints widened by bit
-//! replication, in-between points rounded to nearest. BC1 with `c0 <= c1` is
-//! three colours plus transparent black (RSX honours DXT1's one-bit alpha);
-//! BC3's colour half always picks from four, its alpha from eight steps, or
-//! six plus 0 and 255 when `a0 <= a1`. A GPU may land one step off on an
-//! in-between point; endpoints are exact.
+//! One level to straight RGBA8 rows in its stored order (openspec AE.3); a
+//! PNG portrait holds them reversed (AE.31). The usual reference rules: 565
+//! endpoints widened by bit replication, in-between points rounded to
+//! nearest. BC1 with `c0 <= c1` is three colours plus transparent black (RSX
+//! honours DXT1's one-bit alpha); BC3's colour half always picks from four,
+//! its alpha from eight steps, or six plus 0 and 255 when `a0 <= a1`. A GPU
+//! may land one step off on an in-between point; endpoints are exact.
 
 use super::Format;
 
 /// `data`, one `width` x `height` level as [`super::Texture`] holds it (rows
-/// of blocks, or rows of L8 texels), as RGBA8 rows top down. L8 reads as grey
-/// with alpha 255, KTX2's `rrr1`. `None` when `data` is shorter than the
-/// level; bytes past it are ignored.
+/// of blocks, or rows of L8 texels), as RGBA8 rows in `data`'s order, its
+/// first row first. L8 reads as grey with alpha 255, KTX2's `rrr1`. `None`
+/// when `data` is shorter than the level; bytes past it are ignored.
 pub fn decode(format: Format, width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {
     let need = u128::from(width.div_ceil(format.block_edge()))
         * u128::from(height.div_ceil(format.block_edge()))

@@ -1615,7 +1615,7 @@ impl IntroFixture {
 }
 
 /// [`E2E_ROSTER`] into the extract as the roster stage leaves it: the IR, then
-/// a 16x16 flat-colour PNG per figure.
+/// a 16x16 flat-colour PNG per figure, recorded as the portraits part.
 fn write_roster(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_ir::{FigureKind, Language, Roster, RosterFigure, Text};
@@ -1668,6 +1668,8 @@ fn write_roster(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
         image.write_to(&mut png, image::ImageFormat::Png)?;
         dir.write_output(f.portrait.as_deref().unwrap(), png.get_ref())?;
     }
+    let portraits = roster.figures.iter().filter_map(|f| f.portrait.clone());
+    dir.record_part(guac_extract::roster::PORTRAITS, portraits.collect())?;
     Ok(())
 }
 

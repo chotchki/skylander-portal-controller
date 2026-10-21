@@ -376,6 +376,35 @@ mod tests {
         }
     }
 
+    /// AE.31: a model's or a level's texture keeps the disc's row order,
+    /// bottom row first, the row RSX samples at v = 0 (AC.15, AC.21), so the
+    /// disc's UVs read what the original does. Only a portrait's PNG flips.
+    #[test]
+    fn a_texture_keeps_the_stored_rows() {
+        let red = vec![0x00, 0xF8, 0, 0, 0, 0, 0, 0];
+        let blue = vec![0x1F, 0x00, 0, 0, 0, 0, 0, 0];
+        let stored = [red, blue].concat();
+        let ktx2 = Texture {
+            format: Format::Bc1RgbaUnorm,
+            width: 4,
+            height: 8,
+            levels: vec![stored.clone()],
+        }
+        .to_ktx2();
+        let s = Sampler {
+            wrap_u: Wrap::Repeat,
+            wrap_v: Wrap::Repeat,
+            mag: Filter::Linear,
+            min: Filter::Linear,
+            mip: None,
+        };
+        for srgb in [true, false] {
+            let image = texture_view(&ktx2, srgb, &s, CompressedImageFormats::BC).unwrap();
+            assert_eq!((image.width(), image.height()), (4, 8));
+            assert_eq!(image.data.as_deref(), Some(&stored[..]), "sRGB {srgb}");
+        }
+    }
+
     #[test]
     fn a_gloss_map_samples_as_stored() {
         // A third layer's colour map decodes; the same slot holding a gloss
