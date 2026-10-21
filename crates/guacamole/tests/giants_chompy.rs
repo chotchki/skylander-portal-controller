@@ -1269,7 +1269,7 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
             .collect::<Vec<_>>()
     );
     assert!(
-        (1..=15).contains(&(alert.k - within)),
+        (14..=15).contains(&(alert.k - within)),
         "the next 0.25 s check"
     );
     for &c in &seers {
@@ -1299,6 +1299,9 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     let mut notice = Vec::new();
     let mut waits = Vec::new();
     let mut nips = Vec::new();
+    // Each nip's entry: the middles then (ft) and whether it walked in (it
+    // moved over the step before, the hero still).
+    let mut entries: Vec<(f32, bool)> = Vec::new();
     let mut top_speed = 0.0f32;
     let mut top_turn = 0.0f32;
     for (c, name) in CHOMPIES.iter().enumerate() {
@@ -1348,6 +1351,12 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
             if b.beh.as_deref() == Some("attack - nip") && a.beh.as_deref() != Some("attack - nip")
             {
                 cur = Some((w[1].k, middles(b.pos, w[1].hero), Vec::new(), 0.0));
+                let across = Vec3::new(b.pos.x - a.pos.x, 0.0, b.pos.z - a.pos.z);
+                let still = (w[1].hero - w[0].hero).length() < 1e-4;
+                entries.push((
+                    middles(b.pos, w[1].hero),
+                    still && ft(across.length()) * 60.0 > 5.0,
+                ));
             }
             if let Some((_, _, steps, lunge)) = cur.as_mut() {
                 if b.beh.as_deref() == Some("attack - nip") {
@@ -1384,10 +1393,25 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
         "{notice:?}"
     );
     assert!(top_speed <= 20.0 + 0.05 && top_speed > 15.0, "{top_speed}");
-    assert!(top_turn <= 12.0 + 1e-3, "{top_turn}");
+    assert!((11.9..=12.0 + 1e-3).contains(&top_turn), "{top_turn}");
     assert!(!nips.is_empty());
-    // A nip's steps: 1 windup, 2 hold, 3 lunge, 10 recovery (AH.10: 0.298-
-    // 0.319 s, the same, up to 0.418 s at 34 ft/s, 0.548-0.578 s).
+    // Walking in, a nip starts at AH.10's 13.9-15.5 ft between middles (the
+    // review's reading of the 20 `still` drives, 102 entries).
+    let walked: Vec<f32> = entries.iter().filter(|e| e.1).map(|e| e.0).collect();
+    println!("nips entered walking in at {walked:?} ft");
+    assert!(
+        !walked.is_empty() && walked.iter().all(|d| (13.9..=15.6).contains(d)),
+        "{walked:?}"
+    );
+    // The lunge's top speed, AH.10's 33.7-34.2 ft/s (35 set, slowed by the
+    // velocity model).
+    let lunge = nips.iter().map(|n| n.5).fold(0.0f32, f32::max);
+    assert!((33.0..=34.2).contains(&lunge), "lunge top {lunge}");
+    // A nip's steps: 1 windup, 2 hold, 3 lunge, 10 recovery, each counted
+    // to the step the next starts (AH.10's recordings by the review's
+    // reading: 18-19 frames, 18-19, up to 0.419 s at 34 ft/s, 32-33 frames
+    // to the nip's last frame, 0.530-0.561 s; AH.10's note's recovery,
+    // 0.548-0.578 s, counts to 'battle', a frame more).
     for n in &nips {
         let steps = &n.4;
         let dur = |s: i32| {
@@ -1407,8 +1431,10 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
         if let Some(l) = l {
             assert!(l <= 0.43, "lunge {l}");
         }
+        // The recovery waits out its clip (slot 25, 0.567 s) and ends 1-2
+        // frames after the original's, as the windup does (AH.55).
         if let Some(r) = r {
-            assert!((0.54..=0.59).contains(&r), "recovery {r}");
+            assert!((0.53..=0.57).contains(&r), "recovery {r}");
         }
     }
     // The next windup 2 s or more after a nip ends.
@@ -1430,15 +1456,19 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     }
     let cost = snaps[0].health - snaps.last().unwrap().health;
     println!("bites {bites:?}; standing still to F0 + 900 cost {cost}");
+    // AH.10: standing still to F0 + 900 cost 73-104 over its 20 drives.
+    assert!(!bites.is_empty(), "no bite landed");
+    assert!((73.0..=104.0).contains(&cost), "{cost}");
     let (limits, read) = ah10_limits();
     assert_eq!(read, 40);
     let stalled = stalls(&snaps, &limits);
     println!("stalls against AH.10's {read} drives: {stalled:?}");
     assert!(stalled.is_empty());
+    // A bite takes 11-14, two in one step 22-28 (AH.10's 26 and 25).
     assert!(
         bites
             .iter()
-            .all(|b| (11.0..=14.0).contains(&b.1) || b.1 == 0.0 || (22.0..=28.0).contains(&b.1)),
+            .all(|b| (11.0..=14.0).contains(&b.1) || (22.0..=28.0).contains(&b.1)),
         "{bites:?}"
     );
     println!("load after: {}", load());

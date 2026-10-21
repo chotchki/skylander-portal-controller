@@ -1626,6 +1626,68 @@ mod tests {
         assert!(after < steps, "{after} steps after leaving, {steps} before");
     }
 
+    /// The review of AH.24: a hero whose scripts went off after joining (a
+    /// join that failed, his script stopped in play) walks on the stand-in
+    /// and his attack buttons do nothing, though his file's placements the
+    /// VM still ticks would throw on them: no clip, no clone.
+    #[test]
+    fn a_hero_whose_scripts_went_off_does_nothing_on_the_attack_buttons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready"
+                && a.world()
+                    .contains_resource::<guacamole::scripts::ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let e = app.world().resource::<Play>().hero().unwrap();
+        app.world_mut()
+            .entity_mut(e)
+            .get_mut::<HeroRun>()
+            .unwrap()
+            .join = Join::Off("the test put him on the stand-in".into());
+        app.world_mut()
+            .entity_mut(e)
+            .remove::<crate::hero::ScriptedHero>();
+        let log = |app: &App| {
+            let steps = app
+                .world()
+                .resource::<crate::hero_scripts::ScriptLog>()
+                .since(0);
+            let started = steps.iter().map(|s| s.started.len()).sum::<usize>();
+            let spawned = steps.iter().map(|s| s.spawned.len()).sum::<usize>();
+            (started, spawned)
+        };
+        let before = log(&app);
+        for button in [
+            GamepadButton::South,
+            GamepadButton::West,
+            GamepadButton::RightTrigger,
+        ] {
+            test_pad::press(&mut app, pad, button);
+            for _ in 0..10 {
+                app.update();
+            }
+        }
+        test_pad::button(&mut app, pad, GamepadButton::South, true);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert_eq!(log(&app), before, "no clip and no clone off");
+        assert_eq!(join(&app).as_deref(), Some("off"));
+    }
+
     /// AH.24: a character whose attacks don't run (here no script part
     /// linked) walks on the stand-in, and its attack buttons do nothing:
     /// no join, no clip, no clone.

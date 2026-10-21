@@ -2950,5 +2950,104 @@ mod fight_tests {
         };
         assert_eq!(set(&mut w, &mut e, "inactive"), vec![Value::Entity(C1)]);
         assert_eq!(set(&mut w, &mut e, "removed"), vec![Value::Entity(C3)]);
+        // Asleep is the activity rule's: a removed placement isn't asleep,
+        // nor is an actor the rule doesn't manage (a clone).
+        w.actors.get_mut(&C3).unwrap().active = false;
+        let mut clone = chompy(Vec3::new(2.0, 0.0, 0.0), 0.0);
+        (clone.managed, clone.active) = (false, false);
+        w.actors.insert(HERO + 1, clone);
+        assert_eq!(set(&mut w, &mut e, "inactive"), vec![Value::Entity(C1)]);
+    }
+
+    /// The review of AH.18: what touches a hero is what's awake and on:
+    /// a Chompy taken off or asleep against him isn't among his contacts.
+    #[test]
+    fn contacts_with_me_leave_out_whats_taken_off_or_asleep() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        e.bodies.insert(HERO, BodyId(9));
+        let mut w = world();
+        let r = 3.0 * FOOT;
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        let at = |x: f32, z: f32| pivot + Vec3::new(x, 0.0, z);
+        w.actors.insert(C1, chompy(at(0.0, 2.0 * r + 0.005), 0.0));
+        let mut gone = chompy(at(2.0 * r + 0.002, 0.0), 0.0);
+        gone.removed = true;
+        w.actors.insert(C2, gone);
+        let mut asleep = chompy(at(-2.0 * r - 0.002, 0.0), 0.0);
+        asleep.active = false;
+        w.actors.insert(C3, asleep);
+        let facet = w.objs.value(Object::Facet(HERO, Facet::Collision));
+        let contacts = w
+            .elements(
+                &Access {
+                    placement: HERO,
+                    receiver: Some(facet),
+                    member: MemberId::named("collisioninfo", "contacts with me"),
+                    other_point: None,
+                },
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(contacts, vec![Value::Entity(C1)]);
+    }
+
+    /// The review of AH.18: the ray caster and the ground finder meet the
+    /// level, never an actor's body (a creature the engine walks): a ray
+    /// down through a Chompy lands on the floor under it, and so does the
+    /// ground under an actor standing over one.
+    #[test]
+    fn rays_and_the_ground_finder_pass_through_the_actors_bodies() {
+        let mut e = pit();
+        let r = 3.0 * FOOT;
+        let centre = Vec3::new(0.0, r, 3.0);
+        e.world
+            .set_body(&Body {
+                id: BodyId(21),
+                kind: BodyKind::Kinematic,
+                pose: Pose::at(centre),
+                collider: Collider::Convex(Shape::Sphere { radius: r }),
+            })
+            .unwrap();
+        e.bodies.insert(C1, BodyId(21));
+        let mut w = world();
+        w.actors.insert(C1, chompy(centre, 0.0));
+        // Through it from above: the floor (y 0), not its top (y 2r).
+        w.ray = crate::scripts::Ray {
+            start: centre + Vec3::Y * 3.0,
+            end: centre - Vec3::Y * 3.0,
+        };
+        let (hit, _) = w.ray_contact(&mut e).expect("the floor");
+        assert!(hit.y.abs() < 0.01, "{hit}");
+        // The ground under an actor over it: the floor too.
+        let mut over = Actor::blank();
+        over.position = centre + Vec3::Y * 2.0;
+        w.actors.insert(C2, over);
+        let (ground, ..) = w.ground(C2, &mut e).expect("ground");
+        assert!(ground.y.abs() < 0.01, "{ground}");
+        // Without the actor's body in the way the seam alone would stop on
+        // it: the exclusion is what lets these through.
+        let top = guac_motion::ground::ray(&e.world, centre + Vec3::Y * 3.0, Vec3::NEG_Y, 6.0, &[])
+            .unwrap();
+        assert!((top.point.y - 2.0 * r).abs() < 0.01, "{}", top.point);
+    }
+
+    /// The review of AH.18: `turn to` a hero turns him at once, his facing
+    /// his controller's, and its block runs.
+    #[test]
+    fn turn_to_turns_a_hero_at_once() {
+        let mut e = pit();
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0));
+        let mut w = world();
+        let call = op(
+            Class::TurnTo,
+            HERO,
+            vec![("_facingRHS", Some(Value::Float(-90.0)))],
+            Vec::new(),
+        );
+        assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
+        assert_eq!(e.hero.as_ref().unwrap().facing, 270.0);
     }
 }

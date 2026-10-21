@@ -16,12 +16,13 @@
 //!   the part doesn't hold walks on AG.16's stand-in and its attack buttons
 //!   do nothing (hero-attacks' Which characters attack); a join that fails,
 //!   or his script stopped in play, puts him back on it, logged.
-//! - A step ([`step_scripts`], before the hero's): the walking pad's stick
-//!   and attacks ([`HeroActions`]) read as the first player's pad, the
-//!   portal manager's projectile manager (once he's in), every placement's
-//!   tick, the clones of scripted templates added. After the hero's step,
-//!   the engine's frame ([`advance_scripts`]): the sequences on, what the
-//!   scripts threw flying through the seam.
+//! - A step ([`step_scripts`], before the hero's): his join's next half,
+//!   then the walking pad's stick and, once he's in, its attacks
+//!   ([`HeroActions`]) read as the first player's pad, the portal manager's
+//!   projectile manager (once he's in), every placement's tick, the clones
+//!   of scripted templates added. After the hero's step, the engine's frame
+//!   ([`advance_scripts`]): the sequences on, what the scripts threw flying
+//!   through the seam.
 //! - The engine the host reads ([`TvEngine`], decision 21): the hero's
 //!   controller by query on his entity, Avian's side of the seam, the
 //!   follow camera's view; nothing copied in or out.
@@ -412,12 +413,6 @@ fn step_scripts(
         .next()
         .is_some_and(|(_, r)| matches!(r.join, Join::Joined(_)));
     let walking = pads.seat().and_then(|s| s.walking()).is_some();
-    let first = Pad {
-        stick: input.0.stick,
-        actions: held,
-        connected: walking,
-    };
-    world.read_pads([first, Pad::default()]);
     let view = view_heading(&cameras);
     let run = runs.iter_mut().next();
     let (hero, mut run) = match run {
@@ -497,6 +492,20 @@ fn step_scripts(
         Join::Joined(m) => Some(m),
         _ => None,
     });
+    // The pads after the join, as the headless runs read them. The attack
+    // buttons are his scripts' only once they run (hero-attacks' Which
+    // characters attack): a hero not joined yet, or whose join failed or
+    // whose script stopped, reads none, so nothing of his file the VM still
+    // ticks throws for him.
+    let held = if joined.is_some() { held } else { [false; 4] };
+    world.read_pads([
+        Pad {
+            stick: input.0.stick,
+            actions: held,
+            connected: walking,
+        },
+        Pad::default(),
+    ]);
     let mut host = WorldHost {
         world: &mut world,
         engine: &mut engine,

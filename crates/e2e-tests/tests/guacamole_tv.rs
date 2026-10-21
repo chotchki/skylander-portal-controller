@@ -1079,10 +1079,12 @@ async fn a_press_throws_from_his_scripts() {
         .flat_map(|s| s["gone"].as_array().cloned().unwrap_or_default())
         .find(|c| c["name"] == "009_LavaProjectile")
         .unwrap();
+    // Its solid resting on the floor puts its pivot on it: not still in the
+    // air, and not through it.
     let y = gone["at"][1].as_f64().unwrap();
     let above = y - f64::from(E2E_FLOOR);
     assert!(
-        above < 0.6,
+        above.abs() < 0.05,
         "the ball came down on the floor: {above} m over it"
     );
 
