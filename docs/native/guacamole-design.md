@@ -219,6 +219,11 @@ checks everything else.
   Nothing flows back to the original games or to RPCS3.
 - The phone can edit a figure's progress (level and gold, plus reset to fresh), which the original never
   offered. It edits rows in the store, not a file.
+- At the cap a figure's experience stays at 96,500 and wherever the phone or the TV shows its level or
+  experience it reads MAX, as the later games show it (chotchki, 2026-10-21: "show 'MAX' when the cap is
+  reached"). Giants keeps counting past the cap on the toy and never takes it back (a Restart Chapter, the
+  save loaded again and the figure taken off and put back all kept 96,506-96,508, AH.52), and shows MAX
+  only on its HUD's experience bar beside "Level 15".
 - Story saves belong to profiles: one save per profile per game and no slot picker. The profile that
   starts the game plays on its own save.
 - Trophies become per-profile achievements stored with the profile instead of PSN trophies. Names and
@@ -1571,8 +1576,9 @@ drawn) boots only on the `09d602fd5` copy (AF.6 read PINE in it); every savestat
   with the horizons above and chotchki wants it.
 - A per-frame state stream (P9) and asset loads with the guest's return address (FSTRACE) wait for the
   rungs that need them; PINE already covers bulk peeks, so no MEMSNAP verb.
-- A second player in play: port 1 reads every flip (AF.7), but no run has put a second figure in a scene
-  (AI's).
+- A second player measured in play: port 1 reads every flip (AF.7), and AG.6 joined one (a second figure
+  on the portal holds single-player play under "too many Skylanders" until pad 1's South joins it), but
+  no run has measured co-op itself (AL's, AI's).
 - Windows: the HTPC's oracle build, PINE over TCP and its divergence runs are the Windows/HTPC bring-up's
   ([`openspec/backlog.md`](../../openspec/backlog.md)).
 

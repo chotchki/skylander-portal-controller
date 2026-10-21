@@ -11,7 +11,8 @@
 //!   health `description.creature info.character parameters.hp max`. His
 //!   player's joined data is `my Minion Description.player joined data`:
 //!   its `player` (0 for player 1), `exp target` (a reference to the
-//!   experience his next level starts at) and `loaded data.object info.tag
+//!   experience his next level starts at, null at level 15, past the table's
+//!   end: AH.52) and `loaded data.object info.tag
 //!   data`, the figure's data as the game keeps it. That structure's `save data
 //!   area` is a set of `ValueInfo` words, one per 32-bit word of the figure's
 //!   save area in AH.2's numbering (word 0 at its start, the second area from
@@ -348,8 +349,10 @@ pub struct Hero {
     pub invulnerable: Number,
     /// His joined data's `player`: 0 for player 1.
     pub player: i64,
-    /// The experience his next level starts at, as his joined data holds it.
-    pub exp_target: Number,
+    /// The experience his next level starts at, as his joined data holds it;
+    /// none at the cap, where the game leaves the reference null (AH.11's
+    /// level 15), so a capped figure still reads.
+    pub exp_target: Option<Number>,
     pub figure: Figure,
     /// The cells: `hp`, `hp max`, `invulnerable`.
     pub cells: [u32; 3],
@@ -378,9 +381,10 @@ pub fn hero(g: &mut impl Gather, types: &mut Types, placement: u32, rows: &Rows)
     let joined = fields(g, joined_at, &joined_what)?;
     let player = number(g, types, the(&joined, "player", &joined_what)?.at, "player")?.as_int();
     let target = the(&joined, "exp target", &joined_what)?;
-    let target_at = script::referent(g, target)?
-        .with_context(|| format!("{joined_what}.exp target is a null reference"))?;
-    let exp_target = number(g, types, target_at, "the exp target")?;
+    let exp_target = match script::referent(g, target)? {
+        Some(at) => Some(number(g, types, at, "the exp target")?),
+        None => None,
+    };
     let tag = script::structure_at(g, &joined, &TAG_DATA, &joined_what)?;
     Ok(Hero {
         placement,
@@ -1551,7 +1555,7 @@ mod tests {
             (h.health, h.health_max, h.invulnerable),
             (Number::Int(290), Number::Int(290), Number::Int(0))
         );
-        assert_eq!((h.player, h.exp_target), (0, Number::Int(1000)));
+        assert_eq!((h.player, h.exp_target), (0, Some(Number::Int(1000))));
         assert_eq!(h.cells[0], f.hp);
         let fig = &h.figure;
         assert_eq!(fig.tag_data, f.tag);
@@ -1811,13 +1815,16 @@ mod tests {
         let mut f = fight(0, 0, 4);
         f.w.put32(f.hero + 0xB0, 0);
         assert!(err(read_it(&mut f)).contains("never started"));
-        // His joined data's `exp target` null.
-        let mut f = fight(0, 0, 4);
+        // His joined data's `exp target` null, as at level 15 (AH.52): the
+        // hero still reads, the target none and the figure's experience whole.
+        let mut f = fight(96_519, 0, 4);
         let cells = f.w.get32(f.joined + 0x18);
         let data = f.w.get32(cells + 0x14);
         let target = f.w.get32(data + 4);
         f.w.put32(target + 0x1C, 0);
-        assert!(err(read_it(&mut f)).contains("exp target is a null reference"));
+        let capped = read_it(&mut f).unwrap();
+        assert_eq!(capped.hero.exp_target, None);
+        assert_eq!(capped.hero.figure.experience, 96_519);
         // His tag data without a save area.
         let mut f = fight(0, 0, 4);
         let cells = f.w.get32(f.tag + 0x18);
