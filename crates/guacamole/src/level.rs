@@ -712,6 +712,14 @@ pub(crate) struct Loaded {
     also: Vec<LitAlso>,
 }
 
+#[cfg(test)]
+impl Loaded {
+    /// Materials besides its own it lights ([`Level::light_also`]).
+    pub(crate) fn also_count(&self) -> usize {
+        self.also.len()
+    }
+}
+
 /// A material outside the level lit with it: the hero's, in
 /// [`hero_scene`], relit when the level's are.
 pub(crate) struct LitAlso {
@@ -884,6 +892,14 @@ impl Level {
         let scene = hero_scene(&loaded.lights, &loaded.lit_fog, Mat4::IDENTITY);
         relight(&materials, &scene, assets);
         loaded.also.extend(materials);
+    }
+
+    /// Stops lighting `materials` with the level: a hero who left it
+    /// (AG.29), whose materials go with him.
+    pub(crate) fn forget(&mut self, materials: &[Handle<CharacterMaterial>]) {
+        if let Some(loaded) = self.stage.loaded_mut() {
+            loaded.also.retain(|lit| !materials.contains(&lit.material));
+        }
     }
 }
 

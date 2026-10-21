@@ -160,6 +160,8 @@ pub(crate) struct Seat<Id> {
     walking: Option<Id>,
     pause: Option<Pause<Id>>,
     begun: bool,
+    /// The portal held the level the frame before ([`Self::hold`]).
+    holding: bool,
     /// The walking pad's faces still down from a press a layer took (the
     /// resume, the take-over, an intro's skip): kept from the hero until
     /// each is let go.
@@ -175,6 +177,7 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
             walking: None,
             pause: None,
             begun: false,
+            holding: false,
             swallowed: [false; 4],
             last: HeroPad::STILL,
         }
@@ -198,7 +201,8 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
     /// to wait he reads what he read the frame before: the steps due this
     /// frame were due before the press, and from the next none run.
     pub(crate) fn step(&mut self, pads: &[PadFrame<Id>]) -> HeroPad {
-        let was_running = self.begun && self.pause.is_none();
+        let was_running = self.begun && self.pause.is_none() && !self.holding;
+        self.holding = false;
         if !self.begun {
             self.begun = true;
             match pads.first() {
@@ -270,7 +274,28 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
         if let Some(walking) = self.walking_frame(pads) {
             self.swallowed = walking.held;
         }
+        self.holding = false;
         self.last = HeroPad::STILL;
+    }
+
+    /// The portal holds the level (AG.29: an alert, or no hero in it): no
+    /// pad walks the hero, pauses or takes him over, and the walking pad's
+    /// faces held now stay his only once let go and pressed again. The
+    /// frame the hold begins he reads what he read the frame before, as a
+    /// pause's first frame does: the steps due then were due before it.
+    pub(crate) fn hold(&mut self, pads: &[PadFrame<Id>]) -> HeroPad {
+        let was_running = self.begun && self.pause.is_none() && !self.holding;
+        self.holding = true;
+        if let Some(walking) = self.walking_frame(pads) {
+            self.swallowed = walking.held;
+        }
+        let out = if was_running {
+            self.last
+        } else {
+            HeroPad::STILL
+        };
+        self.last = out;
+        out
     }
 
     fn take_seat(&mut self, pad: &PadFrame<Id>) {
@@ -291,6 +316,8 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
 pub(crate) struct LevelPads {
     order: Vec<Entity>,
     seat: Option<Seat<Entity>>,
+    /// The portal holds the level ([`crate::play`]'s alerts, or no hero).
+    held: bool,
 }
 
 impl LevelPads {
@@ -305,6 +332,17 @@ impl LevelPads {
     /// The level gave the TV back.
     pub(crate) fn hide(&mut self) {
         self.seat = None;
+        self.held = false;
+    }
+
+    /// The portal holds the level, or lets it go: while held the router
+    /// hands the seat [`Seat::hold`] and the level's clock stops.
+    pub(crate) fn hold(&mut self, held: bool) {
+        self.held = held && self.seat.is_some();
+    }
+
+    pub(crate) fn held(&self) -> bool {
+        self.held
     }
 
     pub(crate) fn shows(&self) -> bool {
@@ -319,9 +357,15 @@ impl LevelPads {
         self.seat.as_mut()
     }
 
-    /// The level shows and waits: its clock stops ([`crate::pause`]).
+    /// The level shows and waits for Start or a pad.
     pub(crate) fn paused(&self) -> bool {
         self.seat.as_ref().is_some_and(|s| s.pause.is_some())
+    }
+
+    /// The level shows and stands still, paused or held: its clock stops
+    /// ([`crate::pause::hold_time`]).
+    pub(crate) fn waiting(&self) -> bool {
+        self.paused() || self.held
     }
 
     /// This frame's pads, the connected ones in the order they connected

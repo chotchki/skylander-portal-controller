@@ -48,14 +48,14 @@ A figure's level SHALL be the original's for its total experience: level 2 from 
 - **THEN** it shows level 14 and the experience it has toward 96,500, not MAX
 
 ### Requirement: Playtime counts the time in play
-A figure's playtime SHALL grow by the time it spends on the portal while a level shows, as the original counts it: in play, in the pause menu and on the screen of a beaten hero alike, each figure on the portal counting its own.
+A figure's playtime SHALL grow by the time it spends on the portal while a level shows, as the original counts it: in play, in the pause menu, under the too-many alert and on the screen of a beaten hero alike, each figure on the portal counting its own.
 
 #### Scenario: A minute in the level
 - **WHEN** Eruptor walks the level as the hero for a minute, then the level is paused for a minute
 - **THEN** his playtime has grown by two minutes, as the original's would
 
-#### Scenario: Waiting on the portal
-- **WHEN** Tree Rex waits on the portal for a minute while Eruptor walks the level
+#### Scenario: Held beside the hero
+- **WHEN** Tree Rex is placed beside Eruptor in the level and the too-many alert holds it for a minute
 - **THEN** each one's playtime has grown by a minute
 
 #### Scenario: Beaten and still on the portal
@@ -115,6 +115,6 @@ Resetting a figure to fresh from the phone SHALL drop that profile's progress fo
 - **WHEN** the slot holding Alice's Eruptor, the hero in the level, is reset to fresh
 - **THEN** the phone says he's in the level and his progress is unchanged
 
-#### Scenario: A slot reset while waiting
-- **WHEN** the slot holding Alice's level 10 Tree Rex, waiting on the portal while Eruptor walks the level, is reset to fresh
-- **THEN** her phone shows Tree Rex at level 1 with no gold, and he comes into the level at level 1
+#### Scenario: A slot reset under the too-many alert
+- **WHEN** the slot holding Alice's level 10 Tree Rex, placed beside Eruptor in the level and held under the too-many alert, is reset to fresh
+- **THEN** her phone shows Tree Rex at level 1 with no gold, and once Eruptor comes off Tree Rex comes into the level at level 1

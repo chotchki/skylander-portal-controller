@@ -295,6 +295,9 @@ pub(crate) enum Redrawn {
     /// The level's overlay (Start's, the controller message) came or went
     /// (AG.50).
     Overlay,
+    /// The portal's alert, or the small join code over the level, came or
+    /// went (AG.29).
+    Alert,
 }
 
 /// The `Update` systems that redraw part of a screen in place.
@@ -881,7 +884,8 @@ fn arm_layout_report(mut redrawn: MessageReader<Redrawn>, mut report: ResMut<Lay
                 report.0 = REPORT_AFTER_FRAMES;
             }
             Redrawn::Screen(_) => report.0 = 0,
-            Redrawn::Text | Redrawn::Focus | Redrawn::Level | Redrawn::Overlay => {}
+            Redrawn::Text | Redrawn::Focus | Redrawn::Level | Redrawn::Overlay | Redrawn::Alert => {
+            }
         }
     }
 }

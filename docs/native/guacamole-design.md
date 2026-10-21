@@ -2003,7 +2003,15 @@ press:
   AG.20: the first pad connected walks the hero, Start pauses, a lost pad waits for a press) and the
   screen hears nothing. Otherwise the screen hears `TvInput`s. The level shows once the first figure
   placed that walks has entered it ([`play.rs`](../../crates/guacamole/src/play.rs), AG.21), and the
-  hero's fixed step reads the walking pad's stick against the following camera's view.
+  hero's fixed step reads the walking pad's stick against the following camera's view. While the portal
+  holds the level (AG.29: a portal alert, or no hero in it) the layer keeps the pads from everyone,
+  Start included, and `Time<Virtual>` stops as it does for a pause.
+- The portal's alerts ([`alert.rs`](../../crates/guacamole/src/alert.rs), AG.29, AG.63, AG.73): too many
+  Skylanders, too many magic items, a toy Giants can't use and the call for a Skylander once the hero
+  comes off, each full screen and opaque, as the original hides the level behind its own (AG.6, AG.64),
+  ruled by `play::judge` off the extract's roster. TV UI at 940, over the pause overlays' 900; the
+  small join code stands in the corner at 960 whenever the level or an alert covers the portal view's
+  header, so another kid can still join; an intro's 1,000 stays on top.
 - The level draws under the TV's UI (AG.50, `level::tv_over_level`): its camera first on the TV's target,
   the TV's after it, which while the level shows clears to no colour, hides its screen and lays its UI
   over the level with a premultiplied write (`level::TV_OVER`). So Start's overlay, the controller

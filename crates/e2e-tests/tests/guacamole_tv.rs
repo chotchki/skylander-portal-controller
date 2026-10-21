@@ -986,6 +986,326 @@ async fn placing_a_character_enters_the_level_at_its_start() {
     phone.close().await.unwrap();
 }
 
+/// The distance across the ground between two of `hero_at`'s points.
+fn ground_apart(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (a[0] - b[0]).hypot(a[2] - b[2])
+}
+
+/// The TV's alert's kind, `null` when none shows.
+fn alert_kind(snap: &Value) -> &Value {
+    &snap["alert"]["kind"]
+}
+
+/// AG.29 and AG.63 on the walking fixture, two phones: an item placed
+/// first doesn't start the level; Eruptor and Tree Rex placed before the
+/// start hold the portal view under the too-many alert instead of the
+/// level, and once Tree Rex comes off the level shows with Eruptor at its
+/// start; while the level shows the TV reports no cards and the small join
+/// code stands in its corner. Mid-level: Bob's Eruptor beside Alice's holds
+/// the level under the too-many alert, Alice's unmoved with the stick
+/// pushed; Alice's off, Bob's comes in where she stood and walks on;
+/// Bob's off, the TV asks for a Skylander, the level held; Alice's placed
+/// again, she comes in where he stood and the level carries on.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn the_portal_holds_the_level_and_a_hero_comes_back_in() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_walking().expect("spawn guacamole");
+    let (alice, _, alice_sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &alice).await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready"
+    })
+    .await
+    .expect("the level loads");
+    let figs = figures(&server, alice_sid).await;
+    let (shield, eruptor, tree_rex) = (
+        id_named(&figs, "Sky-Iron Shield"),
+        id_named(&figs, "Eruptor"),
+        id_named(&figs, "Tree Rex"),
+    );
+
+    // An item first: the portal view and its card, no hero.
+    load(&server, alice_sid, 1, &shield).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let snap = tv(&server.url).await.unwrap();
+    assert_eq!(snap["mode"], "portal", "{snap}");
+    assert!(snap["hero"].is_null() && snap["alert"].is_null(), "{snap}");
+    assert_eq!(card_slots(&snap), [1]);
+
+    // Two characters before the start: held under the too-many alert.
+    load(&server, alice_sid, 2, &eruptor).await;
+    load(&server, alice_sid, 3, &tree_rex).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        alert_kind(s) == "too_many_skylanders"
+    })
+    .await
+    .expect("the too-many alert at the start");
+    assert_eq!(snap["mode"], "portal", "the level not entered: {snap}");
+    assert_eq!(snap["alert"]["full_screen"], true, "{}", snap["alert"]);
+    assert_eq!(snap["join_corner"], true, "{snap}");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(tv(&server.url).await.unwrap()["mode"], "portal");
+    clear(&server, alice_sid, 3).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] != "portal"
+    })
+    .await
+    .expect("Eruptor enters once Tree Rex is off");
+    assert!(snap["alert"].is_null(), "{}", snap["alert"]);
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["hero"]["position"].is_array()
+    })
+    .await
+    .unwrap();
+    assert_eq!(snap["hero"]["slot"], 2);
+    let start = hero_at(&snap);
+    assert!(
+        (start[0] - f64::from(E2E_START[0])).abs() < 1e-4
+            && (start[2] - f64::from(E2E_START[2])).abs() < 1e-4,
+        "at the start: {start:?}"
+    );
+    // The level takes the TV: no cards, the join code in its corner.
+    assert!(
+        snap["cards"].as_array().unwrap().is_empty(),
+        "{}",
+        snap["cards"]
+    );
+    assert_eq!(snap["join_corner"], true);
+    assert_eq!(snap["join_qr"], true, "the corner's QR");
+
+    // A pad takes her over and walks her.
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level"
+    })
+    .await
+    .expect("the pad takes her over");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [1.0, 0.3]}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        ground_apart(hero_at(s), start) > 1.5
+    })
+    .await
+    .expect("she walks");
+
+    // Bob's Eruptor beside her: the hold, her still under the pushed stick.
+    let (bob, _, bob_sid) = phone_as(&server, "Bob", BOB).await;
+    let placed = Instant::now();
+    load(&server, bob_sid, 5, &eruptor).await;
+    let (snap, at) = wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        s["mode"] == "held" && alert_kind(s) == "too_many_skylanders"
+    })
+    .await
+    .expect("the too-many hold mid-level");
+    eprintln!(
+        "held {} ms after the load was sent",
+        at.duration_since(placed).as_millis()
+    );
+    assert!(at.duration_since(placed) < Duration::from_millis(1500));
+    assert_eq!(snap["alert"]["over_level"], true, "{}", snap["alert"]);
+    // The frame the hold begins still runs the steps already due (AG.20).
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let held_at = hero_at(&tv(&server.url).await.unwrap());
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let snap = tv(&server.url).await.unwrap();
+    assert_eq!(hero_at(&snap), held_at, "still under the hold");
+    assert_eq!(snap["hero"]["slot"], 2);
+
+    // Alice's off: Bob's comes in where she stood and walks on.
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 0.0]}))
+        .await
+        .unwrap();
+    clear(&server, alice_sid, 2).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level" && s["hero"]["slot"] == 5 && s["hero"]["position"].is_array()
+    })
+    .await
+    .expect("Bob's Eruptor comes in");
+    let came = hero_at(&snap);
+    assert!(
+        ground_apart(came, held_at) < 1e-3,
+        "{came:?} against {held_at:?}"
+    );
+    assert!(snap["alert"].is_null(), "{}", snap["alert"]);
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 1.0]}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        ground_apart(hero_at(s), came) > 0.5
+    })
+    .await
+    .expect("Bob's walks on");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 0.0]}))
+        .await
+        .unwrap();
+
+    // Bob's off: the call for a Skylander, held, no hero.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let last = hero_at(&tv(&server.url).await.unwrap());
+    clear(&server, bob_sid, 5).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        alert_kind(s) == "place_a_skylander"
+    })
+    .await
+    .expect("the call for a Skylander");
+    assert_eq!(snap["mode"], "held");
+    assert!(snap["hero"].is_null(), "{}", snap["hero"]);
+    assert_eq!(snap["alert"]["over_level"], true);
+    assert_eq!(snap["level"]["shown"], true);
+    let left = tv(&server.url).await.unwrap();
+    assert!(left["cards"].as_array().unwrap().is_empty());
+
+    // Alice's again: in where he stood, the level carrying on.
+    load(&server, alice_sid, 2, &eruptor).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level" && s["hero"]["position"].is_array()
+    })
+    .await
+    .expect("she comes in");
+    assert!(
+        ground_apart(hero_at(&snap), last) < 2e-2,
+        "{:?} against {last:?}",
+        hero_at(&snap)
+    );
+    assert!(snap["alert"].is_null());
+    bob.close().await.unwrap();
+    alice.close().await.unwrap();
+}
+
+/// POSTs AG.73's test hook: a later game's figure listed beside the roster.
+async fn foreign_figure(server: &TestServer, figure_id: &str, name: &str) {
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/_test/foreign_figure", server.url))
+        .json(&json!({ "figure_id": figure_id, "name": name }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202, "{}", resp.text().await.unwrap());
+}
+
+/// AG.73 on the walking fixture: a toy Giants can't use (a later game's
+/// figure, listed through the test hook; guacamole's own catalogue is the
+/// disc's roster) placed from the phone holds the portal view under the
+/// wrong-toy alert until it comes off; placed while Eruptor walks it holds
+/// the level the same way, over it, Eruptor unmoved and the pad's buttons
+/// doing nothing, and once it comes off he walks on.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_toy_giants_cant_use_holds_the_tv_until_it_comes_off() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_walking().expect("spawn guacamole");
+    let (phone, _, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready"
+    })
+    .await
+    .expect("the level loads");
+    const FRYNO: &str = "0001c2-0000";
+    foreign_figure(&server, FRYNO, "Fryno").await;
+    let eruptor = id_named(&figures(&server, sid).await, "Eruptor");
+
+    // At the start.
+    let placed = Instant::now();
+    load(&server, sid, 4, FRYNO).await;
+    let (snap, at) = wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        alert_kind(s) == "wrong_toy"
+    })
+    .await
+    .expect("the wrong-toy alert at the start");
+    assert!(at.duration_since(placed) < Duration::from_millis(1500));
+    assert_eq!(snap["mode"], "portal");
+    assert_eq!(snap["alert"]["full_screen"], true);
+    let texts = snap["alert"]["texts"].to_string();
+    assert!(texts.contains("can't be used with this game"), "{texts}");
+    clear(&server, sid, 4).await;
+    wait_for_tv(&server.url, Duration::from_secs(1), |s| {
+        s["alert"].is_null()
+    })
+    .await
+    .expect("gone within a second of coming off");
+
+    // Mid-level.
+    load(&server, sid, 1, &eruptor).await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["hero"]["position"].is_array()
+    })
+    .await
+    .expect("Eruptor enters");
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level"
+    })
+    .await
+    .expect("the pad takes him over");
+    pad_tv(&server.url, json!({"pad": 0, "stick": [0.0, 1.0]}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        let p = hero_at(s);
+        ground_apart(p, [f64::from(E2E_START[0]), 0.0, f64::from(E2E_START[2])]) > 1.0
+    })
+    .await
+    .expect("he walks");
+    let _ = snap;
+    load(&server, sid, 4, FRYNO).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        s["mode"] == "held" && alert_kind(s) == "wrong_toy"
+    })
+    .await
+    .expect("the wrong-toy alert over the level");
+    assert_eq!(snap["alert"]["over_level"], true, "{}", snap["alert"]);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let held_at = hero_at(&tv(&server.url).await.unwrap());
+    for button in ["start", "south", "east"] {
+        pad_tv(&server.url, json!({"pad": 0, "press": button}))
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let snap = tv(&server.url).await.unwrap();
+    assert_eq!(hero_at(&snap), held_at, "unmoved under the alert");
+    assert!(
+        snap["input"]["pause"].is_null(),
+        "Start did nothing: {}",
+        snap["input"]
+    );
+    clear(&server, sid, 4).await;
+    wait_for_tv(&server.url, Duration::from_secs(1), |s| {
+        s["mode"] == "level"
+    })
+    .await
+    .expect("the level again within a second");
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        ground_apart(hero_at(s), held_at) > 0.5
+    })
+    .await
+    .expect("he walks on");
+    phone.close().await.unwrap();
+}
+
 /// A damaged model leaves its card on the portrait, says why on the TV's
 /// mirror and in the log, and the modelled figure beside it still turns.
 #[tokio::test(flavor = "current_thread")]

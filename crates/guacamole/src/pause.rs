@@ -220,14 +220,14 @@ fn dot_at(face: Face) -> (f32, f32) {
     }
 }
 
-/// Stops the level's clock while it waits and starts it again after; a
-/// pause it didn't make it leaves alone.
+/// Stops the level's clock while it waits or the portal holds it, and
+/// starts it again after; a pause it didn't make it leaves alone.
 pub(crate) fn hold_time(
     pads: Res<LevelPads>,
     mut time: ResMut<Time<Virtual>>,
     mut held: Local<bool>,
 ) {
-    let wait = pads.paused();
+    let wait = pads.waiting();
     if wait && !*held {
         time.pause();
         *held = true;

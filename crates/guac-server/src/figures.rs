@@ -115,6 +115,22 @@ impl FigureSet {
     }
 }
 
+#[cfg(feature = "test-hooks")]
+impl FigureSet {
+    /// This list with `figure` beside it: a toy the disc's roster doesn't
+    /// hold, which a later game's catalogue would bring, for the TV's alert
+    /// for a toy Giants can't use (openspec AG.73). `None` when its id is
+    /// listed already.
+    pub fn with_foreign(&self, figure: Figure) -> Option<Self> {
+        if self.index.contains_key(&figure.id) {
+            return None;
+        }
+        let mut figures = self.figures.clone();
+        figures.push(figure);
+        Some(Self::new(figures, self.portraits.clone(), self.roster))
+    }
+}
+
 /// A roster row as the phone's collection groups it: variant group the
 /// character's name, tag the disc's variant word (design decision 3).
 fn figure(roster: &Roster, f: &RosterFigure) -> Option<Figure> {
@@ -332,6 +348,43 @@ pub(crate) mod fixture {
 mod tests {
     use super::fixture::{roster, row};
     use super::*;
+
+    /// AG.73's test hook: a figure the roster doesn't hold joins the list
+    /// once, the roster's figures and state kept; its id listed already, it
+    /// doesn't.
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn a_foreign_figure_joins_the_list_once() {
+        let set = FigureSet::from_roster(&fixture::eruptor_and_spyro(), Path::new("/x"));
+        let fryno = |id: &str| Figure {
+            id: FigureId::new(id),
+            canonical_name: "Fryno".into(),
+            variant_group: "Fryno".into(),
+            variant_tag: "base".into(),
+            game: GameOfOrigin::SwapForce,
+            element: None,
+            category: Category::Figure,
+            vehicle_terrain: None,
+            sky_path: PathBuf::new(),
+            element_icon_path: None,
+            tag_identity: None,
+        };
+        let with = set.with_foreign(fryno("0001c2-0000")).expect("listed");
+        assert_eq!(with.figures().len(), 3);
+        assert_eq!(
+            with.get(&FigureId::new("0001c2-0000"))
+                .unwrap()
+                .canonical_name,
+            "Fryno"
+        );
+        assert!(with.get(&FigureId::new("000009-0000")).is_some());
+        assert_eq!(with.roster(), Some(RosterState::Ready));
+        assert!(with.with_foreign(fryno("0001c2-0000")).is_none());
+        assert!(
+            set.with_foreign(fryno("000009-0000")).is_none(),
+            "Eruptor's id"
+        );
+    }
 
     #[test]
     fn a_roster_becomes_the_collections_figures() {
