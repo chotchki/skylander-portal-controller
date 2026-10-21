@@ -264,15 +264,23 @@ fn what_changed_between_two_reads_and_the_scripts_that_started() {
     l.w.put32(controller + 0xAC, wait);
     let alerted = fx::named(&mut l.w, vtable::USER_BEHAVIOR, 0x28, "alerted");
     l.w.put32(l.chompy + 0xAC, alerted);
+    // A pot broken: taken off, nothing else of it moves.
+    let pot = HEAP + l.disc.offsets()["pottery_2(5)"];
+    l.w.put32(pot + 0x54, 3);
     let after = read(&mut l.w, &frame, &l.disc, &[]).unwrap();
     let changes = after.changes_since(&before);
-    assert_eq!(changes.len(), 2, "{changes:?}");
-    assert_eq!(changes[0].name, "Enemy_Chompy(1)");
-    assert_eq!(changes[0].from.2.as_deref(), Some("idle"));
-    assert_eq!(changes[0].to.2.as_deref(), Some("alerted"));
-    assert_eq!(changes[1].name, "Setup_001_Controller");
-    assert_eq!(changes[1].from, (2, false, None));
-    assert_eq!(changes[1].to, (1, true, Some("Wait For Minion".to_owned())));
+    assert_eq!(changes.len(), 3, "{changes:?}");
+    assert_eq!(changes[0].name, "pottery_2(5)");
+    assert_eq!(
+        (&changes[0].from, &changes[0].to),
+        (&(0, false, None), &(3, false, None))
+    );
+    assert_eq!(changes[1].name, "Enemy_Chompy(1)");
+    assert_eq!(changes[1].from.2.as_deref(), Some("idle"));
+    assert_eq!(changes[1].to.2.as_deref(), Some("alerted"));
+    assert_eq!(changes[2].name, "Setup_001_Controller");
+    assert_eq!(changes[2].from, (2, false, None));
+    assert_eq!(changes[2].to, (1, true, Some("Wait For Minion".to_owned())));
     // Of the scripts, only the controller's started between them.
     let scripts = RouteRecord::scripts_between(&before, &after);
     assert_eq!(
@@ -374,11 +382,26 @@ fn a_route_record_is_written_and_read_back() {
         Look {
             seen: seen(18, 19.5),
             step: 2,
-            did: "done".into(),
+            did: "walk".into(),
+        },
+        // A last step of more than one look: given up, it ends on its last.
+        Look {
+            seen: seen(26, 21.0),
+            step: 2,
+            did: "gave up".into(),
         },
     ];
     let steps = RouteRecord::steps(&looks, &plan);
     assert_eq!(steps.len(), 3);
+    assert_eq!(
+        (
+            steps[2].first_flip,
+            steps[2].last_flip,
+            steps[2].looks,
+            steps[2].to[0]
+        ),
+        (18, 26, 2, 21.0)
+    );
     assert_eq!(
         (
             steps[0].index,

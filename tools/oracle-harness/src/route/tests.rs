@@ -618,6 +618,18 @@ fn a_hold_keeps_the_stick_on_its_point_for_its_flips_whatever_he_does() {
         "the wall held him: {:?}",
         fake.pos
     );
+    // A hold one flip past a stretch: 8, then the 1 left.
+    let mut short = Fake::new(SPAWN, 15.0);
+    let route = plan(vec![Step::Hold {
+        toward: to,
+        flips: 9,
+    }]);
+    assert_eq!(
+        drive(&mut short, &route, Knobs::default()).unwrap().outcome,
+        Outcome::Done
+    );
+    assert_eq!(short.held.len(), 9);
+    assert_eq!(short.runs, vec![(3, 8), (11, 1)]);
     // And on open ground he walks the hold's way, re-aimed at each look.
     let mut open = Fake::new(SPAWN, 15.0);
     open.view_turn = -1.5;
