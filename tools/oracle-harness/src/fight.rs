@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actors::{Gather, be32, f32_at};
 use crate::pine::PineClient;
+use crate::route::FigureField;
 use crate::script::{
     self, Instance, Named, Number, Types, bit_field, exports, fields, number, set_items, the,
     vtable,
@@ -105,6 +106,10 @@ pub struct Rows {
     pub experience: (u32, u32),
     /// The second area experience runs on into, when the table has one.
     pub spillover: Option<(u32, u32)>,
+    /// What the first area holds before experience runs on into the second
+    /// (its row's limit, 33,000 on Giants' disc), when the row has one.
+    #[serde(default)]
+    pub experience_limit: Option<u32>,
     pub gold: (u32, u32),
     pub playtime: (u32, u32),
     /// The experience each level starts at, level 1's first.
@@ -128,9 +133,16 @@ impl Rows {
         if p.level_xp.is_empty() {
             bail!("AH.2's level table is empty");
         }
+        let limit = p
+            .save_params
+            .iter()
+            .find(|s| s.param == "pp_Exp" && s.kind == SaveKind::Plain)
+            .map(|s| s.limit)
+            .filter(|&l| l > 0);
         Ok(Self {
             experience: need("pp_Exp")?,
             spillover: at("pp_Exp", SaveKind::Spillover),
+            experience_limit: limit,
             gold: need("pp_Money")?,
             playtime: need("pp_CumulativeTime")?,
             level_xp: p.level_xp.clone(),
@@ -177,6 +189,28 @@ impl Rows {
             field(self.gold)?,
             field(self.playtime)?,
         ))
+    }
+
+    /// `words` with one value set (AH.11's figure pokes): experience as a
+    /// total, the first area up to [`Rows::experience_limit`] and the rest in
+    /// the spillover, as the game's own rows split it; gold or playtime as
+    /// they are. Refused for a total the areas can't hold.
+    pub fn set(&self, words: &mut [u32], field: FigureField, value: u32) -> Result<()> {
+        let put = |words: &mut [u32], (bit, width): (u32, u32), v: u32| {
+            script::set_bit_field(words, bit, width, v)
+        };
+        match field {
+            FigureField::Experience => match (self.spillover, self.experience_limit) {
+                (Some(spill), Some(limit)) => {
+                    let first = value.min(limit);
+                    put(words, self.experience, first)?;
+                    put(words, spill, value - first)
+                }
+                _ => put(words, self.experience, value),
+            },
+            FigureField::Gold => put(words, self.gold, value),
+            FigureField::Playtime => put(words, self.playtime, value),
+        }
     }
 
     /// The level `experience` reaches: how many thresholds it's at or past.
@@ -1307,6 +1341,45 @@ mod tests {
         let r = Rows::of(&p).unwrap();
         assert_eq!(r.spillover, None);
         assert_eq!(r.words(), [0, 1, 2]);
+    }
+
+    /// AH.11's figure pokes: experience as a total over both areas as the
+    /// first area's limit splits it, gold and playtime as they are, each
+    /// read back through the rows and nothing else moved.
+    #[test]
+    fn a_figure_value_set_reads_back_through_the_rows() {
+        let r = rows();
+        assert_eq!(r.experience_limit, Some(33_000));
+        let mut words = vec![0u32; 44];
+        let read = |w: &[u32]| r.values(|i| w.get(i as usize).copied()).unwrap();
+        r.set(&mut words, FigureField::Gold, 17).unwrap();
+        r.set(&mut words, FigureField::Playtime, 34).unwrap();
+        r.set(&mut words, FigureField::Experience, 999).unwrap();
+        assert_eq!(read(&words), (999, 17, 34));
+        assert_eq!(words[28] >> 24, 0);
+        // 96,499: 33,000 in the first area, 63,499 spilled over.
+        r.set(&mut words, FigureField::Experience, 96_499).unwrap();
+        assert_eq!(read(&words), (96_499, 17, 34));
+        assert_eq!(bit_field(&words, 0, 24, false).unwrap(), 33_000);
+        assert_eq!(bit_field(&words, 28 * 32 + 24, 16, false).unwrap(), 63_499);
+        assert_eq!(r.level(96_499), 14);
+        // Back under the limit: the spillover emptied.
+        r.set(&mut words, FigureField::Experience, 40).unwrap();
+        assert_eq!(bit_field(&words, 28 * 32 + 24, 16, false).unwrap(), 0);
+        r.set(&mut words, FigureField::Gold, 64_999).unwrap();
+        assert_eq!(read(&words), (40, 64_999, 34));
+        // More than the areas hold is refused.
+        assert!(
+            r.set(&mut words, FigureField::Experience, 33_000 + 65_536)
+                .is_err()
+        );
+        // Without a spillover row the first area takes it all.
+        let mut p = progression();
+        p.save_params.retain(|s| s.kind != SaveKind::Spillover);
+        let r1 = Rows::of(&p).unwrap();
+        let mut w1 = vec![0u32; 44];
+        r1.set(&mut w1, FigureField::Experience, 40_000).unwrap();
+        assert_eq!(bit_field(&w1, 0, 24, false).unwrap(), 40_000);
     }
 
     #[test]

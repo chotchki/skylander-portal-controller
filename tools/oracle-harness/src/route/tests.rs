@@ -38,6 +38,11 @@ struct Fake {
     reads: Vec<(String, u64)>,
     /// The flips each run went in at and lasted.
     runs: Vec<(u64, u64)>,
+    /// AH.11's steps carried out, each with the flip it was done at.
+    acts: Vec<(Step, u64)>,
+    /// The hero left off every look from this flip on (AH.11: beaten, or
+    /// taken off the portal).
+    gone_from: Option<u64>,
 }
 
 impl Fake {
@@ -67,6 +72,8 @@ impl Fake {
             shots: Vec::new(),
             reads: Vec::new(),
             runs: Vec::new(),
+            acts: Vec::new(),
+            gone_from: None,
         };
         fake.eye = fake.follow();
         fake.write();
@@ -156,7 +163,21 @@ impl Fake {
 
 impl Session for Fake {
     fn look(&mut self) -> Result<(u64, ActorFrame)> {
-        Ok((self.flip, actors::read(&mut self.world)?))
+        let mut frame = actors::read(&mut self.world)?;
+        if self.gone_from.is_some_and(|f| self.flip >= f) {
+            frame.actors.retain(|a| a.corpus != self.hero.corpus);
+        }
+        Ok((self.flip, frame))
+    }
+
+    fn act(&mut self, step: &Step, frame: &ActorFrame) -> Result<()> {
+        assert!(step.acts(), "{step:?} isn't one of AH.11's steps");
+        assert_eq!(
+            frame.game_frame, self.game_frame,
+            "acted on the pause's own frame"
+        );
+        self.acts.push((step.clone(), self.flip));
+        Ok(())
     }
 
     fn run(&mut self, script: &InputScript, flips: u64) -> Result<()> {
@@ -187,6 +208,137 @@ impl Session for Fake {
         self.reads.push((label.to_owned(), self.flip));
         Ok(())
     }
+}
+
+/// AH.11's steps act at the pause they fall on, in plan order, with no run
+/// between them, and the runs around them go on as before.
+#[test]
+fn ah11s_steps_act_at_the_pause_in_plan_order() {
+    let mut fake = Fake::new(SPAWN, 15.0);
+    let poke = Step::Poke {
+        placement: "009_Eruptor".into(),
+        path: "description.creature info.hp".into(),
+        value: 40.0,
+    };
+    let figure = Step::Figure {
+        field: FigureField::Experience,
+        value: 999,
+    };
+    let load = Step::Portal {
+        slot: 1,
+        figure: Some("/figures/Tree Rex.sky".into()),
+    };
+    let clear = Step::Portal {
+        slot: 0,
+        figure: None,
+    };
+    let vars = Step::Vars {
+        placement: "Enemy_Chompy(2)".into(),
+        label: "c2".into(),
+    };
+    let route = plan(vec![
+        poke.clone(),
+        Step::Wait { flips: 10 },
+        figure.clone(),
+        load.clone(),
+        clear.clone(),
+        Step::Reconnect,
+        vars.clone(),
+        Step::Wait { flips: 5 },
+        Step::Read {
+            label: "end".into(),
+        },
+    ]);
+    let trace = drive(&mut fake, &route, Knobs::default()).unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    assert_eq!(
+        fake.acts,
+        vec![
+            (poke, 2),
+            (figure, 12),
+            (load, 12),
+            (clear, 12),
+            (Step::Reconnect, 12),
+            (vars, 12)
+        ]
+    );
+    assert_eq!(fake.runs, vec![(3, 10), (13, 5)]);
+    assert_eq!(fake.reads, vec![("end".to_owned(), 17)]);
+    // Each act is a look of its own in the trace.
+    assert_eq!(
+        trace
+            .looks
+            .iter()
+            .filter(|l| l.did.starts_with("act "))
+            .count(),
+        6
+    );
+}
+
+/// A session that can't act refuses AH.11's steps rather than skipping them.
+#[test]
+fn a_session_that_cant_act_refuses_ah11s_steps() {
+    struct Plain(Fake);
+    impl Session for Plain {
+        fn look(&mut self) -> Result<(u64, ActorFrame)> {
+            self.0.look()
+        }
+        fn run(&mut self, script: &InputScript, flips: u64) -> Result<()> {
+            self.0.run(script, flips)
+        }
+        fn shot(&mut self, label: &str) -> Result<()> {
+            self.0.shot(label)
+        }
+        fn read(&mut self, label: &str, frame: &ActorFrame) -> Result<()> {
+            self.0.read(label, frame)
+        }
+    }
+    let mut plain = Plain(Fake::new(SPAWN, 15.0));
+    let e = drive(&mut plain, &plan(vec![Step::Reconnect]), Knobs::default()).unwrap_err();
+    assert!(
+        format!("{e:#}").contains("can't carry out Reconnect"),
+        "{e:#}"
+    );
+}
+
+/// With no hero at a pause (beaten, or off the portal) the driver keeps the
+/// last look's pose and the waits, shots and acts go on; with none at F0
+/// there's nothing to keep and the drive is refused.
+#[test]
+fn a_look_with_no_hero_keeps_the_last_pose() {
+    let mut fake = Fake::new(SPAWN, 15.0);
+    fake.gone_from = Some(12);
+    let route = plan(vec![
+        Step::Wait { flips: 10 },
+        Step::Shot {
+            label: "gone".into(),
+        },
+        Step::Portal {
+            slot: 0,
+            figure: Some("/figures/Eruptor.sky".into()),
+        },
+        Step::Wait { flips: 20 },
+    ]);
+    let trace = drive(&mut fake, &route, Knobs::default()).unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    assert_eq!(fake.shots, vec![("gone".to_owned(), 12)]);
+    assert_eq!(fake.acts.len(), 1);
+    let first = trace.looks[0].seen;
+    for l in &trace.looks[1..] {
+        assert_eq!((l.seen.pivot, l.seen.view), (first.pivot, first.view));
+        assert_eq!(l.seen.game_frame, 5_962 + (l.seen.flip - 2) as u32);
+    }
+    assert_eq!(trace.looks.last().unwrap().seen.flip, 32);
+    let mut none = Fake::new(SPAWN, 15.0);
+    none.gone_from = Some(0);
+    assert!(
+        drive(
+            &mut none,
+            &plan(vec![Step::Wait { flips: 5 }]),
+            Knobs::default()
+        )
+        .is_err()
+    );
 }
 
 fn plan(steps: Vec<Step>) -> RoutePlan {
@@ -871,11 +1023,34 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
             Shot(label: "lob_1"),
             Hold(toward: (x: 4.5, z: -12.0), flips: 45),
             Tilt(toward: (x: 1.797, z: -20.974), flips: 10),
+            Poke(placement: "009_Eruptor", path: "description.creature info.armor", value: 200),
+            Figure(field: Gold, value: 64999),
+            Portal(slot: 0, figure: None),
+            Portal(slot: 1, figure: Some("/figures/Tree Rex.sky")),
+            Reconnect,
+            Vars(placement: "009_Eruptor", label: "anchor"),
+            Globals(names: ["portal save control"], label: "anchor"),
         ],
         save: true,
     )"#;
     let plan = RoutePlan::from_ron(text).unwrap();
-    assert_eq!(plan.steps.len(), 10);
+    assert_eq!(plan.steps.len(), 17);
+    assert_eq!(
+        plan.steps[11],
+        Step::Figure {
+            field: FigureField::Gold,
+            value: 64_999
+        }
+    );
+    assert_eq!(
+        plan.steps[13],
+        Step::Portal {
+            slot: 1,
+            figure: Some("/figures/Tree Rex.sky".into())
+        }
+    );
+    assert!(plan.steps[10..].iter().all(Step::acts));
+    assert!(!plan.steps[..10].iter().any(Step::acts));
     assert_eq!(
         plan.steps[9],
         Step::Tilt {
@@ -917,6 +1092,18 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
         "(steps: [Shot(label: \"x\"), Shot(label: \"x\")])",
         "(steps: [Read(label: \"x\"), Wait(flips: 2), Read(label: \"x\")])",
         "(steps: [Read(label: \"f0\")])",
+        "(steps: [Poke(placement: \"\", path: \"a.b\", value: 1.0)])",
+        "(steps: [Poke(placement: \"x\", path: \"a..b\", value: 1.0)])",
+        "(steps: [Poke(placement: \"x\", path: \"\", value: 1.0)])",
+        "(steps: [Figure(field: Level, value: 2)])",
+        "(steps: [Portal(slot: 8, figure: None)])",
+        "(steps: [Portal(slot: 0, figure: Some(\"\"))])",
+        "(steps: [Vars(placement: \"x\", label: \"a b\")])",
+        "(steps: [Vars(placement: \"\", label: \"ab\")])",
+        "(steps: [Vars(placement: \"x\", label: \"v\"), Vars(placement: \"y\", label: \"v\")])",
+        "(steps: [Globals(names: [], label: \"g\")])",
+        "(steps: [Globals(names: [\"\"], label: \"g\")])",
+        "(steps: [Globals(names: [\"a\"], label: \"g\"), Globals(names: [\"b\"], label: \"g\")])",
         "(steps: [Hop(to: (x: 1.0, z: 2.0))])",
         "(steps: [Wait(flips: 3)], extra: 1)",
     ] {

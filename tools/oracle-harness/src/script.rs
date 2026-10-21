@@ -645,6 +645,150 @@ pub fn bit_field(words: &[u32], bit: u32, bits: u32, signed: bool) -> Result<i64
     })
 }
 
+/// [`bit_field`]'s inverse: `value`'s low `bits` bits written from bit `bit`
+/// of `words` in the same stream, the rest of each word kept. Refused past
+/// the words, over 32 bits, or for a value the width can't hold.
+pub fn set_bit_field(words: &mut [u32], bit: u32, bits: u32, value: u32) -> Result<()> {
+    if bits == 0 || bits > 32 {
+        bail!("a bit field of {bits} bits");
+    }
+    if bits < 32 && value >> bits != 0 {
+        bail!("{value} doesn't fit {bits} bits");
+    }
+    let (w, b) = ((bit / 32) as usize, bit % 32);
+    let runs_on = b + bits > 32;
+    if w >= words.len() || (runs_on && w + 1 >= words.len()) {
+        bail!(
+            "bits {bit} to {} run past the {} words",
+            bit + bits - 1,
+            words.len()
+        );
+    }
+    let mask = if bits == 32 {
+        u64::from(u32::MAX)
+    } else {
+        (1u64 << bits) - 1
+    };
+    let mut pair = u64::from(words[w]) | words.get(w + 1).map_or(0, |&n| u64::from(n) << 32);
+    pair = (pair & !(mask << b)) | (u64::from(value) << b);
+    words[w] = pair as u32;
+    if runs_on {
+        words[w + 1] = (pair >> 32) as u32;
+    }
+    Ok(())
+}
+
+/// One script object read whole for a dump (AH.11's `Vars`): its name and
+/// class, what it holds, and what's under it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Node {
+    pub name: String,
+    pub at: u32,
+    pub vtable: u32,
+    pub value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// A structure's fields, a set's elements, or what a reference names
+    /// (a structure's fields or a placement's variables) when it hasn't been
+    /// dumped already; an object met again is named, not repeated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub under: Vec<Node>,
+    /// Met before in this dump: its contents are where it was first met.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seen: bool,
+}
+
+/// How far a dump goes: levels below the cells it starts from, and the
+/// objects it reads in all.
+pub const TREE_DEPTH: usize = 6;
+pub const TREE_NODES: usize = 20_000;
+
+/// `cells` read whole into [`Node`]s, structures, sets and references
+/// followed down to `depth` levels, every object read once.
+pub fn tree(g: &mut impl Gather, types: &mut Types, cells: &[Named], depth: usize) -> Vec<Node> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut budget = TREE_NODES;
+    tree_of(g, types, cells, depth, &mut seen, &mut budget)
+}
+
+fn tree_of(
+    g: &mut impl Gather,
+    types: &mut Types,
+    cells: &[Named],
+    depth: usize,
+    seen: &mut std::collections::BTreeSet<u32>,
+    budget: &mut usize,
+) -> Vec<Node> {
+    let mut out = Vec::with_capacity(cells.len());
+    for c in cells {
+        if *budget == 0 {
+            break;
+        }
+        *budget -= 1;
+        let (value, error) = match value(g, types, c) {
+            Ok(v) => (Some(v), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
+        };
+        let mut node = Node {
+            name: c.name.clone(),
+            at: c.at,
+            vtable: c.vtable,
+            value,
+            error,
+            under: Vec::new(),
+            seen: false,
+        };
+        // What's under it: a structure's fields, a set's elements, or a
+        // reference's structure or placement.
+        let target = match (&node.value, c.vtable) {
+            (Some(Value::Structure { .. }), _) => Some(c.at),
+            (Some(Value::Set { .. }), _) => Some(c.at),
+            (Some(Value::Reference { to: Some(to), .. }), _) => Some(*to),
+            _ => None,
+        };
+        if let Some(t) = target {
+            if !seen.insert(t) {
+                node.seen = true;
+            } else if depth > 0 {
+                let children: Result<Vec<Named>> = (|| {
+                    let head = one(g, t, 4, &c.name)?;
+                    Ok(match be32(&head, 0) {
+                        vtable::SCRIPT_STRUCTURE => fields(g, t, &c.name)?,
+                        vtable::SCRIPT_SET => {
+                            let items = set_items(g, t, &c.name)?;
+                            let mut named_items = named(g, &items)?;
+                            // A number cell may carry no name: list it by place.
+                            if named_items.len() < items.len() {
+                                named_items = items
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, &at)| {
+                                        let h = one(g, at, 4, "a set element").ok();
+                                        Named {
+                                            at,
+                                            vtable: h.map_or(0, |h| be32(&h, 0)),
+                                            name: format!("[{i}]"),
+                                        }
+                                    })
+                                    .collect();
+                            }
+                            named_items
+                        }
+                        vtable::ACTOR_INFO => variables(g, t)?.unwrap_or_default(),
+                        _ => Vec::new(),
+                    })
+                })();
+                match children {
+                    Ok(ch) => node.under = tree_of(g, types, &ch, depth - 1, seen, budget),
+                    Err(e) => node.error = Some(format!("{e:#}")),
+                }
+            }
+        }
+        out.push(node);
+    }
+    out
+}
+
 /// Script objects written out in code for the tests here and in
 /// [`crate::fight`], on [`crate::actors::fixture::World`]'s heap, laid out as
 /// AF.8's fresh state has them. The offsets are typed in, not taken from the
@@ -1136,6 +1280,119 @@ mod tests {
         assert!(bit_field(&words, 43 * 32 + 24, 16, false).is_err());
         assert!(bit_field(&words, 0, 0, false).is_err());
         assert!(bit_field(&words, 0, 33, false).is_err());
+    }
+
+    /// AH.11's figure pokes: each field written where the reader reads it,
+    /// the bits round it kept, across a word's end too.
+    #[test]
+    fn a_bit_field_set_reads_back_and_keeps_its_neighbours() {
+        let mut words = vec![0u32; 44];
+        words[0] = 0x2A00_0FA0;
+        words[1] = 0x0000_0401;
+        words[2] = 0x0000_0001;
+        words[28] = 0xAB00_0000;
+        words[29] = 0x0000_00CD;
+        let was = words.clone();
+        // Experience 999 in the first 24 bits: gold's low byte stays.
+        set_bit_field(&mut words, 0, 24, 999).unwrap();
+        assert_eq!(words[0], 0x2A00_03E7);
+        assert_eq!(bit_field(&words, 24, 16, false).unwrap(), 0x012A);
+        // Gold 64,999 across words 0 and 1: experience and playtime stay.
+        set_bit_field(&mut words, 24, 16, 64_999).unwrap();
+        assert_eq!(bit_field(&words, 24, 16, false).unwrap(), 64_999);
+        assert_eq!(bit_field(&words, 0, 24, false).unwrap(), 999);
+        assert_eq!(bit_field(&words, 40, 32, false).unwrap(), 0x0100_0004);
+        // Playtime, 32 bits from bit 40 over words 1 and 2.
+        set_bit_field(&mut words, 40, 32, 0xDEAD_BEEF).unwrap();
+        assert_eq!(bit_field(&words, 40, 32, false).unwrap(), 0xDEAD_BEEF);
+        assert_eq!(bit_field(&words, 24, 16, false).unwrap(), 64_999);
+        // The spillover's 16 bits from word 28's bit 24.
+        set_bit_field(&mut words, 28 * 32 + 24, 16, 63_499).unwrap();
+        assert_eq!(bit_field(&words, 28 * 32 + 24, 16, false).unwrap(), 63_499);
+        assert_eq!(words[28] & 0x00FF_FFFF, was[28] & 0x00FF_FFFF);
+        assert_eq!(words[29] & 0xFFFF_FF00, was[29] & 0xFFFF_FF00);
+        // A whole word.
+        set_bit_field(&mut words, 5 * 32, 32, u32::MAX).unwrap();
+        assert_eq!(words[5], u32::MAX);
+        // Refused: too wide a value, past the words, a width of 0 or over 32;
+        // nothing written by a refusal.
+        let before = words.clone();
+        assert!(err(set_bit_field(&mut words, 0, 24, 1 << 24)).contains("doesn't fit"));
+        assert!(set_bit_field(&mut words, 44 * 32, 1, 0).is_err());
+        assert!(set_bit_field(&mut words, 43 * 32 + 24, 16, 1).is_err());
+        assert!(set_bit_field(&mut words, 0, 0, 0).is_err());
+        assert!(set_bit_field(&mut words, 0, 33, 0).is_err());
+        assert_eq!(words, before);
+    }
+
+    /// AH.11's `Vars`: a placement's cells read whole, a structure's fields,
+    /// a reference's target and a set's elements under them, an object met
+    /// twice named the second time, not repeated, and the depth held.
+    #[test]
+    fn a_dump_reads_every_cell_through_structures_references_and_sets() {
+        let mut c = creature();
+        let a = fx::int(&mut c.w, &c.t, "a", 7);
+        let b = fx::float(&mut c.w, &c.t, "b", 2.5);
+        let set = fx::set(&mut c.w, "pair", &[a, b]);
+        // The description again, under another name: the second meeting.
+        let description = referent(
+            &mut c.w,
+            &Named {
+                at: c.description_ref,
+                vtable: vtable::SCRIPT_REFERENCE,
+                name: "description".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let again = fx::reference(&mut c.w, vtable::SCRIPT_REFERENCE, "again", description);
+        let placement = fx::placement(
+            &mut c.w,
+            "dumped",
+            Some("default"),
+            1.0,
+            Some(&[c.description_ref, set, again]),
+        );
+        let cells = variables(&mut c.w, placement).unwrap().unwrap();
+        let mut types = Types::default();
+        let nodes = tree(&mut c.w, &mut types, &cells, TREE_DEPTH);
+        let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, ["description", "pair", "again"]);
+        // description -> creature info -> hp, followed through references.
+        let info = &nodes[0].under[0];
+        assert_eq!(info.name, "creature info");
+        let hp = info.under.iter().find(|n| n.name == "hp").unwrap();
+        assert_eq!(hp.value, Some(Value::Number(Number::Int(290))));
+        assert_eq!(hp.at, c.hp);
+        let armor = info.under.iter().find(|n| n.name == "armor").unwrap();
+        assert_eq!(armor.value, Some(Value::Number(Number::Float(6.0))));
+        let params = info
+            .under
+            .iter()
+            .find(|n| n.name == "character parameters")
+            .unwrap();
+        assert!(params.under.iter().any(|n| n.name == "hp max"));
+        // The set's two elements by name.
+        assert_eq!(nodes[1].value, Some(Value::Set { count: 2 }));
+        let els: Vec<(&str, Option<&Value>)> = nodes[1]
+            .under
+            .iter()
+            .map(|n| (n.name.as_str(), n.value.as_ref()))
+            .collect();
+        assert_eq!(
+            els,
+            [
+                ("a", Some(&Value::Number(Number::Int(7)))),
+                ("b", Some(&Value::Number(Number::Float(2.5))))
+            ]
+        );
+        // The description met again: named, nothing under it.
+        assert!(nodes[2].seen && nodes[2].under.is_empty());
+        // Depth 0: the cells alone.
+        let flat = tree(&mut c.w, &mut types, &cells, 0);
+        assert!(flat.iter().all(|n| n.under.is_empty()));
+        assert_eq!(flat.len(), 3);
+        let _ = c.info;
     }
 
     #[test]

@@ -359,6 +359,17 @@ impl ActorFrame {
         }
     }
 
+    /// The player the lowest pad drives: the hero alone, or player 1 when a
+    /// second figure has joined (AH.11); an error when there's none.
+    pub fn player_one(&self) -> Result<&Actor> {
+        self.players().min_by_key(|a| a.pad).with_context(|| {
+            format!(
+                "no skinned actor a pad drives among {} actors",
+                self.actors.len()
+            )
+        })
+    }
+
     pub fn by_corpus(&self) -> BTreeMap<u32, &Actor> {
         self.actors.iter().map(|a| (a.corpus, a)).collect()
     }
@@ -1258,6 +1269,27 @@ mod tests {
         assert_eq!(frame.counts().players, 2);
         let err = frame.hero().unwrap_err().to_string();
         assert_eq!(err, "2 players: 009_Eruptor, 112_TreeRex");
+        // Player 1 is the lowest pad's (AH.11's driver with a second figure
+        // in), and with none there is none.
+        assert_eq!(
+            frame.player_one().unwrap().name.as_deref(),
+            Some("009_Eruptor")
+        );
+        let mut alone = World::new();
+        alone.actor(&Spec {
+            name: "Sheep_1".into(),
+            skinned: true,
+            ..Spec::default()
+        });
+        let err = read(&mut alone)
+            .unwrap()
+            .player_one()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no skinned actor a pad drives among 1"),
+            "{err}"
+        );
     }
 
     #[test]
