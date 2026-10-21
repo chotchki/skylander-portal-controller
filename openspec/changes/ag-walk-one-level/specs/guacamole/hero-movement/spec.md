@@ -224,7 +224,7 @@ A hero SHALL stand in his idle and move in his walk and run, mixed by the speed 
 
 #### Scenario: His fall
 - **WHEN** Eruptor walks off the ledge route's edge into the corridor
-- **THEN** the frame after he first falls faster than 20 ft/s his fall comes in over 0.2 s, his run fading under it, with no landing animation after; once it's wholly in, his run comes back over 0.12 s from the frame after he's within half a foot of the ground
+- **THEN** the frame after a move first takes him down faster than 20 ft/s from 1.5 ft or more above the ground his fall comes in over 0.2 s, his run fading under it, with no landing animation after; once it's wholly in, the frame after one that leaves him within 1.5 ft of the ground or slower, his run comes back over 0.12 s from three quarters into its stride
 
 #### Scenario: A drop under 20 ft/s
 - **WHEN** Eruptor walks off the ledge route's edge where the corridor's slope is 0.6 m or less below it

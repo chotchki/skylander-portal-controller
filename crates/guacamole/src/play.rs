@@ -784,8 +784,9 @@ fn draw_hero(
 /// before's toward this one's, each clip's time back from this step's by
 /// what's left of the step at its rate), so it holds while the level waits;
 /// his scrolling parts and what he carries on the TV's virtual clock since
-/// he came in. Under reduced motion his idle and his scrolls hold their
-/// start, standing or walking.
+/// he came in. Under reduced motion (dev shots) his idle, his scrolls and
+/// what he carries hold their start; his walk, run and fall still play, as
+/// the stick's and not ambient motion, so a walk's shots show them.
 fn pose_hero(
     play: Res<Play>,
     time: Res<Time>,
@@ -804,13 +805,13 @@ fn pose_hero(
     } else {
         time.elapsed().saturating_sub(inside.since).as_secs_f64()
     };
-    let pose = match gaits.get(inside.hero).ok().filter(|_| !still) {
+    let pose = match gaits.get(inside.hero).ok() {
         Some(g) => gait_pose(
             &inside.model,
             &inside.clips,
             g,
-            fixed.overstep_fraction(),
-            fixed.timestep().as_secs_f64(),
+            (fixed.overstep_fraction(), fixed.timestep().as_secs_f64()),
+            still,
         ),
         None => guacamole::character::mesh::pose(&inside.model, seconds),
     };
@@ -842,13 +843,14 @@ fn pose_hero(
 /// His joints `alpha` of the way from his locomotion's last step to its
 /// next, a step `step` seconds long: the weights eased from the step
 /// before's, each clip its time this step less what's left of the step at
-/// its rate (from its restart, where it restarted), none before 0.
+/// its rate (from its restart, where it restarted), none before 0; the idle
+/// at its start when `held`.
 fn gait_pose(
     model: &Model,
     clips: &HeroClips,
     gaits: &HeroGaits,
-    alpha: f32,
-    step: f64,
+    (alpha, step): (f32, f64),
+    held: bool,
 ) -> Vec<Transform> {
     let now = gaits.locomotion.weights();
     let back = f64::from(1.0 - alpha) * step;
@@ -862,7 +864,11 @@ fn gait_pose(
             }?;
             let weight = gaits.before[i] + (now[i] - gaits.before[i]) * alpha;
             let p = gaits.locomotion.play(gait);
-            let at = (p.time - back * f64::from(p.rate)).max(0.0);
+            let at = if held && gait == locomotion::Clip::Idle {
+                0.0
+            } else {
+                (p.time - back * f64::from(p.rate)).max(0.0)
+            };
             Some((clip, at, f64::from(weight)))
         })
         .collect();
@@ -1319,8 +1325,8 @@ mod tests {
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
     }
 
-    /// His idle loops on the TV's clock while he walks, and holds its start
-    /// under reduced motion.
+    /// His idle loops on the TV's clock, and holds its start under reduced
+    /// motion; walking, his gaits play under it all the same.
     #[test]
     fn under_reduced_motion_his_idle_holds_its_start() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1360,13 +1366,19 @@ mod tests {
             app.update();
             assert_eq!(joints(&app), at_start, "held at its start");
         }
-        // Walking too: no gait plays under reduced motion.
+        // Walking, his gaits play: the stick's, not ambient motion.
         test_pad::stick(&mut app, pad, 0.0, 1.0);
         for _ in 0..40 {
             app.update();
-            assert_eq!(joints(&app), at_start, "held while he walks");
         }
         assert_eq!(gaits(&app).top(), locomotion::Clip::Run);
+        assert!((top_x(&app) - RUN_X).abs() < 1e-5, "{}", top_x(&app));
+        // Let go and at rest again, his idle's start.
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        for _ in 0..40 {
+            app.update();
+        }
+        assert_eq!(joints(&app), at_start, "his idle's start again");
     }
 
     fn gaits(app: &App) -> Locomotion {

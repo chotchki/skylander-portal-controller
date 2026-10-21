@@ -6,7 +6,8 @@
 //!    toward it, and unless the edge probe holds his controller off, the walk
 //!    turns and is pushed;
 //! 2. the edge probe ([`crate::edge`]), which can zero the walk's across part
-//!    before he moves and hold the controller off;
+//!    before he moves and hold the controller off; the walk's length here is
+//!    the speed his locomotion reads ([`Hero::gait_speed`], AG.30);
 //! 3. Update Movers ([`crate::walk`]): the slowing, the stop, the band,
 //!    gravity, the landing;
 //! 4. the engine: the walk in m/s, laid along the ground while he's on it
