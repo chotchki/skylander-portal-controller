@@ -11,8 +11,8 @@ use crate::host::{
     Access, Answer, Builtin, Host, HostFault, Kind, MemberId, Members, OpCall, Place,
 };
 use crate::program::{
-    Container, Contents, Decl, DefId, DefKind, Elem, Global, GlobalId, Ins, Obj, OpId, Operand,
-    OperandId, Param, Program, ScriptId, Sym,
+    Container, Contents, Decl, DefId, DefKind, Elem, Global, GlobalId, Ins, LiteralClass, Obj,
+    OpId, Operand, OperandId, Param, Program, ScriptId, Sym,
 };
 use crate::value::{Value, arith_in, compare, convert, random_literal};
 use crate::whitelist::{Listed, Whitelist};
@@ -201,6 +201,9 @@ struct Placement {
     handle: Handle,
     name: String,
     script: ScriptId,
+    /// Its object in its file, for a placement a file holds: whose tags
+    /// `find variable` reaches.
+    obj: Option<Obj>,
     started: bool,
     behaviour: Option<u32>,
     shutdown: bool,
@@ -209,13 +212,16 @@ struct Placement {
     inert: bool,
     /// Taken off by a `remove`: never ticked again.
     removed: bool,
-    /// Whether its variable list exists for `find variable`: from its
-    /// STARTUP on, or once another script made a variable on it.
+    /// Whether its variable list exists for `find variable`: from the end of
+    /// its STARTUP's tick on, or once another script made a variable on it.
     listed: bool,
     /// Listed for its first tick alone ([`Listed::FirstTick`]).
     first_tick: bool,
     /// Its first tick done: never ticked again, not taken off.
     held: bool,
+    /// Inactive (the embedder's activity rule): not ticked until it wakes,
+    /// its state kept.
+    asleep: bool,
     /// Seconds of ticks so far: `system.script timer`.
     active: f32,
 }
@@ -359,6 +365,36 @@ fn recv(v: Value) -> Recv {
     Recv::Value(tag, bits)
 }
 
+/// Whether an operand reads `its`: a path naming it, or an expression with
+/// one on either side (a right side `its.$x` wrapped in an expression is
+/// read anew for each member `find subset` tests).
+fn reads_its(program: &Program, o: OperandId) -> bool {
+    match program.operands.get(o as usize) {
+        Some(Operand::Path { names_its, .. }) => *names_its,
+        Some(Operand::Expr { a, b, .. }) => {
+            a.is_some_and(|a| reads_its(program, a)) || b.is_some_and(|b| reads_its(program, b))
+        }
+        None => false,
+    }
+}
+
+/// A tag's value: its literal, through any expression holding it alone.
+fn tag_value(program: &Program, o: OperandId) -> Option<Value> {
+    match program.operands.get(o as usize)? {
+        Operand::Path {
+            elems,
+            literal: Some(l),
+            ..
+        } if elems.is_empty() && !l.random => Some(l.value()),
+        Operand::Expr {
+            a: Some(a),
+            op: None,
+            b: None,
+        } => tag_value(program, *a),
+        _ => None,
+    }
+}
+
 /// The interpreter over one [`Program`].
 pub struct Vm {
     program: Arc<Program>,
@@ -486,6 +522,7 @@ impl Vm {
             handle,
             name: name.to_owned(),
             script,
+            obj: None,
             started: false,
             behaviour: None,
             shutdown: false,
@@ -496,6 +533,7 @@ impl Vm {
             listed: false,
             first_tick: listing == Listed::FirstTick,
             held: false,
+            asleep: false,
             active: 0.0,
         });
         let id = (self.placements.len() - 1) as PlacementId;
@@ -528,7 +566,9 @@ impl Vm {
         obj: Obj,
     ) -> PlacementId {
         self.name_object(obj, handle);
-        self.add(handle, name, script)
+        let id = self.add(handle, name, script);
+        self.placements[id as usize].obj = Some(obj);
+        id
     }
 
     /// A file object (a placement the host keeps, scripted or not) that
@@ -582,6 +622,23 @@ impl Vm {
         };
         self.write_cell(c, value, 0);
         true
+    }
+
+    /// Puts the placement running under `handle` to sleep or wakes it
+    /// (crate docs, The tick): an inactive placement isn't ticked and keeps
+    /// its state, its STARTUP running on its first tick awake. False when no
+    /// placement runs under it.
+    pub fn set_asleep(&mut self, handle: Handle, asleep: bool) -> bool {
+        let Some(&id) = self.handles.get(&handle) else {
+            return false;
+        };
+        self.placements[id as usize].asleep = asleep;
+        true
+    }
+
+    /// Whether the placement is asleep (inactive).
+    pub fn asleep(&self, id: PlacementId) -> bool {
+        self.placements.get(id as usize).is_some_and(|p| p.asleep)
     }
 
     /// The placements that are inert, off the whitelist.
@@ -661,6 +718,21 @@ impl Vm {
     pub fn global(&mut self, g: GlobalId) -> Option<Value> {
         let c = self.global_cell(g).ok()?;
         Some(self.cells[c as usize].value)
+    }
+
+    /// Sets a file variable's number, made from the file first if nothing
+    /// has read it yet: how an embedder puts the shared state in a recorded
+    /// state (a test standing in for a script the whitelist doesn't run).
+    /// False when it isn't a number cell.
+    pub fn set_global(&mut self, g: GlobalId, value: Value) -> bool {
+        let Ok(c) = self.global_cell(g) else {
+            return false;
+        };
+        if self.cells[c as usize].kind != CellKind::Value {
+            return false;
+        }
+        self.write_cell(c, value, 0);
+        true
     }
 
     /// The members of the set `v` holds or names; `None` for a non-set.
@@ -779,7 +851,7 @@ impl Vm {
         let mut report = StepReport::default();
         for id in 0..self.placements.len() as PlacementId {
             let p = &self.placements[id as usize];
-            if p.inert || p.removed || p.held || p.stopped.is_some() {
+            if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
                 continue;
             }
             let before = self.executed;
@@ -800,7 +872,7 @@ impl Vm {
         let Some(p) = self.placements.get(id as usize) else {
             return Ok(None);
         };
-        if p.inert || p.removed || p.held || p.stopped.is_some() {
+        if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
             return Ok(None);
         }
         let handle = p.handle;
@@ -810,6 +882,7 @@ impl Vm {
         let dt = self.config.tick_seconds;
         if let Some(p) = self.placements.get_mut(id as usize) {
             p.active += dt;
+            p.listed |= p.started;
             if p.first_tick && p.started {
                 p.held = true;
             }
@@ -1231,9 +1304,10 @@ impl Vm {
                     .get(self.run.ctx as usize)
                     .and_then(|s| s.first_behaviour);
                 match self.placement_mut() {
+                    // Its declared locals join its list once this first
+                    // tick is done ([`Vm::tick`]).
                     Some(p) if !p.started => {
                         p.started = true;
-                        p.listed = true;
                         p.behaviour = first;
                     }
                     _ => self.skip(program, op),
@@ -1330,6 +1404,10 @@ impl Vm {
             }
             Ins::CheckMembership { lhs, code, rhs } => {
                 let spot = self.path(program, *lhs, host)?;
+                // `undefined` holds no set: a check of it skips.
+                if spot == Spot::Undefined {
+                    return Err(Fault::Nothing);
+                }
                 let set = self.read(spot, host)?;
                 let Value::Set(s) = self.materialize(set) else {
                     return if set == Value::Null {
@@ -1346,6 +1424,10 @@ impl Vm {
             }
             Ins::ChangeMembership { lhs, code, rhs } => {
                 let spot = self.path(program, *lhs, host)?;
+                // Into `undefined` the change goes nowhere, as its writes do.
+                if spot == Spot::Undefined {
+                    return Err(Fault::Nothing);
+                }
                 let set = self.read(spot, host)?;
                 let Value::Set(s) = self.materialize(set) else {
                     return if set == Value::Null {
@@ -1658,7 +1740,8 @@ impl Vm {
         rhs: Option<OperandId>,
         host: &mut dyn Host,
     ) -> Result<bool, Fault> {
-        let Some(Operand::Path { elems, .. }) = lhs.and_then(|l| program.operands.get(l as usize))
+        let Some(Operand::Path { elems, other, .. }) =
+            lhs.and_then(|l| program.operands.get(l as usize))
         else {
             return unsupported("find subset without a path");
         };
@@ -1674,17 +1757,7 @@ impl Vm {
                 unsupported(format!("find subset over {set:?}"))
             };
         };
-        let names_its = rhs
-            .and_then(|r| program.operands.get(r as usize))
-            .is_some_and(|o| {
-                matches!(
-                    o,
-                    Operand::Path {
-                        names_its: true,
-                        ..
-                    }
-                )
-            });
+        let names_its = rhs.is_some_and(|r| reads_its(program, r));
         let me = self.run.receiver_placement(&self.placements);
         let members = self.sets[s as usize].elems.clone();
         let saved_its = self.run.its;
@@ -1697,7 +1770,23 @@ impl Vm {
             self.run.its = m;
             let mut spot = Spot::Const(m);
             let mut ok = true;
+            // The path's other point, what a measurement on it is taken
+            // from, read with this member under test.
+            let saved_other = self.run.other_point;
+            if other.is_some() {
+                match self.rhs_ref(program, *other, None, host) {
+                    Ok(p) => self.run.other_point = Some(p),
+                    Err(Fault::Nothing) => ok = false,
+                    Err(f) => {
+                        self.run.its = saved_its;
+                        return Err(f);
+                    }
+                }
+            }
             for &e in &elems[slot + 1..] {
+                if !ok {
+                    break;
+                }
                 match self.next_spot(program, spot, e, host) {
                     Ok(next) => spot = next,
                     Err(Fault::Nothing) => {
@@ -1706,10 +1795,12 @@ impl Vm {
                     }
                     Err(f) => {
                         self.run.its = saved_its;
+                        self.run.other_point = saved_other;
                         return Err(f);
                     }
                 }
             }
+            self.run.other_point = saved_other;
             if !ok {
                 continue;
             }
@@ -1809,6 +1900,7 @@ impl Vm {
                         class,
                         operands: vec![(name, Some(t))],
                         words: words.to_vec(),
+                        sets: Vec::new(),
                     };
                     match host.op(&call) {
                         Ok(_) | Err(HostFault::Nothing) => {}
@@ -1848,12 +1940,20 @@ impl Vm {
             }
             _ => {}
         }
+        let sets = read
+            .iter()
+            .filter_map(|&(name, v)| match self.peek(v?) {
+                Value::Set(s) => Some((name, self.targets(Value::Set(s)))),
+                _ => None,
+            })
+            .collect();
         let call = OpCall {
             placement: self.my_handle(),
             receiver: self.run.receiver,
             class,
             operands: read,
             words: words.to_vec(),
+            sets,
         };
         let answer = match host.op(&call) {
             Ok(a) => a,
@@ -1882,6 +1982,24 @@ impl Vm {
                     self.skip(program, op);
                 }
             }
+            Answer::Found(found) => {
+                if found.is_empty() {
+                    if branch {
+                        self.skip(program, op);
+                    }
+                } else {
+                    self.sets.push(SetObj {
+                        elems: found,
+                        elem: None,
+                        next: 0,
+                    });
+                    let set = (self.sets.len() - 1) as u32;
+                    self.op_state.entry(op).or_default().cached = Some(Value::Set(set));
+                    if branch {
+                        self.push(program, op, BlockKind::Plain);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1904,11 +2022,35 @@ impl Vm {
             Container::Structure => Some(CellKind::Structure),
             Container::Unknown(_) => None,
         };
-        let existing = p
+        let mut existing = p
             .locals
             .get(&name)
             .copied()
             .filter(|&c| Some(self.cells[c as usize].kind) == kind(decl.container));
+        // A tag its file gives the placement is one of its variables from
+        // the start, holding the tag's value.
+        let tag = p
+            .obj
+            .and_then(|o| self.program.tags.get(&o))
+            .and_then(|t| t.iter().find(|t| t.name == name).copied());
+        let is_tag = tag.is_some_and(|t| kind(t.decl.container) == kind(decl.container));
+        if existing.is_none()
+            && let Some(tag) = tag
+            && is_tag
+        {
+            let value = match tag.value {
+                None => Value::Int(0),
+                Some(o) => match tag_value(&self.program, o) {
+                    Some(v) => v,
+                    None => return unsupported("a tag whose value isn't a literal"),
+                },
+            };
+            let c = self.new_cell(decl, None, 0)?;
+            self.write_cell(c, value, 0);
+            self.placements[pid as usize].locals.insert(name, c);
+            existing = Some(c);
+        }
+        let p = &self.placements[pid as usize];
         // A structure type named through a stub is the structure it
         // resolves to.
         let same = |a: &Decl, b: &Decl| {
@@ -1945,8 +2087,13 @@ impl Vm {
                     None => None,
                 }
             }
+            // Filter 1 finds in a list the owner already has: its tags from
+            // the start, its declared locals once its STARTUP's tick is done
+            // (AH.18: a Chompy's own STARTUP finds `communicate range` so
+            // and gets its script's default, 10, as the live game holds it,
+            // where its script declares the local).
             1 => match existing {
-                Some(c) if listed => Some(c),
+                Some(c) if listed || is_tag => Some(c),
                 None if listed && declared => Some(make(self)?),
                 _ => None,
             },
@@ -2636,6 +2783,7 @@ impl Vm {
                     class: Class::Reset,
                     operands: vec![("_NP", Some(v))],
                     words: Vec::new(),
+                    sets: Vec::new(),
                 };
                 match host.op(&call) {
                     Ok(_) => Ok(()),
@@ -2690,7 +2838,26 @@ impl Vm {
                 }
                 let spot = self.path(program, Some(o), host)?;
                 let v = self.read(spot, host)?;
-                self.deref_with(v, host)
+                let v = self.deref_with(v, host)?;
+                match literal {
+                    // `random(Enemy_DMG_Rand_Small)`: a roll up to the
+                    // path's value, by the literal's class.
+                    Some(l) if l.random => {
+                        let n = match (l.class, v.as_f32()) {
+                            (LiteralClass::Float, Some(f)) => Value::Float(f),
+                            (_, Some(_)) => Value::Int(v.as_i32().unwrap_or(0)),
+                            (_, None) => {
+                                return unsupported(format!("a roll up to {v:?}"));
+                            }
+                        };
+                        let word = host.draw();
+                        match random_literal(n, word) {
+                            Some(r) => Ok(r),
+                            None => unsupported(format!("a roll up to {n:?}")),
+                        }
+                    }
+                    _ => Ok(v),
+                }
             }
             None => unsupported("an operand past the program"),
         }

@@ -125,6 +125,27 @@ pub struct Actor {
     /// each contact's point, its normal out of the surface and its
     /// triangle's material (`collisioninfo.environment contacts`).
     pub contacts: Vec<Contact>,
+    /// An UNMANAGED placement of a loaded file: the engine wakes and sleeps
+    /// it by the activity rule ([`crate::scripts::ScriptWorld::activity`]).
+    pub managed: bool,
+    /// Awake (the activity rule's ACTIVE); a clone always is.
+    pub active: bool,
+    /// The engine moves it as a creature walks (openspec AH.18): its
+    /// controller body, steered or carried by its scripts' velocity.
+    pub walker: Option<Box<Walker>>,
+}
+
+/// A creature the engine moves (openspec AH.18): guac-motion's controller
+/// body under it, and what the scripts last asked of the engine's own
+/// steering this tick (`move to`, `move from`, `turn to`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Walker {
+    /// Made in the engine's first frame with a solid, again when its
+    /// scripts change it.
+    pub body: Option<Hero>,
+    pub aim: guac_motion::steer::Aim,
+    /// Which waypoint of a path it's walking to (`move to` along a path).
+    pub along: usize,
 }
 
 /// A contact the engine reports: a point, the normal out of the surface
@@ -168,6 +189,9 @@ impl Actor {
             parent: Value::Null,
             launched: false,
             contacts: Vec::new(),
+            managed: false,
+            active: true,
+            walker: None,
         }
     }
 

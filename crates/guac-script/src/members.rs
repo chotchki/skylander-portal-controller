@@ -1854,6 +1854,110 @@ pub const HERO: &[Registered] = &[
     ),
 ];
 
+/// Every engine member chapter 1's first fight reaches past [`INIT_CHAIN`]'s
+/// and [`HERO`]'s (openspec AH.18): the four Chompies' script, Setup_001's
+/// controller, Norticus as far as the encounter reaches him, the level's
+/// enemy system and `global.bld`'s mover update over the fight.
+pub const CREATURES: &[Registered] = &[
+    // The host's: the engine's sets of placements asleep and taken off, and
+    // the actors whose solids touch one's.
+    m("actorinfo", "inactive", "SetVariant", "", 0.0, 0.0, Host),
+    m("actorinfo", "removed", "SetVariant", "", 0.0, 0.0, Host),
+    m(
+        "collisioninfo",
+        "contacts with me",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // Value cells: what's drawn (a hurt's tint, shadows, a cutscene's view)
+    // and what a sound or a cutscene the whitelist doesn't run reads.
+    m(
+        "placement",
+        "shadow receive",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "replace color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "replace color percentage",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "draw behind enabled",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m("actorinfo", "npcs", "SetVariant", "", 0.0, 0.0, Cell),
+    m(
+        "spriteinfo",
+        "replace color percentage",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "clonedsequence",
+        "parent",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "animationinfo",
+        "ambient",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "viewportinfo",
+        "view converter",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "viewportinfo",
+        "field of view",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        180.0,
+        Cell,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 

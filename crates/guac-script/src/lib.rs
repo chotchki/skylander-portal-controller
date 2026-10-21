@@ -195,13 +195,22 @@
 //!   locals already (a reading of the original's search, which asks for the
 //!   list with that flag set for filter 0 alone: the portal manager's
 //!   STARTUP finds the portal control's `portal data` so, ticking before
-//!   it). Filter 1 finds in a list the owner already has, so nothing before
-//!   its STARTUP or another find made one (the same reading; the original's
-//!   other branch for filter 1 is for a name holding a pattern, which no
-//!   filter-1 name on the disc does). 2 finds or makes, 3 finds and takes it
-//!   off; the variable is the op's result as a path element. On anything
-//!   else it's a table per owner. Filter 4 and the skip operand stop as
-//!   unsupported: what they select is a reading not yet settled.
+//!   it). Filter 1 finds in a list the owner already has: its tags from
+//!   the start, its declared locals once its first tick (its STARTUP) is
+//!   done or a find made the list (the same reading, and AH.18's: a Chompy's
+//!   own STARTUP finds `communicate range` with filter 1 and gets its
+//!   script's default, 10, as the live game holds it, where its script
+//!   declares the local; the original's other branch for filter 1 is for a
+//!   name holding a pattern, which no filter-1 name on the disc does). 2
+//!   finds or makes, 3
+//!   finds and takes it off; the variable is the op's result as a path
+//!   element. On anything else it's a table per owner. Filter 4 and the
+//!   skip operand stop as unsupported: what they select is a reading not
+//!   yet settled.
+//! - A placement's *tags* (its `_tagList`'s variables, each with a value
+//!   its file gives: a Chompy's `notice player radius` 30) are among its
+//!   variables from the start: `find variable` finds one by name and
+//!   declaration's container, holding the tag's value ([`Program::tags`]).
 //! - A reference names a set, a structure, a number variable, a part of a
 //!   packed value or a value cell's number (`setref r = s.first.screen
 //!   measurement.x`), or a host member's number (`setref r = my.actorinfo.
@@ -269,7 +278,8 @@
 //! the VM's own:
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
-//!   (nothing) and `.undefined` (reads 0, writes go nowhere); `.its`, the
+//!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
+//!   into it too, and a membership check of it skips); `.its`, the
 //!   member under test inside `find subset`; `.valuedereferencer`, the
 //!   object a reference names, as the place to write;
 //! - `setvariant.count`, `.first`, `.last` and `.random` on a set, and
@@ -373,7 +383,7 @@ pub use host::{
 pub use program::{
     Arith, Container, Contents, Decl, Def, DefId, DefKind, Elem, Global, GlobalId, Ins, LinkError,
     Literal, LiteralClass, Obj, OpId, OpInfo, Operand, OperandId, Param, Program, Role, ScriptId,
-    ScriptInfo, Sym, Unit,
+    ScriptInfo, Sym, Tag, Unit,
 };
 pub use stall::{Stall, StallDetector, StallLimit};
 pub use value::{Value, arith, arith_in, compare, convert, random_literal};

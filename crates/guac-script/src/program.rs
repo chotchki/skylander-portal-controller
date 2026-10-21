@@ -7,8 +7,8 @@ use std::collections::{HashMap, VecDeque};
 
 use guac_formats::exports::{Export, Exports, NAMESPACE, Root};
 use guac_formats::igz::layouts::{
-    Layout, NO_OPERATOR, ObjectList, ObjectRef, ScriptSet, ScriptSetList, TypeRef, ValueInfo,
-    Variable,
+    AbstractPlacement, Layout, NO_OPERATOR, ObjectList, ObjectRef, OpParameter, ScriptSet,
+    ScriptSetList, TagList, TypeRef, ValueInfo, Variable, is_a,
 };
 use guac_formats::igz::{ExternalId, Igz, Ref};
 use guac_formats::progression::ScriptStructure;
@@ -363,6 +363,19 @@ pub struct Program {
     ops_by_obj: HashMap<Obj, OpId>,
     globals_by_obj: HashMap<Obj, GlobalId>,
     names: HashMap<Obj, String>,
+    /// Each placement's tags in its `_tagList`, by the placement's object:
+    /// variables its scripts find on it by name (crate docs, `find
+    /// variable`).
+    pub tags: HashMap<Obj, Vec<Tag>>,
+}
+
+/// One of a placement's tags: a variable its file gives it (a Chompy's
+/// `notice player radius` 30), its declaration and its value's operand.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tag {
+    pub name: Sym,
+    pub decl: Decl,
+    pub value: Option<OperandId>,
 }
 
 impl Program {
@@ -576,6 +589,51 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
         }
     }
 
+    /// Every placement's tags, in every unit: each `OpParameter` of its
+    /// `_tagList`, its value's operand linked as an op's is.
+    fn link_tags(&mut self) -> Result<(), LinkError> {
+        for u in 0..self.units.len() as u16 {
+            let igz = self.igz(u);
+            for (i, o) in igz.objects().iter().enumerate() {
+                if !is_a(igz.type_name(o), "AbstractPlacement") {
+                    continue;
+                }
+                let Some(at) = o.field(AbstractPlacement::TAG_LIST) else {
+                    continue;
+                };
+                let Ref::Object(t) = igz.reference(at, "_tagList").map_err(|e| self.fail(u, e))?
+                else {
+                    continue;
+                };
+                let list = TagList::read(igz, t).map_err(|e| self.fail(u, e))?;
+                let mut objects = list.initial;
+                for k in list.tags {
+                    if !objects.contains(&k) {
+                        objects.push(k);
+                    }
+                }
+                let mut tags = Vec::with_capacity(objects.len());
+                for k in objects {
+                    let tag = OpParameter::read(igz, k).map_err(|e| self.fail(u, e))?;
+                    let name = self.sym(tag.var.name.unwrap_or(""));
+                    let decl = self.decl(u, &tag.var)?;
+                    let value = self.operand_id(u, tag.rhs)?;
+                    tags.push(Tag { name, decl, value });
+                }
+                if !tags.is_empty() {
+                    self.p.tags.insert(
+                        Obj {
+                            unit: u,
+                            index: i as u32,
+                        },
+                        tags,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn run(mut self) -> Result<Program, LinkError> {
         let mut lists = Vec::new();
         for (u, unit) in self.units.iter().enumerate() {
@@ -611,6 +669,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
             }
         }
         count(&self.p.scripts, "scripts")?;
+        self.link_tags()?;
         while let Some(w) = self.queue.pop_front() {
             match w {
                 Work::Op(obj) => self.link_op(obj)?,

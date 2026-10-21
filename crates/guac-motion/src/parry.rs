@@ -70,6 +70,21 @@ pub fn parry_pose(pose: Pose) -> PPose {
     PPose::from_parts(pose.position, pose.rotation)
 }
 
+/// The gap between two convex shapes where they stand, metres: surface to
+/// surface, 0 when they touch or overlap (openspec AH.18: what a creature
+/// measures as its separation from another's body). Pure geometry, no
+/// world: the same parry call whichever side asks.
+pub fn gap(a: &Shape, at_a: Pose, b: &Shape, at_b: Pose) -> f32 {
+    let (sa, sb) = (convex_shape(a), convex_shape(b));
+    query::distance(
+        &parry_pose(at_a),
+        sa.as_ref(),
+        &parry_pose(at_b),
+        sb.as_ref(),
+    )
+    .map_or(0.0, |d| d.distance)
+}
+
 struct Entry {
     id: BodyId,
     kind: BodyKind,
@@ -172,6 +187,47 @@ impl ParryWorld {
         entry.pose = parry_pose(pose);
         entry.aabb = entry.shape.compute_aabb(&entry.pose);
         Ok(())
+    }
+
+    /// Puts a kinematic convex body in the world, or replaces the one under
+    /// its id (a creature whose scripts set its solid, openspec AH.18);
+    /// queries see it at once. A static body or a mesh goes in with the
+    /// world ([`ParryWorld::new`]), never here.
+    pub fn set_body(&mut self, body: &Body) -> Result<(), WorldError> {
+        check_body(body)?;
+        let Collider::Convex(shape) = &body.collider else {
+            return Err(WorldError::Static(body.id));
+        };
+        if body.kind == BodyKind::Static {
+            return Err(WorldError::Static(body.id));
+        }
+        let shape = convex_shape(shape);
+        let pose = parry_pose(body.pose);
+        let entry = Entry {
+            id: body.id,
+            kind: body.kind,
+            aabb: shape.compute_aabb(&pose),
+            pose,
+            shape,
+            mesh: None,
+        };
+        match self.entries.iter_mut().find(|e| e.id == body.id) {
+            Some(e) if e.kind == BodyKind::Static => Err(WorldError::Static(body.id)),
+            Some(e) => {
+                *e = entry;
+                Ok(())
+            }
+            None => {
+                self.entries.push(entry);
+                Ok(())
+            }
+        }
+    }
+
+    /// Takes a body out; nothing for an id it doesn't hold.
+    pub fn remove_body(&mut self, id: BodyId) {
+        self.entries
+            .retain(|e| e.id != id || e.kind == BodyKind::Static);
     }
 
     fn solids<'a>(&'a self, exclude: &'a [BodyId]) -> impl Iterator<Item = &'a Entry> + 'a {
@@ -468,6 +524,64 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
+    #[test]
+    fn the_gap_between_two_shapes_is_surface_to_surface() {
+        let ball = Shape::Sphere { radius: 0.5 };
+        let pill = Shape::Capsule {
+            radius: 0.25,
+            half_segment: 1.0,
+        };
+        let g = gap(
+            &ball,
+            Pose::at(Vec3::ZERO),
+            &ball,
+            Pose::at(Vec3::new(3.0, 0.0, 0.0)),
+        );
+        assert!((g - 2.0).abs() < 1e-5, "{g}");
+        // A capsule standing up: its side, not its ends.
+        let g = gap(
+            &ball,
+            Pose::at(Vec3::ZERO),
+            &pill,
+            Pose::at(Vec3::new(0.0, 0.5, 2.0)),
+        );
+        assert!((g - 1.25).abs() < 1e-5, "{g}");
+        // Overlapping reads 0.
+        let g = gap(
+            &ball,
+            Pose::at(Vec3::ZERO),
+            &ball,
+            Pose::at(Vec3::new(0.5, 0.0, 0.0)),
+        );
+        assert_eq!(g, 0.0);
+    }
+
+    #[test]
+    fn a_body_set_in_is_met_replaced_and_taken_out() {
+        let ball = |r: f32, z: f32| Body {
+            id: BodyId(7),
+            kind: BodyKind::Kinematic,
+            pose: Pose::at(Vec3::new(0.0, 0.0, z)),
+            collider: Collider::Convex(Shape::Sphere { radius: r }),
+        };
+        let mut w = ParryWorld::new(&[]).unwrap();
+        let hit = |w: &ParryWorld| w.ray(Vec3::new(0.0, 0.0, -5.0), Vec3::Z, 10.0, &[]);
+        assert!(hit(&w).is_none());
+        w.set_body(&ball(1.0, 0.0)).unwrap();
+        let first = hit(&w).expect("met");
+        assert!((first.point.z + 1.0).abs() < 1e-4, "{first:?}");
+        // The same id again: replaced, not a second body.
+        w.set_body(&ball(2.0, 0.0)).unwrap();
+        let second = hit(&w).expect("met");
+        assert!((second.point.z + 2.0).abs() < 1e-4, "{second:?}");
+        w.remove_body(BodyId(7));
+        assert!(hit(&w).is_none());
+        // A static body goes in with the world.
+        let mut stat = ball(1.0, 0.0);
+        stat.kind = BodyKind::Static;
+        assert_eq!(w.set_body(&stat), Err(WorldError::Static(BodyId(7))));
     }
 
     #[test]

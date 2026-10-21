@@ -17,6 +17,10 @@
 //! - [`tuning`]: Eruptor's numbers, in the script's feet;
 //! - [`clock`]: the fixed 1/60 s step against the display's.
 //!
+//! The engine's own steering beside it ([`steer`], AH.18): the velocity
+//! model an actor no stick drives runs, fed a destination by the scripts'
+//! `move to`, `move from` and `turn to` ([`hero::Hero::step_steered`]).
+//!
 //! The locomotion stand-in beside it ([`locomotion`], AG.30): the clips'
 //! weights, times and rates from the speed the controller's walk reads and
 //! his fall (AG.11).
@@ -50,6 +54,7 @@ pub mod scenarios;
 pub mod seam;
 pub mod solid;
 pub mod solve;
+pub mod steer;
 pub mod stick;
 pub mod tuning;
 pub mod walk;

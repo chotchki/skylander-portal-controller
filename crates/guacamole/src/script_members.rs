@@ -26,6 +26,9 @@
 //!   feet, never under 0; from his own ground, a hero his support check
 //!   holds has none (his skin's 5 mm isn't a gap: Update Movers' band and
 //!   gravity act only over 0, and AG.38 saw neither on a supported frame);
+//!   from another actor with a solid, the gap between the two solids (AH.18:
+//!   a Chompy nips at 10 ft from a hero, AH.10's middles 14.7-15.2 ft apart
+//!   with both radii 2.84 ft);
 //! - a sweep stops at a creature's body as at a wall, though the ball's solid
 //!   doesn't meet actors (`interacts with actors` 0): the touch is what the
 //!   projectile manager's Targets check reads as `collision`; contacts with
@@ -39,12 +42,16 @@
 use std::collections::HashMap;
 
 use guac_formats::script::Class;
+use guac_motion::hero::Hero;
+use guac_motion::proxy::Surfaces;
 use guac_motion::seam::{BodyId, CAST_SLOP, Pose, Quat, Shape, Vec3};
+use guac_motion::solid::HavokSolid;
+use guac_motion::steer::{Aim, MoveType, Physics as SteerPhysics};
 use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
 
 use crate::script_engine::{
     Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object, Sequence,
-    direction, heading_of, normalized, pitch_of,
+    Walker, direction, heading_of, normalized, pitch_of,
 };
 use crate::scripts::{ScriptWorld, Spawner};
 
@@ -130,6 +137,14 @@ pub(crate) enum Member {
     StickHeading,
     StickMagnitude,
     StickConnection,
+    // AH.18's.
+    /// `actorinfo.inactive`: every placement asleep by the activity rule.
+    Inactive,
+    /// `actorinfo.removed`: every placement and clone taken off.
+    Removed,
+    /// `collisioninfo.contacts with me`: the actors whose solids touch this
+    /// one's (within [`CONTACT_REACH`]), nearest first.
+    ContactsWithMe,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -370,6 +385,9 @@ impl Member {
         add("joystickmeasurement", "heading", Member::StickHeading);
         add("joystickmeasurement", "magnitude", Member::StickMagnitude);
         add("joystickmeasurement", "connection", Member::StickConnection);
+        add("actorinfo", "inactive", Member::Inactive);
+        add("actorinfo", "removed", Member::Removed);
+        add("collisioninfo", "contacts with me", Member::ContactsWithMe);
         t
     }
 }
@@ -455,8 +473,9 @@ impl ScriptWorld {
         }
         let at = self.actors.get(&h)?.position;
         let origin = at + Vec3::Y * 0.1;
-        let hit = guac_motion::ground::ray(engine.seam(), origin, Vec3::NEG_Y, 160.0, &[])
-            .or_else(|| guac_motion::ground::ray(engine.seam(), origin, Vec3::Y, 80.0, &[]))?;
+        let actors = self.actor_bodies(engine);
+        let hit = guac_motion::ground::ray(engine.seam(), origin, Vec3::NEG_Y, 160.0, &actors)
+            .or_else(|| guac_motion::ground::ray(engine.seam(), origin, Vec3::Y, 80.0, &actors))?;
         let normal = if hit.normal.y < -0.05 {
             -hit.normal
         } else {
@@ -467,7 +486,13 @@ impl ScriptWorld {
 
     /// Where a measurement taken from `v` is taken from.
     pub(crate) fn point(&mut self, v: Value, engine: &mut dyn Engine) -> Option<Vec3> {
-        let h = self.handle(v)?;
+        let Some(h) = self.handle(v) else {
+            // A waypoint is a point in its file, no placement's.
+            return match v {
+                Value::Object(o) => self.points.get(&o).copied(),
+                _ => None,
+            };
+        };
         match self.objs.get(h) {
             None => self.position(h, engine),
             Some(Object::Node(a, i)) => self.node(a, i, engine),
@@ -527,8 +552,31 @@ impl ScriptWorld {
         if len <= 0.0 {
             return None;
         }
-        let hit = guac_motion::ground::ray(engine.seam(), self.ray.start, d, len, &[])?;
+        let actors = self.actor_bodies(engine);
+        let hit = guac_motion::ground::ray(engine.seam(), self.ray.start, d, len, &actors)?;
         Some((hit.point, hit.normal, hit.material))
+    }
+
+    /// The bodies in the seam that are actors (the heroes, the creatures
+    /// the engine moves): what the ground finder and the ray caster see
+    /// past (AH.18: the original's rays meet the level and the props, and a
+    /// Chompy's look at a hero would stop on its own body or his).
+    fn actor_bodies(&self, engine: &mut dyn Engine) -> Vec<BodyId> {
+        let mut out: Vec<BodyId> = engine
+            .heroes()
+            .into_iter()
+            .filter_map(|h| engine.body(h))
+            .collect();
+        for (&h, a) in &self.actors {
+            if a.walker.is_some()
+                && let Some(b) = engine.body(h)
+            {
+                out.push(b);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// An actor's turn: a hero's facing his controller's; his tilt and roll
@@ -573,7 +621,8 @@ impl ScriptWorld {
         match self.actors.get_mut(&h) {
             Some(a) => {
                 a.velocity = v;
-                a.launched |= v != Vec3::ZERO;
+                // A creature walks by it; anything else flies.
+                a.launched |= a.walker.is_none() && v != Vec3::ZERO;
                 Ok(())
             }
             None => Err(HostFault::Nothing),
@@ -826,6 +875,18 @@ impl ScriptWorld {
                 {
                     return Ok(Value::Float(0.0));
                 }
+                // From another actor's body: the gap between the two solids
+                // (a Chompy nips at 10 ft of it, AH.10's middles 15 ft apart).
+                if let (Some(h), Some(o)) = (actor, at.other_point)
+                    && let Some(b) = self.actor_of(Some(o))
+                    && b != h
+                    && let Some((sa, pa)) = self.query(h, engine)
+                    && let Some((sb, pb)) = self.query(b, engine)
+                {
+                    return Ok(Value::Float(
+                        guac_motion::parry::gap(&sa, pa, &sb, pb) * FEET_PER_METRE,
+                    ));
+                }
                 let (a, b) = (me(self, engine)?, other(self, engine)?);
                 let low = actor.and_then(|h| self.bottom(h)).unwrap_or(a.y);
                 Value::Float(((low - b.y) * FEET_PER_METRE).max(0.0))
@@ -901,7 +962,10 @@ impl ScriptWorld {
             | Member::PlayingSounds
             | Member::Palette
             | Member::EnvironmentContacts
-            | Member::Waypoints => return Err(HostFault::Nothing),
+            | Member::Waypoints
+            | Member::Inactive
+            | Member::Removed
+            | Member::ContactsWithMe => return Err(HostFault::Nothing),
             Member::Collision => {
                 let a = actor.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
@@ -950,6 +1014,7 @@ impl ScriptWorld {
             Member::Range => {
                 let h = actor.ok_or(HostFault::Nothing)?;
                 self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.range = float(v)?;
+                self.note_wake(h, at.placement);
             }
             Member::Facing
             | Member::RelativeFacing
@@ -1247,6 +1312,49 @@ impl ScriptWorld {
                     .waypoints
                     .clone()
             }
+            Member::ContactsWithMe => {
+                let Some(Object::Facet(h, Facet::Collision)) = self.object(recv) else {
+                    return Err(HostFault::Nothing);
+                };
+                let Some((sa, pa)) = self.query(h, engine) else {
+                    return Ok(Vec::new());
+                };
+                let mut near: Vec<(f32, Handle)> = Vec::new();
+                let others: Vec<Handle> = self
+                    .actors
+                    .iter()
+                    .filter(|(o, a)| **o != h && !a.removed && a.active && a.obj.is_some())
+                    .map(|(o, _)| *o)
+                    .chain(engine.heroes())
+                    .collect();
+                for o in others {
+                    if o == h {
+                        continue;
+                    }
+                    if let Some((sb, pb)) = self.query(o, engine) {
+                        let g = guac_motion::parry::gap(&sa, pa, &sb, pb);
+                        if g <= CONTACT_REACH {
+                            near.push((g, o));
+                        }
+                    }
+                }
+                near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                near.dedup_by_key(|k| k.1);
+                near.into_iter().map(|(_, o)| Value::Entity(o)).collect()
+            }
+            Member::Inactive | Member::Removed => {
+                let mut v: Vec<Handle> = self
+                    .actors
+                    .iter()
+                    .filter(|(_, a)| match m {
+                        Member::Inactive => a.managed && !a.removed && !a.active,
+                        _ => a.removed,
+                    })
+                    .map(|(h, _)| *h)
+                    .collect();
+                v.sort_unstable();
+                v.into_iter().map(Value::Entity).collect()
+            }
             _ => return Err(HostFault::Unmodelled),
         })
     }
@@ -1281,7 +1389,21 @@ impl ScriptWorld {
         let first = call.operands.first().and_then(|(_, v)| *v);
         Some(match call.class {
             Class::StartSequence => {
-                let Some(template) = first else {
+                // A set and an index (`play palette [index]` written as the
+                // op's own index operand): the set's element at it.
+                let index = call
+                    .operands
+                    .iter()
+                    .find(|(n, _)| *n == "_indexRHS")
+                    .and_then(|(_, v)| *v)
+                    .and_then(|v| v.as_i32());
+                let indexed = call
+                    .sets
+                    .iter()
+                    .find(|(n, _)| *n == "_LHS")
+                    .and_then(|(_, e)| index.and_then(|i| e.get(usize::try_from(i).ok()?)))
+                    .copied();
+                let Some(template) = indexed.or(first) else {
                     return Some(Ok(Answer::Skip));
                 };
                 let Some(actor) = self.handle(call.receiver) else {
@@ -1339,8 +1461,199 @@ impl ScriptWorld {
                     },
                 )
             }
+            Class::MoveTo | Class::MoveFrom => self.op_move(call, engine),
+            Class::TurnTo => self.op_turn(call, engine),
+            Class::TeleportTo => self.op_teleport(call, engine),
+            Class::CheckFov => self.op_fov(call, engine),
             _ => return None,
         })
+    }
+
+    /// `move to` and `move from` (openspec AH.18): the mover (the op's
+    /// receiver) steered toward or away from a point, an actor, or along a
+    /// path of waypoints, until within (beyond) the op's distance in feet
+    /// across the ground; reached, the op's block runs and the engine has
+    /// no destination. Along a path the actor walks to each waypoint in turn,
+    /// the block running as it reaches each (a reading: the engine keeps the
+    /// path's place per actor; the original's isn't read).
+    fn op_move(&mut self, call: &OpCall, engine: &mut dyn Engine) -> Result<Answer, HostFault> {
+        let named = |n: &str| {
+            call.operands
+                .iter()
+                .find(|(k, _)| *k == n)
+                .and_then(|(_, v)| *v)
+        };
+        let mover = self
+            .actor_of(Some(call.receiver))
+            .ok_or(HostFault::Nothing)?;
+        let distance = named("_RHS").and_then(|v| v.as_f32()).unwrap_or(0.0);
+        let path = call
+            .sets
+            .iter()
+            .find(|(n, _)| *n == "_LHS")
+            .map(|(_, e)| e.clone());
+        let at = self.position(mover, engine).ok_or(HostFault::Nothing)?;
+        let toward = call.class == Class::MoveTo;
+        let (target, last) = match &path {
+            Some(p) if p.is_empty() => return Ok(Answer::Skip),
+            Some(p) => {
+                let i = self
+                    .actors
+                    .get(&mover)
+                    .and_then(|a| a.walker.as_ref())
+                    .map_or(0, |w| w.along)
+                    .min(p.len() - 1);
+                (p[i], i + 1 == p.len())
+            }
+            None => (named("_LHS").ok_or(HostFault::Nothing)?, true),
+        };
+        let point = self.point(target, engine).ok_or(HostFault::Nothing)?;
+        let done = if toward {
+            guac_motion::steer::reached(at, point, distance)
+        } else {
+            guac_motion::steer::cleared(at, point, distance)
+        };
+        let Some(w) = self
+            .actors
+            .get_mut(&mover)
+            .and_then(|a| a.walker.as_deref_mut())
+        else {
+            // Only a creature the engine moves steers.
+            return Err(HostFault::Unmodelled);
+        };
+        if done {
+            w.aim = Aim::Still;
+            if path.is_some() && !last {
+                w.along += 1;
+            }
+            return Ok(Answer::Run {
+                receiver: None,
+                result: None,
+            });
+        }
+        w.aim = if toward {
+            Aim::To(point)
+        } else {
+            Aim::From(point)
+        };
+        Ok(Answer::Done)
+    }
+
+    /// `turn to`: the receiver turned toward a facing, degrees; the block
+    /// runs once it faces it (a reading: within 0.01°). A creature turns at
+    /// its turn rate in the engine's frame; anything else at once.
+    fn op_turn(&mut self, call: &OpCall, engine: &mut dyn Engine) -> Result<Answer, HostFault> {
+        let to = call
+            .operands
+            .iter()
+            .find(|(k, _)| *k == "_facingRHS")
+            .and_then(|(_, v)| *v)
+            .and_then(|v| v.as_f32())
+            .ok_or(HostFault::Nothing)?;
+        let h = self
+            .actor_of(Some(call.receiver))
+            .ok_or(HostFault::Nothing)?;
+        let facing = self.angles(h, engine).ok_or(HostFault::Nothing)?.facing;
+        let faces = normalized(facing - to).abs() <= 0.01;
+        if let Some(hero) = engine.hero(h) {
+            hero.facing = to.rem_euclid(360.0);
+            return Ok(Answer::Run {
+                receiver: None,
+                result: None,
+            });
+        }
+        let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
+        match a.walker.as_deref_mut() {
+            Some(w) if !faces => {
+                w.aim = Aim::Face(to);
+                Ok(Answer::Done)
+            }
+            Some(w) => {
+                w.aim = Aim::Still;
+                Ok(Answer::Run {
+                    receiver: None,
+                    result: None,
+                })
+            }
+            None => {
+                a.angles.facing = to;
+                Ok(Answer::Run {
+                    receiver: None,
+                    result: None,
+                })
+            }
+        }
+    }
+
+    /// `teleport to`: the receiver set at a point (an actor's pivot, a
+    /// waypoint) facing the op's facing, at once.
+    fn op_teleport(&mut self, call: &OpCall, engine: &mut dyn Engine) -> Result<Answer, HostFault> {
+        let named = |n: &str| {
+            call.operands
+                .iter()
+                .find(|(k, _)| *k == n)
+                .and_then(|(_, v)| *v)
+        };
+        let to = named("_LHS").ok_or(HostFault::Nothing)?;
+        let p = self.point(to, engine).ok_or(HostFault::Nothing)?;
+        let facing = named("_facingRHS").and_then(|v| v.as_f32());
+        let h = self
+            .actor_of(Some(call.receiver))
+            .ok_or(HostFault::Nothing)?;
+        if let Some(hero) = engine.hero(h) {
+            hero.pivot = p;
+            if let Some(f) = facing {
+                hero.facing = f.rem_euclid(360.0);
+            }
+            hero.walk.velocity = Vec3::ZERO;
+            return Ok(Answer::Done);
+        }
+        let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
+        a.position = p;
+        if let Some(f) = facing {
+            a.angles.facing = f;
+        }
+        Ok(Answer::Done)
+    }
+
+    /// `check fov`: the targets (one, or a set's) inside the cone of the
+    /// op's width centred on its facing from its point, whose distance in
+    /// feet passes the op's comparison, nearest first (aj-vm's reading of
+    /// the op; its `_mode` unread). The cone is across the ground, no ray
+    /// asked: the original's routine casts none.
+    fn op_fov(&mut self, call: &OpCall, engine: &mut dyn Engine) -> Result<Answer, HostFault> {
+        let named = |n: &str| {
+            call.operands
+                .iter()
+                .find(|(k, _)| *k == n)
+                .and_then(|(_, v)| *v)
+        };
+        let word = |n: &str| call.words.iter().find(|(k, _)| *k == n).map(|(_, w)| *w);
+        let from = named("_fromLHS").ok_or(HostFault::Nothing)?;
+        let from = self.point(from, engine).ok_or(HostFault::Nothing)?;
+        let facing = named("_RHSfacing").and_then(|v| v.as_f32()).unwrap_or(0.0);
+        let width = named("_RHSfov").and_then(|v| v.as_f32()).unwrap_or(0.0);
+        let limit = named("_RHS").unwrap_or(Value::Int(0));
+        let code = word("_relOperator").unwrap_or(0);
+        let targets = match call.sets.iter().find(|(n, _)| *n == "_LHS") {
+            Some((_, e)) => e.clone(),
+            None => named("_LHS").into_iter().collect(),
+        };
+        let mut found = Vec::new();
+        for t in targets {
+            let Some(p) = self.point(t, engine) else {
+                continue;
+            };
+            let d = p - from;
+            let off = normalized(heading_of(d) - facing).abs();
+            let feet = (d.length_squared() + f32::MIN_POSITIVE).sqrt() * FEET_PER_METRE;
+            let passes = guac_script::compare(code, Value::Float(feet), limit) == Some(true);
+            if off <= width * 0.5 && passes {
+                found.push((feet, t));
+            }
+        }
+        found.sort_by(|a, b| a.0.total_cmp(&b.0));
+        Ok(Answer::Found(found.into_iter().map(|(_, t)| t).collect()))
     }
 
     /// OpDisplace: `len` feet along a heading and a pitch, added in the
@@ -1404,8 +1717,16 @@ impl ScriptWorld {
         Some(a.position.y + solid.centre.y - reach)
     }
 
-    /// Its solid as the seam's query shape, posed where it stands.
-    fn query(&self, h: Handle) -> Option<(Shape, Pose)> {
+    /// Its solid as the seam's query shape, posed where it stands: a hero's
+    /// his controller's.
+    fn query(&self, h: Handle, engine: &mut dyn Engine) -> Option<(Shape, Pose)> {
+        if let Some(hero) = engine.hero(h) {
+            let solid = *hero.solid();
+            return Some((
+                solid.grown(0.0),
+                solid.pose(Pose::new(hero.pivot, hero.rotation())),
+            ));
+        }
         let a = self.actors.get(&h)?;
         let solid = a.havok()?;
         let rotation = guac_motion::solid::euler([a.angles.tilt, a.angles.facing, a.angles.roll]);
@@ -1416,12 +1737,23 @@ impl ScriptWorld {
     }
 
     /// `positionmeasurement.collision`: whether two actors' solids touch,
-    /// one of them a body in the seam (a creature, a prop): the other's
-    /// last move stopped on it, or its solid overlaps it where it stands.
-    /// Two actors neither of which the seam holds aren't modelled.
+    /// one of them a body in the seam (a hero, a creature, a prop): the
+    /// other's last move stopped on it, or its solid is within [`TOUCH`] of
+    /// it where it stands (openspec AH.18: what a Chompy's bite reads). Two
+    /// actors neither of which the seam holds aren't modelled.
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
+        // Two solids within both their convex radii of each other touch,
+        // as Havok's do (AH.18: AH.10's 68 bites read at 5.54-6.01 ft
+        // between the middles of two 2.84 ft spheres, gaps of -0.04 to
+        // 0.10 m).
+        let near = match (self.query(a, engine), self.query(b, engine)) {
+            (Some((sa, pa)), Some((sb, pb))) => {
+                guac_motion::parry::gap(&sa, pa, &sb, pb) <= CONTACT_REACH
+            }
+            _ => false,
+        };
         for (me, other) in pair {
             let Some(body) = engine.body(other) else {
                 continue;
@@ -1431,11 +1763,16 @@ impl ScriptWorld {
                 .actors
                 .get(&me)
                 .is_some_and(|k| k.contacts.iter().any(|c| c.body == body));
-            if stopped {
+            if stopped || near {
                 return Ok(true);
             }
-            if let Some((shape, pose)) = self.query(me)
-                && engine.seam().overlaps(&shape, pose, &[]).contains(&body)
+            let own: Vec<BodyId> = engine.body(me).into_iter().collect();
+            if let Some((shape, pose)) = self.query(me, engine)
+                && engine
+                    .seam()
+                    .contacts(&shape, pose, TOUCH, &own)
+                    .iter()
+                    .any(|p| p.body == body)
             {
                 return Ok(true);
             }
@@ -1454,6 +1791,7 @@ impl ScriptWorld {
     /// sliding along it, its contacts there kept for
     /// `collisioninfo.environment contacts`.
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
+        self.move_walkers(dt, engine);
         let mut hung = Vec::new();
         let mut flying = Vec::new();
         for (&h, a) in &self.actors {
@@ -1533,9 +1871,123 @@ impl ScriptWorld {
     }
 }
 
+impl ScriptWorld {
+    /// Makes the actor under `h` a creature the engine moves (openspec
+    /// AH.18): from the next frame its controller body carries it by the
+    /// velocity its scripts leave, or steers it where a `move to`, `move
+    /// from` or `turn to` asked this tick. False for no such actor.
+    pub fn walk(&mut self, h: Handle) -> bool {
+        match self.actors.get_mut(&h) {
+            Some(a) => {
+                if a.walker.is_none() {
+                    a.walker = Some(Box::new(Walker {
+                        body: None,
+                        aim: Aim::Still,
+                        along: 0,
+                    }));
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Each creature's controller body, where it stands: what the embedder
+    /// keeps in the seam so a hero's sweep meets it.
+    pub fn walkers(&self) -> Vec<(Handle, HavokSolid, Pose)> {
+        let mut out: Vec<(Handle, HavokSolid, Pose)> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.walker.is_some() && !a.removed && a.active)
+            .filter_map(|(&h, a)| {
+                let solid = a.havok()?;
+                let rotation = Quat::from_rotation_y(a.angles.facing.to_radians());
+                Some((h, solid, solid.pose(Pose::new(a.position, rotation))))
+            })
+            .collect();
+        out.sort_unstable_by_key(|k| k.0);
+        out
+    }
+
+    /// The engine's frame for each awake creature not hung on a node: its
+    /// controller body set where its scripts left it (made, or made again
+    /// when its scripts change its solid), then moved by the engine alone
+    /// or steered by this tick's aim, the aim spent.
+    fn move_walkers(&mut self, dt: f32, engine: &mut dyn Engine) {
+        let mut walkers: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| {
+                a.walker.is_some() && !a.removed && a.active && a.attach == Value::Null
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        walkers.sort_unstable();
+        for h in walkers {
+            let own: Vec<BodyId> = engine.body(h).into_iter().collect();
+            let Some(a) = self.actors.get_mut(&h) else {
+                continue;
+            };
+            let solid = a.havok().filter(|_| a.solid.interacts_with_level_mesh != 0);
+            let dt = dt * a.physics.time_scale / 100.0;
+            let physics = steer_physics(&a.physics);
+            let (position, facing, velocity) = (a.position, a.angles.facing, a.velocity);
+            let Some(w) = a.walker.as_mut() else {
+                continue;
+            };
+            let aim = std::mem::take(&mut w.aim);
+            let Some(solid) = solid else {
+                // Nothing to sweep: it moves by its velocity as it is.
+                a.position += a.velocity * (dt * METRES_PER_FOOT);
+                continue;
+            };
+            if w.body.as_ref().is_none_or(|b| *b.solid() != solid) {
+                let mut b = Hero::actor(solid, position, facing);
+                b.settle(engine.seam(), &own);
+                w.body = Some(b);
+            }
+            let Some(b) = w.body.as_mut() else {
+                continue;
+            };
+            b.pivot = position;
+            b.facing = facing;
+            b.walk.velocity = velocity;
+            match aim {
+                Aim::Still => b.step_engine(engine.seam(), dt, &own, Surfaces::NONE),
+                aim => b.step_steered(engine.seam(), &physics, aim, dt, &own, Surfaces::NONE),
+            }
+            let (p, f, v) = (b.pivot, b.facing, b.walk.velocity);
+            a.position = p;
+            a.angles.facing = f;
+            a.velocity = v;
+        }
+    }
+}
+
+/// An actor's movement numbers as the engine's steering reads them.
+fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
+    SteerPhysics {
+        ground_max_speed: p.ground_max_speed,
+        ground_acceleration: p.ground_acceleration,
+        ground_deceleration: p.ground_deceleration,
+        ground_turn_rate: p.ground_turn_rate,
+        air_max_speed: p.air_max_speed,
+        air_acceleration: p.air_acceleration,
+        air_deceleration: p.air_deceleration,
+        air_turn_rate: p.air_turn_rate,
+        gravity_acceleration: p.gravity_acceleration,
+        gravity_max_speed: p.gravity_max_speed,
+        move_type: MoveType::from_value(p.move_type),
+    }
+}
+
 /// How near a solid counts as touching for its contacts: twice what a cast
 /// leaves between a shape and what stopped it.
 const TOUCH: f32 = 2.0 * CAST_SLOP;
+
+/// How near two actors' solids touch, metres: both their convex radii
+/// (Havok's 0.05 m each), what `positionmeasurement.collision` reads.
+pub const CONTACT_REACH: f32 = 2.0 * guac_motion::solid::MESH_RADIUS;
 
 /// How many attach nodes an actor's set holds: the scripts index up to 13
 /// on a hero; which joint each is isn't read yet (a stand-in: a node sits
@@ -1650,6 +2102,7 @@ mod tests {
         let files = Files {
             placed: Vec::new(),
             ids: HashMap::new(),
+            points: HashMap::new(),
         };
         let handles = HashMap::new();
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
