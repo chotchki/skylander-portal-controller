@@ -296,6 +296,7 @@ fn run_tv(
         physics::SeamPlugin,
         play::PlayPlugin,
         progress::ProgressPlugin,
+        guacamole::scripts::ScriptPlugin,
     ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));

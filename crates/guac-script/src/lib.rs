@@ -17,11 +17,18 @@
 //! op, operand and object a list reaches gets an id, `global.bld` imports
 //! resolve through the export ids (bootstrap's roots first), and a macro or
 //! structure *stub* (a definition in no list) resolves by name to the
-//! definition of that name that sits in a list. A *placement* is one thing in
-//! the world running one script: the VM keeps, per placement, whether its
-//! STARTUP has run, its current behaviour, its local variables and whether a
-//! shutdown is pending. The script's op objects are shared by every placement
-//! running it.
+//! definition of that name that sits in a list. A script's `_masterVarList`
+//! is linked too: the variables a placement's locals are built from. A
+//! *placement* is one thing in the world running one script: the VM keeps,
+//! per placement, whether its STARTUP has run, its current behaviour, its
+//! local variables, whether a shutdown is pending, whether a `remove` took it
+//! off and its seconds of ticks. The script's op objects are shared by every
+//! placement running it.
+//!
+//! A placement is one value however a script reaches it: the embedder names
+//! each placement's object in its file with the handle it runs under
+//! ([`Vm::add_at`], [`Vm::name_object`], for placements with no script too),
+//! and that object reads as the handle, as `my` does.
 //!
 //! # The tick
 //!
@@ -30,7 +37,19 @@
 //! the op; until the counter passes the end of the list it's in or the
 //! current behaviour's block ends. Nothing waits inside a tick. What takes
 //! time (an animation, a slide, a move) is started by an op and polled by
-//! the script on later ticks through members.
+//! the script on later ticks through members. After each tick the
+//! placement's `system.script timer` grows by the tick's seconds
+//! ([`Config::tick_seconds`], 1/60 s), so it reads 0 through the first.
+//!
+//! `remove` takes a placement off: the rest of the tick it's in runs (a
+//! script taking itself off finishes its tick), then it's never ticked again
+//! and its started flag is cleared (AH.4's census shows level 213's
+//! definition so: removed, not started, one tick's seconds); a tell of it
+//! skips its block. Its SHUTDOWN doesn't run: that's the level's teardown,
+//! which no box models yet (a reading: no oracle read has seen a removed
+//! placement's SHUTDOWN run). A whitelist listing a script for its first
+//! tick alone ticks its placements until their STARTUP has run, then holds
+//! them, listed ([`Vm::held`]).
 //!
 //! An op's *block* is the `_branchPC` ops after it. An op either skips its
 //! block (counter += block length), runs into it (and may *push* an entry on
@@ -163,14 +182,36 @@
 //!   type (a new structure, a new number variable, a new reference), so `inc
 //!   count` appends one. `first` and `last` read the ends, nothing when
 //!   empty; `random` a member by a draw modulo the count.
-//! - `global.bld`'s numbers, sets, structures and references are cells made
-//!   from the file on first use and shared by every placement.
+//! - `global.bld`'s numbers, screen positions, colours, sets, structures and
+//!   references are cells made from the file on first use and shared by
+//!   every placement.
+//! - `find variable` finds a variable by name and declaration (container and
+//!   contents type, a structure named through a stub being the structure) on
+//!   what its owner path names. On a placement the VM runs, that's its
+//!   locals, there once its STARTUP has run: a declared one is made as it's
+//!   first reached, as the original builds every declared local at STARTUP.
+//!   On anything else it's a table per owner. Filter 0 finds (the block runs
+//!   only with one found), 2 finds or makes, 3 finds and takes it off; the
+//!   variable is the op's result as a path element. Filters 1 and 4 and the
+//!   skip operand stop as unsupported: what they select is a reading not yet
+//!   settled.
+//! - A reference names a set, a structure, a number variable, or a part of a
+//!   packed value or a value cell's number (`setref r = s.first.screen
+//!   measurement.x`): written through `valuedereferencer`, that part changes.
+//!   `undefined` reads 0 as a number and as an object none.
 //!
 //! # Values and arithmetic
 //!
 //! - Integers are 32-bit and wrap. An integer op an integer stays an
 //!   integer; anything with a float converts both sides to single precision.
-//!   Nothing is ever computed in double precision.
+//!   Nothing is ever computed in double precision, bar the perturbation the
+//!   exact layer's tests run ([`Precision::Double`]): there a fraction is
+//!   carried in double precision, in variables too, and rounded only where a
+//!   member takes it.
+//! - A screen position's halves are 12.4 fixed point: `+` and `-` work on
+//!   each half, `*` multiplies each and shifts the four fraction bits back,
+//!   every half held to 16 bits signed. Screen division and colour
+//!   arithmetic stop as unsupported until a script reaches them.
 //! - An expression is `a <op> b` (+ - * /) or `a` alone, read left side
 //!   first, nested as the data nests it: the order written is the order
 //!   computed, which single precision makes observable.
@@ -222,7 +263,15 @@
 //!   object a reference names, as the place to write;
 //! - `setvariant.count`, `.first`, `.last` and `.random` on a set;
 //! - `system.cast to integer`, an integer cell: written, it truncates toward
-//!   0 (no rounding); read, it gives what was written.
+//!   0 (no rounding); read, it gives what was written;
+//! - `system.script timer`, the running placement's seconds of ticks, and
+//!   `system.frame rate scale`, the tick's seconds times 60;
+//! - a packed value's parts, wherever the value lives (a cell, a value cell
+//!   or a host member, read and written back whole):
+//!   `screenmeasurement.x` and `.y`, the high and low halves in sixteenths,
+//!   a write truncated to them; `colormeasurement.red`, `.green`, `.blue`
+//!   and `.alpha`, the bytes from the high one down, a write clamped to
+//!   0-255.
 //!
 //! Every other member is in a [`Members`] table or unmodelled. Each entry has
 //! the member's registered type, minimum and maximum, and lives either in
@@ -232,9 +281,12 @@
 //! truncates a float toward 0 and clamps to [min, max], but only when min or
 //! max is nonzero; a float member converts an integer and clamps the same
 //! way; a packed member takes only packed values and a reference member only
-//! references. A value that can't convert drops the write. A path through
-//! nothing (a null receiver, a member the host answers with nothing) fails
-//! quietly as the original's does: a write drops, a check skips.
+//! references. A value that can't convert drops the write. An engine set
+//! member (an actor's waypoints) is read whole through [`Host::elements`],
+//! anew each read, and never written. A path through nothing (a null
+//! receiver, a member the host answers with nothing) fails quietly as the
+//! original's does: a write drops, a check skips. [`members`] lists the
+//! members as the original registers them and who keeps each here.
 //!
 //! # Modes, the budget and the whitelist
 //!
@@ -257,25 +309,38 @@
 //!
 //! # Left to the host, and not modelled yet
 //!
-//! The world ops (spawn, tell, remove, displace, teleport, turn and move
-//! steering, sequences, slides, field-of-view checks) and named dynamic
-//! variables (`find variable`) go to [`Host::op`] with their operands read;
-//! the host answers whether the op's block runs. A path through nothing
-//! answers for it, as in the original: a branch op skips, any other does
-//! nothing. Not modelled yet: arithmetic on packed colours and screen
-//! positions (it stops as unsupported), `setvariant.next` and the set
-//! properties (unmodelled members); and, with no stop, a reference's type
-//! check against the stack's edit type, `for each`'s shuffled order (any order
-//! that visits each member once) and the scheduler's placement groups and
-//! activity states (the embedder ticks placements in the order it adds them),
-//! so SHUTDOWN's restart isn't either: the original runs STARTUP again at
-//! once when an active placement's SHUTDOWN block falls through, where the
-//! VM ends the tick and starts it on the next.
+//! The world ops (spawning a placement, tell, remove, a placement's reset,
+//! displace, teleport, turn and move steering, sequences, field-of-view
+//! checks) go to [`Host::op`] with their operands read; the host answers
+//! whether the op's block runs. `remove` and `stop sequence` go once per
+//! object a set names, and a removal once per placement: one already off
+//! isn't removed again. A path through nothing answers for it, as in the
+//! original: a branch op skips, any other does nothing.
+//!
+//! What the VM does itself: a spawn of a structure or a set copies it (its
+//! structures and sets copied too) and runs the block with the copy as the
+//! receiver, the copy the op's result; a reset of a structure, a set or what
+//! a reference names puts it back to its defaults, the reference kept (a
+//! reading: `EnemySystem_` resets its action references, then nulls them);
+//! a slide sets its target to where it would end at once and skips its
+//! block, as the original does when its pool of 400 sliders is full (a
+//! stand-in: the eased slide over time isn't modelled yet).
+//!
+//! Not modelled yet: colour arithmetic and screen division (they stop as
+//! unsupported), `setvariant.next` and the set properties (unmodelled
+//! members); and, with no stop, a reference's type check against the stack's
+//! edit type, `for each`'s shuffled order (any order that visits each member
+//! once) and the scheduler's placement groups and activity by distance (the
+//! embedder ticks placements in the order it adds them), so SHUTDOWN's
+//! restart isn't either: the original runs STARTUP again at once when an
+//! active placement's SHUTDOWN block falls through, where the VM ends the
+//! tick and starts it on the next.
 
 #![forbid(unsafe_code)]
 
 mod generator;
 mod host;
+pub mod members;
 mod program;
 mod stall;
 mod value;
@@ -295,8 +360,9 @@ pub use program::{
     ScriptInfo, Sym, Unit,
 };
 pub use stall::{Stall, StallDetector, StallLimit};
-pub use value::{Value, arith, compare, convert, random_literal};
+pub use value::{Value, arith, arith_in, compare, convert, random_literal};
 pub use vm::{
-    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, PlacementId, Reason, StepReport, Vm,
+    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, PlacementId, Precision, Reason,
+    StepReport, TICK_SECONDS, Vm,
 };
-pub use whitelist::Whitelist;
+pub use whitelist::{Listed, Whitelist};

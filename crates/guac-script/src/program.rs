@@ -7,7 +7,8 @@ use std::collections::{HashMap, VecDeque};
 
 use guac_formats::exports::{Export, Exports, NAMESPACE, Root};
 use guac_formats::igz::layouts::{
-    Layout, NO_OPERATOR, ObjectRef, ScriptSet, ScriptSetList, TypeRef, ValueInfo, Variable,
+    Layout, NO_OPERATOR, ObjectList, ObjectRef, ScriptSet, ScriptSetList, TypeRef, ValueInfo,
+    Variable,
 };
 use guac_formats::igz::{ExternalId, Igz, Ref};
 use guac_formats::progression::ScriptStructure;
@@ -136,7 +137,7 @@ pub enum Operand {
 }
 
 /// What a variable's declaration makes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Container {
     Value,
     Reference,
@@ -148,7 +149,7 @@ pub enum Container {
 }
 
 /// A declaration's contents type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Contents {
     None,
     Class(Sym),
@@ -157,7 +158,7 @@ pub enum Contents {
     Unresolved,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Decl {
     pub container: Container,
     pub contents: Contents,
@@ -264,6 +265,18 @@ pub enum Ins {
         np: Option<OperandId>,
         index: Option<OperandId>,
     },
+    /// `find variable`: a variable named `name` of `decl`'s types on what
+    /// `owner` names (an element of it when `index` is given), found, made
+    /// or taken off as `filter` says (crate docs, Variables, structures and
+    /// sets).
+    FindVariable {
+        name: Sym,
+        decl: Decl,
+        filter: u32,
+        owner: Option<OperandId>,
+        index: Option<OperandId>,
+        skip: Option<OperandId>,
+    },
     /// An op left to the host ([`crate::Host::op`]).
     World {
         operands: Vec<(&'static str, Option<OperandId>)>,
@@ -324,6 +337,9 @@ pub struct ScriptInfo {
     pub first_behaviour: Option<u32>,
     /// SHUTDOWN's position.
     pub shutdown: Option<u32>,
+    /// The variables its `_masterVarList` declares, which a placement's
+    /// locals are built from, by name.
+    pub declared: HashMap<Sym, Decl>,
 }
 
 /// Every op list of the files linked together.
@@ -438,6 +454,8 @@ fn kind_of(type_name: &str) -> Kind {
     } else if matches!(
         type_name,
         "ValueInfo"
+            | "ScriptScreenInfo"
+            | "ScriptColorInfo"
             | "ScriptSet"
             | "ScriptStructure"
             | "ScriptReference"
@@ -453,6 +471,10 @@ fn kind_of(type_name: &str) -> Kind {
 /// The reference globals' `_obj`: not a layout `guac-formats` registers, so
 /// read as the one word aj-vm read it as (0x1C).
 const REFERENCE_TARGET: u32 = 0x1C;
+
+/// A screen position's or colour's `_value` (`ScriptScreenInfo`,
+/// `ScriptColorInfo`), at the registry's offset, read as the packed word.
+const PACKED_VALUE: u32 = 0x18;
 
 enum Work {
     Op(Obj),
@@ -555,6 +577,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
     }
 
     fn run(mut self) -> Result<Program, LinkError> {
+        let mut lists = Vec::new();
         for (u, unit) in self.units.iter().enumerate() {
             for s in &unit.graph.scripts {
                 let mut ops = Vec::with_capacity(s.ops.len());
@@ -565,6 +588,17 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                     };
                     ops.push(self.op_id(obj)?);
                 }
+                let mut declared = Vec::new();
+                if let ObjectRef::Object(l) = s.master_var_list {
+                    let list = ObjectList::read(unit.igz, l).map_err(|e| self.fail(u as u16, e))?;
+                    for v in list.elements.into_iter().flatten() {
+                        declared.push(self.op_id(Obj {
+                            unit: u as u16,
+                            index: v as u32,
+                        })?);
+                    }
+                }
+                lists.push(declared);
                 self.p.scripts.push(ScriptInfo {
                     name: s.name.unwrap_or("").to_owned(),
                     unit: u as u16,
@@ -572,6 +606,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                     behaviours: HashMap::new(),
                     first_behaviour: None,
                     shutdown: None,
+                    declared: HashMap::new(),
                 });
             }
         }
@@ -581,6 +616,13 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                 Work::Op(obj) => self.link_op(obj)?,
                 Work::Operand(obj) => self.link_operand(obj)?,
                 Work::Global(obj) => self.link_global(obj)?,
+            }
+        }
+        for (script, declared) in self.p.scripts.iter_mut().zip(lists) {
+            for op in declared {
+                if let Ins::Variable { name, decl } = &self.p.ops[op as usize] {
+                    script.declared.entry(*name).or_insert(*decl);
+                }
             }
         }
         self.finish();
@@ -1008,13 +1050,16 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                 ],
                 words: vec![],
             },
-            Op::FindVariable(f) => Ins::World {
-                operands: vec![
-                    ("_skipRHS", o(self, f.skip_rhs)?),
-                    ("_owner", o(self, f.owner)?),
-                    ("_indexRHS", o(self, f.index_rhs)?),
-                ],
-                words: vec![("_filter", f.filter)],
+            Op::FindVariable(f) => Ins::FindVariable {
+                name: self.sym(f.name.unwrap_or("")),
+                decl: Decl {
+                    container: self.container(f.container_type),
+                    contents: self.contents(unit, f.contents_type)?,
+                },
+                filter: f.filter,
+                owner: o(self, f.owner)?,
+                index: o(self, f.index_rhs)?,
+                skip: o(self, f.skip_rhs)?,
             },
             Op::CheckFov(c) => Ins::World {
                 operands: vec![
@@ -1144,6 +1189,18 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                         elem: Contents::None,
                     },
                 }
+            }
+            ty @ ("ScriptScreenInfo" | "ScriptColorInfo") => {
+                let o = igz.objects()[i];
+                let word = match o.field(PACKED_VALUE) {
+                    Some(at) => igz.u32_at(at, "_value").map_err(|e| fail(self, e))?,
+                    None => 0,
+                };
+                Global::Number(if ty == "ScriptScreenInfo" {
+                    Value::Screen(word)
+                } else {
+                    Value::Color(word)
+                })
             }
             "ScriptStructure" => {
                 let s = ScriptStructure::read(igz, i).map_err(|e| fail(self, e))?;

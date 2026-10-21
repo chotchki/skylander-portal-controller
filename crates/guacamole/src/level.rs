@@ -758,7 +758,7 @@ pub(crate) struct LevelSpawner<'w, 's> {
 /// ready once the renderer has it all and the warm has its keys.
 fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpawner) {
     let level = &mut *level;
-    poll_scripts(level);
+    poll_scripts(level, &mut s.commands);
     match std::mem::replace(&mut level.stage, Stage::Idle) {
         Stage::Reading(mut task) => match check_ready(&mut task) {
             None => level.stage = Stage::Reading(task),
@@ -836,8 +836,9 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
 }
 
 /// The script part's task, reported once it's done: what linked and what
-/// it cost, or why it didn't. The level goes on either way.
-fn poll_scripts(level: &mut Level) {
+/// it cost, or why it didn't, and the run installed from it (AH.16). The
+/// level goes on either way.
+fn poll_scripts(level: &mut Level, commands: &mut Commands) {
     let Some(task) = level.scripts.as_mut() else {
         return;
     };
@@ -873,6 +874,20 @@ fn poll_scripts(level: &mut Level) {
                 "the level's scripts linked"
             );
             level.report.scripts = Some(report);
+            let level_scripts::Linked {
+                program,
+                placements,
+                order,
+                ..
+            } = linked;
+            commands.queue(move |world: &mut World| {
+                guacamole::scripts::install(
+                    world,
+                    std::sync::Arc::new(program),
+                    &placements,
+                    &order,
+                );
+            });
         }
         Err(why) => {
             warn!(level = ?level.report.level, reason = %why, "the level's scripts didn't load; it's drawn without them");

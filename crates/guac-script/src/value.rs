@@ -1,9 +1,12 @@
 //! Values and the arithmetic, comparisons, conversions and rolls over them
 //! (the crate docs' Values and arithmetic, Comparisons, Literals and rolls,
-//! Members). Single precision throughout: nothing here touches an `f64`.
+//! Members). Single precision throughout: an `f64` appears only in
+//! [`Precision::Double`], the perturbation the exact layer's tests run to
+//! see their checks fail without the original's rounding.
 
 use crate::host::{Kind, MemberSpec};
 use crate::program::{Obj, Sym};
+use crate::vm::Precision;
 
 /// What a cell, a member or a path step holds.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -12,6 +15,9 @@ pub enum Value {
     Null,
     Int(i32),
     Float(f32),
+    /// A fraction carried in double precision: only [`Precision::Double`]'s
+    /// arithmetic makes one.
+    Double(f64),
     /// A packed RGBA colour, as stored.
     Color(u32),
     /// A packed screen position (two 12.4 fixed-point halves).
@@ -30,17 +36,31 @@ pub enum Value {
     /// An index into the VM's cells: a variable made at run time (a number
     /// a set grew).
     Cell(u32),
+    /// A reference to a part of a packed value or a value cell's member (a
+    /// set element's `screenmeasurement.x`): an index into the VM's bound
+    /// places, read and written through `valuedereferencer`.
+    Bound(u32),
 }
 
 impl Value {
     pub fn is_number(&self) -> bool {
-        matches!(self, Value::Int(_) | Value::Float(_))
+        matches!(self, Value::Int(_) | Value::Float(_) | Value::Double(_))
     }
 
     pub fn as_f32(&self) -> Option<f32> {
         match *self {
             Value::Int(i) => Some(i as f32),
             Value::Float(f) => Some(f),
+            Value::Double(d) => Some(d as f32),
+            _ => None,
+        }
+    }
+
+    fn as_f64(&self) -> Option<f64> {
+        match *self {
+            Value::Int(i) => Some(f64::from(i)),
+            Value::Float(f) => Some(f64::from(f)),
+            Value::Double(d) => Some(d),
             _ => None,
         }
     }
@@ -50,6 +70,7 @@ impl Value {
         match *self {
             Value::Int(i) => Some(i),
             Value::Float(f) => Some(truncate(f)),
+            Value::Double(d) => Some(d as i32),
             _ => None,
         }
     }
@@ -67,8 +88,46 @@ pub fn truncate(f: f32) -> i32 {
 /// float is computed in single precision. Nothing counts as the integer 0.
 /// `None` for an operator past 3 or an operand that isn't a number.
 pub fn arith(operator: u32, a: Value, b: Value) -> Option<Value> {
+    arith_in(Precision::Single, operator, a, b)
+}
+
+/// [`arith`] at a [`Precision`]: in [`Precision::Double`] anything with a
+/// fraction is computed and kept in double precision.
+pub fn arith_in(precision: Precision, operator: u32, a: Value, b: Value) -> Option<Value> {
     let zero = |v: Value| if v == Value::Null { Value::Int(0) } else { v };
-    match (zero(a), zero(b)) {
+    let (a, b) = (zero(a), zero(b));
+    let double = precision == Precision::Double
+        || matches!(a, Value::Double(_))
+        || matches!(b, Value::Double(_));
+    if double && a.is_number() && b.is_number() && !matches!((a, b), (Value::Int(_), Value::Int(_)))
+    {
+        let (x, y) = (a.as_f64()?, b.as_f64()?);
+        return Some(Value::Double(match operator {
+            0 => x + y,
+            1 => x - y,
+            2 => x * y,
+            3 => x / y,
+            _ => return None,
+        }));
+    }
+    match (a, b) {
+        // A screen position's halves, each on its own and held to 16 bits;
+        // a product scaled back by the halves' four fraction bits.
+        (Value::Screen(x), Value::Screen(y)) => {
+            let half = |w: u32, at: u32| i32::from((w >> at) as u16 as i16);
+            let op = |p: i32, q: i32| -> Option<u32> {
+                let r = match operator {
+                    0 => p + q,
+                    1 => p - q,
+                    2 => (p * q) >> 4,
+                    _ => return None,
+                };
+                Some(u32::from(r.clamp(-0x8000, 0x7FFF) as i16 as u16))
+            };
+            Some(Value::Screen(
+                op(half(x, 16), half(y, 16))? << 16 | op(half(x, 0), half(y, 0))?,
+            ))
+        }
         (Value::Int(x), Value::Int(y)) => Some(Value::Int(match operator {
             0 => x.wrapping_add(y),
             1 => x.wrapping_sub(y),
@@ -106,6 +165,23 @@ pub fn compare(code: u32, l: Value, r: Value) -> Option<bool> {
             5 => a != b,
             _ => return None,
         }),
+        (a, b)
+            if a.is_number()
+                && b.is_number()
+                && (matches!(a, Value::Double(_)) || matches!(b, Value::Double(_))) =>
+        {
+            let d = a.as_f64()? - b.as_f64()?;
+            let e = f64::from(TOLERANCE);
+            Some(match code {
+                0 => d <= e,
+                1 => d.abs() <= e,
+                2 => d >= -e,
+                3 => d < -e,
+                4 => d > e,
+                5 => d.abs() > e,
+                _ => return None,
+            })
+        }
         (a, b) if a.is_number() && b.is_number() => {
             let d = a.as_f32()? - b.as_f32()?;
             Some(match code {
@@ -154,6 +230,8 @@ pub fn convert(spec: &MemberSpec, v: Value) -> Option<Value> {
         Kind::Color => matches!(v, Value::Color(_)).then_some(v),
         Kind::Screen => matches!(v, Value::Screen(_)).then_some(v),
         Kind::Reference => (!v.is_number()).then_some(v),
+        // The engine's sets are read, never written.
+        Kind::Set => None,
         Kind::Any => Some(v),
     }
 }

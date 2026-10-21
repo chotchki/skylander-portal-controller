@@ -452,6 +452,15 @@ impl<'b> Writer<'b> {
         info
     }
 
+    /// Gives the script `info` (from [`Writer::end`]) a `_masterVarList`
+    /// declaring `vars`, the variables a placement's locals are built from.
+    pub fn declare(&mut self, info: Location, vars: &[Location]) {
+        let list = self.b.object(0, "OpCreateVariableList", 0x18);
+        let els: Vec<El<'_>> = vars.iter().map(|v| El::Local(*v)).collect();
+        self.path(list, &els);
+        self.refer(info, 0x18, list);
+    }
+
     /// A script's frame as every script on the disc has it: PRESCRIPT
     /// holding STARTUP (`startup`'s ops), SHUTDOWN and a MACROS section
     /// (`macros`' definitions), then the behaviours `behaviours` writes.

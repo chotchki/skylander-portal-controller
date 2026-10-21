@@ -13,6 +13,8 @@ use guac_formats::script::{Class, Graph, StackClass};
 
 use crate::*;
 
+mod init;
+
 const INT: &str = "IntMeasurement";
 const HANDLE: Handle = 0x51;
 
@@ -796,7 +798,7 @@ fn a_value_cell_reads_its_default_keeps_what_is_written_and_clamps() {
             w,
             |_| {},
             |w| {
-                let alpha = [El::Member("colormeasurement", "alpha")];
+                let alpha = [El::Member("test", "alpha")];
                 let read_alpha = |w: &mut Writer<'_>| w.rhs(INT, &alpha);
                 let v = read_alpha(w);
                 w.set(&[El::Local(r0)], v);
@@ -814,7 +816,7 @@ fn a_value_cell_reads_its_default_keeps_what_is_written_and_clamps() {
                 // Per object: the placement's own alpha is another cell.
                 let mine_alpha = [
                     El::Member("optoplevelbehavior", "my"),
-                    El::Member("colormeasurement", "alpha"),
+                    El::Member("test", "alpha"),
                 ];
                 let nine = w.int(9);
                 w.set(&mine_alpha, nine);
@@ -825,7 +827,7 @@ fn a_value_cell_reads_its_default_keeps_what_is_written_and_clamps() {
     });
     let mut c = Config::new(Mode::Strict);
     c.members.value_cell(
-        "colormeasurement",
+        "test",
         "alpha",
         MemberSpec::new(Kind::Int, 0.0, 255.0).with_default(Value::Int(255)),
     );
@@ -839,7 +841,7 @@ fn a_value_cell_reads_its_default_keeps_what_is_written_and_clamps() {
     assert_eq!(vm.local(id, "r2"), Some(Value::Int(255)), "clamped");
     assert_eq!(vm.local(id, "r3"), Some(Value::Int(255)), "reset");
     assert_eq!(vm.local(id, "mine"), Some(Value::Int(9)));
-    let alpha = MemberId::named("colormeasurement", "alpha");
+    let alpha = MemberId::named("test", "alpha");
     assert_eq!(vm.value_cell(None, alpha), Some(Value::Int(255)));
     assert_eq!(
         vm.value_cell(Some(Value::Entity(HANDLE)), alpha),

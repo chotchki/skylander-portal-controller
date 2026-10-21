@@ -222,6 +222,9 @@ pub const TYPES: &[TypeDef] = &[
     // Script ops and operand stacks, what the toy table's reader walks (AE.2).
     def("tfbScriptInfo", "tfbComplexDataInfo", 0x1C),
     def("OpCodeList", "ScriptObjectList", 0x18),
+    // A script's `_masterVarList`: the variables a placement's locals are
+    // built from (AH.16).
+    def("OpCreateVariableList", "igObjectList", 0x18),
     def("OpCode", "AbstractScriptVariant", 0x1C),
     def("OpBranch", "OpCode", 0x1C),
     def("OpAbstractBehavior", "OpBranch", 0x1C),
