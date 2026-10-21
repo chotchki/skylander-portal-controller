@@ -38,7 +38,9 @@
 //! holds, the cast's hits among them. Without it a hero falling past an
 //! edge he grazes hangs there; with it, AG.36's `l_off135` W-00 leaves the
 //! ledge route's edge 1.2 cm off its recording at record 109 where it had
-//! stalled 11.2 cm short.
+//! stalled 11.2 cm short, then parts from it in the air as W-01 always did
+//! (up to 57 cm, where the stall had kept it within 25 cm), resting 21.7 cm
+//! off theirs against 7.6 before. No other replay moves.
 
 use std::collections::BTreeMap;
 

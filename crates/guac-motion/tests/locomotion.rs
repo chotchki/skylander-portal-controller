@@ -143,7 +143,8 @@ fn coming_to_rest() {
 }
 
 /// Into a wall: at full stick straight into it his walk holds 21.5 ft/s and
-/// he runs on the spot at 102.4 %.
+/// he runs on the spot at 102.4 %, the run's stride running on through a
+/// 4.5 s hold, never restarted (AG.58's `w58_hold`, Held against it).
 #[test]
 fn into_a_wall_he_runs_on_the_spot() {
     let mut w = Walk::on(&walled(), Vec3::new(0.0, 1.0, 3.0));
@@ -154,6 +155,19 @@ fn into_a_wall_he_runs_on_the_spot() {
     assert!(close(frames[119].1, 21.5, 1e-4), "{}", frames[119].1);
     assert_eq!(w.loco.weights(), [0.0, 0.0, 1.0, 0.0]);
     assert!(close(w.loco.play(Clip::Run).rate * 100.0, 102.37, 0.01));
+    for k in 0..270 {
+        let before = w.loco.play(Clip::Run);
+        let (weights, speed) = w.frame(stick(1.0, 0.0));
+        let run = w.loco.play(Clip::Run);
+        assert_eq!(w.hero.pivot, still, "{k}: against the wall");
+        assert_eq!(weights, [0.0, 0.0, 1.0, 0.0], "{k}");
+        assert!(close(speed, 21.5, 1e-4), "{k}: {speed}");
+        let ran = run.time - before.time;
+        assert!(
+            (ran - f64::from(DT) * f64::from(before.rate)).abs() < 1e-9,
+            "{k}: the run's stride moved {ran}"
+        );
+    }
 }
 
 /// Level ground to z = 0, a drop `depth` deep and ground under it.
@@ -283,7 +297,8 @@ fn held_at_an_edge_he_comes_to_rest() {
 /// leaving only its slope's share (0.14 ft/s), which restarts the walk a
 /// quarter into its stride and sets the run's rate without setting him off,
 /// so the walk's stride holds at a quarter as it fades (AG.58's door runs:
-/// 2.71-2.74 ft/s read at the stop, 20 flickers, the walk at 0.28-0.30 s).
+/// 2.23-2.74 ft/s read at the stop, 9-10 restarts in the 0.30-0.34 s after
+/// it, the walk at 0.28-0.30 s).
 #[test]
 fn held_at_a_sloped_edge_his_idle_comes_back_through_the_probes_flicker() {
     // A 3° ramp down toward +z to an open edge at z = 0, y = 0.
@@ -296,6 +311,8 @@ fn held_at_a_sloped_edge_his_idle_comes_back_through_the_probes_flicker() {
     for _ in 0..150 {
         let (weights, speed) = w.frame(stick(1.0, 0.0));
         let walk = w.loco.play(Clip::Walk);
+        // What the TV's gait report and log hand out as `held`.
+        assert_eq!(w.loco.held(), w.hero.probe_held);
         log.push((
             weights,
             speed,
@@ -354,12 +371,16 @@ fn held_at_a_sloped_edge_his_idle_comes_back_through_the_probes_flicker() {
 /// the mix after a let-go (the frame after it, its own reading the walk
 /// before its first slowing) the run takes the walk's place in its stride plus
 /// its own advance, at about 90 % of the weight, as the original's does
-/// (AG.68's recordings: the run within 0.0034 s of the walk's place at 15 of 16
-/// let-gos, the jump 0.03-0.41 of its cycle). The longer the run, the further
-/// apart the two drift, so the jump is the original's and stays.
+/// (AG.68's recordings, each record advanced by the step of the one before:
+/// the run on the walk's place to 1e-7 s at 15 of 16 let-gos, the jump
+/// 0.02-0.42 of its cycle). The longer the run, the further apart the two
+/// drift, so the jump is the original's and stays: after the same time at top
+/// speed it lands within 0.01 of the original's two replays (`r68_short`
+/// −0.168 and −0.190, `r68_long` +0.400 and +0.415).
 #[test]
 fn let_go_from_a_long_run_the_run_takes_the_walks_place() {
-    for seconds in [1.25f32, 9.0] {
+    // The original's jumps after the same time at top speed (AG.68).
+    for (seconds, theirs) in [(1.25f32, -0.190..=-0.168), (9.0, 0.400..=0.415)] {
         let mut w = Walk::on(&open_ground(), Vec3::new(0.0, 1.0, -36.0));
         w.frames(30, Stick::CENTRED);
         let run_steps = (seconds / DT).round() as usize;
@@ -395,5 +416,9 @@ fn let_go_from_a_long_run_the_run_takes_the_walks_place() {
         let own = run_before.time + f64::from(DT * run_before.rate);
         let jump = ((run.time - own) / 0.6667 + 0.5).rem_euclid(1.0) - 0.5;
         eprintln!("{seconds} s at top speed: the run jumps {jump:+.3} of its cycle at {share:.3}");
+        assert!(
+            jump >= theirs.start() - 0.01 && jump <= theirs.end() + 0.01,
+            "{seconds} s: a jump of {jump:+.3} against the original's {theirs:?}"
+        );
     }
 }

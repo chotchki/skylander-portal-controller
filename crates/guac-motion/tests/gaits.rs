@@ -170,8 +170,13 @@ struct Tally {
 /// the gate's), the records flip each frame: one shows the idle at 100
 /// beside a walk at the rest of the idle's own weight, the next the idle at
 /// its weight and the run at the walk's, its share 0 (the speed read is a
-/// slope's share of a push, 0.14 ft/s). Elsewhere a record holds the gaits
-/// either as the rest of the idle or as their own split of 100.
+/// slope's share of a push, 0.14 ft/s). Both flips turn up where the probe
+/// holds nothing too (AG.9's `walk` coming to rest, the first record of a
+/// set-off from the corner's stop in AG.58's `w58_angle`), so every record is
+/// read this way: read only on held records, AG.11's walk-speed records
+/// within 1e-3 fall from 19,287 to 19,231 and AG.58's from 5,800 to 5,798.
+/// Elsewhere a record holds the gaits either as the rest of the idle or as
+/// their own split of 100.
 fn held_weights(rec: &[f32]) -> (f32, Option<f32>) {
     let [idle, walk, run] = [rec[0], rec[1], rec[2]];
     if idle == 1.0 && walk > 0.0 && walk < 1.0 && run == 0.0 {

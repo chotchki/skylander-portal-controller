@@ -160,11 +160,11 @@ A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his
 
 #### Scenario: Past the gate's door's end
 - **WHEN** Eruptor walks at full stick from the start into the gate's door and slides east along it
-- **THEN** past its end, over the bridge's foot, he stops dead at (19.70-19.72, −83.69..−83.70), his walk read at its slope's share of 21.5 ft/s that frame (2.2-2.7 ft/s); the stick held, every second frame's push is let through and zeroed again, 9-10 times over 0.30-0.34 s, each read at 0.12-0.15 ft/s, until he has drifted back far enough that the point it looks at slower than 2 ft/s leaves the space under the door (its face within 0.5 mm)
+- **THEN** past its end, over the bridge's foot, he stops dead at (19.70-19.72, −83.69..−83.70), his walk read at its slope's share of 21.5 ft/s that frame (2.2-2.7 ft/s); the stick held, every second frame's push is let through and zeroed again, 9-10 times over 0.30-0.34 s, each read at 0.12-0.15 ft/s, until he has drifted back far enough that the point it looks at slower than 2 ft/s leaves the space under the door (its last pass and first refusal within 3 mm of the door's face)
 
 #### Scenario: Into the corner of the wall behind the start
 - **WHEN** Eruptor slides along the wall behind the start at 20° from head-on into its east corner, past which the level holds nothing
-- **THEN** he runs on the spot in the corner, and the frame the point ahead clears the wall's end the probe stops him for that frame; the next he sets off again from rest
+- **THEN** he runs on the spot in the corner, and the frame the point ahead clears the wall's end the probe stops him for that frame; the next he's at rest and the one after he sets off again
 
 #### Scenario: Where the ledge route lets him off
 - **WHEN** Eruptor walks at full stick at the ledge route's edge over the corridor, head-on, 17°-70° east of head-on or 34°-64° west of it, or creeps at it under 2 ft/s
@@ -178,7 +178,7 @@ A hero SHALL turn his up axis toward the normal of the ground under him at 120°
 - **THEN** his tilt turns toward the new slope at 120°/s, 1.9-2.1° a frame, and stays 0.26-0.31° short of it after six frames
 
 ### Requirement: Falling and landing
-Off the ground a hero SHALL fall 136.21 ft/s² faster over the step two back, to 120 ft/s as read; his walk SHALL steer by 160 ft/s² × S along the stick over the step three back, cut across the ground to 21.5 ft/s × S or what it had if more, slowing as on the ground at 50 ft/s². An edge with nothing past it SHALL hold him off its nearest point, sliding him round it, and up within 45° below him. He SHALL land without bouncing, from a frame begun over 0.4 ft up sliding a frame down the fall line.
+Off the ground a hero SHALL fall faster by 136.21 ft/s² (41.52 m/s²) over the step two back, up to 120 ft/s as read. In the air his walk SHALL steer, gaining 160 ft/s² × S along the stick over the step three back, cut across the ground to the larger of 21.5 ft/s × S and what it had, and slow that part as on the ground but at 50 ft/s². He SHALL land without bouncing and, from a last frame in the air begun over 0.4 ft up, slide a frame down the fall line, then walk the stick's way at that speed.
 
 #### Scenario: Falling off the ledge route
 - **WHEN** Eruptor walks at full stick off the ledge route's edge into the corridor, head-on, up to 64° west of it or up to 70° east of it, and keeps the stick held
@@ -204,13 +204,16 @@ Off the ground a hero SHALL fall 136.21 ft/s² faster over the step two back, to
 - **WHEN** the stick is let go 0.3 or 0.6 m short of the ledge route's edge at its west end, Eruptor at full stick
 - **THEN** he slides over it and down the cliff below, and in 3 of 4 runs stops dead 0.4-0.9 m below the edge on the open upper edge of the face overhanging the corridor there, which holds him up from 41.6-45.0° below him, and stays there
 
-#### Scenario: Round the overhang's open edge
-- **WHEN** the stick is let go or reversed 0.1 s into a fall from the ledge route's west end, past the face overhanging the corridor, whose upper edge has no surface past it
-- **THEN** that edge holds him 5-8 mm off it for 6-7 frames, the push off it square to the edge, turning 55-57° round it from 52-54° below him to past level, never holding him up, and he lands on the corridor's slope 0.20-0.22 s after first meeting it, never caught behind the face
-
 #### Scenario: A long drop
 - **WHEN** Eruptor falls further than 16.1 m
 - **THEN** his downward speed stops at 120 ft/s (36.58 m/s) and he lands without bouncing
+
+### Requirement: Open edges
+An edge of the level's surfaces that no other surface shares SHALL meet a hero as a corner does, in the air or on the ground: it holds him off its nearest point, its push running from there to him, slides him round it as he passes, and holds him up while that push lies within 45° below him, as an edge between two surfaces does.
+
+#### Scenario: Round the overhang's open edge
+- **WHEN** the stick is let go or reversed 0.1 s into a fall from the ledge route's west end, past the face overhanging the corridor, whose upper edge has no surface past it
+- **THEN** that edge holds him 5-8 mm off it for 6-7 frames, the push off it square to the edge, turning 55-57° round it from 52-54° below him to past level, never holding him up, and he lands on the corridor's slope 0.20-0.22 s after first meeting it, never caught behind the face
 
 ### Requirement: No jumping
 A hero SHALL NOT jump: no button lifts a hero off the ground, as in the original Giants, where no hero can jump.
@@ -240,7 +243,7 @@ A hero SHALL stand in his idle and move in his walk and run mixed by the speed h
 
 #### Scenario: Let go from a long run
 - **WHEN** the stick is let go after 1.25 s or 9 s of Eruptor at top speed
-- **THEN** under the pure run his walk has played on at the last mix's rate (144-147 %), out of step with the run, and the first frame of the mix the run jumps to the walk's place in its stride, 0.03-0.41 of its cycle at 89-92 % of the weight
+- **THEN** under the pure run his walk has played on at the last mix's rate (144-147 %), out of step with the run, and the first frame of the mix the run jumps to the walk's place in its stride, 0.02-0.42 of its cycle at 89-92 % of the weight
 
 #### Scenario: Held at an edge with the stick pushed
 - **WHEN** Eruptor slides along the gate's door at full stick to its end over the bridge's foot, where the edge probe stops him, and the stick stays held
