@@ -283,6 +283,9 @@ struct Run {
     /// The position of the op executing, for a [`Halt`].
     at: u32,
     at_op: Option<OpId>,
+    /// [`Vm::run_span`]'s end: the run stops once the counter reaches it
+    /// in the stretch's own list with no call open.
+    stop: Option<u32>,
 }
 
 /// A path's end: where a read comes from and a write goes.
@@ -448,6 +451,23 @@ fn tag_value(program: &Program, o: OperandId) -> Option<Value> {
     }
 }
 
+/// The object a tag's value names, a path of that object alone.
+fn tag_object(program: &Program, o: OperandId) -> Option<Obj> {
+    match program.operands.get(o as usize)? {
+        Operand::Path { elems, .. } => match elems.as_slice() {
+            [Elem::Object(obj)] => Some(*obj),
+            [Elem::Op(op)] => Some(program.op_info.get(*op as usize)?.obj),
+            _ => None,
+        },
+        Operand::Expr {
+            a: Some(a),
+            op: None,
+            b: None,
+        } => tag_object(program, *a),
+        _ => None,
+    }
+}
+
 /// The interpreter over one [`Program`].
 pub struct Vm {
     program: Arc<Program>,
@@ -588,6 +608,7 @@ impl Vm {
                 ops: 0,
                 at: 0,
                 at_op: None,
+                stop: None,
             },
         }
     }
@@ -1129,6 +1150,57 @@ impl Vm {
         self.finish(result)
     }
 
+    /// Runs the ops at positions `from..to` of a placement's own script as
+    /// a stretch of its tick (crate docs, A stretch of a tick): its locals,
+    /// `my` and its `system.script timer` as its tick reads them, no tick
+    /// counted. What a native rule that schedules part of a placement's
+    /// tick runs (design decision 2's player loop: the portal manager's
+    /// ops for orbs, the award and loot, only their scheduling ours). The
+    /// stretch starts and ends between statements of one list: every block
+    /// it opens closes inside it. `Ok(true)` when it ran to `to`,
+    /// `Ok(false)` when a `flow end` ended the tick inside it or the
+    /// placement doesn't run (taken off, stopped, never added). A stop is
+    /// returned in either mode, the placement stopped with it, as
+    /// [`Vm::call_with`] returns one.
+    pub fn run_span(
+        &mut self,
+        id: PlacementId,
+        from: u32,
+        to: u32,
+        host: &mut dyn Host,
+    ) -> Result<bool, Halt> {
+        let Some(p) = self.placements.get(id as usize) else {
+            return Ok(false);
+        };
+        if p.removed || p.stopped.is_some() {
+            return Ok(false);
+        }
+        let len = self
+            .program
+            .scripts
+            .get(p.script as usize)
+            .map_or(0, |s| s.ops.len() as u32);
+        if from > to || to > len {
+            return Err(self.halt_outside(Reason::Unsupported(format!(
+                "a stretch {from}..{to} of a list of {len} ops"
+            ))));
+        }
+        let (handle, script) = (p.handle, p.script);
+        self.begin(Some(id), script, Value::Entity(handle));
+        self.run.pc = from;
+        self.run.stop = Some(to);
+        let result = if from == to {
+            Ok(())
+        } else {
+            self.execute(host)
+        };
+        let ran = result.is_ok() && self.run.ctx == script && self.run.pc == to;
+        match self.finish(result)? {
+            None => Ok(ran),
+            Some(halt) => Err(halt),
+        }
+    }
+
     /// Runs the macro `name` as a parameterless call from a fresh context,
     /// for a placement or none: what a script's first tick does when it
     /// calls one. Returns the ops it executed.
@@ -1258,6 +1330,7 @@ impl Vm {
             ops: 0,
             at: 0,
             at_op: None,
+            stop: None,
         };
     }
 
@@ -1361,6 +1434,24 @@ impl Vm {
                 Err(f) => return Err(f),
             }
             if self.run.pc == END && self.run.blocks.is_empty() {
+                return Ok(());
+            }
+            if let Some(stop) = self.run.stop
+                && self.run.calls.is_empty()
+                && self.run.pc >= stop
+            {
+                // A stretch's end: every block it opened has closed, unless
+                // a skip carried the counter past it (a stretch cut through
+                // a statement).
+                self.close(program)?;
+                if self
+                    .run
+                    .blocks
+                    .iter()
+                    .any(|b| b.ctx == self.run.ctx && b.kind != BlockKind::Root)
+                {
+                    return unsupported("a stretch of a tick ended inside a block it opened");
+                }
                 return Ok(());
             }
         }
@@ -2298,7 +2389,12 @@ impl Vm {
                 None => Value::Int(0),
                 Some(o) => match tag_value(&self.program, o) {
                     Some(v) => v,
-                    None => return unsupported("a tag whose value isn't a literal"),
+                    // A reference tag names an object of its file (a
+                    // breakable's `archetype ref`, AH.20): that object.
+                    None => match tag_object(&self.program, o) {
+                        Some(obj) => self.canon(Value::Object(obj)),
+                        None => return unsupported("a tag whose value isn't a literal"),
+                    },
                 },
             };
             let c = self.new_cell(decl, None, 0)?;
@@ -2814,6 +2910,15 @@ impl Vm {
                         let v = self.read(prev, host)?;
                         let v = self.materialize(v);
                         if v == Value::Null {
+                            // A reference naming nothing still keeps its own
+                            // point (crate docs, Variables, structures and
+                            // sets): the reference is the receiver.
+                            if let Spot::Cell(c) = prev
+                                && self.cells[c as usize].kind == CellKind::Reference
+                                && m == MemberId::named("placementreference", "remembered")
+                            {
+                                return self.member(Some(Value::Cell(c)), m, Recv::ValueCell(c));
+                            }
                             return Err(Fault::Nothing);
                         }
                         if let Value::Slider(id) = v {
@@ -3023,7 +3128,7 @@ impl Vm {
                 let Some(n) = self.deref(v).as_i32() else {
                     return unsupported(format!("count set to {v:?}"));
                 };
-                self.resize(s, n.max(0) as usize)
+                self.resize(s, n.max(0) as usize, host)
             }
             Spot::CastToInteger => {
                 if let Some(i) = self.deref(v).as_i32() {
@@ -3691,7 +3796,7 @@ impl Vm {
 
     /// `count` written: shorter drops the tail, longer appends fresh default
     /// elements of the set's element type.
-    fn resize(&mut self, s: u32, n: usize) -> Result<(), Fault> {
+    fn resize(&mut self, s: u32, n: usize, host: &mut dyn Host) -> Result<(), Fault> {
         let len = self.sets[s as usize].elems.len();
         if n <= len {
             self.sets[s as usize].elems.truncate(n);
@@ -3733,7 +3838,11 @@ impl Vm {
                             }
                             Value::Cell(cell)
                         }
-                        None => Value::Null,
+                        // An engine object: a fresh one from the host.
+                        None => {
+                            let class = self.program.sym(c).to_owned();
+                            host.make(&class).unwrap_or(Value::Null)
+                        }
                     }
                 }
                 _ => Value::Null,

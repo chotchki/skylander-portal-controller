@@ -419,7 +419,12 @@ fn step_scripts(
         Some((e, r)) => (Some(e), Some(r)),
         None => (None, None),
     };
-    let ScriptRuntime { vm, generator, .. } = &mut *runtime;
+    let ScriptRuntime {
+        vm,
+        generator,
+        player_loop,
+        ..
+    } = &mut *runtime;
     let mut spawn =
         |template: Value| -> Handle { commands.spawn(ScriptClone(template)).id().to_bits() };
     let mut engine = TvEngine {
@@ -430,7 +435,8 @@ fn step_scripts(
     let mut stopped: Vec<Halt> = Vec::new();
     let mut off: Option<String> = None;
     // The frame's slides, once before any script this step (openspec
-    // AH.19), then the portal manager's clock, the head of its tick.
+    // AH.19), then the player loop (AH.20): the portal manager's tick, its
+    // stretches past the clock once he'd joined before this step.
     {
         let mut host = WorldHost {
             world: &mut world,
@@ -442,9 +448,9 @@ fn step_scripts(
             Ok(r) => stopped.extend(r.stopped),
             Err(h) => stopped.push(h),
         }
-    }
-    if let Err(h) = scripts::portal_manager_clock(vm, &world) {
-        stopped.push(h);
+        if let Err(h) = player_loop.step(vm, &mut host, settled) {
+            stopped.push(h);
+        }
     }
     // The minion activates at the step after his file's placements joined,
     // before anything of this step: AH.17's order.
@@ -529,11 +535,6 @@ fn step_scripts(
         generator,
         spawn: &mut spawn,
     };
-    if joined.is_some()
-        && let Err(h) = scripts::manage_projectiles(vm, &mut host)
-    {
-        stopped.push(h);
-    }
     match vm.step(&mut host) {
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
@@ -976,6 +977,32 @@ pub(crate) mod tests {
             self.host(|vm, host| scripts::join_activate(vm, host, HERO))
                 .unwrap_or_else(|h| panic!("{h}"))
         }
+    }
+
+    /// The swap's stand-in on a joined hero (openspec AH.20): the health
+    /// he left with set where his scripts hold it, which the TV's report
+    /// reads back; kept across his swap, gone at a level change.
+    #[test]
+    fn a_swapped_heros_health_comes_back_as_he_left_it() {
+        let mut run = Headless::new();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let minion = run.join();
+        run.step([false; 4]);
+        assert_eq!(scripts::health(&run.vm, minion), Some(ATTACK_HEALTH));
+        let mut kept = scripts::KeptHealth::default();
+        kept.left("eruptor", 77);
+        let back = kept.back("eruptor").unwrap();
+        assert!(scripts::set_health(&mut run.vm, minion, back));
+        assert_eq!(hero_numbers(&run.vm, minion).health, Some(77));
+        run.step([false; 4]);
+        assert_eq!(
+            scripts::health(&run.vm, minion),
+            Some(77),
+            "his scripts keep it"
+        );
+        kept.level_changed();
+        assert_eq!(kept.back("eruptor"), None);
     }
 
     /// The synthetic attack the e2e suite throws with runs through the

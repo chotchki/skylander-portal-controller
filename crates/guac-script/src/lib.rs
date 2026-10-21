@@ -77,6 +77,18 @@
 //! block it sits in, and the pop cleans up whatever it left behind. That is
 //! why the VM steps a counter over the list rather than walking a tree.
 //!
+//! # A stretch of a tick
+//!
+//! An embedder that schedules part of a placement's tick natively runs the
+//! ops between two positions of the placement's own script, as its tick
+//! would reach them ([`Vm::run_span`]): the placement's locals, `my` the
+//! placement, its `system.script timer` as it stands (no tick counted).
+//! The stretch starts and ends between statements of one list, so every
+//! block it opens closes inside it; a `flow end` in it ends it there, as it
+//! would the tick. Design decision 2's player loop runs the portal
+//! manager's own ops this way, its orbs, award and loot check among them,
+//! only which stretches run and when being guacamole's.
+//!
 //! # A script's frame
 //!
 //! Every script opens with PRESCRIPT, whose block holds STARTUP, SHUTDOWN,
@@ -195,8 +207,10 @@
 //!   occurrence of each, 2 intersects, 3 replaces, 4 appends with duplicates,
 //!   5 removes every occurrence. `count` reads the length; written, it
 //!   resizes, new slots holding fresh default elements of the set's element
-//!   type (a new structure, a new number variable, a new reference), so `inc
-//!   count` appends one. `first` and `last` read the ends, nothing when
+//!   type (a new structure, a new number variable, a new reference, or for
+//!   a set of engine objects a fresh one the host makes, [`Host::make`]:
+//!   an orb's landing point is a new `ActorWaypoint`), so `inc count`
+//!   appends one. `first` and `last` read the ends, nothing when
 //!   empty; `random` a member by a draw modulo the count.
 //! - `global.bld`'s numbers, screen positions, colours, sets, structures and
 //!   references are cells made from the file on first use and shared by
@@ -235,6 +249,13 @@
 //!   changes; read, a host member's is asked anew. Two references to one
 //!   host member compare equal. `undefined` reads 0 as a number and as an
 //!   object none.
+//! - A placement reference keeps a point of its own
+//!   (`placementreference.remembered`), which the host keeps on the actor
+//!   it names; one naming nothing still has it, the host keeping it on the
+//!   reference itself (its receiver is the reference's cell). A reading:
+//!   the orbs' delayed spawn remembers where an orb comes out through its
+//!   `orb` reference before the orb exists, then moves the spawn point
+//!   there (AH.20).
 //!
 //! # Values and arithmetic
 //!

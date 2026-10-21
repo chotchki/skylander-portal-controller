@@ -1986,6 +1986,64 @@ pub const COMBAT: &[Registered] = &[
     ),
 ];
 
+/// What AH.20's player loop, orbs and coins reach past AH.16-AH.19's
+/// tables, and a defeated hero's kill (openspec AH.20): each as the
+/// original registers it.
+pub const LOOP: &[Registered] = &[
+    // A coin's fade by distance as it's placed: cosmetic.
+    m(
+        "placement",
+        "near/far alpha fade",
+        "EnumMeasurement",
+        "off|on",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    // The world's origin as a point (a hero's death puts the measurement
+    // actor there): the host's.
+    m(
+        "system",
+        "absolute zero",
+        "PositionMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // A hero's death snapshot for the data mining: the portal's battery
+    // (no battery: the phone is the portal), the console's online object
+    // (none) and the save data it fills. Value cells: nothing reads them
+    // back but the snapshot.
+    m(
+        "redoctaneperipheralscriptobject",
+        "battery remaining",
+        "FloatMeasurement",
+        "per cent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "system",
+        "online",
+        "tfbOnlineScriptObject",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "system",
+        "save data",
+        "ScriptSetReference",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 

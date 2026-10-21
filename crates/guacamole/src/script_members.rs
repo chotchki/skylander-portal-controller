@@ -127,6 +127,8 @@ pub(crate) enum Member {
     RayEnd,
     RayHasContact,
     Viewport,
+    /// `system.absolute zero`: the world's origin as a point (AH.20).
+    AbsoluteZero,
     InactiveController,
     Pad(Button),
     MainStick,
@@ -351,6 +353,7 @@ impl Member {
         add("raycontact", "end", Member::RayEnd);
         add("raycontact", "has contact", Member::RayHasContact);
         add("viewportinfo", "default", Member::Viewport);
+        add("system", "absolute zero", Member::AbsoluteZero);
         add(
             "scriptcontroller",
             "inactive controller",
@@ -423,6 +426,18 @@ impl ScriptWorld {
     fn object(&self, v: Option<Value>) -> Option<Object> {
         let h = self.handle(v?)?;
         self.objs.get(h)
+    }
+
+    /// A fresh engine object a script grows a set of them by
+    /// ([`guac_script::Host::make`]): a waypoint, not put anywhere yet. Any
+    /// other class makes none.
+    pub(crate) fn make(&mut self, class: &str) -> Option<Value> {
+        if class != "actorwaypoint" {
+            return None;
+        }
+        self.waypoints_made.push(None);
+        let i = (self.waypoints_made.len() - 1) as u32;
+        Some(self.objs.value(Object::Waypoint(i)))
     }
 
     /// The actor (or hero) a receiver names: `None` for a host object.
@@ -505,6 +520,9 @@ impl ScriptWorld {
                 let kept = self.actors.get(&a).and_then(|k| k.remembered);
                 kept.or_else(|| self.position(a, engine))
             }
+            Some(Object::RememberedRef(c)) => self.kept_points.get(&c).copied(),
+            Some(Object::Waypoint(i)) => self.waypoints_made.get(i as usize).copied().flatten(),
+            Some(Object::AbsoluteZero) => Some(Vec3::ZERO),
             _ => None,
         }
     }
@@ -531,6 +549,18 @@ impl ScriptWorld {
             Some(Object::Remembered(a)) => {
                 let k = self.actors.get_mut(&a).ok_or(HostFault::Nothing)?;
                 k.remembered = Some(p);
+                Ok(())
+            }
+            Some(Object::RememberedRef(c)) => {
+                self.kept_points.insert(c, p);
+                Ok(())
+            }
+            Some(Object::Waypoint(i)) => {
+                let w = self
+                    .waypoints_made
+                    .get_mut(i as usize)
+                    .ok_or(HostFault::Nothing)?;
+                *w = Some(p);
                 Ok(())
             }
             Some(Object::RayEnd) => {
@@ -808,10 +838,14 @@ impl ScriptWorld {
                 self.actors.get(&h).ok_or(HostFault::Nothing)?;
                 self.objs.value(Object::Origin(h))
             }
-            Member::Remembered => {
-                let h = actor.ok_or(HostFault::Nothing)?;
-                self.objs.value(Object::Remembered(h))
-            }
+            Member::Remembered => match recv {
+                // A reference naming nothing: its own point.
+                Some(Value::Cell(c)) => self.objs.value(Object::RememberedRef(c)),
+                _ => {
+                    let h = actor.ok_or(HostFault::Nothing)?;
+                    self.objs.value(Object::Remembered(h))
+                }
+            },
             Member::ContactType => {
                 let (_, m, found) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
                 Value::Int(if found { i32::from(m.unwrap_or(0)) } else { -1 })
@@ -898,6 +932,7 @@ impl ScriptWorld {
             Member::RayEnd => self.objs.value(Object::RayEnd),
             Member::RayHasContact => Value::Int(i32::from(self.ray_contact(engine).is_some())),
             Member::Viewport => Value::Entity(self.viewport),
+            Member::AbsoluteZero => self.objs.value(Object::AbsoluteZero),
             Member::InactiveController => self.objs.value(Object::Inactive),
             Member::Pad(b) => {
                 let pad = self.pad_of(recv).ok_or(HostFault::Nothing)?;
@@ -971,6 +1006,13 @@ impl ScriptWorld {
                 let a = actor.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 let b = self.handle(o).ok_or(HostFault::Nothing)?;
+                if b == self.viewport {
+                    // Against the gameplay camera: on screen. A stand-in
+                    // answering yes for every point (AH.20): the one reader
+                    // the fight reaches is the orbs' idle bounce, which
+                    // only shows on screen.
+                    return Ok(Value::Int(1));
+                }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
             }
             // AH.16's are answered by `ScriptWorld::get` before this.
@@ -1196,7 +1238,20 @@ impl ScriptWorld {
                 let r = recv.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 let b = self.point(o, engine).ok_or(HostFault::Nothing)?;
-                let a = self.point(r, engine).ok_or(HostFault::Nothing)?;
+                let a = match self.point(r, engine) {
+                    Some(a) => a,
+                    // A reference's own point not kept yet, or a waypoint
+                    // a script made and hasn't put anywhere: put from the
+                    // other point.
+                    None if matches!(
+                        self.handle(r).and_then(|h| self.objs.get(h)),
+                        Some(Object::RememberedRef(_) | Object::Waypoint(_))
+                    ) =>
+                    {
+                        b
+                    }
+                    None => return Err(HostFault::Nothing),
+                };
                 let x = float(v)?;
                 let d = a - b;
                 let to = match m {
@@ -1755,7 +1810,8 @@ impl ScriptWorld {
     /// one of them a body in the seam (a hero, a creature, a prop): the
     /// other's last move stopped on it, or its solid is within [`TOUCH`] of
     /// it where it stands (openspec AH.18: what a Chompy's bite reads). Two
-    /// actors neither of which the seam holds aren't modelled.
+    /// actors neither of which the seam holds touch when their solids are
+    /// within a centimetre (AH.20); one with no solid isn't modelled.
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
@@ -1793,6 +1849,11 @@ impl ScriptWorld {
         }
         if asked {
             Ok(false)
+        } else if self.query(a, engine).is_some() && self.query(b, engine).is_some() {
+            // Neither a body in the seam (a thrown ball against a breakable
+            // the loot system listed, AH.20): their solids where they
+            // stand.
+            Ok(near)
         } else {
             Err(HostFault::Unmodelled)
         }
@@ -2254,7 +2315,8 @@ mod tests {
             )
             .unwrap();
         assert!(contacts.is_empty());
-        // Two actors the seam holds neither of aren't modelled.
+        // Two actors the seam holds neither of touch by their solids
+        // (AH.20): these 5 m apart don't.
         w.actors
             .insert(0x6000_0009, ball(Vec3::new(9.0, 1.0, 0.0), 0.0));
         let neither = w.get_member(
@@ -2267,7 +2329,7 @@ mod tests {
             Member::Collision,
             &mut e,
         );
-        assert_eq!(neither, Err(HostFault::Unmodelled));
+        assert_eq!(neither, Ok(Value::Int(0)));
     }
 
     /// A solid's offset is metres in its file and feet at its members, as
@@ -2378,6 +2440,161 @@ mod tests {
         assert!(((p - Vec3::new(1.0, 2.0, 3.0)).length() - 10.0 * METRES_PER_FOOT).abs() < 1e-5);
         fly(&mut w, &mut e, 5);
         assert_eq!(w.point(kept, &mut e), Some(p));
+    }
+
+    /// AH.20's points: a reference naming nothing keeps a point of its own,
+    /// asked on its cell and put from the other point the first time; a
+    /// waypoint a script makes is a point of its own, nowhere until put;
+    /// any other class makes none.
+    #[test]
+    fn a_reference_naming_nothing_and_a_made_waypoint_keep_their_points() {
+        let mut e = bench();
+        let mut w = world();
+        let target = Vec3::new(3.0, 0.0, 4.0);
+        w.actors.insert(BALL, ball(target, 0.0));
+        let remembered = |w: &mut ScriptWorld, e: &mut Bench, cell: u32| {
+            w.get_member(
+                &at(
+                    "placementreference",
+                    "remembered",
+                    Some(Value::Cell(cell)),
+                    None,
+                ),
+                Member::Remembered,
+                e,
+            )
+            .unwrap()
+        };
+        let kept = remembered(&mut w, &mut e, 7);
+        assert_eq!(w.point(kept, &mut e), None, "nowhere yet");
+        w.set_member(
+            &at(
+                "positionmeasurement",
+                "distance",
+                Some(kept),
+                Some(Value::Entity(BALL)),
+            ),
+            Member::Distance,
+            Value::Float(0.0),
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(w.point(kept, &mut e), Some(target));
+        assert_eq!(remembered(&mut w, &mut e, 7), kept, "the same reference");
+        let other = remembered(&mut w, &mut e, 8);
+        assert_ne!(other, kept);
+        assert_eq!(w.point(other, &mut e), None, "another reference's own");
+        let a = w.make("actorwaypoint").unwrap();
+        let b = w.make("actorwaypoint").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(w.point(a, &mut e), None);
+        w.set_member(
+            &at(
+                "positionmeasurement",
+                "vertical offset",
+                Some(a),
+                Some(Value::Entity(BALL)),
+            ),
+            Member::VerticalOffset,
+            Value::Float(2.5),
+            &mut e,
+        )
+        .unwrap();
+        let p = w.point(a, &mut e).unwrap();
+        assert!((p - (target + Vec3::Y * 2.5 * METRES_PER_FOOT)).length() < 1e-5);
+        assert_eq!(w.point(b, &mut e), None, "the other made one untouched");
+        assert_eq!(w.make("spriteinfo"), None);
+    }
+
+    /// `system.absolute zero` is the world's origin as a point: what a
+    /// hero's death measures from (AH.20).
+    #[test]
+    fn absolute_zero_is_the_worlds_origin() {
+        let mut e = bench();
+        let mut w = world();
+        let zero = w
+            .get_member(
+                &at("system", "absolute zero", None, None),
+                Member::AbsoluteZero,
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(w.point(zero, &mut e), Some(Vec3::ZERO));
+        w.actors.insert(BALL, ball(Vec3::new(3.0, 0.0, 4.0), 0.0));
+        let d = w
+            .get_member(
+                &at(
+                    "positionmeasurement",
+                    "distance",
+                    Some(Value::Entity(BALL)),
+                    Some(zero),
+                ),
+                Member::Distance,
+                &mut e,
+            )
+            .unwrap();
+        assert!(
+            (d.as_f32().unwrap() - 5.0 * FEET_PER_METRE).abs() < 1e-4,
+            "{d:?}"
+        );
+    }
+
+    /// Against the gameplay camera every point is on screen (AH.20's
+    /// stand-in, the orbs' idle bounce its reader), near or far.
+    #[test]
+    fn every_point_is_on_screen_to_the_gameplay_camera() {
+        let mut e = bench();
+        let mut w = world();
+        for at_x in [0.0, 500.0] {
+            w.actors.insert(BALL, ball(Vec3::new(at_x, 0.0, 0.0), 0.0));
+            let c = w
+                .get_member(
+                    &at(
+                        "positionmeasurement",
+                        "collision",
+                        Some(Value::Entity(BALL)),
+                        Some(Value::Entity(w.viewport)),
+                    ),
+                    Member::Collision,
+                    &mut e,
+                )
+                .unwrap();
+            assert_eq!(c, Value::Int(1));
+        }
+    }
+
+    /// Two actors the seam doesn't hold (a thrown ball and a breakable the
+    /// loot system lists, AH.20) touch by their solids where they stand;
+    /// one with no solid isn't modelled.
+    #[test]
+    fn two_actors_off_the_seam_touch_by_their_solids() {
+        let mut e = bench();
+        let mut w = world();
+        const OTHER: Handle = 0x6000_0009;
+        let here = Vec3::new(10.0, 3.0, -5.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        let collision = |w: &mut ScriptWorld, e: &mut Bench| {
+            w.get_member(
+                &at(
+                    "positionmeasurement",
+                    "collision",
+                    Some(Value::Entity(BALL)),
+                    Some(Value::Entity(OTHER)),
+                ),
+                Member::Collision,
+                e,
+            )
+        };
+        w.actors.insert(OTHER, ball(here + Vec3::X, 0.0));
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(1)), "overlapping");
+        w.actors.get_mut(&OTHER).unwrap().position = here + Vec3::X * 10.0;
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "10 m apart");
+        w.actors.insert(OTHER, Actor::blank());
+        assert_eq!(
+            collision(&mut w, &mut e),
+            Err(HostFault::Unmodelled),
+            "no solid"
+        );
     }
 
     #[test]

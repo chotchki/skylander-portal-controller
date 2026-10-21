@@ -39,12 +39,13 @@ use guac_motion::proxy::Surfaces;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{COMBAT, CREATURES, HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{COMBAT, CREATURES, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
     Stall, StallDetector, StallLimit, Unit, Value, Vm, random_literal,
 };
 use guacamole::level_scene;
+use guacamole::player_loop::PlayerLoop;
 use guacamole::script_engine::{Engine, FEET_PER_METRE, Pad};
 use guacamole::scripts::{
     self, FIRST_FIGHT, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
@@ -192,6 +193,8 @@ struct Run {
     next: Handle,
     minion: Option<PlacementId>,
     steps: u32,
+    /// The portal manager's tick as the player loop runs it (AH.20).
+    player_loop: PlayerLoop,
 }
 
 impl Run {
@@ -225,11 +228,9 @@ impl Run {
         }
         let slid = self.with_host(|vm, host| vm.slide(host))?;
         assert!(slid.stopped.is_empty(), "strict mode stops by halting");
-        scripts::portal_manager_clock(&mut self.vm, &self.world)?;
-        if self.minion.is_some() {
-            self.with_host(scripts::manage_combat)?;
-            self.with_host(scripts::manage_projectiles)?;
-        }
+        let joined = self.minion.is_some();
+        let player_loop = self.player_loop.clone();
+        self.with_host(|vm, host| player_loop.step(vm, host, joined))?;
         let r = self.with_host(|vm, host| vm.step(host));
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
@@ -443,6 +444,7 @@ fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
         })
         .collect();
     let program = Arc::new(Program::link(&units).unwrap());
+    let player_loop = PlayerLoop::read(&program);
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, LEVEL, ERUPTOR]
         .iter()
         .map(|&u| (u, &igzs[u as usize]))
@@ -506,6 +508,7 @@ fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
             next,
             minion: None,
             steps: 0,
+            player_loop,
         },
         found,
     )
@@ -946,6 +949,12 @@ struct Script {
     /// and his armour set at F0.
     crit: Option<i32>,
     armour: Option<i32>,
+    /// The save's experience multiplier set at F0 (openspec AH.20: the
+    /// oracle's save reads 1.1, AH.4; a fresh save and guacamole 1).
+    xp_multiplier: Option<f32>,
+    /// His health set at F0 (openspec AH.20: AH.11's `defeat2` set it to 40
+    /// or 60 for a bite or few to beat him).
+    hero_health: Option<i32>,
     /// Steps past the opening's start.
     steps: u32,
 }
@@ -1006,6 +1015,8 @@ struct Snap {
     game_timer: f32,
     /// His player's `enemies defeated`.
     defeated: i32,
+    /// His minion taken off (openspec AH.20: a defeated hero leaving).
+    hero_gone: bool,
     chompies: Vec<ChompySnap>,
     norticus: (Option<String>, Vec3, bool),
     controller: Option<String>,
@@ -1173,6 +1184,7 @@ impl Run {
                 })
                 .and_then(|v| v.as_f32())
                 .unwrap_or(0.0) as i32,
+            hero_gone: self.minion.is_some_and(|m| self.vm.removed(m)),
             chompies,
             norticus: (
                 self.vm.behaviour(nid).map(str::to_owned),
@@ -1217,6 +1229,21 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
             if let Some(crit) = script.crit {
                 let d = run.minion_description();
                 assert!(run.vm.set_field(d, "total crit", Value::Int(crit)));
+            }
+            if let Some(hp) = script.hero_health {
+                assert!(scripts::set_health(&mut run.vm, m, hp));
+            }
+            if let Some(mult) = script.xp_multiplier {
+                let g = run
+                    .vm
+                    .program()
+                    .global_named("combat control data")
+                    .unwrap();
+                let c = run.vm.global(g).map(|v| run.vm.value(v)).unwrap();
+                assert!(
+                    run.vm
+                        .set_field(c, "accolade xp multiplier", Value::Float(mult))
+                );
             }
             if let Some(armour) = script.armour {
                 let c = path(&run, m, "description", &["creature info"]).unwrap();
@@ -1699,7 +1726,8 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
 /// (`ah10-main-1792553632`'s 20 `still` and 20 `fight` drives), each stay
 /// of a Chompy's or Norticus' in one behaviour with a change on both
 /// sides, its behaviour's longest by the names each drive's `chain.json`
-/// resolves, half a frame over for counting in whole frames; and how many
+/// resolves, a frame and a half over (whole frames, and a roll's top);
+/// and how many
 /// drives it read.
 fn ah10_limits() -> (Vec<StallLimit>, usize) {
     ah10_limits_from(&["ah10-main-1792553632"], |_| true)
@@ -1765,7 +1793,11 @@ fn ah10_limits_from(folders: &[&str], keep: impl Fn(&str) -> bool) -> (Vec<Stall
         .map(|((placement, behaviour), frames)| StallLimit {
             placement,
             behaviour,
-            longest_stay: (frames as f32 + 0.5) / 60.0,
+            // A frame and a half over: whole frames counted, and a stay
+            // with a roll in it can run a frame past the drives' longest
+            // (AH.20: a Chompy's alert, its wait a roll up to 0.5 s, 76
+            // steps against AH.10's longest 75 frames).
+            longest_stay: (frames as f32 + 1.5) / 60.0,
         })
         .collect();
     (limits, dirs.len())
@@ -1969,6 +2001,7 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .chain(HERO_MEMBERS)
             .chain(CREATURES)
             .chain(COMBAT)
+            .chain(LOOP)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -2282,13 +2315,13 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
                 let want = s[0] - (80.0 / FEET_PER_METRE) * j as f32 / 60.0;
                 assert!((v - want).abs() < 0.2, "step {j}: {v} against {want}");
             }
+            // At 80 ft/s² a step for at least five steps: from its second
+            // step, or from its third where the reaction's write lands a
+            // step late (AH.20's run, F0 + 801, a second Chompy's mover in
+            // the update that step: AH.57's tick order).
             let level = s
-                .iter()
-                .enumerate()
-                .skip(1)
-                .filter(|(j, v)| {
-                    (**v - (s[0] - (80.0 / FEET_PER_METRE) * *j as f32 / 60.0)).abs() < 0.01
-                })
+                .windows(2)
+                .filter(|w| ((w[0] - w[1]) - (80.0 / FEET_PER_METRE) / 60.0).abs() < 0.01)
                 .count();
             assert!(level >= 5, "{s:?}");
         } else {
@@ -2301,8 +2334,12 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             assert!((s[0] - 24.33).abs() < 0.02, "{}", s[0]);
             assert!((s[6] - 16.9).abs() < 0.3, "{}", s[6]);
         }
-        // A lone push: nothing more for 1.7 s.
-        if p.resist_before == 0.0 && !pushes.iter().any(|q| q.k > p.k && q.k <= p.k + 102) {
+        // A lone push: nothing more for 1.7 s, the run lasting that long.
+        let last = snaps.last().map_or(0, |s| s.k);
+        if p.resist_before == 0.0
+            && p.k + 102 <= last
+            && !pushes.iter().any(|q| q.k > p.k && q.k <= p.k + 102)
+        {
             let gone = snaps[at..]
                 .iter()
                 .find(|s| s.hero_hurt.resist == 0.0)
@@ -2517,8 +2554,14 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
             if a.hurt.resist < 25.0 {
                 let p = push.expect("a push");
                 let want = ((25.0 - a.hurt.resist) / 100.0 * 0.6).max(0.125);
+                // A resistance in its last falling step is gone by the hit:
+                // the combat manager lets it fall before the projectile
+                // manager lands the hit, both ahead of the step (AH.20's
+                // run, 0.12 the step before).
+                let gone = 25.0 / 100.0 * 0.6;
                 assert!(
-                    (p.knock_before - want).abs() < 2e-4,
+                    (p.knock_before - want).abs() < 2e-4
+                        || a.hurt.resist < 0.5 && (p.knock_before - gone).abs() < 2e-4,
                     "{} against {want}",
                     p.knock_before
                 );
@@ -2533,7 +2576,9 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
         }
     }
     println!("{hits} hits, {stuns} stuns");
-    assert!(hits >= 6 && stuns >= 2);
+    // How many lobs land rides on AH.58's aim and the session's draws
+    // (AH.19's run 6, AH.20's 4 once the route's coins drew).
+    assert!(hits >= 4 && stuns >= 2);
     let stalled = stalls(&snaps, &limits);
     assert!(stalled.is_empty(), "{stalled:?}");
     println!("load after: {}", load());
@@ -2857,5 +2902,819 @@ fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
     }
     println!("cases {seen:?}");
     assert_eq!(seen.len(), 4, "every case staged");
+    println!("load after: {}", load());
+}
+
+/// One orb as a run sees it (openspec AH.20): its worth and the steps from
+/// F0 it came out (listed among the active or launching), came down (left
+/// the launching set), was taken (into his player's `xp balls collecting`)
+/// and arrived (left it, its worth paid); his distance to it, in space and
+/// across the ground, ft, at the end of the step before it was taken (what
+/// the take read), and across the ground at the end of the step it came
+/// down.
+#[derive(Debug, Clone, Default)]
+struct OrbLife {
+    worth: i32,
+    out: i64,
+    down: Option<i64>,
+    taken: Option<i64>,
+    arrived: Option<i64>,
+    taken_from: Option<(f32, f32)>,
+    down_ground: Option<f32>,
+}
+
+/// What the orbs' sets hold after a step: each orb's entity, its worth
+/// and where it is.
+#[derive(Debug, Clone, Default)]
+struct OrbSets {
+    active: Vec<(u64, i32, Vec3)>,
+    launching: Vec<u64>,
+    collecting: Vec<u64>,
+}
+
+impl Run {
+    /// `combat control data.$xp ball control`.
+    fn xp_control(&self) -> Option<Value> {
+        let g = self.vm.program().global_named("combat control data")?;
+        let c = self.vm.value(self.vm.global_peek(g)?);
+        self.vm
+            .field(c, "xp ball control")
+            .map(|v| self.vm.value(v))
+    }
+
+    /// Each ball of `set` (a set of `Xp Ball Movement`): its orb's entity
+    /// and worth.
+    fn balls(&self, set: Value) -> Vec<(u64, i32)> {
+        let items = self.vm.set(set).map(<[Value]>::to_vec).unwrap_or_default();
+        items
+            .into_iter()
+            .filter_map(|b| {
+                let b = self.vm.value(b);
+                let xb = self.vm.field(b, "xp ball").map(|v| self.vm.value(v))?;
+                let orb = match self.vm.field(xb, "orb").map(|v| self.vm.value(v)) {
+                    Some(Value::Entity(e)) => e,
+                    _ => return None,
+                };
+                let worth = self
+                    .vm
+                    .field(xb, "xp val")
+                    .and_then(|v| self.vm.value(v).as_i32())?;
+                Some((orb, worth))
+            })
+            .collect()
+    }
+
+    fn orb_sets(&self) -> OrbSets {
+        let Some(xbc) = self.xp_control() else {
+            return OrbSets::default();
+        };
+        let set = |name: &str| self.vm.field(xbc, name).map(|v| self.vm.value(v));
+        let mut active: Vec<(u64, i32, Vec3)> = Vec::new();
+        for n in ["all active balls", "balls launching"] {
+            for (orb, worth) in set(n).map(|s| self.balls(s)).unwrap_or_default() {
+                if !active.iter().any(|a| a.0 == orb) {
+                    let at = self.world.actor(orb).map_or(Vec3::ZERO, |a| a.position);
+                    active.push((orb, worth, at));
+                }
+            }
+        }
+        let launching = set("balls launching")
+            .map(|s| self.balls(s).into_iter().map(|b| b.0).collect())
+            .unwrap_or_default();
+        let collecting = self
+            .minion
+            .and_then(|m| {
+                path(
+                    self,
+                    m,
+                    "my Minion Description",
+                    &["player joined data", "xp balls collecting"],
+                )
+            })
+            .map(|s| self.balls(s).into_iter().map(|b| b.0).collect())
+            .unwrap_or_default();
+        OrbSets {
+            active,
+            launching,
+            collecting,
+        }
+    }
+
+    /// His player's `player stat tracking.$exp collected`: what
+    /// `Game - Award Experience` has paid this session (the figure's own
+    /// experience is AH.23's buffer).
+    fn exp_collected(&self) -> i32 {
+        self.minion
+            .and_then(|m| {
+                path(
+                    self,
+                    m,
+                    "my Minion Description",
+                    &[
+                        "player joined data",
+                        "player stat tracking",
+                        "exp collected",
+                    ],
+                )
+            })
+            .and_then(|v| v.as_i32())
+            .unwrap_or(0)
+    }
+}
+
+/// Follows every orb from step `from` (F0 + `from`) for `steps` steps,
+/// `walk` moving the hero before each (given the orbs as the last step left
+/// them), and returns each orb's life by its entity and each step's
+/// experience paid.
+fn follow_orbs(
+    run: &mut Run,
+    from: i64,
+    steps: i64,
+    mut walk: impl FnMut(&mut Run, i64, &OrbSets),
+) -> (BTreeMap<u64, OrbLife>, Vec<(i64, i32)>) {
+    let mut lives: BTreeMap<u64, OrbLife> = BTreeMap::new();
+    let mut paid = Vec::new();
+    let mut before = run.orb_sets();
+    let mut exp_before = run.exp_collected();
+    for f in from..from + steps {
+        walk(run, f, &before);
+        let hero_at_start = run.hero().pivot;
+        run.step().unwrap_or_else(|h| panic!("F0 + {f}: {h}"));
+        let now = run.orb_sets();
+        for (orb, worth, at) in &now.active {
+            let life = lives.entry(*orb).or_insert(OrbLife {
+                worth: *worth,
+                out: f,
+                ..OrbLife::default()
+            });
+            if life.down.is_none() && !now.launching.contains(orb) {
+                life.down = Some(f);
+                let d = *at - run.hero().pivot;
+                life.down_ground = Some(feet(Vec3::new(d.x, 0.0, d.z).length()));
+            }
+        }
+        for orb in &now.collecting {
+            let life = lives.get_mut(orb).expect("a taken orb came out");
+            if life.taken.is_none() {
+                life.taken = Some(f);
+                // Where it was, and he, as the take read them: the step
+                // before's end.
+                let at = before
+                    .active
+                    .iter()
+                    .find(|a| a.0 == *orb)
+                    .map_or(Vec3::ZERO, |a| a.2);
+                let d = at - hero_at_start;
+                life.taken_from = Some((feet(d.length()), feet(Vec3::new(d.x, 0.0, d.z).length())));
+            }
+        }
+        for orb in &before.collecting {
+            if !now.collecting.contains(orb) {
+                lives.get_mut(orb).unwrap().arrived = Some(f);
+            }
+        }
+        let exp = run.exp_collected();
+        if exp != exp_before {
+            paid.push((f, exp - exp_before));
+        }
+        exp_before = exp;
+        before = now;
+    }
+    (lives, paid)
+}
+
+/// A lob's kill and its orbs against AH.10's (openspec AH.20, pickups'
+/// Experience comes out as orbs and A hero collects orbs): each Chompy
+/// beaten makes its experience times the save's multiplier in 1-point
+/// orbs; they come out two a step from the step after the kill or the
+/// one after, and down within 1.2 s (AH.10's 4-72 frames); one down
+/// within 20 ft of him across the ground is taken the step after it comes
+/// down, never in the air, and flies in at 55 ft/s, paying its worth the
+/// step it arrives (AH.10: 8.4 ft in 10 frames, 20 ft in 22); those out of
+/// reach stay until he walks within 20 ft across the ground. Returns the
+/// lives, the experience paid and how many Chompies the lob beat.
+/// A lob's orbs followed ([`lob_and_collect`]): each orb's life, the
+/// experience paid by step, how many the lob beat and the step it did.
+struct Lobbed {
+    lives: BTreeMap<u64, OrbLife>,
+    paid: Vec<(i64, i32)>,
+    beaten: usize,
+    kill: i64,
+}
+
+fn lob_and_collect(mult: Option<f32>) -> Lobbed {
+    let (mut run, _) = fight(Script {
+        lob: Some(20),
+        xp_multiplier: mult,
+        steps: 40,
+        ..Script::default()
+    });
+    let health = |run: &Run, c: usize| {
+        let id = run.placement(CHOMPIES[c]);
+        path(run, id, "description", &["creature info", "hp"])
+            .and_then(|v| v.as_f32())
+            .unwrap_or(0.0)
+    };
+    let mut beaten = [false; 4];
+    let mut kill: Option<i64> = None;
+    // Where he stands, then once every orb is down a walk to each left,
+    // 4 m/s across the ground.
+    let mut target: Option<u64> = None;
+    let (lives, paid) = follow_orbs(&mut run, 40, 900, |run, f, sets| {
+        for (c, b) in beaten.iter_mut().enumerate() {
+            if !*b && health(run, c) <= 0.0 {
+                *b = true;
+                // Its health read 0 at the end of the step before.
+                kill.get_or_insert(f - 1);
+            }
+        }
+        if f < 200 || sets.active.iter().any(|a| sets.launching.contains(&a.0)) {
+            return;
+        }
+        if target
+            .is_none_or(|t| !sets.active.iter().any(|a| a.0 == t) || sets.collecting.contains(&t))
+        {
+            let h = run.hero().pivot;
+            target = sets
+                .active
+                .iter()
+                .filter(|a| !sets.collecting.contains(&a.0))
+                .min_by(|a, b| (a.2 - h).length().total_cmp(&(b.2 - h).length()))
+                .map(|a| a.0);
+        }
+        let Some(at) = target.and_then(|t| sets.active.iter().find(|a| a.0 == t)) else {
+            return;
+        };
+        let h = run.hero().pivot;
+        let d = Vec3::new(at.2.x - h.x, 0.0, at.2.z - h.z);
+        if d.length() > 0.1 {
+            let to = h + d.normalize() * (4.0 / 60.0) - Vec3::Y;
+            let facing = run.hero().facing;
+            run.put(to, facing);
+        }
+    });
+    let n = beaten.iter().filter(|b| **b).count();
+    let kill = kill.expect("the lob beats a Chompy");
+    println!("the lob beats {n} at F0 + {kill}");
+    Lobbed {
+        lives,
+        paid,
+        beaten: n,
+        kill,
+    }
+}
+
+fn check_orbs(l: &Lobbed, per_chompy: usize) {
+    let Lobbed {
+        lives,
+        paid,
+        beaten,
+        kill,
+    } = l;
+    let (beaten, kill) = (*beaten, *kill);
+    assert_eq!(lives.len(), per_chompy * beaten, "orbs per Chompy beaten");
+    assert!(lives.values().all(|l| l.worth == 1), "every one worth 1");
+    let mut outs: BTreeMap<i64, usize> = BTreeMap::new();
+    for l in lives.values() {
+        *outs.entry(l.out).or_default() += 1;
+    }
+    println!("out per step {outs:?}");
+    assert!(outs.values().all(|&n| n <= 2), "two a step at most");
+    let first = *outs.keys().next().unwrap();
+    assert!(
+        first == kill + 1 || first == kill + 2,
+        "the first out at F0 + {first}, the kill at F0 + {kill}"
+    );
+    let mut taken_where_they_lay = 0;
+    let mut walked_to = 0;
+    for (orb, l) in lives {
+        let down = l.down.expect("every orb comes down");
+        let fall = down - l.out;
+        println!(
+            "orb {orb:#x}: out F0 + {} ({} after the first), down {fall} steps on {:.2} ft across, taken {:?} from {:?}, arrived {:?}",
+            l.out,
+            l.out - first,
+            l.down_ground.unwrap(),
+            l.taken,
+            l.taken_from,
+            l.arrived
+        );
+        assert!((1..=72).contains(&fall), "down within 1.2 s: {fall}");
+        let taken = l.taken.expect("every orb taken, as he walks in");
+        assert!(taken > down, "never taken in the air");
+        let (space, ground) = l.taken_from.unwrap();
+        assert!(ground <= 20.0, "within 20 ft across the ground: {ground}");
+        if l.down_ground.unwrap() <= 20.0 {
+            // Down within reach: taken the next step, as it lay.
+            assert_eq!(taken, down + 1, "taken as it comes down");
+            taken_where_they_lay += 1;
+        } else {
+            // Walked to: out of reach as it came down.
+            walked_to += 1;
+        }
+        let arrived = l.arrived.expect("every orb taken arrives");
+        let want = (space / 55.0 * 60.0 - 1e-3).ceil() as i64;
+        assert!(
+            arrived - taken == want || arrived - taken == want + 1,
+            "{space:.2} ft in {} steps, want {want}",
+            arrived - taken
+        );
+        assert!(
+            paid.iter().any(|(f, _)| *f == arrived),
+            "its worth paid the step it arrives"
+        );
+    }
+    let total: i32 = paid.iter().map(|p| p.1).sum();
+    assert_eq!(total as usize, lives.len(), "every orb's worth paid");
+    println!(
+        "{taken_where_they_lay} taken where they came down, {walked_to} walked to; {total} experience"
+    );
+    assert!(walked_to > 0, "some out of reach as they come down");
+}
+
+/// AH.10's orbs at guacamole's multiplier, 1 (a fresh save): four of 1 a
+/// Chompy, so the lob's two make eight and 8 experience.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_beaten_chompys_orbs_come_down_and_fly_to_him_as_ah10s() {
+    println!("load before: {}", load());
+    check_orbs(&lob_and_collect(None), 4);
+    println!("load after: {}", load());
+}
+
+/// At the oracle's save's multiplier, 1.1 (AH.4's read, one accolade
+/// done): a Chompy's 4.4 makes five orbs of 1, the fraction one more
+/// (AH.10: the twenty fights' 80 Chompies made 400).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn at_the_oracles_multiplier_a_chompy_makes_five_orbs() {
+    println!("load before: {}", load());
+    check_orbs(&lob_and_collect(Some(1.1)), 5);
+    println!("load after: {}", load());
+}
+
+/// A big orb on the disc's own macro (openspec AH.20; pickups' A big orb):
+/// `Xp Balls - Create Exp Balls` called as `Combat - Kill Creature` calls
+/// it, for a creature worth 50, 1,000 times on the session's seeded
+/// generator, the orbs left waiting to come out (the macro fades the
+/// oldest past 50 itself): its first orb is 25 between 207 and 288 times
+/// (25 in 101, mean +- 3 sd) and 50 otherwise, every kill's orbs summing
+/// to 50.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_big_orb_splits_by_the_discs_roll() {
+    println!("load before: {}", load());
+    // At anchor B, the four awake and their descriptions built.
+    let (mut run, _) = fight(Script {
+        steps: 1,
+        ..Script::default()
+    });
+    let id = run.placement("Enemy_Chompy(1)");
+    let info = path(&run, id, "description", &["creature info"]).unwrap();
+    let params = run
+        .vm
+        .field(info, "character parameters")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    let started = Instant::now();
+    let mut first: BTreeMap<i32, usize> = BTreeMap::new();
+    let mut splits: BTreeMap<Vec<i32>, usize> = BTreeMap::new();
+    let next_id = |run: &Run| {
+        let xbc = run.xp_control().unwrap();
+        run.vm
+            .field(xbc, "Next Ball ID")
+            .and_then(|v| run.vm.value(v).as_i32())
+            .unwrap()
+    };
+    for _ in 0..1000 {
+        // Kill Creature zeroes the experience after the call.
+        assert!(run.vm.set_field(params, "exp value", Value::Int(50)));
+        // This kill's orbs: their ids from the next one on (the pool keeps
+        // older ones, the clean-up leaving it, and prunes it to 50 itself).
+        let from = next_id(&run);
+        run.with_host(|vm, host| {
+            vm.call_with(
+                Some(id),
+                "Xp Balls - Create Exp Balls",
+                &[
+                    ("incoming creature info", info),
+                    ("spawn loc", Value::Null),
+                    ("force count", Value::Int(-1)),
+                    ("force value", Value::Int(-1)),
+                    ("force h rate", Value::Int(-1)),
+                    ("time mult", Value::Float(1.0)),
+                    ("elemental zone bonus", Value::Int(0)),
+                ],
+                &[],
+                host,
+            )
+        })
+        .unwrap_or_else(|h| panic!("{h}"));
+        let xbc = run.xp_control().unwrap();
+        let mut balls: BTreeMap<i32, i32> = BTreeMap::new();
+        for n in ["ball movement pool", "balls launching"] {
+            let set = run.vm.field(xbc, n).map(|v| run.vm.value(v)).unwrap();
+            for b in run.vm.set(set).map(<[Value]>::to_vec).unwrap_or_default() {
+                let b = run.vm.value(b);
+                let xb = run.vm.field(b, "xp ball").map(|v| run.vm.value(v)).unwrap();
+                let get = |n: &str| {
+                    run.vm
+                        .field(xb, n)
+                        .and_then(|v| run.vm.value(v).as_i32())
+                        .unwrap()
+                };
+                if get("my ID") >= from {
+                    balls.insert(get("my ID"), get("xp val"));
+                }
+            }
+        }
+        let worths: Vec<i32> = balls.into_values().collect();
+        assert_eq!(worths.iter().sum::<i32>(), 50, "{worths:?}");
+        *first.entry(worths[0]).or_default() += 1;
+        *splits.entry(worths.clone()).or_default() += 1;
+    }
+    let xbc = run.xp_control().unwrap();
+    let pool = run
+        .vm
+        .field(xbc, "ball movement pool")
+        .and_then(|v| run.vm.set(run.vm.value(v)).map(<[Value]>::len))
+        .unwrap();
+    println!("the pool at the end: {pool} (its own pruning past 50)");
+    assert!(pool <= 60, "{pool}");
+    println!(
+        "first orb {first:?}; splits {splits:?}; {:.1?}",
+        started.elapsed()
+    );
+    assert_eq!(first.keys().copied().collect::<Vec<_>>(), [25, 50]);
+    assert!((207..=288).contains(&first[&25]), "{}", first[&25]);
+    println!("load after: {}", load());
+}
+
+/// An AH.11 coin drive read back (openspec AH.20): each record's game time
+/// (s from its first, by the oracle's clamped frame times), the hero's
+/// pivot, the loot entries listed (by placement) and his figure's gold.
+struct CoinDrive {
+    name: String,
+    t: Vec<f32>,
+    hero: Vec<Vec3>,
+    loot: Vec<Vec<String>>,
+    gold: Vec<f32>,
+}
+
+impl CoinDrive {
+    fn read(dir: &Path) -> Self {
+        let json = |n: &str| -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(dir.join(n)).unwrap()).unwrap()
+        };
+        let rec = json("recording.json");
+        let records = json("chain-records.json");
+        let mut t = vec![0.0f32];
+        for r in rec
+            .as_array()
+            .unwrap()
+            .iter()
+            .take(records.as_array().unwrap().len() - 1)
+        {
+            let c = &r["clock"];
+            let dt = if c["logic_stopped"].as_bool().unwrap() {
+                0.0
+            } else {
+                let pr = c["presentation_rate"].as_f64().unwrap() as f32;
+                let d = (c["frame_delta"].as_f64().unwrap() as f32).clamp(0.5 * pr, 3.0 * pr);
+                d * c["logic_scale"].as_f64().unwrap() as f32
+                    * c["object_scale"].as_f64().unwrap() as f32
+            };
+            t.push(t.last().unwrap() + dt);
+        }
+        let (mut hero, mut loot, mut gold) = (Vec::new(), Vec::new(), Vec::new());
+        for r in records.as_array().unwrap() {
+            let items = r["items"].as_array().unwrap();
+            let h = items.iter().find(|i| i["kind"] == "hero").unwrap();
+            let p: Vec<f32> = h["body"]["position"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap() as f32)
+                .collect();
+            hero.push(Vec3::new(p[0], p[1], p[2]));
+            gold.push(h["vars"]["gold"].as_f64().unwrap() as f32);
+            loot.push(
+                items
+                    .iter()
+                    .filter(|i| i["kind"] == "coin")
+                    .map(|i| i["placement"].as_str().unwrap().to_owned())
+                    .collect(),
+            );
+        }
+        CoinDrive {
+            name: dir.file_name().unwrap().to_string_lossy().into_owned(),
+            t,
+            hero,
+            loot,
+            gold,
+        }
+    }
+
+    /// Where he was at game time `at`, between the records either side.
+    fn hero_at(&self, at: f32) -> Vec3 {
+        let k = self.t.partition_point(|&x| x <= at).max(1) - 1;
+        if k + 1 >= self.t.len() {
+            return *self.hero.last().unwrap();
+        }
+        let span = (self.t[k + 1] - self.t[k]).max(1e-6);
+        let x = ((at - self.t[k]) / span).clamp(0.0, 1.0);
+        self.hero[k].lerp(self.hero[k + 1], x)
+    }
+
+    /// Each coin taken in the drive: the game time of the record its entry
+    /// is first gone from, and his distance to it in space then (ft).
+    fn takes(&self, coin_at: impl Fn(&str) -> Vec3) -> BTreeMap<String, (f32, f32)> {
+        let mut out = BTreeMap::new();
+        for k in 1..self.loot.len() {
+            for c in &self.loot[k - 1] {
+                if !self.loot[k].contains(c) {
+                    let d = feet((coin_at(c) - self.hero[k - 1]).length());
+                    out.insert(c.clone(), (self.t[k], d));
+                }
+            }
+        }
+        out
+    }
+
+    /// Each rise of his gold: game time and by how much.
+    fn gold_rises(&self) -> Vec<(f32, f32)> {
+        (1..self.gold.len())
+            .filter(|&k| self.gold[k] > self.gold[k - 1])
+            .map(|k| (self.t[k], self.gold[k] - self.gold[k - 1]))
+            .collect()
+    }
+}
+
+impl Run {
+    /// The loot in play (`Macros_UI`'s `LootInPlay`) and his player's
+    /// `loot i collect`: each entry's coin, by its placement's name.
+    fn coins(&self) -> (Vec<String>, Vec<String>) {
+        let ui_obj = self
+            .files
+            .placed
+            .iter()
+            .find(|p| p.name == "Macros_UI")
+            .unwrap()
+            .obj;
+        let ui = self.vm.placement_of(self.handles[&ui_obj]).unwrap();
+        let names = |set: Option<Value>| -> Vec<String> {
+            let items = set
+                .and_then(|s| self.vm.set(self.vm.value(s)).map(<[Value]>::to_vec))
+                .unwrap_or_default();
+            items
+                .into_iter()
+                .filter_map(|e| {
+                    let e = self.vm.value(e);
+                    let a = self.vm.field(e, "lootActor").map(|v| self.vm.value(v))?;
+                    let Value::Entity(h) = a else {
+                        return None;
+                    };
+                    let obj = self.handles.iter().find(|(_, x)| **x == h)?.0;
+                    self.files
+                        .placed
+                        .iter()
+                        .find(|p| p.obj == *obj)
+                        .map(|p| p.name.clone())
+                })
+                .collect()
+        };
+        let in_play = names(self.vm.local(ui, "LootInPlay"));
+        let collecting = names(self.minion.and_then(|m| {
+            path(
+                self,
+                m,
+                "my Minion Description",
+                &["player joined data", "loot i collect"],
+            )
+        }));
+        (in_play, collecting)
+    }
+
+    /// His player's `player stat tracking.$loot collected`: what
+    /// `Game - Award Money` has paid this session (the figure's own gold is
+    /// AH.23's buffer).
+    fn loot_collected(&self) -> i32 {
+        self.minion
+            .and_then(|m| {
+                path(
+                    self,
+                    m,
+                    "my Minion Description",
+                    &[
+                        "player joined data",
+                        "player stat tracking",
+                        "loot collected",
+                    ],
+                )
+            })
+            .and_then(|v| v.as_i32())
+            .unwrap_or(0)
+    }
+}
+
+/// AH.11's coin drives replayed headless (openspec AH.20; pickups' Coins):
+/// the hero put each step where the drive had him at that game time, from
+/// the level's start with his scripts joined. A coin is taken at a check
+/// every 0.25 s (15 steps) once within 12 ft of him in space, and not at
+/// the check before; its gold paid 0.48 s (29 steps) on, one taken while
+/// another slides starting both again so they pay together; within a
+/// check's 0.25 s of the drive's own take, by the same coins and the same
+/// gold. `Coin_spinning(1)` was taken before anchor F, so it's left out of
+/// the fall line's drives.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.11's recordings; run on the Mac"]
+fn spinning_coins_fly_to_him_and_pay_as_ah11s() {
+    println!("load before: {}", load());
+    let root = env_or_dotenv("GUAC_CAPTURE_DIR").expect("GUAC_CAPTURE_DIR: AH.11's recordings");
+    let base = Path::new(&root).join("BLUS30968");
+    let mut drives = Vec::new();
+    for f in ["ah11-coinsw-1792571832", "ah11-coinsf-1792572230"] {
+        let mut d: Vec<PathBuf> = std::fs::read_dir(base.join(f))
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.join("chain-records.json").is_file())
+            .collect();
+        d.sort();
+        drives.extend(d);
+    }
+    assert_eq!(drives.len(), 6);
+    for dir in drives {
+        let drive = CoinDrive::read(&dir);
+        let (mut run, _) = joined(Mode::Strict);
+        let coin_at = |run: &Run, c: &str| run.placed(c).1;
+        let theirs = drive.takes(|c| {
+            run.files
+                .placed
+                .iter()
+                .find(|p| p.name == c && p.obj.unit == LEVEL)
+                .map_or(Vec3::ZERO, |p| Vec3::from_array(p.position))
+        });
+        let skip = |c: &str| c == "Coin_spinning(1)" || !scripts::PICKUPS.contains(&c);
+        let gold_theirs: f32 = drive
+            .gold_rises()
+            .iter()
+            .filter(|(t, _)| *t > 0.0)
+            .map(|g| g.1)
+            .sum();
+        // Two seconds at the drive's start first, for what was taken before
+        // it (the fall line's first coin, which wakes as he comes within its
+        // range and can't be taken for 0.7 s) to be taken and paid.
+        for _ in 0..120 {
+            let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+            hero.pivot = drive.hero[0];
+            hero.walk.velocity = Vec3::ZERO;
+            run.step().unwrap_or_else(|h| panic!("{}: {h}", drive.name));
+        }
+        // Ours: the hero where the drive had him, each step.
+        let steps = (drive.t.last().unwrap() * 60.0) as i64 + 60;
+        let mut ours: BTreeMap<String, (i64, f32)> = BTreeMap::new();
+        let mut paid: Vec<(i64, i32)> = Vec::new();
+        let (mut before, _) = run.coins();
+        let mut paid_before = run.loot_collected();
+        let mut checks: Vec<i64> = Vec::new();
+        let timer = |run: &Run| {
+            let m = run.minion.unwrap();
+            path(
+                run,
+                m,
+                "my Minion Description",
+                &["player joined data", "timer"],
+            )
+            .and_then(|v| v.as_f32())
+            .unwrap_or(0.0)
+        };
+        let mut timer_before = timer(&run);
+        for s in 0..steps {
+            let at = drive.hero_at(s as f32 / 60.0);
+            let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+            hero.pivot = at;
+            hero.walk.velocity = Vec3::ZERO;
+            let from = at;
+            run.step()
+                .unwrap_or_else(|h| panic!("{}: step {s}: {h}", drive.name));
+            let t = timer(&run);
+            if t != timer_before {
+                checks.push(s);
+            }
+            timer_before = t;
+            let (now, _) = run.coins();
+            for c in &before {
+                if !now.contains(c) {
+                    let d = feet((coin_at(&run, c) - from).length());
+                    ours.insert(c.clone(), (s, d));
+                }
+            }
+            before = now;
+            let p = run.loot_collected();
+            if p != paid_before {
+                paid.push((s, p - paid_before));
+            }
+            paid_before = p;
+        }
+        let ours: BTreeMap<String, (i64, f32)> =
+            ours.into_iter().filter(|(c, _)| !skip(c)).collect();
+        let theirs: BTreeMap<String, (f32, f32)> =
+            theirs.into_iter().filter(|(c, _)| !skip(c)).collect();
+        println!(
+            "{}: theirs {theirs:?}, gold +{gold_theirs}; ours {ours:?}, paid {paid:?}",
+            drive.name
+        );
+        assert_eq!(
+            ours.keys().collect::<Vec<_>>(),
+            theirs.keys().collect::<Vec<_>>(),
+            "the same coins taken"
+        );
+        for (c, (s, d)) in &ours {
+            assert!(*d <= 12.0, "{c}: taken {d:.2} ft off");
+            assert!(checks.contains(s), "{c}: taken at a check");
+            // Not within 12 ft at the check before.
+            let prev = checks.iter().rev().find(|x| **x < *s).copied();
+            if let Some(p) = prev {
+                let then = drive.hero_at(p as f32 / 60.0);
+                let d0 = feet((coin_at(&run, c) - then).length());
+                assert!(
+                    d0 > 12.0,
+                    "{c}: within reach at the check before ({d0:.2} ft)"
+                );
+            }
+            let (t, _) = theirs[c];
+            let ours_t = *s as f32 / 60.0;
+            assert!(
+                (ours_t - t).abs() <= 0.25 + 1.0 / 60.0 + 0.03,
+                "{c}: ours {ours_t:.3} s, theirs {t:.3} s"
+            );
+        }
+        // Paid 0.48 s after the last take before it: 29 steps.
+        let mut takes: Vec<i64> = ours.values().map(|v| v.0).collect();
+        takes.sort();
+        for (s, n) in &paid {
+            let last = *takes
+                .iter()
+                .rev()
+                .find(|t| *t < s)
+                .expect("a take before it");
+            assert_eq!(
+                s - last,
+                29,
+                "{}: paid {n} at {s}, the last take {last}",
+                drive.name
+            );
+        }
+        let ours_gold: i32 = paid.iter().map(|p| p.1).sum();
+        assert_eq!(ours_gold as f32, gold_theirs, "{}: the gold", drive.name);
+    }
+    println!("load after: {}", load());
+}
+
+/// A defeated hero's sequence (openspec AH.20, the player loop's death
+/// sequence; combat's A defeated hero), his health set to 20 at F0 so a
+/// second bite beats him: his hurt reaction from the step after the
+/// killing bite, 8 steps on every creature within 30 ft knocked back at
+/// strength 25 and none past it (AH.11's `defeat2`: 8 records, 0.13 s, the
+/// Chompies 5.6-20.9 ft off), his mode -1 28 steps after the knock (AH.11's
+/// 28 records), and his minion taken off 133-134 steps after the bite
+/// (AH.11's 133-134 records): the kill strict through the death's
+/// data-mining snapshot.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_defeated_hero_knocks_them_back_and_leaves() {
+    println!("load before: {}", load());
+    let (_, snaps) = fight(Script {
+        hero_health: Some(20),
+        steps: 900,
+        ..Script::default()
+    });
+    let at = |p: &dyn Fn(&Snap) -> bool| snaps.iter().find(|s| p(s)).map(|s| s.k);
+    let bite = at(&|s| s.health <= 0.0).expect("beaten");
+    let reaction = at(&|s| s.k > bite && s.hero_hurt.mode == 1).unwrap();
+    let knock = at(&|s| s.k > bite && s.chompies.iter().any(|c| c.hurt.strength == 25.0)).unwrap();
+    let out = at(&|s| s.k > bite && s.hero_hurt.mode == -1).unwrap();
+    let gone = at(&|s| s.hero_gone).expect("he leaves");
+    let before = snaps.iter().find(|s| s.k == knock - 1).unwrap();
+    let knocked = snaps.iter().find(|s| s.k == knock).unwrap();
+    let off: Vec<f32> = before
+        .chompies
+        .iter()
+        .map(|c| feet((c.pos - before.hero).length()))
+        .collect();
+    println!(
+        "beaten at F0 + {bite}; reaction F0 + {reaction}; knock F0 + {knock} ({off:.1?} ft off); mode -1 F0 + {out}; gone F0 + {gone} ({:.3} s after the bite)",
+        (gone - bite) as f32 / 60.0
+    );
+    assert_eq!(reaction, bite + 1);
+    assert_eq!(knock - reaction, 8, "0.13 s on");
+    for (c, d) in off.iter().enumerate() {
+        let k = knocked.chompies[c].hurt.strength == 25.0;
+        assert_eq!(k, *d < 30.0, "{}: {d:.1} ft, knocked {k}", CHOMPIES[c]);
+    }
+    assert!((27..=29).contains(&(out - knock)), "{}", out - knock);
+    // In steps, as AH.11's records count (its 133-134 records read 2.18-2.20
+    // s on the oracle's frame times; 134 of ours, 2.233 s at 60 a second).
+    assert!((133..=134).contains(&(gone - bite)), "{}", gone - bite);
     println!("load after: {}", load());
 }
