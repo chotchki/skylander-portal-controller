@@ -513,6 +513,11 @@ pub struct Vm {
     /// those running are stepped once a frame ([`Vm::slide`]).
     sliders: Vec<Slider>,
     running: usize,
+    /// The sliders that may still run, by index, in the order begun: what
+    /// a frame's slides and a script's write scan, rather than every
+    /// slider a session has made (about 25 a second in the fight). One
+    /// that ended leaves at the next scan.
+    live: Vec<u32>,
     /// Frames [`Vm::slide`] has begun: a slider begun in a frame first moves
     /// in the next.
     frame: u64,
@@ -592,6 +597,7 @@ impl Vm {
             trace: None,
             sliders: Vec::new(),
             running: 0,
+            live: Vec::new(),
             frame: 0,
             slid: false,
             sliding: false,
@@ -1067,10 +1073,14 @@ impl Vm {
         self.frame += 1;
         self.slid = true;
         if self.running == 0 {
+            self.live.clear();
             return Ok(report);
         }
         let dt = self.config.tick_seconds;
-        for i in 0..self.sliders.len() {
+        let live = std::mem::take(&mut self.live);
+        let mut failed = None;
+        for &id in &live {
+            let i = id as usize;
             let s = &mut self.sliders[i];
             if !s.running || s.begun >= self.frame {
                 continue;
@@ -1101,15 +1111,30 @@ impl Vm {
             self.sliding = true;
             let result = self.write(spot, v, host);
             self.sliding = false;
-            if let Some(halt) = self.finish(result)? {
-                if self.sliders[i].running {
-                    self.sliders[i].running = false;
-                    self.running -= 1;
+            match self.finish(result) {
+                Ok(None) => {}
+                Ok(Some(halt)) => {
+                    if self.sliders[i].running {
+                        self.sliders[i].running = false;
+                        self.running -= 1;
+                    }
+                    report.stopped.push(halt);
                 }
-                report.stopped.push(halt);
+                Err(halt) => {
+                    failed = Some(halt);
+                    break;
+                }
             }
         }
-        Ok(report)
+        // Any begun meanwhile follow those scanned, in the order begun.
+        let begun = std::mem::replace(&mut self.live, live);
+        self.live.extend(begun);
+        let sliders = &self.sliders;
+        self.live.retain(|&i| sliders[i as usize].running);
+        match failed {
+            Some(halt) => Err(halt),
+            None => Ok(report),
+        }
     }
 
     /// A tick the embedder ran natively for a placement (the portal
@@ -1125,6 +1150,12 @@ impl Vm {
     /// Sliders running now.
     pub fn sliders_running(&self) -> usize {
         self.running
+    }
+
+    /// Sliders a frame's slides and a script's write scan: those running,
+    /// and any that ended since the last scan.
+    pub fn sliders_scanned(&self) -> usize {
+        self.live.len()
     }
 
     /// One tick of one placement. `Ok(Some)` is a play-mode stop.
@@ -2539,6 +2570,7 @@ impl Vm {
         });
         self.running += 1;
         let id = (self.sliders.len() - 1) as u32;
+        self.live.push(id);
         self.op_state.entry(op).or_default().cached = Some(Value::Slider(id));
         self.push(program, op, BlockKind::Plain);
         Ok(())
@@ -2567,12 +2599,15 @@ impl Vm {
             other => other,
         };
         let k = key(spot);
-        for s in &mut self.sliders {
+        for &i in &self.live {
+            let s = &mut self.sliders[i as usize];
             if s.running && key(s.spot) == k {
                 s.running = false;
                 self.running -= 1;
             }
         }
+        let sliders = &self.sliders;
+        self.live.retain(|&i| sliders[i as usize].running);
     }
 
     /// A slider's `sequence` members and `slider.ignores time scales`

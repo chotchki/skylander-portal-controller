@@ -151,6 +151,36 @@ fn a_slide_eases_its_place_from_the_next_frame_and_lands_on_its_target() {
     assert_eq!(vm.local(id, "inside"), Some(Value::Int(1)));
 }
 
+/// A slider that ended leaves the scan (the AH.19 and AH.20 review): a
+/// script beginning a two-frame slide every tick makes 300 over 300 frames,
+/// and each frame's slides and each write scan only those still running,
+/// not every slider the session made.
+#[test]
+fn an_ended_slider_leaves_the_scan() {
+    let p = program(|w| {
+        let v = fvar(w, "v");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let to = w.int(600);
+                let secs = w.float(2.0 * TICK_SECONDS);
+                let (out, in_) = (w.int(0), w.int(0));
+                let (p, _) = slide(w, &[El::Local(v)], to, secs, out, in_);
+                w.end_block(p);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    vm.add(HANDLE, "Slider", 0);
+    let mut host = Bare;
+    for _ in 0..300 {
+        vm.step(&mut host).unwrap();
+        assert!(vm.sliders_scanned() <= 2, "{}", vm.sliders_scanned());
+        assert_eq!(vm.sliders_scanned(), vm.sliders_running());
+    }
+}
+
 /// [`Vm::step`] slides itself only when the embedder hasn't this frame:
 /// [`Vm::slide`] first, then a step, moves a slide once.
 #[test]

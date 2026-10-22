@@ -2129,7 +2129,7 @@ mod tests {
             }
         }
         // The fight's members are none of the earlier tables'.
-        for r in CREATURES.iter().chain(COMBAT) {
+        for r in CREATURES.iter().chain(COMBAT).chain(LOOP) {
             assert!(
                 find(INIT_CHAIN, r.namespace, r.name).is_none(),
                 "{}",
@@ -2141,7 +2141,13 @@ mod tests {
         let hero = HERO
             .iter()
             .filter(|r| find(INIT_CHAIN, r.namespace, r.name).is_none());
-        for r in INIT_CHAIN.iter().chain(hero).chain(CREATURES).chain(COMBAT) {
+        for r in INIT_CHAIN
+            .iter()
+            .chain(hero)
+            .chain(CREATURES)
+            .chain(COMBAT)
+            .chain(LOOP)
+        {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -2163,11 +2169,12 @@ mod tests {
         register(&mut members, HERO);
         register(&mut members, CREATURES);
         register(&mut members, COMBAT);
+        register(&mut members, LOOP);
         // The hero's entry wins where both tables name a member.
         let init = INIT_CHAIN
             .iter()
             .filter(|r| find(HERO, r.namespace, r.name).is_none());
-        for r in init.chain(HERO).chain(CREATURES).chain(COMBAT) {
+        for r in init.chain(HERO).chain(CREATURES).chain(COMBAT).chain(LOOP) {
             assert_eq!(r.kind(), kind_of(r), "{}", r.path());
             let id = MemberId::named(r.namespace, r.name);
             match r.keeper {
@@ -2204,6 +2211,7 @@ mod tests {
             .chain(HERO)
             .chain(CREATURES)
             .chain(COMBAT)
+            .chain(LOOP)
             .filter(labelled)
         {
             let n = r.units.split('|').count();
@@ -2359,6 +2367,55 @@ mod tests {
             let r = find(HERO, "sequence", name).unwrap_or_else(|| panic!("{name}"));
             assert_eq!(r.keeper, Keeper::Host, "{name}");
         }
+    }
+
+    /// AH.20's rows by the registry's own entries (aj-vm's live table): a
+    /// coin's fade by its labels; the world's origin the host's, a point
+    /// nothing writes; the portal's battery a percent clamped to 0-100; the
+    /// online object and the save data references reading nothing until
+    /// written.
+    #[test]
+    fn the_loops_members_convert_by_their_units_and_range() {
+        let fade = find(LOOP, "placement", "near/far alpha fade").unwrap();
+        assert_eq!((fade.class, fade.keeper), ("EnumMeasurement", Keeper::Cell));
+        assert_eq!(label(&fade, "on"), Some(Value::Int(1)));
+        assert_eq!(convert(&fade.spec(), Value::Int(5)), Some(Value::Int(1)));
+        let zero = find(LOOP, "system", "absolute zero").unwrap();
+        assert_eq!(
+            (zero.class, zero.kind(), zero.keeper),
+            ("PositionMeasurement", Kind::Reference, Keeper::Host)
+        );
+        assert_eq!(convert(&zero.spec(), Value::Float(1.0)), None);
+        let battery = find(LOOP, "redoctaneperipheralscriptobject", "battery remaining").unwrap();
+        assert_eq!((battery.units, battery.kind()), ("per cent", Kind::Float));
+        assert_eq!(battery.spec().default, Value::Float(0.0));
+        assert_eq!(
+            convert(&battery.spec(), Value::Int(250)),
+            Some(Value::Float(100.0))
+        );
+        assert_eq!(
+            convert(&battery.spec(), Value::Float(-3.0)),
+            Some(Value::Float(0.0))
+        );
+        for (ns, name, class) in [
+            ("system", "online", "tfbOnlineScriptObject"),
+            ("system", "save data", "ScriptSetReference"),
+        ] {
+            let r = find(LOOP, ns, name).unwrap();
+            assert_eq!(r.class, class, "{}", r.path());
+            assert_eq!(
+                (r.kind(), r.keeper, r.spec().default),
+                (Kind::Reference, Keeper::Cell, Value::Null),
+                "{}",
+                r.path()
+            );
+        }
+        let mut members = Members::new();
+        register(&mut members, LOOP);
+        let (_, place) = members
+            .get(MemberId::named("system", "absolute zero"))
+            .unwrap();
+        assert_eq!(place, Place::Host);
     }
 
     #[test]

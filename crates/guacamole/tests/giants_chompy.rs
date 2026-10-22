@@ -45,7 +45,7 @@ use guac_script::{
     Stall, StallDetector, StallLimit, Unit, Value, Vm, random_literal,
 };
 use guacamole::level_scene;
-use guacamole::player_loop::PlayerLoop;
+use guacamole::player_loop::{PlayerLoop, called};
 use guacamole::script_engine::{Engine, FEET_PER_METRE, Pad};
 use guacamole::scripts::{
     self, FIRST_FIGHT, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
@@ -2623,7 +2623,7 @@ fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
     }
     let mut wind_up = 0;
     let mut out = 0;
-    for w in snaps.windows(2) {
+    for (i, w) in snaps.windows(2).enumerate() {
         let reached: usize = (0..4)
             .map(|c| {
                 w[1].chompies[c]
@@ -2637,7 +2637,13 @@ fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
         let k = w[1].k;
         let lost = w[0].health - w[1].health;
         let pushed = w[1].hero_hurt.knock_timer != w[0].hero_hurt.knock_timer;
-        let reaction = w[1].hero_hurt.mode == 1 && w[0].hero_hurt.mode == 0;
+        // His reaction starts the step after the bite (the bites test's
+        // and the defeat's order), or the bite's own.
+        let next = snaps
+            .get(i + 2)
+            .map_or(w[1].hero_hurt.mode, |n| n.hero_hurt.mode);
+        let reaction = (w[1].hero_hurt.mode == 1 && w[0].hero_hurt.mode == 0)
+            || (next == 1 && w[1].hero_hurt.mode == 0);
         let inside = windows.iter().any(|&(a, b)| k >= a && k < b);
         let before = windows.iter().any(|&(a, _)| k >= a - 43 && k < a);
         println!(
@@ -2905,6 +2911,234 @@ fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
     println!("load after: {}", load());
 }
 
+/// What the Chompy's bite passes `Combat - Hurt Creature` as `name` (its
+/// bite's call in `S2_Enemy_Chompy.ai`, the last of the script's calls):
+/// the object a path of one (or its op) names, read as the definition a
+/// stub resolves to, and that definition's name.
+fn bite_argument(program: &guac_script::Program, name: &str) -> (Value, String) {
+    use guac_script::{Elem, Ins, Operand};
+    let script = program
+        .script_named("S2_Enemy_Chompy.ai")
+        .expect("the Chompy's script");
+    let ops = &program.scripts[script as usize].ops;
+    let call = ops
+        .iter()
+        .rposition(|&op| called(program, op) == Some("Combat - Hurt Creature"))
+        .expect("its bite's call");
+    let rhs = ops[call..]
+        .iter()
+        .find_map(|&op| match &program.ops[op as usize] {
+            Ins::Parameter(p) if program.sym(p.name) == name => Some(p.rhs),
+            _ => None,
+        })
+        .flatten()
+        .unwrap_or_else(|| panic!("no {name}"));
+    let Some(Operand::Path { elems, .. }) = program.operands.get(rhs as usize) else {
+        panic!("{name} isn't a path");
+    };
+    let obj = match elems.as_slice() {
+        [Elem::Object(obj)] => *obj,
+        [Elem::Op(op)] => program.op_info[*op as usize].obj,
+        _ => panic!("{name} isn't one object: {elems:?}"),
+    };
+    let d = program.def_of(obj).expect("a definition");
+    let d = program.resolve(d).unwrap_or(d);
+    let def = &program.defs[d as usize];
+    (Value::Object(def.obj), def.display.clone())
+}
+
+/// AH.10's pushes on him, his speed across the ground (m/s) each frame from
+/// the bite's own, the least and the most of the recordings', the review's
+/// recount of the 40 main drives: the 49 on open ground that started his
+/// hurt reaction (its write of his deceleration holding the push at 80
+/// ft/s² a frame), and the three a reaction already running met, which
+/// start none (still-02 F0 + 644 and + 838 and still-04-s20261025 + 807,
+/// the last into a wall from its sixth frame), easing their deceleration
+/// in.
+const REACTION_PUSH: [(f32, f32); 8] = [
+    (24.384, 24.384),
+    (23.914, 24.026),
+    (23.506, 23.621),
+    (23.098, 23.213),
+    (22.702, 22.805),
+    (22.291, 22.400),
+    (21.846, 21.999),
+    (21.488, 21.585),
+];
+const EASED_PUSH: [(f32, f32); 8] = [
+    (24.384, 24.384),
+    (24.325, 24.337),
+    (24.068, 24.138),
+    (23.554, 23.620),
+    (22.642, 22.766),
+    (21.220, 21.396),
+    (19.221, 19.414),
+    (16.487, 16.751),
+];
+
+/// Whether `speeds` holds `profile` frame by frame, within `slack` m/s.
+fn holds(speeds: &[f32], profile: &[(f32, f32)], slack: f32) -> bool {
+    speeds.len() >= profile.len()
+        && profile
+            .iter()
+            .zip(speeds)
+            .all(|((lo, hi), v)| (lo - slack..=hi + slack).contains(v))
+}
+
+/// Bites on him on a schedule (combat: No grace after a hit, Knockback;
+/// the AH.19 and AH.20 review): the disc's own `Combat - Hurt Creature`
+/// called as `Enemy_Chompy(4)`'s bite calls it (11, its damage state,
+/// strength 25, from it) ahead of set steps, his armour 0 so none is turned
+/// away. A bite with no reaction running or ended within a second starts
+/// his hurt reaction, which holds the push at 80 ft/s² a frame; one inside
+/// it, or within a second of its end, starts none, and its push eases its
+/// deceleration in. Called ahead of the step, each push runs from the
+/// bite's own step frame by frame inside AH.10's recorded spread (a
+/// Chompy's own bite moves him a step later: AH.57). The Chompies' own
+/// bites add cases, read alike.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn bites_on_him_on_a_schedule_follow_his_reactions_rule() {
+    println!("load before: {}", load());
+    let (mut run, _) = fight(Script {
+        armour: Some(0),
+        steps: 30,
+        ..Script::default()
+    });
+    // The bite is the Chompy's call, as its tick makes it, with its own
+    // damage state.
+    let (chompy, _) = run.placed("Enemy_Chompy(4)");
+    let biter = run.placement("Enemy_Chompy(4)");
+    let (state, state_name) = bite_argument(&run.vm.program_arc(), "damage state");
+    println!("a bite's damage state: {state_name}");
+    let args = [
+        ("damage", Value::Float(11.0)),
+        ("target", Value::Entity(HERO)),
+        ("damage state", state),
+        ("damage state magnitude", Value::Int(50)),
+        ("critical hit", Value::Int(-1)),
+        ("knockback strength", Value::Int(25)),
+        ("hurt location actor", Value::Entity(chompy)),
+    ];
+    // Fresh at 40; inside its reaction at 60; within a second of its end
+    // at 100; long after at 300.
+    let schedule = [40i64, 60, 100, 300];
+    let mut snaps = vec![run.snap(30)];
+    for k in 31..=420i64 {
+        if schedule.contains(&k) {
+            run.with_host(|vm, host| {
+                vm.call_with(Some(biter), "Combat - Hurt Creature", &args, &[], host)
+            })
+            .unwrap_or_else(|h| panic!("{h}"));
+        }
+        run.step().unwrap_or_else(|h| panic!("F0 + {k}: {h}"));
+        snaps.push(run.snap(k));
+    }
+    let pushes = pushes(&snaps, |s| (s.hero_hurt, s.hero_speed));
+    let mut seen = std::collections::BTreeSet::new();
+    let (mut held, mut eased) = (0, 0);
+    for (i, w) in snaps.windows(2).enumerate() {
+        if w[1].health >= w[0].health {
+            continue;
+        }
+        let k = w[1].k;
+        let next = snaps
+            .get(i + 2)
+            .map_or(w[1].hero_hurt.mode, |n| n.hero_hurt.mode);
+        let started = (w[1].hero_hurt.mode == 1 && w[0].hero_hurt.mode != 1)
+            || (next == 1 && w[1].hero_hurt.mode != 1);
+        let running = w[0].hero_hurt.mode == 1;
+        let since_end = snaps[..=i]
+            .windows(2)
+            .rev()
+            .find(|x| x[0].hero_hurt.mode == 1 && x[1].hero_hurt.mode != 1)
+            .map(|x| (k - x[1].k) as f32 / 60.0);
+        let push = pushes.iter().find(|p| p.k == k);
+        println!(
+            "F0 + {k}: -{}, resist {:.2}, push {:?}, started {started} (running {running}, {since_end:?} s after the last)",
+            w[0].health - w[1].health,
+            w[0].hero_hurt.resist,
+            push.map(|p| (p.knock_before, p.speeds.clone()))
+        );
+        if w[0].hero_hurt.resist >= 25.0 {
+            seen.insert("too weak");
+            assert!(!started && push.is_none(), "too weak to push him");
+            continue;
+        }
+        let p = push.expect("a push");
+        let staged = schedule.contains(&k);
+        // Into a wall a push stops short: only open ground is held to a
+        // profile.
+        let open = p.speeds.len() >= 8 && p.speeds[..8].iter().all(|v| *v > 1.0);
+        if running || since_end.is_some_and(|t| t < 1.0) {
+            seen.insert(if running { "inside" } else { "within 1 s" });
+            assert!(!started, "a bite at F0 + {k} started his reaction");
+            if staged && open {
+                eased += 1;
+                assert!(
+                    holds(&p.speeds, &EASED_PUSH, 0.1),
+                    "F0 + {k}: {:?} against AH.10's eased {EASED_PUSH:?}",
+                    p.speeds
+                );
+            }
+        } else {
+            seen.insert("fresh");
+            assert!(started, "a bite at F0 + {k} started no reaction");
+            if staged && open {
+                held += 1;
+                assert!(
+                    holds(&p.speeds, &REACTION_PUSH, 0.02),
+                    "F0 + {k}: {:?} against AH.10's {REACTION_PUSH:?}",
+                    p.speeds
+                );
+            }
+        }
+    }
+    println!("cases {seen:?}; {held} held at 80 ft/s², {eased} eased");
+    for case in ["fresh", "inside", "within 1 s"] {
+        assert!(seen.contains(case), "{case} staged");
+    }
+    assert!(held >= 1 && eased >= 2, "each push's profile checked");
+    println!("load after: {}", load());
+}
+
+/// The player loop's stretches on the disc (openspec AH.20, the AH.19 and
+/// AH.20 review): each found in `Spyro_PortalManager.ai`'s tick where the
+/// original's tick holds it (ops 3780-3869 the death sequence, 3870-3873
+/// the hurts' upkeep, 3874-3878 the combat manager, 3879-3883 the
+/// projectile manager, 3964-4024 a player's orbs, loot and health, 4118
+/// the last frame's time), and the orbs' call at `GameSystems.ai`'s
+/// 356-360: a portal manager whose shape moved fails here, not quietly.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_player_loops_stretches_are_the_portal_managers_own() {
+    let (run, _) = run_on(Mode::Strict);
+    let l = &run.player_loop;
+    let program = run.vm.program_arc();
+    let script = l.script.expect("the portal manager");
+    assert_eq!(program.script_named("Spyro_PortalManager.ai"), Some(script));
+    let ops = &program.scripts[script as usize].ops;
+    assert_eq!(l.death, Some(3780..3870));
+    assert_eq!(l.hurts, Some(3870..3874));
+    assert_eq!(l.combat, Some(3874..3879));
+    assert_eq!(l.projectiles, Some(3879..3884));
+    assert_eq!(l.player, Some(3964..4025));
+    assert_eq!(l.last_frame, Some(4118..4119));
+    let head =
+        |r: &Option<std::ops::Range<u32>>| called(&program, ops[r.clone().unwrap().start as usize]);
+    assert_eq!(head(&l.combat), Some("Combat - Manage Combat"));
+    assert_eq!(head(&l.projectiles), Some("Manage Projectiles"));
+    assert_eq!(head(&l.player), Some("XP Balls - Collect XP Balls"));
+    let (gs, orbs) = l.orbs.clone().expect("the game systems' orbs");
+    assert_eq!(program.script_named("GameSystems.ai"), Some(gs));
+    assert_eq!(orbs, 356..361);
+    let gops = &program.scripts[gs as usize].ops;
+    assert_eq!(
+        called(&program, gops[orbs.start as usize]),
+        Some("Xp Balls - Xp Ball Control")
+    );
+}
+
 /// One orb as a run sees it (openspec AH.20): its worth and the steps from
 /// F0 it came out (listed among the active or launching), came down (left
 /// the launching set), was taken (into his player's `xp balls collecting`)
@@ -2921,6 +3155,8 @@ struct OrbLife {
     arrived: Option<i64>,
     taken_from: Option<(f32, f32)>,
     down_ground: Option<f32>,
+    /// Its height each step it's listed, m (the idle bounces, the review's).
+    heights: Vec<(i64, f32)>,
 }
 
 /// What the orbs' sets hold after a step: each orb's entity, its worth
@@ -3047,6 +3283,7 @@ fn follow_orbs(
                 out: f,
                 ..OrbLife::default()
             });
+            life.heights.push((f, at.y));
             if life.down.is_none() && !now.launching.contains(orb) {
                 life.down = Some(f);
                 let d = *at - run.hero().pivot;
@@ -3230,6 +3467,34 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         "{taken_where_they_lay} taken where they came down, {walked_to} walked to; {total} experience"
     );
     assert!(walked_to > 0, "some out of reach as they come down");
+    // Resting out of reach, an orb bounces every 1.5-2 s (the idle update
+    // on the game systems' clock, the on-screen stand-in answering yes):
+    // AH.10's 427 bounces of resting orbs came 1.515-2.002 s apart (the
+    // AH.19 and AH.20 review). A bounce starts where its height moves after
+    // three steps still.
+    let mut gaps: Vec<i64> = Vec::new();
+    for l in lives.values() {
+        let h = &l.heights;
+        let starts: Vec<i64> = (3..h.len())
+            .filter(|&j| {
+                (h[j].1 - h[j - 1].1).abs() > 1e-6
+                    && (1..3).all(|n| (h[j - n].1 - h[j - n - 1].1).abs() < 1e-6)
+                    && h[j].0 - h[j - 3].0 == 3
+                    && l.down.is_some_and(|d| h[j].0 > d)
+            })
+            .map(|j| h[j].0)
+            .collect();
+        gaps.extend(starts.windows(2).map(|w| w[1] - w[0]));
+    }
+    println!(
+        "idle bounces {} apart (steps): {:?}",
+        gaps.len(),
+        (gaps.iter().min(), gaps.iter().max())
+    );
+    assert!(!gaps.is_empty(), "resting orbs bounce");
+    for g in &gaps {
+        assert!((90..=121).contains(g), "a bounce {g} steps after the last");
+    }
 }
 
 /// AH.10's orbs at guacamole's multiplier, 1 (a fresh save): four of 1 a
