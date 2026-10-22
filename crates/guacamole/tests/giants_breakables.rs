@@ -644,7 +644,7 @@ fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool) {
 /// and a second lob, him turned to it, breaks it; the three solids are out
 /// of the seam, and walked at where the
 /// first barrel lay he stands on the ground there, where with it whole his
-/// controller climbed onto it (an oracle check of its own: AH.63). The
+/// controller climbed onto it (an oracle check of its own: AH.70). The
 /// props the scripts took off are written where `AH21_STATE_OUT` says, for
 /// AG.7's reach.
 #[test]
