@@ -200,6 +200,18 @@ impl LevelProps {
             .collect()
     }
 
+    /// The props standing with the hero at `hero` less those the level's
+    /// scripts took off, by object (openspec AH.21: a breakable broken stands
+    /// nowhere again, wherever he goes), by index.
+    pub fn standing_but<'a>(
+        &'a self,
+        hero: Vec3,
+        taken_off: impl Fn(u32) -> bool + 'a,
+    ) -> impl Iterator<Item = usize> + 'a {
+        self.standing(hero)
+            .filter(move |&i| !taken_off(self.props[i].object))
+    }
+
     /// Every model's drawn part in one list, the models in order, their
     /// materials numbered across them, and each model's segments in it.
     pub fn drawn(&self) -> (Drawn, Vec<Range<usize>>) {

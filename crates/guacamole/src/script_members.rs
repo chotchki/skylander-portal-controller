@@ -486,7 +486,15 @@ impl ScriptWorld {
             let point = hero.pivot - Vec3::Y * height;
             return Some((point, normal, Some(1)));
         }
-        let at = self.actors.get(&h)?.position;
+        let a = self.actors.get(&h)?;
+        // Asleep, a placement has no corpus (AG.7's INACTIVE) and so no
+        // ground: its ground's type reads -1, which the destructibles
+        // system shuts a breakable down by and wakes it on (openspec AH.21;
+        // a hypothesis, no oracle read has a sleeping one's ground).
+        if a.managed && !a.active {
+            return None;
+        }
+        let at = a.position;
         let origin = at + Vec3::Y * 0.1;
         let actors = self.actor_bodies(engine);
         let hit = guac_motion::ground::ray(engine.seam(), origin, Vec3::NEG_Y, 160.0, &actors)

@@ -583,6 +583,25 @@ impl ScriptWorld {
         self.actors.get(&h).is_some_and(|k| k.removed)
     }
 
+    /// Takes the file placement `obj` off, as a remove of it does (a
+    /// recorded state's breakable already broken); false for none.
+    pub fn take_off(&mut self, obj: Obj) -> bool {
+        match self.objects.get(&obj).and_then(|h| self.actors.get_mut(h)) {
+            Some(a) => {
+                a.removed = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether a remove took the file placement `obj` off (openspec AH.21:
+    /// a breakable broken): the prop it stands for stands nowhere again,
+    /// its solid gone from both sides of the seam.
+    pub fn taken_off(&self, obj: Obj) -> bool {
+        self.objects.get(&obj).is_some_and(|&h| self.removed(h))
+    }
+
     /// The handles of the clones the scripts have made, live or taken off.
     pub fn clones(&self) -> Vec<Handle> {
         let mut c: Vec<Handle> = self
@@ -993,9 +1012,23 @@ pub const PICKUPS: [&str; 10] = [
     "Coin_spinning(6)",
 ];
 
+/// The breakables' own scripts (openspec AH.21, design decision 2's
+/// whitelist): the level's archetype setups for the clearing's and the
+/// ledge route's barrels, gourds and pots, by placement name. Each sets its
+/// archetypes' tags (the explosion, the debris set, the sounds) at the
+/// level's start and takes itself off; the rest of a breakable's life is
+/// `global.bld`'s destructibles system, which the loot system's init lists
+/// them with and the game systems' update runs (the player loop's
+/// [`crate::player_loop::UPDATES`]).
+pub const BREAKABLES: [&str; 3] = [
+    "init_temp_barrel_b",
+    "init_temp_gourds",
+    "init_temp_pottery",
+];
+
 /// The VM's config for AH.18's run: AH.17's with the first fight's
-/// placements and the members they reach, and AH.20's pickups with
-/// theirs.
+/// placements and the members they reach, AH.20's pickups with theirs and
+/// AH.21's breakables with theirs.
 pub fn fight_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
@@ -1003,6 +1036,7 @@ pub fn fight_config(mode: Mode) -> Config {
     if let Whitelist::Only { placements, .. } = &mut c.whitelist {
         placements.extend(FIRST_FIGHT.iter().map(|s| (*s).to_owned()));
         placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
+        placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
     }
     c
 }
@@ -1209,6 +1243,53 @@ pub fn set_health(vm: &mut Vm, minion: PlacementId, health: i32) -> bool {
         return false;
     };
     vm.set_field(c, "hp", Value::Int(health))
+}
+
+/// A kind of breakable by what it drops (design decision 13): each kind
+/// keeps a running count of its own in the level's loot data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rarity {
+    Common,
+    Uncommon,
+    Rare,
+}
+
+impl Rarity {
+    /// The loot data's reference to the kind's count.
+    fn field(self) -> &'static str {
+        match self {
+            Rarity::Common => "DestructiblesCommonRef",
+            Rarity::Uncommon => "DestructiblesUncommonRef",
+            Rarity::Rare => "DestructiblesRareRef",
+        }
+    }
+}
+
+/// The kind's loot count as the UI's `LootData` holds it: its rate and
+/// where its running count stands. The loot system's init draws where each
+/// starts at the level's start (`Loot - Set Loot Counts`).
+fn loot_count(vm: &Vm, world: &ScriptWorld, rarity: Rarity) -> Option<Value> {
+    let ui = running(vm, world, "/UI.ai")?;
+    let data = vm.local(ui, "LootData").map(|v| vm.value(v))?;
+    vm.field(data, rarity.field()).map(|v| vm.value(v))
+}
+
+/// Where the kind's running count stands (openspec AH.21), none before the
+/// level's loot data is made.
+pub fn loot_index(vm: &Vm, world: &ScriptWorld, rarity: Rarity) -> Option<f32> {
+    let count = loot_count(vm, world, rarity)?;
+    vm.field(count, "DropRateIndex")
+        .and_then(|v| vm.value(v).as_f32())
+}
+
+/// The kind's running count set where an anchor's read has it (a
+/// comparison with the oracle starts from the anchor's index, not the
+/// session's draw). False before the loot data is made.
+pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f32) -> bool {
+    match loot_count(vm, world, rarity) {
+        Some(count) => vm.set_field(count, "DropRateIndex", Value::Float(index)),
+        None => false,
+    }
 }
 
 /// Each clone of a scripted template the last step made, added to the VM

@@ -16,6 +16,7 @@ use crate::*;
 mod creatures;
 mod hero;
 mod init;
+mod loot;
 mod slides;
 mod span;
 

@@ -79,6 +79,7 @@ use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_motion::seam::BodyKind;
+use guac_script::Obj;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
     CharacterMaterial, CharacterUniform, ShadowLookup, reference_material, remaster, static_mesh,
@@ -89,11 +90,13 @@ use guacamole::level_scene::{
 };
 use guacamole::level_scripts;
 use guacamole::props::{LeftOut, LevelProps, Prop};
+use guacamole::scripts::ScriptWorld;
 use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::extraction::Extraction;
 use crate::hero::{HeroBody, HeroSystems};
+use crate::hero_scripts::{ScriptSource, ScriptSystems};
 use crate::motion::ReducedMotion;
 use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
@@ -566,6 +569,9 @@ pub(crate) struct PropsReport {
     pub names: Vec<String>,
     /// Where the rule measured from last.
     pub at: Option<[f32; 3]>,
+    /// Props the level's scripts took off (openspec AH.21: breakables
+    /// broken), by name: they stand nowhere again.
+    pub taken_off: Vec<String>,
     /// The placements left out, by why (template, creature, by script,
     /// nothing to stand, a state no level file holds), and the props whose
     /// model draws nothing.
@@ -655,14 +661,25 @@ impl StandingProps {
         }
     }
 
-    /// Stands up the props within range of `at` and takes down the rest:
-    /// each one's draw shown or hidden, its solid spawned into Avian's world
-    /// or despawned from it.
-    pub(crate) fn stand(&mut self, at: Vec3, commands: &mut Commands) {
+    /// Stands up the props within range of `at` and takes down the rest,
+    /// and every one `taken_off` says the level's scripts took off, by its
+    /// object (openspec AH.21: a breakable broken goes at once and never
+    /// stands again): each one's draw shown or hidden, its solid spawned
+    /// into Avian's world or despawned from it.
+    pub(crate) fn stand(
+        &mut self,
+        at: Vec3,
+        taken_off: impl Fn(u32) -> bool,
+        commands: &mut Commands,
+    ) {
         self.report.at = Some(at.to_array());
         let mut changed = false;
         for (i, p) in self.props.iter().enumerate() {
-            let stands = p.stands(at);
+            let off = taken_off(p.object);
+            if off && !self.report.taken_off.contains(&p.name) {
+                self.report.taken_off.push(p.name.clone());
+            }
+            let stands = p.stands(at) && !off;
             if stands == self.standing[i] {
                 continue;
             }
@@ -1030,7 +1047,12 @@ impl Plugin for LevelPlugin {
                     .after(crate::turntable::TurntableSystems),
             )
             // The props stand by where the hero is as his step begins.
-            .add_systems(FixedUpdate, stand_props.before(HeroSystems::Step))
+            .add_systems(
+                FixedUpdate,
+                stand_props
+                    .after(ScriptSystems::Step)
+                    .before(HeroSystems::Step),
+            )
             // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,
@@ -1430,7 +1452,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         &mut s.commands,
     );
     // Standing by the start until a hero's step says where he is.
-    props.stand(built.walk.start, &mut s.commands);
+    props.stand(built.walk.start, |_| false, &mut s.commands);
     let spawns = built
         .spawn_models
         .iter()
@@ -1467,13 +1489,29 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
 
 /// Each fixed step before the hero's (AG.25): the props stand by where he
 /// stands as the step begins, so his step meets the solids the original's
-/// would; before he's in, by the level's start.
-fn stand_props(mut commands: Commands, mut level: ResMut<Level>, heroes: Query<&HeroBody>) {
+/// would; before he's in, by the level's start. After the scripts' step
+/// (openspec AH.21), so a breakable they broke this step is gone before
+/// anything moves.
+fn stand_props(
+    mut commands: Commands,
+    mut level: ResMut<Level>,
+    heroes: Query<&HeroBody>,
+    scripts: Option<Res<ScriptWorld>>,
+    source: Option<Res<ScriptSource>>,
+) {
     let Some(loaded) = level.stage.loaded_mut() else {
         return;
     };
     let at = heroes.iter().next().map_or(loaded.start, |h| h.hero.pivot);
-    loaded.props.stand(at, &mut commands);
+    let unit = source.as_deref().and_then(ScriptSource::level_unit);
+    let taken_off = |object: u32| match (scripts.as_deref(), unit) {
+        (Some(w), Some(unit)) => w.taken_off(Obj {
+            unit,
+            index: object,
+        }),
+        _ => false,
+    };
+    loaded.props.stand(at, taken_off, &mut commands);
 }
 
 /// The camera the level is drawn from into `target` at `order`: the
@@ -2557,6 +2595,56 @@ pub(crate) mod tests {
         assert_eq!(props(&app).names, ["gourd"]);
         assert_eq!(bodies(&mut app), [1, PROP_BODIES + 20]);
         assert_eq!(down_on_the_gourd(&mut app), Some(PROP_BODIES + 20));
+
+        // AH.21: the level's scripts take the gourd's placement off (broken):
+        // the next fixed step hides its draw and takes its solid out of
+        // Avian's world, for good wherever the hero stands. Another unit's
+        // object of the same index stands as before.
+        use guacamole::scripts::{Files, Placed, ScriptWorld, headless_objects};
+        let gourd = Obj { unit: 4, index: 20 };
+        let files = Files {
+            placed: vec![Placed::named(gourd, "gourd", None, 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(gourd, 0x20)]);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let source = crate::hero_scripts::ScriptSource::of(
+            Arc::new(guac_script::Program::default()),
+            files,
+            vec![2, 4],
+        );
+        app.insert_resource(source);
+        app.insert_resource(world);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(props(&app).names, ["gourd"], "not taken off yet");
+        world = app.world_mut().remove_resource::<ScriptWorld>().unwrap();
+        assert!(world.take_off(gourd));
+        assert!(!world.take_off(Obj { unit: 2, index: 20 }));
+        app.insert_resource(world);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !props(&app).names.is_empty() {
+            assert!(Instant::now() < deadline, "the gourd never went");
+            app.update();
+        }
+        let r = props(&app);
+        assert_eq!(
+            (r.standing, r.solid, r.taken_off.clone()),
+            (0, 0, vec!["gourd".to_owned()])
+        );
+        assert_eq!(
+            shown(&mut app),
+            [
+                ("prop coin".to_owned(), false),
+                ("prop gourd".to_owned(), false)
+            ]
+        );
+        assert_eq!(bodies(&mut app), [1]);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(down_on_the_gourd(&mut app), Some(1), "the floor, for good");
     }
 
     /// AG.21: the level's solids come and go with it. A new source's load

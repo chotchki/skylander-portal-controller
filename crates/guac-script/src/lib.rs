@@ -241,6 +241,9 @@
 //!   its file gives: a Chompy's `notice player radius` 30) are among its
 //!   variables from the start: `find variable` finds one by name and
 //!   declaration's container, holding the tag's value ([`Program::tags`]).
+//!   A placement with no script has them too, found from any script as
+//!   its table's first entries (AH.21: the loot system's init reads each
+//!   breakable's `archetype ref`, and a breakable runs no script).
 //! - A reference names a set, a structure, a number variable, a part of a
 //!   packed value or a value cell's number (`setref r = s.first.screen
 //!   measurement.x`), or a host member's number (`setref r = my.actorinfo.
@@ -267,8 +270,10 @@
 //!   member takes it.
 //! - A screen position's halves are 12.4 fixed point: `+` and `-` work on
 //!   each half, `*` multiplies each and shifts the four fraction bits back,
-//!   every half held to 16 bits signed. Screen division and colour
-//!   arithmetic stop as unsupported until a script reaches them.
+//!   every half held to 16 bits signed. A colour's `+` and `-` work on
+//!   each byte, held to 0-255 (AH.21: the particle tinter's white less a
+//!   pot's tint). Screen division and a colour's `*` and `/` stop as
+//!   unsupported until a script reaches them.
 //! - An expression is `a <op> b` (+ - * /) or `a` alone, read left side
 //!   first, nested as the data nests it: the order written is the order
 //!   computed, which single precision makes observable.
@@ -422,8 +427,8 @@
 //! reading: `EnemySystem_` resets its action references, then nulls them);
 //! and slides, with their sliders (Slides).
 //!
-//! Not modelled yet: colour arithmetic and screen division (they stop as
-//! unsupported), the set properties (unmodelled members); and, with no
+//! Not modelled yet: a colour's multiplication and division and screen
+//! division (they stop as unsupported), the set properties (unmodelled members); and, with no
 //! stop, a reference's type check against the stack's edit type,
 //! `for each`'s shuffled order (any order that visits each member once)
 //! and the scheduler's placement groups (activity by distance is the

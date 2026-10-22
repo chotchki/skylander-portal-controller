@@ -78,12 +78,32 @@ pub(crate) struct ScriptSource {
 }
 
 impl ScriptSource {
+    /// The unit the level's own file links as: the last whose placements
+    /// run from the level's start.
+    pub(crate) fn level_unit(&self) -> Option<u16> {
+        self.order.last().copied()
+    }
+
     /// The unit `load_file`'s scripts link as, if he's a fighter.
     pub(crate) fn fighter(&self, load_file: &str) -> Option<u16> {
         self.fighters
             .iter()
             .find(|(f, _)| f == load_file)
             .map(|(_, u)| *u)
+    }
+}
+
+#[cfg(test)]
+impl ScriptSource {
+    /// A part with `files` linked as `program`, the level's unit last of
+    /// `order`, no fighters.
+    pub(crate) fn of(program: Arc<Program>, files: Files, order: Vec<u16>) -> Self {
+        Self {
+            program,
+            files,
+            order,
+            fighters: Vec::new(),
+        }
     }
 }
 
