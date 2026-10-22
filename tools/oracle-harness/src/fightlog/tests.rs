@@ -380,15 +380,37 @@ fn a_groups_floors_pass_its_own_replays_and_fail_a_press_moved() {
     ));
     let text = named.text();
     assert!(text.contains("judged at the named floors"), "{text}");
-    // A rolled kind of the rules' own joins the named ones.
+    // A rolled kind of the rules' own joins the named ones, judged by the
+    // group's horizon (frame 2) both in the group's calibration and at the
+    // named floors: the ball a frame apart needs nothing once it's rolled,
+    // and the late press's throw, 3 frames past its 5 ms, fails unrolled and
+    // goes unstamped rolled.
     let rolled = build_at(
         &ReportRules {
-            ordered: BTreeSet::from(["spawn".to_owned()]),
+            ordered: BTreeSet::from(["spawn".to_owned(), "throw".to_owned()]),
             ..b.clone()
         },
         Some(&guac_oracle::tolerance::anchor_a::EVENTS),
     );
-    assert!(rolled.judge.ordered.contains("spawn") && rolled.judge.ordered.contains("pickup"));
+    assert!(
+        ["spawn", "throw", "pickup"]
+            .iter()
+            .all(|k| rolled.judge.ordered.contains(*k))
+    );
+    assert_eq!(
+        (rolled.judge.horizon, rolled.judge.gate),
+        (Some(2), Gate::RolledKinds)
+    );
+    assert_eq!(rolled.floors["spawn"], 0.0);
+    let throw_stamped = |r: &GroupReport| {
+        r.candidates[0].1.verdict.actors[HERO]
+            .mismatches
+            .iter()
+            .any(|m| matches!(m, LogMismatch::Stamp { kind, .. } if kind == "throw"))
+    };
+    assert!(throw_stamped(&named));
+    assert!(!throw_stamped(&rolled));
+    assert!(!rolled.candidates[0].1.passed);
 }
 
 #[test]
