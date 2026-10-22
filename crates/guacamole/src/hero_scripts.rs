@@ -225,9 +225,16 @@ pub(crate) fn reinstall_keeping_level(world: &mut World) {
     }
     played.sort_unstable_by_key(|o| (o.unit, o.index));
     played.dedup();
+    // Counts the last take-off carried that no step has set back yet (the
+    // portal held the level since) go on as they were, not the fresh run's
+    // draw.
+    let loot = match &carried.loot {
+        Some(waiting) => waiting.loot.clone(),
+        None => now.loot,
+    };
     let kept = LevelState {
         taken_off: played.clone(),
-        loot: now.loot,
+        loot,
     };
     install_from(world, &source);
     world.insert_resource(ScriptSteps::default());
@@ -1341,7 +1348,19 @@ pub(crate) mod tests {
         // every four bytes of the portal's regions: AH.11's live 44.
         let area = run.vm.field(data, "save data area").unwrap();
         assert_eq!(run.vm.set(area).map(<[Value]>::len), Some(44));
+        // The slot `Portal - Enter Object` marks entered, as its links.
+        let entered = |vm: &mut guac_script::Vm| {
+            let g = vm.program().global_named("portal control data").unwrap();
+            let pcd = vm.global(g).unwrap();
+            let slot = vm
+                .field(pcd, "loaded objects")
+                .and_then(|s| vm.set(s).and_then(|e| e.first().copied()))
+                .unwrap();
+            vm.field(slot, "entered").map(|v| vm.value(v))
+        };
+        assert_eq!(entered(&mut run.vm), Some(Value::Int(0)), "not before");
         run.join();
+        assert_eq!(entered(&mut run.vm), Some(Value::Int(1)), "at his join");
         run.step([false; 4]);
         run.step([false, true, false, false]);
         let after = figure::read(&run.vm, &layout, data).unwrap();
@@ -1550,6 +1569,54 @@ pub(crate) mod tests {
         assert!(!rt.vm.inert().contains(&h), "the setup runs");
     }
 
+    /// A take-off before any step since the last (the portal held the
+    /// level throughout) carries what the last one carried: the barrel put
+    /// back off, and the counts still waiting to be set back as they were,
+    /// not the fresh run's (the synthetic part draws none).
+    #[test]
+    fn a_take_off_before_any_step_carries_what_the_last_one_did() {
+        use guac_formats::script::builder::SMASH_BARREL;
+        use guacamole::scripts::Rarity;
+        let tmp = tempfile::tempdir().unwrap();
+        write_smash(tmp.path(), BARREL_AT);
+        let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+        let level = *linked.order.last().unwrap();
+        let barrel = linked
+            .placements
+            .placed
+            .iter()
+            .find(|p| p.name == SMASH_BARREL && p.obj.unit == level)
+            .unwrap()
+            .obj;
+        let mut world = World::new();
+        install(
+            &mut world,
+            Part {
+                program: Arc::new(linked.program),
+                files: linked.placements,
+                order: linked.order,
+                fighters: linked.fighters,
+                layout: None,
+                palettes: Vec::new(),
+            },
+        );
+        let waiting = LevelState {
+            taken_off: vec![barrel],
+            loot: vec![(Rarity::Common, 0.25), (Rarity::Uncommon, 0.5)],
+        };
+        world.insert_resource(Carried {
+            at_join: None,
+            played: vec![barrel],
+            loot: Some(waiting.clone()),
+        });
+        reinstall_keeping_level(&mut world);
+        assert!(world.resource::<ScriptWorld>().taken_off(barrel));
+        let carried = world.resource::<Carried>();
+        assert_eq!(carried.played, [barrel]);
+        assert_eq!(carried.at_join, None);
+        assert_eq!(carried.loot.as_ref(), Some(&waiting), "the counts waiting");
+    }
+
     /// Where the synthetic barrel stands: 3 m ahead of the headless hero
     /// along his facing, on the open ground, inside the ball's arc.
     const BARREL_AT: [f32; 3] = [0.0, 0.0, 3.0];
@@ -1700,6 +1767,27 @@ pub(crate) mod tests {
             "off before the join: not play's"
         );
         assert!(kept.loot.is_empty(), "the synthetic part has no loot data");
+        // Another file's placement taken off (his own file's) isn't the
+        // level's to carry.
+        let other = run
+            .files
+            .placed
+            .iter()
+            .find(|p| {
+                p.obj.unit != run.level
+                    && run.world.handles().contains_key(&p.obj)
+                    && !run.world.taken_off(p.obj)
+            })
+            .expect("another file's placement")
+            .obj;
+        assert!(run.world.take_off(other));
+        assert_eq!(
+            LevelState::read(&run.vm, &run.world, run.level)
+                .since(&at_join)
+                .taken_off,
+            [barrel_obj],
+            "the level's own alone"
+        );
 
         let mut fresh = Headless::smash(BARREL_AT);
         let (_, barrel) = fresh.placed(SMASH_BARREL);

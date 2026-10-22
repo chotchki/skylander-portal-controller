@@ -686,8 +686,10 @@ mod tests {
 
     /// A game systems file in the original's shape, our ops: `System Update
     /// Controls` a file structure whose `update while unpaused macros` its
-    /// STARTUP fills with the three update macros.
-    fn game_systems() -> Arc<Program> {
+    /// STARTUP fills with the three update macros. With `first_takes_remover`
+    /// the destructibles' macro takes the actor remover out of the set each
+    /// call, before the remover's turn.
+    fn game_systems(first_takes_remover: bool) -> Arc<Program> {
         let mut b = IgzBuilder::new();
         {
             let mut w = Writer::new(&mut b);
@@ -732,6 +734,9 @@ mod tests {
                 if i == 1 {
                     membership(w, *def, 1);
                 }
+                if i == 0 && first_takes_remover {
+                    membership(w, defs[1], 1);
+                }
                 w.end_block(p);
             }
             w.end_block(section);
@@ -762,15 +767,55 @@ mod tests {
     /// nothing; the orbs only once a hero has joined (none here).
     #[test]
     fn the_game_systems_run_the_listed_update_macros() {
-        let program = game_systems();
-        let player_loop = PlayerLoop::read(&program);
+        let (mut vm, mut world, player_loop, gs) = game_systems_run(false);
         assert_eq!(player_loop.orbs, None);
+        let mut generator = Generator::seeded(1);
+        game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        assert!(vm.is_held(gs), "its first tick taken");
+        assert_eq!(update_calls(&vm), [0; 3], "nothing before it");
+        assert_eq!(
+            update_macros(&mut vm),
+            [
+                "Destructibles - System Update",
+                "Actor Remover Sytem Update Macro"
+            ],
+            "the listed ones, in the set's order"
+        );
+        for _ in 0..10 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        assert_eq!(update_calls(&vm), [10, 1, 0]);
+        assert_eq!(update_macros(&mut vm), ["Destructibles - System Update"]);
+        let clock = vm.active_seconds(gs).unwrap();
+        assert!((clock - 11.0 / 60.0).abs() < 1e-5, "{clock}");
+    }
+
+    /// One the set loses before its turn doesn't run (the set read again
+    /// before each call): the destructibles' macro takes the actor remover
+    /// out each call, so the remover, listed as the step began, never runs.
+    #[test]
+    fn an_update_macro_taken_out_before_its_turn_doesnt_run() {
+        let (mut vm, mut world, player_loop, _) = game_systems_run(true);
+        let mut generator = Generator::seeded(1);
+        for _ in 0..11 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        assert_eq!(update_calls(&vm), [10, 0, 0]);
+        assert_eq!(update_macros(&mut vm), ["Destructibles - System Update"]);
+    }
+
+    /// [`game_systems`]' file on a VM of its own, in strict mode with its
+    /// first tick listed and each update macro's count a value cell: the
+    /// VM, its world, the loop read off it and the placement.
+    fn game_systems_run(first_takes_remover: bool) -> (Vm, ScriptWorld, PlayerLoop, PlacementId) {
+        let program = game_systems(first_takes_remover);
+        let player_loop = PlayerLoop::read(&program);
         let files = Files {
             placed: vec![Placed::named(GS, "GameSystems", Some(GS_PATH), 4)],
             ..Files::default()
         };
         let handles = HashMap::from([(GS, GS_HANDLE)]);
-        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         let mut config = Config::new(Mode::Strict);
         for (_, cell) in UPDATED {
             config
@@ -781,47 +826,39 @@ mod tests {
         let sid = program.script_named("GameSystems.ai").unwrap();
         let mut vm = Vm::new(program, config);
         let gs = vm.add_at(GS_HANDLE, "GameSystems", sid, GS);
-        let mut generator = Generator::seeded(1);
-        let count = |vm: &Vm, cell: &str| match vm.value_cell(None, MemberId::named("test", cell)) {
-            Some(Value::Int(i)) => i,
-            _ => 0,
+        (vm, world, player_loop, gs)
+    }
+
+    /// A step as the loop takes it, a hero joined: the game systems' tick,
+    /// then every placement's.
+    fn game_systems_step(
+        vm: &mut Vm,
+        world: &mut ScriptWorld,
+        player_loop: &PlayerLoop,
+        generator: &mut Generator,
+    ) {
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x1000);
+        let mut host = WorldHost {
+            world,
+            engine: &mut engine,
+            generator,
+            spawn: &mut spawn,
         };
-        let mut step = |vm: &mut Vm, world: &mut ScriptWorld| {
-            let mut engine = NoEngine;
-            let mut spawn = headless_spawner(0x1000);
-            let mut host = WorldHost {
-                world,
-                engine: &mut engine,
-                generator: &mut generator,
-                spawn: &mut spawn,
-            };
-            player_loop
-                .game_systems(vm, &mut host, true)
-                .unwrap_or_else(|h| panic!("{h}"));
-            vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
-        };
-        step(&mut vm, &mut world);
-        assert!(vm.is_held(gs), "its first tick taken");
-        assert_eq!(
-            UPDATED.map(|(_, c)| count(&vm, c)),
-            [0; 3],
-            "nothing before it"
-        );
-        assert_eq!(
-            update_macros(&mut vm),
-            [
-                "Destructibles - System Update",
-                "Actor Remover Sytem Update Macro"
-            ],
-            "the listed ones, in the set's order"
-        );
-        for _ in 0..10 {
-            step(&mut vm, &mut world);
-        }
-        assert_eq!(UPDATED.map(|(_, c)| count(&vm, c)), [10, 1, 0]);
-        assert_eq!(update_macros(&mut vm), ["Destructibles - System Update"]);
-        let clock = vm.active_seconds(gs).unwrap();
-        assert!((clock - 11.0 / 60.0).abs() < 1e-5, "{clock}");
+        player_loop
+            .game_systems(vm, &mut host, true)
+            .unwrap_or_else(|h| panic!("{h}"));
+        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+    }
+
+    /// Each of [`UPDATED`]'s calls so far.
+    fn update_calls(vm: &Vm) -> [i32; 3] {
+        UPDATED.map(
+            |(_, cell)| match vm.value_cell(None, MemberId::named("test", cell)) {
+                Some(Value::Int(i)) => i,
+                _ => 0,
+            },
+        )
     }
 
     /// The loop's schedule over game time: before a hero joins, the clock

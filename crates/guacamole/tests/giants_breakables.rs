@@ -409,7 +409,7 @@ fn same_kind(broken: &str, debris: &str) -> bool {
 /// twice by 0.6 from anchor A's 0.8242795 to AH.9's 0.024279475 and both
 /// drop a coin worth 1 or 2; the destructibles system's lists hold every
 /// other breakable in range of him active, the rest asleep. Our break comes
-/// 31 steps after the press, AH.9's 34 (the lob's aim, AH.60's); our loot
+/// 31 steps after the press, AH.9's 33-34 (the lob's aim, AH.60's); our loot
 /// steps the step it breaks, AH.9's the frame after (AH.59's tick order).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.9's recordings; run on the Mac"]
@@ -501,13 +501,13 @@ fn a_lob_breaks_the_ledge_routes_two_barrels_as_ah9s() {
 }
 
 /// One Eruption from anchor A breaks the uncommon pot, the gourd and the
-/// barrel its reach passes, in AH.9's order and at its steps from the
-/// press (66, 70-71 and 73 in all ten `erupt` replays), each solid out of
-/// the seam the step it breaks, three pieces of debris each gone 1.52 s
-/// on: the uncommon count's rate of 1 leaves 0.097497 at 0.09749699 and
-/// drops a coin worth 3 or 7; the common count steps twice, 0.8242795 to
-/// 0.42427945 to 0.024279475 as AH.9's, each dropping a coin worth 1 or 2,
-/// the step after its break as AH.9's.
+/// barrel its reach passes, in AH.9's order and within two of its steps
+/// from the press (65, 69-70 and 72 over the ten `erupt` replays), each
+/// solid out of the seam the step it breaks, three pieces of debris each
+/// gone 1.52 s on: the uncommon count's rate of 1 leaves 0.097497 at
+/// 0.09749699 and drops a coin worth 3 or 7; the common count steps twice,
+/// 0.8242795 to 0.42427945 to 0.024279475 as AH.9's, each dropping a coin
+/// worth 1 or 2, the step after its break as AH.9's.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.9's recordings; run on the Mac"]
 fn an_eruption_breaks_the_pot_the_gourd_and_the_barrel_as_ah9s() {

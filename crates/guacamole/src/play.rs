@@ -2604,6 +2604,47 @@ mod tests {
             5 + SMASH_GOLD as u32,
             "his figure's gold came back with him"
         );
+
+        // A second swap carries what the first carried: the barrel still off
+        // in the third run, though nothing broke it in the second.
+        clear(&mut app, 2);
+        until(&mut app, "the call again", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        app.update();
+        let change = owned(0);
+        crate::turntable::tests::set(&mut app, [change.clone()]);
+        app.world_mut().write_message(PortalChanged(change));
+        until(&mut app, "his scripts a third time", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..5 {
+            app.update();
+        }
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.taken_off(barrel_obj), "still off after two swaps");
+        let third = world.handles()[&barrel_obj];
+        assert_ne!(third, again, "the third run's own");
+        assert!(!world.actor(third).unwrap().active, "asleep");
+        assert!(world.taken_off(setup_obj), "the setup ran and went again");
+        assert!(!props_report(&app).names.contains(&SMASH_BARREL.to_owned()));
+
+        // The activity rule follows him once he's in, not the level's start:
+        // set down 33 m short of the far barrel (no floor there; a step or
+        // two of falling), it and the far coin wake, the coin in the VM too.
+        assert!(!active(&app, SMASH_FAR), "out of his range");
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let near_far = Vec3::new(START[0], FLOOR + 1.0, START[2] + 30.0);
+        app.world_mut()
+            .entity_mut(e)
+            .get_mut::<HeroBody>()
+            .unwrap()
+            .hero
+            .pivot = near_far;
+        until(&mut app, "the far barrel woken by him", |a| {
+            active(a, SMASH_FAR)
+        });
+        assert!(!asleep(&app, SMASH_FAR_COIN), "the far coin runs");
     }
 
     // ---- AG.29 over AH.24: the portal's holds and his scripts ------------
