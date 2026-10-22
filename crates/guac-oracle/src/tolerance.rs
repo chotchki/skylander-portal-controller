@@ -16,7 +16,7 @@
 //!
 //! The fight's event floors are per anchor, on game time: [`anchor_a`]'s
 //! (AH.51, from AH.9's replays through [`crate::fight::log::floors_needed`]).
-//! Not set: anchor B's event floors (AH.10 measured them; AH.59) and the
+//! Not set: anchor B's event floors (AH.10 measured them; AH.64) and the
 //! totals floors ([`crate::totals`]; AH.30).
 
 use std::collections::BTreeMap;
