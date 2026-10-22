@@ -30,13 +30,14 @@ use guac_motion::scenarios;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{COMBAT, HERO as HERO_MEMBERS, INIT_CHAIN};
 
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
     StallDetector, StallLimit, Unit, Value, Vm,
 };
 use guacamole::level_scene;
+use guacamole::player_loop::PlayerLoop;
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
     self, Files, ScriptWorld, WorldHost, headless_handles, headless_objects, headless_spawner,
@@ -126,6 +127,8 @@ struct Run {
     next: Handle,
     minion: Option<PlacementId>,
     steps: u32,
+    /// The portal manager's tick as the player loop runs it (AH.20).
+    player_loop: PlayerLoop,
 }
 
 impl Run {
@@ -151,9 +154,11 @@ impl Run {
     fn step(&mut self) -> Result<(), Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
-        if self.minion.is_some() {
-            self.with_host(scripts::manage_projectiles)?;
-        }
+        let slid = self.with_host(|vm, host| vm.slide(host))?;
+        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        let joined = self.minion.is_some();
+        let player_loop = self.player_loop.clone();
+        self.with_host(|vm, host| player_loop.step(vm, host, joined))?;
         let r = self.with_host(|vm, host| vm.step(host));
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
@@ -295,6 +300,7 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
         })
         .collect();
     let program = Arc::new(Program::link(&units).unwrap());
+    let player_loop = PlayerLoop::read(&program);
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, 4, ERUPTOR]
         .iter()
         .map(|&u| (u, &igzs[u as usize]))
@@ -343,6 +349,7 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
             next,
             minion: None,
             steps: 0,
+            player_loop,
         },
         found,
     )
@@ -596,6 +603,7 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
         INIT_CHAIN
             .iter()
             .chain(HERO_MEMBERS)
+            .chain(COMBAT)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

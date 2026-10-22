@@ -3,7 +3,7 @@
 //! placement taken off, a placement's file object reading as its handle,
 //! packed screen positions and colours, a structure's clone, first-tick
 //! listings, the double-precision perturbation, the tick's clock, the
-//! engine's sets, resets, slides, `undefined` as an object, member counts,
+//! engine's sets, resets, `undefined` as an object, member counts,
 //! a placement seeded from outside and the master variable list.
 
 use std::collections::HashMap;
@@ -1009,38 +1009,6 @@ fn a_reset_through_a_reference_puts_back_the_number_it_names() {
     assert_eq!(vm.global(g), Some(Value::Int(0)), "the file's number");
     let s = vm.local(id, "s").unwrap();
     assert!(matches!(s, Value::Object(_)), "the reference kept: {s:?}");
-}
-
-#[test]
-fn a_slide_lands_at_once_and_skips_its_block() {
-    let p = program(|w| {
-        let (v, inside) = (var(w, "v"), var(w, "inside"));
-        idle(
-            w,
-            |_| {},
-            |w| {
-                let lhs = w.value(&[El::Local(v)]);
-                let to = w.int(10);
-                let secs = w.float(2.0);
-                let ease = w.int(20);
-                let (sp, so) = w.open(Class::SlideValue, "slide value");
-                w.refer(so, 0x1C, lhs);
-                w.refer(so, 0x20, to);
-                w.refer(so, 0x24, secs);
-                w.refer(so, 0x28, ease);
-                w.refer(so, 0x2C, ease);
-                w.inc(&[El::Local(inside)]);
-                w.end_block(sp);
-            },
-        );
-    });
-    let mut vm = Vm::new(p, Config::new(Mode::Strict));
-    let id = vm.add(HANDLE, "Slider", 0);
-    let mut host = Engine::default();
-    vm.tick(id, &mut host).unwrap();
-    assert_eq!(vm.local(id, "v"), Some(Value::Int(10)));
-    assert_eq!(vm.local(id, "inside"), None);
-    assert!(host.ops.is_empty(), "the host isn't asked");
 }
 
 #[test]

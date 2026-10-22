@@ -14,6 +14,7 @@ use crate::program::{
     Container, Contents, Decl, DefId, DefKind, Elem, Global, GlobalId, Ins, LiteralClass, Obj,
     OpId, Operand, OperandId, Param, Program, ScriptId, Sym,
 };
+use crate::slide::{between, eased};
 use crate::value::{Value, arith_in, compare, convert, random_literal};
 use crate::whitelist::{Listed, Whitelist};
 
@@ -61,6 +62,10 @@ pub enum Precision {
 /// A logic tick's seconds at the game's 60 ticks a second, as the
 /// original's single-precision step holds it.
 pub const TICK_SECONDS: f32 = 1.0 / 60.0;
+
+/// The original's pool of sliders (aj-vm): a slide begun with every one
+/// running lands at once and skips its block (crate docs, Slides).
+pub const SLIDERS: usize = 400;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -278,6 +283,9 @@ struct Run {
     /// The position of the op executing, for a [`Halt`].
     at: u32,
     at_op: Option<OpId>,
+    /// [`Vm::run_span`]'s end: the run stops once the counter reaches it
+    /// in the stretch's own list with no call open.
+    stop: Option<u32>,
 }
 
 /// A path's end: where a read comes from and a write goes.
@@ -304,6 +312,53 @@ enum Spot {
         base: Base,
         part: Packed,
     },
+    /// A slider's sequence member (crate docs, Slides).
+    Slider {
+        id: u32,
+        part: SliderPart,
+    },
+}
+
+/// What of a slider a `sequence` member reads and writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SliderPart {
+    /// `time remaining`, seconds: what's left of this pass; written, how
+    /// much is.
+    Left,
+    /// `percent remaining`: the same over its time.
+    Percent,
+    /// `playback rate`, percent: a frame moves it a tick's seconds times
+    /// this over 100.
+    Rate,
+    /// `playback mode`: 0 one way, 1 ping pong.
+    Mode,
+    /// `looping`: 0 or 1.
+    Looping,
+    /// `raw duration`, seconds: its time (read only).
+    Duration,
+    /// `slider.ignores time scales`: kept, and no time scale is modelled to
+    /// ignore (a slider runs on the tick's seconds either way).
+    IgnoresTimeScales,
+}
+
+impl SliderPart {
+    fn of(m: MemberId) -> Option<Self> {
+        [
+            ("time remaining", SliderPart::Left),
+            ("percent remaining", SliderPart::Percent),
+            ("playback rate", SliderPart::Rate),
+            ("playback mode", SliderPart::Mode),
+            ("looping", SliderPart::Looping),
+            ("raw duration", SliderPart::Duration),
+        ]
+        .into_iter()
+        .find(|(n, _)| MemberId::named("sequence", n) == m)
+        .map(|(_, p)| p)
+        .or_else(|| {
+            (MemberId::named("slider", "ignores time scales") == m)
+                .then_some(SliderPart::IgnoresTimeScales)
+        })
+    }
 }
 
 /// Where a packed value lives: a cell, a member or a constant.
@@ -361,6 +416,7 @@ fn recv(v: Value) -> Recv {
         Value::Struct(s) => (9, s as u64),
         Value::Cell(c) => (10, c as u64),
         Value::Bound(b) => (12, b as u64),
+        Value::Slider(s) => (13, s as u64),
     };
     Recv::Value(tag, bits)
 }
@@ -391,6 +447,23 @@ fn tag_value(program: &Program, o: OperandId) -> Option<Value> {
             op: None,
             b: None,
         } => tag_value(program, *a),
+        _ => None,
+    }
+}
+
+/// The object a tag's value names, a path of that object alone.
+fn tag_object(program: &Program, o: OperandId) -> Option<Obj> {
+    match program.operands.get(o as usize)? {
+        Operand::Path { elems, .. } => match elems.as_slice() {
+            [Elem::Object(obj)] => Some(*obj),
+            [Elem::Op(op)] => Some(program.op_info.get(*op as usize)?.obj),
+            _ => None,
+        },
+        Operand::Expr {
+            a: Some(a),
+            op: None,
+            b: None,
+        } => tag_object(program, *a),
         _ => None,
     }
 }
@@ -436,6 +509,52 @@ pub struct Vm {
     capture: Option<Capture>,
     /// [`Vm::trace`]: each op executed, up to a cap.
     trace: Option<(usize, Vec<(ScriptId, u32)>)>,
+    /// Every slider made, in the order begun ([`Value::Slider`] names one);
+    /// those running are stepped once a frame ([`Vm::slide`]).
+    sliders: Vec<Slider>,
+    running: usize,
+    /// The sliders that may still run, by index, in the order begun: what
+    /// a frame's slides and a script's write scan, rather than every
+    /// slider a session has made (about 25 a second in the fight). One
+    /// that ended leaves at the next scan.
+    live: Vec<u32>,
+    /// Frames [`Vm::slide`] has begun: a slider begun in a frame first moves
+    /// in the next.
+    frame: u64,
+    /// [`Vm::slide`] has run this frame ([`Vm::step`] clears it).
+    slid: bool,
+    /// A slider's own write, which doesn't end it.
+    sliding: bool,
+}
+
+/// A `slide value` under way: where it writes, from what to what, over how
+/// long and eased how, and whose script began it.
+#[derive(Debug, Clone)]
+struct Slider {
+    spot: Spot,
+    placement: Option<PlacementId>,
+    ctx: ScriptId,
+    receiver: Value,
+    from: Value,
+    to: Value,
+    time: f32,
+    out: f32,
+    in_: f32,
+    elapsed: f32,
+    /// `sequence.playback rate`, percent: a frame moves it a tick's seconds
+    /// times this over 100.
+    rate: f32,
+    /// `sequence.looping` and `.playback mode` (ping pong): a looping slide
+    /// starts again at its time's end, a ping pong one back the way it
+    /// came, and never ends on its own.
+    looping: bool,
+    ping_pong: bool,
+    ignores_time_scales: bool,
+    /// Running from its target back to where it began (a ping pong's
+    /// return).
+    back: bool,
+    begun: u64,
+    running: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -476,6 +595,12 @@ impl Vm {
             executed: 0,
             capture: None,
             trace: None,
+            sliders: Vec::new(),
+            running: 0,
+            live: Vec::new(),
+            frame: 0,
+            slid: false,
+            sliding: false,
             run: Run {
                 placement: None,
                 ctx: 0,
@@ -489,6 +614,7 @@ impl Vm {
                 ops: 0,
                 at: 0,
                 at_op: None,
+                stop: None,
             },
         }
     }
@@ -589,6 +715,12 @@ impl Vm {
     }
 
     /// The placements listed for their first tick that have had it.
+    /// Whether a placement is held after its first tick (the whitelist
+    /// listing its script for that tick alone).
+    pub fn is_held(&self, id: PlacementId) -> bool {
+        self.placements.get(id as usize).is_some_and(|p| p.held)
+    }
+
     pub fn held(&self) -> Vec<Handle> {
         self.placements
             .iter()
@@ -728,6 +860,13 @@ impl Vm {
     /// yet.
     pub fn global(&mut self, g: GlobalId) -> Option<Value> {
         let c = self.global_cell(g).ok()?;
+        Some(self.cells[c as usize].value)
+    }
+
+    /// A file variable's value if something has made it yet, without making
+    /// it: what a reader holding the VM shared asks.
+    pub fn global_peek(&self, g: GlobalId) -> Option<Value> {
+        let c = self.globals.get(g as usize).copied().flatten()?;
         Some(self.cells[c as usize].value)
     }
 
@@ -886,6 +1025,23 @@ impl Vm {
     /// first stop; play mode records it and runs the rest.
     pub fn step(&mut self, host: &mut dyn Host) -> Result<StepReport, Halt> {
         let mut report = StepReport::default();
+        if !self.slid {
+            match self.slide(host) {
+                Ok(slid) => report.stopped = slid.stopped,
+                Err(halt) => {
+                    self.slid = false;
+                    return Err(halt);
+                }
+            }
+        }
+        let result = self.tick_all(&mut report, host);
+        // The frame's over: the next slides begin the next.
+        self.slid = false;
+        result.map(|()| report)
+    }
+
+    /// Every placement's tick, in the tick order.
+    fn tick_all(&mut self, report: &mut StepReport, host: &mut dyn Host) -> Result<(), Halt> {
         let order = self.order.clone();
         for id in order {
             let p = &self.placements[id as usize];
@@ -902,7 +1058,104 @@ impl Vm {
                 Err(halt) => return Err(halt),
             }
         }
-        Ok(report)
+        Ok(())
+    }
+
+    /// The frame's slides, once a frame before the scripts (crate docs,
+    /// Slides): each running slider a tick's seconds on, its place written
+    /// where it now stands, one finished landing on its target and ending.
+    /// A slider begun this frame first moves in the next. [`Vm::step`] runs
+    /// this itself unless the embedder has this frame, as one that makes
+    /// native calls ahead of the step does first. A slider whose write
+    /// stops in play mode ends, and its placement's script stops with it.
+    pub fn slide(&mut self, host: &mut dyn Host) -> Result<StepReport, Halt> {
+        let mut report = StepReport::default();
+        self.frame += 1;
+        self.slid = true;
+        if self.running == 0 {
+            self.live.clear();
+            return Ok(report);
+        }
+        let dt = self.config.tick_seconds;
+        let live = std::mem::take(&mut self.live);
+        let mut failed = None;
+        for &id in &live {
+            let i = id as usize;
+            let s = &mut self.sliders[i];
+            if !s.running || s.begun >= self.frame {
+                continue;
+            }
+            s.elapsed += dt * s.rate / 100.0;
+            let mut done = s.elapsed + 1e-6 >= s.time;
+            if done && s.looping {
+                s.elapsed = (s.elapsed - s.time).max(0.0);
+                if s.ping_pong {
+                    s.back = !s.back;
+                }
+                done = false;
+            }
+            let x = s.elapsed / s.time;
+            let k = eased(if s.back { 1.0 - x } else { x }, s.out, s.in_);
+            let v = if done {
+                s.to
+            } else {
+                between(s.from, s.to, k).unwrap_or(s.to)
+            };
+            let (spot, placement, ctx, receiver) = (s.spot, s.placement, s.ctx, s.receiver);
+            if done {
+                s.running = false;
+                self.running -= 1;
+            }
+            report.ticked += 1;
+            self.begin(placement, ctx, receiver);
+            self.sliding = true;
+            let result = self.write(spot, v, host);
+            self.sliding = false;
+            match self.finish(result) {
+                Ok(None) => {}
+                Ok(Some(halt)) => {
+                    if self.sliders[i].running {
+                        self.sliders[i].running = false;
+                        self.running -= 1;
+                    }
+                    report.stopped.push(halt);
+                }
+                Err(halt) => {
+                    failed = Some(halt);
+                    break;
+                }
+            }
+        }
+        // Any begun meanwhile follow those scanned, in the order begun.
+        let begun = std::mem::replace(&mut self.live, live);
+        self.live.extend(begun);
+        let sliders = &self.sliders;
+        self.live.retain(|&i| sliders[i as usize].running);
+        match failed {
+            Some(halt) => Err(halt),
+            None => Ok(report),
+        }
+    }
+
+    /// A tick the embedder ran natively for a placement (the portal
+    /// manager's, decision 2's player loop): its `system.script timer`
+    /// grows by a tick's seconds, as a tick of its own would.
+    pub fn count_tick(&mut self, id: PlacementId) {
+        let dt = self.config.tick_seconds;
+        if let Some(p) = self.placements.get_mut(id as usize) {
+            p.active += dt;
+        }
+    }
+
+    /// Sliders running now.
+    pub fn sliders_running(&self) -> usize {
+        self.running
+    }
+
+    /// Sliders a frame's slides and a script's write scan: those running,
+    /// and any that ended since the last scan.
+    pub fn sliders_scanned(&self) -> usize {
+        self.live.len()
     }
 
     /// One tick of one placement. `Ok(Some)` is a play-mode stop.
@@ -926,6 +1179,57 @@ impl Vm {
             }
         }
         self.finish(result)
+    }
+
+    /// Runs the ops at positions `from..to` of a placement's own script as
+    /// a stretch of its tick (crate docs, A stretch of a tick): its locals,
+    /// `my` and its `system.script timer` as its tick reads them, no tick
+    /// counted. What a native rule that schedules part of a placement's
+    /// tick runs (design decision 2's player loop: the portal manager's
+    /// ops for orbs, the award and loot, only their scheduling ours). The
+    /// stretch starts and ends between statements of one list: every block
+    /// it opens closes inside it. `Ok(true)` when it ran to `to`,
+    /// `Ok(false)` when a `flow end` ended the tick inside it or the
+    /// placement doesn't run (taken off, stopped, never added). A stop is
+    /// returned in either mode, the placement stopped with it, as
+    /// [`Vm::call_with`] returns one.
+    pub fn run_span(
+        &mut self,
+        id: PlacementId,
+        from: u32,
+        to: u32,
+        host: &mut dyn Host,
+    ) -> Result<bool, Halt> {
+        let Some(p) = self.placements.get(id as usize) else {
+            return Ok(false);
+        };
+        if p.removed || p.stopped.is_some() {
+            return Ok(false);
+        }
+        let len = self
+            .program
+            .scripts
+            .get(p.script as usize)
+            .map_or(0, |s| s.ops.len() as u32);
+        if from > to || to > len {
+            return Err(self.halt_outside(Reason::Unsupported(format!(
+                "a stretch {from}..{to} of a list of {len} ops"
+            ))));
+        }
+        let (handle, script) = (p.handle, p.script);
+        self.begin(Some(id), script, Value::Entity(handle));
+        self.run.pc = from;
+        self.run.stop = Some(to);
+        let result = if from == to {
+            Ok(())
+        } else {
+            self.execute(host)
+        };
+        let ran = result.is_ok() && self.run.ctx == script && self.run.pc == to;
+        match self.finish(result)? {
+            None => Ok(ran),
+            Some(halt) => Err(halt),
+        }
     }
 
     /// Runs the macro `name` as a parameterless call from a fresh context,
@@ -1057,6 +1361,7 @@ impl Vm {
             ops: 0,
             at: 0,
             at_op: None,
+            stop: None,
         };
     }
 
@@ -1160,6 +1465,24 @@ impl Vm {
                 Err(f) => return Err(f),
             }
             if self.run.pc == END && self.run.blocks.is_empty() {
+                return Ok(());
+            }
+            if let Some(stop) = self.run.stop
+                && self.run.calls.is_empty()
+                && self.run.pc >= stop
+            {
+                // A stretch's end: every block it opened has closed, unless
+                // a skip carried the counter past it (a stretch cut through
+                // a statement).
+                self.close(program)?;
+                if self
+                    .run
+                    .blocks
+                    .iter()
+                    .any(|b| b.ctx == self.run.ctx && b.kind != BlockKind::Root)
+                {
+                    return unsupported("a stretch of a tick ended inside a block it opened");
+                }
                 return Ok(());
             }
         }
@@ -1787,6 +2110,11 @@ impl Vm {
             return unsupported("find subset's path has no empty slot");
         };
         let set = self.walk(program, &elems[..slot], host)?;
+        // `undefined` holds no set: nothing matches (AH.19: the enemy
+        // system's way round obstacles searches it).
+        if set == Spot::Undefined {
+            return Err(Fault::Nothing);
+        }
         let set = self.read(set, host)?;
         let Value::Set(s) = self.materialize(set) else {
             return if set == Value::Null {
@@ -1893,7 +2221,7 @@ impl Vm {
     ) -> Result<(), Fault> {
         let class = program.class(op).unwrap_or(Class::Remove);
         if class == Class::SlideValue {
-            return self.slide_at_once(program, op, operands, host);
+            return self.begin_slide(program, op, operands, host);
         }
         let mut read = Vec::with_capacity(operands.len());
         for &(name, o) in operands {
@@ -1930,6 +2258,18 @@ impl Vm {
                 let targets = self.targets(v);
                 for t in targets {
                     if class == Class::Remove && !self.take_off(t) {
+                        continue;
+                    }
+                    // A slider is the VM's own: stopped, its place stays
+                    // where it stands.
+                    if let Value::Slider(id) = t {
+                        if class == Class::StopSequence
+                            && let Some(s) = self.sliders.get_mut(id as usize)
+                            && s.running
+                        {
+                            s.running = false;
+                            self.running -= 1;
+                        }
                         continue;
                     }
                     let call = OpCall {
@@ -2080,7 +2420,12 @@ impl Vm {
                 None => Value::Int(0),
                 Some(o) => match tag_value(&self.program, o) {
                     Some(v) => v,
-                    None => return unsupported("a tag whose value isn't a literal"),
+                    // A reference tag names an object of its file (a
+                    // breakable's `archetype ref`, AH.20): that object.
+                    None => match tag_object(&self.program, o) {
+                        Some(obj) => self.canon(Value::Object(obj)),
+                        None => return unsupported("a tag whose value isn't a literal"),
+                    },
                 },
             };
             let c = self.new_cell(decl, None, 0)?;
@@ -2154,11 +2499,14 @@ impl Vm {
         })
     }
 
-    /// `slide value`, finished at once: its target set to where the slide
-    /// would end and its block skipped, as the original does when its
-    /// pool of sliders is full (aj-vm). The eased slide over time isn't
-    /// modelled yet (crate docs, Left to the host).
-    fn slide_at_once(
+    /// `slide value` (crate docs, Slides): its place eased from what it
+    /// holds now to its target over its seconds by a slider of the pool,
+    /// the op's result, its block run; with every slider running, a time
+    /// that isn't over 0 or values that don't slide (not numbers, colours
+    /// or screen positions alike), it lands on its target at once and
+    /// skips its block, as the original does when its pool is full
+    /// (aj-vm).
+    fn begin_slide(
         &mut self,
         program: &Program,
         op: OpId,
@@ -2172,18 +2520,109 @@ impl Vm {
                 .and_then(|(_, o)| *o)
         };
         let to = self.rhs(program, operand("_RHS"), host, 0)?;
-        // The duration and eases are read as the original reads them, for
-        // the members they name; a slide finished at once uses none.
-        for name in ["_secondsRHS", "_easeOutRHS", "_easeInRHS"] {
-            match self.rhs(program, operand(name), host, 0) {
-                Ok(_) | Err(Fault::Nothing) => {}
-                Err(f) => return Err(f),
+        let mut number = |vm: &mut Self, name: &str| match vm.rhs(program, operand(name), host, 0) {
+            Ok(v) => Ok(v.as_f32().unwrap_or(0.0)),
+            Err(Fault::Nothing) => Ok(0.0),
+            Err(f) => Err(f),
+        };
+        let time = number(self, "_secondsRHS")?;
+        let out = number(self, "_easeOutRHS")? * 0.02;
+        let in_ = number(self, "_easeInRHS")? * 0.02;
+        let spot = self.path(program, operand("_LHS"), host)?;
+        let from = self.read(spot, host)?;
+        let from = self.deref_with(from, host)?;
+        let slides = time.is_finite()
+            && time > 0.0
+            && self.running < SLIDERS
+            && between(from, to, 0.5).is_some()
+            && !matches!(spot, Spot::Const(_) | Spot::Undefined);
+        if !slides {
+            self.write(spot, to, host)?;
+            self.skip(program, op);
+            return Ok(());
+        }
+        // A slide begun on a place one already runs on takes over from it.
+        self.end_slides_on(spot);
+        self.sliders.push(Slider {
+            spot,
+            placement: self.run.placement,
+            ctx: self.run.ctx,
+            receiver: self.run.receiver,
+            from,
+            to,
+            time,
+            out,
+            in_,
+            elapsed: 0.0,
+            rate: 100.0,
+            looping: false,
+            ping_pong: false,
+            ignores_time_scales: false,
+            back: false,
+            // Begun ahead of this frame's slides (a native call before
+            // them), it belongs to the frame they're about to begin.
+            begun: if self.slid {
+                self.frame
+            } else {
+                self.frame + 1
+            },
+            running: true,
+        });
+        self.running += 1;
+        let id = (self.sliders.len() - 1) as u32;
+        self.live.push(id);
+        self.op_state.entry(op).or_default().cached = Some(Value::Slider(id));
+        self.push(program, op, BlockKind::Plain);
+        Ok(())
+    }
+
+    /// Ends every running slide on `spot`: a script's own write to a place
+    /// a slide is easing takes it over (AH.19's reading of AH.10's pushes:
+    /// his hurt reaction writes his deceleration back to its default while
+    /// the push's slide eases it, and the default holds).
+    fn end_slides_on(&mut self, spot: Spot) {
+        if self.running == 0 {
+            return;
+        }
+        let key = |s: Spot| match s {
+            Spot::Member {
+                receiver,
+                member,
+                cell,
+                ..
+            } => Spot::Member {
+                receiver,
+                member,
+                cell,
+                other: None,
+            },
+            other => other,
+        };
+        let k = key(spot);
+        for &i in &self.live {
+            let s = &mut self.sliders[i as usize];
+            if s.running && key(s.spot) == k {
+                s.running = false;
+                self.running -= 1;
             }
         }
-        let spot = self.path(program, operand("_LHS"), host)?;
-        self.write(spot, to, host)?;
-        self.skip(program, op);
-        Ok(())
+        let sliders = &self.sliders;
+        self.live.retain(|&i| sliders[i as usize].running);
+    }
+
+    /// A slider's `sequence` members and `slider.ignores time scales`
+    /// ([`SliderPart`]); any other member of one is unmodelled.
+    fn slider_member(&mut self, id: u32, m: MemberId) -> Result<Spot, Fault> {
+        if self.sliders.get(id as usize).is_none() {
+            return Err(Fault::Nothing);
+        }
+        match SliderPart::of(m) {
+            Some(part) => {
+                self.uses.entry(m).or_default().0 += 1;
+                Ok(Spot::Slider { id, part })
+            }
+            None => Err(Fault::Member(m)),
+        }
     }
 
     /// The objects a world op acts on: a set's members one by one, or the
@@ -2218,10 +2657,25 @@ impl Vm {
         true
     }
 
-    /// A file object that names a placement, as that placement's handle.
+    /// A file object that names a placement, as that placement's handle; a
+    /// definition stub, as the definition it resolves to (crate docs,
+    /// Programs and placements), so two files naming one macro name one
+    /// object (AH.19: Eruptor's file names `State - On Fire` through a stub,
+    /// and the Chompy's state list holds `global.bld`'s definition).
     fn canon(&self, v: Value) -> Value {
         match v {
-            Value::Object(o) => self.objects.get(&o).map_or(v, |&h| Value::Entity(h)),
+            Value::Object(o) => {
+                if let Some(&h) = self.objects.get(&o) {
+                    return Value::Entity(h);
+                }
+                match self.program.def_of(o) {
+                    Some(d) => match self.program.resolve(d) {
+                        Some(r) if r != d => Value::Object(self.program.defs[r as usize].obj),
+                        _ => v,
+                    },
+                    None => v,
+                }
+            }
             other => other,
         }
     }
@@ -2330,9 +2784,9 @@ impl Vm {
                         .and_then(|s| s.cached)
                         .unwrap_or(Value::Null),
                 )),
-                Ins::Define(_) | Ins::Behaviour { .. } => {
-                    Ok(Spot::Const(Value::Object(program.op_info[op as usize].obj)))
-                }
+                Ins::Define(_) | Ins::Behaviour { .. } => Ok(Spot::Const(
+                    self.canon(Value::Object(program.op_info[op as usize].obj)),
+                )),
                 _ => unsupported(format!(
                     "{} as a path element",
                     program.class(op).map_or("?", Class::type_name)
@@ -2491,7 +2945,19 @@ impl Vm {
                         let v = self.read(prev, host)?;
                         let v = self.materialize(v);
                         if v == Value::Null {
+                            // A reference naming nothing still keeps its own
+                            // point (crate docs, Variables, structures and
+                            // sets): the reference is the receiver.
+                            if let Spot::Cell(c) = prev
+                                && self.cells[c as usize].kind == CellKind::Reference
+                                && m == MemberId::named("placementreference", "remembered")
+                            {
+                                return self.member(Some(Value::Cell(c)), m, Recv::ValueCell(c));
+                            }
                             return Err(Fault::Nothing);
+                        }
+                        if let Value::Slider(id) = v {
+                            return self.slider_member(id, m);
                         }
                         let key = if key == Recv::Head { recv(v) } else { key };
                         self.member(Some(v), m, key)
@@ -2578,6 +3044,23 @@ impl Vm {
             Spot::Count(s) => Value::Int(self.sets[s as usize].elems.len() as i32),
             Spot::CastToInteger => self.cast,
             Spot::Undefined => Value::Int(0),
+            Spot::Slider { id, part } => {
+                let s = &self.sliders[id as usize];
+                let left = if s.running {
+                    (s.time - s.elapsed).max(0.0)
+                } else {
+                    0.0
+                };
+                match part {
+                    SliderPart::Left => Value::Float(left),
+                    SliderPart::Percent => Value::Float(100.0 * left / s.time),
+                    SliderPart::Rate => Value::Float(s.rate),
+                    SliderPart::Mode => Value::Int(i32::from(s.ping_pong)),
+                    SliderPart::Looping => Value::Int(i32::from(s.looping)),
+                    SliderPart::Duration => Value::Float(s.time),
+                    SliderPart::IgnoresTimeScales => Value::Int(i32::from(s.ignores_time_scales)),
+                }
+            }
             Spot::Member {
                 member,
                 cell: Some(slot),
@@ -2668,6 +3151,9 @@ impl Vm {
     }
 
     fn write(&mut self, spot: Spot, v: Value, host: &mut dyn Host) -> Result<(), Fault> {
+        if !self.sliding {
+            self.end_slides_on(spot);
+        }
         match spot {
             Spot::Cell(c) => {
                 self.write_cell(c, v, 0);
@@ -2677,7 +3163,7 @@ impl Vm {
                 let Some(n) = self.deref(v).as_i32() else {
                     return unsupported(format!("count set to {v:?}"));
                 };
-                self.resize(s, n.max(0) as usize)
+                self.resize(s, n.max(0) as usize, host)
             }
             Spot::CastToInteger => {
                 if let Some(i) = self.deref(v).as_i32() {
@@ -2686,6 +3172,26 @@ impl Vm {
                 Ok(())
             }
             Spot::Undefined => Ok(()),
+            // Time left set on a slider: it carries on from there, and with
+            // none left it lands on its target in the next frame's step.
+            Spot::Slider { id, part } => {
+                let Some(n) = self.deref(v).as_f32() else {
+                    return Ok(());
+                };
+                let s = &mut self.sliders[id as usize];
+                match part {
+                    SliderPart::Left => s.elapsed = (s.time - n).clamp(0.0, s.time),
+                    SliderPart::Percent => {
+                        s.elapsed = (s.time - n / 100.0 * s.time).clamp(0.0, s.time);
+                    }
+                    SliderPart::Rate => s.rate = n,
+                    SliderPart::Mode => s.ping_pong = n as i32 == 1,
+                    SliderPart::Looping => s.looping = n as i32 == 1,
+                    SliderPart::Duration => return unsupported("a slider's raw duration written"),
+                    SliderPart::IgnoresTimeScales => s.ignores_time_scales = n as i32 == 1,
+                }
+                Ok(())
+            }
             Spot::Packed { base, part } => {
                 let whole = self.read(base.spot(), host)?;
                 let whole = self.deref(whole);
@@ -2794,7 +3300,7 @@ impl Vm {
                 self.cast = Value::Int(0);
                 Ok(())
             }
-            Spot::Undefined => Ok(()),
+            Spot::Undefined | Spot::Slider { .. } => Ok(()),
             // A structure or set a reference names, back to its defaults
             // as a variable holding it would be.
             Spot::Const(Value::Struct(st)) => {
@@ -3325,7 +3831,7 @@ impl Vm {
 
     /// `count` written: shorter drops the tail, longer appends fresh default
     /// elements of the set's element type.
-    fn resize(&mut self, s: u32, n: usize) -> Result<(), Fault> {
+    fn resize(&mut self, s: u32, n: usize, host: &mut dyn Host) -> Result<(), Fault> {
         let len = self.sets[s as usize].elems.len();
         if n <= len {
             self.sets[s as usize].elems.truncate(n);
@@ -3367,7 +3873,11 @@ impl Vm {
                             }
                             Value::Cell(cell)
                         }
-                        None => Value::Null,
+                        // An engine object: a fresh one from the host.
+                        None => {
+                            let class = self.program.sym(c).to_owned();
+                            host.make(&class).unwrap_or(Value::Null)
+                        }
                     }
                 }
                 _ => Value::Null,

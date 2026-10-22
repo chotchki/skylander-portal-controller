@@ -40,7 +40,7 @@ When collected experience reaches the next level's threshold (level 2 at exactly
 - **THEN** the two within 30 ft lose 99 each and the one 34 ft off nothing
 
 ### Requirement: Coins
-A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.7 m) of him in space and at least 0.7 s old; a dropped coin SHALL slide in over 0.48 s, a spinning one in 0.3 to 0.43 s, and its worth join his figure's gold the frame it reaches him, one taken while another still slides starting both slides again. A dropped coin SHALL pop up 2.8 to 5.6 m and fall back. Each spinning coin on chapter 1's walkway and above the pit SHALL be worth 1.
+A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.7 m) of him in space and at least 0.7 s old; dropped or spinning, it SHALL slide in over 0.48 s, and its worth join his figure's gold the frame it reaches him, one taken while another still slides starting both slides again. A dropped coin SHALL pop up 2.8 to 5.6 m and fall back. Each spinning coin on chapter 1's walkway and above the pit SHALL be worth 1.
 
 #### Scenario: A spinning coin on the walkway
 - **WHEN** Eruptor walks within 12 ft of a spinning coin on the walkway

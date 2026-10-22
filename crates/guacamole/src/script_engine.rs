@@ -267,6 +267,14 @@ pub enum Object {
     Origin(Handle),
     /// The point a reference to an actor keeps.
     Remembered(Handle),
+    /// The point a reference naming nothing keeps on itself, by the VM's
+    /// cell for the reference (openspec AH.20: an orb's delayed spawn).
+    RememberedRef(u32),
+    /// A waypoint a script made by growing a set of them, by its index in
+    /// the world's list (openspec AH.20: an orb's landing point).
+    Waypoint(u32),
+    /// `system.absolute zero`: the world's origin.
+    AbsoluteZero,
     /// A contact's normal, as a vector.
     Normal(Normal),
     /// A pad as the scripts reach it (`scriptcontroller.controller 1`,

@@ -127,6 +127,8 @@ pub(crate) enum Member {
     RayEnd,
     RayHasContact,
     Viewport,
+    /// `system.absolute zero`: the world's origin as a point (AH.20).
+    AbsoluteZero,
     InactiveController,
     Pad(Button),
     MainStick,
@@ -351,6 +353,7 @@ impl Member {
         add("raycontact", "end", Member::RayEnd);
         add("raycontact", "has contact", Member::RayHasContact);
         add("viewportinfo", "default", Member::Viewport);
+        add("system", "absolute zero", Member::AbsoluteZero);
         add(
             "scriptcontroller",
             "inactive controller",
@@ -423,6 +426,18 @@ impl ScriptWorld {
     fn object(&self, v: Option<Value>) -> Option<Object> {
         let h = self.handle(v?)?;
         self.objs.get(h)
+    }
+
+    /// A fresh engine object a script grows a set of them by
+    /// ([`guac_script::Host::make`]): a waypoint, not put anywhere yet. Any
+    /// other class makes none.
+    pub(crate) fn make(&mut self, class: &str) -> Option<Value> {
+        if class != "actorwaypoint" {
+            return None;
+        }
+        self.waypoints_made.push(None);
+        let i = (self.waypoints_made.len() - 1) as u32;
+        Some(self.objs.value(Object::Waypoint(i)))
     }
 
     /// The actor (or hero) a receiver names: `None` for a host object.
@@ -505,6 +520,9 @@ impl ScriptWorld {
                 let kept = self.actors.get(&a).and_then(|k| k.remembered);
                 kept.or_else(|| self.position(a, engine))
             }
+            Some(Object::RememberedRef(c)) => self.kept_points.get(&c).copied(),
+            Some(Object::Waypoint(i)) => self.waypoints_made.get(i as usize).copied().flatten(),
+            Some(Object::AbsoluteZero) => Some(Vec3::ZERO),
             _ => None,
         }
     }
@@ -531,6 +549,18 @@ impl ScriptWorld {
             Some(Object::Remembered(a)) => {
                 let k = self.actors.get_mut(&a).ok_or(HostFault::Nothing)?;
                 k.remembered = Some(p);
+                Ok(())
+            }
+            Some(Object::RememberedRef(c)) => {
+                self.kept_points.insert(c, p);
+                Ok(())
+            }
+            Some(Object::Waypoint(i)) => {
+                let w = self
+                    .waypoints_made
+                    .get_mut(i as usize)
+                    .ok_or(HostFault::Nothing)?;
+                *w = Some(p);
                 Ok(())
             }
             Some(Object::RayEnd) => {
@@ -808,10 +838,14 @@ impl ScriptWorld {
                 self.actors.get(&h).ok_or(HostFault::Nothing)?;
                 self.objs.value(Object::Origin(h))
             }
-            Member::Remembered => {
-                let h = actor.ok_or(HostFault::Nothing)?;
-                self.objs.value(Object::Remembered(h))
-            }
+            Member::Remembered => match recv {
+                // A reference naming nothing: its own point.
+                Some(Value::Cell(c)) => self.objs.value(Object::RememberedRef(c)),
+                _ => {
+                    let h = actor.ok_or(HostFault::Nothing)?;
+                    self.objs.value(Object::Remembered(h))
+                }
+            },
             Member::ContactType => {
                 let (_, m, found) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
                 Value::Int(if found { i32::from(m.unwrap_or(0)) } else { -1 })
@@ -898,6 +932,7 @@ impl ScriptWorld {
             Member::RayEnd => self.objs.value(Object::RayEnd),
             Member::RayHasContact => Value::Int(i32::from(self.ray_contact(engine).is_some())),
             Member::Viewport => Value::Entity(self.viewport),
+            Member::AbsoluteZero => self.objs.value(Object::AbsoluteZero),
             Member::InactiveController => self.objs.value(Object::Inactive),
             Member::Pad(b) => {
                 let pad = self.pad_of(recv).ok_or(HostFault::Nothing)?;
@@ -971,6 +1006,13 @@ impl ScriptWorld {
                 let a = actor.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 let b = self.handle(o).ok_or(HostFault::Nothing)?;
+                if b == self.viewport {
+                    // Against the gameplay camera: on screen. A stand-in
+                    // answering yes for every point (AH.20): the one reader
+                    // the fight reaches is the orbs' idle bounce, which
+                    // only shows on screen.
+                    return Ok(Value::Int(1));
+                }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
             }
             // AH.16's are answered by `ScriptWorld::get` before this.
@@ -1196,7 +1238,20 @@ impl ScriptWorld {
                 let r = recv.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 let b = self.point(o, engine).ok_or(HostFault::Nothing)?;
-                let a = self.point(r, engine).ok_or(HostFault::Nothing)?;
+                let a = match self.point(r, engine) {
+                    Some(a) => a,
+                    // A reference's own point not kept yet, or a waypoint
+                    // a script made and hasn't put anywhere: put from the
+                    // other point.
+                    None if matches!(
+                        self.handle(r).and_then(|h| self.objs.get(h)),
+                        Some(Object::RememberedRef(_) | Object::Waypoint(_))
+                    ) =>
+                    {
+                        b
+                    }
+                    None => return Err(HostFault::Nothing),
+                };
                 let x = float(v)?;
                 let d = a - b;
                 let to = match m {
@@ -1755,7 +1810,8 @@ impl ScriptWorld {
     /// one of them a body in the seam (a hero, a creature, a prop): the
     /// other's last move stopped on it, or its solid is within [`TOUCH`] of
     /// it where it stands (openspec AH.18: what a Chompy's bite reads). Two
-    /// actors neither of which the seam holds aren't modelled.
+    /// actors neither of which the seam holds touch when their solids are
+    /// within a centimetre (AH.20); one with no solid isn't modelled.
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
@@ -1793,6 +1849,11 @@ impl ScriptWorld {
         }
         if asked {
             Ok(false)
+        } else if self.query(a, engine).is_some() && self.query(b, engine).is_some() {
+            // Neither a body in the seam (a thrown ball against a breakable
+            // the loot system listed, AH.20): their solids where they
+            // stand.
+            Ok(near)
         } else {
             Err(HostFault::Unmodelled)
         }
@@ -2254,7 +2315,8 @@ mod tests {
             )
             .unwrap();
         assert!(contacts.is_empty());
-        // Two actors the seam holds neither of aren't modelled.
+        // Two actors the seam holds neither of touch by their solids
+        // (AH.20): these 5 m apart don't.
         w.actors
             .insert(0x6000_0009, ball(Vec3::new(9.0, 1.0, 0.0), 0.0));
         let neither = w.get_member(
@@ -2267,7 +2329,7 @@ mod tests {
             Member::Collision,
             &mut e,
         );
-        assert_eq!(neither, Err(HostFault::Unmodelled));
+        assert_eq!(neither, Ok(Value::Int(0)));
     }
 
     /// A solid's offset is metres in its file and feet at its members, as
@@ -2380,6 +2442,161 @@ mod tests {
         assert_eq!(w.point(kept, &mut e), Some(p));
     }
 
+    /// AH.20's points: a reference naming nothing keeps a point of its own,
+    /// asked on its cell and put from the other point the first time; a
+    /// waypoint a script makes is a point of its own, nowhere until put;
+    /// any other class makes none.
+    #[test]
+    fn a_reference_naming_nothing_and_a_made_waypoint_keep_their_points() {
+        let mut e = bench();
+        let mut w = world();
+        let target = Vec3::new(3.0, 0.0, 4.0);
+        w.actors.insert(BALL, ball(target, 0.0));
+        let remembered = |w: &mut ScriptWorld, e: &mut Bench, cell: u32| {
+            w.get_member(
+                &at(
+                    "placementreference",
+                    "remembered",
+                    Some(Value::Cell(cell)),
+                    None,
+                ),
+                Member::Remembered,
+                e,
+            )
+            .unwrap()
+        };
+        let kept = remembered(&mut w, &mut e, 7);
+        assert_eq!(w.point(kept, &mut e), None, "nowhere yet");
+        w.set_member(
+            &at(
+                "positionmeasurement",
+                "distance",
+                Some(kept),
+                Some(Value::Entity(BALL)),
+            ),
+            Member::Distance,
+            Value::Float(0.0),
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(w.point(kept, &mut e), Some(target));
+        assert_eq!(remembered(&mut w, &mut e, 7), kept, "the same reference");
+        let other = remembered(&mut w, &mut e, 8);
+        assert_ne!(other, kept);
+        assert_eq!(w.point(other, &mut e), None, "another reference's own");
+        let a = w.make("actorwaypoint").unwrap();
+        let b = w.make("actorwaypoint").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(w.point(a, &mut e), None);
+        w.set_member(
+            &at(
+                "positionmeasurement",
+                "vertical offset",
+                Some(a),
+                Some(Value::Entity(BALL)),
+            ),
+            Member::VerticalOffset,
+            Value::Float(2.5),
+            &mut e,
+        )
+        .unwrap();
+        let p = w.point(a, &mut e).unwrap();
+        assert!((p - (target + Vec3::Y * 2.5 * METRES_PER_FOOT)).length() < 1e-5);
+        assert_eq!(w.point(b, &mut e), None, "the other made one untouched");
+        assert_eq!(w.make("spriteinfo"), None);
+    }
+
+    /// `system.absolute zero` is the world's origin as a point: what a
+    /// hero's death measures from (AH.20).
+    #[test]
+    fn absolute_zero_is_the_worlds_origin() {
+        let mut e = bench();
+        let mut w = world();
+        let zero = w
+            .get_member(
+                &at("system", "absolute zero", None, None),
+                Member::AbsoluteZero,
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(w.point(zero, &mut e), Some(Vec3::ZERO));
+        w.actors.insert(BALL, ball(Vec3::new(3.0, 0.0, 4.0), 0.0));
+        let d = w
+            .get_member(
+                &at(
+                    "positionmeasurement",
+                    "distance",
+                    Some(Value::Entity(BALL)),
+                    Some(zero),
+                ),
+                Member::Distance,
+                &mut e,
+            )
+            .unwrap();
+        assert!(
+            (d.as_f32().unwrap() - 5.0 * FEET_PER_METRE).abs() < 1e-4,
+            "{d:?}"
+        );
+    }
+
+    /// Against the gameplay camera every point is on screen (AH.20's
+    /// stand-in, the orbs' idle bounce its reader), near or far.
+    #[test]
+    fn every_point_is_on_screen_to_the_gameplay_camera() {
+        let mut e = bench();
+        let mut w = world();
+        for at_x in [0.0, 500.0] {
+            w.actors.insert(BALL, ball(Vec3::new(at_x, 0.0, 0.0), 0.0));
+            let c = w
+                .get_member(
+                    &at(
+                        "positionmeasurement",
+                        "collision",
+                        Some(Value::Entity(BALL)),
+                        Some(Value::Entity(w.viewport)),
+                    ),
+                    Member::Collision,
+                    &mut e,
+                )
+                .unwrap();
+            assert_eq!(c, Value::Int(1));
+        }
+    }
+
+    /// Two actors the seam doesn't hold (a thrown ball and a breakable the
+    /// loot system lists, AH.20) touch by their solids where they stand;
+    /// one with no solid isn't modelled.
+    #[test]
+    fn two_actors_off_the_seam_touch_by_their_solids() {
+        let mut e = bench();
+        let mut w = world();
+        const OTHER: Handle = 0x6000_0009;
+        let here = Vec3::new(10.0, 3.0, -5.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        let collision = |w: &mut ScriptWorld, e: &mut Bench| {
+            w.get_member(
+                &at(
+                    "positionmeasurement",
+                    "collision",
+                    Some(Value::Entity(BALL)),
+                    Some(Value::Entity(OTHER)),
+                ),
+                Member::Collision,
+                e,
+            )
+        };
+        w.actors.insert(OTHER, ball(here + Vec3::X, 0.0));
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(1)), "overlapping");
+        w.actors.get_mut(&OTHER).unwrap().position = here + Vec3::X * 10.0;
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "10 m apart");
+        w.actors.insert(OTHER, Actor::blank());
+        assert_eq!(
+            collision(&mut w, &mut e),
+            Err(HostFault::Unmodelled),
+            "no solid"
+        );
+    }
+
     #[test]
     fn the_scripts_are_the_one_writer_of_his_speed_turn_and_clip() {
         let mut e = bench();
@@ -2448,17 +2665,17 @@ mod fight_tests {
     use crate::script_engine::{Actor, Pad, Physics, Solid, Walker};
     use crate::scripts::{Files, headless_objects};
 
-    const C1: Handle = 0x6100_0001;
+    pub(super) const C1: Handle = 0x6100_0001;
     const C2: Handle = 0x6100_0002;
     const C3: Handle = 0x6100_0003;
     const HERO: Handle = 0x6100_0010;
-    const STEP: f32 = 1.0 / 60.0;
+    pub(super) const STEP: f32 = 1.0 / 60.0;
     const WP: Obj = Obj { unit: 9, index: 1 };
     const WP2: Obj = Obj { unit: 9, index: 2 };
 
     /// Open level ground whose top is y = 0; the hero and the creatures
     /// bodies in it as the embedder keeps them.
-    struct Pit {
+    pub(super) struct Pit {
         world: ParryWorld,
         hero: Option<Hero>,
         bodies: HashMap<Handle, BodyId>,
@@ -2491,7 +2708,7 @@ mod fight_tests {
         }
     }
 
-    fn pit() -> Pit {
+    pub(super) fn pit() -> Pit {
         let floor = Body {
             id: BodyId(1),
             kind: BodyKind::Static,
@@ -2511,7 +2728,7 @@ mod fight_tests {
     /// A chapter 1 Chompy as its STARTUP leaves it: a 6 x 3 x 3 ft sphere
     /// meeting the level and actors, 20 ft/s, 160 up, 80 down, 720°/s, a
     /// creature the engine walks.
-    fn chompy(at: Vec3, facing: f32) -> Actor {
+    pub(super) fn chompy(at: Vec3, facing: f32) -> Actor {
         let mut a = Actor::blank();
         a.position = at;
         a.angles.facing = facing;
@@ -2551,7 +2768,7 @@ mod fight_tests {
         a
     }
 
-    fn world() -> ScriptWorld {
+    pub(super) fn world() -> ScriptWorld {
         let files = Files {
             placed: Vec::new(),
             ids: HashMap::new(),
@@ -3049,5 +3266,412 @@ mod fight_tests {
         );
         assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
         assert_eq!(e.hero.as_ref().unwrap().facing, 270.0);
+    }
+}
+
+/// What AH.19's hurt chain asks of the VM and the host, on a synthetic
+/// chain written in code the hurt chain's way (our numbers): a hit's
+/// damage, a critical by a fraction rolled 0-100 under a chance, a hit
+/// turned away by a whole number rolled 0-100 under half the armour, a
+/// push (the creature's deceleration put to 0 and slid back to 600 over
+/// the knock time with ease out 50, its velocity displaced 80 ft/s along a
+/// heading, its resistance up half the strength, the push ended at its
+/// time) carried by guac-motion's controller on the parry twin, and a kill
+/// taking it off.
+#[cfg(test)]
+mod hurt_tests {
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph};
+    use guac_motion::tuning::FOOT;
+    use guac_script::{Generator, Mode, Program, Role, Unit, Value, Vm, Whitelist};
+
+    use super::fight_tests::{C1, Pit, STEP, chompy, pit, world};
+    use super::*;
+    use crate::scripts::{WorldHost, headless_spawner};
+
+    const INT: &str = "IntMeasurement";
+    const FLOAT: &str = "FloatMeasurement";
+
+    fn my() -> El<'static> {
+        El::Member("optoplevelbehavior", "my")
+    }
+
+    fn decel() -> [El<'static>; 4] {
+        [
+            my(),
+            El::Member("actorinfo", "movement"),
+            El::Member("actorphysics", "ground deceleration"),
+            El::Null,
+        ]
+    }
+
+    /// The synthetic chain: a creature whose every tick ends its push once
+    /// its time is up, then takes a hit when `go` reads 1.
+    fn chain() -> Arc<Program> {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let v = |w: &mut Writer<'_>, n: &str, c: &str| w.variable(n, "ValueInfo", Some(c));
+            let go = v(&mut w, "go", INT);
+            let hp = v(&mut w, "hp", FLOAT);
+            let armor = v(&mut w, "armor", INT);
+            let chance = v(&mut w, "chance", INT);
+            let damage = v(&mut w, "damage", FLOAT);
+            let strength = v(&mut w, "strength", INT);
+            let heading = v(&mut w, "heading", FLOAT);
+            let resist = v(&mut w, "resist", FLOAT);
+            let end = v(&mut w, "knock end", FLOAT);
+            let roll = v(&mut w, "roll", FLOAT);
+            let t = v(&mut w, "knock time", FLOAT);
+            let (crits, turned, kills, hits) = (
+                v(&mut w, "crits", INT),
+                v(&mut w, "turned", INT),
+                v(&mut w, "kills", INT),
+                v(&mut w, "hits", INT),
+            );
+            let timer = [El::Member("system", "script timer")];
+            let decel = decel();
+            let decel = &decel[..3];
+            w.script(
+                "C:/tfb/Synthetic/Hurt.ai",
+                |_| {},
+                |_| {},
+                |w| {
+                    let body = w.behaviour("idle");
+                    // The push's end: its deceleration back, the creature
+                    // stopped, as the combat manager's clear leaves it.
+                    let zero = w.int(0);
+                    let pushing = w.check(&[El::Local(end)], 4, zero);
+                    let at = w.rhs(FLOAT, &[El::Local(end)]);
+                    let due = w.check(&timer, 2, at);
+                    let eighty = w.int(80);
+                    w.set(decel, eighty);
+                    let still = w.group(&[my(), El::Member("actorinfo", "velocity")], None);
+                    let o = w.op(Class::Displace, "displace");
+                    let (l, h, pt) = (w.float(0.0), w.float(0.0), w.float(0.0));
+                    w.refer(o, 0x1C, still);
+                    // Combine 1 sets it: to nothing.
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, l);
+                    w.refer(o, 0x28, h);
+                    w.refer(o, 0x2C, pt);
+                    w.push(o);
+                    let zero = w.int(0);
+                    w.set(&[El::Local(end)], zero);
+                    w.end_block(due);
+                    w.end_block(pushing);
+                    // A hit when asked.
+                    let one = w.int(1);
+                    let asked = w.check(&[El::Local(go)], 1, one);
+                    let zero = w.int(0);
+                    w.set(&[El::Local(go)], zero);
+                    w.inc(&[El::Local(hits)]);
+                    // Critical: the chance less a fraction rolled 0-100.
+                    let c = w.rhs(INT, &[El::Local(chance)]);
+                    let r = w.literal(FLOAT, 100f32.to_bits(), true);
+                    let e = w.expr(c, Some((1, r)));
+                    w.set(&[El::Local(roll)], e);
+                    let zero = w.int(0);
+                    let crit = w.check(&[El::Local(roll)], 4, zero);
+                    let d = w.rhs(FLOAT, &[El::Local(damage)]);
+                    let half = w.float(0.5);
+                    let e = w.expr(d, Some((2, half)));
+                    w.set(&[El::Member("system", "cast to integer")], e);
+                    let d = w.rhs(FLOAT, &[El::Local(damage)]);
+                    let cast = w.rhs(INT, &[El::Member("system", "cast to integer")]);
+                    let e = w.expr(d, Some((0, cast)));
+                    w.set(&[El::Local(damage)], e);
+                    w.inc(&[El::Local(crits)]);
+                    w.end_block(crit);
+                    // Armour: half of it less a whole number rolled 0-100.
+                    let a = w.rhs(INT, &[El::Local(armor)]);
+                    let half = w.float(0.5);
+                    let a = w.expr(a, Some((2, half)));
+                    let r = w.literal(INT, 100, true);
+                    let e = w.expr(a, Some((1, r)));
+                    w.set(&[El::Local(roll)], e);
+                    let zero = w.int(0);
+                    let away = w.check(&[El::Local(roll)], 4, zero);
+                    w.inc(&[El::Local(turned)]);
+                    w.flow_end();
+                    w.end_block(away);
+                    // The damage, and a kill at none left.
+                    let h = w.rhs(FLOAT, &[El::Local(hp)]);
+                    let d = w.rhs(FLOAT, &[El::Local(damage)]);
+                    let e = w.expr(h, Some((1, d)));
+                    w.set(&[El::Local(hp)], e);
+                    let zero = w.int(0);
+                    let dead = w.check(&[El::Local(hp)], 0, zero);
+                    w.inc(&[El::Local(kills)]);
+                    w.remove(&[my()]);
+                    w.flow_end();
+                    w.end_block(dead);
+                    // The push: (strength - resistance) / 100 x 0.6 s, at
+                    // least 0.125.
+                    let s = w.rhs(INT, &[El::Local(strength)]);
+                    let r = w.rhs(FLOAT, &[El::Local(resist)]);
+                    let e = w.expr(s, Some((1, r)));
+                    let hundred = w.float(100.0);
+                    let e = w.expr(e, Some((3, hundred)));
+                    let k = w.float(0.6);
+                    let e = w.expr(e, Some((2, k)));
+                    w.set(&[El::Local(t)], e);
+                    let floor = w.float(0.125);
+                    let short = w.check(&[El::Local(t)], 3, floor);
+                    let floor = w.float(0.125);
+                    w.set(&[El::Local(t)], floor);
+                    w.end_block(short);
+                    let r = w.rhs(FLOAT, &[El::Local(resist)]);
+                    let s = w.rhs(INT, &[El::Local(strength)]);
+                    let half = w.float(0.5);
+                    let s = w.expr(s, Some((2, half)));
+                    let e = w.expr(r, Some((0, s)));
+                    w.set(&[El::Local(resist)], e);
+                    let zero = w.int(0);
+                    w.set(decel, zero);
+                    let lhs = w.value(decel);
+                    let to = w.int(600);
+                    let secs = w.rhs(FLOAT, &[El::Local(t)]);
+                    let (out, in_) = (w.int(50), w.int(0));
+                    let (sp, so) = w.open(Class::SlideValue, "slide value");
+                    w.refer(so, 0x1C, lhs);
+                    w.refer(so, 0x20, to);
+                    w.refer(so, 0x24, secs);
+                    w.refer(so, 0x28, out);
+                    w.refer(so, 0x2C, in_);
+                    w.end_block(sp);
+                    let target = w.group(&[my(), El::Member("actorinfo", "velocity")], None);
+                    let o = w.op(Class::Displace, "displace");
+                    let len = w.int(80);
+                    let head = w.rhs(FLOAT, &[El::Local(heading)]);
+                    let pitch = w.int(0);
+                    w.refer(o, 0x1C, target);
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, len);
+                    w.refer(o, 0x28, head);
+                    w.refer(o, 0x2C, pitch);
+                    w.push(o);
+                    let now = w.rhs(FLOAT, &timer);
+                    let tt = w.rhs(FLOAT, &[El::Local(t)]);
+                    let e = w.expr(now, Some((0, tt)));
+                    w.set(&[El::Local(end)], e);
+                    w.end_block(asked);
+                    w.end_block(body);
+                },
+            );
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "synthetic",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    /// The chain's creature on the twin's open ground, its locals set, and
+    /// a step: the frame's slides, its tick, then the engine's frame.
+    struct Bench {
+        vm: Vm,
+        world: ScriptWorld,
+        pit: Pit,
+        generator: Generator,
+        id: guac_script::PlacementId,
+    }
+
+    impl Bench {
+        fn new(seed: u32) -> Bench {
+            let mut config = crate::scripts::fight_config(Mode::Strict);
+            config.whitelist = Whitelist::All;
+            let mut vm = Vm::new(chain(), config);
+            let id = vm.add(C1, "Chompy", 0);
+            let mut world = world();
+            world.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+            let mut b = Bench {
+                vm,
+                world,
+                pit: pit(),
+                generator: Generator::seeded(seed),
+                id,
+            };
+            for (n, v) in [
+                ("hp", Value::Float(20.0)),
+                ("damage", Value::Float(8.0)),
+                ("strength", Value::Int(25)),
+                ("heading", Value::Float(0.0)),
+                ("resist", Value::Float(4.0)),
+            ] {
+                assert!(b.vm.set_local(id, n, v));
+            }
+            b
+        }
+
+        fn set(&mut self, n: &str, v: Value) {
+            assert!(self.vm.set_local(self.id, n, v));
+        }
+
+        fn int(&self, n: &str) -> i32 {
+            self.vm
+                .local(self.id, n)
+                .and_then(|v| v.as_i32())
+                .unwrap_or(0)
+        }
+
+        fn float(&self, n: &str) -> f32 {
+            self.vm
+                .local(self.id, n)
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0)
+        }
+
+        /// The step, and the creature's speed across the ground after it
+        /// (ft/s).
+        fn step(&mut self) -> f32 {
+            let mut spawn = headless_spawner(1 << 40);
+            {
+                let mut host = WorldHost {
+                    world: &mut self.world,
+                    engine: &mut self.pit,
+                    generator: &mut self.generator,
+                    spawn: &mut spawn,
+                };
+                self.vm.slide(&mut host).unwrap();
+                self.vm.step(&mut host).unwrap();
+            }
+            self.world.end_step();
+            self.world.advance(STEP, &mut self.pit);
+            let a = self.world.actor(C1).unwrap();
+            Vec3::new(a.velocity.x, 0.0, a.velocity.z).length()
+        }
+
+        fn hit(&mut self) -> Vec<f32> {
+            self.set("go", Value::Int(1));
+            let mut speeds = vec![self.step()];
+            while self.float("knock end") > 0.0 {
+                speeds.push(self.step());
+                assert!(speeds.len() < 60, "a push that never ends");
+            }
+            speeds
+        }
+    }
+
+    /// A hit's damage and its push: 8 off 20, no critical at a chance of 0,
+    /// none turned away with no armour; 80 ft/s along its heading from the
+    /// hit's own frame (the creature's velocity, as the engine path has a
+    /// Chompy's), slowing as the slide brings its deceleration in from
+    /// nothing as x², for its knock time from the strength less the
+    /// resistance, (25 - 4) / 100 x 0.6 = 0.126 s: 8 frames, then still; its
+    /// resistance up half the strength. A second push on that resistance
+    /// takes the floor, 0.125 s.
+    #[test]
+    fn a_hit_hurts_and_pushes_for_its_strength_less_the_resistance() {
+        let mut b = Bench::new(7);
+        let speeds = b.hit();
+        assert_eq!(b.float("hp"), 12.0);
+        assert_eq!((b.int("crits"), b.int("turned")), (0, 0));
+        assert!((b.float("knock time") - 0.126).abs() < 1e-6);
+        assert!((b.float("resist") - 16.5).abs() < 1e-6);
+        // 80 ft/s the frame it's hit, then each frame the slid
+        // deceleration, 600 x (k / 60 / 0.126)^2, off it.
+        assert!((speeds[0] - 80.0).abs() < 1e-3, "{speeds:?}");
+        let mut want = 80.0f32;
+        for (k, v) in speeds.iter().enumerate().skip(1).take(7) {
+            let x = k as f32 * STEP / 0.126;
+            want -= 600.0 * x * x * STEP;
+            assert!((v - want).abs() < 0.05, "frame {k}: {v} against {want}");
+        }
+        assert_eq!(
+            speeds.len(),
+            9,
+            "8 frames moving, still the ninth: {speeds:?}"
+        );
+        assert_eq!(*speeds.last().unwrap(), 0.0);
+        let moved = b.world.actor(C1).unwrap().position;
+        assert!(moved.z > 2.0 * FOOT && moved.x.abs() < 1e-3, "{moved}");
+        // The second: (25 - 16.5) / 100 x 0.6 = 0.051 s, under the floor.
+        let speeds = b.hit();
+        assert!((b.float("knock time") - 0.125).abs() < 1e-6);
+        assert_eq!(speeds.len(), 9, "{speeds:?}");
+        assert_eq!(b.float("hp"), 4.0);
+    }
+
+    /// A critical: at a chance of 100 every hit adds half its damage,
+    /// rounded down, 8 to 12, as long as the roll isn't the top (one in
+    /// 2^25); a chance of 6 lands one in about 17, exactly when the roll is
+    /// under 6.
+    #[test]
+    fn a_critical_adds_half_and_lands_when_the_roll_is_under_the_chance() {
+        let mut b = Bench::new(11);
+        b.set("chance", Value::Int(100));
+        b.set("hp", Value::Float(1000.0));
+        b.hit();
+        assert_eq!(b.float("hp"), 988.0);
+        assert_eq!(b.int("crits"), 1);
+        let mut crits = 0;
+        for n in 0..300 {
+            let mut b = Bench::new(100 + n);
+            b.set("chance", Value::Int(6));
+            let first = b.generator.clone().next_u32();
+            let roll = guac_script::random_literal(Value::Float(100.0), first)
+                .unwrap()
+                .as_f32()
+                .unwrap();
+            b.hit();
+            let critical = 6.0 - roll > 0.0;
+            assert_eq!(b.int("crits"), i32::from(critical), "roll {roll}");
+            assert_eq!(b.float("hp"), if critical { 8.0 } else { 12.0 });
+            crits += i32::from(critical);
+        }
+        assert!((5..=40).contains(&crits), "{crits}");
+    }
+
+    /// Armour turns a hit away whole: no damage, no push, the creature
+    /// still; at 200 it lands only on the roll's top.
+    #[test]
+    fn a_turned_away_hit_takes_nothing_and_pushes_nothing() {
+        let mut b = Bench::new(3);
+        b.set("armor", Value::Int(200));
+        let first = b.generator.clone().next_u32();
+        let roll = guac_script::random_literal(Value::Int(100), first)
+            .unwrap()
+            .as_i32()
+            .unwrap();
+        assert!(roll < 100, "the seed's roll isn't the top");
+        b.set("go", Value::Int(1));
+        assert_eq!(b.step(), 0.0);
+        assert_eq!(b.int("turned"), 1);
+        assert_eq!(b.float("hp"), 20.0);
+        assert_eq!(b.float("knock end"), 0.0, "no push");
+        let at = b.world.actor(C1).unwrap().position;
+        assert_eq!(
+            (at.x, at.z),
+            (0.0, 0.0),
+            "not moved across the ground: {at}"
+        );
+    }
+
+    /// A kill: the third 8 takes 20 to -4, and the creature is taken off,
+    /// its script ended.
+    #[test]
+    fn a_kill_takes_the_creature_off() {
+        let mut b = Bench::new(5);
+        b.hit();
+        b.hit();
+        b.set("go", Value::Int(1));
+        b.step();
+        assert_eq!(b.float("hp"), -4.0);
+        assert_eq!(b.int("kills"), 1);
+        assert!(b.vm.removed(b.id));
+        assert!(b.world.removed(C1));
+        b.set("go", Value::Int(1));
+        b.step();
+        assert_eq!(b.int("hits"), 3, "its script ended with it");
     }
 }

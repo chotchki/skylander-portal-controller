@@ -53,6 +53,7 @@ use guac_script::{
 };
 use tracing::{info, warn};
 
+use crate::player_loop::PlayerLoop;
 use crate::script_engine::{
     Actor, Angles, Engine, NoEngine, Object, Objects, Pad, Physics, Sequence, Solid,
 };
@@ -336,6 +337,11 @@ pub struct ScriptWorld {
     pub(crate) pads_before: [Pad; 2],
     pub(crate) normalized: f32,
     pub(crate) ray: Ray,
+    /// The points references naming nothing keep, by the reference's cell.
+    pub(crate) kept_points: HashMap<u32, Vec3>,
+    /// The waypoints scripts made ([`Object::Waypoint`]), each where it was
+    /// last put, none until it's put somewhere.
+    pub(crate) waypoints_made: Vec<Option<Vec3>>,
     /// Clones of scripted templates the scripts made this step, with the
     /// template: the embedder adds each as a placement running its script.
     pub scripted: Vec<(Handle, Obj)>,
@@ -395,6 +401,8 @@ impl ScriptWorld {
             pads_before: [Pad::default(); 2],
             normalized: 0.0,
             ray: Ray::default(),
+            kept_points: HashMap::new(),
+            waypoints_made: Vec::new(),
             scripted: Vec::new(),
             time_scale: FULL_SPEED,
             load_level: Value::Null,
@@ -859,6 +867,9 @@ impl Host for WorldHost<'_, '_> {
     fn elements(&mut self, at: &Access) -> Result<Vec<Value>, HostFault> {
         self.world.elements(at, self.engine)
     }
+    fn make(&mut self, class: &str) -> Option<Value> {
+        self.world.make(class)
+    }
 }
 
 /// `global.bld`'s running placements' scripts: their first tick only.
@@ -904,8 +915,10 @@ pub fn config(mode: Mode) -> Config {
 }
 
 /// `global.bld`'s placements AH.17 ticks every step: the UI's (its tick
-/// advances the combat timer every mover's update reads) and the movement
-/// update's (each tick moving the scripted movers).
+/// advances the combat timer every mover's update reads, and keeps the
+/// loot in play) and the movement update's (each tick moving the scripted
+/// movers). The game systems' tick moves the orbs; the player loop runs
+/// that stretch of it alone (openspec AH.20).
 pub const GLOBAL_EVERY_TICK: [&str; 2] = ["/UI.ai", "movementUpdate.ai"];
 
 /// Eruptor's scripts (openspec AH.17): his definition and tuning actor, his
@@ -926,6 +939,8 @@ pub fn hero_config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
     members::register(&mut c.members, INIT_CHAIN);
     members::register(&mut c.members, members::HERO);
+    // A slider's own members (AH.19): his attacks' and the HUD's slides.
+    members::register(&mut c.members, members::COMBAT);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
         .copied()
@@ -960,13 +975,34 @@ pub const FIRST_FIGHT: [&str; 11] = [
     "Chompie_Dummies(6)",
 ];
 
+/// The loot on the way to the first fight (openspec AH.20, design decision
+/// 2's whitelist: the coins in reach and the loot macros): the level's loot
+/// system's first tick and the spinning coins on chapter 1's walkway and on
+/// the line down into the pit, by placement name, so the level's other
+/// coins stay inert.
+pub const PICKUPS: [&str; 10] = [
+    "LootSystem_Init",
+    "Coin_spinning",
+    "Coin_spinning_0",
+    "Coin_spinning_0(1)",
+    "Coin_spinning(1)",
+    "Coin_spinning(2)",
+    "Coin_spinning(3)",
+    "Coin_spinning(4)",
+    "Coin_spinning(5)",
+    "Coin_spinning(6)",
+];
+
 /// The VM's config for AH.18's run: AH.17's with the first fight's
-/// placements and the members they reach.
+/// placements and the members they reach, and AH.20's pickups with
+/// theirs.
 pub fn fight_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
+    members::register(&mut c.members, members::LOOP);
     if let Whitelist::Only { placements, .. } = &mut c.whitelist {
         placements.extend(FIRST_FIGHT.iter().map(|s| (*s).to_owned()));
+        placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
     }
     c
 }
@@ -1124,6 +1160,57 @@ pub fn join_activate(
     minion_placement.ok_or_else(|| outside("the activation spawned no minion".to_owned()))
 }
 
+/// A figure's health kept across a swap within a level (openspec AH.20;
+/// design decision 2's stand-in row, Health kept across a swap; combat: A
+/// hero's health): in the original the portal manager keeps each figure's
+/// health in its stored data while the level lasts, keyed by the tag, and
+/// clears it at a level change. guacamole keys it by the figure. The hero
+/// taken off mid-level leaves his health here ([`KeptHealth::left`]); put
+/// back in the same level, his join sets it ([`set_health`]) from
+/// [`KeptHealth::back`]; a level change clears it. The TV's portal has no
+/// mid-level removal yet (AG.29's), so nothing calls `left` there today.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct KeptHealth {
+    kept: HashMap<String, i32>,
+}
+
+impl KeptHealth {
+    /// `figure` taken off mid-level with `health` left.
+    pub fn left(&mut self, figure: &str, health: i32) {
+        self.kept.insert(figure.to_owned(), health);
+    }
+
+    /// The health `figure` comes back in with, if it left this level.
+    pub fn back(&self, figure: &str) -> Option<i32> {
+        self.kept.get(figure).copied()
+    }
+
+    /// A level change: every figure comes in full again.
+    pub fn level_changed(&mut self) {
+        self.kept.clear();
+    }
+}
+
+/// The hero's health as his scripts hold it: his minion's
+/// `description.creature info.hp`.
+pub fn health(vm: &Vm, minion: PlacementId) -> Option<i32> {
+    let d = vm.local(minion, "description").map(|v| vm.value(v))?;
+    let c = vm.field(d, "creature info").map(|v| vm.value(v))?;
+    vm.field(c, "hp").map(|v| vm.value(v))?.as_i32()
+}
+
+/// The hero's health set where his scripts hold it, as the swap's stand-in
+/// puts back what he left with. False when he has no health to set.
+pub fn set_health(vm: &mut Vm, minion: PlacementId, health: i32) -> bool {
+    let Some(d) = vm.local(minion, "description").map(|v| vm.value(v)) else {
+        return false;
+    };
+    let Some(c) = vm.field(d, "creature info").map(|v| vm.value(v)) else {
+        return false;
+    };
+    vm.set_field(c, "hp", Value::Int(health))
+}
+
 /// Each clone of a scripted template the last step made, added to the VM
 /// running its template's script: what the original's scheduler ticks from
 /// the next frame (a hypothesis: where in a frame a new clone first ticks
@@ -1140,56 +1227,6 @@ pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
         .collect()
 }
 
-/// A slice of the player loop's native rule (AH.20's, decision 2's table):
-/// the portal manager's tick calls `Manage Projectiles` with its projectile
-/// control (the global `projectile control data` its STARTUP set), so what
-/// `Projectile - Fire Projectile` threw runs its midair logic, its hits and
-/// its detonation. Called once a step before the placements' ticks, where
-/// the portal manager's tick runs ahead of a joined hero's scripts.
-pub fn manage_projectiles(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
-    let pm = portal_manager(vm, host.world)?;
-    let g = vm
-        .program()
-        .global_named("projectile control data")
-        .ok_or_else(|| outside("no projectile control data".to_owned()))?;
-    let control = vm
-        .global(g)
-        .ok_or_else(|| outside("projectile control data reads nothing".to_owned()))?;
-    vm.call_with(
-        Some(pm),
-        "Manage Projectiles",
-        &[("control data", control)],
-        &[],
-        host,
-    )?;
-    Ok(())
-}
-
-/// Another slice of the player loop's native rule (openspec AH.18; AH.20
-/// owns the loop): the portal manager's tick calls `Combat - Manage Combat`
-/// with the global `combat control data` once a step, just before `Manage
-/// Projectiles`, so every 0.25 s of game time each creature within its
-/// notice range of a player is alerted and calls the others in range, and a
-/// knockback that's run its time ends.
-pub fn manage_combat(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
-    let pm = portal_manager(vm, host.world)?;
-    let g = vm
-        .program()
-        .global_named("combat control data")
-        .ok_or_else(|| outside("no combat control data".to_owned()))?;
-    let control = vm
-        .global(g)
-        .ok_or_else(|| outside("combat control data reads nothing".to_owned()))?;
-    vm.call_with(
-        Some(pm),
-        "Combat - Manage Combat",
-        &[("combat control data", control)],
-        &[],
-        host,
-    )?;
-    Ok(())
-}
-
 fn outside(why: String) -> Halt {
     Halt {
         placement: None,
@@ -1201,13 +1238,29 @@ fn outside(why: String) -> Halt {
     }
 }
 
-fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId, Halt> {
-    let h = world
+/// The portal manager's handle.
+fn portal_manager_handle(world: &ScriptWorld) -> Result<Handle, Halt> {
+    world
         .templates
         .values()
         .find(|p| p.name == PORTAL_MANAGER)
         .and_then(|p| world.objects.get(&p.obj).copied())
-        .ok_or_else(|| outside(format!("no {PORTAL_MANAGER} placement")))?;
+        .ok_or_else(|| outside(format!("no {PORTAL_MANAGER} placement")))
+}
+
+/// The placement running the script whose source path ends with `suffix`,
+/// if one runs.
+pub(crate) fn running(vm: &Vm, world: &ScriptWorld, suffix: &str) -> Option<PlacementId> {
+    world
+        .templates
+        .values()
+        .filter(|p| p.script.as_deref().is_some_and(|s| s.ends_with(suffix)))
+        .filter_map(|p| world.objects.get(&p.obj))
+        .find_map(|&h| vm.placement_of(h))
+}
+
+pub(crate) fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId, Halt> {
+    let h = portal_manager_handle(world)?;
     vm.placement_of(h)
         .ok_or_else(|| outside(format!("{PORTAL_MANAGER} doesn't run")))
 }
@@ -1260,6 +1313,9 @@ impl ScriptWorld {
 pub struct ScriptRuntime {
     pub vm: Vm,
     pub generator: Generator,
+    /// The portal manager's tick as the player loop runs it (openspec
+    /// AH.20): stepped ahead of every placement's tick.
+    pub player_loop: PlayerLoop,
     /// Every step so far and the scripts play mode stopped.
     pub steps: u64,
     pub stopped: Vec<Halt>,
@@ -1357,11 +1413,13 @@ pub fn install_with(
         "portal",
     ];
     let objects = names.map(|n| world.spawn(ScriptObject(n)).id().to_bits());
+    let player_loop = PlayerLoop::read(&program);
     let vm = init_chain(program, files, &handles, order, config);
     world.insert_resource(ScriptWorld::new(files, &handles, objects));
     world.insert_resource(ScriptRuntime {
         vm,
         generator: Generator::seeded(guac_script::session_seed()),
+        player_loop,
         steps: 0,
         stopped: Vec::new(),
     });
@@ -1419,6 +1477,24 @@ mod tests {
 
     use super::*;
     use crate::script_engine::Pad;
+
+    /// The swap's stand-in: a figure taken off mid-level comes back with
+    /// what it left with, another figure with nothing kept, the latest
+    /// leaving winning; a level change clears every figure's.
+    #[test]
+    fn health_is_kept_across_a_swap_and_cleared_at_a_level_change() {
+        let mut kept = KeptHealth::default();
+        assert_eq!(kept.back("eruptor"), None, "never left: full");
+        kept.left("eruptor", 200);
+        kept.left("tree rex", 430);
+        assert_eq!(kept.back("eruptor"), Some(200));
+        kept.left("eruptor", 150);
+        assert_eq!(kept.back("eruptor"), Some(150), "the latest leaving");
+        assert_eq!(kept.back("bash"), None);
+        kept.level_changed();
+        assert_eq!(kept.back("eruptor"), None, "the next level: full");
+        assert_eq!(kept.back("tree rex"), None);
+    }
 
     const GRUNT: Obj = Obj { unit: 4, index: 7 };
     const SPRITE: Obj = Obj { unit: 4, index: 9 };

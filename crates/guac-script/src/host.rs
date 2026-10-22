@@ -335,4 +335,13 @@ pub trait Host {
         let _ = at;
         Err(HostFault::Unmodelled)
     }
+
+    /// A fresh engine object of `class` (lowercased, `actorwaypoint`): what
+    /// a set of them grows by when a script raises its count (crate docs,
+    /// Variables, structures and sets). The default makes none, and the
+    /// new element reads nothing.
+    fn make(&mut self, class: &str) -> Option<Value> {
+        let _ = class;
+        None
+    }
 }

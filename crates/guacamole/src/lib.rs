@@ -10,6 +10,7 @@ pub mod character;
 pub mod game_controller;
 pub mod level_scene;
 pub mod level_scripts;
+pub mod player_loop;
 pub mod props;
 pub mod script_engine;
 mod script_members;
