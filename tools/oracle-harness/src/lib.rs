@@ -54,6 +54,7 @@ pub mod rng;
 pub mod route;
 pub mod rpcs3_log;
 pub mod scan;
+pub mod sched;
 pub mod script;
 pub mod session;
 pub mod snapshot;

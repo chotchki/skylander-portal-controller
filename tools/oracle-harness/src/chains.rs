@@ -106,6 +106,13 @@ pub const LAVA: u8 = 6;
 /// sequence's, its animation's name pointer), a slot that holds no control
 /// read as missing.
 pub const CHOMPY_ANIMS: u8 = 7;
+/// AH.59: a drive that follows the script scheduler (`oracle goto --sched`)
+/// arms its two chains in [`LAVA`]'s and [`CHOMPY_ANIMS`]' slots, O6 arming
+/// 8 at most: the scripts' updater with each group's placement lists
+/// ([`crate::sched::order_chain`]) and group 1's actors with their stamps
+/// ([`crate::sched::active_chain`]).
+pub const SCHED_ORDER: u8 = LAVA;
+pub const SCHED_ACTIVE: u8 = CHOMPY_ANIMS;
 /// A Chompy's vector slots [`CHOMPY_ANIMS`] reads.
 pub const CHOMPY_CLIP_SLOTS: usize = 6;
 
@@ -911,6 +918,10 @@ pub struct GiantsChains {
     /// the actor list didn't hold at the resolve.
     #[serde(default)]
     pub referents: Vec<(String, u32)>,
+    /// AH.59: the scheduler's chains in [`SCHED_ORDER`] and [`SCHED_ACTIVE`]
+    /// rather than the lava's and the Chompies' clips.
+    #[serde(default)]
+    pub sched: bool,
 }
 
 impl GiantsChains {
@@ -922,6 +933,18 @@ impl GiantsChains {
         g: &mut impl Gather,
         watch: &GiantsWatch,
         kinds: &[(String, Vec<String>)],
+    ) -> Result<Self> {
+        Self::resolve_with(g, watch, kinds, None)
+    }
+
+    /// [`GiantsChains::resolve`], with `sched` (the scheduler as F0 holds
+    /// it, [`crate::sched::snapshot`]) following the script scheduler in
+    /// [`SCHED_ORDER`] and [`SCHED_ACTIVE`] instead (AH.59).
+    pub fn resolve_with(
+        g: &mut impl Gather,
+        watch: &GiantsWatch,
+        kinds: &[(String, Vec<String>)],
+        sched: Option<&crate::sched::SchedSnapshot>,
     ) -> Result<Self> {
         let app = be32(&one(g, actors::APP, 4, "the application pointer")?, 0);
         let a = one(g, app, actors::APP_LEN, "the application")?;
@@ -999,12 +1022,24 @@ impl GiantsChains {
         slots.insert(ORBS, orb_chain(combat_control));
         slots.insert(LOOT, loot_chain(macros_ui));
         slots.insert(ANIMS, anim_chain(watch.hero_corpus));
-        slots.insert(LAVA, lava_chain(updater_index as u32)?);
-        // AH.55: the Chompies' clips, whichever the list holds as it runs.
-        slots.insert(
-            CHOMPY_ANIMS,
-            followed_chain(updater_index as u32, &CHOMPIES, chompy_clip_probes())?,
-        );
+        match sched {
+            Some(s) => {
+                slots.insert(SCHED_ORDER, crate::sched::order_chain());
+                slots.insert(
+                    SCHED_ACTIVE,
+                    crate::sched::active_chain(s.index, s.awake_vtables())?,
+                );
+            }
+            None => {
+                slots.insert(LAVA, lava_chain(updater_index as u32)?);
+                // AH.55: the Chompies' clips, whichever the list holds as it
+                // runs.
+                slots.insert(
+                    CHOMPY_ANIMS,
+                    followed_chain(updater_index as u32, &CHOMPIES, chompy_clip_probes())?,
+                );
+            }
+        }
         if !creature_vars.is_empty() {
             slots.insert(
                 CREATURES,
@@ -1038,6 +1073,7 @@ impl GiantsChains {
             creature_vars,
             hero_vars,
             referents,
+            sched: sched.is_some(),
         })
     }
 
@@ -1126,7 +1162,7 @@ impl GiantsChains {
                     names.extend(i.range(loot_range::NAME).map(word).filter(|&n| n != 0));
                 }
             }
-            if let Some(b) = record.get(&LAVA) {
+            if let Some(b) = record.get(&LAVA).filter(|_| !self.sched) {
                 for i in &b.items {
                     types.extend(i.range(lava_range::REACH).map(word));
                     let Some(p) = i.range(lava_range::PLACEMENT) else {
@@ -1163,7 +1199,9 @@ impl GiantsChains {
             for (&slot, b) in record {
                 let named: Vec<(Clip, Option<u32>)> = match slot {
                     ANIMS => b.items.iter().filter_map(anim_clip).collect(),
-                    CHOMPY_ANIMS => b.items.iter().flat_map(chompy_item_clips).collect(),
+                    CHOMPY_ANIMS if !self.sched => {
+                        b.items.iter().flat_map(chompy_item_clips).collect()
+                    }
                     _ => continue,
                 };
                 for (clip, name) in named {
@@ -1302,6 +1340,11 @@ impl GiantsChains {
                 // ([`GiantsChains::clips`]); a vector that didn't read loses
                 // that record's clips alone.
                 if slot == ANIMS || slot == CHOMPY_ANIMS {
+                    continue;
+                }
+                // AH.59's scheduler chains decode on their own
+                // ([`crate::sched::decode`]).
+                if self.sched && slot == SCHED_ORDER {
                     continue;
                 }
                 if block.status != 0 {
@@ -1616,7 +1659,28 @@ impl GiantsChains {
         std::fs::write(dir.join(CHAIN_FILE), serde_json::to_string_pretty(&file)?)?;
         std::fs::write(dir.join(CHAIN_BLOCKS), &raw)?;
         std::fs::write(dir.join(CHAIN_RECORDS), serde_json::to_string(&decoded)?)?;
-        if self.chains.slots.keys().any(|&s| s == CHOMPY_ANIMS) {
+        if self.sched {
+            let sched: Vec<crate::sched::SchedRecord> = blocks
+                .iter()
+                .zip(&decoded)
+                .map(|(b, d)| {
+                    crate::sched::decode(
+                        (d.flip, d.read, d.game_frame),
+                        b.get(&SCHED_ORDER),
+                        b.get(&SCHED_ACTIVE),
+                    )
+                })
+                .collect();
+            let names = crate::sched::names(g, &sched)?;
+            std::fs::write(
+                dir.join(crate::sched::SCHED_RECORDS),
+                serde_json::to_string(&sched)?,
+            )?;
+            std::fs::write(
+                dir.join(crate::sched::SCHED_NAMES),
+                serde_json::to_string_pretty(&names)?,
+            )?;
+        } else if self.chains.slots.keys().any(|&s| s == CHOMPY_ANIMS) {
             let frames: Vec<CreatureClips> = blocks
                 .iter()
                 .zip(&decoded)
@@ -2316,6 +2380,48 @@ mod tests {
         let mut k = fight_kinds();
         k.push(("leaf".into(), vec!["leaves Blowing in air ".into()]));
         k
+    }
+
+    /// AH.59: with the scheduler asked for, its two chains take the lava's
+    /// and the Chompies' clips' slots, the rest as before, within O6's
+    /// budget.
+    #[test]
+    fn sched_mode_arms_the_schedulers_chains_in_the_lava_and_clip_slots() {
+        let mut f = fixture();
+        let plain = GiantsChains::resolve(&mut f.w, &f.watch, &kinds()).unwrap();
+        let snapshot = crate::sched::SchedSnapshot {
+            input: None,
+            scheduler_class: None,
+            updaters: Vec::new(),
+            script_update: 0,
+            index: 2,
+            cursor: [0; 3],
+            shutdown: None,
+            groups: Vec::new(),
+        };
+        let g = GiantsChains::resolve_with(&mut f.w, &f.watch, &kinds(), Some(&snapshot)).unwrap();
+        assert!(g.sched && !plain.sched);
+        assert_eq!(
+            g.chains.slots[&SCHED_ORDER],
+            crate::sched::order_chain(),
+            "the order chain in the lava's slot"
+        );
+        assert_eq!(
+            g.chains.slots[&SCHED_ACTIVE],
+            crate::sched::active_chain(2, vec![vtable::ACTOR_INFO]).unwrap()
+        );
+        for slot in [ACTORS, ORBS, LOOT, ANIMS, CREATURES, HERO_STATE] {
+            assert_eq!(
+                g.chains.slots.get(&slot),
+                plain.chains.slots.get(&slot),
+                "{slot}"
+            );
+        }
+        assert!(
+            g.chains.bytes() <= crate::verbs::CHAIN_BUDGET,
+            "{}",
+            g.chains.bytes()
+        );
     }
 
     #[test]

@@ -155,6 +155,7 @@ fn write(root: &Path, label: &str, s: &Script) -> PathBuf {
             creature_vars: Vec::new(),
             hero_vars: Vec::new(),
             referents: Vec::new(),
+            sched: false,
         },
         resolved: Resolved {
             clip_names: BTreeMap::from([
