@@ -1,0 +1,53 @@
+# Phase AQ - Structure: the hot files split, the tests' repeated setups cached, every stand-in on a ledger and lane ids that don't collide
+
+## Why
+
+Six items of tech debt came out of the day's lanes and merges, listed by the session on the evening of 2026-10-21. chotchki's answers, verbatim:
+
+1. Source files over 1,000 lines: "I think any code file over 1k is worthy of considering a split. We should also chew on if moving stuff to separate crates would help too."
+2. Stand-ins: "plan where these make sense to fix in the plan."
+3. Task-id collisions between lanes: "anything we can do here?"
+4. Tests that couldn't fail: "not sure we can do anything on this."
+5. Build weight: "I feel like a crate spilt would help this."
+6. The "one step late" fidelity gaps: "is there a root cause to this?"
+
+To the session's proposal (a measured survey, a crate split for his approval, the splits one at a time, a stand-in ledger, per-lane id blocks, item 6 fixed by AH.59 ahead of AH.25): "yes write the change, we should also consider caching things like the intro transcoding or other things that might be overtesting".
+
+- **Size** (line counts at `5920f56`). 78 tracked `.rs` files run over 1,000 lines. guacamole's library is ONE crate of 52,044 lines in 54 files, 17 of them over 1,000: [`tv.rs`](../../../crates/guacamole/src/tv.rs) 5,021, [`script_members.rs`](../../../crates/guacamole/src/script_members.rs) 3,677, [`play.rs`](../../../crates/guacamole/src/play.rs) 3,524, [`level.rs`](../../../crates/guacamole/src/level.rs) 3,248, [`mirror.rs`](../../../crates/guacamole/src/mirror.rs) 2,289, [`scripts.rs`](../../../crates/guacamole/src/scripts.rs) 2,111, [`extraction.rs`](../../../crates/guacamole/src/extraction.rs) 1,884, [`crates/guacamole/src/turntable.rs`](../../../crates/guacamole/src/turntable.rs) 1,829, [`crates/guacamole/src/pad.rs`](../../../crates/guacamole/src/pad.rs) 1,616 and eight more down to [`title.rs`](../../../crates/guacamole/src/title.rs)'s 1,120 ([`hero_scripts.rs`](../../../crates/guacamole/src/hero_scripts.rs) 1,121; [`crates/guacamole/src/input.rs`](../../../crates/guacamole/src/input.rs) 869 and [`player_loop.rs`](../../../crates/guacamole/src/player_loop.rs) 648 sit under the line but in every gameplay lane's path). Outside it: guac-script's [`vm.rs`](../../../crates/guac-script/src/vm.rs) 4,157 (one `impl Vm` of about 3,400 lines), guac-server's [`http.rs`](../../../crates/guac-server/src/http.rs) 3,523 and [`crates/guac-server/src/state.rs`](../../../crates/guac-server/src/state.rs) 2,736, oracle-harness's [`chains.rs`](../../../tools/oracle-harness/src/chains.rs) 2,807, [`watch.rs`](../../../tools/oracle-harness/src/watch.rs) 2,249, [`verbs.rs`](../../../tools/oracle-harness/src/verbs.rs) 2,163 and [`fight.rs`](../../../tools/oracle-harness/src/fight.rs) 2,141, the e2e harness's [`crates/e2e-tests/src/lib.rs`](../../../crates/e2e-tests/src/lib.rs) 2,873.
+- **Merges.** Of the six lane merges into `2.0` from 08:15 to 18:42 (fixes, wall, throws, portal, fight, infra), three conflicted, in [`play.rs`](../../../crates/guacamole/src/play.rs), [`crates/guacamole/src/pad.rs`](../../../crates/guacamole/src/pad.rs), [`mirror.rs`](../../../crates/guacamole/src/mirror.rs), [`shots.rs`](../../../crates/guacamole/src/shots.rs) and [`hero_scripts.rs`](../../../crates/guacamole/src/hero_scripts.rs); the portal merge needed a resolve-and-check workflow of its own. The mirror is where every subsystem's `/api/_test/tv` field lives, so every lane edits it.
+- **Ids.** Nine renumber commits from 2026-10-20 22:35 (`c9ba64c`) to 2026-10-21 18:42 (`39b0478`), each a merge finding its lane's new box ids already taken on `2.0`, each rewriting the cross-references in its own boxes.
+- **Build weight.** AG.65's dev profile (dependencies at opt-level 3, ours at 1) took a cold dev build from 169 to 660 s at 4 jobs and gave back `cargo test --workspace` 61 → 32 s, the guacamole e2e 596 → 277 s and a disc-test file 5-9 min → about 1.5 min. Target dirs ran 14-45 GiB per worktree and the Mac's free disk fell under 40 GiB three times that day. AG.78 (open) is the e2e harness's first spawn timing out on a cold build.
+- **Stand-ins.** AG's design table holds 15 rows and AH's 20 (plus Slides, struck at AH.19); 61 code lines in 27 files call something a stand-in; [`openspec/backlog.md`](../../backlog.md) and open boxes add more. Some are harmless until a neighbour lands: the script reinstall on a hero swap (`hero_scripts::reinstall`) resets Setup_001 and the Chompies on every swap once AH.25 runs the first fight on the TV, and no box retires it today; AH.62's kept health isn't wired.
+- **Item 6.** AH.19's review: with the hurt chain called a step earlier, Eruptor's pushes match AH.10's frame for frame, so the push is right and the order isn't. It shows in four places (a bite moving him a step late, his hurt reaction's 80 ft/s² from the second step, a lob's push on a Chompy over 10 steps against 9, the lunge topping out a frame short) and maybe AG.38's walk a frame after the stick. The order lives in before/after edges between `FixedUpdate` systems added from five files.
+- **Item 4** gets no box: the reviews' mutants already find a test that can't fail when they're run, and chotchki saw nothing more to do. The test survey records any it meets.
+
+## What Changes
+
+- **Per-lane id blocks** (item 3), in [`openspec/config.yaml`](../../config.yaml) with this proposal (AQ.1): when lanes run at once the session hands each a block of new task ids per change at launch, written into its prompt; a lane numbers new boxes only from its block; unused ids stay gaps; a lone lane still takes the next free id.
+- **A stand-in ledger** (item 2): every stand-in in the design tables, the backlog, the open boxes and the code, each with the box that retires it (a box added where none exists) and the hazard of leaving it in, the hazardous ones ordered ahead of the box they'd break, the swap's script reinstall first and ahead of AH.25.
+- **Two measured surveys** (items 1 and 5, and chotchki's caching ask): the code (every file over 1,000 lines with its conflict history, `cargo build --timings` per crate cold and after a one-line change in each hot file, the guacamole library's module graph, which test binaries each hot file drags into a rebuild) and the test time (per-test durations, every repeated expensive setup with its cost and a verdict, the intro transcodes first, and tests that exercise the same thing twice). Each ends in a proposal: crate and file boundaries, a cache and narrowing list.
+- **chotchki approves** the split and the cache list before anything moves. The 1,000-line mark is a trigger to consider a split, not a rule.
+- **The splits, one at a time, moves only**, each when no lane is editing its files: guac-script's [`vm.rs`](../../../crates/guac-script/src/vm.rs), the TV's screens, the test hooks and the mirror, the level and its loading, the hero and the pads, the scripts bridge, and whatever else the survey lists and he approves. The gameplay seams wait for AH.59, which puts the tick order in one place first.
+- **Caches and narrower tests**, after his approval: inputs a test needs but doesn't test (the e2e's synthetic intros and extracts, the harness's build, the disc tests' read-only extracts) built once per content key; anything a test exists to exercise is never cached; tests that cover the same thing twice narrowed, with the mutants the removed one caught still caught.
+- **Item 6 stays AH's**: AH.59 is the root cause, promoted ahead of AH.25 in [`ah-first-fight/tasks.md`](../ah-first-fight/tasks.md) with this proposal (measure the original's per-frame order on the oracle once, encode it as one explicit Bevy schedule of named sets every system joins). AH.25 now stands on it.
+- **Out:** any behaviour change (a split is moves, a cache feeds inputs, a narrowed test keeps its coverage); a requirement or spec; a Bevy or dependency upgrade; the product's behaviour (a guac-server split, if one is approved, is moves only under the product's e2e).
+
+## Capabilities
+
+### New Capabilities
+
+None. [`.openspec.yaml`](.openspec.yaml) sets `skip_specs: true`: a refactor, tooling and test-time change.
+
+### Modified Capabilities
+
+None.
+
+## Impact
+
+- Track: Guacamole, beside the ladder, not a rung (as AP). Kid-visible: nothing. What it buys is lanes that merge without renumbers or rename-and-modify conflicts, rebuilds that touch less and a list of stand-ins with no surprises in it.
+- Starts: AQ.1 landed with this proposal; the ledger (AQ.2) and the surveys (AQ.3, AQ.4) stand on nothing, the surveys' timings taken with at most one other compile lane on the Mac and the load beside each; the rest follows the gates in What Changes.
+- Disc serials: none read by anything AQ adds; the `#[ignore]`d BLUS30968 disc tests a split moves or a cache feeds are rerun with their numbers unchanged. guac-extract's output doesn't change (extract layout and IR version stay); the e2e's synthetic extract is a test fixture, not guac-extract's output.
+- Code: `crates/guacamole` (into crates or modules, as approved), `crates/guac-script` ([`vm.rs`](../../../crates/guac-script/src/vm.rs)), `crates/e2e-tests` (fixtures, the harness's spawn), the disc tests' setup; others, `guac-server` among them, only as the survey lists and chotchki approves. No change to the phone.
+- Owning docs: [`docs/native/guacamole-design.md`](../../../docs/native/guacamole-design.md) (Architecture: the crates as split; the stand-in ledger, where AG.33 and AH.32 move the stand-in tables; the ladder's beside-the-ladder paragraph), [`CLAUDE.md`](../../../CLAUDE.md) (Architecture's crate list and every path it cites that moves; Dev mode: the cache switch), [`crates/e2e-tests/README.md`](../../../crates/e2e-tests/README.md) (the caches) and [`openspec/config.yaml`](../../config.yaml) (the id blocks, AQ.1).
+- Release reach: none. Refactors, test fixtures and tooling; guacamole isn't in any `v*` release, and a guac-server split would reach the product only as moves in the next tag, on chotchki's word. AQ lands and archives on `2.0` with no release task.
+- Id: AQ, the next past AP. The ladder reserves AA-AO ([`openspec/backlog.md`](../../backlog.md), the design doc's Milestone ladder) and AP is taken.

@@ -55,6 +55,19 @@ context: |
   numbered <ID>.<N>, and in a new change <ID>.0 is the phase-exit criterion. Changes that came
   over from PLAN.md keep their numbering.
 
+  When lanes run at once (each in a worktree of its own, merged into 2.0 when it lands), the
+  session that launches them hands each lane a block of new task ids per change it may add boxes
+  to, written into the lane's prompt at launch (AH.70-AH.79 to one lane, AH.80-AH.89 to the
+  next), each block starting past the highest id 2.0 or any block still out holds. A lane numbers
+  a new box (a split, a gap it finds) only from its own block, in order; it never renumbers a box
+  2.0 or another lane holds, and one that fills its block lists further boxes unnumbered in its
+  report for the session to number at the merge. The session's own boxes (a merge's findings)
+  take ids past every block still out. Ids a lane leaves unused stay gaps, never backfilled, as
+  change ids do. A lone lane, nothing else in flight, still takes the next free id. Why: nine
+  renumber commits from 2026-10-20 22:35 to 2026-10-21 18:42, each a merge finding its lane's new
+  boxes already numbered on 2.0 (chotchki, on the collisions: "anything we can do here?";
+  openspec/changes/aq-structure/, AQ.1).
+
   Plans state no time or effort estimates (no hours, weeks, timeboxes or years): a change is
   sequenced by conditions (it starts when what it stands on has landed) and reports measured
   progress, and chotchki decides what comes next from that.
