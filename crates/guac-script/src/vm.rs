@@ -796,6 +796,14 @@ impl Vm {
         true
     }
 
+    /// Takes the placement running under `handle` off as a script's `remove`
+    /// of it does: its script stopped for good, never told again. An
+    /// embedder's, for a placement a run carries over as taken off (openspec
+    /// AH.27). False when none runs under it or it's already off.
+    pub fn remove(&mut self, handle: Handle) -> bool {
+        self.handles.contains_key(&handle) && self.take_off(Value::Entity(handle))
+    }
+
     /// Whether the placement is asleep (inactive).
     pub fn asleep(&self, id: PlacementId) -> bool {
         self.placements.get(id as usize).is_some_and(|p| p.asleep)

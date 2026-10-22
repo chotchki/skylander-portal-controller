@@ -78,7 +78,7 @@ use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
-use guac_motion::seam::BodyKind;
+use guac_motion::seam::{BodyId, BodyKind};
 use guac_script::Obj;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
@@ -735,6 +735,18 @@ impl StandingProps {
     pub(crate) fn report(&self) -> &PropsReport {
         &self.report
     }
+
+    /// Each prop whose solid is in Avian's world now: its object and its
+    /// body's id (what the scripts' engine maps to the prop's placement,
+    /// openspec AH.27).
+    fn standing_bodies(&self) -> Vec<(u32, BodyId)> {
+        self.props
+            .iter()
+            .zip(&self.spawned)
+            .filter(|(_, spawned)| spawned.is_some())
+            .filter_map(|(p, _)| p.body.as_ref().map(|b| (p.object, b.id)))
+            .collect()
+    }
 }
 
 /// What `/api/_test/tv` reports of the level's script part (AH.22).
@@ -958,6 +970,21 @@ impl Level {
         }
     }
 
+    /// Where the hero starts, once the level's spawned: where the scripts'
+    /// activity rule measures from before a hero is in (openspec AH.27), as
+    /// the props stand.
+    pub(crate) fn start(&self) -> Option<Vec3> {
+        self.stage.loaded().map(|l| l.start)
+    }
+
+    /// Each prop whose solid is in Avian's world now, by its object, and
+    /// its body's id (openspec AH.27); none before the level's spawned.
+    pub(crate) fn standing_bodies(&self) -> Vec<(u32, BodyId)> {
+        self.stage
+            .loaded()
+            .map_or_else(Vec::new, |l| l.props.standing_bodies())
+    }
+
     /// The spawn part's models by path, once the level's loaded: what the
     /// scripts' clones draw (AH.24).
     pub(crate) fn spawn_models(
@@ -1114,6 +1141,7 @@ fn receive_level(
         AsyncComputeTaskPool::get().spawn(async move {
             level_scripts::load(&dir, &name).map(|mut linked| {
                 linked.layout = level_scripts::figure_layout(&dir, ir);
+                linked.palettes = level_scripts::level_palettes(&dir, &name, ir);
                 linked
             })
         })
@@ -1267,6 +1295,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 order,
                 fighters,
                 layout,
+                palettes,
                 ..
             } = linked;
             let layout = match layout {
@@ -1276,14 +1305,21 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                     None
                 }
             };
+            let palettes = palettes.unwrap_or_else(|why| {
+                warn!(reason = %why, "the level's palettes didn't read: its placements' clips play nothing");
+                Vec::new()
+            });
             commands.queue(move |world: &mut World| {
                 crate::hero_scripts::install(
                     world,
-                    std::sync::Arc::new(program),
-                    placements,
-                    order,
-                    fighters,
-                    layout,
+                    crate::hero_scripts::Part {
+                        program: std::sync::Arc::new(program),
+                        files: placements,
+                        order,
+                        fighters,
+                        layout,
+                        palettes,
+                    },
                 );
             });
         }

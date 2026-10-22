@@ -681,6 +681,69 @@ fn the_synthetic_attack_reads_back() {
     );
 }
 
+/// AH.27's synthetic breakable reads back: the barrel a running placement
+/// with no script where it was put, the level builder's 160 ft range, its
+/// solid a solid cylinder of its size, its object index the one `smash`
+/// says; the coin a template running the coin's script, its solid a sphere
+/// that stops nothing; the coin's script defining the break the ball asks
+/// for, its spin checking what touches it and calling the award; and the
+/// ball, its first op of a flight a call to the break, the stub
+/// unresolved in its own file.
+#[test]
+fn the_synthetic_breakable_reads_back() {
+    use super::builder::{
+        SMASH_BARREL, SMASH_BARREL_SIZE, SMASH_BREAK, SMASH_COIN, SMASH_COIN_REACH, attack, smash,
+    };
+    use crate::level::Placements;
+    let s = smash([1.0, 2.0, 3.0]);
+    let igz = Igz::parse(&s.level).unwrap();
+    let p = Placements::read(&igz).unwrap();
+    let barrel = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SMASH_BARREL))
+        .unwrap();
+    assert_eq!(barrel.index as u32, s.barrel);
+    let placed = barrel.placement();
+    assert_eq!((placed.placement.activity_state, barrel.script), (4, None));
+    assert_eq!(placed.placement.init_matrix.position, [1.0, 2.0, 3.0]);
+    assert_eq!(placed.activation_range, 160.0);
+    let solid = barrel.collision.unwrap();
+    assert_eq!(solid.properties, 0x0C, "a solid cylinder");
+    assert_eq!([solid.width, solid.height, solid.length], SMASH_BARREL_SIZE);
+    let coin = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SMASH_COIN))
+        .unwrap();
+    assert_eq!(coin.placement().placement.activity_state, 5);
+    assert!(coin.script.unwrap().ends_with("Synthetic_Coin.ai"));
+    let reach = coin.collision.unwrap();
+    assert_eq!(reach.properties, 0x03, "a sphere that stops nothing");
+    assert_eq!(reach.width, SMASH_COIN_REACH);
+    let graph = Graph::read(&igz).unwrap();
+    let script = &graph.scripts[0];
+    let ops = positions(&graph, script);
+    assert!(
+        ops.iter().any(|o| o.contains(SMASH_BREAK)),
+        "the break defined: {ops:?}"
+    );
+    assert!(ops.iter().any(|o| o.contains("CheckMembership")), "{ops:?}");
+    assert!(ops.iter().any(|o| o.contains("spin")), "{ops:?}");
+    // The ball's flight asks for the break first.
+    let fighter = attack().fighter;
+    let igz = Igz::parse(&fighter).unwrap();
+    let graph = Graph::read(&igz).unwrap();
+    let ball = graph
+        .scripts
+        .iter()
+        .find(|s| s.name.is_some_and(|n| n.ends_with("009_MagmaBall.ai")))
+        .unwrap();
+    let ops = positions(&graph, ball);
+    let fly = ops.iter().position(|o| o.contains("fly")).unwrap();
+    assert!(ops[fly + 1].contains("UseMacro"), "{ops:?}");
+}
+
 /// A placement's tags (openspec AH.18): its `_tagList` a `TagList` whose
 /// `_initialTags` hold each `OpParameter`, read back field for field, the
 /// list's own elements empty as level files hold them.

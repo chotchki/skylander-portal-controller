@@ -1030,6 +1030,38 @@ fn a_placement_off_the_whitelist_stays_inert() {
     assert!(vm.inert().is_empty());
 }
 
+/// An embedder's remove (openspec AH.27: a placement a run carries over as
+/// taken off) stops its script for good, as a script's `remove` does: no
+/// tick after it, the other placement ticking on; a second remove, or one
+/// of a handle nothing runs under, changes nothing.
+#[test]
+fn an_embedders_remove_stops_a_placements_script_for_good() {
+    let p = program(|w| {
+        let count = var(w, "count");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[El::Local(count)]);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let coin = vm.add(1, "Coin_spinning(1)", 0);
+    let other = vm.add(2, "Coin_spinning(2)", 0);
+    vm.step(&mut Bare).unwrap();
+    assert!(vm.remove(1));
+    assert!(vm.removed(coin));
+    for _ in 0..3 {
+        vm.step(&mut Bare).unwrap();
+    }
+    assert_eq!(vm.local(coin, "count"), Some(Value::Int(1)));
+    assert_eq!(vm.local(other, "count"), Some(Value::Int(4)));
+    assert!(!vm.remove(1), "already off");
+    assert!(!vm.remove(99), "nothing runs under it");
+    assert!(!vm.removed(other));
+}
+
 #[test]
 fn a_scripts_rolls_draw_from_the_generator_in_the_order_written() {
     // bite = 11 + random(3), then frac = random(0.5), each tick: one number

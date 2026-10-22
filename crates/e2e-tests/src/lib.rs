@@ -159,6 +159,16 @@ impl TestServer {
         Self::spawn_guacamole_over(tmp, &dumps, &env)
     }
 
+    /// guacamole over a Giants dump whose [`E2E_WALKER`] fights on its
+    /// scripts beside AH.27's synthetic breakable ([`E2E_BARREL`]), no
+    /// intros ([`IntroFixture::build_smashing_in`]).
+    pub fn spawn_guacamole_smashing() -> Result<Self> {
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let fixture = IntroFixture::build_smashing_in(&tmp.path().join("giants"))?;
+        let (dumps, env) = (fixture.dumps.clone(), fixture.env());
+        Self::spawn_guacamole_over(tmp, &dumps, &env)
+    }
+
     /// guacamole over `fixture`'s Giants dump and finished extract, the dump
     /// trusted through `GUAC_TEST_KNOWN_DUMP` (openspec AB.11).
     pub fn spawn_guacamole_with_intros(fixture: &IntroFixture) -> Result<Self> {
@@ -1521,11 +1531,18 @@ impl IntroFixture {
     /// attack as the script part, the walker's palette holding its throw's
     /// and its second attack's slots: [`E2E_WALKER`] fights on its scripts.
     pub fn build_fighting_in(dir: &Path) -> Result<Self> {
-        Self::build_with_fight(dir, &[], true, true)
+        Self::build_with_fight(dir, &[], true, true, false)
+    }
+
+    /// [`Self::build_fighting_in`] with AH.27's synthetic breakable as the
+    /// level's script entry and its barrel standing [`E2E_BARREL`] in the
+    /// level's placements, a prop for its solid.
+    pub fn build_smashing_in(dir: &Path) -> Result<Self> {
+        Self::build_with_fight(dir, &[], true, true, true)
     }
 
     fn build_with(dir: &Path, intros: &[FixtureIntro], walking: bool) -> Result<Self> {
-        Self::build_with_fight(dir, intros, walking, false)
+        Self::build_with_fight(dir, intros, walking, false, false)
     }
 
     fn build_with_fight(
@@ -1533,6 +1550,7 @@ impl IntroFixture {
         intros: &[FixtureIntro],
         walking: bool,
         fighting: bool,
+        smashing: bool,
     ) -> Result<Self> {
         use guac_extract::intros::{self, IrFormat};
         use guac_extract::known::KnownDump;
@@ -1586,7 +1604,7 @@ impl IntroFixture {
         write_roster(&mut opened.dir, walking)?;
         write_progression(&mut opened.dir)?;
         write_models(&mut opened.dir, walking, fighting)?;
-        write_level(&mut opened.dir)?;
+        write_level(&mut opened.dir, smashing)?;
         write_scripts(&mut opened.dir, fighting)?;
 
         // Only the intros need ffmpeg.
@@ -1699,14 +1717,22 @@ fn write_roster(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
     Ok(())
 }
 
+/// Where AH.27's synthetic barrel stands in a smashing fixture: 3 m ahead
+/// of the start along the hero's facing, on the floor, inside his ball's
+/// arc.
+pub const E2E_BARREL: [f32; 3] = [E2E_START[0], E2E_FLOOR, E2E_START[2] + 3.0];
+
 /// Chapter 1 into the extract as the level stage leaves it (AG.15), every
 /// part recorded so the extract is current: a floor at the spawn's height
 /// ending at a wall (AG.21's walk), `213_Init_Location` with its first
 /// waypoint, the three world lights (AG.19) and the start's atmospheric
 /// zone the TV's loader lights and fogs the level with (AG.41), nothing
-/// drawn and no props. Its camera is camera 0's definition, which guacamole
-/// holds until AG.26 reads them off the scripts. Every number made up.
-fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
+/// drawn and no props; with `smashing`, AH.27's breakable as the level's
+/// script entry and its barrel in the placements at [`E2E_BARREL`], its
+/// solid a prop that draws nothing. Its camera is camera 0's definition,
+/// which guacamole holds until AG.26 reads them off the scripts. Every
+/// number made up.
+fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
     use guac_ir::RigLight;
@@ -1760,6 +1786,54 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
             yon_colour: [100, 90, 80, 0],
         },
     };
+    let smash = smashing.then(|| guac_formats::script::builder::smash(E2E_BARREL));
+    let mut actors = vec![Placement {
+        object: 1,
+        id: 0,
+        name: "213_Init_Location".into(),
+        script: None,
+        position: spawn,
+        rotation: [0.0; 3],
+        scale: [100.0; 3],
+        model: None,
+        solid: None,
+        movement: None,
+        waypoints: Some(0),
+        activity_state: 4,
+        activation_range: 0.0,
+    }];
+    if let Some(s) = &smash {
+        use guac_formats::script::builder::{SMASH_BARREL, SMASH_BARREL_SIZE};
+        use guac_ir::actor::{Shape, Solid};
+        let [width, height, length] = SMASH_BARREL_SIZE;
+        actors.push(Placement {
+            object: s.barrel,
+            id: 0,
+            name: SMASH_BARREL.into(),
+            script: None,
+            position: E2E_BARREL,
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            model: None,
+            solid: Some(Solid {
+                shape: Shape::Cylinder,
+                solid: true,
+                world: false,
+                actor_surface: false,
+                offset: [0.0; 3],
+                rotation: [0.0; 3],
+                width,
+                height,
+                length,
+                weight: 1.0,
+                rebound: 0.0,
+            }),
+            movement: None,
+            waypoints: None,
+            activity_state: 4,
+            activation_range: 160.0,
+        });
+    }
     let parts: [(&str, Vec<u8>); 6] = [
         (
             SCENE,
@@ -1804,21 +1878,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
                 &Placements {
                     identity: identity.clone(),
                     level: level.clone(),
-                    actors: vec![Placement {
-                        object: 1,
-                        id: 0,
-                        name: "213_Init_Location".into(),
-                        script: None,
-                        position: spawn,
-                        rotation: [0.0; 3],
-                        scale: [100.0; 3],
-                        model: None,
-                        solid: None,
-                        movement: None,
-                        waypoints: Some(0),
-                        activity_state: 4,
-                        activation_range: 0.0,
-                    }],
+                    actors,
                     waypoints: vec![vec![Waypoint {
                         name: "wp0".into(),
                         position: spawn,
@@ -1878,10 +1938,14 @@ fn write_level(dir: &mut guac_extract::IdentityDir) -> Result<()> {
         dir.write_output(&rel, &bytes)?;
         dir.record_level_part(&level, part, vec![rel])?;
     }
-    // AH.22's two: the level's entry (AH.13's creature, our numbers) and no
-    // creature palettes.
+    // AH.22's two: the level's entry (AH.13's creature, or AH.27's
+    // breakable; our numbers) and no creature palettes.
     let rel = guac_extract::levels::script_path(&level);
-    dir.write_output(&rel, &guac_formats::script::builder::creature().0)?;
+    let entry = match smash {
+        Some(s) => s.level,
+        None => guac_formats::script::builder::creature().0,
+    };
+    dir.write_output(&rel, &entry)?;
     dir.record_level_part(&level, guac_extract::levels::SCRIPT, vec![rel])?;
     let palettes = guac_ir::palette::LevelPalettes {
         identity,

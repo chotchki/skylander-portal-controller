@@ -410,6 +410,19 @@ impl<'b> Writer<'b> {
         p
     }
 
+    /// `if <element> in <set>`, `membership` as `OpCheckMembership` codes it
+    /// (0 all, 1 none, 2 any, 3 all with multiplicity): returns its
+    /// position; the block follows.
+    pub fn check_in(&mut self, set: &[El<'_>], membership: u32, element: &[El<'_>]) -> usize {
+        let lhs = self.value(set);
+        let rhs = self.reference(element, None);
+        let (p, o) = self.open(Class::CheckMembership, "if||in");
+        self.refer(o, 0x1C, lhs);
+        self.word(o, 0x20, membership);
+        self.refer(o, 0x24, rhs);
+        p
+    }
+
     /// `start sequence <sequence>`: returns its position; the block follows.
     pub fn start_sequence(&mut self, sequence: &[El<'_>]) -> usize {
         let lhs = self.group(sequence, None);
@@ -719,15 +732,158 @@ pub fn attack() -> Attack {
     }
 }
 
+/// The breakable [`smash`] writes: its placement's name.
+pub const SMASH_BARREL: &str = "Synthetic_Barrel";
+/// The coin it drops: a template named as one of chapter 1's spinning
+/// coins, so the TV's listing (openspec AH.27) runs its clones.
+pub const SMASH_COIN: &str = "Coin_spinning";
+/// What the coin pays through `Game - Award Money`.
+pub const SMASH_GOLD: i32 = 3;
+/// The level's macro [`attack`]'s ball asks for each tick it flies.
+pub const SMASH_BREAK: &str = "Synthetic - Break";
+/// The barrel's solid: a cylinder this wide, tall and long (ft).
+pub const SMASH_BARREL_SIZE: [f32; 3] = [3.0, 6.0, 3.0];
+/// How far the coin reaches for the hero: its solid, a sphere this wide
+/// (ft), which touches nothing (no solid, no level mesh).
+pub const SMASH_COIN_REACH: f32 = 20.0;
+
+/// What [`smash`] writes: the level's entry, and the barrel's object index
+/// in it (what the level's props part keys its solid by).
+#[derive(Debug, Clone)]
+pub struct Smash {
+    pub level: Vec<u8>,
+    pub barrel: u32,
+}
+
+/// AH.27's synthetic breakable (openspec AH.27; design decision 19), the
+/// level's entry beside [`attack`]'s, our numbers throughout:
+///
+/// - [`SMASH_BARREL`], at `barrel_at` (its pivot, metres), a running
+///   placement with no script, as the original's breakables have none:
+///   the level builder's 160 ft activation range, its solid a
+///   [`SMASH_BARREL_SIZE`] cylinder;
+/// - [`SMASH_COIN`], a template whose script holds the level's
+///   [`SMASH_BREAK`]: when the barrel is among what touches the caller (the
+///   ball, `collisioninfo.contacts with me`), a coin spawned where the
+///   barrel stands, then the barrel and the caller taken off; and whose
+///   coin, each tick, once anything touches its [`SMASH_COIN_REACH`]
+///   sphere (the hero beside it), pays [`SMASH_GOLD`] through a stub of
+///   `Game - Award Money` and takes itself off.
+///
+/// A press throws [`attack`]'s ball; the ball, asking for the break as it
+/// flies, takes the barrel off where it meets it, and the coin the barrel
+/// drops pays the hero's figure.
+pub fn smash(barrel_at: [f32; 3]) -> Smash {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let barrel = b.object(0, "tfbActorInfo", 0xF8);
+    let coin = b.object(0, "tfbActorInfo", 0xF8);
+    let my = El::Member("optoplevelbehavior", "my");
+    let touching = [
+        my,
+        El::Member("actorinfo", "collision volume"),
+        El::Member("collisioninfo", "contacts with me"),
+    ];
+    let coin_script = {
+        let mut w = Writer::new(&mut b);
+        let award = w.op(Class::DefineMacro, "Game - Award Money");
+        w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Coin.ai",
+            |_| {},
+            |w| {
+                let (p, _) = define_with(w, SMASH_BREAK, &[]);
+                let hit = w.check_in(&touching, 2, &[El::Local(barrel)]);
+                let facing = w.int(0);
+                let s = w.spawn(&[El::Local(coin)], &[El::Local(barrel)], facing);
+                w.end_block(s);
+                w.remove(&[El::Local(barrel)]);
+                w.remove(&[my]);
+                w.end_block(hit);
+                w.flow_end();
+                w.end_block(p);
+            },
+            |w| {
+                let p = w.behaviour("spin");
+                let zero = w.int(0);
+                let mut count = touching.to_vec();
+                count.push(El::Member("setvariant", "count"));
+                let near = w.check(&count, 4, zero);
+                let gold = w.int(SMASH_GOLD);
+                call_stub(w, award, &[("amount", "ValueInfo", gold)]);
+                w.remove(&[my]);
+                w.end_block(near);
+                w.end_block(p);
+            },
+        )
+    };
+    let [x, y, z] = barrel_at;
+    place(
+        &mut b,
+        barrel,
+        SMASH_BARREL,
+        None,
+        4,
+        &[x, y, z, 0.0, 0.0, 0.0],
+    );
+    // A cylinder (4), solid (bit 3).
+    collision(&mut b, barrel, 0x0C, SMASH_BARREL_SIZE);
+    place(&mut b, coin, SMASH_COIN, Some(coin_script), 5, &[0.0; 6]);
+    // A sphere (3) that stops nothing.
+    collision(&mut b, coin, 0x03, [SMASH_COIN_REACH; 3]);
+    let blocks = b.section(0x10);
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(barrel), Some(coin)]);
+    let level = b.build();
+    let igz = crate::igz::Igz::parse(&level).expect("the level's entry parses");
+    let barrel = crate::level::Placements::read(&igz)
+        .expect("its placements read")
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SMASH_BARREL))
+        .expect("the barrel")
+        .index as u32;
+    Smash { level, barrel }
+}
+
 /// A `tfbActorInfo` placement named `name` running `script` (an info from
-/// [`Writer::end`]), at the origin, `state` its activity state.
+/// [`Writer::end`]), at the origin, `state` its activity state, with no
+/// activation range and no buffer: awake from the level's start wherever
+/// the hero is, as `global.bld`'s placements are (openspec AH.27: the TV
+/// runs the activity rule).
 fn actor_with(b: &mut IgzBuilder, name: &str, script: Option<Location>, state: u32) -> Location {
     let a = b.object(0, "tfbActorInfo", 0xF8);
-    crate::level::builder::placement(b, a, name, 0, &[0.0; 6], state);
+    place(b, a, name, script, state, &[0.0; 6]);
+    b.put_bytes(at(a, 0xD0), &[0; 8]);
+    a
+}
+
+/// The placement fields of the `tfbActorInfo` at `a`: named `name`, running
+/// `script`, `state` its activity state, at `matrix` (its position, then its
+/// angles), with the level builder's 160 ft activation range and 8 ft buffer.
+fn place(
+    b: &mut IgzBuilder,
+    a: Location,
+    name: &str,
+    script: Option<Location>,
+    state: u32,
+    matrix: &[f32; 6],
+) {
+    crate::level::builder::placement(b, a, name, 0, matrix, state);
     if let Some(s) = script {
         b.pointer(at(a, 0xA8), s);
     }
-    a
+}
+
+/// A `CollisionInfo` at `a`'s `_collision`: `properties` (its shape in bits
+/// 0-2, solid 3, the level mesh 4) and its size in feet.
+fn collision(b: &mut IgzBuilder, a: Location, properties: u32, [w, h, l]: [f32; 3]) {
+    let solid = b.object(0, "CollisionInfo", 0x58);
+    b.put_u32(at(solid, 0x18), properties);
+    let sizes: Vec<u8> = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, w, h, l, 1.0, 0.0]
+        .iter()
+        .flat_map(|v| v.to_be_bytes())
+        .collect();
+    b.put_bytes(at(solid, 0x1C), &sizes);
+    b.pointer(at(a, 0xC4), solid);
 }
 
 /// A parameter op named `name` binding into `def`, declared as `class`,
@@ -739,6 +895,26 @@ fn parameter_of(w: &mut Writer<'_>, name: &str, class: &str, def: Location) -> L
     w.word(o, 0x28, u32::MAX);
     w.refer(o, 0x38, def);
     o
+}
+
+/// `use macro <stub>` binding `args` (each parameter's name, its declared
+/// class and its right side) through an INTERFACE, its block closed with
+/// nothing after the return: a call to a macro another file defines, which
+/// the link resolves by name (a stub nothing defines skips the block).
+fn call_stub(w: &mut Writer<'_>, stub: Location, args: &[(&str, &str, Location)]) {
+    let np = w.group(&[El::Local(stub)], None);
+    let (u, o) = w.open(Class::UseMacro, "use macro");
+    w.refer(o, 0x1C, np);
+    let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+    for &(name, class, rhs) in args {
+        let param = parameter_of(w, name, class, stub);
+        w.refer(param, 0x30, rhs);
+        w.push(param);
+    }
+    let enter = w.flow(Class::FlowMacro);
+    w.push(enter);
+    w.close(iface);
+    w.end_block(u);
 }
 
 /// Opens a macro definition `name` with an INTERFACE declaring `params`
@@ -925,6 +1101,7 @@ fn attack_global() -> Vec<u8> {
         let more = w.variable("more words", "ValueInfo", Some("IntMeasurement"));
         let amount = w.variable("amount", "ValueInfo", Some("IntMeasurement"));
         let word = w.variable("word", "ScriptReference", None);
+        let shifted = w.variable("shifted", "ValueInfo", Some("IntMeasurement"));
         let tags_held = w.variable("tags held", "ValueInfo", Some("IntMeasurement"));
         frame_with(
             &mut w,
@@ -1085,6 +1262,44 @@ fn attack_global() -> Vec<u8> {
                 );
                 w.flow_end();
                 w.end_block(p);
+                // The coins' award (openspec AH.27): the amount onto the
+                // gold the same word holds from its bit 24 (Giants' place
+                // for `pp_Money`), a figure holding under 256 gold.
+                let (p, _) = define_with(
+                    w,
+                    "Game - Award Money",
+                    &[("minion", "ScriptReference"), ("amount", "ValueInfo")],
+                );
+                setref(
+                    w,
+                    &[El::Local(word)],
+                    &[
+                        El::Local(control),
+                        El::Local(joined),
+                        El::Member("setvariant", "first"),
+                        El::Local(loaded_data),
+                        El::Local(object_info),
+                        El::Local(info_tag),
+                        El::Local(area),
+                        El::Member("setvariant", "first"),
+                    ],
+                );
+                let add = w.rhs("IntMeasurement", &[El::Local(amount)]);
+                let bit_24 = w.int(1 << 24);
+                let up = w.expr(add, Some((2, bit_24)));
+                w.set(&[El::Local(shifted)], up);
+                let now = w.rhs("IntMeasurement", &[El::Local(word)]);
+                let add = w.rhs("IntMeasurement", &[El::Local(shifted)]);
+                let sum = w.expr(now, Some((0, add)));
+                w.set(
+                    &[
+                        El::Local(word),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    sum,
+                );
+                w.flow_end();
+                w.end_block(p);
             },
             |_| {},
         )
@@ -1101,15 +1316,18 @@ fn attack_fighter() -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     // The ball: its solid a 1 ft sphere that touches the level and nothing
-    // else, falling by its own gravity at full speed.
+    // else, falling by its own gravity at full speed. Each tick it asks the
+    // level's [`SMASH_BREAK`] first (a stub: a level without one skips it).
     let ball_script = {
         let mut w = Writer::new(&mut b);
+        let smash = w.op(Class::DefineMacro, SMASH_BREAK);
         w.script(
             "C:/tfb/Content/Levels/Includes/Minions/Eruptor/scripts/009_MagmaBall.ai",
             |_| {},
             |_| {},
             |w| {
                 let p = w.behaviour("fly");
+                call_stub(w, smash, &[]);
                 let zero = w.int(0);
                 let touched = w.check(
                     &[
@@ -1128,15 +1346,8 @@ fn attack_fighter() -> Vec<u8> {
         )
     };
     let ball = actor_with(&mut b, ATTACK_BALL, Some(ball_script), 5);
-    let solid = b.object(0, "CollisionInfo", 0x58);
     // A sphere (3) that interacts with the level's mesh (bit 4) alone.
-    b.put_u32(at(solid, 0x18), 0x13);
-    let sizes: Vec<u8> = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]
-        .iter()
-        .flat_map(|v| v.to_be_bytes())
-        .collect();
-    b.put_bytes(at(solid, 0x1C), &sizes);
-    b.pointer(at(ball, 0xC4), solid);
+    collision(&mut b, ball, 0x13, [1.0; 3]);
     let parameters = b.object(0, "ActorParameters", 0x4C);
     let movement: Vec<u8> = [
         0.0f32,
@@ -1237,18 +1448,8 @@ fn attack_fighter() -> Vec<u8> {
                 w.end_block(first);
                 let second = on_press(w, 2);
                 start_slot(w, clip, ATTACK_SECOND_SLOT);
-                let np = w.group(&[El::Local(award)], None);
-                let (u, o) = w.open(Class::UseMacro, "use macro");
-                w.refer(o, 0x1C, np);
-                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
-                let param = parameter_of(w, "amount", "ValueInfo", award);
-                let rhs = w.int(ATTACK_AWARD);
-                w.refer(param, 0x30, rhs);
-                w.push(param);
-                let enter = w.flow(Class::FlowMacro);
-                w.push(enter);
-                w.close(iface);
-                w.end_block(u);
+                let points = w.int(ATTACK_AWARD);
+                call_stub(w, award, &[("amount", "ValueInfo", points)]);
                 w.end_block(second);
                 w.end_block(p);
             },
@@ -1265,18 +1466,8 @@ fn attack_fighter() -> Vec<u8> {
         w.script(
             "C:/tfb/Content/Levels/Includes/Minions/Eruptor/scripts/009_Def_Eruptor.ai",
             |w| {
-                let np = w.group(&[El::Local(stub)], None);
-                let (p, o) = w.open(Class::UseMacro, "use macro");
-                w.refer(o, 0x1C, np);
-                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
-                let param = parameter_of(w, "minion", "ScriptReference", stub);
                 let rhs = w.reference(&[El::Local(minion)], None);
-                w.refer(param, 0x30, rhs);
-                w.push(param);
-                let enter = w.flow(Class::FlowMacro);
-                w.push(enter);
-                w.close(iface);
-                w.end_block(p);
+                call_stub(w, stub, &[("minion", "ScriptReference", rhs)]);
             },
             |_| {},
             |_| {},

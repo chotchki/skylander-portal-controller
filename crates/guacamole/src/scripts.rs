@@ -426,6 +426,13 @@ impl ScriptWorld {
             .into_iter()
             .filter_map(|h| engine.hero(h).map(|x| x.pivot))
             .collect();
+        self.activity_at(&heroes)
+    }
+
+    /// [`ScriptWorld::activity`] with the heroes' pivots given: the TV's,
+    /// which before a hero is in measures from the level's start, as its
+    /// props stand (openspec AH.27).
+    pub fn activity_at(&mut self, heroes: &[Vec3]) -> Vec<(Handle, bool)> {
         let mut out = Vec::new();
         for (&h, a) in &mut self.actors {
             if !a.managed || a.removed {
@@ -600,6 +607,22 @@ impl ScriptWorld {
     /// its solid gone from both sides of the seam.
     pub fn taken_off(&self, obj: Obj) -> bool {
         self.objects.get(&obj).is_some_and(|&h| self.removed(h))
+    }
+
+    /// Takes the file placement `obj` off and puts it to sleep: a placement
+    /// a run carries over as taken off from before its install (openspec
+    /// AH.27, [`LevelState`]). Asleep it has no ground, so the destructibles
+    /// system shuts it down as it does a breakable out of range, never
+    /// making it a target again. False for none.
+    pub fn put_away(&mut self, obj: Obj) -> bool {
+        match self.objects.get(&obj).and_then(|h| self.actors.get_mut(h)) {
+            Some(a) => {
+                a.removed = true;
+                a.active = false;
+                true
+            }
+            None => false,
+        }
     }
 
     /// The handles of the clones the scripts have made, live or taken off.
@@ -1034,17 +1057,28 @@ pub const BREAKABLES: [&str; 3] = [
     "init_temp_pottery",
 ];
 
-/// The VM's config for AH.18's run: AH.17's with the first fight's
-/// placements and the members they reach, AH.20's pickups with theirs and
-/// AH.21's breakables with theirs.
-pub fn fight_config(mode: Mode) -> Config {
+/// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
+/// pickups and AH.21's breakables and the members they reach (the
+/// creatures' and the loop's: the destructibles system makes a breakable a
+/// combat target), the first fight's placements left inert until AH.25's
+/// entry brings them.
+pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
     members::register(&mut c.members, members::LOOP);
     if let Whitelist::Only { placements, .. } = &mut c.whitelist {
-        placements.extend(FIRST_FIGHT.iter().map(|s| (*s).to_owned()));
         placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
+    }
+    c
+}
+
+/// The VM's config for AH.18's run: AH.27's ([`smash_config`]) with the
+/// first fight's placements.
+pub fn fight_config(mode: Mode) -> Config {
+    let mut c = smash_config(mode);
+    if let Whitelist::Only { placements, .. } = &mut c.whitelist {
+        placements.extend(FIRST_FIGHT.iter().map(|s| (*s).to_owned()));
     }
     c
 }
@@ -1304,6 +1338,84 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
     }
 }
 
+/// What a run installed again carries over when the level goes on under it
+/// (openspec AH.27): the hero's take-off installs the TV's run again (the
+/// swap's stand-in, `openspec/backlog.md`), and this keeps the level as he
+/// left it: its placements play took off (each breakable broken, each
+/// spinning coin taken: [`LevelState::since`] the join, not the setups that
+/// take themselves off at the level's start, which the fresh run runs
+/// again) stay off, and each kind's loot count stays where it stood rather
+/// than drawn anew. Not carried: the clones in flight (a coin not yet paid,
+/// debris), which the original's swap leaves to land.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LevelState {
+    /// The level's placements taken off, in object order.
+    pub taken_off: Vec<Obj>,
+    /// Each kind's count where the loot data held it.
+    pub loot: Vec<(Rarity, f32)>,
+}
+
+impl LevelState {
+    /// The run's state: unit `level`'s placements its scripts took off and
+    /// each kind's count.
+    pub fn read(vm: &Vm, world: &ScriptWorld, level: u16) -> Self {
+        let mut taken_off: Vec<Obj> = world
+            .objects
+            .iter()
+            .filter(|(o, h)| o.unit == level && world.removed(**h))
+            .map(|(o, _)| *o)
+            .collect();
+        taken_off.sort_unstable_by_key(|o| o.index);
+        let loot = [Rarity::Common, Rarity::Uncommon, Rarity::Rare]
+            .into_iter()
+            .filter_map(|r| loot_index(vm, world, r).map(|i| (r, i)))
+            .collect();
+        Self { taken_off, loot }
+    }
+
+    /// What was taken off since `start` (what [`LevelState::read`] found
+    /// taken off then: the level's start's own, the setups taking
+    /// themselves off), the counts as they stand.
+    pub fn since(&self, start: &[Obj]) -> Self {
+        Self {
+            taken_off: self
+                .taken_off
+                .iter()
+                .filter(|o| !start.contains(o))
+                .copied()
+                .collect(),
+            loot: self.loot.clone(),
+        }
+    }
+
+    /// Into a fresh run before its first step: each placement taken off
+    /// again, in the world and in the VM, and put to sleep
+    /// ([`ScriptWorld::put_away`]).
+    pub fn put_back(&self, vm: &mut Vm, world: &mut ScriptWorld) {
+        for &o in &self.taken_off {
+            world.put_away(o);
+            if let Some(&h) = world.objects.get(&o) {
+                vm.remove(h);
+            }
+        }
+    }
+
+    /// Each count set back where it stood, once the fresh run's loot data
+    /// is made (the loot system's first tick): true once done, or with no
+    /// count to set.
+    pub fn set_loot(&self, vm: &mut Vm, world: &ScriptWorld) -> bool {
+        if self.loot.is_empty() {
+            return true;
+        }
+        if loot_count(vm, world, Rarity::Common).is_none() {
+            return false;
+        }
+        self.loot
+            .iter()
+            .all(|&(r, i)| set_loot_index(vm, world, r, i))
+    }
+}
+
 /// Each clone of a scripted template the last step made, added to the VM
 /// running its template's script: what the original's scheduler ticks from
 /// the next frame (a hypothesis: where in a frame a new clone first ticks
@@ -1514,7 +1626,11 @@ pub fn install_with(
     let objects = names.map(|n| world.spawn(ScriptObject(n)).id().to_bits());
     let player_loop = PlayerLoop::read(&program);
     let vm = init_chain(program, files, &handles, order, config);
-    world.insert_resource(ScriptWorld::new(files, &handles, objects));
+    let mut script_world = ScriptWorld::new(files, &handles, objects);
+    // What a listed script wakes off the whitelist is logged and listed
+    // (decision 6), as the headless runs list it.
+    script_world.set_inert(vm.inert());
+    world.insert_resource(script_world);
     world.insert_resource(ScriptRuntime {
         vm,
         generator: Generator::seeded(guac_script::session_seed()),
@@ -2066,6 +2182,74 @@ mod tests {
                     .is_some()
             );
         }
+    }
+
+    /// The TV's listing (openspec AH.27): the pickups and the breakables
+    /// by name, with the creatures' and the loop's members; the first
+    /// fight's Chompies, Setup_001 and what only a Giant moves (the Titan
+    /// boulders' and the castle wall's scripts) off it, inert, so nothing
+    /// takes them off; the fight's own listing AH.27's with the four.
+    #[test]
+    fn the_tvs_listing_runs_the_breakables_and_no_creature_or_titan_feat() {
+        let c = smash_config(Mode::Play);
+        for name in BREAKABLES.iter().chain(&PICKUPS) {
+            assert!(c.whitelist.lists(name, "C:/x/Anything.ai"), "{name}");
+        }
+        let chompy = "C:/tfb/Content/Levels/_Enemies/Chompy/scripts/S2_Enemy_Chompy.ai";
+        assert!(!c.whitelist.lists("Enemy_Chompy(1)", chompy));
+        assert!(
+            !c.whitelist
+                .lists("Setup_001_Controller", "C:/x/Setup_001_Controller.ai")
+        );
+        for (name, script) in [
+            (
+                "Titan_CarriableObject_Boulder_v3_(4)",
+                "C:/tfb/Content/Levels/Includes/Titan_Includes/Titan_CarribleObject/Scripts/Titan_Carriable_Object.ai",
+            ),
+            (
+                "Breakable_Stone_Wall_Castle_206(1)",
+                "C:/tfb/Content/Levels/Includes/GameElement_Breakable_Wall/Scripts/Breakable_Wall_213.ai",
+            ),
+        ] {
+            assert!(!c.whitelist.lists(name, script), "{name}");
+        }
+        assert!(c.whitelist.lists("Eruptor", "C:/x/009_Eruptor.ai"));
+        for r in members::CREATURES.iter().chain(members::LOOP) {
+            assert!(
+                c.members
+                    .get(MemberId::named(r.namespace, r.name))
+                    .is_some()
+            );
+        }
+        let fight = fight_config(Mode::Play);
+        for name in FIRST_FIGHT.iter().chain(&BREAKABLES).chain(&PICKUPS) {
+            assert!(fight.whitelist.lists(name, "C:/x/Anything.ai"), "{name}");
+        }
+    }
+
+    /// The TV's activity rule from the points it's given (openspec AH.27):
+    /// none, every ranged placement asleep; the level's start before a hero
+    /// is in, as from a hero standing there; a placement put away (carried
+    /// over as taken off) never woken again, asleep.
+    #[test]
+    fn the_activity_rule_from_given_points_and_a_placement_put_away() {
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (30.0, 1.0, true);
+        assert_eq!(w.activity_at(&[]), vec![(grunt, false)], "no one");
+        let start = Vec3::new(9.0, 0.0, 0.0);
+        assert_eq!(w.activity_at(&[start]), vec![(grunt, true)]);
+        let mut hero = him(start);
+        assert_eq!(w.activity(&mut hero), w.activity_at(&[start]));
+        let obj = *w.objects.iter().find(|(_, h)| **h == grunt).unwrap().0;
+        assert!(w.put_away(obj));
+        assert!(w.taken_off(obj));
+        assert!(w.activity_at(&[start]).is_empty(), "never woken");
+        assert!(
+            !w.actors[&grunt].active,
+            "asleep: no ground, as AH.21's sleeping breakable"
+        );
+        assert!(!w.put_away(Obj { unit: 9, index: 9 }));
     }
 
     /// Setup_001's 7 ft rule from a recorded state (AH.8's anchor B and the

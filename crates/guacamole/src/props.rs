@@ -896,6 +896,90 @@ mod tests {
         );
     }
 
+    /// What only a Giant moves stays put (openspec AH.27; breakables' Tree
+    /// Rex at a boulder, a stand-in until the Titan feats run): a Titan
+    /// boulder built as the props build it off `Titan_CarriableObject_
+    /// Boulder_v3_(4)`'s placement (AG.7: an 18 x 16 x 3 ft sphere 2.74 m
+    /// down, its feat script `Titan_Carriable_Object.ai` off the TV's
+    /// listing), walked into head-on for 3 s by a Giant-sized capsule (8 x
+    /// 14 x 3 ft at 100 %, ours: Tree Rex's own read is AG.27's) on Tree
+    /// Rex's live 20 ft/s and 360°/s (AG.12): he stops against it, the
+    /// boulder stands where it stood with its solid, and taken-off reads
+    /// false for it, so nothing takes it down.
+    #[test]
+    fn a_titan_boulder_a_giant_walks_into_stays_put() {
+        let feat = "C:/tfb/Content/Levels/Includes/Titan_Includes/Titan_CarribleObject/Scripts/Titan_Carriable_Object.ai";
+        let boulder_at = [0.0, 0.0, 6.0];
+        let mut solid = info(Shape::Sphere, true, [18.0, 16.0, 3.0], [0.0; 3]);
+        solid.offset = [0.0, -2.7432, 0.0];
+        let boulder = actor(
+            32886,
+            "Titan_CarriableObject_Boulder_v3_(4)",
+            4,
+            220.0,
+            boulder_at,
+            0.0,
+            Some("boulder.mdl"),
+            Some(solid),
+            Some(feat),
+        );
+        let p = LevelProps::new(
+            &Props {
+                identity: identity(),
+                level: LEVEL.into(),
+                props: vec![model("boulder.mdl", false)],
+                refused: Vec::new(),
+            },
+            &Placements {
+                identity: identity(),
+                level: LEVEL.into(),
+                actors: vec![boulder],
+                waypoints: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(p.props.len(), 1, "a prop, its feat script not run");
+        assert!(
+            !crate::scripts::smash_config(guac_script::Mode::Play)
+                .whitelist
+                .lists("Titan_CarriableObject_Boulder_v3_(4)", feat)
+        );
+        let mut bodies = vec![scenarios::level(Soup::default().floor(
+            0.0,
+            [-20.0, 20.0],
+            [-20.0, 20.0],
+            4.0,
+        ))];
+        let before = p.bodies(Vec3::ZERO);
+        bodies.extend(before.clone());
+        let world = ParryWorld::new(&bodies).unwrap();
+        let giant = guac_motion::solid::SolidInfo {
+            kind: guac_motion::solid::SolidKind::Capsule,
+            offset: [0.0; 3],
+            rotation: [0.0; 3],
+            width: 8.0,
+            height: 14.0,
+            length: 3.0,
+        }
+        .havok([100.0; 3])
+        .unwrap();
+        let tree_rex = guac_motion::tuning::Tuning {
+            max_speed: 20.0,
+            turn_rate: 360.0,
+            width: 8.0,
+            ..guac_motion::tuning::Tuning::ERUPTOR
+        };
+        let mut hero = guac_motion::hero::Hero::new(giant, tree_rex, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        hero.settle(&world, &[]);
+        let states = run(&world, &mut hero, 180, |_| stick(1.0, -scenarios::VIEW));
+        let s = states[179];
+        assert_eq!(s.velocity, Vec3::ZERO, "stopped against it: {s:?}");
+        assert!(s.pivot.z > 0.5 && s.pivot.z < boulder_at[2], "{s:?}");
+        let standing: Vec<usize> = p.standing_but(s.pivot, |_| false).collect();
+        assert_eq!(standing, [0], "it stands where it stood");
+        assert_eq!(p.bodies(s.pivot), before, "its solid unmoved");
+    }
+
     /// The gate's door and a gourd, built as the props build them off their
     /// placements, stop Eruptor where the original's do on parry's side of
     /// the seam: walked into head-on, his pivot 1.4781 m from the door's

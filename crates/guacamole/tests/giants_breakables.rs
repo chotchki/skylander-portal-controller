@@ -57,12 +57,7 @@ const LEDGE: [&str; 3] = ["barrel_b_intact(1)", "barrel_b_intact(4)", "pottery_1
 /// anchor A's pose and the loot counts at its read.
 fn at_anchor_a() -> Run {
     let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
-    let hand = Vec3::new(0.6011, 0.7710, 1.4838);
-    let mut nodes = vec![Vec3::ZERO; 9];
-    nodes[7] = hand;
-    nodes[8] = Vec3::new(-hand.x, hand.y, hand.z);
-    run.world.set_nodes(HERO, nodes);
-    run.put(Vec3::from_array(ANCHOR_A), ANCHOR_A_FACING);
+    to_anchor_a(&mut run);
     for (rarity, index) in ANCHOR_A_LOOT {
         assert!(scripts::set_loot_index(
             &mut run.vm,
@@ -72,6 +67,17 @@ fn at_anchor_a() -> Run {
         ));
     }
     run
+}
+
+/// His hands at AH.7's launch point and its mirror, and him set down at
+/// anchor A's pose.
+fn to_anchor_a(run: &mut Run) {
+    let hand = Vec3::new(0.6011, 0.7710, 1.4838);
+    let mut nodes = vec![Vec3::ZERO; 9];
+    nodes[7] = hand;
+    nodes[8] = Vec3::new(-hand.x, hand.y, hand.z);
+    run.world.set_nodes(HERO, nodes);
+    run.put(Vec3::from_array(ANCHOR_A), ANCHOR_A_FACING);
 }
 
 fn pad(actions: [bool; 4], stick: Stick) -> Pad {
@@ -714,6 +720,135 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
         whole_above - above > 1.0,
         "lower than on it whole: {above} against {whole_above}"
     );
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
+/// A hero swap keeps the level as he left it (openspec AH.27, the TV's
+/// take-off): a lob from anchor A breaks the ledge route's two barrels and
+/// steps the common count to 0.024279475; the level read off that run and
+/// put back into a fresh one before its first step, as the TV's take-off
+/// installs it again, holds both barrels off (out of the VM, asleep, their
+/// solids out of the seam, the destructibles system listing neither as a
+/// target) and, once the fresh run's loot data is made, the counts where
+/// they stood rather than drawn anew; joined again at anchor A, an
+/// eruption breaks the pot and the gourd and never the barrel, the
+/// uncommon count holding and the common one going on from 0.024279475.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_swap_keeps_the_broken_ones_broken_and_the_counts_where_they_stood() {
+    use guacamole::scripts::LevelState;
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let mut run = at_anchor_a();
+    // Taken off by the level's start (its definition and the archetype
+    // setups take themselves off), which the fresh run runs again.
+    let at_join = LevelState::read(&run.vm, &run.world, LEVEL).taken_off;
+    let w = drive(&mut run, 200, |k, _| press(0, PRESS, k));
+    assert_eq!(
+        w.broke().iter().map(|b| b.0).collect::<Vec<_>>(),
+        ["barrel_b_intact(1)", "barrel_b_intact(4)"]
+    );
+    let kept = LevelState::read(&run.vm, &run.world, LEVEL).since(&at_join);
+    let barrels: Vec<Obj> = ["barrel_b_intact(1)", "barrel_b_intact(4)"]
+        .iter()
+        .map(|n| {
+            run.files
+                .placed
+                .iter()
+                .find(|p| p.name == *n && p.obj.unit == LEVEL)
+                .unwrap()
+                .obj
+        })
+        .collect();
+    assert_eq!(kept.taken_off, barrels, "play's alone");
+    println!(
+        "taken off at the join: {:?}",
+        at_join
+            .iter()
+            .map(|o| run.world.name(run.handles[o]))
+            .collect::<Vec<_>>()
+    );
+    let common = |state: &LevelState| {
+        state
+            .loot
+            .iter()
+            .find(|(r, _)| *r == Rarity::Common)
+            .map(|c| c.1)
+    };
+    assert_eq!(common(&kept), Some(0.024_279_475));
+    println!(
+        "kept: {:?} off, counts {:?}",
+        kept.taken_off
+            .iter()
+            .map(|o| run.world.name(run.handles[o]))
+            .collect::<Vec<_>>(),
+        kept.loot
+    );
+
+    // The fresh run, as the TV's take-off installs it again.
+    let (mut fresh, _) = run_on_with(Mode::Strict, Setup { props: true });
+    kept.put_back(&mut fresh.vm, &mut fresh.world);
+    fresh.step().unwrap_or_else(|h| panic!("{h}"));
+    assert!(
+        kept.set_loot(&mut fresh.vm, &fresh.world),
+        "the loot data made"
+    );
+    let again = LevelState::read(&fresh.vm, &fresh.world, LEVEL);
+    assert_eq!(again.loot, kept.loot, "the counts where they stood");
+    fresh.step().unwrap_or_else(|h| panic!("{h}"));
+    fresh.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        fresh.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    to_anchor_a(&mut fresh);
+    for b in &barrels {
+        assert!(fresh.world.taken_off(*b), "{b:?} off in the fresh run");
+        let h = fresh.handles[b];
+        assert!(!fresh.world.actor(h).unwrap().active, "{b:?} asleep");
+        let p = fresh.vm.placement_of(h);
+        assert!(p.is_none_or(|p| fresh.vm.removed(p)), "{b:?} out of the VM");
+        assert!(!in_seam(&fresh, b.index), "{b:?}'s solid out of the seam");
+    }
+    let targets: Vec<String> = destructibles(&fresh)
+        .into_iter()
+        .filter(|(_, active)| *active)
+        .map(|(n, _)| n)
+        .collect();
+    for n in ["barrel_b_intact(1)", "barrel_b_intact(4)"] {
+        assert!(!targets.contains(&n.to_owned()), "{n} a target again");
+    }
+    let w = drive(&mut fresh, 300, |k, _| press(1, PRESS, k));
+    println!(
+        "the eruption after the swap: broke {:?}, coins {:?}, counts {:?}",
+        w.broke(),
+        w.coins,
+        w.counts
+    );
+    // The watch finds the two off from its first step: put back, never
+    // broken again.
+    let broke: Vec<(&str, u32)> = w.broke();
+    assert_eq!(
+        broke,
+        [
+            ("barrel_b_intact(1)", 0),
+            ("barrel_b_intact(4)", 0),
+            ("pottery_2(5)", PRESS + 66),
+            ("gourd_01(10)", PRESS + 71),
+        ],
+        "the eruption at AH.21's steps, never the barrel again"
+    );
+    assert_eq!(w.coins.len(), 1, "the pot's; the gourd's count past 0.6");
+    assert_eq!(
+        w.count("uncommon")
+            .iter()
+            .map(|c| (c.1, c.2))
+            .collect::<Vec<_>>(),
+        [(0.097_497, 0.097_496_99)]
+    );
+    let c = w.count("common");
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(c[0].1, 0.024_279_475, "on from where it stood");
+    assert!((c[0].2 - 0.624_279_5).abs() < 1e-5, "{c:?}");
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 

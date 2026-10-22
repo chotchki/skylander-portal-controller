@@ -37,6 +37,48 @@ pub fn figure_layout(dir: &Path, ir: IrFormat) -> Result<Layout, String> {
     Layout::of(&p)
 }
 
+/// Each animation palette the extract's level palettes part holds (AH.22:
+/// every slot of every model a placement of the level names), by its
+/// model's path, as each slot's clip length at 100 %, 0 where a slot holds
+/// no clip (openspec AH.27: what the TV sets for the level's placements, as
+/// the headless runs set them). Why not when the part isn't there or is
+/// another dump's or level's.
+pub fn level_palettes(
+    dir: &Path,
+    level: &str,
+    ir: IrFormat,
+) -> Result<Vec<(String, Vec<f32>)>, String> {
+    let rel = ir.level_path(level, levels::PALETTES);
+    let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let p: guac_ir::palette::LevelPalettes = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    if p.level != level {
+        return Err(format!("{rel} holds {}'s palettes", p.level));
+    }
+    Ok(p.palettes
+        .iter()
+        .map(|palette| (palette.owner.clone(), lengths(palette)))
+        .collect())
+}
+
+/// Each slot's clip length at 100 %, 0 where a slot holds no clip.
+pub fn lengths(palette: &guac_ir::palette::Palette) -> Vec<f32> {
+    let mut out = vec![0.0; usize::from(palette.slots)];
+    for e in &palette.entries {
+        if let guac_ir::palette::SlotEntry::Clip { clip, .. } = &e.entry
+            && let Some(l) = out.get_mut(usize::from(e.slot))
+        {
+            *l = clip.duration;
+        }
+    }
+    out
+}
+
 /// A level's script part linked, with what the load cost: the level's
 /// reading task makes one beside the parts it draws.
 #[derive(Debug)]
@@ -54,6 +96,10 @@ pub struct Linked {
     /// progression tables ([`figure_layout`], AH.23), or why not: [`load`]
     /// leaves it unread, the level's load reads it beside.
     pub layout: Result<Layout, String>,
+    /// The level's placements' palettes by model ([`level_palettes`]), or
+    /// why not: [`load`] leaves them unread, the level's load reads them
+    /// beside.
+    pub palettes: Result<Vec<(String, Vec<f32>)>, String>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -155,6 +201,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         order,
         fighters,
         layout: Err("not read".into()),
+        palettes: Err("not read".into()),
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,
