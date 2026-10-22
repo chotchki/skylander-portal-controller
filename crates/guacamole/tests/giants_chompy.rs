@@ -2554,7 +2554,7 @@ fn the_lob_at_f0_90_aims_as_ah10s_fights() {
         assert!(!early.contains(&"fight-00".to_owned()));
         assert_eq!(oracle.beaten, ["Enemy_Chompy(1)", "Enemy_Chompy(2)"]);
         // The hand it leaves from: his turned hand, his model's tilt on the
-        // ground there left out (AH.65).
+        // ground there left out (AH.68).
         assert!((ours.first - oracle.first).length() < 0.03);
         let at_one: Vec<f32> = lobs
             .iter()
