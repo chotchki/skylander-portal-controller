@@ -2186,7 +2186,7 @@ fn probe_the_pushes() {
 /// set or set again), its knock time (the timer less the game time when it
 /// was set: the step's, for a hurt in a placement's tick after the UI's
 /// moved it; for one in the projectile manager, the step before's, the
-/// native player loop running ahead of the UI's tick here, AH.57), the
+/// native player loop running ahead of the UI's tick here, AH.59), the
 /// resistance before and after, and the speed each step from it until the
 /// timer is cleared.
 #[derive(Debug, Clone)]
@@ -2247,7 +2247,7 @@ fn slowed(frames: usize, decel: f32) -> f32 {
 /// over the push without it (a bite inside his reaction's window). The push
 /// moves him from the step after the bite, 8 steps as AH.10's 8 frames
 /// from the bite's own: the mover update ticks before the Chompies here
-/// (AH.57).
+/// (AH.59).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
@@ -2318,7 +2318,7 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             // At 80 ft/s² a step for at least five steps: from its second
             // step, or from its third where the reaction's write lands a
             // step late (AH.20's run, F0 + 801, a second Chompy's mover in
-            // the update that step: AH.57's tick order).
+            // the update that step: AH.59's tick order).
             let level = s
                 .windows(2)
                 .filter(|w| ((w[0] - w[1]) - (80.0 / FEET_PER_METRE) / 60.0).abs() < 0.01)
@@ -2440,7 +2440,7 @@ fn a_turned_away_bite_neither_hurts_nor_pushes() {
 /// Lob; combat: A hit does its attack's damage): each 1 -> 0 at the step
 /// it lands, 'death' then, gone 0.8 s on, his player credited each. Thrown
 /// at F0 + 20, it lands among the four while they stand noticing him;
-/// AH.10's at F0 + 90 lands short of where ours does (AH.58).
+/// AH.10's at F0 + 90 lands short of where ours does (AH.60).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_lava_lob_beats_the_chompies_its_burst_reaches() {
@@ -2493,7 +2493,7 @@ fn a_lava_lob_beats_the_chompies_its_burst_reaches() {
 /// to push it; a lob pushes it 0.15 s from 24.4 m/s at the hit, slowing
 /// (eased) to about 17 m/s at its ninth step. Our push runs a tenth step
 /// (the combat manager's knockback check before the game timer moves here:
-/// AH.57).
+/// AH.59).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
 fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
@@ -2576,7 +2576,7 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
         }
     }
     println!("{hits} hits, {stuns} stuns");
-    // How many lobs land rides on AH.58's aim and the session's draws
+    // How many lobs land rides on AH.60's aim and the session's draws
     // (AH.19's run 6, AH.20's 4 once the route's coins drew).
     assert!(hits >= 4 && stuns >= 2);
     let stalled = stalls(&snaps, &limits);
@@ -2994,7 +2994,7 @@ fn holds(speeds: &[f32], profile: &[(f32, f32)], slack: f32) -> bool {
 /// it, or within a second of its end, starts none, and its push eases its
 /// deceleration in. Called ahead of the step, each push runs from the
 /// bite's own step frame by frame inside AH.10's recorded spread (a
-/// Chompy's own bite moves him a step later: AH.57). The Chompies' own
+/// Chompy's own bite moves him a step later: AH.59). The Chompies' own
 /// bites add cases, read alike.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
