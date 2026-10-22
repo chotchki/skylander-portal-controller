@@ -1170,8 +1170,10 @@ fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
 /// stick; his first frame facing the stick's 15° at full stick and turning
 /// at 720°/s at half; a full reversal walking
 /// straight back the next frame at top speed, his facing round in
-/// 0.13-0.15 s (1440°/s). His scripts move him a frame after his facing
-/// turns, the movement update ticking before his own script (AG.38).
+/// 0.13-0.15 s (1440°/s). His scripts move him the step the stick is read,
+/// his own script ahead of the movement update (AH.59's order), as the
+/// original's walk from the spawn moves him the frame its read lands (still
+/// at the record that reads the stick, 0.80 m/s at the next).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_walk_holds_top_speed_and_turning_with_the_vm_driving() {
@@ -1207,7 +1209,7 @@ fn the_walk_holds_top_speed_and_turning_with_the_vm_driving() {
             (ninety - first) as f32 / 60.0,
             track[first + 59].0.y == track[first + 119].0.y
         );
-        assert_eq!(first, 1, "a frame after the stick");
+        assert_eq!(first, 0, "the step the stick is read");
         assert!((metres - top * strength).abs() < 1e-3, "{metres}");
         if strength == 1.0 {
             assert!(((ninety - first) as f32 / 60.0 - 0.1167).abs() < 1e-3);

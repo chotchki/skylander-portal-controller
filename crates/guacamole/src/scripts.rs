@@ -2449,6 +2449,80 @@ mod tests {
         assert_eq!(vm.behaviour(id), Some("chompy - intro"));
     }
 
+    /// openspec AH.59: `init_chain` adds the placements of a unit that
+    /// [`crate::frame::AWAKE_HEAD`] names in its order, the rest after them
+    /// in file order: `global.bld`'s as the original's scheduler holds them,
+    /// whatever their order in the file.
+    #[test]
+    fn init_chain_adds_globals_in_the_recorded_order() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::Writer;
+        const PATH: &str = "C:/tfb/Synthetic/Global.ai";
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = guac_script::Unit {
+            name: "global",
+            role: guac_script::Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        // global.bld's file order.
+        let names = [
+            "Macros_UI",
+            "Spyro_PortalManager",
+            "Spyro_PortalControl",
+            "Pause Controller",
+            "Macros_Animation",
+            "Macros_GameSystems",
+            "Macros_Music",
+            "movementUpdate",
+            "Macros_Sound",
+        ];
+        let files = Files {
+            placed: names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let obj = Obj {
+                        unit: 0,
+                        index: 100 + i as u32,
+                    };
+                    Placed::named(obj, name, Some(PATH), RUNNING)
+                })
+                .collect(),
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut c = Config::new(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let vm = init_chain(program, &files, &handles, &[0], c);
+        let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+        assert_eq!(
+            order,
+            [
+                "Macros_Animation",
+                "Macros_GameSystems",
+                "Macros_Music",
+                "Macros_Sound",
+                "Macros_UI",
+                "Spyro_PortalManager",
+                "Pause Controller",
+                "Spyro_PortalControl",
+                "movementUpdate"
+            ]
+        );
+    }
+
     #[test]
     fn the_config_registers_the_init_chains_members_and_listing() {
         let c = config(Mode::Play);

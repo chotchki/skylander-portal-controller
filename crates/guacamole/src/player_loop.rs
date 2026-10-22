@@ -30,7 +30,7 @@
 //!   his figure's stored data when it changes;
 //! - the tail: `script timer last frame` set, then the clock a tick on.
 //!
-//! The game systems' ([`PlayerLoop::game_systems`]), once a step: of its
+//! The game systems' ([`PlayerLoop::game_systems_tick`]), once a step: of its
 //! update macros (`System Update Controls`' `update while unpaused macros`)
 //! the ones [`UPDATES`] names, each once in the set's order (openspec AH.21:
 //! the destructibles system waking a breakable in range as a target and
@@ -311,16 +311,34 @@ impl PlayerLoop {
         joined: bool,
         stopped: &mut Vec<Halt>,
     ) -> Result<StepReport, Halt> {
+        self.walk_with(vm, host, joined, stopped, &mut |_, _, _| Ok(()))
+    }
+
+    /// [`PlayerLoop::walk`], with `then` run after the loop's slice in each
+    /// held placement's place: a test's own call where a placement of the
+    /// original's order would make it (a bite at the portal manager's
+    /// place: after the hero's tick and the UI's, before the mover update).
+    pub fn walk_with(
+        &self,
+        vm: &mut Vm,
+        host: &mut WorldHost<'_, '_>,
+        joined: bool,
+        stopped: &mut Vec<Halt>,
+        then: &mut guac_script::Native<'_>,
+    ) -> Result<StepReport, Halt> {
         let places = Places::of(vm, host.world);
         let play = vm.config().mode == Mode::Play;
-        let mut native = |vm: &mut Vm, id: PlacementId, host: &mut dyn Host| match self
-            .native(vm, host, &places, id, joined)
-        {
-            Err(h) if play => {
-                stopped.push(h);
-                Ok(())
+        let mut native = |vm: &mut Vm, id: PlacementId, host: &mut dyn Host| {
+            let ran = self
+                .native(vm, host, &places, id, joined)
+                .and_then(|()| then(vm, id, host));
+            match ran {
+                Err(h) if play => {
+                    stopped.push(h);
+                    Ok(())
+                }
+                other => other,
             }
-            other => other,
         };
         vm.step_with(host, &mut native)
     }
@@ -335,9 +353,21 @@ impl PlayerLoop {
         joined: bool,
         stopped: &mut Vec<Halt>,
     ) -> Result<StepReport, Halt> {
+        self.frame_with(vm, host, joined, stopped, &mut |_, _, _| Ok(()))
+    }
+
+    /// [`PlayerLoop::frame`] walking with [`PlayerLoop::walk_with`]'s `then`.
+    pub fn frame_with(
+        &self,
+        vm: &mut Vm,
+        host: &mut WorldHost<'_, '_>,
+        joined: bool,
+        stopped: &mut Vec<Halt>,
+        then: &mut guac_script::Native<'_>,
+    ) -> Result<StepReport, Halt> {
         let slid = vm.slide(host)?;
         stopped.extend(slid.stopped);
-        self.walk(vm, host, joined, stopped)
+        self.walk_with(vm, host, joined, stopped, then)
     }
 
     /// What the walk runs in held placement `id`'s place: the game systems'

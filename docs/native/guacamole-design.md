@@ -1381,6 +1381,39 @@ forward) walk the forward path bit for bit, and x 161, 165, 173 and 255 turn him
 44.700 deg, each within 0.001 deg of atan((|x − 128| − 32) / 96) against full forward. Controllers
 carries both for Guacamole's side.
 
+### The frame's order (AH.59)
+
+Measured once on the O6 build (`oracle goto --sched`: the script scheduler read at F0 and at the end pause,
+and two O6 chains carrying its lists every frame, [`sched.rs`](../../tools/oracle-harness/src/sched.rs)),
+over anchor B's `still` and its `fight` to F0 + 700 and a walk's start at the spawn, 1,783 records; the
+decompile only explains them. Each frame the insight core takes its frame time, then reads the pads
+(its input context), then runs its updaters in list order, the same twelve at anchor B, the spawn and in
+the June state: the portal's USB, the physics world's step, the scripts, every actor moved by its
+velocity, the camera, then particles, lights, sprites, sound and the screen. The stick moves the hero the
+frame its read lands (still at the record that reads it, 0.80 m/s at the next).
+
+The scripts' updater steps the slides, then walks its groups, each a list per kind (actors, lights,
+particles) taken in list order: group 0 the activators, held by Eruptor's own minion alone in every
+record, so his script (his walk off the stick, his hurt reaction) runs first; group 1 the awake
+placements in the order they woke (a placement joins its group's list at the end when it wakes, spawns or
+is reset; one leaving a place the walk passed steps the walk's index back), headed in every record by
+`Bootstrap_Halt_LoadLevel`, `Macros_Animation`, `Macros_GameSystems`, `Macros_Music`, `Macros_Sound`,
+`Macros_UI`, `Spyro_PortalManager`, `Pause Controller`, `TRG_Checker`, `Macros_Achievements`,
+`PointLightManager`, `Spyro_PortalControl` and `zPortalManager`; group 2 the asleep placements' activity
+checks. The music controller's tick ends by resetting `movementUpdate`, which sends it to the awake list's
+end, so the mover update hands every scripted mover's velocity to the engine after every other awake
+placement has ticked (last in 891 of 900, 699 of 706 and 176 of 177 records; behind it only what joined
+after the reset). So in a frame: the hero's own script, the game systems (the destructibles, the actor
+remover, the orbs), the UI (the game timer), the portal manager (the death sequence, the combat and
+projectile managers, the pickups), the level's placements as they woke, the mover update, then the actors
+move.
+
+guacamole's fixed step runs that order in one schedule, [`frame.rs`](../../crates/guacamole/src/frame.rs)'s
+sets (pads, scripts, solids, hero, actors, locomotion, hands, camera, record), every fixed-step system in
+one: the VM walks the activators first and the rest in the order they woke, the player loop's slices
+in their placements' places and the mover update sent to the end at the music controller's (`guac-script`'s
+crate docs, The tick). Avian's step in `FixedPostUpdate` stands for the next frame's physics.
+
 ### How far it drifts from itself (AF.11)
 
 The protocol, `oracle divergence run|report`
@@ -1870,8 +1903,9 @@ the HTPC, tuned bloom and DoF, the upscaled pack). No wholesale PBR conversion a
 albedo; that's re-art-direction, not a remaster. With one look, nothing keeps two material sets resident
 or swaps post stacks.
 
-Frame rate: logic runs in `FixedUpdate` at the original tick and rendering interpolates transforms
-between ticks, so 60 fps+ doesn't touch game logic. The TV draws at the display's rate focused or not
+Frame rate: logic runs in `FixedUpdate` at the original tick, in the original's order within a tick
+(The oracle, The frame's order), and rendering interpolates transforms between ticks, so 60 fps+
+doesn't touch game logic. The TV draws at the display's rate focused or not
 (AG.55): Bevy's default updates an unfocused window off a 1/60 s timer, and the walk eased off that
 timer's uneven ticks judders against the display's even ones, so unfocused waits at most 1/240 s (a
 display's vsync outlasts that up to 240 Hz; an occluded window nothing paces stops there) and winit's

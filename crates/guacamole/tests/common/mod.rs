@@ -351,6 +351,13 @@ impl Run {
     /// what the scripts threw flying, his hands posed and what hangs from
     /// them set there (AH.50), the bodies placed where their actors stand.
     pub fn step(&mut self) -> Result<(), Halt> {
+        self.step_with(&mut |_, _, _| Ok(()))
+    }
+
+    /// [`Run::step`], with `then` run in each held placement's place in the
+    /// walk after the player loop's slice there (`PlayerLoop::walk_with`):
+    /// a test's call where the original's order would make it.
+    pub fn step_with(&mut self, then: &mut guac_script::Native<'_>) -> Result<(), Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
         for (h, active) in self.world.activity(&mut self.bench) {
@@ -361,7 +368,8 @@ impl Run {
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
-        let r = self.with_host(|vm, host| player_loop.frame(vm, host, joined, &mut stopped));
+        let r =
+            self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
         assert!(stopped.is_empty(), "strict mode stops by halting");
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);

@@ -1431,6 +1431,10 @@ pub(crate) mod tests {
         run.step([false; 4]);
         run.step([false; 4]);
         let minion = run.join();
+        assert!(
+            run.vm.is_activator(minion),
+            "his minion ticks first (AH.59)"
+        );
         run.step([false; 4]);
         assert_eq!(scripts::health(&run.vm, minion), Some(ATTACK_HEALTH));
         let mut kept = scripts::KeptHealth::default();

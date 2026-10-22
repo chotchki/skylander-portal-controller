@@ -1422,7 +1422,13 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     // to the step the next starts (AH.10's recordings by the review's
     // reading: 18-19 frames, 18-19, up to 0.419 s at 34 ft/s, 32-33 frames
     // to the nip's last frame, 0.530-0.561 s; AH.10's note's recovery,
-    // 0.548-0.578 s, counts to 'battle', a frame more).
+    // 0.548-0.578 s, counts to 'battle', a frame more). A lunge that bites
+    // nothing runs its script's 0.4 s timer out: the first tick its clock
+    // reaches it, 24 steps here; AH.10's ten still drives' 165 unbitten
+    // lunges took 24 records (104) or 25 (61), 0.398-0.4185 s on the
+    // oracle's frame times (AH.59: its 0.418 is a frame there, not the
+    // order's).
+    let mut unbitten = 0;
     for n in &nips {
         let steps = &n.4;
         let dur = |s: i32| {
@@ -1442,7 +1448,15 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
             assert!((0.298..=0.321).contains(&h), "hold {h}");
         }
         if let Some(l) = l {
-            assert!(l <= 0.43, "lunge {l}");
+            let bit = snaps
+                .iter()
+                .any(|s| s.k >= n.1 && s.k < n.2 && s.chompies[n.0].bitten > 0);
+            if bit {
+                assert!(l < 0.4 + 1e-6, "a bite ends it: lunge {l}");
+            } else {
+                unbitten += 1;
+                assert!((l - 0.4).abs() < 1e-6, "its timer out: lunge {l}");
+            }
         }
         // The recovery waits out its clip (slot 25, 0.567 s) less its last
         // two frames (AH.55): AH.10's 32-33 frames, 0.530-0.561 s.
@@ -1450,6 +1464,7 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
             assert!((0.530..=0.561).contains(&r), "recovery {r}");
         }
     }
+    assert!(unbitten > 0, "a lunge that bit nothing");
     // The next windup 2 s or more after a nip ends.
     for (c, name) in CHOMPIES.iter().enumerate() {
         let mine: Vec<_> = nips.iter().filter(|n| n.0 == c).collect();
@@ -2143,17 +2158,14 @@ fn probe_the_pushes() {
 
 /// A push as the snaps show it: the step its knockback began (the timer
 /// set or set again), its knock time (the timer less the game time when it
-/// was set: the step's, for a hurt in a placement's tick after the UI's
-/// moved it; for one in the projectile manager, the step before's, the
-/// native player loop running ahead of the UI's tick here, AH.59), the
-/// resistance before and after, and the speed each step from it until the
-/// timer is cleared.
+/// was set: the step's, the UI's tick moving the game timer ahead of every
+/// placement's tick that can push and of the projectile manager's in the
+/// portal manager's, AH.59's order), the resistance before and after, and
+/// the speed each step from it until the timer is cleared.
 #[derive(Debug, Clone)]
 struct Push {
     k: i64,
     knock: f32,
-    /// The knock time against the step before's game time.
-    knock_before: f32,
     resist_before: f32,
     resist_after: f32,
     speeds: Vec<f32>,
@@ -2173,7 +2185,6 @@ fn pushes(snaps: &[Snap], of: impl Fn(&Snap) -> (Hurt, f32)) -> Vec<Push> {
             out.push(Push {
                 k: w[1].k,
                 knock: b.knock_timer - w[1].game_timer,
-                knock_before: b.knock_timer - w[0].game_timer,
                 resist_before: a.resist,
                 resist_after: b.resist,
                 speeds,
@@ -2192,21 +2203,15 @@ fn bites_of(snaps: &[Snap]) -> Vec<(i64, f32)> {
         .collect()
 }
 
-/// A step's speed `d` m/s off what an 80 ft/s push slowed by `decel` ft/s²
-/// for `frames` frames reads.
-fn slowed(frames: usize, decel: f32) -> f32 {
-    (80.0 - decel * frames as f32 / 60.0) / FEET_PER_METRE
-}
-
 /// Bites push him by his resistance, as AH.10 recorded (combat: Knockback,
 /// No grace after a hit): 0.13125 s at 24.4 m/s with none, 0.125 with
 /// some, his resistance up 12.5 a bite and gone 1.63-1.65 s after a lone
 /// one; his hurt reaction 0.6 s, the push slowing 80 ft/s² while it runs
 /// (his deceleration put back by it) and eased from nothing to 600 ft/s²
 /// over the push without it (a bite inside his reaction's window). The push
-/// moves him from the step after the bite, 8 steps as AH.10's 8 frames
-/// from the bite's own: the mover update ticks before the Chompies here
-/// (AH.59).
+/// moves him from the bite's own step, 8 steps frame by frame inside
+/// AH.10's 49 reaction pushes and its eased ones: the mover update ticks
+/// after the Chompies and his own script ahead of them (AH.59's order).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
@@ -2224,6 +2229,7 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
     }
     let mut lone = 0;
     let mut reacted = 0;
+    let mut held = 0;
     let mut eased = 0;
     for p in &pushes {
         println!(
@@ -2251,10 +2257,15 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
         } else {
             assert!((12.3..=12.501).contains(&rose), "{rose}");
         }
-        // Still the step of the bite, moving from the next.
+        // Moving from the bite's own step, as AH.10's from its own frame.
         let at = snaps.iter().position(|s| s.k == p.k).unwrap();
-        assert!(snaps[at].hero_speed < 1e-3);
-        let s = &p.speeds[1..];
+        assert!(
+            (snaps[at].hero_speed - 24.384).abs() < 0.02,
+            "F0 + {}: {} the bite's step",
+            p.k,
+            snaps[at].hero_speed
+        );
+        let s = &p.speeds[..];
         let reaction = snaps[at + 1].hero_hurt.mode == 1 && snaps[at].hero_hurt.mode == 0;
         // Into a wall a push stops after a frame (AH.10): only open-ground
         // pushes are held to their profile.
@@ -2264,34 +2275,32 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
         assert_eq!(s.len(), 8, "8 steps moving");
         if reaction {
             reacted += 1;
-            // The first step slows by the push's slide (its first 60th of
-            // 0.13125 s of x²: 9.7 ft/s²), then 80 ft/s² a step: AH.10's
-            // 23.956-21.535 m/s from its second frame, each a frame early.
-            assert!((s[0] - slowed(1, 600.0 * (1.0 / 7.875f32).powi(2))).abs() < 0.01);
-            // The ground's slope under him can take a little off the
-            // across-the-ground speed of a step: within 0.2 m/s.
-            for (j, v) in s.iter().enumerate().skip(1) {
-                let want = s[0] - (80.0 / FEET_PER_METRE) * j as f32 / 60.0;
-                assert!((v - want).abs() < 0.2, "step {j}: {v} against {want}");
+            // 80 ft/s² a step from the step after the bite, his reaction
+            // having put his deceleration back: AH.10's 24.384, 23.914-24.026
+            // ... 21.488-21.585 m/s, frame by frame. A step the push carries
+            // him a frame off the ground slows by the air's 50 ft/s² instead
+            // (hero-movement's slopes; AH.20 took F0 + 801's for the order).
+            let air = (50.0 / FEET_PER_METRE) / 60.0;
+            let ground = (80.0 / FEET_PER_METRE) / 60.0;
+            assert!((s[0] - 24.384).abs() < 0.01, "{s:?}");
+            for w in s.windows(2) {
+                let d = w[0] - w[1];
+                assert!(
+                    (d - ground).abs() < 0.01 || (d - air).abs() < 0.01,
+                    "{s:?}: a step of {d}"
+                );
             }
-            // At 80 ft/s² a step for at least five steps: from its second
-            // step, or from its third where the reaction's write lands a
-            // step late (AH.20's run, F0 + 801, a second Chompy's mover in
-            // the update that step: AH.59's tick order).
-            let level = s
-                .windows(2)
-                .filter(|w| ((w[0] - w[1]) - (80.0 / FEET_PER_METRE) / 60.0).abs() < 0.01)
-                .count();
-            assert!(level >= 5, "{s:?}");
+            if s.windows(2).all(|w| (w[0] - w[1] - ground).abs() < 0.01) {
+                held += 1;
+                assert!(
+                    holds(s, &REACTION_PUSH, 0.02),
+                    "{s:?} against {REACTION_PUSH:?}"
+                );
+            }
         } else {
             eased += 1;
-            // AH.10's 24.330, 24.121, 23.664, 22.794, 21.374, 19.482,
-            // 16.939 m/s: the decel slid in as x².
-            for w in s.windows(3) {
-                assert!(w[0] - w[1] < w[1] - w[2] + 1e-3, "{s:?}");
-            }
-            assert!((s[0] - 24.33).abs() < 0.02, "{}", s[0]);
-            assert!((s[6] - 16.9).abs() < 0.3, "{}", s[6]);
+            // AH.10's eased pushes, the deceleration slid in as x².
+            assert!(holds(s, &EASED_PUSH, 0.1), "{s:?} against {EASED_PUSH:?}");
         }
         // A lone push: nothing more for 1.7 s, the run lasting that long.
         let last = snaps.last().map_or(0, |s| s.k);
@@ -2311,6 +2320,7 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
     }
     assert!(lone > 0, "a lone push");
     assert!(reacted > 0, "a push in his reaction");
+    assert!(held > 0, "a reaction's push held to AH.10's frame by frame");
     // His hurt reaction: 0.6 s of his script's time (AH.10: 0.581-0.585 s,
     // 36-37 frames), none started by a bite inside it or within about a
     // second of its end.
@@ -2449,10 +2459,14 @@ fn a_lava_lob_beats_the_chompies_its_burst_reaches() {
 /// poked to 100, a lob every 20 steps): each lob hurts for 8 (12
 /// critical); the first stuns it 0.6 s ('disabled'), a lob inside the stun
 /// doesn't start it again, nor one within a second of its end or too weak
-/// to push it; a lob pushes it 0.15 s from 24.4 m/s at the hit, slowing
-/// (eased) to about 17 m/s at its ninth step. Our push runs a tenth step
-/// (the combat manager's knockback check before the game timer moves here:
-/// AH.59).
+/// to push it; a lob pushes it 0.15 s from 24.4 m/s at the hit, its knock
+/// time set on the step's game timer (the projectile manager landing the
+/// hit after the UI's tick moved it, AH.59's order), slowing (eased) to
+/// about 17 m/s at its ninth step. It ends the first step its timer is
+/// under the game timer, the tenth at 1/60 s a step: 0.15 s is nine steps
+/// exactly, so AH.10's `stun` stagings split by their frame times, 9
+/// records where nine frames ran past 0.15 s (10 of 14) and 10 where they
+/// didn't (4), and the order moves neither (AH.59).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
 fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
@@ -2491,7 +2505,7 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
                 "{} F0 + {k}: -{lost}, resist {:.2}, push {:?}, stunned {stunned} (in one {}, {since_end:?} s after the last)",
                 name,
                 a.hurt.resist,
-                push.map(|p| (p.knock_before, p.speeds.len())),
+                push.map(|p| (p.knock, p.speeds.len())),
                 a.hurt.mode == 1
             );
             if a.hurt.mode == 1 {
@@ -2515,7 +2529,8 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
                 let knock = |resist: f32| ((25.0 - resist) / 100.0 * 0.6).max(0.125);
                 let want = knock(a.hurt.resist);
                 // The combat manager lets a resistance fall before the
-                // projectile manager lands the hit, both ahead of the step:
+                // projectile manager lands the hit, both in the portal
+                // manager's tick:
                 // the hit sees it a step's fall lower, as much as it fell
                 // the step before or a little more as its slide speeds up
                 // (AH.54's run: 2.54 seen as 2.24, 0.29 off the step
@@ -2525,11 +2540,11 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
                 let seen = knock((a.hurt.resist - fell).max(0.0));
                 let gone = 25.0 / 100.0 * 0.6;
                 assert!(
-                    (p.knock_before - want).abs() < 2e-4
-                        || (p.knock_before - seen).abs() < 2e-4 * (1.0 + 10.0 * fell)
-                        || a.hurt.resist < 0.5 && (p.knock_before - gone).abs() < 2e-4,
+                    (p.knock - want).abs() < 2e-4
+                        || (p.knock - seen).abs() < 2e-4 * (1.0 + 10.0 * fell)
+                        || a.hurt.resist < 0.5 && (p.knock - gone).abs() < 2e-4,
                     "{} against {want} (or {seen} a step's fall on)",
-                    p.knock_before
+                    p.knock
                 );
                 if a.hurt.resist == 0.0 && p.speeds.iter().all(|v| *v > 1.0) {
                     assert!((p.speeds[0] - 24.384).abs() < 1e-3);
@@ -2784,6 +2799,9 @@ fn the_hurt_chains_rolls_come_out_as_the_originals() {
 /// after that second, too weak to push it, neither pushes nor stuns; one
 /// with the resistance gone stuns again; each push its knock time from the
 /// strength less the resistance, 0.15 s at none (AH.10's `stun` staging).
+/// Each hit is called in the walk where a lob's lands, in the projectile
+/// manager's slice of the portal manager's tick (after the UI's tick moved
+/// the game timer: AH.59's order).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
@@ -2814,15 +2832,17 @@ fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
     // that second too, building its resistance past 25 with no stun; 135,
     // out of both, too weak; 250 a stun again, 253 inside it; 420 fresh.
     let schedule = [27u32, 66, 90, 94, 98, 135, 250, 253, 420];
+    let pm = scripts::portal_manager_placement(&run.vm, &run.world).expect("the portal manager");
     let mut snaps = vec![run.snap(0)];
     for k in 1..=480u32 {
-        if schedule.contains(&k) {
-            run.with_host(|vm, host| {
-                vm.call_with(Some(m), "Combat - Hurt Creature", &args, &[], host)
-            })
-            .unwrap_or_else(|h| panic!("{h}"));
-        }
-        run.step().unwrap_or_else(|h| panic!("{h}"));
+        let staged = schedule.contains(&k);
+        let mut hit = |vm: &mut guac_script::Vm, id, host: &mut dyn guac_script::Host| {
+            if staged && id == pm {
+                vm.call_with(Some(m), "Combat - Hurt Creature", &args, &[], host)?;
+            }
+            Ok(())
+        };
+        run.step_with(&mut hit).unwrap_or_else(|h| panic!("{h}"));
         snaps.push(run.snap(k as i64));
     }
     let c = 1;
@@ -2845,7 +2865,7 @@ fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
             "F0 + {k}: -{}, resist {:.2}, push {:?}, stunned {stunned} (in one {}, {since_end:?} s after the last)",
             a.health - b.health,
             a.hurt.resist,
-            push.map(|p| (p.knock_before, p.speeds.len())),
+            push.map(|p| (p.knock, p.speeds.len())),
             a.hurt.mode == 1
         );
         assert_eq!(a.health - b.health, 8.0);
@@ -2871,14 +2891,21 @@ fn a_chompy_hit_on_a_schedule_is_stunned_by_the_rule() {
             assert!((35..=37).contains(&end), "{end}");
         }
         if a.hurt.resist < 25.0 {
-            // Called ahead of the step: the game time it set the timer on
-            // is the step before's.
+            // On the step's game time, the UI's tick ahead of the hit; on
+            // the resistance the combat manager has let fall that step, as
+            // a lob's hit in the projectile manager sees it (about what it
+            // fell the step before).
             let p = push.expect("a push");
-            let want = ((25.0 - a.hurt.resist) / 100.0 * 0.6).max(0.125);
+            let knock = |resist: f32| ((25.0 - resist) / 100.0 * 0.6).max(0.125);
+            let want = knock(a.hurt.resist);
+            let fell = (snaps[i.max(1) - 1].chompies[c].hurt.resist - a.hurt.resist).max(0.0);
+            let seen = knock((a.hurt.resist - fell).max(0.0));
             assert!(
-                (p.knock_before - want).abs() < 2e-4,
-                "{} against {want}",
-                p.knock_before
+                (p.knock - want).abs() < 2e-4
+                    || (p.knock - seen).abs() < 2e-4 * (1.0 + 10.0 * fell)
+                    || a.hurt.resist < 0.5 && (p.knock - knock(0.0)).abs() < 2e-4,
+                "{} against {want} (or {seen} a step's fall on)",
+                p.knock
             );
         }
     }
@@ -2968,10 +2995,11 @@ fn holds(speeds: &[f32], profile: &[(f32, f32)], slack: f32) -> bool {
 /// away. A bite with no reaction running or ended within a second starts
 /// his hurt reaction, which holds the push at 80 ft/s² a frame; one inside
 /// it, or within a second of its end, starts none, and its push eases its
-/// deceleration in. Called ahead of the step, each push runs from the
-/// bite's own step frame by frame inside AH.10's recorded spread (a
-/// Chompy's own bite moves him a step later: AH.59). The Chompies' own
-/// bites add cases, read alike.
+/// deceleration in. Called in the walk where a Chompy's tick makes it
+/// (at the portal manager's place: after his own tick, before the mover
+/// update, AH.59's order), each push runs from the bite's own step frame by
+/// frame inside AH.10's recorded spread, as a Chompy's own bite's does.
+/// The Chompies' own bites add cases, read alike.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn bites_on_him_on_a_schedule_follow_his_reactions_rule() {
@@ -2999,15 +3027,18 @@ fn bites_on_him_on_a_schedule_follow_his_reactions_rule() {
     // Fresh at 40; inside its reaction at 60; within a second of its end
     // at 100; long after at 300.
     let schedule = [40i64, 60, 100, 300];
+    let pm = scripts::portal_manager_placement(&run.vm, &run.world).expect("the portal manager");
     let mut snaps = vec![run.snap(30)];
     for k in 31..=420i64 {
-        if schedule.contains(&k) {
-            run.with_host(|vm, host| {
-                vm.call_with(Some(biter), "Combat - Hurt Creature", &args, &[], host)
-            })
-            .unwrap_or_else(|h| panic!("{h}"));
-        }
-        run.step().unwrap_or_else(|h| panic!("F0 + {k}: {h}"));
+        let staged = schedule.contains(&k);
+        let mut bite = |vm: &mut guac_script::Vm, id, host: &mut dyn guac_script::Host| {
+            if staged && id == pm {
+                vm.call_with(Some(biter), "Combat - Hurt Creature", &args, &[], host)?;
+            }
+            Ok(())
+        };
+        run.step_with(&mut bite)
+            .unwrap_or_else(|h| panic!("F0 + {k}: {h}"));
         snaps.push(run.snap(k));
     }
     let pushes = pushes(&snaps, |s| (s.hero_hurt, s.hero_speed));
@@ -3034,7 +3065,7 @@ fn bites_on_him_on_a_schedule_follow_his_reactions_rule() {
             "F0 + {k}: -{}, resist {:.2}, push {:?}, started {started} (running {running}, {since_end:?} s after the last)",
             w[0].health - w[1].health,
             w[0].hero_hurt.resist,
-            push.map(|p| (p.knock_before, p.speeds.clone()))
+            push.map(|p| (p.knock, p.speeds.clone()))
         );
         if w[0].hero_hurt.resist >= 25.0 {
             seen.insert("too weak");
@@ -3278,7 +3309,15 @@ fn follow_orbs(
                     .find(|a| a.0 == *orb)
                     .map_or(Vec3::ZERO, |a| a.2);
                 let d = at - hero_at_start;
-                life.taken_from = Some((feet(d.length()), feet(Vec3::new(d.x, 0.0, d.z).length())));
+                let ground = feet(Vec3::new(d.x, 0.0, d.z).length());
+                life.taken_from = Some((feet(d.length()), ground));
+                // Landed and taken in one step (the orbs' control lands it
+                // ahead of the portal manager's collecting, AH.59's order):
+                // down where the take found it.
+                if life.down.is_none() {
+                    life.down = Some(f);
+                    life.down_ground = Some(ground);
+                }
             }
         }
         for orb in &before.collecting {
@@ -3419,12 +3458,13 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         );
         assert!((1..=72).contains(&fall), "down within 1.2 s: {fall}");
         let taken = l.taken.expect("every orb taken, as he walks in");
-        assert!(taken > down, "never taken in the air");
+        assert!(taken >= down, "never taken in the air");
         let (space, ground) = l.taken_from.unwrap();
         assert!(ground <= 20.0, "within 20 ft across the ground: {ground}");
         if l.down_ground.unwrap() <= 20.0 {
-            // Down within reach: taken the next step, as it lay.
-            assert_eq!(taken, down + 1, "taken as it comes down");
+            // Down within reach: taken the step it lands, as AH.10's (every
+            // orb landed within 20 ft of him went that frame, 178 of 178).
+            assert_eq!(taken, down, "taken as it comes down");
             taken_where_they_lay += 1;
         } else {
             // Walked to: out of reach as it came down.
@@ -3432,8 +3472,13 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         }
         let arrived = l.arrived.expect("every orb taken arrives");
         let want = (space / 55.0 * 60.0 - 1e-3).ceil() as i64;
+        // Taken the step it lands, its distance is read off the step
+        // before's, a step's fall higher; walked to, he closes on it as it
+        // flies (AH.10's: the rest sooner as he walked in): up to a step
+        // longer than its flight either way.
+        let early = i64::from(taken == down || l.down_ground.unwrap() > 20.0);
         assert!(
-            arrived - taken == want || arrived - taken == want + 1,
+            (want - early..=want + 1).contains(&(arrived - taken)),
             "{space:.2} ft in {} steps, want {want}",
             arrived - taken
         );
@@ -3939,9 +3984,9 @@ fn spinning_coins_fly_to_him_and_pay_as_ah11s() {
 /// killing bite, 8 steps on every creature within 30 ft knocked back at
 /// strength 25 and none past it (AH.11's `defeat2`: 8 records, 0.13 s, the
 /// Chompies 5.6-20.9 ft off), his mode -1 28 steps after the knock (AH.11's
-/// 28 records), and his minion taken off 133-134 steps after the bite
-/// (AH.11's 133-134 records): the kill strict through the death's
-/// data-mining snapshot.
+/// 28 records), and his minion taken off 133-134 steps after his reaction
+/// starts, 97-98 after mode -1 (AH.11's `restart1` and `restart2` records):
+/// the kill strict through the death's data-mining snapshot.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_defeated_hero_knocks_them_back_and_leaves() {
@@ -3975,9 +4020,16 @@ fn a_defeated_hero_knocks_them_back_and_leaves() {
         assert_eq!(k, *d < 30.0, "{}: {d:.1} ft, knocked {k}", CHOMPIES[c]);
     }
     assert!((27..=29).contains(&(out - knock)), "{}", out - knock);
-    // In steps, as AH.11's records count (its 133-134 records read 2.18-2.20
-    // s on the oracle's frame times; 134 of ours, 2.233 s at 60 a second).
-    assert!((133..=134).contains(&(gone - bite)), "{}", gone - bite);
+    // In steps, as AH.11's records count, from his reaction's first record
+    // (the record after the one the killing bite shows in): 133 and 134 in
+    // `restart2` and `restart1`, 97 and 98 of them from mode -1 (AH.59's
+    // re-read; AH.11's note had them from the bite).
+    assert!(
+        (133..=134).contains(&(gone - reaction)),
+        "{}",
+        gone - reaction
+    );
+    assert!((97..=98).contains(&(gone - out)), "{}", gone - out);
     println!("load after: {}", load());
 }
 
