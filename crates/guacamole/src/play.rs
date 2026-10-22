@@ -74,6 +74,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
+use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
@@ -302,17 +303,20 @@ impl HeroClips {
     }
 }
 
-/// His model, his locomotion's clips and his palette (every slot's clip,
-/// which his scripts play: AH.24), read together off the shelf.
+/// His model, his locomotion's clips, his palette (every slot's clip,
+/// which his scripts play: AH.24) and his model's attach nodes (AH.50),
+/// read together off the shelf.
 pub(crate) struct HeroModel {
     loaded: Loaded,
     clips: Arc<HeroClips>,
     palette: Option<Arc<Palette>>,
+    nodes: Option<Arc<AttachNodes>>,
 }
 
-/// `load`'s model, its hero side and its palette, on a task. A palette that
-/// doesn't read leaves his scripts' clips unplayed, logged; he walks all
-/// the same.
+/// `load`'s model, its hero side, its palette and its attach nodes, on a
+/// task. A palette that doesn't read leaves his scripts' clips unplayed, and
+/// attach nodes that don't read leave every node at his pivot, each logged;
+/// he walks all the same.
 fn read_hero_model(
     shelf: &Shelf,
     load: &str,
@@ -327,11 +331,32 @@ fn read_hero_model(
             None
         }
     };
+    let nodes = match read_nodes(shelf, load) {
+        Ok(n) => Some(Arc::new(n)),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his attach nodes didn't read: what his scripts hang on them sits at his pivot");
+            None
+        }
+    };
     Ok(HeroModel {
         loaded,
         clips: Arc::new(HeroClips::of(hero)),
         palette,
+        nodes,
     })
+}
+
+/// `load`'s attach nodes off the extract (AH.50's part).
+fn read_nodes(shelf: &Shelf, load: &str) -> Result<AttachNodes, String> {
+    let rel = shelf.ir.nodes_path(load);
+    let nodes: AttachNodes = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if nodes.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if nodes.load_file != load {
+        return Err(format!("{rel} holds {}'s attach nodes", nodes.load_file));
+    }
+    Ok(nodes)
 }
 
 /// `load`'s animation palette off the extract (AH.22's part).
@@ -1099,6 +1124,12 @@ fn enter(
     };
     let clips = read.clips.clone();
     let palette = read.palette.clone();
+    let rig = read.nodes.clone().map(|nodes| hero_scripts::HandRig {
+        model: drawn.model.clone(),
+        clips: clips.clone(),
+        nodes,
+        scale: walker.scale,
+    });
     let loops = clips.loops(&read.loaded.model);
     s.commands
         .entity(hero_entity)
@@ -1111,6 +1142,7 @@ fn enter(
         hero_entity,
         walker.load_file,
         palette.clone(),
+        rig,
         s.source.as_deref(),
         c.slot,
     );
@@ -1368,8 +1400,28 @@ fn gait_pose(
     held: bool,
     over: &[(&Clip, f64)],
 ) -> Vec<Transform> {
-    let drawn = drawn_clips(gaits, (alpha, step), held);
-    let playing: Vec<(&Clip, f64, f64)> = locomotion::Clip::ALL
+    let playing = gait_clips(model, clips, drawn_clips(gaits, (alpha, step), held));
+    guacamole::character::mesh::blended_over(model, &playing, over)
+}
+
+/// His locomotion's clips as the step left them (AH.50: what his attach
+/// nodes are posed over), each at its time and weight, none eased.
+pub(crate) fn locomotion_clips<'a>(
+    model: &'a Model,
+    clips: &'a HeroClips,
+    gaits: &HeroGaits,
+) -> Vec<(&'a Clip, f64, f64)> {
+    gait_clips(model, clips, drawn_clips(gaits, (1.0, 0.0), false))
+}
+
+/// Each of his locomotion's clips with a time and weight from `drawn` (in
+/// [`locomotion::Clip::ALL`]'s order), the idle his model's.
+fn gait_clips<'a>(
+    model: &'a Model,
+    clips: &'a HeroClips,
+    drawn: [(f64, f32); 4],
+) -> Vec<(&'a Clip, f64, f64)> {
+    locomotion::Clip::ALL
         .iter()
         .zip(drawn)
         .filter_map(|(&gait, (at, weight))| {
@@ -1379,8 +1431,7 @@ fn gait_pose(
             }?;
             Some((clip, at, f64::from(weight)))
         })
-        .collect();
-    guacamole::character::mesh::blended_over(model, &playing, over)
+        .collect()
 }
 
 /// The clips his scripts play on `hero` (AH.24), out of `palette`, each at
@@ -1459,6 +1510,8 @@ mod tests {
     /// the run and the fall: a pose tells their weights. The idle sways it
     /// from 0 to 0.5 over its second.
     const WALK_X: f32 = 1.0;
+    /// Where the made-up attach list puts his hands on the top joint (AH.50).
+    const HAND_Z: f32 = 0.5;
     const RUN_X: f32 = 2.0;
     const FALL_X: f32 = 3.0;
 
@@ -1857,6 +1910,29 @@ mod tests {
         let rel = IrFormat::Ron.palette_path("009_Eruptor");
         std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
         std::fs::write(dir.join(rel), guac_ir::to_ron(&palette).unwrap()).unwrap();
+        // His attach list (AH.50): nodes 0-6 on his model's origin, his
+        // hands 7 and 8 on the top joint half a metre ahead of it and behind.
+        let node = |bone: &str, joint: Option<u16>, z: f32| guac_ir::nodes::AttachNode {
+            name: None,
+            bone: Some(bone.into()),
+            joint,
+            offset: guac_ir::model::Transform {
+                translation: [0.0, 0.0, z],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            },
+        };
+        let mut nodes: Vec<_> = (0..7).map(|_| node("*root*", None, 0.0)).collect();
+        nodes.push(node("top", Some(1), HAND_Z));
+        nodes.push(node("top", Some(1), -HAND_Z));
+        let nodes = guac_ir::nodes::AttachNodes {
+            identity: crate::turntable::tests::identity(),
+            load_file: "009_Eruptor".into(),
+            nodes,
+        };
+        let rel = IrFormat::Ron.nodes_path("009_Eruptor");
+        std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(rel), guac_ir::to_ron(&nodes).unwrap()).unwrap();
         let key = guacamole::census::SPAWNS[0].key(false).unwrap();
         let material = guacamole::census::material_for(&key);
         // Its textures, one 4x4 BC1 block of one colour each: built here.
@@ -2036,6 +2112,15 @@ mod tests {
         // Drawn over his idle: the made-up throw holds the top joint at the
         // walk clip's x, where his idle sways it between 0 and 0.5.
         assert!((top_x(&app) - WALK_X).abs() < 1e-4, "{}", top_x(&app));
+        // His hands posed by it too (AH.50): node 7 on the top joint, at
+        // (WALK_X, 2, HAND_Z) in his model at his scale (1.5), node 8 behind.
+        let nodes = world.nodes(e.to_bits()).expect("his nodes posed").to_vec();
+        let scale = walkers::walker("009_Eruptor").unwrap().scale;
+        assert_eq!(nodes.len(), 9);
+        let want = Vec3::new(WALK_X, 2.0, HAND_Z) * scale;
+        assert!(nodes[7].at.distance(want) < 1e-4, "{:?}", nodes[7]);
+        assert!(nodes[8].at.distance(want - Vec3::Z * 2.0 * HAND_Z * scale) < 1e-4);
+        assert_eq!(nodes[0].at, Vec3::ZERO, "on his origin");
         while spawned(&app).1 == 0 {
             assert!(Instant::now() < deadline, "the ball never landed");
             app.update();

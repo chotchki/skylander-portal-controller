@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use guac_formats::fnv1a32;
 use guac_formats::script::Class;
 
+use crate::program::{Program, ScriptId};
 use crate::value::Value;
+use crate::vm::Handle;
 
 /// An engine member as a script imports it: FNV-1a 32 of the lowercased
 /// class namespace (`actorinfo`, the class name less any `tfb`) and of the
@@ -343,5 +345,15 @@ pub trait Host {
     fn make(&mut self, class: &str) -> Option<Value> {
         let _ = class;
         None
+    }
+
+    /// The scripted placements world ops have spawned since it was last
+    /// asked, each with its name and its script in `program`: the VM adds
+    /// them and ticks each this tick, after every placement in the order
+    /// (crate docs, The tick). The default spawns none; an embedder that
+    /// leaves them listed adds them itself, and they tick from the next.
+    fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
+        let _ = program;
+        Vec::new()
     }
 }

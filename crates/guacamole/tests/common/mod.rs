@@ -17,7 +17,7 @@ use guac_ir::{DumpIdentity, Sha256};
 use guac_motion::hero::Hero;
 use guac_motion::parry::ParryWorld;
 use guac_motion::proxy::Surfaces;
-use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
+use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Quat, Vec3};
 use guac_motion::tuning::{Tuning, eruptor_solid};
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
@@ -29,7 +29,7 @@ use guacamole::figure::{self, Layout, Tag, Values};
 use guacamole::level_scene;
 use guacamole::player_loop::PlayerLoop;
 use guacamole::props::{LevelProps, PROP_BODIES};
-use guacamole::script_engine::{Engine, Pad};
+use guacamole::script_engine::{Engine, NodePose, Pad};
 use guacamole::scripts::{
     self, FIRST_FIGHT, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
     headless_spawner,
@@ -268,6 +268,29 @@ pub struct Run {
     pub layout: Layout,
     /// The figure's tag data once he's joined (AH.23).
     pub figure: Option<Value>,
+    /// What poses his hands each step (AH.50), and his idle's time at step
+    /// 0: his attach nodes off his model's attach list by his idle and what
+    /// his scripts play on him.
+    pub rig: guacamole::hands::Rig,
+    pub idle0: f64,
+    /// A recorded pose's lean ([`lean_of`]) and where he stood in it: while
+    /// his pivot holds there, his posed nodes are turned by it before what
+    /// hangs from them is set. AH.68's stand-in for a run set down at a
+    /// recorded pose (guacamole poses him upright, the oracle tilts his
+    /// model to the ground).
+    pub lean: Option<(Vec3, Quat)>,
+}
+
+/// His model's turn off his facing alone for a recorded `[tilt, heading,
+/// roll]` (degrees, as a record's `rotation` holds them): his whole turn as
+/// AH.50 composes it, less the heading his nodes are already turned by.
+pub fn lean_of(rotation: [f32; 3]) -> Quat {
+    let whole =
+        guac_extract::models::euler_transform(&guac_formats::igz::layouts::EulerTransform {
+            position: [0.0; 3],
+            rotation,
+        });
+    Quat::from_rotation_y(rotation[1].to_radians()).inverse() * Quat::from_array(whole.rotation)
 }
 
 /// Eruptor's toy, as his figure's tag names it: the toy id 9, the base
@@ -282,6 +305,27 @@ pub fn eruptor_tag(values: Values) -> Tag {
 }
 
 impl Run {
+    /// His attach nodes posed as the frame left his clips (his idle at its
+    /// time this step), and what hangs from them set there (AH.50).
+    pub fn pose_hands(&mut self) {
+        let idle = self.idle0 + f64::from(self.steps) / 60.0;
+        self.rig.pose(&mut self.world, HERO, idle);
+        if let Some((at, lean)) = self.lean
+            && self.hero().pivot.distance(at) < 0.01
+            && let Some(nodes) = self.world.nodes(HERO)
+        {
+            let leaned = nodes
+                .iter()
+                .map(|n| NodePose {
+                    at: lean * n.at,
+                    turn: lean * n.turn,
+                })
+                .collect();
+            self.world.set_nodes(HERO, leaned);
+        }
+        self.world.place_hung(&mut self.bench);
+    }
+
     pub fn with_host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
         let mut spawn = headless_spawner(self.next);
         let t = {
@@ -303,7 +347,8 @@ impl Run {
     /// every placement's tick, the clones of scripted templates added, then
     /// the engine's frame: the hero moved by the walk his scripts left, the
     /// sequences on, the creatures walked, what the scripts threw flying,
-    /// the bodies placed where their actors stand.
+    /// his hands posed and what hangs from them set there (AH.50), the
+    /// bodies placed where their actors stand.
     pub fn step(&mut self) -> Result<(), Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
@@ -329,8 +374,9 @@ impl Run {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
         }
         self.world.advance(dt, &mut self.bench);
-        self.bench.place_bodies(&self.world);
         self.steps += 1;
+        self.pose_hands();
+        self.bench.place_bodies(&self.world);
         Ok(())
     }
 
@@ -491,13 +537,19 @@ pub fn lengths(p: &guac_ir::palette::Palette) -> Vec<f32> {
     out
 }
 
-/// Each slot's clip length on Eruptor's model, read from his archive with
-/// the globals his model's shaders need.
-pub fn eruptor_palette(part: &[Vec<u8>]) -> Vec<f32> {
+/// Eruptor's rig read from his archive with the globals his model's
+/// shaders need: his model, his palette and his attach nodes, at his scale
+/// in the level (AH.50).
+pub fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
     let globals = guac_extract::models::Globals::new(&part[1], &part[0]).expect("the globals");
     let read = guac_extract::models::read(&part[3], "009_Eruptor", identity(), Some(&globals))
         .expect("Eruptor's model");
-    lengths(&read.palette)
+    guacamole::hands::Rig {
+        model: read.model,
+        palette: read.palette,
+        nodes: read.nodes,
+        scale: guac_motion::tuning::ERUPTOR_SCALE,
+    }
 }
 
 /// Each live-table member the registry doesn't hold, as a value cell of its
@@ -590,7 +642,8 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         .find(|p| p.name == "009_Eruptor")
         .expect("Eruptor's template")
         .obj;
-    world.set_palette(template, eruptor_palette(&part));
+    let rig = eruptor_rig(&part);
+    world.set_palette(template, lengths(&rig.palette));
     // The creatures' palettes, by the model each placement names.
     let palettes = levels::palettes(&igzs[LEVEL as usize], levels::LEVELS[0], identity())
         .expect("the level's palettes")
@@ -659,6 +712,9 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
             player_loop,
             layout,
             figure: None,
+            rig,
+            idle0: 0.0,
+            lean: None,
         },
         found,
     )

@@ -468,6 +468,88 @@ fn a_specialization_reads_its_bases_parameters_from_its_own_frame() {
 }
 
 #[test]
+fn after_return_a_family_reads_its_callees_returned_parameter() {
+    // Macros: a family (a base and its specializations) shares its
+    // parameter ops, as Giants' `Calc - Sin`, `Calc - Cosine` and `Calc -
+    // Tangent` do (AH.60). In a call's after-return code a parameter naming
+    // the callee's definition, or the base it specializes, reads the
+    // callee's frame, even where the caller declares that parameter too;
+    // binding the call's arguments and the caller's own body read its own.
+    let p = program(|w| {
+        let base = w.op(Class::DefineMacro, "Double");
+        let spec = w.op(Class::DefineMacroSpecialization, "Double Plus 100");
+        let angle = parameter(w, "angle", base);
+        let result = parameter(w, "result", base);
+        let scratch = var(w, "scratch");
+        let header = |w: &mut Writer<'_>, def: Location| {
+            let at = w.push(def);
+            let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+            w.push(angle);
+            w.push(result);
+            let enter = w.flow(Class::FlowMacro);
+            w.push(enter);
+            w.close(iface);
+            at
+        };
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                // Double(angle, result): result = angle * 2.
+                let at = header(w, base);
+                let a = w.rhs(INT, &[El::Local(angle)]);
+                let two = w.int(2);
+                let times = w.expr(a, Some((2, two)));
+                w.set(&[El::Local(result)], times);
+                w.end_block(at);
+                // Double Plus 100(angle, result), the same parameter ops:
+                // Double(angle = angle + 1), after it test.after = result
+                // and scratch = result; then result = scratch + 100.
+                let np = w.stack(StackClass::MacroDefinitions, &[El::Local(base)]);
+                w.refer(spec, 0x38, np);
+                let at = header(w, spec);
+                let a = w.rhs(INT, &[El::Local(angle)]);
+                let one = w.int(1);
+                let plus = w.expr(a, Some((0, one)));
+                call_then(w, base, &[("angle", plus)], |w| {
+                    let r = w.rhs(INT, &[El::Local(result)]);
+                    w.set(&[El::Member("test", "after")], r);
+                    let r = w.rhs(INT, &[El::Local(result)]);
+                    w.set(&[El::Local(scratch)], r);
+                });
+                let s = w.rhs(INT, &[El::Local(scratch)]);
+                let hundred = w.int(100);
+                let plus = w.expr(s, Some((0, hundred)));
+                w.set(&[El::Local(result)], plus);
+                w.end_block(at);
+            },
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                let five = w.int(5);
+                call_then(w, spec, &[("angle", five)], |w| {
+                    let r = w.rhs(INT, &[El::Local(result)]);
+                    w.set(&[El::Member("test", "out")], r);
+                });
+                w.end_block(b);
+            },
+        );
+    });
+    let (vm, _) = run(&p, config(Mode::Strict, &["after", "out"]), 1);
+    assert_eq!(
+        cell(&vm, "after"),
+        Some(Value::Int(12)),
+        "the callee's result after its return, its argument bound from the caller's angle"
+    );
+    assert_eq!(
+        cell(&vm, "out"),
+        Some(Value::Int(112)),
+        "the specialization's own result once the nested call closed"
+    );
+}
+
+#[test]
 fn a_behaviour_switch_applies_next_tick_or_this_tick_from_prescript() {
     for from_prescript in [false, true] {
         let p = program(|w| {

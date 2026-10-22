@@ -2284,6 +2284,24 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool, fighting: bo
         palettes.push(rel);
     }
     dir.record_part(guac_extract::models::PALETTES, palettes)?;
+    // AH.50's attach nodes, none on the made-up models: a node there sits
+    // at the actor's pivot.
+    let mut nodes = Vec::new();
+    let loads = [
+        Some(model.load_file.clone()),
+        fighting.then(|| WALKING_LOAD.to_owned()),
+    ];
+    for load in loads.into_iter().flatten() {
+        let n = guac_ir::nodes::AttachNodes {
+            identity: identity.clone(),
+            load_file: load.clone(),
+            nodes: Vec::new(),
+        };
+        let rel = ir.nodes_path(&load);
+        dir.write_output(&rel, &ir.encode(&n, dir, &rel)?)?;
+        nodes.push(rel);
+    }
+    dir.record_part(guac_extract::models::NODES, nodes)?;
     // The damaged one: the same file cut off halfway.
     let damaged = ir.model_path(&load_file(E2E_DAMAGED));
     dir.write_output(&damaged, &bytes[..bytes.len() / 2])?;

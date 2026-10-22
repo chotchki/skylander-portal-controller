@@ -255,6 +255,8 @@ struct Call {
     def: DefId,
     /// The context the call was made in, restored on return.
     caller: Option<DefId>,
+    /// The body has returned: the use block's after-return code runs.
+    returned: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -646,6 +648,14 @@ impl Vm {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// The seconds each tick and slide steps from now on
+    /// ([`Config::tick_seconds`]): a model replay steps the oracle's own
+    /// frames this way (design decision 18's model replay), where the TV
+    /// ticks 1/60 s throughout.
+    pub fn set_tick_seconds(&mut self, seconds: f32) {
+        self.config.tick_seconds = seconds;
     }
 
     /// Adds a placement running `script`, ticked after those added before
@@ -1126,10 +1136,15 @@ impl Vm {
         result.map(|()| report)
     }
 
-    /// Every placement's tick, in the tick order.
+    /// Every placement's tick, in the tick order; what one spawns with a
+    /// script of its own joins the order's end and ticks this tick too
+    /// ([`Host::adopt`]).
     fn tick_all(&mut self, report: &mut StepReport, host: &mut dyn Host) -> Result<(), Halt> {
-        let order = self.order.clone();
-        for id in order {
+        let program = self.program.clone();
+        self.adopt(&program, host);
+        let mut at = 0;
+        while let Some(&id) = self.order.get(at) {
+            at += 1;
             let p = &self.placements[id as usize];
             if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
                 continue;
@@ -1138,6 +1153,7 @@ impl Vm {
             let result = self.tick(id, host);
             report.ticked += 1;
             report.ops += self.executed - before;
+            self.adopt(&program, host);
             match result {
                 Ok(None) => {}
                 Ok(Some(halt)) => report.stopped.push(halt),
@@ -1242,6 +1258,14 @@ impl Vm {
     /// and any that ended since the last scan.
     pub fn sliders_scanned(&self) -> usize {
         self.live.len()
+    }
+
+    /// What the host has spawned with scripts of their own, added at the
+    /// order's end.
+    fn adopt(&mut self, program: &Program, host: &mut dyn Host) {
+        for (handle, name, script) in host.adopt(program) {
+            self.add(handle, &name, script);
+        }
     }
 
     /// One tick of one placement. `Ok(Some)` is a play-mode stop.
@@ -1385,7 +1409,11 @@ impl Vm {
         let (sid, _) = self.program.defs[def as usize].placed.unwrap_or((0, 0));
         self.begin(placement, sid, receiver);
         self.busy.insert(def);
-        self.run.calls.push(Call { def, caller: None });
+        self.run.calls.push(Call {
+            def,
+            caller: None,
+            returned: false,
+        });
         self.run.blocks.push(Block {
             ctx: sid,
             start: 0,
@@ -1693,7 +1721,11 @@ impl Vm {
             .and_then(|s| s.ops.get(top.start as usize))
             .map_or(0, |&o| program.branch(o));
         self.run.pc = top.start + iface + 1;
-        self.run.frame = self.run.calls.last().and_then(|c| c.caller);
+        let Some(call) = self.run.calls.last_mut() else {
+            return unsupported("a macro body ended with no call open");
+        };
+        call.returned = true;
+        self.run.frame = call.caller;
         Ok(())
     }
 
@@ -2075,6 +2107,7 @@ impl Vm {
         self.run.calls.push(Call {
             def,
             caller: self.run.frame,
+            returned: false,
         });
         *self.calls.entry(def).or_default() += 1;
         *self
@@ -2935,13 +2968,29 @@ impl Vm {
         }
     }
 
-    /// The frame a parameter on a path reads. A definition's own parameter
-    /// reads the running definition's frame: in its body, while it binds a
-    /// nested call's arguments and in a nested call's after-return code
-    /// (a specialization's own parameters name the base). Any other reads
-    /// the definition it binds into (a stub followed), or the open call's
+    /// The frame a parameter on a path reads. In a call's after-return code,
+    /// one naming the callee's definition or its base reads the callee's.
+    /// Otherwise a definition's own parameter reads the running
+    /// definition's frame: in its body, while it binds a nested call's
+    /// arguments and in a nested call's after-return code (a
+    /// specialization's own parameters name the base). Any other reads the
+    /// definition it binds into (a stub followed), or the open call's
     /// specialization of it (an after-return read of what a call returned).
     fn param_frame(&self, program: &Program, op: OpId, p: &Param) -> Option<DefId> {
+        let base_of = |d: DefId| {
+            program.defs[d as usize]
+                .base
+                .and_then(|b| program.resolve(b))
+        };
+        // A family shares its parameter ops, so the caller may declare the
+        // one it reads back (AH.60: `Calc - Tangent` reading `Calc - Sin`).
+        if let Some(top) = self.run.calls.last()
+            && top.returned
+            && let Some(def) = p.def.and_then(|d| program.resolve(d))
+            && (top.def == def || base_of(top.def) == Some(def))
+        {
+            return Some(top.def);
+        }
         if let Some(running) = self.run.frame
             && declares(program, running, op)
         {
@@ -2950,10 +2999,7 @@ impl Vm {
         let def = p.def.and_then(|d| program.resolve(d))?;
         if let Some(top) = self.run.calls.last()
             && top.def != def
-            && program.defs[top.def as usize]
-                .base
-                .and_then(|b| program.resolve(b))
-                == Some(def)
+            && base_of(top.def) == Some(def)
         {
             return Some(top.def);
         }

@@ -210,6 +210,122 @@ fn a_placement_woken_ticks_after_those_already_awake() {
     );
 }
 
+/// A host that spawns `Child` placements running script 1 and hands them
+/// over through [`Host::adopt`] (AH.54).
+#[derive(Default)]
+struct Spawning {
+    inner: Engine,
+    next: u64,
+    pending: Vec<(Handle, String, crate::ScriptId)>,
+}
+
+impl Host for Spawning {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        self.inner.get(at)
+    }
+    fn set(&mut self, at: &Access, value: Value) -> Result<(), HostFault> {
+        self.inner.set(at, value)
+    }
+    fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.inner.reset(at)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn op(&mut self, call: &OpCall) -> Result<Answer, HostFault> {
+        if call.class != Class::Spawn {
+            return self.inner.op(call);
+        }
+        self.next += 1;
+        let h = 0x900 + self.next;
+        self.pending.push((h, format!("Child{}", self.next), 1));
+        let e = Value::Entity(h);
+        Ok(Answer::Run {
+            receiver: Some(e),
+            result: Some(e),
+        })
+    }
+    fn adopt(&mut self, _: &Program) -> Vec<(Handle, String, crate::ScriptId)> {
+        std::mem::take(&mut self.pending)
+    }
+}
+
+/// What a placement's tick spawns with a script of its own ticks in the
+/// same tick, after every placement already in the order (AH.54: the
+/// eruption's lava is out at the eruption's first record), then keeps its
+/// place in the order; a host that doesn't hand it over leaves it to the
+/// embedder, untouched this tick. Each reads a file's counter, then counts
+/// it on; the spawner spawns once.
+#[test]
+fn a_placement_spawned_with_a_script_ticks_the_tick_it_was_spawned() {
+    let p = program(|w| {
+        let f = w.b.object(0, "ValueInfo", 0x24);
+        w.text(f, 0x08, "Counter");
+        w.meta_word(f, 0x1C, INT);
+        w.word(f, 0x20, 0);
+        let seen = var(w, "seen");
+        let spawned = var(w, "spawned");
+        let template = actor(w);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(INT, &[El::Local(f)]);
+                w.set(&[El::Local(seen)], v);
+                w.inc(&[El::Local(f)]);
+                let zero = w.int(0);
+                let (c, _) = check(w, spawned, 1, zero);
+                let lhs = w.stack(StackClass::PlacementList, &[El::Local(template)]);
+                let at = w.stack(StackClass::Position, &[]);
+                let (s, so) = w.open(Class::Spawn, "clone||at|facing||cloned");
+                w.refer(so, 0x20, lhs);
+                w.refer(so, 0x28, at);
+                w.refer(so, 0x2C, zero);
+                w.end_block(s);
+                w.inc(&[El::Local(spawned)]);
+                w.end_block(c);
+            },
+        );
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(INT, &[El::Local(f)]);
+                w.set(&[El::Local(seen)], v);
+                w.inc(&[El::Local(f)]);
+            },
+        );
+    });
+    let run = |host: &mut dyn Host| {
+        let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+        let spawner = vm.add(0x10, "Spawner", 0);
+        let other = vm.add(0x20, "Other", 1);
+        vm.step(host).unwrap();
+        let first = (vm.local(spawner, "seen"), vm.local(other, "seen"));
+        let child = vm.placement_of(0x901);
+        let child_first = child.and_then(|c| vm.local(c, "seen"));
+        vm.step(host).unwrap();
+        let second = [spawner, other].map(|id| vm.local(id, "seen"));
+        (
+            first,
+            child_first,
+            second,
+            child.and_then(|c| vm.local(c, "seen")),
+        )
+    };
+    let (first, child, second, child_second) = run(&mut Spawning::default());
+    assert_eq!(first, (Some(Value::Int(0)), Some(Value::Int(1))));
+    assert_eq!(child, Some(Value::Int(2)), "the child's first tick, last");
+    assert_eq!(second, [Some(Value::Int(3)), Some(Value::Int(4))]);
+    assert_eq!(child_second, Some(Value::Int(5)), "then in its place");
+    // A host that keeps its spawns: nothing more ticks this tick.
+    let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+    let spawner = vm.add(0x10, "Spawner", 0);
+    vm.step(&mut Engine::default()).unwrap();
+    assert_eq!(vm.local(spawner, "seen"), Some(Value::Int(0)));
+    assert_eq!(vm.placement_of(0x1001), None, "not added");
+}
+
 /// Three things at 10, 20 and 30 the host keeps as `test.items`; each one's
 /// `test.distance` from the path's other point is how far apart their
 /// numbers are, `test.size` its number and `test.limit` 15, 25 and 5.

@@ -49,13 +49,13 @@ use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
 use guac_script::{
     Access, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode, Obj, OpCall,
-    PlacementId, Program, Value, Vm, Whitelist,
+    PlacementId, Program, ScriptId, Value, Vm, Whitelist,
 };
 use tracing::{info, warn};
 
 use crate::player_loop::PlayerLoop;
 use crate::script_engine::{
-    Actor, Angles, Engine, NoEngine, Object, Objects, Pad, Physics, Sequence, Solid,
+    Actor, Angles, Engine, NoEngine, NodePose, Object, Objects, Pad, Physics, Sequence, Solid,
 };
 use crate::script_members::Member;
 
@@ -331,7 +331,7 @@ pub struct ScriptWorld {
     pub(crate) hero_templates: HashMap<Obj, Handle>,
     /// Each actor's attach nodes where they're set, in its own frame
     /// (metres, +Z its facing); a node not set sits at its pivot.
-    pub(crate) nodes: HashMap<Handle, Vec<Vec3>>,
+    pub(crate) nodes: HashMap<Handle, Vec<NodePose>>,
     /// The pads as this step reads them, and as the step before did.
     pub(crate) pads: [Pad; 2],
     pub(crate) pads_before: [Pad; 2],
@@ -517,21 +517,43 @@ impl ScriptWorld {
     /// state has it (a scripted test's or the dev entry's). False for no
     /// such actor.
     pub fn place(&mut self, h: Handle, at: Vec3, facing: f32) -> bool {
+        self.place_moving(h, at, facing, Vec3::ZERO)
+    }
+
+    /// [`ScriptWorld::place`] moving at `velocity` (ft/s): a recorded
+    /// state's creature mid-stride, which a lob's lead reads (AH.60).
+    pub fn place_moving(&mut self, h: Handle, at: Vec3, facing: f32, velocity: Vec3) -> bool {
         let Some(a) = self.actors.get_mut(&h) else {
             return false;
         };
         a.position = at;
         a.angles.facing = facing;
-        a.velocity = Vec3::ZERO;
+        a.velocity = velocity;
         true
     }
 
-    /// Where `actor`'s attach nodes sit, in its own frame (metres, +Z its
-    /// facing), by index; one past the list, or never set, at its pivot.
-    /// Where on the model a node is through a clip isn't read yet: a caller
-    /// with a measured point sets it here.
-    pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<Vec3>) {
+    /// Where `actor`'s attach nodes sit and how each is turned, in its own
+    /// frame (metres, +Z its facing), by index; one past the list, or never
+    /// set, at its pivot. The embedder poses them off the actor's model by
+    /// the clips playing ([`crate::hands`], openspec AH.50), then
+    /// [`ScriptWorld::place_hung`] sets what hangs from them there, turned
+    /// as its node (AH.60).
+    pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<NodePose>) {
         self.nodes.insert(actor, nodes);
+    }
+
+    /// `actor`'s attach nodes as last set, in its own frame.
+    pub fn nodes(&self, actor: Handle) -> Option<&[NodePose]> {
+        self.nodes.get(&actor).map(Vec::as_slice)
+    }
+
+    /// Each actor hung from a node set at it, as the end of
+    /// [`ScriptWorld::advance`] leaves it: run again once the nodes are
+    /// posed after that frame, so what hangs from them follows the pose the
+    /// frame's clips leave (the original's collider on Eruptor's hand,
+    /// AH.50).
+    pub fn place_hung(&mut self, engine: &mut dyn Engine) {
+        self.place_hung_actors(engine);
     }
 
     /// A spawn of `template` makes `hero` the clone: the hero's actor, his
@@ -756,16 +778,20 @@ impl ScriptWorld {
         let first = call.operands.first().and_then(|(_, v)| *v);
         let target = first.and_then(|v| self.handle(v));
         match call.class {
+            // The block runs with what it controls as its receiver, and the
+            // op reads as it on a path (`<OpControl>.placement.scale`: AH.54,
+            // the eruption grows and moves each blob so; read as nothing, the
+            // writes went nowhere and the lava sat still at his feet).
             Class::Control => Ok(match (first, target) {
                 (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
                 (Some(v), Some(_)) => Answer::Run {
                     receiver: Some(v),
-                    result: None,
+                    result: Some(v),
                 },
                 // An object no placement stands for: the pads, the portal.
                 (Some(v @ Value::Entity(_)), None) => Answer::Run {
                     receiver: Some(v),
-                    result: None,
+                    result: Some(v),
                 },
                 _ => Answer::Skip,
             }),
@@ -917,6 +943,9 @@ impl Host for WorldHost<'_, '_> {
     }
     fn make(&mut self, class: &str) -> Option<Value> {
         self.world.make(class)
+    }
+    fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
+        self.world.adopt(program)
     }
 }
 
@@ -1422,13 +1451,10 @@ impl LevelState {
 /// isn't read).
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
-    std::mem::take(&mut world.scripted)
+    world
+        .adopt(&program)
         .into_iter()
-        .filter_map(|(h, t)| {
-            let sid = world.script_of(t, &program)?;
-            let name = world.name_of(t).unwrap_or_default();
-            Some(vm.add(h, &name, sid))
-        })
+        .map(|(h, name, sid)| vm.add(h, &name, sid))
         .collect()
 }
 
@@ -1503,7 +1529,21 @@ impl ScriptWorld {
         }
     }
 
-    /// The script a template runs, in `program`.
+    /// The clones of scripted templates spawned since last asked, each
+    /// with its template's name and script ([`guac_script::Host::adopt`]);
+    /// one whose script `program` doesn't hold is dropped.
+    pub fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
+        std::mem::take(&mut self.scripted)
+            .into_iter()
+            .filter_map(|(h, t)| {
+                let sid = self.script_of(t, program)?;
+                Some((h, self.name_of(t).unwrap_or_default(), sid))
+            })
+            .collect()
+    }
+
+    /// Where in `program.scripts` the script a template runs is; none when
+    /// `program` doesn't hold it.
     pub fn script_of(&self, t: Obj, program: &Program) -> Option<u32> {
         let script = self.templates.get(&t)?.script.as_ref()?;
         program
@@ -1902,13 +1942,13 @@ mod tests {
             got.push(w.get(&at(ns, name, None), &mut NoEngine).unwrap());
         }
         assert_eq!(got, objects.map(Value::Entity));
-        // A tell on one runs its block with it.
+        // A tell on one runs its block with it, and reads as it.
         let pad = Value::Entity(objects[0]);
         assert_eq!(
             w.op(&call(Class::Control, Some(pad)), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Run {
                 receiver: Some(pad),
-                result: None
+                result: Some(pad)
             })
         );
     }
@@ -1946,11 +1986,16 @@ mod tests {
             ),
             Ok(Value::Float(12.5))
         );
+        // A tell on the clone runs its block with it, and reads as it
+        // (AH.54: `<OpControl>.placement.scale` is the clone's).
         let tell = call(Class::Control, Some(clone));
-        assert!(matches!(
+        assert_eq!(
             w.op(&tell, &mut |_| 0, &mut NoEngine),
-            Ok(Answer::Run { .. })
-        ));
+            Ok(Answer::Run {
+                receiver: Some(clone),
+                result: Some(clone)
+            })
+        );
         assert_eq!(
             w.op(&call(Class::Remove, Some(clone)), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Done)

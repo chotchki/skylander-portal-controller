@@ -40,10 +40,12 @@
 //!   ([`crate::play`]), and each clone whose template names a model the
 //!   extract's spawn part holds ([`draw_clones`]), at its actor's place,
 //!   turn and scale, eased between steps.
-//! - His hands: where on his model a thrown ball leaves isn't posed yet
-//!   (AH.50), so his attach nodes 7 and 8 (`lHand`, `rHand`) sit at AH.7's
-//!   measured launch point in his frame, mirrored ([`hands`]): the stand-in
-//!   row "A node's place on the model".
+//! - His hands (AH.50): after each step's locomotion, his attach nodes are
+//!   posed off his model's attach list by the clips on him, his
+//!   locomotion's with his scripts' laid over them ([`pose_hands`],
+//!   [`guacamole::hands`]), and what hangs from them set there: the
+//!   collider his throw hangs on `lHand` or `rHand`, which the ball leaves
+//!   from, as the original's engine poses it.
 //!
 //! Leaving the level installs the run again from the part, the level's
 //! start as the next entry finds it. The hero coming off the portal
@@ -65,6 +67,8 @@ use std::sync::{Arc, Mutex};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::TransformInterpolation;
+use guac_ir::Model;
+use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
 use guac_motion::hero::Hero;
 use guac_motion::seam::{BodyId, PhysicsSeam};
@@ -78,10 +82,13 @@ use guacamole::scripts::{
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroInput, HeroSystems, ScriptedHero};
+use crate::hero::{
+    FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, HeroSystems, ScriptedHero,
+};
 use crate::level::{LEVEL_LAYER, Level};
 use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
+use crate::play::{self, HeroClips};
 use crate::progress::Earning;
 use skylander_core::SlotIndex;
 
@@ -302,18 +309,30 @@ impl Join {
 
 /// The hero whose scripts join the run: his load file, his file's unit, his
 /// palette (each slot's clip, which his scripts' sequences play and the TV
-/// draws) and his join.
+/// draws), what poses his attach nodes and his join.
 #[derive(Component, Debug, Clone)]
 pub(crate) struct HeroRun {
     pub(crate) load_file: String,
     pub(crate) unit: u16,
     pub(crate) palette: Option<Arc<Palette>>,
+    /// None when his attach nodes didn't read: every node at his pivot.
+    pub(crate) rig: Option<HandRig>,
     pub(crate) join: Join,
     /// The portal slot his figure stands in: its values make his tag's words.
     pub(crate) slot: SlotIndex,
     /// His figure's tag data once his scripts join holding it (AH.23), and
     /// the generation its words were made under.
     pub(crate) figure: Option<(Value, i64)>,
+}
+
+/// What poses his attach nodes (AH.50): his model (its skeleton and idle),
+/// his locomotion's other clips, his model's attach list and his scale.
+#[derive(Debug, Clone)]
+pub(crate) struct HandRig {
+    pub(crate) model: Arc<Model>,
+    pub(crate) clips: Arc<HeroClips>,
+    pub(crate) nodes: Arc<AttachNodes>,
+    pub(crate) scale: f32,
 }
 
 /// Asks for `hero`'s scripts to join the run, if the part holds his file;
@@ -323,6 +342,7 @@ pub(crate) fn ask_join(
     hero: Entity,
     load_file: &str,
     palette: Option<Arc<Palette>>,
+    rig: Option<HandRig>,
     source: Option<&ScriptSource>,
     slot: SlotIndex,
 ) -> bool {
@@ -338,6 +358,7 @@ pub(crate) fn ask_join(
             load_file: load_file.to_owned(),
             unit,
             palette,
+            rig,
             join: Join::Asked,
             slot,
             figure: None,
@@ -346,27 +367,6 @@ pub(crate) fn ask_join(
     ));
     info!(load_file, unit, "his scripts join at the next step");
     true
-}
-
-/// Where AH.7's first lob left his left hand, his frame (metres, +Z his
-/// facing): its first record less its frame's move, from his pivot at the
-/// spawn facing 0 (AH.17's derivation). His right hand mirrors it.
-pub(crate) const ERUPTOR_LEFT_HAND: Vec3 = Vec3::new(0.6011, 0.7710, 1.4838);
-
-/// His attach nodes where the stand-in puts them, by index (AH.50 poses
-/// them off his model instead): Eruptor's `lHand` (7) and `rHand` (8) at
-/// AH.7's launch point and its mirror, the rest at his pivot.
-pub(crate) fn hands(load_file: &str) -> Option<Vec<Vec3>> {
-    (load_file == "009_Eruptor").then(|| {
-        let mut nodes = vec![Vec3::ZERO; 9];
-        nodes[7] = ERUPTOR_LEFT_HAND;
-        nodes[8] = Vec3::new(
-            -ERUPTOR_LEFT_HAND.x,
-            ERUPTOR_LEFT_HAND.y,
-            ERUPTOR_LEFT_HAND.z,
-        );
-        nodes
-    })
 }
 
 /// Each slot's clip length at 100 %, 0 where a slot holds no clip.
@@ -575,6 +575,8 @@ pub(crate) enum ScriptSystems {
     Step,
     /// The engine's frame and the clones drawn, after it.
     Advance,
+    /// His attach nodes posed once his locomotion has stepped (AH.50).
+    Hands,
 }
 
 /// The run on the TV: its step before the hero's, the engine's frame and
@@ -591,6 +593,7 @@ impl Plugin for HeroScriptsPlugin {
                     ScriptSystems::Advance
                         .after(HeroSystems::Step)
                         .before(HeroSystems::Gait),
+                    ScriptSystems::Hands.after(HeroSystems::Gait),
                 ),
             )
             .add_systems(
@@ -600,6 +603,7 @@ impl Plugin for HeroScriptsPlugin {
                     (advance_scripts, draw_clones)
                         .chain()
                         .in_set(ScriptSystems::Advance),
+                    pose_hands.in_set(ScriptSystems::Hands),
                 )
                     .run_if(resource_exists::<ScriptRuntime>)
                     .run_if(resource_exists::<ScriptWorld>),
@@ -703,9 +707,6 @@ fn step_scripts(
         };
         match scripts::join_activate(vm, &mut host, handle) {
             Ok(minion) => {
-                if let Some(nodes) = hands(&r.load_file) {
-                    world.set_nodes(handle, nodes);
-                }
                 info!(load_file = %r.load_file, ?minion, "his scripts run");
                 r.join = Join::Joined(minion);
             }
@@ -970,6 +971,44 @@ fn advance_scripts(
     {
         entry.ended.extend(ended);
     }
+}
+
+/// His attach nodes posed by the clips on him as this step left them, his
+/// locomotion's (his idle alone with no gaits) with his scripts' laid over,
+/// and what hangs from them set there (the module docs; AH.50).
+fn pose_hands(
+    mut world: ResMut<ScriptWorld>,
+    seam: AvianSeam,
+    cameras: Query<&FollowCamera>,
+    mut heroes: Query<(Entity, &'static mut HeroBody)>,
+    runs: Query<(Entity, &HeroRun, Option<&HeroGaits>)>,
+    (level, source): (Res<Level>, Option<Res<ScriptSource>>),
+) {
+    let mut posed = false;
+    for (e, run, gaits) in &runs {
+        let Some(rig) = &run.rig else {
+            continue;
+        };
+        let base = match gaits {
+            Some(g) => play::locomotion_clips(&rig.model, &rig.clips, g),
+            None => vec![(&rig.model.idle, 0.0, 1.0)],
+        };
+        let over = match &run.palette {
+            Some(p) => guacamole::hands::playing(&world, e.to_bits(), p),
+            None => Vec::new(),
+        };
+        let nodes =
+            guacamole::hands::posed(&rig.model.skeleton, &rig.nodes, &base, &over, rig.scale);
+        world.set_nodes(e.to_bits(), nodes);
+        posed = true;
+    }
+    if !posed {
+        return;
+    }
+    let view = view_heading(&cameras);
+    let props = standing_props(&level, &world, source.as_deref());
+    let mut engine = TvEngine::new(&mut heroes, &seam, view, &props);
+    world.place_hung(&mut engine);
 }
 
 /// A clone drawn: its model's parts hang under it.

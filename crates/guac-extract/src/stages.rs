@@ -717,8 +717,9 @@ fn level_failure(level: &str, part: &str, reason: String) -> LevelFailure {
 /// Each character load file `roster` names, its model into
 /// `models/<load file>.<ron|postcard>`, its textures into
 /// `textures/<sha256>.ktx2`, its hero side into
-/// `heroes/<load file>.<ron|postcard>` and its palette into
-/// `palettes/<load file>.<ron|postcard>` (the part recorded once every
+/// `heroes/<load file>.<ron|postcard>`, its palette into
+/// `palettes/<load file>.<ron|postcard>` and its attach nodes into
+/// `nodes/<load file>.<ron|postcard>` (each part recorded once every
 /// model has been through), then `global.bld`'s rig into
 /// `ir/rig.<ron|postcard>`. A model or rig that won't read is reported in
 /// [`ModelStage::failed`], a hero that doesn't settle in
@@ -748,6 +749,7 @@ pub fn model_stage(
     };
     let mut written: HashSet<String> = HashSet::new();
     let mut palette_files = Vec::new();
+    let mut node_files = Vec::new();
     // `global.bld` and `bootstrap.bld`, for the attachments a global
     // template draws (AE.23); without them those sets stay unsettled.
     let level_of = |archive: &str| {
@@ -799,6 +801,10 @@ pub fn model_stage(
                 stage.palettes.add(&m.palette);
                 stage.palettes.took += m.palette_took + started.elapsed();
                 palette_files.push(rel);
+                let rel = ir.nodes_path(load);
+                let bytes = ir.encode(&m.nodes, dir, &rel)?;
+                put(dir, &rel, &bytes, &mut stage.files)?;
+                node_files.push(rel);
             }
             Err(e @ ExtractError::ModelUnreadable { .. }) => stage.failed.push(ModelFailure {
                 load_file: (*load).to_owned(),
@@ -811,6 +817,7 @@ pub fn model_stage(
     stage.textures = written.len();
     // Every model that read has its palette in: the part is.
     dir.record_part(models::PALETTES, palette_files)?;
+    dir.record_part(models::NODES, node_files)?;
     let rig = std::fs::read(usrdir.join(roster::GLOBAL))
         .map_err(ExtractError::io(usrdir.join(roster::GLOBAL)))
         .and_then(|bytes| models::level(&bytes, roster::GLOBAL))

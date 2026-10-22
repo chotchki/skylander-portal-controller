@@ -50,8 +50,8 @@ use guac_motion::steer::{Aim, MoveType, Physics as SteerPhysics};
 use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
 
 use crate::script_engine::{
-    Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object, Sequence,
-    Walker, direction, heading_of, normalized, pitch_of,
+    Angles, Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object,
+    Sequence, Walker, angles_of, direction, heading_of, normalized, pitch_of,
 };
 use crate::scripts::{ScriptWorld, Spawner};
 
@@ -461,10 +461,29 @@ impl ScriptWorld {
 
     /// An actor's pivot, metres: a hero's from his controller.
     pub(crate) fn position(&self, h: Handle, engine: &mut dyn Engine) -> Option<Vec3> {
+        self.position_within(h, engine, HUNG_DEPTH)
+    }
+
+    /// [`ScriptWorld::position`], through at most `depth` actors hung one
+    /// from another's node. One hung from an actor's node reads where that
+    /// node is now, its offset as the last frame posed it turned by its
+    /// owner's facing as it stands (openspec AH.50: an aimed ball leaves
+    /// from Eruptor's hand, where his collider hangs, turned by the facing
+    /// his throw's own turn just wrote, 0.67 m from where the collider stood
+    /// after a 20° turn and within 1e-5 m of the turned node in every drive).
+    fn position_within(&self, h: Handle, engine: &mut dyn Engine, depth: u8) -> Option<Vec3> {
         if let Some(hero) = engine.hero(h) {
             return Some(hero.pivot);
         }
         let a = self.actors.get(&h)?;
+        if depth > 0
+            && !a.removed
+            && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
+            && owner != h
+            && let Some(p) = self.node_within(owner, i, engine, depth - 1)
+        {
+            return Some(p);
+        }
         Some(a.position)
     }
 
@@ -548,12 +567,27 @@ impl ScriptWorld {
     /// Attach node `i` of actor `a` in the level: its offset turned by the
     /// actor's facing, from its pivot.
     fn node(&self, a: Handle, i: u32, engine: &mut dyn Engine) -> Option<Vec3> {
-        let pivot = self.position(a, engine)?;
+        self.node_within(a, i, engine, HUNG_DEPTH)
+    }
+
+    fn node_within(&self, a: Handle, i: u32, engine: &mut dyn Engine, depth: u8) -> Option<Vec3> {
+        let pivot = self.position_within(a, engine, depth)?;
         let Some(off) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) else {
             return Some(pivot);
         };
         let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
-        Some(pivot + Quat::from_rotation_y(facing.to_radians()) * *off)
+        Some(pivot + Quat::from_rotation_y(facing.to_radians()) * off.at)
+    }
+
+    /// Attach node `i` of actor `a`'s turn in the level, where the embedder
+    /// posed it ([`ScriptWorld::set_nodes`]): its own turned by the actor's
+    /// facing as it stands. None for a node never posed.
+    fn node_turn(&self, a: Handle, i: u32, engine: &mut dyn Engine, depth: u8) -> Option<Quat> {
+        let node = self.nodes.get(&a)?.get(i as usize)?;
+        let facing = self
+            .angles_within(a, engine, depth)
+            .map_or(0.0, |g| g.facing);
+        Some(Quat::from_rotation_y(facing.to_radians()) * node.turn)
     }
 
     fn set_point(&mut self, v: Value, p: Vec3, engine: &mut dyn Engine) -> Result<(), HostFault> {
@@ -594,21 +628,41 @@ impl ScriptWorld {
         self.ray_contact_full(engine).map(|(p, n, _)| (p, n))
     }
 
+    /// The ray cast's first contact: the level, or an actor whose collision
+    /// acts as an actor surface. One that doesn't (a barrel, pot or gourd)
+    /// the ray passes through: `Minion - Check Target Blocked` reads any
+    /// contact as blocking unless its target's collision acts as an actor
+    /// surface, so in the original the ray never meets one that doesn't
+    /// (merging AH.50 into AH.21: the lob's burst from anchor A met the
+    /// lying `barrel_b_intact(4)`'s own solid on the way to it and spared
+    /// it, where AH.9's burst breaks it).
     fn ray_contact_full(&self, engine: &mut dyn Engine) -> Option<(Vec3, Vec3, Option<u8>)> {
         let d = self.ray.end - self.ray.start;
         let len = d.length();
         if len <= 0.0 {
             return None;
         }
-        let actors = self.actor_bodies(engine);
-        let hit = guac_motion::ground::ray(engine.seam(), self.ray.start, d, len, &actors)?;
-        Some((hit.point, hit.normal, hit.material))
+        let mut past = self.actor_bodies(engine);
+        loop {
+            let hit = guac_motion::ground::ray(engine.seam(), self.ray.start, d, len, &past)?;
+            let surface = engine
+                .actor_of(hit.body)
+                .and_then(|h| self.actors.get(&h))
+                .is_none_or(|a| a.solid.acts_as_actor_surface != 0);
+            if surface {
+                return Some((hit.point, hit.normal, hit.material));
+            }
+            // Each pass leaves one more body out, so it ends.
+            past.push(hit.body);
+        }
     }
 
     /// The bodies in the seam that are actors (the heroes, the creatures
     /// the engine moves): what the ground finder and the ray caster see
     /// past (AH.18: the original's rays meet the level and the props, and a
-    /// Chompy's look at a hero would stop on its own body or his).
+    /// Chompy's look at a hero would stop on its own body or his; the ray
+    /// caster also passes a prop that doesn't act as an actor surface,
+    /// [`ScriptWorld::ray_contact_full`]).
     fn actor_bodies(&self, engine: &mut dyn Engine) -> Vec<BodyId> {
         let mut out: Vec<BodyId> = engine
             .heroes()
@@ -629,7 +683,16 @@ impl ScriptWorld {
 
     /// An actor's turn: a hero's facing his controller's; his tilt and roll
     /// read 0 (his lean is the engine's, never the script's).
-    fn angles(&self, h: Handle, engine: &mut dyn Engine) -> Option<crate::script_engine::Angles> {
+    fn angles(&self, h: Handle, engine: &mut dyn Engine) -> Option<Angles> {
+        self.angles_within(h, engine, HUNG_DEPTH)
+    }
+
+    /// [`ScriptWorld::angles`], through at most `depth` actors hung one from
+    /// another's node: one hung from a posed node reads that node's turn as
+    /// it stands (openspec AH.60: Eruptor's collider on his hand, within
+    /// 0.06° of the oracle's on every frame of AH.50's throws; the
+    /// autoaim's strip runs along it).
+    fn angles_within(&self, h: Handle, engine: &mut dyn Engine, depth: u8) -> Option<Angles> {
         if h == self.objs_viewport() {
             return Some(crate::script_engine::Angles {
                 facing: engine.view_heading(),
@@ -642,7 +705,21 @@ impl ScriptWorld {
                 ..Default::default()
             });
         }
-        self.actors.get(&h).map(|a| a.angles)
+        // An actor's remembered point is turned as the actor is (AH.60: the
+        // autoaim's strip runs along its aimer's remembered point's facing).
+        if let Some(Object::Remembered(a)) = self.objs.get(h) {
+            return self.angles_within(a, engine, depth);
+        }
+        let a = self.actors.get(&h)?;
+        if depth > 0
+            && !a.removed
+            && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
+            && owner != h
+            && let Some(q) = self.node_turn(owner, i, engine, depth - 1)
+        {
+            return Some(angles_of(q));
+        }
+        Some(a.angles)
     }
 
     fn objs_viewport(&self) -> Handle {
@@ -1224,6 +1301,15 @@ impl ScriptWorld {
             }
             Member::AttachNode => {
                 let h = actor.ok_or(HostFault::Nothing)?;
+                // An actor's own ground isn't something it hangs from (where
+                // it stands is found from where it is): the eruption's lava
+                // is hung so as it spawns, and AH.54's recordings read its
+                // hang null on every record while it stands on the ground.
+                // Another actor's ground still takes it (the movement
+                // update's helper, turned along its mover's slope).
+                if self.object(Some(v)) == Some(Object::Facet(h, Facet::Ground)) {
+                    return Ok(());
+                }
                 // Hung from a node, an actor sits at it.
                 if let Some(at_node) = self.point(v, engine)
                     && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)))
@@ -1885,19 +1971,12 @@ impl ScriptWorld {
     /// `collisioninfo.environment contacts`.
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
-        let mut hung = Vec::new();
-        let mut flying = Vec::new();
-        for (&h, a) in &self.actors {
-            if a.removed {
-                continue;
-            }
-            if a.attach != Value::Null {
-                hung.push((h, a.attach));
-            } else if a.launched {
-                flying.push(h);
-            }
-        }
-        hung.sort_unstable_by_key(|k| k.0);
+        let mut flying: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| !a.removed && a.attach == Value::Null && a.launched)
+            .map(|(&h, _)| h)
+            .collect();
         flying.sort_unstable();
         for h in flying {
             let Some(a) = self.actors.get(&h) else {
@@ -1948,6 +2027,20 @@ impl ScriptWorld {
                 a.contacts = contacts;
             }
         }
+        self.place_hung_actors(engine);
+    }
+
+    /// Each actor hung from a node set at it, as the engine's frame leaves
+    /// it: [`ScriptWorld::move_actors`]' last part, and what an embedder
+    /// posing the nodes after that frame (openspec AH.50) runs again.
+    pub(crate) fn place_hung_actors(&mut self, engine: &mut dyn Engine) {
+        let mut hung: Vec<(Handle, Value)> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| !a.removed && a.attach != Value::Null)
+            .map(|(&h, a)| (h, a.attach))
+            .collect();
+        hung.sort_unstable_by_key(|k| k.0);
         for (h, node) in hung {
             if matches!(
                 self.object(Some(node)),
@@ -1955,10 +2048,19 @@ impl ScriptWorld {
             ) {
                 continue;
             }
+            let turn = match self.object(Some(node)) {
+                Some(Object::Node(owner, i)) if owner != h => {
+                    self.node_turn(owner, i, engine, HUNG_DEPTH)
+                }
+                _ => None,
+            };
             if let Some(p) = self.point(node, engine)
                 && let Some(a) = self.actors.get_mut(&h)
             {
                 a.position = p;
+                if let Some(q) = turn {
+                    a.angles = angles_of(q);
+                }
             }
         }
     }
@@ -2084,6 +2186,11 @@ const TOUCH: f32 = 2.0 * CAST_SLOP;
 /// a centimetre (AH.10's bites at most 0.003 m apart, a hypothesis past it).
 pub const CONTACT_REACH: f32 = 0.01;
 
+/// How many actors hung one from another's node a position read follows:
+/// the disc hangs a clone on a clone at most (Gill Grunt's spear on his
+/// gun, AE.23), and a loop of them stops here.
+const HUNG_DEPTH: u8 = 8;
+
 /// How many attach nodes an actor's set holds: the scripts index up to 13
 /// on a hero; which joint each is isn't read yet (a stand-in: a node sits
 /// where [`ScriptWorld::set_nodes`] put it, else at the actor's pivot).
@@ -2102,7 +2209,7 @@ mod tests {
     use guac_script::MemberId;
 
     use super::*;
-    use crate::script_engine::{Actor, Pad, Physics, Solid};
+    use crate::script_engine::{Actor, NodePose, Pad, Physics, Solid};
     use crate::scripts::{Files, headless_objects};
 
     const BALL: Handle = 0x6000_0001;
@@ -2666,6 +2773,151 @@ mod tests {
             Err(HostFault::Unmodelled),
             "no solid"
         );
+    }
+
+    /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
+    /// the node moves what hangs from it only once the hung are placed
+    /// (the frame's end); and read while he's turned since, it's his node's
+    /// offset turned by the facing he has now, where an aimed ball leaves
+    /// from, while what the frame placed stays put. Taken off, it reads
+    /// where it was left.
+    #[test]
+    fn a_hung_actor_follows_its_node_posed_and_reads_it_turned_as_he_stands() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().pivot = pivot;
+        let mut w = world();
+        w.actors.insert(BALL, ball(Vec3::ZERO, 0.0));
+        let hand = Vec3::new(0.5, 2.0, 1.5);
+        let mut nodes = vec![NodePose::at(Vec3::ZERO); 9];
+        nodes[7] = NodePose::at(hand);
+        w.set_nodes(HERO, nodes.clone());
+        let node = w.objs.value(Object::Node(HERO, 7));
+        w.set_member(
+            &at(
+                "abstractplacement",
+                "attach node",
+                Some(Value::Entity(BALL)),
+                None,
+            ),
+            Member::AttachNode,
+            node,
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(w.actor(BALL).unwrap().position, pivot + hand);
+        // Posed again: the hung ball follows at the frame's end.
+        let raised = Vec3::new(0.5, 3.0, 0.5);
+        nodes[7] = NodePose::at(raised);
+        w.set_nodes(HERO, nodes);
+        assert_eq!(w.actor(BALL).unwrap().position, pivot + hand);
+        w.place_hung(&mut e);
+        assert_eq!(w.actor(BALL).unwrap().position, pivot + raised);
+        // Turned a quarter since: read, it's the node turned as he faces now.
+        e.hero.as_mut().unwrap().facing = 90.0;
+        let read = w.position(BALL, &mut e).unwrap();
+        let turned = pivot + Quat::from_rotation_y(90f32.to_radians()) * raised;
+        assert!(read.distance(turned) < 1e-6, "{read:?}");
+        assert!(read.distance(pivot + Vec3::new(0.5, 3.0, -0.5)) < 1e-6);
+        assert_eq!(
+            w.actor(BALL).unwrap().position,
+            pivot + raised,
+            "where the frame left it"
+        );
+        // Taken off, where it was left.
+        w.actors.get_mut(&BALL).unwrap().removed = true;
+        assert_eq!(w.position(BALL, &mut e), Some(pivot + raised));
+    }
+
+    /// AH.60's aim: an actor hung on a posed node takes the node's turn,
+    /// turned by its owner's facing (stored when the hung are placed, read
+    /// as the owner stands), its remembered point turned so too, and a turn
+    /// is the angles the original keeps for it; an actor hung on a node
+    /// never posed keeps its own turn.
+    #[test]
+    fn a_hung_actor_is_turned_as_its_node() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 30.0));
+        e.hero.as_mut().unwrap().facing = 30.0;
+        let mut w = world();
+        w.actors.insert(BALL, ball(Vec3::ZERO, 0.0));
+        w.actors.insert(CHOMPY, ball(Vec3::ZERO, 0.0));
+        // The hand tilted 20° up, rolled 10° and turned 40° left of him.
+        let mut nodes = vec![NodePose::at(Vec3::ZERO); 9];
+        nodes[7] = NodePose {
+            at: Vec3::new(0.5, 2.0, 1.5),
+            turn: guac_motion::solid::euler([20.0, 40.0, 10.0]),
+        };
+        w.set_nodes(HERO, nodes);
+        let hang = |w: &mut ScriptWorld, e: &mut Bench, who: Handle, owner: Handle| {
+            let node = w.objs.value(Object::Node(owner, 7));
+            w.set_member(
+                &at(
+                    "abstractplacement",
+                    "attach node",
+                    Some(Value::Entity(who)),
+                    None,
+                ),
+                Member::AttachNode,
+                node,
+                e,
+            )
+            .unwrap();
+        };
+        hang(&mut w, &mut e, BALL, HERO);
+        w.place_hung(&mut e);
+        let stored = w.actor(BALL).unwrap().angles;
+        let read = w.angles(BALL, &mut e).unwrap();
+        // Its remembered point is turned as it is.
+        let Value::Entity(kept) = w.objs.value(Object::Remembered(BALL)) else {
+            unreachable!()
+        };
+        let remembered = w.angles(kept, &mut e).unwrap();
+        for g in [stored, read, remembered] {
+            assert!((g.facing - 70.0).abs() < 1e-3, "{g:?}");
+            assert!((g.tilt - 20.0).abs() < 1e-3, "{g:?}");
+            assert!((g.roll - 10.0).abs() < 1e-3, "{g:?}");
+        }
+        // He turns: read, it turns with him; stored, the frame's.
+        e.hero.as_mut().unwrap().facing = 300.0;
+        let read = w.angles(BALL, &mut e).unwrap();
+        assert!((read.facing - 340.0).abs() < 1e-3, "{read:?}");
+        assert!((w.actor(BALL).unwrap().angles.facing - 70.0).abs() < 1e-3);
+        // A node never posed (the creature has none): its own turn kept.
+        w.actors.get_mut(&CHOMPY).unwrap().angles.facing = 123.0;
+        const OTHER: Handle = 0x6000_0009;
+        w.actors.insert(OTHER, ball(Vec3::ZERO, 0.0));
+        hang(&mut w, &mut e, OTHER, CHOMPY);
+        w.place_hung(&mut e);
+        assert_eq!(w.angles(OTHER, &mut e).unwrap(), Angles::default());
+        // The angles a turn reads back as compose to it again.
+        for angles in [
+            [20.0, 40.0, 10.0],
+            [-35.0, 250.0, -120.0],
+            [0.0, 359.0, 0.0],
+        ] {
+            let q = guac_motion::solid::euler(angles);
+            let back = angles_of(q);
+            let again = guac_motion::solid::euler([back.tilt, back.facing, back.roll]);
+            assert!(q.angle_between(again) < 1e-5, "{angles:?} -> {back:?}");
+        }
+    }
+
+    /// A recorded state's creature set down mid-stride (AH.60's pinned
+    /// scenes): its place, facing and velocity as given; `place` at rest.
+    #[test]
+    fn a_placed_actor_keeps_the_velocity_it_was_set_with() {
+        let mut w = world();
+        w.actors.insert(CHOMPY, ball(Vec3::ZERO, 0.0));
+        let (at, v) = (Vec3::new(1.0, 2.0, 3.0), Vec3::new(1.0, 0.0, 20.0));
+        assert!(w.place_moving(CHOMPY, at, 90.0, v));
+        let a = w.actor(CHOMPY).unwrap();
+        assert_eq!((a.position, a.angles.facing, a.velocity), (at, 90.0, v));
+        assert!(w.place(CHOMPY, Vec3::ZERO, 0.0));
+        assert_eq!(w.actor(CHOMPY).unwrap().velocity, Vec3::ZERO);
+        assert!(!w.place_moving(0x6000_0099, at, 0.0, v), "no such actor");
     }
 
     #[test]
@@ -3320,6 +3572,61 @@ mod fight_tests {
         let top = guac_motion::ground::ray(&e.world, centre + Vec3::Y * 3.0, Vec3::NEG_Y, 6.0, &[])
             .unwrap();
         assert!((top.point.y - 2.0 * r).abs() < 0.01, "{}", top.point);
+    }
+
+    /// The ray cast passes through a prop whose collision doesn't act as an
+    /// actor surface (a barrel) to what's past it, and stops on one whose
+    /// does (a wall); the ground finder still stands on either (AH.21's
+    /// props; merging AH.50 in, a burst's look at the barrel behind
+    /// another met the near one).
+    #[test]
+    fn the_ray_cast_passes_props_that_dont_act_as_actor_surfaces() {
+        let mut e = pit();
+        let half = Vec3::new(1.0, 1.0, 0.25);
+        e.world
+            .set_body(&Body {
+                id: BodyId(31),
+                kind: BodyKind::Kinematic,
+                pose: Pose::at(Vec3::new(0.0, 1.0, 3.0)),
+                collider: Collider::Convex(Shape::Box {
+                    half_extents: half,
+                    margin: 0.0,
+                }),
+            })
+            .unwrap();
+        e.bodies.insert(C3, BodyId(31));
+        let mut w = world();
+        let mut barrel = Actor::blank();
+        barrel.position = Vec3::new(0.0, 0.0, 3.0);
+        w.actors.insert(C3, barrel);
+        // Along the ground through it: nothing past it but open level.
+        w.ray = crate::scripts::Ray {
+            start: Vec3::new(0.0, 1.0, 0.0),
+            end: Vec3::new(0.0, 1.0, 6.0),
+        };
+        assert_eq!(w.ray_contact(&mut e), None, "through the barrel");
+        // Down onto it: the floor under it.
+        w.ray = crate::scripts::Ray {
+            start: Vec3::new(0.0, 4.0, 3.0),
+            end: Vec3::new(0.0, -1.0, 3.0),
+        };
+        let (floor, _) = w.ray_contact(&mut e).expect("the floor");
+        assert!(floor.y.abs() < 0.01, "{floor}");
+        // A wall's collision acts as an actor surface: the ray stops on it.
+        w.actors.get_mut(&C3).unwrap().solid.acts_as_actor_surface = 1;
+        w.ray = crate::scripts::Ray {
+            start: Vec3::new(0.0, 1.0, 0.0),
+            end: Vec3::new(0.0, 1.0, 6.0),
+        };
+        let (wall, _) = w.ray_contact(&mut e).expect("the wall");
+        assert!((wall.z - (3.0 - half.z)).abs() < 0.01, "{wall}");
+        // The ground finder stands on the barrel either way.
+        w.actors.get_mut(&C3).unwrap().solid.acts_as_actor_surface = 0;
+        let mut over = Actor::blank();
+        over.position = Vec3::new(0.0, 3.0, 3.0);
+        w.actors.insert(C2, over);
+        let (ground, ..) = w.ground(C2, &mut e).expect("ground");
+        assert!((ground.y - 2.0).abs() < 0.01, "{ground}");
     }
 
     /// The review of AH.18: `turn to` a hero turns him at once, his facing

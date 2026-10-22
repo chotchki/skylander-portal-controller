@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use guac_motion::hero::Hero;
-use guac_motion::seam::{BodyId, PhysicsSeam, Vec3};
+use guac_motion::seam::{BodyId, PhysicsSeam, Quat, Vec3};
 use guac_motion::stick::Stick;
 use guac_script::{Handle, Obj, Value};
 
@@ -25,6 +25,37 @@ use guac_script::{Handle, Obj, Value};
 pub const FEET_PER_METRE: f32 = 1.0 / METRES_PER_FOOT;
 /// A foot in metres: what a displacement's feet move.
 pub const METRES_PER_FOOT: f32 = 0.3048;
+
+/// An attach node as the embedder poses it (openspec AH.50, AH.60): its
+/// place (metres) and its turn, both in its actor's own frame (+Z his
+/// facing). What hangs from it stands there turned so.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodePose {
+    pub at: Vec3,
+    pub turn: Quat,
+}
+
+impl NodePose {
+    /// A node at `at`, turned as its actor is.
+    pub fn at(at: Vec3) -> Self {
+        Self {
+            at,
+            turn: Quat::IDENTITY,
+        }
+    }
+}
+
+/// The angles the original keeps for a turn (its tilt, heading and roll, as
+/// [`guac_motion::solid::euler`] composes them), degrees, the heading in
+/// [0, 360).
+pub fn angles_of(q: Quat) -> Angles {
+    let (heading, x, roll) = q.normalize().to_euler(bevy::math::EulerRot::YXZ);
+    Angles {
+        facing: heading.to_degrees().rem_euclid(360.0),
+        tilt: -x.to_degrees(),
+        roll: roll.to_degrees(),
+    }
+}
 
 /// An actor's turn as the original keeps it, degrees.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -388,26 +419,46 @@ pub struct Sequence {
     pub done: bool,
 }
 
+/// What a script reads of a sequence with this little left (seconds of
+/// play, at 100 %) is nothing: its last two frames (openspec AH.55). The
+/// original's sequence answers its remaining time only past
+/// `rate × 0.01 × 0.033333335` of clip time, so a wait on a clip's end ends
+/// two frames before the clip does: AH.55's Chompies leave a windup with
+/// 0.0333 s still on its control, never more, and Eruptor's guard drops two
+/// records before his eruption's clip leaves (AH.9).
+pub const DONE_MARGIN: f32 = 0.033_333_335;
+
 impl Sequence {
-    /// `sequence.percent remaining`: what's left of it, percent.
-    pub fn percent_remaining(&self) -> f32 {
+    /// What's left of it in its own time, seconds at 100 %, as a script
+    /// reads it: none once it's within [`DONE_MARGIN`] of its end at its
+    /// rate.
+    fn left(&self) -> f32 {
         if self.length <= 0.0 || self.done || self.stopped {
+            return 0.0;
+        }
+        let left = self.length - self.time;
+        if left <= self.rate * 0.01 * DONE_MARGIN {
             0.0
         } else {
-            100.0 * (1.0 - self.time / self.length)
+            left
         }
+    }
+
+    /// `sequence.percent remaining`: what's left of it, percent.
+    pub fn percent_remaining(&self) -> f32 {
+        if self.length <= 0.0 {
+            return 0.0;
+        }
+        100.0 * self.left() / self.length
     }
 
     /// `sequence.time remaining`: seconds left at its rate.
     pub fn time_remaining(&self) -> f32 {
-        if self.length <= 0.0 || self.done || self.stopped {
-            return 0.0;
-        }
         let rate = self.rate * 0.01;
         if rate <= 0.0 {
             return 0.0;
         }
-        (self.length - self.time) / rate
+        self.left() / rate
     }
 
     /// One frame of `dt` seconds: on by its rate, done at its end unless it
@@ -609,5 +660,59 @@ mod tests {
         }
         assert!(!l.done);
         assert!(l.time < l.length);
+    }
+
+    /// AH.55: a script reads a sequence's time left until its last two
+    /// frames, then nothing: the Chompy's windup (11 frames at 30 a second,
+    /// 1/3 s) reads 0.05 s three frames from its end and nothing two from
+    /// it, so a wait on it ends after 18 frames of 20, its recovery (0.567
+    /// s) after 32 of 34 and its notice (0.767 s) after 45 of 46, AH.10's
+    /// and AH.55's recordings' counts; at 150 % the margin is still two
+    /// frames of play (Eruptor's throw, 0.5 s: 18 of 20), and mid-clip
+    /// nothing changes (his 84 % at the throw's fourth frame).
+    #[test]
+    fn a_sequence_reads_nothing_left_in_its_last_two_frames() {
+        let at = |length: f32, rate: f32| Sequence {
+            actor: 1,
+            template: Value::Null,
+            length,
+            time: 0.0,
+            rate,
+            looping: false,
+            stopped: false,
+            done: false,
+        };
+        // The frame a wait on its end sees it over, and what each frame
+        // before reads.
+        let over = |mut s: Sequence| -> (u32, Vec<f32>) {
+            let mut read = Vec::new();
+            for k in 1..=200u32 {
+                s.advance(1.0 / 60.0);
+                read.push(s.time_remaining());
+                if s.time_remaining() <= 0.0 {
+                    assert!(!s.done, "seen over before it's done");
+                    assert_eq!(s.percent_remaining(), 0.0);
+                    return (k, read);
+                }
+            }
+            panic!("never over");
+        };
+        let (windup, read) = over(at(1.0 / 3.0, 100.0));
+        assert_eq!(windup, 18);
+        assert!((read[16] - 0.05).abs() < 1e-5, "{read:?}");
+        assert_eq!(over(at(0.566_666_66, 100.0)).0, 32);
+        assert_eq!(over(at(0.766_666_65, 100.0)).0, 45);
+        assert_eq!(over(at(0.5, 150.0)).0, 18);
+        // Mid-clip, as before: 85 % then 80 % at 150 %.
+        let mut throw = at(0.5, 150.0);
+        let percents: Vec<f32> = (0..4)
+            .map(|_| {
+                throw.advance(1.0 / 60.0);
+                throw.percent_remaining()
+            })
+            .collect();
+        assert!((percents[2] - 85.0).abs() < 1e-3 && (percents[3] - 80.0).abs() < 1e-3);
+        // A rate of 0 leaves it playing nothing: no time left to read.
+        assert_eq!(at(1.0, 0.0).time_remaining(), 0.0);
     }
 }

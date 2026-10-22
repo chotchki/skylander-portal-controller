@@ -91,6 +91,23 @@ pub const ANIMS: u8 = 3;
 /// O6's search.
 pub const CREATURES: u8 = 4;
 pub const HERO_STATE: u8 = 5;
+/// AH.54: the eruption's lava. The actor list once more, kept by the
+/// templates [`LAVA_TEMPLATES`] names: each clone's placement from its
+/// `_currentMatrix` to its `_tint` (its place, its hang: `_attachNode`,
+/// `_attachNodeOwner` and `_attachXform`, its `_scaleVec`, its tint), its
+/// corpus's world transform (`_xform`), its velocity, the head of what it
+/// hangs from and of that node's owner, and the eruption's own reach
+/// (`$Damage Range`, a local of `009_LavaAttack.ai`).
+pub const LAVA: u8 = 6;
+/// AH.55: each Chompy's clips. O6 arms 8 chains, so the four Chompies'
+/// `_nowPlaying` vectors ride one: the actor list kept by [`CHOMPIES`]' names,
+/// each corpus's vector count and its first [`CHOMPY_CLIP_SLOTS`] controls,
+/// each as [`ANIMS`] reads one of the hero's (the control's span, its
+/// sequence's, its animation's name pointer), a slot that holds no control
+/// read as missing.
+pub const CHOMPY_ANIMS: u8 = 7;
+/// A Chompy's vector slots [`CHOMPY_ANIMS`] reads.
+pub const CHOMPY_CLIP_SLOTS: usize = 6;
 
 /// What [`CREATURES`] follows on each Chompy, by label and path, as
 /// `Enemy_Chompy.ai` and the enemy system name them: the state machine's
@@ -202,6 +219,22 @@ pub const ACTOR_ITEMS: u32 = 64;
 pub const ORB_ITEMS: u32 = 64;
 pub const LOOT_ITEMS: u32 = 32;
 pub const ANIM_ITEMS: u32 = 16;
+/// An eruption spawns 18 blobs and a heat shimmer (AH.24's headless count)
+/// beside itself, and the next can't start before it's gone (AH.9: 1 s
+/// after the clip ends, the lava gone 0.7 s past it): 32.
+pub const LAVA_ITEMS: u32 = 32;
+
+/// The templates [`LAVA`] keeps, each with the kind its clones go by: the
+/// three lava blobs `009_LavaAttack.ai` picks from at random, its heat
+/// shimmer, and the eruption itself, whose reach rides only this chain (its
+/// body and behaviour are [`ACTORS`]').
+pub const LAVA_TEMPLATES: [(&str, &str); 5] = [
+    ("lava_blob", "009_Lava"),
+    ("lava_blob_1", "009_Lava(1)"),
+    ("lava_blob_2", "009_Lava(2)"),
+    ("lava_heat", "009_LavaHeatDistotion"),
+    ("eruption", "009_LavaAttack"),
+];
 
 /// Setup_001's four Chompies (AH.4).
 pub const CHOMPIES: [&str; 4] = [
@@ -242,8 +275,11 @@ pub const BREAKABLES: [&str; 16] = [
 /// actors among `009_eruptor.bld`'s placements: the lava ball, its upgrade,
 /// the fire blob and its splash, the eruption and its volcano, and upgrade
 /// 4's Magma Ball and its impact, AH.41), each with the kind its clones go
-/// by, so a trace tells a ball from the splash under his hand (AH.9).
-pub const ERUPTOR_SPAWNS: [(&str, &str); 8] = [
+/// by, so a trace tells a ball from the splash under his hand (AH.9); and
+/// the collider his join makes and each throw hangs on the hand it throws
+/// from (`$primary attack collider`, AH.50), so a trace has that hand's
+/// place every frame.
+pub const ERUPTOR_SPAWNS: [(&str, &str); 9] = [
     ("lava_ball", "009_LavaProjectile"),
     ("lava_ball_upgrade", "009_LavaProjectileUpgrade"),
     ("fire_blob", "009_FireBlob"),
@@ -252,6 +288,7 @@ pub const ERUPTOR_SPAWNS: [(&str, &str); 8] = [
     ("mini_volcano", "009_MiniVolcano"),
     ("magma_ball", "009_MagmaBall"),
     ("magma_ball_impact", "009_MagmaBall_Impact"),
+    ("lava_collider", "009_LavaCollider"),
 ];
 
 /// The currency art `Loot - Get Loot` clones a dropped coin from (level
@@ -318,7 +355,10 @@ const PLACEMENT_NAME: u16 = 0x08;
 const PLACEMENT_MATRIX: u16 = 0x3C;
 const PLACEMENT_STATE: u16 = 0x54;
 const PLACEMENT_PARENT: u16 = 0x5C;
+const PLACEMENT_ATTACH_NODE: u16 = 0x6C;
+const PLACEMENT_ATTACH_NODE_OWNER: u16 = 0x70;
 const PLACEMENT_BEHAVIOUR: u16 = 0xAC;
+const CORPUS_XFORM: u16 = actors::CORPUS_XFORM as u16;
 const PLACEMENT_LOCALS: u16 = 0xB0;
 const PLACEMENT_ACTIVE: u16 = 0xB4;
 const ACTOR_GAME_ACTOR: u16 = 0xF4;
@@ -360,6 +400,35 @@ pub mod actor_range {
     pub const ACTIVE: usize = 6;
     pub const HEALTH: usize = 7;
     pub const ALERTED: usize = 8;
+}
+
+/// [`LAVA`]'s ranges, in order.
+pub mod lava_range {
+    /// The placement from `_currentMatrix` (+0x3C) to `_tint` (+0xCC).
+    pub const PLACEMENT: usize = 0;
+    /// The corpus's `_xform`, its world transform (row vectors).
+    pub const WORLD: usize = 1;
+    pub const VELOCITY: usize = 2;
+    /// The first 16 bytes of `_attachNode`'s object (its vtable at +0, its
+    /// name pointer at +0x08 when it has one), and of `_attachNodeOwner`'s.
+    pub const ATTACH: usize = 3;
+    pub const ATTACH_OWNER: usize = 4;
+    /// `$Damage Range`'s cell (the eruption's alone).
+    pub const REACH: usize = 5;
+
+    /// Offsets inside [`PLACEMENT`]'s bytes.
+    pub const FIRST: u16 = 0x3C;
+    pub const LEN: u16 = 0xCC - FIRST;
+    pub const MATRIX: usize = 0;
+    pub const ACTIVITY: usize = (0x54 - FIRST) as usize;
+    pub const PARENT: usize = (0x5C - FIRST) as usize;
+    pub const ATTACH_NODE: usize = (0x6C - FIRST) as usize;
+    pub const ATTACH_NODE_OWNER: usize = (0x70 - FIRST) as usize;
+    pub const ATTACH_XFORM: usize = (0x78 - FIRST) as usize;
+    pub const BEHAVIOUR: usize = (0xAC - FIRST) as usize;
+    pub const ACTIVE: usize = (0xB4 - FIRST) as usize;
+    pub const SCALE: usize = (0xB8 - FIRST) as usize;
+    pub const TINT: usize = (0xC8 - FIRST) as usize;
 }
 
 /// [`ORBS`]' ranges: each field through a structure, then through a
@@ -686,6 +755,33 @@ fn loot_chain(macros_ui: u32) -> ChainSpec {
     }
 }
 
+/// The actor list walked again, kept by [`LAVA_TEMPLATES`]' names, each
+/// corpus read through [`lava_range`]'s six ranges.
+fn lava_chain(updater_index: u32) -> Result<ChainSpec> {
+    let placement = || Hop::at(CORPUS_PLACEMENT);
+    Ok(ChainSpec {
+        items: LAVA_ITEMS,
+        base: actors::APP,
+        path: actor_list_path(updater_index)?,
+        count: LIST_COUNT,
+        array: LIST_ARRAY,
+        key: corpus_key(),
+        values: LAVA_TEMPLATES.iter().map(|(_, n)| name_hash(n)).collect(),
+        ranges: vec![
+            Probe::new(vec![placement()], lava_range::FIRST, lava_range::LEN),
+            Probe::new(vec![Hop::at(CORPUS_XFORM)], 0, actors::MATRIX_LEN as u16),
+            Probe::new(vec![], CORPUS_VELOCITY, 12),
+            Probe::new(vec![placement(), Hop::at(PLACEMENT_ATTACH_NODE)], 0, 0x10),
+            Probe::new(
+                vec![placement(), Hop::at(PLACEMENT_ATTACH_NODE_OWNER)],
+                0,
+                0x10,
+            ),
+            Probe::new(variable(&["Damage Range"]), CELL_NUMBER, 8),
+        ],
+    })
+}
+
 /// The hero's `_nowPlaying` controls, from his corpus.
 fn anim_chain(hero_corpus: u32) -> ChainSpec {
     let sequence = || Hop::checked(CONTROL_SEQUENCE, vtable::ANIMATION_INFO);
@@ -721,6 +817,63 @@ fn anim_chain(hero_corpus: u32) -> ChainSpec {
 fn anim_clip(e: &ChainEntry) -> Option<(Clip, Option<u32>)> {
     let c = e.range(anim_range::CONTROL)?;
     let s = e.range(anim_range::SEQUENCE)?;
+    Some(clip_of(c, s, e.range(anim_range::NAME)))
+}
+
+/// [`CHOMPY_ANIMS`]' ranges: the vector's count, then per slot its control,
+/// sequence and name pointer, as [`anim_range`] has them for the hero.
+pub mod chompy_clip_range {
+    pub const COUNT: usize = 0;
+    /// Slot `k`'s ranges start here, three a slot.
+    pub fn slot(k: usize) -> usize {
+        1 + 3 * k
+    }
+}
+
+/// [`chompy_clip_range`]'s probes, from a Chompy's corpus.
+fn chompy_clip_probes() -> Vec<Probe> {
+    let block = || Hop::checked(CORPUS_ANIMATION, vtable::ANIMATION_COMPONENT);
+    let mut probes = vec![Probe::new(vec![block()], COMPONENT_PLAYING, 4)];
+    for k in 0..CHOMPY_CLIP_SLOTS {
+        let control = vec![
+            block(),
+            Hop::at(COMPONENT_SLOTS),
+            Hop::checked(4 * k as u16, vtable::ANIM_CONTROL),
+        ];
+        let mut sequence = control.clone();
+        sequence.push(Hop::checked(CONTROL_SEQUENCE, vtable::ANIMATION_INFO));
+        let mut animation = sequence.clone();
+        animation.push(Hop::checked(SEQUENCE_ANIMATION, vtable::PHYSICS_ANIMATION));
+        probes.push(Probe::new(control, CONTROL_FIRST, CONTROL_LEN));
+        probes.push(Probe::new(sequence, SEQUENCE_FIRST, SEQUENCE_LEN));
+        probes.push(Probe::new(animation, ANIMATION_NAME, 4));
+    }
+    probes
+}
+
+/// A [`CHOMPY_ANIMS`] entry's clips with their name pointers, in its
+/// vector's order up to its count; a slot whose control or sequence didn't
+/// read ends them.
+fn chompy_item_clips(e: &ChainEntry) -> Vec<(Clip, Option<u32>)> {
+    let Some(count) = e
+        .range(chompy_clip_range::COUNT)
+        .map(|b| be32(b, 0) as usize)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for k in 0..count.min(CHOMPY_CLIP_SLOTS) {
+        let r = chompy_clip_range::slot(k);
+        let (Some(c), Some(s)) = (e.range(r), e.range(r + 1)) else {
+            break;
+        };
+        out.push(clip_of(c, s, e.range(r + 2)));
+    }
+    out
+}
+
+/// A clip from a control's span, its sequence's and its name pointer.
+fn clip_of(c: &[u8], s: &[u8], name: Option<&[u8]>) -> (Clip, Option<u32>) {
     let at = |off: u16| usize::from(off - CONTROL_FIRST);
     let clip = Clip {
         id: be32(c, at(0x0C)),
@@ -729,11 +882,7 @@ fn anim_clip(e: &ChainEntry) -> Option<(Clip, Option<u32>)> {
         period: f32_at(c, at(0x18)),
         remaining: f32_at(c, at(0x14)),
     };
-    let name = e
-        .range(anim_range::NAME)
-        .map(|b| be32(b, 0))
-        .filter(|&p| p != 0);
-    Some((clip, name))
+    (clip, name.map(|b| be32(b, 0)).filter(|&p| p != 0))
 }
 
 /// Giants' chains as resolved at a pause, with what each [`ACTORS`] value
@@ -850,6 +999,12 @@ impl GiantsChains {
         slots.insert(ORBS, orb_chain(combat_control));
         slots.insert(LOOT, loot_chain(macros_ui));
         slots.insert(ANIMS, anim_chain(watch.hero_corpus));
+        slots.insert(LAVA, lava_chain(updater_index as u32)?);
+        // AH.55: the Chompies' clips, whichever the list holds as it runs.
+        slots.insert(
+            CHOMPY_ANIMS,
+            followed_chain(updater_index as u32, &CHOMPIES, chompy_clip_probes())?,
+        );
         if !creature_vars.is_empty() {
             slots.insert(
                 CREATURES,
@@ -943,6 +1098,7 @@ impl GiantsChains {
         let mut types = BTreeSet::new();
         let mut cells = BTreeSet::new();
         let mut names = BTreeSet::new();
+        let mut heads: BTreeMap<u32, Option<Vec<u8>>> = BTreeMap::new();
         let word = |b: &[u8]| be32(b, 0);
         for record in blocks {
             if let Some(b) = record.get(&ACTORS) {
@@ -970,6 +1126,25 @@ impl GiantsChains {
                     names.extend(i.range(loot_range::NAME).map(word).filter(|&n| n != 0));
                 }
             }
+            if let Some(b) = record.get(&LAVA) {
+                for i in &b.items {
+                    types.extend(i.range(lava_range::REACH).map(word));
+                    let Some(p) = i.range(lava_range::PLACEMENT) else {
+                        continue;
+                    };
+                    for (at, head) in [
+                        (lava_range::ATTACH_NODE, lava_range::ATTACH),
+                        (lava_range::ATTACH_NODE_OWNER, lava_range::ATTACH_OWNER),
+                    ] {
+                        let node = be32(p, at);
+                        if node != 0 {
+                            heads
+                                .entry(node)
+                                .or_insert_with(|| i.range(head).map(<[u8]>::to_vec));
+                        }
+                    }
+                }
+            }
             for slot in [CREATURES, HERO_STATE] {
                 let Some(b) = record.get(&slot) else {
                     continue;
@@ -985,8 +1160,13 @@ impl GiantsChains {
         }
         let mut clip_names = BTreeMap::new();
         for record in blocks {
-            if let Some(b) = record.get(&ANIMS) {
-                for (clip, name) in b.items.iter().filter_map(anim_clip) {
+            for (&slot, b) in record {
+                let named: Vec<(Clip, Option<u32>)> = match slot {
+                    ANIMS => b.items.iter().filter_map(anim_clip).collect(),
+                    CHOMPY_ANIMS => b.items.iter().flat_map(chompy_item_clips).collect(),
+                    _ => continue,
+                };
+                for (clip, name) in named {
                     if let Some(at) = name {
                         clip_names.insert(clip.id, at);
                     }
@@ -1033,6 +1213,28 @@ impl GiantsChains {
                 cell,
                 name.unwrap_or_else(|_| format!("freed behaviour {cell:#010x}")),
             );
+        }
+        // A hang's node by the head a record read (the node may be gone by
+        // the end pause), its name read now from the pointer there.
+        for (node, head) in heads {
+            let text = match head {
+                Some(h) => {
+                    let vt = be32(&h, 0);
+                    let at = be32(&h, 0x08);
+                    let name = (at != 0 && at.is_multiple_of(4))
+                        .then(|| one(g, at, 64, "a node's name").ok().map(|n| c_string(&n)))
+                        .flatten()
+                        .filter(|n| {
+                            !n.is_empty() && n.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+                        });
+                    match name {
+                        Some(n) => format!("{vt:#010x} {n}"),
+                        None => format!("{vt:#010x}"),
+                    }
+                }
+                None => "unread".to_owned(),
+            };
+            out.attach_nodes.insert(node, text);
         }
         for at in names {
             let name = one(g, at, 64, "a loot actor's name")
@@ -1084,6 +1286,8 @@ impl GiantsChains {
         resolved: &Resolved,
     ) -> Result<(Vec<ChainRecord>, Vec<Blocks>)> {
         let mut serials = Serials::default();
+        // A blob's slot taken again shows as its active time going back.
+        let mut lava_serials = Serials::default();
         let mut out = Vec::with_capacity(records.len());
         let mut all = Vec::with_capacity(records.len());
         for record in records {
@@ -1092,11 +1296,12 @@ impl GiantsChains {
                 .with_context(|| format!("the game frame at flip {}", o5.flip))?;
             let mut items = Vec::new();
             let mut followed: Vec<(u32, BTreeMap<String, f32>)> = Vec::new();
+            let mut lava: Vec<ChainItem> = Vec::new();
             for (&slot, block) in &blocks {
                 // The clips ride beside the actors, not among them
                 // ([`GiantsChains::clips`]); a vector that didn't read loses
                 // that record's clips alone.
-                if slot == ANIMS {
+                if slot == ANIMS || slot == CHOMPY_ANIMS {
                     continue;
                 }
                 if block.status != 0 {
@@ -1118,8 +1323,20 @@ impl GiantsChains {
                                 .push((entry.address, self.followed_vars(slot, entry, resolved)));
                             continue;
                         }
+                        // AH.54: a blob or the shimmer is an item of its
+                        // own; the eruption's reach joins its [`ACTORS`] item.
+                        LAVA => {
+                            lava.push(lava_item(entry, resolved, &mut lava_serials)?);
+                            continue;
+                        }
                         other => bail!("no chain in slot {other}"),
                     });
+                }
+            }
+            for item in lava {
+                match items.iter_mut().find(|i| i.address == item.address) {
+                    Some(i) => i.vars.extend(item.vars),
+                    None => items.push(item),
                 }
             }
             for (address, vars) in followed {
@@ -1182,6 +1399,25 @@ impl GiantsChains {
             .collect()
     }
 
+    /// Each Chompy's clips in a record, by name, as [`CHOMPY_ANIMS`] read
+    /// them, in its vector's order: a Chompy the list doesn't hold is left
+    /// out, one whose vector didn't read is `None` (AH.55).
+    pub fn chompy_clips(blocks: &Blocks) -> BTreeMap<String, Option<Vec<Clip>>> {
+        let Some(b) = blocks.get(&CHOMPY_ANIMS).filter(|b| b.status == 0) else {
+            return BTreeMap::new();
+        };
+        b.items
+            .iter()
+            .filter_map(|e| {
+                let name = CHOMPIES.get(e.value as usize)?;
+                let read = e.range(chompy_clip_range::COUNT).is_some();
+                let clips =
+                    read.then(|| chompy_item_clips(e).into_iter().map(|(c, _)| c).collect());
+                Some(((*name).to_owned(), clips))
+            })
+            .collect()
+    }
+
     fn actor(
         &self,
         e: &ChainEntry,
@@ -1234,6 +1470,18 @@ impl GiantsChains {
 pub const CHAIN_FILE: &str = "chain.json";
 /// Each record's chain bytes, back to back in the ring's order.
 pub const CHAIN_BLOCKS: &str = "chain.bin";
+/// Each record's Chompy clips ([`CHOMPY_ANIMS`]), when any are followed;
+/// their names are [`Resolved::clip_names`].
+pub const CREATURE_CLIPS: &str = "creature-clips.json";
+
+/// One record's [`CREATURE_CLIPS`] entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreatureClips {
+    pub flip: u64,
+    pub read: u32,
+    pub game_frame: u32,
+    pub clips: BTreeMap<String, Option<Vec<Clip>>>,
+}
 /// The records decoded: `guac_oracle`'s [`ChainRecord`]s, one per O5 record.
 pub const CHAIN_RECORDS: &str = "chain-records.json";
 
@@ -1342,6 +1590,7 @@ impl GiantsChains {
                     let slot = match i.kind.as_str() {
                         "orb" => ORBS,
                         "coin" => LOOT,
+                        k if LAVA_TEMPLATES[..4].iter().any(|(l, _)| *l == k) => LAVA,
                         _ => ACTORS,
                     };
                     slots.entry(slot).or_default().bodies_missing += 1;
@@ -1367,6 +1616,19 @@ impl GiantsChains {
         std::fs::write(dir.join(CHAIN_FILE), serde_json::to_string_pretty(&file)?)?;
         std::fs::write(dir.join(CHAIN_BLOCKS), &raw)?;
         std::fs::write(dir.join(CHAIN_RECORDS), serde_json::to_string(&decoded)?)?;
+        if self.chains.slots.keys().any(|&s| s == CHOMPY_ANIMS) {
+            let frames: Vec<CreatureClips> = blocks
+                .iter()
+                .zip(&decoded)
+                .map(|(b, d)| CreatureClips {
+                    flip: d.flip,
+                    read: d.read,
+                    game_frame: d.game_frame,
+                    clips: Self::chompy_clips(b),
+                })
+                .collect();
+            std::fs::write(dir.join(CREATURE_CLIPS), serde_json::to_string(&frames)?)?;
+        }
         let clips = blocks.iter().map(Self::clips).collect();
         Ok(Written {
             o5,
@@ -1427,6 +1689,11 @@ pub struct Resolved {
     /// A clip's name (its `.ma` path), by its id, from [`ANIMS`].
     #[serde(default)]
     pub clip_names: BTreeMap<u32, String>,
+    /// What a [`LAVA`] item hangs from, and that node's owner, by address:
+    /// its vtable and, where its head holds a readable name pointer at +0x08,
+    /// the name (AH.54).
+    #[serde(default)]
+    pub attach_nodes: BTreeMap<u32, String>,
 }
 
 impl Resolved {
@@ -1526,6 +1793,69 @@ fn loot(e: &ChainEntry, resolved: &Resolved) -> ChainItem {
         vars,
         missing: u64::from(e.missing),
     }
+}
+
+/// A [`LAVA`] entry as an item: its kind by template, its place and velocity
+/// as its body, and as numbers its scale (percent per axis), its tint (0 to
+/// 255 a channel), whether it hangs (`attached`, and `attach.node`, the
+/// node's place among [`Resolved::attach_nodes`] counted from 1), the hang's
+/// own transform, its world place, its activity and active time and, on the
+/// eruption, its reach (feet).
+fn lava_item(e: &ChainEntry, resolved: &Resolved, serials: &mut Serials) -> Result<ChainItem> {
+    use lava_range as r;
+    let (kind, name) = LAVA_TEMPLATES
+        .get(e.value as usize)
+        .with_context(|| format!("no lava value {}", e.value))?;
+    let p = e.range(r::PLACEMENT);
+    let word = |at: usize| p.map(|b| be32(b, at));
+    let parent = word(r::PARENT);
+    let clone = parent.is_some_and(|w| w != 0);
+    let active = p.map(|b| f32_at(b, r::ACTIVE));
+    let mut vars = BTreeMap::new();
+    if let Some(b) = p {
+        let s: [f32; 3] = floats(b, r::SCALE);
+        for (axis, v) in ["x", "y", "z"].iter().zip(s) {
+            vars.insert(format!("scale.{axis}"), v);
+        }
+        for (i, ch) in ["r", "g", "b", "a"].iter().enumerate() {
+            vars.insert(format!("tint.{ch}"), f32::from(b[r::TINT + i]));
+        }
+        let node = be32(b, r::ATTACH_NODE);
+        vars.insert("attached".into(), f32::from(u8::from(node != 0)));
+        if let Some(i) = resolved.attach_nodes.keys().position(|&a| a == node) {
+            vars.insert("attach.node".into(), (i + 1) as f32);
+        }
+        let owner = be32(b, r::ATTACH_NODE_OWNER);
+        if let Some(i) = resolved.attach_nodes.keys().position(|&a| a == owner) {
+            vars.insert("attach.owner".into(), (i + 1) as f32);
+        }
+        let x: [f32; 6] = floats(b, r::ATTACH_XFORM);
+        for (label, v) in ["x", "y", "z", "tilt", "heading", "roll"].iter().zip(x) {
+            vars.insert(format!("attach.{label}"), v);
+        }
+        vars.insert("placement.activity".into(), be32(b, r::ACTIVITY) as f32);
+        vars.insert("placement.active".into(), f32_at(b, r::ACTIVE));
+    }
+    if let Some(w) = e.range(r::WORLD) {
+        let m: [f32; 16] = floats(w, 0);
+        for (axis, v) in ["x", "y", "z"].iter().zip(&m[12..15]) {
+            vars.insert(format!("world.{axis}"), *v);
+        }
+    }
+    if let Some(v) = e.range(r::REACH).and_then(|b| resolved.number(b)) {
+        vars.insert("reach".into(), v);
+    }
+    let matrix = p.map(|b| &b[r::MATRIX..r::MATRIX + 24]);
+    Ok(ChainItem {
+        address: e.address,
+        kind: (*kind).into(),
+        placement: (!clone).then(|| (*name).to_owned()),
+        serial: clone.then(|| serials.of(e.address, None, active)),
+        body: body(matrix, e.range(r::VELOCITY).map(|b| floats(b, 0))),
+        behaviour: word(r::BEHAVIOUR).filter(|&c| c != 0),
+        vars,
+        missing: u64::from(e.missing),
+    })
 }
 
 /// `_curFrame` in a record of Giants' list (its `app` field, +0x5C).
@@ -1995,7 +2325,7 @@ mod tests {
         assert_eq!(g.updater_index, 1);
         assert_eq!(g.actors[0], (HERO.to_owned(), "009_Eruptor".to_owned()));
         assert_eq!(g.kind(1), Some("chompy"));
-        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 9 + 8 + 1);
+        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 9 + 9 + 1);
         assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
         let actors = evaluate(&g.chains.slots[&ACTORS], &mut f.w).unwrap();
         // The hero, the Chompy, the barrel, the leaf and the dropped coin's
@@ -2023,7 +2353,8 @@ mod tests {
                 "eruption",
                 "mini_volcano",
                 "magma_ball",
-                "magma_ball_impact"
+                "magma_ball_impact",
+                "lava_collider"
             ]
         );
         let hero = &actors.items[0];
@@ -2767,7 +3098,9 @@ mod tests {
     }
 
     /// A fixture whose Chompies' scripts hold none of AH.10's paths (AF.8's
-    /// fresh state: their scripts never started) arms neither chain.
+    /// fresh state: their scripts never started) arms neither chain; the
+    /// lava's is armed whether any lava is listed or not (AH.54), and a clip
+    /// chain for each Chompy the list holds (AH.55: the fixture's one).
     #[test]
     fn no_chompy_or_hero_state_to_follow_arms_neither_chain() {
         let mut f = fixture();
@@ -2775,8 +3108,249 @@ mod tests {
         assert!(g.creature_vars.is_empty() && g.hero_vars.is_empty());
         assert_eq!(
             g.chains.slots.keys().copied().collect::<Vec<_>>(),
-            [ACTORS, ORBS, LOOT, ANIMS]
+            [ACTORS, ORBS, LOOT, ANIMS, LAVA, CHOMPY_ANIMS]
         );
+    }
+
+    /// AH.54: the eruption's lava on a chain of its own: a blob hung on a
+    /// ground placement with its scale, tint, hang and world place, one
+    /// hanging from nothing, and the eruption's reach joining its
+    /// [`ACTORS`] item.
+    #[test]
+    fn the_eruptions_lava_rides_a_chain_of_its_own() {
+        let mut f = fixture();
+        let t = &f.types;
+        let reach = fx::float(&mut f.w, t, "Damage Range", 12.5);
+        let template = fx::placement(&mut f.w, "009_LavaAttack", None, 0.0, None);
+        let (eruption, eruption_placement) =
+            scripted(&mut f.w, "009_LavaAttack", 11.0, "LavaBlobbing", &[reach]);
+        f.w.put32(eruption_placement + 0x5C, template);
+        let ground = f.w.actor(&Spec {
+            name: "rock_ground".into(),
+            ..Spec::default()
+        });
+        let blob_template = fx::placement(&mut f.w, "009_Lava", None, 0.0, None);
+        let mut world = [0.0f32; 16];
+        world[0] = 2.6;
+        world[5] = 3.0;
+        world[10] = 0.5;
+        world[12..15].copy_from_slice(&[10.6, 43.4, -92.9]);
+        world[15] = 1.0;
+        let blob = f.w.actor(&Spec {
+            name: "009_Lava".into(),
+            position: [10.5, 43.4, -93.0],
+            rotation: [0.0, 36.0, 0.0],
+            scale: [260.0, 300.0, 50.0],
+            world: Some(world),
+            velocity: [0.0, -1.0, 0.0],
+            ..Spec::default()
+        });
+        f.w.put32(blob.placement + 0x5C, blob_template);
+        f.w.put32(blob.placement + 0x6C, ground.placement);
+        f.w.put_floats(blob.placement + 0x78, &[0.1, 0.2, 0.3, 0.0, 36.0, 0.0]);
+        f.w.put32(blob.placement + 0xC8, 0xFF80_40C0);
+        let blob2_template = fx::placement(&mut f.w, "009_Lava(2)", None, 0.0, None);
+        let blob2 = f.w.actor(&Spec {
+            name: "009_Lava(2)".into(),
+            scale: [100.0, 100.0, 50.0],
+            ..Spec::default()
+        });
+        f.w.put32(blob2.placement + 0x5C, blob2_template);
+        let g = GiantsChains::resolve(&mut f.w, &f.watch, &kinds()).unwrap();
+        assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
+        let spec = &g.chains.slots[&LAVA];
+        assert_eq!(spec.items, LAVA_ITEMS);
+        let lava = evaluate(spec, &mut f.w).unwrap();
+        assert_eq!((lava.status, lava.unread, lava.matched), (0, 0, 3));
+        assert_eq!(
+            lava.items.iter().map(|i| i.address).collect::<Vec<_>>(),
+            [eruption, blob.corpus, blob2.corpus]
+        );
+        use lava_range as r;
+        // The eruption: no world transform, no hang; its reach reads. A blob
+        // runs no script: no reach; the second hangs from nothing.
+        let hang = (1 << r::ATTACH) | (1 << r::ATTACH_OWNER);
+        assert_eq!(lava.items[0].missing, (1 << r::WORLD) | hang);
+        assert_eq!(
+            lava.items[1].missing,
+            (1 << r::ATTACH_OWNER) | (1 << r::REACH)
+        );
+        assert_eq!(
+            lava.items[2].missing,
+            (1 << r::WORLD) | hang | (1 << r::REACH)
+        );
+        // Decoded from a record as O6 writes it.
+        let app = f.w.app;
+        let mut payload = f.w.gather(&[(app + 0x54, 0x14)]).unwrap()[0]
+            .clone()
+            .unwrap();
+        for spec in g.chains.slots.values() {
+            payload.extend(block_bytes(spec, &evaluate(spec, &mut f.w).unwrap()));
+        }
+        let records = [WatchRecord {
+            flip: 100,
+            host_us: 0,
+            missing: 0,
+            read: 0,
+            payload,
+        }];
+        let watch = GiantsWatch {
+            list: WatchList::new(vec![crate::watch::Field::new("app", app + 0x54, 0x14)]).unwrap(),
+            ..f.watch.clone()
+        };
+        let blocks: Vec<Blocks> = records
+            .iter()
+            .map(|r| g.chains.split(&watch.list, r).unwrap().1)
+            .collect();
+        let resolved = g.resolve_names(&mut f.w, &blocks).unwrap();
+        assert_eq!(
+            resolved.attach_nodes,
+            [(ground.placement, "0x00621048 rock_ground".to_owned())].into()
+        );
+        let (chain, _) = g.records(&watch, &records, &resolved).unwrap();
+        let items = &chain[0].items;
+        let at = |a: u32| {
+            let found: Vec<&ChainItem> = items.iter().filter(|i| i.address == a).collect();
+            assert_eq!(found.len(), 1, "one item at {a:#x}");
+            found[0]
+        };
+        let e = at(eruption);
+        assert_eq!((e.kind.as_str(), e.vars["reach"]), ("eruption", 12.5));
+        assert!(e.body.is_some(), "its body is the actor chain's");
+        let b = at(blob.corpus);
+        assert_eq!(b.kind, "lava_blob");
+        assert_eq!(b.placement, None, "a clone");
+        assert_eq!(b.serial, Some(0));
+        let body = b.body.as_ref().unwrap();
+        assert_eq!(
+            (body.position, body.rotation, body.velocity),
+            ([10.5, 43.4, -93.0], [0.0, 36.0, 0.0], [0.0, -1.0, 0.0])
+        );
+        let v = |k: &str| b.vars[k];
+        assert_eq!(
+            [v("scale.x"), v("scale.y"), v("scale.z")],
+            [260.0, 300.0, 50.0]
+        );
+        assert_eq!(
+            [v("tint.r"), v("tint.g"), v("tint.b"), v("tint.a")],
+            [255.0, 128.0, 64.0, 192.0]
+        );
+        assert_eq!((v("attached"), v("attach.node")), (1.0, 1.0));
+        assert!(!b.vars.contains_key("attach.owner"));
+        assert_eq!(
+            [
+                v("attach.x"),
+                v("attach.y"),
+                v("attach.z"),
+                v("attach.heading")
+            ],
+            [0.1, 0.2, 0.3, 36.0]
+        );
+        assert_eq!(
+            [v("world.x"), v("world.y"), v("world.z")],
+            [10.6, 43.4, -92.9]
+        );
+        assert!(!b.vars.contains_key("reach"));
+        let b2 = at(blob2.corpus);
+        assert_eq!(b2.kind, "lava_blob_2");
+        assert_eq!(b2.vars["attached"], 0.0);
+        assert!(!b2.vars.contains_key("world.x"));
+    }
+
+    /// AH.55: the Chompies' clips ride one chain, each Chompy's vector read
+    /// slot by slot up to its count, by name per record; a slot holding
+    /// something other than a control ends its clips, one whose vector
+    /// doesn't read has none, and the hero's clips stay [`ANIMS`]'.
+    #[test]
+    fn the_chompies_clips_ride_a_chain_of_their_own() {
+        let mut f = fixture();
+        let notice = (
+            "Models/Characters/Enemies/Chompy/Teeth_Notice.ma",
+            0x3091_1000,
+            100.0,
+            100.0,
+            0.766_666_7,
+            0.5,
+        );
+        let idle = (
+            "Models/Characters/Enemies/Chompy/Teeth_Idle.ma",
+            0x3091_2000,
+            0.0,
+            100.0,
+            1.0,
+            0.25,
+        );
+        let control = anim_control(&mut f.w, notice);
+        let under = anim_control(&mut f.w, idle);
+        let stranger = f.w.object(vtable::ANIMATION_INFO, 0x44);
+        let block = f.w.object(vtable::ANIMATION_COMPONENT, 0x28);
+        let slots = f.w.alloc(32);
+        f.w.put32(block + 0x08, 3);
+        f.w.put32(block + 0x10, slots);
+        for (k, c) in [control, under, stranger].into_iter().enumerate() {
+            f.w.put32(slots + 4 * k as u32, c);
+        }
+        f.w.put32(f.chompy + 0x7C, block);
+        let g = GiantsChains::resolve(&mut f.w, &f.watch, &kinds()).unwrap();
+        let spec = &g.chains.slots[&CHOMPY_ANIMS];
+        assert_eq!(spec.ranges.len(), 1 + 3 * CHOMPY_CLIP_SLOTS);
+        assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
+        let app = f.w.app;
+        let record = |w: &mut World| {
+            let mut payload = w.gather(&[(app + 0x54, 0x14)]).unwrap()[0].clone().unwrap();
+            for spec in g.chains.slots.values() {
+                payload.extend(block_bytes(spec, &evaluate(spec, w).unwrap()));
+            }
+            payload
+        };
+        let first = record(&mut f.w);
+        f.w.putf(control + 0x14, 0.25);
+        f.w.put32(block + 0x08, 1);
+        let second = record(&mut f.w);
+        // Its vector gone: the Chompy is listed with no clips to read.
+        f.w.put32(f.chompy + 0x7C, 0);
+        let third = record(&mut f.w);
+        let watch = GiantsWatch {
+            list: WatchList::new(vec![crate::watch::Field::new("app", app + 0x54, 0x14)]).unwrap(),
+            ..f.watch.clone()
+        };
+        let blocks: Vec<Blocks> = [first, second, third]
+            .into_iter()
+            .enumerate()
+            .map(|(k, payload)| {
+                let r = WatchRecord {
+                    flip: 10 + k as u64,
+                    host_us: 0,
+                    missing: 0,
+                    read: 0,
+                    payload,
+                };
+                g.chains.split(&watch.list, &r).unwrap().1
+            })
+            .collect();
+        let resolved = g.resolve_names(&mut f.w, &blocks).unwrap();
+        assert_eq!(resolved.clip_names[&0x3091_1000], notice.0);
+        assert_eq!(resolved.clip_names[&0x3091_2000], idle.0);
+        let read: Vec<Option<Vec<(u32, f32)>>> = blocks
+            .iter()
+            .map(|b| {
+                let by_name = GiantsChains::chompy_clips(b);
+                assert_eq!(by_name.keys().collect::<Vec<_>>(), ["Enemy_Chompy(1)"]);
+                by_name["Enemy_Chompy(1)"]
+                    .as_ref()
+                    .map(|c| c.iter().map(|c| (c.id, c.remaining)).collect())
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                Some(vec![(0x3091_1000, 0.5), (0x3091_2000, 0.25)]),
+                Some(vec![(0x3091_1000, 0.25)]),
+                None,
+            ]
+        );
+        // The hero's own clips are untouched by the Chompy's.
+        assert_eq!(GiantsChains::clips(&blocks[0]).unwrap().len(), 2);
     }
 
     fn block_bytes(spec: &ChainSpec, b: &ChainBlock) -> Vec<u8> {

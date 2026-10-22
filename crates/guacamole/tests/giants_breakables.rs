@@ -34,6 +34,10 @@ use guacamole::scripts::{self, Rarity};
 /// heading as its `record.json` reads them.
 const ANCHOR_A: [f32; 3] = [31.08841, 51.46313, -72.9834];
 const ANCHOR_A_FACING: f32 = 253.706;
+/// His model's tilt and roll there, degrees, as AH.9's records hold his
+/// `rotation` (the ground under him; AH.68's to pose on our side).
+const ANCHOR_A_TILT: f32 = 8.288_624;
+const ANCHOR_A_ROLL: f32 = 6.209_965;
 /// Anchor A's loot counts (its `fight-anchor.json`, AH.4's reader).
 const ANCHOR_A_LOOT: [(Rarity, f32); 3] = [
     (Rarity::Common, 0.824_279_5),
@@ -49,12 +53,16 @@ const WEST: u64 = 0x80;
 /// record does (a record holds the pad its frame reads, the frame after
 /// the record before it; our step k reads what it's given).
 const PRESS: u32 = 30;
+/// His idle's time at AH.9's press record (`lob-00`'s 0.5636 s; 0.560-0.570
+/// over the 20 `lob` and `erupt` replays), its clip's period less what
+/// remains: the state our step `PRESS - 1` leaves.
+const AH9_PRESS_IDLE: f64 = 0.5636;
 /// The ledge route's three breakables (AG.7's reach: the walkway's way up).
 const LEDGE: [&str; 3] = ["barrel_b_intact(1)", "barrel_b_intact(4)", "pottery_1(8)"];
 
 /// A run at anchor A: joined over the dump with the level's props in the
-/// seam, his hands at AH.7's launch point and its mirror, set down at
-/// anchor A's pose and the loot counts at its read.
+/// seam, set down at anchor A's pose with his idle where AH.9's replays
+/// have it and the loot counts at its read.
 fn at_anchor_a() -> Run {
     let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
     to_anchor_a(&mut run);
@@ -69,15 +77,19 @@ fn at_anchor_a() -> Run {
     run
 }
 
-/// His hands at AH.7's launch point and its mirror, and him set down at
-/// anchor A's pose.
+/// Him set down at anchor A's pose as AH.9's records hold it: his idle
+/// timed so the state our step `PRESS - 1` from here leaves holds it as
+/// AH.9's press record does, and his posed hands leaned by the ground's
+/// tilt and roll there while he stands on it (AH.50: the run poses his
+/// hands each step and a lob leaves from one, so both move its burst;
+/// upright, the hand stands 0.62 m off the oracle's, AH.68).
 fn to_anchor_a(run: &mut Run) {
-    let hand = Vec3::new(0.6011, 0.7710, 1.4838);
-    let mut nodes = vec![Vec3::ZERO; 9];
-    nodes[7] = hand;
-    nodes[8] = Vec3::new(-hand.x, hand.y, hand.z);
-    run.world.set_nodes(HERO, nodes);
     run.put(Vec3::from_array(ANCHOR_A), ANCHOR_A_FACING);
+    run.idle0 = AH9_PRESS_IDLE - f64::from(run.steps + PRESS) / 60.0;
+    run.lean = Some((
+        run.hero().pivot,
+        lean_of([ANCHOR_A_TILT, ANCHOR_A_FACING, ANCHOR_A_ROLL]),
+    ));
 }
 
 fn pad(actions: [bool; 4], stick: Stick) -> Pad {
@@ -409,8 +421,11 @@ fn same_kind(broken: &str, debris: &str) -> bool {
 /// twice by 0.6 from anchor A's 0.8242795 to AH.9's 0.024279475 and both
 /// drop a coin worth 1 or 2; the destructibles system's lists hold every
 /// other breakable in range of him active, the rest asleep. Our break comes
-/// 31 steps after the press, AH.9's 33-34 (the lob's aim, AH.60's); our loot
-/// steps the step it breaks, AH.9's the frame after (AH.59's tick order).
+/// within AH.9's 33-34 steps after the press (his hand posed off his model,
+/// AH.50, in anchor A's recorded lean; the lob aimed as AH.60's), the
+/// burst's look at `barrel_b_intact(4)` passing the barrels' own solids as
+/// the original's ray cast does; our loot steps the step it breaks, AH.9's
+/// the frame after (AH.59's tick order).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.9's recordings; run on the Mac"]
 fn a_lob_breaks_the_ledge_routes_two_barrels_as_ah9s() {
@@ -456,9 +471,14 @@ fn a_lob_breaks_the_ledge_routes_two_barrels_as_ah9s() {
             assert_eq!(!gone, in_seam(&run, p.object), "{}", p.name);
         }
     }
-    let ours_after = k - PRESS;
+    let ours_after = (k - PRESS) as usize;
     let theirs: Vec<usize> = ah9.iter().map(|r| r.breaks[0].1 - 1 - r.press).collect();
     println!("the break {ours_after} steps after the press; AH.9's {theirs:?}");
+    let (lo, hi) = (*theirs.iter().min().unwrap(), *theirs.iter().max().unwrap());
+    assert!(
+        (lo..=hi).contains(&ours_after),
+        "{ours_after} past {lo}..={hi}"
+    );
     check_debris(&w, &ah9);
     let common = w.count("common");
     assert_eq!(common.len(), 1, "{common:?}");
@@ -641,12 +661,13 @@ fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool) {
 
 /// The ledge route opens (breakables' Up to the walkway): a lob from
 /// anchor A breaks its two barrels; he walks 0.6 s toward `pottery_1(8)`
-/// and a second lob, him turned to it, breaks it; the three solids are out
-/// of the seam, and walked at where the
-/// first barrel lay he stands on the ground there, where with it whole his
-/// controller climbed onto it (an oracle check of its own: AH.70). The
-/// props the scripts took off are written where `AH21_STATE_OUT` says, for
-/// AG.7's reach.
+/// and, him turned to it, lobs twice: the second lob, from his right hand
+/// (2.3 m up since AH.50 poses it), meets the level over the pot and
+/// breaks nothing, the third, from his left, breaks it; the three solids
+/// are out of the seam, and walked at where the first barrel lay he stands
+/// on the ground there, where with it whole his controller climbed onto it
+/// (an oracle check of its own: AH.70). The props the scripts took off are
+/// written where `AH21_STATE_OUT` says, for AG.7's reach.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
@@ -661,16 +682,16 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
     );
     let mut run = at_anchor_a();
     let (_, pot) = run.placed(LEDGE[2]);
-    let w = drive(&mut run, 300, |k, run| {
+    let w = drive(&mut run, 380, |k, run| {
         let to = pot - run.hero().pivot;
         if (100..136).contains(&k) {
             run.bench.view = heading_of(to);
         }
-        if k == 199 {
+        if k == 199 || k == 259 {
             run.bench.heroes.get_mut(&HERO).unwrap().facing = heading_of(to).rem_euclid(360.0);
         }
         let mut p = press(0, PRESS, k);
-        p.actions[0] |= (200..206).contains(&k);
+        p.actions[0] |= (200..206).contains(&k) || (260..266).contains(&k);
         if (100..136).contains(&k) {
             p.stick = Stick::new(0.0, 1.0);
         }
@@ -680,6 +701,11 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
         "broke {:?}; he stood {:.2} m from the pot at its lob",
         w.broke(),
         (pot - run.hero().pivot).length()
+    );
+    let pot_at = w.breaks.iter().find(|b| b.0 == LEDGE[2]).map(|b| b.1);
+    assert!(
+        pot_at.is_some_and(|k| k >= 260),
+        "the pot to the third lob: {pot_at:?}"
     );
     for name in LEDGE {
         let b = w.breaks.iter().find(|b| b.0 == name).expect(name);
@@ -832,10 +858,10 @@ fn a_swap_keeps_the_broken_ones_broken_and_the_counts_where_they_stood() {
         [
             ("barrel_b_intact(1)", 0),
             ("barrel_b_intact(4)", 0),
-            ("pottery_2(5)", PRESS + 66),
-            ("gourd_01(10)", PRESS + 71),
+            ("pottery_2(5)", PRESS + 65),
+            ("gourd_01(10)", PRESS + 70),
         ],
-        "the eruption at AH.21's steps, never the barrel again"
+        "the eruption at AH.9's steps (AH.54), never the barrel again"
     );
     assert_eq!(w.coins.len(), 1, "the pot's; the gourd's count past 0.6");
     assert_eq!(
