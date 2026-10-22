@@ -230,14 +230,15 @@ usage:
       <s>, <set>: each trajectory inside the group's horizon and over the whole run,
       and each frame the two share a checkpoint for; written to <candidates>/check.txt
       and check.json
-  oracle fight report --rules <rules.ron> --out <dir> <replay dir>... [--candidate <dir>]...
+  oracle fight report --rules <rules.ron> --out <dir> <replay dir>... [--candidate <dir>]... [--floors anchor-a]
       AH.9: each replay dir (a drive's or a divergence replay's, with O5's watch and
       O6's chains) read back as guac_oracle's fight trace: its per-actor event logs,
       chain links, breaks, totals and the generator's draws per game frame; over
       the group (3 or more replays of one script from one anchor) the anchor's
       horizon, each event kind's floor by AF.12's method (the least that passes
       every replay's leave-one-out, rounded up to the rules' quantum), and each
-      candidate against the whole group at those floors; written to
+      candidate against the whole group at those floors, or with --floors at an
+      anchor's named ones (guac_oracle::tolerance, AH.51); written to
       <dir>/report.txt and report.json";
 
 fn main() -> Result<()> {
@@ -266,7 +267,7 @@ fn main() -> Result<()> {
 
 /// `oracle fight report` (AH.9).
 fn fight_report(mut rest: &[&str]) -> Result<()> {
-    let (mut rules, mut out) = (None, None);
+    let (mut rules, mut out, mut named) = (None, None, None);
     let (mut dirs, mut candidates) = (Vec::new(), Vec::new());
     while let [arg, tail @ ..] = rest {
         rest = tail;
@@ -283,6 +284,10 @@ fn fight_report(mut rest: &[&str]) -> Result<()> {
                 candidates.push(PathBuf::from(at));
                 rest = tail;
             }
+            ("--floors", ["anchor-a", tail @ ..]) => {
+                named = Some(guac_oracle::tolerance::anchor_a::EVENTS);
+                rest = tail;
+            }
             (flag, _) if flag.starts_with("--") => bail!("{USAGE}"),
             (dir, _) => dirs.push(PathBuf::from(dir)),
         }
@@ -290,7 +295,8 @@ fn fight_report(mut rest: &[&str]) -> Result<()> {
     let (Some(rules), Some(out)) = (rules, out) else {
         bail!("{USAGE}");
     };
-    let report = oracle_harness::fightlog::report(&rules, &dirs, &candidates, &out)?;
+    let report =
+        oracle_harness::fightlog::report(&rules, &dirs, &candidates, named.as_ref(), &out)?;
     print!("{}", report.text());
     println!("written to {}", out.display());
     Ok(())

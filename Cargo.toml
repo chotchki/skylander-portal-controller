@@ -62,18 +62,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 walkdir = "2"
 
-# Intros decode on a thread of their own. At opt-level 0 OpenH264 (C, which cc
-# builds at the profile's level) and its YUV to RGBA kept a debug guacamole
-# near 7 fps on a 640x360 clip (AB.11's e2e); optimized, they keep pace.
-[profile.dev.package.openh264]
-opt-level = 3
+# Bevy's setup guide's dev profile (AG.65): the workspace's own crates at
+# opt-level 1 and every dependency at 3, debug assertions and overflow checks
+# still on in both. "*" is every package outside the workspace, its build
+# scripts and proc macros included (it outranks build-override). It also covers
+# the two that had lines of their own, C and C++ that cc builds at the package's
+# level: at opt-level 0 OpenH264 and its YUV to RGBA kept a debug guacamole near
+# 7 fps on a 640x360 clip (AB.11's e2e), and FLIP's C++ (guac-oracle's frame
+# comparison) took 7.1-8.5 s for one FLIP of the reference's 1080p example pair,
+# against 0.37 s at 3, its error map off the reference's in the last bit at
+# 1,665 pixels where at 3 it matches bit for bit (AF.10).
+[profile.dev]
+opt-level = 1
 
-[profile.dev.package.openh264-sys2]
-opt-level = 3
-
-# FLIP's C++ (guac-oracle's frame comparison) at opt-level 0 took 7.1-8.5 s for
-# one FLIP of the reference's 1080p example pair, against 0.37 s at 3, and its
-# error map was off the reference's in the last bit at 1,665 pixels; at 3 it
-# matches bit for bit (AF.10).
-[profile.dev.package.nv-flip-sys]
+[profile.dev.package."*"]
 opt-level = 3

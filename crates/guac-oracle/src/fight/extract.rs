@@ -554,6 +554,11 @@ pub struct Rules {
     pub beaten: Vec<Beaten>,
 }
 
+/// The kind a press of `button` logs as (`press South`).
+pub fn press_kind(button: Button) -> String {
+    format!("press {button:?}")
+}
+
 /// One log per actor: its spawn; each behaviour entered (`state <name>`);
 /// the hero's presses (`press <Button>`) and throws; a ball's burst; a
 /// break; a creature beaten; a biter's bites and a pushed actor's pushes;
@@ -604,7 +609,7 @@ pub fn logs(trace: &FightTrace, rules: &Rules) -> Result<ActorLogs, MetricError>
         for k in 1..ticks.len() {
             if let (Some(before), Some(now)) = (&ticks[k - 1].buttons, &ticks[k].buttons) {
                 for b in now.difference(before) {
-                    push(HERO, format!("press {b:?}"), trace.stamp(k));
+                    push(HERO, press_kind(*b), trace.stamp(k));
                 }
             }
         }
@@ -1336,6 +1341,7 @@ mod tests {
             floors: BTreeMap::new(),
             horizon: None,
             ordered: Default::default(),
+            gate: Default::default(),
         };
         // A headless run at the nominal step, both alerted at frame 6: passes.
         let headless = |c2: usize| {
