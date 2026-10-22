@@ -1318,10 +1318,9 @@ impl ScriptWorld {
         }
     }
 
-    /// The script a template runs, in `program`.
     /// The clones of scripted templates spawned since last asked, each
     /// with its template's name and script ([`guac_script::Host::adopt`]);
-    /// one whose script `program` doesn't hold is dropped, as before.
+    /// one whose script `program` doesn't hold is dropped.
     pub fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
         std::mem::take(&mut self.scripted)
             .into_iter()
@@ -1332,6 +1331,8 @@ impl ScriptWorld {
             .collect()
     }
 
+    /// Where in `program.scripts` the script a template runs is; none when
+    /// `program` doesn't hold it.
     pub fn script_of(&self, t: Obj, program: &Program) -> Option<u32> {
         let script = self.templates.get(&t)?.script.as_ref()?;
         program

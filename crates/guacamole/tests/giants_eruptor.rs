@@ -2027,7 +2027,8 @@ fn our_lava(seconds: &[f32], made: Option<u32>) -> (LavaDrive, u32) {
 /// each blob's place across the ground from the pivot within AG.1's step
 /// residual of the oracle's on every record it's listed, to the record it
 /// goes, its facing within 1e-3°, its scale and alpha as the oracle's
-/// (scale within 0.01 %, the alpha within 1); its height named, not held:
+/// (scale within 0.01 %, the alpha within 1), the eruption's last record
+/// the oracle's (111, 112 or 113); its height named, not held:
 /// it stands on the level's collision as we read it, where the original's
 /// steps a centimetre between frames at one spot (0.5 cm under his pivot,
 /// then 0.5 over), within 1.25 cm of the oracle's.
@@ -2100,6 +2101,10 @@ fn the_eruptions_lava_spreads_and_grows_as_the_oracles() {
         println!(
             "west-{i:02}: made at step {made}, last record {} (ours {}), worst across {drive_across:.2e} m",
             oracle.last, ours.last
+        );
+        assert_eq!(
+            ours.last, oracle.last,
+            "west-{i:02}: the eruption's last record"
         );
     }
     assert_eq!(drives, 10, "AH.54's ten drives");

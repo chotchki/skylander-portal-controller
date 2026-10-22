@@ -7,11 +7,13 @@
 //! `009_LavaCollider` on `lHand` (node 7, `J_palm_L`) or `rHand` (node 8,
 //! `J_palm_R`), and each frame the collider stands where that node is with
 //! his locomotion's clips at their times (his idle) and the throw laid over
-//! them at its time, his model's scale (1.5) taken, to 5 µm over every
-//! frame of 20 throws; the ball leaves from the collider's place at the
-//! start of the frame it's thrown in. The node moves up to 1.9 m a frame
-//! through the throw, so the place it leaves from follows the clip's time
-//! then. [`posed`] is that pose; the embedder sets it after each engine
+//! them at its time, his model's scale (1.5) taken, to 8.7 µm on every frame
+//! a throw's clip or his idle alone poses it in 25 drives (the 11-13 frames
+//! the engine blends a throw out after its clip has left are AH.49's); the
+//! ball leaves from that node as its frame began, turned by the facing the
+//! throw's aim gives him in it. The node moves up to 2.1 m a frame through
+//! the throw, so the place it leaves from follows the clip's time then.
+//! [`posed`] is that pose; the embedder sets it after each engine
 //! frame ([`crate::scripts::ScriptWorld::set_nodes`], then
 //! [`crate::scripts::ScriptWorld::place_hung`]).
 
