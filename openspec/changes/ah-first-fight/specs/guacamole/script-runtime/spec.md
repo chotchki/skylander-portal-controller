@@ -36,6 +36,13 @@ Every roll the game makes SHALL cover the original's range the way the original 
 - **WHEN** chapter 1 is played twice from its start with the same input
 - **THEN** the rolls differ between the two
 
+### Requirement: An animation's end, as the scripts see it
+A script reading how much of an animation is left SHALL read nothing once two frames (1/30 s) of its play or less remain, as the original's scripts do, so a wait on an animation's end ends two frames before the animation does.
+
+#### Scenario: A Chompy winds up
+- **WHEN** a Chompy plays its windup (1/3 s) and waits for it to end
+- **THEN** it holds after 18 or 19 frames, not 20
+
 ### Requirement: Played at medium
 Until a story save chooses it, guacamole SHALL play every level at the original's default difficulty, medium.
 

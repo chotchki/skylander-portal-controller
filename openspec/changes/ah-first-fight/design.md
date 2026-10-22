@@ -251,7 +251,8 @@ AH.0 requires this table complete.
 | hero-attacks | A Chompy ahead; Nothing in range; The button held; Chompies all round; Bitten while erupting; Bitten as he winds up; From the press to the ball | AH.9, AH.10, AH.17, AH.24, AH.25, AH.30 |
 | hero-attacks | A character whose attacks don't run yet; Eruptor | AH.24, AH.29 |
 | hero-attacks | Tree Rex | AH.29 (in the oracle and headless) |
-| hero-attacks | Pressed again and again (both attacks); A barrel 5.9 m off; From the press to the eruption | AH.9 (the original's), AH.17 (unit), AH.24, AH.30 |
+| hero-attacks | Pressed again and again (both attacks); A barrel 5.9 m off; From the press to the eruption | AH.9 (the original's), AH.17 (unit), AH.24, AH.30; A barrel 5.9 m off also AH.54 (the reach on the oracle's frames) |
+| hero-attacks | Lava round his feet | AH.54 (the original's, and ours on its frames) |
 | creatures | Down into the pit; Watching from above | AH.10, AH.18, AH.25, AH.28, AH.30 |
 | creatures | One Lava Lob | AH.4, AH.16, AH.19, AH.25 |
 | creatures | Alerted across the pit; Standing still beside a Chompy; Many bites; One Chompy sees him; The fourth Chompy sees him; A Chompy beaten | AH.10, AH.18, AH.25, AH.30 |
@@ -272,6 +273,7 @@ AH.0 requires this table complete.
 | script-runtime | Chompy bites; Two sessions | AH.11 (the roll's kind), AH.15 (unit), AH.30 |
 | script-runtime | Armour at its top; A critical chance of 100 | AH.11 (the original's), AH.15 (unit), AH.19 (unit) |
 | script-runtime | A fraction's top | AH.15 (unit) |
+| script-runtime | A Chompy winds up | AH.55 (the original's, and unit) |
 | pad-input | Two 8BitDo variants; The second attack's position | AH.7 (the positions), AH.24 (unit), AH.31 (chotchki's hands) |
 | pad-input | The third attack's position; The top position | AH.7 and AH.41 (the original's, with no upgrades and with upgrade 4), AH.24 (unit) |
 | pad-input | A button held | AH.7, AH.9 and AH.41 (the original's), AH.24 (unit) |

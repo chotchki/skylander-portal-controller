@@ -134,6 +134,9 @@ struct Run {
     /// his scripts play on him.
     rig: guacamole::hands::Rig,
     idle0: f64,
+    /// Each step's seconds: 1/60, or the oracle's own frame in a model
+    /// replay (AH.54).
+    dt: f32,
 }
 
 impl Run {
@@ -165,6 +168,8 @@ impl Run {
     /// the engine's frame: the hero moved by the walk his scripts left, the
     /// sequences on, what the scripts threw flying.
     fn step(&mut self) -> Result<(), Halt> {
+        let dt = self.dt;
+        self.vm.set_tick_seconds(dt);
         let pads = self.bench.pads;
         self.world.read_pads(pads);
         let slid = self.with_host(|vm, host| vm.slide(host))?;
@@ -177,7 +182,6 @@ impl Run {
         scripts::add_scripted(&mut self.vm, &mut self.world);
         let report = r?;
         assert!(report.stopped.is_empty(), "strict mode stops by halting");
-        let dt = 1.0 / 60.0;
         for hero in self.bench.heroes.values_mut() {
             hero.step_engine(&self.bench.world, dt, &[], Surfaces::NONE);
         }
@@ -376,6 +380,7 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
             player_loop,
             rig,
             idle0: 0.0,
+            dt: 1.0 / 60.0,
         },
         found,
     )
@@ -895,11 +900,13 @@ fn south_throws_a_ball_from_his_hand_that_bursts_on_the_clearing_floor() {
 }
 
 /// A press of West from rest: the eruption's clip (slot 32, 2 s at 140 %)
-/// at once, the eruption 43 steps into it and gone 112 steps later, 1.867 s,
-/// as AH.9's (44 game frames after the press, 1.867 s of game time).
+/// at once, the eruption 43 steps into it and gone 111 steps later, its
+/// first tick the step it's made (AH.54): AH.9's 44 game frames after the
+/// press and 111-113 from its first record to the first without it, AH.54's
+/// 112-114 at the spawn (on its frame times there, ours to the frame).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
-fn west_erupts_43_steps_into_the_clip_for_1_867_s() {
+fn west_erupts_43_steps_into_the_clip_for_111_steps() {
     println!("load before: {}", load());
     let mut run = joined();
     // The eruption's behaviours each step against the oracle's longest
@@ -941,8 +948,8 @@ fn west_erupts_43_steps_into_the_clip_for_1_867_s() {
             }
         }
     }
-    // The step it's made, its script hasn't ticked yet (the oracle lists it
-    // from the frame after, in its first behaviour): from its first.
+    // It ticks the step it's made (AH.54), so it's in its first behaviour
+    // from there; a step before its first, nothing.
     let stays: Vec<(Option<String>, u32)> = stays
         .windows(2)
         .map(|w| (w[0].0.clone(), w[1].1 - w[0].1))
@@ -976,7 +983,7 @@ fn west_erupts_43_steps_into_the_clip_for_1_867_s() {
         seen.len()
     );
     assert_eq!(e.step - 10, 43);
-    assert!((life - 1.867).abs() < 0.5 / 60.0, "{life}");
+    assert!((111..=114).contains(&(gone - e.step)), "{life}");
     println!("load after: {}", load());
 }
 
@@ -1745,4 +1752,577 @@ fn his_hands_posed_from_his_attach_list_stand_where_the_oracles_collider_does() 
         // 0.056° at worst over AH.50's 25 throwing drives.
         assert!(worst_turn < 0.06, "{worst_turn}");
     }
+}
+
+/// A development probe (AH.54): which of `009_LavaAttack.ai`'s ops each
+/// step runs once the eruption is out, and its lava's state.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_eruption_ops() {
+    let mut run = joined();
+    let script = run
+        .vm
+        .program()
+        .script_named("009_LavaAttack.ai")
+        .expect("the eruption's script");
+    let before = run.world.clones();
+    for k in 0..80u32 {
+        run.bench.pads[0] = scripted("a2@5", k);
+        run.vm.trace(Some(200_000));
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let ops: Vec<u32> = run
+            .vm
+            .traced()
+            .into_iter()
+            .filter(|(s, _)| *s == script)
+            .map(|(_, o)| o)
+            .collect();
+        if ops.is_empty() || !(48..=60).contains(&k) {
+            continue;
+        }
+        let mut uniq = ops.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        println!("step {k}: {} ops, distinct {:?}", ops.len(), uniq);
+        for c in run.world.clones() {
+            if before.contains(&c) {
+                continue;
+            }
+            let a = run.world.actor(c).unwrap();
+            let name = a
+                .template
+                .and_then(|t| run.world.name_of(t))
+                .unwrap_or_default();
+            if name.starts_with("009_Lava(") || name == "009_Lava" {
+                println!(
+                    "   {name} {c:#x} at {:?} scale {:?} facing {} attach {:?}",
+                    a.position, a.scale, a.angles.facing, a.attach
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// AH.54's drives: from the spawn (AF.8's fresh state), West at F0 + 30,
+/// O6's lava chain on the eruption's blobs every frame, ten of them.
+const LAVA_DRIVES: &str = "ah54-main-1792649526";
+
+/// One lava blob as a record holds it, from the eruption's pivot: across
+/// the ground (m), its bearing (degrees), how far over the pivot (m), its
+/// facing, scale (percent per axis) and alpha.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BlobAt {
+    across: f32,
+    bearing: f32,
+    rise: f32,
+    facing: f32,
+    scale: [f32; 3],
+    alpha: f32,
+    /// Whether it hangs from anything.
+    hung: bool,
+}
+
+impl BlobAt {
+    fn from(at: Vec3, pivot: Vec3, facing: f32, scale: [f32; 3], alpha: f32, hung: bool) -> Self {
+        let d = at - pivot;
+        Self {
+            across: d.x.hypot(d.z),
+            bearing: d.x.atan2(d.z).to_degrees().rem_euclid(360.0),
+            rise: d.y,
+            facing: facing.rem_euclid(360.0),
+            scale,
+            alpha,
+            hung,
+        }
+    }
+}
+
+/// A blob's life: the record it's first listed on, counted from the
+/// eruption's first, and where it is on each record to its last.
+#[derive(Debug, Clone)]
+struct BlobLife {
+    first: usize,
+    at: Vec<BlobAt>,
+}
+
+/// One drive's eruption: its blobs, the record it's last listed on, and
+/// each game frame's seconds from the frame that made it.
+#[derive(Debug, Clone)]
+struct LavaDrive {
+    blobs: Vec<BlobLife>,
+    last: usize,
+    seconds: Vec<f32>,
+}
+
+/// [`LAVA_DRIVES`]' drive `i`, if it's there.
+fn lava_drive(i: usize) -> Option<LavaDrive> {
+    let drive = format!("{LAVA_DRIVES}/west-{i:02}");
+    let records = recording(&format!("{drive}/chain-records.json"))?;
+    let rec = recording(&format!("{drive}/recording.json"))?;
+    let seconds_of: HashMap<i64, f32> = rec
+        .as_array()?
+        .iter()
+        .map(|r| {
+            (
+                r["game_frame"].as_i64().unwrap(),
+                r["clock"]["frame_delta"].as_f64().unwrap() as f32,
+            )
+        })
+        .collect();
+    let records = records.as_array()?;
+    let pivot_of = |r: &serde_json::Value| {
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|it| it["kind"] == "eruption")
+            .map(|it| vec3(&it["body"]["position"]))
+    };
+    let e0 = records.iter().position(|r| pivot_of(r).is_some())?;
+    let pivot = pivot_of(&records[e0]).unwrap();
+    let last = records.iter().rposition(|r| pivot_of(r).is_some())? - e0;
+    let frame0 = records[e0]["game_frame"].as_i64().unwrap();
+    let mut blobs: BTreeMap<(i64, i64), BlobLife> = BTreeMap::new();
+    for (k, r) in records[e0..].iter().enumerate() {
+        for it in r["items"].as_array().unwrap() {
+            if !it["kind"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("lava_blob")
+            {
+                continue;
+            }
+            let v = |n: &str| it["vars"][n].as_f64().unwrap() as f32;
+            let at = BlobAt::from(
+                vec3(&it["body"]["position"]),
+                pivot,
+                it["body"]["rotation"][1].as_f64().unwrap() as f32,
+                [v("scale.x"), v("scale.y"), v("scale.z")],
+                v("tint.a"),
+                v("attached") != 0.0,
+            );
+            let key = (
+                it["address"].as_i64().unwrap(),
+                it["serial"].as_i64().unwrap_or(0),
+            );
+            blobs
+                .entry(key)
+                .or_insert(BlobLife {
+                    first: k,
+                    at: Vec::new(),
+                })
+                .at
+                .push(at);
+        }
+    }
+    let seconds = (0..=last as i64 + 1)
+        .map(|j| {
+            seconds_of
+                .get(&(frame0 - 1 + j))
+                .copied()
+                .unwrap_or(1.0 / 60.0)
+        })
+        .collect();
+    Some(LavaDrive {
+        blobs: blobs.into_values().collect(),
+        last,
+        seconds,
+    })
+}
+
+/// Our eruption from rest at the spawn, West pressed at step 10 after the
+/// join, stepped at 1/60 s until the step `made` that makes it (found by a
+/// run with none given), then each step the game time `seconds` gives (the
+/// oracle's frame that made it first): its blobs as [`lava_drive`] reads
+/// the oracle's, and the step it's made.
+fn our_lava(seconds: &[f32], made: Option<u32>) -> (LavaDrive, u32) {
+    let mut run = joined();
+    let before = run.world.clones();
+    let mut eruption: Option<(Handle, u32, Vec3)> = None;
+    let mut blobs: BTreeMap<Handle, BlobLife> = BTreeMap::new();
+    let mut last = 0;
+    for k in 0..400u32 {
+        if let Some(m) = made.filter(|&m| k >= m) {
+            run.dt = seconds.get((k - m) as usize).copied().unwrap_or(1.0 / 60.0);
+        }
+        run.bench.pads[0] = scripted("a2@10", k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let named = |run: &Run, c: Handle| {
+            run.world
+                .actor(c)
+                .and_then(|a| a.template)
+                .and_then(|t| run.world.name_of(t))
+                .unwrap_or_default()
+        };
+        if eruption.is_none() {
+            let Some(c) = run
+                .world
+                .clones()
+                .into_iter()
+                .filter(|c| !before.contains(c))
+                .find(|&c| named(&run, c) == "009_LavaAttack")
+            else {
+                continue;
+            };
+            // The step that made it: the oracle's frame before its first
+            // record. A replay from here would step `seconds[0]`.
+            let pivot = run.world.actor(c).unwrap().position;
+            eruption = Some((c, k, pivot));
+        }
+        let (e, made, pivot) = eruption.unwrap();
+        let j = (k - made) as usize;
+        if run.world.removed(e) {
+            break;
+        }
+        last = j;
+        for c in run.world.clones() {
+            if before.contains(&c) || run.world.removed(c) {
+                continue;
+            }
+            let name = named(&run, c);
+            if !(name == "009_Lava" || name.starts_with("009_Lava(")) {
+                continue;
+            }
+            let a = run.world.actor(c).unwrap();
+            let at = BlobAt::from(
+                a.position,
+                pivot,
+                a.angles.facing,
+                a.scale,
+                (a.tint & 0xFF) as f32,
+                a.attach != Value::Null,
+            );
+            blobs
+                .entry(c)
+                .or_insert(BlobLife {
+                    first: j,
+                    at: Vec::new(),
+                })
+                .at
+                .push(at);
+        }
+    }
+    let (_, made, _) = eruption.expect("an eruption");
+    (
+        LavaDrive {
+            blobs: blobs.into_values().collect(),
+            last,
+            seconds: Vec::new(),
+        },
+        made,
+    )
+}
+
+/// The eruption's lava as the original lays it (AH.54, O6's lava chain on
+/// AH.54's ten West presses at the spawn): three waves 0.15 s apart from
+/// the eruption's first record (records 0, 9 or 10 and 18 to 20 as the
+/// frames fall), six blobs each along its six paths (his
+/// facing, ±60°, ±120°, 180°) turned 36° more each wave, every blob set
+/// down at his pivot on the ground and drawn out along its path to 8, 6
+/// and 4 ft by the wave over 0.5 s, its scale growing from (100, 300, 50) %
+/// to (260, 28, 140), (220, 46, 130) and (180, 64, 120), fading in over
+/// 0.25 s, never hung on anything. Ours stepped on each drive's own frame
+/// times from the frame that made the eruption: every wave on its record,
+/// each blob's place across the ground from the pivot within AG.1's step
+/// residual of the oracle's on every record it's listed, to the record it
+/// goes, its facing within 1e-3°, its scale and alpha as the oracle's
+/// (scale within 0.01 %, the alpha within 1); its height named, not held:
+/// it stands on the level's collision as we read it, where the original's
+/// steps a centimetre between frames at one spot (0.5 cm under his pivot,
+/// then 0.5 over), within 1.25 cm of the oracle's.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.54's recordings; run on the Mac"]
+fn the_eruptions_lava_spreads_and_grows_as_the_oracles() {
+    println!("load before: {}", load());
+    let mut drives = 0;
+    let (mut worst_across, mut worst_angle, mut worst_scale, mut worst_alpha, mut worst_rise) =
+        (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let (_, made) = our_lava(&[], None);
+    for i in 0..10 {
+        let Some(oracle) = lava_drive(i) else {
+            continue;
+        };
+        drives += 1;
+        let (ours, again) = our_lava(&oracle.seconds, Some(made));
+        assert_eq!(again, made);
+        let waves = |d: &LavaDrive| {
+            let mut w: Vec<usize> = d.blobs.iter().map(|b| b.first).collect();
+            w.sort_unstable();
+            w.dedup();
+            w
+        };
+        let w = waves(&oracle);
+        assert!(
+            w.len() == 3 && w[0] == 0 && (9..=10).contains(&w[1]) && (18..=20).contains(&w[2]),
+            "west-{i:02}'s waves {w:?}"
+        );
+        assert_eq!(waves(&ours), w, "west-{i:02}: our waves");
+        assert_eq!(ours.blobs.len(), 18);
+        assert_eq!(oracle.blobs.len(), 18);
+        let mut drive_across: f32 = 0.0;
+        for o in &oracle.blobs {
+            // Its twin: the same wave and facing.
+            let twin = ours
+                .blobs
+                .iter()
+                .find(|b| b.first == o.first && (b.at[0].facing - o.at[0].facing).abs() < 1e-3)
+                .unwrap_or_else(|| panic!("west-{i:02}: no blob of ours like {o:?}"));
+            assert_eq!(o.at.len(), twin.at.len(), "west-{i:02}: a blob's records");
+            for (k, (ob, wb)) in o.at.iter().zip(&twin.at).enumerate() {
+                // Its place across the ground from the pivot, both ways.
+                let flat = |b: &BlobAt| {
+                    let r = b.bearing.to_radians();
+                    (b.across * r.sin(), b.across * r.cos())
+                };
+                let (a, b) = (flat(ob), flat(wb));
+                let across = (a.0 - b.0).hypot(a.1 - b.1);
+                drive_across = drive_across.max(across);
+                worst_across = worst_across.max(across);
+                worst_angle = worst_angle.max((ob.facing - wb.facing).abs());
+                assert!(!ob.hung && !wb.hung, "west-{i:02}: a blob hung");
+                for a in 0..3 {
+                    worst_scale = worst_scale.max((ob.scale[a] - wb.scale[a]).abs());
+                }
+                worst_alpha = worst_alpha.max((ob.alpha - wb.alpha).abs());
+                worst_rise = worst_rise.max((ob.rise - wb.rise).abs());
+                assert!(
+                    across <= STEP_RESIDUAL,
+                    "west-{i:02} wave {} facing {} record {}: across {} against {} ({across})",
+                    o.first,
+                    o.at[0].facing,
+                    o.first + k,
+                    wb.across,
+                    ob.across
+                );
+            }
+        }
+        println!(
+            "west-{i:02}: made at step {made}, last record {} (ours {}), worst across {drive_across:.2e} m",
+            oracle.last, ours.last
+        );
+    }
+    assert_eq!(drives, 10, "AH.54's ten drives");
+    println!(
+        "worst: across {worst_across:.2e} m, angle {worst_angle:.2e} deg, scale {worst_scale:.2e} %, alpha {worst_alpha}, rise {worst_rise:.4} m"
+    );
+    assert!(worst_angle < 1e-3);
+    assert!(worst_scale < 0.01);
+    assert!(worst_alpha <= 1.0);
+    assert!(worst_rise < 0.0125);
+    println!("load after: {}", load());
+}
+
+/// Anchor A (AH.7): Eruptor still at the foot of the ledge route facing
+/// `barrel_b_intact(1)`, metres and degrees.
+const ANCHOR_A: ([f32; 3], f32) = ([31.0884, 51.4631, -72.9834], 253.706);
+
+/// The breakables round anchor A AH.9's eruption reached (`pottery_2(5)`
+/// 4.743 m off, `gourd_01(10)` 5.491, `barrel_b_intact(1)` 5.932) and the
+/// one it left standing (`pottery_1(11)`, 6.21).
+const ROUND_ANCHOR_A: [&str; 4] = [
+    "pottery_2(5)",
+    "gourd_01(10)",
+    "barrel_b_intact(1)",
+    "pottery_1(11)",
+];
+
+impl Run {
+    /// The hero set down at `at` facing `facing`, at rest.
+    fn put(&mut self, at: Vec3, facing: f32) {
+        let hero = self.bench.heroes.get_mut(&HERO).unwrap();
+        hero.pivot = at + Vec3::Y;
+        hero.facing = facing;
+        hero.walk.velocity = Vec3::ZERO;
+        hero.settle(&self.bench.world, &[]);
+    }
+
+    /// A level placement's place in its file, metres.
+    fn placed_at(&self, name: &str) -> Vec3 {
+        let p = self
+            .files
+            .placed
+            .iter()
+            .find(|p| p.name == name && p.obj.unit == 4)
+            .unwrap_or_else(|| panic!("no {name}"));
+        Vec3::from_array(p.position)
+    }
+}
+
+/// One AH.54 eruption at anchor A (`erupt_a-NN`): its reach on each record
+/// from its first (feet, as the frame starts), each of [`ROUND_ANCHOR_A`]'s
+/// distance from it (feet) and the record it's first gone on (none for one
+/// still listed), and each game frame's seconds from the frame that made
+/// it.
+struct ReachDrive {
+    reach: Vec<f32>,
+    round: Vec<(f32, Option<usize>)>,
+    seconds: Vec<f32>,
+}
+
+fn reach_drive(i: usize) -> Option<ReachDrive> {
+    let drive = format!("{LAVA_DRIVES}/erupt_a-{i:02}");
+    let records = recording(&format!("{drive}/chain-records.json"))?;
+    let rec = recording(&format!("{drive}/recording.json"))?;
+    let seconds_of: HashMap<i64, f32> = rec
+        .as_array()?
+        .iter()
+        .map(|r| {
+            (
+                r["game_frame"].as_i64().unwrap(),
+                r["clock"]["frame_delta"].as_f64().unwrap() as f32,
+            )
+        })
+        .collect();
+    let records = records.as_array()?;
+    let eruption = |r: &serde_json::Value| {
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|it| it["kind"] == "eruption")
+            .cloned()
+    };
+    let e0 = records.iter().position(|r| eruption(r).is_some())?;
+    let pivot = vec3(&eruption(&records[e0]).unwrap()["body"]["position"]);
+    let reach = records[e0..]
+        .iter()
+        .map_while(eruption)
+        .map(|e| e["vars"]["reach"].as_f64().unwrap() as f32)
+        .collect();
+    let listed = |name: &str, r: &serde_json::Value| {
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|it| it["placement"] == name)
+            .map(|it| vec3(&it["body"]["position"]))
+    };
+    let round = ROUND_ANCHOR_A
+        .iter()
+        .map(|n| {
+            let at = listed(n, &records[e0]).unwrap_or_else(|| panic!("{n} at the start"));
+            let gone = records[e0..].iter().position(|r| listed(n, r).is_none());
+            (ft((at - pivot).length()), gone)
+        })
+        .collect();
+    let frame0 = records[e0]["game_frame"].as_i64().unwrap();
+    let seconds = (0..64)
+        .map(|j| {
+            seconds_of
+                .get(&(frame0 - 1 + j))
+                .copied()
+                .unwrap_or(1.0 / 60.0)
+        })
+        .collect();
+    Some(ReachDrive {
+        reach,
+        round,
+        seconds,
+    })
+}
+
+fn ft(m: f32) -> f32 {
+    m * 3.280_84
+}
+
+/// Our eruption at anchor A (West pressed 30 steps after he's set down
+/// there), stepped at 1/60 s until the step `made` that makes it (found by
+/// a run with none), then on `seconds`: its reach after each step from
+/// that one (feet), each of [`ROUND_ANCHOR_A`]'s distance from it (feet),
+/// and the step it's made.
+fn our_reach(seconds: &[f32], made: Option<u32>) -> (Vec<f32>, Vec<f32>, u32) {
+    let mut run = joined();
+    run.put(Vec3::from_array(ANCHOR_A.0), ANCHOR_A.1);
+    let before = run.world.clones();
+    let mut eruption: Option<(Handle, u32)> = None;
+    let mut reach = Vec::new();
+    for k in 0..120u32 {
+        if let Some(m) = made.filter(|&m| k >= m) {
+            run.dt = seconds.get((k - m) as usize).copied().unwrap_or(1.0 / 60.0);
+        }
+        run.bench.pads[0] = scripted("a2@30", k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        if eruption.is_none() {
+            eruption = run
+                .world
+                .clones()
+                .into_iter()
+                .filter(|c| !before.contains(c))
+                .find(|&c| {
+                    run.world
+                        .actor(c)
+                        .and_then(|a| a.template)
+                        .and_then(|t| run.world.name_of(t))
+                        .as_deref()
+                        == Some("009_LavaAttack")
+                })
+                .map(|c| (c, k));
+        }
+        let Some((e, _)) = eruption else { continue };
+        let id = run.vm.placement_of(e).expect("the eruption runs");
+        let r = run.vm.local(id, "Damage Range").map(|v| run.vm.value(v));
+        reach.push(r.and_then(|v| v.as_f32()).expect("its reach"));
+        if reach.len() == 40 {
+            let pivot = run.world.actor(e).unwrap().position;
+            let round = ROUND_ANCHOR_A
+                .iter()
+                .map(|n| ft((run.placed_at(n) - pivot).length()))
+                .collect();
+            return (reach, round, eruption.unwrap().1);
+        }
+    }
+    panic!("no eruption");
+}
+
+/// The eruption's reach (AH.54, AH.9's breaks reproduced at their cause):
+/// from 5 ft it slides to 20 over 0.5 s from the frame after it's made,
+/// and its tick reads the slide where that frame left it, what the oracle's
+/// next record holds. A breakable it reaches goes the record after the
+/// eruption's tick first reads a reach of at least its distance (AH.54's five drives at anchor A,
+/// 15 of 15: `pottery_2(5)` 15.56 ft off on record 22, `gourd_01(10)` 18.02
+/// on 26 or 27 as the frames fall, `barrel_b_intact(1)` 19.46 on 29;
+/// `pottery_1(11)`, 20.36 ft, never: AH.9's 4.7-5.9 m). Ours on each drive's
+/// frame times: its reach after each step within 1e-4 ft of that record's,
+/// and the step it first covers each breakable the record it went on. That
+/// the breakables are targets it hurts, and go, is their scripts' (AH.21).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.54's recordings; run on the Mac"]
+fn the_eruptions_reach_passes_the_breakables_on_their_frames() {
+    println!("load before: {}", load());
+    let (_, ours_round, made) = our_reach(&[], None);
+    println!("ours: made at step {made}; the four {ours_round:?} ft off");
+    let mut drives = 0;
+    let mut worst: f32 = 0.0;
+    for i in 0..5 {
+        let Some(o) = reach_drive(i) else { continue };
+        drives += 1;
+        let (reach, round, again) = our_reach(&o.seconds, Some(made));
+        assert_eq!(again, made);
+        // Our step j after the one that made it is the oracle's frame
+        // before record j: its tick reads what that record holds.
+        for (j, r) in reach.iter().enumerate().take(o.reach.len()) {
+            let d = (r - o.reach[j]).abs();
+            worst = worst.max(d);
+            assert!(
+                d < 1e-4,
+                "erupt_a-{i:02} step {j}: {r} against {}",
+                o.reach[j]
+            );
+        }
+        let mut goes = Vec::new();
+        for (k, ((d, gone), ours_d)) in o.round.iter().zip(&round).enumerate() {
+            // The step that first covers it is the frame it's hurt in; the
+            // record after that frame, record j, doesn't list it.
+            let ours_gone = reach.iter().position(|r| r >= ours_d);
+            goes.push((ROUND_ANCHOR_A[k], *d, *ours_d, *gone, ours_gone));
+            assert_eq!(ours_gone, *gone, "erupt_a-{i:02}: {}", ROUND_ANCHOR_A[k]);
+        }
+        println!("erupt_a-{i:02}: {goes:?}");
+    }
+    assert_eq!(drives, 5, "AH.54's five drives at anchor A");
+    println!(
+        "reach within {worst:.2e} ft of the oracle's; load after: {}",
+        load()
+    );
 }

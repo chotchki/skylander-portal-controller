@@ -1925,10 +1925,10 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
         !waits.is_empty() && waits.iter().all(|w| (0.0..=0.51).contains(w)),
         "{waits:?}"
     );
-    // AH.10's notice is 0.748-0.769 s; the Chompy's clips end a frame or
-    // two later here than in the original (AH.55), so a frame's slack.
+    // AH.10's notice is 0.748-0.769 s, 45-46 frames: its clip (0.767 s)
+    // less the two frames a script sees it over early (AH.55).
     assert!(
-        !notice.is_empty() && notice.iter().all(|n| (0.74..=0.79).contains(n)),
+        !notice.is_empty() && notice.iter().all(|n| (0.748..=0.769).contains(n)),
         "{notice:?}"
     );
     assert!(top_speed <= 20.0 + 0.05 && top_speed > 15.0, "{top_speed}");
@@ -1960,20 +1960,22 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
         };
         let (w, h, l, r) = (dur(1), dur(2), dur(3), dur(10));
         println!("  windup {w:?} hold {h:?} lunge {l:?} recovery {r:?}");
-        // AH.10's windup 0.298-0.319 s; two frames' slack (AH.55).
+        // AH.10's windup 0.298-0.319 s, 18-19 frames: its clip (1/3 s)
+        // less the two frames a script sees it over early (AH.55); its hold
+        // the same, a timer.
         if let Some(w) = w {
-            assert!((0.29..=0.34).contains(&w), "windup {w}");
+            assert!((0.298..=0.319).contains(&w), "windup {w}");
         }
         if let Some(h) = h {
-            assert!((0.29..=0.33).contains(&h), "hold {h}");
+            assert!((0.298..=0.321).contains(&h), "hold {h}");
         }
         if let Some(l) = l {
             assert!(l <= 0.43, "lunge {l}");
         }
-        // The recovery waits out its clip (slot 25, 0.567 s) and ends 1-2
-        // frames after the original's, as the windup does (AH.55).
+        // The recovery waits out its clip (slot 25, 0.567 s) less its last
+        // two frames (AH.55): AH.10's 32-33 frames, 0.530-0.561 s.
         if let Some(r) = r {
-            assert!((0.53..=0.57).contains(&r), "recovery {r}");
+            assert!((0.530..=0.561).contains(&r), "recovery {r}");
         }
     }
     // The next windup 2 s or more after a nip ends.
@@ -2000,10 +2002,11 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     // late, four) and 89 in `still_p2` (two late, three). Three come at him
     // here (anchor B's wander for (2) isn't set), and since AH.19 a bite's
     // push carries him the original's 3 m clear, so it costs what three
-    // make of it: 4-8 bites, 50-104 (the 22 drives' range).
+    // make of it: 4-8 bites of 11-14, so 44 at the least (four here since
+    // AH.55's clip ends, 49) and the 22 drives' 104 at the most.
     assert!(!bites.is_empty(), "no bite landed");
     assert!((4..=8).contains(&bites.len()), "{bites:?}");
-    assert!((50.0..=104.0).contains(&cost), "{cost}");
+    assert!((44.0..=104.0).contains(&cost), "{cost}");
     let (limits, read) = ah10_limits();
     assert_eq!(read, 40);
     let stalled = stalls(&snaps, &limits);
@@ -3029,16 +3032,23 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
             }
             if a.hurt.resist < 25.0 {
                 let p = push.expect("a push");
-                let want = ((25.0 - a.hurt.resist) / 100.0 * 0.6).max(0.125);
-                // A resistance in its last falling step is gone by the hit:
-                // the combat manager lets it fall before the projectile
-                // manager lands the hit, both ahead of the step (AH.20's
+                let knock = |resist: f32| ((25.0 - resist) / 100.0 * 0.6).max(0.125);
+                let want = knock(a.hurt.resist);
+                // The combat manager lets a resistance fall before the
+                // projectile manager lands the hit, both ahead of the step:
+                // the hit sees it a step's fall lower, as much as it fell
+                // the step before or a little more as its slide speeds up
+                // (AH.54's run: 2.54 seen as 2.24, 0.29 off the step
+                // before), and one in its last falling step gone (AH.20's
                 // run, 0.12 the step before).
+                let fell = (snaps[i.max(1) - 1].chompies[c].hurt.resist - a.hurt.resist).max(0.0);
+                let seen = knock((a.hurt.resist - fell).max(0.0));
                 let gone = 25.0 / 100.0 * 0.6;
                 assert!(
                     (p.knock_before - want).abs() < 2e-4
+                        || (p.knock_before - seen).abs() < 2e-4 * (1.0 + 10.0 * fell)
                         || a.hurt.resist < 0.5 && (p.knock_before - gone).abs() < 2e-4,
-                    "{} against {want}",
+                    "{} against {want} (or {seen} a step's fall on)",
                     p.knock_before
                 );
                 if a.hurt.resist == 0.0 && p.speeds.iter().all(|v| *v > 1.0) {
@@ -3093,8 +3103,11 @@ fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
     assert!(windows.len() >= 3, "eruptions");
     for &(a, b) in &windows {
         if b != i64::MAX {
-            // From the lava's spawn to the clip's end: 86 - 43 steps.
-            assert!((42..=44).contains(&(b - a)), "{a}..{b}");
+            // From the lava's spawn to two steps before the clip's end, as
+            // the original's flag goes two records before its clip's last
+            // (AH.9: on from record 75 to 115; AH.55: his scripts see the
+            // clip over in its last two frames): 86 - 43 - 2 steps.
+            assert_eq!(b - a, 41, "{a}..{b}");
         }
     }
     let mut wind_up = 0;
@@ -4458,4 +4471,107 @@ fn a_defeated_hero_knocks_them_back_and_leaves() {
     // s on the oracle's frame times; 134 of ours, 2.233 s at 60 a second).
     assert!((133..=134).contains(&(gone - bite)), "{}", gone - bite);
     println!("load after: {}", load());
+}
+
+/// Anchor A (AH.7): Eruptor still at the foot of the ledge route facing
+/// `barrel_b_intact(1)`, metres and degrees.
+const ANCHOR_A: ([f32; 3], f32) = ([31.0884, 51.4631, -72.9834], 253.706);
+
+/// The breakables round anchor A an eruption there reaches, or doesn't
+/// (AH.9: `pottery_2(5)` 4.743 m off, `gourd_01(10)` 5.491, `barrel_b_intact(1)`
+/// 5.932 and `pottery_1(11)` 6.21, which stands).
+const ROUND_ANCHOR_A: [&str; 4] = [
+    "pottery_2(5)",
+    "gourd_01(10)",
+    "barrel_b_intact(1)",
+    "pottery_1(11)",
+];
+
+/// A development probe (AH.54): West from anchor A, the eruption's reach
+/// and the breakables round it each step.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_the_eruption_at_anchor_a() {
+    let (mut run, _) = joined(Mode::Strict);
+    run.put(Vec3::from_array(ANCHOR_A.0), ANCHOR_A.1);
+    for _ in 0..30 {
+        run.step().unwrap();
+    }
+    let before = run.world.clones();
+    let mut eruption = None;
+    for k in 0..120u32 {
+        run.bench.pads[0] = Pad {
+            connected: true,
+            actions: [false, (0..6).contains(&k), false, false],
+            ..Pad::default()
+        };
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        if eruption.is_none() {
+            eruption = run.world.clones().into_iter().find(|c| {
+                !before.contains(c)
+                    && run
+                        .world
+                        .actor(*c)
+                        .and_then(|a| a.template)
+                        .and_then(|t| run.world.name_of(t))
+                        .as_deref()
+                        == Some("009_LavaAttack")
+            });
+            if let Some(e) = eruption {
+                println!(
+                    "step {k}: the eruption at {:?}",
+                    run.world.actor(e).unwrap().position
+                );
+                let g = run.vm.program().global_named("EruptorCreatureInfo");
+                let info = g.and_then(|g| run.vm.global(g)).map(|v| run.vm.value(v));
+                let sets = info
+                    .and_then(|i| run.vm.field(i, "character parameters"))
+                    .map(|v| run.vm.value(v))
+                    .and_then(|c| run.vm.field(c, "targetting sets"))
+                    .map(|v| run.vm.value(v));
+                for name in ["foes", "foes and destructibles", "destructibles"] {
+                    let set = sets
+                        .and_then(|t| run.vm.field(t, name))
+                        .map(|v| run.vm.value(v))
+                        .and_then(|v| run.vm.set(v).map(<[Value]>::to_vec));
+                    let named: Option<Vec<String>> = set.map(|s| {
+                        s.iter()
+                            .map(|x| {
+                                let c = run
+                                    .vm
+                                    .field(run.vm.value(*x), "creature")
+                                    .map(|v| run.vm.value(v));
+                                format!("{c:?}")
+                            })
+                            .collect()
+                    });
+                    println!("  {name}: {named:?}");
+                }
+                for n in ROUND_ANCHOR_A {
+                    println!("  {n} is {:?}", run.placed(n).0);
+                }
+            }
+        }
+        let Some(e) = eruption else { continue };
+        let id = run.vm.placement_of(e);
+        let reach = id
+            .and_then(|id| run.vm.local(id, "Damage Range"))
+            .map(|v| run.vm.value(v));
+        let hurt = id
+            .and_then(|id| run.vm.local(id, "Already Hurt Once Info Set"))
+            .and_then(|v| run.vm.set(run.vm.value(v)).map(<[Value]>::len));
+        let round: Vec<(String, bool, f32)> = ROUND_ANCHOR_A
+            .iter()
+            .map(|n| {
+                let (h, at) = run.placed(n);
+                let e_at = run.world.actor(e).unwrap().position;
+                (
+                    n.to_string(),
+                    run.world.removed(h),
+                    ft((at - e_at).length()),
+                )
+            })
+            .collect();
+        println!("step {k}: reach {reach:?} hurt {hurt:?} {round:?}");
+    }
 }

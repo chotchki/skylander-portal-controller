@@ -52,6 +52,13 @@ Eruptor's second attack SHALL play his eruption, 2 s at 1.4 times its speed (1.4
 - **WHEN** the button for his second attack goes down every other frame for 5 s, or is held as long
 - **THEN** he erupts three times, each 1 s after the last ended, or once when held
 
+### Requirement: Eruptor's eruption lays lava
+His eruption SHALL lay lava round him in three waves 0.15 s apart from its appearing, six blobs a wave on paths 60° apart from his facing, each wave's turned 36° on: each blob set down at his feet and drawn out along its path over 0.5 s to 8, 6 or 4 ft (2.4, 1.8, 1.2 m) by its wave, growing as it goes from (100, 300, 50) % to (260, 28, 140), (220, 46, 130) or (180, 64, 120) % and fading in over 0.25 s, then darkening, shrinking and going with the eruption.
+
+#### Scenario: Lava round his feet
+- **WHEN** Eruptor erupts on open ground facing north
+- **THEN** within 0.8 s six blobs lie 8 ft out at 0°, ±60°, ±120° and 180°, six more 6 ft out at 36° past each and six 4 ft out at 72° past each, and all are gone with the eruption, 1.85-1.89 s after it appeared
+
 ### Requirement: An attack lands when the original's does
 Each attack SHALL start the frame after its press and take effect where the original's does in the hero's attack animation, played at the original's speed: Eruptor's lava ball leaving his hand in the first frame that starts with 84 % or less of his throw (0.5 s at 1.5 times its speed) left, its fourth, and his eruption in the first that starts with half of his eruption left, its 43rd.
 

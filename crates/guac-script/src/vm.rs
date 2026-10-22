@@ -634,6 +634,14 @@ impl Vm {
         &self.config
     }
 
+    /// The seconds each tick and slide steps from now on
+    /// ([`Config::tick_seconds`]): a model replay steps the oracle's own
+    /// frames this way (design decision 18's model replay), where the TV
+    /// ticks 1/60 s throughout.
+    pub fn set_tick_seconds(&mut self, seconds: f32) {
+        self.config.tick_seconds = seconds;
+    }
+
     /// Adds a placement running `script`, ticked after those added before
     /// it. Off the whitelist it stays inert: never ticked, listed.
     pub fn add(&mut self, handle: Handle, name: &str, script: ScriptId) -> PlacementId {
@@ -1042,10 +1050,15 @@ impl Vm {
         result.map(|()| report)
     }
 
-    /// Every placement's tick, in the tick order.
+    /// Every placement's tick, in the tick order; what one spawns with a
+    /// script of its own joins the order's end and ticks this tick too
+    /// ([`Host::adopt`]).
     fn tick_all(&mut self, report: &mut StepReport, host: &mut dyn Host) -> Result<(), Halt> {
-        let order = self.order.clone();
-        for id in order {
+        let program = self.program.clone();
+        self.adopt(&program, host);
+        let mut at = 0;
+        while let Some(&id) = self.order.get(at) {
+            at += 1;
             let p = &self.placements[id as usize];
             if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
                 continue;
@@ -1054,6 +1067,7 @@ impl Vm {
             let result = self.tick(id, host);
             report.ticked += 1;
             report.ops += self.executed - before;
+            self.adopt(&program, host);
             match result {
                 Ok(None) => {}
                 Ok(Some(halt)) => report.stopped.push(halt),
@@ -1158,6 +1172,14 @@ impl Vm {
     /// and any that ended since the last scan.
     pub fn sliders_scanned(&self) -> usize {
         self.live.len()
+    }
+
+    /// What the host has spawned with scripts of their own, added at the
+    /// order's end.
+    fn adopt(&mut self, program: &Program, host: &mut dyn Host) {
+        for (handle, name, script) in host.adopt(program) {
+            self.add(handle, &name, script);
+        }
     }
 
     /// One tick of one placement. `Ok(Some)` is a play-mode stop.

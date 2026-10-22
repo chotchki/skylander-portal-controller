@@ -1263,6 +1263,15 @@ impl ScriptWorld {
             }
             Member::AttachNode => {
                 let h = actor.ok_or(HostFault::Nothing)?;
+                // An actor's own ground isn't something it hangs from (where
+                // it stands is found from where it is): the eruption's lava
+                // is hung so as it spawns, and AH.54's recordings read its
+                // hang null on every record while it stands on the ground.
+                // Another actor's ground still takes it (the movement
+                // update's helper, turned along its mover's slope).
+                if self.object(Some(v)) == Some(Object::Facet(h, Facet::Ground)) {
+                    return Ok(());
+                }
                 // Hung from a node, an actor sits at it.
                 if let Some(at_node) = self.point(v, engine)
                     && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)))

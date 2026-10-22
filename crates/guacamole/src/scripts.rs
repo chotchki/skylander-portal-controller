@@ -49,7 +49,7 @@ use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
 use guac_script::{
     Access, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode, Obj, OpCall,
-    PlacementId, Program, Value, Vm, Whitelist,
+    PlacementId, Program, ScriptId, Value, Vm, Whitelist,
 };
 use tracing::{info, warn};
 
@@ -730,16 +730,20 @@ impl ScriptWorld {
         let first = call.operands.first().and_then(|(_, v)| *v);
         let target = first.and_then(|v| self.handle(v));
         match call.class {
+            // The block runs with what it controls as its receiver, and the
+            // op reads as it on a path (`<OpControl>.placement.scale`: AH.54,
+            // the eruption grows and moves each blob so; read as nothing, the
+            // writes went nowhere and the lava sat still at his feet).
             Class::Control => Ok(match (first, target) {
                 (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
                 (Some(v), Some(_)) => Answer::Run {
                     receiver: Some(v),
-                    result: None,
+                    result: Some(v),
                 },
                 // An object no placement stands for: the pads, the portal.
                 (Some(v @ Value::Entity(_)), None) => Answer::Run {
                     receiver: Some(v),
-                    result: None,
+                    result: Some(v),
                 },
                 _ => Answer::Skip,
             }),
@@ -891,6 +895,9 @@ impl Host for WorldHost<'_, '_> {
     }
     fn make(&mut self, class: &str) -> Option<Value> {
         self.world.make(class)
+    }
+    fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
+        self.world.adopt(program)
     }
 }
 
@@ -1239,13 +1246,10 @@ pub fn set_health(vm: &mut Vm, minion: PlacementId, health: i32) -> bool {
 /// isn't read).
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
-    std::mem::take(&mut world.scripted)
+    world
+        .adopt(&program)
         .into_iter()
-        .filter_map(|(h, t)| {
-            let sid = world.script_of(t, &program)?;
-            let name = world.name_of(t).unwrap_or_default();
-            Some(vm.add(h, &name, sid))
-        })
+        .map(|(h, name, sid)| vm.add(h, &name, sid))
         .collect()
 }
 
@@ -1315,6 +1319,19 @@ impl ScriptWorld {
     }
 
     /// The script a template runs, in `program`.
+    /// The clones of scripted templates spawned since last asked, each
+    /// with its template's name and script ([`guac_script::Host::adopt`]);
+    /// one whose script `program` doesn't hold is dropped, as before.
+    pub fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
+        std::mem::take(&mut self.scripted)
+            .into_iter()
+            .filter_map(|(h, t)| {
+                let sid = self.script_of(t, program)?;
+                Some((h, self.name_of(t).unwrap_or_default(), sid))
+            })
+            .collect()
+    }
+
     pub fn script_of(&self, t: Obj, program: &Program) -> Option<u32> {
         let script = self.templates.get(&t)?.script.as_ref()?;
         program
@@ -1709,13 +1726,13 @@ mod tests {
             got.push(w.get(&at(ns, name, None), &mut NoEngine).unwrap());
         }
         assert_eq!(got, objects.map(Value::Entity));
-        // A tell on one runs its block with it.
+        // A tell on one runs its block with it, and reads as it.
         let pad = Value::Entity(objects[0]);
         assert_eq!(
             w.op(&call(Class::Control, Some(pad)), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Run {
                 receiver: Some(pad),
-                result: None
+                result: Some(pad)
             })
         );
     }
@@ -1753,11 +1770,16 @@ mod tests {
             ),
             Ok(Value::Float(12.5))
         );
+        // A tell on the clone runs its block with it, and reads as it
+        // (AH.54: `<OpControl>.placement.scale` is the clone's).
         let tell = call(Class::Control, Some(clone));
-        assert!(matches!(
+        assert_eq!(
             w.op(&tell, &mut |_| 0, &mut NoEngine),
-            Ok(Answer::Run { .. })
-        ));
+            Ok(Answer::Run {
+                receiver: Some(clone),
+                result: Some(clone)
+            })
+        );
         assert_eq!(
             w.op(&call(Class::Remove, Some(clone)), &mut |_| 0, &mut NoEngine),
             Ok(Answer::Done)

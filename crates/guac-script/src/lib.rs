@@ -55,7 +55,11 @@
 //! reading of AH.10's encounter end, which the order added misses by a
 //! frame both ways: Norticus (woken last) takes his scene the frame the
 //! last Chompy goes, and `Setup_001_Controller` (woken first) sees it and
-//! goes a frame later.
+//! goes a frame later. A placement a tick spawns with a script of its own
+//! ([`Host::adopt`]) joins the order's end and ticks that same tick, after
+//! every placement already in it: AH.54's recordings list the eruption's
+//! first wave of lava at the eruption's own first record, which its first
+//! tick spawns.
 //!
 //! `remove` takes a placement off: the rest of the tick it's in runs (a
 //! script taking itself off finishes its tick), then it's never ticked again
