@@ -110,6 +110,18 @@ pub struct TvSnapshot {
     /// The small join code drawn in the corner over the level or an alert
     /// (AG.29); `join_qr` counts its QR too.
     pub join_corner: bool,
+    /// Where each kind of breakable's loot count stands (openspec AH.27),
+    /// once the level's loot data is made; none before the scripts run.
+    pub loot: Option<LootShot>,
+}
+
+/// The level's loot counts as its scripts hold them (AH.21's running count:
+/// a break drops when its kind's count lands at or under the kind's rate).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct LootShot {
+    pub common: Option<f32>,
+    pub uncommon: Option<f32>,
+    pub rare: Option<f32>,
 }
 
 /// The portal's alert as drawn.
@@ -1349,7 +1361,7 @@ fn mirror_tv(
         play,
         heroes,
         cameras,
-        runtime,
+        (runtime, earning, script_world),
     ): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
@@ -1363,7 +1375,11 @@ fn mirror_tv(
         Option<Res<Play>>,
         Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         Query<(&Transform, &Projection), With<FollowCamera>>,
-        Option<Res<guacamole::scripts::ScriptRuntime>>,
+        (
+            Option<Res<guacamole::scripts::ScriptRuntime>>,
+            Option<Res<crate::progress::Earning>>,
+            Option<Res<guacamole::scripts::ScriptWorld>>,
+        ),
     ),
 ) {
     let Some(current) = current else {
@@ -1507,7 +1523,7 @@ fn mirror_tv(
     };
     let hero = play
         .as_deref()
-        .and_then(|p| p.report(&heroes, &cameras, runtime.as_deref()));
+        .and_then(|p| p.report(&heroes, &cameras, runtime.as_deref(), earning.as_deref()));
     let alert = alerts
         .iter()
         .next()
@@ -1539,6 +1555,18 @@ fn mirror_tv(
             || corner_qrs.iter().any(|image| image.image == handle)
     });
     let input = input_shot(intro.is_some(), pads, (&children, &texts, &images, &pips));
+    let loot = match (runtime.as_deref(), script_world.as_deref()) {
+        (Some(rt), Some(w)) => {
+            use guacamole::scripts::{Rarity, loot_index};
+            let shot = LootShot {
+                common: loot_index(&rt.vm, w, Rarity::Common),
+                uncommon: loot_index(&rt.vm, w, Rarity::Uncommon),
+                rare: loot_index(&rt.vm, w, Rarity::Rare),
+            };
+            (shot != LootShot::default()).then_some(shot)
+        }
+        _ => None,
+    };
     let snapshot = TvSnapshot {
         screen: current.screen.kind().to_string(),
         game,
@@ -1577,6 +1605,7 @@ fn mirror_tv(
         hero,
         alert,
         join_corner: !corners.is_empty(),
+        loot,
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

@@ -53,7 +53,9 @@
 //!   after it ([`crate::hero::HeroActions::release`]). No intro plays once
 //!   the level has started ([`crate::intro_player`]).
 //! - The hero taken off takes his scripts with him: the run starts over
-//!   from the level's part ([`crate::hero_scripts::reinstall`]), and the
+//!   from the level's part with the level kept as he left it
+//!   ([`crate::hero_scripts::reinstall_keeping_level`], AH.27: what its
+//!   scripts broke stays broken, its loot counts where they stood), and the
 //!   next hero in joins it as the first did (AH.24's join), his scripts
 //!   the one writer of his walk from then on.
 //! - A character that doesn't walk yet (AG.27) counts as one on the portal
@@ -448,9 +450,10 @@ pub(crate) struct HeroReport {
     pub health: Option<i32>,
     pub health_max: Option<i32>,
     pub behaviour: Option<String>,
-    /// His figure's experience and gold as the TV holds them: the placing
-    /// profile's row as the placement read it (AH.1), 0 for a figure no
-    /// profile placed, until AH.23 hands the figure to his scripts.
+    /// His figure's experience and gold as the TV holds them (AH.1): what
+    /// his figure's words hold after the last step once his scripts run
+    /// (AH.23), the placing profile's row as the placement read it before,
+    /// fresh for a figure no profile placed.
     pub experience: Option<u32>,
     pub gold: Option<u32>,
 }
@@ -586,6 +589,7 @@ impl Play {
         bodies: &Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
         runtime: Option<&ScriptRuntime>,
+        earning: Option<&crate::progress::Earning>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
         let body = self.on_stage().and_then(|h| bodies.get(h.hero).ok());
@@ -598,7 +602,13 @@ impl Play {
             (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(&rt.vm, *minion),
             _ => hero_scripts::HeroNumbers::default(),
         };
-        let progress = c.placement.owner.as_ref().map(|o| o.progress);
+        // The TV's values for his slot: what his figure's words hold after
+        // the last step (AH.23), else the row as the placement read it.
+        let progress = earning
+            .and_then(|e| e.slots.get(c.slot.as_usize()))
+            .and_then(Option::as_ref)
+            .map(|e| e.progress)
+            .or_else(|| c.placement.owner.as_ref().map(|o| o.progress));
         // In the level with him in it: not while the portal holds it with
         // no hero (AG.29), when a replacement is only the hero-to-be.
         let inside = self.on_stage().is_some();
@@ -728,8 +738,10 @@ fn follow_portal(
 /// level stops lighting his materials, and where he stood and the way he
 /// faced are kept for the next one in. His scripts go with him: the run is
 /// installed again from the level's part, his minion and everything his
-/// scripts spawned gone, for the next one's join (AH.24). The level holds
-/// from the next [`judge_portal`] (no hero in it).
+/// scripts spawned gone, for the next one's join (AH.24), the level kept as
+/// he left it (AH.27: what its scripts broke and took stays off, its loot
+/// counts where they stood). The level holds from the next
+/// [`judge_portal`] (no hero in it).
 fn take_off(
     inside: &mut Inside,
     level: &mut Level,
@@ -745,7 +757,7 @@ fn take_off(
     }
     level.forget(&gone.lit);
     commands.entity(gone.hero).despawn();
-    commands.queue(hero_scripts::reinstall);
+    commands.queue(hero_scripts::reinstall_keeping_level);
     info!(slot = slot.display(), left = ?inside.left, "the hero left the portal: the level holds");
 }
 
@@ -1100,6 +1112,7 @@ fn enter(
         walker.load_file,
         palette.clone(),
         s.source.as_deref(),
+        c.slot,
     );
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
@@ -1528,7 +1541,8 @@ mod tests {
 
     /// The turntables' made-up extract with Eruptor's load file on toy 9,
     /// a made-up model and hero side of its own, and a chapter 1 on
-    /// [`write_level`]'s walk; the TV on the portal view.
+    /// [`write_level`]'s walk; the TV on the portal view, each figure's
+    /// values followed (AH.1) with no server to send them to.
     fn play_app(dir: &std::path::Path) -> (App, crate::level::LevelSender) {
         let mut shelf = extract(dir);
         let ron = guac_ir::to_ron(&model("009_Eruptor")).unwrap();
@@ -1560,6 +1574,7 @@ mod tests {
                 SeamPlugin,
                 PlayPlugin,
                 crate::hero_scripts::HeroScriptsPlugin,
+                crate::progress::ProgressPlugin,
             ))
             .init_resource::<IntroQueue>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
@@ -2161,6 +2176,475 @@ mod tests {
             app.update();
         }
         assert!(hero(&app).pivot.distance(from) > 1.0);
+    }
+
+    // ---- AH.23: his figure in his scripts on the TV --------------------
+
+    /// The extract's progression tables beside [`write_attack_parts`]'s:
+    /// what lays his figure's words out.
+    fn write_figure_rows(dir: &std::path::Path) {
+        let p = crate::hero_scripts::tests::progression_rows();
+        let rel = IrFormat::Ron.progression_path();
+        std::fs::write(dir.join(rel), guac_ir::to_ron(&p).unwrap()).unwrap();
+    }
+
+    /// AH.23 on the TV: his figure in his scripts. Placed by Alice at 999
+    /// experience, Eruptor joins with his figure's tag on the portal holding
+    /// it; the synthetic second attack's award (a point, through `Game -
+    /// Award Experience`) lands in his figure's words, the TV reads it back
+    /// after the step onto his slot's values, `/api/_test/tv`'s report reads
+    /// it, and it goes to the map under the generation he was placed under
+    /// and from there to the row: 1,000, level 2. Placed with no profile
+    /// unlocked, the same award lands in his words and on the TV and
+    /// nothing goes to the map.
+    #[test]
+    fn a_scripts_award_reaches_his_figure_and_the_row() {
+        use guac_server::progress::{Drainer, ProgressSink, ProgressionSlot};
+        use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, alice, fresh) = rt.block_on(async {
+            let store =
+                guac_server::profiles::ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
+                    .await
+                    .unwrap();
+            let alice = store.create("Alice", "1234", "#e63946").await.unwrap();
+            let fresh = store
+                .instances()
+                .fresh(&alice, &format!("{ERUPTOR:06x}-0000"))
+                .await
+                .unwrap();
+            (store, alice, fresh.progress)
+        });
+        for owned in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, tx) = play_app(tmp.path());
+            write_attack_parts(tmp.path());
+            write_figure_rows(tmp.path());
+            let sink = ProgressSink::new();
+            app.insert_resource(crate::progress::ProgressOut(sink.clone()));
+            tx.send(write_level(tmp.path(), &lights())).unwrap();
+            let pad = test_pad::connect(&mut app, None, None);
+            until(&mut app, "the level and its scripts", |a| {
+                level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+            });
+            let mut change = placed(0, ERUPTOR, "Eruptor");
+            if owned && let PortalChange::Placed { placement, .. } = &mut change {
+                placement.owner = Some(PlacementOwner {
+                    profile_id: alice.clone(),
+                    initial: "A".into(),
+                    color: "#e63946".into(),
+                    progress: FigureProgress { xp: 999, ..fresh },
+                });
+            }
+            crate::turntable::tests::set(&mut app, [change.clone()]);
+            app.world_mut().write_message(PortalChanged(change));
+            until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+            test_pad::press(&mut app, pad, GamepadButton::East);
+            until(&mut app, "his scripts", |a| {
+                join(a).as_deref() == Some("joined")
+            });
+            let held = |app: &App| {
+                let e = app.world().resource::<crate::progress::Earning>();
+                e.slots[0].as_ref().unwrap().progress
+            };
+            // `/api/_test/tv`'s hero, as the mirror builds it.
+            let reported = |app: &mut App| {
+                let mut state: bevy::ecs::system::SystemState<(
+                    Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
+                    Query<(&Transform, &Projection), With<FollowCamera>>,
+                    Option<Res<ScriptRuntime>>,
+                    Option<Res<crate::progress::Earning>>,
+                    Res<Play>,
+                )> = bevy::ecs::system::SystemState::new(app.world_mut());
+                let (bodies, cameras, runtime, earning, play) = state.get(app.world()).unwrap();
+                play.report(&bodies, &cameras, runtime.as_deref(), earning.as_deref())
+                    .and_then(|r| r.experience)
+            };
+            let start = if owned { 999 } else { 0 };
+            let e = app.world().resource::<Play>().hero().unwrap();
+            let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+            let (data, generation) = run.figure.expect("his figure's tag on the portal");
+            assert_eq!(generation, if owned { fresh.generation } else { 0 });
+            let rt_vm = &app.world().resource::<ScriptRuntime>().vm;
+            let layout =
+                guacamole::level_scripts::figure_layout(tmp.path(), IrFormat::Ron).unwrap();
+            assert_eq!(
+                guacamole::figure::read(rt_vm, &layout, data).map(|v| v.xp),
+                Some(start),
+                "his words made from his slot's values"
+            );
+            assert_eq!(held(&app).xp, start);
+            assert_eq!(reported(&mut app), Some(start));
+            let _ = sink.waiting();
+            test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+            for _ in 0..3 {
+                app.update();
+            }
+            let rt_vm = &app.world().resource::<ScriptRuntime>().vm;
+            assert_eq!(
+                guacamole::figure::read(rt_vm, &layout, data).map(|v| v.xp),
+                Some(start + 1),
+                "the award in his words"
+            );
+            assert_eq!(held(&app).xp, start + 1, "read back onto his slot");
+            assert_eq!(reported(&mut app), Some(start + 1));
+            let waiting = sink.waiting();
+            if !owned {
+                assert_eq!(waiting, vec![], "an ownerless figure writes nothing");
+                continue;
+            }
+            assert_eq!(waiting.len(), 1, "{waiting:?}");
+            assert_eq!(
+                (waiting[0].2.progress.xp, waiting[0].2.progress.generation),
+                (1_000, fresh.generation)
+            );
+            let row = rt.block_on(async {
+                let (events, _) = tokio::sync::broadcast::channel(16);
+                let slot = ProgressionSlot::default();
+                slot.publish(guac_server::progress::Progression {
+                    level_xp: vec![0, 1_000],
+                    gold_cap: 65_000,
+                });
+                Drainer::new(sink.clone(), store.clone(), events, slot.clone())
+                    .drain()
+                    .await;
+                let row = store
+                    .instances()
+                    .read(&alice, &format!("{ERUPTOR:06x}-0000"))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                (row.progress, slot.get().unwrap().level_for(row.progress.xp))
+            });
+            assert_eq!((row.0.xp, row.1), (1_000, 2), "the row at level 2");
+        }
+    }
+
+    // ---- AH.27: the breakables on the TV --------------------------------
+
+    /// Where the synthetic barrel stands: 3 m ahead of [`START`] along his
+    /// facing, on the made-up floor.
+    const BARREL_AT: [f32; 3] = [START[0], FLOOR, START[2] + 3.0];
+
+    /// AH.27's parts beside [`write_attack_parts`]'s, after
+    /// [`write_level`]'s: the level's entry AH.27's breakable at
+    /// [`BARREL_AT`], its placement in the level's placements part at the
+    /// same object with its solid (a prop that stands for its solid alone),
+    /// and the figure's rows.
+    fn write_smash_parts(dir: &std::path::Path) {
+        use guac_formats::script::builder::{SMASH_BARREL, SMASH_BARREL_SIZE};
+        write_attack_parts(dir);
+        let barrel = crate::hero_scripts::tests::write_smash(dir, BARREL_AT);
+        write_figure_rows(dir);
+        let [width, height, length] = SMASH_BARREL_SIZE;
+        let solid = guac_ir::actor::Solid {
+            shape: guac_ir::actor::Shape::Cylinder,
+            solid: true,
+            world: false,
+            actor_surface: false,
+            offset: [0.0; 3],
+            rotation: [0.0; 3],
+            width,
+            height,
+            length,
+            weight: 1.0,
+            rebound: 0.0,
+        };
+        let placement = guac_ir::level::Placement {
+            object: barrel,
+            id: 0,
+            name: SMASH_BARREL.into(),
+            script: None,
+            position: BARREL_AT,
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            model: None,
+            solid: Some(solid),
+            movement: None,
+            waypoints: None,
+            activity_state: 4,
+            activation_range: 160.0,
+        };
+        crate::level::tests::write_props(dir, Vec::new(), vec![placement]);
+    }
+
+    /// The level's props as `/api/_test/tv` reports them.
+    fn props_report(app: &App) -> crate::level::PropsReport {
+        app.world()
+            .resource::<Level>()
+            .snapshot()
+            .props
+            .expect("the level's props")
+    }
+
+    /// AH.27 on the TV: Eruptor, Alice's at 5 gold, smashes the synthetic
+    /// barrel. The TV's listing runs it (the activity rule waking it, its
+    /// solid a prop in Avian's world that the scripts' engine maps to its
+    /// placement, so the ball stops on it short of its middle); a press
+    /// throws, the ball takes the barrel off and its prop goes down for
+    /// good (hidden, its solid out of Avian's world, `/api/_test/tv`'s
+    /// props listing it taken off); its coin pays 3 into his figure's
+    /// words, read back onto his slot and sent under his generation: 8.
+    /// Taken off and placed again, he comes back to the level as he left
+    /// it: the barrel still off in the fresh run, nothing to break, the
+    /// gold his figure's.
+    #[test]
+    fn eruptor_smashes_the_synthetic_barrel_and_its_coin_reaches_the_row() {
+        use guac_formats::script::builder::{
+            SMASH_BARREL, SMASH_FAR, SMASH_FAR_COIN, SMASH_GOLD, SMASH_SETUP,
+        };
+        use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        let source = write_level(tmp.path(), &lights());
+        write_smash_parts(tmp.path());
+        let sink = guac_server::progress::ProgressSink::new();
+        app.insert_resource(crate::progress::ProgressOut(sink.clone()));
+        tx.send(source).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        // The activity rule from the level's start before he's in: the
+        // barrel 3 m off it awake, the far one 63 m off asleep.
+        for _ in 0..3 {
+            app.update();
+        }
+        let placed_named = |app: &App, name: &str| {
+            let source = app.world().resource::<ScriptSource>();
+            let unit = source.level_unit().unwrap();
+            let world = app.world().resource::<ScriptWorld>();
+            let obj = world
+                .handles()
+                .keys()
+                .find(|o| o.unit == unit && world.name(world.handles()[o]) == name)
+                .copied()
+                .unwrap();
+            (obj, world.handles()[&obj])
+        };
+        let active = |app: &App, name: &str| {
+            let (_, h) = placed_named(app, name);
+            app.world()
+                .resource::<ScriptWorld>()
+                .actor(h)
+                .unwrap()
+                .active
+        };
+        assert!(active(&app, SMASH_BARREL), "from the start, before he's in");
+        assert!(!active(&app, SMASH_FAR), "out of its range");
+        // A scripted one out of range sleeps in the VM too: never ticked.
+        let asleep = |app: &App, name: &str| {
+            let (_, h) = placed_named(app, name);
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            vm.asleep(vm.placement_of(h).expect("it runs"))
+        };
+        assert!(asleep(&app, SMASH_FAR_COIN), "out of its range");
+        let generation = 4;
+        let owned = |slot: u8| {
+            let mut change = placed(slot, ERUPTOR, "Eruptor");
+            if let PortalChange::Placed { placement, .. } = &mut change {
+                placement.owner = Some(PlacementOwner {
+                    profile_id: "alice".into(),
+                    initial: "A".into(),
+                    color: "#e63946".into(),
+                    progress: FigureProgress {
+                        xp: 0,
+                        gold: 5,
+                        playtime_secs: 0,
+                        generation,
+                    },
+                });
+            }
+            change
+        };
+        let change = owned(0);
+        crate::turntable::tests::set(&mut app, [change.clone()]);
+        app.world_mut().write_message(PortalChanged(change));
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let (barrel_obj, barrel) = placed_named(&app, SMASH_BARREL);
+        let (setup_obj, _) = placed_named(&app, SMASH_SETUP);
+        assert!(
+            app.world().resource::<ScriptWorld>().taken_off(setup_obj),
+            "the setup took itself off at the start"
+        );
+        assert!(!active(&app, SMASH_FAR), "out of his range");
+        assert!(asleep(&app, SMASH_FAR_COIN), "out of his range");
+        assert!(
+            app.world()
+                .resource::<ScriptWorld>()
+                .actor(barrel)
+                .unwrap()
+                .active,
+            "awake: he's within its range"
+        );
+        assert!(props_report(&app).names.contains(&SMASH_BARREL.to_owned()));
+        assert!(props_report(&app).taken_off.is_empty());
+        // Its solid is its placement to the scripts' engine, both ways.
+        let prop_body = guac_motion::seam::BodyId(guacamole::props::PROP_BODIES + barrel_obj.index);
+        let standing = |app: &App| {
+            let w = app.world();
+            crate::hero_scripts::standing_props(
+                w.resource::<Level>(),
+                w.resource::<ScriptWorld>(),
+                w.get_resource::<ScriptSource>(),
+            )
+        };
+        let props = standing(&app);
+        assert_eq!(
+            crate::hero_scripts::body_of(&props, barrel),
+            Some(prop_body)
+        );
+        assert_eq!(
+            crate::hero_scripts::actor_of(&props, prop_body),
+            Some(barrel)
+        );
+        assert_eq!(
+            crate::hero_scripts::actor_of(&props, guac_motion::seam::BodyId(7)),
+            None
+        );
+        // So the scripts' engine answers.
+        {
+            use guacamole::script_engine::Engine;
+            let mut state: bevy::ecs::system::SystemState<(
+                Query<(Entity, &'static mut HeroBody)>,
+                AvianSeam,
+            )> = bevy::ecs::system::SystemState::new(app.world_mut());
+            let (mut heroes, seam) = state.get_mut(app.world_mut()).unwrap();
+            let engine = crate::hero_scripts::TvEngine::new(&mut heroes, &seam, 0.0, &props);
+            assert_eq!(engine.body(barrel), Some(prop_body));
+            assert_eq!(engine.actor_of(prop_body), Some(barrel));
+        }
+        let _ = sink.waiting();
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "the barrel broken", |a| {
+            a.world().resource::<ScriptWorld>().taken_off(barrel_obj)
+        });
+        // The ball stopped on its solid, short of its middle.
+        let world = app.world().resource::<ScriptWorld>();
+        let ball = world
+            .clones()
+            .into_iter()
+            .find(|&c| world.name(c) == guac_formats::script::builder::ATTACK_BALL)
+            .unwrap();
+        let at = world.actor(ball).unwrap().position;
+        assert!(world.removed(ball));
+        assert!(
+            at.z < BARREL_AT[2] - 0.3 && at.y > FLOOR + 0.3,
+            "it met the barrel's face: {at}"
+        );
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = props_report(&app);
+        assert_eq!(r.taken_off, [SMASH_BARREL]);
+        assert!(!r.names.contains(&SMASH_BARREL.to_owned()), "down: {r:?}");
+        let mut bodies = app.world_mut().query::<&crate::physics::SeamBody>();
+        assert!(
+            bodies.iter(app.world()).all(|b| b.id != prop_body),
+            "its solid out of Avian's world"
+        );
+        assert_eq!(
+            crate::hero_scripts::body_of(&standing(&app), barrel),
+            None,
+            "nor the engine's"
+        );
+        until(&mut app, "its coin's gold on his slot", |a| {
+            let e = a.world().resource::<crate::progress::Earning>();
+            e.slots[0].as_ref().unwrap().progress.gold == 5 + SMASH_GOLD as u32
+        });
+        let waiting = sink.waiting();
+        assert_eq!(
+            waiting
+                .last()
+                .map(|w| (w.2.progress.gold, w.2.progress.generation)),
+            Some((5 + SMASH_GOLD as u32, generation)),
+            "{waiting:?}"
+        );
+        // Off and on again: the level as he left it.
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        app.update();
+        let change = owned(2);
+        crate::turntable::tests::set(&mut app, [change.clone()]);
+        app.world_mut().write_message(PortalChanged(change));
+        until(&mut app, "his scripts again", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..5 {
+            app.update();
+        }
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.taken_off(barrel_obj), "still off in the fresh run");
+        // The setup ran again (its own take-off isn't play's to carry).
+        let setup = world.handles()[&setup_obj];
+        let vm = &app.world().resource::<ScriptRuntime>().vm;
+        let p = vm.placement_of(setup).unwrap();
+        assert_eq!(vm.local(p, "ran"), Some(guac_script::Value::Int(1)));
+        assert!(world.taken_off(setup_obj));
+        // The fresh run's placements are entities of their own.
+        let again = world.handles()[&barrel_obj];
+        assert_ne!(again, barrel);
+        assert!(!world.actor(again).unwrap().active, "asleep");
+        let r = props_report(&app);
+        assert!(!r.names.contains(&SMASH_BARREL.to_owned()));
+        let e = app.world().resource::<crate::progress::Earning>();
+        assert_eq!(
+            e.slots[2].as_ref().unwrap().progress.gold,
+            5 + SMASH_GOLD as u32,
+            "his figure's gold came back with him"
+        );
+
+        // A second swap carries what the first carried: the barrel still off
+        // in the third run, though nothing broke it in the second.
+        clear(&mut app, 2);
+        until(&mut app, "the call again", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        app.update();
+        let change = owned(0);
+        crate::turntable::tests::set(&mut app, [change.clone()]);
+        app.world_mut().write_message(PortalChanged(change));
+        until(&mut app, "his scripts a third time", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..5 {
+            app.update();
+        }
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.taken_off(barrel_obj), "still off after two swaps");
+        let third = world.handles()[&barrel_obj];
+        assert_ne!(third, again, "the third run's own");
+        assert!(!world.actor(third).unwrap().active, "asleep");
+        assert!(world.taken_off(setup_obj), "the setup ran and went again");
+        assert!(!props_report(&app).names.contains(&SMASH_BARREL.to_owned()));
+
+        // The activity rule follows him once he's in, not the level's start:
+        // set down 33 m short of the far barrel (no floor there; a step or
+        // two of falling), it and the far coin wake, the coin in the VM too.
+        assert!(!active(&app, SMASH_FAR), "out of his range");
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let near_far = Vec3::new(START[0], FLOOR + 1.0, START[2] + 30.0);
+        app.world_mut()
+            .entity_mut(e)
+            .get_mut::<HeroBody>()
+            .unwrap()
+            .hero
+            .pivot = near_far;
+        until(&mut app, "the far barrel woken by him", |a| {
+            active(a, SMASH_FAR)
+        });
+        assert!(!asleep(&app, SMASH_FAR_COIN), "the far coin runs");
     }
 
     // ---- AG.29 over AH.24: the portal's holds and his scripts ------------

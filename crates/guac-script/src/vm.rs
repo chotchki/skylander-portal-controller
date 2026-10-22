@@ -12,7 +12,7 @@ use crate::host::{
 };
 use crate::program::{
     Container, Contents, Decl, DefId, DefKind, Elem, Global, GlobalId, Ins, LiteralClass, Obj,
-    OpId, Operand, OperandId, Param, Program, ScriptId, Sym,
+    OpId, Operand, OperandId, Param, Program, ScriptId, Sym, Tag,
 };
 use crate::slide::{between, eased};
 use crate::value::{Value, arith_in, compare, convert, random_literal};
@@ -434,6 +434,18 @@ fn reads_its(program: &Program, o: OperandId) -> bool {
     }
 }
 
+/// The kind of cell a declaration's container makes.
+fn cell_kind(c: Container) -> Option<CellKind> {
+    match c {
+        Container::Value => Some(CellKind::Value),
+        Container::Reference => Some(CellKind::Reference),
+        Container::Set => Some(CellKind::Set),
+        Container::SetReference => Some(CellKind::SetReference),
+        Container::Structure => Some(CellKind::Structure),
+        Container::Unknown(_) => None,
+    }
+}
+
 /// A tag's value: its literal, through any expression holding it alone.
 fn tag_value(program: &Program, o: OperandId) -> Option<Value> {
     match program.operands.get(o as usize)? {
@@ -493,6 +505,9 @@ pub struct Vm {
     bound: Vec<Spot>,
     /// What a file object naming a placement reads as: its handle.
     objects: HashMap<Obj, Handle>,
+    /// The file object each named handle stands for: what a placement with
+    /// no script finds its tags by.
+    named: HashMap<Handle, Obj>,
     /// The VM's placement running under each handle.
     handles: HashMap<Handle, PlacementId>,
     /// `find variable`'s variables, by owner, name and declaration.
@@ -585,6 +600,7 @@ impl Vm {
             engine_sets: HashMap::new(),
             bound: Vec::new(),
             objects: HashMap::new(),
+            named: HashMap::new(),
             handles: HashMap::new(),
             found: HashMap::new(),
             cast: Value::Int(0),
@@ -707,6 +723,7 @@ impl Vm {
     /// value however a script reaches it: by name, as `my`, from a member.
     pub fn name_object(&mut self, obj: Obj, handle: Handle) {
         self.objects.insert(obj, handle);
+        self.named.insert(handle, obj);
     }
 
     /// Whether a `remove` took the placement off.
@@ -777,6 +794,14 @@ impl Vm {
         }
         p.asleep = asleep;
         true
+    }
+
+    /// Takes the placement running under `handle` off as a script's `remove`
+    /// of it does: its script stopped for good, never told again. An
+    /// embedder's, for a placement a run carries over as taken off (openspec
+    /// AH.27). False when none runs under it or it's already off.
+    pub fn remove(&mut self, handle: Handle) -> bool {
+        self.handles.contains_key(&handle) && self.take_off(Value::Entity(handle))
     }
 
     /// Whether the placement is asleep (inactive).
@@ -934,6 +959,67 @@ impl Vm {
         }
         self.write_cell(c, value, 0);
         true
+    }
+
+    /// Points a reference field of the structure `v` holds or names at
+    /// `target`, as `setref` does: how an embedder makes a link the
+    /// original's own unrun scripts make (the portal manager handing a
+    /// slot its tag's data, openspec AH.23). False when the structure has
+    /// no reference field of that name.
+    pub fn set_reference(&mut self, v: Value, name: &str, target: Value) -> bool {
+        let Some(sym) = self.program.find_sym(name) else {
+            return false;
+        };
+        let Value::Struct(s) = self.peek(v) else {
+            return false;
+        };
+        let Some(c) = self
+            .structs
+            .get(s as usize)
+            .and_then(|st| st.fields.iter().find(|(n, _)| *n == sym))
+            .map(|(_, c)| *c)
+        else {
+            return false;
+        };
+        if !matches!(
+            self.cells[c as usize].kind,
+            CellKind::Reference | CellKind::SetReference
+        ) {
+            return false;
+        }
+        self.write_cell(c, target, 0);
+        true
+    }
+
+    /// Writes a number into the number variable `v` names (a set's member,
+    /// [`Value::Cell`]), converted as a script's write converts it: how an
+    /// embedder puts a figure's words in its tag's save area (AH.23). False
+    /// when `v` names no number variable.
+    pub fn put(&mut self, v: Value, value: Value) -> bool {
+        let Value::Cell(c) = v else {
+            return false;
+        };
+        match self.cells.get(c as usize) {
+            Some(cell) if cell.kind == CellKind::Value => {
+                self.write_cell(c, value, 0);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Appends one fresh default member to the set `v` holds or names, as
+    /// `inc count` does, and returns it: how an embedder makes what the
+    /// original's own unrun scripts would (the portal save control's data
+    /// for a tag put on the portal, AH.23). `None` for anything but a set,
+    /// or a member that can't be made.
+    pub fn grow(&mut self, v: Value, host: &mut dyn Host) -> Option<Value> {
+        let Value::Set(s) = self.materialize(v) else {
+            return None;
+        };
+        let n = self.sets.get(s as usize)?.elems.len();
+        self.resize(s, n + 1, host).ok()?;
+        self.sets[s as usize].elems.last().copied()
     }
 
     /// What `v` holds when it names a cell or a file variable that has one
@@ -1879,6 +1965,22 @@ impl Vm {
             return Ok(cell.is_some());
         }
         let key = (recv(owner), name, decl);
+        // A placement of a loaded file with no script (a breakable) has its
+        // tags from the start too, as a running placement's are its locals:
+        // the loot system's init reads each breakable's `archetype ref`.
+        let file_obj = match owner {
+            Value::Entity(h) => self.named.get(&h).copied(),
+            Value::Object(o) => Some(o),
+            _ => None,
+        };
+        if !self.found.contains_key(&key)
+            && filter <= 3
+            && let Some(obj) = file_obj
+            && self.tag(obj, name, decl).is_some()
+        {
+            let c = self.tag_cell(obj, name, decl)?;
+            self.found.insert(key, c);
+        }
         let cell = match (filter, self.found.get(&key).copied()) {
             (0 | 1, found) => found,
             (2, Some(c)) => Some(c),
@@ -2382,6 +2484,40 @@ impl Vm {
         Ok(())
     }
 
+    /// The tag `name` `obj`'s file gives it, when its declaration holds
+    /// what `decl`'s container does.
+    fn tag(&self, obj: Obj, name: Sym, decl: Decl) -> Option<Tag> {
+        self.program
+            .tags
+            .get(&obj)?
+            .iter()
+            .find(|t| t.name == name)
+            .copied()
+            .filter(|t| cell_kind(t.decl.container) == cell_kind(decl.container))
+    }
+
+    /// A new cell holding the tag `name` `obj`'s file gives it ([`Vm::tag`]).
+    fn tag_cell(&mut self, obj: Obj, name: Sym, decl: Decl) -> Result<u32, Fault> {
+        let Some(tag) = self.tag(obj, name, decl) else {
+            return unsupported("no such tag");
+        };
+        let value = match tag.value {
+            None => Value::Int(0),
+            Some(o) => match tag_value(&self.program, o) {
+                Some(v) => v,
+                // A reference tag names an object of its file (a
+                // breakable's `archetype ref`, AH.20): that object.
+                None => match tag_object(&self.program, o) {
+                    Some(obj) => self.canon(Value::Object(obj)),
+                    None => return unsupported("a tag whose value isn't a literal"),
+                },
+            },
+        };
+        let c = self.new_cell(decl, None, 0)?;
+        self.write_cell(c, value, 0);
+        Ok(c)
+    }
+
     /// `find variable` on a placement the VM runs: among its locals, the
     /// ones its script declares made as they're first reached.
     fn find_local(
@@ -2392,44 +2528,19 @@ impl Vm {
         filter: u32,
     ) -> Result<Option<u32>, Fault> {
         let p = &self.placements[pid as usize];
-        let kind = |c: Container| match c {
-            Container::Value => Some(CellKind::Value),
-            Container::Reference => Some(CellKind::Reference),
-            Container::Set => Some(CellKind::Set),
-            Container::SetReference => Some(CellKind::SetReference),
-            Container::Structure => Some(CellKind::Structure),
-            Container::Unknown(_) => None,
-        };
         let mut existing = p
             .locals
             .get(&name)
             .copied()
-            .filter(|&c| Some(self.cells[c as usize].kind) == kind(decl.container));
+            .filter(|&c| Some(self.cells[c as usize].kind) == cell_kind(decl.container));
         // A tag its file gives the placement is one of its variables from
         // the start, holding the tag's value.
-        let tag = p
-            .obj
-            .and_then(|o| self.program.tags.get(&o))
-            .and_then(|t| t.iter().find(|t| t.name == name).copied());
-        let is_tag = tag.is_some_and(|t| kind(t.decl.container) == kind(decl.container));
+        let is_tag = p.obj.is_some_and(|o| self.tag(o, name, decl).is_some());
         if existing.is_none()
-            && let Some(tag) = tag
             && is_tag
+            && let Some(obj) = p.obj
         {
-            let value = match tag.value {
-                None => Value::Int(0),
-                Some(o) => match tag_value(&self.program, o) {
-                    Some(v) => v,
-                    // A reference tag names an object of its file (a
-                    // breakable's `archetype ref`, AH.20): that object.
-                    None => match tag_object(&self.program, o) {
-                        Some(obj) => self.canon(Value::Object(obj)),
-                        None => return unsupported("a tag whose value isn't a literal"),
-                    },
-                },
-            };
-            let c = self.new_cell(decl, None, 0)?;
-            self.write_cell(c, value, 0);
+            let c = self.tag_cell(obj, name, decl)?;
             self.placements[pid as usize].locals.insert(name, c);
             existing = Some(c);
         }

@@ -11,12 +11,73 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use guac_extract::intros::IrFormat;
 use guac_extract::{levels, roster, scripts};
 use guac_formats::igz::Igz;
 use guac_formats::script::Graph;
+use guac_ir::progression::Progression;
 use guac_script::{Program, Role, Unit};
 
+use crate::figure::Layout;
 use crate::scripts::Files;
+
+/// The figure's layout off the progression tables in the extract at `dir`
+/// (AH.2's part, AH.23): why not when the part isn't there or its rows
+/// don't lay a figure out (the e2e fixture's tables have none).
+pub fn figure_layout(dir: &Path, ir: IrFormat) -> Result<Layout, String> {
+    let rel = ir.progression_path();
+    let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let p: Progression = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    Layout::of(&p)
+}
+
+/// Each animation palette the extract's level palettes part holds (AH.22:
+/// every slot of every model a placement of the level names), by its
+/// model's path, as each slot's clip length at 100 %, 0 where a slot holds
+/// no clip (openspec AH.27: what the TV sets for the level's placements, as
+/// the headless runs set them). Why not when the part isn't there or is
+/// another dump's or level's.
+pub fn level_palettes(
+    dir: &Path,
+    level: &str,
+    ir: IrFormat,
+) -> Result<Vec<(String, Vec<f32>)>, String> {
+    let rel = ir.level_path(level, levels::PALETTES);
+    let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let p: guac_ir::palette::LevelPalettes = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    if p.level != level {
+        return Err(format!("{rel} holds {}'s palettes", p.level));
+    }
+    Ok(p.palettes
+        .iter()
+        .map(|palette| (palette.owner.clone(), lengths(palette)))
+        .collect())
+}
+
+/// Each slot's clip length at 100 %, 0 where a slot holds no clip.
+pub fn lengths(palette: &guac_ir::palette::Palette) -> Vec<f32> {
+    let mut out = vec![0.0; usize::from(palette.slots)];
+    for e in &palette.entries {
+        if let guac_ir::palette::SlotEntry::Clip { clip, .. } = &e.entry
+            && let Some(l) = out.get_mut(usize::from(e.slot))
+        {
+            *l = clip.duration;
+        }
+    }
+    out
+}
 
 /// A level's script part linked, with what the load cost: the level's
 /// reading task makes one beside the parts it draws.
@@ -31,6 +92,14 @@ pub struct Linked {
     /// Each fighter's load file and its unit: his file's placements join the
     /// run when he's the hero (openspec AH.24).
     pub fighters: Vec<(String, u16)>,
+    /// Where a figure's values sit in its tag's words, from the extract's
+    /// progression tables ([`figure_layout`], AH.23), or why not: [`load`]
+    /// leaves it unread, the level's load reads it beside.
+    pub layout: Result<Layout, String>,
+    /// The level's placements' palettes by model ([`level_palettes`]), or
+    /// why not: [`load`] leaves them unread, the level's load reads them
+    /// beside.
+    pub palettes: Result<Vec<(String, Vec<f32>)>, String>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -131,6 +200,8 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         placements,
         order,
         fighters,
+        layout: Err("not read".into()),
+        palettes: Err("not read".into()),
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,
@@ -207,6 +278,68 @@ mod tests {
         );
         assert!(linked.program.script_named("Creature.ai").is_some());
         assert!(linked.took() >= linked.linked);
+    }
+
+    /// The level's palettes part (openspec AH.27): each palette by its
+    /// model's path, each slot's clip length at 100 % (0 where a slot holds
+    /// none); another level's refused, a missing part named.
+    #[test]
+    fn the_levels_palettes_by_model() {
+        use guac_ir::palette::{LevelPalettes, Palette, PaletteSlot, SlotEntry};
+        let tmp = tempfile::tempdir().unwrap();
+        let ir = IrFormat::Ron;
+        let rel = ir.level_path(LEVEL, levels::PALETTES);
+        let e = level_palettes(tmp.path(), LEVEL, ir).unwrap_err();
+        assert!(e.starts_with(&rel), "{e}");
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([0; 32]),
+        };
+        let clip = guac_ir::clip::Clip {
+            name: "Coin_Spin.ma".into(),
+            duration: 0.5,
+            frame_duration: 1.0 / 30.0,
+            frames: 16,
+            tracks: Vec::new(),
+        };
+        let palettes = LevelPalettes {
+            identity: identity.clone(),
+            level: LEVEL.into(),
+            palettes: vec![Palette {
+                identity,
+                owner: "C:/x/Coin.mdl".into(),
+                slots: 3,
+                entries: vec![PaletteSlot {
+                    slot: 1,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip,
+                    },
+                }],
+                refused: Vec::new(),
+            }],
+        };
+        let path = tmp.path().join(&rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, guac_ir::to_ron(&palettes).unwrap()).unwrap();
+        assert_eq!(
+            level_palettes(tmp.path(), LEVEL, ir).unwrap(),
+            [("C:/x/Coin.mdl".to_owned(), vec![0.0, 0.5, 0.0])]
+        );
+        // Another level's, where level 212's should be.
+        let other = tmp
+            .path()
+            .join(ir.level_path("level_212", levels::PALETTES));
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::copy(&path, &other).unwrap();
+        let e = level_palettes(tmp.path(), "level_212", ir).unwrap_err();
+        assert!(e.contains(&format!("holds {LEVEL}'s palettes")), "{e}");
     }
 
     #[test]

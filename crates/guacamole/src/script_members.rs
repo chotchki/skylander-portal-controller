@@ -72,6 +72,9 @@ pub(crate) enum Member {
     Controller(usize),
     Physical(usize),
     Portal,
+    /// `redoctaneperipheralscriptobject.size of region 1` and `2` on the
+    /// portal: a figure's tag's two data regions in bytes (AH.23).
+    Region(u8),
     // AH.17's.
     Range,
     Orientation,
@@ -224,6 +227,13 @@ impl Member {
             );
         }
         add("redoctaneperipheralsystemobject", "portal", Member::Portal);
+        for n in 1..=2u8 {
+            add(
+                "redoctaneperipheralscriptobject",
+                &format!("size of region {n}"),
+                Member::Region(n),
+            );
+        }
         add("placement", "activation range", Member::Range);
         add("matrixmeasurement", "orientation", Member::Orientation);
         add("orientationmeasurement", "facing", Member::Facing);
@@ -486,7 +496,15 @@ impl ScriptWorld {
             let point = hero.pivot - Vec3::Y * height;
             return Some((point, normal, Some(1)));
         }
-        let at = self.actors.get(&h)?.position;
+        let a = self.actors.get(&h)?;
+        // Asleep, a placement has no corpus (AG.7's INACTIVE) and so no
+        // ground: its ground's type reads -1, which the destructibles
+        // system shuts a breakable down by and wakes it on (openspec AH.21;
+        // a hypothesis, no oracle read has a sleeping one's ground).
+        if a.managed && !a.active {
+            return None;
+        }
+        let at = a.position;
         let origin = at + Vec3::Y * 0.1;
         let actors = self.actor_bodies(engine);
         let hit = guac_motion::ground::ray(engine.seam(), origin, Vec3::NEG_Y, 160.0, &actors)
@@ -2363,6 +2381,59 @@ mod tests {
         assert!(
             (centre - (0.762 + METRES_PER_FOOT)).abs() < 1e-5,
             "{centre}"
+        );
+    }
+
+    /// The two members a breakable's debris reach that no earlier root's
+    /// run did (openspec AH.21): a piece's relative roll reads its roll and
+    /// a write turns it, in degrees and unclamped as registered (the debris'
+    /// roll eased 20-40° on from its 45°); its solid's rebound reads its
+    /// file's percent and keeps a write.
+    #[test]
+    fn a_pieces_relative_roll_and_its_solids_rebound() {
+        use guac_script::Kind;
+        use guac_script::members::{HERO as TABLE, find};
+        let mut e = bench();
+        let mut w = world();
+        let mut piece = ball(Vec3::ZERO, 100.0);
+        piece.angles.roll = 45.0;
+        piece.solid.rebound = 25.0;
+        w.actors.insert(BALL, piece);
+        let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
+        let roll = at("orientationmeasurement", "relative roll", Some(turn), None);
+        assert_eq!(
+            w.get_member(&roll, Member::RelativeRoll, &mut e),
+            Ok(Value::Float(45.0))
+        );
+        w.set_member(&roll, Member::RelativeRoll, Value::Float(83.5), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap();
+        assert_eq!(
+            (a.angles.roll, a.angles.tilt, a.angles.facing),
+            (83.5, 0.0, 0.0)
+        );
+        let facet = w.objs.value(Object::Facet(BALL, Facet::Collision));
+        let rebound = at("collisioninfo", "rebound", Some(facet), None);
+        let field = Member::Solid(SolidField::Rebound);
+        assert_eq!(
+            w.get_member(&rebound, field, &mut e),
+            Ok(Value::Float(25.0))
+        );
+        w.set_member(&rebound, field, Value::Float(0.0), &mut e)
+            .unwrap();
+        assert_eq!(w.actor(BALL).unwrap().solid.rebound, 0.0);
+        let r = find(TABLE, "orientationmeasurement", "relative roll").unwrap();
+        assert_eq!((r.units, r.kind()), ("degrees", Kind::Float));
+        assert_eq!(
+            guac_script::convert(&r.spec(), Value::Int(400)),
+            Some(Value::Float(400.0)),
+            "open both ways"
+        );
+        let r = find(TABLE, "collisioninfo", "rebound").unwrap();
+        assert_eq!((r.units, r.kind()), ("percent", Kind::Float));
+        assert_eq!(
+            guac_script::convert(&r.spec(), Value::Float(-5.0)),
+            Some(Value::Float(-5.0))
         );
     }
 

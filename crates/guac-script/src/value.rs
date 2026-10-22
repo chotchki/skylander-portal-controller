@@ -131,6 +131,21 @@ pub fn arith_in(precision: Precision, operator: u32, a: Value, b: Value) -> Opti
                 op(half(x, 16), half(y, 16))? << 16 | op(half(x, 0), half(y, 0))?,
             ))
         }
+        // A colour's bytes, each on its own and held to 0-255 (openspec
+        // AH.21: a pot's particle tint, white less the tint).
+        (Value::Color(x), Value::Color(y)) => {
+            let mut out = 0u32;
+            for at in [24, 16, 8, 0] {
+                let (p, q) = (((x >> at) & 0xFF) as i32, ((y >> at) & 0xFF) as i32);
+                let r = match operator {
+                    0 => p + q,
+                    1 => p - q,
+                    _ => return None,
+                };
+                out |= (r.clamp(0, 0xFF) as u32) << at;
+            }
+            Some(Value::Color(out))
+        }
         (Value::Int(x), Value::Int(y)) => Some(Value::Int(match operator {
             0 => x.wrapping_add(y),
             1 => x.wrapping_sub(y),
@@ -263,6 +278,32 @@ pub fn random_literal(v: Value, word: u32) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A colour's bytes add and subtract each on its own, held to 0-255
+    /// (openspec AH.21): the particle tinter's white less a pot's tint is
+    /// the tint's complement byte by byte, a generator's colour less that
+    /// stops at 0 where it would go under, and a sum stops at 255. A colour
+    /// times or over anything stops unsupported, as does a colour with a
+    /// number.
+    #[test]
+    fn a_colours_bytes_add_and_subtract_each_held_to_0_255() {
+        let white = Value::Color(0xFFFF_FFFF);
+        let tint = Value::Color(14_149_367); // 0x00D7E6F7
+        assert_eq!(arith(1, white, tint), Some(Value::Color(0xFF28_1908)));
+        assert_eq!(
+            arith(1, Value::Color(0x1050_9020), Value::Color(0xFF28_1908)),
+            Some(Value::Color(0x0028_7718)),
+            "each byte stops at 0"
+        );
+        assert_eq!(
+            arith(0, Value::Color(0x80F0_0102), Value::Color(0x8020_0304)),
+            Some(Value::Color(0xFFFF_0406)),
+            "each byte stops at 255"
+        );
+        assert_eq!(arith(2, white, tint), None);
+        assert_eq!(arith(3, white, tint), None);
+        assert_eq!(arith(0, white, Value::Int(1)), None);
+    }
 
     #[test]
     fn every_comparison_code_at_and_either_side_of_the_tolerance() {

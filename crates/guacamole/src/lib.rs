@@ -7,6 +7,7 @@
 
 pub mod census;
 pub mod character;
+pub mod figure;
 pub mod game_controller;
 pub mod level_scene;
 pub mod level_scripts;

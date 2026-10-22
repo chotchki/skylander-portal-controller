@@ -2044,6 +2044,34 @@ pub const LOOP: &[Registered] = &[
     ),
 ];
 
+/// What AH.23's figure on the portal reaches past AH.16-AH.21's tables:
+/// the portal's two data regions, which `Save - Set up Tag Data Fields`
+/// sizes a tag's save area by, each as the original registers it (bytes,
+/// 0 to 448). The host's: a figure's tag holds 112 bytes in its first
+/// region and 64 in its second, as AH.11's live `save data area` of 44
+/// words gives (12 words past the first region's 16 and 12 past the
+/// second's 4). Nothing on the disc writes either.
+pub const FIGURE: &[Registered] = &[
+    m(
+        "redoctaneperipheralscriptobject",
+        "size of region 1",
+        "IntMeasurement",
+        "bytes",
+        0.0,
+        448.0,
+        Host,
+    ),
+    m(
+        "redoctaneperipheralscriptobject",
+        "size of region 2",
+        "IntMeasurement",
+        "bytes",
+        0.0,
+        448.0,
+        Host,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2129,7 +2157,7 @@ mod tests {
             }
         }
         // The fight's members are none of the earlier tables'.
-        for r in CREATURES.iter().chain(COMBAT).chain(LOOP) {
+        for r in CREATURES.iter().chain(COMBAT).chain(LOOP).chain(FIGURE) {
             assert!(
                 find(INIT_CHAIN, r.namespace, r.name).is_none(),
                 "{}",
@@ -2147,6 +2175,7 @@ mod tests {
             .chain(CREATURES)
             .chain(COMBAT)
             .chain(LOOP)
+            .chain(FIGURE)
         {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
@@ -2170,11 +2199,18 @@ mod tests {
         register(&mut members, CREATURES);
         register(&mut members, COMBAT);
         register(&mut members, LOOP);
+        register(&mut members, FIGURE);
         // The hero's entry wins where both tables name a member.
         let init = INIT_CHAIN
             .iter()
             .filter(|r| find(HERO, r.namespace, r.name).is_none());
-        for r in init.chain(HERO).chain(CREATURES).chain(COMBAT).chain(LOOP) {
+        for r in init
+            .chain(HERO)
+            .chain(CREATURES)
+            .chain(COMBAT)
+            .chain(LOOP)
+            .chain(FIGURE)
+        {
             assert_eq!(r.kind(), kind_of(r), "{}", r.path());
             let id = MemberId::named(r.namespace, r.name);
             match r.keeper {
@@ -2212,6 +2248,7 @@ mod tests {
             .chain(CREATURES)
             .chain(COMBAT)
             .chain(LOOP)
+            .chain(FIGURE)
             .filter(labelled)
         {
             let n = r.units.split('|').count();
@@ -2414,6 +2451,36 @@ mod tests {
         register(&mut members, LOOP);
         let (_, place) = members
             .get(MemberId::named("system", "absolute zero"))
+            .unwrap();
+        assert_eq!(place, Place::Host);
+    }
+
+    /// AH.23's rows by the registry's own entries (aj-vm's live table): the
+    /// portal's regions in bytes, 0 to 448, the host's.
+    #[test]
+    fn the_figures_members_convert_by_their_units_and_range() {
+        for name in ["size of region 1", "size of region 2"] {
+            let r = find(FIGURE, "redoctaneperipheralscriptobject", name).unwrap();
+            assert_eq!(
+                (r.class, r.units, r.kind(), r.keeper),
+                ("IntMeasurement", "bytes", Kind::Int, Keeper::Host),
+                "{}",
+                r.path()
+            );
+            assert_eq!(convert(&r.spec(), Value::Int(500)), Some(Value::Int(448)));
+            assert_eq!(
+                convert(&r.spec(), Value::Float(112.9)),
+                Some(Value::Int(112))
+            );
+            assert_eq!(convert(&r.spec(), Value::Int(-4)), Some(Value::Int(0)));
+        }
+        let mut members = Members::new();
+        register(&mut members, FIGURE);
+        let (_, place) = members
+            .get(MemberId::named(
+                "redoctaneperipheralscriptobject",
+                "size of region 2",
+            ))
             .unwrap();
         assert_eq!(place, Place::Host);
     }

@@ -15,10 +15,10 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, E2E_START,
-    E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, gaits_tv, guacamole_only,
-    inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv,
-    wait_for_tv,
+    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS,
+    E2E_SMASH_SCRIPTS, E2E_START, E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap,
+    gaits_tv, guacamole_only, inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv,
+    set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -1032,7 +1032,8 @@ fn started(steps: &[Value]) -> Vec<u64> {
 /// bottom button starts his throw's clip and spawns the ball, which falls
 /// onto the made-up floor and is taken off; held it throws once, the
 /// attack held reading in the input's; a right shoulder starts the second
-/// attack's clip; the top button does nothing.
+/// attack's clip and awards a point, which his figure's words take and the
+/// TV and Alice's row show (AH.23); the top button does nothing.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn a_press_throws_from_his_scripts() {
@@ -1040,7 +1041,7 @@ async fn a_press_throws_from_his_scripts() {
         return;
     }
     let server = TestServer::spawn_guacamole_fighting().expect("spawn guacamole");
-    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    let (phone, alice_id, _) = phone_as(&server, "Alice", ALICE).await;
     pick_giants(&server, &phone).await;
     let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
         s["level"]["state"] == "ready" && !s["level"]["scripts"].is_null()
@@ -1146,7 +1147,10 @@ async fn a_press_throws_from_his_scripts() {
     .await;
     assert_eq!(started(&steps), [20], "held, one throw");
 
-    // A right shoulder: the second attack's clip. The top button: nothing.
+    // A right shoulder: the second attack's clip, and its award (a point,
+    // through the synthetic `Game - Award Experience`) in his figure's
+    // words, read back onto the TV and written to Alice's row (AH.23). The
+    // top button: nothing.
     let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
         .as_u64()
         .unwrap();
@@ -1158,6 +1162,21 @@ async fn a_press_throws_from_his_scripts() {
     })
     .await;
     assert_eq!(started(&steps), [32]);
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["hero"]["experience"] == json!(1)
+    })
+    .await
+    .expect("the award on the TV");
+    let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let (status, body) = stats(&server, &alice_id, &figure).await;
+        if status == 200 && body["xp"] == json!(1) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the row: {status} {body}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
         .as_u64()
         .unwrap();
@@ -1168,6 +1187,142 @@ async fn a_press_throws_from_his_scripts() {
     let steps = scripts_until(&server.url, since, Duration::from_secs(1), |_| true).await;
     assert!(started(&steps).is_empty() && named(&steps, "spawned").is_empty());
     phone.close().await.unwrap();
+}
+
+/// AH.27: a press breaks the synthetic barrel and its coin's gold reaches
+/// the phone. Over AH.27's synthetic breakable (written with AH.13's
+/// writer, our numbers: a barrel 3 m ahead of the start, a prop for its
+/// solid, beside AH.24's attack): Alice's Eruptor placed and taken over,
+/// his scripts joined, the barrel standing; the bottom button throws, the
+/// ball takes the barrel off (its prop down, `/api/_test/tv`'s props
+/// listing it taken off) and goes with it, the coin it drops comes out and
+/// is taken, his figure's gold on the TV (3), in Alice's row and on her
+/// phone's details strip, which had read 0.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_press_breaks_the_barrel_and_its_coins_gold_reaches_the_phone() {
+    use guac_formats::script::builder::{ATTACK_BALL, SMASH_BARREL, SMASH_COIN, SMASH_GOLD};
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_smashing().expect("spawn guacamole");
+    let (phone, alice_id, _) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready" && !s["level"]["scripts"].is_null()
+    })
+    .await
+    .expect("the level and its scripts");
+    assert_eq!(snap["level"]["scripts"]["scripts"], E2E_SMASH_SCRIPTS);
+    assert!(
+        snap["loot"].is_null(),
+        "the synthetic part keeps no loot data"
+    );
+    place_named(&phone, "Eruptor").await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] == "paused"
+    })
+    .await
+    .expect("the level waits for a pad");
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "east"}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level" && s["hero"]["scripts"] == "joined"
+    })
+    .await
+    .expect("his scripts join");
+    let props = &snap["level"]["props"];
+    assert!(
+        props["names"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(SMASH_BARREL)),
+        "the barrel stands: {props}"
+    );
+    assert_eq!(props["taken_off"], json!([]));
+    assert_eq!(snap["hero"]["gold"], json!(0));
+    let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();
+    open_details(&phone, "Eruptor").await;
+    wait_strip_gold(&phone, "0").await;
+
+    // The press: the ball, the barrel off, the coin out and taken.
+    let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
+        .as_u64()
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    let gold = SMASH_GOLD as u64;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["level"]["props"]["taken_off"] == json!([SMASH_BARREL]) && s["hero"]["gold"] == gold
+    })
+    .await
+    .expect("the barrel broken and its coin's gold on the TV");
+    let props = &snap["level"]["props"];
+    assert!(
+        !props["names"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(SMASH_BARREL)),
+        "its prop down: {props}"
+    );
+    let steps = scripts_until(&server.url, since, Duration::from_secs(2), |s| {
+        named(s, "gone").iter().any(|n| n == SMASH_COIN)
+    })
+    .await;
+    assert_eq!(named(&steps, "spawned"), [ATTACK_BALL, SMASH_COIN]);
+    let mut gone = named(&steps, "gone");
+    gone.sort();
+    assert_eq!(gone, [ATTACK_BALL, SMASH_COIN]);
+    // The ball went at the barrel, over the floor, short of its middle.
+    let ball = steps
+        .iter()
+        .flat_map(|s| s["gone"].as_array().cloned().unwrap_or_default())
+        .find(|c| c["name"] == ATTACK_BALL)
+        .unwrap();
+    let at = &ball["at"];
+    assert!(
+        at[1].as_f64().unwrap() - f64::from(E2E_FLOOR) > 0.3,
+        "over the floor: {at}"
+    );
+    assert!(
+        at[2].as_f64().unwrap() < f64::from(E2E_START[2]) + 3.0,
+        "short of the barrel's middle: {at}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let (status, body) = stats(&server, &alice_id, &figure).await;
+        if status == 200 && body["gold"] == json!(gold) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the row: {status} {body}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    wait_strip_gold(&phone, &gold.to_string()).await;
+    phone.close().await.unwrap();
+}
+
+/// Waits up to 5 s for the details' stats strip to read `want` gold.
+async fn wait_strip_gold(phone: &Phone, want: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let read = strip(phone).await;
+        if read.get(1).map(String::as_str) == Some(want) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the strip read {read:?}, its gold never {want}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// The distance across the ground between two of `hero_at`'s points.

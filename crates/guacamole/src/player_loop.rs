@@ -22,10 +22,16 @@
 //!   (`Loot - Player Collecting Loot`), and the hero's health written to
 //!   his figure's stored data when it changes;
 //! - the tail: `script timer last frame` set, then the clock a tick on;
-//! - once a hero has joined, the game systems' tick's orbs (`Xp Balls - Xp
-//!   Ball Control`): the orbs popping out two a frame, coming down and
-//!   bouncing. The rest of that tick (its update macros, which run the
-//!   encounter's camera pans, and the playtime) isn't run.
+//! - the game systems' tick ([`PlayerLoop::game_systems`]): of its update
+//!   macros (`System Update Controls`' `update while unpaused macros`) the
+//!   ones [`UPDATES`] names, each once in the set's order (openspec AH.21:
+//!   the destructibles system waking a breakable in range as a target and
+//!   shutting a broken one down for its loot, the actor remover taking its
+//!   debris 1.5 s on); then, once a hero has joined, its orbs (`Xp Balls -
+//!   Xp Ball Control`): the orbs popping out two a frame, coming down and
+//!   bouncing. The rest of that tick (its other update macros, which run
+//!   the encounter's camera pans and the difficulty tracking, and the
+//!   playtime) isn't run.
 //!
 //! Not run: the HUD's messages and its low-health warning (the HUD is
 //! AH.26's stand-in), the join prompt and a player's join, the champion
@@ -49,6 +55,18 @@ use crate::scripts::{WorldHost, portal_manager, running};
 const SCRIPT: &str = "Spyro_PortalManager.ai";
 /// The game systems' script, whose tick moves the orbs.
 const GAME_SYSTEMS: &str = "GameSystems.ai";
+
+/// The game systems' update macros the loop runs, by name (openspec AH.21):
+/// the destructibles system's (a breakable woken in range made a target,
+/// one broken shut down, the bounce and a delayed effect) and the actor
+/// remover's (debris gone 1.5 s on). The set's other update macros (the
+/// encounter's camera pans, the HUD's) stay off.
+pub const UPDATES: [&str; 4] = [
+    "Destructibles - System Update",
+    "Destructibles - Bounce",
+    "Destructibles - Delayed Particle",
+    "Actor Remover Sytem Update Macro",
+];
 
 /// The portal manager's tick as the loop runs it: each stretch's positions
 /// in its script.
@@ -287,20 +305,80 @@ impl PlayerLoop {
             vm.run_span(pm, r.start, r.end, host)?;
         }
         vm.count_tick(pm);
-        // The game systems' tick's orbs, after the portal manager's (it's
-        // listed after it in `global.bld`), once a hero has joined; its
-        // clock counted each step, as its own tick would.
-        if let Some((_, r)) = &self.orbs
-            && let Some(gs) = running(vm, host.world, GAME_SYSTEMS)
-            && vm.is_held(gs)
-        {
-            if joined {
-                vm.run_span(gs, r.start, r.end, host)?;
-            }
-            vm.count_tick(gs);
+        self.game_systems(vm, host, joined)
+    }
+
+    /// The game systems' tick as the loop runs it, after the portal
+    /// manager's (it's listed after it in `global.bld`): the update macros
+    /// the loop runs ([`UPDATES`]), then once a hero has joined its orbs;
+    /// its clock counted each step, as its own tick would. Nothing until its
+    /// own first tick has run.
+    pub fn game_systems(
+        &self,
+        vm: &mut Vm,
+        host: &mut WorldHost<'_, '_>,
+        joined: bool,
+    ) -> Result<(), Halt> {
+        let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
+            return Ok(());
+        };
+        if !vm.is_held(gs) {
+            return Ok(());
         }
+        run_updates(vm, host, gs)?;
+        if joined && let Some((_, r)) = &self.orbs {
+            vm.run_span(gs, r.start, r.end, host)?;
+        }
+        vm.count_tick(gs);
         Ok(())
     }
+}
+
+/// The update macros of `System Update Controls`' `update while unpaused
+/// macros` the loop runs ([`UPDATES`]), each once in the set's order as the
+/// game systems' tick reaches the set, for `gs`; one a macro takes out of
+/// the set before its turn doesn't run.
+fn run_updates(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    gs: guac_script::PlacementId,
+) -> Result<(), Halt> {
+    let listed = update_macros(vm);
+    for name in listed {
+        if update_macros(vm).contains(&name) {
+            vm.call_with(Some(gs), name, &[], &[], host)?;
+        }
+    }
+    Ok(())
+}
+
+/// The set as it stands, by the names the loop runs: read again before each
+/// call, since an update macro takes itself or another out when it's done
+/// (the bounce with nothing bouncing, the remover with nothing to remove).
+pub fn update_macros(vm: &mut Vm) -> Vec<&'static str> {
+    let Some(g) = vm.program().global_named("System Update Controls") else {
+        return Vec::new();
+    };
+    let Some(controls) = vm.global(g).map(|v| vm.value(v)) else {
+        return Vec::new();
+    };
+    let Some(set) = vm.field(controls, "update while unpaused macros") else {
+        return Vec::new();
+    };
+    let elems = vm.set(set).map(<[Value]>::to_vec).unwrap_or_default();
+    let program = vm.program();
+    elems
+        .into_iter()
+        .filter_map(|e| match vm.value(e) {
+            Value::Object(o) => program.def_of(o),
+            _ => None,
+        })
+        .filter_map(|d| {
+            let d = program.resolve(d).unwrap_or(d);
+            let display = program.defs.get(d as usize)?.display.as_str();
+            UPDATES.iter().copied().find(|u| *u == display)
+        })
+        .collect()
 }
 
 /// A `global.bld` number, 0 when it reads none.
@@ -592,6 +670,195 @@ mod tests {
         // A script without the stretches: none found, nothing to run.
         let empty = PlayerLoop::read(&Program::default());
         assert_eq!(empty, PlayerLoop::default());
+    }
+
+    const GS: Obj = Obj { unit: 0, index: 2 };
+    const GS_HANDLE: u64 = 0x30;
+    const GS_PATH: &str = "C:/tfb/Content/Levels/Includes/Global/scripts/GameSystems.ai";
+    /// The game systems' update macros the synthetic file defines, each
+    /// counting its calls in a value cell: two the loop runs, one it
+    /// doesn't. The actor remover takes itself out of the set as it runs.
+    const UPDATED: [(&str, &str); 3] = [
+        ("Destructibles - System Update", "destructibles"),
+        ("Actor Remover Sytem Update Macro", "remover"),
+        ("Difficulty Tracking Macro", "difficulty"),
+    ];
+
+    /// A game systems file in the original's shape, our ops: `System Update
+    /// Controls` a file structure whose `update while unpaused macros` its
+    /// STARTUP fills with the three update macros. With `first_takes_remover`
+    /// the destructibles' macro takes the actor remover out of the set each
+    /// call, before the remover's turn.
+    fn game_systems(first_takes_remover: bool) -> Arc<Program> {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            let controls_ty = w.op(Class::DefineStructure, "Update Controls");
+            let updates = w.variable("update while unpaused macros", "ScriptSet", None);
+            let controls = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(controls, 0x08, "System Update Controls");
+            w.refer(controls, 0x1C, controls_ty);
+            let defs: Vec<_> = UPDATED
+                .iter()
+                .map(|(name, _)| w.op(Class::DefineMacro, name))
+                .collect();
+            let membership = |w: &mut Writer<'_>, def, combine| {
+                let lhs = w.stack(
+                    guac_formats::script::StackClass::Set,
+                    &[El::Local(controls), El::Local(updates)],
+                );
+                let rhs = w.reference(&[El::Local(def)], None);
+                let o = w.op(Class::ChangeMembership, "set [set]||to");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, combine);
+                w.refer(o, 0x24, rhs);
+                w.push(o);
+            };
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            for &d in &defs {
+                membership(w, d, 0);
+            }
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (section, _) = w.open(Class::MacroSection, "MACROS");
+            for (i, (def, (_, cell))) in defs.iter().zip(UPDATED).enumerate() {
+                let p = w.push(*def);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.inc(&[El::Member("test", cell)]);
+                if i == 1 {
+                    membership(w, *def, 1);
+                }
+                if i == 0 && first_takes_remover {
+                    membership(w, defs[1], 1);
+                }
+                w.end_block(p);
+            }
+            w.end_block(section);
+            let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+            let p = w.push(controls_ty);
+            w.push(updates);
+            w.end_block(p);
+            w.end_block(types);
+            w.end_block(pre);
+            w.end(GS_PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    /// The game systems' update macros as the loop runs them (openspec
+    /// AH.21): from its first tick on, each listed one in the set once a
+    /// step, the destructibles' every step, the actor remover once (it takes
+    /// itself out), the difficulty tracking never; before its first tick,
+    /// nothing; the orbs only once a hero has joined (none here).
+    #[test]
+    fn the_game_systems_run_the_listed_update_macros() {
+        let (mut vm, mut world, player_loop, gs) = game_systems_run(false);
+        assert_eq!(player_loop.orbs, None);
+        let mut generator = Generator::seeded(1);
+        game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        assert!(vm.is_held(gs), "its first tick taken");
+        assert_eq!(update_calls(&vm), [0; 3], "nothing before it");
+        assert_eq!(
+            update_macros(&mut vm),
+            [
+                "Destructibles - System Update",
+                "Actor Remover Sytem Update Macro"
+            ],
+            "the listed ones, in the set's order"
+        );
+        for _ in 0..10 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        assert_eq!(update_calls(&vm), [10, 1, 0]);
+        assert_eq!(update_macros(&mut vm), ["Destructibles - System Update"]);
+        let clock = vm.active_seconds(gs).unwrap();
+        assert!((clock - 11.0 / 60.0).abs() < 1e-5, "{clock}");
+    }
+
+    /// One the set loses before its turn doesn't run (the set read again
+    /// before each call): the destructibles' macro takes the actor remover
+    /// out each call, so the remover, listed as the step began, never runs.
+    #[test]
+    fn an_update_macro_taken_out_before_its_turn_doesnt_run() {
+        let (mut vm, mut world, player_loop, _) = game_systems_run(true);
+        let mut generator = Generator::seeded(1);
+        for _ in 0..11 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        assert_eq!(update_calls(&vm), [10, 0, 0]);
+        assert_eq!(update_macros(&mut vm), ["Destructibles - System Update"]);
+    }
+
+    /// [`game_systems`]' file on a VM of its own, in strict mode with its
+    /// first tick listed and each update macro's count a value cell: the
+    /// VM, its world, the loop read off it and the placement.
+    fn game_systems_run(first_takes_remover: bool) -> (Vm, ScriptWorld, PlayerLoop, PlacementId) {
+        let program = game_systems(first_takes_remover);
+        let player_loop = PlayerLoop::read(&program);
+        let files = Files {
+            placed: vec![Placed::named(GS, "GameSystems", Some(GS_PATH), 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(GS, GS_HANDLE)]);
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        for (_, cell) in UPDATED {
+            config
+                .members
+                .value_cell("test", cell, MemberSpec::new(Kind::Int, 0.0, 0.0));
+        }
+        config.whitelist = Whitelist::with_first_ticks(&[], &[], &["GameSystems.ai"]);
+        let sid = program.script_named("GameSystems.ai").unwrap();
+        let mut vm = Vm::new(program, config);
+        let gs = vm.add_at(GS_HANDLE, "GameSystems", sid, GS);
+        (vm, world, player_loop, gs)
+    }
+
+    /// A step as the loop takes it, a hero joined: the game systems' tick,
+    /// then every placement's.
+    fn game_systems_step(
+        vm: &mut Vm,
+        world: &mut ScriptWorld,
+        player_loop: &PlayerLoop,
+        generator: &mut Generator,
+    ) {
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x1000);
+        let mut host = WorldHost {
+            world,
+            engine: &mut engine,
+            generator,
+            spawn: &mut spawn,
+        };
+        player_loop
+            .game_systems(vm, &mut host, true)
+            .unwrap_or_else(|h| panic!("{h}"));
+        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+    }
+
+    /// Each of [`UPDATED`]'s calls so far.
+    fn update_calls(vm: &Vm) -> [i32; 3] {
+        UPDATED.map(
+            |(_, cell)| match vm.value_cell(None, MemberId::named("test", cell)) {
+                Some(Value::Int(i)) => i,
+                _ => 0,
+            },
+        )
     }
 
     /// The loop's schedule over game time: before a hero joins, the clock

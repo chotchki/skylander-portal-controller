@@ -410,6 +410,19 @@ impl<'b> Writer<'b> {
         p
     }
 
+    /// `if <element> in <set>`, `membership` as `OpCheckMembership` codes it
+    /// (0 all, 1 none, 2 any, 3 all with multiplicity): returns its
+    /// position; the block follows.
+    pub fn check_in(&mut self, set: &[El<'_>], membership: u32, element: &[El<'_>]) -> usize {
+        let lhs = self.value(set);
+        let rhs = self.reference(element, None);
+        let (p, o) = self.open(Class::CheckMembership, "if||in");
+        self.refer(o, 0x1C, lhs);
+        self.word(o, 0x20, membership);
+        self.refer(o, 0x24, rhs);
+        p
+    }
+
     /// `start sequence <sequence>`: returns its position; the block follows.
     pub fn start_sequence(&mut self, sequence: &[El<'_>]) -> usize {
         let lhs = self.group(sequence, None);
@@ -654,6 +667,10 @@ pub const ATTACK_HELPER: &str = "009_LavaCollider";
 /// The hero's health and full health as [`attack`]'s minion sets them.
 pub const ATTACK_HEALTH: i32 = 120;
 pub const ATTACK_HEALTH_MAX: i32 = 150;
+/// What [`attack`]'s second attack awards through `Game - Award
+/// Experience`, an orb's worth: added to the first word of his figure's save
+/// area, where a figure's first area of experience starts (AH.23).
+pub const ATTACK_AWARD: i32 = 1;
 
 /// The portal manager's placement name, as the join looks it up.
 const PORTAL_MANAGER: &str = "Spyro_PortalManager";
@@ -668,6 +685,17 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 ///   `Manage Projectiles` (nothing), `Portal - Define Minion` (the slot's
 ///   spawned object becomes its `minion`) and `Game - Activate/Deactivate
 ///   Minion` (its `minion` spawned at its `spawn location`);
+/// - the shapes a figure's tag stands in (AH.23): `portal save control`, a
+///   global whose `tag data` holds each tag's `Portal - Tag Data` (its
+///   `save data area` of words, its toy id, serial, subtype and load
+///   state); `Save - Set up Tag Data Fields`, sizing a tag's save area at a
+///   word per four bytes of the portal's two regions; the loaded slot's
+///   `tag data`, `tag` (`rfid`, `prodid`), `entered` and `owner`, its
+///   object info's `tag data`; the portal manager's `player data`, two
+///   players each with a `loaded data`, which `portal control data`'s
+///   `player joined data` names; and `Game - Award Experience`, adding its
+///   `amount` to the first word of the first player's loaded slot's object
+///   info's tag data's save area;
 /// - the fighter's: his definition (`009_Eruptor_Def`, whose first tick
 ///   defines his minion through a stub of `Portal - Define Minion`), his
 ///   minion (`009_Eruptor`, a template), whose script on its first tick
@@ -677,7 +705,9 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 ///   his pivot, moved [`ATTACK_BALL_RISE`] ft up and sent at
 ///   [`ATTACK_BALL_SPEED`] ft/s, [`ATTACK_BALL_PITCH`]° up along his
 ///   facing, and on action 2 going down starts slot
-///   [`ATTACK_SECOND_SLOT`]; and the ball, a template whose solid touches
+///   [`ATTACK_SECOND_SLOT`] and awards [`ATTACK_AWARD`] experience through
+///   a stub of `Game - Award Experience`; and the ball, a template whose
+///   solid touches
 ///   the level and whose script takes it off the tick it touches anything.
 ///
 /// The scripts' names are the ones the TV's whitelist runs (the portal
@@ -702,15 +732,233 @@ pub fn attack() -> Attack {
     }
 }
 
+/// The breakable [`smash`] writes: its placement's name.
+pub const SMASH_BARREL: &str = "Synthetic_Barrel";
+/// The coin it drops: a template named as one of chapter 1's spinning
+/// coins, so the TV's listing (openspec AH.27) runs its clones.
+pub const SMASH_COIN: &str = "Coin_spinning";
+/// What the coin pays through `Game - Award Money`.
+pub const SMASH_GOLD: i32 = 3;
+/// The level's macro [`attack`]'s ball asks for each tick it flies.
+pub const SMASH_BREAK: &str = "Synthetic - Break";
+/// The barrel's solid: a cylinder this wide, tall and long (ft).
+pub const SMASH_BARREL_SIZE: [f32; 3] = [3.0, 6.0, 3.0];
+/// How far the coin reaches for the hero: its solid, a sphere this wide
+/// (ft), which touches nothing (no solid, no level mesh).
+pub const SMASH_COIN_REACH: f32 = 20.0;
+
+/// A second barrel [`smash`] writes, [`SMASH_FAR_AHEAD`] m past the first,
+/// out of its range of a hero beside the first: asleep by the activity
+/// rule.
+pub const SMASH_FAR: &str = "Synthetic_Barrel_Far";
+pub const SMASH_FAR_AHEAD: f32 = 60.0;
+/// The model the far barrel names (none of the extract's: what a level's
+/// palettes part keys a placement's palette by).
+pub const SMASH_FAR_MODEL: &str = "C:/tfb/Content/Models/Objects/Synthetic_Barrel.mdl";
+/// A spinning coin [`smash`] places [`SMASH_FAR_AHEAD`] m past the barrel,
+/// running the coin's script under a name the TV's listing runs (one of
+/// chapter 1's): a scripted placement out of its range, asleep in the VM.
+pub const SMASH_FAR_COIN: &str = "Coin_spinning(1)";
+/// A running placement [`smash`] writes whose STARTUP sets its `ran` and
+/// takes itself off, as the level's archetype setups do at the level's
+/// start, under one's name so the TV's listing runs it.
+pub const SMASH_SETUP: &str = "init_temp_barrel_b";
+
+/// What [`smash`] writes: the level's entry, and the barrel's object index
+/// in it (what the level's props part keys its solid by).
+#[derive(Debug, Clone)]
+pub struct Smash {
+    pub level: Vec<u8>,
+    pub barrel: u32,
+}
+
+/// AH.27's synthetic breakable (openspec AH.27; design decision 19), the
+/// level's entry beside [`attack`]'s, our numbers throughout:
+///
+/// - [`SMASH_BARREL`], at `barrel_at` (its pivot, metres), a running
+///   placement with no script, as the original's breakables have none:
+///   the level builder's 160 ft activation range, its solid a
+///   [`SMASH_BARREL_SIZE`] cylinder;
+/// - [`SMASH_FAR`], another, [`SMASH_FAR_AHEAD`] m further along z,
+///   naming [`SMASH_FAR_MODEL`];
+/// - [`SMASH_FAR_COIN`], a placed coin beside the far barrel running the
+///   coin's script;
+/// - [`SMASH_SETUP`], running from the level's start with no range, whose
+///   STARTUP sets its local `ran` to 1 and takes itself off;
+/// - [`SMASH_COIN`], a template whose script holds the level's
+///   [`SMASH_BREAK`]: when the barrel is among what touches the caller (the
+///   ball, `collisioninfo.contacts with me`), a coin spawned where the
+///   barrel stands, then the barrel and the caller taken off; and whose
+///   coin, each tick, once anything touches its [`SMASH_COIN_REACH`]
+///   sphere (the hero beside it), pays [`SMASH_GOLD`] through a stub of
+///   `Game - Award Money` and takes itself off.
+///
+/// A press throws [`attack`]'s ball; the ball, asking for the break as it
+/// flies, takes the barrel off where it meets it, and the coin the barrel
+/// drops pays the hero's figure.
+pub fn smash(barrel_at: [f32; 3]) -> Smash {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let barrel = b.object(0, "tfbActorInfo", 0xF8);
+    let coin = b.object(0, "tfbActorInfo", 0xF8);
+    let far = b.object(0, "tfbActorInfo", 0xF8);
+    let far_coin = b.object(0, "tfbActorInfo", 0xF8);
+    let my = El::Member("optoplevelbehavior", "my");
+    let setup_script = {
+        let mut w = Writer::new(&mut b);
+        let ran = w.variable("ran", "ValueInfo", Some("IntMeasurement"));
+        let info = w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Setup.ai",
+            |w| {
+                let one = w.int(1);
+                w.set(&[El::Local(ran)], one);
+                w.remove(&[my]);
+            },
+            |_| {},
+            |_| {},
+        );
+        w.declare(info, &[ran]);
+        info
+    };
+    let setup = actor_with(&mut b, SMASH_SETUP, Some(setup_script), 4);
+    let touching = [
+        my,
+        El::Member("actorinfo", "collision volume"),
+        El::Member("collisioninfo", "contacts with me"),
+    ];
+    let coin_script = {
+        let mut w = Writer::new(&mut b);
+        let award = w.op(Class::DefineMacro, "Game - Award Money");
+        w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Coin.ai",
+            |_| {},
+            |w| {
+                let (p, _) = define_with(w, SMASH_BREAK, &[]);
+                let hit = w.check_in(&touching, 2, &[El::Local(barrel)]);
+                let facing = w.int(0);
+                let s = w.spawn(&[El::Local(coin)], &[El::Local(barrel)], facing);
+                w.end_block(s);
+                w.remove(&[El::Local(barrel)]);
+                w.remove(&[my]);
+                w.end_block(hit);
+                w.flow_end();
+                w.end_block(p);
+            },
+            |w| {
+                let p = w.behaviour("spin");
+                let zero = w.int(0);
+                let mut count = touching.to_vec();
+                count.push(El::Member("setvariant", "count"));
+                let near = w.check(&count, 4, zero);
+                let gold = w.int(SMASH_GOLD);
+                call_stub(w, award, &[("amount", "ValueInfo", gold)]);
+                w.remove(&[my]);
+                w.end_block(near);
+                w.end_block(p);
+            },
+        )
+    };
+    let [x, y, z] = barrel_at;
+    place(
+        &mut b,
+        barrel,
+        SMASH_BARREL,
+        None,
+        4,
+        &[x, y, z, 0.0, 0.0, 0.0],
+    );
+    // A cylinder (4), solid (bit 3).
+    collision(&mut b, barrel, 0x0C, SMASH_BARREL_SIZE);
+    let ahead = z + SMASH_FAR_AHEAD;
+    place(
+        &mut b,
+        far,
+        SMASH_FAR,
+        None,
+        4,
+        &[x, y, ahead, 0.0, 0.0, 0.0],
+    );
+    collision(&mut b, far, 0x0C, SMASH_BARREL_SIZE);
+    let far_model = b.object(0, "tfbPhysicsModel", 0x30);
+    crate::model::builder::info(&mut b, far_model, SMASH_FAR_MODEL);
+    b.pointer(at(far, 0xDC), far_model);
+    place(&mut b, coin, SMASH_COIN, Some(coin_script), 5, &[0.0; 6]);
+    place(
+        &mut b,
+        far_coin,
+        SMASH_FAR_COIN,
+        Some(coin_script),
+        4,
+        &[x, y, ahead, 0.0, 0.0, 0.0],
+    );
+    collision(&mut b, far_coin, 0x03, [SMASH_COIN_REACH; 3]);
+    // A sphere (3) that stops nothing.
+    collision(&mut b, coin, 0x03, [SMASH_COIN_REACH; 3]);
+    let blocks = b.section(0x10);
+    crate::igz::layouts::builder::list(
+        &mut b,
+        root,
+        blocks,
+        &[
+            Some(barrel),
+            Some(coin),
+            Some(far),
+            Some(setup),
+            Some(far_coin),
+        ],
+    );
+    let level = b.build();
+    let igz = crate::igz::Igz::parse(&level).expect("the level's entry parses");
+    let barrel = crate::level::Placements::read(&igz)
+        .expect("its placements read")
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SMASH_BARREL))
+        .expect("the barrel")
+        .index as u32;
+    Smash { level, barrel }
+}
+
 /// A `tfbActorInfo` placement named `name` running `script` (an info from
-/// [`Writer::end`]), at the origin, `state` its activity state.
+/// [`Writer::end`]), at the origin, `state` its activity state, with no
+/// activation range and no buffer: awake from the level's start wherever
+/// the hero is, as `global.bld`'s placements are (openspec AH.27: the TV
+/// runs the activity rule).
 fn actor_with(b: &mut IgzBuilder, name: &str, script: Option<Location>, state: u32) -> Location {
     let a = b.object(0, "tfbActorInfo", 0xF8);
-    crate::level::builder::placement(b, a, name, 0, &[0.0; 6], state);
+    place(b, a, name, script, state, &[0.0; 6]);
+    b.put_bytes(at(a, 0xD0), &[0; 8]);
+    a
+}
+
+/// The placement fields of the `tfbActorInfo` at `a`: named `name`, running
+/// `script`, `state` its activity state, at `matrix` (its position, then its
+/// angles), with the level builder's 160 ft activation range and 8 ft buffer.
+fn place(
+    b: &mut IgzBuilder,
+    a: Location,
+    name: &str,
+    script: Option<Location>,
+    state: u32,
+    matrix: &[f32; 6],
+) {
+    crate::level::builder::placement(b, a, name, 0, matrix, state);
     if let Some(s) = script {
         b.pointer(at(a, 0xA8), s);
     }
-    a
+}
+
+/// A `CollisionInfo` at `a`'s `_collision`: `properties` (its shape in bits
+/// 0-2, solid 3, the level mesh 4) and its size in feet.
+fn collision(b: &mut IgzBuilder, a: Location, properties: u32, [w, h, l]: [f32; 3]) {
+    let solid = b.object(0, "CollisionInfo", 0x58);
+    b.put_u32(at(solid, 0x18), properties);
+    let sizes: Vec<u8> = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, w, h, l, 1.0, 0.0]
+        .iter()
+        .flat_map(|v| v.to_be_bytes())
+        .collect();
+    b.put_bytes(at(solid, 0x1C), &sizes);
+    b.pointer(at(a, 0xC4), solid);
 }
 
 /// A parameter op named `name` binding into `def`, declared as `class`,
@@ -722,6 +970,26 @@ fn parameter_of(w: &mut Writer<'_>, name: &str, class: &str, def: Location) -> L
     w.word(o, 0x28, u32::MAX);
     w.refer(o, 0x38, def);
     o
+}
+
+/// `use macro <stub>` binding `args` (each parameter's name, its declared
+/// class and its right side) through an INTERFACE, its block closed with
+/// nothing after the return: a call to a macro another file defines, which
+/// the link resolves by name (a stub nothing defines skips the block).
+fn call_stub(w: &mut Writer<'_>, stub: Location, args: &[(&str, &str, Location)]) {
+    let np = w.group(&[El::Local(stub)], None);
+    let (u, o) = w.open(Class::UseMacro, "use macro");
+    w.refer(o, 0x1C, np);
+    let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+    for &(name, class, rhs) in args {
+        let param = parameter_of(w, name, class, stub);
+        w.refer(param, 0x30, rhs);
+        w.push(param);
+    }
+    let enter = w.flow(Class::FlowMacro);
+    w.push(enter);
+    w.close(iface);
+    w.end_block(u);
 }
 
 /// Opens a macro definition `name` with an INTERFACE declaring `params`
@@ -858,35 +1126,99 @@ fn attack_global() -> Vec<u8> {
         let info_ty = w.op(Class::DefineStructure, "Object Info");
         let slot_ty = w.op(Class::DefineStructure, "Loaded Object");
         let control_ty = w.op(Class::DefineStructure, "Portal Control");
+        let pair_ty = w.op(Class::DefineStructure, "Portal RFID and ProdID Pair");
+        let tag_ty = w.op(Class::DefineStructure, "Portal - Tag Data");
+        let save_ty = w.op(Class::DefineStructure, "Portal Save Control");
+        let player_ty = w.op(Class::DefineStructure, "Player Joined Data");
         let spawned = w.variable("spawned object", "ScriptReference", None);
         let extra = w.variable("minion additional info", "ScriptReference", None);
+        let info_tag = w.variable("tag data", "ScriptReference", None);
         let object_info = structure_var(&mut w, "object info", info_ty);
+        let slot_tag = w.variable("tag data", "ScriptReference", None);
+        let pair = structure_var(&mut w, "tag", pair_ty);
+        let entered = w.variable("entered", "ValueInfo", Some("IntMeasurement"));
+        let owner = w.variable("owner", "ValueInfo", Some("IntMeasurement"));
+        let rfid = w.variable("rfid", "ValueInfo", Some("IntMeasurement"));
+        let prodid = w.variable("prodid", "ValueInfo", Some("IntMeasurement"));
+        let area = w.variable("save data area", "ScriptSet", Some("ValueInfo"));
+        let tag_fields: Vec<Location> = [
+            "portal tag index",
+            "toy id",
+            "toy serial",
+            "toy subtype",
+            "initial load complete",
+        ]
+        .iter()
+        .map(|n| w.variable(n, "ValueInfo", Some("IntMeasurement")))
+        .collect();
+        let save_tags = w.variable("tag data", "ScriptSet", None);
+        w.refer(save_tags, 0x24, tag_ty);
+        let loaded_data = w.variable("loaded data", "ScriptReference", None);
+        let joined = w.variable("player joined data", "ScriptSetReference", None);
+        let players = w.variable("player data", "ScriptSet", None);
+        w.refer(players, 0x24, player_ty);
         let loaded = w.variable("loaded objects", "ScriptSet", None);
         w.refer(loaded, 0x24, slot_ty);
-        // `portal control data` and `projectile control data`: globals.
+        // `portal control data`, `portal save control` and `projectile
+        // control data`: globals.
         let control = w.b.object(0, "ScriptStructure", 0x20);
         w.text(control, 0x08, "portal control data");
         w.refer(control, 0x1C, control_ty);
+        let save_control = w.b.object(0, "ScriptStructure", 0x20);
+        w.text(save_control, 0x08, "portal save control");
+        w.refer(save_control, 0x1C, save_ty);
         let projectiles = w.b.object(0, "ScriptReference", 0x20);
         w.text(projectiles, 0x08, "projectile control data");
         let minion = w.variable("minion", "ScriptReference", None);
         let location = w.variable("spawn location", "ScriptReference", None);
+        let set_up_tag = w.variable("set up tag", "ScriptReference", None);
+        let words = w.variable("region words", "ValueInfo", Some("IntMeasurement"));
+        let more = w.variable("more words", "ValueInfo", Some("IntMeasurement"));
+        let amount = w.variable("amount", "ValueInfo", Some("IntMeasurement"));
+        let word = w.variable("word", "ScriptReference", None);
+        let shifted = w.variable("shifted", "ValueInfo", Some("IntMeasurement"));
+        let tags_held = w.variable("tags held", "ValueInfo", Some("IntMeasurement"));
         frame_with(
             &mut w,
             "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/Spyro_PortalManager.ai",
             |w| {
-                structure(w, info_ty, &[spawned, extra]);
-                structure(w, slot_ty, &[object_info]);
-                structure(w, control_ty, &[loaded]);
+                structure(w, info_ty, &[spawned, extra, info_tag]);
+                structure(w, pair_ty, &[rfid, prodid]);
+                structure(w, slot_ty, &[object_info, slot_tag, pair, entered, owner]);
+                let mut fields = vec![area];
+                fields.extend(&tag_fields);
+                structure(w, tag_ty, &fields);
+                structure(w, save_ty, &[save_tags]);
+                structure(w, player_ty, &[loaded_data]);
+                structure(w, control_ty, &[loaded, joined]);
             },
             |w| {
-                // The portal's one loaded slot.
+                // The portal's one loaded slot, and two players.
                 w.inc(&[
                     El::Local(control),
                     El::Local(loaded),
                     El::Member("setvariant", "count"),
                 ]);
                 setref(w, &[El::Local(projectiles)], &[El::Local(control)]);
+                for _ in 0..2 {
+                    w.inc(&[El::Local(players), El::Member("setvariant", "count")]);
+                }
+                setref(
+                    w,
+                    &[El::Local(control), El::Local(joined)],
+                    &[El::Local(players)],
+                );
+                // How many tags the save control holds: the file's variable
+                // reached, so a figure's stand-in finds it by name.
+                let held = w.rhs(
+                    "IntMeasurement",
+                    &[
+                        El::Local(save_control),
+                        El::Local(save_tags),
+                        El::Member("setvariant", "count"),
+                    ],
+                );
+                w.set(&[El::Local(tags_held)], held);
             },
             |w| {
                 let (p, _) = define_with(
@@ -939,6 +1271,110 @@ fn attack_global() -> Vec<u8> {
                 w.end_block(s);
                 w.flow_end();
                 w.end_block(p);
+                // A tag's save area: a word per four bytes of the portal's
+                // two regions.
+                let (p, _) = define_with(
+                    w,
+                    "Save - Set up Tag Data Fields",
+                    &[("set up tag", "ScriptReference")],
+                );
+                for (n, into) in [(1, words), (2, more)] {
+                    let region = format!("size of region {n}");
+                    let bytes = w.rhs(
+                        "IntMeasurement",
+                        &[
+                            El::Member("redoctaneperipheralsystemobject", "portal"),
+                            El::Member("redoctaneperipheralscriptobject", &region),
+                        ],
+                    );
+                    let four = w.int(4);
+                    let quarter = w.expr(bytes, Some((3, four)));
+                    w.set(&[El::Local(into)], quarter);
+                }
+                let a = w.rhs("IntMeasurement", &[El::Local(words)]);
+                let b2 = w.rhs("IntMeasurement", &[El::Local(more)]);
+                let both = w.expr(a, Some((0, b2)));
+                w.set(
+                    &[
+                        El::Local(set_up_tag),
+                        El::Local(area),
+                        El::Member("setvariant", "count"),
+                    ],
+                    both,
+                );
+                w.flow_end();
+                w.end_block(p);
+                // The award: the amount onto the first word of the first
+                // player's figure.
+                let (p, _) = define_with(
+                    w,
+                    "Game - Award Experience",
+                    &[("minion", "ScriptReference"), ("amount", "ValueInfo")],
+                );
+                setref(
+                    w,
+                    &[El::Local(word)],
+                    &[
+                        El::Local(control),
+                        El::Local(joined),
+                        El::Member("setvariant", "first"),
+                        El::Local(loaded_data),
+                        El::Local(object_info),
+                        El::Local(info_tag),
+                        El::Local(area),
+                        El::Member("setvariant", "first"),
+                    ],
+                );
+                let now = w.rhs("IntMeasurement", &[El::Local(word)]);
+                let add = w.rhs("IntMeasurement", &[El::Local(amount)]);
+                let sum = w.expr(now, Some((0, add)));
+                w.set(
+                    &[
+                        El::Local(word),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    sum,
+                );
+                w.flow_end();
+                w.end_block(p);
+                // The coins' award (openspec AH.27): the amount onto the
+                // gold the same word holds from its bit 24 (Giants' place
+                // for `pp_Money`), a figure holding under 256 gold.
+                let (p, _) = define_with(
+                    w,
+                    "Game - Award Money",
+                    &[("minion", "ScriptReference"), ("amount", "ValueInfo")],
+                );
+                setref(
+                    w,
+                    &[El::Local(word)],
+                    &[
+                        El::Local(control),
+                        El::Local(joined),
+                        El::Member("setvariant", "first"),
+                        El::Local(loaded_data),
+                        El::Local(object_info),
+                        El::Local(info_tag),
+                        El::Local(area),
+                        El::Member("setvariant", "first"),
+                    ],
+                );
+                let add = w.rhs("IntMeasurement", &[El::Local(amount)]);
+                let bit_24 = w.int(1 << 24);
+                let up = w.expr(add, Some((2, bit_24)));
+                w.set(&[El::Local(shifted)], up);
+                let now = w.rhs("IntMeasurement", &[El::Local(word)]);
+                let add = w.rhs("IntMeasurement", &[El::Local(shifted)]);
+                let sum = w.expr(now, Some((0, add)));
+                w.set(
+                    &[
+                        El::Local(word),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    sum,
+                );
+                w.flow_end();
+                w.end_block(p);
             },
             |_| {},
         )
@@ -955,15 +1391,18 @@ fn attack_fighter() -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     // The ball: its solid a 1 ft sphere that touches the level and nothing
-    // else, falling by its own gravity at full speed.
+    // else, falling by its own gravity at full speed. Each tick it asks the
+    // level's [`SMASH_BREAK`] first (a stub: a level without one skips it).
     let ball_script = {
         let mut w = Writer::new(&mut b);
+        let smash = w.op(Class::DefineMacro, SMASH_BREAK);
         w.script(
             "C:/tfb/Content/Levels/Includes/Minions/Eruptor/scripts/009_MagmaBall.ai",
             |_| {},
             |_| {},
             |w| {
                 let p = w.behaviour("fly");
+                call_stub(w, smash, &[]);
                 let zero = w.int(0);
                 let touched = w.check(
                     &[
@@ -982,15 +1421,8 @@ fn attack_fighter() -> Vec<u8> {
         )
     };
     let ball = actor_with(&mut b, ATTACK_BALL, Some(ball_script), 5);
-    let solid = b.object(0, "CollisionInfo", 0x58);
     // A sphere (3) that interacts with the level's mesh (bit 4) alone.
-    b.put_u32(at(solid, 0x18), 0x13);
-    let sizes: Vec<u8> = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]
-        .iter()
-        .flat_map(|v| v.to_be_bytes())
-        .collect();
-    b.put_bytes(at(solid, 0x1C), &sizes);
-    b.pointer(at(ball, 0xC4), solid);
+    collision(&mut b, ball, 0x13, [1.0; 3]);
     let parameters = b.object(0, "ActorParameters", 0x4C);
     let movement: Vec<u8> = [
         0.0f32,
@@ -1034,6 +1466,8 @@ fn attack_fighter() -> Vec<u8> {
         let description = structure_var(&mut w, "description", description_ty);
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let clip = w.variable("attack clip", "ScriptReference", None);
+        // The portal manager's award, through a stub of it.
+        let award = w.op(Class::DefineMacro, "Game - Award Experience");
         let ball_at = ball;
         let script = frame_with(
             &mut w,
@@ -1089,6 +1523,8 @@ fn attack_fighter() -> Vec<u8> {
                 w.end_block(first);
                 let second = on_press(w, 2);
                 start_slot(w, clip, ATTACK_SECOND_SLOT);
+                let points = w.int(ATTACK_AWARD);
+                call_stub(w, award, &[("amount", "ValueInfo", points)]);
                 w.end_block(second);
                 w.end_block(p);
             },
@@ -1105,18 +1541,8 @@ fn attack_fighter() -> Vec<u8> {
         w.script(
             "C:/tfb/Content/Levels/Includes/Minions/Eruptor/scripts/009_Def_Eruptor.ai",
             |w| {
-                let np = w.group(&[El::Local(stub)], None);
-                let (p, o) = w.open(Class::UseMacro, "use macro");
-                w.refer(o, 0x1C, np);
-                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
-                let param = parameter_of(w, "minion", "ScriptReference", stub);
                 let rhs = w.reference(&[El::Local(minion)], None);
-                w.refer(param, 0x30, rhs);
-                w.push(param);
-                let enter = w.flow(Class::FlowMacro);
-                w.push(enter);
-                w.close(iface);
-                w.end_block(p);
+                call_stub(w, stub, &[("minion", "ScriptReference", rhs)]);
             },
             |_| {},
             |_| {},
