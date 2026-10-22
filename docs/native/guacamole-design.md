@@ -1457,7 +1457,8 @@ hitching replay included, rounded up:
 | `ACTORS` | floor 1, k 1 | actors listed and skinned: idle-B-09, a slow replay, listed one more at F0 + 1,260 while the other nine agreed to 1,500, so floor 0 fails it; the walk's outcomes still part by 7 at 240 |
 | `ANIMATION_STEPS` | floor 1, k 1 | the animation LCG: idle-B-01 stepped once at F0 + 240 while the other nine hadn't, so floor 0 fails it |
 | `FRAME_FLOOR` | 0.03 | at floor 0 the two replays of a checkpoint's largest pair fail their own leave-one-out by construction; the largest lead any replay had over the others' band was 0.0262 (a slow idle replay's end shot) |
-| event and totals floors | not set | AF observes no events, XP or gold; AH, the first rung that does, calibrates them the same way |
+| `anchor_a` (AH.51) | per event kind on game time: press and throw 5 ms, break and the eruption's later states 20, spawn and gone 35 (the default), a coin's pickup 20 | AF.12's method over AH.9's 50 pause-free replays from anchor A, every kind stamped, the largest need of five groups rounded up to 5 ms: a frame (1/60 s) or two where a replay keyed later. Judged under AH.45's (b): a kind no roll times stamped wherever it falls, the horizon gating only the rolled ones (a coin's pickup here). Every replay passes, and each first press moved 1 or 2 flips fails on the throw as well as the press |
+| anchor B's event floors, totals floors | not set | AH.10 measured anchor B's (AH.59 names them); the totals are AH.30's |
 
 The acceptance is leave-one-out with each replay a candidate against the other nine, judged inside THEIR
 horizon, as a Guacamole run will be. AF.12's first cut read the horizon over all ten, the replay judged

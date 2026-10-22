@@ -10,12 +10,18 @@
 //! A stamp is game seconds since F0 and the game frame since F0. An event's
 //! stamp is judged against the replays' [earliest, latest] widened by its
 //! kind's floor (game seconds, calibrated by AF.12's method through
-//! [`leave_one_out`] and [`floors_needed`]) only when no roll times it and it
-//! lies inside the anchor's horizon (the last frame every replay drew alike
-//! by, [`super::draws`]); past the horizon, and for kinds a roll times, only
-//! the order is checked. Where an actor's replays part, the branches are
-//! counted (decision 18: a reference holding no replay of a branch claims
-//! nothing past it) and nothing after the parting is judged.
+//! [`leave_one_out`] and [`floors_needed`]); which stamps count is the
+//! judge's [`Gate`] over the anchor's horizon (the last frame every replay
+//! drew alike by, [`super::draws`]) and the kinds a roll times. Decision 18
+//! as first written stamps only what no roll times inside the horizon
+//! ([`Gate::AllKinds`]); AH.45's (b), the rule since chotchki's call on
+//! 2026-10-21, stamps every kind no roll times wherever it falls and lets the
+//! horizon gate only the kinds a roll times ([`Gate::RolledKinds`]), so a
+//! press moved a frame at anchor A, whose horizon is F0 itself, still fails.
+//! An anchor's calibrated floors are named in [`crate::tolerance`]. Where an
+//! actor's replays part, the branches are counted (decision 18: a reference
+//! holding no replay of a branch claims nothing past it) and nothing after
+//! the parting is judged.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -134,6 +140,19 @@ pub struct ActorReference {
     pub parted: Option<Branches>,
 }
 
+/// Which kinds the anchor's horizon gates: past it a gated kind's order is
+/// checked, never its stamps.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Gate {
+    /// Decision 18 as first written: every kind, and a kind a roll times is
+    /// never stamped at all.
+    #[default]
+    AllKinds,
+    /// AH.45's (b): only the kinds a roll times, stamped inside the horizon;
+    /// every other kind is stamped wherever it falls.
+    RolledKinds,
+}
+
 /// Which stamps count and how far they may stray.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Judge {
@@ -142,13 +161,15 @@ pub struct Judge {
     pub default: f64,
     #[serde(default)]
     pub floors: BTreeMap<String, f64>,
-    /// The anchor's horizon: the last frame since F0 whose events' stamps
-    /// count. `None` judges every stamp.
+    /// The anchor's horizon: the last frame since F0 inside it. `None`
+    /// gates nothing.
     #[serde(default)]
     pub horizon: Option<u32>,
-    /// Kinds a roll times: their order is checked, never their stamps.
+    /// Kinds a roll times.
     #[serde(default)]
     pub ordered: BTreeSet<String>,
+    #[serde(default)]
+    pub gate: Gate,
 }
 
 impl Judge {
@@ -156,10 +177,15 @@ impl Judge {
         self.floors.get(kind).copied().unwrap_or(self.default)
     }
 
-    /// Whether `band`'s stamps are judged: no roll times it and every
-    /// replay's lies inside the horizon.
+    /// Whether `band`'s stamps are judged. Inside the horizon means every
+    /// replay's stamp lies at or before it.
     pub fn stamps(&self, band: &EventBand) -> bool {
-        !self.ordered.contains(&band.kind) && self.horizon.is_none_or(|h| band.last_frame <= h)
+        let rolled = self.ordered.contains(&band.kind);
+        let inside = self.horizon.is_none_or(|h| band.last_frame <= h);
+        match self.gate {
+            Gate::AllKinds => !rolled && inside,
+            Gate::RolledKinds => !rolled || inside,
+        }
     }
 
     fn validate(&self) -> Result<(), MetricError> {
@@ -411,7 +437,7 @@ pub fn leave_one_out(runs: &[ActorLogs], judge: &Judge) -> Result<Vec<LogVerdict
 /// The least floor each event kind needs for every run's leave-one-out to
 /// pass on stamps (0 for a kind always inside the others' spread): AF.12's
 /// calibration, before the perturbations check the floors can still fail.
-/// The judge's floors are ignored; its horizon and ordered kinds hold.
+/// The judge's floors are ignored; its horizon, ordered kinds and gate hold.
 pub fn floors_needed(
     runs: &[ActorLogs],
     judge: &Judge,
@@ -474,6 +500,7 @@ mod tests {
             floors: BTreeMap::new(),
             horizon: None,
             ordered: BTreeSet::new(),
+            gate: Gate::AllKinds,
         }
     }
 
@@ -696,6 +723,46 @@ mod tests {
             ),
         ]);
         assert!(!reference.check(&swapped, &j).unwrap().passed());
+    }
+
+    #[test]
+    fn under_b_the_horizon_gates_only_the_rolled_kinds() {
+        let reference = LogReference::from_runs(&interleaved()).unwrap();
+        // Battle (frames 79-80) 120 frames late, Alerted (60-61) in place.
+        let way_late = logs(&[
+            (
+                "Enemy_Chompy(1)",
+                &[("state Alerted", 60), ("state Battle", 200)],
+            ),
+            (
+                "Enemy_Chompy(2)",
+                &[("state Alerted", 60), ("state Battle", 80)],
+            ),
+        ]);
+        let mut j = judge(F);
+        j.gate = Gate::RolledKinds;
+        j.horizon = Some(70);
+        // Unrolled, Battle is stamped past the horizon and fails.
+        let v = reference.check(&way_late, &j).unwrap();
+        assert_eq!(v.failed(), ["Enemy_Chompy(1)"]);
+        assert_eq!(v.actors["Enemy_Chompy(1)"].stamped, 2);
+        // Rolled, it's stamped inside the horizon and skipped past it.
+        j.ordered.insert("state Battle".into());
+        let v = reference.check(&way_late, &j).unwrap();
+        assert!(v.passed(), "{v:?}");
+        assert_eq!(v.actors["Enemy_Chompy(1)"].stamped, 1);
+        j.horizon = Some(80);
+        assert!(!reference.check(&way_late, &j).unwrap().passed());
+        // No horizon gates nothing: the rolled kind is stamped too.
+        j.horizon = None;
+        assert!(!reference.check(&way_late, &j).unwrap().passed());
+        // A judge written before the gate existed reads as decision 18's
+        // first rule.
+        let old = r#"{"default":0.1,"horizon":3,"ordered":["bite"]}"#;
+        assert_eq!(
+            serde_json::from_str::<Judge>(old).unwrap().gate,
+            Gate::AllKinds
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use guac_oracle::fight::draws::MtWords;
 use guac_oracle::fight::extract::{BreakRule, ChainRule};
+use guac_oracle::fight::log::LogMismatch;
 use guac_oracle::fight::oracle::ChainItem;
 use guac_oracle::fight::ticks::{Cue, HERO};
 use guac_oracle::input::{Button, Ds3Pad};
@@ -314,9 +315,10 @@ fn a_groups_floors_pass_its_own_replays_and_fail_a_press_moved() {
     let text = r.text();
     assert!(text.contains("candidate lob_shift3: fails"), "{text}");
     // With the generator parting at frame 3 instead (anchor A's parts at 1
-    // to 4), every event lies past the horizon: nothing is stamped, every floor reads 0
-    // and the late press passes on order alone; judged past the horizon too,
-    // the floors come back and it fails again.
+    // to 4), every event lies past the horizon: under decision 18's first
+    // rule nothing is stamped, every floor reads 0 and the late press passes
+    // on order alone; under AH.45's (b) the floors come back and it fails
+    // again, at the group's floors and at anchor A's named ones.
     let early: Vec<PathBuf> = [(8, 20, 9), (9, 20, 7), (8, 21, 9), (8, 20, 7)]
         .iter()
         .enumerate()
@@ -328,10 +330,11 @@ fn a_groups_floors_pass_its_own_replays_and_fail_a_press_moved() {
             write(tmp.path(), &format!("early-{k:02}"), &script)
         })
         .collect();
-    let build = |rules: &ReportRules| {
+    let build_at = |rules: &ReportRules, named: Option<&EventFloors>| {
         let g: Vec<Replay> = early.iter().map(|d| load(d, rules).unwrap()).collect();
-        GroupReport::build(&g, &[load(&late, rules).unwrap()], rules).unwrap()
+        GroupReport::build_at(&g, &[load(&late, rules).unwrap()], rules, named).unwrap()
     };
+    let build = |rules: &ReportRules| build_at(rules, None);
     let gated = build(&rules);
     assert_eq!(
         (gated.horizon.last_agreeing, gated.judge.horizon),
@@ -343,15 +346,49 @@ fn a_groups_floors_pass_its_own_replays_and_fail_a_press_moved() {
         gated.floors
     );
     assert!(gated.candidates[0].1.passed);
-    let open = build(&ReportRules {
+    let b = ReportRules {
         stamps_past_horizon: true,
         ..rules.clone()
-    });
-    assert_eq!(open.judge.horizon, None);
+    };
+    let open = build(&b);
+    assert_eq!(
+        (open.judge.horizon, open.judge.gate),
+        (Some(2), Gate::RolledKinds)
+    );
     assert_eq!(open.floors["spawn"], 0.02);
     assert!(open.leave_one_out.iter().all(|j| j.passed));
     assert!(!open.candidates[0].1.passed);
-    assert!(open.text().contains("stamps judged everywhere"));
+    assert!(!open.named);
+    assert!(
+        open.text()
+            .contains("stamps judged everywhere, the rolled kinds through frame 2")
+    );
+    // Anchor A's named floors (the ball a frame late needs 1/60 s, under its
+    // 35 ms) pass the group and fail the press 3 frames late on the press.
+    let named = build_at(&b, Some(&guac_oracle::tolerance::anchor_a::EVENTS));
+    assert!(named.named);
+    assert_eq!(named.floors["spawn"], 0.02);
+    assert_eq!(named.judge.floor("spawn"), 0.035);
+    assert_eq!(named.judge.floor("press South"), 0.005);
+    assert!(named.judge.ordered.contains("pickup"));
+    assert!(named.leave_one_out.iter().all(|j| j.passed));
+    let (_, j) = &named.candidates[0];
+    assert!(!j.passed);
+    assert!(matches!(
+        &j.verdict.actors[HERO].mismatches[0],
+        LogMismatch::Stamp { kind, .. } if kind == "press South"
+    ));
+    let text = named.text();
+    assert!(text.contains("judged at the named floors"), "{text}");
+    // A rolled kind of the rules' own joins the named ones.
+    let rolled = build_at(
+        &ReportRules {
+            ordered: BTreeSet::from(["spawn".to_owned()]),
+            ..b.clone()
+        },
+        Some(&guac_oracle::tolerance::anchor_a::EVENTS),
+    );
+    assert!(rolled.judge.ordered.contains("spawn") && rolled.judge.ordered.contains("pickup"));
 }
 
 #[test]
@@ -370,13 +407,13 @@ fn a_report_writes_beside_its_rules_and_refuses_a_dir_without_a_peek() {
     let at = tmp.path().join("rules.ron");
     fs::write(&at, ron::to_string(&rules()).unwrap()).unwrap();
     let out = tmp.path().join("report");
-    let r = report(&at, &dirs, &[], &out).unwrap();
+    let r = report(&at, &dirs, &[], None, &out).unwrap();
     assert!(out.join("report.json").exists() && out.join("report.txt").exists());
     // Three alike: every floor 0, the horizon never parting.
     assert!(r.floors.values().all(|&v| v == 0.0), "{:?}", r.floors);
     assert_eq!(r.horizon.parted_at, None);
     fs::remove_file(dirs[1].join("peek-f0.json")).unwrap();
-    let err = report(&at, &dirs, &[], &tmp.path().join("again")).unwrap_err();
+    let err = report(&at, &dirs, &[], None, &tmp.path().join("again")).unwrap_err();
     assert!(format!("{err:#}").contains("no F0 peek"), "{err:#}");
     // A quantum that isn't positive is refused.
     let mut bad = rules();

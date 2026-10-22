@@ -5,7 +5,8 @@
 //! group of pause-free replays of one script from one anchor, the anchor's
 //! horizon, each event kind's floor by AF.12's method (the least that passes
 //! every replay's leave-one-out, rounded up) and candidates (a press moved,
-//! a perturbation) judged against the whole group at those floors.
+//! a perturbation) judged against the whole group at those floors, or at an
+//! anchor's named ones from `guac_oracle::tolerance` (AH.51).
 //!
 //! A replay is a dir `oracle goto` or `oracle divergence run` wrote with O5's
 //! watch and O6's chains: `recording.json`, `chain.json`,
@@ -23,11 +24,12 @@ use anyhow::{Context, Result, bail};
 use guac_oracle::fight::draws::{anchor_horizon, draws};
 use guac_oracle::fight::extract::{self, Break, Link, Rules};
 use guac_oracle::fight::log::{
-    ActorLogs, Judge, LogReference, LogVerdict, floors_needed, leave_one_out,
+    ActorLogs, Gate, Judge, LogReference, LogVerdict, floors_needed, leave_one_out,
 };
 use guac_oracle::fight::oracle::{ChainRecord, Names, fight_trace};
 use guac_oracle::fight::ticks::{FightTrace, SpawnRule};
 use guac_oracle::recording::Recording;
+use guac_oracle::tolerance::EventFloors;
 use guac_oracle::totals::Totals;
 use guac_oracle::trace::Horizon;
 use serde::{Deserialize, Serialize};
@@ -45,7 +47,8 @@ pub const F0_PEEKS: [&str; 2] = ["peek-f0.json", "peek-00000.json"];
 pub struct ReportRules {
     pub spawns: Vec<SpawnRule>,
     pub rules: Rules,
-    /// Event kinds a roll times: order only, never a stamp.
+    /// Event kinds a roll times: by order alone past the horizon, and
+    /// everywhere unless `stamps_past_horizon`.
     #[serde(default)]
     pub ordered: BTreeSet<String>,
     /// Game seconds a floor is rounded up to (AF.12: the largest spread
@@ -55,11 +58,13 @@ pub struct ReportRules {
     /// Twists searched between two records when counting draws.
     #[serde(default = "default_twists")]
     pub max_twists: u64,
-    /// Judge stamps past the anchor's horizon too, for every kind not in
-    /// `ordered`. Design decision 18 stamps only inside it; at anchor A the
-    /// generator parts 1 to 4 game frames from F0, by script (particles
-    /// drawing on host time), while no event a lob makes is timed by a roll
-    /// (AH.9), so a group can be calibrated both ways and the two compared.
+    /// AH.45's (b), the rule since 2026-10-21 ([`Gate::RolledKinds`]):
+    /// every kind not in `ordered` stamped wherever it falls, the horizon
+    /// gating only `ordered`. Unset is decision 18 as first written
+    /// ([`Gate::AllKinds`]): nothing stamped past the horizon and `ordered`
+    /// never. At anchor A the generator parts 1 to 4 game frames from F0, by
+    /// script (particles drawing on host time), while no event a lob makes is
+    /// timed by a roll (AH.9), so the first rule stamps nothing there.
     #[serde(default)]
     pub stamps_past_horizon: bool,
 }
@@ -238,7 +243,10 @@ pub struct GroupReport {
     pub needed: BTreeMap<String, f64>,
     /// Those rounded up to the quantum: the floors.
     pub floors: BTreeMap<String, f64>,
+    /// What the leave-one-out and the candidates were judged by: `floors`,
+    /// or an anchor's named floors when `named`.
     pub judge: Judge,
+    pub named: bool,
     pub reference: LogReference,
     pub leave_one_out: Vec<Judged>,
     pub candidates: Vec<(ReplayReport, Judged)>,
@@ -255,6 +263,19 @@ impl GroupReport {
     /// kind needs, each replay against the others at them; then each
     /// candidate against all of them.
     pub fn build(group: &[Replay], candidates: &[Replay], rules: &ReportRules) -> Result<Self> {
+        Self::build_at(group, candidates, rules, None)
+    }
+
+    /// As [`GroupReport::build`], the group's floors still calibrated, but
+    /// the leave-one-out and the candidates judged at `named`'s floors under
+    /// AH.45's (b), its rolled kinds joining `rules.ordered`: whether an
+    /// anchor's named defaults hold on this group.
+    pub fn build_at(
+        group: &[Replay],
+        candidates: &[Replay],
+        rules: &ReportRules,
+        named: Option<&EventFloors>,
+    ) -> Result<Self> {
         let replays = group
             .iter()
             .map(|r| ReplayReport::of(r, &rules.rules))
@@ -265,9 +286,13 @@ impl GroupReport {
         let open = Judge {
             default: 0.0,
             floors: BTreeMap::new(),
-            horizon: (!rules.stamps_past_horizon)
-                .then(|| horizon.last_agreeing.map_or(0, |h| h as u32)),
+            horizon: Some(horizon.last_agreeing.map_or(0, |h| h as u32)),
             ordered: rules.ordered.clone(),
+            gate: if rules.stamps_past_horizon {
+                Gate::RolledKinds
+            } else {
+                Gate::AllKinds
+            },
         };
         // Every kind the replays logged, 0 where none strayed.
         let mut needed = floors_needed(&runs, &open)?;
@@ -282,9 +307,16 @@ impl GroupReport {
             .iter()
             .map(|(k, &v)| (k.clone(), round_up(v, rules.quantum)))
             .collect();
-        let judge = Judge {
-            floors: floors.clone(),
-            ..open
+        let judge = match named {
+            Some(named) => {
+                let mut judge = named.judge(open.horizon);
+                judge.ordered.extend(rules.ordered.iter().cloned());
+                judge
+            }
+            None => Judge {
+                floors: floors.clone(),
+                ..open
+            },
         };
         let leave_one_out = leave_one_out(&runs, &judge)?
             .into_iter()
@@ -307,6 +339,7 @@ impl GroupReport {
             needed,
             floors,
             judge,
+            named: named.is_some(),
             reference,
             leave_one_out,
             candidates,
@@ -325,9 +358,12 @@ impl GroupReport {
             self.replays.len(),
             self.horizon.last_agreeing,
             self.horizon.parted_at,
-            match self.judge.horizon {
-                Some(h) => format!("through frame {h}"),
-                None => "everywhere".to_owned(),
+            match (self.judge.gate, self.judge.horizon) {
+                (_, None) => "everywhere".to_owned(),
+                (Gate::AllKinds, Some(h)) => format!("through frame {h}"),
+                (Gate::RolledKinds, Some(h)) => {
+                    format!("everywhere, the rolled kinds through frame {h}")
+                }
             }
         ));
         for r in &self.replays {
@@ -346,6 +382,15 @@ impl GroupReport {
         line("floors (needed -> rounded up), game seconds:".into());
         for (k, v) in &self.needed {
             line(format!("  {k}: {v:.6} -> {:.3}", self.floors[k]));
+        }
+        if self.named {
+            line(format!(
+                "judged at the named floors (default {:.3}), rolled {:?}:",
+                self.judge.default, self.judge.ordered
+            ));
+            for k in self.needed.keys() {
+                line(format!("  {k}: {:.3}", self.judge.floor(k)));
+            }
         }
         line("reference, per actor (present, prefix, parted):".into());
         for (name, a) in self.reference.actors() {
@@ -408,12 +453,14 @@ impl GroupReport {
     }
 }
 
-/// `oracle fight report`: reads `dirs` and `candidates`, writes
-/// `report.json` and `report.txt` into `out` (outside every work tree).
+/// `oracle fight report`: reads `dirs` and `candidates`, judged at the
+/// group's floors or `named`'s, and writes `report.json` and `report.txt`
+/// into `out` (outside every work tree).
 pub fn report(
     rules_at: &Path,
     dirs: &[PathBuf],
     candidates: &[PathBuf],
+    named: Option<&EventFloors>,
     out: &Path,
 ) -> Result<GroupReport> {
     let rules = ReportRules::from_ron(
@@ -427,7 +474,7 @@ pub fn report(
         .iter()
         .map(|d| load(d, &rules))
         .collect::<Result<Vec<_>>>()?;
-    let report = GroupReport::build(&group, &cands, &rules)?;
+    let report = GroupReport::build_at(&group, &cands, &rules, named)?;
     let dir = rrc_dump::output::refuse_repo_output(out)?;
     fs::create_dir_all(&dir)?;
     fs::write(

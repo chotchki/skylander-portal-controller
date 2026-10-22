@@ -14,11 +14,16 @@
 //! replay that strays alone while the others still agree (the AF.11-AF.13
 //! review's re-check set the actor and animation floors that way).
 //!
-//! Not set: the event-sequence and totals floors ([`crate::events`],
-//! [`crate::totals`]). AF observes no game events and no XP or gold, so they
-//! wait for the first rung that does (AH's combat) to calibrate them the same
-//! way: AH.9-AH.11, through [`crate::fight::log::floors_needed`] on game time.
+//! The fight's event floors are per anchor, on game time: [`anchor_a`]'s
+//! (AH.51, from AH.9's replays through [`crate::fight::log::floors_needed`]).
+//! Not set: anchor B's event floors (AH.10 measured them; AH.59) and the
+//! totals floors ([`crate::totals`]; AH.30).
 
+use std::collections::BTreeMap;
+
+use crate::fight::extract::press_kind;
+use crate::fight::log::{Gate, Judge};
+use crate::input::Button;
 use crate::trace::TrajectoryTolerance;
 
 /// The multiple of the replays' spread a candidate may stray past their
@@ -77,9 +82,109 @@ pub const ANIMATION_STEPS: TrajectoryTolerance = TrajectoryTolerance { floor: 1.
 /// slow); AF.12's walk needed 0.0199 at most (F0 + 120).
 pub const FRAME_FLOOR: f64 = 0.03;
 
+/// One anchor's event floors in game seconds by event kind (the kinds
+/// [`crate::fight::extract::logs`] writes) and the kinds a roll times there.
+/// Design decision 18 judges by them under AH.45's (b), chotchki's call on
+/// 2026-10-21 ("I agree on option B until we see if it breaks stuff"):
+/// [`EventFloors::judge`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EventFloors {
+    /// Every `press <button>` kind: the pad's own stamp, alike for every
+    /// button.
+    pub press: f64,
+    /// The other kinds by name.
+    pub kinds: &'static [(&'static str, f64)],
+    /// A kind not named.
+    pub default: f64,
+    /// The kinds a roll times: stamped inside the anchor's horizon, by order
+    /// alone past it.
+    pub rolled: &'static [&'static str],
+}
+
+impl EventFloors {
+    /// The judge at this anchor (AH.30's): every kind no roll times stamped
+    /// wherever it falls, the horizon (the last game frame since F0 every
+    /// replay's generator drew alike by, [`crate::fight::draws`]) gating only
+    /// the rolled kinds. A rolled kind stamped inside the horizon lines up
+    /// between oracle replays but not against guacamole, whose generator reads
+    /// the stream at other places (decision 18); no event falls inside anchor
+    /// A's or B's horizon, so nothing yet depends on which.
+    pub fn judge(&self, horizon: Option<u32>) -> Judge {
+        let mut floors: BTreeMap<String, f64> = Button::ALL
+            .iter()
+            .map(|&b| (press_kind(b), self.press))
+            .collect();
+        floors.extend(self.kinds.iter().map(|&(k, f)| (k.to_owned(), f)));
+        Judge {
+            default: self.default,
+            floors,
+            horizon,
+            ordered: self.rolled.iter().map(|&k| k.to_owned()).collect(),
+            gate: Gate::RolledKinds,
+        }
+    }
+}
+
+/// Anchor A's event floors (openspec AH.51): AF.12's method over AH.9's 50
+/// pause-free replays from anchor A (`245dec5d…`, Eruptor at rest in chapter
+/// one's clearing), 10 each of `lob`, `erupt`, `lobs`, `erupts` and `coin`,
+/// every kind stamped: a kind's floor is the least that passes every replay's
+/// leave-one-out in all five groups, rounded up to 5 ms. What they need is
+/// a game frame (1/60 s) or two, where a replay keyed one later; the events
+/// came out alike to the frame while the generator parted 1 to 4 frames from
+/// F0 on particles drawn on host time (AH.45). At these floors every replay
+/// passes and the first press moved 1 or 2 flips either way fails, on the
+/// throw as well as the press: the `#[ignore]`d `anchor_a` test in
+/// `tools/oracle-harness` re-derives both from the recordings.
+pub mod anchor_a {
+    use super::EventFloors;
+
+    /// `press <button>`: 1.8 ms at most (`erupts`).
+    pub const PRESS: f64 = 0.005;
+    /// `throw`, the attack's clip starting: 1.5 ms (`lob`).
+    pub const THROW: f64 = 0.005;
+    /// `spawn`, a ball, an eruption, debris or a coin listed: 33.6 ms (`lobs`).
+    pub const SPAWN: f64 = 0.035;
+    /// `break`: 18.0 ms (`lob`).
+    pub const BREAK: f64 = 0.020;
+    /// `gone`, a ball bursting or a breakable, its debris or an eruption
+    /// leaving: 33.4 ms (`lobs`).
+    pub const GONE: f64 = 0.035;
+    /// The eruption's `state LavaBlobbing`: 2.1 ms (`erupts`).
+    pub const LAVA_BLOBBING: f64 = 0.005;
+    /// Its `state Going Black`: 16.5 ms (`erupts`).
+    pub const GOING_BLACK: f64 = 0.020;
+    /// Its `state Fading`: 16.5 ms (`erupts`).
+    pub const FADING: f64 = 0.020;
+    /// `pickup`, a coin taken leaving at the end of its slide: 18.1 ms
+    /// (`coin`). The 0.25 s check it slides off is a roll's to time (AH.45),
+    /// so this judges only inside a horizon, and anchor A's ends 0 to 3
+    /// frames past F0 by script, a second before any coin is taken.
+    pub const PICKUP: f64 = 0.020;
+    /// A kind AH.9 never logged: the largest above.
+    pub const DEFAULT: f64 = 0.035;
+
+    pub const EVENTS: EventFloors = EventFloors {
+        press: PRESS,
+        kinds: &[
+            ("throw", THROW),
+            ("spawn", SPAWN),
+            ("break", BREAK),
+            ("gone", GONE),
+            ("state LavaBlobbing", LAVA_BLOBBING),
+            ("state Going Black", GOING_BLACK),
+            ("state Fading", FADING),
+            ("pickup", PICKUP),
+        ],
+        default: DEFAULT,
+        rolled: &["pickup"],
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fight::log::{ActorEvent, ActorLogs, LogMismatch, LogReference};
 
     #[test]
     fn the_defaults_are_tolerances_the_metrics_take() {
@@ -97,5 +202,165 @@ mod tests {
         // An f32 heading near 105 deg rounds to steps far under the floor.
         let ulp = f64::from(105.0f32.next_up() - 105.0f32);
         assert!(10.0 * ulp < ANGLE.floor);
+    }
+
+    /// Game time at `frame` in replay `r`: a frame is 1/60 s and each
+    /// replay keys 0.1 ms later than the one before.
+    fn at(frame: u32, r: u32) -> ActorEvent {
+        ActorEvent::new("", f64::from(frame) / 60.0 + 1e-4 * f64::from(r), frame)
+    }
+
+    /// AH.9's `lob` from anchor A in frames since F0: South at 31, the throw
+    /// at 32, the ball listed at 36 and bursting on the barrel at `hit`, its
+    /// coin listed a frame later and taken at `taken`.
+    fn lob(r: u32, press: u32, hit: u32, taken: u32) -> ActorLogs {
+        let shift = |f: u32| f + press - 31;
+        let log = |events: &[(&str, u32)]| -> Vec<ActorEvent> {
+            events
+                .iter()
+                .map(|&(kind, frame)| ActorEvent {
+                    kind: kind.to_owned(),
+                    ..at(frame, r)
+                })
+                .collect()
+        };
+        ActorLogs::new(BTreeMap::from([
+            (
+                "hero".to_owned(),
+                log(&[("press South", shift(31)), ("throw", shift(32))]),
+            ),
+            (
+                "hero>lava_ball#1".to_owned(),
+                log(&[("spawn", shift(36)), ("gone", shift(hit))]),
+            ),
+            (
+                "barrel_b_intact(1)".to_owned(),
+                log(&[("gone", shift(hit)), ("break", shift(hit))]),
+            ),
+            (
+                "barrel_b_intact(1)>coin#1".to_owned(),
+                log(&[("spawn", shift(hit + 1)), ("pickup", taken)]),
+            ),
+        ]))
+        .unwrap()
+    }
+
+    /// Ten replays, the burst at 65 or 66 and the coin taken at 120 or 121.
+    fn reference() -> LogReference {
+        let runs: Vec<ActorLogs> = (0..10)
+            .map(|r| lob(r, 31, 65 + r % 2, 120 + r % 2))
+            .collect();
+        LogReference::from_runs(&runs).unwrap()
+    }
+
+    /// Anchor A's horizon: F0 itself (AH.9).
+    fn anchor_a_judge() -> Judge {
+        anchor_a::EVENTS.judge(Some(0))
+    }
+
+    #[test]
+    fn a_kind_no_roll_times_is_judged_past_the_horizon() {
+        let reference = reference();
+        let judge = anchor_a_judge();
+        let v = reference.check(&lob(0, 31, 66, 120), &judge).unwrap();
+        assert!(v.passed(), "{v:?}");
+        // Every event past F0 but the rolled pickup is stamped.
+        assert_eq!(v.actors["barrel_b_intact(1)"].stamped, 2);
+        assert_eq!(v.actors["barrel_b_intact(1)>coin#1"].stamped, 1);
+        // The burst two frames past the latest: the break's 20 ms floor
+        // fails it, while the leaving's 35 ms lets it by.
+        let late = reference.check(&lob(0, 31, 68, 121), &judge).unwrap();
+        assert_eq!(late.failed(), ["barrel_b_intact(1)"]);
+        assert!(matches!(
+            late.actors["barrel_b_intact(1)"].mismatches[..],
+            [LogMismatch::Stamp { index: 1, ref kind, .. }] if kind == "break"
+        ));
+        // Decision 18 as first written stamps nothing past F0.
+        let first = Judge {
+            gate: Gate::AllKinds,
+            ..judge
+        };
+        let v = reference.check(&lob(0, 31, 68, 121), &first).unwrap();
+        assert!(v.passed(), "{v:?}");
+        assert!(v.actors.values().all(|a| a.stamped == 0));
+    }
+
+    #[test]
+    fn a_rolled_kind_past_the_horizon_is_skipped() {
+        let reference = reference();
+        // The coin taken half a second late passes on order alone.
+        let slow = lob(0, 31, 65, 150);
+        let v = reference.check(&slow, &anchor_a_judge()).unwrap();
+        assert!(v.passed(), "{v:?}");
+        // Inside a horizon it's stamped, and fails.
+        let v = reference
+            .check(&slow, &anchor_a::EVENTS.judge(Some(200)))
+            .unwrap();
+        assert_eq!(v.failed(), ["barrel_b_intact(1)>coin#1"]);
+        // Its order still counts past the horizon: never taken fails.
+        let mut logs: BTreeMap<String, Vec<ActorEvent>> = slow.into();
+        logs.get_mut("barrel_b_intact(1)>coin#1").unwrap().pop();
+        let v = reference
+            .check(&ActorLogs::new(logs).unwrap(), &anchor_a_judge())
+            .unwrap();
+        assert!(matches!(
+            v.actors["barrel_b_intact(1)>coin#1"].mismatches[..],
+            [LogMismatch::Missing { index: 1, .. }]
+        ));
+    }
+
+    #[test]
+    fn a_press_moved_one_flip_fails_at_anchor_a() {
+        let reference = reference();
+        let judge = anchor_a_judge();
+        for press in [30, 32] {
+            let moved = lob(0, press, 65, 120);
+            let v = reference.check(&moved, &judge).unwrap();
+            // The press and the throw it starts, each out by a frame, past
+            // their 5 ms floors.
+            let hero: Vec<&str> = v.actors["hero"]
+                .mismatches
+                .iter()
+                .map(|m| match m {
+                    LogMismatch::Stamp { kind, .. } => kind.as_str(),
+                    other => panic!("{other:?}"),
+                })
+                .collect();
+            assert_eq!(hero, ["press South", "throw"], "press at {press}");
+            // On order alone, decision 18's first rule at anchor A, it passes.
+            let first = Judge {
+                gate: Gate::AllKinds,
+                ..judge.clone()
+            };
+            assert!(reference.check(&moved, &first).unwrap().passed());
+        }
+    }
+
+    #[test]
+    fn anchor_as_floors_are_whole_quanta_with_the_press_under_a_frame() {
+        let a = anchor_a::EVENTS;
+        let all: Vec<f64> = a
+            .kinds
+            .iter()
+            .map(|&(_, f)| f)
+            .chain([a.press, a.default])
+            .collect();
+        for f in &all {
+            let quanta = f / 0.005;
+            assert!((quanta - quanta.round()).abs() < 1e-9 && *f > 0.0, "{f}");
+        }
+        assert_eq!(all.iter().copied().fold(0.0, f64::max), a.default);
+        // A press or a throw a frame off can't hide in its floor.
+        const { assert!(anchor_a::PRESS < 1.0 / 60.0 && anchor_a::THROW < 1.0 / 60.0) };
+        let judge = a.judge(Some(0));
+        for b in Button::ALL {
+            assert_eq!(judge.floor(&press_kind(b)), anchor_a::PRESS);
+        }
+        assert_eq!(judge.floor("bite"), anchor_a::DEFAULT);
+        for k in a.rolled {
+            assert!(a.kinds.iter().any(|(n, _)| n == k), "{k}");
+            assert!(judge.ordered.contains(*k));
+        }
+        assert_eq!(judge.gate, Gate::RolledKinds);
     }
 }
