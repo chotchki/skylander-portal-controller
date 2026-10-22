@@ -173,7 +173,13 @@
 //!   resumes right after the caller's INTERFACE block, in the caller's
 //!   context. The rest of the use block is the caller's after-return code:
 //!   it still reads the callee's frame (that's how a macro returns values),
-//!   through the callee's parameters.
+//!   through the callee's parameters. A family (a base and its
+//!   specializations) shares its parameter ops, so there a parameter naming
+//!   the callee's definition, or the base it specializes, reads the
+//!   callee's frame even where the caller declares it too: Giants' `Calc -
+//!   Tangent` reads the `Calc - Sin` it called that way (AH.60: read as its
+//!   own, every lob's speed came out wrong; read so, AH.10's 20 lobs are the
+//!   oracle's within 1 %).
 //! - When the use block itself closes, every variable in the callee's frame
 //!   goes back to its default and the definition is no longer busy.
 //! - A specialization is a definition with an INTERFACE and body of its own;
@@ -190,11 +196,12 @@
 //!   code, the caller's), else the placement's locals. A definition's own
 //!   parameter (one its INTERFACE declares) reads that definition's frame
 //!   wherever its body runs, binding a nested call's arguments and in a
-//!   nested call's after-return code included; a specialization's own
-//!   parameters name the base and read the specialization's frame. Any other
-//!   parameter on a path (an after-return read of what a call returned)
-//!   reads the frame of the definition it binds into (its `_macroDef`, a stub
-//!   followed), or of the open call's specialization of that definition.
+//!   nested call's after-return code included (but for the family's read
+//!   above); a specialization's own parameters name the base and read the
+//!   specialization's frame. Any other parameter on a path (an after-return
+//!   read of what a call returned) reads the frame of the definition it
+//!   binds into (its `_macroDef`, a stub followed), or of the open call's
+//!   specialization of that definition.
 //! - A variable holds a number (dynamically an integer or a float: a write
 //!   takes the type it's given), a reference, a set, a reference to a set or
 //!   a structure, as its declaration says. Writing anything but a number or a

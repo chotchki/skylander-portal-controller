@@ -13,6 +13,10 @@ Eruptor's first attack SHALL lob a lava ball from each hand in turn, 3° to that
 - **WHEN** Eruptor throws with an awake Chompy 20 ft ahead of him
 - **THEN** the ball comes down on it and the Chompy is beaten
 
+#### Scenario: A Chompy walking in
+- **WHEN** Eruptor throws with the nearest of four Chompies 8.4 m off, walking toward him at 6 m/s
+- **THEN** he turns to it, and the ball, thrown at 51.5 ft/s (15.7 m/s), comes down on it 0.45 s later where it has walked to, beating it and any other Chompy within the burst
+
 #### Scenario: Nothing in range
 - **WHEN** Eruptor throws with no creature, barrel, pot or gourd within 60 ft
 - **THEN** the ball flies straight ahead at 80 ft/s and bursts where it comes down

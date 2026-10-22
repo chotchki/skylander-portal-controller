@@ -20,31 +20,35 @@ use guac_ir::clip::Clip;
 use guac_ir::model::Skeleton;
 use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
-use guac_motion::seam::Vec3;
+use guac_motion::seam::{Quat, Vec3};
 use guac_script::Handle;
 
+use crate::script_engine::NodePose;
 use crate::scripts::ScriptWorld;
 
-/// Each of `nodes`' places in the actor's own frame (metres, +Z its facing,
-/// as [`ScriptWorld::set_nodes`] takes them): the model's joints posed by
-/// `base` (each clip at its time in seconds and its weight: his
+/// Each of `nodes`' places and turns in the actor's own frame (metres, +Z
+/// its facing, as [`ScriptWorld::set_nodes`] takes them): the model's joints
+/// posed by `base` (each clip at its time in seconds and its weight: his
 /// locomotion) with `over` laid on it (each clip at its time: what his
-/// scripts play on him), every node on its joint at its offset, the whole
+/// scripts play on him), every node on its joint at its offset, its place
 /// at the actor's `scale`. A node on no joint sits at its offset from the
-/// model's origin; one whose joint the skeleton lacks, at the pivot.
+/// model's origin; one whose joint the skeleton lacks, at the pivot turned
+/// as the actor.
 pub fn posed(
     skeleton: &Skeleton,
     nodes: &AttachNodes,
     base: &[(&Clip, f64, f64)],
     over: &[(&Clip, f64)],
     scale: f32,
-) -> Vec<Vec3> {
+) -> Vec<NodePose> {
     let pose = skeleton.blend_over(base, over);
     (0..nodes.nodes.len())
-        .map(|i| {
-            nodes
-                .place(i, &pose)
-                .map_or(Vec3::ZERO, |p| Vec3::from_array(p) * scale)
+        .map(|i| match nodes.transform(i, &pose) {
+            Some(m) => NodePose {
+                at: Vec3::from_array(m.translation) * scale,
+                turn: Quat::from_array(m.rotation).normalize(),
+            },
+            None => NodePose::at(Vec3::ZERO),
         })
         .collect()
 }
@@ -184,26 +188,36 @@ mod tests {
 
     #[test]
     fn a_node_rides_its_bone_through_the_clip_at_the_actors_scale() {
-        let (skeleton, nodes) = rig();
+        let (skeleton, mut nodes) = rig();
+        // The palm's node turned a quarter about +Y on it: its turn, which
+        // doesn't move it.
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        nodes.nodes[0].offset.rotation = [0.0, s, 0.0, s];
         let clip = swing();
         let rest = posed(&skeleton, &nodes, &[], &[], 1.5);
         let to = |v: [f32; 3]| Vec3::from_array(v) * 1.5;
         assert!(
-            rest[0].distance(to([0.0, 1.0, 0.6])) < 1e-6,
+            rest[0].at.distance(to([0.0, 1.0, 0.6])) < 1e-6,
             "{:?}",
             rest[0]
         );
+        let quarter = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        assert!(rest[0].turn.angle_between(quarter) < 1e-5, "{:?}", rest[0]);
         assert!(
-            rest[1].distance(to([0.0, 0.2, 0.0])) < 1e-6,
+            rest[1].at.distance(to([0.0, 0.2, 0.0])) < 1e-6,
             "{:?}",
             rest[1]
         );
-        assert_eq!(rest[2], Vec3::ZERO, "a joint the skeleton lacks: the pivot");
+        assert_eq!(
+            rest[2],
+            NodePose::at(Vec3::ZERO),
+            "a joint the skeleton lacks: the pivot, turned as the actor"
+        );
         // Half way through the swing laid over the rest, the palm 0.25 m
         // left; the node on the origin doesn't move.
         let half = posed(&skeleton, &nodes, &[], &[(&clip, 0.5)], 1.5);
         assert!(
-            half[0].distance(to([0.25, 1.0, 0.6])) < 1e-6,
+            half[0].at.distance(to([0.25, 1.0, 0.6])) < 1e-6,
             "{:?}",
             half[0]
         );
@@ -217,12 +231,12 @@ mod tests {
             &[(&clip, 0.5)],
             1.5,
         );
-        assert!(based[0].distance(half[0]) < 1e-6);
+        assert!(based[0].at.distance(half[0].at) < 1e-6);
         // With nothing laid over it the base clip moves the palm, at the
         // base's own time: three quarters through, 0.375 m left.
         let base_only = posed(&skeleton, &nodes, &[(&clip, 0.75, 1.0)], &[], 1.0);
         assert!(
-            base_only[0].distance(Vec3::new(0.375, 1.0, 0.6)) < 1e-6,
+            base_only[0].at.distance(Vec3::new(0.375, 1.0, 0.6)) < 1e-6,
             "{:?}",
             base_only[0]
         );

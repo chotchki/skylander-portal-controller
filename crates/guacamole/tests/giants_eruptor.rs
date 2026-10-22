@@ -1565,12 +1565,13 @@ const STEP_RESIDUAL: f32 = 1.24e-5;
 /// frame (his whole turn, the tilt and roll the ground under him gives his
 /// model as well as his facing), against that hand posed by the clips the
 /// record names at their times (his locomotion's, the throw laid over them)
-/// at his scale: within AG.1's step residual, the lean his turn plays (6 %
-/// at most, no clip of our locomotion's yet) left out and moving no joint
-/// up to his hands. Named, AH.49's: the frames after a throw's clip has gone
-/// from the list while the engine still blends it out (the collider's hand
-/// off the idle's by up to 3.4 m, back within the residual inside 13
-/// frames). A record with a clip the end pause named nothing for (a bite's
+/// at his scale: within AG.1's step residual, and turned as the collider is
+/// (AH.60: what hangs from a node takes its turn, within 0.06°), the lean
+/// his turn plays (6 % at most, no clip of our locomotion's yet) left out
+/// and moving no joint up to his hands. Named, AH.49's: the frames after a
+/// throw's clip has gone from the list while the engine still blends it out
+/// (the collider's hand off the idle's by up to 3.4 m, back within the
+/// residual inside 13 frames). A record with a clip the end pause named nothing for (a bite's
 /// hurt reaction) is left out.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.50's recordings; run on the Mac"]
@@ -1607,6 +1608,7 @@ fn his_hands_posed_from_his_attach_list_stand_where_the_oracles_collider_does() 
     let (mut drives, mut records, mut leaning, mut unnamed) = (0, 0, 0, 0);
     let (mut worst, mut worst_lean, mut worst_out): (f32, f32, f32) = (0.0, 0.0, 0.0);
     let mut longest_out = 0;
+    let mut worst_turn: f32 = 0.0;
     for (kind, n) in HAND_DRIVES {
         for i in 0..n {
             let drive = format!("ah50-main-1792638637/{kind}-{i:02}");
@@ -1697,8 +1699,19 @@ fn his_hands_posed_from_his_attach_list_stand_where_the_oracles_collider_does() 
                     },
                 );
                 let turn = guac_motion::seam::Quat::from_array(turn.rotation);
-                let at = vec3(&he["body"]["position"]) + turn * posed[node];
+                let at = vec3(&he["body"]["position"]) + turn * posed[node].at;
                 let off = (at - vec3(&col["body"]["position"])).length();
+                // Its turn (AH.60): the node's in his whole turn against the
+                // collider's angles.
+                let collider = guac_extract::models::euler_transform(
+                    &guac_formats::igz::layouts::EulerTransform {
+                        position: [0.0; 3],
+                        rotation: vec3(&col["body"]["rotation"]).to_array(),
+                    },
+                );
+                let turned = (turn * posed[node].turn)
+                    .angle_between(guac_motion::seam::Quat::from_array(collider.rotation))
+                    .to_degrees();
                 records += 1;
                 if lean {
                     leaning += 1;
@@ -1711,6 +1724,7 @@ fn his_hands_posed_from_his_attach_list_stand_where_the_oracles_collider_does() 
                 } else {
                     out = 0;
                     drive_worst = drive_worst.max(off);
+                    worst_turn = worst_turn.max(turned);
                 }
             }
             println!("{drive}: worst {drive_worst:.2e} m");
@@ -1720,12 +1734,15 @@ fn his_hands_posed_from_his_attach_list_stand_where_the_oracles_collider_does() 
     println!(
         "{drives} drives, {records} records: worst {worst:.2e} m; {leaning} with a lean, worst there \
          {worst_lean:.2e} m; a throw blending out off by {worst_out:.3} m at most, {longest_out} frames \
-         at most; {unnamed} with a clip the end pause didn't name"
+         at most; {unnamed} with a clip the end pause didn't name; the node's turn off the \
+         collider's by {worst_turn:.4}° at most"
     );
     println!("load after: {}", load());
     if drives > 0 {
         assert!(worst <= STEP_RESIDUAL, "{worst}");
         assert!(worst_lean <= STEP_RESIDUAL, "{worst_lean}");
         assert!(longest_out <= 13, "{longest_out}");
+        // 0.056° at worst over AH.50's 25 throwing drives.
+        assert!(worst_turn < 0.06, "{worst_turn}");
     }
 }

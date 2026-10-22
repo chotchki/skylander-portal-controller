@@ -2103,9 +2103,9 @@ mod tests {
         let scale = walkers::walker("009_Eruptor").unwrap().scale;
         assert_eq!(nodes.len(), 9);
         let want = Vec3::new(WALK_X, 2.0, HAND_Z) * scale;
-        assert!(nodes[7].distance(want) < 1e-4, "{:?}", nodes[7]);
-        assert!(nodes[8].distance(want - Vec3::Z * 2.0 * HAND_Z * scale) < 1e-4);
-        assert_eq!(nodes[0], Vec3::ZERO, "on his origin");
+        assert!(nodes[7].at.distance(want) < 1e-4, "{:?}", nodes[7]);
+        assert!(nodes[8].at.distance(want - Vec3::Z * 2.0 * HAND_Z * scale) < 1e-4);
+        assert_eq!(nodes[0].at, Vec3::ZERO, "on his origin");
         while spawned(&app).1 == 0 {
             assert!(Instant::now() < deadline, "the ball never landed");
             app.update();

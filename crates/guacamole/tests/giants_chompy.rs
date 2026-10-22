@@ -15,14 +15,18 @@
 //! resistance and his hurt reaction, a turned-away bite, a Lava Lob's kill,
 //! a stunned Chompy hit again (a lob staging and the disc's own `Combat -
 //! Hurt Creature` on a schedule), a bite in his eruption and the chain's
-//! rolls over 1,000 calls a case.
+//! rolls over 1,000 calls a case. AH.60's throws AH.10's lob at F0 + 90
+//! into each of its 20 `fight` drives' recorded scenes and holds the aim,
+//! the speed, the burst and who it beats to the oracle's.
 //!
 //! Dev aids, not checks: `AH18_LIVE_TABLE=<aj-vm's live member table>`
 //! answers every member the registry doesn't hold with a value cell of its
 //! registered type and prints which the run reached; in a fight,
 //! `AH19_TRACE=<steps from F0>` with `AH19_TRACE_OUT=<file outside the
 //! tree>` writes that step's ops as script and position, and `AH19_BALLS`
-//! prints what flies from F0 + 85 to F0 + 150.
+//! prints what flies from F0 + 85 to F0 + 150; in AH.60's, `AH60_DRIVES=
+//! <names>` runs those drives alone and `AH60_BURST` prints the four
+//! around each burst.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -972,9 +976,18 @@ struct Script {
     /// His health set at F0 (openspec AH.20: AH.11's `defeat2` set it to 40
     /// or 60 for a bite or few to beat him).
     hero_health: Option<i32>,
+    /// AH.10's drive (`ah10-main-1792553632/<drive>`) whose scene the lob
+    /// is thrown into (openspec AH.60): him at the release record's pivot
+    /// and facing from F0 + 85, the four where each record has them, mid
+    /// stride, from F0 + 85 to [`PINNED_TO`], his idle at the oracle's time
+    /// at the release.
+    pinned: Option<&'static str>,
     /// Steps past the opening's start.
     steps: u32,
 }
+
+/// The last step [`Script::pinned`] sets the four at.
+const PINNED_TO: i64 = 145;
 
 /// A Chompy as one step leaves it.
 #[derive(Debug, Clone)]
@@ -1023,6 +1036,10 @@ struct Snap {
     /// Steps from the opening's start (AH.10's F0).
     k: i64,
     hero: Vec3,
+    hero_facing: f32,
+    /// The lob in flight (AH.60): the first `009_LavaProjectile` flying,
+    /// its place and velocity (ft/s).
+    ball: Option<(Vec3, Vec3)>,
     health: f32,
     /// His walk across the ground, m/s, and the hurt chain's numbers on him.
     hero_speed: f32,
@@ -1175,9 +1192,16 @@ impl Run {
         let (nh, _) = self.placed(NORTICUS);
         let nid = self.vm.placement_of(nh).unwrap();
         let ctl = self.placement("Setup_001_Controller");
+        let ball = self.world.clones().into_iter().find_map(|h| {
+            let a = self.world.actor(h)?;
+            (a.launched && !a.removed && self.world.name(h) == "009_LavaProjectile")
+                .then_some((a.position, a.velocity))
+        });
         Snap {
             k,
             hero: self.hero().pivot,
+            hero_facing: self.hero().facing,
+            ball,
             health: self.health().unwrap_or(0.0),
             hero_speed: {
                 let v = self.hero().walk.velocity;
@@ -1217,6 +1241,7 @@ impl Run {
 /// them), then `script` from the opening, strict: a snap each step from the
 /// opening on, and the run.
 fn fight(script: Script) -> (Run, Vec<Snap>) {
+    let pin = script.pinned.map(ah10_drive);
     let (mut run, _) = joined(Mode::Strict);
     let mut snaps = Vec::new();
     let mut scene = 0;
@@ -1293,7 +1318,10 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
             stick(Stick::CENTRED)
         };
         let at = |s: Option<u32>| s.is_some_and(|s| (s as i64..s as i64 + 6).contains(&f));
-        if script.lob.is_some_and(|s| f == s as i64 - 1) {
+        if let Some(p) = &pin {
+            p.pin(&mut run, f);
+        }
+        if script.lob.is_some_and(|s| f == s as i64 - 1) && pin.is_none() {
             let to = run.at("Enemy_Chompy(2)") - run.hero().pivot;
             run.bench.heroes.get_mut(&HERO).unwrap().facing =
                 guacamole::script_engine::heading_of(to).rem_euclid(360.0);
@@ -1353,7 +1381,15 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
             run.vm.trace(None);
             let text: String = ops
                 .iter()
-                .map(|(s, at)| format!("{} {at}\n", program.scripts[*s as usize].name))
+                .map(|(s, at)| {
+                    let script = &program.scripts[*s as usize];
+                    let op = script.ops[*at as usize];
+                    format!(
+                        "{} {at} op#{op} {}\n",
+                        script.name,
+                        describe_op(&program, op)
+                    )
+                })
                 .collect();
             let out = std::env::var("AH19_TRACE_OUT").expect("AH19_TRACE_OUT");
             std::fs::write(out, text).unwrap();
@@ -1363,6 +1399,255 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
         }
     }
     (run, snaps)
+}
+
+/// A JSON triple as a vector.
+fn vec3(v: &serde_json::Value) -> Vec3 {
+    let c = |i: usize| v[i].as_f64().unwrap() as f32;
+    Vec3::new(c(0), c(1), c(2))
+}
+
+/// A record's items of `kind`.
+fn items<'a>(
+    r: &'a serde_json::Value,
+    kind: &'a str,
+) -> impl Iterator<Item = &'a serde_json::Value> {
+    r["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(move |i| i["kind"] == kind)
+}
+
+/// An AH.10 drive read back (openspec AH.60): its records by frame from
+/// F0 (a record the state a frame starts from), the release record (the
+/// one before the lob's first) and his idle's time there.
+struct Ah10Drive {
+    name: String,
+    records: BTreeMap<i64, serde_json::Value>,
+    release: i64,
+    idle: f64,
+}
+
+fn ah10_drive(drive: &str) -> Ah10Drive {
+    let root = env_or_dotenv("GUAC_CAPTURE_DIR").expect("GUAC_CAPTURE_DIR: AH.10's recordings");
+    let dir = Path::new(&root)
+        .join("BLUS30968/ah10-main-1792553632")
+        .join(drive);
+    let json = |n: &str| -> serde_json::Value {
+        let p = dir.join(n);
+        serde_json::from_str(
+            &std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display())),
+        )
+        .unwrap()
+    };
+    let list = json("chain-records.json");
+    let f0 = list[0]["game_frame"].as_i64().unwrap();
+    let records: BTreeMap<i64, serde_json::Value> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["game_frame"].as_i64().unwrap() - f0, r.clone()))
+        .collect();
+    let release = records
+        .iter()
+        .find(|(_, r)| items(r, "lava_ball").next().is_some())
+        .map(|(k, _)| k - 1)
+        .expect("a lob");
+    let names = json("chain.json")["resolved"]["clip_names"].clone();
+    let idle = json("recording.json")
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["game_frame"].as_i64() == Some(f0 + release))
+        .and_then(|r| {
+            r["clips"].as_array()?.iter().find_map(|c| {
+                let n = names[c["id"].as_i64()?.to_string()].as_str()?;
+                n.ends_with("Eruptor_Idle.ma")
+                    .then(|| c["period"].as_f64().unwrap() - c["remaining"].as_f64().unwrap())
+            })
+        })
+        .expect("his idle at the release");
+    Ah10Drive {
+        name: drive.to_owned(),
+        records,
+        release,
+        idle,
+    }
+}
+
+impl Ah10Drive {
+    /// [`Script::pinned`]'s scene before step `f` from F0. The oracle reads
+    /// the pad a frame later (AH.7), so our step `f` is its frame `f + 1`,
+    /// which starts from record `f + 1`.
+    fn pin(&self, run: &mut Run, f: i64) {
+        if f == 85 {
+            let h = items(&self.records[&self.release], "hero").next().unwrap();
+            let facing = h["body"]["rotation"][1].as_f64().unwrap() as f32;
+            run.put(vec3(&h["body"]["position"]), facing);
+        }
+        if f == self.release - 2 {
+            // The pose the release reads is the one the step before leaves.
+            run.idle0 = self.idle - f64::from(run.steps + 1) / 60.0;
+        }
+        if (85..=PINNED_TO).contains(&f) {
+            for c in items(&self.records[&(f + 1)], "chompy") {
+                let name = c["placement"].as_str().unwrap();
+                let (h, _) = run.placed(name);
+                let b = &c["body"];
+                let facing = b["rotation"][1].as_f64().unwrap() as f32;
+                let v = vec3(&b["velocity"]) * FEET_PER_METRE;
+                assert!(
+                    run.world.place_moving(h, vec3(&b["position"]), facing, v),
+                    "{name}"
+                );
+            }
+        }
+    }
+
+    /// The lob as the oracle threw it: his facing the release left (the
+    /// ball's first record), the ball's first record from his pivot at the
+    /// release and its velocity (ft/s), its last record in flight and its
+    /// burst across from his pivot (m) with their records, and the Chompies
+    /// it beat (health lost by 3 records after the burst).
+    fn lob(&self) -> OracleLob {
+        let first = self.release + 1;
+        let pivot =
+            vec3(&items(&self.records[&self.release], "hero").next().unwrap()["body"]["position"]);
+        let facing = items(&self.records[&first], "hero").next().unwrap()["body"]["rotation"][1]
+            .as_f64()
+            .unwrap() as f32;
+        let ball = items(&self.records[&first], "lava_ball").next().unwrap();
+        let addr = ball["address"].as_i64();
+        let flight: Vec<(i64, Vec3)> = self
+            .records
+            .range(first..)
+            .map_while(|(k, r)| {
+                items(r, "lava_ball")
+                    .find(|b| b["address"].as_i64() == addr)
+                    .map(|b| (*k, vec3(&b["body"]["position"])))
+            })
+            .collect();
+        let across = |p: Vec3| Vec3::new(p.x - pivot.x, 0.0, p.z - pivot.z).length();
+        let health = |k: i64| -> BTreeMap<String, f64> {
+            items(&self.records[&k], "chompy")
+                .map(|c| {
+                    (
+                        c["placement"].as_str().unwrap().to_owned(),
+                        c["vars"]["health"].as_f64().unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let (burst_at, burst) = *flight.last().unwrap();
+        let (last_at, last) = flight[flight.len() - 2];
+        let (before, after) = (health(first), health(burst_at + 3));
+        OracleLob {
+            facing,
+            first: vec3(&ball["body"]["position"]) - pivot,
+            velocity: vec3(&ball["body"]["velocity"]) * FEET_PER_METRE,
+            last: (last_at, across(last)),
+            burst: (burst_at, across(burst)),
+            beaten: before
+                .iter()
+                .filter(|(n, h)| after.get(*n).is_none_or(|a| a < h))
+                .map(|(n, _)| n.clone())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct OracleLob {
+    facing: f32,
+    first: Vec3,
+    velocity: Vec3,
+    last: (i64, f32),
+    burst: (i64, f32),
+    beaten: Vec<String>,
+}
+
+/// An op as the trace dev aid prints it: its class, and the names it
+/// carries (a parameter's or variable's, a definition's, a behaviour's, the
+/// names along an operand's path).
+fn describe_op(program: &guac_script::Program, op: guac_script::OpId) -> String {
+    use guac_script::Ins;
+    fn path(program: &guac_script::Program, o: Option<guac_script::OperandId>) -> String {
+        use guac_script::{Elem, Ins, Operand};
+        let Some(o) = o else { return String::new() };
+        match &program.operands[o as usize] {
+            Operand::Path {
+                elems,
+                literal,
+                other,
+                ..
+            } => {
+                let names: Vec<String> = elems
+                    .iter()
+                    .map(|e| match e {
+                        Elem::Op(op) => match &program.ops[*op as usize] {
+                            Ins::Parameter(p) => program.sym(p.name).to_owned(),
+                            Ins::Variable { name, .. } => program.sym(*name).to_owned(),
+                            other => {
+                                format!("{:?}", program.op_info[*op as usize].class)
+                                    + &format!("{}", matches!(other, Ins::Define(_)) as u8)
+                            }
+                        },
+                        Elem::Named(a, b) => format!("{}.{}", program.sym(*a), program.sym(*b)),
+                        Elem::Member(m) => format!("{m:?}"),
+                        other => format!("{other:?}"),
+                    })
+                    .collect();
+                let other =
+                    other.map_or(String::new(), |o| format!(" @{}", path(program, Some(o))));
+                format!(
+                    "[{}{}{other}]",
+                    names.join("/"),
+                    literal.map_or(String::new(), |l| format!(" ={l:?}"))
+                )
+            }
+            Operand::Expr { a, op, b } => {
+                format!("({} {op:?} {})", path(program, *a), path(program, *b))
+            }
+        }
+    }
+    let path = |o: Option<guac_script::OperandId>| path(program, o);
+    let class = program.op_info[op as usize].class;
+    match &program.ops[op as usize] {
+        Ins::Parameter(p) => format!(
+            "{class:?} {} of {}",
+            program.sym(p.name),
+            p.def
+                .map_or(String::new(), |d| program.defs[d as usize].display.clone())
+        ),
+        Ins::Define(d) => format!("{class:?} {}", program.defs[*d as usize].display),
+        Ins::Behaviour { name } => format!("{class:?} {}", program.sym(*name)),
+        Ins::Variable { name, .. } => format!("{class:?} {}", program.sym(*name)),
+        Ins::CheckValue { lhs, relation, rhs } => {
+            format!("{class:?} {} {relation} {}", path(*lhs), path(*rhs))
+        }
+        Ins::SetValue { lhs, rhs } => format!("{class:?} {} = {}", path(*lhs), path(*rhs)),
+        Ins::CheckReference {
+            lhs, relation, rhs, ..
+        } => {
+            format!("{class:?} {} {relation} {}", path(*lhs), path(*rhs))
+        }
+        Ins::SetReference { lhs, rhs, .. } => format!("{class:?} {} = {}", path(*lhs), path(*rhs)),
+        Ins::LoopValue { rhs } => format!("{class:?} {}", path(*rhs)),
+        Ins::FindVariable {
+            name,
+            filter,
+            owner,
+            index,
+            ..
+        } => format!(
+            "{class:?} {} filter {filter} of {} [{}]",
+            program.sym(*name),
+            path(*owner),
+            path(*index)
+        ),
+        _ => format!("{class:?}"),
+    }
 }
 
 /// A nip under way: its first step, the middles then (ft), each state's
@@ -2107,6 +2392,185 @@ fn probe_clip_lengths() {
     let read =
         guac_extract::models::read(&part[3], "009_Eruptor", identity(), Some(&globals)).unwrap();
     show(&read.palette, &[20, 21, 32]);
+}
+
+/// [`Script::pinned`]'s lob thrown into AH.10's `drive`, read as
+/// [`Ah10Drive::lob`] reads the oracle's (our step k is its frame k + 1,
+/// the state after it its record k + 2).
+fn our_lob(drive: &Ah10Drive) -> OracleLob {
+    let name: &'static str = Box::leak(drive.name.clone().into_boxed_str());
+    let (_, snaps) = fight(Script {
+        lob: Some(90),
+        pinned: Some(name),
+        steps: 170,
+        ..Script::default()
+    });
+    let ours = |record: i64| snaps.iter().find(|s| s.k == record - 2);
+    let release = ours(drive.release).expect("the release");
+    assert!(
+        release.ball.is_none(),
+        "{}: a ball before the release",
+        drive.name
+    );
+    let thrown = ours(drive.release + 1).expect("the step after");
+    let (first, velocity) = thrown
+        .ball
+        .unwrap_or_else(|| panic!("{}: no ball after the release", drive.name));
+    let flight: Vec<&Snap> = snaps
+        .iter()
+        .skip_while(|s| s.k < thrown.k)
+        .take_while(|s| s.ball.is_some())
+        .collect();
+    let pivot = release.hero;
+    let across = |s: &Snap| {
+        let p = s.ball.unwrap().0;
+        Vec3::new(p.x - pivot.x, 0.0, p.z - pivot.z).length()
+    };
+    let (last, burst) = (flight[flight.len() - 2], flight[flight.len() - 1]);
+    let after = snaps
+        .iter()
+        .find(|s| s.k == burst.k + 3)
+        .unwrap_or_else(|| panic!("{}: still flying at the run's end", drive.name));
+    // A dev aid: `AH60_BURST` prints the four around the burst.
+    if std::env::var("AH60_BURST").is_ok() {
+        let b = burst.ball.unwrap().0;
+        for s in snaps
+            .iter()
+            .filter(|s| (burst.k - 1..=burst.k + 3).contains(&s.k))
+        {
+            for (x, n) in s.chompies.iter().zip(CHOMPIES) {
+                println!(
+                    "  record {} {n}: {:.2} ft from the burst ({:.2} across), {:?} hp {}",
+                    s.k + 2,
+                    x.pos.distance(b) * FEET_PER_METRE,
+                    Vec3::new(x.pos.x - b.x, 0.0, x.pos.z - b.z).length() * FEET_PER_METRE,
+                    x.beh,
+                    x.health,
+                );
+            }
+        }
+    }
+    OracleLob {
+        facing: thrown.hero_facing,
+        first: first - pivot,
+        velocity,
+        last: (last.k + 2, across(last)),
+        burst: (burst.k + 2, across(burst)),
+        beaten: (0..4)
+            .filter(|&c| after.chompies[c].health < thrown.chompies[c].health)
+            .map(|c| CHOMPIES[c].to_owned())
+            .collect(),
+    }
+}
+
+/// AH.10's `fight` lob at F0 + 90 thrown into each of its 20 `fight`
+/// drives' scenes (openspec AH.60): him where the oracle had him, the four
+/// where each record has them mid stride. The aim turns him to the Chompy
+/// the oracle's did, to a hundredth of a degree, and the lob leads it at
+/// the oracle's speed within 1 % (the oracle's throw a frame's jitter off
+/// ours moves the hand it leaves from); it bursts at the oracle's record
+/// and beats the ones the oracle's did, or a record early on a Chompy
+/// walking in and beats no more (AH.66). `fight-00` as the box has it: the
+/// same record, within the bursts of the ten `fight` drives that threw at
+/// (1), (1) and (2) beaten. `AH60_DRIVES=<names>` runs those alone.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
+fn the_lob_at_f0_90_aims_as_ah10s_fights() {
+    println!("load before: {}", load());
+    let root = env_or_dotenv("GUAC_CAPTURE_DIR").expect("GUAC_CAPTURE_DIR: AH.10's recordings");
+    let main = Path::new(&root).join("BLUS30968/ah10-main-1792553632");
+    let mut drives: Vec<String> = std::fs::read_dir(&main)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("fight-"))
+        .collect();
+    drives.sort();
+    assert_eq!(drives.len(), 20, "{drives:?}");
+    if let Ok(only) = std::env::var("AH60_DRIVES") {
+        drives.retain(|d| only.split(',').any(|o| o == d));
+    }
+    let mut early = Vec::new();
+    let mut lobs = BTreeMap::new();
+    for name in &drives {
+        let drive = ah10_drive(name);
+        let oracle = drive.lob();
+        let ours = our_lob(&drive);
+        let ratio = ours.velocity.length() / oracle.velocity.length();
+        println!(
+            "{name}: facing {:.3} (oracle {:.3}); first {:.4} (oracle {:.4}), {:.4} m apart; \
+             speed {:.3} ft/s (oracle {:.3}, {:+.3} %); last {:?} (oracle {:?}); burst {:?} \
+             (oracle {:?}); beaten {:?} (oracle {:?})",
+            ours.facing,
+            oracle.facing,
+            ours.first,
+            oracle.first,
+            (ours.first - oracle.first).length(),
+            ours.velocity.length(),
+            oracle.velocity.length(),
+            (ratio - 1.0) * 100.0,
+            ours.last,
+            oracle.last,
+            ours.burst,
+            oracle.burst,
+            ours.beaten,
+            oracle.beaten
+        );
+        assert!(
+            (ours.facing - oracle.facing).abs() < 0.01,
+            "{name}: the turn"
+        );
+        assert!((ratio - 1.0).abs() < 0.01, "{name}: the speed");
+        match oracle.burst.0 - ours.burst.0 {
+            0 => {
+                assert_eq!(ours.beaten, oracle.beaten, "{name}");
+                // Up to 0.12 m on the longest, where the hand it leaves
+                // from is highest off the oracle's.
+                assert!(
+                    (ours.burst.1 - oracle.burst.1).abs() < 0.15,
+                    "{name}: {} against {}",
+                    ours.burst.1,
+                    oracle.burst.1
+                );
+            }
+            1 => {
+                assert!(
+                    ours.beaten.iter().all(|b| oracle.beaten.contains(b)),
+                    "{name}: {:?} against {:?}",
+                    ours.beaten,
+                    oracle.beaten
+                );
+                early.push(name.clone());
+            }
+            d => panic!("{name}: the burst {d} records off the oracle's"),
+        }
+        lobs.insert(name.clone(), (ours, oracle));
+    }
+    println!("a record early (AH.66): {early:?}");
+    assert!(early.len() <= 6, "{early:?}");
+    if let Some((ours, oracle)) = lobs.get("fight-00") {
+        assert!(!early.contains(&"fight-00".to_owned()));
+        assert_eq!(oracle.beaten, ["Enemy_Chompy(1)", "Enemy_Chompy(2)"]);
+        // The hand it leaves from: his turned hand, his model's tilt on the
+        // ground there left out (AH.65).
+        assert!((ours.first - oracle.first).length() < 0.03);
+        let at_one: Vec<f32> = lobs
+            .iter()
+            .filter(|(n, (_, o))| n.len() == 8 && (o.facing - oracle.facing).abs() < 0.5)
+            .map(|(_, (_, o))| o.burst.1)
+            .collect();
+        let (lo, hi) = at_one
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), &b| (lo.min(b), hi.max(b)));
+        println!(
+            "fight-00's burst {:.3} m across; the {} main drives at (1) {lo:.3}-{hi:.3} m",
+            ours.burst.1,
+            at_one.len()
+        );
+        if drives.len() == 20 {
+            assert!(at_one.len() >= 2 && (lo..=hi).contains(&ours.burst.1));
+        }
+    }
+    println!("load after: {}", load());
 }
 
 /// A development probe (openspec AH.19): standing still from anchor B,

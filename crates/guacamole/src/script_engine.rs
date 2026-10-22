@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use guac_motion::hero::Hero;
-use guac_motion::seam::{BodyId, PhysicsSeam, Vec3};
+use guac_motion::seam::{BodyId, PhysicsSeam, Quat, Vec3};
 use guac_motion::stick::Stick;
 use guac_script::{Handle, Obj, Value};
 
@@ -25,6 +25,37 @@ use guac_script::{Handle, Obj, Value};
 pub const FEET_PER_METRE: f32 = 1.0 / METRES_PER_FOOT;
 /// A foot in metres: what a displacement's feet move.
 pub const METRES_PER_FOOT: f32 = 0.3048;
+
+/// An attach node as the embedder poses it (openspec AH.50, AH.60): its
+/// place (metres) and its turn, both in its actor's own frame (+Z his
+/// facing). What hangs from it stands there turned so.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodePose {
+    pub at: Vec3,
+    pub turn: Quat,
+}
+
+impl NodePose {
+    /// A node at `at`, turned as its actor is.
+    pub fn at(at: Vec3) -> Self {
+        Self {
+            at,
+            turn: Quat::IDENTITY,
+        }
+    }
+}
+
+/// The angles the original keeps for a turn (its tilt, heading and roll, as
+/// [`guac_motion::solid::euler`] composes them), degrees, the heading in
+/// [0, 360).
+pub fn angles_of(q: Quat) -> Angles {
+    let (heading, x, roll) = q.normalize().to_euler(bevy::math::EulerRot::YXZ);
+    Angles {
+        facing: heading.to_degrees().rem_euclid(360.0),
+        tilt: -x.to_degrees(),
+        roll: roll.to_degrees(),
+    }
+}
 
 /// An actor's turn as the original keeps it, degrees.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

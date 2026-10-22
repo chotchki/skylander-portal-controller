@@ -44,12 +44,18 @@ impl AttachNodes {
     /// origin at its offset from it. `None` past the list, or a joint past
     /// the pose.
     pub fn place(&self, i: usize, pose: &[Transform]) -> Option<[f32; 3]> {
+        self.transform(i, pose).map(|m| m.translation)
+    }
+
+    /// Node `i`'s whole transform in the model's space with its joints at
+    /// `pose`: [`AttachNodes::place`]'s, its turn as well (what hangs from it
+    /// is turned so, AH.60).
+    pub fn transform(&self, i: usize, pose: &[Transform]) -> Option<Transform> {
         let node = self.nodes.get(i)?;
-        let m = match node.joint {
-            Some(j) => pose.get(usize::from(j))?.then(&node.offset),
-            None => node.offset,
-        };
-        Some(m.translation)
+        match node.joint {
+            Some(j) => Some(pose.get(usize::from(j))?.then(&node.offset)),
+            None => Some(node.offset),
+        }
     }
 }
 
@@ -128,6 +134,11 @@ mod tests {
             assert!((got - want).abs() < 1e-6, "{hand:?}");
         }
         assert_eq!(n.place(0, &pose), Some([0.0, 0.5, 0.0]));
+        // Its turn is its joint's: the arm's quarter turn about +Y.
+        let turn = n.transform(1, &pose).unwrap().rotation;
+        for (got, want) in turn.iter().zip([0.0, s, 0.0, s]) {
+            assert!((got - want).abs() < 1e-6, "{turn:?}");
+        }
         assert_eq!(n.place(2, &pose), None, "past the list");
         assert_eq!(n.place(1, &pose[..1]), None, "a joint past the pose");
     }

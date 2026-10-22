@@ -55,7 +55,7 @@ use tracing::{info, warn};
 
 use crate::player_loop::PlayerLoop;
 use crate::script_engine::{
-    Actor, Angles, Engine, NoEngine, Object, Objects, Pad, Physics, Sequence, Solid,
+    Actor, Angles, Engine, NoEngine, NodePose, Object, Objects, Pad, Physics, Sequence, Solid,
 };
 use crate::script_members::Member;
 
@@ -331,7 +331,7 @@ pub struct ScriptWorld {
     pub(crate) hero_templates: HashMap<Obj, Handle>,
     /// Each actor's attach nodes where they're set, in its own frame
     /// (metres, +Z its facing); a node not set sits at its pivot.
-    pub(crate) nodes: HashMap<Handle, Vec<Vec3>>,
+    pub(crate) nodes: HashMap<Handle, Vec<NodePose>>,
     /// The pads as this step reads them, and as the step before did.
     pub(crate) pads: [Pad; 2],
     pub(crate) pads_before: [Pad; 2],
@@ -510,26 +510,33 @@ impl ScriptWorld {
     /// state has it (a scripted test's or the dev entry's). False for no
     /// such actor.
     pub fn place(&mut self, h: Handle, at: Vec3, facing: f32) -> bool {
+        self.place_moving(h, at, facing, Vec3::ZERO)
+    }
+
+    /// [`ScriptWorld::place`] moving at `velocity` (ft/s): a recorded
+    /// state's creature mid-stride, which a lob's lead reads (AH.60).
+    pub fn place_moving(&mut self, h: Handle, at: Vec3, facing: f32, velocity: Vec3) -> bool {
         let Some(a) = self.actors.get_mut(&h) else {
             return false;
         };
         a.position = at;
         a.angles.facing = facing;
-        a.velocity = Vec3::ZERO;
+        a.velocity = velocity;
         true
     }
 
-    /// Where `actor`'s attach nodes sit, in its own frame (metres, +Z its
-    /// facing), by index; one past the list, or never set, at its pivot.
-    /// The embedder poses them off the actor's model by the clips playing
-    /// ([`crate::hands`], openspec AH.50), then [`ScriptWorld::place_hung`]
-    /// sets what hangs from them there.
-    pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<Vec3>) {
+    /// Where `actor`'s attach nodes sit and how each is turned, in its own
+    /// frame (metres, +Z its facing), by index; one past the list, or never
+    /// set, at its pivot. The embedder poses them off the actor's model by
+    /// the clips playing ([`crate::hands`], openspec AH.50), then
+    /// [`ScriptWorld::place_hung`] sets what hangs from them there, turned
+    /// as its node (AH.60).
+    pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<NodePose>) {
         self.nodes.insert(actor, nodes);
     }
 
     /// `actor`'s attach nodes as last set, in its own frame.
-    pub fn nodes(&self, actor: Handle) -> Option<&[Vec3]> {
+    pub fn nodes(&self, actor: Handle) -> Option<&[NodePose]> {
         self.nodes.get(&actor).map(Vec::as_slice)
     }
 

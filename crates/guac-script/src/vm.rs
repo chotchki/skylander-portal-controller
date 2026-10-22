@@ -255,6 +255,8 @@ struct Call {
     def: DefId,
     /// The context the call was made in, restored on return.
     caller: Option<DefId>,
+    /// The body has returned: the use block's after-return code runs.
+    returned: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1299,7 +1301,11 @@ impl Vm {
         let (sid, _) = self.program.defs[def as usize].placed.unwrap_or((0, 0));
         self.begin(placement, sid, receiver);
         self.busy.insert(def);
-        self.run.calls.push(Call { def, caller: None });
+        self.run.calls.push(Call {
+            def,
+            caller: None,
+            returned: false,
+        });
         self.run.blocks.push(Block {
             ctx: sid,
             start: 0,
@@ -1607,7 +1613,11 @@ impl Vm {
             .and_then(|s| s.ops.get(top.start as usize))
             .map_or(0, |&o| program.branch(o));
         self.run.pc = top.start + iface + 1;
-        self.run.frame = self.run.calls.last().and_then(|c| c.caller);
+        let Some(call) = self.run.calls.last_mut() else {
+            return unsupported("a macro body ended with no call open");
+        };
+        call.returned = true;
+        self.run.frame = call.caller;
         Ok(())
     }
 
@@ -1973,6 +1983,7 @@ impl Vm {
         self.run.calls.push(Call {
             def,
             caller: self.run.frame,
+            returned: false,
         });
         *self.calls.entry(def).or_default() += 1;
         *self
@@ -2824,13 +2835,29 @@ impl Vm {
         }
     }
 
-    /// The frame a parameter on a path reads. A definition's own parameter
-    /// reads the running definition's frame: in its body, while it binds a
-    /// nested call's arguments and in a nested call's after-return code
-    /// (a specialization's own parameters name the base). Any other reads
-    /// the definition it binds into (a stub followed), or the open call's
+    /// The frame a parameter on a path reads. In a call's after-return code,
+    /// one naming the callee's definition or its base reads the callee's.
+    /// Otherwise a definition's own parameter reads the running
+    /// definition's frame: in its body, while it binds a nested call's
+    /// arguments and in a nested call's after-return code (a
+    /// specialization's own parameters name the base). Any other reads the
+    /// definition it binds into (a stub followed), or the open call's
     /// specialization of it (an after-return read of what a call returned).
     fn param_frame(&self, program: &Program, op: OpId, p: &Param) -> Option<DefId> {
+        let base_of = |d: DefId| {
+            program.defs[d as usize]
+                .base
+                .and_then(|b| program.resolve(b))
+        };
+        // A family shares its parameter ops, so the caller may declare the
+        // one it reads back (AH.60: `Calc - Tangent` reading `Calc - Sin`).
+        if let Some(top) = self.run.calls.last()
+            && top.returned
+            && let Some(def) = p.def.and_then(|d| program.resolve(d))
+            && (top.def == def || base_of(top.def) == Some(def))
+        {
+            return Some(top.def);
+        }
         if let Some(running) = self.run.frame
             && declares(program, running, op)
         {
@@ -2839,10 +2866,7 @@ impl Vm {
         let def = p.def.and_then(|d| program.resolve(d))?;
         if let Some(top) = self.run.calls.last()
             && top.def != def
-            && program.defs[top.def as usize]
-                .base
-                .and_then(|b| program.resolve(b))
-                == Some(def)
+            && base_of(top.def) == Some(def)
         {
             return Some(top.def);
         }
