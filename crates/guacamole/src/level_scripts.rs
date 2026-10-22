@@ -280,6 +280,68 @@ mod tests {
         assert!(linked.took() >= linked.linked);
     }
 
+    /// The level's palettes part (openspec AH.27): each palette by its
+    /// model's path, each slot's clip length at 100 % (0 where a slot holds
+    /// none); another level's refused, a missing part named.
+    #[test]
+    fn the_levels_palettes_by_model() {
+        use guac_ir::palette::{LevelPalettes, Palette, PaletteSlot, SlotEntry};
+        let tmp = tempfile::tempdir().unwrap();
+        let ir = IrFormat::Ron;
+        let rel = ir.level_path(LEVEL, levels::PALETTES);
+        let e = level_palettes(tmp.path(), LEVEL, ir).unwrap_err();
+        assert!(e.starts_with(&rel), "{e}");
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([0; 32]),
+        };
+        let clip = guac_ir::clip::Clip {
+            name: "Coin_Spin.ma".into(),
+            duration: 0.5,
+            frame_duration: 1.0 / 30.0,
+            frames: 16,
+            tracks: Vec::new(),
+        };
+        let palettes = LevelPalettes {
+            identity: identity.clone(),
+            level: LEVEL.into(),
+            palettes: vec![Palette {
+                identity,
+                owner: "C:/x/Coin.mdl".into(),
+                slots: 3,
+                entries: vec![PaletteSlot {
+                    slot: 1,
+                    name: None,
+                    label: None,
+                    entry: SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip,
+                    },
+                }],
+                refused: Vec::new(),
+            }],
+        };
+        let path = tmp.path().join(&rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, guac_ir::to_ron(&palettes).unwrap()).unwrap();
+        assert_eq!(
+            level_palettes(tmp.path(), LEVEL, ir).unwrap(),
+            [("C:/x/Coin.mdl".to_owned(), vec![0.0, 0.5, 0.0])]
+        );
+        // Another level's, where level 212's should be.
+        let other = tmp
+            .path()
+            .join(ir.level_path("level_212", levels::PALETTES));
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::copy(&path, &other).unwrap();
+        let e = level_palettes(tmp.path(), "level_212", ir).unwrap_err();
+        assert!(e.contains(&format!("holds {LEVEL}'s palettes")), "{e}");
+    }
+
     #[test]
     fn a_part_that_wont_load_names_its_file() {
         let tmp = extract();

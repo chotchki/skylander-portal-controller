@@ -1965,6 +1965,11 @@ fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()
 /// setup's one, the fighter's three and the level's creature.
 pub const E2E_SCRIPTS: usize = 6;
 
+/// How many a smashing fixture links (AH.27): AH.24's fighting fixture's
+/// with the level's entry AH.27's breakable, its coin's script and its
+/// setup's.
+pub const E2E_SMASH_SCRIPTS: usize = 7;
+
 /// The fight's script data as the script stage leaves it (AH.22), both
 /// parts recorded: the roster builder's bootstrap, global and init_setup
 /// entries and AH.13's creature as the fighter's, built here, or with

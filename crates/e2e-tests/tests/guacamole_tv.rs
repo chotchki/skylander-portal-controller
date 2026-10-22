@@ -15,10 +15,10 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS, E2E_START,
-    E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap, gaits_tv, guacamole_only,
-    inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv,
-    wait_for_tv,
+    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS,
+    E2E_SMASH_SCRIPTS, E2E_START, E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap,
+    gaits_tv, guacamole_only, inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv,
+    set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -1213,7 +1213,11 @@ async fn a_press_breaks_the_barrel_and_its_coins_gold_reaches_the_phone() {
     })
     .await
     .expect("the level and its scripts");
-    assert_eq!(snap["level"]["scripts"]["scripts"], E2E_SCRIPTS);
+    assert_eq!(snap["level"]["scripts"]["scripts"], E2E_SMASH_SCRIPTS);
+    assert!(
+        snap["loot"].is_null(),
+        "the synthetic part keeps no loot data"
+    );
     place_named(&phone, "Eruptor").await;
     wait_for_tv(&server.url, Duration::from_secs(10), |s| {
         s["mode"] == "paused"

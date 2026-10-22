@@ -747,6 +747,23 @@ pub const SMASH_BARREL_SIZE: [f32; 3] = [3.0, 6.0, 3.0];
 /// (ft), which touches nothing (no solid, no level mesh).
 pub const SMASH_COIN_REACH: f32 = 20.0;
 
+/// A second barrel [`smash`] writes, [`SMASH_FAR_AHEAD`] m past the first,
+/// out of its range of a hero beside the first: asleep by the activity
+/// rule.
+pub const SMASH_FAR: &str = "Synthetic_Barrel_Far";
+pub const SMASH_FAR_AHEAD: f32 = 60.0;
+/// The model the far barrel names (none of the extract's: what a level's
+/// palettes part keys a placement's palette by).
+pub const SMASH_FAR_MODEL: &str = "C:/tfb/Content/Models/Objects/Synthetic_Barrel.mdl";
+/// A spinning coin [`smash`] places [`SMASH_FAR_AHEAD`] m past the barrel,
+/// running the coin's script under a name the TV's listing runs (one of
+/// chapter 1's): a scripted placement out of its range, asleep in the VM.
+pub const SMASH_FAR_COIN: &str = "Coin_spinning(1)";
+/// A running placement [`smash`] writes whose STARTUP sets its `ran` and
+/// takes itself off, as the level's archetype setups do at the level's
+/// start, under one's name so the TV's listing runs it.
+pub const SMASH_SETUP: &str = "init_temp_barrel_b";
+
 /// What [`smash`] writes: the level's entry, and the barrel's object index
 /// in it (what the level's props part keys its solid by).
 #[derive(Debug, Clone)]
@@ -762,6 +779,12 @@ pub struct Smash {
 ///   placement with no script, as the original's breakables have none:
 ///   the level builder's 160 ft activation range, its solid a
 ///   [`SMASH_BARREL_SIZE`] cylinder;
+/// - [`SMASH_FAR`], another, [`SMASH_FAR_AHEAD`] m further along z,
+///   naming [`SMASH_FAR_MODEL`];
+/// - [`SMASH_FAR_COIN`], a placed coin beside the far barrel running the
+///   coin's script;
+/// - [`SMASH_SETUP`], running from the level's start with no range, whose
+///   STARTUP sets its local `ran` to 1 and takes itself off;
 /// - [`SMASH_COIN`], a template whose script holds the level's
 ///   [`SMASH_BREAK`]: when the barrel is among what touches the caller (the
 ///   ball, `collisioninfo.contacts with me`), a coin spawned where the
@@ -778,7 +801,26 @@ pub fn smash(barrel_at: [f32; 3]) -> Smash {
     let root = b.object(0, "igObjectList", 0x18);
     let barrel = b.object(0, "tfbActorInfo", 0xF8);
     let coin = b.object(0, "tfbActorInfo", 0xF8);
+    let far = b.object(0, "tfbActorInfo", 0xF8);
+    let far_coin = b.object(0, "tfbActorInfo", 0xF8);
     let my = El::Member("optoplevelbehavior", "my");
+    let setup_script = {
+        let mut w = Writer::new(&mut b);
+        let ran = w.variable("ran", "ValueInfo", Some("IntMeasurement"));
+        let info = w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Setup.ai",
+            |w| {
+                let one = w.int(1);
+                w.set(&[El::Local(ran)], one);
+                w.remove(&[my]);
+            },
+            |_| {},
+            |_| {},
+        );
+        w.declare(info, &[ran]);
+        info
+    };
+    let setup = actor_with(&mut b, SMASH_SETUP, Some(setup_script), 4);
     let touching = [
         my,
         El::Member("actorinfo", "collision volume"),
@@ -827,11 +869,44 @@ pub fn smash(barrel_at: [f32; 3]) -> Smash {
     );
     // A cylinder (4), solid (bit 3).
     collision(&mut b, barrel, 0x0C, SMASH_BARREL_SIZE);
+    let ahead = z + SMASH_FAR_AHEAD;
+    place(
+        &mut b,
+        far,
+        SMASH_FAR,
+        None,
+        4,
+        &[x, y, ahead, 0.0, 0.0, 0.0],
+    );
+    collision(&mut b, far, 0x0C, SMASH_BARREL_SIZE);
+    let far_model = b.object(0, "tfbPhysicsModel", 0x30);
+    crate::model::builder::info(&mut b, far_model, SMASH_FAR_MODEL);
+    b.pointer(at(far, 0xDC), far_model);
     place(&mut b, coin, SMASH_COIN, Some(coin_script), 5, &[0.0; 6]);
+    place(
+        &mut b,
+        far_coin,
+        SMASH_FAR_COIN,
+        Some(coin_script),
+        4,
+        &[x, y, ahead, 0.0, 0.0, 0.0],
+    );
+    collision(&mut b, far_coin, 0x03, [SMASH_COIN_REACH; 3]);
     // A sphere (3) that stops nothing.
     collision(&mut b, coin, 0x03, [SMASH_COIN_REACH; 3]);
     let blocks = b.section(0x10);
-    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(barrel), Some(coin)]);
+    crate::igz::layouts::builder::list(
+        &mut b,
+        root,
+        blocks,
+        &[
+            Some(barrel),
+            Some(coin),
+            Some(far),
+            Some(setup),
+            Some(far_coin),
+        ],
+    );
     let level = b.build();
     let igz = crate::igz::Igz::parse(&level).expect("the level's entry parses");
     let barrel = crate::level::Placements::read(&igz)

@@ -2394,7 +2394,9 @@ mod tests {
     /// gold his figure's.
     #[test]
     fn eruptor_smashes_the_synthetic_barrel_and_its_coin_reaches_the_row() {
-        use guac_formats::script::builder::{SMASH_BARREL, SMASH_GOLD};
+        use guac_formats::script::builder::{
+            SMASH_BARREL, SMASH_FAR, SMASH_FAR_COIN, SMASH_GOLD, SMASH_SETUP,
+        };
         use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
 
         let tmp = tempfile::tempdir().unwrap();
@@ -2408,6 +2410,40 @@ mod tests {
         until(&mut app, "the level and its scripts", |a| {
             level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
         });
+        // The activity rule from the level's start before he's in: the
+        // barrel 3 m off it awake, the far one 63 m off asleep.
+        for _ in 0..3 {
+            app.update();
+        }
+        let placed_named = |app: &App, name: &str| {
+            let source = app.world().resource::<ScriptSource>();
+            let unit = source.level_unit().unwrap();
+            let world = app.world().resource::<ScriptWorld>();
+            let obj = world
+                .handles()
+                .keys()
+                .find(|o| o.unit == unit && world.name(world.handles()[o]) == name)
+                .copied()
+                .unwrap();
+            (obj, world.handles()[&obj])
+        };
+        let active = |app: &App, name: &str| {
+            let (_, h) = placed_named(app, name);
+            app.world()
+                .resource::<ScriptWorld>()
+                .actor(h)
+                .unwrap()
+                .active
+        };
+        assert!(active(&app, SMASH_BARREL), "from the start, before he's in");
+        assert!(!active(&app, SMASH_FAR), "out of its range");
+        // A scripted one out of range sleeps in the VM too: never ticked.
+        let asleep = |app: &App, name: &str| {
+            let (_, h) = placed_named(app, name);
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            vm.asleep(vm.placement_of(h).expect("it runs"))
+        };
+        assert!(asleep(&app, SMASH_FAR_COIN), "out of its range");
         let generation = 4;
         let owned = |slot: u8| {
             let mut change = placed(slot, ERUPTOR, "Eruptor");
@@ -2434,18 +2470,14 @@ mod tests {
         until(&mut app, "his scripts", |a| {
             join(a).as_deref() == Some("joined")
         });
-        let barrel_obj = {
-            let source = app.world().resource::<ScriptSource>();
-            let unit = source.level_unit().unwrap();
-            let world = app.world().resource::<ScriptWorld>();
-            world
-                .handles()
-                .keys()
-                .find(|o| o.unit == unit && world.name(world.handles()[o]) == SMASH_BARREL)
-                .copied()
-                .unwrap()
-        };
-        let barrel = app.world().resource::<ScriptWorld>().handles()[&barrel_obj];
+        let (barrel_obj, barrel) = placed_named(&app, SMASH_BARREL);
+        let (setup_obj, _) = placed_named(&app, SMASH_SETUP);
+        assert!(
+            app.world().resource::<ScriptWorld>().taken_off(setup_obj),
+            "the setup took itself off at the start"
+        );
+        assert!(!active(&app, SMASH_FAR), "out of his range");
+        assert!(asleep(&app, SMASH_FAR_COIN), "out of his range");
         assert!(
             app.world()
                 .resource::<ScriptWorld>()
@@ -2479,6 +2511,18 @@ mod tests {
             crate::hero_scripts::actor_of(&props, guac_motion::seam::BodyId(7)),
             None
         );
+        // So the scripts' engine answers.
+        {
+            use guacamole::script_engine::Engine;
+            let mut state: bevy::ecs::system::SystemState<(
+                Query<(Entity, &'static mut HeroBody)>,
+                AvianSeam,
+            )> = bevy::ecs::system::SystemState::new(app.world_mut());
+            let (mut heroes, seam) = state.get_mut(app.world_mut()).unwrap();
+            let engine = crate::hero_scripts::TvEngine::new(&mut heroes, &seam, 0.0, &props);
+            assert_eq!(engine.body(barrel), Some(prop_body));
+            assert_eq!(engine.actor_of(prop_body), Some(barrel));
+        }
         let _ = sink.waiting();
         test_pad::press(&mut app, pad, GamepadButton::South);
         until(&mut app, "the barrel broken", |a| {
@@ -2542,6 +2586,12 @@ mod tests {
         }
         let world = app.world().resource::<ScriptWorld>();
         assert!(world.taken_off(barrel_obj), "still off in the fresh run");
+        // The setup ran again (its own take-off isn't play's to carry).
+        let setup = world.handles()[&setup_obj];
+        let vm = &app.world().resource::<ScriptRuntime>().vm;
+        let p = vm.placement_of(setup).unwrap();
+        assert_eq!(vm.local(p, "ran"), Some(guac_script::Value::Int(1)));
+        assert!(world.taken_off(setup_obj));
         // The fresh run's placements are entities of their own.
         let again = world.handles()[&barrel_obj];
         assert_ne!(again, barrel);

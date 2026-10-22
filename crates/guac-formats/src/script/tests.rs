@@ -692,7 +692,8 @@ fn the_synthetic_attack_reads_back() {
 #[test]
 fn the_synthetic_breakable_reads_back() {
     use super::builder::{
-        SMASH_BARREL, SMASH_BARREL_SIZE, SMASH_BREAK, SMASH_COIN, SMASH_COIN_REACH, attack, smash,
+        SMASH_BARREL, SMASH_BARREL_SIZE, SMASH_BREAK, SMASH_COIN, SMASH_COIN_REACH, SMASH_FAR,
+        SMASH_FAR_AHEAD, SMASH_SETUP, attack, smash,
     };
     use crate::level::Placements;
     let s = smash([1.0, 2.0, 3.0]);
@@ -721,8 +722,29 @@ fn the_synthetic_breakable_reads_back() {
     let reach = coin.collision.unwrap();
     assert_eq!(reach.properties, 0x03, "a sphere that stops nothing");
     assert_eq!(reach.width, SMASH_COIN_REACH);
+    let far = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SMASH_FAR))
+        .unwrap();
+    assert_eq!(
+        far.placement().placement.init_matrix.position,
+        [1.0, 2.0, 3.0 + SMASH_FAR_AHEAD]
+    );
+    let setup = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SMASH_SETUP))
+        .unwrap();
+    assert_eq!(setup.placement().placement.activity_state, 4);
+    assert_eq!(setup.placement().activation_range, 0.0, "no range: awake");
+    assert!(setup.script.unwrap().ends_with("Synthetic_Setup.ai"));
     let graph = Graph::read(&igz).unwrap();
-    let script = &graph.scripts[0];
+    let script = graph
+        .scripts
+        .iter()
+        .find(|s| s.name.is_some_and(|n| n.ends_with("Synthetic_Coin.ai")))
+        .unwrap();
     let ops = positions(&graph, script);
     assert!(
         ops.iter().any(|o| o.contains(SMASH_BREAK)),

@@ -379,6 +379,24 @@ pub(crate) struct TvEngine<'a, 'w, 's> {
     props: &'a [(Handle, BodyId)],
 }
 
+impl<'a, 'w, 's> TvEngine<'a, 'w, 's> {
+    /// Over the heroes' controllers, Avian's side of the seam, the view's
+    /// heading and the standing props ([`standing_props`]).
+    pub(crate) fn new(
+        heroes: &'a mut Query<'w, 's, (Entity, &'static mut HeroBody)>,
+        seam: &'a dyn PhysicsSeam,
+        view: f32,
+        props: &'a [(Handle, BodyId)],
+    ) -> Self {
+        Self {
+            heroes,
+            seam,
+            view,
+            props,
+        }
+    }
+}
+
 /// Each prop standing with its solid in Avian's world, as its placement's
 /// handle and its body: the level's file's placements by their object.
 pub(crate) fn standing_props(
@@ -482,6 +500,16 @@ pub(crate) struct ScriptStep {
     pub gone: Vec<Spawned>,
     /// Scripts play mode stopped this step.
     pub stopped: Vec<String>,
+    /// When the step ran, on the frame log's clock (`/api/_test/tv/frames`,
+    /// the TV's real time), and how long its scripts took on the frame's
+    /// thread (the activity rule, the slides, the player loop, the join and
+    /// every placement's tick), both ms (openspec AH.27: a long frame told
+    /// apart from a long step).
+    pub at_ms: f64,
+    pub took_ms: f64,
+    /// How long the engine's frame after it took (the sequences, what the
+    /// scripts threw moved through the seam), ms.
+    pub advance_ms: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -596,8 +624,9 @@ fn step_scripts(
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
     mut earning: Option<ResMut<Earning>>,
-    (level, mut carried): (Res<Level>, Option<ResMut<Carried>>),
+    (level, mut carried, real): (Res<Level>, Option<ResMut<Carried>>, Res<Time<Real>>),
 ) {
+    let began = std::time::Instant::now();
     // The activity rule (openspec AH.27, AG.7's rule as the headless runs
     // apply it): each managed placement woken or put to sleep by the
     // heroes' pivots as the step begins, by the level's start before one is
@@ -632,12 +661,7 @@ fn step_scripts(
     } = &mut *runtime;
     let mut spawn =
         |template: Value| -> Handle { commands.spawn(ScriptClone(template)).id().to_bits() };
-    let mut engine = TvEngine {
-        heroes: &mut heroes,
-        seam: &seam,
-        view,
-        props: &props,
-    };
+    let mut engine = TvEngine::new(&mut heroes, &seam, view, &props);
     let mut stopped: Vec<Halt> = Vec::new();
     let mut off: Option<String> = None;
     // The frame's slides, once before any script this step (openspec
@@ -832,6 +856,8 @@ fn step_scripts(
         actions: held,
         join: run.as_deref().map(|r| r.join.name()),
         stopped: stopped.iter().map(|h| h.to_string()).collect(),
+        at_ms: real.elapsed().as_secs_f64() * 1e3,
+        took_ms: began.elapsed().as_secs_f64() * 1e3,
         ..ScriptStep::default()
     };
     runtime.stopped.extend(stopped);
@@ -910,15 +936,15 @@ fn advance_scripts(
     log: Res<ScriptLog>,
     (level, source): (Res<Level>, Option<Res<ScriptSource>>),
 ) {
+    let began = std::time::Instant::now();
     let view = view_heading(&cameras);
     let props = standing_props(&level, &world, source.as_deref());
-    let mut engine = TvEngine {
-        heroes: &mut heroes,
-        seam: &seam,
-        view,
-        props: &props,
-    };
+    let mut engine = TvEngine::new(&mut heroes, &seam, view, &props);
     world.advance(time.delta_secs(), &mut engine);
+    let took = began.elapsed().as_secs_f64() * 1e3;
+    if let Some(entry) = log.0.lock().unwrap_or_else(|e| e.into_inner()).back_mut() {
+        entry.advance_ms = took;
+    }
     // His clips that played out over this frame, onto this step's entry.
     let Some(mut steps) = steps else {
         return;
@@ -1481,6 +1507,49 @@ pub(crate) mod tests {
 
     // ---- AH.27: the breakables on the TV's listing ------------------------
 
+    /// The TV's install (openspec AH.27): the run on the TV's listing, the
+    /// level's placements given their palettes by the model each names
+    /// (the far barrel's), none for one that names no model, the run's
+    /// listing the breakables' (the setup ticks, not inert).
+    #[test]
+    fn the_tvs_install_gives_the_levels_placements_their_palettes() {
+        use guac_formats::script::builder::{
+            SMASH_BARREL, SMASH_FAR, SMASH_FAR_MODEL, SMASH_SETUP,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        write_smash(tmp.path(), BARREL_AT);
+        let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+        let level = *linked.order.last().unwrap();
+        let obj = |name: &str| {
+            linked
+                .placements
+                .placed
+                .iter()
+                .find(|p| p.name == name && p.obj.unit == level)
+                .unwrap()
+                .obj
+        };
+        let (far, near, setup) = (obj(SMASH_FAR), obj(SMASH_BARREL), obj(SMASH_SETUP));
+        let mut world = World::new();
+        install(
+            &mut world,
+            Part {
+                program: Arc::new(linked.program),
+                files: linked.placements,
+                order: linked.order,
+                fighters: linked.fighters,
+                layout: None,
+                palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
+            },
+        );
+        let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.palette(far), Some(&[0.0, 0.5][..]));
+        assert_eq!(w.palette(near), None);
+        let rt = world.resource::<ScriptRuntime>();
+        let h = w.handles()[&setup];
+        assert!(!rt.vm.inert().contains(&h), "the setup runs");
+    }
+
     /// Where the synthetic barrel stands: 3 m ahead of the headless hero
     /// along his facing, on the open ground, inside the ball's arc.
     const BARREL_AT: [f32; 3] = [0.0, 0.0, 3.0];
@@ -1594,13 +1663,15 @@ pub(crate) mod tests {
     }
 
     /// AH.27's carry: the level read off a run where the barrel broke holds
-    /// it; put back into a fresh run before its first step it's off there
-    /// too, asleep (no ground) and out of the VM, and a throw at where it
-    /// stood breaks nothing and drops no coin; a run with nothing taken off
-    /// carries nothing, and with no loot data has no count to set.
+    /// it, and since the join only it (the setup that took itself off at the
+    /// start isn't play's); put back into a fresh run before its first step
+    /// it's off there too, asleep (no ground) and out of the VM, and a throw
+    /// at where it stood breaks nothing and drops no coin; a run with
+    /// nothing taken off carries nothing, and with no loot data has no
+    /// count to set.
     #[test]
     fn a_fresh_run_put_back_keeps_the_barrel_broken() {
-        use guac_formats::script::builder::{ATTACK_BALL, SMASH_BARREL, SMASH_COIN};
+        use guac_formats::script::builder::{ATTACK_BALL, SMASH_BARREL, SMASH_COIN, SMASH_SETUP};
         let mut run = Headless::smash(BARREL_AT);
         assert_eq!(
             LevelState::read(&run.vm, &run.world, run.level),
@@ -1609,7 +1680,12 @@ pub(crate) mod tests {
         let layout = Layout::of(&progression_rows()).unwrap();
         run.joined_holding(&layout, figure::Values::default());
         let at_join = LevelState::read(&run.vm, &run.world, run.level).taken_off;
-        assert!(at_join.is_empty(), "nothing of its own off at the start");
+        let (setup_obj, _) = run.placed(SMASH_SETUP);
+        assert_eq!(
+            at_join,
+            [setup_obj],
+            "the setup took itself off at the start"
+        );
         let (barrel_obj, _) = run.placed(SMASH_BARREL);
         run.step([true, false, false, false]);
         for _ in 0..60 {
@@ -1617,7 +1693,7 @@ pub(crate) mod tests {
         }
         assert!(run.world.taken_off(barrel_obj));
         let kept = LevelState::read(&run.vm, &run.world, run.level).since(&at_join);
-        assert_eq!(kept.taken_off, [barrel_obj]);
+        assert_eq!(kept.taken_off, [barrel_obj], "play's alone, not the setup");
         assert_eq!(
             kept.since(&[barrel_obj]).taken_off,
             [],
