@@ -448,9 +448,10 @@ pub(crate) struct HeroReport {
     pub health: Option<i32>,
     pub health_max: Option<i32>,
     pub behaviour: Option<String>,
-    /// His figure's experience and gold as the TV holds them: the placing
-    /// profile's row as the placement read it (AH.1), 0 for a figure no
-    /// profile placed, until AH.23 hands the figure to his scripts.
+    /// His figure's experience and gold as the TV holds them (AH.1): what
+    /// his figure's words hold after the last step once his scripts run
+    /// (AH.23), the placing profile's row as the placement read it before,
+    /// fresh for a figure no profile placed.
     pub experience: Option<u32>,
     pub gold: Option<u32>,
 }
@@ -586,6 +587,7 @@ impl Play {
         bodies: &Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
         runtime: Option<&ScriptRuntime>,
+        earning: Option<&crate::progress::Earning>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
         let body = self.on_stage().and_then(|h| bodies.get(h.hero).ok());
@@ -598,7 +600,13 @@ impl Play {
             (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(&rt.vm, *minion),
             _ => hero_scripts::HeroNumbers::default(),
         };
-        let progress = c.placement.owner.as_ref().map(|o| o.progress);
+        // The TV's values for his slot: what his figure's words hold after
+        // the last step (AH.23), else the row as the placement read it.
+        let progress = earning
+            .and_then(|e| e.slots.get(c.slot.as_usize()))
+            .and_then(Option::as_ref)
+            .map(|e| e.progress)
+            .or_else(|| c.placement.owner.as_ref().map(|o| o.progress));
         // In the level with him in it: not while the portal holds it with
         // no hero (AG.29), when a replacement is only the hero-to-be.
         let inside = self.on_stage().is_some();
@@ -1100,6 +1108,7 @@ fn enter(
         walker.load_file,
         palette.clone(),
         s.source.as_deref(),
+        c.slot,
     );
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
@@ -1528,7 +1537,8 @@ mod tests {
 
     /// The turntables' made-up extract with Eruptor's load file on toy 9,
     /// a made-up model and hero side of its own, and a chapter 1 on
-    /// [`write_level`]'s walk; the TV on the portal view.
+    /// [`write_level`]'s walk; the TV on the portal view, each figure's
+    /// values followed (AH.1) with no server to send them to.
     fn play_app(dir: &std::path::Path) -> (App, crate::level::LevelSender) {
         let mut shelf = extract(dir);
         let ron = guac_ir::to_ron(&model("009_Eruptor")).unwrap();
@@ -1560,6 +1570,7 @@ mod tests {
                 SeamPlugin,
                 PlayPlugin,
                 crate::hero_scripts::HeroScriptsPlugin,
+                crate::progress::ProgressPlugin,
             ))
             .init_resource::<IntroQueue>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
@@ -2161,6 +2172,152 @@ mod tests {
             app.update();
         }
         assert!(hero(&app).pivot.distance(from) > 1.0);
+    }
+
+    // ---- AH.23: his figure in his scripts on the TV --------------------
+
+    /// The extract's progression tables beside [`write_attack_parts`]'s:
+    /// what lays his figure's words out.
+    fn write_figure_rows(dir: &std::path::Path) {
+        let p = crate::hero_scripts::tests::progression_rows();
+        let rel = IrFormat::Ron.progression_path();
+        std::fs::write(dir.join(rel), guac_ir::to_ron(&p).unwrap()).unwrap();
+    }
+
+    /// AH.23 on the TV: his figure in his scripts. Placed by Alice at 999
+    /// experience, Eruptor joins with his figure's tag on the portal holding
+    /// it; the synthetic second attack's award (a point, through `Game -
+    /// Award Experience`) lands in his figure's words, the TV reads it back
+    /// after the step onto his slot's values, `/api/_test/tv`'s report reads
+    /// it, and it goes to the map under the generation he was placed under
+    /// and from there to the row: 1,000, level 2. Placed with no profile
+    /// unlocked, the same award lands in his words and on the TV and
+    /// nothing goes to the map.
+    #[test]
+    fn a_scripts_award_reaches_his_figure_and_the_row() {
+        use guac_server::progress::{Drainer, ProgressSink, ProgressionSlot};
+        use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, alice, fresh) = rt.block_on(async {
+            let store =
+                guac_server::profiles::ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
+                    .await
+                    .unwrap();
+            let alice = store.create("Alice", "1234", "#e63946").await.unwrap();
+            let fresh = store
+                .instances()
+                .fresh(&alice, &format!("{ERUPTOR:06x}-0000"))
+                .await
+                .unwrap();
+            (store, alice, fresh.progress)
+        });
+        for owned in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, tx) = play_app(tmp.path());
+            write_attack_parts(tmp.path());
+            write_figure_rows(tmp.path());
+            let sink = ProgressSink::new();
+            app.insert_resource(crate::progress::ProgressOut(sink.clone()));
+            tx.send(write_level(tmp.path(), &lights())).unwrap();
+            let pad = test_pad::connect(&mut app, None, None);
+            until(&mut app, "the level and its scripts", |a| {
+                level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+            });
+            let mut change = placed(0, ERUPTOR, "Eruptor");
+            if owned && let PortalChange::Placed { placement, .. } = &mut change {
+                placement.owner = Some(PlacementOwner {
+                    profile_id: alice.clone(),
+                    initial: "A".into(),
+                    color: "#e63946".into(),
+                    progress: FigureProgress { xp: 999, ..fresh },
+                });
+            }
+            crate::turntable::tests::set(&mut app, [change.clone()]);
+            app.world_mut().write_message(PortalChanged(change));
+            until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+            test_pad::press(&mut app, pad, GamepadButton::East);
+            until(&mut app, "his scripts", |a| {
+                join(a).as_deref() == Some("joined")
+            });
+            let held = |app: &App| {
+                let e = app.world().resource::<crate::progress::Earning>();
+                e.slots[0].as_ref().unwrap().progress
+            };
+            // `/api/_test/tv`'s hero, as the mirror builds it.
+            let reported = |app: &mut App| {
+                let mut state: bevy::ecs::system::SystemState<(
+                    Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
+                    Query<(&Transform, &Projection), With<FollowCamera>>,
+                    Option<Res<ScriptRuntime>>,
+                    Option<Res<crate::progress::Earning>>,
+                    Res<Play>,
+                )> = bevy::ecs::system::SystemState::new(app.world_mut());
+                let (bodies, cameras, runtime, earning, play) = state.get(app.world()).unwrap();
+                play.report(&bodies, &cameras, runtime.as_deref(), earning.as_deref())
+                    .and_then(|r| r.experience)
+            };
+            let start = if owned { 999 } else { 0 };
+            let e = app.world().resource::<Play>().hero().unwrap();
+            let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+            let (data, generation) = run.figure.expect("his figure's tag on the portal");
+            assert_eq!(generation, if owned { fresh.generation } else { 0 });
+            let rt_vm = &app.world().resource::<ScriptRuntime>().vm;
+            let layout =
+                guacamole::level_scripts::figure_layout(tmp.path(), IrFormat::Ron).unwrap();
+            assert_eq!(
+                guacamole::figure::read(rt_vm, &layout, data).map(|v| v.xp),
+                Some(start),
+                "his words made from his slot's values"
+            );
+            assert_eq!(held(&app).xp, start);
+            assert_eq!(reported(&mut app), Some(start));
+            let _ = sink.waiting();
+            test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+            for _ in 0..3 {
+                app.update();
+            }
+            let rt_vm = &app.world().resource::<ScriptRuntime>().vm;
+            assert_eq!(
+                guacamole::figure::read(rt_vm, &layout, data).map(|v| v.xp),
+                Some(start + 1),
+                "the award in his words"
+            );
+            assert_eq!(held(&app).xp, start + 1, "read back onto his slot");
+            assert_eq!(reported(&mut app), Some(start + 1));
+            let waiting = sink.waiting();
+            if !owned {
+                assert_eq!(waiting, vec![], "an ownerless figure writes nothing");
+                continue;
+            }
+            assert_eq!(waiting.len(), 1, "{waiting:?}");
+            assert_eq!(
+                (waiting[0].2.progress.xp, waiting[0].2.progress.generation),
+                (1_000, fresh.generation)
+            );
+            let row = rt.block_on(async {
+                let (events, _) = tokio::sync::broadcast::channel(16);
+                let slot = ProgressionSlot::default();
+                slot.publish(guac_server::progress::Progression {
+                    level_xp: vec![0, 1_000],
+                    gold_cap: 65_000,
+                });
+                Drainer::new(sink.clone(), store.clone(), events, slot.clone())
+                    .drain()
+                    .await;
+                let row = store
+                    .instances()
+                    .read(&alice, &format!("{ERUPTOR:06x}-0000"))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                (row.progress, slot.get().unwrap().level_for(row.progress.xp))
+            });
+            assert_eq!((row.0.xp, row.1), (1_000, 2), "the row at level 2");
+        }
     }
 
     // ---- AG.29 over AH.24: the portal's holds and his scripts ------------

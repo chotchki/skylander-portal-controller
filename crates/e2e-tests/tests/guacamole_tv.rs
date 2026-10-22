@@ -1032,7 +1032,8 @@ fn started(steps: &[Value]) -> Vec<u64> {
 /// bottom button starts his throw's clip and spawns the ball, which falls
 /// onto the made-up floor and is taken off; held it throws once, the
 /// attack held reading in the input's; a right shoulder starts the second
-/// attack's clip; the top button does nothing.
+/// attack's clip and awards a point, which his figure's words take and the
+/// TV and Alice's row show (AH.23); the top button does nothing.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn a_press_throws_from_his_scripts() {
@@ -1040,7 +1041,7 @@ async fn a_press_throws_from_his_scripts() {
         return;
     }
     let server = TestServer::spawn_guacamole_fighting().expect("spawn guacamole");
-    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    let (phone, alice_id, _) = phone_as(&server, "Alice", ALICE).await;
     pick_giants(&server, &phone).await;
     let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
         s["level"]["state"] == "ready" && !s["level"]["scripts"].is_null()
@@ -1146,7 +1147,10 @@ async fn a_press_throws_from_his_scripts() {
     .await;
     assert_eq!(started(&steps), [20], "held, one throw");
 
-    // A right shoulder: the second attack's clip. The top button: nothing.
+    // A right shoulder: the second attack's clip, and its award (a point,
+    // through the synthetic `Game - Award Experience`) in his figure's
+    // words, read back onto the TV and written to Alice's row (AH.23). The
+    // top button: nothing.
     let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
         .as_u64()
         .unwrap();
@@ -1158,6 +1162,21 @@ async fn a_press_throws_from_his_scripts() {
     })
     .await;
     assert_eq!(started(&steps), [32]);
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["hero"]["experience"] == json!(1)
+    })
+    .await
+    .expect("the award on the TV");
+    let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let (status, body) = stats(&server, &alice_id, &figure).await;
+        if status == 200 && body["xp"] == json!(1) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the row: {status} {body}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
         .as_u64()
         .unwrap();

@@ -14,6 +14,7 @@ use guac_formats::script::{Class, Graph, StackClass};
 use crate::*;
 
 mod creatures;
+mod embed;
 mod hero;
 mod init;
 mod loot;

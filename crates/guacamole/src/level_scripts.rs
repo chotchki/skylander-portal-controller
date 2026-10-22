@@ -11,12 +11,31 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use guac_extract::intros::IrFormat;
 use guac_extract::{levels, roster, scripts};
 use guac_formats::igz::Igz;
 use guac_formats::script::Graph;
+use guac_ir::progression::Progression;
 use guac_script::{Program, Role, Unit};
 
+use crate::figure::Layout;
 use crate::scripts::Files;
+
+/// The figure's layout off the progression tables in the extract at `dir`
+/// (AH.2's part, AH.23): why not when the part isn't there or its rows
+/// don't lay a figure out (the e2e fixture's tables have none).
+pub fn figure_layout(dir: &Path, ir: IrFormat) -> Result<Layout, String> {
+    let rel = ir.progression_path();
+    let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let p: Progression = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    Layout::of(&p)
+}
 
 /// A level's script part linked, with what the load cost: the level's
 /// reading task makes one beside the parts it draws.
@@ -31,6 +50,10 @@ pub struct Linked {
     /// Each fighter's load file and its unit: his file's placements join the
     /// run when he's the hero (openspec AH.24).
     pub fighters: Vec<(String, u16)>,
+    /// Where a figure's values sit in its tag's words, from the extract's
+    /// progression tables ([`figure_layout`], AH.23), or why not: [`load`]
+    /// leaves it unread, the level's load reads it beside.
+    pub layout: Result<Layout, String>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -131,6 +154,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         placements,
         order,
         fighters,
+        layout: Err("not read".into()),
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,

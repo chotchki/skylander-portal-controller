@@ -55,6 +55,7 @@ use guac_motion::hero::Hero;
 use guac_motion::seam::PhysicsSeam;
 use guac_motion::solid::euler;
 use guac_script::{Halt, Handle, Mode, PlacementId, Program, Value};
+use guacamole::figure::{self, Layout};
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
     self, Files, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost, hero_config,
@@ -66,6 +67,8 @@ use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroInput, HeroSystems, S
 use crate::level::{LEVEL_LAYER, Level};
 use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
+use crate::progress::Earning;
+use skylander_core::SlotIndex;
 
 /// The level's script part as it linked, kept to install the run again.
 #[derive(Resource, Clone)]
@@ -75,6 +78,10 @@ pub(crate) struct ScriptSource {
     order: Vec<u16>,
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,
+    /// Where a figure's values sit in its tag's words, from the extract's
+    /// progression tables (AH.23); none when the extract has no rows to lay
+    /// them out by, and then no figure reaches his scripts.
+    layout: Option<Layout>,
 }
 
 impl ScriptSource {
@@ -103,6 +110,7 @@ impl ScriptSource {
             files,
             order,
             fighters: Vec::new(),
+            layout: None,
         }
     }
 }
@@ -115,12 +123,14 @@ pub(crate) fn install(
     files: Files,
     order: Vec<u16>,
     fighters: Vec<(String, u16)>,
+    layout: Option<Layout>,
 ) {
     let source = ScriptSource {
         program,
         files,
         order,
         fighters,
+        layout,
     };
     install_from(world, &source);
     world.insert_resource(source);
@@ -189,6 +199,11 @@ pub(crate) struct HeroRun {
     pub(crate) unit: u16,
     pub(crate) palette: Option<Arc<Palette>>,
     pub(crate) join: Join,
+    /// The portal slot his figure stands in: its values make his tag's words.
+    pub(crate) slot: SlotIndex,
+    /// His figure's tag data once his scripts join holding it (AH.23), and
+    /// the generation its words were made under.
+    pub(crate) figure: Option<(Value, i64)>,
 }
 
 /// Asks for `hero`'s scripts to join the run, if the part holds his file;
@@ -199,6 +214,7 @@ pub(crate) fn ask_join(
     load_file: &str,
     palette: Option<Arc<Palette>>,
     source: Option<&ScriptSource>,
+    slot: SlotIndex,
 ) -> bool {
     let Some(unit) = source.and_then(|s| s.fighter(load_file)) else {
         info!(
@@ -213,6 +229,8 @@ pub(crate) fn ask_join(
             unit,
             palette,
             join: Join::Asked,
+            slot,
+            figure: None,
         },
         ScriptedHero,
     ));
@@ -441,6 +459,7 @@ fn step_scripts(
     mut runs: Query<(Entity, &mut HeroRun)>,
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
+    mut earning: Option<ResMut<Earning>>,
 ) {
     let held = actions.take();
     let settled = runs
@@ -533,6 +552,40 @@ fn step_scripts(
             generator,
             spawn: &mut spawn,
         };
+        // His figure's tag on the portal first, so his definition's first
+        // tick finds it (AH.23).
+        if let Some(r) = run.as_deref_mut() {
+            let layout = source.as_ref().and_then(|s| s.layout.as_ref());
+            let earner = earning
+                .as_deref()
+                .and_then(|e| e.slots.get(r.slot.as_usize()))
+                .and_then(Option::as_ref);
+            match (layout, earner) {
+                (Some(layout), Some(e)) => {
+                    match figure::put_on_portal(vm, &mut host, layout, &e.tag()) {
+                        Ok(data) => {
+                            info!(
+                                slot = r.slot.display(),
+                                xp = e.progress.xp,
+                                gold = e.progress.gold,
+                                "his figure's tag is on the portal"
+                            );
+                            r.figure = Some((data, e.progress.generation));
+                        }
+                        Err(h) => {
+                            warn!(%h, "his figure's tag didn't go on the portal: his scripts see none")
+                        }
+                    }
+                }
+                (None, _) => {
+                    info!("the extract lays out no figure's words: his scripts see no figure")
+                }
+                (_, None) => warn!(
+                    slot = r.slot.display(),
+                    "no figure stands in his slot: his scripts see none"
+                ),
+            }
+        }
         match scripts::join_request(vm, &mut host, files, unit, &handles) {
             Ok(added) => {
                 info!(
@@ -577,6 +630,17 @@ fn step_scripts(
     }
     world.end_step();
     scripts::add_scripted(vm, &mut world);
+    // What his figure's words hold after the step, onto his slot's values
+    // under the generation they were made from (AH.23).
+    if let (Some(r), Some(layout), Some(earning)) = (
+        run.as_deref(),
+        source.as_ref().and_then(|s| s.layout.as_ref()),
+        earning.as_deref_mut(),
+    ) && let Some((data, generation)) = r.figure
+        && let Some(values) = figure::read(vm, layout, data)
+    {
+        earning.earned(r.slot.as_usize(), values, generation);
+    }
     runtime.steps += 1;
     for h in &stopped {
         warn!(%h, "a script stopped");
@@ -1015,6 +1079,79 @@ pub(crate) mod tests {
             self.step([false; 4]);
             self.host(|vm, host| scripts::join_activate(vm, host, HERO))
                 .unwrap_or_else(|h| panic!("{h}"))
+        }
+    }
+
+    /// AH.23 headless on the synthetic fight: his figure's tag on the
+    /// portal before his join, in strict mode on the TV's listing, holding
+    /// 999 experience and 4,321 gold; his second attack's award (a point,
+    /// through `Game - Award Experience`, as an orb pays) lands in its words
+    /// as the scripts wrote it, the thousandth point.
+    #[test]
+    fn the_synthetic_fights_award_lands_in_his_figures_words() {
+        use guacamole::figure::{Layout, Tag, Values};
+        let mut run = Headless::new();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let layout = Layout::of(&progression_rows()).unwrap();
+        let tag = Tag {
+            toy_id: 9,
+            subtype: 0,
+            serial: 1,
+            values: Values {
+                xp: 999,
+                gold: 4_321,
+                playtime_secs: 60,
+            },
+        };
+        let data = run
+            .host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))
+            .unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(figure::read(&run.vm, &layout, data), Some(tag.values));
+        // Sized by the part's `Save - Set up Tag Data Fields`, a word for
+        // every four bytes of the portal's regions: AH.11's live 44.
+        let area = run.vm.field(data, "save data area").unwrap();
+        assert_eq!(run.vm.set(area).map(<[Value]>::len), Some(44));
+        run.join();
+        run.step([false; 4]);
+        run.step([false, true, false, false]);
+        let after = figure::read(&run.vm, &layout, data).unwrap();
+        assert_eq!(
+            after,
+            Values {
+                xp: 1_000,
+                ..tag.values
+            },
+            "the award in his words"
+        );
+    }
+
+    /// Giants' rows as AH.2 reads them, the table ours: what lays a
+    /// figure's words out in the synthetic part's tests.
+    pub(crate) fn progression_rows() -> guac_ir::progression::Progression {
+        use guac_ir::progression::{Progression, SaveField, SaveKind, SaveParam};
+        let row = |param: &str, kind, word, bit, width, limit| SaveParam {
+            param: param.into(),
+            kind,
+            fields: vec![SaveField {
+                word,
+                bit,
+                member: None,
+            }],
+            width,
+            bits_per_field: 0,
+            limit,
+        };
+        Progression {
+            identity: crate::turntable::tests::identity(),
+            level_xp: vec![0, 1_000],
+            save_params: vec![
+                row("pp_Exp", SaveKind::Plain, 0, 0, 24, 33_000),
+                row("pp_Money", SaveKind::Plain, 0, 24, 16, 65_535),
+                row("pp_CumulativeTime", SaveKind::Plain, 1, 8, 32, 0),
+                row("pp_Exp", SaveKind::Spillover, 28, 24, 16, 63_500),
+            ],
+            gold_cap: 65_000,
         }
     }
 

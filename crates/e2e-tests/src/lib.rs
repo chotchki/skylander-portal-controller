@@ -1958,16 +1958,36 @@ pub const E2E_LEVEL_XP: [u32; 15] = [
 pub const E2E_GOLD_CAP: u32 = 50_000;
 
 /// The progression tables into the extract as the progression stage leaves
-/// them (AH.2): [`E2E_LEVEL_XP`] and [`E2E_GOLD_CAP`], no save params
-/// (nothing lays a figure's data out yet), recorded as the part it is.
+/// them (AH.2): [`E2E_LEVEL_XP`], [`E2E_GOLD_CAP`] and save params that lay
+/// a figure's experience, gold and playtime out in Giants' places (AH.23:
+/// experience from word 0's bit 0, where the synthetic award adds, to a
+/// first-area limit of our own and on into a second area), recorded as the
+/// part it is.
 fn write_progression(dir: &mut guac_extract::IdentityDir) -> Result<()> {
     use guac_extract::intros::IrFormat;
-    use guac_ir::progression::Progression;
+    use guac_ir::progression::{Progression, SaveField, SaveKind, SaveParam};
 
+    let row = |param: &str, kind, word, bit, width, limit| SaveParam {
+        param: param.into(),
+        kind,
+        fields: vec![SaveField {
+            word,
+            bit,
+            member: None,
+        }],
+        width,
+        bits_per_field: 0,
+        limit,
+    };
     let progression = Progression {
         identity: dir.manifest().identity.clone(),
         level_xp: E2E_LEVEL_XP.to_vec(),
-        save_params: Vec::new(),
+        save_params: vec![
+            row("pp_Exp", SaveKind::Plain, 0, 0, 24, 9_000),
+            row("pp_Money", SaveKind::Plain, 0, 24, 16, 65_535),
+            row("pp_CumulativeTime", SaveKind::Plain, 1, 8, 32, 0),
+            row("pp_Exp", SaveKind::Spillover, 28, 24, 16, 7_100),
+        ],
         gold_cap: E2E_GOLD_CAP,
     };
     let ir = IrFormat::Ron;

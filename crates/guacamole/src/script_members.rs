@@ -72,6 +72,9 @@ pub(crate) enum Member {
     Controller(usize),
     Physical(usize),
     Portal,
+    /// `redoctaneperipheralscriptobject.size of region 1` and `2` on the
+    /// portal: a figure's tag's two data regions in bytes (AH.23).
+    Region(u8),
     // AH.17's.
     Range,
     Orientation,
@@ -224,6 +227,13 @@ impl Member {
             );
         }
         add("redoctaneperipheralsystemobject", "portal", Member::Portal);
+        for n in 1..=2u8 {
+            add(
+                "redoctaneperipheralscriptobject",
+                &format!("size of region {n}"),
+                Member::Region(n),
+            );
+        }
         add("placement", "activation range", Member::Range);
         add("matrixmeasurement", "orientation", Member::Orientation);
         add("orientationmeasurement", "facing", Member::Facing);

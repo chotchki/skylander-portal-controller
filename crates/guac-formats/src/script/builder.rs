@@ -654,6 +654,10 @@ pub const ATTACK_HELPER: &str = "009_LavaCollider";
 /// The hero's health and full health as [`attack`]'s minion sets them.
 pub const ATTACK_HEALTH: i32 = 120;
 pub const ATTACK_HEALTH_MAX: i32 = 150;
+/// What [`attack`]'s second attack awards through `Game - Award
+/// Experience`, an orb's worth: added to the first word of his figure's save
+/// area, where a figure's first area of experience starts (AH.23).
+pub const ATTACK_AWARD: i32 = 1;
 
 /// The portal manager's placement name, as the join looks it up.
 const PORTAL_MANAGER: &str = "Spyro_PortalManager";
@@ -668,6 +672,17 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 ///   `Manage Projectiles` (nothing), `Portal - Define Minion` (the slot's
 ///   spawned object becomes its `minion`) and `Game - Activate/Deactivate
 ///   Minion` (its `minion` spawned at its `spawn location`);
+/// - the shapes a figure's tag stands in (AH.23): `portal save control`, a
+///   global whose `tag data` holds each tag's `Portal - Tag Data` (its
+///   `save data area` of words, its toy id, serial, subtype and load
+///   state); `Save - Set up Tag Data Fields`, sizing a tag's save area at a
+///   word per four bytes of the portal's two regions; the loaded slot's
+///   `tag data`, `tag` (`rfid`, `prodid`), `entered` and `owner`, its
+///   object info's `tag data`; the portal manager's `player data`, two
+///   players each with a `loaded data`, which `portal control data`'s
+///   `player joined data` names; and `Game - Award Experience`, adding its
+///   `amount` to the first word of the first player's loaded slot's object
+///   info's tag data's save area;
 /// - the fighter's: his definition (`009_Eruptor_Def`, whose first tick
 ///   defines his minion through a stub of `Portal - Define Minion`), his
 ///   minion (`009_Eruptor`, a template), whose script on its first tick
@@ -677,7 +692,9 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 ///   his pivot, moved [`ATTACK_BALL_RISE`] ft up and sent at
 ///   [`ATTACK_BALL_SPEED`] ft/s, [`ATTACK_BALL_PITCH`]° up along his
 ///   facing, and on action 2 going down starts slot
-///   [`ATTACK_SECOND_SLOT`]; and the ball, a template whose solid touches
+///   [`ATTACK_SECOND_SLOT`] and awards [`ATTACK_AWARD`] experience through
+///   a stub of `Game - Award Experience`; and the ball, a template whose
+///   solid touches
 ///   the level and whose script takes it off the tick it touches anything.
 ///
 /// The scripts' names are the ones the TV's whitelist runs (the portal
@@ -858,35 +875,98 @@ fn attack_global() -> Vec<u8> {
         let info_ty = w.op(Class::DefineStructure, "Object Info");
         let slot_ty = w.op(Class::DefineStructure, "Loaded Object");
         let control_ty = w.op(Class::DefineStructure, "Portal Control");
+        let pair_ty = w.op(Class::DefineStructure, "Portal RFID and ProdID Pair");
+        let tag_ty = w.op(Class::DefineStructure, "Portal - Tag Data");
+        let save_ty = w.op(Class::DefineStructure, "Portal Save Control");
+        let player_ty = w.op(Class::DefineStructure, "Player Joined Data");
         let spawned = w.variable("spawned object", "ScriptReference", None);
         let extra = w.variable("minion additional info", "ScriptReference", None);
+        let info_tag = w.variable("tag data", "ScriptReference", None);
         let object_info = structure_var(&mut w, "object info", info_ty);
+        let slot_tag = w.variable("tag data", "ScriptReference", None);
+        let pair = structure_var(&mut w, "tag", pair_ty);
+        let entered = w.variable("entered", "ValueInfo", Some("IntMeasurement"));
+        let owner = w.variable("owner", "ValueInfo", Some("IntMeasurement"));
+        let rfid = w.variable("rfid", "ValueInfo", Some("IntMeasurement"));
+        let prodid = w.variable("prodid", "ValueInfo", Some("IntMeasurement"));
+        let area = w.variable("save data area", "ScriptSet", Some("ValueInfo"));
+        let tag_fields: Vec<Location> = [
+            "portal tag index",
+            "toy id",
+            "toy serial",
+            "toy subtype",
+            "initial load complete",
+        ]
+        .iter()
+        .map(|n| w.variable(n, "ValueInfo", Some("IntMeasurement")))
+        .collect();
+        let save_tags = w.variable("tag data", "ScriptSet", None);
+        w.refer(save_tags, 0x24, tag_ty);
+        let loaded_data = w.variable("loaded data", "ScriptReference", None);
+        let joined = w.variable("player joined data", "ScriptSetReference", None);
+        let players = w.variable("player data", "ScriptSet", None);
+        w.refer(players, 0x24, player_ty);
         let loaded = w.variable("loaded objects", "ScriptSet", None);
         w.refer(loaded, 0x24, slot_ty);
-        // `portal control data` and `projectile control data`: globals.
+        // `portal control data`, `portal save control` and `projectile
+        // control data`: globals.
         let control = w.b.object(0, "ScriptStructure", 0x20);
         w.text(control, 0x08, "portal control data");
         w.refer(control, 0x1C, control_ty);
+        let save_control = w.b.object(0, "ScriptStructure", 0x20);
+        w.text(save_control, 0x08, "portal save control");
+        w.refer(save_control, 0x1C, save_ty);
         let projectiles = w.b.object(0, "ScriptReference", 0x20);
         w.text(projectiles, 0x08, "projectile control data");
         let minion = w.variable("minion", "ScriptReference", None);
         let location = w.variable("spawn location", "ScriptReference", None);
+        let set_up_tag = w.variable("set up tag", "ScriptReference", None);
+        let words = w.variable("region words", "ValueInfo", Some("IntMeasurement"));
+        let more = w.variable("more words", "ValueInfo", Some("IntMeasurement"));
+        let amount = w.variable("amount", "ValueInfo", Some("IntMeasurement"));
+        let word = w.variable("word", "ScriptReference", None);
+        let tags_held = w.variable("tags held", "ValueInfo", Some("IntMeasurement"));
         frame_with(
             &mut w,
             "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/Spyro_PortalManager.ai",
             |w| {
-                structure(w, info_ty, &[spawned, extra]);
-                structure(w, slot_ty, &[object_info]);
-                structure(w, control_ty, &[loaded]);
+                structure(w, info_ty, &[spawned, extra, info_tag]);
+                structure(w, pair_ty, &[rfid, prodid]);
+                structure(w, slot_ty, &[object_info, slot_tag, pair, entered, owner]);
+                let mut fields = vec![area];
+                fields.extend(&tag_fields);
+                structure(w, tag_ty, &fields);
+                structure(w, save_ty, &[save_tags]);
+                structure(w, player_ty, &[loaded_data]);
+                structure(w, control_ty, &[loaded, joined]);
             },
             |w| {
-                // The portal's one loaded slot.
+                // The portal's one loaded slot, and two players.
                 w.inc(&[
                     El::Local(control),
                     El::Local(loaded),
                     El::Member("setvariant", "count"),
                 ]);
                 setref(w, &[El::Local(projectiles)], &[El::Local(control)]);
+                for _ in 0..2 {
+                    w.inc(&[El::Local(players), El::Member("setvariant", "count")]);
+                }
+                setref(
+                    w,
+                    &[El::Local(control), El::Local(joined)],
+                    &[El::Local(players)],
+                );
+                // How many tags the save control holds: the file's variable
+                // reached, so a figure's stand-in finds it by name.
+                let held = w.rhs(
+                    "IntMeasurement",
+                    &[
+                        El::Local(save_control),
+                        El::Local(save_tags),
+                        El::Member("setvariant", "count"),
+                    ],
+                );
+                w.set(&[El::Local(tags_held)], held);
             },
             |w| {
                 let (p, _) = define_with(
@@ -937,6 +1017,72 @@ fn attack_global() -> Vec<u8> {
                 let zero = w.int(0);
                 let s = w.spawn(&[El::Local(minion)], &[El::Local(location)], zero);
                 w.end_block(s);
+                w.flow_end();
+                w.end_block(p);
+                // A tag's save area: a word per four bytes of the portal's
+                // two regions.
+                let (p, _) = define_with(
+                    w,
+                    "Save - Set up Tag Data Fields",
+                    &[("set up tag", "ScriptReference")],
+                );
+                for (n, into) in [(1, words), (2, more)] {
+                    let region = format!("size of region {n}");
+                    let bytes = w.rhs(
+                        "IntMeasurement",
+                        &[
+                            El::Member("redoctaneperipheralsystemobject", "portal"),
+                            El::Member("redoctaneperipheralscriptobject", &region),
+                        ],
+                    );
+                    let four = w.int(4);
+                    let quarter = w.expr(bytes, Some((3, four)));
+                    w.set(&[El::Local(into)], quarter);
+                }
+                let a = w.rhs("IntMeasurement", &[El::Local(words)]);
+                let b2 = w.rhs("IntMeasurement", &[El::Local(more)]);
+                let both = w.expr(a, Some((0, b2)));
+                w.set(
+                    &[
+                        El::Local(set_up_tag),
+                        El::Local(area),
+                        El::Member("setvariant", "count"),
+                    ],
+                    both,
+                );
+                w.flow_end();
+                w.end_block(p);
+                // The award: the amount onto the first word of the first
+                // player's figure.
+                let (p, _) = define_with(
+                    w,
+                    "Game - Award Experience",
+                    &[("minion", "ScriptReference"), ("amount", "ValueInfo")],
+                );
+                setref(
+                    w,
+                    &[El::Local(word)],
+                    &[
+                        El::Local(control),
+                        El::Local(joined),
+                        El::Member("setvariant", "first"),
+                        El::Local(loaded_data),
+                        El::Local(object_info),
+                        El::Local(info_tag),
+                        El::Local(area),
+                        El::Member("setvariant", "first"),
+                    ],
+                );
+                let now = w.rhs("IntMeasurement", &[El::Local(word)]);
+                let add = w.rhs("IntMeasurement", &[El::Local(amount)]);
+                let sum = w.expr(now, Some((0, add)));
+                w.set(
+                    &[
+                        El::Local(word),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    sum,
+                );
                 w.flow_end();
                 w.end_block(p);
             },
@@ -1034,6 +1180,8 @@ fn attack_fighter() -> Vec<u8> {
         let description = structure_var(&mut w, "description", description_ty);
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let clip = w.variable("attack clip", "ScriptReference", None);
+        // The portal manager's award, through a stub of it.
+        let award = w.op(Class::DefineMacro, "Game - Award Experience");
         let ball_at = ball;
         let script = frame_with(
             &mut w,
@@ -1089,6 +1237,18 @@ fn attack_fighter() -> Vec<u8> {
                 w.end_block(first);
                 let second = on_press(w, 2);
                 start_slot(w, clip, ATTACK_SECOND_SLOT);
+                let np = w.group(&[El::Local(award)], None);
+                let (u, o) = w.open(Class::UseMacro, "use macro");
+                w.refer(o, 0x1C, np);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let param = parameter_of(w, "amount", "ValueInfo", award);
+                let rhs = w.int(ATTACK_AWARD);
+                w.refer(param, 0x30, rhs);
+                w.push(param);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.end_block(u);
                 w.end_block(second);
                 w.end_block(p);
             },

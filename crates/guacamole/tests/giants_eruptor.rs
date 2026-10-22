@@ -30,12 +30,13 @@ use guac_motion::scenarios;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{COMBAT, HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN};
 
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
     StallDetector, StallLimit, Unit, Value, Vm,
 };
+use guacamole::figure;
 use guacamole::level_scene;
 use guacamole::player_loop::PlayerLoop;
 use guacamole::script_engine::{Engine, Pad};
@@ -356,11 +357,23 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
 }
 
 impl Run {
-    /// The join at this step: the request now, the activation after the
+    /// The join at this step: a fresh figure's tag on the portal as the TV
+    /// puts his (AH.23), the request now, the activation after the
     /// definition's first tick.
     fn join(&mut self) -> Result<(), Halt> {
         let files = self.files.clone();
         let handles = self.handles.clone();
+        let usr = dump().join("PS3_GAME/USRDIR");
+        let progression =
+            guac_extract::progression::read(&usr, identity()).expect("the progression tables");
+        let layout = figure::Layout::of(&progression).expect("the figure's layout");
+        let tag = figure::Tag {
+            toy_id: 9,
+            subtype: 0,
+            serial: 1,
+            values: figure::Values::default(),
+        };
+        self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
         self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
         self.step()?;
         let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
@@ -604,6 +617,7 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
             .iter()
             .chain(HERO_MEMBERS)
             .chain(COMBAT)
+            .chain(FIGURE)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

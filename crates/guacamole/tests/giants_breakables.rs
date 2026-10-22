@@ -24,7 +24,7 @@ use std::time::Instant;
 use common::*;
 use guac_motion::seam::{PhysicsSeam, Shape, Vec3};
 use guac_motion::stick::Stick;
-use guac_script::members::{COMBAT, CREATURES, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
+use guac_script::members::{COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
 use guac_script::{Handle, MemberId, Mode, Obj, Value};
 use guacamole::script_engine::{FEET_PER_METRE, Pad, heading_of};
 use guacamole::scripts::{self, Rarity};
@@ -933,6 +933,7 @@ fn the_members_the_breakables_reach_stay_under_the_ceiling() {
             .chain(CREATURES)
             .chain(COMBAT)
             .chain(LOOP)
+            .chain(FIGURE)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

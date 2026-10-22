@@ -1349,7 +1349,7 @@ fn mirror_tv(
         play,
         heroes,
         cameras,
-        runtime,
+        (runtime, earning),
     ): (
         Option<Res<IntroQueue>>,
         Option<Res<IntroPlayer>>,
@@ -1363,7 +1363,10 @@ fn mirror_tv(
         Option<Res<Play>>,
         Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
         Query<(&Transform, &Projection), With<FollowCamera>>,
-        Option<Res<guacamole::scripts::ScriptRuntime>>,
+        (
+            Option<Res<guacamole::scripts::ScriptRuntime>>,
+            Option<Res<crate::progress::Earning>>,
+        ),
     ),
 ) {
     let Some(current) = current else {
@@ -1507,7 +1510,7 @@ fn mirror_tv(
     };
     let hero = play
         .as_deref()
-        .and_then(|p| p.report(&heroes, &cameras, runtime.as_deref()));
+        .and_then(|p| p.report(&heroes, &cameras, runtime.as_deref(), earning.as_deref()));
     let alert = alerts
         .iter()
         .next()

@@ -953,6 +953,67 @@ impl Vm {
         true
     }
 
+    /// Points a reference field of the structure `v` holds or names at
+    /// `target`, as `setref` does: how an embedder makes a link the
+    /// original's own unrun scripts make (the portal manager handing a
+    /// slot its tag's data, openspec AH.23). False when the structure has
+    /// no reference field of that name.
+    pub fn set_reference(&mut self, v: Value, name: &str, target: Value) -> bool {
+        let Some(sym) = self.program.find_sym(name) else {
+            return false;
+        };
+        let Value::Struct(s) = self.peek(v) else {
+            return false;
+        };
+        let Some(c) = self
+            .structs
+            .get(s as usize)
+            .and_then(|st| st.fields.iter().find(|(n, _)| *n == sym))
+            .map(|(_, c)| *c)
+        else {
+            return false;
+        };
+        if !matches!(
+            self.cells[c as usize].kind,
+            CellKind::Reference | CellKind::SetReference
+        ) {
+            return false;
+        }
+        self.write_cell(c, target, 0);
+        true
+    }
+
+    /// Writes a number into the number variable `v` names (a set's member,
+    /// [`Value::Cell`]), converted as a script's write converts it: how an
+    /// embedder puts a figure's words in its tag's save area (AH.23). False
+    /// when `v` names no number variable.
+    pub fn put(&mut self, v: Value, value: Value) -> bool {
+        let Value::Cell(c) = v else {
+            return false;
+        };
+        match self.cells.get(c as usize) {
+            Some(cell) if cell.kind == CellKind::Value => {
+                self.write_cell(c, value, 0);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Appends one fresh default member to the set `v` holds or names, as
+    /// `inc count` does, and returns it: how an embedder makes what the
+    /// original's own unrun scripts would (the portal save control's data
+    /// for a tag put on the portal, AH.23). `None` for anything but a set,
+    /// or a member that can't be made.
+    pub fn grow(&mut self, v: Value, host: &mut dyn Host) -> Option<Value> {
+        let Value::Set(s) = self.materialize(v) else {
+            return None;
+        };
+        let n = self.sets.get(s as usize)?.elems.len();
+        self.resize(s, n + 1, host).ok()?;
+        self.sets[s as usize].elems.last().copied()
+    }
+
     /// What `v` holds when it names a cell or a file variable that has one
     /// (a set's number member, a reference's target); `v` itself otherwise.
     pub fn value(&self, v: Value) -> Value {

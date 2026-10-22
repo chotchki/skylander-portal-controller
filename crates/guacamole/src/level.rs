@@ -1110,8 +1110,13 @@ fn receive_level(
         AsyncComputeTaskPool::get().spawn(async move { read_level(&source, formats) })
     };
     level.scripts = Some({
-        let (dir, name) = (source.dir.clone(), source.level.clone());
-        AsyncComputeTaskPool::get().spawn(async move { level_scripts::load(&dir, &name) })
+        let (dir, name, ir) = (source.dir.clone(), source.level.clone(), source.ir);
+        AsyncComputeTaskPool::get().spawn(async move {
+            level_scripts::load(&dir, &name).map(|mut linked| {
+                linked.layout = level_scripts::figure_layout(&dir, ir);
+                linked
+            })
+        })
     });
     level.report = LevelReport {
         state: "reading".into(),
@@ -1261,8 +1266,16 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 placements,
                 order,
                 fighters,
+                layout,
                 ..
             } = linked;
+            let layout = match layout {
+                Ok(l) => Some(l),
+                Err(why) => {
+                    warn!(reason = %why, "no figure's words to lay out: a hero's scripts see no figure");
+                    None
+                }
+            };
             commands.queue(move |world: &mut World| {
                 crate::hero_scripts::install(
                     world,
@@ -1270,6 +1283,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                     placements,
                     order,
                     fighters,
+                    layout,
                 );
             });
         }

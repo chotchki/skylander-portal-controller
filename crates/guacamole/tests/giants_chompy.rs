@@ -32,7 +32,7 @@ use guac_extract::levels;
 use guac_formats::igz::Igz;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
-use guac_script::members::{COMBAT, CREATURES, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
+use guac_script::members::{COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
 use guac_script::{
     MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
 };
@@ -1497,6 +1497,7 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .chain(CREATURES)
             .chain(COMBAT)
             .chain(LOOP)
+            .chain(FIGURE)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -2846,6 +2847,8 @@ struct Lobbed {
     paid: Vec<(i64, i32)>,
     beaten: usize,
     kill: i64,
+    /// His figure's values at the end (AH.23).
+    figure: guacamole::figure::Values,
 }
 
 fn lob_and_collect(mult: Option<f32>) -> Lobbed {
@@ -2902,11 +2905,13 @@ fn lob_and_collect(mult: Option<f32>) -> Lobbed {
     let n = beaten.iter().filter(|b| **b).count();
     let kill = kill.expect("the lob beats a Chompy");
     println!("the lob beats {n} at F0 + {kill}");
+    let figure = run.figure_values().expect("his figure joined with him");
     Lobbed {
         lives,
         paid,
         beaten: n,
         kill,
+        figure,
     }
 }
 
@@ -2916,6 +2921,7 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         paid,
         beaten,
         kill,
+        figure,
     } = l;
     let (beaten, kill) = (*beaten, *kill);
     assert_eq!(lives.len(), per_chompy * beaten, "orbs per Chompy beaten");
@@ -2972,6 +2978,12 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
     }
     let total: i32 = paid.iter().map(|p| p.1).sum();
     assert_eq!(total as usize, lives.len(), "every orb's worth paid");
+    // His figure joined fresh: its words hold what the scripts paid, and so
+    // does the row the TV's map writes (AH.23).
+    let row = row_after(&[*figure]);
+    println!("his figure {figure:?}, the row {row:?}");
+    assert_eq!(figure.xp as i32, total, "the words hold the scripts' award");
+    assert_eq!(row.xp as i32, total, "and the row");
     println!(
         "{taken_where_they_lay} taken where they came down, {walked_to} walked to; {total} experience"
     );
@@ -3441,6 +3453,16 @@ fn spinning_coins_fly_to_him_and_pay_as_ah11s() {
         }
         let ours_gold: i32 = paid.iter().map(|p| p.1).sum();
         assert_eq!(ours_gold as f32, gold_theirs, "{}: the gold", drive.name);
+        // His figure joined fresh: its words hold every coin the scripts
+        // paid this session, and so does the row (AH.23).
+        let figure = run.figure_values().unwrap();
+        let row = row_after(&[figure]);
+        assert_eq!(
+            (figure.gold as i32, row.gold as i32),
+            (run.loot_collected(), run.loot_collected()),
+            "{}: the figure's gold",
+            drive.name
+        );
     }
     println!("load after: {}", load());
 }

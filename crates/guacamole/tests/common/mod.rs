@@ -23,6 +23,9 @@ use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
     Unit, Value, Vm,
 };
+use guac_server::profiles::ProfileStore;
+use guac_server::progress::{Drainer, ProgressSink, ProgressionSlot};
+use guacamole::figure::{self, Layout, Tag, Values};
 use guacamole::level_scene;
 use guacamole::player_loop::PlayerLoop;
 use guacamole::props::{LevelProps, PROP_BODIES};
@@ -31,6 +34,11 @@ use guacamole::scripts::{
     self, FIRST_FIGHT, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
     headless_spawner,
 };
+use skylander_core::FigureId;
+use skylander_rpcs3_control::FigureProgress;
+
+/// Eruptor's figure as guacamole's store keys it.
+pub const ERUPTOR_FIGURE: &str = "000009-0000";
 
 /// `key` from the environment, else from the repo's `.env.dev`.
 pub fn env_or_dotenv(key: &str) -> Option<String> {
@@ -255,6 +263,22 @@ pub struct Run {
     pub steps: u32,
     /// The portal manager's tick as the player loop runs it (AH.20).
     pub player_loop: PlayerLoop,
+    /// Where the figure's values sit in its tag's save area, AH.2's rows off
+    /// the disc (AH.23).
+    pub layout: Layout,
+    /// The figure's tag data once he's joined (AH.23).
+    pub figure: Option<Value>,
+}
+
+/// Eruptor's toy, as his figure's tag names it: the toy id 9, the base
+/// subtype, a serial of our own.
+pub fn eruptor_tag(values: Values) -> Tag {
+    Tag {
+        toy_id: 9,
+        subtype: 0,
+        serial: 1,
+        values,
+    }
 }
 
 impl Run {
@@ -310,11 +334,22 @@ impl Run {
         Ok(())
     }
 
-    /// The join at this step: the request now, the activation after the
-    /// definition's first tick.
+    /// The join at this step with a fresh figure on the portal, as the TV
+    /// joins him ([`Run::join_with`]).
     pub fn join(&mut self) -> Result<(), Halt> {
+        self.join_with(Values::default())
+    }
+
+    /// The join at this step: his figure's tag on the portal holding
+    /// `values` (AH.23), the request now, the activation after the
+    /// definition's first tick.
+    pub fn join_with(&mut self, values: Values) -> Result<(), Halt> {
         let files = self.files.clone();
         let handles = self.handles.clone();
+        let layout = self.layout.clone();
+        let data = self
+            .with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &eruptor_tag(values)))?;
+        self.figure = Some(data);
         self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
         self.step()?;
         let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
@@ -374,6 +409,11 @@ impl Run {
 
     pub fn hero(&self) -> &Hero {
         &self.bench.heroes[&HERO]
+    }
+
+    /// His figure's values as its tag's words hold them, once he's joined.
+    pub fn figure_values(&self) -> Option<Values> {
+        figure::read(&self.vm, &self.layout, self.figure?)
     }
 
     /// A level placement's handle and where its file puts it, metres.
@@ -531,6 +571,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         .collect();
     let program = Arc::new(Program::link(&units).unwrap());
     let player_loop = PlayerLoop::read(&program);
+    let layout = layout();
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, LEVEL, ERUPTOR]
         .iter()
         .map(|&u| (u, &igzs[u as usize]))
@@ -616,9 +657,22 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
             minion: None,
             steps: 0,
             player_loop,
+            layout,
+            figure: None,
         },
         found,
     )
+}
+
+/// AH.2's progression tables off the disc, and the figure's layout from
+/// their rows.
+pub fn progression() -> guac_ir::progression::Progression {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    guac_extract::progression::read(&usr, identity()).expect("the progression tables")
+}
+
+pub fn layout() -> Layout {
+    Layout::of(&progression()).expect("the figure's layout")
 }
 
 pub fn load() -> String {
@@ -659,4 +713,48 @@ pub fn joined_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         run.step().unwrap_or_else(|h| panic!("{h}"));
     }
     (run, found)
+}
+
+/// The TV's half of AH.1's path, the store's half on an in-memory
+/// database of guacamole's set: a profile's fresh row, `sent` handed over
+/// under its generation and drained; the row after.
+pub fn row_after(sent: &[Values]) -> FigureProgress {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let store = ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
+            .await
+            .unwrap();
+        let bob = store.create("Bob", "1234", "#457b9d").await.unwrap();
+        let fresh = store.instances().fresh(&bob, ERUPTOR_FIGURE).await.unwrap();
+        let (tx, _events) = tokio::sync::broadcast::channel(256);
+        let sink = ProgressSink::new();
+        let slot = ProgressionSlot::default();
+        let p = progression();
+        slot.publish((&p).into());
+        let mut drainer = Drainer::new(sink.clone(), store.clone(), tx, slot);
+        let figure = FigureId::new(ERUPTOR_FIGURE);
+        for v in sent {
+            sink.send(
+                &bob,
+                &figure,
+                FigureProgress {
+                    xp: v.xp,
+                    gold: v.gold,
+                    playtime_secs: v.playtime_secs,
+                    generation: fresh.progress.generation,
+                },
+            );
+        }
+        drainer.drain().await;
+        store
+            .instances()
+            .read(&bob, ERUPTOR_FIGURE)
+            .await
+            .unwrap()
+            .unwrap()
+            .progress
+    })
 }

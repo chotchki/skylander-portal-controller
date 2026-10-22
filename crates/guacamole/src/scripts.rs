@@ -628,6 +628,11 @@ impl ScriptWorld {
             Member::Controller(n) => Value::Entity(self.controllers[n]),
             Member::Physical(n) => Value::Entity(self.physical[n]),
             Member::Portal => Value::Entity(self.portal),
+            Member::Region(n) if on == Some(self.portal) => Value::Int(match n {
+                1 => crate::figure::REGION_1,
+                _ => crate::figure::REGION_2,
+            }),
+            Member::Region(_) => return Err(HostFault::Nothing),
             Member::Buffer => match on.and_then(|h| self.actors.get(&h)) {
                 Some(k) => Value::Float(k.buffer),
                 None => return Err(HostFault::Nothing),
@@ -691,6 +696,7 @@ impl ScriptWorld {
                 | Member::Controller(_)
                 | Member::Physical(_)
                 | Member::Portal
+                | Member::Region(_)
                 | Member::Waypoints
                 | Member::TimeScale
                 | Member::Buffer
@@ -951,8 +957,8 @@ pub const ERUPTOR_SCRIPTS: [&str; 5] = [
     "009_MagmaBall.ai",
 ];
 
-/// The VM's config for AH.17's run: AH.16's members and Eruptor's, the init
-/// chain's listing with `global.bld`'s UI and movement update every tick and
+/// The VM's config for AH.17's run: AH.16's members, Eruptor's and his
+/// figure's (AH.23), the init chain's listing with `global.bld`'s UI and movement update every tick and
 /// Eruptor's scripts beside them.
 pub fn hero_config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
@@ -960,6 +966,8 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::HERO);
     // A slider's own members (AH.19): his attacks' and the HUD's slides.
     members::register(&mut c.members, members::COMBAT);
+    // His figure's tag on the portal (AH.23): the portal's regions.
+    members::register(&mut c.members, members::FIGURE);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
         .copied()
@@ -1136,20 +1144,24 @@ pub fn join_request(
     Ok(added)
 }
 
-/// The join's second half, after the definition's first tick: the minion
-/// its definition registered becomes `hero` (a spawn of its template
-/// answers with him), and `Game - Activate/Deactivate Minion` runs as the
-/// portal manager's entry beam calls it (`Portal - Entry Activate Minion`):
-/// the minion, spawned where `hero` stands, for the first player's
-/// controller, the definition's minion description, no health restored, in
-/// a level transition. The minion's own script then joins the VM under
-/// `hero` (its template's, listed for every tick). Returns its placement.
+/// The join's second half, after the definition's first tick: with a
+/// figure's tag on the slot ([`crate::figure::put_on_portal`], before
+/// [`join_request`]), `Portal - Enter Object`'s links to it
+/// ([`crate::figure::enter`], AH.23); then the minion its definition
+/// registered becomes `hero` (a spawn of its template answers with him),
+/// and `Game - Activate/Deactivate Minion` runs as the portal manager's
+/// entry beam calls it (`Portal - Entry Activate Minion`): the minion,
+/// spawned where `hero` stands, for the first player's controller, the
+/// definition's minion description, no health restored, in a level
+/// transition. The minion's own script then joins the VM under `hero` (its
+/// template's, listed for every tick). Returns its placement.
 pub fn join_activate(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     hero: Handle,
 ) -> Result<PlacementId, Halt> {
     let pm = portal_manager(vm, host.world)?;
+    crate::figure::enter(vm, host.world)?;
     let loaded = slot_zero(vm)?;
     let info = vm.field(loaded, "object info").unwrap_or(Value::Null);
     let minion = vm.field(info, "spawned object").unwrap_or(Value::Null);
@@ -1308,7 +1320,7 @@ pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
         .collect()
 }
 
-fn outside(why: String) -> Halt {
+pub(crate) fn outside(why: String) -> Halt {
     Halt {
         placement: None,
         placement_name: "(the join)".to_owned(),
@@ -1340,6 +1352,12 @@ pub(crate) fn running(vm: &Vm, world: &ScriptWorld, suffix: &str) -> Option<Plac
         .find_map(|&h| vm.placement_of(h))
 }
 
+/// The portal manager's placement, once it runs: the context the player
+/// loop's stretches and the figure's links run in.
+pub fn portal_manager_placement(vm: &Vm, world: &ScriptWorld) -> Option<PlacementId> {
+    portal_manager(vm, world).ok()
+}
+
 pub(crate) fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId, Halt> {
     let h = portal_manager_handle(world)?;
     vm.placement_of(h)
@@ -1347,7 +1365,7 @@ pub(crate) fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId
 }
 
 /// The first player's slot's loaded data.
-fn slot_zero(vm: &mut Vm) -> Result<Value, Halt> {
+pub(crate) fn slot_zero(vm: &mut Vm) -> Result<Value, Halt> {
     let g = vm
         .program()
         .global_named("portal control data")
