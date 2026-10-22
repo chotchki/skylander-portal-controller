@@ -41,6 +41,8 @@ const REFUSED: &str = "MinionLoad_112_TitanLifeAlt";
 /// Of the nine, the one whose archive holds no actor: its model extracts and
 /// its hero doesn't settle.
 const HEROES: usize = 8;
+/// AH.50's attach nodes: one a model that reads.
+const NODES: usize = MODELS;
 const HEROLESS: &str = "MinionLoad_106_IceSorcLegendary";
 /// The model builder's sample binds eight textures, five distinct.
 const TEXTURES: usize = 5;
@@ -325,6 +327,9 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     // AH.22's: a palette a model, the script entries, the spawn models.
     assert_eq!(recorded(&m, "palettes/"), MODELS);
     assert_eq!(m.parts["palettes"].len(), MODELS);
+    // AH.50's: the attach nodes a model.
+    assert_eq!(recorded(&m, "nodes/"), NODES);
+    assert_eq!(m.parts["nodes"].len(), NODES);
     assert_eq!(recorded(&m, "scripts/"), ENTRIES);
     assert_eq!(recorded(&m, "spawns/"), 2);
     assert!(scripts::complete(&m));
@@ -562,7 +567,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     }
     // So are AH.22's palettes, script entries and spawn models.
     assert!(m.parts.contains_key("palettes") && scripts::complete(&m));
-    for part in ["palettes", "scripts", "spawns"] {
+    for part in ["palettes", "scripts", "spawns", "nodes"] {
         for f in &m.parts[part] {
             assert!(dir.join(f).is_file(), "{f}");
         }
@@ -581,7 +586,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     );
     assert_eq!(
         (done.models.files.written, done.models.files.kept),
-        (0, MODELS + HEROES + TEXTURES + 1)
+        (0, MODELS + NODES + HEROES + TEXTURES + 1)
     );
     // The progression and the level, whole, are kept without reading them.
     assert!(!done.progression.read);
@@ -656,7 +661,7 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     let models = stages::model_stage(&mut again.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(
         (models.files.written, models.files.kept),
-        (4, MODELS + HEROES + TEXTURES + 1 - 4)
+        (4, MODELS + NODES + HEROES + TEXTURES + 1 - 4)
     );
     assert!(again.dir.output_done(&texture).unwrap());
     assert!(
@@ -1229,10 +1234,11 @@ fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
     files
 }
 
-/// Each of AH.22's parts, missing alone from a finished extract, resumes
-/// alone: the extract isn't current, the next run writes that part's files
-/// and no other (the model stage, which reads every archive on a resume,
-/// keeps every file but the palettes), and then it's current.
+/// Each of AH.22's parts and AH.50's attach nodes, missing alone from a
+/// finished extract, resumes alone: the extract isn't current, the next run
+/// writes that part's files and no other (the model stage, which reads every
+/// archive on a resume, keeps every file but the missing part's), and then
+/// it's current.
 #[test]
 fn each_of_the_fights_parts_resumes_alone() {
     let s = setup();
@@ -1242,6 +1248,7 @@ fn each_of_the_fights_parts_resumes_alone() {
     drop(opened);
     for (level, part) in [
         (false, "palettes"),
+        (false, "nodes"),
         (true, levels::SCRIPT),
         (true, levels::PALETTES),
         (false, scripts::SCRIPTS),
@@ -1262,7 +1269,7 @@ fn each_of_the_fights_parts_resumes_alone() {
         let (lv, sc) = (&done.levels, &done.scripts);
         let (level_read, script_read) = match (level, part) {
             (true, _) => (1, 0),
-            (false, "palettes") => (0, 0),
+            (false, "palettes" | "nodes") => (0, 0),
             _ => (0, 1),
         };
         assert_eq!(lv.parts_read, level_read, "{part}");

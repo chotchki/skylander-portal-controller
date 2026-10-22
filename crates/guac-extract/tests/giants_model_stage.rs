@@ -216,6 +216,26 @@ fn the_model_stage_extracts_every_character() {
         "  RON: models/ {n_models} files {model_bytes} bytes, textures/ {n_tex} files {tex_bytes} bytes, heroes/ {n_heroes} files {hero_bytes} bytes, ir/rig.ron {rig_bytes} bytes"
     );
     assert_eq!((n_models, n_tex, n_heroes), (67, stage.textures, 67));
+    // AH.50: every model's attach nodes, Eruptor's hands on his palms.
+    let (n_nodes, node_bytes) = recorded("nodes/", &m);
+    println!("  nodes/ {n_nodes} files {node_bytes} bytes");
+    assert_eq!(n_nodes, 67);
+    assert_eq!(m.parts[models::NODES].len(), 67);
+    let nodes: guac_ir::nodes::AttachNodes = guac_ir::from_ron(
+        &std::fs::read_to_string(dir.join(IrFormat::Ron.nodes_path("009_Eruptor"))).unwrap(),
+    )
+    .unwrap();
+    let hands: Vec<(Option<&str>, Option<&str>, bool)> = nodes.nodes[7..9]
+        .iter()
+        .map(|n| (n.name.as_deref(), n.bone.as_deref(), n.joint.is_some()))
+        .collect();
+    assert_eq!(
+        hands,
+        [
+            (Some("lHand"), Some("J_palm_L"), true),
+            (Some("rHand"), Some("J_palm_R"), true)
+        ]
+    );
     // The glow each drawn material carries (AE.11): an amount, layer 1's
     // alpha (the attribute off) or none (no attribute).
     let (mut amount, mut layer_alpha, mut none) = (0, 0, 0);
@@ -252,7 +272,7 @@ fn the_model_stage_extracts_every_character() {
         again.files,
         Files {
             written: 0,
-            kept: 67 + 67 + stage.textures + 1,
+            kept: 67 + 67 + 67 + stage.textures + 1,
             bytes: stage.files.bytes
         }
     );
@@ -279,7 +299,7 @@ fn the_model_stage_extracts_every_character() {
     );
     assert_eq!(
         (post.files.written, post.files.kept),
-        (67 + 67 + 1, stage.textures)
+        (67 + 67 + 67 + 1, stage.textures)
     );
     // Every hero's RON, read back and put in postcard, is its postcard file
     // byte for byte: the two formats hold the same bits.

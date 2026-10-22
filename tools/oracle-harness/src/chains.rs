@@ -242,8 +242,11 @@ pub const BREAKABLES: [&str; 16] = [
 /// actors among `009_eruptor.bld`'s placements: the lava ball, its upgrade,
 /// the fire blob and its splash, the eruption and its volcano, and upgrade
 /// 4's Magma Ball and its impact, AH.41), each with the kind its clones go
-/// by, so a trace tells a ball from the splash under his hand (AH.9).
-pub const ERUPTOR_SPAWNS: [(&str, &str); 8] = [
+/// by, so a trace tells a ball from the splash under his hand (AH.9); and
+/// the collider his join makes and each throw hangs on the hand it throws
+/// from (`$primary attack collider`, AH.50), so a trace has that hand's
+/// place every frame.
+pub const ERUPTOR_SPAWNS: [(&str, &str); 9] = [
     ("lava_ball", "009_LavaProjectile"),
     ("lava_ball_upgrade", "009_LavaProjectileUpgrade"),
     ("fire_blob", "009_FireBlob"),
@@ -252,6 +255,7 @@ pub const ERUPTOR_SPAWNS: [(&str, &str); 8] = [
     ("mini_volcano", "009_MiniVolcano"),
     ("magma_ball", "009_MagmaBall"),
     ("magma_ball_impact", "009_MagmaBall_Impact"),
+    ("lava_collider", "009_LavaCollider"),
 ];
 
 /// The currency art `Loot - Get Loot` clones a dropped coin from (level
@@ -1995,7 +1999,7 @@ mod tests {
         assert_eq!(g.updater_index, 1);
         assert_eq!(g.actors[0], (HERO.to_owned(), "009_Eruptor".to_owned()));
         assert_eq!(g.kind(1), Some("chompy"));
-        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 9 + 8 + 1);
+        assert_eq!(g.actors.len(), 1 + 4 + 2 + 16 + 9 + 5 + 9 + 9 + 1);
         assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
         let actors = evaluate(&g.chains.slots[&ACTORS], &mut f.w).unwrap();
         // The hero, the Chompy, the barrel, the leaf and the dropped coin's
@@ -2023,7 +2027,8 @@ mod tests {
                 "eruption",
                 "mini_volcano",
                 "magma_ball",
-                "magma_ball_impact"
+                "magma_ball_impact",
+                "lava_collider"
             ]
         );
         let hero = &actors.items[0];

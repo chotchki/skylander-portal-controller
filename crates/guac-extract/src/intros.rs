@@ -450,6 +450,16 @@ impl IrFormat {
         format!("{}/{load_file}.{ext}", crate::models::PALETTE_DIR)
     }
 
+    /// The attach nodes `load_file`'s model carries,
+    /// `nodes/<load file>.<ron|postcard>` (AH.50).
+    pub fn nodes_path(self, load_file: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!("{}/{load_file}.{ext}", crate::models::NODE_DIR)
+    }
+
     /// The spawn models of `archive` (`permanent/global.bld`),
     /// `spawns/<stem>.<ron|postcard>` (AH.22).
     pub fn spawn_path(self, archive: &str) -> String {

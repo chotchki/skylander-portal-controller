@@ -50,6 +50,7 @@ use guac_ir::model::{
     Attachment, Blend, Filter, Glow, Joint, Mask, Material, MaterialTrack, Params, RenderStates,
     Sampler, Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
+use guac_ir::nodes::{AttachNode, AttachNodes};
 use guac_ir::palette::{Palette, PaletteSlot, RefusedSlot, SlotEntry};
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
@@ -68,6 +69,10 @@ pub const PALETTE_DIR: &str = "palettes";
 /// The palettes' part in the manifest: every character's, recorded once
 /// the model stage has been through them all.
 pub const PALETTES: &str = "palettes";
+/// Where the attach nodes go, one `<load file>.<ron|postcard>` each (AH.50).
+pub const NODE_DIR: &str = "nodes";
+/// The attach nodes' part in the manifest, recorded as the palettes' is.
+pub const NODES: &str = "nodes";
 /// Each gait's slot in the animation set ([`guac_formats::model`]'s).
 pub const GAITS: [(Gait, usize); 5] = [
     (Gait::Walk, fmodel::WALK_SLOT),
@@ -99,6 +104,8 @@ pub struct Extracted {
     pub palette: Palette,
     /// What reading the palette took, of the whole read.
     pub palette_took: Duration,
+    /// The model's attach list (AH.50).
+    pub nodes: AttachNodes,
 }
 
 /// The character load files a roster names, in roster order: each figure
@@ -246,6 +253,8 @@ pub fn read(
         identity.clone(),
     );
     let palette_took = started.elapsed();
+    let nodes = self::nodes(&igz, &portal, load_file, &skeleton, identity.clone())
+        .map_err(|e| refused(load_file, format!("its attach list: {e}")))?;
     Ok(Extracted {
         model: Model {
             identity,
@@ -264,6 +273,47 @@ pub fn read(
         hero_took,
         palette,
         palette_took,
+        nodes,
+    })
+}
+
+/// The attach list of the model `portal`'s hero draws (AH.50), each node
+/// on its bone's joint of `skeleton` by name: the list a script indexes as
+/// `actorinfo.attach nodes`, read as AE.23 reads the point an attachment
+/// hangs on. A bone the skeleton lacks, or `*root*`, holds its node at the
+/// model's origin.
+pub fn nodes(
+    igz: &Igz<'_>,
+    portal: &PortalModel<'_>,
+    load_file: &str,
+    skeleton: &Skeleton,
+    identity: DumpIdentity,
+) -> std::result::Result<AttachNodes, FormatError> {
+    let model = fmodel::hero_actor(igz, portal, load_file)
+        .ok()
+        .and_then(|h| h.info.model)
+        .unwrap_or(portal.model);
+    let nodes = fattach::attach_points(igz, model)?
+        .iter()
+        .map(|p| {
+            let bone = p.bone_name.map(str::to_owned);
+            let joint = p
+                .bone_name
+                .filter(|b| *b != BoneAttachInfo::ROOT)
+                .and_then(|b| skeleton.joints.iter().position(|j| j.name == b))
+                .and_then(|j| u16::try_from(j).ok());
+            AttachNode {
+                name: p.name.map(str::to_owned),
+                bone,
+                joint,
+                offset: euler_transform(&p.transform),
+            }
+        })
+        .collect();
+    Ok(AttachNodes {
+        identity,
+        load_file: load_file.to_owned(),
+        nodes,
     })
 }
 

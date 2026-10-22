@@ -451,10 +451,29 @@ impl ScriptWorld {
 
     /// An actor's pivot, metres: a hero's from his controller.
     pub(crate) fn position(&self, h: Handle, engine: &mut dyn Engine) -> Option<Vec3> {
+        self.position_within(h, engine, HUNG_DEPTH)
+    }
+
+    /// [`ScriptWorld::position`], through at most `depth` actors hung one
+    /// from another's node. One hung from an actor's node reads where that
+    /// node is now, its offset as the last frame posed it turned by its
+    /// owner's facing as it stands (openspec AH.50: an aimed ball leaves
+    /// from Eruptor's hand, where his collider hangs, turned by the facing
+    /// his throw's own turn just wrote, 0.67 m from where the collider stood
+    /// after a 20° turn and within 1e-5 m of the turned node in every drive).
+    fn position_within(&self, h: Handle, engine: &mut dyn Engine, depth: u8) -> Option<Vec3> {
         if let Some(hero) = engine.hero(h) {
             return Some(hero.pivot);
         }
         let a = self.actors.get(&h)?;
+        if depth > 0
+            && !a.removed
+            && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
+            && owner != h
+            && let Some(p) = self.node_within(owner, i, engine, depth - 1)
+        {
+            return Some(p);
+        }
         Some(a.position)
     }
 
@@ -530,7 +549,11 @@ impl ScriptWorld {
     /// Attach node `i` of actor `a` in the level: its offset turned by the
     /// actor's facing, from its pivot.
     fn node(&self, a: Handle, i: u32, engine: &mut dyn Engine) -> Option<Vec3> {
-        let pivot = self.position(a, engine)?;
+        self.node_within(a, i, engine, HUNG_DEPTH)
+    }
+
+    fn node_within(&self, a: Handle, i: u32, engine: &mut dyn Engine, depth: u8) -> Option<Vec3> {
+        let pivot = self.position_within(a, engine, depth)?;
         let Some(off) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) else {
             return Some(pivot);
         };
@@ -1867,19 +1890,12 @@ impl ScriptWorld {
     /// `collisioninfo.environment contacts`.
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
-        let mut hung = Vec::new();
-        let mut flying = Vec::new();
-        for (&h, a) in &self.actors {
-            if a.removed {
-                continue;
-            }
-            if a.attach != Value::Null {
-                hung.push((h, a.attach));
-            } else if a.launched {
-                flying.push(h);
-            }
-        }
-        hung.sort_unstable_by_key(|k| k.0);
+        let mut flying: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| !a.removed && a.attach == Value::Null && a.launched)
+            .map(|(&h, _)| h)
+            .collect();
         flying.sort_unstable();
         for h in flying {
             let Some(a) = self.actors.get(&h) else {
@@ -1930,6 +1946,20 @@ impl ScriptWorld {
                 a.contacts = contacts;
             }
         }
+        self.place_hung_actors(engine);
+    }
+
+    /// Each actor hung from a node set at it, as the engine's frame leaves
+    /// it: [`ScriptWorld::move_actors`]' last part, and what an embedder
+    /// posing the nodes after that frame (openspec AH.50) runs again.
+    pub(crate) fn place_hung_actors(&mut self, engine: &mut dyn Engine) {
+        let mut hung: Vec<(Handle, Value)> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| !a.removed && a.attach != Value::Null)
+            .map(|(&h, a)| (h, a.attach))
+            .collect();
+        hung.sort_unstable_by_key(|k| k.0);
         for (h, node) in hung {
             if matches!(
                 self.object(Some(node)),
@@ -2065,6 +2095,11 @@ const TOUCH: f32 = 2.0 * CAST_SLOP;
 /// `positionmeasurement.collision` and `collisioninfo.contacts with me` read:
 /// a centimetre (AH.10's bites at most 0.003 m apart, a hypothesis past it).
 pub const CONTACT_REACH: f32 = 0.01;
+
+/// How many actors hung one from another's node a position read follows:
+/// the disc hangs a clone on a clone at most (Gill Grunt's spear on his
+/// gun, AE.23), and a loop of them stops here.
+const HUNG_DEPTH: u8 = 8;
 
 /// How many attach nodes an actor's set holds: the scripts index up to 13
 /// on a hero; which joint each is isn't read yet (a stand-in: a node sits
@@ -2595,6 +2630,61 @@ mod tests {
             Err(HostFault::Unmodelled),
             "no solid"
         );
+    }
+
+    /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
+    /// the node moves what hangs from it only once the hung are placed
+    /// (the frame's end); and read while he's turned since, it's his node's
+    /// offset turned by the facing he has now, where an aimed ball leaves
+    /// from, while what the frame placed stays put. Taken off, it reads
+    /// where it was left.
+    #[test]
+    fn a_hung_actor_follows_its_node_posed_and_reads_it_turned_as_he_stands() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().pivot = pivot;
+        let mut w = world();
+        w.actors.insert(BALL, ball(Vec3::ZERO, 0.0));
+        let hand = Vec3::new(0.5, 2.0, 1.5);
+        let mut nodes = vec![Vec3::ZERO; 9];
+        nodes[7] = hand;
+        w.set_nodes(HERO, nodes.clone());
+        let node = w.objs.value(Object::Node(HERO, 7));
+        w.set_member(
+            &at(
+                "abstractplacement",
+                "attach node",
+                Some(Value::Entity(BALL)),
+                None,
+            ),
+            Member::AttachNode,
+            node,
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(w.actor(BALL).unwrap().position, pivot + hand);
+        // Posed again: the hung ball follows at the frame's end.
+        let raised = Vec3::new(0.5, 3.0, 0.5);
+        nodes[7] = raised;
+        w.set_nodes(HERO, nodes);
+        assert_eq!(w.actor(BALL).unwrap().position, pivot + hand);
+        w.place_hung(&mut e);
+        assert_eq!(w.actor(BALL).unwrap().position, pivot + raised);
+        // Turned a quarter since: read, it's the node turned as he faces now.
+        e.hero.as_mut().unwrap().facing = 90.0;
+        let read = w.position(BALL, &mut e).unwrap();
+        let turned = pivot + Quat::from_rotation_y(90f32.to_radians()) * raised;
+        assert!(read.distance(turned) < 1e-6, "{read:?}");
+        assert!(read.distance(pivot + Vec3::new(0.5, 3.0, -0.5)) < 1e-6);
+        assert_eq!(
+            w.actor(BALL).unwrap().position,
+            pivot + raised,
+            "where the frame left it"
+        );
+        // Taken off, where it was left.
+        w.actors.get_mut(&BALL).unwrap().removed = true;
+        assert_eq!(w.position(BALL, &mut e), Some(pivot + raised));
     }
 
     #[test]

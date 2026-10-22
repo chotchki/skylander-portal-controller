@@ -195,9 +195,22 @@ struct Run {
     steps: u32,
     /// The portal manager's tick as the player loop runs it (AH.20).
     player_loop: PlayerLoop,
+    /// What poses his hands each step (AH.50), and his idle's time at step
+    /// 0: his attach nodes off his model's attach list by his idle and what
+    /// his scripts play on him.
+    rig: guacamole::hands::Rig,
+    idle0: f64,
 }
 
 impl Run {
+    /// His attach nodes posed as the frame left his clips (his idle at its
+    /// time this step), and what hangs from them set there (AH.50).
+    fn pose_hands(&mut self) {
+        let idle = self.idle0 + f64::from(self.steps) / 60.0;
+        self.rig.pose(&mut self.world, HERO, idle);
+        self.world.place_hung(&mut self.bench);
+    }
+
     fn with_host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
         let mut spawn = headless_spawner(self.next);
         let t = {
@@ -241,8 +254,9 @@ impl Run {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
         }
         self.world.advance(dt, &mut self.bench);
-        self.bench.place_bodies(&self.world);
         self.steps += 1;
+        self.pose_hands();
+        self.bench.place_bodies(&self.world);
         Ok(())
     }
 
@@ -376,13 +390,19 @@ fn lengths(p: &guac_ir::palette::Palette) -> Vec<f32> {
     out
 }
 
-/// Each slot's clip length on Eruptor's model, read from his archive with
-/// the globals his model's shaders need.
-fn eruptor_palette(part: &[Vec<u8>]) -> Vec<f32> {
+/// Eruptor's rig read from his archive with the globals his model's
+/// shaders need: his model, his palette and his attach nodes, at his scale
+/// in the level (AH.50).
+fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
     let globals = guac_extract::models::Globals::new(&part[1], &part[0]).expect("the globals");
     let read = guac_extract::models::read(&part[3], "009_Eruptor", identity(), Some(&globals))
         .expect("Eruptor's model");
-    lengths(&read.palette)
+    guacamole::hands::Rig {
+        model: read.model,
+        palette: read.palette,
+        nodes: read.nodes,
+        scale: guac_motion::tuning::ERUPTOR_SCALE,
+    }
 }
 
 /// Each live-table member the registry doesn't hold, as a value cell of its
@@ -463,7 +483,8 @@ fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
         .find(|p| p.name == "009_Eruptor")
         .expect("Eruptor's template")
         .obj;
-    world.set_palette(template, eruptor_palette(&part));
+    let rig = eruptor_rig(&part);
+    world.set_palette(template, lengths(&rig.palette));
     // The creatures' palettes, by the model each placement names.
     let palettes = levels::palettes(&igzs[LEVEL as usize], levels::LEVELS[0], identity())
         .expect("the level's palettes")
@@ -509,6 +530,8 @@ fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
             minion: None,
             steps: 0,
             player_loop,
+            rig,
+            idle0: 0.0,
         },
         found,
     )
@@ -660,12 +683,6 @@ fn probe_the_route() {
         })
         .collect();
     let mut last: HashMap<String, (Option<String>, bool)> = HashMap::new();
-    // The hands where AH.7's first lob leaves them (AH.24's stand-in).
-    let hand = Vec3::new(0.6011, 0.7710, 1.4838);
-    let mut nodes = vec![Vec3::ZERO; 9];
-    nodes[7] = hand;
-    nodes[8] = Vec3::new(-hand.x, hand.y, hand.z);
-    run.world.set_nodes(HERO, nodes);
     let mut result = Ok(());
     let mut scene = 0;
     for k in 0..steps {
@@ -1201,11 +1218,6 @@ impl Run {
 /// opening on, and the run.
 fn fight(script: Script) -> (Run, Vec<Snap>) {
     let (mut run, _) = joined(Mode::Strict);
-    let hand = Vec3::new(0.6011, 0.7710, 1.4838);
-    let mut nodes = vec![Vec3::ZERO; 9];
-    nodes[7] = hand;
-    nodes[8] = Vec3::new(-hand.x, hand.y, hand.z);
-    run.world.set_nodes(HERO, nodes);
     let mut snaps = Vec::new();
     let mut scene = 0;
     let end = OPENING + script.steps;

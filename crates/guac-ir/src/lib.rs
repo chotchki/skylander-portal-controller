@@ -17,6 +17,7 @@ pub mod hero;
 mod identity;
 pub mod level;
 pub mod model;
+pub mod nodes;
 pub mod palette;
 pub mod progression;
 pub mod rig;
@@ -58,7 +59,8 @@ use serde::{Deserialize, Serialize};
 /// ([`spawn`]) are new records in files of their own too, so v5 holds. v6
 /// (AG.25) gives a level's placement its activation range
 /// ([`level::Placement::activation_range`]), which a v5 placements file
-/// can't say, so a v5 extract redoes itself.
+/// can't say, so a v5 extract redoes itself. AH.50's attach nodes
+/// ([`nodes`]) are a new record in files of their own, so v6 holds.
 pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]

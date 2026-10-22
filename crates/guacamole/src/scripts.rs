@@ -521,10 +521,25 @@ impl ScriptWorld {
 
     /// Where `actor`'s attach nodes sit, in its own frame (metres, +Z its
     /// facing), by index; one past the list, or never set, at its pivot.
-    /// Where on the model a node is through a clip isn't read yet: a caller
-    /// with a measured point sets it here.
+    /// The embedder poses them off the actor's model by the clips playing
+    /// ([`crate::hands`], openspec AH.50), then [`ScriptWorld::place_hung`]
+    /// sets what hangs from them there.
     pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<Vec3>) {
         self.nodes.insert(actor, nodes);
+    }
+
+    /// `actor`'s attach nodes as last set, in its own frame.
+    pub fn nodes(&self, actor: Handle) -> Option<&[Vec3]> {
+        self.nodes.get(&actor).map(Vec::as_slice)
+    }
+
+    /// Each actor hung from a node set at it, as the end of
+    /// [`ScriptWorld::advance`] leaves it: run again once the nodes are
+    /// posed after that frame, so what hangs from them follows the pose the
+    /// frame's clips leave (the original's collider on Eruptor's hand,
+    /// AH.50).
+    pub fn place_hung(&mut self, engine: &mut dyn Engine) {
+        self.place_hung_actors(engine);
     }
 
     /// A spawn of `template` makes `hero` the clone: the hero's actor, his

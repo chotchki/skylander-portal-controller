@@ -57,19 +57,20 @@ pub use root::{ExtractRoot, RootMode};
 /// manifest, so a part a later build adds resumes alone. AH.2's
 /// `ir/progression.*` is such a part outside the levels (the manifest's
 /// `parts`), so v4 holds, and so are AH.22's `palettes/`, `scripts/` and
-/// `spawns/`, beside each level's `script.igz` and `palettes.*`, and AE.31's
-/// `portraits` (the same files, now the right way up).
+/// `spawns/`, beside each level's `script.igz` and `palettes.*`, AE.31's
+/// `portraits` (the same files, now the right way up) and AH.50's `nodes/`.
 pub const LAYOUT_VERSION: u32 = 4;
 
 /// The extract-wide parts this build reads (the manifest's `parts`), each
 /// recorded once its files are in: AE.31's upright portraits, AH.2's
-/// progression, AH.22's palettes, script entries and spawn models. A start
-/// is current only once every one is, so an extract made before one resumes
-/// for it alone.
-pub const PARTS: [&str; 5] = [
+/// progression, AH.22's palettes, script entries and spawn models, AH.50's
+/// attach nodes. A start is current only once every one is, so an extract
+/// made before one resumes for it alone.
+pub const PARTS: [&str; 6] = [
     roster::PORTRAITS,
     progression::PART,
     models::PALETTES,
     scripts::SCRIPTS,
     scripts::SPAWNS,
+    models::NODES,
 ];

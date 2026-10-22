@@ -129,9 +129,22 @@ struct Run {
     steps: u32,
     /// The portal manager's tick as the player loop runs it (AH.20).
     player_loop: PlayerLoop,
+    /// What poses his hands each step (AH.50), and his idle's time at step
+    /// 0: his attach nodes off his model's attach list by his idle and what
+    /// his scripts play on him.
+    rig: guacamole::hands::Rig,
+    idle0: f64,
 }
 
 impl Run {
+    /// His attach nodes posed as the frame left his clips (his idle at its
+    /// time this step), and what hangs from them set there (AH.50).
+    fn pose_hands(&mut self) {
+        let idle = self.idle0 + f64::from(self.steps) / 60.0;
+        self.rig.pose(&mut self.world, HERO, idle);
+        self.world.place_hung(&mut self.bench);
+    }
+
     fn with_host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
         let mut spawn = headless_spawner(self.next);
         let t = {
@@ -170,6 +183,7 @@ impl Run {
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
+        self.pose_hands();
         Ok(())
     }
 }
@@ -205,21 +219,30 @@ fn chapter_1(dump: &Path) -> (Body, Vec3) {
     (mesh, start)
 }
 
-/// Eruptor's palette as his archive holds it: each slot's clip length at
-/// 100 %, 0 where a slot is empty or a network.
-fn eruptor_palette(usrdir: &Path, part: &[Vec<u8>]) -> Vec<f32> {
-    let _ = usrdir;
+/// Eruptor's rig as his archive holds it, read with the globals his
+/// model's shaders need: his model, his palette and his attach nodes, at his
+/// scale in the level (AH.50).
+fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
     let globals = guac_extract::models::Globals::new(&part[1], &part[0]).expect("the globals");
     let read = guac_extract::models::read(&part[3], "009_Eruptor", identity(), Some(&globals))
         .expect("Eruptor's model");
-    let p = read.palette;
-    let mut lengths = vec![0.0; usize::from(p.slots)];
+    guacamole::hands::Rig {
+        model: read.model,
+        palette: read.palette,
+        nodes: read.nodes,
+        scale: guac_motion::tuning::ERUPTOR_SCALE,
+    }
+}
+
+/// Each slot's clip length at 100 %, 0 where a slot is empty or a network.
+fn lengths(p: &guac_ir::palette::Palette) -> Vec<f32> {
+    let mut out = vec![0.0; usize::from(p.slots)];
     for e in &p.entries {
         if let guac_ir::palette::SlotEntry::Clip { clip, .. } = &e.entry {
-            lengths[usize::from(e.slot)] = clip.duration;
+            out[usize::from(e.slot)] = clip.duration;
         }
     }
-    lengths
+    out
 }
 
 /// Each live-table member the registry doesn't hold, as a value cell of its
@@ -318,7 +341,8 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
         .find(|p| p.name == "009_Eruptor")
         .expect("Eruptor's template")
         .obj;
-    world.set_palette(template, eruptor_palette(&usr, &part));
+    let rig = eruptor_rig(&part);
+    world.set_palette(template, lengths(&rig.palette));
     let (parry, start) = if open {
         let ground = scenarios::bodies(&scenarios::open_ground(), &[]);
         (ParryWorld::new(&ground).unwrap(), Vec3::new(0.0, 1.0, 0.0))
@@ -350,6 +374,8 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
             minion: None,
             steps: 0,
             player_loop,
+            rig,
+            idle0: 0.0,
         },
         found,
     )
@@ -428,42 +454,48 @@ fn press(run: &mut Run, script: &str, steps: u32) -> Vec<Spawned> {
     let mut seen: Vec<Spawned> = Vec::new();
     let before = run.world.clones();
     for k in 0..steps {
-        run.bench.pads[0] = scripted(script, k);
-        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
-        for c in run.world.clones() {
-            if before.contains(&c) {
-                continue;
-            }
-            let a = run.world.actor(c).unwrap();
-            let i = match seen.iter().position(|s| s.handle == c) {
-                Some(i) => i,
-                None => {
-                    let name = a
-                        .template
-                        .and_then(|t| run.world.name_of(t))
-                        .unwrap_or_default();
-                    seen.push(Spawned {
-                        step: k,
-                        name,
-                        handle: c,
-                        flight: Vec::new(),
-                        gone: None,
-                    });
-                    seen.len() - 1
-                }
-            };
-            let s = &mut seen[i];
-            if s.gone.is_some() {
-                continue;
-            }
-            if a.removed {
-                s.gone = Some((k, a.position));
-            } else if a.launched {
-                s.flight.push((k, a.position, a.velocity));
-            }
-        }
+        press_step(run, script, k, &before, &mut seen);
     }
     seen
+}
+
+/// Step `k` of [`press`]: the pad, the step, and each clone made since
+/// `before` noted in `seen`.
+fn press_step(run: &mut Run, script: &str, k: u32, before: &[Handle], seen: &mut Vec<Spawned>) {
+    run.bench.pads[0] = scripted(script, k);
+    run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+    for c in run.world.clones() {
+        if before.contains(&c) {
+            continue;
+        }
+        let a = run.world.actor(c).unwrap();
+        let i = match seen.iter().position(|s| s.handle == c) {
+            Some(i) => i,
+            None => {
+                let name = a
+                    .template
+                    .and_then(|t| run.world.name_of(t))
+                    .unwrap_or_default();
+                seen.push(Spawned {
+                    step: k,
+                    name,
+                    handle: c,
+                    flight: Vec::new(),
+                    gone: None,
+                });
+                seen.len() - 1
+            }
+        };
+        let s = &mut seen[i];
+        if s.gone.is_some() {
+            continue;
+        }
+        if a.removed {
+            s.gone = Some((k, a.position));
+        } else if a.launched {
+            s.flight.push((k, a.position, a.velocity));
+        }
+    }
 }
 
 /// A recording under `$GUAC_CAPTURE_DIR/BLUS30968/`, if it's there.
@@ -478,84 +510,123 @@ fn vec3(v: &serde_json::Value) -> Vec3 {
     Vec3::new(f(0), f(1), f(2))
 }
 
-/// One record of an oracle's chain: its game frame, a position (m) and a
-/// velocity (m/s).
-type Record = (i64, Vec3, Vec3);
+/// A behaviour an actor entered (none: no script, or gone) and the game
+/// frame it entered it on.
+type Stay = (Option<String>, i64);
 
-/// AH.7's South press from rest at the spawn (`ah7-buttons-1792535490`): the
-/// ball's records, each its game frame, position (m) and velocity (m/s),
-/// and the hero's pivot.
-fn oracles_lob() -> Option<(Vec<Record>, Vec3)> {
-    let r = recording("ah7-buttons-1792535490/button_South/chain-records.json")?;
-    let mut ball = Vec::new();
-    let mut hero = None;
-    let mut address = None;
-    for rec in r.as_array()? {
-        for it in rec["items"].as_array()? {
-            let body = &it["body"];
-            match it["kind"].as_str()? {
-                "hero" => hero = hero.or(Some(vec3(&body["position"]))),
-                // The first projectile listed is the ball; its splash, still
-                // on the ground, follows it.
-                "projectile" => {
-                    let a = it["address"].as_i64()?;
-                    if *address.get_or_insert(a) == a {
-                        let frame = rec["game_frame"].as_i64()?;
-                        ball.push((frame, vec3(&body["position"]), vec3(&body["velocity"])));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    Some((ball, hero?))
-}
+/// The oracle's drives the stall detector's limits on him and his clones
+/// come from: AH.9's from anchor A (`erupt`, `lob`) and AH.50's from the
+/// spawn (`west`, `south`), ten each.
+const LIMIT_DRIVES: [(&str, &str); 4] = [
+    ("ah9-main-1792545846", "erupt"),
+    ("ah9-main-1792545846", "lob"),
+    ("ah50-main-1792638637", "west"),
+    ("ah50-main-1792638637", "south"),
+];
 
-/// AH.9's limits for the stall detector off its eruptions' and lobs'
-/// records (`ah9-main-1792545846`), and how many recordings it read: each
-/// stay of the hero's in one behaviour with a change on both sides, its
-/// behaviour's longest. The records name a behaviour by its address only,
-/// so a limit found can't be matched to his scripts' names: one stops the
-/// test until a read maps it (none so far, AH.50 records the clones').
-fn ah9_limits() -> (Vec<StallLimit>, usize) {
+/// The stall detector's limits on him and the clones his attacks make (the
+/// eruption's `LavaBlobbing`, `Going Black` and `Fading`, AH.50), from
+/// [`LIMIT_DRIVES`]: each stay of an actor in one behaviour with a change
+/// on both sides, a clone's spawn and its last listing counting as one,
+/// its behaviour's longest by the names each drive's `chain.json` resolves,
+/// lowercased as the VM names them, a frame and a half over (whole frames,
+/// and a frame's time on the oracle's clock); by the placement's name, the
+/// clones by their template's. The hero holds one behaviour throughout every
+/// drive, so none is his. And how many drives it read.
+fn eruptor_limits() -> (Vec<StallLimit>, usize) {
     let mut read = 0;
-    let mut longest: HashMap<i64, f32> = HashMap::new();
-    for kind in ["erupt", "lob"] {
+    let mut longest: BTreeMap<(String, String), i64> = BTreeMap::new();
+    for (folder, kind) in LIMIT_DRIVES {
         for i in 0..10 {
-            let Some(r) = recording(&format!(
-                "ah9-main-1792545846/{kind}-{i:02}/chain-records.json"
-            )) else {
+            let drive = format!("{folder}/{kind}-{i:02}");
+            let (Some(records), Some(chain)) = (
+                recording(&format!("{drive}/chain-records.json")),
+                recording(&format!("{drive}/chain.json")),
+            ) else {
                 continue;
             };
             read += 1;
-            let mut stays: Vec<(i64, i64)> = Vec::new();
-            for rec in r.as_array().into_iter().flatten() {
+            let names = &chain["resolved"]["behaviours"];
+            // Per actor (its kind and address): its behaviour per listing,
+            // with the game frame, and whether it's a clone.
+            let mut stays: BTreeMap<(String, i64), Vec<Stay>> = BTreeMap::new();
+            let mut clones: BTreeMap<(String, i64), bool> = BTreeMap::new();
+            for rec in records.as_array().into_iter().flatten() {
+                let frame = rec["game_frame"].as_i64().unwrap();
                 for it in rec["items"].as_array().into_iter().flatten() {
-                    if it["kind"] == "hero" {
-                        let b = it["behaviour"].as_i64().unwrap_or(0);
-                        match stays.last_mut() {
-                            Some((cur, n)) if *cur == b => *n += 1,
-                            _ => stays.push((b, 1)),
-                        }
+                    let k = it["kind"].as_str().unwrap_or_default();
+                    let template = match k {
+                        "hero" => "009_Eruptor",
+                        "eruption" => "009_LavaAttack",
+                        "lava_ball" => "009_LavaProjectile",
+                        "fire_blob_splash" => "009_FireBlobSplash",
+                        "lava_collider" => "009_LavaCollider",
+                        _ => continue,
+                    };
+                    let key = (template.to_owned(), it["address"].as_i64().unwrap());
+                    clones.insert(key.clone(), k != "hero");
+                    let b = it["behaviour"].as_i64().filter(|&a| a != 0).map(|a| {
+                        names[a.to_string()]
+                            .as_str()
+                            .unwrap_or_else(|| panic!("{drive}: behaviour {a} unnamed"))
+                            .to_lowercase()
+                    });
+                    let s = stays.entry(key).or_default();
+                    if s.last().is_none_or(|l| l.0 != b) {
+                        s.push((b, frame));
                     }
                 }
             }
-            for &(b, n) in stays.iter().skip(1).take(stays.len().saturating_sub(2)) {
-                let e = longest.entry(b).or_insert(0.0);
-                *e = e.max(n as f32 / 60.0);
+            let last = records
+                .as_array()
+                .and_then(|r| r.last())
+                .and_then(|r| r["game_frame"].as_i64())
+                .unwrap_or(0);
+            for (key, mut s) in stays {
+                let clone = clones[&key];
+                // A clone's last listing ends its last stay, unless it's
+                // still listed at the drive's end.
+                let gone = records
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|r| {
+                        r["items"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|i| i["address"].as_i64() == Some(key.1))
+                    })
+                    .filter_map(|r| r["game_frame"].as_i64())
+                    .max()
+                    .map(|f| f + 1);
+                if clone && let Some(g) = gone.filter(|&g| g <= last) {
+                    s.push((None, g));
+                }
+                let skip = usize::from(!clone);
+                for w in s.windows(2).skip(skip) {
+                    if let Some(b) = &w[0].0 {
+                        let e = longest.entry((key.0.clone(), b.clone())).or_insert(0);
+                        *e = (*e).max(w[1].1 - w[0].1);
+                    }
+                }
             }
         }
     }
-    assert!(
-        longest.is_empty(),
-        "AH.9's records see the hero change behaviour ({longest:?}): map the addresses to \
-         his scripts' behaviours before the detector can hold him to them"
-    );
-    (Vec::new(), read)
+    let limits = longest
+        .into_iter()
+        .map(|((placement, behaviour), frames)| StallLimit {
+            placement,
+            behaviour,
+            longest_stay: (frames as f32 + 1.5) / 60.0,
+        })
+        .collect();
+    (limits, read)
 }
 
 /// His scripts for 600 steps from the join, standing: no unmodelled member,
-/// the stall detector clean against AH.9's records.
+/// the stall detector clean against the oracle's records (none of them
+/// moves him off his one behaviour, so none holds him to one).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn his_scripts_run_600_steps_standing() {
@@ -563,8 +634,12 @@ fn his_scripts_run_600_steps_standing() {
     let started = Instant::now();
     let mut run = joined();
     let minion = run.minion.unwrap();
-    let (limits, read) = ah9_limits();
-    println!("AH.9's {read} recordings: limits on his behaviours {limits:?}");
+    let (limits, read) = eruptor_limits();
+    println!("{read} recordings: limits {limits:?}");
+    assert!(
+        limits.iter().all(|l| l.placement != "009_Eruptor"),
+        "a limit on him: {limits:?}"
+    );
     let mut detector = StallDetector::new(limits);
     for k in 0..600 {
         run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
@@ -657,93 +732,164 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
     );
 }
 
+/// AH.50's South press at the spawn (`ah50-main-1792638637/<drive>`): the
+/// first throw's release as the oracle has it, in his frame from his pivot
+/// (facing 0 at the spawn, so the world's axes): the collider's place at
+/// the record before the ball's first (where the ball leaves from), his
+/// idle's and the throw's times there, the ball's first record and the
+/// last two of its flight, and his pivot.
+struct OracleThrow {
+    idle: f64,
+    throw: f64,
+    collider: Vec3,
+    first: Vec3,
+    last: Vec3,
+    burst: Vec3,
+    pivot: Vec3,
+}
+
+fn oracles_south(drive: &str) -> Option<OracleThrow> {
+    let records = recording(&format!("ah50-main-1792638637/{drive}/chain-records.json"))?;
+    let rec = recording(&format!("ah50-main-1792638637/{drive}/recording.json"))?;
+    let chain = recording(&format!("ah50-main-1792638637/{drive}/chain.json"))?;
+    let names = &chain["resolved"]["clip_names"];
+    let at = |r: &serde_json::Value, kind: &str| -> Option<(i64, Vec3)> {
+        r["items"]
+            .as_array()?
+            .iter()
+            .find(|i| i["kind"] == kind)
+            .and_then(|i| Some((i["address"].as_i64()?, vec3(&i["body"]["position"]))))
+    };
+    let records = records.as_array()?;
+    let first_at = records.iter().position(|r| at(r, "lava_ball").is_some())?;
+    let (ball, _) = at(&records[first_at], "lava_ball")?;
+    let flight: Vec<Vec3> = records[first_at..]
+        .iter()
+        .filter_map(|r| {
+            r["items"]
+                .as_array()?
+                .iter()
+                .find(|i| i["kind"] == "lava_ball" && i["address"].as_i64() == Some(ball))
+                .map(|i| vec3(&i["body"]["position"]))
+        })
+        .collect();
+    let release = &records[first_at - 1];
+    let pivot = at(release, "hero")?.1;
+    let frame = release["game_frame"].as_i64()?;
+    let clips = rec
+        .as_array()?
+        .iter()
+        .find(|r| r["game_frame"].as_i64() == Some(frame))?["clips"]
+        .clone();
+    let time_of = |stem: &str| -> Option<f64> {
+        clips.as_array()?.iter().find_map(|c| {
+            let name = names[c["id"].as_i64()?.to_string()].as_str()?;
+            (name.ends_with(stem) && c["weight"].as_f64()? > 0.0)
+                .then(|| c["period"].as_f64().unwrap() - c["remaining"].as_f64().unwrap())
+        })
+    };
+    Some(OracleThrow {
+        idle: time_of("Eruptor_Idle.ma")?,
+        throw: time_of("Eruptor_RunAttackLeft.ma")?,
+        collider: at(release, "lava_collider")?.1 - pivot,
+        first: flight[0] - pivot,
+        last: flight[flight.len() - 2] - pivot,
+        burst: flight[flight.len() - 1] - pivot,
+        pivot,
+    })
+}
+
 /// A press of South from rest at the spawn: the throw's clip at once, the
 /// ball four steps into it (AH.7's and AH.9's five game frames after the
 /// press, the pad read a frame later there), 80 ft/s at 65° less a frame of
-/// gravity, 3° left of his facing, and its burst on the clearing's floor.
+/// gravity, 3° left of his facing, from his left hand posed by his idle and
+/// the throw (AH.50: where the oracle's collider stands on that hand at the
+/// release, his idle set to the oracle's time there), and its burst on the
+/// clearing's floor where the oracle's comes down.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
-fn south_throws_a_ball_that_bursts_on_the_clearing_floor() {
+fn south_throws_a_ball_from_his_hand_that_bursts_on_the_clearing_floor() {
     println!("load before: {}", load());
-    {
-        let mut run = joined();
-        let pivot = run.bench.heroes[&HERO].pivot;
-        let oracle = oracles_lob();
-        // The hand's place at the throw, which the nodes don't pose yet
-        // (a ball from his pivot starts in the ground and bursts at once):
-        // the oracle's first record less its frame's move, or, with no
-        // recording, that offset as AH.7's read it.
-        let off = match &oracle {
-            Some((ball, hero)) => ball[0].1 - ball[0].2 / 60.0 - *hero,
-            None => Vec3::new(0.6011, 0.7710, 1.4838),
-        };
-        let mut nodes = vec![Vec3::ZERO; 9];
-        nodes[7] = off;
-        nodes[8] = Vec3::new(-off.x, off.y, off.z);
-        run.world.set_nodes(HERO, nodes);
-        let launch = format!("{off:?} from his pivot");
-        let seen = press(&mut run, "a1@10", 120);
-        let throw = run
-            .world
-            .sequences()
-            .iter()
-            .find(|q| q.actor == HERO && q.rate == 150.0)
-            .expect("a throw")
-            .clone();
-        assert_eq!((throw.length, throw.rate), (0.5, 150.0), "his left lob");
-        let ball = seen
-            .iter()
-            .find(|s| s.name == "009_LavaProjectile")
-            .expect("a ball");
-        assert_eq!(ball.step, 14, "four steps into the throw");
-        let (_, first, v) = ball.flight[0];
-        let speed = v.length();
-        let pitch = guacamole::script_engine::pitch_of(v);
-        let heading = guacamole::script_engine::heading_of(v);
-        let (gone, burst) = ball.gone.expect("it burst");
-        let across = Vec3::new(burst.x - pivot.x, 0.0, burst.z - pivot.z).length();
+    let oracle = oracles_south("south-00");
+    let mut run = joined();
+    let pivot = run.bench.heroes[&HERO].pivot;
+    // The ball leaves at step 14 from the collider his hand left at step
+    // 13's pose, the run's steps then 14 on from now.
+    if let Some(o) = &oracle {
+        run.idle0 = o.idle - f64::from(run.steps + 14) / 60.0;
+    }
+    let seen = press(&mut run, "a1@10", 120);
+    let throw = run
+        .world
+        .sequences()
+        .iter()
+        .find(|q| q.actor == HERO && q.rate == 150.0)
+        .expect("a throw")
+        .clone();
+    assert_eq!((throw.length, throw.rate), (0.5, 150.0), "his left lob");
+    let ball = seen
+        .iter()
+        .find(|s| s.name == "009_LavaProjectile")
+        .expect("a ball");
+    assert_eq!(ball.step, 14, "four steps into the throw");
+    let (_, first, v) = ball.flight[0];
+    // Its first record less the frame's move (ft/s to m).
+    let launch = first - v * (0.3048 / 60.0) - pivot;
+    let speed = v.length();
+    let pitch = guacamole::script_engine::pitch_of(v);
+    let heading = guacamole::script_engine::heading_of(v);
+    let (gone, burst) = ball.gone.expect("it burst");
+    let across = Vec3::new(burst.x - pivot.x, 0.0, burst.z - pivot.z).length();
+    println!(
+        "ball from step {} for {} records, launched at {launch:?} from his pivot, first {first:?} at \
+         {speed:.3} ft/s, {pitch:.3} deg up, heading {heading:.3}; burst at step {gone} at {burst:?}, \
+         {across:.3} m across from his pivot",
+        ball.step,
+        ball.flight.len()
+    );
+    assert!((speed - 76.99).abs() < 0.02, "{speed}");
+    assert!((pitch - 63.95).abs() < 0.02, "{pitch}");
+    assert!((heading + 3.0).abs() < 0.01, "{heading}");
+    // From his left hand: up and ahead of him, never at his pivot.
+    assert!(
+        launch.x > 0.0 && launch.y > 1.0 && launch.z > 1.0,
+        "{launch:?}"
+    );
+    // On the floor: the gap under it to the level's ground no more than
+    // the Floor check's quarter foot.
+    let down = guac_motion::ground::ray(
+        &run.bench.world,
+        burst + Vec3::Y * 0.1,
+        Vec3::NEG_Y,
+        10.0,
+        &[],
+    )
+    .expect("floor under the burst");
+    let gap = (burst.y - 0.712 - down.point.y) / 0.3048;
+    assert!(gap <= 0.25, "{gap} ft off the floor");
+    if let Some(o) = &oracle {
+        let flat = |p: Vec3| Vec3::new(p.x, 0.0, p.z).length();
         println!(
-            "launch at {launch}: ball from step {} for {} records, first {first:?} at {speed:.3} ft/s, \
-             {pitch:.3} deg up, heading {heading:.3}; burst at step {gone} at {burst:?}, {across:.3} m \
-             across from his pivot",
-            ball.step,
-            ball.flight.len()
+            "oracle (south-00): released with the throw at {:.4} s and his idle at {:.4} s from \
+             {:?}, first {:?}; last in flight {:.3} m across, burst {:.3} m across at {:.3} m up; \
+             his pivot {:?} (ours {pivot:?})",
+            o.throw,
+            o.idle,
+            o.collider,
+            o.first,
+            flat(o.last),
+            flat(o.burst),
+            o.burst.y,
+            o.pivot
         );
-        assert!((speed - 76.99).abs() < 0.02, "{speed}");
-        assert!((pitch - 63.95).abs() < 0.02, "{pitch}");
-        assert!((heading + 3.0).abs() < 0.01, "{heading}");
-        // On the floor: the gap under it to the level's ground no more than
-        // the Floor check's quarter foot.
-        let down = guac_motion::ground::ray(
-            &run.bench.world,
-            burst + Vec3::Y * 0.1,
-            Vec3::NEG_Y,
-            10.0,
-            &[],
-        )
-        .expect("floor under the burst");
-        let gap = (burst.y - 0.712 - down.point.y) / 0.3048;
-        assert!(gap <= 0.25, "{gap} ft off the floor");
-        if let Some((orecs, hero)) = &oracle {
-            // Its flight's frames: the first record the same place by
-            // construction, the burst inside the oracle's last frame's sweep.
-            let flown: Vec<&Record> = orecs.iter().filter(|r| r.2 != Vec3::ZERO).collect();
-            let last = flown[flown.len() - 2].1;
-            let end = flown[flown.len() - 1].1;
-            let oacross = |p: Vec3| Vec3::new(p.x - hero.x, 0.0, p.z - hero.z).length();
-            println!(
-                "oracle: {} records from game frame {}, first {:?}, last in flight {last:?} ({:.3} m \
-                 across), burst {end:?} ({:.3} m across)",
-                flown.len(),
-                flown[0].0,
-                flown[0].1,
-                oacross(last),
-                oacross(end)
-            );
-            assert!((first - flown[0].1).length() < 2e-3);
-            assert!(across > oacross(last) && across < oacross(end), "{across}");
-            assert!((burst.y - end.y).abs() < 0.05);
-        }
+        // The hand moves about 1.9 m a frame there (0.025 s of the clip), so
+        // the oracle's throw a tenth of a millisecond off ours moves it
+        // millimetres: within a centimetre of the oracle's collider.
+        assert!((launch - o.collider).length() < 0.01, "{launch:?}");
+        assert!(
+            across > flat(o.last) - 0.05 && across < flat(o.burst) + 0.05,
+            "{across}"
+        );
     }
     println!("load after: {}", load());
 }
@@ -756,7 +902,64 @@ fn south_throws_a_ball_that_bursts_on_the_clearing_floor() {
 fn west_erupts_43_steps_into_the_clip_for_1_867_s() {
     println!("load before: {}", load());
     let mut run = joined();
-    let seen = press(&mut run, "a2@10", 240);
+    // The eruption's behaviours each step against the oracle's longest
+    // stays (AH.50): its stays, and the detector clean.
+    let (limits, read) = eruptor_limits();
+    let names: Vec<&str> = limits
+        .iter()
+        .filter(|l| l.placement == "009_LavaAttack")
+        .map(|l| l.behaviour.as_str())
+        .collect();
+    println!("{read} recordings: the eruption's limits {limits:?}");
+    if read > 0 {
+        assert_eq!(names, ["fading", "going black", "lavablobbing"]);
+    }
+    let mut detector = StallDetector::new(limits.clone());
+    let mut stays: Vec<(Option<String>, u32)> = Vec::new();
+    let mut stalls = Vec::new();
+    let before = run.world.clones();
+    let mut seen: Vec<Spawned> = Vec::new();
+    for k in 0..240u32 {
+        press_step(&mut run, "a2@10", k, &before, &mut seen);
+        let now = run.steps as f32 / 60.0;
+        let eruption = seen
+            .iter()
+            .find(|s| s.name == "009_LavaAttack")
+            .map(|s| s.handle);
+        if let Some(h) = eruption {
+            let b = if run.world.removed(h) {
+                None
+            } else {
+                run.vm
+                    .placement_of(h)
+                    .and_then(|id| run.vm.behaviour(id))
+                    .map(str::to_owned)
+            };
+            stalls.extend(detector.observe(now, "009_LavaAttack", b.as_deref()));
+            if stays.last().is_none_or(|l| l.0 != b) {
+                stays.push((b, k));
+            }
+        }
+    }
+    // The step it's made, its script hasn't ticked yet (the oracle lists it
+    // from the frame after, in its first behaviour): from its first.
+    let stays: Vec<(Option<String>, u32)> = stays
+        .windows(2)
+        .map(|w| (w[0].0.clone(), w[1].1 - w[0].1))
+        .skip_while(|s| s.0.is_none())
+        .collect();
+    println!("the eruption's stays (steps): {stays:?}; stalls {stalls:?}");
+    assert!(stalls.is_empty(), "{stalls:?}");
+    // The oracle's: LavaBlobbing 66-67 frames, Going Black 30-31, Fading
+    // 15-16, taken off from it (never `Wait to Remove`).
+    let names: Vec<Option<&str>> = stays.iter().map(|s| s.0.as_deref()).collect();
+    assert_eq!(
+        names,
+        [Some("lavablobbing"), Some("going black"), Some("fading")]
+    );
+    for ((_, steps), range) in stays.iter().zip([66..=67, 30..=31, 15..=16]) {
+        assert!(range.contains(steps), "{stays:?}");
+    }
     let clip = run.world.sequences()[1].clone();
     assert_eq!((clip.length, clip.rate), (2.0, 140.0));
     let e = seen
@@ -854,14 +1057,7 @@ struct ClipSteps {
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
     println!("load before: {}", load());
-    let hands = |run: &mut Run| {
-        let mut nodes = vec![Vec3::ZERO; 9];
-        nodes[7] = Vec3::new(0.6011, 0.7710, 1.4838);
-        nodes[8] = Vec3::new(-0.6011, 0.7710, 1.4838);
-        run.world.set_nodes(HERO, nodes);
-    };
     let mut run = joined();
-    hands(&mut run);
     let lobs = clip_steps(&mut run, 150.0, 300, |k| pulsed(1, 10, 130, k));
     let gaps: Vec<u32> = lobs.started.windows(2).map(|w| w[1] - w[0]).collect();
     let balls: Vec<u32> = lobs
@@ -898,7 +1094,6 @@ fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
     assert_eq!(balls.len(), lobs.started.len());
 
     let mut run = joined();
-    hands(&mut run);
     let erupts = clip_steps(&mut run, 140.0, 330, |k| pulsed(2, 10, 310, k));
     let after: Vec<u32> = erupts
         .started
@@ -925,14 +1120,12 @@ fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
 
     // Held: one of each.
     let mut run = joined();
-    hands(&mut run);
     let held = clip_steps(&mut run, 150.0, 140, |k| {
         let mut pad = pulsed(1, 0, 0, k);
         pad.actions[0] = (10..130).contains(&k);
         pad
     });
     let mut run = joined();
-    hands(&mut run);
     let held_west = clip_steps(&mut run, 140.0, 320, |k| {
         let mut pad = pulsed(2, 0, 0, k);
         pad.actions[1] = (10..310).contains(&k);
@@ -1074,13 +1267,6 @@ fn probe_input() {
     run.join().unwrap_or_else(|h| panic!("{h}"));
     for _ in 0..120 {
         run.step().unwrap_or_else(|h| panic!("{h}"));
-    }
-    if let Ok(n) = std::env::var("AH17_NODES") {
-        let v: Vec<f32> = n.split(',').map(|x| x.parse().unwrap()).collect();
-        let mut nodes = vec![Vec3::ZERO; 9];
-        nodes[7] = Vec3::new(v[0], v[1], v[2]);
-        nodes[8] = Vec3::new(-v[0], v[1], v[2]);
-        run.world.set_nodes(HERO, nodes);
     }
     let mut result = Ok(());
     let mut actors_before: Vec<Handle> = run.world.clones();
@@ -1284,10 +1470,6 @@ fn bevy_quat(q: [f32; 4]) -> guac_motion::seam::Quat {
 fn probe_spawns() {
     let mut run = joined();
     let minion = run.minion.unwrap();
-    let mut nodes = vec![Vec3::ZERO; 9];
-    nodes[7] = Vec3::new(0.6011, 0.7710, 1.4838);
-    nodes[8] = Vec3::new(-0.6011, 0.7710, 1.4838);
-    run.world.set_nodes(HERO, nodes);
     for (name, v) in [
         ("description", "creature info"),
         ("my Minion Description", "player joined data"),
@@ -1365,5 +1547,185 @@ fn probe_eruption() {
                 a.position, a.scale, a.angles, a.attach, a.velocity, a.launched, a.removed
             );
         }
+    }
+}
+
+/// AH.50's drives with throws in them, each a fresh RPCS3 from its state
+/// with O6's actor chain on `009_LavaCollider`: from the spawn, South twice
+/// (a hand each); from anchor A, AH.9's lob at the barrel; from anchor B,
+/// AH.10's lob at F0 + 90 at a Chompy.
+const HAND_DRIVES: [(&str, usize); 3] = [("south", 10), ("lob_a", 10), ("fight_lob", 5)];
+
+/// AG.1's step residual: what an O5 trace's own steps leave unexplained.
+const STEP_RESIDUAL: f32 = 1.24e-5;
+
+/// Eruptor's nodes 7 and 8 (`lHand`, `rHand`) posed off his model's attach
+/// list (AH.50): each record of AH.50's drives a throw plays in, the
+/// `009_LavaCollider` the throw hangs on the hand it throws from, in his
+/// frame (his whole turn, the tilt and roll the ground under him gives his
+/// model as well as his facing), against that hand posed by the clips the
+/// record names at their times (his locomotion's, the throw laid over them)
+/// at his scale: within AG.1's step residual, the lean his turn plays (6 %
+/// at most, no clip of our locomotion's yet) left out and moving no joint
+/// up to his hands. Named, AH.49's: the frames after a throw's clip has gone
+/// from the list while the engine still blends it out (the collider's hand
+/// off the idle's by up to 3.4 m, back within the residual inside 13
+/// frames). A record with a clip the end pause named nothing for (a bite's
+/// hurt reaction) is left out.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.50's recordings; run on the Mac"]
+fn his_hands_posed_from_his_attach_list_stand_where_the_oracles_collider_does() {
+    println!("load before: {}", load());
+    let dump = dump();
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let part: Vec<Vec<u8>> = ARCHIVES
+        .iter()
+        .map(|(a, _)| guac_extract::scripts::entry(&usr, a).unwrap_or_else(|e| panic!("{a}: {e}")))
+        .collect();
+    let rig = eruptor_rig(&part);
+    assert_eq!(
+        rig.nodes.nodes[7..9]
+            .iter()
+            .map(|n| (n.name.as_deref(), n.bone.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            (Some("lHand"), Some("J_palm_L")),
+            (Some("rHand"), Some("J_palm_R"))
+        ]
+    );
+    let mut clips: HashMap<String, &guac_ir::clip::Clip> = rig
+        .palette
+        .entries
+        .iter()
+        .filter_map(|e| match &e.entry {
+            guac_ir::palette::SlotEntry::Clip { clip, .. } => Some((clip.name.clone(), clip)),
+            _ => None,
+        })
+        .collect();
+    clips.insert(rig.model.idle.name.clone(), &rig.model.idle);
+    let only = std::env::var("AH50_REC").ok();
+    let (mut drives, mut records, mut leaning, mut unnamed) = (0, 0, 0, 0);
+    let (mut worst, mut worst_lean, mut worst_out): (f32, f32, f32) = (0.0, 0.0, 0.0);
+    let mut longest_out = 0;
+    for (kind, n) in HAND_DRIVES {
+        for i in 0..n {
+            let drive = format!("ah50-main-1792638637/{kind}-{i:02}");
+            if only.as_ref().is_some_and(|o| !drive.ends_with(o.as_str())) {
+                continue;
+            }
+            let (Some(chain_records), Some(rec), Some(chain)) = (
+                recording(&format!("{drive}/chain-records.json")),
+                recording(&format!("{drive}/recording.json")),
+                recording(&format!("{drive}/chain.json")),
+            ) else {
+                continue;
+            };
+            drives += 1;
+            let names = &chain["resolved"]["clip_names"];
+            let by_frame: HashMap<i64, &serde_json::Value> = rec
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (r["game_frame"].as_i64().unwrap(), r))
+                .collect();
+            let mut hand: Option<usize> = None;
+            let mut drive_worst: f32 = 0.0;
+            // Frames since a throw's clip left the list while its hand is
+            // still off the idle's.
+            let mut out = 0;
+            for r in chain_records.as_array().unwrap() {
+                let g = r["game_frame"].as_i64().unwrap();
+                let items = r["items"].as_array().unwrap();
+                let he = items.iter().find(|i| i["kind"] == "hero").unwrap();
+                let Some(col) = items.iter().find(|i| i["kind"] == "lava_collider") else {
+                    continue;
+                };
+                let Some(frame) = by_frame.get(&g) else {
+                    continue;
+                };
+                let mut base = Vec::new();
+                let mut over = Vec::new();
+                let mut lean = false;
+                let mut named = true;
+                for c in frame["clips"].as_array().unwrap() {
+                    let w = c["weight"].as_f64().unwrap();
+                    if w <= 0.0 {
+                        continue;
+                    }
+                    let id = c["id"].as_i64().unwrap().to_string();
+                    let Some(name) = names[&id].as_str().and_then(|n| n.rsplit('/').next()) else {
+                        named = false;
+                        continue;
+                    };
+                    let t = c["period"].as_f64().unwrap() - c["remaining"].as_f64().unwrap();
+                    if name.contains("Lean") {
+                        // Not his locomotion's on our side yet (AH.49).
+                        lean = true;
+                        continue;
+                    }
+                    let clip = clips
+                        .get(name)
+                        .unwrap_or_else(|| panic!("{drive}: {name} not in his palette"));
+                    if name.contains("Attack") {
+                        hand = Some(if name.contains("Right") { 8 } else { 7 });
+                        over.push((*clip, t));
+                    } else {
+                        base.push((*clip, t, w));
+                    }
+                }
+                // Hung from the first throw on: before it, it lies where
+                // his join dropped it.
+                let Some(node) = hand else {
+                    continue;
+                };
+                if !named {
+                    unnamed += 1;
+                    continue;
+                }
+                let posed = guacamole::hands::posed(
+                    &rig.model.skeleton,
+                    &rig.nodes,
+                    &base,
+                    &over,
+                    rig.scale,
+                );
+                let angles = vec3(&he["body"]["rotation"]);
+                let turn = guac_extract::models::euler_transform(
+                    &guac_formats::igz::layouts::EulerTransform {
+                        position: [0.0; 3],
+                        rotation: angles.to_array(),
+                    },
+                );
+                let turn = guac_motion::seam::Quat::from_array(turn.rotation);
+                let at = vec3(&he["body"]["position"]) + turn * posed[node];
+                let off = (at - vec3(&col["body"]["position"])).length();
+                records += 1;
+                if lean {
+                    leaning += 1;
+                    worst_lean = worst_lean.max(off);
+                }
+                if over.is_empty() && off > STEP_RESIDUAL {
+                    out += 1;
+                    longest_out = longest_out.max(out);
+                    worst_out = worst_out.max(off);
+                } else {
+                    out = 0;
+                    drive_worst = drive_worst.max(off);
+                }
+            }
+            println!("{drive}: worst {drive_worst:.2e} m");
+            worst = worst.max(drive_worst);
+        }
+    }
+    println!(
+        "{drives} drives, {records} records: worst {worst:.2e} m; {leaning} with a lean, worst there \
+         {worst_lean:.2e} m; a throw blending out off by {worst_out:.3} m at most, {longest_out} frames \
+         at most; {unnamed} with a clip the end pause didn't name"
+    );
+    println!("load after: {}", load());
+    if drives > 0 {
+        assert!(worst <= STEP_RESIDUAL, "{worst}");
+        assert!(worst_lean <= STEP_RESIDUAL, "{worst_lean}");
+        assert!(longest_out <= 13, "{longest_out}");
     }
 }
