@@ -521,13 +521,14 @@ fn a_lob_breaks_the_ledge_routes_two_barrels_as_ah9s() {
 }
 
 /// One Eruption from anchor A breaks the uncommon pot, the gourd and the
-/// barrel its reach passes, in AH.9's order and within two of its steps
-/// from the press (65, 69-70 and 72 over the ten `erupt` replays), each
-/// solid out of the seam the step it breaks, three pieces of debris each
-/// gone 1.52 s on: the uncommon count's rate of 1 leaves 0.097497 at
-/// 0.09749699 and drops a coin worth 3 or 7; the common count steps twice,
-/// 0.8242795 to 0.42427945 to 0.024279475 as AH.9's, each dropping a coin
-/// worth 1 or 2, the step after its break as AH.9's.
+/// barrel its reach passes, in AH.9's order and on its steps from the press
+/// (65, 69-70 and 72 over the ten `erupt` replays; a step late before
+/// AH.54's lava ticked the step it spawns), each solid out of the seam the
+/// step it breaks, three pieces of debris each gone 1.52 s on: the uncommon
+/// count's rate of 1 leaves 0.097497 at 0.09749699 and drops a coin worth 3
+/// or 7; the common count steps twice, 0.8242795 to 0.42427945 to
+/// 0.024279475 as AH.9's, each dropping a coin worth 1 or 2, the step after
+/// its break as AH.9's.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.9's recordings; run on the Mac"]
 fn an_eruption_breaks_the_pot_the_gourd_and_the_barrel_as_ah9s() {
@@ -560,10 +561,7 @@ fn an_eruption_breaks_the_pot_the_gourd_and_the_barrel_as_ah9s() {
             .collect();
         println!("{name}: ours {ours} steps after the press, AH.9's {theirs:?}");
         let (lo, hi) = (*theirs.iter().min().unwrap(), *theirs.iter().max().unwrap());
-        assert!(
-            (lo.saturating_sub(2)..=hi + 2).contains(&ours),
-            "{name}: {ours} past {lo}..={hi} by more than 2"
-        );
+        assert!((lo..=hi).contains(&ours), "{name}: {ours} past {lo}..={hi}");
     }
     check_debris(&w, &ah9);
     let unc = w.count("uncommon");
