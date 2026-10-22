@@ -447,6 +447,14 @@ Dev, from the repo root:
 cargo run -p guacamole       # add --features test-hooks for the /api/_test/* endpoints
 ```
 
+- A dev build is Bevy's dev profile (AG.65, the root [`Cargo.toml`](../../Cargo.toml)): the workspace's
+  crates at opt-level 1, every dependency at 3 (its build scripts and proc macros too), debug assertions
+  on. Against 0a55f0e's opt-level 0 at 4 jobs, a cold target dir costs 3.9 times as long (660 s for
+  `cargo build --workspace --all-targets`) and each feature set's first build 2-5 times; a one-line
+  rebuild costs about the same (0.4-1.8 s more in `guacamole`, 2.7 s less after a change in
+  `guac-script`); the runs take a half to a sixth (`cargo test --workspace` 61 to 32 s, the guacamole
+  e2e 596 to 277 s, AH.16's disc tests 526 to 84 s, bit for bit the same numbers). So keep a target dir
+  warm rather than starting another.
 - It reads the dev env file the product reads (the keys are in
   [`.env.dev.example`](../../.env.dev.example)), and only these matter: `GUAC_DUMP_DIRS` (folders in the
   OS's path-list form; set, it overrides the stored folders and the TV skips setup), `GUAC_EXTRACT_DIR`,
@@ -1500,10 +1508,10 @@ and averaged with `FlipMap::mean` (`mean_masked` for a mask). The catch is the v
 `nv-flip`'s `DEFAULT_PIXELS_PER_DEGREE` is 67 flat, while the reference computes 67.0206 (0.7 m from a 0.7
 m wide monitor 3,840 pixels across). On the reference's own example pair 67 scores 0.159717, and
 67.0206 scores the reference's 0.159693 with an error map identical bit for bit to the current
-reference's (0 of 2,073,600 pixels), so never the crate's default. The workspace builds `nv-flip-sys` at
-opt-level 3 in dev too: at 0 it took 7.1-8.5 s a FLIP and put 1,665 pixels off in the last bit. Picked
-over the reference CLI because it runs in process, so `guac-oracle` stays pure (nothing built outside the
-tree for a key to point at, and no subprocess fed PNGs); AC.18 and AE.16 call the same function. The
+reference's (0 of 2,073,600 pixels), so never the crate's default. The dev profile builds every dependency
+at opt-level 3 (AG.65), `nv-flip-sys` among them: at 0 it took 7.1-8.5 s a FLIP and put 1,665 pixels off in
+the last bit. Picked over the reference CLI because it runs in process, so `guac-oracle` stays pure
+(nothing built outside the tree for a key to point at, and no subprocess fed PNGs); AC.18 and AE.16 call the same function. The
 `#[ignore]`d `flip_reference` re-runs the example pair from a clone at `GUAC_FLIP_REF`.
 
 ### Captures and savestates
