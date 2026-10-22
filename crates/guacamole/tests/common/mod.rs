@@ -341,26 +341,28 @@ impl Run {
         t
     }
 
-    /// One step: the pads read, every managed placement woken or put to
-    /// sleep by the activity rule, the combat manager and the projectiles
-    /// managed as the portal manager's tick runs them (once he's in),
-    /// every placement's tick, the clones of scripted templates added, then
-    /// the engine's frame: the hero moved by the walk his scripts left, the
-    /// sequences on, the creatures walked, what the scripts threw flying,
-    /// his hands posed and what hangs from them set there (AH.50), the
-    /// bodies placed where their actors stand.
+    /// One step, in the TV's order (`guacamole::frame`, openspec AH.59):
+    /// the pads read, every managed placement woken or put to sleep by the
+    /// activity rule, the frame's slides, the walk (his minion first, every
+    /// awake placement as it woke with the player loop's slices in their
+    /// placements' places, the mover update last), the clones made outside
+    /// it added, the props stood; then the engine's frame: the hero moved by
+    /// the walk his scripts left, the sequences on, the creatures walked,
+    /// what the scripts threw flying, his hands posed and what hangs from
+    /// them set there (AH.50), the bodies placed where their actors stand.
     pub fn step(&mut self) -> Result<(), Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
         for (h, active) in self.world.activity(&mut self.bench) {
             self.vm.set_asleep(h, !active);
         }
-        let slid = self.with_host(|vm, host| vm.slide(host))?;
-        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        // The frame's slides and the walk in the original's order, the
+        // player loop's slices in their places (openspec AH.59).
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
-        self.with_host(|vm, host| player_loop.step(vm, host, joined))?;
-        let r = self.with_host(|vm, host| vm.step(host));
+        let mut stopped = Vec::new();
+        let r = self.with_host(|vm, host| player_loop.frame(vm, host, joined, &mut stopped));
+        assert!(stopped.is_empty(), "strict mode stops by halting");
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         // The props stand by where he is as the step began, after the

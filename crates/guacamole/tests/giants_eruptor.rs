@@ -164,21 +164,23 @@ impl Run {
         t
     }
 
-    /// One step: the pads read, the projectiles managed (once he's in),
-    /// every placement's tick, the clones of scripted templates added, then
-    /// the engine's frame: the hero moved by the walk his scripts left, the
-    /// sequences on, what the scripts threw flying.
+    /// One step, in the TV's order (`guacamole::frame`, openspec AH.59): the
+    /// pads read, the frame's slides, the walk with the player loop's slices
+    /// in their places, the clones made outside it added, then the engine's
+    /// frame: the hero moved by the walk his scripts left, the sequences on,
+    /// what the scripts threw flying.
     fn step(&mut self) -> Result<(), Halt> {
         let dt = self.dt;
         self.vm.set_tick_seconds(dt);
         let pads = self.bench.pads;
         self.world.read_pads(pads);
-        let slid = self.with_host(|vm, host| vm.slide(host))?;
-        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        // The frame's slides and the walk in the original's order, the
+        // player loop's slices in their places (openspec AH.59).
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
-        self.with_host(|vm, host| player_loop.step(vm, host, joined))?;
-        let r = self.with_host(|vm, host| vm.step(host));
+        let mut stopped = Vec::new();
+        let r = self.with_host(|vm, host| player_loop.frame(vm, host, joined, &mut stopped));
+        assert!(stopped.is_empty(), "strict mode stops by halting");
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         let report = r?;

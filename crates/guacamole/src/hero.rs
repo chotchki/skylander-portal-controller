@@ -20,12 +20,17 @@
 //! ([`crate::hero_scripts`]), and nothing here turns or pushes him. Any
 //! other walks on the stick by AG.16's controller, the stand-in.
 //!
-//! Ordering: Avian refits its trees for a moved kinematic body when its
-//! physics schedule runs (`FixedPostUpdate`), so a body moved in `FixedUpdate`
-//! before the hero's step would be met where it stood the step before, where
-//! `ParryWorld` sees it at once. Movers go after [`HeroSystems::Step`]: then
-//! both sides meet it where it stood when the step began, and record its
-//! velocity in [`MovingSolids`] for the next.
+//! Ordering ([`guacamole::frame`], openspec AH.59): his step is
+//! [`frame::Frame::Hero`], after the scripts, his locomotion
+//! [`frame::Frame::Locomotion`] and the camera [`frame::Frame::Camera`], as
+//! the original's actors' updater runs after its scripts' and its
+//! viewport's after both. Avian refits its trees for a moved kinematic body
+//! when its physics schedule runs (`FixedPostUpdate`), so a body moved in
+//! `FixedUpdate` before the hero's step would be met where it stood the
+//! step before, where `ParryWorld` sees it at once. Movers go in
+//! [`frame::Frame::Actors`], after his step: then both sides meet it where
+//! it stood when the step began, and record its velocity in
+//! [`MovingSolids`] for the next.
 
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
@@ -37,6 +42,8 @@ use guac_motion::proxy::Surfaces;
 use guac_motion::seam::BodyId;
 use guac_motion::stick::Stick;
 
+use guacamole::frame;
+
 use crate::physics::AvianSeam;
 
 /// The game's step: the original's nominal frame (design decision 5).
@@ -46,6 +53,7 @@ pub(crate) struct HeroPlugin;
 
 impl Plugin for HeroPlugin {
     fn build(&self, app: &mut App) {
+        frame::ensure(app);
         app.insert_resource(Time::<Fixed>::from_hz(STEP_HZ))
             .add_plugins(TransformInterpolationPlugin::default())
             .init_resource::<HeroInput>()
@@ -54,29 +62,12 @@ impl Plugin for HeroPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    step_heroes.in_set(HeroSystems::Step),
-                    step_gaits.in_set(HeroSystems::Gait),
-                    step_cameras.in_set(HeroSystems::Camera),
-                ),
-            )
-            .configure_sets(
-                FixedUpdate,
-                (
-                    HeroSystems::Gait.after(HeroSystems::Step),
-                    HeroSystems::Camera.after(HeroSystems::Step),
+                    step_heroes.in_set(frame::Frame::Hero),
+                    step_gaits.in_set(frame::Frame::Locomotion),
+                    step_cameras.in_set(frame::Frame::Camera),
                 ),
             );
     }
-}
-
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum HeroSystems {
-    /// Every hero's frame; kinematic movers run after it.
-    Step,
-    /// His locomotion's frame, on what his step left (AG.30).
-    Gait,
-    /// The gameplay camera's frame, after the hero's.
-    Camera,
 }
 
 /// What the next step reads of the player: the walking stick and the
@@ -317,7 +308,7 @@ mod tests {
     use crate::physics::{SeamBody, SeamPlugin, set_pose, spawn_body};
     use avian3d::prelude::{Position, Rotation};
 
-    /// Fixed steps run, counted in `FixedUpdate` after the heroes'.
+    /// Fixed steps run, counted in `FixedUpdate`'s [`frame::Frame::Record`].
     #[derive(Resource, Default)]
     struct Steps(u32);
 
@@ -357,8 +348,8 @@ mod tests {
             (
                 script
                     .run_if(resource_exists::<WalkScript>)
-                    .before(HeroSystems::Step),
-                count.after(HeroSystems::Step),
+                    .in_set(frame::Frame::Pads),
+                count.in_set(frame::Frame::Record),
             ),
         );
         app.finish();
@@ -647,7 +638,7 @@ mod tests {
         app.world_mut().remove_resource::<WalkScript>();
         app.insert_resource(Block(start_at))
             .insert_resource(HeroInput::default())
-            .add_systems(FixedUpdate, move_block.after(HeroSystems::Step));
+            .add_systems(FixedUpdate, move_block.in_set(frame::Frame::Actors));
         let entity = spawn_eruptor(&mut app, START, 0.0);
 
         let mut parry = ParryWorld::new(&bodies).unwrap();

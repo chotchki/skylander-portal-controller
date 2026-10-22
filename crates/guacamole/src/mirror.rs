@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::alert::{AlertScreen, CornerJoin, CornerQr};
 use crate::cards::PortalCards;
 use crate::extraction::{ExtractStatus, Extraction};
-use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, HeroSystems};
+use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput};
 use crate::hero_scripts::{HeroRun, ScriptLog, ScriptStep};
 use crate::input::Layer;
 use crate::input::{FocusId, PostedPresses, TestPress};
@@ -52,6 +52,7 @@ use crate::tv::{
     safe_area,
 };
 use crate::warm::{PipelineWatch, Warm, WarmReport};
+use guacamole::frame::{self, Frame};
 
 /// What the TV shows this frame.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -971,12 +972,13 @@ pub struct Mirror;
 
 impl Plugin for Mirror {
     fn build(&self, app: &mut App) {
+        frame::ensure(app);
         app.add_systems(PostUpdate, mirror_tv.after(UiSystems::Layout))
             .add_systems(Update, skip_asked.before(intro_player::play_intros))
             .init_resource::<PadSteps>()
             .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
-            .add_systems(FixedUpdate, log_gaits.after(HeroSystems::Gait))
-            .add_systems(FixedUpdate, count_pad_steps)
+            .add_systems(FixedUpdate, log_gaits.in_set(Frame::Record))
+            .add_systems(FixedUpdate, count_pad_steps.in_set(Frame::Pads))
             .add_systems(Last, (log_frame, log_drawn));
         // The scripts' run logs where the routes read.
         if let Some(scripts) = app.world().get_resource::<TvMirror>().map(|m| m.7.clone()) {
@@ -2216,17 +2218,18 @@ mod tests {
         ))
         .init_resource::<PadSteps>()
         .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
-        .add_systems(FixedUpdate, count_pad_steps);
+        .add_systems(FixedUpdate, count_pad_steps.in_set(Frame::Pads));
         app.insert_resource(mirror.clone());
         // Each game step reads the attacks as the scripts' step does.
         #[derive(Resource, Default)]
         struct Read(Vec<[bool; 4]>);
         app.init_resource::<Read>().add_systems(
             FixedUpdate,
-            |mut a: ResMut<HeroActions>, mut read: ResMut<Read>| {
+            (|mut a: ResMut<HeroActions>, mut read: ResMut<Read>| {
                 let now = a.take();
                 read.0.push(now);
-            },
+            })
+            .in_set(Frame::Scripts),
         );
         let push = |act: PadAct| mirror.4.push(PadPost { pad: 0, act });
         push(PadAct::Connect {

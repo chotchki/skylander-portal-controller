@@ -84,6 +84,7 @@ use guacamole::character::warm::WarmKey;
 use guacamole::character::{
     CharacterMaterial, CharacterUniform, ShadowLookup, reference_material, remaster, static_mesh,
 };
+use guacamole::frame::{self, Frame};
 use guacamole::level_scene::{
     self as arithmetic, AtStart, Drawn, LevelFog, LevelLights, fresh_state_projection,
     fresh_state_transform, fresh_state_view, hero_scene, view_scene, world_scene,
@@ -95,8 +96,8 @@ use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::extraction::Extraction;
-use crate::hero::{HeroBody, HeroSystems};
-use crate::hero_scripts::{ScriptSource, ScriptSystems};
+use crate::hero::HeroBody;
+use crate::hero_scripts::ScriptSource;
 use crate::motion::ReducedMotion;
 use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
@@ -1056,6 +1057,7 @@ pub(crate) struct LevelPlugin;
 
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
+        frame::ensure(app);
         let watch = LevelWatch::default();
         let gpu = app.get_sub_app(RenderApp).is_some();
         let view = cfg!(feature = "dev-tools") && std::env::var_os("GUAC_LEVEL_VIEW").is_some();
@@ -1073,13 +1075,9 @@ impl Plugin for LevelPlugin {
                     .in_set(LevelSystems)
                     .after(crate::turntable::TurntableSystems),
             )
-            // The props stand by where the hero is as his step begins.
-            .add_systems(
-                FixedUpdate,
-                stand_props
-                    .after(ScriptSystems::Step)
-                    .before(HeroSystems::Step),
-            )
+            // The props stand by where the hero is as his step begins: what
+            // the scripts broke this step out before anything moves.
+            .add_systems(FixedUpdate, stand_props.in_set(Frame::Solids))
             // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,

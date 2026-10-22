@@ -18,6 +18,7 @@ mod embed;
 mod hero;
 mod init;
 mod loot;
+mod order;
 mod slides;
 mod span;
 

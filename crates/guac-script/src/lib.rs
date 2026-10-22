@@ -48,18 +48,32 @@
 //! Before the frame's scripts the sliders step, once ([`Vm::slide`]; Slides
 //! below).
 //!
+//! The order is the original scheduler's, as AH.59 recorded it a frame at a
+//! time on the oracle (the scheduler's lists at every frame's pad read; the
+//! decompile explaining them): placements tick group by group, each group a
+//! list walked from its head. The *activators* ([`Vm::set_activator`]: the
+//! hero's own minion, the one placement the others' activation ranges are
+//! measured from) tick first, then every other awake placement in its list's
+//! order. A placement joins its group's list at the end: added, woken, sent
+//! round its states by a `reset` ([`Vm::requeue`]: the mover update, which
+//! the music controller's tick resets every frame, so it ticks after every
+//! other awake placement), or spawned. The walk takes each place as the list
+//! stands when it gets there, so one joining the end during the walk ticks
+//! that step too, and one leaving a place the walk has passed doesn't make
+//! it skip the next.
+//!
 //! The embedder puts placements to sleep and wakes them by its activity
-//! rule ([`Vm::set_asleep`]); one asleep isn't ticked and keeps its state.
-//! Placements tick in the order they woke: those awake from the start in
-//! the order added, one woken after every placement already awake. A
-//! reading of AH.10's encounter end, which the order added misses by a
-//! frame both ways: Norticus (woken last) takes his scene the frame the
-//! last Chompy goes, and `Setup_001_Controller` (woken first) sees it and
-//! goes a frame later. A placement a tick spawns with a script of its own
-//! ([`Host::adopt`]) joins the order's end and ticks that same tick, after
-//! every placement already in it: AH.54's recordings list the eruption's
-//! first wave of lava at the eruption's own first record, which its first
-//! tick spawns.
+//! rule ([`Vm::set_asleep`]); one asleep isn't ticked and keeps its state,
+//! and waking puts it at its group's end: placements tick in the order they
+//! woke. AH.10's encounter end shows it too (Norticus, woken last, takes his
+//! scene the frame the last Chompy goes, and `Setup_001_Controller`, woken
+//! first, sees it a frame later). A placement a tick spawns with a script
+//! of its own ([`Host::adopt`]) joins the end and ticks that same tick:
+//! AH.54's recordings list the eruption's first wave of lava at the
+//! eruption's own first record, which its first tick spawns. A held
+//! placement (below) runs what the embedder does in its place natively
+//! ([`Vm::step_with`]), where the walk reaches it: design decision 2's
+//! player loop runs the portal manager's and the game systems' ticks so.
 //!
 //! `remove` takes a placement off: the rest of the tick it's in runs (a
 //! script taking itself off finishes its tick), then it's never ticked again
@@ -476,7 +490,7 @@ pub use slide::{between, eased};
 pub use stall::{Stall, StallDetector, StallLimit};
 pub use value::{Value, arith, arith_in, compare, convert, random_literal};
 pub use vm::{
-    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, PlacementId, Precision, Reason, SLIDERS,
-    StepReport, TICK_SECONDS, Vm,
+    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId, Precision, Reason,
+    SLIDERS, StepReport, TICK_SECONDS, Vm,
 };
 pub use whitelist::{Listed, Whitelist};

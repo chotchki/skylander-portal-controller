@@ -699,4 +699,49 @@ mod tests {
             }
         }
     }
+
+    /// openspec AH.59: every fixed-step system the TV's plugins add (the
+    /// hero's, his scripts', the level's, the test hooks' mirror and the
+    /// library's script runner) sits in one of the step's sets, so the
+    /// step's order is [`guacamole::frame::ORDER`] and nothing runs outside
+    /// it.
+    #[test]
+    fn every_fixed_step_system_is_in_a_frame_set() {
+        use bevy::ecs::schedule::{ApplyDeferred, Schedules, SystemSet};
+        use bevy::prelude::{FixedUpdate, MinimalPlugins};
+        use guacamole::frame::{FramePlugin, ORDER};
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            physics::SeamPlugin,
+            hero::HeroPlugin,
+            hero_scripts::HeroScriptsPlugin,
+            level::LevelPlugin,
+            mirror::Mirror,
+            guacamole::scripts::ScriptPlugin,
+        ));
+        assert!(app.is_plugin_added::<FramePlugin>());
+        let world = app.world_mut();
+        let mut fixed = world
+            .resource_mut::<Schedules>()
+            .remove(FixedUpdate)
+            .expect("FixedUpdate");
+        fixed.initialize(world).expect("it builds");
+        let mut in_sets = std::collections::HashSet::new();
+        for set in ORDER {
+            if let Ok(keys) = fixed.graph().systems_in_set(set.intern()) {
+                in_sets.extend(keys.iter().copied());
+            }
+        }
+        // Bevy's own sync points between a set's commands and the next set
+        // aren't systems of ours.
+        let sync = std::any::TypeId::of::<ApplyDeferred>();
+        let outside = fixed
+            .systems()
+            .expect("initialized")
+            .filter(|(key, system)| !in_sets.contains(key) && system.system_type() != sync)
+            .count();
+        assert_eq!(outside, 0, "systems outside every set");
+        assert!(in_sets.len() >= 10, "{} systems in the sets", in_sets.len());
+    }
 }

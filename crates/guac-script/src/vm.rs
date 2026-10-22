@@ -227,6 +227,9 @@ struct Placement {
     /// Inactive (the embedder's activity rule): not ticked until it wakes,
     /// its state kept.
     asleep: bool,
+    /// An activator ([`Vm::set_activator`]): its group ticks ahead of every
+    /// other placement (crate docs, The tick).
+    activator: bool,
     /// Seconds of ticks so far: `system.script timer`.
     active: f32,
 }
@@ -482,14 +485,25 @@ fn tag_object(program: &Program, o: OperandId) -> Option<Obj> {
     }
 }
 
+/// What an embedder runs in a held placement's place during a step's walk
+/// ([`Vm::step_with`]): the VM, the placement and the host.
+pub type Native<'a> = dyn FnMut(&mut Vm, PlacementId, &mut dyn Host) -> Result<(), Halt> + 'a;
+
 /// The interpreter over one [`Program`].
 pub struct Vm {
     program: Arc<Program>,
     config: Config,
     placements: Vec<Placement>,
-    /// The tick order: the order added, a placement woken from sleep moved
-    /// after every one already awake.
+    /// The tick order (crate docs, The tick): the activators' group, then
+    /// every other placement's, each in the order added, a placement woken
+    /// from sleep or sent round its states ([`Vm::requeue`]) moved to its
+    /// group's end.
+    activators: Vec<PlacementId>,
     order: Vec<PlacementId>,
+    /// The walk's place during a step: the group (true the activators') and
+    /// the index of the next placement in it, stepped back when a placement
+    /// at or before it leaves the list, so the walk skips nothing.
+    cursor: Option<(bool, usize)>,
     cells: Vec<Cell>,
     sets: Vec<SetObj>,
     structs: Vec<StructObj>,
@@ -588,7 +602,9 @@ impl Vm {
             program,
             config,
             placements: Vec::new(),
+            activators: Vec::new(),
             order: Vec::new(),
+            cursor: None,
             cells: Vec::new(),
             sets: Vec::new(),
             structs: Vec::new(),
@@ -690,6 +706,7 @@ impl Vm {
             first_tick: listing == Listed::FirstTick,
             held: false,
             asleep: false,
+            activator: false,
             active: 0.0,
         });
         let id = (self.placements.len() - 1) as PlacementId;
@@ -761,6 +778,11 @@ impl Vm {
         self.handles.get(&handle).copied()
     }
 
+    /// The handle a placement runs under.
+    pub fn handle_of(&self, id: PlacementId) -> Option<Handle> {
+        self.placements.get(id as usize).map(|p| p.handle)
+    }
+
     /// Sets a placement local by name, made as a number if the script
     /// hasn't used it yet: how an embedder puts a placement in a recorded
     /// state. False when no op names it or the placement doesn't exist.
@@ -798,12 +820,92 @@ impl Vm {
             return false;
         };
         let p = &mut self.placements[id as usize];
-        if p.asleep && !asleep {
-            self.order.retain(|&o| o != id);
-            self.order.push(id);
-        }
+        let woken = p.asleep && !asleep;
         p.asleep = asleep;
+        if woken {
+            self.move_to_end(id);
+        }
         true
+    }
+
+    /// Makes the placement running under `handle` an activator, or not
+    /// (crate docs, The tick): the hero's own minion, whose group ticks
+    /// ahead of every other placement; it joins its new group's end. False
+    /// when no placement runs under it.
+    pub fn set_activator(&mut self, handle: Handle, activator: bool) -> bool {
+        let Some(&id) = self.handles.get(&handle) else {
+            return false;
+        };
+        if self.placements[id as usize].activator != activator {
+            self.unlist(id);
+            self.placements[id as usize].activator = activator;
+            let list = self.list_mut(activator);
+            list.push(id);
+        }
+        true
+    }
+
+    /// Sends the placement running under `handle` round its states, as the
+    /// original's `reset` of a placement does (crate docs, The tick): off
+    /// its group's list and back on at its end, so it ticks after every
+    /// placement already there, this step too when the walk hasn't reached
+    /// it. False when no placement runs under it.
+    pub fn requeue(&mut self, handle: Handle) -> bool {
+        let Some(&id) = self.handles.get(&handle) else {
+            return false;
+        };
+        self.move_to_end(id);
+        true
+    }
+
+    /// Whether the placement is an activator.
+    pub fn is_activator(&self, id: PlacementId) -> bool {
+        self.placements
+            .get(id as usize)
+            .is_some_and(|p| p.activator)
+    }
+
+    /// The tick order as it stands: the activators', then the rest, each
+    /// by name in its group's order.
+    pub fn tick_order(&self) -> Vec<(bool, String)> {
+        self.activators
+            .iter()
+            .map(|&id| (true, id))
+            .chain(self.order.iter().map(|&id| (false, id)))
+            .map(|(g, id)| (g, self.placements[id as usize].name.clone()))
+            .collect()
+    }
+
+    fn list_mut(&mut self, activators: bool) -> &mut Vec<PlacementId> {
+        if activators {
+            &mut self.activators
+        } else {
+            &mut self.order
+        }
+    }
+
+    /// Takes `id` off its group's list, the walk's cursor stepped back when
+    /// it sat before it in the group being walked.
+    fn unlist(&mut self, id: PlacementId) {
+        let group = self.placements[id as usize].activator;
+        let list = self.list_mut(group);
+        let Some(at) = list.iter().position(|&o| o == id) else {
+            return;
+        };
+        list.remove(at);
+        if let Some((g, next)) = self.cursor.as_mut()
+            && *g == group
+            && at < *next
+        {
+            *next -= 1;
+        }
+    }
+
+    /// `id` off its group's list and back on at its end.
+    fn move_to_end(&mut self, id: PlacementId) {
+        self.unlist(id);
+        let group = self.placements[id as usize].activator;
+        self.list_mut(group).push(id);
     }
 
     /// Takes the placement running under `handle` off as a script's `remove`
@@ -1120,6 +1222,19 @@ impl Vm {
     /// in the tick order (crate docs, The tick). Strict mode returns the
     /// first stop; play mode records it and runs the rest.
     pub fn step(&mut self, host: &mut dyn Host) -> Result<StepReport, Halt> {
+        self.step_with(host, &mut |_, _, _| Ok(()))
+    }
+
+    /// [`Vm::step`], with `native` run for each held placement where the
+    /// walk reaches it (crate docs, The tick): what an embedder runs in a
+    /// placement's place natively (design decision 2's player loop: the
+    /// portal manager's and the game systems' ticks). A native's halt ends
+    /// the step there.
+    pub fn step_with(
+        &mut self,
+        host: &mut dyn Host,
+        native: &mut Native<'_>,
+    ) -> Result<StepReport, Halt> {
         let mut report = StepReport::default();
         if !self.slid {
             match self.slide(host) {
@@ -1130,36 +1245,56 @@ impl Vm {
                 }
             }
         }
-        let result = self.tick_all(&mut report, host);
+        let result = self.tick_all(&mut report, host, native);
         // The frame's over: the next slides begin the next.
         self.slid = false;
+        self.cursor = None;
         result.map(|()| report)
     }
 
-    /// Every placement's tick, in the tick order; what one spawns with a
-    /// script of its own joins the order's end and ticks this tick too
-    /// ([`Host::adopt`]).
-    fn tick_all(&mut self, report: &mut StepReport, host: &mut dyn Host) -> Result<(), Halt> {
+    /// Every placement's tick, in the tick order: the activators' group,
+    /// then the rest's, each list walked from its head as it stands when the
+    /// walk reaches each place; a held placement runs `native` there. What
+    /// one spawns with a script of its own joins the order's end and ticks
+    /// this tick too ([`Host::adopt`]).
+    fn tick_all(
+        &mut self,
+        report: &mut StepReport,
+        host: &mut dyn Host,
+        native: &mut Native<'_>,
+    ) -> Result<(), Halt> {
         let program = self.program.clone();
         self.adopt(&program, host);
-        let mut at = 0;
-        while let Some(&id) = self.order.get(at) {
-            at += 1;
-            let p = &self.placements[id as usize];
-            if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
-                continue;
-            }
-            let before = self.executed;
-            let result = self.tick(id, host);
-            report.ticked += 1;
-            report.ops += self.executed - before;
-            self.adopt(&program, host);
-            match result {
-                Ok(None) => {}
-                Ok(Some(halt)) => report.stopped.push(halt),
-                Err(halt) => return Err(halt),
+        for group in [true, false] {
+            self.cursor = Some((group, 0));
+            while let Some((g, at)) = self.cursor {
+                let list = if g { &self.activators } else { &self.order };
+                let Some(&id) = list.get(at) else {
+                    break;
+                };
+                self.cursor = Some((g, at + 1));
+                let p = &self.placements[id as usize];
+                if p.inert || p.removed || p.asleep || p.stopped.is_some() {
+                    continue;
+                }
+                if p.held {
+                    native(self, id, host)?;
+                    self.adopt(&program, host);
+                    continue;
+                }
+                let before = self.executed;
+                let result = self.tick(id, host);
+                report.ticked += 1;
+                report.ops += self.executed - before;
+                self.adopt(&program, host);
+                match result {
+                    Ok(None) => {}
+                    Ok(Some(halt)) => report.stopped.push(halt),
+                    Err(halt) => return Err(halt),
+                }
             }
         }
+        self.cursor = None;
         Ok(())
     }
 
