@@ -22,10 +22,11 @@
 //!   no ground found (level 213's reachable ground is material 1, AG.7,
 //!   which no surface handler's type matches);
 //! - `positionmeasurement.separation` from a point is the vertical gap from
-//!   the bottom of the actor's solid (its pivot with none) down to it, in
-//!   feet, never under 0; from his own ground, a hero his support check
-//!   holds has none (his skin's 5 mm isn't a gap: Update Movers' band and
-//!   gravity act only over 0, and AG.38 saw neither on a supported frame);
+//!   the bottom of the actor's solid (its pivot with none; a hero's, his
+//!   controller's pivot) down to it, in feet, never under 0; from his own
+//!   ground, a hero his support check holds has none (his skin's 5 mm isn't
+//!   a gap: Update Movers' band and gravity act only over 0, and AG.38 saw
+//!   neither on a supported frame);
 //!   from another actor with a solid, the gap between the two solids as
 //!   authored (AH.18: a Chompy nips at 10 ft from a hero, AH.10's middles
 //!   14.7-15.2 ft apart, both 3 ft spheres);
@@ -35,9 +36,10 @@
 //!   another actor's body aren't `environment contacts`;
 //! - nothing rebounds (`collisioninfo.rebound` is 0 on what he throws);
 //! - a distance set from a point the actor sits on moves it nowhere;
-//! - a relative facing on an actor hung from the ground turns it in the
-//!   ground's plane, so its tilt reads the slope along that heading (what
-//!   Face and Move's push takes the slope's pitch from).
+//! - a relative facing on an actor hung from the ground turns it from the
+//!   ground's owner's facing in the ground's plane (a hero's ground leaning
+//!   as his footing's slope), so its tilt reads the slope along that heading
+//!   (what Face and Move's push takes the slope's pitch from, AG.38, AG.90).
 
 use std::collections::HashMap;
 
@@ -1018,7 +1020,7 @@ impl ScriptWorld {
                     ));
                 }
                 let (a, b) = (me(self, engine)?, other(self, engine)?);
-                let low = actor.and_then(|h| self.bottom(h)).unwrap_or(a.y);
+                let low = actor.and_then(|h| self.bottom(h, engine)).unwrap_or(a.y);
                 Value::Float(((low - b.y) * FEET_PER_METRE).max(0.0))
             }
             Member::NormalizedAngle => Value::Float(self.normalized),
@@ -1108,6 +1110,16 @@ impl ScriptWorld {
                     // only shows on screen.
                     return Ok(Value::Int(1));
                 }
+                if self.objs.get(b) == Some(Object::RayCast) {
+                    // Against the ray caster (the autoaim's check for
+                    // collision shapes, `Projectiles.ai`, its targets' solids
+                    // against the ray from its start to its end): no touch,
+                    // as the seam's side has always answered it for a target
+                    // with a body there (a hypothesis, AH.90). The fight's
+                    // headless runs keep no props in the seam, and AG.90's
+                    // fix walked a lob there onto this check.
+                    return Ok(Value::Int(0));
+                }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
             }
             // AH.16's are answered by `ScriptWorld::get` before this.
@@ -1181,8 +1193,23 @@ impl ScriptWorld {
                         }),
                     _ => None,
                 };
+                // The ground's frame faces its owner's way, so a relative
+                // facing turns from his facing (Face and Move writes the way
+                // it asks less his facing), and a hero's leans as his
+                // footing's slope does (AG.38's push tilt: his settled lean's,
+                // else the ground finder's). Read as a heading of its own, it
+                // tilted his push along whatever lay that far from 0° (AG.90:
+                // 7° up on the ledge route's 17° slope whichever way he
+                // walked, where the slope along his climb is 13°).
                 let slope = match ground {
-                    Some(g) => self.ground(g, engine).map(|g| g.1),
+                    Some(g) => {
+                        let facing = self.angles(g, engine).map_or(0.0, |a| a.facing);
+                        let normal = match engine.hero(g) {
+                            Some(hero) => hero.footing.height.map(|_| hero.footing.slope),
+                            None => self.ground(g, engine).map(|g| g.1),
+                        };
+                        normal.map(|n| (n, facing))
+                    }
                     None => None,
                 };
                 let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
@@ -1190,8 +1217,8 @@ impl ScriptWorld {
                     Member::Facing => a.angles.facing = x,
                     Member::RelativeFacing => {
                         a.angles.facing = x;
-                        if let Some(n) = slope {
-                            let dir = guac_motion::walk::push_direction(x, Some(n));
+                        if let Some((n, facing)) = slope {
+                            let dir = guac_motion::walk::push_direction(facing + x, Some(n));
                             a.angles.tilt = pitch_of(dir);
                         }
                     }
@@ -1868,8 +1895,16 @@ impl ScriptWorld {
 
 impl ScriptWorld {
     /// The lowest point of an actor's solid, metres, as it's posed; `None`
-    /// for a hero (his pivot is his feet) or an actor with no solid.
-    fn bottom(&self, h: Handle) -> Option<f32> {
+    /// for a hero (his pivot is his feet) or an actor with no solid. A hero
+    /// is known by his controller, not by a missing actor: his placement has
+    /// one, whose position is where he joined and never moves (decision 21:
+    /// his place is his controller's), so read as his it held the script's
+    /// separation at 0 wherever the ground stood above the spawn and no
+    /// frame off it pulled his walk down (AG.90).
+    fn bottom(&self, h: Handle, engine: &mut dyn Engine) -> Option<f32> {
+        if engine.hero(h).is_some() {
+            return None;
+        }
         let a = self.actors.get(&h)?;
         let solid = a.havok()?;
         let reach = match solid.shape {
@@ -3379,6 +3414,126 @@ mod fight_tests {
             )
             .unwrap();
         assert_eq!(contacts, vec![Value::Entity(C2), Value::Entity(C1)]);
+    }
+
+    /// AG.90: a hero's separation from his ground is his pivot's height over
+    /// it once his support check fails, wherever his placement's own copy of
+    /// a place stands. That copy is where he joined and never moves (his
+    /// place is his controller's): read as his, a hero off the ground above
+    /// it read no separation at all, and one below it read the whole drop
+    /// to where he joined.
+    #[test]
+    fn a_heros_separation_from_his_ground_is_his_controllers() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        let rest = hero.pivot;
+        e.hero = Some(hero);
+        let mut w = world();
+        // His placement as the join leaves it: his solid as authored, a
+        // place of its own (Eruptor's 4 x 3 x 6 ft sphere at his 150 %).
+        let mut placed = Actor::blank();
+        placed.scale = [150.0; 3];
+        placed.solid = Solid {
+            width: 4.0,
+            length: 3.0,
+            height: 6.0,
+            shape: 3,
+            interacts_with_level_mesh: 1,
+            ..Solid::default()
+        };
+        let ground = w.objs.value(Object::Facet(HERO, Facet::Ground));
+        let separation = |w: &mut ScriptWorld, e: &mut Pit| {
+            w.get(
+                &Access {
+                    placement: HERO,
+                    receiver: Some(Value::Entity(HERO)),
+                    member: MemberId::named("positionmeasurement", "separation"),
+                    other_point: Some(ground),
+                },
+                e,
+            )
+            .unwrap()
+            .as_f32()
+            .unwrap()
+        };
+        for joined_at in [-10.0, 0.0, 10.0] {
+            placed.position = Vec3::new(3.0, joined_at, 3.0);
+            w.actors.insert(HERO, placed.clone());
+            // Supported: no gap, whatever his skin leaves.
+            e.hero.as_mut().unwrap().pivot = rest;
+            e.hero.as_mut().unwrap().stand(&e.world, &[]);
+            assert!(e.hero.as_ref().unwrap().footing.supported);
+            assert_eq!(separation(&mut w, &mut e), 0.0, "joined at {joined_at}");
+            // Off the ground 3 cm up (a frame his walk left it): 3 cm.
+            let hero = e.hero.as_mut().unwrap();
+            hero.pivot = rest + Vec3::Y * 0.03;
+            hero.footing.supported = false;
+            hero.footing.height = Some(hero.pivot.y);
+            let ft = separation(&mut w, &mut e);
+            assert!(
+                (ft - hero_height_ft(e.hero.as_ref().unwrap())).abs() < 1e-4,
+                "joined at {joined_at}: {ft} ft"
+            );
+        }
+    }
+
+    fn hero_height_ft(hero: &Hero) -> f32 {
+        hero.footing.height.unwrap() * FEET_PER_METRE
+    }
+
+    /// AG.90: an actor hung from a hero's ground and turned there by a
+    /// relative facing (Face and Move's velocity actor, turned by the way
+    /// the stick asks less his facing) tilts as the slope along his facing
+    /// plus it, the ground leaning as his footing's slope. Read as a heading
+    /// of its own, it tilted along whatever lay that far from 0°.
+    #[test]
+    fn a_relative_facing_on_a_heros_ground_turns_from_his_facing() {
+        use guac_motion::walk::{Footing, push_direction};
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        // The ledge route's 17° slope by barrel_b_intact(1), falling toward
+        // 113.4°, and him facing as he did through AG.90's rock.
+        let n = Vec3::new(0.270_066, 0.955_700_3, -0.117_053_23);
+        hero.footing = Footing {
+            supported: true,
+            height: Some(0.005),
+            slope: n,
+            ground: Some(n),
+        };
+        hero.facing = 233.5;
+        e.hero = Some(hero);
+        let mut w = world();
+        let mut hung = Actor::blank();
+        hung.attach = w.objs.value(Object::Facet(HERO, Facet::Ground));
+        w.actors.insert(C1, hung);
+        let turn = w.objs.value(Object::Facet(C1, Facet::Orientation));
+        let at = Access {
+            placement: C1,
+            receiver: Some(turn),
+            member: MemberId::named("orientationmeasurement", "relative facing"),
+            other_point: None,
+        };
+        for (asked, up) in [
+            (257.4f32, true),
+            (77.4, false),
+            (233.5, true),
+            (113.4, false),
+        ] {
+            w.set_member(
+                &at,
+                Member::RelativeFacing,
+                Value::Float(asked - 233.5),
+                &mut e,
+            )
+            .unwrap();
+            let tilt = w.actor(C1).unwrap().angles.tilt;
+            let want = crate::script_engine::pitch_of(push_direction(asked, Some(n)));
+            assert!((tilt - want).abs() < 1e-3, "{asked}: {tilt} against {want}");
+            assert_eq!(tilt > 0.0, up, "{asked}: {tilt}");
+        }
+        // Straight down the fall line, the slope's whole 17°.
+        assert!((w.actor(C1).unwrap().angles.tilt + 17.1).abs() < 0.1);
     }
 
     #[test]

@@ -246,6 +246,7 @@ AH.0 requires this table complete.
 | combat | Chompy bites on Eruptor | AH.10, AH.11 (the roll's kind), AH.19, AH.30 |
 | combat | Every hit critical; Armour of 200 | AH.11 (the original's), AH.19 (unit), AH.30 (rule) |
 | combat | Two bites at once; Eruptor bitten; A stunned Chompy hit again; A Chompy's bite; A second bite soon after; A sleeping Chompy | AH.10, AH.19, AH.25, AH.30 |
+| combat | A push off the ground | AH.10 (its 184 knocks, read at AG.90), AG.90 (`giants_chompy`'s push profiles) |
 | combat | A Giant bitten | AH.29 (headless, Tree Rex) |
 | combat | Eruptor at level 1 and at level 10; Standing after a bite | AH.4 (live), AH.16 (disc), AH.25 |
 | combat | Put back in the same level | AH.11, AH.20 (unit), AH.26 (e2e) |
