@@ -2464,9 +2464,12 @@ fn a_lava_lob_beats_the_chompies_its_burst_reaches() {
 /// hit after the UI's tick moved it, AH.59's order), slowing (eased) to
 /// about 17 m/s at its ninth step. It ends the first step its timer is
 /// under the game timer, the tenth at 1/60 s a step: 0.15 s is nine steps
-/// exactly, so AH.10's `stun` stagings split by their frame times, 9
-/// records where nine frames ran past 0.15 s (10 of 14) and 10 where they
-/// didn't (4), and the order moves neither (AH.59).
+/// exactly. AH.10's `stun` stagings ran 9 records in 10 of 14 and 10 in 4
+/// on frames of 0.0142-0.0234 s: their own frame times give 12 of the 14
+/// lengths counted from the frame the hit lands in (the timer read before
+/// that frame's tick and checked before each frame's), 9 counted as ours
+/// runs it, and at 1/60 s a step both give 10; the order moves neither
+/// (AH.59 and its review).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
 fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
