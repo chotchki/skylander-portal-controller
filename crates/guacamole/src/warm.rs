@@ -1145,7 +1145,16 @@ mod tests {
         });
         let body = census::TURNTABLE[0].key(true).unwrap();
         let carried = census::TURNTABLE_STATIC[0].key(false).unwrap();
-        let level = census::LEVEL[0].key(false).unwrap();
+        // The first of the level's opaque keys that writes depth (the sky's
+        // write none since AG.79).
+        let level = census::LEVEL
+            .iter()
+            .map(|r| r.key(false).unwrap())
+            .find(|k| {
+                k.material.states.depth_write
+                    && k.material.states.blend == guac_ir::model::Blend::Opaque
+            })
+            .unwrap();
         for k in [body, carried, level] {
             assert!(k.material.states.depth_write, "a key the glow pass draws");
         }

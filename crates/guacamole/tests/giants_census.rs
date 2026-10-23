@@ -182,12 +182,24 @@ fn level_keys(dump: &Path) -> Chapter1 {
     Chapter1 {
         keys: start.keys.into_iter().map(|(k, _)| k).collect(),
         props: props.keys(&view).expect("the props' keys"),
-        spawns: guacamole::props::models_keys(&spawned, &view).expect("the spawn models' keys"),
+        spawns: spawn_keys(&spawned, &view),
         materials: start.drawn.materials.len(),
         prop_models: props.models.len(),
         spawn_models: spawned.len(),
         hero,
     }
+}
+
+/// The keys the spawn models draw in `view`, then those a clone draws while
+/// the scripts fade it in (AH.67) that they don't, each once.
+fn spawn_keys(spawned: &[guacamole::props::PropModel], view: &Scene) -> Vec<WarmKey> {
+    let mut keys = guacamole::props::models_keys(spawned, view).expect("the spawn models' keys");
+    for k in guacamole::props::faded_keys(spawned, view).expect("the faded keys") {
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    keys
 }
 
 /// The rows `keys` give, sorted as the tables keep them.
@@ -348,7 +360,7 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (spawn_models, spawns.len(), spawns_beyond.len()),
-        (13, 10, 5),
-        "what the scripts spawn: the spawn part's models, their keys, those past the level's and its props'"
+        (13, 13, 8),
+        "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
     );
 }

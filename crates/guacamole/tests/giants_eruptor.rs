@@ -1833,12 +1833,21 @@ struct BlobAt {
     facing: f32,
     scale: [f32; 3],
     alpha: f32,
+    /// Its tint's red, green and blue (AH.67).
+    rgb: [f32; 3],
     /// Whether it hangs from anything.
     hung: bool,
 }
 
 impl BlobAt {
-    fn from(at: Vec3, pivot: Vec3, facing: f32, scale: [f32; 3], alpha: f32, hung: bool) -> Self {
+    fn from(
+        at: Vec3,
+        pivot: Vec3,
+        facing: f32,
+        scale: [f32; 3],
+        tint: [f32; 4],
+        hung: bool,
+    ) -> Self {
         let d = at - pivot;
         Self {
             across: d.x.hypot(d.z),
@@ -1846,7 +1855,8 @@ impl BlobAt {
             rise: d.y,
             facing: facing.rem_euclid(360.0),
             scale,
-            alpha,
+            alpha: tint[3],
+            rgb: [tint[0], tint[1], tint[2]],
             hung,
         }
     }
@@ -1913,7 +1923,7 @@ fn lava_drive(i: usize) -> Option<LavaDrive> {
                 pivot,
                 it["body"]["rotation"][1].as_f64().unwrap() as f32,
                 [v("scale.x"), v("scale.y"), v("scale.z")],
-                v("tint.a"),
+                [v("tint.r"), v("tint.g"), v("tint.b"), v("tint.a")],
                 v("attached") != 0.0,
             );
             let key = (
@@ -2004,7 +2014,7 @@ fn our_lava(seconds: &[f32], made: Option<u32>) -> (LavaDrive, u32) {
                 pivot,
                 a.angles.facing,
                 a.scale,
-                (a.tint & 0xFF) as f32,
+                a.tint.to_be_bytes().map(f32::from),
                 a.attach != Value::Null,
             );
             blobs
@@ -2053,6 +2063,8 @@ fn the_eruptions_lava_spreads_and_grows_as_the_oracles() {
     let mut drives = 0;
     let (mut worst_across, mut worst_angle, mut worst_scale, mut worst_alpha, mut worst_rise) =
         (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    // AH.67: the tint's colour, as its alpha, record by record.
+    let mut worst_rgb = 0.0f32;
     let (_, made) = our_lava(&[], None);
     for i in 0..10 {
         let Some(oracle) = lava_drive(i) else {
@@ -2100,6 +2112,20 @@ fn the_eruptions_lava_spreads_and_grows_as_the_oracles() {
                     worst_scale = worst_scale.max((ob.scale[a] - wb.scale[a]).abs());
                 }
                 worst_alpha = worst_alpha.max((ob.alpha - wb.alpha).abs());
+                for c in 0..3 {
+                    let off = (ob.rgb[c] - wb.rgb[c]).abs();
+                    if off > 1.0 && worst_rgb <= 1.0 {
+                        println!(
+                            "west-{i:02} wave {} facing {} record {}: tint {:?} against the oracle's {:?}",
+                            o.first,
+                            o.at[0].facing,
+                            o.first + k,
+                            wb.rgb,
+                            ob.rgb
+                        );
+                    }
+                    worst_rgb = worst_rgb.max(off);
+                }
                 worst_rise = worst_rise.max((ob.rise - wb.rise).abs());
                 assert!(
                     across <= STEP_RESIDUAL,
@@ -2123,11 +2149,12 @@ fn the_eruptions_lava_spreads_and_grows_as_the_oracles() {
     }
     assert_eq!(drives, 10, "AH.54's ten drives");
     println!(
-        "worst: across {worst_across:.2e} m, angle {worst_angle:.2e} deg, scale {worst_scale:.2e} %, alpha {worst_alpha}, rise {worst_rise:.4} m"
+        "worst: across {worst_across:.2e} m, angle {worst_angle:.2e} deg, scale {worst_scale:.2e} %, alpha {worst_alpha}, colour {worst_rgb}, rise {worst_rise:.4} m"
     );
     assert!(worst_angle < 1e-3);
     assert!(worst_scale < 0.01);
     assert!(worst_alpha <= 1.0);
+    assert!(worst_rgb <= 1.0, "the tint's colour: {worst_rgb} off");
     assert!(worst_rise < 0.0125);
     println!("load after: {}", load());
 }

@@ -11,8 +11,10 @@
 //! `/api/_test/tv/frames` hands out the TV's frame times for the stall check,
 //! `/api/_test/tv/gaits` his locomotion step by step (AG.30),
 //! `/api/_test/tv/drawn` the walk frame by frame as drawn (AG.55),
-//! `/api/_test/tv/scripts` the scripts' run step by step (AH.24) and
-//! `/api/_test/tv/pad` drives pads as a hand would, no hardware needed.
+//! `/api/_test/tv/scripts` the scripts' run step by step (AH.24),
+//! `/api/_test/tv/pad` drives pads as a hand would, no hardware needed, and
+//! `/api/_test/tv/camera` pins the level's camera where an oracle frame's
+//! stood, so a shot of ours lines up with it (AG.79).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -280,7 +282,8 @@ pub struct PipShot {
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
 /// presses posted for the input router, the frame log, the posted pads,
-/// the gait log and the drawn log.
+/// the gait log, the drawn log, the scripts' log, the camera pin and the
+/// shots asked for.
 #[derive(Resource, Clone, Default)]
 pub struct TvMirror(
     pub Arc<Mutex<TvSnapshot>>,
@@ -291,7 +294,116 @@ pub struct TvMirror(
     pub(crate) Arc<Mutex<GaitLog>>,
     pub(crate) Arc<Mutex<DrawnLog>>,
     pub(crate) ScriptLog,
+    pub(crate) Arc<Mutex<Option<CameraPin>>>,
+    pub(crate) AskedShots,
 );
+
+/// Shots asked for by label (`/api/_test/tv/shot`), oldest first, taken
+/// at once on the next frames, one a frame.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct AskedShots(pub(crate) Arc<Mutex<Vec<String>>>);
+
+impl AskedShots {
+    /// Queues `label` when it names a file safely: 1 to 40 characters,
+    /// letters, digits, `-` and `_`.
+    pub(crate) fn ask(&self, label: &str) -> bool {
+        let ok = (1..=40).contains(&label.len())
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if ok {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(label.to_owned());
+        }
+        ok
+    }
+
+    #[cfg_attr(not(feature = "dev-tools"), allow(dead_code))]
+    pub(crate) fn take(&self) -> Option<String> {
+        let mut asked = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        (!asked.is_empty()).then(|| asked.remove(0))
+    }
+}
+
+/// Where `/api/_test/tv/camera` holds the level's camera (AG.79): an oracle
+/// frame's viewport as O5 reads it, its eye in metres in the level's frame
+/// and its tilt and heading in degrees (a `tfbEulerTransform`'s, as
+/// [`guacamole::level_scene::facing`] takes them), and the picture's height in
+/// degrees when given (else the follow camera's own).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub(crate) struct CameraPin {
+    pub(crate) eye: [f32; 3],
+    pub(crate) tilt: f32,
+    pub(crate) heading: f32,
+    #[serde(default)]
+    pub(crate) fov_y: Option<f32>,
+}
+
+impl CameraPin {
+    /// A pin that can be drawn from: every number finite, the picture's
+    /// height inside (0, 180).
+    fn valid(&self) -> bool {
+        self.eye
+            .iter()
+            .chain([&self.tilt, &self.heading])
+            .all(|v| v.is_finite())
+            && self.fov_y.is_none_or(|f| f > 0.0 && f < 180.0)
+    }
+
+    /// The camera's drawn transform there, unrolled.
+    pub(crate) fn transform(&self) -> Transform {
+        Transform::from_translation(Vec3::from_array(self.eye)).looking_to(
+            guacamole::level_scene::facing([self.tilt, self.heading, 0.0]),
+            Vec3::Y,
+        )
+    }
+}
+
+/// `POST /api/_test/tv/shot`'s body.
+#[derive(Deserialize)]
+struct ShotBody {
+    label: String,
+}
+
+/// `POST /api/_test/tv/camera`'s body: a pin, or `{"off": true}`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CameraBody {
+    Off { off: bool },
+    Pin(CameraPin),
+}
+
+impl CameraBody {
+    /// The pin it asks for (`Some(None)` lets the camera follow again);
+    /// `None` for a body that's neither.
+    fn pin(self) -> Option<Option<CameraPin>> {
+        match self {
+            Self::Off { off: true } => Some(None),
+            Self::Off { off: false } => None,
+            Self::Pin(p) => p.valid().then_some(Some(p)),
+        }
+    }
+}
+
+/// The level's camera where the pin holds it, after its follow eased it
+/// and before transforms propagate, so the frame draws from the pin; the
+/// follow itself steps on, untouched, and takes over once the pin's off.
+fn pin_camera(
+    mirror: Res<TvMirror>,
+    mut cameras: Query<(&mut Transform, &mut Projection), With<FollowCamera>>,
+) {
+    let Some(pin) = *mirror.8.lock().unwrap_or_else(|e| e.into_inner()) else {
+        return;
+    };
+    for (mut transform, mut projection) in &mut cameras {
+        *transform = pin.transform();
+        if let (Some(fov), Projection::Perspective(p)) = (pin.fov_y, &mut *projection) {
+            p.fov = fov.to_radians();
+        }
+    }
+}
 
 /// Pads `/api/_test/tv/pad` drives, 0 to 3.
 pub(crate) const TEST_PADS: usize = 4;
@@ -977,10 +1089,18 @@ impl Plugin for Mirror {
             .add_systems(PreUpdate, drive_posted_pads.before(InputSystems))
             .add_systems(FixedUpdate, log_gaits.after(HeroSystems::Gait))
             .add_systems(FixedUpdate, count_pad_steps)
+            .add_systems(
+                PostUpdate,
+                pin_camera.before(bevy::transform::TransformSystems::Propagate),
+            )
             .add_systems(Last, (log_frame, log_drawn));
-        // The scripts' run logs where the routes read.
+        // The scripts' run logs where the routes read, and the shots plugin
+        // takes the shots they ask for.
         if let Some(scripts) = app.world().get_resource::<TvMirror>().map(|m| m.7.clone()) {
             app.insert_resource(scripts);
+        }
+        if let Some(asked) = app.world().get_resource::<TvMirror>().map(|m| m.9.clone()) {
+            app.insert_resource(asked);
         }
         let log = app.world().get_resource::<TvMirror>().map(|m| m.6.clone());
         if let (Some(log), Some(render)) = (log, app.get_sub_app_mut(bevy::render::RenderApp)) {
@@ -1062,6 +1182,12 @@ struct PressBody {
 /// hands out the scripts' run step by step after step `since` (all of the
 /// run's without one) and the last step's number: the attacks read, the
 /// hero's join, the clips started on him, the clones made and taken off.
+/// AG.79: `POST /api/_test/tv/camera` pins the level's camera (`{"eye": [x,
+/// y, z], "tilt": t, "heading": h}`, optionally `"fov_y"`, degrees: an
+/// oracle frame's viewport) until `{"off": true}`; anything else is a 400.
+/// `POST /api/_test/tv/shot` (`{"label": "walkway"}`) asks the shots plugin
+/// for a shot now, named for the label (letters, digits, `-` and `_`, 40 at
+/// most; anything else is a 400), taken only when `GUAC_SHOT_DIR` is set.
 /// Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
@@ -1072,7 +1198,37 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
     let gaits = mirror.5.clone();
     let drawn = mirror.6.clone();
     let scripts = mirror.7.clone();
+    let pin = mirror.8.clone();
+    let asked = mirror.9.clone();
     axum::Router::new()
+        .route(
+            "/api/_test/tv/shot",
+            axum::routing::post(move |body: Result<axum::Json<ShotBody>, JsonRejection>| {
+                let ok = body.is_ok_and(|axum::Json(b)| asked.ask(&b.label));
+                async move {
+                    if ok {
+                        axum::http::StatusCode::ACCEPTED
+                    } else {
+                        axum::http::StatusCode::BAD_REQUEST
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/_test/tv/camera",
+            axum::routing::post(move |body: Result<axum::Json<CameraBody>, JsonRejection>| {
+                let asked = body.ok().and_then(|axum::Json(b)| b.pin());
+                if let Some(asked) = asked {
+                    *pin.lock().unwrap_or_else(|e| e.into_inner()) = asked;
+                }
+                async move {
+                    match asked {
+                        Some(_) => axum::http::StatusCode::ACCEPTED,
+                        None => axum::http::StatusCode::BAD_REQUEST,
+                    }
+                }
+            }),
+        )
         .route(
             "/api/_test/tv/scripts",
             axum::routing::get(move |q: axum::extract::Query<ScriptsQuery>| {
@@ -2314,5 +2470,119 @@ mod tests {
         assert_eq!(mirror.2.len(), 0);
         app.update();
         assert_eq!(take(&mut app), []);
+    }
+
+    /// AG.79: `/api/_test/tv/camera` holds the level's camera where a pin
+    /// puts it (an oracle frame's eye, tilt and heading, and its picture's
+    /// height when given), the follow stepping on underneath, until `{"off":
+    /// true}`; a body that's neither, or a pin that isn't finite, is a 400.
+    #[tokio::test]
+    async fn a_pinned_camera_draws_from_the_pin_until_its_off() {
+        use bevy::camera::PerspectiveProjection;
+        use guac_motion::camera::{CameraDef, GameCamera};
+        use tower::ServiceExt;
+        let mirror = TvMirror::default();
+        let routes = routes::<()>(&mirror);
+        let post = |body: &'static str| {
+            let routes = routes.clone();
+            async move {
+                routes
+                    .oneshot(
+                        axum::http::Request::post("/api/_test/tv/camera")
+                            .header("content-type", "application/json")
+                            .body(axum::body::Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+        for (body, status) in [
+            (r#"{"eye":[1,2,3],"tilt":0,"heading":"x"}"#, 400),
+            (r#"{"eye":[1,2],"tilt":0,"heading":0}"#, 400),
+            (r#"{"eye":[1,2,3],"tilt":0,"heading":0,"fov_y":180}"#, 400),
+            (r#"{"off":false}"#, 400),
+            ("pin", 400),
+        ] {
+            assert_eq!(post(body).await, status, "{body}");
+        }
+        assert_eq!(*mirror.8.lock().unwrap(), None);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(mirror.clone())
+            .add_systems(PostUpdate, pin_camera);
+        let feet = Vec3::new(10.19, 43.38, -93.39);
+        let follow = FollowCamera {
+            camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
+            planes: Vec::new(),
+        };
+        let followed = crate::hero::viewed(&follow.camera.view());
+        let camera = app
+            .world_mut()
+            .spawn((
+                followed,
+                Projection::Perspective(PerspectiveProjection::default()),
+                follow,
+            ))
+            .id();
+        let drawn = |app: &App| {
+            let e = app.world().entity(camera);
+            let fov = match e.get::<Projection>().unwrap() {
+                Projection::Perspective(p) => p.fov,
+                _ => unreachable!(),
+            };
+            (*e.get::<Transform>().unwrap(), fov)
+        };
+        app.update();
+        assert_eq!(drawn(&app).0, followed, "no pin: the follow's");
+
+        // The walkway's viewport (AH.8's route_b, `actors-walkway.json`).
+        assert_eq!(
+            post(r#"{"eye":[-17.509413,65.969376,-67.233185],"tilt":-37.472958,"heading":60.542427,"fov_y":53.96}"#).await,
+            202
+        );
+        app.update();
+        let (t, fov) = drawn(&app);
+        assert!(
+            t.translation
+                .distance(Vec3::new(-17.509413, 65.969376, -67.233185))
+                < 1e-6
+        );
+        let ahead = t.forward().as_vec3();
+        let want = guacamole::level_scene::facing([-37.472958, 60.542427, 0.0]);
+        assert!(ahead.distance(want) < 1e-6, "{ahead} against {want}");
+        assert!(t.right().y.abs() < 1e-6, "unrolled");
+        assert!((fov - 53.96f32.to_radians()).abs() < 1e-6);
+        // The follow steps on underneath: a step's write is drawn over.
+        app.world_mut().entity_mut(camera).insert(followed);
+        app.update();
+        assert_eq!(drawn(&app).0, t);
+
+        assert_eq!(post(r#"{"off":true}"#).await, 202);
+        assert_eq!(*mirror.8.lock().unwrap(), None);
+        // A shot asked for over the route lands in the shots plugin's queue.
+        for (body, status) in [
+            (r#"{"label":"walkway"}"#, 202),
+            (r#"{"label":"../walkway"}"#, 400),
+            (r#"{"shot":"walkway"}"#, 400),
+        ] {
+            let response = routes
+                .clone()
+                .oneshot(
+                    axum::http::Request::post("/api/_test/tv/shot")
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{body}");
+        }
+        assert_eq!(*mirror.9.0.lock().unwrap(), ["walkway"]);
+        app.world_mut().entity_mut(camera).insert(followed);
+        app.update();
+        assert_eq!(drawn(&app).0, followed, "off: the follow's again");
     }
 }

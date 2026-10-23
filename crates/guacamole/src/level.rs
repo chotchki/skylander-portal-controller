@@ -189,6 +189,9 @@ struct Built {
     fog: LevelFog,
     /// The sky's bounds, for the log: (min, max).
     sky: Option<(Vec3, Vec3)>,
+    /// Each drawn material's sort bias: the sky's blended parts first, in
+    /// the scene's order (AG.79, `level_scene::depth_biases`).
+    depth_bias: Vec<f32>,
     walk: Walk,
     /// The props (AG.25): each model's segments as (an index into `meshes`,
     /// past the level's own, and its material in `drawn.materials`).
@@ -400,6 +403,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         .fold(None, |b: Option<(Vec3, Vec3)>, p| {
             Some(b.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))))
         });
+    let depth_bias = arithmetic::depth_biases(&drawn);
     // The meshes hold the vertices now.
     drawn
         .segments
@@ -414,6 +418,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         lights,
         fog,
         sky,
+        depth_bias,
         walk,
         prop_models,
         spawn_models,
@@ -1396,7 +1401,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     let scene = world_scene(&up.built.lights, &up.fog);
     let start = up.materials.len();
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
-    for m in &up.built.drawn.materials[start..end] {
+    for (k, m) in up.built.drawn.materials[start..end].iter().enumerate() {
         let texture = |t: &model::TextureSlot| -> Handle<Image> {
             let key = (
                 t.texture.clone(),
@@ -1414,7 +1419,8 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         // Bevy's default rather than fail the level.
         let material = match CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, texture) {
             Ok(mut material) => {
-                material.uniform = material.uniform.lit_in_world();
+                material.uniform = material.uniform.lit_in_world().multiplies_in_light();
+                material.depth_bias = up.built.depth_bias[start + k];
                 s.materials.add(material)
             }
             Err(e) => {

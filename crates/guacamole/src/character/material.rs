@@ -78,7 +78,10 @@ pub struct CharacterUniform {
     pub layer2_weights: Vec4,
     pub layer3_weights: Vec4,
     pub rim_weights: Vec4,
-    /// x the lookup's scale, y the colour/alpha split.
+    /// x the lookup's scale, y the colour/alpha split, z what a multiplying
+    /// rim's colour takes for its strength: the strength itself, or on a
+    /// level's material its power in linear light
+    /// ([`Self::multiplies_in_light`]).
     pub rim: Vec4,
     pub material_tint: Vec4,
     /// Each texture-coordinate set's transform, numbered as the set:
@@ -164,7 +167,7 @@ impl CharacterUniform {
             layer2_weights: weights(second.map_or(unset, |s| s.weights)),
             layer3_weights: weights(third.map_or(unset, |t| t.weights)),
             rim_weights: weights(rim.map_or(unset, |r| r.weights)),
-            rim: rim.map_or(Vec4::ZERO, |r| Vec4::new(r.scale, r.split, 0.0, 0.0)),
+            rim: rim.map_or(Vec4::ZERO, |r| Vec4::new(r.scale, r.split, r.strength, 0.0)),
             material_tint: v4(material.tint),
             uv_u,
             uv_v,
@@ -176,6 +179,16 @@ impl CharacterUniform {
     /// positions are the world's.
     pub fn lit_in_world(mut self) -> Self {
         self.misc.w = LIGHTS_IN_WORLD;
+        self
+    }
+
+    /// The uniform with a multiplying rim's colour scaled by its strength
+    /// in linear light ([`super::remaster::in_light`]), as a level's
+    /// materials draw (openspec AG.79): the original multiplies stored
+    /// values, and its strength on decoded ones is its 2.2nd power. Its
+    /// alpha keeps the strength; a gloss map's rim reads its own.
+    pub fn multiplies_in_light(mut self) -> Self {
+        self.rim.z = super::remaster::in_light(self.fixed_alpha.w);
         self
     }
 
@@ -296,6 +309,10 @@ pub struct CharacterMaterial {
     /// Whether the part has a glow attribute (its glow is an amount or
     /// layer 1's alpha, not none): what [`Self::glow_mask`] reads.
     pub glows: bool,
+    /// Added to a blended part's view depth when Bevy sorts its pass (its
+    /// [`Material::depth_bias`]): 0 but for a level's sky, which draws
+    /// first in the scene's order (AG.79, `level_scene::sky_bias`).
+    pub depth_bias: f32,
 }
 
 impl From<&CharacterMaterial> for MaterialKey {
@@ -332,6 +349,7 @@ impl CharacterMaterial {
             shadow: textures.shadow,
             key,
             glows: material.glow != Glow::None,
+            depth_bias: 0.0,
         })
     }
 
@@ -547,6 +565,10 @@ impl Material for CharacterMaterial {
 
     fn alpha_mode(&self) -> AlphaMode {
         self.key.states.alpha_mode(self.uniform.misc.y)
+    }
+
+    fn depth_bias(&self) -> f32 {
+        self.depth_bias
     }
 
     // Bevy's prepass and shadow shaders read its own vertex layout and
@@ -855,7 +877,7 @@ mod tests {
         assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 0.0, 1.0));
         assert_eq!(u.layer1, Vec4::new(1.0, 1.0, 0.0, 0.0));
         assert_eq!(u.rim_weights, Vec4::new(0.0, 1.0, 0.0, 0.0));
-        assert_eq!(u.rim, Vec4::new(1.0, 0.0, 0.0, 0.0));
+        assert_eq!(u.rim, Vec4::new(1.0, 0.0, 1.0, 0.0));
         assert_eq!(u.uv_u[1], Vec4::new(2.0, 0.0, 0.5, 0.0));
         assert_eq!(u.uv_v[1], Vec4::new(0.0, 3.0, 0.25, 0.0));
         assert_eq!(u.uv_u[0], Vec4::new(1.0, 0.0, 0.0, 0.0));
@@ -871,6 +893,40 @@ mod tests {
             },
             u
         );
+    }
+
+    /// AG.79: a multiplying rim's colour takes its strength as is on a
+    /// character and its 2.2nd power on a level's material (the coins'
+    /// bronze at 2 multiplies by 4.6 times the decoded map), nothing else
+    /// moving; with no rim there's nothing to scale.
+    #[test]
+    fn a_levels_multiplying_rim_takes_its_strength_in_light() {
+        let mut ir = eruptor_body();
+        ir.pixel.base = 0x24;
+        ir.vertex.base = 0x24;
+        ir.params.layer4_blend = [0.0, 0.0, 1.0, 0.0];
+        ir.params.fixed_alpha = [-1.0, -1.0, -1.0, 2.0];
+        let m = reference_material(&ir).unwrap();
+        let u = CharacterUniform::new(&m, &Scene::new(), ShadowLookup::NONE, 0.0);
+        assert_eq!((u.rim.z, u.fixed_alpha.w), (2.0, 2.0), "a character's");
+        let level = u.lit_in_world().multiplies_in_light();
+        assert!(
+            (level.rim.z - 2.0f32.powf(2.2)).abs() < 1e-6,
+            "{}",
+            level.rim.z
+        );
+        assert_eq!(
+            CharacterUniform {
+                rim: u.rim,
+                ..level
+            },
+            u.lit_in_world()
+        );
+        let mut plain = eruptor_body();
+        plain.pixel.base = 0x20;
+        let p = reference_material(&plain).unwrap();
+        let none = CharacterUniform::new(&p, &Scene::new(), ShadowLookup::NONE, 0.0);
+        assert_eq!(none.multiplies_in_light().rim, Vec4::ZERO);
     }
 
     #[test]

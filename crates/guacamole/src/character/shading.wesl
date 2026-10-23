@@ -47,7 +47,7 @@ struct Character {
     layer2_weights: vec4<f32>,
     layer3_weights: vec4<f32>,
     rim_weights: vec4<f32>,
-    // x the lookup's scale, y the colour/alpha split.
+    // x the lookup's scale, y the colour/alpha split, z a multiply's strength.
     rim: vec4<f32>,
     material_tint: vec4<f32>,
     uv_u: array<vec4<f32>, 3>,
@@ -355,9 +355,12 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
     let under = vec4<f32>(colour, alpha);
     let w4 = character.rim_weights;
     var blended = vec4<f32>(0.0);
+    // A multiply's colour takes rim.z for its strength: the strength, or
+    // its power in linear light on a level's material (AG.79).
 @if(!CHAR_GLOSS_MAP) {
     let rim = rim_sample * rim_strength;
-    blended = w4.x * (rim + under * (1.0 - rim_strength)) + w4.y * (under + rim) + w4.z * (under * rim);
+    let multiply = vec4<f32>(rim_sample.rgb * character.rim.z, rim.a);
+    blended = w4.x * (rim + under * (1.0 - rim_strength)) + w4.y * (under + rim) + w4.z * (under * multiply);
 }
     // A gloss map (AG.22): the third layer's texture, at its set, read as
     // stored; its red times the gloss strength is the share of the rim's

@@ -391,7 +391,8 @@ pub struct Drawn {
     /// The scene's materials and segments not drawn (other effects').
     pub left_out_materials: usize,
     pub left_out_segments: usize,
-    /// The sky's segments among the drawn, by drawn index.
+    /// The sky's segments among the drawn, by drawn index, in the order the
+    /// scene lists them (the order the original draws its sky in, AG.79).
     pub sky: Vec<usize>,
 }
 
@@ -423,20 +424,68 @@ pub fn unfogged(mut m: model::Material) -> model::Material {
     m
 }
 
-/// `graph`'s drawn part, taking its segments. Unless the sky dome takes the
-/// fog (`sky_fogged`, [`sky_fogged`]), the sky's segments draw on copies of
-/// their materials that own their fog off ([`unfogged`]): one a material
-/// the sky draws with, beside the material itself where the rest of the
-/// scene draws with it too.
+/// `m` as the sky draws it: writing no depth, whatever its states say, and
+/// owning its fog off unless the sky takes the fog (`fogged`). AG.13's
+/// capture of the fresh state has the original draw its 14 sky segments
+/// after the scenery that hides them and before the rest of what blends,
+/// each depth-tested and none written, its opaque dome first and then the
+/// others in the scene's order (AG.79: written, a cloud plane drawn before
+/// the sky's cap cut the cap away in its own outline, the hard-edged slab
+/// across the sky chotchki saw).
+pub fn sky_material(m: model::Material, fogged: bool) -> model::Material {
+    let mut m = if fogged { m } else { unfogged(m) };
+    m.states.depth_write = false;
+    m
+}
+
+/// The sort bias that draws the sky's blended parts before anything else
+/// that blends and in the scene's order, `rank` being the place of the
+/// first sky segment drawing with the material among the sky's: a sorted
+/// part's view depth (metres, increasing toward the camera, back to front)
+/// plus its bias orders the blended pass, and the level's sky reaches 750 m,
+/// so a step of 10 km keeps the ranks apart wherever the camera stands.
+pub fn sky_bias(rank: usize) -> f32 {
+    SKY_BIAS + SKY_BIAS_STEP * rank as f32
+}
+
+/// The first sky rank's bias, and the step between ranks.
+pub const SKY_BIAS: f32 = -1.0e7;
+pub const SKY_BIAS_STEP: f32 = 1.0e4;
+
+/// Each material's sort bias in `drawn`: [`sky_bias`] of its rank for one
+/// the sky draws with, 0 for the rest (sorted by depth alone).
+pub fn depth_biases(drawn: &Drawn) -> Vec<f32> {
+    let mut out = vec![0.0; drawn.materials.len()];
+    let mut ranked = vec![false; drawn.materials.len()];
+    let mut rank = 0;
+    for &i in &drawn.sky {
+        let k = usize::from(drawn.segments[i].material);
+        if !ranked[k] {
+            ranked[k] = true;
+            out[k] = sky_bias(rank);
+            rank += 1;
+        }
+    }
+    out
+}
+
+/// `graph`'s drawn part, taking its segments. The sky's segments draw on
+/// copies of their materials that write no depth and, unless the sky dome
+/// takes the fog (`sky_fogged`, [`sky_fogged`]), own their fog off
+/// ([`sky_material`]): one a material the sky draws with, beside the
+/// material itself where the rest of the scene draws with it too.
 pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
-    let sky: std::collections::HashSet<usize> = graph
-        .sky
-        .iter()
-        .flat_map(|g| g.segments.iter().map(|&s| s as usize))
-        .collect();
+    // The sky's segments in the order the scene lists them, each once.
+    let mut listed: Vec<usize> = Vec::new();
+    for s in graph.sky.iter().flat_map(|g| &g.segments) {
+        if !listed.contains(&(*s as usize)) {
+            listed.push(*s as usize);
+        }
+    }
+    let sky: std::collections::HashSet<usize> = listed.iter().copied().collect();
     let n = graph.materials.len();
-    // Which kinds of segment draw with each material: the sky's own a copy
-    // only when the sky stays unfogged.
+    // Which kinds of segment draw with each material: the sky's on a copy
+    // of its own ([`sky_material`]).
     let (mut by_sky, mut by_rest) = (vec![false; n], vec![false; n]);
     for (i, s) in graph.segments.iter().enumerate() {
         let k = usize::from(s.material);
@@ -447,7 +496,7 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
                 materials: n,
             });
         }
-        if sky.contains(&i) && !sky_fogged {
+        if sky.contains(&i) {
             by_sky[k] = true;
         } else {
             by_rest[k] = true;
@@ -466,7 +515,7 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
             rest[k] = Some((materials.len() - 1) as u16);
         }
         if by_sky[k] {
-            materials.push(unfogged(d));
+            materials.push(sky_material(d, sky_fogged));
             sky_copy[k] = Some((materials.len() - 1) as u16);
         }
     }
@@ -477,7 +526,7 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
     };
     for (i, mut s) in graph.segments.into_iter().enumerate() {
         let is_sky = sky.contains(&i);
-        let index = if is_sky && !sky_fogged {
+        let index = if is_sky {
             sky_copy[usize::from(s.material)]
         } else {
             rest[usize::from(s.material)]
@@ -487,12 +536,13 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
             continue;
         };
         s.material = index;
-        if is_sky {
-            out.sky.push(out.segments.len());
-        }
         out.segments.push(s);
         out.sources.push(i);
     }
+    out.sky = listed
+        .iter()
+        .filter_map(|&i| out.sources.iter().position(|&s| s == i))
+        .collect();
     Ok(out)
 }
 
@@ -1262,6 +1312,78 @@ mod tests {
             .map(|(k, m)| (*m, k.material.shader.switches().fog))
             .collect();
         assert_eq!(fogged, [(0, true), (2, false), (1, false)]);
+    }
+
+    /// AG.79: the sky writes no depth, whatever its materials' states say,
+    /// fogged or not, and its blended parts sort before anything else that
+    /// blends, in the scene's order, wherever their middles are: AG.13's
+    /// capture draws the clouds, the horizon rings and then the cap, none
+    /// written, where a cloud plane drawn first and written cut the cap.
+    #[test]
+    fn the_sky_writes_no_depth_and_blends_first_in_the_scenes_order() {
+        let blended = |depth_write| RenderStates {
+            blend: Blend::Alpha,
+            depth_write,
+            two_sided: false,
+            alpha_test: None,
+        };
+        let mut leaves = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        leaves.states = blended(true);
+        let dome = multi2(mask(0x0, 0x3BFF), mask(0x0, 0x3BFF));
+        let mut clouds = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
+        clouds.states = blended(true);
+        let mut cap = clouds.clone();
+        cap.name = "cap".into();
+        let graph = SceneGraph {
+            world: "Levels/Test/Test_ART_MASTER.ma".into(),
+            materials: vec![
+                LevelMaterial::Multi2(leaves),
+                LevelMaterial::Multi2(cap),
+                LevelMaterial::Multi2(clouds),
+                LevelMaterial::Multi2(dome),
+            ],
+            segments: vec![
+                segment(0, false),
+                segment(1, true),
+                segment(3, false),
+                segment(2, true),
+            ],
+            // The scene lists the dome, then the clouds, then the cap.
+            sky: vec![SkyGroup {
+                name: "sky".into(),
+                segments: vec![2, 3, 1],
+            }],
+        };
+        for fogged in [false, true] {
+            let d = drawn(graph.clone(), fogged).unwrap();
+            let by_segment: Vec<&model::Material> = d
+                .segments
+                .iter()
+                .map(|s| &d.materials[usize::from(s.material)])
+                .collect();
+            assert!(by_segment[0].states.depth_write, "the leaves keep theirs");
+            for (i, m) in by_segment.iter().enumerate().skip(1) {
+                assert!(!m.states.depth_write, "sky segment {i}");
+                assert_eq!(
+                    m.pixel.base >> bit::FOG & 1 == 0 && m.pixel.ignore >> bit::FOG & 1 == 1,
+                    !fogged,
+                    "sky segment {i} owns its fog off unless the sky's fogged"
+                );
+            }
+            let bias = depth_biases(&d);
+            let of = |segment: usize| bias[usize::from(d.segments[segment].material)];
+            assert_eq!(
+                [of(0), of(2), of(3), of(1)],
+                [0.0, sky_bias(0), sky_bias(1), sky_bias(2)]
+            );
+            // Bevy's blended pass sorts by view depth plus bias, back to
+            // front: the cap's middle 600 m nearer than the clouds' still
+            // draws after them, and everything else after the sky.
+            let sorted = |depth: f32, segment: usize| depth + of(segment);
+            assert!(sorted(-700.0, 3) < sorted(-100.0, 1));
+            assert!(sorted(-100.0, 1) < sorted(-1000.0, 0));
+            assert!(sorted(-1.0, 1) < sorted(-250.0, 0));
+        }
     }
 
     /// The fresh state's camera looks where AC.13's capture of it does:

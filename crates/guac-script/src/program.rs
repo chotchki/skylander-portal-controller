@@ -65,6 +65,13 @@ pub enum LinkError {
     TooMany(&'static str),
 }
 
+/// A colour word as the file stores it, alpha in its high byte and red in
+/// its low, in the VM's order, red high and alpha low (crate docs,
+/// Literals and rolls).
+pub(crate) fn file_colour(word: u32) -> u32 {
+    word.swap_bytes()
+}
+
 /// What an RHS literal's 32 bits are, by its `_type` class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiteralClass {
@@ -86,7 +93,7 @@ impl Literal {
         match self.class {
             LiteralClass::Int => Value::Int(self.bits as i32),
             LiteralClass::Float => Value::Float(f32::from_bits(self.bits)),
-            LiteralClass::Color => Value::Color(self.bits),
+            LiteralClass::Color => Value::Color(file_colour(self.bits)),
             LiteralClass::Screen => Value::Screen(self.bits),
         }
     }
@@ -1258,7 +1265,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                 Global::Number(if ty == "ScriptScreenInfo" {
                     Value::Screen(word)
                 } else {
-                    Value::Color(word)
+                    Value::Color(file_colour(word))
                 })
             }
             "ScriptStructure" => {

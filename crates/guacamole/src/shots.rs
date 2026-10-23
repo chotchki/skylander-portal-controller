@@ -21,7 +21,12 @@
 //! (AH.24) at the same interval while anything his attacks spawned draws,
 //! named `attack` (a throw's ball in flight, an eruption's lava; not the
 //! helpers his join spawns). Off by default,
-//! since a shot's PNG is written on the frame's thread.
+//! since a shot's PNG is written on the frame's thread. A walk's or an
+//! attack's shot names the scripts' step it was drawn at (AG.79: `step0467`,
+//! the step `/api/_test/tv/scripts` numbers), so a run's shots line up with
+//! an oracle recording's records. `POST /api/_test/tv/shot` (`test-hooks`)
+//! asks for one now, named `asked-<label>` (`mirror::AskedShots`): a still view
+//! the camera pin holds, which no walk or redraw would shoot.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -42,6 +47,21 @@ use crate::pause::LevelOverlay;
 use crate::play::Play;
 use crate::turntable::FrozenYaw;
 use crate::tv::{Current, Redrawn, TvCamera};
+
+/// A walk's or an attack's shot's name: its number, what it shows, where he
+/// stands, the way he faces and the scripts' step when they run.
+fn moving_name(seq: u32, attacking: bool, step: Option<u64>, pivot: Vec3, facing: f32) -> String {
+    let step = step.map(|s| format!("-step{s:04}")).unwrap_or_default();
+    format!(
+        "{seq:02}-{}{step}-{:.2}_{:.2}_{:.2}-facing-{:.0}.png",
+        if attacking { "attack" } else { "walk" },
+        pivot.x,
+        pivot.y,
+        pivot.z,
+        // `+ 0.0` turns a turn's -0 into 0.
+        facing.rem_euclid(360.0) + 0.0
+    )
+}
 
 /// Long enough for a redrawn tree's layout and portraits to reach the GPU.
 const SETTLE: Duration = Duration::from_millis(750);
@@ -229,12 +249,17 @@ fn snap(
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
     mut redrawn: MessageReader<Redrawn>,
-    (play, heroes, time, overlays, (alerts, clones)): (
+    (play, heroes, time, overlays, (alerts, clones, asked, log)): (
         Option<Res<Play>>,
         Query<&HeroBody>,
         Res<Time>,
         Query<&LevelOverlay>,
-        (Query<&AlertScreen>, Query<&crate::hero_scripts::CloneDrawn>),
+        (
+            Query<&AlertScreen>,
+            Query<&crate::hero_scripts::CloneDrawn>,
+            Option<Res<crate::mirror::AskedShots>>,
+            Option<Res<crate::hero_scripts::ScriptLog>>,
+        ),
     ),
     mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
@@ -250,6 +275,17 @@ fn snap(
     let Some(target) = state.target.clone() else {
         return;
     };
+    if let Some(label) = asked.as_deref().and_then(crate::mirror::AskedShots::take) {
+        state.seq += 1;
+        let path = state
+            .dir
+            .join(format!("{:02}-asked-{label}.png", state.seq));
+        info!(path = %path.display(), "asked screenshot requested");
+        commands
+            .spawn(Screenshot::image(target))
+            .observe(store(path));
+        return;
+    }
     let hero = play
         .as_deref()
         .and_then(Play::hero)
@@ -264,15 +300,8 @@ fn snap(
         if now.saturating_sub(at) >= every && (attacking || pivot.distance(from) >= WALK_MOVED) {
             *walked = Some((now, pivot));
             state.seq += 1;
-            let name = format!(
-                "{:02}-{}-{:.2}_{:.2}_{:.2}-facing-{:.0}.png",
-                state.seq,
-                if attacking { "attack" } else { "walk" },
-                pivot.x,
-                pivot.y,
-                pivot.z,
-                facing.rem_euclid(360.0)
-            );
+            let step = log.as_deref().map(crate::hero_scripts::ScriptLog::last);
+            let name = moving_name(state.seq, attacking, step, pivot, facing);
             let path = state.dir.join(name);
             info!(path = %path.display(), "walk screenshot requested");
             commands
@@ -325,6 +354,30 @@ mod tests {
         assert_eq!(parse_size("3840x2160"), Some(UVec2::new(3840, 2160)));
         assert_eq!(parse_size("1920 x 1080"), Some(UVec2::new(1920, 1080)));
         assert_eq!(parse_size("big"), None);
+    }
+
+    /// AG.79: a walk's or an attack's shot names the scripts' step it was
+    /// drawn at when they run; an asked shot's label must name a file
+    /// safely, and they're taken oldest first.
+    #[test]
+    fn moving_shots_name_their_step_and_asked_labels_are_files() {
+        let at = Vec3::new(10.19, 43.38, -93.39);
+        assert_eq!(
+            moving_name(58, true, Some(467), at, -360.0),
+            "58-attack-step0467-10.19_43.38_-93.39-facing-0.png"
+        );
+        assert_eq!(
+            moving_name(5, false, None, at, 38.4),
+            "05-walk-10.19_43.38_-93.39-facing-38.png"
+        );
+        let asked = crate::mirror::AskedShots::default();
+        for bad in ["", "../up", "a b", "e05.png", &"x".repeat(41)] {
+            assert!(!asked.ask(bad), "{bad:?}");
+        }
+        assert!(asked.ask("walkway") && asked.ask("drop_before-2"));
+        assert_eq!(asked.take().as_deref(), Some("walkway"));
+        assert_eq!(asked.take().as_deref(), Some("drop_before-2"));
+        assert_eq!(asked.take(), None);
     }
 
     #[test]

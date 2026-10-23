@@ -12,7 +12,8 @@
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
 //! static parts they carry) and its chapter 1 another 55, its props 32
-//! more, what its scripts spawn 5 more. So the tables
+//! more, what its scripts spawn 8 more (3 of them a spawned part fading in,
+//! AH.67). So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on
 //! `GUAC_GIANTS_DUMP`) holds them equal to what the extractor's readers and
@@ -182,15 +183,15 @@ pub const TURNTABLE: &[Row] = &[
 /// the level's scene (fog on but on the sky, which takes none of its
 /// start's fog (AG.41); its one point light unless a material owns its
 /// point lights off; no shadows until AG.23), each once: AG.19's 55, the
-/// sky's 7 unfogged since AG.41.
+/// sky's 7 unfogged since AG.41 and writing no depth since AG.79.
 pub const LEVEL: &[Row] = &[
-    row(0x0000, 0x0000, O, true, false, false, 1, true, false),
-    row(0x0000, 0x1000, O, true, false, false, 1, true, true),
-    row(0x0000, 0x1000, A, true, false, false, 1, true, true),
-    row(0x0000, 0x1000, A, true, false, true, 1, true, true),
+    row(0x0000, 0x0000, O, false, false, false, 1, true, false),
+    row(0x0000, 0x1000, O, false, false, false, 1, true, true),
+    row(0x0000, 0x1000, A, false, false, false, 1, true, true),
+    row(0x0000, 0x1000, A, false, false, true, 1, true, true),
     row(0x0001, 0x1001, A, false, true, false, 2, true, true),
     row(0x0001, 0x1001, A, false, true, true, 2, true, true),
-    row(0x0001, 0x1001, ADD, true, true, false, 2, true, true),
+    row(0x0001, 0x1001, ADD, false, true, false, 2, true, true),
     row(0x0c00, 0x2400, MUL, true, true, false, 1, true, false),
     row(0x0c00, 0x3400, O, true, true, false, 1, true, true),
     row(0x0c00, 0x3400, A, false, true, false, 1, true, true),
@@ -284,14 +285,18 @@ pub const LEVEL_PROPS: &[Row] = &[
 /// and [`LEVEL_PROPS`] don't hold: the models the extract's spawn part
 /// holds for `global.bld` and each fighter's archive (AH.22; Eruptor's ball,
 /// its splash and his eruption's blobs among them, `global.bld`'s all
-/// refused until AH.39), in the level's scene at AF's fresh state, each
-/// once.
+/// refused until AH.39), in the level's scene at AF's fresh state, and
+/// each opaque one blending as a clone fading in draws it (AH.67,
+/// `props::faded_keys`), each once.
 pub const SPAWNS: &[Row] = &[
     row(0x0c00, 0x2400, O, true, false, false, 1, true, false),
     row(0x0c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x0c00, 0x2400, ADD, false, false, false, 1, true, false),
     row(0x0c00, 0x3400, A, false, false, false, 1, true, true),
     row(0x0c01, 0x3401, O, true, false, false, 2, true, true),
+    row(0x0c01, 0x3401, A, true, false, false, 2, true, true),
+    row(0x0c20, 0x3420, A, true, true, false, 1, true, true),
+    row(0x0c24, 0x2424, A, true, false, false, 1, true, false),
 ];
 
 /// Every key the 01.00 roster's figures draw on a card on a static mesh
@@ -463,7 +468,7 @@ mod tests {
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 55),
             (LEVEL_PROPS, false, 32),
-            (SPAWNS, false, 5),
+            (SPAWNS, false, 8),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -480,7 +485,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 5);
+        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 8);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()

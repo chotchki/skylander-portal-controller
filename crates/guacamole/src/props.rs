@@ -266,6 +266,26 @@ pub fn models_keys(models: &[PropModel], scene: &Scene) -> Result<Vec<WarmKey>, 
         .collect())
 }
 
+/// Every key `models` draw in `scene` while a placement's tint fades them
+/// (openspec AH.67, [`crate::character::key::StateKey::faded`]): each of
+/// [`models_keys`]' opaque ones blending, each once. What a clone of a
+/// spawn model draws as the scripts fade it in, which the census holds
+/// beside the models' own keys so the start's pass compiles them.
+pub fn faded_keys(models: &[PropModel], scene: &Scene) -> Result<Vec<WarmKey>, LevelError> {
+    let mut out: Vec<WarmKey> = Vec::new();
+    for mut k in models_keys(models, scene)? {
+        let faded = k.material.states.faded();
+        if faded == k.material.states {
+            continue;
+        }
+        k.material.states = faded;
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    Ok(out)
+}
+
 /// A static prop's drawn part, as a scene's: its tfbmulti2 segments on
 /// their materials (a layer's unset values at the level's defaults), the
 /// other effects' left out.

@@ -35,6 +35,7 @@ mod shots;
 mod starfield;
 mod surfaces;
 mod theme;
+mod tints;
 mod title;
 mod turntable;
 mod tv;
@@ -411,6 +412,7 @@ fn run_tv(
             alert::AlertPlugin,
             progress::ProgressPlugin,
             hero_scripts::HeroScriptsPlugin,
+            tints::CloneTintsPlugin,
         ));
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));

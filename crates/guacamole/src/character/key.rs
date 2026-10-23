@@ -411,6 +411,23 @@ impl StateKey {
         }
     }
 
+    /// The states a part draws with while its placement's tint holds its
+    /// alpha under full (openspec AH.67): an opaque part blends by its
+    /// alpha, its depth write, sides and alpha test kept; a part that
+    /// blends already keeps its own. The eruption's lava is opaque on the
+    /// disc and fades in on the oracle's frames (AH.54's `e05`: the first
+    /// wave a third in, the ground showing through); what the original sets
+    /// for the faded draw beyond the blend is AH.85's to read.
+    pub fn faded(self) -> Self {
+        match self.blend {
+            Blend::Opaque => Self {
+                blend: Blend::Alpha,
+                ..self
+            },
+            _ => self,
+        }
+    }
+
     /// The game's winding matches Bevy's (counter-clockwise in front) and
     /// it culls back faces too (AC.16), so only a two-sided part keeps them.
     pub fn cull_mode(&self) -> Option<Face> {
