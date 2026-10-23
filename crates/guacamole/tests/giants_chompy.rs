@@ -3338,10 +3338,10 @@ fn follow_orbs(
 /// A lob's kill and its orbs against AH.10's (openspec AH.20, pickups'
 /// Experience comes out as orbs and A hero collects orbs): each Chompy
 /// beaten makes its experience times the save's multiplier in 1-point
-/// orbs; they come out two a step from the step after the kill or the
-/// one after, and down within 1.2 s (AH.10's 4-72 frames); one down
-/// within 20 ft of him across the ground is taken the step after it comes
-/// down, never in the air, and flies in at 55 ft/s, paying its worth the
+/// orbs; they come out two a step from the second step after the kill
+/// (AH.59's order), and down within 1.2 s (AH.10's 4-72 frames); one down
+/// within 20 ft of him across the ground is taken the step it comes down,
+/// never in the air, and flies in at 55 ft/s, paying its worth the
 /// step it arrives (AH.10: 8.4 ft in 10 frames, 20 ft in 22); those out of
 /// reach stay until he walks within 20 ft across the ground. Returns the
 /// lives, the experience paid and how many Chompies the lob beat.
@@ -3438,8 +3438,13 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
     println!("out per step {outs:?}");
     assert!(outs.values().all(|&n| n <= 2), "two a step at most");
     let first = *outs.keys().next().unwrap();
-    assert!(
-        first == kill + 1 || first == kill + 2,
+    // The second step after the kill, as in all 69 of AH.10's lob kills
+    // (the first orb listed two records after the one the Chompy's health
+    // first reads 0 in; AH.59's review). The order before AH.59's had it
+    // the step after.
+    assert_eq!(
+        first,
+        kill + 2,
         "the first out at F0 + {first}, the kill at F0 + {kill}"
     );
     let mut taken_where_they_lay = 0;

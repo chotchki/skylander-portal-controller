@@ -1400,19 +1400,25 @@ is reset; one leaving a place the walk passed steps the walk's index back), head
 `Bootstrap_Halt_LoadLevel`, `Macros_Animation`, `Macros_GameSystems`, `Macros_Music`, `Macros_Sound`,
 `Macros_UI`, `Spyro_PortalManager`, `Pause Controller`, `TRG_Checker`, `Macros_Achievements`,
 `PointLightManager`, `Spyro_PortalControl` and `zPortalManager`; group 2 the asleep placements' activity
-checks. The music controller's tick ends by resetting `movementUpdate`, which sends it to the awake list's
-end, so the mover update hands every scripted mover's velocity to the engine after every other awake
-placement has ticked (last in 891 of 900, 699 of 706 and 176 of 177 records; behind it only what joined
-after the reset). So in a frame: the hero's own script, the game systems (the destructibles, the actor
-remover, the orbs), the UI (the game timer), the portal manager (the death sequence, the combat and
-projectile managers, the pickups), the level's placements as they woke, the mover update, then the actors
-move.
+checks. The music controller's tick ends by resetting `movementUpdate`, which sends it round its states:
+off the awake list, its active time back to 0, and back on the list's end once the walk is through,
+ticking there, so the mover update hands every scripted mover's velocity to the engine after every other
+awake placement has ticked, a spawn made after the music controller's tick included (last in 891 of 900,
+699 of 706 and 176 of 177 records; its active time that frame's own at all 1,780 records with a frame
+before them; the eruption's lava, spawned by its tick after the music controller's, listed ahead of it at
+its first record in `fight`'s three waves; behind it only placements reset after it, two push blocks'
+water ends and Norticus' encounter, and what Norticus spawned then). The June state has it at the end of
+group 2's list instead, asleep, its active time one frame's: what a reset does on the way is AH.80's. So
+in a frame: the hero's own script, the game systems (the destructibles, the actor remover, the orbs), the
+UI (the game timer), the portal manager (the death sequence, the combat and projectile managers, the
+pickups), the level's placements as they woke, the mover update, then the actors move.
 
 guacamole's fixed step runs that order in one schedule, [`frame.rs`](../../crates/guacamole/src/frame.rs)'s
 sets (pads, scripts, solids, hero, actors, locomotion, hands, camera, record), every fixed-step system in
-one: the VM walks the activators first and the rest in the order they woke, the player loop's slices
-in their placements' places and the mover update sent to the end at the music controller's (`guac-script`'s
-crate docs, The tick). Avian's step in `FixedPostUpdate` stands for the next frame's physics.
+one: the VM walks the activators first and the rest in the order they woke, the player loop's slices in
+their placements' places, and the mover update, reset at the music controller's, last (`guac-script`'s
+crate docs, The tick). A script's own `reset` of a placement doesn't send it round yet (AH.80). Avian's
+step in `FixedPostUpdate` stands for the next frame's physics.
 
 ### How far it drifts from itself (AF.11)
 

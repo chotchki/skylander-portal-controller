@@ -54,13 +54,24 @@
 //! list walked from its head. The *activators* ([`Vm::set_activator`]: the
 //! hero's own minion, the one placement the others' activation ranges are
 //! measured from) tick first, then every other awake placement in its list's
-//! order. A placement joins its group's list at the end: added, woken, sent
-//! round its states by a `reset` ([`Vm::requeue`]: the mover update, which
-//! the music controller's tick resets every frame, so it ticks after every
-//! other awake placement), or spawned. The walk takes each place as the list
-//! stands when it gets there, so one joining the end during the walk ticks
-//! that step too, and one leaving a place the walk has passed doesn't make
-//! it skip the next.
+//! order. A placement joins its group's list at the end: added, woken or
+//! spawned. The walk takes each place as the list stands when it gets there,
+//! so one joining the end during the walk ticks that step too, and one
+//! leaving a place the walk has passed doesn't make it skip the next.
+//!
+//! One sent round its states by a `reset` ([`Vm::requeue`]: the mover
+//! update, which the music controller's tick resets every frame) leaves its
+//! list, its `system.script timer` back to 0, and goes back on the list's end
+//! once the walk has passed every group, ticking there: after every other
+//! placement that step, those that joined the list behind it during the walk
+//! included. AH.59's recordings show both halves: the mover update's timer
+//! reads that frame's own time at every record, and the eruption's lava,
+//! spawned by its tick after the music controller's, lists ahead of the
+//! mover update at its first record (`fight`'s three waves). Behind it are
+//! only placements reset after it (two push blocks' water ends, Norticus'
+//! encounter) and what Norticus' tick then spawned. A script's own `reset`
+//! of a placement doesn't send it round yet: the host resets its buffer
+//! alone (openspec AH.80).
 //!
 //! The embedder puts placements to sleep and wakes them by its activity
 //! rule ([`Vm::set_asleep`]); one asleep isn't ticked and keeps its state,

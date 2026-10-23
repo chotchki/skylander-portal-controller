@@ -8,10 +8,10 @@
 //! order as [`crate::frame`] has it) runs the loop's slices where their
 //! placements sit in the scheduler's list: the game systems' tick at
 //! `Macros_GameSystems`' place, the music controller's reset of the mover
-//! update at `Macros_Music`'s (the mover update joins the awake list's end,
-//! so it ticks after every other awake placement), and the portal
-//! manager's tick at `Spyro_PortalManager`'s, after the UI's, whose tick
-//! moves the game timer. The portal manager's, once a step:
+//! update at `Macros_Music`'s (the mover update leaves the list and ticks
+//! at its end once the walk is through, after every other awake placement),
+//! and the portal manager's tick at `Spyro_PortalManager`'s, after the UI's,
+//! whose tick moves the game timer. The portal manager's, once a step:
 //!
 //! - the head: its `script timer local` set from its clock (the state
 //!   system's immunity after a hurt reaction and a dropped coin's age read
@@ -371,9 +371,9 @@ impl PlayerLoop {
     }
 
     /// What the walk runs in held placement `id`'s place: the game systems'
-    /// tick, the music controller's reset of the mover update (it joins the
-    /// awake list's end) or the portal manager's tick; nothing for any
-    /// other held placement.
+    /// tick, the music controller's reset of the mover update (it rejoins
+    /// the awake list's end once the walk is through) or the portal
+    /// manager's tick; nothing for any other held placement.
     pub fn native(
         &self,
         vm: &mut Vm,

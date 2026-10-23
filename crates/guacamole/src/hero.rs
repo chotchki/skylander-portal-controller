@@ -221,7 +221,7 @@ pub(crate) fn spawn_hero(commands: &mut Commands, hero: Hero) -> Entity {
 
 /// One game frame of every hero, the fixed step's length its step, against
 /// the gameplay camera's view as the frame before left it when there is one.
-fn step_heroes(
+pub(crate) fn step_heroes(
     seam: AvianSeam,
     input: Res<HeroInput>,
     moving: Res<MovingSolids>,
@@ -252,7 +252,7 @@ fn step_heroes(
 
 /// One game frame of each hero's locomotion, on the speed his step's walk
 /// read and his move and footing after it.
-fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut HeroGaits)>) {
+pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut HeroGaits)>) {
     let step = time.delta_secs();
     for (body, mut gaits) in &mut heroes {
         let gaits = &mut *gaits;
@@ -264,7 +264,7 @@ fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut HeroGaits)>) {
 /// One game frame of the gameplay camera on the hero's pivot as his step
 /// began. One hero walks (pad-input's One pad walks the hero): with none,
 /// or a second, the camera waits.
-fn step_cameras(
+pub(crate) fn step_cameras(
     time: Res<Time>,
     heroes: Query<&HeroBody>,
     mut cameras: Query<

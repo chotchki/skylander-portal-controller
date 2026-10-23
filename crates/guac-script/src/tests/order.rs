@@ -175,3 +175,79 @@ fn a_placement_leaving_a_passed_place_skips_nothing() {
     vm.step(&mut host).unwrap();
     assert_eq!(seen(&vm, &[a, b, c]), ints(&[7, 8, 9]), "A first now");
 }
+
+/// What a held placement's native hands over through [`Host::adopt`]: a
+/// spawn the walk reaches after the reset (AH.54's lava, spawned by the
+/// eruption's tick after the music controller's).
+#[derive(Default)]
+struct Late {
+    inner: Engine,
+    pending: std::rc::Rc<std::cell::RefCell<Vec<(Handle, String, crate::ScriptId)>>>,
+}
+
+impl Host for Late {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        self.inner.get(at)
+    }
+    fn set(&mut self, at: &Access, value: Value) -> Result<(), HostFault> {
+        self.inner.set(at, value)
+    }
+    fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.inner.reset(at)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn adopt(&mut self, _: &Program) -> Vec<(Handle, String, crate::ScriptId)> {
+        std::mem::take(&mut *self.pending.borrow_mut())
+    }
+}
+
+/// A placement sent round its states ticks after what joins the list behind
+/// it during the walk, its script timer from 0 (AH.59: the eruption's lava,
+/// spawned after the music controller has reset the mover update, lists
+/// ahead of it; its timer one frame's at every record). Music resets the
+/// mover where the walk reaches it; Spawner, after it, spawns Child once.
+#[test]
+fn a_reset_placement_ticks_after_what_joins_behind_it() {
+    let mut config = Config::new(Mode::Strict);
+    config.whitelist = Whitelist::with_first_ticks(&["Mover", "X", "Child"], &[], &["Test.ai"]);
+    let mut vm = Vm::new(counting(), config);
+    let music = vm.add(0x10, "Music", 0);
+    let mover = vm.add(0x20, "Mover", 0);
+    let spawner = vm.add(0x30, "Spawner", 0);
+    let x = vm.add(0x40, "X", 0);
+    let mut host = Late::default();
+    vm.step(&mut host).unwrap();
+    assert!(vm.is_held(music) && vm.is_held(spawner));
+    assert_eq!(seen(&vm, &[mover, x]), ints(&[1, 3]));
+    let pending = host.pending.clone();
+    let mut spawned = false;
+    let mut natives = |vm: &mut Vm, id: PlacementId, _: &mut dyn Host| {
+        if id == music {
+            assert!(vm.requeue(0x20));
+        } else if id == spawner && !spawned {
+            spawned = true;
+            pending.borrow_mut().push((0x50, "Child".to_owned(), 0));
+        }
+        Ok(())
+    };
+    vm.step_with(&mut host, &mut natives).unwrap();
+    let child = vm.placement_of(0x50).expect("adopted");
+    assert_eq!(
+        seen(&vm, &[x, child, mover]),
+        ints(&[4, 5, 6]),
+        "the child spawned behind the reset ticks ahead of the mover"
+    );
+    let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+    assert_eq!(order, ["Music", "Spawner", "X", "Child", "Mover"]);
+    assert_eq!(
+        vm.active_seconds(mover),
+        Some(vm.config().tick_seconds),
+        "its timer restarted, one tick on"
+    );
+    assert_eq!(vm.active_seconds(x), Some(2.0 * vm.config().tick_seconds));
+    vm.step_with(&mut host, &mut natives).unwrap();
+    assert_eq!(seen(&vm, &[x, child, mover]), ints(&[7, 8, 9]));
+    assert_eq!(vm.active_seconds(mover), Some(vm.config().tick_seconds));
+}

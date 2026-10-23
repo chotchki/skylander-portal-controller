@@ -20,11 +20,13 @@
 //!    stick, his hurt reaction) runs first. Then the awake placements in
 //!    the order they woke: [`AWAKE_HEAD`] in that order in every record,
 //!    the level's placements after them as they woke, a spawn at the end.
-//!    The music controller's tick resets the mover update, which then rejoins
-//!    the end, so it runs after every other awake placement (last in 891 of
-//!    900, 699 of 706 and 176 of 177 records, the rest behind a push block's
-//!    water end or a respawned actor that joined after the reset). Then the
-//!    lights and particles, then the asleep placements' activity checks.
+//!    The music controller's tick resets the mover update, which leaves the
+//!    list and rejoins its end once the walk is through, so it runs after
+//!    every other awake placement, those spawned behind the reset included
+//!    (last in 891 of 900, 699 of 706 and 176 of 177 records; behind it only
+//!    placements reset after it, two push blocks' water ends and Norticus'
+//!    encounter, and the hat his tick then spawned). Then the lights and
+//!    particles, then the asleep placements' activity checks.
 //!
 //! guacamole's step follows it: [`ORDER`] chains the sets, the scripts' set
 //! runs the VM's walk in the scheduler's order (`guac_script`'s crate docs,

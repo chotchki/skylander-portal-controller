@@ -1540,7 +1540,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
 /// would; before he's in, by the level's start. After the scripts' step
 /// (openspec AH.21), so a breakable they broke this step is gone before
 /// anything moves.
-fn stand_props(
+pub(crate) fn stand_props(
     mut commands: Commands,
     mut level: ResMut<Level>,
     heroes: Query<&HeroBody>,

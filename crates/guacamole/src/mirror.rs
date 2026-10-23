@@ -453,7 +453,7 @@ const MAX_PULSES: u32 = 1_800;
 #[derive(Resource, Debug, Default)]
 pub(crate) struct PadSteps(u64);
 
-fn count_pad_steps(mut steps: ResMut<PadSteps>) {
+pub(crate) fn count_pad_steps(mut steps: ResMut<PadSteps>) {
     steps.0 += 1;
 }
 
@@ -716,7 +716,7 @@ struct GaitsQuery {
 }
 
 /// Each hero's locomotion step into the gait log, after it ran.
-fn log_gaits(
+pub(crate) fn log_gaits(
     time: Res<Time>,
     mirror: Res<TvMirror>,
     input: Option<Res<HeroInput>>,

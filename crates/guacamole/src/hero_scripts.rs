@@ -600,7 +600,7 @@ fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
 }
 
 /// One step of the run, before the hero's (the module docs).
-fn step_scripts(
+pub(crate) fn step_scripts(
     mut commands: Commands,
     mut runtime: ResMut<ScriptRuntime>,
     mut world: ResMut<ScriptWorld>,
@@ -914,7 +914,7 @@ fn record(
 
 /// The engine's frame after the hero's step: the sequences on and what the
 /// scripts threw moved through the seam.
-fn advance_scripts(
+pub(crate) fn advance_scripts(
     time: Res<Time>,
     mut world: ResMut<ScriptWorld>,
     seam: AvianSeam,
@@ -956,7 +956,7 @@ fn advance_scripts(
 /// His attach nodes posed by the clips on him as this step left them, his
 /// locomotion's (his idle alone with no gaits) with his scripts' laid over,
 /// and what hangs from them set there (the module docs; AH.50).
-fn pose_hands(
+pub(crate) fn pose_hands(
     mut world: ResMut<ScriptWorld>,
     seam: AvianSeam,
     cameras: Query<&FollowCamera>,
@@ -1015,7 +1015,7 @@ pub(crate) fn clone_transform(a: &guacamole::script_engine::Actor) -> Transform 
 /// Each clone the scripts made, drawn from its template's model off the
 /// extract's spawn part while it's on: placed each step, eased between
 /// steps, hidden once taken off.
-fn draw_clones(
+pub(crate) fn draw_clones(
     mut commands: Commands,
     world: Res<ScriptWorld>,
     level: Res<Level>,

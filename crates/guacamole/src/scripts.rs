@@ -1713,6 +1713,7 @@ pub struct ScriptPlugin;
 
 impl Plugin for ScriptPlugin {
     fn build(&self, app: &mut App) {
+        crate::frame::ensure(app);
         app.add_systems(
             FixedUpdate,
             step_scripts

@@ -496,10 +496,13 @@ pub struct Vm {
     placements: Vec<Placement>,
     /// The tick order (crate docs, The tick): the activators' group, then
     /// every other placement's, each in the order added, a placement woken
-    /// from sleep or sent round its states ([`Vm::requeue`]) moved to its
-    /// group's end.
+    /// from sleep moved to its group's end.
     activators: Vec<PlacementId>,
     order: Vec<PlacementId>,
+    /// Placements sent round their states ([`Vm::requeue`]), in that order:
+    /// off their group's list until the walk has passed every group, then
+    /// back on its end and ticked there.
+    rejoin: Vec<PlacementId>,
     /// The walk's place during a step: the group (true the activators') and
     /// the index of the next placement in it, stepped back when a placement
     /// at or before it leaves the list, so the walk skips nothing.
@@ -604,6 +607,7 @@ impl Vm {
             placements: Vec::new(),
             activators: Vec::new(),
             order: Vec::new(),
+            rejoin: Vec::new(),
             cursor: None,
             cells: Vec::new(),
             sets: Vec::new(),
@@ -847,14 +851,17 @@ impl Vm {
 
     /// Sends the placement running under `handle` round its states, as the
     /// original's `reset` of a placement does (crate docs, The tick): off
-    /// its group's list and back on at its end, so it ticks after every
-    /// placement already there, this step too when the walk hasn't reached
-    /// it. False when no placement runs under it.
+    /// its group's list, its `system.script timer` back to 0, and back on
+    /// the list's end once the walk has passed every group, ticking there:
+    /// after every placement on the lists this step, those that join them
+    /// during the walk included. False when no placement runs under it.
     pub fn requeue(&mut self, handle: Handle) -> bool {
         let Some(&id) = self.handles.get(&handle) else {
             return false;
         };
-        self.move_to_end(id);
+        self.unlist(id);
+        self.rejoin.push(id);
+        self.placements[id as usize].active = 0.0;
         true
     }
 
@@ -866,12 +873,18 @@ impl Vm {
     }
 
     /// The tick order as it stands: the activators', then the rest, each
-    /// by name in its group's order.
+    /// by name in its group's order, then those waiting to rejoin
+    /// ([`Vm::requeue`]), each with its group.
     pub fn tick_order(&self) -> Vec<(bool, String)> {
         self.activators
             .iter()
             .map(|&id| (true, id))
             .chain(self.order.iter().map(|&id| (false, id)))
+            .chain(
+                self.rejoin
+                    .iter()
+                    .map(|&id| (self.placements[id as usize].activator, id)),
+            )
             .map(|(g, id)| (g, self.placements[id as usize].name.clone()))
             .collect()
     }
@@ -885,8 +898,12 @@ impl Vm {
     }
 
     /// Takes `id` off its group's list, the walk's cursor stepped back when
-    /// it sat before it in the group being walked.
+    /// it sat before it in the group being walked, or off the rejoin list.
     fn unlist(&mut self, id: PlacementId) {
+        if let Some(at) = self.rejoin.iter().position(|&o| o == id) {
+            self.rejoin.remove(at);
+            return;
+        }
         let group = self.placements[id as usize].activator;
         let list = self.list_mut(group);
         let Some(at) = list.iter().position(|&o| o == id) else {
@@ -1256,7 +1273,10 @@ impl Vm {
     /// then the rest's, each list walked from its head as it stands when the
     /// walk reaches each place; a held placement runs `native` there. What
     /// one spawns with a script of its own joins the order's end and ticks
-    /// this tick too ([`Host::adopt`]).
+    /// this tick too ([`Host::adopt`]). Then those sent round their states
+    /// ([`Vm::requeue`]), each back on its group's end and ticked there, in
+    /// the order they were sent; one sent again after its turn waits for
+    /// the next step.
     fn tick_all(
         &mut self,
         report: &mut StepReport,
@@ -1273,29 +1293,59 @@ impl Vm {
                     break;
                 };
                 self.cursor = Some((g, at + 1));
-                let p = &self.placements[id as usize];
-                if p.inert || p.removed || p.asleep || p.stopped.is_some() {
-                    continue;
-                }
-                if p.held {
-                    native(self, id, host)?;
-                    self.adopt(&program, host);
-                    continue;
-                }
-                let before = self.executed;
-                let result = self.tick(id, host);
-                report.ticked += 1;
-                report.ops += self.executed - before;
-                self.adopt(&program, host);
-                match result {
-                    Ok(None) => {}
-                    Ok(Some(halt)) => report.stopped.push(halt),
-                    Err(halt) => return Err(halt),
-                }
+                self.tick_in_place(id, &program, report, host, native)?;
             }
         }
         self.cursor = None;
+        let mut rejoined = Vec::new();
+        let mut at = 0;
+        while let Some(&id) = self.rejoin.get(at) {
+            if rejoined.contains(&id) {
+                at += 1;
+                continue;
+            }
+            self.rejoin.remove(at);
+            rejoined.push(id);
+            let group = self.placements[id as usize].activator;
+            self.list_mut(group).push(id);
+            self.tick_in_place(id, &program, report, host, native)?;
+        }
         Ok(())
+    }
+
+    /// Placement `id`'s turn in the walk: nothing if it's inert, taken off,
+    /// asleep or stopped; `native` if it's held; else its tick. What the
+    /// turn spawns is adopted after it.
+    fn tick_in_place(
+        &mut self,
+        id: PlacementId,
+        program: &Program,
+        report: &mut StepReport,
+        host: &mut dyn Host,
+        native: &mut Native<'_>,
+    ) -> Result<(), Halt> {
+        let p = &self.placements[id as usize];
+        if p.inert || p.removed || p.asleep || p.stopped.is_some() {
+            return Ok(());
+        }
+        if p.held {
+            native(self, id, host)?;
+            self.adopt(program, host);
+            return Ok(());
+        }
+        let before = self.executed;
+        let result = self.tick(id, host);
+        report.ticked += 1;
+        report.ops += self.executed - before;
+        self.adopt(program, host);
+        match result {
+            Ok(None) => Ok(()),
+            Ok(Some(halt)) => {
+                report.stopped.push(halt);
+                Ok(())
+            }
+            Err(halt) => Err(halt),
+        }
     }
 
     /// The frame's slides, once a frame before the scripts (crate docs,
