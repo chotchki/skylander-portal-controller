@@ -24,13 +24,15 @@
 //!   the part doesn't hold walks on AG.16's stand-in and its attack buttons
 //!   do nothing (hero-attacks' Which characters attack); a join that fails,
 //!   or his script stopped in play, puts him back on it, logged.
-//! - A step ([`step_scripts`], before the hero's): his join's next half,
-//!   then the walking pad's stick and, once he's in, its attacks
-//!   ([`HeroActions`]) read as the first player's pad, the portal manager's
-//!   projectile manager (once he's in), every placement's tick, the clones
-//!   of scripted templates added. After the hero's step, the engine's frame
-//!   ([`advance_scripts`]): the sequences on, what the scripts threw flying
-//!   through the seam.
+//! - A step ([`step_scripts`], [`Frame::Scripts`]): the frame's slides,
+//!   his join's next half, then the walking pad's stick and, once he's in,
+//!   its attacks ([`HeroActions`]) read as the first player's pad, then the
+//!   walk in the original's order ([`guacamole::frame`], openspec AH.59): his
+//!   minion first, every awake placement as it woke with the player loop's
+//!   slices in their placements' places, the mover update last; the clones
+//!   of scripted templates made outside it added. After the hero's step,
+//!   the engine's frame ([`advance_scripts`], [`Frame::Actors`]): the
+//!   sequences on, what the scripts threw flying through the seam.
 //! - The engine the host reads ([`TvEngine`], decision 21): the hero's
 //!   controller by query on his entity, Avian's side of the seam, the
 //!   follow camera's view, each standing prop's body as its placement (a
@@ -75,6 +77,7 @@ use guac_motion::seam::{BodyId, PhysicsSeam};
 use guac_motion::solid::euler;
 use guac_script::{Halt, Handle, Mode, Obj, PlacementId, Program, Value};
 use guacamole::figure::{self, Layout};
+use guacamole::frame::Frame;
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
     self, Files, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost, smash_config,
@@ -82,9 +85,7 @@ use guacamole::scripts::{
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::hero::{
-    FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, HeroSystems, ScriptedHero,
-};
+use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, ScriptedHero};
 use crate::level::{LEVEL_LAYER, Level};
 use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
@@ -569,45 +570,24 @@ impl ScriptLog {
     }
 }
 
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum ScriptSystems {
-    /// Every placement's tick, before the hero's step.
-    Step,
-    /// The engine's frame and the clones drawn, after it.
-    Advance,
-    /// His attach nodes posed once his locomotion has stepped (AH.50).
-    Hands,
-}
-
-/// The run on the TV: its step before the hero's, the engine's frame and
-/// the clones' draws after.
+/// The run on the TV ([`guacamole::frame`]'s sets): its step in
+/// [`Frame::Scripts`], the engine's frame and the clones' draws in
+/// [`Frame::Actors`] after the hero's, his hands in [`Frame::Hands`].
 pub(crate) struct HeroScriptsPlugin;
 
 impl Plugin for HeroScriptsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ScriptLog>()
-            .configure_sets(
-                FixedUpdate,
-                (
-                    ScriptSystems::Step.before(HeroSystems::Step),
-                    ScriptSystems::Advance
-                        .after(HeroSystems::Step)
-                        .before(HeroSystems::Gait),
-                    ScriptSystems::Hands.after(HeroSystems::Gait),
-                ),
+        guacamole::frame::ensure(app);
+        app.init_resource::<ScriptLog>().add_systems(
+            FixedUpdate,
+            (
+                step_scripts.in_set(Frame::Scripts),
+                (advance_scripts, draw_clones).chain().in_set(Frame::Actors),
+                pose_hands.in_set(Frame::Hands),
             )
-            .add_systems(
-                FixedUpdate,
-                (
-                    step_scripts.in_set(ScriptSystems::Step),
-                    (advance_scripts, draw_clones)
-                        .chain()
-                        .in_set(ScriptSystems::Advance),
-                    pose_hands.in_set(ScriptSystems::Hands),
-                )
-                    .run_if(resource_exists::<ScriptRuntime>)
-                    .run_if(resource_exists::<ScriptWorld>),
-            );
+                .run_if(resource_exists::<ScriptRuntime>)
+                .run_if(resource_exists::<ScriptWorld>),
+        );
     }
 }
 
@@ -620,7 +600,7 @@ fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
 }
 
 /// One step of the run, before the hero's (the module docs).
-fn step_scripts(
+pub(crate) fn step_scripts(
     mut commands: Commands,
     mut runtime: ResMut<ScriptRuntime>,
     mut world: ResMut<ScriptWorld>,
@@ -676,8 +656,7 @@ fn step_scripts(
     let mut stopped: Vec<Halt> = Vec::new();
     let mut off: Option<String> = None;
     // The frame's slides, once before any script this step (openspec
-    // AH.19), then the player loop (AH.20): the portal manager's tick, its
-    // stretches past the clock once he'd joined before this step.
+    // AH.19), as the original's scripts' updater begins.
     {
         let mut host = WorldHost {
             world: &mut world,
@@ -688,9 +667,6 @@ fn step_scripts(
         match vm.slide(&mut host) {
             Ok(r) => stopped.extend(r.stopped),
             Err(h) => stopped.push(h),
-        }
-        if let Err(h) = player_loop.step(vm, &mut host, settled) {
-            stopped.push(h);
         }
     }
     // The minion activates at the step after his file's placements joined,
@@ -801,13 +777,17 @@ fn step_scripts(
         },
         Pad::default(),
     ]);
+    // The walk in the original's order (openspec AH.59, [`guacamole::frame`]):
+    // his minion first, then the awake placements as they woke, the player
+    // loop's slices (AH.20) in their placements' places, its stretches past
+    // the clock once he'd joined before this step, the mover update last.
     let mut host = WorldHost {
         world: &mut world,
         engine: &mut engine,
         generator,
         spawn: &mut spawn,
     };
-    match vm.step(&mut host) {
+    match player_loop.walk(vm, &mut host, settled, &mut stopped) {
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
     }
@@ -934,7 +914,7 @@ fn record(
 
 /// The engine's frame after the hero's step: the sequences on and what the
 /// scripts threw moved through the seam.
-fn advance_scripts(
+pub(crate) fn advance_scripts(
     time: Res<Time>,
     mut world: ResMut<ScriptWorld>,
     seam: AvianSeam,
@@ -976,7 +956,7 @@ fn advance_scripts(
 /// His attach nodes posed by the clips on him as this step left them, his
 /// locomotion's (his idle alone with no gaits) with his scripts' laid over,
 /// and what hangs from them set there (the module docs; AH.50).
-fn pose_hands(
+pub(crate) fn pose_hands(
     mut world: ResMut<ScriptWorld>,
     seam: AvianSeam,
     cameras: Query<&FollowCamera>,
@@ -1035,7 +1015,7 @@ pub(crate) fn clone_transform(a: &guacamole::script_engine::Actor) -> Transform 
 /// Each clone the scripts made, drawn from its template's model off the
 /// extract's spawn part while it's on: placed each step, eased between
 /// steps, hidden once taken off.
-fn draw_clones(
+pub(crate) fn draw_clones(
     mut commands: Commands,
     world: Res<ScriptWorld>,
     level: Res<Level>,
@@ -1451,6 +1431,10 @@ pub(crate) mod tests {
         run.step([false; 4]);
         run.step([false; 4]);
         let minion = run.join();
+        assert!(
+            run.vm.is_activator(minion),
+            "his minion ticks first (AH.59)"
+        );
         run.step([false; 4]);
         assert_eq!(scripts::health(&run.vm, minion), Some(ATTACK_HEALTH));
         let mut kept = scripts::KeptHealth::default();

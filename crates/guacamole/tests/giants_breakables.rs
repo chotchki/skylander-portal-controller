@@ -424,8 +424,12 @@ fn same_kind(broken: &str, debris: &str) -> bool {
 /// within AH.9's 33-34 steps after the press (his hand posed off his model,
 /// AH.50, in anchor A's recorded lean; the lob aimed as AH.60's), the
 /// burst's look at `barrel_b_intact(4)` passing the barrels' own solids as
-/// the original's ray cast does; our loot steps the step it breaks, AH.9's
-/// the frame after (AH.59's tick order).
+/// the original's ray cast does. The count steps and the coins come the step
+/// after the break, AH.9's the record after: the lob's hit lands in the
+/// projectile manager's slice, after the game systems' update has run that
+/// step (AH.59's order), so the destructibles system shuts the two down for
+/// their loot the next; their debris gone 92 steps on, AH.9's 92 (`lob-04`'s
+/// 91, its ball a frame shorter).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.9's recordings; run on the Mac"]
 fn a_lob_breaks_the_ledge_routes_two_barrels_as_ah9s() {
@@ -516,7 +520,14 @@ fn a_lob_breaks_the_ledge_routes_two_barrels_as_ah9s() {
     println!("the destructibles listed: {}, {awake} active", listed.len());
     assert!(awake > 10 && listed.len() > awake);
     assert_eq!(w.coins.len(), 2, "{:?}", w.coins);
-    assert!(w.coins.iter().all(|c| c.0 == k && (1..=2).contains(&c.1)));
+    assert!(
+        w.coins
+            .iter()
+            .all(|c| c.0 == k + 1 && (1..=2).contains(&c.1)),
+        "the step after the break: {:?}",
+        w.coins
+    );
+    assert_eq!(common[0].0, k + 1, "the count the step after");
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 
@@ -629,14 +640,24 @@ fn in_seam(run: &Run, object: u32) -> bool {
 }
 
 /// He walks at `target` for `steps` steps, the stick full ahead with the
-/// view along his way: the nearest his pivot came across the ground, how
-/// high over `target` it stood then (m), and whether the level's own
-/// collision was what he stood on there.
+/// view along his way until he comes within 0.1 m of it across the ground,
+/// then lets go: the nearest his pivot came across the ground, how high
+/// over `target` it stood then (m), and whether the level's own collision
+/// was what he stood on there. Held on past it, the stick re-aimed at the
+/// point reverses his walk every step, which lifts him off a slope (AG.90).
 fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool) {
     let mut nearest = (f32::MAX, 0.0, false);
+    let mut arrived = false;
     for k in 0..steps {
-        run.bench.view = heading_of(target - run.hero().pivot);
-        run.bench.pads[0] = pad([false; 4], Stick::new(0.0, 1.0));
+        let to = target - run.hero().pivot;
+        arrived |= Vec3::new(to.x, 0.0, to.z).length() < 0.1;
+        run.bench.view = heading_of(to);
+        let stick = if arrived {
+            Stick::CENTRED
+        } else {
+            Stick::new(0.0, 1.0)
+        };
+        run.bench.pads[0] = pad([false; 4], stick);
         run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
         let p = run.hero().pivot;
         let across = ((p - target) * Vec3::new(1.0, 0.0, 1.0)).length();

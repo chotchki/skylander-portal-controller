@@ -53,6 +53,7 @@ use guac_script::{
 };
 use tracing::{info, warn};
 
+use crate::frame::Frame;
 use crate::player_loop::PlayerLoop;
 use crate::script_engine::{
     Actor, Angles, Engine, NoEngine, NodePose, Object, Objects, Pad, Physics, Sequence, Solid,
@@ -1112,11 +1113,14 @@ pub fn fight_config(mode: Mode) -> Config {
     c
 }
 
-/// The VM over `program` with every running placement of `files` added in
-/// file order (`global.bld`'s, then `init_setup.bld`'s, then the level's,
+/// The VM over `program` with every running placement of `files` added
+/// unit by unit (`global.bld`'s, then `init_setup.bld`'s, then the level's,
 /// by `order`'s units), each under the handle `handles` gives its object;
-/// every placement's object is named, scripted or not. A running
-/// placement whose script the program lacks is left out, logged.
+/// every placement's object is named, scripted or not. Within a unit, those
+/// [`crate::frame::AWAKE_HEAD`] names go first in its order, the order the
+/// original's scheduler holds `global.bld`'s in (openspec AH.59), the rest
+/// after them in file order. A running placement whose script the program
+/// lacks is left out, logged.
 pub fn init_chain(
     program: Arc<Program>,
     files: &Files,
@@ -1136,8 +1140,16 @@ pub fn init_chain(
         .enumerate()
         .map(|(i, s)| ((s.unit, s.name.as_str()), i as u32))
         .collect();
+    let head = |p: &&Placed| {
+        crate::frame::AWAKE_HEAD
+            .iter()
+            .position(|n| *n == p.name)
+            .unwrap_or(usize::MAX)
+    };
     for &unit in order {
-        for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+        let mut placed: Vec<&Placed> = files.placed.iter().filter(|p| p.obj.unit == unit).collect();
+        placed.sort_by_key(head);
+        for p in placed {
             let (Some(script), RUNNING) = (&p.script, p.activity_state) else {
                 continue;
             };
@@ -1217,7 +1229,10 @@ pub fn join_request(
 /// spawned where `hero` stands, for the first player's controller, the
 /// definition's minion description, no health restored, in a level
 /// transition. The minion's own script then joins the VM under `hero` (its
-/// template's, listed for every tick). Returns its placement.
+/// template's, listed for every tick), the activator (openspec AH.59: the
+/// original's scheduler holds the hero's minion alone in its first group,
+/// so his script ticks ahead of every other placement). Returns its
+/// placement.
 pub fn join_activate(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
@@ -1263,6 +1278,7 @@ pub fn join_activate(
         let name = host.world.name_of(t).unwrap_or_default();
         let id = vm.add(h, &name, sid);
         if h == hero {
+            vm.set_activator(h, true);
             minion_placement = Some(id);
         }
     }
@@ -1445,10 +1461,14 @@ impl LevelState {
     }
 }
 
-/// Each clone of a scripted template the last step made, added to the VM
-/// running its template's script: what the original's scheduler ticks from
-/// the next frame (a hypothesis: where in a frame a new clone first ticks
-/// isn't read).
+/// Each clone of a scripted template made outside a step's walk and not
+/// yet in the VM (a native call's spawn between steps), added at the tick
+/// order's end running its template's script, to tick from the next step.
+/// What a placement's tick or a slice of the player loop spawns during the
+/// walk joins the order's end at once and ticks that same step
+/// ([`guac_script::Host::adopt`], openspec AH.54; AH.59's recordings list a
+/// clone at the scheduler's list's end the frame its spawner ran), so none
+/// of those waits for this.
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
     world
@@ -1593,9 +1613,16 @@ pub struct ScriptHost<'w, 's> {
     commands: Commands<'w, 's>,
 }
 
-/// Steps the scripts once a fixed step, in play mode.
+/// Steps the scripts once a fixed step, in play mode: the frame's slides,
+/// then the walk in the original's order with the player loop's slices in
+/// their placements' places ([`PlayerLoop::walk`]; no hero joins here).
 pub fn step_scripts(mut runtime: ResMut<ScriptRuntime>, mut host: ScriptHost) {
-    let ScriptRuntime { vm, generator, .. } = &mut *runtime;
+    let ScriptRuntime {
+        vm,
+        generator,
+        player_loop,
+        ..
+    } = &mut *runtime;
     let commands = &mut host.commands;
     let mut spawn =
         |template: Value| -> Handle { commands.spawn(ScriptClone(template)).id().to_bits() };
@@ -1606,21 +1633,21 @@ pub fn step_scripts(mut runtime: ResMut<ScriptRuntime>, mut host: ScriptHost) {
         generator,
         spawn: &mut spawn,
     };
-    let report = vm.step(&mut world_host);
+    let mut stopped = Vec::new();
+    let report = vm.slide(&mut world_host).and_then(|slid| {
+        stopped.extend(slid.stopped);
+        player_loop.walk(vm, &mut world_host, false, &mut stopped)
+    });
     host.world.end_step();
     runtime.steps += 1;
     match report {
-        Ok(r) => {
-            for h in &r.stopped {
-                warn!(%h, "a script stopped");
-            }
-            runtime.stopped.extend(r.stopped);
-        }
-        Err(h) => {
-            warn!(%h, "a script stopped");
-            runtime.stopped.push(h);
-        }
+        Ok(r) => stopped.extend(r.stopped),
+        Err(h) => stopped.push(h),
     }
+    for h in &stopped {
+        warn!(%h, "a script stopped");
+    }
+    runtime.stopped.extend(stopped);
 }
 
 /// Spawns an entity for every placement of `files` and the pads and the
@@ -1680,15 +1707,17 @@ pub fn install_with(
     });
 }
 
-/// The scripts' system in `FixedUpdate`: nothing runs until a level's
-/// script part is installed.
+/// The scripts' system in `FixedUpdate`'s [`Frame::Scripts`]: nothing runs
+/// until a level's script part is installed.
 pub struct ScriptPlugin;
 
 impl Plugin for ScriptPlugin {
     fn build(&self, app: &mut App) {
+        crate::frame::ensure(app);
         app.add_systems(
             FixedUpdate,
             step_scripts
+                .in_set(Frame::Scripts)
                 .run_if(resource_exists::<ScriptRuntime>)
                 .run_if(resource_exists::<ScriptWorld>),
         );
@@ -2419,6 +2448,80 @@ mod tests {
         step(&mut vm, &mut world, &mut him);
         step(&mut vm, &mut world, &mut him);
         assert_eq!(vm.behaviour(id), Some("chompy - intro"));
+    }
+
+    /// openspec AH.59: `init_chain` adds the placements of a unit that
+    /// [`crate::frame::AWAKE_HEAD`] names in its order, the rest after them
+    /// in file order: `global.bld`'s as the original's scheduler holds them,
+    /// whatever their order in the file.
+    #[test]
+    fn init_chain_adds_globals_in_the_recorded_order() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::Writer;
+        const PATH: &str = "C:/tfb/Synthetic/Global.ai";
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = guac_script::Unit {
+            name: "global",
+            role: guac_script::Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        // global.bld's file order.
+        let names = [
+            "Macros_UI",
+            "Spyro_PortalManager",
+            "Spyro_PortalControl",
+            "Pause Controller",
+            "Macros_Animation",
+            "Macros_GameSystems",
+            "Macros_Music",
+            "movementUpdate",
+            "Macros_Sound",
+        ];
+        let files = Files {
+            placed: names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let obj = Obj {
+                        unit: 0,
+                        index: 100 + i as u32,
+                    };
+                    Placed::named(obj, name, Some(PATH), RUNNING)
+                })
+                .collect(),
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut c = Config::new(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let vm = init_chain(program, &files, &handles, &[0], c);
+        let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+        assert_eq!(
+            order,
+            [
+                "Macros_Animation",
+                "Macros_GameSystems",
+                "Macros_Music",
+                "Macros_Sound",
+                "Macros_UI",
+                "Spyro_PortalManager",
+                "Pause Controller",
+                "Spyro_PortalControl",
+                "movementUpdate"
+            ]
+        );
     }
 
     #[test]

@@ -164,21 +164,23 @@ impl Run {
         t
     }
 
-    /// One step: the pads read, the projectiles managed (once he's in),
-    /// every placement's tick, the clones of scripted templates added, then
-    /// the engine's frame: the hero moved by the walk his scripts left, the
-    /// sequences on, what the scripts threw flying.
+    /// One step, in the TV's order (`guacamole::frame`, openspec AH.59): the
+    /// pads read, the frame's slides, the walk with the player loop's slices
+    /// in their places, the clones made outside it added, then the engine's
+    /// frame: the hero moved by the walk his scripts left, the sequences on,
+    /// what the scripts threw flying.
     fn step(&mut self) -> Result<(), Halt> {
         let dt = self.dt;
         self.vm.set_tick_seconds(dt);
         let pads = self.bench.pads;
         self.world.read_pads(pads);
-        let slid = self.with_host(|vm, host| vm.slide(host))?;
-        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        // The frame's slides and the walk in the original's order, the
+        // player loop's slices in their places (openspec AH.59).
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
-        self.with_host(|vm, host| player_loop.step(vm, host, joined))?;
-        let r = self.with_host(|vm, host| vm.step(host));
+        let mut stopped = Vec::new();
+        let r = self.with_host(|vm, host| player_loop.frame(vm, host, joined, &mut stopped));
+        assert!(stopped.is_empty(), "strict mode stops by halting");
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         let report = r?;
@@ -1168,8 +1170,10 @@ fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
 /// stick; his first frame facing the stick's 15° at full stick and turning
 /// at 720°/s at half; a full reversal walking
 /// straight back the next frame at top speed, his facing round in
-/// 0.13-0.15 s (1440°/s). His scripts move him a frame after his facing
-/// turns, the movement update ticking before his own script (AG.38).
+/// 0.13-0.15 s (1440°/s). His scripts move him the step the stick is read,
+/// his own script ahead of the movement update (AH.59's order), as the
+/// original's walk from the spawn moves him the frame its read lands (still
+/// at the record that reads the stick, 0.80 m/s at the next).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_walk_holds_top_speed_and_turning_with_the_vm_driving() {
@@ -1205,7 +1209,7 @@ fn the_walk_holds_top_speed_and_turning_with_the_vm_driving() {
             (ninety - first) as f32 / 60.0,
             track[first + 59].0.y == track[first + 119].0.y
         );
-        assert_eq!(first, 1, "a frame after the stick");
+        assert_eq!(first, 0, "the step the stick is read");
         assert!((metres - top * strength).abs() < 1e-3, "{metres}");
         if strength == 1.0 {
             assert!(((ninety - first) as f32 / 60.0 - 0.1167).abs() < 1e-3);

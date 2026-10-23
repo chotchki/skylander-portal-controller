@@ -43,6 +43,17 @@ A script reading how much of an animation is left SHALL read nothing once two fr
 - **WHEN** a Chompy plays its windup (1/3 s) and waits for it to end
 - **THEN** it holds after 18 or 19 frames, not 20
 
+### Requirement: The order within a frame
+Within a frame the hero's own script SHALL act first, then the game's other scripts in the order they woke, the hand-off of every scripted mover's velocity after them all, and then everything SHALL move, as the original's frame runs: so a push begun that frame (a bite) moves him that frame and his hurt reaction slows it from the next, the stick walks him the frame it's read, and an orb landing within his reach is taken that frame.
+
+#### Scenario: A Chompy's bite
+- **WHEN** a Chompy's bite lands on Eruptor standing on open ground, no hurt reaction of his running
+- **THEN** that frame he moves at 24.384 m/s, and from the next he slows by 80 ft/s² a frame, 23.978 m/s, 23.571 and on to 21.539 at the push's eighth frame
+
+#### Scenario: A lob's barrels
+- **WHEN** a Lava Lob breaks the two barrels at the foot of the ledge route at once
+- **THEN** their coins come out the frame after they break, not the frame they break
+
 ### Requirement: Played at medium
 Until a story save chooses it, guacamole SHALL play every level at the original's default difficulty, medium.
 

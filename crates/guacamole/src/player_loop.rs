@@ -4,7 +4,14 @@
 //! manager's own ops, run as its tick reaches them ([`Vm::run_span`]); only
 //! which stretches run, for whom and when is ours.
 //!
-//! Once a step, ahead of every placement's tick:
+//! Each step's walk ([`PlayerLoop::walk`], openspec AH.59, the original's
+//! order as [`crate::frame`] has it) runs the loop's slices where their
+//! placements sit in the scheduler's list: the game systems' tick at
+//! `Macros_GameSystems`' place, the music controller's reset of the mover
+//! update at `Macros_Music`'s (the mover update leaves the list and ticks
+//! at its end once the walk is through, after every other awake placement),
+//! and the portal manager's tick at `Spyro_PortalManager`'s, after the UI's,
+//! whose tick moves the game timer. The portal manager's, once a step:
 //!
 //! - the head: its `script timer local` set from its clock (the state
 //!   system's immunity after a hurt reaction and a dropped coin's age read
@@ -21,17 +28,18 @@
 //!   sliding in and paying through `Game - Award Money`
 //!   (`Loot - Player Collecting Loot`), and the hero's health written to
 //!   his figure's stored data when it changes;
-//! - the tail: `script timer last frame` set, then the clock a tick on;
-//! - the game systems' tick ([`PlayerLoop::game_systems`]): of its update
-//!   macros (`System Update Controls`' `update while unpaused macros`) the
-//!   ones [`UPDATES`] names, each once in the set's order (openspec AH.21:
-//!   the destructibles system waking a breakable in range as a target and
-//!   shutting a broken one down for its loot, the actor remover taking its
-//!   debris 1.5 s on); then, once a hero has joined, its orbs (`Xp Balls -
-//!   Xp Ball Control`): the orbs popping out two a frame, coming down and
-//!   bouncing. The rest of that tick (its other update macros, which run
-//!   the encounter's camera pans and the difficulty tracking, and the
-//!   playtime) isn't run.
+//! - the tail: `script timer last frame` set, then the clock a tick on.
+//!
+//! The game systems' ([`PlayerLoop::game_systems_tick`]), once a step: of its
+//! update macros (`System Update Controls`' `update while unpaused macros`)
+//! the ones [`UPDATES`] names, each once in the set's order (openspec AH.21:
+//! the destructibles system waking a breakable in range as a target and
+//! shutting a broken one down for its loot, the actor remover taking its
+//! debris 1.5 s on); then, once a hero has joined, its orbs (`Xp Balls - Xp
+//! Ball Control`): the orbs popping out two a frame, coming down and
+//! bouncing. The rest of that tick (its other update macros, which run the
+//! encounter's camera pans and the difficulty tracking, and the playtime)
+//! isn't run.
 //!
 //! Not run: the HUD's messages and its low-health warning (the HUD is
 //! AH.26's stand-in), the join prompt and a player's join, the champion
@@ -46,15 +54,49 @@
 
 use std::ops::Range;
 
-use guac_script::{Elem, Halt, Ins, Operand, Program, ScriptId, Value, Vm};
+use guac_script::{
+    Elem, Halt, Handle, Host, Ins, Mode, Operand, PlacementId, Program, ScriptId, StepReport,
+    Value, Vm,
+};
 use tracing::warn;
 
-use crate::scripts::{WorldHost, portal_manager, running};
+use crate::scripts::{ScriptWorld, WorldHost, portal_manager, running};
 
 /// The source path the portal manager's script ends with, as linked.
 const SCRIPT: &str = "Spyro_PortalManager.ai";
 /// The game systems' script, whose tick moves the orbs.
 const GAME_SYSTEMS: &str = "GameSystems.ai";
+/// The music controller's script, whose tick ends resetting the mover
+/// update (openspec AH.59).
+const MUSIC: &str = "MusicController.ai";
+/// The mover update's script: every scripted mover's velocity handed to the
+/// engine.
+const MOVER: &str = "movementUpdate.ai";
+
+/// Where the loop's slices sit in a step's walk (openspec AH.59): the
+/// placements running the game systems', the music controller's and the
+/// portal manager's scripts, and the mover update the music controller
+/// resets; `None` where the program runs no such placement.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Places {
+    pub game_systems: Option<PlacementId>,
+    pub music: Option<PlacementId>,
+    pub portal_manager: Option<PlacementId>,
+    pub mover: Option<Handle>,
+}
+
+impl Places {
+    /// The places as `vm` runs `world`'s placements.
+    pub fn of(vm: &Vm, world: &ScriptWorld) -> Self {
+        let mover = running(vm, world, MOVER).and_then(|id| vm.handle_of(id));
+        Places {
+            game_systems: running(vm, world, GAME_SYSTEMS),
+            music: running(vm, world, MUSIC),
+            portal_manager: portal_manager(vm, world).ok(),
+            mover,
+        }
+    }
+}
 
 /// The game systems' update macros the loop runs, by name (openspec AH.21):
 /// the destructibles system's (a breakable woken in range made a target,
@@ -256,16 +298,113 @@ impl PlayerLoop {
         out
     }
 
-    /// One step of the loop (the module docs), `joined` once a hero's
-    /// scripts run. Nothing until the portal manager's own first tick has
-    /// run (the VM ticks it then).
-    pub fn step(
+    /// One step's walk (the module docs; `guac_script`'s crate docs, The
+    /// tick): every placement's tick in the scheduler's order, the loop's
+    /// slices in their placements' places, `joined` once a hero's scripts
+    /// run. In play mode a slice that stops is logged into `stopped` and
+    /// the walk goes on, as a placement's tick that stops; in strict mode it
+    /// ends the step. The frame's slides are the caller's, first.
+    pub fn walk(
         &self,
         vm: &mut Vm,
         host: &mut WorldHost<'_, '_>,
         joined: bool,
+        stopped: &mut Vec<Halt>,
+    ) -> Result<StepReport, Halt> {
+        self.walk_with(vm, host, joined, stopped, &mut |_, _, _| Ok(()))
+    }
+
+    /// [`PlayerLoop::walk`], with `then` run after the loop's slice in each
+    /// held placement's place: a test's own call where a placement of the
+    /// original's order would make it (a bite at the portal manager's
+    /// place: after the hero's tick and the UI's, before the mover update).
+    pub fn walk_with(
+        &self,
+        vm: &mut Vm,
+        host: &mut WorldHost<'_, '_>,
+        joined: bool,
+        stopped: &mut Vec<Halt>,
+        then: &mut guac_script::Native<'_>,
+    ) -> Result<StepReport, Halt> {
+        let places = Places::of(vm, host.world);
+        let play = vm.config().mode == Mode::Play;
+        let mut native = |vm: &mut Vm, id: PlacementId, host: &mut dyn Host| {
+            let ran = self
+                .native(vm, host, &places, id, joined)
+                .and_then(|()| then(vm, id, host));
+            match ran {
+                Err(h) if play => {
+                    stopped.push(h);
+                    Ok(())
+                }
+                other => other,
+            }
+        };
+        vm.step_with(host, &mut native)
+    }
+
+    /// The scripts' part of a step as a headless run takes it: the frame's
+    /// slides, then [`PlayerLoop::walk`]. The TV's puts the join between
+    /// the two.
+    pub fn frame(
+        &self,
+        vm: &mut Vm,
+        host: &mut WorldHost<'_, '_>,
+        joined: bool,
+        stopped: &mut Vec<Halt>,
+    ) -> Result<StepReport, Halt> {
+        self.frame_with(vm, host, joined, stopped, &mut |_, _, _| Ok(()))
+    }
+
+    /// [`PlayerLoop::frame`] walking with [`PlayerLoop::walk_with`]'s `then`.
+    pub fn frame_with(
+        &self,
+        vm: &mut Vm,
+        host: &mut WorldHost<'_, '_>,
+        joined: bool,
+        stopped: &mut Vec<Halt>,
+        then: &mut guac_script::Native<'_>,
+    ) -> Result<StepReport, Halt> {
+        let slid = vm.slide(host)?;
+        stopped.extend(slid.stopped);
+        self.walk_with(vm, host, joined, stopped, then)
+    }
+
+    /// What the walk runs in held placement `id`'s place: the game systems'
+    /// tick, the music controller's reset of the mover update (it rejoins
+    /// the awake list's end once the walk is through) or the portal
+    /// manager's tick; nothing for any other held placement.
+    pub fn native(
+        &self,
+        vm: &mut Vm,
+        host: &mut dyn Host,
+        places: &Places,
+        id: PlacementId,
+        joined: bool,
     ) -> Result<(), Halt> {
-        let pm = portal_manager(vm, host.world)?;
+        if places.game_systems == Some(id) {
+            self.game_systems_tick(vm, host, id, joined)
+        } else if places.music == Some(id) {
+            if let Some(mover) = places.mover {
+                vm.requeue(mover);
+            }
+            Ok(())
+        } else if places.portal_manager == Some(id) {
+            self.portal_manager_tick(vm, host, id, joined)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The portal manager's tick as the loop runs it (the module docs), for
+    /// `pm` once its own first tick has run (the VM ticks it then).
+    pub fn portal_manager_tick(
+        &self,
+        vm: &mut Vm,
+        host: &mut dyn Host,
+        pm: PlacementId,
+        joined: bool,
+    ) -> Result<(), Halt> {
         if !vm.is_held(pm) {
             return Ok(());
         }
@@ -305,23 +444,22 @@ impl PlayerLoop {
             vm.run_span(pm, r.start, r.end, host)?;
         }
         vm.count_tick(pm);
-        self.game_systems(vm, host, joined)
+        Ok(())
     }
 
-    /// The game systems' tick as the loop runs it, after the portal
-    /// manager's (it's listed after it in `global.bld`): the update macros
-    /// the loop runs ([`UPDATES`]), then once a hero has joined its orbs;
-    /// its clock counted each step, as its own tick would. Nothing until its
-    /// own first tick has run.
-    pub fn game_systems(
+    /// The game systems' tick as the loop runs it, for `gs` in its own
+    /// place (ahead of the UI's and the portal manager's, AH.59's
+    /// recordings; `global.bld` lists it after them, which isn't the order
+    /// it runs in): the update macros the loop runs ([`UPDATES`]), then once
+    /// a hero has joined its orbs; its clock counted each step, as its own
+    /// tick would. Nothing until its own first tick has run.
+    pub fn game_systems_tick(
         &self,
         vm: &mut Vm,
-        host: &mut WorldHost<'_, '_>,
+        host: &mut dyn Host,
+        gs: PlacementId,
         joined: bool,
     ) -> Result<(), Halt> {
-        let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
-            return Ok(());
-        };
         if !vm.is_held(gs) {
             return Ok(());
         }
@@ -338,11 +476,7 @@ impl PlayerLoop {
 /// macros` the loop runs ([`UPDATES`]), each once in the set's order as the
 /// game systems' tick reaches the set, for `gs`; one a macro takes out of
 /// the set before its turn doesn't run.
-fn run_updates(
-    vm: &mut Vm,
-    host: &mut WorldHost<'_, '_>,
-    gs: guac_script::PlacementId,
-) -> Result<(), Halt> {
+fn run_updates(vm: &mut Vm, host: &mut dyn Host, gs: PlacementId) -> Result<(), Halt> {
     let listed = update_macros(vm);
     for name in listed {
         if update_macros(vm).contains(&name) {
@@ -436,6 +570,11 @@ mod tests {
     /// 0.25 s, loot collecting, health remembered) and the last frame's
     /// time.
     fn portal_manager() -> Arc<Program> {
+        portal_manager_with(|_| {})
+    }
+
+    /// [`portal_manager`]'s file with `extra`'s scripts after it.
+    fn portal_manager_with(extra: impl FnOnce(&mut Writer<'_>)) -> Arc<Program> {
         let mut b = IgzBuilder::new();
         {
             let mut w = Writer::new(&mut b);
@@ -541,6 +680,7 @@ mod tests {
             w.set(&[El::Local(last)], now);
             w.end_block(pre);
             w.end(PATH);
+            extra(w);
         }
         let bytes = b.build();
         let igz = Igz::parse(&bytes).unwrap();
@@ -599,21 +739,16 @@ mod tests {
             bench
         }
 
-        /// One step as the TV's: the slides, the loop, every tick.
+        /// One step as the TV's: the slides, then the walk with the loop's
+        /// slices in their places.
         fn step(&mut self, joined: bool) {
-            let mut engine = NoEngine;
-            let mut spawn = headless_spawner(0x1000);
-            let mut host = WorldHost {
-                world: &mut self.world,
-                engine: &mut engine,
-                generator: &mut self.generator,
-                spawn: &mut spawn,
-            };
-            self.vm.slide(&mut host).unwrap();
-            self.player_loop
-                .step(&mut self.vm, &mut host, joined)
-                .unwrap_or_else(|h| panic!("{h}"));
-            self.vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+            walk(
+                &mut self.vm,
+                &mut self.world,
+                &self.player_loop,
+                &mut self.generator,
+                joined,
+            );
         }
 
         fn count(&self, cell: &str) -> i32 {
@@ -829,13 +964,24 @@ mod tests {
         (vm, world, player_loop, gs)
     }
 
-    /// A step as the loop takes it, a hero joined: the game systems' tick,
-    /// then every placement's.
+    /// A step as the loop takes it, a hero joined: the game systems' tick
+    /// in its place.
     fn game_systems_step(
         vm: &mut Vm,
         world: &mut ScriptWorld,
         player_loop: &PlayerLoop,
         generator: &mut Generator,
+    ) {
+        walk(vm, world, player_loop, generator, true);
+    }
+
+    /// One step's slides and walk over `world`, strict: any stop panics.
+    fn walk(
+        vm: &mut Vm,
+        world: &mut ScriptWorld,
+        player_loop: &PlayerLoop,
+        generator: &mut Generator,
+        joined: bool,
     ) {
         let mut engine = NoEngine;
         let mut spawn = headless_spawner(0x1000);
@@ -845,10 +991,12 @@ mod tests {
             generator,
             spawn: &mut spawn,
         };
+        vm.slide(&mut host).unwrap();
+        let mut stopped = Vec::new();
         player_loop
-            .game_systems(vm, &mut host, true)
+            .walk(vm, &mut host, joined, &mut stopped)
             .unwrap_or_else(|h| panic!("{h}"));
-        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+        assert!(stopped.is_empty(), "strict mode stops by halting");
     }
 
     /// Each of [`UPDATED`]'s calls so far.
@@ -859,6 +1007,174 @@ mod tests {
                 _ => 0,
             },
         )
+    }
+
+    /// openspec AH.59: a step's walk in the original's order, on the
+    /// synthetic portal manager's file grown by a counting script (each
+    /// placement running it reads the combat manager's calls so far into
+    /// `seen` and the step's count of ticks into `place`, then counts on)
+    /// and a music controller with nothing to tick. Added as `init_chain`
+    /// adds them (the music controller, the UI, the portal manager, the
+    /// mover update, a level's Chompy, then the hero's minion made the
+    /// activator at his join), they walk the hero first, the UI ahead of the
+    /// portal manager's slice, the Chompy after it, and the mover update,
+    /// which the music controller's place sends to the end, last.
+    #[test]
+    fn a_step_walks_in_the_originals_order_with_the_loops_slices_in_place() {
+        let program = portal_manager_with(|w| {
+            let counter = w.b.object(0, "ValueInfo", 0x24);
+            w.text(counter, 0x08, "Counter");
+            w.meta_word(counter, 0x1C, INT);
+            w.word(counter, 0x20, 0);
+            let seen = w.variable("seen", "ValueInfo", Some(INT));
+            let place = w.variable("place", "ValueInfo", Some(INT));
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let calls = w.rhs(INT, &[El::Member("test", "combat")]);
+            w.set(&[El::Local(seen)], calls);
+            let at = w.rhs(INT, &[El::Local(counter)]);
+            w.set(&[El::Local(place)], at);
+            w.inc(&[El::Local(counter)]);
+            w.end_block(pre);
+            w.end("C:/tfb/Content/Levels/Synthetic/Count.ai");
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            w.end_block(start);
+            w.end_block(pre);
+            w.end("C:/tfb/Content/Levels/Includes/Global/scripts/MusicController.ai");
+        });
+        let player_loop = PlayerLoop::read(&program);
+        // Each placement's file path, as the places are found by it.
+        let named: [(Obj, u64, &str, &str); 6] = [
+            (
+                Obj { unit: 0, index: 11 },
+                0x11,
+                "Macros_Music",
+                "MusicController.ai",
+            ),
+            (
+                Obj { unit: 0, index: 12 },
+                0x12,
+                "Macros_UI",
+                "Global/scripts/UI.ai",
+            ),
+            (PM, PM_HANDLE, PORTAL_MANAGER, "Spyro_PortalManager.ai"),
+            (
+                Obj { unit: 0, index: 13 },
+                0x13,
+                "movementUpdate",
+                "movementUpdate.ai",
+            ),
+            (
+                Obj { unit: 1, index: 1 },
+                0x21,
+                "Enemy_Chompy(1)",
+                "S2_Enemy_Chompy.ai",
+            ),
+            (
+                Obj { unit: 2, index: 1 },
+                0x31,
+                "009_Eruptor",
+                "009_Eruptor.ai",
+            ),
+        ];
+        let files = Files {
+            placed: named
+                .iter()
+                .map(|&(obj, _, name, path)| {
+                    Placed::named(obj, name, Some(&format!("C:/tfb/{path}")), 4)
+                })
+                .collect(),
+            ..Files::default()
+        };
+        let handles: HashMap<Obj, u64> = named.iter().map(|&(o, h, ..)| (o, h)).collect();
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        for (_, cell) in CALLED {
+            config
+                .members
+                .value_cell("test", cell, MemberSpec::new(Kind::Int, 0.0, 0.0));
+        }
+        config
+            .members
+            .value_cell("test", "hurts", MemberSpec::new(Kind::Int, 0.0, 0.0));
+        config.whitelist = Whitelist::with_first_ticks(
+            &[
+                "Macros_UI",
+                "movementUpdate",
+                "Enemy_Chompy(1)",
+                "009_Eruptor",
+            ],
+            &[],
+            &["Spyro_PortalManager.ai", "MusicController.ai"],
+        );
+        let pm_script = program.script_named("Spyro_PortalManager.ai").unwrap();
+        let music_script = program.script_named("MusicController.ai").unwrap();
+        let count = program.script_named("Count.ai").unwrap();
+        let mut vm = Vm::new(program, config);
+        let mut ids = HashMap::new();
+        for &(obj, h, name, _) in &named {
+            let sid = match name {
+                PORTAL_MANAGER => pm_script,
+                "Macros_Music" => music_script,
+                _ => count,
+            };
+            ids.insert(name, vm.add_at(h, name, sid, obj));
+        }
+        assert!(vm.set_activator(0x31, true));
+        let places = Places::of(&vm, &world);
+        assert_eq!(places.game_systems, None, "no game systems here");
+        assert_eq!(places.music, Some(ids["Macros_Music"]));
+        assert_eq!(places.portal_manager, Some(ids[PORTAL_MANAGER]));
+        assert_eq!(places.mover, Some(0x13));
+        let mut generator = Generator::seeded(1);
+        // The first step takes the held placements' first ticks.
+        walk(&mut vm, &mut world, &player_loop, &mut generator, false);
+        assert!(vm.is_held(ids[PORTAL_MANAGER]) && vm.is_held(ids["Macros_Music"]));
+        let read = |vm: &Vm, name: &str, var: &str| match vm.local(ids[name], var) {
+            Some(Value::Int(i)) => i,
+            other => panic!("{name}'s {var}: {other:?}"),
+        };
+        for step in 1..4 {
+            walk(&mut vm, &mut world, &player_loop, &mut generator, true);
+            let base = 4 * step;
+            let places: Vec<i32> = [
+                "009_Eruptor",
+                "Macros_UI",
+                "Enemy_Chompy(1)",
+                "movementUpdate",
+            ]
+            .iter()
+            .map(|n| read(&vm, n, "place") - base)
+            .collect();
+            assert_eq!(places, [0, 1, 2, 3], "step {step}: hero, UI, Chompy, mover");
+            let calls = step;
+            assert_eq!(
+                read(&vm, "009_Eruptor", "seen"),
+                calls - 1,
+                "before the slice"
+            );
+            assert_eq!(
+                read(&vm, "Macros_UI", "seen"),
+                calls - 1,
+                "the UI ahead of it"
+            );
+            assert_eq!(read(&vm, "Enemy_Chompy(1)", "seen"), calls, "after it");
+            assert_eq!(read(&vm, "movementUpdate", "seen"), calls);
+        }
+        assert_eq!(
+            vm.tick_order()
+                .into_iter()
+                .map(|(g, n)| format!("{}{n}", if g { "*" } else { "" }))
+                .collect::<Vec<_>>(),
+            [
+                "*009_Eruptor",
+                "Macros_Music",
+                "Macros_UI",
+                PORTAL_MANAGER,
+                "Enemy_Chompy(1)",
+                "movementUpdate"
+            ]
+        );
     }
 
     /// The loop's schedule over game time: before a hero joins, the clock

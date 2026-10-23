@@ -62,6 +62,10 @@ pub struct Inputs<'a> {
     /// O5's watch on Giants' list armed at F0, and O6's chains with it.
     pub watch: bool,
     pub chains: bool,
+    /// AH.59: the script scheduler read at F0 and at the end pause
+    /// (`sched-f0.json`, `sched-end.json`) and its chains armed in place of
+    /// the lava's and the Chompies' clips ([`crate::sched`]).
+    pub sched: bool,
     /// The ring's records.
     pub ring: u32,
     /// `sgenrand(seed)` written into the game's generator at F0, before
@@ -837,9 +841,22 @@ fn drive_live(
                 .with_fight(fight.clone())
                 .context("the route's placements on the watch list")?;
         }
+        let sched = if inputs.sched {
+            let s = crate::sched::snapshot(&mut pine).context("the scheduler at F0")?;
+            let path = rrc_dump::output::refuse_repo_output(&dir.join("sched-f0.json"))?;
+            fs::write(&path, serde_json::to_string_pretty(&s)?)?;
+            Some(s)
+        } else {
+            None
+        };
         let chains = if inputs.chains {
-            let chains = GiantsChains::resolve(&mut pine, &watch, &chains::fight_kinds())
-                .context("Giants' chains at F0")?;
+            let chains = GiantsChains::resolve_with(
+                &mut pine,
+                &watch,
+                &chains::fight_kinds(),
+                sched.as_ref(),
+            )
+            .context("Giants' chains at F0")?;
             control.chains_arm(&chains.chains)?;
             Some(chains)
         } else {
@@ -905,6 +922,20 @@ fn drive_live(
         },
         None => (None, None),
     };
+    // AH.59: the scheduler as the end pause holds it, beside the ring's.
+    if inputs.sched {
+        let read =
+            crate::sched::snapshot(&mut pine).and_then(|s| Ok(serde_json::to_string_pretty(&s)?));
+        let (name, text) = match read {
+            Ok(t) => ("sched-end.json", t),
+            Err(e) => (
+                "sched-end.error.txt",
+                format!("the scheduler at the end: {e:#}\n"),
+            ),
+        };
+        let path = rrc_dump::output::refuse_repo_output(&dir.join(name))?;
+        fs::write(&path, text)?;
+    }
     let path = rrc_dump::output::refuse_repo_output(&dir.join(PORTAL_EVENTS_FILE))?;
     fs::write(
         &path,

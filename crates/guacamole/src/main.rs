@@ -699,4 +699,154 @@ mod tests {
             }
         }
     }
+
+    /// openspec AH.59: every fixed-step system the TV's plugins add (the
+    /// hero's, his scripts', the level's, the test hooks' mirror and the
+    /// library's script runner) sits in one of the step's sets, so the
+    /// step's order is [`guacamole::frame::ORDER`] and nothing runs outside
+    /// it.
+    #[test]
+    fn every_fixed_step_system_is_in_a_frame_set() {
+        use bevy::ecs::schedule::{ApplyDeferred, Schedules, SystemSet};
+        use bevy::prelude::{FixedUpdate, MinimalPlugins};
+        use guacamole::frame::{FramePlugin, ORDER};
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            physics::SeamPlugin,
+            hero::HeroPlugin,
+            hero_scripts::HeroScriptsPlugin,
+            level::LevelPlugin,
+            mirror::Mirror,
+            guacamole::scripts::ScriptPlugin,
+        ));
+        assert!(app.is_plugin_added::<FramePlugin>());
+        let world = app.world_mut();
+        let mut fixed = world
+            .resource_mut::<Schedules>()
+            .remove(FixedUpdate)
+            .expect("FixedUpdate");
+        fixed.initialize(world).expect("it builds");
+        let mut in_sets = std::collections::HashSet::new();
+        for set in ORDER {
+            if let Ok(keys) = fixed.graph().systems_in_set(set.intern()) {
+                in_sets.extend(keys.iter().copied());
+            }
+        }
+        // Bevy's own sync points between a set's commands and the next set
+        // aren't systems of ours.
+        let sync = std::any::TypeId::of::<ApplyDeferred>();
+        let outside = fixed
+            .systems()
+            .expect("initialized")
+            .filter(|(key, system)| !in_sets.contains(key) && system.system_type() != sync)
+            .count();
+        assert_eq!(outside, 0, "systems outside every set");
+        assert!(in_sets.len() >= 10, "{} systems in the sets", in_sets.len());
+    }
+
+    /// openspec AH.59's review: each fixed-step system sits in the set its
+    /// phase of the original's frame puts it in ([`guacamole::frame`]'s
+    /// docs), told apart by its type: the pads first, his scripts and the
+    /// level's before the solids, his move after them, the camera after
+    /// him. A system moved to another set fails here, where the sets' own
+    /// order and `every_fixed_step_system_is_in_a_frame_set` don't see it.
+    #[test]
+    fn each_fixed_step_system_runs_in_its_phases_set() {
+        use bevy::ecs::schedule::{Schedules, SystemSet};
+        use bevy::ecs::system::IntoSystem;
+        use bevy::prelude::{FixedUpdate, MinimalPlugins};
+        use guacamole::frame::{Frame, ORDER};
+        use std::any::TypeId;
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            physics::SeamPlugin,
+            hero::HeroPlugin,
+            hero_scripts::HeroScriptsPlugin,
+            level::LevelPlugin,
+            mirror::Mirror,
+            guacamole::scripts::ScriptPlugin,
+        ));
+        let world = app.world_mut();
+        let mut fixed = world
+            .resource_mut::<Schedules>()
+            .remove(FixedUpdate)
+            .expect("FixedUpdate");
+        fixed.initialize(world).expect("it builds");
+        let mut placed: Vec<(TypeId, Frame)> = Vec::new();
+        for set in ORDER {
+            let Ok(keys) = fixed.graph().systems_in_set(set.intern()) else {
+                continue;
+            };
+            let keys: Vec<_> = keys.iter().copied().collect();
+            for (key, system) in fixed.systems().expect("initialized") {
+                if keys.contains(&key) {
+                    placed.push((system.system_type(), set));
+                }
+            }
+        }
+        let want: [(TypeId, Frame, &str); 11] = [
+            (
+                mirror::count_pad_steps.system_type_id(),
+                Frame::Pads,
+                "the pads' count",
+            ),
+            (
+                hero_scripts::step_scripts.system_type_id(),
+                Frame::Scripts,
+                "his scripts' step",
+            ),
+            (
+                guacamole::scripts::step_scripts.system_type_id(),
+                Frame::Scripts,
+                "the library's script runner",
+            ),
+            (
+                level::stand_props.system_type_id(),
+                Frame::Solids,
+                "the props' solids",
+            ),
+            (hero::step_heroes.system_type_id(), Frame::Hero, "his move"),
+            (
+                hero_scripts::advance_scripts.system_type_id(),
+                Frame::Actors,
+                "the engine's frame",
+            ),
+            (
+                hero_scripts::draw_clones.system_type_id(),
+                Frame::Actors,
+                "the clones' draws",
+            ),
+            (
+                hero::step_gaits.system_type_id(),
+                Frame::Locomotion,
+                "his locomotion",
+            ),
+            (
+                hero_scripts::pose_hands.system_type_id(),
+                Frame::Hands,
+                "his hands",
+            ),
+            (
+                hero::step_cameras.system_type_id(),
+                Frame::Camera,
+                "the camera",
+            ),
+            (
+                mirror::log_gaits.system_type_id(),
+                Frame::Record,
+                "the gaits' log",
+            ),
+        ];
+        for (ty, set, what) in want {
+            let sets: Vec<Frame> = placed.iter().filter(|p| p.0 == ty).map(|p| p.1).collect();
+            assert_eq!(sets, [set], "{what}");
+        }
+        assert_eq!(
+            placed.len(),
+            want.len(),
+            "a fixed-step system the table lacks"
+        );
+    }
 }

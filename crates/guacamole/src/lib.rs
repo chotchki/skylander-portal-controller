@@ -9,6 +9,7 @@
 pub mod census;
 pub mod character;
 pub mod figure;
+pub mod frame;
 pub mod game_controller;
 pub mod hands;
 pub mod level_scene;
