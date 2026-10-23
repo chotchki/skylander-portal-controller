@@ -11,9 +11,20 @@
 //! frame times the mask goes into a buffer 512/960 of its width and half
 //! its height, is blurred across and down and is added back twice over
 //! ([`glow.wesl`](glow.wesl)), the arithmetic [`guac_ir::glow`] checks.
+//!
+//! A level (openspec AH.65) runs the same chain on its camera's frame with
+//! the mask in the frame's own alpha ([`FrameGlow`]), the original's order
+//! kept in one camera: everything draws, a fullscreen [`AlphaClear`] then
+//! clears the alpha (it sorts after every blended part, [`CLEAR_BIAS`]),
+//! and each glowing part's mask ([`super::Pass::LevelGlow`]) writes alpha
+//! alone, tested against the level's depth, sorting after that
+//! ([`LEVEL_GLOW_BIAS`]); the chain reads the frame times its alpha and adds
+//! back with the alpha set opaque again.
 
 use bevy::app::{App, Plugin};
-use bevy::asset::{AssetServer, Assets, Handle, RenderAssetUsages, embedded_asset};
+use bevy::asset::{
+    Asset, AssetServer, Assets, Handle, RenderAssetUsages, embedded_asset, uuid_handle,
+};
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{Camera, Camera3d, ClearColorConfig, Hdr, Projection, RenderTarget};
 use bevy::color::Color;
@@ -24,27 +35,29 @@ use bevy::ecs::prelude::*;
 use bevy::ecs::query::QueryItem;
 use bevy::image::Image;
 use bevy::math::{UVec2, Vec4};
-use bevy::mesh::Mesh3d;
 use bevy::mesh::skinning::SkinnedMesh;
-use bevy::pbr::MeshMaterial3d;
+use bevy::mesh::{Indices, Mesh, Mesh3d, MeshVertexBufferLayoutRef, PrimitiveTopology};
+use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin, MeshMaterial3d};
 use bevy::prelude::{ChildOf, Transform};
+use bevy::reflect::TypePath;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{texture_2d, uniform_buffer};
 use bevy::render::render_resource::{
-    BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
-    BlendFactor, BlendOperation, BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites,
-    FragmentState, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, ShaderStages, ShaderType, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsages, UniformBuffer,
+    AsBindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, CachedRenderPipelineId,
+    ColorTargetState, ColorWrites, CompareFunction, FragmentState, Operations, PipelineCache,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages,
+    ShaderType, SpecializedMeshPipelineError, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, UniformBuffer,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_component::SyncComponent;
 use bevy::render::texture::{CachedTexture, GpuImage, TextureCache};
 use bevy::render::view::{Msaa, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
-use bevy::shader::Shader;
+use bevy::shader::{Shader, ShaderRef};
 use guac_ir::model::Model;
 
 use super::material::CharacterMaterial;
@@ -52,6 +65,133 @@ use super::mesh::SpawnedCharacter;
 
 /// The shader, embedded by [`GlowPlugin`].
 pub const SHADER: &str = "embedded://guacamole/character/glow.wesl";
+/// [`AlphaClear`]'s shader, embedded by [`GlowPlugin`].
+pub const CLEAR_SHADER: &str = "embedded://guacamole/character/alpha_clear.wesl";
+
+/// Where a level's [`AlphaClear`] sorts among the blended parts (Bevy sorts
+/// them by view depth plus their bias, nearest last): after every one of
+/// them, its own depth a few metres either side of nothing.
+pub const CLEAR_BIAS: f32 = 1.0e6;
+/// Where a level's glow masks sort: after the [`AlphaClear`], in their own
+/// depth order among themselves.
+pub const LEVEL_GLOW_BIAS: f32 = 2.0e6;
+
+/// The fullscreen triangle an [`AlphaClear`] draws, in clip space.
+pub const CLEAR_MESH: Handle<Mesh> = uuid_handle!("5a7e0b8c-2f61-4d1e-8c3a-9b0d4e6f1a01");
+/// The one [`AlphaClear`] material.
+pub const CLEAR_MATERIAL: Handle<AlphaClear> = uuid_handle!("5a7e0b8c-2f61-4d1e-8c3a-9b0d4e6f1a02");
+
+/// On an HDR 3D camera that draws a level: run the glow chain on its frame
+/// with the mask its own alpha holds ([`spawn_alpha_clear`] clears it, the
+/// level's glow masks write it), and leave the frame opaque.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct FrameGlow;
+
+impl SyncComponent<RenderApp> for FrameGlow {
+    type Target = Self;
+}
+
+impl ExtractComponent<RenderApp> for FrameGlow {
+    type QueryData = &'static Self;
+    type QueryFilter = With<Hdr>;
+    type Out = Self;
+
+    fn extract_component(glow: QueryItem<'_, '_, Self::QueryData>) -> Option<Self> {
+        Some(*glow)
+    }
+}
+
+/// Clears a level frame's alpha to none, colour untouched, wherever it
+/// draws (a triangle over the whole view, every depth): what the level's
+/// glow masks then write into. Blended, so it sorts with the blended parts,
+/// and after them all ([`CLEAR_BIAS`]).
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct AlphaClear {}
+
+impl Material for AlphaClear {
+    fn vertex_shader() -> ShaderRef {
+        CLEAR_SHADER.into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        CLEAR_SHADER.into()
+    }
+
+    fn alpha_mode(&self) -> bevy::material::AlphaMode {
+        bevy::material::AlphaMode::Blend
+    }
+
+    fn depth_bias(&self) -> f32 {
+        CLEAR_BIAS
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.vertex.buffers = vec![
+            layout
+                .0
+                .get_layout(&[Mesh::ATTRIBUTE_POSITION.at_shader_location(0)])?,
+        ];
+        clear_states(descriptor);
+        Ok(())
+    }
+}
+
+/// [`AlphaClear`]'s states: both faces, every depth passing and none
+/// written, alpha alone written, unblended.
+fn clear_states(descriptor: &mut RenderPipelineDescriptor) {
+    descriptor.primitive.cull_mode = None;
+    if let Some(depth) = descriptor.depth_stencil.as_mut() {
+        depth.depth_write_enabled = Some(false);
+        depth.depth_compare = Some(CompareFunction::Always);
+    }
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        for target in fragment.targets.iter_mut().flatten() {
+            target.blend = None;
+            target.write_mask = ColorWrites::ALPHA;
+        }
+    }
+}
+
+/// [`CLEAR_MESH`]: one triangle whose corners cover clip space.
+pub fn clear_mesh() -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vec![[-1.0f32, -1.0, 0.0], [3.0, -1.0, 0.0], [-1.0, 3.0, 0.0]],
+    )
+    .with_inserted_indices(Indices::U16(vec![0, 1, 2]))
+}
+
+/// The level's [`AlphaClear`] for `camera`, on `layer` (the camera's): a
+/// child, so it goes with it.
+pub fn spawn_alpha_clear(commands: &mut Commands, camera: Entity, layer: usize) -> Entity {
+    commands
+        .spawn((
+            Mesh3d(CLEAR_MESH),
+            MeshMaterial3d(CLEAR_MATERIAL),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            RenderLayers::layer(layer),
+            ChildOf(camera),
+        ))
+        .id()
+}
 
 /// The mask, the buffer and the frame they're added back into: half
 /// floats, so the chain stays linear and unclamped.
@@ -84,7 +224,12 @@ pub struct GlowPlugin;
 impl Plugin for GlowPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "glow.wesl");
-        app.add_plugins(ExtractComponentPlugin::<Glow>::default());
+        embedded_asset!(app, "alpha_clear.wesl");
+        app.add_plugins((
+            ExtractComponentPlugin::<Glow>::default(),
+            ExtractComponentPlugin::<FrameGlow>::default(),
+            MaterialPlugin::<AlphaClear>::default(),
+        ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -98,6 +243,16 @@ impl Plugin for GlowPlugin {
                 Core3d,
                 glow.before(tonemapping).in_set(Core3dSystems::PostProcess),
             );
+    }
+
+    // After every plugin's build, so the asset stores are there.
+    fn finish(&self, app: &mut App) {
+        if let Some(mut meshes) = app.world_mut().get_resource_mut::<Assets<Mesh>>() {
+            let _ = meshes.insert(CLEAR_MESH.id(), clear_mesh());
+        }
+        if let Some(mut clears) = app.world_mut().get_resource_mut::<Assets<AlphaClear>>() {
+            let _ = clears.insert(CLEAR_MATERIAL.id(), AlphaClear {});
+        }
     }
 }
 
@@ -139,7 +294,25 @@ struct GlowPipelines {
     across: CachedRenderPipelineId,
     down: CachedRenderPipelineId,
     add_back: CachedRenderPipelineId,
+    /// A level's ([`FrameGlow`]): the mask off the frame's alpha, and the
+    /// add-back leaving the alpha opaque.
+    extract_alpha: CachedRenderPipelineId,
+    add_back_opaque: CachedRenderPipelineId,
 }
+
+/// Adds colour and sets alpha to what's written (the add-back writes 1).
+const ADD_COLOUR_OPAQUE: BlendState = BlendState {
+    color: BlendComponent {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::One,
+        operation: BlendOperation::Add,
+    },
+    alpha: BlendComponent {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::Zero,
+        operation: BlendOperation::Add,
+    },
+};
 
 /// Adds colour and leaves what's there in alpha.
 const ADD_COLOUR: BlendState = BlendState {
@@ -196,6 +369,12 @@ fn init_pipelines(
         across: pipeline("glow_across", "across", None),
         down: pipeline("glow_down", "down", None),
         add_back: pipeline("glow_add_back", "add_back", Some(ADD_COLOUR)),
+        extract_alpha: pipeline("glow_extract_alpha", "extract_alpha", None),
+        add_back_opaque: pipeline(
+            "glow_add_back_opaque",
+            "add_back_opaque",
+            Some(ADD_COLOUR_OPAQUE),
+        ),
         layout,
     };
     commands.insert_resource(pipelines);
@@ -210,12 +389,16 @@ struct GlowTextures {
     uniform: UniformBuffer<GlowUniform>,
 }
 
+/// The views a chain runs on: a card's ([`Glow`]) or a level's
+/// ([`FrameGlow`]).
+type GlowViews = Or<(With<Glow>, With<FrameGlow>)>;
+
 fn prepare_textures(
     mut commands: Commands,
     mut cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
-    views: Query<(Entity, &ExtractedCamera), With<Glow>>,
+    views: Query<(Entity, &ExtractedCamera), GlowViews>,
 ) {
     for (entity, camera) in &views {
         let Some(frame) = camera.physical_viewport_size else {
@@ -250,7 +433,7 @@ fn prepare_textures(
 }
 
 fn glow(
-    view: ViewQuery<(&ExtractedCamera, &ViewTarget, &Glow, &GlowTextures)>,
+    view: ViewQuery<(&ExtractedCamera, &ViewTarget, Option<&Glow>, &GlowTextures)>,
     pipelines: Option<Res<GlowPipelines>>,
     pipeline_cache: Res<PipelineCache>,
     images: Res<RenderAssets<GpuImage>>,
@@ -261,17 +444,30 @@ fn glow(
     if !camera.hdr || target.main_texture_format() != FORMAT {
         return;
     }
+    // A card's chain reads its glow camera's mask; a level's, its frame's
+    // alpha (`FrameGlow`, the only other view prepared).
+    let (extract, add_back) = match glow {
+        Some(_) => (pipelines.extract, pipelines.add_back),
+        None => (pipelines.extract_alpha, pipelines.add_back_opaque),
+    };
     let get = |id| pipeline_cache.get_render_pipeline(id);
     let (Some(extract), Some(across), Some(down), Some(add_back)) = (
-        get(pipelines.extract),
+        get(extract),
         get(pipelines.across),
         get(pipelines.down),
-        get(pipelines.add_back),
+        get(add_back),
     ) else {
         return;
     };
-    let (Some(mask), Some(uniform)) = (images.get(&glow.mask), textures.uniform.binding()) else {
+    let Some(uniform) = textures.uniform.binding() else {
         return;
+    };
+    let mask = match glow {
+        Some(glow) => match images.get(&glow.mask) {
+            Some(mask) => Some(mask),
+            None => return,
+        },
+        None => None,
     };
     let layout = pipeline_cache.get_bind_group_layout(&pipelines.layout);
     let (first, second) = (&textures.first.default_view, &textures.second.default_view);
@@ -286,7 +482,7 @@ fn glow(
     let from_frame = bind(
         "glow_extract",
         target.main_texture_view(),
-        &mask.texture_view,
+        mask.map_or(target.main_texture_view(), |m| &m.texture_view),
     );
     let from_first = bind("glow_from_first", first, first);
     let from_second = bind("glow_from_second", second, second);
@@ -435,6 +631,68 @@ mod tests {
         let sum = weights[0] + 2.0 * weights[1..].iter().sum::<f32>();
         assert!((sum - 1.0).abs() < 1e-6);
         assert_eq!(buffer_size(UVec2::new(3840, 2160)), UVec2::new(2048, 1080));
+    }
+
+    /// AH.65: a level's add-back adds colour as a card's does and leaves
+    /// the frame opaque (its alpha held the mask); its alpha clear writes
+    /// alpha alone at every depth over the whole view, after the blended
+    /// parts and before the masks.
+    #[test]
+    fn a_levels_chain_clears_its_alpha_and_leaves_the_frame_opaque() {
+        let c = ADD_COLOUR_OPAQUE.color;
+        assert_eq!(
+            (c.src_factor, c.dst_factor, c.operation),
+            (BlendFactor::One, BlendFactor::One, BlendOperation::Add)
+        );
+        let a = ADD_COLOUR_OPAQUE.alpha;
+        assert_eq!(
+            (a.src_factor, a.dst_factor),
+            (BlendFactor::One, BlendFactor::Zero)
+        );
+        let mut d = RenderPipelineDescriptor {
+            depth_stencil: Some(bevy::render::render_resource::DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            fragment: Some(FragmentState {
+                targets: vec![Some(ColorTargetState {
+                    format: FORMAT,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        clear_states(&mut d);
+        let depth = d.depth_stencil.as_ref().unwrap();
+        assert_eq!(
+            (depth.depth_write_enabled, depth.depth_compare),
+            (Some(false), Some(CompareFunction::Always))
+        );
+        let target = d.fragment.as_ref().unwrap().targets[0].as_ref().unwrap();
+        assert_eq!(
+            (target.blend, target.write_mask),
+            (None, ColorWrites::ALPHA)
+        );
+        assert_eq!(d.primitive.cull_mode, None);
+        const { assert!(CLEAR_BIAS > 1e5 && LEVEL_GLOW_BIAS > CLEAR_BIAS + 1e5) };
+        // Its triangle covers clip space.
+        let mesh = clear_mesh();
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("positions")
+        };
+        assert_eq!(p.len(), 3);
+        for corner in [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]] {
+            // Inside x >= -1, y >= -1, x + y <= 2.
+            assert!(corner[0] >= p[0][0] && corner[1] >= p[0][1]);
+            assert!(corner[0] + corner[1] <= p[1][0] + p[1][1]);
+        }
     }
 
     #[test]

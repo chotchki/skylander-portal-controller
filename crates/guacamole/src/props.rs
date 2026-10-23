@@ -274,6 +274,10 @@ pub fn models_keys(models: &[PropModel], scene: &Scene) -> Result<Vec<WarmKey>, 
 pub fn faded_keys(models: &[PropModel], scene: &Scene) -> Result<Vec<WarmKey>, LevelError> {
     let mut out: Vec<WarmKey> = Vec::new();
     for mut k in models_keys(models, scene)? {
+        // A glow mask's pipeline takes no blend (openspec AH.65).
+        if k.material.pass != crate::character::Pass::Colour {
+            continue;
+        }
         let faded = k.material.states.faded();
         if faded == k.material.states {
             continue;
@@ -910,10 +914,12 @@ mod tests {
             fog: true,
             ..Scene::new()
         };
-        assert_eq!(
-            p.keys(&scene).unwrap(),
-            [census::LEVEL[0].key(false).unwrap()]
-        );
+        // The census's material glows, so its level glow mask keys too
+        // (AH.65).
+        let key = census::LEVEL[0].key(false).unwrap();
+        let mut glow = key;
+        glow.material.pass = crate::character::Pass::LevelGlow;
+        assert_eq!(p.keys(&scene).unwrap(), [key, glow]);
     }
 
     /// What only a Giant moves stays put (openspec AH.27; breakables' Tree

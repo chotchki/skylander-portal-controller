@@ -10,7 +10,9 @@
 // Every vector the uniform holds is view space, but for a level's lights
 // (AG.21): with `misc.w` 1 the directional lights' travels and the point
 // lights' positions are the world's, turned into view space by the view
-// drawn for, so a camera that moves rewrites no material.
+// drawn for, so a camera that moves rewrites no material. With `misc.w` 2
+// (AH.65) the point lights come off the scene's buffer instead, in the
+// world's frame too, so a light the scripts move rewrites one buffer.
 //
 // WESL flattens a block an `@if` holds into the block around it, so each
 // such block's names are its own.
@@ -73,6 +75,15 @@ struct Character {
 @group(constants::MATERIAL_BIND_GROUP) @binding(16) var rim_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(17) var shadow_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(18) var shadow_sampler: sampler;
+
+// A scene's three point lights, as the uniform's three arrays.
+struct SceneLights {
+    position: array<vec4<f32>, 3>,
+    colour: array<vec4<f32>, 3>,
+    falloff: array<vec4<f32>, 3>,
+}
+
+@group(constants::MATERIAL_BIND_GROUP) @binding(19) var<storage, read> scene_lights: SceneLights;
 
 // What a part without vertex colours takes in their place.
 const HALF_GREY: vec4<f32> = vec4<f32>(0.5, 0.5, 0.5, 1.0);
@@ -192,9 +203,17 @@ fn light_travel(i: u32) -> vec3<f32> {
     return travel;
 }
 
+// Whether the point lights come off the scene's buffer (`misc.w` 2).
+fn lights_from_scene() -> bool {
+    return character.misc.w > 1.5;
+}
+
 // Point light `j`'s position in view space.
 fn point_position(j: u32) -> vec3<f32> {
-    let at = character.point_position[j].xyz;
+    var at = character.point_position[j].xyz;
+    if lights_from_scene() {
+        at = scene_lights.position[j].xyz;
+    }
     if character.misc.w > 0.5 {
         return (view.view_from_world * vec4<f32>(at, 1.0)).xyz;
     }
@@ -273,8 +292,14 @@ fn point_light(j: u32, n: vec3<f32>, position: vec3<f32>) -> vec3<f32> {
     let d = length(to);
     let f = max(dot(n, to) / d, 0.0);
     let de = d + 0.001;
-    let falloff = character.point_falloff[j].x / de + character.point_falloff[j].y / (de * de);
-    return character.point_colour[j].rgb * (f * falloff);
+    var terms = character.point_falloff[j].xy;
+    var colour = character.point_colour[j].rgb;
+    if lights_from_scene() {
+        terms = scene_lights.falloff[j].xy;
+        colour = scene_lights.colour[j].rgb;
+    }
+    let falloff = terms.x / de + terms.y / (de * de);
+    return colour * (f * falloff);
 }
 
 @fragment
@@ -406,11 +431,9 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
 // The glow pass (AE.11): the part's glow alpha, layer 1's alpha switched
 // hard at a fixed alpha of 0 (not the colour pass's ramp) times the vertex
 // and both tints' alphas, and its mask: the glow amount, that alpha when the
-// amount is -1, nothing at 0. The alpha test runs on the glow alpha; the
-// mask goes in red, green and blue, the glow alpha in alpha, as the
-// original's glow shader writes them.
-@fragment
-fn glow_mask(in: Interpolants) -> @location(0) vec4<f32> {
+// amount is -1, nothing at 0. The alpha test runs on the glow alpha. x the
+// mask, y the glow alpha.
+fn glow_of(in: Interpolants) -> vec2<f32> {
     var vertex_colour = HALF_GREY;
 @if(CHAR_VERTEX_COLOUR)
     vertex_colour = in.colour;
@@ -428,5 +451,20 @@ fn glow_mask(in: Interpolants) -> @location(0) vec4<f32> {
         discard;
     }
 }
-    return vec4<f32>(mask, mask, mask, glow_alpha);
+    return vec2<f32>(mask, glow_alpha);
+}
+
+// The mask in red, green and blue, the glow alpha in alpha, as the
+// original's glow shader writes them.
+@fragment
+fn glow_mask(in: Interpolants) -> @location(0) vec4<f32> {
+    let g = glow_of(in);
+    return vec4<f32>(g.x, g.x, g.x, g.y);
+}
+
+// A level's (AH.65): the mask in the frame's alpha, the only channel the
+// pipeline writes.
+@fragment
+fn level_glow(in: Interpolants) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, glow_of(in).x);
 }

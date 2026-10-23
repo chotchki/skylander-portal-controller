@@ -2372,3 +2372,103 @@ fn the_eruptions_reach_passes_the_breakables_on_their_frames() {
         load()
     );
 }
+
+/// AH.65: what his attacks light, as `global.bld`'s point-light manager
+/// hands its three pool lights out (`PointLightManager.ai` every tick):
+/// South's ball carries `009_Eruptor_projectile_light`'s values on it from
+/// the step after it spawns until it's gone, its burst lights the same
+/// light on the splash, and West's eruption lights
+/// `009_Eruptor_LavaAttack_light_big` 22 ft over its `009_LavaAttack`,
+/// fading out over 1.5 s; never more than the pool's three at once, none
+/// before the press.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn his_attacks_light_what_the_point_light_manager_hands_out() {
+    println!("load before: {}", load());
+    let mut run = joined();
+    assert!(run.world.lit_lights().is_empty(), "nothing lit at rest");
+    let named = |run: &Run, name: &str| -> Vec<Handle> {
+        run.world
+            .clones()
+            .into_iter()
+            .filter(|c| {
+                let a = run.world.actor(*c).unwrap();
+                !a.removed && a.template.and_then(|t| run.world.name_of(t)).as_deref() == Some(name)
+            })
+            .collect()
+    };
+    let feet = guacamole::script_engine::METRES_PER_FOOT;
+    let (mut ball_steps, mut ball_lit, mut most) = (0, 0, 0);
+    let mut erupt: Vec<(u32, u32, f32)> = Vec::new();
+    let mut ball_gone = None;
+    for k in 0..300u32 {
+        run.bench.pads[0] = scripted("a1@5,a2@100", k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let lit = run.world.lit_lights();
+        most = most.max(lit.len());
+        if k < 5 {
+            assert!(lit.is_empty(), "step {k}: lit before the press");
+        }
+        let balls = named(&run, "009_LavaProjectile");
+        if let Some(&ball) = balls.first() {
+            ball_steps += 1;
+            let at = run.world.actor(ball).unwrap().position;
+            // The step it spawns the light holds the pool's template's
+            // values (no falloff: it adds nothing); the manager's next tick
+            // copies the ball's on.
+            if let Some((_, l)) = lit
+                .iter()
+                .find(|(p, l)| p.distance(at) < 1e-4 && l.attenuation[1] > 0.0)
+            {
+                ball_lit += 1;
+                assert_eq!(
+                    (l.diffuse, l.attenuation[1], l.lift),
+                    (0x5F29_1BFF, 1.5, 0.0),
+                    "step {k}: the ball's light"
+                );
+            }
+        } else if ball_steps > 0 && ball_gone.is_none() {
+            ball_gone = Some(k);
+        }
+        for attack in named(&run, "009_LavaAttack") {
+            let at = run.world.actor(attack).unwrap().position;
+            let over = at + bevy::math::Vec3::Y * 22.0 * feet;
+            if let Some((_, l)) = lit
+                .iter()
+                .find(|(p, l)| p.distance(over) < 1e-3 && l.attenuation[1] > 0.0)
+            {
+                assert_eq!((l.attenuation[1], l.lift), (0.99, 22.0), "step {k}");
+                erupt.push((k, l.diffuse, l.multiplier));
+            }
+        }
+    }
+    println!(
+        "ball on {ball_steps} steps, lit {ball_lit}, gone at {ball_gone:?}; the eruption's light {} steps, first {:x?}, last {:x?}; at most {most} lit",
+        erupt.len(),
+        erupt.first(),
+        erupt.last()
+    );
+    assert!(
+        ball_steps > 40 && ball_lit >= ball_steps - 1,
+        "lit from the step after it spawns"
+    );
+    assert!(most <= 3, "the pool's three");
+    // The eruption's: full at the first step it's lit, then down step by
+    // step, every channel, over its 1.5 s.
+    let (first, last) = (erupt[0], *erupt.last().unwrap());
+    let channels = |c: u32| c.to_be_bytes();
+    assert!(channels(first.1)[0] >= 0xD0, "{:x}", first.1);
+    for w in erupt.windows(2) {
+        let (a, b) = (channels(w[0].1), channels(w[1].1));
+        assert!(
+            (0..3).all(|i| b[i] <= a[i]),
+            "{:x} then {:x}",
+            w[0].1,
+            w[1].1
+        );
+    }
+    let lasted = (last.0 - first.0 + 1) as f32 / 60.0;
+    assert!((1.3..=1.6).contains(&lasted), "lit {lasted} s");
+    assert!(channels(last.1)[0] < 0x10, "out at its end: {:x}", last.1);
+    println!("load after: {}", load());
+}

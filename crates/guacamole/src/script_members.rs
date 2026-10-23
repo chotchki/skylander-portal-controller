@@ -150,6 +150,19 @@ pub(crate) enum Member {
     /// `collisioninfo.contacts with me`: the actors whose solids touch this
     /// one's (within [`CONTACT_REACH`]), nearest first.
     ContactsWithMe,
+    // AH.65's.
+    /// A placed light's or its clone's `lightinfo` values.
+    Light(LightField),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LightField {
+    Diffuse,
+    Ambient,
+    Specular,
+    Multiplier,
+    /// Constant, linear or quadratic, by its index.
+    Attenuation(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +273,18 @@ impl Member {
         add("scalemeasurement", "y", Member::ScaleAxis(1));
         add("scalemeasurement", "z", Member::ScaleAxis(2));
         add("placement", "tint", Member::Tint);
+        use LightField as L;
+        for (name, f) in [
+            ("diffuse color", L::Diffuse),
+            ("ambient color", L::Ambient),
+            ("specular color", L::Specular),
+            ("multiplier", L::Multiplier),
+            ("constant attenuation factor", L::Attenuation(0)),
+            ("linear attenuation factor", L::Attenuation(1)),
+            ("quadratic attenuation factor", L::Attenuation(2)),
+        ] {
+            add("lightinfo", name, Member::Light(f));
+        }
         add("actorinfo", "movement", Member::Movement);
         use PhysicsField as P;
         for (name, f) in [
@@ -795,6 +820,18 @@ impl ScriptWorld {
         }
     }
 
+    /// The light a receiver names (openspec AH.65): a clone's own, or a
+    /// light placement's as its file has it (no handle stands for one).
+    fn light_mut(&mut self, recv: Option<Value>) -> Option<&mut crate::script_engine::Light> {
+        match recv? {
+            Value::Object(o) if !self.objects.contains_key(&o) => self.light_templates.get_mut(&o),
+            v => {
+                let h = self.handle(v)?;
+                self.actors.get_mut(&h)?.light.as_mut()
+            }
+        }
+    }
+
     pub(crate) fn get_member(
         &mut self,
         at: &Access,
@@ -860,6 +897,16 @@ impl ScriptWorld {
                     .get(&actor.ok_or(HostFault::Nothing)?)
                     .map_or(0x8080_80FF, |a| a.tint),
             ),
+            Member::Light(f) => {
+                let l = *self.light_mut(recv).ok_or(HostFault::Nothing)?;
+                match f {
+                    LightField::Diffuse => Value::Color(l.diffuse),
+                    LightField::Ambient => Value::Color(l.ambient),
+                    LightField::Specular => Value::Color(l.specular),
+                    LightField::Multiplier => Value::Float(l.multiplier),
+                    LightField::Attenuation(i) => Value::Float(l.attenuation[i]),
+                }
+            }
             Member::Movement => self.facet(recv, Facet::Movement)?,
             Member::Physics(f) => {
                 let Some(Object::Facet(h, Facet::Movement)) = object else {
@@ -1214,6 +1261,28 @@ impl ScriptWorld {
                 let h = actor.ok_or(HostFault::Nothing)?;
                 if let Value::Color(c) = v {
                     self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.tint = c;
+                }
+            }
+            Member::Light(f) => {
+                let l = self.light_mut(recv).ok_or(HostFault::Nothing)?;
+                match (f, v) {
+                    (LightField::Diffuse, Value::Color(c)) => l.diffuse = c,
+                    (LightField::Ambient, Value::Color(c)) => l.ambient = c,
+                    (LightField::Specular, Value::Color(c)) => l.specular = c,
+                    (LightField::Multiplier, v) => l.multiplier = float(v)?,
+                    (LightField::Attenuation(i), v) => l.attenuation[i] = float(v)?,
+                    _ => {}
+                }
+            }
+            // A light's vertical offset: how far over what it hangs from it
+            // sits (openspec AH.65: the point-light manager writes its
+            // `V Offset` measured from the light's parent each tick, and
+            // hangs it on that parent each tick too, so it's kept as the
+            // light's lift, not as a place the next hang would undo).
+            Member::VerticalOffset if self.light_mut(recv).is_some() => {
+                let x = float(v)?;
+                if let Some(l) = self.light_mut(recv) {
+                    l.lift = x;
                 }
             }
             Member::Physics(f) => {
@@ -2302,6 +2371,7 @@ mod tests {
 
     fn world() -> ScriptWorld {
         let files = Files {
+            lights: HashMap::new(),
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::new(),
@@ -3093,6 +3163,7 @@ mod fight_tests {
 
     pub(super) fn world() -> ScriptWorld {
         let files = Files {
+            lights: HashMap::new(),
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::from([
@@ -4051,5 +4122,169 @@ mod hurt_tests {
         b.set("go", Value::Int(1));
         b.step();
         assert_eq!(b.int("hits"), 3, "its script ended with it");
+    }
+}
+
+/// The placed lights the point-light manager hands out (openspec AH.65).
+#[cfg(test)]
+mod light_tests {
+    use super::*;
+    use crate::script_engine::{Actor, Light, NoEngine};
+    use crate::scripts::{Files, headless_objects};
+
+    /// `global.bld`'s `PointLightTemplate` and Eruptor's
+    /// `009_Eruptor_projectile_light`, as their files hold them.
+    const TEMPLATE: Obj = Obj { unit: 1, index: 15 };
+    const BALL_LIGHT: Obj = Obj { unit: 3, index: 21 };
+    const CLONE: Handle = 0x77;
+    const BALL: Handle = 0x78;
+
+    fn light(diffuse: u32, specular: u32, linear: f32) -> Light {
+        Light {
+            diffuse,
+            ambient: 0x0000_00FF,
+            specular,
+            multiplier: 1.0,
+            attenuation: [0.0, linear, 0.0],
+            lift: 0.0,
+        }
+    }
+
+    fn world() -> ScriptWorld {
+        let files = Files {
+            lights: HashMap::from([
+                (TEMPLATE, light(0xFFFF_FFFF, 0xFFFF_FFFF, 0.0)),
+                (BALL_LIGHT, light(0x5F29_1BFF, 0x3B26_12FF, 1.5)),
+            ]),
+            ..Files::default()
+        };
+        let handles = HashMap::new();
+        ScriptWorld::new(&files, &handles, headless_objects(&handles))
+    }
+
+    fn call(class: Class, first: Value) -> OpCall {
+        OpCall {
+            placement: 1,
+            receiver: first,
+            class,
+            operands: vec![("_LHS", Some(first))],
+            words: Vec::new(),
+            sets: Vec::new(),
+        }
+    }
+
+    fn member(ns: &str, name: &str, receiver: Value, other: Option<Value>) -> Access {
+        Access {
+            placement: 1,
+            receiver: Some(receiver),
+            member: MemberId::named(ns, name),
+            other_point: other,
+        }
+    }
+
+    fn at(name: &str, receiver: Value, other: Option<Value>) -> Access {
+        member("lightinfo", name, receiver, other)
+    }
+
+    /// A clone of a placed light starts from its template's values; what
+    /// the manager writes onto it reads back; a remove takes it off and a
+    /// reset brings it back on with its template's values (the manager
+    /// removes a light it returns to its pool and resets one it takes out).
+    #[test]
+    fn a_light_clone_starts_from_its_template_and_a_reset_brings_it_back() {
+        let mut w = world();
+        let e = &mut NoEngine;
+        let made = w
+            .op(
+                &call(Class::Spawn, Value::Object(TEMPLATE)),
+                &mut |_| CLONE,
+                e,
+            )
+            .unwrap();
+        assert!(matches!(made, Answer::Run { .. }));
+        let template = light(0xFFFF_FFFF, 0xFFFF_FFFF, 0.0);
+        assert_eq!(w.actor(CLONE).unwrap().light, Some(template));
+        // The manager copies the asker's colours and falloff on.
+        for name in [
+            "diffuse color",
+            "specular color",
+            "linear attenuation factor",
+        ] {
+            let v = w
+                .get(&at(name, Value::Object(BALL_LIGHT), None), e)
+                .unwrap();
+            w.set(&at(name, Value::Entity(CLONE), None), v, e).unwrap();
+        }
+        let lit = w.actor(CLONE).unwrap().light.unwrap();
+        assert_eq!(
+            (lit.diffuse, lit.specular, lit.attenuation),
+            (0x5F29_1BFF, 0x3B26_12FF, [0.0, 1.5, 0.0])
+        );
+        assert_eq!(
+            w.get(&at("multiplier", Value::Entity(CLONE), None), e),
+            Ok(Value::Float(1.0))
+        );
+        w.op(&call(Class::Remove, Value::Entity(CLONE)), &mut |_| 0, e)
+            .unwrap();
+        assert!(w.removed(CLONE));
+        w.op(&call(Class::Reset, Value::Entity(CLONE)), &mut |_| 0, e)
+            .unwrap();
+        assert!(!w.removed(CLONE), "a reset puts it back on");
+        assert_eq!(w.actor(CLONE).unwrap().light, Some(template));
+        // A member on something that isn't a light is nothing.
+        w.actors.insert(BALL, Actor::blank());
+        assert_eq!(
+            w.get(&at("diffuse color", Value::Entity(BALL), None), e),
+            Err(HostFault::Nothing)
+        );
+    }
+
+    /// What the scripts have lit, as the TV draws it: each clone of a
+    /// light on, where the manager last hung it raised by its vertical
+    /// offset (the eruption's 22 ft), a removed one not.
+    #[test]
+    fn the_lit_lights_hang_where_the_manager_puts_them_raised_by_their_offset() {
+        let mut w = world();
+        let e = &mut NoEngine;
+        let mut ball = Actor::blank();
+        ball.position = Vec3::new(10.0, 43.0, -93.0);
+        w.actors.insert(BALL, ball);
+        w.op(
+            &call(Class::Spawn, Value::Object(TEMPLATE)),
+            &mut |_| CLONE,
+            e,
+        )
+        .unwrap();
+        w.set(
+            &member(
+                "abstractplacement",
+                "attach node",
+                Value::Entity(CLONE),
+                None,
+            ),
+            Value::Entity(BALL),
+            e,
+        )
+        .unwrap();
+        w.set(
+            &member(
+                "positionmeasurement",
+                "vertical offset",
+                Value::Entity(CLONE),
+                Some(Value::Entity(BALL)),
+            ),
+            Value::Float(22.0),
+            e,
+        )
+        .unwrap();
+        let lit = w.lit_lights();
+        assert_eq!(lit.len(), 1);
+        let (place, l) = lit[0];
+        assert_eq!(l.lift, 22.0);
+        let want = Vec3::new(10.0, 43.0 + 22.0 * METRES_PER_FOOT, -93.0);
+        assert!(place.abs_diff_eq(want, 1e-5), "{place}");
+        w.op(&call(Class::Remove, Value::Entity(CLONE)), &mut |_| 0, e)
+            .unwrap();
+        assert!(w.lit_lights().is_empty());
     }
 }

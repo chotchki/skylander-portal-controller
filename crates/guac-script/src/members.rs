@@ -1641,7 +1641,10 @@ pub const HERO: &[Registered] = &[
         0.0,
         Host,
     ),
-    // Cosmetic: the HUD's sprites, lights, bloom, shadows, particles' generators.
+    // Cosmetic: the HUD's sprites, bloom, shadows, particles' generators.
+    // A placed light's colours, multiplier and attenuation are the host's
+    // (openspec AH.65): the point-light manager copies them onto its pool's
+    // lights and the TV draws what they hold.
     m(
         "actorinfo",
         "bloom intensity",
@@ -1676,7 +1679,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         0.0,
-        Cell,
+        Host,
     ),
     m(
         "lightinfo",
@@ -1685,7 +1688,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         0.0,
-        Cell,
+        Host,
     ),
     m(
         "lightinfo",
@@ -1694,7 +1697,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         0.0,
-        Cell,
+        Host,
     ),
     m(
         "lightinfo",
@@ -1703,7 +1706,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         OPEN,
-        Cell,
+        Host,
     ),
     m(
         "lightinfo",
@@ -1712,7 +1715,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         OPEN,
-        Cell,
+        Host,
     ),
     m(
         "lightinfo",
@@ -1721,7 +1724,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         OPEN,
-        Cell,
+        Host,
     ),
     m(
         "lightinfo",
@@ -1730,7 +1733,7 @@ pub const HERO: &[Registered] = &[
         "",
         0.0,
         OPEN,
-        Cell,
+        Host,
     ),
     m(
         "spriteinfo",

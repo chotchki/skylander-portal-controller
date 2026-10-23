@@ -837,11 +837,13 @@ fn choose_hero(cards: Res<PortalCards>, turntables: Res<Turntables>, mut play: R
 }
 
 /// The scene the hero's keys are made in: the hero scene's switches (fog
-/// on, no point light, no shadows), which alone key a pipeline; the
-/// level's lights and fog are uniforms, set when he's drawn.
-fn key_scene() -> Scene {
+/// on, its three point lights, no shadows: openspec AH.65), which alone key
+/// a pipeline; the level's lights and fog are uniforms and its buffer, set
+/// when he's drawn.
+pub(crate) fn key_scene() -> Scene {
     Scene {
         fog: true,
+        point_lights: vec![guacamole::level_scene::DARK; guacamole::level_scene::MAX_POINT_LIGHTS],
         ..Scene::new()
     }
 }
@@ -882,9 +884,11 @@ fn load_hero(
             Some(Ok(read)) => match warm::keys(&read.loaded.model, &key_scene()) {
                 Err(why) => Model3d::Failed(why.to_string()),
                 Ok(keys) => {
-                    let scene = key_scene();
+                    // His glowing parts' masks in the level too (AH.65).
+                    let drawn = guacamole::character::attach::drawn(&read.loaded.model);
+                    let keys = warm::with_level_glow(&drawn.materials, keys);
                     if !warm.covers(keys.iter().map(|(k, _)| k)) {
-                        warm.ask(&read.loaded.model, &keys, &scene);
+                        warm.ask_hero(&read.loaded.model, &keys, Arc::new(key_scene()));
                     }
                     info!(
                         load_file = %c.load_file,
@@ -1189,6 +1193,7 @@ fn enter(
         ))
         .insert(following(follow))
         .id();
+    guacamole::character::spawn_alpha_clear(&mut s.commands, camera, LEVEL_LAYER);
     level.show(&mut s.commands, camera, now);
     pads.show();
     info!(
@@ -1841,7 +1846,7 @@ mod tests {
         assert!(
             frames
                 .iter()
-                .all(|w| *w == guacamole::character::LIGHTS_IN_WORLD),
+                .all(|w| *w == guacamole::character::LIGHTS_FROM_SCENE),
             "{frames:?}"
         );
     }

@@ -8,7 +8,7 @@
 //! to its camera (design decision 14), so its lights are constants in view
 //! space, the space the shader lights in.
 
-use bevy::asset::{Asset, Handle};
+use bevy::asset::{Asset, Handle, uuid_handle};
 use bevy::image::Image;
 use bevy::material::AlphaMode;
 use bevy::math::Vec4;
@@ -20,6 +20,7 @@ use bevy::reflect::TypePath;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use guac_ir::model::{self, Mask, TextureRole};
 use guac_ir::shading::{
@@ -39,6 +40,63 @@ pub const LIGHTS_IN_VIEW: f32 = 0.0;
 /// view it draws for: a level's (AG.21), so a camera that moves rewrites no
 /// material.
 pub const LIGHTS_IN_WORLD: f32 = 1.0;
+/// `misc.w` for lights in the world's frame with the point lights read off
+/// the scene's buffer ([`CharacterMaterial::scene_lights`]) rather than the
+/// uniform (openspec AH.65): a level's, whose point lights the scripts move
+/// every frame, so a light that moves rewrites one buffer, no material.
+pub const LIGHTS_FROM_SCENE: f32 = 2.0;
+
+/// The scene buffer of a material that reads none ([`LIGHTS_FROM_SCENE`]
+/// off): every point light dark. Inserted by
+/// [`super::CharacterShadingPlugin`].
+pub const NO_SCENE_LIGHTS: Handle<ShaderBuffer> =
+    uuid_handle!("6c0d6f3e-3a4b-4f0e-9a7c-6a1f2d5b7e01");
+/// The level's scene buffer (openspec AH.65): its placed point lights and
+/// those the scripts light, the three a frame draws, in the world's frame.
+pub const LEVEL_LIGHTS: Handle<ShaderBuffer> = uuid_handle!("6c0d6f3e-3a4b-4f0e-9a7c-6a1f2d5b7e02");
+
+/// A scene's three point lights as the shader's `SceneLights` reads them
+/// off the buffer: the uniform's three arrays, packed as it packs them.
+#[derive(Debug, Clone, Copy, PartialEq, ShaderType)]
+pub struct ScenePointLights {
+    pub position: [Vec4; 3],
+    pub colour: [Vec4; 3],
+    /// x over (d + 0.001), y over (d + 0.001)².
+    pub falloff: [Vec4; 3],
+}
+
+impl ScenePointLights {
+    /// Up to three of `points`, the rest dark.
+    pub fn new(points: &[guac_ir::shading::PointLight]) -> Self {
+        let point = |i: usize, f: fn(&guac_ir::shading::PointLight) -> Vec4| {
+            points.get(i).map_or(Vec4::ZERO, f)
+        };
+        Self {
+            position: [0, 1, 2]
+                .map(|i| point(i, |p| bevy::math::Vec3::from_array(p.position).extend(0.0))),
+            colour: [0, 1, 2]
+                .map(|i| point(i, |p| bevy::math::Vec3::from_array(p.colour).extend(0.0))),
+            falloff: [0, 1, 2].map(|i| point(i, |p| Vec4::new(p.linear, p.quadratic, 0.0, 0.0))),
+        }
+    }
+
+    /// The buffer's words: positions, colours, then falloffs.
+    pub fn words(&self) -> Vec<[f32; 4]> {
+        self.position
+            .iter()
+            .chain(&self.colour)
+            .chain(&self.falloff)
+            .map(|v| v.to_array())
+            .collect()
+    }
+
+    /// The buffer itself, kept in both worlds so it can be rewritten.
+    pub fn buffer(&self) -> ShaderBuffer {
+        let mut b = ShaderBuffer::new(self.words(), bevy::asset::RenderAssetUsages::default());
+        b.label = "scene point lights".into();
+        b
+    }
+}
 
 /// The material's uniform, in the shader's `Character` layout.
 #[derive(Debug, Clone, Copy, PartialEq, ShaderType)]
@@ -182,6 +240,13 @@ impl CharacterUniform {
         self
     }
 
+    /// The uniform with its lights read in the world's frame and its point
+    /// lights off the scene's buffer ([`LIGHTS_FROM_SCENE`]).
+    pub fn lit_by_scene(mut self) -> Self {
+        self.misc.w = LIGHTS_FROM_SCENE;
+        self
+    }
+
     /// The uniform with a multiplying rim's colour scaled by its strength
     /// in linear light ([`super::remaster::in_light`]), as a level's
     /// materials draw (openspec AG.79): the original multiplies stored
@@ -305,6 +370,10 @@ pub struct CharacterMaterial {
     #[texture(17, visibility(fragment))]
     #[sampler(18, visibility(fragment))]
     pub shadow: Option<Handle<Image>>,
+    /// The scene's point lights when the uniform says to read them here
+    /// ([`LIGHTS_FROM_SCENE`]); [`NO_SCENE_LIGHTS`] otherwise.
+    #[storage(19, read_only, visibility(fragment))]
+    pub scene_lights: Handle<ShaderBuffer>,
     pub key: MaterialKey,
     /// Whether the part has a glow attribute (its glow is an amount or
     /// layer 1's alpha, not none): what [`Self::glow_mask`] reads.
@@ -347,6 +416,7 @@ impl CharacterMaterial {
             third: textures.third,
             rim: textures.rim,
             shadow: textures.shadow,
+            scene_lights: NO_SCENE_LIGHTS,
             key,
             glows: material.glow != Glow::None,
             depth_bias: 0.0,
@@ -364,6 +434,20 @@ impl CharacterMaterial {
         }
         let mut m = self.clone();
         m.key.pass = Pass::GlowMask;
+        Some(m)
+    }
+
+    /// The same part's glow mask in a level ([`Pass::LevelGlow`], openspec
+    /// AH.65), into the frame's alpha after everything else draws; `None`
+    /// for a part without a glow attribute, which writes none (the level's
+    /// depth hides what's behind it, and its alpha was cleared to none).
+    pub fn level_glow(&self) -> Option<Self> {
+        if !self.glows {
+            return None;
+        }
+        let mut m = self.clone();
+        m.key.pass = Pass::LevelGlow;
+        m.depth_bias = super::glow::LEVEL_GLOW_BIAS;
         Some(m)
     }
 
@@ -564,6 +648,11 @@ impl Material for CharacterMaterial {
     }
 
     fn alpha_mode(&self) -> AlphaMode {
+        // A level's glow mask sorts with the blended parts, after them all
+        // ([`super::glow::LEVEL_GLOW_BIAS`]).
+        if self.key.pass == Pass::LevelGlow {
+            return AlphaMode::Blend;
+        }
         self.key.states.alpha_mode(self.uniform.misc.y)
     }
 
@@ -1066,6 +1155,140 @@ mod tests {
             pass: Pass::Colour,
         };
         assert!(specialize_for(&colour, &mut d, &layout).is_err());
+    }
+
+    /// AH.65: a level's glowing part draws its glow mask into the frame's
+    /// alpha alone, unblended, tested against the level's depth and
+    /// writing none, sorting with the blended parts after the alpha clear
+    /// (`level_glow`'s entry, the level's glow pass); its other states and
+    /// uniform are the part's. A part without a glow attribute draws none.
+    #[test]
+    fn a_level_glow_mask_writes_alpha_alone_after_the_blended_parts() {
+        let s = segment(1, false);
+        let layout = layout(&s);
+        let colour = MaterialKey {
+            shader: ShaderKey::new(0x41C, 0x41C).unwrap(),
+            states: StateKey::OPAQUE,
+            pass: Pass::Colour,
+        };
+        let textures = || CharacterTextures {
+            colour: Some(Handle::default()),
+            normal_map: Some(Handle::default()),
+            spec_map: Some(Handle::default()),
+            rim: Some(Handle::default()),
+            ..Default::default()
+        };
+        let m = CharacterMaterial::new(
+            colour,
+            &reference_material(&eruptor_body()).unwrap(),
+            &fogged(),
+            ShadowLookup::NONE,
+            0.5,
+            textures(),
+        )
+        .unwrap();
+        let twin = m.level_glow().expect("a glowing part draws its mask");
+        assert_eq!(
+            twin.key,
+            MaterialKey {
+                pass: Pass::LevelGlow,
+                ..colour
+            }
+        );
+        assert_eq!(twin.uniform, m.uniform);
+        assert_eq!(twin.depth_bias, super::super::glow::LEVEL_GLOW_BIAS);
+        const { assert!(super::super::glow::LEVEL_GLOW_BIAS > super::super::glow::CLEAR_BIAS) };
+        // Opaque as its part is, it sorts with the blended ones.
+        assert_eq!(m.alpha_mode(), AlphaMode::Opaque);
+        assert_eq!(twin.alpha_mode(), AlphaMode::Blend);
+        let mut d = RenderPipelineDescriptor {
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            fragment: Some(FragmentState {
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        specialize_for(&twin.key, &mut d, &layout).unwrap();
+        let fragment = d.fragment.as_ref().unwrap();
+        assert_eq!(fragment.entry_point, Some("level_glow".into()));
+        let target = fragment.targets[0].as_ref().unwrap();
+        assert_eq!(
+            (target.blend, target.write_mask),
+            (None, ColorWrites::ALPHA)
+        );
+        let depth = d.depth_stencil.as_ref().unwrap();
+        assert_eq!(
+            (depth.depth_write_enabled, depth.depth_compare),
+            (Some(false), Some(CompareFunction::GreaterEqual)),
+            "tested, never written"
+        );
+        assert_eq!(d.primitive.cull_mode, Some(Face::Back));
+        // No glow attribute, no mask.
+        let plain = CharacterMaterial::new(
+            colour,
+            &guac_ir::shading::Material {
+                glow: Glow::None,
+                ..reference_material(&eruptor_body()).unwrap()
+            },
+            &fogged(),
+            ShadowLookup::NONE,
+            0.5,
+            textures(),
+        )
+        .unwrap();
+        assert!(plain.level_glow().is_none());
+    }
+
+    /// AH.65: the scene's buffer packs three point lights as the uniform
+    /// packs them, positions, colours, then falloffs, the slots past the
+    /// lights given dark; a material reads it once its uniform says so,
+    /// and binds the dark one until then.
+    #[test]
+    fn the_scene_buffer_packs_its_point_lights_as_the_uniform_does() {
+        let p = PointLight {
+            position: [1.0, 2.0, 3.0],
+            colour: [0.5, 0.25, 0.125],
+            linear: 1.5,
+            quadratic: 0.25,
+        };
+        let packed = ScenePointLights::new(&[p]);
+        let scene = guac_ir::shading::Scene {
+            point_lights: vec![p],
+            ..fogged()
+        };
+        let u = CharacterUniform::new(
+            &reference_material(&eruptor_body()).unwrap(),
+            &scene,
+            ShadowLookup::NONE,
+            0.5,
+        );
+        assert_eq!(packed.position, u.point_position);
+        assert_eq!(packed.colour, u.point_colour);
+        assert_eq!(packed.falloff, u.point_falloff);
+        assert_eq!(packed.position[1], Vec4::ZERO);
+        let words = packed.words();
+        assert_eq!(words.len(), 9);
+        assert_eq!(
+            (words[0], words[3], words[6]),
+            (
+                [1.0, 2.0, 3.0, 0.0],
+                [0.5, 0.25, 0.125, 0.0],
+                [1.5, 0.25, 0.0, 0.0]
+            )
+        );
+        assert_eq!(u.misc.w, LIGHTS_IN_VIEW);
+        assert_eq!(u.lit_by_scene().misc.w, LIGHTS_FROM_SCENE);
     }
 
     #[test]

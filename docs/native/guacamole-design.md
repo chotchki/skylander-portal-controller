@@ -1865,7 +1865,16 @@ to 2.2 (AH.67: the lava's going-black (34, 20, 20) darkens it to 5.5 % of its re
 is untouched either way; the characters' rims and the material tints stay as AE set them (AG.95). A
 level's sky draws as the original's does (AG.13's capture): after its solid scenery, writing no depth, its
 see-through layers in the scene's order before anything else that blends (AG.79: written, a cloud plane
-cut a hard-edged slab out of the cap).
+cut a hard-edged slab out of the cap). A level draws the game's glow as a card does (AH.65): each glowing
+part's mask goes into the frame's own alpha once everything else has drawn and a fullscreen pass has
+cleared it, tested against the level's depth and writing none, and the chain runs off that alpha, so one
+camera keeps the original's order (its mask pass reads the colour pass's depth too) and the chain matches
+its CPU reference to the stored step on the GPU lane. A level is lit by up to three point lights a frame,
+its placed ones and those `global.bld`'s point-light manager hands out for the scripts (Eruptor's ball,
+its burst, his eruption's 22 ft up and fading over 1.5 s), the nearest the hero first; they sit in one
+buffer every level material reads, so a light that moves rewrites no material, and every level key
+carries all three slots, dark ones adding nothing, so none recompiles as lights come and go. What the
+attacks' particles draw (fire, sparks, trails) waits on a particle system (AH.87).
 Giants' render pipeline beyond the characters isn't characterized yet. Trap Team's is (a data-driven
 `tfbRenderer.igx` with a G-buffer, tiled deferred lights, CSM, AO, bloom, DoF, motion blur, FXAA and
 LUTs) and Giants is probably kin, but that's unverified.

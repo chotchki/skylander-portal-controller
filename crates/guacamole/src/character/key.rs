@@ -11,7 +11,8 @@
 
 use bevy::material::AlphaMode;
 use bevy::render::render_resource::{
-    BlendComponent, BlendFactor, BlendOperation, BlendState, Face, RenderPipelineDescriptor,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, Face,
+    RenderPipelineDescriptor,
 };
 use bevy::shader::ShaderDefVal;
 use guac_ir::model::{Blend, Mask, RenderStates};
@@ -461,13 +462,20 @@ impl StateKey {
     }
 }
 
-/// Which pass a part draws in: the frame's colour, or the glow pass's mask
-/// (the character-shading spec's glow mask, AE.11).
+/// Which pass a part draws in: the frame's colour, the glow pass's mask
+/// (the character-shading spec's glow mask, AE.11), or a level's glow mask
+/// laid into the frame's own alpha (openspec AH.65).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Pass {
     #[default]
     Colour,
     GlowMask,
+    /// A level part's glow mask, written into the frame's alpha after
+    /// everything else has drawn and the alpha was cleared
+    /// ([`super::glow::FrameGlow`]): unblended, alpha alone, tested against
+    /// the level's depth and writing none, as the original's mask pass is
+    /// tested against the colour pass's depth copy (AE.11).
+    LevelGlow,
 }
 
 /// What a pipeline is specialized on: the masks, the states and the pass.
@@ -487,18 +495,20 @@ impl MaterialKey {
         defs
     }
 
-    /// The fragment entry point: the shader's `fragment`, or `glow_mask`
-    /// in the glow pass.
+    /// The fragment entry point: the shader's `fragment`, `glow_mask` in
+    /// the glow pass, `level_glow` in a level's.
     pub fn entry_point(&self) -> &'static str {
         match self.pass {
             Pass::Colour => "fragment",
             Pass::GlowMask => "glow_mask",
+            Pass::LevelGlow => "level_glow",
         }
     }
 
     /// The pipeline's states and entry point: the part's own states in the
     /// colour pass; in the glow pass its culling, depth write and alpha
-    /// test, never blended.
+    /// test, never blended; in a level's, its culling and alpha test, never
+    /// blended, alpha alone written and no depth.
     pub fn apply(&self, descriptor: &mut RenderPipelineDescriptor) {
         self.states.apply(descriptor);
         if let Some(fragment) = descriptor.fragment.as_mut() {
@@ -508,6 +518,17 @@ impl MaterialKey {
                     target.blend = None;
                 }
             }
+            if self.pass == Pass::LevelGlow {
+                for target in fragment.targets.iter_mut().flatten() {
+                    target.blend = None;
+                    target.write_mask = ColorWrites::ALPHA;
+                }
+            }
+        }
+        if self.pass == Pass::LevelGlow
+            && let Some(depth) = descriptor.depth_stencil.as_mut()
+        {
+            depth.depth_write_enabled = Some(false);
         }
     }
 }

@@ -24,24 +24,42 @@ pub mod turntable;
 pub mod warm;
 
 use bevy::app::{App, Plugin};
-use bevy::asset::embedded_asset;
+use bevy::asset::{Assets, embedded_asset};
 use bevy::pbr::MaterialPlugin;
+use bevy::render::storage::ShaderBuffer;
 
-pub use glow::{Glow, GlowPlugin, GlowView, spawn_glow_camera, spawn_glow_masks};
+pub use glow::{
+    AlphaClear, FrameGlow, Glow, GlowPlugin, GlowView, spawn_alpha_clear, spawn_glow_camera,
+    spawn_glow_masks,
+};
 pub use key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey};
 pub use material::{
-    CharacterMaterial, CharacterTextures, CharacterUniform, LIGHTS_IN_VIEW, LIGHTS_IN_WORLD,
-    MaterialError, ShadowLookup, reference_material,
+    CharacterMaterial, CharacterTextures, CharacterUniform, LEVEL_LIGHTS, LIGHTS_FROM_SCENE,
+    LIGHTS_IN_VIEW, LIGHTS_IN_WORLD, MaterialError, NO_SCENE_LIGHTS, ScenePointLights,
+    ShadowLookup, reference_material,
 };
 pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character, static_mesh};
 pub use warm::{MeshShape, WarmError, WarmKey};
 
-/// Embeds the shader and registers [`CharacterMaterial`].
+/// Embeds the shader, registers [`CharacterMaterial`] and puts its two scene
+/// buffers in place, every point light dark: [`NO_SCENE_LIGHTS`], which
+/// every material binds unless it reads a scene's, and [`LEVEL_LIGHTS`],
+/// which the level rewrites as its lights move (openspec AH.65).
 pub struct CharacterShadingPlugin;
 
 impl Plugin for CharacterShadingPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "character/shading.wesl");
         app.add_plugins(MaterialPlugin::<CharacterMaterial>::default());
+    }
+
+    // After every plugin's build, so the render plugin's buffer assets are
+    // there whichever was added first.
+    fn finish(&self, app: &mut App) {
+        if let Some(mut buffers) = app.world_mut().get_resource_mut::<Assets<ShaderBuffer>>() {
+            let dark = ScenePointLights::new(&[]).buffer();
+            let _ = buffers.insert(NO_SCENE_LIGHTS.id(), dark.clone());
+            let _ = buffers.insert(LEVEL_LIGHTS.id(), dark);
+        }
     }
 }

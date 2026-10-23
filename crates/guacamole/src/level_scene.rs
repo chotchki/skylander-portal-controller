@@ -297,11 +297,23 @@ pub fn level_lights(lights: &Lights, zone: &AtmosphericZone) -> Result<LevelLigh
     })
 }
 
+/// A point light that adds nothing: a slot no light takes.
+pub const DARK: PointLight = PointLight {
+    position: [0.0; 3],
+    colour: [0.0; 3],
+    linear: 0.0,
+    quadratic: 0.0,
+};
+
 /// The scene the level's materials draw in, seen from a camera whose view
 /// is `view_from_world`: the directional lights' travel and the point
 /// lights' positions in its view space (the space the shader lights in),
 /// fog from `fog`, no shadows until AG.23, neutral tints and no replace
-/// colour.
+/// colour. Its point lights fill all three of tfbmulti2's slots, the placed
+/// ones first and the rest [`DARK`] (openspec AH.65): the scripts light
+/// more as attacks go off, each frame's three are the level's buffer's
+/// ([`frame_point_lights`]), so a part's key never changes with how many
+/// are lit and nothing compiles mid-fight.
 pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
     let mut scene = Scene::new();
     scene.lights = lights.directional.map(|mut l| {
@@ -320,6 +332,8 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
                 .to_array(),
             ..*p
         })
+        .chain(std::iter::repeat(DARK))
+        .take(MAX_POINT_LIGHTS)
         .collect();
     scene.fog = true;
     scene.fog_colour = remaster::linear(fog.colour);
@@ -328,17 +342,54 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
 }
 
 /// The scene the hero draws in, seen from a camera whose view is
-/// `view_from_world`: the level's directional lights and fog as
-/// [`view_scene`] gives them, no point light and no shadows (AG.21). So his
-/// masks are the ones a card draws him with (fog on, nothing else), keys
-/// the start's pass compiled from the census. Whether the original lights a
-/// hero by a level's point lights is unread; level 213's one is about 103 m
-/// from the start, under 1 % of its colour there. AG.23's shadows key him
-/// again either way.
+/// `view_from_world`: the level's as [`view_scene`] gives it, its three
+/// point lights too (openspec AH.65: AH.7's and AH.9's frames show his own
+/// ball and eruption lighting him, and of his materials only those that
+/// own their point lights off leave them to the card; AG.21 drew him
+/// without, on his card's keys), so his keys in the level are the census's
+/// [`crate::census::HEROES`], not a card's. No shadows until AG.23.
 pub fn hero_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
-    let mut scene = view_scene(lights, fog, view_from_world);
-    scene.point_lights.clear();
-    scene
+    view_scene(lights, fog, view_from_world)
+}
+
+/// A light the scripts lit, as the level draws it (openspec AH.65): at
+/// `at` (the level's frame, metres), its diffuse decoded as the remaster
+/// decodes every colour and scaled by its multiplier, its linear and
+/// quadratic attenuation the falloff's two terms, its constant dropped as a
+/// placed one's is ([`level_lights`]).
+pub fn script_light(at: Vec3, l: &crate::script_engine::Light) -> PointLight {
+    let [r, g, b, _] = l.diffuse.to_be_bytes();
+    PointLight {
+        position: at.to_array(),
+        colour: remaster::linear([r, g, b]).map(|c| c * l.multiplier),
+        linear: l.attenuation[1],
+        quadratic: l.attenuation[2],
+    }
+}
+
+/// The three point lights a frame draws the level with (openspec AH.65):
+/// of the level's placed ones and those the scripts lit, the three nearest
+/// `focus` (the hero, else the level's start) that add anything, the rest
+/// [`DARK`]. Which three the original's draws take when more are lit is
+/// unread; its point-light manager lights three at most, so past those
+/// only a placed light (level 213's one, about 103 m off) competes.
+pub fn frame_point_lights(
+    placed: &[PointLight],
+    lit: &[PointLight],
+    focus: Vec3,
+) -> [PointLight; 3] {
+    let mut all: Vec<(f32, PointLight)> = placed
+        .iter()
+        .chain(lit)
+        .filter(|p| p.colour.iter().any(|c| *c > 0.0) && (p.linear > 0.0 || p.quadratic > 0.0))
+        .map(|p| (Vec3::from_array(p.position).distance(focus), *p))
+        .collect();
+    all.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = [DARK; MAX_POINT_LIGHTS];
+    for (slot, (_, p)) in out.iter_mut().zip(all) {
+        *slot = p;
+    }
+    out
 }
 
 /// The scene the level's materials are lit in, in the world's frame: the
@@ -547,14 +598,12 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
 }
 
 /// Every key the drawn part draws in `scene`, each once, with the drawn
-/// material that first draws it: what the warm compiles before the level
-/// shows.
+/// material that first draws it, its glowing parts' level glow masks after
+/// (openspec AH.65, [`warm::with_level_glow`]): what the warm compiles
+/// before the level shows.
 pub fn keys(drawn: &Drawn, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, LevelError> {
-    Ok(warm::segment_keys(
-        &drawn.materials,
-        &drawn.segments,
-        scene,
-    )?)
+    let keys = warm::segment_keys(&drawn.materials, &drawn.segments, scene)?;
+    Ok(warm::with_level_glow(&drawn.materials, keys))
 }
 
 /// A level as it draws at its start: its drawn part, the world lights and
@@ -854,12 +903,13 @@ mod tests {
         const { assert!(LevelFog::NONE.near > FRESH_STATE_FAR) };
     }
 
-    /// AG.21: the hero draws in the level's lights and fog as the camera
-    /// sees them, without its point light, so a material leaving point
-    /// lights and fog to the scene keys as a card draws it (fog on, nothing
-    /// else), where the level's scene keys the point light too.
+    /// AH.65 (AG.21 drew him without its point lights): the hero draws in
+    /// the level's lights, fog and three point lights' slots as the camera
+    /// sees them, the placed one first and two dark, so a material leaving
+    /// point lights and fog to the scene keys as the level's does, not as a
+    /// card draws it (fog on, nothing else).
     #[test]
-    fn the_hero_draws_in_the_levels_light_and_fog_without_its_point_light() {
+    fn the_hero_draws_in_the_levels_light_fog_and_point_lights() {
         let l = level_lights(&lights(), &zone()).unwrap();
         let fog = LevelFog {
             colour: [115, 83, 49],
@@ -873,8 +923,10 @@ mod tests {
         let level = view_scene(&l, &fog, view);
         let hero = hero_scene(&l, &fog, view);
         assert_eq!(hero.lights, level.lights, "the level's lights, in view");
-        assert_eq!(level.point_lights.len(), 1);
-        assert!(hero.point_lights.is_empty());
+        assert_eq!(level.point_lights.len(), MAX_POINT_LIGHTS);
+        assert_eq!(hero.point_lights, level.point_lights);
+        assert_ne!(level.point_lights[0], DARK, "the placed one first");
+        assert_eq!(level.point_lights[1..], [DARK, DARK]);
         assert!(hero.fog && !hero.shadows);
         assert_eq!(
             (hero.fog_colour, hero.fog_near, hero.fog_far),
@@ -890,8 +942,8 @@ mod tests {
             ..Scene::new()
         };
         let open = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
-        assert_eq!(key(&open, &hero), key(&open, &card));
-        assert_ne!(key(&open, &level), key(&open, &card));
+        assert_eq!(key(&open, &hero), key(&open, &level));
+        assert_ne!(key(&open, &hero), key(&open, &card));
     }
 
     fn slot(role: TextureRole) -> TextureSlot {
@@ -974,8 +1026,9 @@ mod tests {
             .collect()
     }
 
-    /// AG.19: a level material's key in the level's scene (fog on, the one
-    /// point light, no shadows) and the shader defs it becomes. The masks
+    /// AG.19: a level material's key in the level's scene (fog on, its
+    /// three point lights' slots (AH.65), no shadows) and the shader defs it
+    /// becomes. The masks
     /// are level 213's kinds: one leaving shadows, fog and point lights to
     /// the scene (ignore 0x2FF), one owning shadows off (0x3FF), one owning
     /// point lights off too (0x3BFF), and the gloss-mapped one, drawn with
@@ -998,7 +1051,7 @@ mod tests {
         let k = key(&both);
         assert_eq!(
             k.shader.pixel(),
-            0x1B | 1 << bit::FOG | 1 << bit::POINT_LIGHTS
+            0x1B | 1 << bit::FOG | 0b111 << bit::POINT_LIGHTS
         );
         assert_eq!(
             defs(&k),
@@ -1014,6 +1067,8 @@ mod tests {
                 def::UV1,
                 def::UV2,
                 def::POINT_LIGHTS[0],
+                def::POINT_LIGHTS[1],
+                def::POINT_LIGHTS[2],
             ])
         );
         // Owning shadows off changes nothing here: the level has none yet.
@@ -1043,6 +1098,8 @@ mod tests {
                 def::GEOMETRIC_NORMAL,
                 def::UV1,
                 def::POINT_LIGHTS[0],
+                def::POINT_LIGHTS[1],
+                def::POINT_LIGHTS[2],
             ])
         );
         // Its gloss strength is the third layer's fixed alpha; a gloss map
@@ -1402,6 +1459,63 @@ mod tests {
         let p = fresh_state_projection();
         assert!((p.fov.to_degrees() - 53.96).abs() < 0.005, "{}", p.fov);
         assert!((p.far - 243.84).abs() < 1e-4);
+    }
+
+    /// AH.65: the three point lights a frame draws the level with, the
+    /// nearest the hero first of the placed ones and the scripts', those
+    /// that add nothing (dark, or no falloff) left out, the slots past them
+    /// dark.
+    #[test]
+    fn the_frames_point_lights_are_the_three_nearest_that_add_light() {
+        let at = |x: f32, colour: f32| PointLight {
+            position: [x, 0.0, 0.0],
+            colour: [colour; 3],
+            linear: 1.0,
+            quadratic: 0.0,
+        };
+        // Level 213's one at the origin, 103 m off.
+        let placed = [at(0.0, 0.3)];
+        let hero = Vec3::new(103.0, 0.0, 0.0);
+        let lit = [
+            at(110.0, 0.5),
+            at(100.0, 0.5),
+            at(104.0, 0.0),
+            at(90.0, 0.5),
+        ];
+        let frame = frame_point_lights(&placed, &lit, hero);
+        assert_eq!(frame, [at(100.0, 0.5), at(110.0, 0.5), at(90.0, 0.5)]);
+        let no_falloff = PointLight {
+            linear: 0.0,
+            ..at(103.0, 0.5)
+        };
+        assert_eq!(
+            frame_point_lights(&placed, &[no_falloff], hero),
+            [at(0.0, 0.3), DARK, DARK]
+        );
+        assert_eq!(frame_point_lights(&[], &[], hero), [DARK; 3]);
+    }
+
+    /// AH.65: a light the scripts lit draws its diffuse decoded as every
+    /// colour is, times its multiplier, its linear and quadratic
+    /// attenuation the falloff's terms (Eruptor's ball's light, as the
+    /// point-light manager copies it from `009_Eruptor_projectile_light`).
+    #[test]
+    fn a_scripts_light_draws_its_diffuse_decoded_times_its_multiplier() {
+        let l = crate::script_engine::Light {
+            diffuse: 0x5F29_1BFF,
+            ambient: 0xFF,
+            specular: 0x3B26_12FF,
+            multiplier: 2.0,
+            attenuation: [0.25, 1.5, 0.5],
+            lift: 0.0,
+        };
+        let p = script_light(Vec3::new(1.0, 2.0, 3.0), &l);
+        assert_eq!(p.position, [1.0, 2.0, 3.0]);
+        assert_eq!(
+            p.colour,
+            remaster::linear([0x5F, 0x29, 0x1B]).map(|c| c * 2.0)
+        );
+        assert_eq!((p.linear, p.quadratic), (1.5, 0.5));
     }
 
     fn placement(name: &str, waypoints: Option<u32>) -> guac_ir::level::Placement {

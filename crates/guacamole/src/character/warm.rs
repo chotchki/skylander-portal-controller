@@ -13,7 +13,7 @@ use bevy::asset::Handle;
 use guac_ir::model::{self, Model, Segment};
 use guac_ir::shading::Scene;
 
-use super::key::MaterialKey;
+use super::key::{MaterialKey, Pass};
 use super::material::{CharacterMaterial, MaterialError, ShadowLookup};
 
 /// What a segment's mesh gives the vertex layout: [`super::segment_mesh`]
@@ -128,6 +128,35 @@ pub fn segment_keys(
         }
     }
     Ok(keys)
+}
+
+/// `keys` and, after them, each one whose material glows again in a level's
+/// glow pass ([`Pass::LevelGlow`], openspec AH.65), each once, with the
+/// material's index: what a level's parts, its props, its clones and its
+/// hero draw, their glowing parts' masks laid into the frame's alpha.
+pub fn with_level_glow(
+    materials: &[model::Material],
+    mut keys: Vec<(WarmKey, usize)>,
+) -> Vec<(WarmKey, usize)> {
+    let glows: Vec<(WarmKey, usize)> = keys
+        .iter()
+        .filter(|(_, m)| {
+            materials
+                .get(*m)
+                .is_some_and(|m| m.params.glow != model::Glow::None)
+        })
+        .map(|(k, m)| {
+            let mut k = *k;
+            k.material.pass = Pass::LevelGlow;
+            (k, *m)
+        })
+        .collect();
+    for g in glows {
+        if !keys.iter().any(|(k, _)| *k == g.0) {
+            keys.push(g);
+        }
+    }
+    keys
 }
 
 /// A one-triangle model drawing `material` on `shape`, under one joint at
@@ -260,6 +289,72 @@ mod tests {
         m.materials = materials;
         m.segments = segments;
         m
+    }
+
+    /// AH.65: a glowing material's keys come again in a level's glow pass,
+    /// each once, after the colour pass's, with its material's index; a
+    /// material without a glow attribute keys none.
+    #[test]
+    fn the_glowing_parts_keys_come_again_in_the_level_glow_pass() {
+        let shape = MeshShape {
+            uv_sets: 1,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let key = |pixel: u32, pass: Pass| WarmKey {
+            material: MaterialKey {
+                shader: super::super::key::ShaderKey::new(pixel, pixel).unwrap(),
+                states: super::super::key::StateKey::OPAQUE,
+                pass,
+            },
+            mesh: shape,
+        };
+        let material = |glow: model::Glow| model::Material {
+            name: "m".into(),
+            pixel: model::Mask { base: 0, ignore: 0 },
+            vertex: model::Mask { base: 0, ignore: 0 },
+            textures: Vec::new(),
+            params: model::Params {
+                fixed_alpha: [-1.0; 4],
+                layer1_extra: [1.0; 4],
+                layer2_extra: None,
+                layer2_blend: None,
+                layer3_blend: None,
+                layer4_blend: [0.0; 4],
+                layer4_values: [0.0; 4],
+                material_tint: [128; 4],
+                glow,
+            },
+            states: model::RenderStates {
+                blend: model::Blend::Opaque,
+                depth_write: true,
+                two_sided: false,
+                alpha_test: None,
+            },
+            scrolls: Vec::new(),
+            tracks: Vec::new(),
+        };
+        let materials = [
+            material(model::Glow::Amount(64)),
+            material(model::Glow::None),
+            material(model::Glow::LayerAlpha),
+        ];
+        let keys = vec![
+            (key(0x400, Pass::Colour), 0),
+            (key(0x404, Pass::Colour), 1),
+            (key(0x408, Pass::Colour), 2),
+            (key(0x400, Pass::Colour), 0),
+        ];
+        let out = with_level_glow(&materials, keys.clone());
+        assert_eq!(out[..4], keys[..]);
+        assert_eq!(
+            out[4..],
+            [
+                (key(0x400, Pass::LevelGlow), 0),
+                (key(0x408, Pass::LevelGlow), 2)
+            ]
+        );
     }
 
     #[test]

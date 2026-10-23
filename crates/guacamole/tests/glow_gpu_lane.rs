@@ -14,7 +14,11 @@
 //! nothing. The colour map is a half-float texture the frame's size,
 //! sampled nearest at texel centres, so the frame and the mask the chain
 //! starts from are known exactly: the map's RGB and its alpha. The frame
-//! goes into an `Rgba16Float` target with tonemapping off, MSAA off.
+//! goes into an `Rgba16Float` target with tonemapping off, MSAA off. A
+//! level's cases (openspec AH.65) draw the mask into the frame's own alpha
+//! instead (`FrameGlow`: the alpha clear, then the part's level glow, the
+//! chain off the frame's alpha), one at the level's 4x MSAA, against the
+//! same reference.
 //!
 //! `cargo test -p guacamole --release --test glow_gpu_lane -- --ignored --nocapture --test-threads 1`
 
@@ -48,9 +52,9 @@ use guac_ir::glow::{self as reference, Image as Plane};
 use guac_ir::model::{self, Joint, Model, Segment, Skeleton};
 use guac_ir::shading::{self, Fixed, Glow, Scene};
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, CharacterTextures, GlowPlugin, GlowView,
-    MaterialKey, Pass, ShaderKey, ShadowLookup, StateKey, spawn_character, spawn_glow_camera,
-    spawn_glow_masks,
+    CharacterMaterial, CharacterShadingPlugin, CharacterTextures, FrameGlow, GlowPlugin, GlowView,
+    MaterialKey, Pass, ShaderKey, ShadowLookup, StateKey, spawn_alpha_clear, spawn_character,
+    spawn_glow_camera, spawn_glow_masks,
 };
 
 /// The clear colour, exact in half precision; the quad covers every pixel.
@@ -136,6 +140,10 @@ struct Case {
     /// A part nearer the camera with no glow, over pixels x0..x1 by
     /// y0..y1, in one flat colour.
     front: Option<Front>,
+    /// Drawn as a level draws it (openspec AH.65): the mask laid into the
+    /// frame's own alpha by the part's level glow after an alpha clear, the
+    /// chain run off it ([`FrameGlow`]), with this many samples.
+    level: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -277,6 +285,7 @@ fn case(name: &str, width: u32, height: u32, glow: Glow, seed: u64) -> Case {
         glow,
         texels,
         front: None,
+        level: None,
     }
 }
 
@@ -315,6 +324,35 @@ fn cases() -> Vec<Case> {
                 540,
                 Glow::Amount(102.0 / 255.0),
                 0xE0E,
+            )
+        },
+        // AH.65: a level's, the mask in the frame's alpha.
+        Case {
+            level: Some(1),
+            ..case(
+                "960x540, the colour map's alpha, a level's",
+                960,
+                540,
+                Glow::LayerAlpha,
+                0xF0F,
+            )
+        },
+        Case {
+            level: Some(1),
+            ..case("320x180, no glow, a level's", 320, 180, Glow::None, 0x101)
+        },
+        Case {
+            level: Some(4),
+            front: Some(Front {
+                rect: [200, 150, 520, 330],
+                colour: [0.5, 1.0, 0.25, 1.0],
+            }),
+            ..case(
+                "960x540, a part in front with no glow, a level's at 4x MSAA",
+                960,
+                540,
+                Glow::Amount(102.0 / 255.0),
+                0x202,
             )
         },
     ]
@@ -451,7 +489,10 @@ fn setup(
         }
         let glows: Vec<_> = parts
             .iter()
-            .map(|m| m.glow_mask().map(|g| materials.add(g)))
+            .map(|m| match c.level {
+                None => m.glow_mask().map(|g| materials.add(g)),
+                Some(_) => m.level_glow().map(|g| materials.add(g)),
+            })
             .collect();
         let handles: Vec<_> = parts.into_iter().map(|m| materials.add(m)).collect();
         let model = quad_model(c);
@@ -468,7 +509,16 @@ fn setup(
         for e in &spawned.segments {
             commands.entity(*e).insert(RenderLayers::layer(frame_layer));
         }
-        spawn_glow_masks(&mut commands, &model, &spawned, &glows, glow_layer);
+        let mask_layer = if c.level.is_some() {
+            frame_layer
+        } else {
+            glow_layer
+        };
+        spawn_glow_masks(&mut commands, &model, &spawned, &glows, mask_layer);
+        let msaa = match c.level {
+            Some(4) => Msaa::Sample4,
+            _ => Msaa::Off,
+        };
 
         let mut target =
             Image::new_target_texture(c.width, c.height, TextureFormat::Rgba16Float, None);
@@ -498,22 +548,27 @@ fn setup(
                 Hdr,
                 Tonemapping::None,
                 DebandDither::Disabled,
-                Msaa::Off,
+                msaa,
                 RenderLayers::layer(frame_layer),
             ))
             .id();
-        spawn_glow_camera(
-            &mut commands,
-            &mut images,
-            camera,
-            GlowView {
-                size: UVec2::new(c.width, c.height),
-                projection,
-                msaa: Msaa::Off,
-                order: -1,
-            },
-            glow_layer,
-        );
+        if c.level.is_some() {
+            commands.entity(camera).insert(FrameGlow);
+            spawn_alpha_clear(&mut commands, camera, frame_layer);
+        } else {
+            spawn_glow_camera(
+                &mut commands,
+                &mut images,
+                camera,
+                GlowView {
+                    size: UVec2::new(c.width, c.height),
+                    projection,
+                    msaa: Msaa::Off,
+                    order: -1,
+                },
+                glow_layer,
+            );
+        }
         targets.0.push(handle);
     }
 }
