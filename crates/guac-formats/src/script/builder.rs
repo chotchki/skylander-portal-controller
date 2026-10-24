@@ -1560,15 +1560,33 @@ fn attack_fighter() -> Vec<u8> {
     b.build()
 }
 
-/// The character [`walker`] writes: its load file, which names its minion's
-/// script (`026_Synthetic.ai`) and the placement the join finds him by.
+/// The character [`walker`] writes: its load file, which names neither
+/// his minion's template placement ([`WALKER_TEMPLATE`], the one his
+/// definition defines) nor its script ([`WALKER_MINION`]), as many of the
+/// disc's don't (`015_Yeti_Legendary`'s is `015_Yeti_L` running
+/// `015_Yeti.ai`).
 pub const WALKER_LOAD: &str = "026_Synthetic";
+/// [`walker`]'s minion's template placement and its script's file name.
+pub const WALKER_TEMPLATE: &str = "026_Synthetic_L";
+pub const WALKER_MINION: &str = "026_Synthetic_Body.ai";
 /// What [`walker`]'s minion sets at its STARTUP, our numbers: the speed its
 /// "speed level" stands for (ft/s), the turn rate its "turn class" stands
 /// for (°/s) and its default scale (percent).
 pub const WALKER_SPEED: f32 = 18.5;
 pub const WALKER_TURN: f32 = 720.0;
 pub const WALKER_SCALE: f32 = 120.0;
+/// Every `movement parameters` member [`walker`]'s setup writes into his
+/// description, as a tuning script does, and the value of each (ft/s,
+/// ft/s², °/s): what the mover update reads.
+pub const WALKER_MOVEMENT: [(&str, f32); 7] = [
+    ("ground max speed", WALKER_SPEED),
+    ("ground acceleration", 120.0),
+    ("ground deceleration", 60.0),
+    ("ground turn rate", WALKER_TURN),
+    ("air deceleration", 40.0),
+    ("gravity acceleration", 96.0),
+    ("gravity max speed", 90.0),
+];
 /// The tick [`WalkerFault::InPlay`]'s minion reaches the member nothing
 /// models.
 pub const WALKER_FAULT_TICK: i32 = 5;
@@ -1589,6 +1607,9 @@ pub enum WalkerFault {
     /// `viewportinfo.default`, AH.107's asks): the host answers every point
     /// "on screen", so the TV doesn't run it.
     Asks,
+    /// Never, but his definition defines no minion (no `Portal - Define
+    /// Minion` call): nothing joins as him.
+    NoMinion,
 }
 
 /// AG.27's synthetic walker (openspec AG.27; design decisions 1, 2 and 8): a
@@ -1596,17 +1617,18 @@ pub enum WalkerFault {
 /// with a definition that defines its minion as [`attack`]'s fighter's does
 /// and a minion that attacks with nothing:
 ///
-/// - at its STARTUP the minion sets its health and then its movement
-///   parameters through the members a tuning script reaches
-///   (`actorinfo.movement.actorphysics`): [`WALKER_SPEED`] as its ground max
-///   speed, [`WALKER_TURN`] as its ground turn rate, and its default scale
-///   [`WALKER_SCALE`] (`scalemeasurement.uniform`);
+/// - at its STARTUP the minion sets its health, then each of
+///   [`WALKER_MOVEMENT`] into its description's `movement parameters` (each
+///   member's `value`, as a tuning script writes them: [`WALKER_SPEED`] its
+///   ground max speed, [`WALKER_TURN`] its ground turn rate), and its
+///   default scale [`WALKER_SCALE`] (`scalemeasurement.uniform`);
 /// - each tick it plays the mover update's part for itself: its velocity
-///   along its facing, as long as its ground max speed.
+///   along its facing, as long as the ground max speed its description
+///   holds.
 ///
 /// `fault` makes it stop on a member nothing models, at its setup or in
-/// play. The scripts' names: the minion's is named for [`WALKER_LOAD`], its
-/// definition's runs from the start.
+/// play. The scripts' names: the minion's is [`WALKER_MINION`] on the
+/// template [`WALKER_TEMPLATE`], its definition's runs from the start.
 pub fn walker(fault: WalkerFault) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
@@ -1616,8 +1638,16 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
         let description_ty = w.op(Class::DefineStructure, "Description");
         let joined_ty = w.op(Class::DefineStructure, "Player Joined Data");
         let mine_ty = w.op(Class::DefineStructure, "Minion Description");
+        let movement_ty = w.op(Class::DefineStructure, "Movement Parameters");
+        let param_ty = w.op(Class::DefineStructure, "Movement Parameter");
         let hp = w.variable("hp", "ValueInfo", Some("IntMeasurement"));
         let hp_max = w.variable("hp max", "ValueInfo", Some("IntMeasurement"));
+        let value = w.variable("value", "ValueInfo", Some("FloatMeasurement"));
+        let params: Vec<Location> = WALKER_MOVEMENT
+            .iter()
+            .map(|(name, _)| structure_var(&mut w, name, param_ty))
+            .collect();
+        let movement = structure_var(&mut w, "movement parameters", movement_ty);
         let creature = structure_var(&mut w, "creature info", creature_ty);
         let joined = structure_var(&mut w, "player joined data", joined_ty);
         let description = structure_var(&mut w, "description", description_ty);
@@ -1625,10 +1655,12 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
         let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
         let script = frame_with(
             &mut w,
-            "C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/026_Synthetic.ai",
+            &format!("C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/{WALKER_MINION}"),
             |w| {
                 structure(w, creature_ty, &[hp]);
-                structure(w, description_ty, &[creature]);
+                structure(w, param_ty, &[value]);
+                structure(w, movement_ty, &params);
+                structure(w, description_ty, &[creature, movement]);
                 structure(w, joined_ty, &[hp_max]);
                 structure(w, mine_ty, &[joined]);
             },
@@ -1647,23 +1679,19 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     &[El::Local(mine), El::Local(joined), El::Local(hp_max)],
                     full,
                 );
+                for (&param, (_, v)) in params.iter().zip(WALKER_MOVEMENT) {
+                    let v = w.float(v);
+                    w.set(
+                        &[
+                            El::Local(description),
+                            El::Local(movement),
+                            El::Local(param),
+                            El::Local(value),
+                        ],
+                        v,
+                    );
+                }
                 let me = El::Member("optoplevelbehavior", "my");
-                let physics = [
-                    me,
-                    El::Member("actorinfo", "movement"),
-                    El::Member("actorphysics", "ground max speed"),
-                ];
-                let speed = w.float(WALKER_SPEED);
-                w.set(&physics, speed);
-                let turn = w.float(WALKER_TURN);
-                w.set(
-                    &[
-                        me,
-                        El::Member("actorinfo", "movement"),
-                        El::Member("actorphysics", "ground turn rate"),
-                    ],
-                    turn,
-                );
                 let scale = w.float(WALKER_SCALE);
                 w.set(
                     &[
@@ -1690,15 +1718,17 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     w.end_block(c);
                 }
                 // The mover's part: his velocity along his facing, as long
-                // as the ground max speed his setup wrote.
+                // as the ground max speed his setup wrote into his
+                // description.
                 let me = El::Member("optoplevelbehavior", "my");
                 let target = w.group(&[me, El::Member("actorinfo", "velocity")], None);
                 let len = w.rhs(
                     "FloatMeasurement",
                     &[
-                        me,
-                        El::Member("actorinfo", "movement"),
-                        El::Member("actorphysics", "ground max speed"),
+                        El::Local(description),
+                        El::Local(movement),
+                        El::Local(params[0]),
+                        El::Local(value),
                     ],
                 );
                 let (head, pitch) = (w.float(0.0), w.float(0.0));
@@ -1723,15 +1753,17 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
         w.declare(script, &[description, mine, ticks]);
         script
     };
-    let minion = actor_with(&mut b, WALKER_LOAD, Some(minion_script), 5);
+    let minion = actor_with(&mut b, WALKER_TEMPLATE, Some(minion_script), 5);
     let def_script = {
         let mut w = Writer::new(&mut b);
         let stub = w.op(Class::DefineMacro, "Portal - Define Minion");
         w.script(
             "C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/026_Def_Synthetic.ai",
             |w| {
-                let rhs = w.reference(&[El::Local(minion)], None);
-                call_stub(w, stub, &[("minion", "ScriptReference", rhs)]);
+                if fault != WalkerFault::NoMinion {
+                    let rhs = w.reference(&[El::Local(minion)], None);
+                    call_stub(w, stub, &[("minion", "ScriptReference", rhs)]);
+                }
             },
             |_| {},
             |_| {},

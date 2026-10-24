@@ -414,12 +414,15 @@ mod tests {
 
     /// AG.27: the walkers' entries link between the fighter's and the
     /// level's; a walker's scripts are the ones his file's placements run at
-    /// the join and his minion's (named for his load file), his attacks'
-    /// and spawns' left off; the TV's listing gains them; the characters the
-    /// extract left out come through with why.
+    /// the join and his minion's (the template his definition's `Portal -
+    /// Define Minion` names, whose script isn't named for his load file),
+    /// his attacks' and spawns' left off; the TV's listing gains them; the
+    /// characters the extract left out come through with why.
     #[test]
     fn the_walkers_link_and_their_scripts_join_the_listing() {
-        use guac_formats::script::builder::{WALKER_LOAD, WalkerFault, walker};
+        use guac_formats::script::builder::{
+            WALKER_LOAD, WALKER_MINION, WALKER_TEMPLATE, WalkerFault, walker,
+        };
         let tmp = extract_with_walkers(
             &[(WALKER_LOAD, walker(WalkerFault::None))],
             &[("070_TreeRex", "no level.bld")],
@@ -435,7 +438,18 @@ mod tests {
         };
         assert_eq!(w.load_file, WALKER_LOAD);
         assert_eq!(w.unit, 4, "after the base's four, before the level's");
-        assert_eq!(w.scripts, ["/026_Def_Synthetic.ai", "/026_Synthetic.ai"]);
+        let minion = format!("/{WALKER_MINION}");
+        assert_eq!(w.scripts, ["/026_Def_Synthetic.ai", minion.as_str()]);
+        assert_eq!(w.minion.as_deref(), Some(minion.as_str()));
+        // The template is the placement his definition defines, not one
+        // named for him.
+        let template = linked
+            .placements
+            .placed
+            .iter()
+            .find(|p| Some(p.obj) == w.template)
+            .expect("his minion's template");
+        assert_eq!(template.name, WALKER_TEMPLATE);
         assert_eq!(w.asks, 0);
         // The level's own entry is the last unit still.
         assert_eq!(linked.order.last(), Some(&5));
@@ -443,12 +457,38 @@ mod tests {
         // minion's whole tick.
         let base = crate::scripts::smash_config(guac_script::Mode::Play);
         let with = crate::scripts::with_walkers(base.clone(), &linked.walkers);
-        for script in ["C:/x/026_Synthetic.ai", "C:/x/026_Def_Synthetic.ai"] {
-            assert!(!base.whitelist.lists("", script), "{script}");
-            assert!(with.whitelist.lists("", script), "{script}");
+        for script in [
+            format!("C:/x/{WALKER_MINION}"),
+            "C:/x/026_Def_Synthetic.ai".to_owned(),
+        ] {
+            assert!(!base.whitelist.lists("", &script), "{script}");
+            assert!(with.whitelist.lists("", &script), "{script}");
         }
+        // Nothing is listed for being named like him.
+        assert!(!with.whitelist.lists("", "C:/x/026_Synthetic.ai"));
         assert!(!with.whitelist.lists("", "C:/x/026_Synthetic_Attack.ai"));
-        assert!(!with.whitelist.lists("", "C:/x/XX_026_Synthetic.ai"));
+        assert!(
+            !with
+                .whitelist
+                .lists("", &format!("C:/x/XX_{WALKER_MINION}"))
+        );
+    }
+
+    /// AG.27: a walker whose definition defines no minion has none to list,
+    /// and none of his scripts join the TV's listing: he keeps his card.
+    #[test]
+    fn a_walker_whose_definition_defines_no_minion_isnt_listed() {
+        use guac_formats::script::builder::{WALKER_LOAD, WalkerFault, walker};
+        let tmp = extract_with_walkers(&[(WALKER_LOAD, walker(WalkerFault::NoMinion))], &[]);
+        let linked = load(tmp.path(), LEVEL).unwrap();
+        let [w] = linked.walkers.as_slice() else {
+            panic!("{:?}", linked.walkers);
+        };
+        assert_eq!((w.minion.as_deref(), w.asks), (None, 0));
+        assert_eq!(w.scripts, ["/026_Def_Synthetic.ai"]);
+        let base = crate::scripts::smash_config(guac_script::Mode::Play);
+        let with = crate::scripts::with_walkers(base, &linked.walkers);
+        assert!(!with.whitelist.lists("", "C:/x/026_Def_Synthetic.ai"));
     }
 
     /// AG.27 with AH.107: a walker whose scripts ask a point against the
@@ -463,7 +503,10 @@ mod tests {
         assert_eq!(linked.walkers[0].asks, 1);
         let base = crate::scripts::smash_config(guac_script::Mode::Play);
         let with = crate::scripts::with_walkers(base, &linked.walkers);
-        assert!(!with.whitelist.lists("", "C:/x/026_Synthetic.ai"));
+        assert!(!with.whitelist.lists(
+            "",
+            &format!("C:/x/{}", guac_formats::script::builder::WALKER_MINION)
+        ));
         assert!(!with.whitelist.lists("", "C:/x/026_Def_Synthetic.ai"));
     }
 

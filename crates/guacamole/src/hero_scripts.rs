@@ -86,7 +86,7 @@ use guacamole::scripts::{
     self, Files, KeptHealth, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WalkerScripts,
     WorldHost, smash_config,
 };
-use guacamole::walkers::{self, Fallback, Kept, Origin, Setup, Stage};
+use guacamole::walkers::{self, Fallback, Kept, Movement, Origin, Stage};
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -153,9 +153,10 @@ impl ScriptSource {
             return Ok(Some(Origin::Measured));
         }
         if let Some(w) = self.walker(load_file) {
-            return match w.asks {
-                0 => Ok(Some(Origin::Scripts)),
-                n => Err(format!(
+            return match (w.asks, &w.minion) {
+                (_, None) => Err("his definition names no minion his file holds".to_owned()),
+                (0, Some(_)) => Ok(Some(Origin::Scripts)),
+                (n, Some(_)) => Err(format!(
                     "his scripts ask {n} points against the gameplay viewport the TV answers for every point"
                 )),
             };
@@ -176,13 +177,13 @@ impl ScriptSource {
             load_file: l.clone(),
             reason: format!("the extract left his scripts out: {why}"),
         });
-        let asking = self.walkers.iter().filter(|w| w.asks > 0).filter_map(|w| {
+        let held = self.walkers.iter().filter_map(|w| {
             Some(Kept {
                 load_file: w.load_file.clone(),
                 reason: self.walks(&w.load_file).err()?,
             })
         });
-        left.chain(asking).collect()
+        left.chain(held).collect()
     }
 }
 
@@ -735,22 +736,22 @@ pub(crate) fn apply_scripted_scale(
         let Some(a) = world.actor(e.to_bits()) else {
             continue;
         };
-        let Some(set) = Setup::read(&a.physics, a.scale, run.shape.width) else {
+        let Some(scale) = walkers::uniform_scale(a.scale) else {
             continue;
         };
-        if (set.scale - run.scale).abs() < 1e-6 {
+        if (scale - run.scale).abs() < 1e-6 {
             continue;
         }
-        let Some(solid) = run.shape.havok([set.scale * 100.0; 3]) else {
+        let Some(solid) = run.shape.havok([scale * 100.0; 3]) else {
             continue;
         };
-        info!(load_file = %run.load_file, from = run.scale, to = set.scale, "his scripts set his scale");
+        info!(load_file = %run.load_file, from = run.scale, to = scale, "his scripts set his scale");
         body.hero.set_solid(solid);
-        run.scale = set.scale;
+        run.scale = scale;
         if let Some(root) = run.root
             && let Ok(mut t) = transforms.get_mut(root)
         {
-            t.scale = Vec3::splat(set.scale);
+            t.scale = Vec3::splat(scale);
         }
     }
 }
@@ -945,14 +946,23 @@ pub(crate) fn step_scripts(
     };
     if let (Some(unit), Some(files)) = (asked, files) {
         let handles = world.handles().clone();
+        // His palette on his minion's template: a walker's the one his
+        // definition names (AG.27), Eruptor's the one named for him.
         if let Some(r) = run.as_deref()
             && let Some(palette) = &r.palette
-            && let Some(template) = files
-                .placed
-                .iter()
-                .find(|p| p.obj.unit == unit && p.name == r.load_file)
+            && let Some(template) = source
+                .as_ref()
+                .and_then(|s| s.walker(&r.load_file))
+                .and_then(|w| w.template)
+                .or_else(|| {
+                    files
+                        .placed
+                        .iter()
+                        .find(|p| p.obj.unit == unit && p.name == r.load_file)
+                        .map(|p| p.obj)
+                })
         {
-            world.set_palette(template.obj, lengths(palette));
+            world.set_palette(template, lengths(palette));
         }
         let mut host = WorldHost {
             world: &mut world,
@@ -1103,14 +1113,13 @@ pub(crate) fn step_scripts(
         };
         // What he does now (AG.27; stand-in ledger: `walker`): Eruptor on
         // the measured numbers he carries; a walker whose script stopped in
-        // play on what his scripts had set, read off his actor; one whose
-        // join never completed keeps his card.
-        let setup = world
-            .actor(e.to_bits())
-            .and_then(|a| Setup::read(&a.physics, a.scale, r.shape.width));
-        let fallback = match (walkers::fallback(r.origin, stage, &why), setup) {
+        // play on the movement parameters his scripts had written into his
+        // description (never his actor's engine numbers, 10,000 ft/s); one
+        // whose join never completed keeps his card.
+        let movement = joined.and_then(|m| Movement::read(&runtime.vm, m));
+        let fallback = match (walkers::fallback(r.origin, stage, &why), movement) {
             (Fallback::OnWhatTheySet, None) => Fallback::Card(format!(
-                "{why}; his scripts had set no uniform scale to walk on"
+                "{why}; his scripts had set no movement parameters to walk on"
             )),
             (f, _) => f,
         };
@@ -1120,8 +1129,8 @@ pub(crate) fn step_scripts(
             }
             Fallback::OnWhatTheySet => {
                 warn!(load_file = %r.load_file, reason = %why, "he walks on what his scripts had set now; his attack buttons do nothing");
-                if let (Some(setup), Ok((_, mut body))) = (setup, heroes.get_mut(e)) {
-                    body.hero.set_tuning(setup.tuning);
+                if let (Some(m), Ok((_, mut body))) = (movement, heroes.get_mut(e)) {
+                    body.hero.set_tuning(m.tuning(r.shape.width));
                 }
             }
             Fallback::Card(reason) => {

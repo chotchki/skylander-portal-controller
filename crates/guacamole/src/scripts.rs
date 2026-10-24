@@ -1261,9 +1261,20 @@ pub struct WalkerScripts {
     pub unit: u16,
     /// `/` and the file name of each of his scripts the run lists: the
     /// scripts of his file's placements running at his join (his
-    /// definition, his tuning actor) and his minion's, whose file is named
-    /// for his load file. His attacks' and his spawns' stay off (AH.29).
+    /// definition, his tuning actor) and his minion's ([`Self::minion`]).
+    /// His attacks' and his spawns' stay off (AH.29).
     pub scripts: Vec<String>,
+    /// His minion's script (`/` and its file name): the template his
+    /// definition's `Portal - Define Minion` names, which the join's
+    /// activation spawns as him. Its file is his own, named as the disc
+    /// names it, often not for his load file (`012_WaterDragon2.ai` for
+    /// `012_SeaDragon`, the base's `015_Yeti.ai` in `015_Yeti_Legendary`'s).
+    /// `None` when the definition names no template of his file: he keeps
+    /// his card.
+    pub minion: Option<String>,
+    /// That template's object: what the join sets his palette's clip
+    /// lengths on (its name is often not his load file: `015_Yeti_L`).
+    pub template: Option<Obj>,
     /// The points his scripts ask against the gameplay viewport that
     /// neither Eruptor's run nor the level's reach already (AH.107's
     /// readers): the host answers every such ask "on screen", so a walker
@@ -1301,7 +1312,11 @@ pub fn walker_scripts(
                 .filter_map(|p| p.script.as_deref())
                 .map(|path| format!("/{}", file_name(path)))
                 .collect();
-            let minion = format!("{load}.ai");
+            let template = defined_minion(program, files, *unit, &names);
+            let minion = template
+                .and_then(|t| t.script.as_deref())
+                .map(|path| format!("/{}", file_name(path)));
+            names.extend(minion.clone());
             let mut asks: BTreeSet<crate::on_screen::Ask> = BTreeSet::new();
             for (id, s) in program
                 .scripts
@@ -1310,9 +1325,6 @@ pub fn walker_scripts(
                 .filter(|(_, s)| s.unit == *unit)
             {
                 let file = file_name(&s.name);
-                if file.eq_ignore_ascii_case(&minion) {
-                    names.push(format!("/{file}"));
-                }
                 if names
                     .iter()
                     .any(|n| n.eq_ignore_ascii_case(&format!("/{file}")))
@@ -1326,18 +1338,77 @@ pub fn walker_scripts(
                 load_file: load.clone(),
                 unit: *unit,
                 scripts: names,
+                minion,
+                template: template.map(|t| t.obj),
                 asks: asks.difference(&known).count(),
             }
         })
         .collect()
 }
 
+/// The template of the minion `unit`'s definition defines: the placement its
+/// `Portal - Define Minion` call binds as `minion`, one of his own file's
+/// with a script, as the join's activation spawns him ([`join_activate`]).
+/// Read off the scripts `listed` (his running placements'), the first such
+/// call; `None` when none names one.
+fn defined_minion<'f>(
+    program: &Program,
+    files: &'f Files,
+    unit: u16,
+    listed: &[String],
+) -> Option<&'f Placed> {
+    use guac_script::{Elem, Ins, Operand};
+    let ours = |name: &str| {
+        let file = file_name(name);
+        listed.iter().any(|n| {
+            n.strip_prefix('/')
+                .is_some_and(|n| n.eq_ignore_ascii_case(file))
+        })
+    };
+    program
+        .scripts
+        .iter()
+        .filter(|s| s.unit == unit && ours(&s.name))
+        .flat_map(|s| s.ops.iter())
+        .find_map(|op| {
+            let Ins::Parameter(p) = &program.ops[*op as usize] else {
+                return None;
+            };
+            let def = &program.defs[p.def? as usize];
+            if program.sym(p.name) != "minion"
+                || !def.display.eq_ignore_ascii_case("Portal - Define Minion")
+            {
+                return None;
+            }
+            let mut rhs = p.rhs?;
+            while let Operand::Expr {
+                a: Some(inner),
+                op: None,
+                b: None,
+            } = &program.operands[rhs as usize]
+            {
+                rhs = *inner;
+            }
+            let Operand::Path { elems, .. } = &program.operands[rhs as usize] else {
+                return None;
+            };
+            let [Elem::Object(obj)] = elems.as_slice() else {
+                return None;
+            };
+            files
+                .placed
+                .iter()
+                .find(|pl| pl.obj == *obj && pl.obj.unit == unit && pl.script.is_some())
+        })
+}
+
 /// `config` with the scripts of every walker that asks nothing new of the
-/// gameplay viewport listed to run every tick (AG.27); a walker that does
-/// stays off the whitelist, so what it would wake stays inert.
+/// gameplay viewport listed to run every tick (AG.27); a walker that does,
+/// or whose definition names no minion, stays off the whitelist, so what
+/// it would wake stays inert.
 pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
     if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
-        for w in walkers.iter().filter(|w| w.asks == 0) {
+        for w in walkers.iter().filter(|w| w.asks == 0 && w.minion.is_some()) {
             scripts.extend(w.scripts.iter().cloned());
         }
     }

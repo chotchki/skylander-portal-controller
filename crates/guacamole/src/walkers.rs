@@ -1,13 +1,3 @@
-//! Who walks the level (openspec AG.21, design decision 1): a character
-//! walks only on numbers measured for it. Until AG.27 reads every
-//! character's tuning off its scripts (Open question 1's (b)), that is
-//! Eruptor alone, on AG.8's live reads, and any other character placed
-//! keeps the portal view (Open question 1's (a) meanwhile).
-//!
-//! The hero's drawn model and its keys are the card's model (AE's), drawn
-//! in [`crate::level_scene::hero_scene`]: the keys the census's card tables
-//! hold, so the start's pass has compiled them (`tests/giants_census.rs`).
-
 //! Who walks the level (openspec AG.21, AG.27, design decision 1): a
 //! character walks only on numbers that are his.
 //!
@@ -19,9 +9,10 @@
 //!   his default scale, which the mover update reads. What AG.27 knows of
 //!   him before that is his solid as the disc authors it ([`Walk::scripted`]),
 //!   and no walk of his own: the fall-back after his script stops in play is
-//!   a [`Tuning`] read off what his scripts had set ([`Setup`]), never a
-//!   number of ours beside them. One whose setup doesn't run through keeps
-//!   his card ([`Fallback::Card`], listed with why).
+//!   a [`Tuning`] read off the `movement parameters` his scripts had written
+//!   into his description ([`Movement`]), never a number of ours beside
+//!   them. One whose setup doesn't run through keeps his card
+//!   ([`Fallback::Card`], listed with why).
 //!
 //! The hero's drawn model and its keys are the card's model (AE's), drawn
 //! in [`crate::level_scene::hero_scene`]: the keys the census's card tables
@@ -31,7 +22,7 @@ use guac_motion::locomotion::Gaits;
 use guac_motion::solid::{HavokSolid, SolidInfo};
 use guac_motion::tuning::{self, Tuning};
 
-use crate::script_engine::Physics;
+use guac_script::{PlacementId, Vm};
 
 /// A character that walks on measured numbers: its load file (the roster's,
 /// the model's key) and the numbers it walks on.
@@ -110,8 +101,8 @@ impl Walk {
     /// A character on his own scripts (AG.27), before they've run: his
     /// solid as the disc authors it at the file's 100 % (his scripts set
     /// his scale), no walk of his own (the controller's tuning is read off
-    /// his scripts if they stop, [`Setup`]) and no gaits (his locomotion is
-    /// the VM's, AH.49).
+    /// his scripts if they stop, [`Movement`]) and no gaits (his
+    /// locomotion is the VM's, AH.49).
     pub fn scripted(load_file: &str, solid: &guac_ir::actor::Solid) -> Walk {
         let shape = SolidInfo {
             kind: crate::props::solid_kind(solid.shape),
@@ -143,37 +134,76 @@ impl Walk {
     }
 }
 
-/// What a scripted walker's setup left on the VM (AG.27): his scale off his
-/// actor and the controller's tuning off his movement parameters, in the
-/// scripts' own units. Read, never chosen.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Setup {
-    pub scale: f32,
-    pub tuning: Tuning,
+/// His scale as his scripts set it on his actor (percent per axis, AG.27),
+/// as a fraction: `None` for one that isn't uniform or isn't set, which no
+/// solid is built at.
+pub fn uniform_scale(scale: [f32; 3]) -> Option<f32> {
+    (scale[0] > 0.0 && scale[0] == scale[1] && scale[1] == scale[2]).then(|| scale[0] / 100.0)
 }
 
-impl Setup {
-    /// A hero's `physics` and `scale` (percent, a uniform one) as his
-    /// scripts left them, under his solid's authored `width` (feet). `None`
-    /// for a scale that isn't uniform or isn't there (a script that hasn't
-    /// set one), which no solid is built at.
-    pub fn read(physics: &Physics, scale: [f32; 3], width: f32) -> Option<Setup> {
-        if scale[0] <= 0.0 || scale[0] != scale[1] || scale[1] != scale[2] {
-            return None;
-        }
-        Some(Setup {
-            scale: scale[0] / 100.0,
-            tuning: Tuning {
-                max_speed: physics.ground_max_speed,
-                push: physics.ground_acceleration,
-                let_go: physics.ground_deceleration,
-                air_let_go: physics.air_deceleration,
-                turn_rate: physics.ground_turn_rate,
-                gravity: physics.gravity_acceleration,
-                terminal: physics.gravity_max_speed,
-                width,
-            },
+/// What a scripted walker's setup wrote into his description's `movement
+/// parameters` (AG.27), each member's `value` in the scripts' own units
+/// (ft/s, ft/s², °/s): what the mover update reads, and what the fall-back
+/// walks him on once his script stops. Read, never chosen. His actor's own
+/// `ActorParameters` aren't these: the engine's, they stay the
+/// unconstrained 10,000 ft/s on every character (AG.12's live read).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Movement {
+    pub ground_max_speed: f32,
+    pub ground_acceleration: f32,
+    pub ground_deceleration: f32,
+    pub ground_turn_rate: f32,
+    pub air_deceleration: f32,
+    pub gravity_acceleration: f32,
+    pub gravity_max_speed: f32,
+}
+
+impl Movement {
+    /// The members read, in the fields' order.
+    pub const MEMBERS: [&'static str; 7] = [
+        "ground max speed",
+        "ground acceleration",
+        "ground deceleration",
+        "ground turn rate",
+        "air deceleration",
+        "gravity acceleration",
+        "gravity max speed",
+    ];
+
+    /// `minion`'s, off his `description` local on `vm`; `None` while any of
+    /// [`Self::MEMBERS`] holds no number (a setup that hasn't written them).
+    pub fn read(vm: &Vm, minion: PlacementId) -> Option<Movement> {
+        let d = vm.value(vm.local(minion, "description")?);
+        let params = vm.value(vm.field(d, "movement parameters")?);
+        let member = |name: &str| {
+            let m = vm.value(vm.field(params, name)?);
+            vm.value(vm.field(m, "value")?).as_f32()
+        };
+        let [a, b, c, d, e, f, g] = Self::MEMBERS;
+        Some(Movement {
+            ground_max_speed: member(a)?,
+            ground_acceleration: member(b)?,
+            ground_deceleration: member(c)?,
+            ground_turn_rate: member(d)?,
+            air_deceleration: member(e)?,
+            gravity_acceleration: member(f)?,
+            gravity_max_speed: member(g)?,
         })
+    }
+
+    /// AG.16's controller's numbers off these, under his solid's authored
+    /// `width` (feet).
+    pub fn tuning(&self, width: f32) -> Tuning {
+        Tuning {
+            max_speed: self.ground_max_speed,
+            push: self.ground_acceleration,
+            let_go: self.ground_deceleration,
+            air_let_go: self.air_deceleration,
+            turn_rate: self.ground_turn_rate,
+            gravity: self.gravity_acceleration,
+            terminal: self.gravity_max_speed,
+            width,
+        }
     }
 }
 
@@ -238,29 +268,23 @@ mod tests {
         assert_eq!(Walk::measured(eruptor).solid(), eruptor.solid());
     }
 
-    /// AG.27: what a scripted walker's setup left reads as the controller's
-    /// numbers in the scripts' own units, a scale as a fraction, his width
-    /// from his authored solid; a scale that isn't one, or isn't set, reads
-    /// as none.
+    /// AG.27: what a scripted walker's setup wrote into his description
+    /// reads as the controller's numbers in the scripts' own units, his
+    /// width from his authored solid (Tree Rex's, AG.12's), and a scale as a
+    /// fraction; one that isn't uniform, or isn't set, reads as none.
     #[test]
-    fn a_setup_reads_off_what_the_scripts_wrote() {
-        let physics = Physics {
+    fn his_movement_parameters_are_the_controllers_numbers() {
+        let tree_rex = Movement {
             ground_max_speed: 20.0,
             ground_acceleration: 160.0,
             ground_deceleration: 80.0,
             ground_turn_rate: 360.0,
-            air_max_speed: 20.0,
-            air_acceleration: 160.0,
             air_deceleration: 50.0,
-            air_turn_rate: 1440.0,
-            gravity_max_speed: 120.0,
             gravity_acceleration: 128.0,
-            ..Physics::default()
+            gravity_max_speed: 120.0,
         };
-        let set = Setup::read(&physics, [100.0; 3], 14.0).unwrap();
-        assert_eq!(set.scale, 1.0);
         assert_eq!(
-            set.tuning,
+            tree_rex.tuning(14.0),
             Tuning {
                 max_speed: 20.0,
                 push: 160.0,
@@ -272,9 +296,25 @@ mod tests {
                 width: 14.0,
             }
         );
-        assert_eq!(Setup::read(&physics, [150.0; 3], 4.0).unwrap().scale, 1.5);
-        assert_eq!(Setup::read(&physics, [150.0, 100.0, 150.0], 4.0), None);
-        assert_eq!(Setup::read(&physics, [0.0; 3], 4.0), None);
+        // Eruptor's description (AG.27's disc read) is AG.8's live table but
+        // for gravity: it holds 128 ft/s², where AG.10 measured his fall at
+        // 136.21. The fall-back walks on the description's.
+        let eruptor = Movement {
+            ground_max_speed: 21.5,
+            ground_turn_rate: 1440.0,
+            ..tree_rex
+        };
+        assert_eq!(
+            eruptor.tuning(Tuning::ERUPTOR.width),
+            Tuning {
+                gravity: 128.0,
+                ..Tuning::ERUPTOR
+            }
+        );
+        assert_eq!(uniform_scale([100.0; 3]), Some(1.0));
+        assert_eq!(uniform_scale([150.0; 3]), Some(1.5));
+        assert_eq!(uniform_scale([150.0, 100.0, 150.0]), None);
+        assert_eq!(uniform_scale([0.0; 3]), None);
     }
 
     /// AG.27: only Eruptor falls back to numbers the build holds; a walker

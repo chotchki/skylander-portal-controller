@@ -821,12 +821,12 @@ fn a_placements_tags_read_back_field_for_field() {
 }
 
 /// AG.27's synthetic walker reads back for every fault: two scripts (his
-/// definition's and the minion's, named for his load file) and two
-/// placements, the minion's named as the join finds it; the setup reaches
-/// the movement members and the faults reach the one member nothing models.
+/// definition's and the minion's, which isn't named for his load file) and
+/// two placements, the minion's template not named for his load file
+/// either; the minion's tick displaces him.
 #[test]
 fn the_synthetic_walker_reads_back() {
-    use super::builder::{WALKER_LOAD, WalkerFault, walker};
+    use super::builder::{WALKER_MINION, WALKER_TEMPLATE, WalkerFault, walker};
     use crate::level::Placements;
     for fault in [WalkerFault::None, WalkerFault::InSetup, WalkerFault::InPlay] {
         let bytes = walker(fault);
@@ -838,7 +838,7 @@ fn the_synthetic_walker_reads_back() {
             .map(|s| s.name.unwrap_or_default().rsplit('/').next().unwrap())
             .collect();
         names.sort();
-        assert_eq!(names, ["026_Def_Synthetic.ai", "026_Synthetic.ai"]);
+        assert_eq!(names, ["026_Def_Synthetic.ai", WALKER_MINION]);
         let placed = Placements::read(&igz).unwrap();
         let actors: Vec<(&str, u32)> = placed
             .actors
@@ -852,13 +852,13 @@ fn the_synthetic_walker_reads_back() {
             .collect();
         assert_eq!(
             actors,
-            [(WALKER_LOAD, 5), ("026_Synthetic_Def", 4)],
+            [(WALKER_TEMPLATE, 5), ("026_Synthetic_Def", 4)],
             "{fault:?}"
         );
         let minion = graph
             .scripts
             .iter()
-            .find(|s| s.name.is_some_and(|n| n.ends_with("026_Synthetic.ai")))
+            .find(|s| s.name.is_some_and(|n| n.ends_with(WALKER_MINION)))
             .unwrap();
         let ops = positions(&graph, minion).join("\n");
         assert!(ops.contains("Displace"), "{fault:?}: {ops}");

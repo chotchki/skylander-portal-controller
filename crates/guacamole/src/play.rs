@@ -445,9 +445,8 @@ fn walking(load: &str, source: Option<&ScriptSource>) -> Option<Who> {
     }
     match source?.walks(load) {
         Ok(Some(Origin::Scripts)) => Some(Who::Scripts),
-        Ok(Some(Origin::Measured)) => {
-            walkers::walker(load).map(|w| Who::Measured(Walk::measured(w)))
-        }
+        // A fighter without a measured table, or a character the part
+        // holds no word on, doesn't walk.
         _ => None,
     }
 }
@@ -2468,6 +2467,17 @@ mod tests {
     ) -> (App, Entity) {
         let (mut app, tx) = play_app_with(dir, &[(WALKER_TOY, WALKER)]);
         write_attack_parts(dir);
+        // His palette, Eruptor's under his name: what the join sets on his
+        // minion's template.
+        let rel = IrFormat::Ron.palette_path("009_Eruptor");
+        let mut palette: Palette =
+            guac_ir::from_ron(&std::fs::read_to_string(dir.join(rel)).unwrap()).unwrap();
+        palette.owner = WALKER.into();
+        std::fs::write(
+            dir.join(IrFormat::Ron.palette_path(WALKER)),
+            guac_ir::to_ron(&palette).unwrap(),
+        )
+        .unwrap();
         crate::test_support::hero_scripts::write_walker(dir, fault);
         tx.send(write_level(dir, &lights())).unwrap();
         let pad = test_pad::connect(&mut app, None, None);
@@ -2488,14 +2498,18 @@ mod tests {
 
     /// AG.27: a character with his own scripts in the part, no table of
     /// measured numbers, walks on what his setup wrote: his speed level and
-    /// turn class into the movement parameters (ground max speed 18.5 ft/s,
-    /// ground turn rate 720°/s) and his default scale (120 %) onto his
-    /// actor, his solid and his drawn model standing at that scale, and the
-    /// mover (his minion's tick, here) walking him along his facing at the
-    /// speed it wrote, his scripts the only writer of it.
+    /// turn class into his description's movement parameters (ground max
+    /// speed 18.5 ft/s, ground turn rate 720°/s) and his default scale
+    /// (120 %) onto his actor, his solid and his drawn model standing at that
+    /// scale, and the mover (his minion's tick, here) walking him along his
+    /// facing at the speed it wrote, his scripts the only writer of it. His
+    /// minion's script isn't named for his load file: his definition names
+    /// it.
     #[test]
     fn a_walker_walks_on_what_his_own_setup_wrote() {
-        use guac_formats::script::builder::{WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WalkerFault};
+        use guac_formats::script::builder::{
+            WALKER_MOVEMENT, WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WalkerFault,
+        };
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, pad) = walker_app(tmp.path(), WalkerFault::None);
         place(&mut app, 0, WALKER_TOY, "Synthetic");
@@ -2515,12 +2529,32 @@ mod tests {
             (Origin::Scripts, false),
             "his numbers are his scripts', his attack buttons do nothing"
         );
-        // What the setup wrote, on his actor.
+        // What the setup wrote: his movement parameters into his
+        // description, his scale onto his actor.
+        let Join::Joined(minion) = run.join else {
+            panic!("{:?}", run.join);
+        };
+        let movement =
+            guacamole::walkers::Movement::read(&app.world().resource::<ScriptRuntime>().vm, minion)
+                .expect("his movement parameters");
+        assert_eq!(movement.ground_max_speed, WALKER_SPEED);
+        assert_eq!(movement.ground_turn_rate, WALKER_TURN);
+        assert_eq!(
+            guacamole::walkers::Movement::MEMBERS,
+            WALKER_MOVEMENT.map(|(name, _)| name)
+        );
         let world = app.world().resource::<guacamole::scripts::ScriptWorld>();
         let actor = world.actor(e.to_bits()).expect("his actor");
-        assert_eq!(actor.physics.ground_max_speed, WALKER_SPEED);
-        assert_eq!(actor.physics.ground_turn_rate, WALKER_TURN);
         assert_eq!(actor.scale, [WALKER_SCALE; 3]);
+        // His palette sits on the template his definition defines, which
+        // isn't named for him.
+        let template = app
+            .world()
+            .resource::<ScriptSource>()
+            .walker(WALKER)
+            .and_then(|w| w.template)
+            .expect("his minion's template");
+        assert!(world.palette(template).is_some(), "his palette's lengths");
         // His solid and his drawn model stand at that scale.
         let scale = WALKER_SCALE / 100.0;
         assert_eq!(run.scale, scale);
@@ -2579,7 +2613,7 @@ mod tests {
             list[0].reason
         );
         assert!(
-            !list[0].reason.contains("no uniform scale"),
+            !list[0].reason.contains("no movement parameters"),
             "kept by the join's stage, not by a missing read: {}",
             list[0].reason
         );
@@ -2600,25 +2634,30 @@ mod tests {
     }
 
     /// AG.27 with AH.107: a walker whose scripts ask a point against the
-    /// gameplay viewport (the host answers every point "on screen") keeps
-    /// his card from the portal on, before the level: never a hero, listed
-    /// with why, and the portal calls for a Skylander as for any hand that
-    /// can't play.
+    /// gameplay viewport (the host answers every point "on screen"), or
+    /// whose definition defines no minion, keeps his card from the portal
+    /// on, before the level: never a hero, listed with why, and the portal
+    /// calls for a Skylander as for any hand that can't play.
     #[test]
     fn a_walker_asking_the_viewport_keeps_his_card_at_the_portal() {
         use guac_formats::script::builder::WalkerFault;
-        let tmp = tempfile::tempdir().unwrap();
-        let (mut app, _pad) = walker_app(tmp.path(), WalkerFault::Asks);
-        place(&mut app, 0, WALKER_TOY, "Synthetic");
-        for _ in 0..30 {
-            app.update();
+        for (fault, why) in [
+            (WalkerFault::Asks, "viewport"),
+            (WalkerFault::NoMinion, "no minion"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, _pad) = walker_app(tmp.path(), fault);
+            place(&mut app, 0, WALKER_TOY, "Synthetic");
+            for _ in 0..30 {
+                app.update();
+            }
+            assert!(app.world().resource::<Play>().candidate.is_none());
+            assert_eq!(mode(&app), Mode::Portal);
+            let list = kept(&mut app);
+            assert_eq!(list.len(), 1, "{list:?}");
+            assert_eq!(list[0].load_file, WALKER);
+            assert!(list[0].reason.contains(why), "{}", list[0].reason);
         }
-        assert!(app.world().resource::<Play>().candidate.is_none());
-        assert_eq!(mode(&app), Mode::Portal);
-        let list = kept(&mut app);
-        assert_eq!(list.len(), 1, "{list:?}");
-        assert_eq!(list[0].load_file, WALKER);
-        assert!(list[0].reason.contains("viewport"), "{}", list[0].reason);
     }
 
     /// AG.27: attacks stay Eruptor's alone. The walker's attack buttons do
@@ -2652,12 +2691,12 @@ mod tests {
 
     /// AG.27: a walker whose script stops in play (after his setup ran
     /// through) walks on, on AG.16's controller, at what his scripts had
-    /// set: the speed level and turn class they wrote become the
-    /// controller's top speed and turn rate, his scale stays theirs, and
-    /// he's listed nowhere (his card isn't kept).
+    /// set: the movement parameters they wrote into his description become
+    /// the controller's numbers (never his actor's engine ones), his scale
+    /// stays theirs, and he's listed nowhere (his card isn't kept).
     #[test]
     fn a_walker_whose_script_stops_in_play_walks_on_at_what_it_set() {
-        use guac_formats::script::builder::{WALKER_SPEED, WALKER_TURN, WalkerFault};
+        use guac_formats::script::builder::{WALKER_MOVEMENT, WalkerFault};
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InPlay);
         place(&mut app, 0, WALKER_TOY, "Synthetic");
@@ -2684,12 +2723,23 @@ mod tests {
                 .entity(e)
                 .contains::<crate::hero::ScriptedHero>()
         );
-        let tuning = *hero(&app).tuning();
-        assert_eq!(tuning.max_speed, WALKER_SPEED, "what the scripts set");
-        assert_eq!(tuning.turn_rate, WALKER_TURN);
-        // The controller walks him on those: the stick forward reaches the
-        // speed his scripts wrote, not another.
         let run = app.world().entity(e).get::<HeroRun>().unwrap();
+        let [speed, push, let_go, turn, air_let_go, gravity, terminal] =
+            WALKER_MOVEMENT.map(|(_, v)| v);
+        assert_eq!(
+            *hero(&app).tuning(),
+            guac_motion::tuning::Tuning {
+                max_speed: speed,
+                push,
+                let_go,
+                air_let_go,
+                turn_rate: turn,
+                gravity,
+                terminal,
+                width: run.shape.width,
+            },
+            "what the scripts wrote into his description"
+        );
         assert_eq!(run.scale, 1.2, "his scale stays his scripts'");
     }
 

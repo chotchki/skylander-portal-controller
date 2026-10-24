@@ -1221,6 +1221,71 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
 /// lacks it: its record gone from the manifest, with its files' outputs and
 /// the files themselves (textures too, which another part may share and
 /// so keep). `level` says whether it's chapter 1's part or extract-wide.
+/// AG.27: an extract made before the walkers (its scripts part recorded
+/// with the base's entries alone, no walker's entry and no walkers' list)
+/// isn't current: the start resumes with no version bump, the scripts part
+/// is read again alone (the walkers' entries and the list written, every
+/// other file kept), and the next start is current.
+#[test]
+fn an_extract_made_before_the_walkers_resumes_for_its_scripts_part_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let base: Vec<String> = scripts::archives()
+        .iter()
+        .map(|a| scripts::script_path(a))
+        .collect();
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let files = json["parts"][scripts::SCRIPTS].as_array_mut().unwrap();
+    let gone: Vec<String> = files
+        .iter()
+        .map(|f| f.as_str().unwrap().to_owned())
+        .filter(|f| !base.contains(f))
+        .collect();
+    assert_eq!(gone.len(), WALKERS + 1, "{gone:?}");
+    files.retain(|f| base.iter().any(|b| f == b.as_str()));
+    let outputs = json["outputs"].as_array_mut().unwrap();
+    outputs.retain(|o| !gone.iter().any(|f| o["path"] == f.as_str()));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    for f in &gone {
+        fs::remove_file(dir.join(f)).unwrap();
+    }
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let sc = &done.scripts;
+    assert_eq!(
+        (sc.parts_read, sc.parts_kept),
+        (1, 1),
+        "the scripts part alone"
+    );
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (WALKERS + 1, BASE_ENTRIES),
+        "the walkers' entries and the list; the base's kept"
+    );
+    assert_eq!(
+        done.roster.files.written
+            + done.progression.files.written
+            + done.models.files.written
+            + done.models.palettes.files.written
+            + done.levels.files.written
+            + sc.files.written,
+        WALKERS + 1,
+        "only those: every other part kept"
+    );
+    assert_eq!(sc.walkers, WALKERS);
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
 fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
     let path = dir.join("manifest.json");
     let mut json: serde_json::Value =
