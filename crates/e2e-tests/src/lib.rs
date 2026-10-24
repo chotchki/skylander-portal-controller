@@ -2413,6 +2413,9 @@ pub async fn gaits_tv(base: &str, since: u64) -> Result<serde_json::Value> {
 
 /// The scripts' run step by step after step `since`
 /// (`/api/_test/tv/scripts`, openspec AH.24): `{"last": .., "steps": [..]}`.
+/// A step whose hero's join reads `off` fails the read, as [`tv`]'s does,
+/// unless the test expects an off (openspec AH.106: so an off between two
+/// reads of the TV isn't missed).
 pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv/scripts?since={since}"))
@@ -2421,7 +2424,27 @@ pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     if !resp.status().is_success() {
         bail!("/api/_test/tv/scripts returned {}", resp.status());
     }
-    Ok(resp.json().await?)
+    let log: serde_json::Value = resp.json().await?;
+    if hero_scripts_off_because(base).is_none()
+        && let Some(step) = log["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["join"] == "off")
+    {
+        // The reason is the TV's (`hero.scripts_reason`), while he's in.
+        let reason = match reqwest::get(format!("{base}/api/_test/tv")).await {
+            Ok(r) => r.json::<serde_json::Value>().await.ok(),
+            Err(_) => None,
+        }
+        .and_then(|s| s["hero"]["scripts_reason"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| "no reason given".to_owned());
+        bail!(
+            "the hero's scripts went off at step {} ({reason}): he walks without them",
+            step["step"]
+        );
+    }
+    Ok(log)
 }
 
 /// Skips the intro the TV is playing, as a key would (`/api/_test/tv/skip`).
@@ -3058,6 +3081,46 @@ mod hero_scripts_tests {
         assert!(e.contains(reason), "{e}");
         expect_hero_scripts_off(&base, "didn't activate");
         assert_eq!(tv(&base).await.unwrap()["hero"]["scripts"], "off");
+        served.join().unwrap();
+    }
+
+    /// The scripts' log (`scripts_tv`): a step logged with his join `off`
+    /// between two reads of the TV fails the read with the TV's reason,
+    /// unless the test expects an off.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_step_logged_off_fails_the_scripts_read() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let log = |join: &str| {
+            json!({"last": 3, "steps": [
+                {"step": 2, "join": "joined"},
+                {"step": 3, "join": join},
+            ]})
+        };
+        let reason = json!({"hero": {"scripts": "off", "scripts_reason": "his script stopped: x"}});
+        let bodies = [log("joined"), log("off"), reason, log("off")];
+        let served = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        assert_eq!(scripts_tv(&base, 1).await.unwrap()["last"], 3);
+        let e = scripts_tv(&base, 1).await.unwrap_err().to_string();
+        assert!(
+            e.contains("step 3") && e.contains("his script stopped: x"),
+            "{e}"
+        );
+        expect_hero_scripts_off(&base, WALKING_SCRIPTS_OFF);
+        assert!(scripts_tv(&base, 1).await.is_ok(), "expected");
         served.join().unwrap();
     }
 }
