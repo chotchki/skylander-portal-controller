@@ -923,15 +923,15 @@ mod tests {
     }
 
     /// What only a Giant moves stays put (openspec AH.27; breakables' Tree
-    /// Rex at a boulder, a stand-in until the Titan feats run): a Titan
-    /// boulder built as the props build it off `Titan_CarriableObject_
-    /// Boulder_v3_(4)`'s placement (AG.7: an 18 x 16 x 3 ft sphere 2.74 m
-    /// down, its feat script `Titan_Carriable_Object.ai` off the TV's
-    /// listing), walked into head-on for 3 s by a Giant-sized capsule (8 x
-    /// 14 x 3 ft at 100 %, ours: Tree Rex's own read is AG.27's) on Tree
-    /// Rex's live 20 ft/s and 360°/s (AG.12): he stops against it, the
-    /// boulder stands where it stood with its solid, and taken-off reads
-    /// false for it, so nothing takes it down.
+    /// Rex at a boulder, until the Titan feats run;
+    /// stand-in ledger: `titan`): a Titan boulder built as the props build
+    /// it off `Titan_CarriableObject_Boulder_v3_(4)`'s placement (AG.7: an
+    /// 18 x 16 x 3 ft sphere 2.74 m down, its feat script
+    /// `Titan_Carriable_Object.ai` off the TV's listing), walked into head-on
+    /// for 3 s by a Giant-sized capsule (8 x 14 x 3 ft at 100 %, ours: Tree
+    /// Rex's own read is AG.27's) on Tree Rex's live 20 ft/s and 360°/s
+    /// (AG.12): he stops against it, the boulder stands where it stood with
+    /// its solid, and taken-off reads false for it, so nothing takes it down.
     #[test]
     fn a_titan_boulder_a_giant_walks_into_stays_put() {
         let feat = "C:/tfb/Content/Levels/Includes/Titan_Includes/Titan_CarribleObject/Scripts/Titan_Carriable_Object.ai";

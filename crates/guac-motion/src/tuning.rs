@@ -2,9 +2,9 @@
 //! and slowing down, Turning and hard reversals, Falling and landing). The
 //! walk runs on numbers Giants' movement script holds for him, not on his
 //! `ActorParameters` (AG.8: those read 10,000 ft/s, no acceleration, 10,000°/s
-//! through every walk), so these are a stand-in until AJ's VM runs the script
-//! (design decision 2's tuning row): Eruptor's live values (AG.8, AG.10, AG.38),
-//! in the script's own units, feet and seconds.
+//! through every walk), so these take its place until AJ's VM runs the script
+//! (stand-in ledger: `tuning`): Eruptor's live values (AG.8, AG.10, AG.38), in
+//! the script's own units, feet and seconds.
 
 use crate::solid::{HavokSolid, SolidInfo, SolidKind};
 

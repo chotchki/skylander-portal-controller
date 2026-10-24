@@ -377,7 +377,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     std::time::Duration::from_secs(90),
                     std::time::Duration::from_secs(5),
                 );
-                // RPCS3 spawns on /api/launch (PLAN 10.8.4); Mock just installs a stand-in process
+                // RPCS3 spawns on /api/launch (PLAN 10.8.4); Mock just installs a fake process
                 // and Native tracks none, ever.
                 match driver_kind {
                     DriverKind::Mock => {

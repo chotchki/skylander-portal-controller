@@ -343,8 +343,8 @@ pub fn open_ground_scenarios() -> Vec<Scenario> {
     ]
 }
 
-/// The wall cases: the wall behind the start's stand-in, and the gate's door
-/// as a kinematic solid built from its `CollisionInfo`.
+/// The wall cases: [`walled`]'s made-up copy of the wall behind the start,
+/// and the gate's door as a kinematic solid built from its `CollisionInfo`.
 pub fn wall_scenarios() -> Vec<Scenario> {
     vec![
         along_a_wall(),

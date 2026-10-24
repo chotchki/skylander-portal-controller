@@ -18,7 +18,8 @@
 //! 5, one writer) steps on the engine alone: his walk and his facing are
 //! what his scripts on the VM left, read before his step
 //! ([`crate::hero_scripts`]), and nothing here turns or pushes him. Any
-//! other walks on the stick by AG.16's controller, the stand-in.
+//! other walks on the stick by AG.16's controller
+//! (stand-in ledger: `walker`).
 //!
 //! Ordering ([`guacamole::frame`], openspec AH.59): his step is
 //! [`frame::Frame::Hero`], after the scripts, his locomotion
@@ -141,9 +142,9 @@ pub(crate) struct HeroBody {
     pub(crate) before: Vec3,
 }
 
-/// A hero's locomotion (AG.30): the stand-in stepped after him, and the
-/// weights the step before left, so his pose eases between steps as his
-/// transform does.
+/// A hero's locomotion (AG.30; stand-in ledger: `locomotion`): stepped
+/// after him, with the weights the step before left, so his pose eases
+/// between steps as his transform does.
 #[derive(Component, Debug, Clone)]
 pub(crate) struct HeroGaits {
     pub(crate) locomotion: Locomotion,

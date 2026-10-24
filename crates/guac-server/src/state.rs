@@ -2247,7 +2247,7 @@ mod tests {
         assert_eq!(got[1].2, None);
     }
 
-    /// Stand-in for the product's figure-file hook: forks the pack file into
+    /// A fake of the product's figure-file hook: forks the pack file into
     /// `<root>/<profile>/<figure>.sky` on first use, the shape of
     /// `working_copies::resolve_load_path` (which stays in `crates/server`
     /// with its own tests).

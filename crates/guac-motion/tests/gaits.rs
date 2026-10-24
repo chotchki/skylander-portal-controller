@@ -1,10 +1,10 @@
-//! The locomotion stand-in against the oracle's own recordings (openspec
-//! AG.30 on AG.11). `#[ignore]`d: the recordings are guest memory and stay
-//! outside the tree, under `GUAC_CAPTURE_DIR` (process env, else the
-//! workspace's `.env.dev`). Run with `cargo test -p guac-motion --test gaits
-//! -- --ignored --nocapture`.
+//! The locomotion against the oracle's own recordings (openspec AG.30 on
+//! AG.11; stand-in ledger: `locomotion`). `#[ignore]`d: the recordings are
+//! guest memory and stay outside the tree, under `GUAC_CAPTURE_DIR` (process
+//! env, else the workspace's `.env.dev`). Run with `cargo test -p guac-motion
+//! --test gaits -- --ignored --nocapture`.
 //!
-//! Each replay starts the stand-in standing at its first record at rest in
+//! Each replay starts the locomotion standing at its first record at rest in
 //! the idle and steps it a record at a time on what the record holds: the
 //! speed, the move down and the height. Records pair by `_curFrame`; a
 //! record's advance is the step of the record before it, as AG.11 summed
@@ -157,7 +157,7 @@ struct Tally {
     walk: Agreement,
     body: Agreement,
     /// Per fall: in on the record, and the record the fall's gone against
-    /// the one the stand-in's gaits are whole again (recording.json keeps
+    /// the one the locomotion's gaits are whole again (recording.json keeps
     /// no clips while the fall plays, so the slide back's start isn't in it).
     falls: usize,
     falls_in: usize,
@@ -293,7 +293,7 @@ fn replay(name: &str, frames: &[Record], falls: bool, count_held: bool, tally: &
     }
 }
 
-/// AG.11's 244 recordings: the stand-in's idle weight and run share against
+/// AG.11's 244 recordings: the locomotion's idle weight and run share against
 /// the recorded ones on every record that holds its five clips, the gaits'
 /// rates where they show, and every fall's in and out.
 #[test]
@@ -328,7 +328,7 @@ fn the_stand_in_against_ag11s_recordings() {
     // On the walk's own speed every record within 1e-3 but AG.11's one
     // known parting, `g38_m049`'s uphill dead stop, whose idle comes back
     // two records late; every rate within 0.1 %. The gate's edge-probe hold
-    // parted too until AG.58: the probe's flicker set the stand-in off while
+    // parted too until AG.58: the probe's flicker set the locomotion off while
     // the original's idle kept coming back.
     let w = &tally.walk;
     assert!(w.records > 19_000, "{}", w.records);
@@ -347,7 +347,7 @@ fn the_stand_in_against_ag11s_recordings() {
 /// gate's door slid along to its end over the bridge's foot, where the edge
 /// probe stops him and flickers with the stick held; let-gos from a 1.25 s
 /// and a 9 s run), every record on the walk's own speed, the probe's holds
-/// included: the stand-in's idle weight and run share against the
+/// included: the locomotion's idle weight and run share against the
 /// original's, both of its flips read (`held_weights`), and the rates.
 #[test]
 #[ignore]

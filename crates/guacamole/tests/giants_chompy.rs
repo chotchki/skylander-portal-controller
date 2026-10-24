@@ -299,9 +299,9 @@ fn probe_the_route() {
                 println!("  host distance ({i}) {got:?}");
             }
         }
-        // The cutscene manager isn't on the whitelist (the stand-in row's
-        // camera pans and dialogue): the scene's end set as it would be 5 s
-        // after it starts (AH.10's 'Advance with player').
+        // The cutscene manager isn't on the whitelist (its camera pans and
+        // dialogue; stand-in ledger: `encounter-pans`): the scene's end set
+        // as it would be 5 s after it starts (AH.10's 'Advance with player').
         if std::env::var("AH18_SCENE_END").is_ok() {
             let id = run.placement("1.NPC_Norticus_First_Encounter");
             if run.vm.behaviour(id) == Some("cutscene go") {
@@ -3539,7 +3539,8 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
     );
     assert!(walked_to > 0, "some out of reach as they come down");
     // Resting out of reach, an orb bounces every 1.5-2 s (the idle update
-    // on the game systems' clock, the on-screen stand-in answering yes):
+    // on the game systems' clock, on screen answered yes;
+    // stand-in ledger: `on-screen`):
     // AH.10's 427 bounces of resting orbs came 1.515-2.002 s apart (the
     // AH.19 and AH.20 review). A bounce starts where its height moves after
     // three steps still.

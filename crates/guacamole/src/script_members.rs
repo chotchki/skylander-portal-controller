@@ -6,10 +6,10 @@
 //!
 //! Points a measurement is taken from (`positionmeasurement.* .@other`):
 //! an actor's pivot (a hero's, his controller's), an attach node (where the
-//! embedder set it in the actor's frame, else its pivot: where on the model
-//! a node sits through a clip isn't read yet, a stand-in), the ground under
-//! an actor (the ground finder's point), its origin, a reference's own
-//! point, the ray caster's two points and its contact.
+//! embedder set it in the actor's frame, as AH.50 poses a hero's on his
+//! clips, else its pivot; stand-in ledger: `nodes`), the ground under an
+//! actor (the ground finder's point), its origin, a reference's own point,
+//! the ray caster's two points and its contact.
 //!
 //! The engine's move for what the scripts set going ([`ScriptWorld::advance`]):
 //! a launched actor falls by its own gravity at its time scale, velocity
@@ -1151,10 +1151,10 @@ impl ScriptWorld {
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 let b = self.handle(o).ok_or(HostFault::Nothing)?;
                 if b == self.viewport {
-                    // Against the gameplay camera: on screen. A stand-in
-                    // answering yes for every point (AH.20): the one reader
-                    // the fight reaches is the orbs' idle bounce, which
-                    // only shows on screen.
+                    // Against the gameplay camera: on screen, yes for every
+                    // point (AH.20; stand-in ledger: `on-screen`): the one
+                    // reader the fight reaches is the orbs' idle bounce,
+                    // which only shows on screen.
                     return Ok(Value::Int(1));
                 }
                 if self.objs.get(b) == Some(Object::RayCast) {
@@ -1162,9 +1162,10 @@ impl ScriptWorld {
                     // collision shapes, `Projectiles.ai`, its targets' solids
                     // against the ray from its start to its end): no touch,
                     // as the seam's side has always answered it for a target
-                    // with a body there (a hypothesis, AH.90). The fight's
-                    // headless runs keep no props in the seam, and AG.90's
-                    // fix walked a lob there onto this check.
+                    // with a body there (a hypothesis, AH.90;
+                    // stand-in ledger: `ray-touch`). The fight's headless
+                    // runs keep no props in the seam, and AG.90's fix walked
+                    // a lob there onto this check.
                     return Ok(Value::Int(0));
                 }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
@@ -2298,8 +2299,9 @@ pub const CONTACT_REACH: f32 = 0.01;
 const HUNG_DEPTH: u8 = 8;
 
 /// How many attach nodes an actor's set holds: the scripts index up to 13
-/// on a hero; which joint each is isn't read yet (a stand-in: a node sits
-/// where [`ScriptWorld::set_nodes`] put it, else at the actor's pivot).
+/// on a hero. A node sits where [`ScriptWorld::set_nodes`] put it (a hero's
+/// off his model's attach list, AH.50), else at the actor's pivot
+/// (stand-in ledger: `nodes`).
 pub const NODES: u32 = 32;
 
 #[cfg(test)]
@@ -2824,8 +2826,9 @@ mod tests {
         );
     }
 
-    /// Against the gameplay camera every point is on screen (AH.20's
-    /// stand-in, the orbs' idle bounce its reader), near or far.
+    /// Against the gameplay camera every point is on screen (AH.20, the
+    /// orbs' idle bounce its reader; stand-in ledger: `on-screen`), near or
+    /// far.
     #[test]
     fn every_point_is_on_screen_to_the_gameplay_camera() {
         let mut e = bench();

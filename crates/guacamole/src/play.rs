@@ -1,7 +1,7 @@
 //! The first walk on the TV (openspec AG.21, design decisions 1 and 13;
 //! level-scene's The first character placed walks into the level, Open
-//! question 4's (a): the original's flow minus its story menus, a stand-in
-//! until the game's own menus land).
+//! question 4's (a): the original's flow minus its story menus, until the
+//! game's own menus land; stand-in ledger: `entering`).
 //!
 //! - Who: the first figure placed that walks ([`guacamole::walkers`]),
 //!   Eruptor alone until AG.27. Any other figure, a character placed before
@@ -467,7 +467,8 @@ pub(crate) struct HeroReport {
     pub gait: Option<GaitReport>,
     /// In the level (AH.24): his scripts' join (`asked`, `requested`,
     /// `joined`, or `off` with why), none for a character whose scripts the
-    /// level's part doesn't hold, who walks on the stand-in.
+    /// level's part doesn't hold, who walks on AG.16's controller
+    /// (stand-in ledger: `walker`).
     pub scripts: Option<String>,
     pub scripts_reason: Option<String>,
     /// His health and full health as his scripts hold them, once they run,
@@ -2209,9 +2210,10 @@ mod tests {
     }
 
     /// The review of AH.24: a hero whose scripts went off after joining (a
-    /// join that failed, his script stopped in play) walks on the stand-in
-    /// and his attack buttons do nothing, though his file's placements the
-    /// VM still ticks would throw on them: no clip, no clone.
+    /// join that failed, his script stopped in play) walks on AG.16's
+    /// controller (stand-in ledger: `walker`) and his attack buttons do
+    /// nothing, though his file's placements the VM still ticks would throw
+    /// on them: no clip, no clone.
     #[test]
     fn a_hero_whose_scripts_went_off_does_nothing_on_the_attack_buttons() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2271,8 +2273,8 @@ mod tests {
     }
 
     /// AH.24: a character whose attacks don't run (here no script part
-    /// linked) walks on the stand-in, and its attack buttons do nothing:
-    /// no join, no clip, no clone.
+    /// linked) walks on AG.16's controller (stand-in ledger: `walker`), and
+    /// its attack buttons do nothing: no join, no clip, no clone.
     #[test]
     fn a_character_whose_attacks_dont_run_does_nothing_on_the_attack_buttons() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3035,7 +3037,7 @@ mod tests {
 
     /// AH.62 over AH.20 and AG.29: his health goes off the portal with his
     /// figure and comes back with it. Bitten to 100 of his 150 (the test
-    /// hook's stand-in for a bite), taken off and put back in the same
+    /// hook doing a bite's work), taken off and put back in the same
     /// level, his scripts read 100 once he's joined again and keep it, the
     /// take-off's reinstall of the run (AH.27's carry) leaving it as it was;
     /// the TV leaving the level (a level change) clears it, so he comes back

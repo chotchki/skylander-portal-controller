@@ -1,7 +1,7 @@
-//! The locomotion stand-in on the controller (openspec AG.30): hero-movement's
-//! Idle, walk and run, each scenario on parry and synthetic ground, the
-//! locomotion fed each frame what the controller's frame left
-//! ([`Frame::of`]).
+//! The locomotion on the controller (openspec AG.30, hero-movement's Idle,
+//! walk and run; stand-in ledger: `locomotion`): each scenario on parry and
+//! synthetic ground, the locomotion fed each frame what the controller's
+//! frame left ([`Frame::of`]).
 
 mod common;
 

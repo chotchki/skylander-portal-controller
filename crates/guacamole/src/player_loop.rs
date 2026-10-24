@@ -1,8 +1,8 @@
 //! The player loop (openspec AH.20, design decisions 2 and 4): the portal
-//! manager's tick as guacamole runs it, a stand-in AJ deletes once the
-//! portal manager's script runs whole. Its stretches are the portal
-//! manager's own ops, run as its tick reaches them ([`Vm::run_span`]); only
-//! which stretches run, for whom and when is ours.
+//! manager's tick as guacamole runs it, which AJ deletes once the portal
+//! manager's script runs whole (stand-in ledger: `player-loop`). Its
+//! stretches are the portal manager's own ops, run as its tick reaches them
+//! ([`Vm::run_span`]); only which stretches run, for whom and when is ours.
 //!
 //! Each step's walk ([`PlayerLoop::walk`], openspec AH.59, the original's
 //! order as [`crate::frame`] has it) runs the loop's slices where their
@@ -42,11 +42,11 @@
 //! isn't run.
 //!
 //! Not run: the HUD's messages and its low-health warning (the HUD is
-//! AH.26's stand-in), the join prompt and a player's join, the champion
-//! details and the two-player camera, each player's update macros, and the
-//! level-init gate: `Game - Init Minions in Level` raises `Level Init
-//! State` in the original's level load, which no box runs, so the loop runs
-//! from the level's start as if it had.
+//! AH.26's; stand-in ledger: `hud`), the join prompt and a player's join,
+//! the champion details and the two-player camera, each player's update
+//! macros, and the level-init gate: `Game - Init Minions in Level` raises
+//! `Level Init State` in the original's level load, which no box runs, so
+//! the loop runs from the level's start as if it had.
 //!
 //! The stretches are found by what they call ([`PlayerLoop::read`]), each
 //! checked; a portal manager without one (a synthetic part's) runs without

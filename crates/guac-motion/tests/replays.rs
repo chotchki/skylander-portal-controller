@@ -731,14 +731,15 @@ fn ag36_and_ag9_free_from_the_start() {
 const AG90: [&str; 2] = ["ag90-rock-1792773586", "ag90-rock-1792773746"];
 
 /// hero-movement's A walk turned round every frame (openspec AG.90) on the
-/// stand-in: each AG.90 recording from the record before its stick first
-/// turns round, run free through the 149 records it turns round on: the walk
-/// turns round with it every record, as the original's does, and he holds
-/// the slope: off the ground a frame at a time as many times as theirs to 3
-/// (16 of 16 in all five), never higher than 6 cm over the ground finder's
-/// point (the original's first frame off it 4.66-5.16 cm, every other at
-/// most 1.3 cm), his pivot ending lower than it began and within 0.1 m of
-/// theirs (3-6 cm further down: AG.16's hypothesis (19)).
+/// controller with no scripts (stand-in ledger: `walker`): each AG.90
+/// recording from the record before its stick first turns round, run free
+/// through the 149 records it turns round on: the walk turns round with it
+/// every record, as the original's does, and he holds the slope: off the
+/// ground a frame at a time as many times as theirs to 3 (16 of 16 in all
+/// five), never higher than 6 cm over the ground finder's point (the
+/// original's first frame off it 4.66-5.16 cm, every other at most 1.3 cm),
+/// his pivot ending lower than it began and within 0.1 m of theirs (3-6 cm
+/// further down: AG.16's hypothesis (19)).
 #[test]
 #[ignore]
 fn ag90_a_walk_turned_round_every_frame_holds_the_slope() {

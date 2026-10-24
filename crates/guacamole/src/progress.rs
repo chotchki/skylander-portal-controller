@@ -18,7 +18,7 @@
 //!   on a timer that runs with every game frame (AH.11). The original folds
 //!   that time into the figure's words only at its tag writes, which don't
 //!   run here, so the words keep the playtime they were made with and the
-//!   map gets the count (design decision 2's stand-in row, Playtime).
+//!   map gets the count (stand-in ledger: `playtime`).
 //!
 //! A figure placed with no profile unlocked earns too, its values starting
 //! fresh, but they go nowhere and are dropped when it leaves the portal.
