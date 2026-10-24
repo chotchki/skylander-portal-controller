@@ -270,6 +270,17 @@ impl Files {
     }
 }
 
+/// A name a trigger goes by (AH.4's live read, as the oracle harness's
+/// census reads them): `Trigger` in it (either case), or `trg_`,
+/// `Transition `, `Activate_` or `Pop_` before it.
+pub fn is_trigger(name: &str) -> bool {
+    name.contains("Trigger")
+        || name.contains("trigger")
+        || ["trg_", "Transition ", "Activate_", "Pop_"]
+            .iter()
+            .any(|p| name.starts_with(p))
+}
+
 /// Whether a managed placement is awake (openspec AH.18, AG.7's rule with
 /// the buffer read as the original's hysteresis): one with an activation
 /// range is awake while a hero is within it (3D, feet, from his pivot) and
@@ -397,6 +408,15 @@ pub struct ScriptWorld {
     /// Each placement off the whitelist a whitelisted script woke, in the
     /// order woken: what it was, and whose script woke it.
     pub woken: Vec<Woken>,
+    /// Each managed placement the activity rule has woken, in the order
+    /// first woken (those of one step by handle): a range trigger has fired
+    /// once it has been active (AH.4's rule; openspec AH.25's equivalence).
+    pub fired: Vec<Handle>,
+    /// The bodies the embedder keeps in its seam for actors (openspec
+    /// AH.25: the TV's heroes and awake creatures in Avian's world, as the
+    /// headless runs keep theirs in parry's), each actor's handle and body:
+    /// what an engine maps an actor and a body by.
+    pub embodied: Vec<(Handle, guac_motion::seam::BodyId)>,
 }
 
 /// A placement off the whitelist a whitelisted script woke (design decision
@@ -452,6 +472,8 @@ impl ScriptWorld {
             requests: Vec::new(),
             inert: Default::default(),
             woken: Vec::new(),
+            fired: Vec::new(),
+            embodied: Vec::new(),
         }
     }
 
@@ -489,7 +511,78 @@ impl ScriptWorld {
             out.push((h, a.active));
         }
         out.sort_unstable_by_key(|k| k.0);
+        for &(h, active) in &out {
+            if active && !self.fired.contains(&h) {
+                self.fired.push(h);
+            }
+        }
         out
+    }
+
+    /// The level placement named `name` in the file linked as `unit`, by
+    /// its handle.
+    pub fn placed_in(&self, unit: u16, name: &str) -> Option<Handle> {
+        let mut found: Vec<(&Obj, &Handle)> = self
+            .objects
+            .iter()
+            .filter(|(o, _)| o.unit == unit)
+            .filter(|(o, _)| self.templates.get(o).is_some_and(|p| p.name == name))
+            .collect();
+        found.sort_unstable();
+        found.first().map(|(_, h)| **h)
+    }
+
+    /// The triggers of the file linked as `unit` that have fired, by name in
+    /// the order they first woke ([`ScriptWorld::fired`]): each a placement
+    /// with an activation range whose name a trigger's goes by (AH.4's
+    /// rule, [`is_trigger`]), so the list reads as the oracle's census does.
+    pub fn fired_triggers(&self, unit: u16) -> Vec<String> {
+        self.fired
+            .iter()
+            .filter_map(|h| {
+                let p = self
+                    .actors
+                    .get(h)?
+                    .obj
+                    .and_then(|o| self.templates.get(&o))?;
+                (p.obj.unit == unit && p.range > 0.0 && is_trigger(&p.name)).then(|| p.name.clone())
+            })
+            .collect()
+    }
+
+    /// Every actor the engine walks as a creature ([`ScriptWorld::walk`]),
+    /// taken off or asleep too, in handle order.
+    pub fn creatures(&self) -> Vec<Handle> {
+        let mut out: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.walker.is_some())
+            .map(|(h, _)| *h)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Makes each of the first fight's placements in the file linked as
+    /// `unit` with movement numbers ([`FIRST_FIGHT`]) a creature the engine
+    /// moves ([`ScriptWorld::walk`], openspec AH.18): what the headless
+    /// runs and the TV's fight listing (AH.25) do once the run is made.
+    pub fn walk_first_fight(&mut self, unit: u16) -> usize {
+        let walkers: Vec<Handle> = FIRST_FIGHT
+            .iter()
+            .filter_map(|n| self.placed_in(unit, n))
+            .filter(|h| {
+                self.actors
+                    .get(h)
+                    .and_then(|a| a.obj)
+                    .and_then(|o| self.templates.get(&o))
+                    .is_some_and(|p| p.physics.is_some())
+            })
+            .collect();
+        for &h in &walkers {
+            self.walk(h);
+        }
+        walkers.len()
     }
 
     /// A placement's name: its file's, or its template's for a clone.
@@ -1521,12 +1614,102 @@ fn loot_count(vm: &Vm, world: &ScriptWorld, rarity: Rarity) -> Option<Value> {
     vm.field(data, rarity.field()).map(|v| vm.value(v))
 }
 
+/// An experience orb out in the level (openspec AH.20, AH.25's report):
+/// its actor, its worth and where it is, and whether it's still coming
+/// down (a hero takes one only once it's down).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Orb {
+    pub actor: Handle,
+    pub worth: i32,
+    pub at: Vec3,
+    pub falling: bool,
+}
+
+/// Every orb the orbs' control holds (`combat control data`'s `xp ball
+/// control`: `all active balls` and `balls launching`), each once, the
+/// active first; none before the combat data is made.
+pub fn orbs(vm: &Vm, world: &ScriptWorld) -> Vec<Orb> {
+    let control = vm
+        .program()
+        .global_named("combat control data")
+        .and_then(|g| vm.global_peek(g))
+        .map(|c| vm.value(c))
+        .and_then(|c| vm.field(c, "xp ball control"))
+        .map(|v| vm.value(v));
+    let Some(control) = control else {
+        return Vec::new();
+    };
+    let balls = |name: &str| -> Vec<(Handle, i32)> {
+        let Some(set) = vm.field(control, name).map(|v| vm.value(v)) else {
+            return Vec::new();
+        };
+        vm.set(set)
+            .map(<[Value]>::to_vec)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|b| {
+                let b = vm.value(b);
+                let ball = vm.field(b, "xp ball").map(|v| vm.value(v))?;
+                let Value::Entity(orb) = vm.field(ball, "orb").map(|v| vm.value(v))? else {
+                    return None;
+                };
+                let worth = vm
+                    .field(ball, "xp val")
+                    .and_then(|v| vm.value(v).as_i32())?;
+                Some((orb, worth))
+            })
+            .collect()
+    };
+    let launching: Vec<Handle> = balls("balls launching").into_iter().map(|b| b.0).collect();
+    let mut out: Vec<Orb> = Vec::new();
+    for (actor, worth) in balls("all active balls")
+        .into_iter()
+        .chain(balls("balls launching"))
+    {
+        if out.iter().any(|o| o.actor == actor) {
+            continue;
+        }
+        let Some(a) = world.actor(actor).filter(|a| !a.removed) else {
+            continue;
+        };
+        out.push(Orb {
+            actor,
+            worth,
+            at: a.position,
+            falling: launching.contains(&actor),
+        });
+    }
+    out
+}
+
 /// Where the kind's running count stands (openspec AH.21), none before the
 /// level's loot data is made.
 pub fn loot_index(vm: &Vm, world: &ScriptWorld, rarity: Rarity) -> Option<f32> {
     let count = loot_count(vm, world, rarity)?;
     vm.field(count, "DropRateIndex")
         .and_then(|v| vm.value(v).as_f32())
+}
+
+/// The combat manager's next alert `steps` steps on, as a recorded state
+/// has its 0.25 s check's phase (openspec AH.18's headless runs, AH.25's
+/// dev entry): `combat control data`'s `alert next time` set between this
+/// step's game timer and the next's, its check running before the
+/// placements' ticks. False before the combat data is made.
+pub fn alert_in(vm: &mut Vm, steps: u32) -> bool {
+    let Some(g) = vm.program().global_named("combat control data") else {
+        return false;
+    };
+    let Some(control) = vm.global(g).map(|v| vm.value(v)) else {
+        return false;
+    };
+    let Some(now) = vm
+        .field(control, "game timer")
+        .and_then(|v| vm.value(v).as_f32())
+    else {
+        return false;
+    };
+    let next = now + (steps as f32 - 0.5) / 60.0;
+    vm.set_field(control, "alert next time", Value::Float(next))
 }
 
 /// The kind's running count set where an anchor's read has it (a
@@ -2382,6 +2565,45 @@ mod tests {
         assert!(w.taken_off(obj));
         assert!(w.activity_at(&[start]).is_empty(), "left out for good");
         assert!(!w.take_off(Obj { unit: 9, index: 9 }));
+    }
+
+    /// AH.25: a placement the activity rule wakes is fired from then on, in
+    /// the order woken; asleep again it stays fired. The fired triggers are
+    /// those with a range going by a trigger's name (AH.4's rule).
+    #[test]
+    fn what_the_activity_rule_wakes_is_fired_and_triggers_go_by_name() {
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (30.0, 0.0, true);
+        assert!(
+            w.activity_at(&[Vec3::new(50.0, 0.0, 0.0)])
+                .iter()
+                .all(|a| !a.1)
+        );
+        assert!(w.fired.is_empty());
+        w.activity_at(&[Vec3::new(9.0, 0.0, 0.0)]);
+        assert_eq!(w.fired, [grunt]);
+        w.activity_at(&[Vec3::new(50.0, 0.0, 0.0)]);
+        w.activity_at(&[Vec3::new(9.0, 0.0, 0.0)]);
+        assert_eq!(w.fired, [grunt], "once");
+        for name in [
+            "Setup_001_Trigger",
+            "Activate_Norticus and Chompies",
+            "Transition 7-1",
+            "Pop_to_Camera_5",
+            "trg_lvl_213_lush_peak",
+            "Synthetic_trigger",
+        ] {
+            assert!(is_trigger(name), "{name}");
+        }
+        for name in [
+            "Enemy_Chompy(1)",
+            "Setup_001_Controller",
+            "Transitional",
+            "pottery_1(8)",
+        ] {
+            assert!(!is_trigger(name), "{name}");
+        }
     }
 
     /// Setup_001's 7 ft rule from a recorded state (AH.8's anchor B and the

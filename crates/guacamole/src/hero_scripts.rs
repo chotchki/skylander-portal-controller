@@ -173,17 +173,26 @@ pub(crate) fn install(world: &mut World, part: Part) {
 /// scripts, the pickups and the breakables), each of the level's placements
 /// with a model the level's palettes part holds given its palette.
 fn install_from(world: &mut World, source: &ScriptSource) {
+    // The dev entry's fight brings the first fight's placements (AH.25).
+    let fight = crate::dev_entry::fight_listed(world);
+    let config = match fight {
+        true => guacamole::scripts::fight_config(Mode::Play),
+        false => smash_config(Mode::Play),
+    };
     scripts::install_with(
         world,
         source.program.clone(),
         &source.files,
         &source.order,
-        smash_config(Mode::Play),
+        config,
     );
     let Some(level) = source.level_unit() else {
         return;
     };
     let mut script_world = world.resource_mut::<ScriptWorld>();
+    if fight {
+        script_world.walk_first_fight(level);
+    }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
@@ -337,14 +346,16 @@ impl<'a, 'w, 's> TvEngine<'a, 'w, 's> {
 }
 
 /// Each prop standing with its solid in Avian's world, as its placement's
-/// handle and its body: the level's file's placements by their object.
+/// handle and its body: the level's file's placements by their object; then
+/// the heroes' and the creatures' bodies the TV keeps there
+/// ([`crate::creatures`], openspec AH.25).
 pub(crate) fn standing_props(
     level: &Level,
     world: &ScriptWorld,
     source: Option<&ScriptSource>,
 ) -> Vec<(Handle, BodyId)> {
     let Some(unit) = source.and_then(ScriptSource::level_unit) else {
-        return Vec::new();
+        return world.embodied.clone();
     };
     level
         .standing_bodies()
@@ -355,6 +366,7 @@ pub(crate) fn standing_props(
                 .get(&Obj { unit, index })
                 .map(|&h| (h, body))
         })
+        .chain(world.embodied.iter().copied())
         .collect()
 }
 

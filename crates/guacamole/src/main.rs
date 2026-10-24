@@ -12,6 +12,8 @@ mod card_motion;
 mod card_view;
 mod cards;
 mod cli;
+mod creatures;
+mod dev_entry;
 mod driver;
 mod extraction;
 mod hero;
@@ -116,6 +118,7 @@ fn main() -> Result<()> {
     let (level_tx, level_feed) = level::level_channel();
     let mirror = TvMirror::default();
     let asked_health = hero_scripts::AskedHealth::default();
+    let entry_asks = dev_entry::EntryAsks::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
         Ok(loaded) => loaded,
@@ -135,7 +138,8 @@ fn main() -> Result<()> {
                 root,
                 None,
                 OutputLatency::default(),
-                (mirror, asked_health),
+                (mirror, asked_health, entry_asks),
+                None,
                 log_guard,
             );
         }
@@ -178,13 +182,14 @@ fn main() -> Result<()> {
     };
 
     let mut progress = None;
+    let mut level_hero = None;
     let link = match boot(BootOptions {
         config: cfg.clone(),
         runtime_root: root.clone(),
         migrator: &setup::MIGRATOR,
         driver_factory: Box::new(move |kind| build_driver(kind, portal_tx)),
         hooks: Hooks::default(),
-        extra_routes: test_routes(&mirror, &asked_health),
+        extra_routes: test_routes(&mirror, &asked_health, &entry_asks),
         catalogue: Catalogue::Native {
             games: scan.games(),
             roster,
@@ -196,6 +201,7 @@ fn main() -> Result<()> {
             job.figures = Some(server.figures.clone());
             job.progression = Some(server.progression.clone());
             progress = Some(server.progress.clone());
+            level_hero = Some(server.level_hero.clone());
             if let Some(giants) = scan.offered() {
                 extraction::preload_roster(giants.dir.clone(), job.clone());
             }
@@ -218,7 +224,8 @@ fn main() -> Result<()> {
         root,
         Some(job),
         latency,
-        (mirror, asked_health),
+        (mirror, asked_health, entry_asks),
+        level_hero,
         log_guard,
     )
 }
@@ -355,14 +362,18 @@ impl Plugin for TvPacing {
     }
 }
 
-/// `/api/_test/tv` for the e2e harness, and AH.62's health beside it;
-/// nothing outside `test-hooks`.
+/// `/api/_test/tv` for the e2e harness, and AH.62's health and AH.25's
+/// dev entry beside it; nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
     asked_health: &hero_scripts::AskedHealth,
+    entry_asks: &dev_entry::EntryAsks,
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
-    cfg!(feature = "test-hooks")
-        .then(|| mirror::routes(mirror).merge(hero_scripts::health_routes(asked_health)))
+    cfg!(feature = "test-hooks").then(|| {
+        mirror::routes(mirror)
+            .merge(hero_scripts::health_routes(asked_health))
+            .merge(dev_entry::routes(entry_asks))
+    })
 }
 
 /// `--setup` alone: the plain dialog, on the main thread before the event
@@ -397,7 +408,8 @@ fn run_tv(
     root: PathBuf,
     job: Option<ExtractJob>,
     latency: OutputLatency,
-    (mirror, asked_health): (TvMirror, hero_scripts::AskedHealth),
+    (mirror, asked_health, entry_asks): (TvMirror, hero_scripts::AskedHealth, dev_entry::EntryAsks),
+    level_hero: Option<guac_server::progress::LevelHero>,
     log_guard: WorkerGuard,
 ) -> Result<()> {
     exit_after_farewell(link.status.clone(), progress.clone());
@@ -442,9 +454,17 @@ fn run_tv(
             progress::ProgressPlugin,
             hero_scripts::HeroScriptsPlugin,
             tints::CloneTintsPlugin,
+            creatures::CreaturesPlugin,
         ));
+    // AH.25's dev entry, in a dev build only.
+    if let Some(entry) = dev_entry::plugin(cfg!(feature = "dev-tools"), entry_asks) {
+        app.add_plugins(entry);
+    }
     if let Some(progress) = &progress {
         app.insert_resource(progress::ProgressOut(progress.clone()));
+    }
+    if let Some(hero) = level_hero {
+        app.insert_resource(play::LevelHeroOut(hero));
     }
     // The TV reads the caps from the same slot the extraction fills.
     if let Some(slot) = job.as_ref().and_then(|j| j.progression.clone()) {

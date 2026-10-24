@@ -174,6 +174,20 @@ impl PreparedBody {
         }
         entity.id()
     }
+
+    /// Makes `entity` this kinematic body (openspec AH.25: a hero's and a
+    /// creature's ride on their own entities, so a body goes with what it's
+    /// the body of). The entity's `Transform`, if any, must be unscaled:
+    /// Avian reads a collider's scale off it.
+    pub(crate) fn insert_on(self, entity: &mut EntityCommands) {
+        entity.insert((
+            self.body,
+            RigidBody::Kinematic,
+            self.collider,
+            Position(self.pose.position),
+            Rotation(self.pose.rotation),
+        ));
+    }
 }
 
 /// Moves a kinematic body or sensor, refusing as `ParryWorld::set_pose` does

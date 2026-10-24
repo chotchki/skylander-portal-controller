@@ -1075,6 +1075,180 @@ pub fn swap(creature_at: [f32; 3]) -> Vec<u8> {
     b.build()
 }
 
+/// The creature [`fight`] writes, named as one of the first fight's, so the
+/// TV's fight listing runs it (openspec AH.25).
+pub const FIGHT_CREATURE: &str = "Enemy_Chompy(1)";
+/// Its health from its first tick.
+pub const FIGHT_HEALTH: i32 = 1;
+/// The experience beating it awards through `Game - Award Experience`.
+pub const FIGHT_XP: i32 = 500;
+/// Its solid: a sphere this wide (ft), solid, standing on the level.
+pub const FIGHT_CREATURE_SIZE: [f32; 3] = [4.0; 3];
+/// Its fall (ft/s²): the movement numbers that make it a creature the
+/// engine walks.
+pub const FIGHT_FALL: f32 = 120.0;
+/// The tick (from its first, which counts 1) it goes from `idle` to
+/// `battle`, starting its palette's [`FIGHT_BATTLE_SLOT`] on itself.
+pub const FIGHT_BATTLE: i32 = 30;
+pub const FIGHT_BATTLE_SLOT: i32 = 11;
+/// The model it names: what the level's props and palettes parts key its
+/// drawing and its clips by.
+pub const FIGHT_CREATURE_MODEL: &str = "C:/tfb/Content/Models/Characters/Synthetic_Chompy.mdl";
+/// The two triggers [`fight`] writes, scriptless placements with
+/// [`FIGHT_TRIGGER_RANGE`], and the controller that waits on them in turn,
+/// named as Setup_001's so the fight listing runs it.
+pub const FIGHT_TRIGGER_A: &str = "Synthetic_Trigger_A";
+pub const FIGHT_TRIGGER_B: &str = "Synthetic_Trigger_B";
+pub const FIGHT_TRIGGER_RANGE: f32 = 10.0;
+pub const FIGHT_CONTROLLER: &str = "Setup_001_Controller";
+/// The controller's behaviours: waiting on A, then on B, then done.
+pub const FIGHT_WAIT_A: &str = "wait a";
+pub const FIGHT_WAIT_B: &str = "wait b";
+pub const FIGHT_DONE: &str = "done";
+
+/// AH.25's synthetic first fight (openspec AH.25; design decision 19), the
+/// level's entry beside [`attack`]'s, our numbers throughout:
+///
+/// - [`FIGHT_CREATURE`] at `creature_at` (its pivot, metres), running with
+///   the level builder's 160 ft range: its solid a [`FIGHT_CREATURE_SIZE`]
+///   sphere that's solid and stands on the level, its movement numbers
+///   [`FIGHT_FALL`]'s, its model [`FIGHT_CREATURE_MODEL`]; its script
+///   holds its `health` ([`FIGHT_HEALTH`]) and counts its `ticks`, `idle`
+///   until tick [`FIGHT_BATTLE`], then `battle`, starting its palette's
+///   [`FIGHT_BATTLE_SLOT`] as it goes; and holds the level's
+///   [`SMASH_BREAK`], which [`attack`]'s
+///   ball asks for each tick it flies: with the creature among what touches
+///   the ball, the hero's figure awarded [`FIGHT_XP`] through a stub of
+///   `Game - Award Experience`, the creature and the ball taken off;
+/// - [`FIGHT_TRIGGER_A`] and [`FIGHT_TRIGGER_B`] at `triggers`, running with
+///   no script, a [`FIGHT_TRIGGER_RANGE`] ft range and no buffer;
+/// - [`FIGHT_CONTROLLER`], running from the level's start with no range,
+///   in [`FIGHT_WAIT_A`] until trigger A is awake (not among
+///   `actorinfo.inactive`, as Setup_001's controller waits on its
+///   trigger), then [`FIGHT_WAIT_B`] until B is, then [`FIGHT_DONE`]: the
+///   triggers fired in that order bring it to its end, the other way not.
+pub fn fight(creature_at: [f32; 3], triggers: [[f32; 3]; 2]) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let creature = b.object(0, "tfbActorInfo", 0xF8);
+    let trigger_a = b.object(0, "tfbActorInfo", 0xF8);
+    let trigger_b = b.object(0, "tfbActorInfo", 0xF8);
+    let my = El::Member("optoplevelbehavior", "my");
+    let creature_script = {
+        let mut w = Writer::new(&mut b);
+        let health = w.variable("health", "ValueInfo", Some("IntMeasurement"));
+        let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+        let clip = w.variable("battle clip", "ScriptReference", None);
+        let award = w.op(Class::DefineMacro, "Game - Award Experience");
+        let idle = w.op(Class::UserBehavior, "idle");
+        let battle = w.op(Class::UserBehavior, "battle");
+        let touching = [
+            my,
+            El::Member("actorinfo", "collision volume"),
+            El::Member("collisioninfo", "contacts with me"),
+        ];
+        let script = w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Fighter.ai",
+            |w| {
+                let full = w.int(FIGHT_HEALTH);
+                w.set(&[El::Local(health)], full);
+            },
+            |w| {
+                let (p, _) = define_with(w, SMASH_BREAK, &[]);
+                let hit = w.check_in(&touching, 2, &[El::Local(creature)]);
+                let xp = w.int(FIGHT_XP);
+                call_stub(w, award, &[("amount", "ValueInfo", xp)]);
+                w.remove(&[El::Local(creature)]);
+                w.remove(&[my]);
+                w.end_block(hit);
+                w.flow_end();
+                w.end_block(p);
+            },
+            |w| {
+                let p = w.push(idle);
+                w.inc(&[El::Local(ticks)]);
+                let wake = w.int(FIGHT_BATTLE);
+                let woken = w.check(&[El::Local(ticks)], 2, wake);
+                start_slot(w, clip, FIGHT_BATTLE_SLOT);
+                w.set_behavior(battle);
+                w.end_block(woken);
+                w.end_block(p);
+                let p = w.push(battle);
+                w.inc(&[El::Local(ticks)]);
+                w.end_block(p);
+            },
+        );
+        w.declare(script, &[health, ticks, clip]);
+        script
+    };
+    let controller_script = {
+        let mut w = Writer::new(&mut b);
+        let wait_a = w.op(Class::UserBehavior, FIGHT_WAIT_A);
+        let wait_b = w.op(Class::UserBehavior, FIGHT_WAIT_B);
+        let done = w.op(Class::UserBehavior, FIGHT_DONE);
+        let inactive = [El::Member("actorinfo", "inactive")];
+        w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Controller.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                for (wait, trigger, next) in
+                    [(wait_a, trigger_a, wait_b), (wait_b, trigger_b, done)]
+                {
+                    let p = w.push(wait);
+                    let asleep = w.check_in(&inactive, 0, &[El::Local(trigger)]);
+                    w.flow_end();
+                    w.end_block(asleep);
+                    w.set_behavior(next);
+                    w.end_block(p);
+                }
+                let p = w.push(done);
+                w.end_block(p);
+            },
+        )
+    };
+    let controller = actor_with(&mut b, FIGHT_CONTROLLER, Some(controller_script), 4);
+    let [x, y, z] = creature_at;
+    place(
+        &mut b,
+        creature,
+        FIGHT_CREATURE,
+        Some(creature_script),
+        4,
+        &[x, y, z, 0.0, 0.0, 0.0],
+    );
+    // A sphere (3), solid (bit 3), on the level's mesh (bit 4).
+    collision(&mut b, creature, 0x1B, FIGHT_CREATURE_SIZE);
+    falling(&mut b, creature, FIGHT_FALL);
+    let model = b.object(0, "tfbPhysicsModel", 0x30);
+    crate::model::builder::info(&mut b, model, FIGHT_CREATURE_MODEL);
+    b.pointer(at(creature, 0xDC), model);
+    for (t, name, [x, y, z]) in [
+        (trigger_a, FIGHT_TRIGGER_A, triggers[0]),
+        (trigger_b, FIGHT_TRIGGER_B, triggers[1]),
+    ] {
+        place(&mut b, t, name, None, 4, &[x, y, z, 0.0, 0.0, 0.0]);
+        let range: Vec<u8> = [FIGHT_TRIGGER_RANGE, 0.0]
+            .iter()
+            .flat_map(|v| v.to_be_bytes())
+            .collect();
+        b.put_bytes(at(t, 0xD0), &range);
+    }
+    let blocks = b.section(0x10);
+    crate::igz::layouts::builder::list(
+        &mut b,
+        root,
+        blocks,
+        &[
+            Some(creature),
+            Some(trigger_a),
+            Some(trigger_b),
+            Some(controller),
+        ],
+    );
+    b.build()
+}
+
 /// `ActorParameters` on the placement at `a`: its own gravity `fall`
 /// (ft/s²) at full speed, as [`attack`]'s ball falls.
 fn falling(b: &mut IgzBuilder, a: Location, fall: f32) {

@@ -814,6 +814,76 @@ fn the_synthetic_swap_level_reads_back() {
     assert!(ops.iter().any(|o| o.contains("CheckReference")), "{ops:?}");
 }
 
+/// AH.25's synthetic fight reads back: the creature running at its place
+/// with its sphere on the level and movement numbers, the two triggers
+/// running scriptless with their 10 ft range and no buffer, the controller
+/// rangeless with its three behaviours and its membership checks, the
+/// creature's script holding its two behaviours and the break the ball
+/// asks for.
+#[test]
+fn the_synthetic_fight_level_reads_back() {
+    use super::builder::{
+        FIGHT_CONTROLLER, FIGHT_CREATURE, FIGHT_DONE, FIGHT_TRIGGER_A, FIGHT_TRIGGER_B,
+        FIGHT_TRIGGER_RANGE, FIGHT_WAIT_A, FIGHT_WAIT_B, SMASH_BREAK, fight,
+    };
+    use crate::level::Placements;
+    let level = fight([1.0, 2.0, 3.0], [[4.0, 2.0, 3.0], [1.0, 2.0, 6.0]]);
+    let igz = Igz::parse(&level).unwrap();
+    let p = Placements::read(&igz).unwrap();
+    let named = |n: &str| p.actors.iter().find(|a| a.name() == Some(n)).unwrap();
+    let creature = named(FIGHT_CREATURE);
+    assert_eq!(creature.placement().placement.activity_state, 4);
+    assert_eq!(
+        creature.placement().placement.init_matrix.position,
+        [1.0, 2.0, 3.0]
+    );
+    assert_eq!(creature.placement().activation_range, 160.0);
+    assert_eq!(creature.collision.unwrap().properties, 0x1B);
+    assert!(creature.parameters.is_some(), "its movement numbers");
+    assert!(creature.script.unwrap().ends_with("Synthetic_Fighter.ai"));
+    for (name, at) in [
+        (FIGHT_TRIGGER_A, [4.0, 2.0, 3.0]),
+        (FIGHT_TRIGGER_B, [1.0, 2.0, 6.0]),
+    ] {
+        let t = named(name);
+        assert!(t.script.is_none(), "{name}");
+        assert_eq!(t.placement().placement.init_matrix.position, at);
+        assert_eq!(t.placement().activation_range, FIGHT_TRIGGER_RANGE);
+        assert_eq!(t.placement().activation_range_buffer, 0.0);
+    }
+    let controller = named(FIGHT_CONTROLLER);
+    assert_eq!(
+        controller.placement().activation_range,
+        0.0,
+        "awake throughout"
+    );
+    let graph = Graph::read(&igz).unwrap();
+    let ops = |suffix: &str| {
+        let script = graph
+            .scripts
+            .iter()
+            .find(|s| s.name.is_some_and(|n| n.ends_with(suffix)))
+            .unwrap();
+        positions(&graph, script)
+    };
+    let c = ops("Synthetic_Controller.ai");
+    for behaviour in [FIGHT_WAIT_A, FIGHT_WAIT_B, FIGHT_DONE] {
+        assert!(c.iter().any(|o| o.contains(behaviour)), "{c:?}");
+    }
+    assert_eq!(
+        c.iter().filter(|o| o.contains("CheckMembership")).count(),
+        2
+    );
+    assert_eq!(
+        p.model_path(creature),
+        Some(super::builder::FIGHT_CREATURE_MODEL)
+    );
+    let f = ops("Synthetic_Fighter.ai");
+    for want in ["idle", "battle", SMASH_BREAK, "Remove", "StartSequence"] {
+        assert!(f.iter().any(|o| o.contains(want)), "{want}: {f:?}");
+    }
+}
+
 /// A placement's tags (openspec AH.18): its `_tagList` a `TagList` whose
 /// `_initialTags` hold each `OpParameter`, read back field for field, the
 /// list's own elements empty as level files hold them.

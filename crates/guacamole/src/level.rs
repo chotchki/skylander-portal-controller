@@ -204,8 +204,24 @@ struct Built {
     /// The spawn part's models (AH.24), by path: each one's segments as the
     /// props' are, past theirs.
     spawn_models: Vec<(String, Vec<(usize, u16)>)>,
+    /// The first fight's creatures' models (openspec AH.25), by path, with
+    /// each one's palette off the level's palettes part: their textures
+    /// among `images`.
+    creatures: Vec<CreatureModel>,
     read: Duration,
     took: Duration,
+}
+
+/// A creature's model as the TV draws it (openspec AH.25,
+/// [`guacamole::creature_models`]): its skinned parts, its idle and the
+/// clips its scripts play by palette slot.
+#[derive(Debug, Clone)]
+pub(crate) struct CreatureModel {
+    pub(crate) path: String,
+    pub(crate) model: Arc<guac_ir::Model>,
+    /// None when the level's palettes part doesn't read or holds none for
+    /// it: it holds its idle.
+    pub(crate) palette: Option<Arc<guac_ir::palette::Palette>>,
 }
 
 /// What walking the level takes: its solids, built off the frame, where
@@ -217,6 +233,8 @@ struct Walk {
     start: Vec3,
     props: LevelProps,
     prop_bodies: Vec<Option<PreparedBody>>,
+    /// The first fight's creatures' models (AH.25), by path.
+    creatures: Vec<(String, guac_ir::Model)>,
 }
 
 /// The collision, placements and props parts as the walk takes them: the
@@ -242,6 +260,8 @@ fn read_walk(source: &LevelSource, part: impl Fn(&str) -> PathBuf) -> Result<Wal
         .iter()
         .map(|b| PreparedBody::new(b).map_err(|e| format!("the collision: {e}")))
         .collect::<Result<_, _>>()?;
+    let creatures =
+        guacamole::creature_models::first_fight_models(&placements, &props, &source.identity);
     let props = LevelProps::new(&props, &placements).map_err(|e| format!("the props: {e}"))?;
     let prop_bodies = props
         .props
@@ -259,6 +279,7 @@ fn read_walk(source: &LevelSource, part: impl Fn(&str) -> PathBuf) -> Result<Wal
         start,
         props,
         prop_bodies,
+        creatures,
     })
 }
 
@@ -359,10 +380,39 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         })
         .collect::<Result<Vec<_>, String>>()?;
     drawn.materials.extend(spawned.materials.iter().cloned());
+    // The first fight's creatures (AH.25): their models with their
+    // palettes, their textures read with the level's. A palettes part that
+    // doesn't read leaves each holding its idle.
+    let palettes: Option<guac_ir::palette::LevelPalettes> = match read_ir(
+        source.ir,
+        &part(guac_extract::levels::PALETTES),
+    ) {
+        Ok(p) => Some(p),
+        Err(why) => {
+            warn!(reason = %why, "the level's palettes didn't read: its creatures hold their idles");
+            None
+        }
+    };
+    let creatures: Vec<CreatureModel> = std::mem::take(&mut walk.creatures)
+        .into_iter()
+        .map(|(path, model)| CreatureModel {
+            palette: palettes
+                .as_ref()
+                .and_then(|p| p.palettes.iter().find(|x| x.owner == path))
+                .map(|p| Arc::new(p.clone())),
+            path,
+            model: Arc::new(model),
+        })
+        .collect();
+    let creature_materials: Vec<&model::Material> = creatures
+        .iter()
+        .flat_map(|c| c.model.materials.iter())
+        .collect();
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
         .materials
         .iter()
+        .chain(creature_materials)
         .flat_map(|m| m.textures.iter().map(move |slot| (m, slot)));
     for (material, slot) in slots {
         let srgb = remaster::samples_srgb(material, slot.role);
@@ -427,6 +477,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         walk,
         prop_models,
         spawn_models,
+        creatures,
         read,
         took: started.elapsed(),
     })
@@ -825,6 +876,10 @@ pub(crate) struct Loaded {
     /// The spawn part's models by path, each segment's mesh and material:
     /// what the scripts' clones draw (AH.24).
     spawns: HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>,
+    /// The first fight's creatures' models (AH.25), and every texture the
+    /// level read, by its view, for their materials.
+    creatures: Vec<CreatureModel>,
+    images: Vec<(ImageKey, Handle<Image>)>,
     /// Where the hero starts, before he's settled.
     pub(crate) start: Vec3,
     /// Materials lit with the level's but in the hero's scene
@@ -1017,6 +1072,17 @@ impl Level {
         &self,
     ) -> Option<&HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>> {
         self.stage.loaded().map(|l| &l.spawns)
+    }
+
+    /// The creature model at `path` (AH.25) and a lookup of the level's
+    /// textures by view for its materials, once the level's loaded.
+    pub(crate) fn creature(
+        &self,
+        path: &str,
+    ) -> Option<(&CreatureModel, &[((String, bool, Sampler), Handle<Image>)])> {
+        let l = self.stage.loaded()?;
+        let c = l.creatures.iter().find(|c| c.path == path)?;
+        Some((c, &l.images))
     }
 
     /// The level's lights and fog, once loaded.
@@ -1481,6 +1547,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         mesh_handles,
         materials,
         fog,
+        image_handles,
         ..
     } = up;
     let level_meshes = built.drawn.segments.len();
@@ -1567,6 +1634,8 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         bodies,
         props,
         spawns,
+        creatures: std::mem::take(&mut built.creatures),
+        images: image_handles,
         start: built.walk.start,
         also: Vec::new(),
         frame_lights: None,

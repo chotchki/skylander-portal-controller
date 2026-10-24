@@ -31,8 +31,7 @@ use guacamole::player_loop::PlayerLoop;
 use guacamole::props::{LevelProps, PROP_BODIES};
 use guacamole::script_engine::{Engine, NodePose, Pad};
 use guacamole::scripts::{
-    self, FIRST_FIGHT, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
-    headless_spawner,
+    self, Files, ScriptWorld, WorldHost, headless_handles, headless_objects, headless_spawner,
 };
 use skylander_core::FigureId;
 use skylander_rpcs3_control::FigureProgress;
@@ -445,22 +444,7 @@ impl Run {
     /// data`'s `alert next time` set between this step's game timer and the
     /// next's (its check runs before the placements' ticks).
     pub fn alert_in(&mut self, steps: u32) {
-        let g = self
-            .vm
-            .program()
-            .global_named("combat control data")
-            .unwrap();
-        let control = self.vm.global(g).map(|v| self.vm.value(v)).unwrap();
-        let now = self
-            .vm
-            .field(control, "game timer")
-            .and_then(|v| self.vm.value(v).as_f32())
-            .unwrap();
-        let next = now + (steps as f32 - 0.5) / 60.0;
-        assert!(
-            self.vm
-                .set_field(control, "alert next time", Value::Float(next))
-        );
+        assert!(scripts::alert_in(&mut self.vm, steps), "the combat data");
     }
 
     /// A level placement set where a recorded state has it, at rest.
@@ -683,16 +667,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
             world.set_palette(p.obj, lengths(pal));
         }
     }
-    for name in FIRST_FIGHT {
-        if let Some(p) = files
-            .placed
-            .iter()
-            .find(|p| p.name == name && p.obj.unit == LEVEL)
-            && p.physics.is_some()
-        {
-            world.walk(handles[&p.obj]);
-        }
-    }
+    world.walk_first_fight(LEVEL);
     let (mesh, start) = chapter_1(&igzs[LEVEL as usize]);
     let parry = ParryWorld::new(&[mesh]).expect("the level's collision");
     let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, start, 0.0);

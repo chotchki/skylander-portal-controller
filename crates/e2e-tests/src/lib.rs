@@ -177,6 +177,17 @@ impl TestServer {
         Self::spawn_guacamole_over(tmp, &dumps, &env)
     }
 
+    /// guacamole over a Giants dump whose [`E2E_WALKER`] fights on its
+    /// scripts beside AH.25's synthetic first fight ([`E2E_CREATURE`], its
+    /// triggers and the controller waiting on them), no intros
+    /// ([`IntroFixture::build_creature_in`]).
+    pub fn spawn_guacamole_creature() -> Result<Self> {
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let fixture = IntroFixture::build_creature_in(&tmp.path().join("giants"))?;
+        let (dumps, env) = (fixture.dumps.clone(), fixture.env());
+        Self::spawn_guacamole_over(tmp, &dumps, &env)
+    }
+
     /// guacamole over `fixture`'s Giants dump and finished extract, the dump
     /// trusted through `GUAC_TEST_KNOWN_DUMP` (openspec AB.11).
     pub fn spawn_guacamole_with_intros(fixture: &IntroFixture) -> Result<Self> {
@@ -1518,18 +1529,26 @@ impl IntroFixture {
     /// attack as the script part, the walker's palette holding its throw's
     /// and its second attack's slots: [`E2E_WALKER`] fights on its scripts.
     pub fn build_fighting_in(dir: &Path) -> Result<Self> {
-        Self::build_with_fight(dir, &[], true, true, false)
+        Self::build_with_fight(dir, &[], true, true, LevelEntry::Creature)
     }
 
     /// [`Self::build_fighting_in`] with AH.27's synthetic breakable as the
     /// level's script entry and its barrel standing [`E2E_BARREL`] in the
     /// level's placements, a prop for its solid.
     pub fn build_smashing_in(dir: &Path) -> Result<Self> {
-        Self::build_with_fight(dir, &[], true, true, true)
+        Self::build_with_fight(dir, &[], true, true, LevelEntry::Smash)
+    }
+
+    /// [`Self::build_fighting_in`] with AH.25's synthetic first fight as the
+    /// level's script entry: its creature at [`E2E_CREATURE`], which the
+    /// fight's listing runs (the dev entry asks for it), and its triggers
+    /// at [`E2E_TRIGGERS`].
+    pub fn build_creature_in(dir: &Path) -> Result<Self> {
+        Self::build_with_fight(dir, &[], true, true, LevelEntry::Fight)
     }
 
     fn build_with(dir: &Path, intros: &[FixtureIntro], walking: bool) -> Result<Self> {
-        Self::build_with_fight(dir, intros, walking, false, false)
+        Self::build_with_fight(dir, intros, walking, false, LevelEntry::Creature)
     }
 
     fn build_with_fight(
@@ -1537,7 +1556,7 @@ impl IntroFixture {
         intros: &[FixtureIntro],
         walking: bool,
         fighting: bool,
-        smashing: bool,
+        entry: LevelEntry,
     ) -> Result<Self> {
         use guac_extract::intros::{self, IrFormat};
         use guac_extract::known::KnownDump;
@@ -1591,7 +1610,7 @@ impl IntroFixture {
         write_roster(&mut opened.dir, walking)?;
         write_progression(&mut opened.dir)?;
         write_models(&mut opened.dir, walking, fighting)?;
-        write_level(&mut opened.dir, smashing)?;
+        write_level(&mut opened.dir, entry)?;
         write_scripts(&mut opened.dir, fighting)?;
 
         // Only the intros need ffmpeg.
@@ -1704,6 +1723,32 @@ fn write_roster(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
     Ok(())
 }
 
+/// The level's script entry a fixture writes (AH.22's part): AH.13's
+/// creature, AH.27's breakable or AH.25's first fight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LevelEntry {
+    Creature,
+    Smash,
+    Fight,
+}
+
+/// Where AH.25's synthetic creature stands in a creature fixture: 3.2 m
+/// ahead of the start along the hero's facing, on the floor, where his
+/// ball comes down.
+pub const E2E_CREATURE: [f32; 3] = [E2E_START[0], E2E_FLOOR, E2E_START[2] + 3.2];
+
+/// Where its triggers stand: 8 m to either side of the start and 8 m
+/// back, out of his way.
+pub const E2E_TRIGGERS: [[f32; 3]; 2] = [
+    [E2E_START[0] - 8.0, E2E_FLOOR, E2E_START[2] - 8.0],
+    [E2E_START[0] + 8.0, E2E_FLOOR, E2E_START[2] - 8.0],
+];
+
+/// How many scripts a creature fixture links (AH.25): AH.24's fighting
+/// fixture's five past the level's, and the fight's creature and
+/// controller.
+pub const E2E_FIGHT_SCRIPTS: usize = 7;
+
 /// Where AH.27's synthetic barrel stands in a smashing fixture: 3 m ahead
 /// of the start along the hero's facing, on the floor, inside his ball's
 /// arc.
@@ -1714,12 +1759,12 @@ pub const E2E_BARREL: [f32; 3] = [E2E_START[0], E2E_FLOOR, E2E_START[2] + 3.0];
 /// ending at a wall (AG.21's walk), `213_Init_Location` with its first
 /// waypoint, the three world lights (AG.19) and the start's atmospheric
 /// zone the TV's loader lights and fogs the level with (AG.41), nothing
-/// drawn and no props; with `smashing`, AH.27's breakable as the level's
-/// script entry and its barrel in the placements at [`E2E_BARREL`], its
-/// solid a prop that draws nothing. Its camera is camera 0's definition,
+/// drawn and no props; the level's script entry `entry`'s: with AH.27's
+/// breakable its barrel in the placements at [`E2E_BARREL`], its solid a
+/// prop that draws nothing. Its camera is camera 0's definition,
 /// which guacamole holds until AG.26 reads them off the scripts. Every
 /// number made up.
-fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()> {
+fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
     use guac_ir::RigLight;
@@ -1773,7 +1818,8 @@ fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()
             yon_colour: [100, 90, 80, 0],
         },
     };
-    let smash = smashing.then(|| guac_formats::script::builder::smash(E2E_BARREL));
+    let smash =
+        (entry == LevelEntry::Smash).then(|| guac_formats::script::builder::smash(E2E_BARREL));
     let mut actors = vec![Placement {
         object: 1,
         id: 0,
@@ -1928,9 +1974,12 @@ fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()
     // AH.22's two: the level's entry (AH.13's creature, or AH.27's
     // breakable; our numbers) and no creature palettes.
     let rel = guac_extract::levels::script_path(&level);
-    let entry = match smash {
-        Some(s) => s.level,
-        None => guac_formats::script::builder::creature().0,
+    let entry = match (smash, entry) {
+        (Some(s), _) => s.level,
+        (None, LevelEntry::Fight) => {
+            guac_formats::script::builder::fight(E2E_CREATURE, E2E_TRIGGERS)
+        }
+        (None, _) => guac_formats::script::builder::creature().0,
     };
     dir.write_output(&rel, &entry)?;
     dir.record_level_part(&level, guac_extract::levels::SCRIPT, vec![rel])?;
@@ -2486,6 +2535,20 @@ pub async fn pad_tv(base: &str, body: serde_json::Value) -> Result<()> {
         .await?;
     if !resp.status().is_success() {
         bail!("/api/_test/tv/pad {body} returned {}", resp.status());
+    }
+    Ok(())
+}
+
+/// Asks guacamole's dev entry (`POST /api/_test/tv/entry`, openspec AH.25)
+/// for `body` (`{"anchor": "start"}` or `"b"`, optionally `"seed"`).
+pub async fn entry_tv(base: &str, body: serde_json::Value) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/entry"))
+        .json(&body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/entry {body} returned {}", resp.status());
     }
     Ok(())
 }

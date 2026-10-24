@@ -32,6 +32,8 @@ use bevy::ui::UiSystems;
 use serde::{Deserialize, Serialize};
 
 use crate::alert::{AlertShot, AlertShots};
+use crate::creatures::{CreatureShots, CreaturesReport};
+use crate::dev_entry::{DevEntry, EntryShot};
 use crate::extraction::{ExtractionShot, ExtractionShots};
 use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroInput};
 use crate::hero_scripts::{LootShot, LootShots, ScriptLog, ScriptStep};
@@ -105,6 +107,13 @@ pub struct TvSnapshot {
     /// Where each kind of breakable's loot count stands (openspec AH.27),
     /// once the level's loot data is made; none before the scripts run.
     pub loot: Option<LootShot>,
+    /// The creatures the scripts walk, with their health, what the fight
+    /// woke past its own and what the scripts spawned that's still on
+    /// (openspec AH.25); none before the scripts run.
+    pub creatures: Option<CreaturesReport>,
+    /// The dev entry (AH.25): where it's got to, F0's step and the
+    /// equivalence list read there; none unless one was asked.
+    pub entry: Option<EntryShot>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1165,6 +1174,7 @@ fn mirror_tv(
     play: PlayShots,
     alert: AlertShots,
     loot: LootShots,
+    (creatures, entry): (CreatureShots, Option<Res<DevEntry>>),
     (warm, level, prepare): (Option<Res<Warm>>, Option<Res<Level>>, Option<Res<Prepare>>),
 ) {
     let Some(screen) = screen.shot() else {
@@ -1201,6 +1211,8 @@ fn mirror_tv(
         alert: alert.shot(window),
         join_corner: alert.corner(),
         loot: loot.shot(),
+        creatures: creatures.shot(),
+        entry: entry.as_deref().filter(|e| e.shown()).map(DevEntry::shot),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

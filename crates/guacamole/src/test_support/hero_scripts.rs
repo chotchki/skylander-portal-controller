@@ -33,6 +33,12 @@ pub(crate) fn write_swap(dir: &Path, at: [f32; 3]) {
     write_parts(dir, &attack_builder::swap(at));
 }
 
+/// AH.25's beside it: AH.24's attack with AH.25's creature, its two
+/// triggers and the controller waiting on them as the level's entry.
+pub(crate) fn write_fight(dir: &Path, creature_at: [f32; 3], triggers: [[f32; 3]; 2]) {
+    write_parts(dir, &attack_builder::fight(creature_at, triggers));
+}
+
 /// The roster builder's bootstrap entry, AH.24's attack (global,
 /// init_setup and the fighter's) and `level` as the level's.
 fn write_parts(dir: &Path, level: &[u8]) {

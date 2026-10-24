@@ -15,7 +15,9 @@
 //! more, what its scripts spawn 8 more (3 of them a spawned part fading in,
 //! AH.67), their glowing parts' level glow masks 19 and the walking
 //! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
-//! point lights on). So the tables
+//! point lights on) and the first fight's creatures' 3 more (AH.25: the
+//! Chompies' model and Norticus', skinned in the hero's scene). So the
+//! tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on
 //! `GUAC_GIANTS_DUMP`) holds them equal to what the extractor's readers and
@@ -347,6 +349,19 @@ pub const HEROES_GLOW: &[Row] = &[row(0x3c1c, 0x241c, O, true, false, false, 1, 
 /// [`LEVEL_GLOW`]'s.
 pub const HEROES_GLOW_STATIC: &[Row] = &[];
 
+/// Every key the first fight's creatures draw in the level on a skinned
+/// mesh that [`HEROES`] doesn't hold (openspec AH.25: the four Chompies'
+/// and Norticus' models, `crate::creature_models`, in the walking hero's
+/// scene), each once.
+pub const CREATURES: &[Row] = &[
+    row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
+];
+
+/// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s.
+pub const CREATURES_GLOW: &[Row] = &[];
+
 /// Every key the 01.00 roster's figures draw on a card on a static mesh
 /// (the turntable's scene), each once: the unskinned parts they carry
 /// fresh (AE.23), each drawn under its bone or its parent part.
@@ -389,7 +404,8 @@ pub fn turntable_keys() -> Vec<WarmKey> {
 /// segments, its props' and what its scripts spawn are static; then their
 /// glowing parts' level glow masks ([`LEVEL_GLOW`]), the heroes' keys in
 /// the level ([`HEROES`], [`HEROES_STATIC`]) and theirs ([`HEROES_GLOW`],
-/// [`HEROES_GLOW_STATIC`]), openspec AH.65.
+/// [`HEROES_GLOW_STATIC`]), openspec AH.65; then the first fight's
+/// creatures' ([`CREATURES`], [`CREATURES_GLOW`]), AH.25.
 pub fn level_keys() -> Vec<WarmKey> {
     let mut out = keys(LEVEL, false);
     out.extend(keys(LEVEL_PROPS, false));
@@ -399,6 +415,8 @@ pub fn level_keys() -> Vec<WarmKey> {
     out.extend(keys(HEROES_STATIC, false));
     out.extend(glow_keys(HEROES_GLOW, true));
     out.extend(glow_keys(HEROES_GLOW_STATIC, false));
+    out.extend(keys(CREATURES, true));
+    out.extend(glow_keys(CREATURES_GLOW, true));
     out
 }
 
@@ -538,6 +556,7 @@ mod tests {
             (SPAWNS, false, 8),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
+            (CREATURES, true, 3),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -558,6 +577,7 @@ mod tests {
             (LEVEL_GLOW, false, 19),
             (HEROES_GLOW, true, 1),
             (HEROES_GLOW_STATIC, false, 0),
+            (CREATURES_GLOW, true, 0),
         ] {
             assert_eq!(rows.len(), n);
             let keys = glow_keys(rows, skinned);
@@ -571,7 +591,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 8 + 1 + 19 + 1);
+        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 8 + 1 + 19 + 1 + 3);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()
@@ -586,6 +606,8 @@ mod tests {
                 + HEROES_STATIC.len()
                 + HEROES_GLOW.len()
                 + HEROES_GLOW_STATIC.len()
+                + CREATURES.len()
+                + CREATURES_GLOW.len()
         );
     }
 

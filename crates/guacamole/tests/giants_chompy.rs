@@ -40,6 +40,7 @@ use guac_script::members::{COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT
 use guac_script::{
     MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
 };
+use guacamole::anchors::{ANCHOR_B, CUTSCENE_STATE, FIRST_ALERT, OPENING, ROUTE, SCENE_STEPS};
 use guacamole::player_loop::called;
 use guacamole::script_engine::{FEET_PER_METRE, Pad};
 use guacamole::scripts::{self, FIRST_FIGHT};
@@ -47,59 +48,6 @@ use guacamole::scripts::{self, FIRST_FIGHT};
 mod common;
 
 use common::*;
-
-/// AH.8's route from the strip to anchor B as a scripted hero's teleports
-/// (`ah8-route-1792539821/route_b`'s `route-record.json`, its steps' end
-/// points): the step each is made, where (metres) and his facing. 16 ft
-/// from `Setup_001_Trigger` and 36 ft from the Norticus trigger where the
-/// trigger fired (step 106's end, `s001`); 23 ft from the Norticus trigger
-/// 122 steps later (`activate`, where it fired 122 game frames after);
-/// on the scaffold at the pit's rim, 26 ft above `Enemy_Chompy(1)`
-/// (`scaffold`); landed on the pit floor (`cutscene`, where the 7 ft rule
-/// had passed); anchor B (`anchor`, 31.7 ft from `Enemy_Chompy(2)`).
-const ROUTE: [(u32, [f32; 3], f32); 5] = [
-    (0, [31.75, 44.06, -5.55], 270.0),
-    (122, [27.76, 43.06, -5.04], 250.0),
-    (180, [10.67, 30.35, -1.93], 200.0),
-    (300, [7.27, 22.39, -7.56], 200.0),
-    (360, [5.445, 22.393, -12.023], 202.28),
-];
-
-/// The creatures where anchor B has them (`actors-anchor.json`): AH.8's
-/// route ran the intro cutscene, which guacamole doesn't, so the fourth
-/// Chompy's walk round its path is somewhere else when the hero lands.
-const ANCHOR_B: [(&str, [f32; 3], f32); 5] = [
-    ("Enemy_Chompy(1)", [4.5213137, 22.374975, -23.117332], 243.0),
-    (
-        "Enemy_Chompy(2)",
-        [1.8390902, 22.380882, -20.97726],
-        178.00002,
-    ),
-    (
-        "Enemy_Chompy(3)",
-        [-0.13646065, 22.384933, -21.690493],
-        146.0,
-    ),
-    (
-        "Enemy_Chompy(4)",
-        [3.6175919, 22.28899, -27.261147],
-        258.4939,
-    ),
-    (
-        "1.NPC_Norticus_First_Encounter",
-        [2.0715888, 22.338335, -23.759197],
-        0.0,
-    ),
-];
-
-/// The step AH.8's opening starts at: 120 steps after the hero lands at
-/// anchor B's pose, the creatures set there again at it (F0).
-const OPENING: u32 = 480;
-
-/// The combat manager's first alert from F0, steps: anchor B's state holds
-/// the 0.25 s check's phase, AH.10's first alert landing at F0 + 24 (or 25,
-/// by F0's own frame time).
-const FIRST_ALERT: u32 = 24;
 
 /// A development probe: the encounter's placements and the route's
 /// triggers where the files put them, then the route as AH.8 walked it
@@ -306,8 +254,8 @@ fn probe_the_route() {
             let id = run.placement("1.NPC_Norticus_First_Encounter");
             if run.vm.behaviour(id) == Some("cutscene go") {
                 scene += 1;
-                if scene == 300 {
-                    let g = run.vm.program().global_named("Cutscene State").unwrap();
+                if scene == SCENE_STEPS {
+                    let g = run.vm.program().global_named(CUTSCENE_STATE).unwrap();
                     assert!(run.vm.set_global(g, Value::Int(0)));
                     println!("step {k}: the scene's end set");
                 }
@@ -825,8 +773,8 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
             let id = run.placement(NORTICUS);
             if run.vm.behaviour(id) == Some("cutscene go") {
                 scene += 1;
-                if scene == 300 {
-                    let g = run.vm.program().global_named("Cutscene State").unwrap();
+                if scene == SCENE_STEPS {
+                    let g = run.vm.program().global_named(CUTSCENE_STATE).unwrap();
                     assert!(run.vm.set_global(g, Value::Int(0)));
                 }
             }
