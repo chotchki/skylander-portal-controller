@@ -82,7 +82,9 @@ use guacamole::walkers::{self, Fallback, Kept, Movement, Origin, Stage};
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, ScriptedHero};
+use crate::hero::{
+    CameraScripts, FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput, ScriptedHero,
+};
 use crate::level::{LEVEL_LAYER, Level};
 use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
@@ -232,6 +234,27 @@ pub(crate) fn install(world: &mut World, part: Part) {
     world.insert_resource(ScriptSteps::default());
 }
 
+/// A new run's camera: idle until a hero joins it (openspec AG.28), the
+/// placements running the camera's level scripts listed so a stop among them
+/// hands the view back.
+fn fresh_camera(world: &mut World, source: &ScriptSource) {
+    world.insert_resource(CameraScripts::default());
+    let script_world = world.resource::<ScriptWorld>();
+    let placements = source
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.script.as_deref().is_some_and(scripts::is_camera_script))
+        .filter_map(|p| script_world.handles().get(&p.obj).copied())
+        .collect();
+    world.insert_resource(CameraPlacements(placements));
+}
+
+/// The placements running the camera's level scripts
+/// ([`scripts::CAMERA_SCRIPTS`]), by handle.
+#[derive(Resource, Debug, Clone, Default)]
+pub(crate) struct CameraPlacements(Vec<Handle>);
+
 /// The run from `source`, its entities and an earlier run's gone first: the
 /// TV's listing ([`scripts::smash_config`], openspec AH.27: Eruptor's
 /// scripts, the pickups and the breakables), each of the level's placements
@@ -250,6 +273,7 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         &source.order,
         scripts::with_walkers(config, &source.walkers),
     );
+    fresh_camera(world, source);
     let Some(level) = source.level_unit() else {
         return;
     };
@@ -755,12 +779,10 @@ fn set_asked_health(
     }
 }
 
-/// The follow camera's heading as the step before left it; 0 with none.
+/// The heading the TV's view looked along as the step before left it
+/// (the camera's scripts' or the chain's, openspec AG.28); 0 with none.
 pub(crate) fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
-    cameras
-        .iter()
-        .next()
-        .map_or(0.0, |f| f.camera.view().heading())
+    cameras.iter().next().map_or(0.0, |f| f.drawn.heading())
 }
 
 /// One step of the run, before the hero's (the module docs).
@@ -779,7 +801,12 @@ pub(crate) fn step_scripts(
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
     mut earning: Option<ResMut<Earning>>,
-    (level, real): (Res<Level>, Res<Time<Real>>),
+    (level, real, mut camera, camera_placements): (
+        Res<Level>,
+        Res<Time<Real>>,
+        ResMut<CameraScripts>,
+        Option<Res<CameraPlacements>>,
+    ),
 ) {
     let began = std::time::Instant::now();
     // The activity rule (openspec AH.27, AG.7's rule as the headless runs
@@ -985,6 +1012,24 @@ pub(crate) fn step_scripts(
         earning.earned(r.slot.as_usize(), values, generation);
     }
     runtime.steps += 1;
+    // The camera's scripts (openspec AG.28): theirs the view once a hero has
+    // joined their run and they place the viewport, the chain's for good once
+    // one of them stops in play.
+    let now = camera_state(
+        &camera,
+        &runtime,
+        &mut world,
+        camera_placements.as_deref().map_or(&[], |c| &c.0),
+        joined.is_some(),
+    );
+    if now != *camera {
+        match &now {
+            CameraScripts::On => info!("the camera's scripts have the view"),
+            CameraScripts::Stopped(why) => warn!(reason = %why, "the camera's scripts stopped"),
+            CameraScripts::Idle(_) => {}
+        }
+        *camera = now;
+    }
     for h in &stopped {
         warn!(%h, "a script stopped");
     }
@@ -1054,6 +1099,50 @@ pub(crate) fn step_scripts(
         );
     }
     log.push(entry);
+}
+
+/// The camera's scripts' state after a step (openspec AG.28): stopped for
+/// good once the portal manager's camera frame, a player's camera target or
+/// a camera volume's or activator's script stops in play (the view handed
+/// back to the TV's camera); driving once a hero has joined their run and
+/// they place the viewport, from then on; idle, with why, before that or
+/// with no camera system in the part.
+fn camera_state(
+    now: &CameraScripts,
+    runtime: &ScriptRuntime,
+    world: &mut ScriptWorld,
+    placements: &[Handle],
+    joined: bool,
+) -> CameraScripts {
+    if let CameraScripts::Stopped(_) = now {
+        return now.clone();
+    }
+    if runtime.player_loop.camera.is_none() {
+        return CameraScripts::Idle("the level's part runs no camera system".to_owned());
+    }
+    let Some(pm) = scripts::portal_manager_placement(&runtime.vm, world) else {
+        return CameraScripts::Idle("the level's part runs no portal manager".to_owned());
+    };
+    let stopped = runtime
+        .player_loop
+        .camera_stopped(&runtime.vm, pm)
+        .map(|h| format!("the camera's frame stopped: {h}"))
+        .or_else(|| {
+            placements
+                .iter()
+                .filter_map(|h| runtime.vm.placement_of(*h))
+                .find_map(|id| runtime.vm.stopped(id))
+                .map(|h| format!("a camera script stopped: {h}"))
+        });
+    if let Some(why) = stopped {
+        world.hand_back_view();
+        return CameraScripts::Stopped(why);
+    }
+    match now {
+        CameraScripts::On => CameraScripts::On,
+        _ if joined && world.viewport().scripted() => CameraScripts::On,
+        idle => idle.clone(),
+    }
 }
 
 /// What changed in `world` since the last step logged: the clips started on
@@ -1357,6 +1446,9 @@ impl LootShots<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod camera_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1979,10 +1979,10 @@ mod tests {
             .insert_resource(mirror.clone())
             .add_systems(PostUpdate, pin_camera);
         let feet = Vec3::new(10.19, 43.38, -93.39);
-        let follow = FollowCamera {
-            camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
-            planes: Vec::new(),
-        };
+        let follow = FollowCamera::new(
+            GameCamera::new(CameraDef::LEVEL_213_START, feet),
+            Vec::new(),
+        );
         let followed = crate::hero::viewed(&follow.camera.view());
         let camera = app
             .world_mut()

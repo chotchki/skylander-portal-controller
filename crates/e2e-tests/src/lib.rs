@@ -2580,7 +2580,54 @@ pub async fn tv(base: &str) -> Result<serde_json::Value> {
     }
     let snap: serde_json::Value = resp.json().await?;
     hero_scripts_held(&snap, hero_scripts_off_because(base).as_deref())?;
+    camera_scripts_held(&snap, camera_scripts_off_because(base).as_deref())?;
     Ok(snap)
+}
+
+/// The TVs whose test expects the camera's scripts to stop, by base URL,
+/// each with what its reason says (openspec AG.28).
+static EXPECTS_CAMERA_OFF: std::sync::Mutex<Vec<(String, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Says the test reading the TV at `base` expects the camera's scripts to
+/// stop, for a reason holding `because` (a script stopped on purpose):
+/// [`tv`]'s reads there let that `off` through from then on, and no other.
+pub fn expect_camera_scripts_off(base: &str, because: &str) {
+    let mut bases = EXPECTS_CAMERA_OFF.lock().unwrap_or_else(|e| e.into_inner());
+    bases.retain(|(b, _)| b != base);
+    bases.push((base.to_owned(), because.to_owned()));
+}
+
+fn camera_scripts_off_because(base: &str) -> Option<String> {
+    EXPECTS_CAMERA_OFF
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(b, _)| b == base)
+        .map(|(_, because)| because.clone())
+}
+
+/// A TV snapshot's camera held to its scripts (openspec AG.28): once one of
+/// the camera's scripts stops in play the TV's own camera follows him from
+/// where they left the view, so every follow check still passes on it.
+/// Read so (`hero.camera.scripts` `off`), it's an error carrying the TV's
+/// reason, unless the test expects an `off` whose reason holds `expected`
+/// (stand-in ledger: `camera`). `none` (no hero has joined the run yet, or
+/// a part with no camera system: the synthetic fixtures') passes.
+pub fn camera_scripts_held(snap: &serde_json::Value, expected: Option<&str>) -> Result<()> {
+    let camera = &snap["hero"]["camera"];
+    if camera["scripts"] != "off" {
+        return Ok(());
+    }
+    let reason = camera["scripts_reason"]
+        .as_str()
+        .unwrap_or("no reason given");
+    match expected {
+        Some(because) if reason.contains(because) => Ok(()),
+        _ => bail!(
+            "the camera's scripts stopped ({reason}): the TV's camera follows him without them; a test expecting that says so (expect_camera_scripts_off)"
+        ),
+    }
 }
 
 /// What a walking fixture's hero's scripts go off for (openspec AH.106,
@@ -2615,11 +2662,13 @@ fn hero_scripts_off_because(base: &str) -> Option<String> {
 /// The expectation at `base` dropped, or moved to `to` (a TV restarted on
 /// another port): a later TV on that port expects nothing of it.
 fn move_hero_scripts_off(base: &str, to: Option<&str>) {
-    let mut bases = EXPECTS_OFF.lock().unwrap_or_else(|e| e.into_inner());
-    let because = bases.iter().find(|(b, _)| b == base).map(|e| e.1.clone());
-    bases.retain(|(b, _)| b != base);
-    if let (Some(to), Some(because)) = (to, because) {
-        bases.push((to.to_owned(), because));
+    for expects in [&EXPECTS_OFF, &EXPECTS_CAMERA_OFF] {
+        let mut bases = expects.lock().unwrap_or_else(|e| e.into_inner());
+        let because = bases.iter().find(|(b, _)| b == base).map(|e| e.1.clone());
+        bases.retain(|(b, _)| b != base);
+        if let (Some(to), Some(because)) = (to, because) {
+            bases.push((to.to_owned(), because));
+        }
     }
 }
 
@@ -3152,6 +3201,69 @@ mod hero_scripts_tests {
         }
         assert!(hero_scripts_held(&json!({"hero": null}), None).is_ok());
         assert!(hero_scripts_held(&json!({"mode": "portal"}), None).is_ok());
+    }
+
+    /// AG.28's check: a read whose camera's scripts stopped fails the test
+    /// with the TV's reason; one expecting that stop passes, a stop for
+    /// another reason still failing; the scripts driving, a camera not yet
+    /// theirs (`none`) and a TV with no camera pass.
+    #[test]
+    fn a_camera_whose_scripts_stop_fails_the_read_unless_expected() {
+        let reason =
+            "the camera's frame stopped: Spyro_PortalManager at 3756: unmodelled member x.y";
+        let off = json!({"hero": {"camera": {"scripts": "off", "scripts_reason": reason}}});
+        let e = camera_scripts_held(&off, None).unwrap_err().to_string();
+        assert!(e.contains(reason), "{e}");
+        assert!(camera_scripts_held(&off, Some("frame stopped")).is_ok());
+        let e = camera_scripts_held(&off, Some("a camera script stopped")).unwrap_err();
+        assert!(e.to_string().contains(reason), "another reason: {e}");
+        for held in ["on", "none"] {
+            let snap = json!({"hero": {"camera": {"scripts": held}}});
+            assert!(camera_scripts_held(&snap, None).is_ok(), "{held}");
+        }
+        assert!(camera_scripts_held(&json!({"hero": {"camera": null}}), None).is_ok());
+        assert!(camera_scripts_held(&json!({"mode": "portal"}), None).is_ok());
+    }
+
+    /// The read itself (`tv`) holds the camera too: against a TV whose
+    /// camera's scripts drive and then stop, the first read passes and the
+    /// later one fails with the reason, unless the test expects it; the
+    /// expectation goes with its TV.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_read_after_the_cameras_scripts_stop_fails_the_test() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let reason = "a camera script stopped: Pop_to_Camera_5 at 7: unmodelled member x.y";
+        let camera = |scripts: &str| {
+            json!({"mode": "level", "hero": {"scripts": "joined",
+                "camera": {"scripts": scripts, "scripts_reason": reason}}})
+        };
+        let bodies = [camera("on"), camera("off"), camera("off")];
+        let served = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        assert_eq!(tv(&base).await.unwrap()["hero"]["camera"]["scripts"], "on");
+        let e = tv(&base).await.unwrap_err().to_string();
+        assert!(e.contains(reason), "{e}");
+        expect_camera_scripts_off(&base, "a camera script stopped");
+        assert_eq!(tv(&base).await.unwrap()["hero"]["camera"]["scripts"], "off");
+        served.join().unwrap();
+        move_hero_scripts_off(&base, Some("http://127.0.0.1:1"));
+        assert_eq!(camera_scripts_off_because(&base), None);
+        assert!(camera_scripts_off_because("http://127.0.0.1:1").is_some());
+        move_hero_scripts_off("http://127.0.0.1:1", None);
+        assert_eq!(camera_scripts_off_because("http://127.0.0.1:1"), None);
     }
 
     /// The read itself (`tv`): against a TV whose hero joins and then goes

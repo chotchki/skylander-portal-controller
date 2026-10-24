@@ -327,6 +327,9 @@ pub enum Object {
     /// The point a reference naming nothing keeps on itself, by the VM's
     /// cell for the reference (openspec AH.20: an orb's delayed spawn).
     RememberedRef(u32),
+    /// The point a reference to an actor keeps, by the actor and the VM's
+    /// cell for the reference: each reference its own (openspec AG.28).
+    RememberedVia(Handle, u32),
     /// A waypoint a script made by growing a set of them, by its index in
     /// the world's list (openspec AH.20: an orb's landing point).
     Waypoint(u32),
@@ -352,6 +355,11 @@ pub enum Object {
     RayEnd,
     /// `viewportinfo.default`: the gameplay camera.
     Viewport,
+    /// Its view converter (openspec AG.28), the point that converter
+    /// projects, and the container sprite the picture fills.
+    ViewConverter,
+    ConverterPoint,
+    ContainerSprite,
     /// `redoctaneperipheralsystemobject.portal`.
     Portal,
 }
@@ -536,6 +544,13 @@ pub trait Engine {
     fn seam(&self) -> &dyn PhysicsSeam;
     /// The heading the gameplay camera's view looked along the frame before.
     fn view_heading(&self) -> f32;
+    /// Whether [`Engine::view_heading`] stands for the viewport's turn over
+    /// what the camera's scripts write (openspec AG.28): a headless run
+    /// steering the stick by a recorded camera's view, a test double. The
+    /// TV's never does: there the scripts' camera is the view.
+    fn holds_view(&self) -> bool {
+        false
+    }
     /// Pad `n` (0 for the first) as this step reads it.
     fn pad(&self, n: usize) -> Pad;
     /// The body in the seam an actor's solid is, a creature's or a prop's;

@@ -96,6 +96,10 @@ pub struct Bench {
     pub heroes: HashMap<Handle, Hero>,
     pub world: ParryWorld,
     pub view: f32,
+    /// Whether `view` stands for the viewport's turn over the camera's
+    /// scripts (openspec AG.28): the runs that steer the stick by a recorded
+    /// camera's view, every run but those judging the scripts' camera.
+    pub hold_view: bool,
     pub pads: [Pad; 2],
     pub bodies: HashMap<Handle, BodyId>,
     pub props: Option<StandingProps>,
@@ -171,6 +175,9 @@ impl Engine for Bench {
     }
     fn view_heading(&self) -> f32 {
         self.view
+    }
+    fn holds_view(&self) -> bool {
+        self.hold_view
     }
     fn pad(&self, n: usize) -> Pad {
         self.pads.get(n).copied().unwrap_or_default()
@@ -390,6 +397,7 @@ impl Run {
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
+
         self.pose_hands();
         self.bench.place_bodies(&self.world);
         Ok(())
@@ -702,6 +710,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         heroes: HashMap::from([(HERO, hero)]),
         world: parry,
         view: 15.0,
+        hold_view: true,
         pads: [Pad::default(); 2],
         bodies: HashMap::new(),
         props,

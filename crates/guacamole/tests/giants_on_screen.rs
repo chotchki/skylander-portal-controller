@@ -1,7 +1,8 @@
 //! The on-screen test's readers on the disc (openspec AH.107), counted
 //! for the host's answer (stand-in ledger: `on-screen`): every script the
 //! whitelist runs, with AH.34's
-//! route scripts and AG.60's start scripts, read for asks of a point
+//! route scripts, AG.60's start scripts and AG.28's camera volumes and
+//! activator, read for asks of a point
 //! against the gameplay camera ([`guacamole::on_screen`]), each with the
 //! list and macro it sits in.
 
@@ -152,6 +153,16 @@ fn the_whitelists_on_screen_readers() {
         .collect();
     assert_eq!(start.len(), listed.len(), "every start script in the part");
     let start_asks = on("AG.60's start scripts", &start);
+    let camera: Vec<ScriptId> = scripts::CAMERA_SCRIPTS
+        .iter()
+        .filter_map(|s| program.script_named(s))
+        .collect();
+    assert_eq!(
+        camera.len(),
+        scripts::CAMERA_SCRIPTS.len(),
+        "every camera script in the part"
+    );
+    let camera_asks = on("AG.28's camera volumes and activator", &camera);
     println!(
         "read in {:.1} s; {}",
         started.elapsed().as_secs_f64(),
@@ -186,4 +197,8 @@ fn the_whitelists_on_screen_readers() {
         start_asks.keys().all(|k| tv_asks.contains_key(k)),
         "{start_asks:?}"
     );
+    // AG.28's ask none (openspec AG.28): the camera's frame and what the
+    // volumes and the activator call place the viewport, they don't test a
+    // point against it.
+    assert!(camera_asks.is_empty(), "{camera_asks:?}");
 }

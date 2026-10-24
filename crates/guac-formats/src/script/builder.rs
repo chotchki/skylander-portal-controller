@@ -14,6 +14,8 @@ use crate::igz::Location;
 use crate::igz::builder::IgzBuilder;
 use crate::igz::layouts::{BRANCH_END, NO_OPERATOR};
 
+pub mod camera;
+
 fn at(base: Location, offset: u32) -> Location {
     base.offset_by(offset).expect("inside the section")
 }
@@ -1453,6 +1455,21 @@ fn frame_with(
     macros: impl FnOnce(&mut Writer<'_>),
     behaviours: impl FnOnce(&mut Writer<'_>),
 ) -> Location {
+    frame_ticking(w, name, structures, startup, macros, |_| {}, behaviours)
+}
+
+/// [`frame_with`] with PRESCRIPT's own ops after its sections, `tick`'s:
+/// what every tick runs ahead of the behaviour, as the portal manager's
+/// tick does.
+fn frame_ticking(
+    w: &mut Writer<'_>,
+    name: &str,
+    structures: impl FnOnce(&mut Writer<'_>),
+    startup: impl FnOnce(&mut Writer<'_>),
+    macros: impl FnOnce(&mut Writer<'_>),
+    tick: impl FnOnce(&mut Writer<'_>),
+    behaviours: impl FnOnce(&mut Writer<'_>),
+) -> Location {
     let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
     let (start, _) = w.open(Class::StartUp, "STARTUP");
     startup(w);
@@ -1465,17 +1482,87 @@ fn frame_with(
     let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
     structures(w);
     w.end_block(types);
+    tick(w);
     w.end_block(pre);
     behaviours(w);
     w.end(name)
 }
 
+/// With the stick held, the placement facing the viewport's facing plus the
+/// stick's heading and going [`camera::CAMERA_WALK_SPEED`] ft/s that way;
+/// let go, still (AG.28's walking minion).
+fn walk_by_stick(w: &mut Writer<'_>) {
+    let my = El::Member("optoplevelbehavior", "my");
+    let stick = |m: &'static str| {
+        [
+            El::Member("scriptcontroller", "controller 1"),
+            El::Member("scriptcontroller", "main stick"),
+            El::Member("joystickmeasurement", m),
+        ]
+    };
+    let zero = w.float(0.0);
+    let held = w.check(&stick("magnitude"), 4, zero);
+    let view = w.rhs(
+        "FloatMeasurement",
+        &[
+            El::Member("viewportinfo", "default"),
+            El::Member("matrixmeasurement", "orientation"),
+            El::Member("orientationmeasurement", "facing"),
+        ],
+    );
+    let way = w.rhs("FloatMeasurement", &stick("heading"));
+    let facing = w.expr(view, Some((0, way)));
+    w.set(
+        &[
+            my,
+            El::Member("matrixmeasurement", "orientation"),
+            El::Member("orientationmeasurement", "facing"),
+        ],
+        facing,
+    );
+    // Set outright along his facing: zeroed, then added turned by it.
+    displace(
+        w,
+        &[my, El::Member("actorinfo", "velocity")],
+        1,
+        0.0,
+        0.0,
+        0.0,
+    );
+    displace(
+        w,
+        &[my, El::Member("actorinfo", "velocity")],
+        2,
+        camera::CAMERA_WALK_SPEED,
+        0.0,
+        0.0,
+    );
+    let still = w.otherwise(held);
+    displace(
+        w,
+        &[my, El::Member("actorinfo", "velocity")],
+        1,
+        0.0,
+        0.0,
+        0.0,
+    );
+    w.close(still);
+}
+
 /// [`attack`]'s `global.bld` entry: the portal manager and its globals.
 fn attack_global() -> Vec<u8> {
+    attack_global_with(None)
+}
+
+/// [`attack_global`], with AG.28's camera system beside the portal manager
+/// when `camera` says how it runs ([`camera::camera`]).
+fn attack_global_with(camera: Option<camera::CameraFault>) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     let info = {
         let mut w = Writer::new(&mut b);
+        let cam = camera.map(|fault| camera::System::new(&mut w, fault));
+        let update = std::cell::Cell::new(None);
         // The structures the join reads through: the portal's loaded slots,
         // each one's object info.
         let info_ty = w.op(Class::DefineStructure, "Object Info");
@@ -1534,10 +1621,13 @@ fn attack_global() -> Vec<u8> {
         let word = w.variable("word", "ScriptReference", None);
         let shifted = w.variable("shifted", "ValueInfo", Some("IntMeasurement"));
         let tags_held = w.variable("tags held", "ValueInfo", Some("IntMeasurement"));
-        frame_with(
+        frame_ticking(
             &mut w,
             "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/Spyro_PortalManager.ai",
             |w| {
+                if let Some(c) = &cam {
+                    c.structures(w);
+                }
                 structure(w, info_ty, &[spawned, extra, info_tag]);
                 structure(w, pair_ty, &[rfid, prodid]);
                 structure(w, slot_ty, &[object_info, slot_tag, pair, entered, owner]);
@@ -1742,6 +1832,15 @@ fn attack_global() -> Vec<u8> {
                 );
                 w.flow_end();
                 w.end_block(p);
+                if let Some(c) = &cam {
+                    update.set(Some(c.macros(w)));
+                }
+            },
+            |w| {
+                // The camera's frame, the tick's first statement (AG.28).
+                if let Some(def) = update.get() {
+                    camera::System::tick(w, def);
+                }
             },
             |_| {},
         )
@@ -1755,6 +1854,12 @@ fn attack_global() -> Vec<u8> {
 /// [`attack`]'s fighter entry: his definition, his minion, the ball and the
 /// helper.
 fn attack_fighter() -> Vec<u8> {
+    attack_fighter_with(false)
+}
+
+/// [`attack_fighter`], his minion walking by the stick against the view when
+/// `walks` ([`camera::camera`]'s).
+fn attack_fighter_with(walks: bool) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     // The ball: its solid a 1 ft sphere that touches the level and nothing
@@ -1890,6 +1995,9 @@ fn attack_fighter() -> Vec<u8> {
                 let points = w.int(ATTACK_AWARD);
                 call_stub(w, award, &[("amount", "ValueInfo", points)]);
                 w.end_block(second);
+                if walks {
+                    walk_by_stick(w);
+                }
                 w.end_block(p);
             },
         );

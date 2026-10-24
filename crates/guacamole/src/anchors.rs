@@ -133,7 +133,9 @@ pub const ANCHOR_B_LOOT: [f32; 3] = [0.6242796, 0.09749699, 0.5707676];
 /// `route.json`, degrees, as a heading), from camera 5, which
 /// `Pop_to_Camera_5` brought in on the way down: the dev entry's follow
 /// camera rests on camera 0's definition looking along it there, until the
-/// level's camera triggers run (AG.28; stand-in ledger: `camera`).
+/// level's camera scripts take the view (AG.28, from his join; which camera
+/// a set-down past the route's volumes and planes leaves them on is
+/// unread; stand-in ledger: `camera`).
 pub const ANCHOR_B_VIEW: f32 = 113.79292;
 
 /// AH.8's reads at anchor B for the equivalence list's numbers

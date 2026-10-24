@@ -260,6 +260,12 @@ pub struct Access {
     /// A value stack's `_otherPoint`, read: what a distance or a heading on
     /// the path is measured from.
     pub other_point: Option<Value>,
+    /// The reference cell the receiver was read through, for a reference's
+    /// own members: `placementreference.remembered` is a point each
+    /// reference keeps, two references to one actor keeping two (openspec
+    /// AG.28: the camera's look-from and look-at points name one follower
+    /// clone and sit 55 ft apart). `None` otherwise.
+    pub via: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

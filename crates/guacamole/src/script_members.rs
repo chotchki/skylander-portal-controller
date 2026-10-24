@@ -132,6 +132,23 @@ pub(crate) enum Member {
     RayEnd,
     RayHasContact,
     Viewport,
+    // AG.28's: the gameplay camera's scripts.
+    /// `viewportinfo.field of view` and `far clip` on the viewport.
+    ViewportFov,
+    ViewportFarClip,
+    /// `viewportinfo.view converter`: the viewport's projection.
+    Converter,
+    /// `viewconverter.world position`: the point it projects.
+    ConverterWorld,
+    /// `viewconverter.screen location`: where that point lands.
+    ConverterScreen,
+    /// `viewportinfo.container sprite`: the screen the picture fills.
+    Container,
+    /// `spriteinfo.screen width` and `screen height` on the container.
+    ScreenWidth,
+    ScreenHeight,
+    /// `actorinfo.players`: every hero in the level.
+    Players,
     /// `system.absolute zero`: the world's origin as a point (AH.20).
     AbsoluteZero,
     InactiveController,
@@ -390,6 +407,15 @@ impl Member {
         add("raycontact", "end", Member::RayEnd);
         add("raycontact", "has contact", Member::RayHasContact);
         add("viewportinfo", "default", Member::Viewport);
+        add("viewportinfo", "field of view", Member::ViewportFov);
+        add("viewportinfo", "far clip", Member::ViewportFarClip);
+        add("viewportinfo", "view converter", Member::Converter);
+        add("viewconverter", "world position", Member::ConverterWorld);
+        add("viewconverter", "screen location", Member::ConverterScreen);
+        add("viewportinfo", "container sprite", Member::Container);
+        add("spriteinfo", "screen width", Member::ScreenWidth);
+        add("spriteinfo", "screen height", Member::ScreenHeight);
+        add("actorinfo", "players", Member::Players);
         add("system", "absolute zero", Member::AbsoluteZero);
         add(
             "scriptcontroller",
@@ -585,8 +611,18 @@ impl ScriptWorld {
                 kept.or_else(|| self.position(a, engine))
             }
             Some(Object::RememberedRef(c)) => self.kept_points.get(&c).copied(),
+            // Not kept yet, where its actor is.
+            Some(Object::RememberedVia(a, c)) => self
+                .kept_via
+                .get(&(a, c))
+                .copied()
+                .or_else(|| self.position(a, engine)),
             Some(Object::Waypoint(i)) => self.waypoints_made.get(i as usize).copied().flatten(),
             Some(Object::AbsoluteZero) => Some(Vec3::ZERO),
+            // The gameplay camera's eye, and the point its view converter
+            // projects (openspec AG.28).
+            Some(Object::Viewport) => Some(self.view.eye),
+            Some(Object::ConverterPoint) => Some(self.view.converter),
             _ => None,
         }
     }
@@ -643,6 +679,10 @@ impl ScriptWorld {
                 self.kept_points.insert(c, p);
                 Ok(())
             }
+            Some(Object::RememberedVia(a, c)) => {
+                self.kept_via.insert((a, c), p);
+                Ok(())
+            }
             Some(Object::Waypoint(i)) => {
                 let w = self
                     .waypoints_made
@@ -653,6 +693,18 @@ impl ScriptWorld {
             }
             Some(Object::RayEnd) => {
                 self.ray.end = p;
+                Ok(())
+            }
+            // The scripts placing the gameplay camera (openspec AG.28): once
+            // the view is handed back to the TV, a write goes nowhere.
+            Some(Object::Viewport) => {
+                if self.view.take() {
+                    self.view.eye = p;
+                }
+                Ok(())
+            }
+            Some(Object::ConverterPoint) => {
+                self.view.converter = p;
                 Ok(())
             }
             _ => Err(HostFault::Nothing),
@@ -730,6 +782,12 @@ impl ScriptWorld {
     /// autoaim's strip runs along it).
     fn angles_within(&self, h: Handle, engine: &mut dyn Engine, depth: u8) -> Option<Angles> {
         if h == self.objs_viewport() {
+            // The camera's scripts' turn once they place it (openspec AG.28),
+            // else the TV's own camera's heading, as a headless run steering
+            // by a recorded camera's gives it.
+            if self.view.scripted() && !engine.holds_view() {
+                return Some(self.view.angles);
+            }
             return Some(crate::script_engine::Angles {
                 facing: engine.view_heading(),
                 ..Default::default()
@@ -743,7 +801,7 @@ impl ScriptWorld {
         }
         // An actor's remembered point is turned as the actor is (AH.60: the
         // autoaim's strip runs along its aimer's remembered point's facing).
-        if let Some(Object::Remembered(a)) = self.objs.get(h) {
+        if let Some(Object::Remembered(a) | Object::RememberedVia(a, _)) = self.objs.get(h) {
             return self.angles_within(a, engine, depth);
         }
         let a = self.actors.get(&h)?;
@@ -1032,9 +1090,16 @@ impl ScriptWorld {
                 self.actors.get(&h).ok_or(HostFault::Nothing)?;
                 self.objs.value(Object::Origin(h))
             }
-            Member::Remembered => match recv {
+            Member::Remembered => match (recv, at.via) {
                 // A reference naming nothing: its own point.
-                Some(Value::Cell(c)) => self.objs.value(Object::RememberedRef(c)),
+                (Some(Value::Cell(c)), _) => self.objs.value(Object::RememberedRef(c)),
+                // A reference to an actor: the point that reference keeps,
+                // apart from any other's to the same actor (openspec AG.28:
+                // the camera's look-from and look-at name one follower).
+                (_, Some(c)) => {
+                    let h = actor.ok_or(HostFault::Nothing)?;
+                    self.objs.value(Object::RememberedVia(h, c))
+                }
                 _ => {
                     let h = actor.ok_or(HostFault::Nothing)?;
                     self.objs.value(Object::Remembered(h))
@@ -1136,6 +1201,43 @@ impl ScriptWorld {
             Member::RayEnd => self.objs.value(Object::RayEnd),
             Member::RayHasContact => Value::Int(i32::from(self.ray_contact(engine).is_some())),
             Member::Viewport => Value::Entity(self.viewport),
+            // The gameplay camera's own (openspec AG.28).
+            Member::ViewportFov
+            | Member::ViewportFarClip
+            | Member::Converter
+            | Member::Container
+                if recv.and_then(|r| self.handle(r)) != Some(self.viewport) =>
+            {
+                return Err(HostFault::Nothing);
+            }
+            Member::ViewportFov => Value::Float(self.view.fov),
+            Member::ViewportFarClip => Value::Float(self.view.far_clip),
+            Member::Converter => self.objs.value(Object::ViewConverter),
+            Member::Container => self.objs.value(Object::ContainerSprite),
+            Member::ConverterWorld | Member::ConverterScreen
+                if object != Some(Object::ViewConverter) =>
+            {
+                return Err(HostFault::Nothing);
+            }
+            Member::ConverterWorld => self.objs.value(Object::ConverterPoint),
+            // Where the converter's point lands on the screen through the
+            // camera as its scripts left it; nowhere at or behind the eye.
+            Member::ConverterScreen => {
+                let (x, y) = self
+                    .view
+                    .project(self.view.converter)
+                    .ok_or(HostFault::Nothing)?;
+                Value::Screen(crate::viewport::pack_screen(x, y))
+            }
+            // Only the container's size is known: a sprite's own is the
+            // interface's, which nothing models.
+            Member::ScreenWidth | Member::ScreenHeight
+                if object != Some(Object::ContainerSprite) =>
+            {
+                return Err(HostFault::Unmodelled);
+            }
+            Member::ScreenWidth => Value::Float(crate::viewport::SCREEN_WIDTH),
+            Member::ScreenHeight => Value::Float(crate::viewport::SCREEN_HEIGHT),
             Member::AbsoluteZero => self.objs.value(Object::AbsoluteZero),
             Member::InactiveController => self.objs.value(Object::Inactive),
             Member::Pad(b) => {
@@ -1205,7 +1307,8 @@ impl ScriptWorld {
             | Member::Waypoints
             | Member::Inactive
             | Member::Removed
-            | Member::ContactsWithMe => return Err(HostFault::Nothing),
+            | Member::ContactsWithMe
+            | Member::Players => return Err(HostFault::Nothing),
             Member::Collision => {
                 let a = actor.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
@@ -1296,6 +1399,20 @@ impl ScriptWorld {
                     return Err(HostFault::Nothing);
                 };
                 let x = float(v)?;
+                // The gameplay camera turned by its scripts (openspec AG.28):
+                // kept unless the view was handed back; the eye's place is
+                // what gives the scripts the view.
+                if h == self.viewport {
+                    if self.view.source != crate::viewport::Source::HandedBack {
+                        let a = &mut self.view.angles;
+                        match m {
+                            Member::Facing | Member::RelativeFacing => a.facing = x,
+                            Member::Tilt | Member::RelativeTilt => a.tilt = x,
+                            _ => a.roll = x,
+                        }
+                    }
+                    return Ok(());
+                }
                 if let Some(hero) = engine.hero(h) {
                     if matches!(m, Member::Facing | Member::RelativeFacing) {
                         hero.facing = x.rem_euclid(360.0);
@@ -1559,6 +1676,23 @@ impl ScriptWorld {
                 self.set_point(r, to, engine)?;
             }
             Member::NormalizedAngle => self.normalized = normalized(float(v)?),
+            // The gameplay camera's picture (openspec AG.28).
+            Member::ViewportFov | Member::ViewportFarClip => {
+                if recv.and_then(|r| self.handle(r)) != Some(self.viewport) {
+                    return Err(HostFault::Nothing);
+                }
+                // Kept whoever writes them (the level's adventure data sets
+                // the far clip as the level loads): the eye's place is what
+                // gives the scripts the view.
+                let x = float(v)?;
+                match m {
+                    Member::ViewportFov => self.view.fov = x,
+                    _ => self.view.far_clip = x,
+                }
+            }
+            // A point put where it lands on the screen (its lock type the
+            // screen's): no camera script does, so it's not modelled.
+            Member::ConverterScreen => return Err(HostFault::Unmodelled),
             // The rest are read-only: a write goes nowhere, as the
             // original's member with no setter.
             _ => {}
@@ -1673,6 +1807,13 @@ impl ScriptWorld {
                 near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
                 near.dedup_by_key(|k| k.1);
                 near.into_iter().map(|(_, o)| Value::Entity(o)).collect()
+            }
+            // Every hero in the level (openspec AG.28: the tether's check for
+            // a second player), in handle order.
+            Member::Players => {
+                let mut v = engine.heroes();
+                v.sort_unstable();
+                v.into_iter().map(Value::Entity).collect()
             }
             Member::Inactive | Member::Removed => {
                 let mut v: Vec<Handle> = self
@@ -2498,6 +2639,7 @@ mod tests {
             receiver,
             member: MemberId::named(ns, name),
             other_point: other,
+            via: None,
         }
     }
 
@@ -3322,6 +3464,7 @@ mod fight_tests {
                 receiver: Some(Value::Entity(on)),
                 member: MemberId::named(ns, name),
                 other_point: Some(Value::Entity(other)),
+                via: None,
             },
             e,
         )
@@ -3558,6 +3701,7 @@ mod fight_tests {
                     receiver: Some(facet),
                     member: MemberId::named("collisioninfo", "contacts with me"),
                     other_point: None,
+                    via: None,
                 },
                 &mut e,
             )
@@ -3599,6 +3743,7 @@ mod fight_tests {
                     receiver: Some(Value::Entity(HERO)),
                     member: MemberId::named("positionmeasurement", "separation"),
                     other_point: Some(ground),
+                    via: None,
                 },
                 e,
             )
@@ -3651,6 +3796,7 @@ mod fight_tests {
             receiver: Some(turn),
             member: MemberId::named("orientationmeasurement", name),
             other_point: None,
+            via: None,
         };
         let mut facings = Vec::new();
         for speed in [4.5f32, 4.5, 4.5, -5.31, 0.0] {
@@ -3731,6 +3877,7 @@ mod fight_tests {
             receiver: Some(turn),
             member: MemberId::named("orientationmeasurement", "relative facing"),
             other_point: None,
+            via: None,
         };
         for (asked, up) in [
             (257.4f32, true),
@@ -3856,6 +4003,7 @@ mod fight_tests {
                     receiver: None,
                     member: MemberId::named("actorinfo", name),
                     other_point: None,
+                    via: None,
                 },
                 e,
             )
@@ -3900,6 +4048,7 @@ mod fight_tests {
                     receiver: Some(facet),
                     member: MemberId::named("collisioninfo", "contacts with me"),
                     other_point: None,
+                    via: None,
                 },
                 &mut e,
             )
@@ -4481,6 +4630,7 @@ mod light_tests {
             receiver: Some(receiver),
             member: MemberId::named(ns, name),
             other_point: other,
+            via: None,
         }
     }
 

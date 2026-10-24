@@ -33,9 +33,10 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
     );
     // AH.12's roots: 17 running in global.bld and 5 it spawns, Eruptor's
     // eight, the level's 18 and the 15 they spawn there; AG.60's 8 start
-    // scripts on the props and the 5 they spawn.
+    // scripts on the props and the 5 they spawn; AG.28's 7 camera volumes
+    // and the sliding rocks' activator.
     let counts: Vec<usize> = WHITELIST.iter().map(|w| w.scripts.len()).collect();
-    assert_eq!(counts, [1, 22, 3, 8, 46]);
+    assert_eq!(counts, [1, 22, 3, 8, 54]);
     for w in WHITELIST {
         let mut names: Vec<String> = w.scripts.iter().map(|s| s.to_lowercase()).collect();
         names.sort();

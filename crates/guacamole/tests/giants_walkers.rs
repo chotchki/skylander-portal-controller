@@ -385,6 +385,7 @@ impl W {
             heroes: HashMap::from([(HERO, hero)]),
             world: parry,
             view: 15.0,
+            hold_view: true,
             pads: [Pad::default(); 2],
             bodies: HashMap::new(),
             props,

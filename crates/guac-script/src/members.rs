@@ -2075,6 +2075,114 @@ pub const FIGURE: &[Registered] = &[
     ),
 ];
 
+/// What AG.28's gameplay camera reaches past the earlier tables: the
+/// camera's scripts (`CameraSystem.ai`, `CameraControl.ai`, run each tick
+/// by the portal manager's) place and turn the viewport, set its picture,
+/// project points through it for the framing zoom and ask for a second
+/// player for the co-op tether, each as the original registers it (aj-vm's
+/// live table). The viewport's field of view, far clip, view converter
+/// and container sprite were cells of the init chain's and the fight's
+/// tables; the camera's host takes them over, registered the same.
+pub const CAMERA: &[Registered] = &[
+    m("actorinfo", "players", "SetVariant", "", 0.0, 0.0, Host),
+    m(
+        "viewportinfo",
+        "field of view",
+        "FloatMeasurement",
+        "degrees",
+        0.0,
+        180.0,
+        Host,
+    ),
+    m(
+        "viewportinfo",
+        "far clip",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "viewportinfo",
+        "view converter",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "viewportinfo",
+        "container sprite",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "viewconverter",
+        "world position",
+        "PositionMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "viewconverter",
+        "screen location",
+        "ScreenMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // Which side the converter holds still: the camera's scripts write
+    // the world position's (0) before every projection, nothing reads it.
+    m(
+        "viewconverter",
+        "lock type",
+        "EnumMeasurement",
+        "lock world position|lock screen location",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "screen width",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "spriteinfo",
+        "screen height",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // How far off a sound falls silent, a value cell as the sounds' are
+    // (nothing plays them yet): the sliding rocks' activator reads it as it
+    // starts the slide's sound (`Sound - Ultra Sound`, `MusicController.ai`
+    // #1227), after opening the rocks and before its switch.
+    m(
+        "soundinfo",
+        "attenuation distance silent",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2159,6 +2267,26 @@ mod tests {
                 );
             }
         }
+        // The camera's take over cells the earlier tables registered, the
+        // same class, units and range, the host's now.
+        for r in CAMERA {
+            for earlier in [INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE] {
+                if let Some(i) = find(earlier, r.namespace, r.name) {
+                    assert_eq!(
+                        (i.keeper, r.keeper),
+                        (Keeper::Cell, Keeper::Host),
+                        "{}",
+                        r.path()
+                    );
+                    assert_eq!(
+                        (i.class, i.units, i.min, i.max),
+                        (r.class, r.units, r.min, r.max),
+                        "{}",
+                        r.path()
+                    );
+                }
+            }
+        }
         // The fight's members are none of the earlier tables'.
         for r in CREATURES.iter().chain(COMBAT).chain(LOOP).chain(FIGURE) {
             assert!(
@@ -2172,14 +2300,16 @@ mod tests {
         let hero = HERO
             .iter()
             .filter(|r| find(INIT_CHAIN, r.namespace, r.name).is_none());
-        for r in INIT_CHAIN
+        let earlier: Vec<&Registered> = INIT_CHAIN
             .iter()
             .chain(hero)
             .chain(CREATURES)
             .chain(COMBAT)
             .chain(LOOP)
             .chain(FIGURE)
-        {
+            .filter(|r| find(CAMERA, r.namespace, r.name).is_none())
+            .collect();
+        for r in earlier.into_iter().chain(CAMERA) {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -2203,17 +2333,21 @@ mod tests {
         register(&mut members, COMBAT);
         register(&mut members, LOOP);
         register(&mut members, FIGURE);
-        // The hero's entry wins where both tables name a member.
+        register(&mut members, CAMERA);
+        // The hero's entry wins where both tables name a member, and the
+        // camera's over any earlier.
         let init = INIT_CHAIN
             .iter()
             .filter(|r| find(HERO, r.namespace, r.name).is_none());
-        for r in init
+        let earlier: Vec<&Registered> = init
             .chain(HERO)
             .chain(CREATURES)
             .chain(COMBAT)
             .chain(LOOP)
             .chain(FIGURE)
-        {
+            .filter(|r| find(CAMERA, r.namespace, r.name).is_none())
+            .collect();
+        for r in earlier.into_iter().chain(CAMERA) {
             assert_eq!(r.kind(), kind_of(r), "{}", r.path());
             let id = MemberId::named(r.namespace, r.name);
             match r.keeper {
@@ -2252,6 +2386,7 @@ mod tests {
             .chain(COMBAT)
             .chain(LOOP)
             .chain(FIGURE)
+            .chain(CAMERA)
             .filter(labelled)
         {
             let n = r.units.split('|').count();
@@ -2525,6 +2660,80 @@ mod tests {
         for (ns, name) in [("clonedsequence", "parent"), ("animationinfo", "ambient")] {
             let r = find(CREATURES, ns, name).unwrap();
             assert_eq!((r.kind(), r.spec().default), (Kind::Reference, Value::Null));
+        }
+    }
+
+    /// AG.28's rows by the registry's own entries (aj-vm's live table): the
+    /// heroes a set the host reads whole; the viewport's field of view in
+    /// degrees to 180 and far clip in feet open on top, the host's; the
+    /// converter's point an object, its screen location a screen position,
+    /// its lock by its labels; the container's size in pixels, open.
+    #[test]
+    fn the_cameras_members_convert_by_their_units_and_range() {
+        let players = find(CAMERA, "actorinfo", "players").unwrap();
+        assert_eq!((players.kind(), players.keeper), (Kind::Set, Keeper::Host));
+        let fov = find(CAMERA, "viewportinfo", "field of view").unwrap();
+        assert_eq!((fov.units, fov.keeper), ("degrees", Keeper::Host));
+        assert_eq!(
+            convert(&fov.spec(), Value::Float(200.0)),
+            Some(Value::Float(180.0))
+        );
+        let far = find(CAMERA, "viewportinfo", "far clip").unwrap();
+        assert_eq!(far.units, "feet");
+        assert_eq!(
+            convert(&far.spec(), Value::Int(1000)),
+            Some(Value::Float(1000.0))
+        );
+        assert_eq!(
+            convert(&far.spec(), Value::Float(-1.0)),
+            Some(Value::Float(0.0))
+        );
+        let world = find(CAMERA, "viewconverter", "world position").unwrap();
+        assert_eq!(world.kind(), Kind::Reference);
+        assert_eq!(convert(&world.spec(), Value::Float(1.0)), None);
+        let screen = find(CAMERA, "viewconverter", "screen location").unwrap();
+        assert_eq!(screen.kind(), Kind::Screen);
+        assert_eq!(convert(&screen.spec(), Value::Float(1.0)), None);
+        let lock = find(CAMERA, "viewconverter", "lock type").unwrap();
+        assert_eq!(lock.keeper, Keeper::Cell);
+        assert_eq!(label(&lock, "lock world position"), Some(Value::Int(0)));
+        for name in ["screen width", "screen height"] {
+            let r = find(CAMERA, "spriteinfo", name).unwrap();
+            assert_eq!(
+                (r.units, r.kind(), r.keeper),
+                ("pixels", Kind::Float, Keeper::Host),
+                "{name}"
+            );
+            assert_eq!(
+                convert(&r.spec(), Value::Float(-5.0)),
+                Some(Value::Float(-5.0))
+            );
+        }
+        // The slide's sound's falloff: a cell, feet from 0 up.
+        let silent = find(CAMERA, "soundinfo", "attenuation distance silent").unwrap();
+        assert_eq!((silent.units, silent.keeper), ("feet", Keeper::Cell));
+        assert_eq!(
+            convert(&silent.spec(), Value::Int(-3)),
+            Some(Value::Float(0.0))
+        );
+        // Registered after the tables whose cells it takes over, the
+        // camera's host answers.
+        let mut members = Members::new();
+        register(&mut members, INIT_CHAIN);
+        register(&mut members, CREATURES);
+        register(&mut members, CAMERA);
+        let (_, place) = members
+            .get(MemberId::named("soundinfo", "attenuation distance silent"))
+            .unwrap();
+        assert_eq!(place, Place::ValueCell);
+        for (ns, name) in [
+            ("viewportinfo", "far clip"),
+            ("viewportinfo", "field of view"),
+            ("viewportinfo", "view converter"),
+            ("viewportinfo", "container sprite"),
+        ] {
+            let (_, place) = members.get(MemberId::named(ns, name)).unwrap();
+            assert_eq!(place, Place::Host, "{ns}.{name}");
         }
     }
 }

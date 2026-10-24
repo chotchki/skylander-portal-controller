@@ -7,7 +7,12 @@
 //! [`FollowCamera`]): after his step, on his pivot as the step began, its
 //! `Transform` the eye looking at the aim, eased the same way; his next step
 //! walks him against the view it left (gameplay-camera's The stick held
-//! through a switch). AG.21 puts [`HeroPlugin`] on the TV
+//! through a switch). Once a hero has joined a run whose camera's scripts
+//! place the viewport (openspec AG.28), the view is theirs, one writer: the
+//! camera entity takes `viewportinfo.default` as they leave it each step
+//! ([`guacamole::viewport`]), and the chain stays only as the fall-back once
+//! one of them stops in play, handed the view from where it stood
+//! (stand-in ledger: `camera`). AG.21 puts [`HeroPlugin`] on the TV
 //! ([`crate::play`]), [`crate::pad`]'s layer feeds [`HeroInput`] and the
 //! level's camera is the [`FollowCamera`]'s entity; the tests here run it
 //! headless. His locomotion steps after him (AG.30, [`HeroGaits`]): the
@@ -36,7 +41,7 @@
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
-use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
+use guac_motion::camera::{CameraDef, GameCamera, LookFrom, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
 use guac_motion::locomotion::{Frame, Locomotion};
 use guac_motion::proxy::Surfaces;
@@ -44,6 +49,9 @@ use guac_motion::seam::BodyId;
 use guac_motion::stick::Stick;
 
 use guacamole::frame;
+use guacamole::scripts::ScriptWorld;
+use guacamole::viewport::Viewport;
+use tracing::warn;
 
 use crate::physics::AvianSeam;
 
@@ -60,6 +68,7 @@ impl Plugin for HeroPlugin {
             .init_resource::<HeroInput>()
             .init_resource::<HeroActions>()
             .init_resource::<MovingSolids>()
+            .init_resource::<CameraScripts>()
             .add_systems(
                 FixedUpdate,
                 (
@@ -164,6 +173,120 @@ impl HeroGaits {
 pub(crate) struct FollowCamera {
     pub(crate) camera: GameCamera,
     pub(crate) planes: Vec<TransitionPlane>,
+    /// What the TV drew last: the stick reads its heading the step after.
+    pub(crate) drawn: View,
+    /// Who drew it.
+    pub(crate) hold: ViewHold,
+}
+
+impl FollowCamera {
+    /// `camera` with the level's `planes`, the view its own until the
+    /// camera's scripts take it.
+    pub(crate) fn new(camera: GameCamera, planes: Vec<TransitionPlane>) -> Self {
+        Self {
+            drawn: camera.view(),
+            camera,
+            planes,
+            hold: ViewHold::default(),
+        }
+    }
+}
+
+/// Who has the view the TV draws (openspec AG.28; AH design decision 5's one
+/// writer): `/api/_test/tv`'s `hero.camera.scripts`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ViewHold {
+    /// AG.17's chain, the camera's scripts not driving yet (no hero has
+    /// joined their run, or the part runs no camera system), with why.
+    Chain(String),
+    /// The camera's scripts on the VM.
+    Scripts,
+    /// The camera's scripts stopped in play: the chain has had the view
+    /// since, from where it stood, for good (stand-in ledger: `camera`).
+    HandedBack(String),
+}
+
+impl Default for ViewHold {
+    fn default() -> Self {
+        Self::Chain(NOT_YET.to_owned())
+    }
+}
+
+/// Why the chain has the view before a hero joins the camera's scripts.
+pub(crate) const NOT_YET: &str = "no hero has joined the camera's scripts";
+
+impl ViewHold {
+    /// `on`, `off` or `none`, and why when it isn't `on`.
+    pub(crate) fn report(&self) -> (&'static str, Option<String>) {
+        match self {
+            Self::Scripts => ("on", None),
+            Self::HandedBack(why) => ("off", Some(why.clone())),
+            Self::Chain(why) => ("none", Some(why.clone())),
+        }
+    }
+}
+
+/// What the camera's scripts on the VM say of the view this step, set by
+/// the scripts' step ([`crate::hero_scripts`]) and read by the camera's.
+#[derive(Resource, Debug, Clone, PartialEq)]
+pub(crate) enum CameraScripts {
+    /// Not driving, with why.
+    Idle(String),
+    /// Driving: the viewport is theirs.
+    On,
+    /// Stopped in play, with why: the view goes to the chain for good.
+    Stopped(String),
+}
+
+impl Default for CameraScripts {
+    fn default() -> Self {
+        Self::Idle(NOT_YET.to_owned())
+    }
+}
+
+/// The view the camera's scripts left, as the TV draws it: their eye and
+/// turn, looking at the point along it nearest his feet (where the chain
+/// would aim), their picture and far clip.
+pub(crate) fn scripts_view(v: &Viewport, feet: Option<Vec3>) -> View {
+    let forward = v.forward();
+    let along = feet.map_or(10.0, |f| (f - v.eye).dot(forward)).max(1.0);
+    View {
+        eye: v.eye,
+        aim: v.eye + forward * along,
+        fov_y: v.fov_y(),
+        far_clip: v.far_clip,
+    }
+}
+
+/// The chain at rest where `view` stands, his feet at `feet` (openspec
+/// AG.28: the view handed back from where it stood): its follow point at
+/// his feet's height under the point of the view's line nearest them across
+/// the ground, a camera of its own whose eye sits at the view's and whose
+/// aim is that point, so its first frame draws the view unmoved and its
+/// follow point then closes on his feet as the chain's does.
+pub(crate) fn chain_from(view: &View, feet: Vec3) -> GameCamera {
+    let foot = guac_motion::tuning::FOOT;
+    let look = (view.aim - view.eye).normalize_or_zero();
+    let across = look.with_y(0.0);
+    let along = if across.length_squared() > 1e-8 {
+        ((feet - view.eye).dot(across) / across.length_squared()).max(0.1)
+    } else {
+        (view.aim - view.eye).length()
+    };
+    let aim = view.eye + look * along;
+    let follow = aim.with_y(feet.y);
+    let back = view.eye - follow;
+    let distance = back.length().max(1e-3);
+    let def = CameraDef {
+        id: u32::MAX,
+        distance: distance / foot,
+        pitch: (back.y / distance).clamp(-1.0, 1.0).asin().to_degrees(),
+        look_from: LookFrom::Heading(guac_motion::camera::bearing(back)),
+        look_at: (aim.y - feet.y) / foot,
+        fov_y: view.fov_y,
+        far_clip: view.far_clip,
+    };
+    GameCamera::resting(def, follow, feet, feet)
 }
 
 /// The camera's drawn transform: at the eye, looking at the aim.
@@ -185,7 +308,7 @@ pub(crate) fn projection(view: &View) -> PerspectiveProjection {
 /// The gameplay camera where `camera` stands, eased between steps: what a
 /// camera entity takes to follow the hero.
 pub(crate) fn following(camera: FollowCamera) -> impl Bundle {
-    let view = camera.camera.view();
+    let view = camera.drawn;
     (
         viewed(&view),
         Projection::Perspective(projection(&view)),
@@ -233,7 +356,7 @@ pub(crate) fn step_heroes(
     let step = time.delta_secs();
     let mut input = input.0;
     if let Some(follow) = cameras.iter().next() {
-        input.view_heading = follow.camera.view().heading();
+        input.view_heading = follow.drawn.heading();
     }
     for (mut body, mut transform, scripted) in &mut heroes {
         let HeroBody {
@@ -262,29 +385,64 @@ pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut Her
     }
 }
 
-/// One game frame of the gameplay camera on the hero's pivot as his step
-/// began. One hero walks (pad-input's One pad walks the hero): with none,
-/// or a second, the camera waits.
+/// One game frame of the gameplay camera: the view the camera's scripts
+/// left this step while they drive (openspec AG.28), else the chain on the
+/// hero's pivot as his step began. One hero walks (pad-input's One pad walks
+/// the hero): with none, or a second, the chain waits. Their stopping hands
+/// the chain the view from where it stood.
 pub(crate) fn step_cameras(
     time: Res<Time>,
     heroes: Query<&HeroBody>,
+    scripts: Option<Res<CameraScripts>>,
+    world: Option<Res<ScriptWorld>>,
     mut cameras: Query<
         (&mut FollowCamera, &mut Transform, Option<&mut Projection>),
         Without<HeroBody>,
     >,
 ) {
-    let Ok(hero) = heroes.single() else {
-        return;
-    };
+    let hero = heroes.single().ok();
+    let feet = hero.map(|h| h.hero.pivot);
     let step = time.delta_secs();
+    let state = scripts.as_deref().cloned().unwrap_or_default();
     for (mut follow, mut transform, drawn) in &mut cameras {
-        let FollowCamera { camera, planes } = &mut *follow;
-        camera.step(hero.before, step, planes);
-        let view = camera.view();
-        *transform = viewed(&view);
-        // The far clip moves through a plane's blend (AG.28's).
+        let follow = &mut *follow;
+        let place = match (&state, world.as_deref()) {
+            (CameraScripts::On, Some(world)) => {
+                follow.hold = ViewHold::Scripts;
+                let v = world.viewport();
+                follow.drawn = scripts_view(v, feet);
+                v.transform()
+            }
+            _ => {
+                match &state {
+                    CameraScripts::Stopped(why) if follow.hold == ViewHold::Scripts => {
+                        follow.camera = chain_from(&follow.drawn, feet.unwrap_or(follow.drawn.aim));
+                        follow.hold = ViewHold::HandedBack(why.clone());
+                        warn!(
+                            reason = %why,
+                            "the camera's scripts stopped: the TV's camera follows him from where they left the view"
+                        );
+                    }
+                    CameraScripts::Stopped(why) | CameraScripts::Idle(why)
+                        if !matches!(follow.hold, ViewHold::HandedBack(_)) =>
+                    {
+                        follow.hold = ViewHold::Chain(why.clone());
+                    }
+                    _ => {}
+                }
+                let Some(hero) = hero else {
+                    continue;
+                };
+                let FollowCamera { camera, planes, .. } = &mut *follow;
+                camera.step(hero.before, step, planes);
+                follow.drawn = camera.view();
+                viewed(&follow.drawn)
+            }
+        };
+        *transform = place;
+        // The far clip moves through a plane's blend and a switch.
         if let Some(mut drawn) = drawn {
-            let want = projection(&view);
+            let want = projection(&follow.drawn);
             let same = matches!(&*drawn, Projection::Perspective(p)
                 if (p.fov, p.near, p.far) == (want.fov, want.near, want.far));
             if !same {
@@ -675,10 +833,7 @@ mod tests {
         let mut commands = app.world_mut().commands();
         let entity = spawn_camera(
             &mut commands,
-            FollowCamera {
-                camera: GameCamera::new(def, feet),
-                planes: Vec::new(),
-            },
+            FollowCamera::new(GameCamera::new(def, feet), Vec::new()),
         );
         app.world_mut().flush();
         entity

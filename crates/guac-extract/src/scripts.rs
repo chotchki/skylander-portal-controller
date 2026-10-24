@@ -71,8 +71,8 @@ pub struct Whitelisted {
 }
 
 /// The whitelist (design decision 2): AH.12's roots and the scripts they
-/// spawn, by archive, with AG.60's start scripts on the props and theirs.
-/// AH.42 grows it with AH.8's route.
+/// spawn, by archive, with AG.60's start scripts on the props and theirs and
+/// AG.28's camera volumes and activator. AH.42 grows it with AH.8's route.
 pub const WHITELIST: [Whitelisted; 5] = [
     Whitelisted {
         archive: BOOTSTRAP,
@@ -190,6 +190,15 @@ pub const WHITELIST: [Whitelisted; 5] = [
             "Boulder_Chunks.ai",
             "Chest_Lock.ai",
             "Lock_Flash.ai",
+            // AG.28: the camera volumes and the sliding rocks' activator.
+            "Pop_To_Camera_x.ai",
+            "Pop_to_Camera_5.ai",
+            "Special_Pop_To_Camera.ai",
+            "Jump_Pad_Camera_Pop.ai",
+            "Special_Camera_Transition_213.ai",
+            "Pop_To_X_Special_213.ai",
+            "Pop_to_42_end.ai",
+            "Activator_Sliding_Rocks.ai",
         ],
     },
 ];

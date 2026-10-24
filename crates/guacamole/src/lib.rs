@@ -23,4 +23,5 @@ pub mod props;
 pub mod script_engine;
 mod script_members;
 pub mod scripts;
+pub mod viewport;
 pub mod walkers;
