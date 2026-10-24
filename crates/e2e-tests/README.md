@@ -77,6 +77,31 @@ changed, so a run never spawns a binary older than its source. A build
 that fails fails each test that spawns with cargo's error (openspec AQ.15,
 [`src/built.rs`](src/built.rs)).
 
+### TMPDIR on a RAM disk (macOS)
+
+On the Mac, run the suite through
+[`.githooks/ram-tmpdir.sh`](../../.githooks/ram-tmpdir.sh) (openspec
+AQ.35), as `.githooks/pre-push` runs `cargo test --workspace`:
+
+```
+E2E_APP=guacamole .githooks/ram-tmpdir.sh cargo test -p skylander-e2e-tests --no-fail-fast -- --ignored --test-threads=1 --skip ios_
+```
+
+It makes a 2 GiB APFS RAM disk, runs the command with `TMPDIR` on it and
+detaches it after, an interrupted run included. Every spawn's temp dir is
+then on the disk, and with it the synthetic extract a guacamole spawn
+starts from, which guac-extract's `write_file` flushes file by file
+(`F_FULLFSYNC`, about 4 ms each on the SSD). On the Mac (AQ.35, alternated,
+the disk's making and detaching included) the suite took 263.3 and 233.0 s
+through the script against 277.4 and 280.9 s without it, 74 of 74 each, the
+disk's peak use 3.7 MiB (Chrome's profiles stay in the system temp
+folder: chromedriver doesn't read `TMPDIR`). A Ctrl-C mid-run leaves the
+spawned server and its chromedriver (each in a process group of its own)
+and that chromedriver's Chrome running, as it does without the script; the
+script forces the disk off under them (4.1 s) and they're left to kill by
+hand. Without it
+every command here works as written.
+
 ### Single-test runs
 
 ```
