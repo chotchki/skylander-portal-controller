@@ -131,7 +131,7 @@ A hero's walk turned round SHALL keep its pitch, so on a slope one turned to poi
 - **THEN** his walk turns round every frame; he leaves the ground on 16 of 149 frames, never two running, 4.7-5.2 cm up on the first and at most 1.3 cm on the rest, riding 5.5-8.9 mm over it otherwise, his walk pitched -33.7° to 10.9°, and ends 0.13-0.17 m lower
 
 ### Requirement: Steps and drops
-A hero SHALL ride 5 mm above level ground, and 10 mm above a slope once the snap has set him there. Within 0.375 m over ground he can stand on, a frame begun on the ground SHALL end on it, and he SHALL be set back 10 mm up only on a frame his lean turns, from up to 285 mm. He SHALL climb no step the original's same character doesn't: the opening area has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m bar the ledge route's edge.
+A hero SHALL ride 5 mm above level ground, and 10 mm above a slope once the snap has set him there. Within 0.375 m over ground he can stand on, a frame begun on the ground SHALL end on it, and he SHALL be set back 10 mm up only on a frame his lean turns, from up to 288 mm. He SHALL climb no step the original's same character doesn't: the opening area has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m bar the ledge route's edge.
 
 #### Scenario: The ground falling away
 - **WHEN** Eruptor walks at full stick from the start toward the gate, the ground falling away 0.15°-1° under him
@@ -147,7 +147,7 @@ A hero SHALL ride 5 mm above level ground, and 10 mm above a slope once the snap
 
 #### Scenario: Along the gate's door
 - **WHEN** Eruptor slides east along the gate's door at full stick, the ground falling away 5° under him
-- **THEN** he rides up to 285 mm above it, supported, his lean holding, and is set back 10 mm above it in the frame the ground's slope under him changes and his lean turns
+- **THEN** he rides up to 288 mm above it, supported, his lean holding, and is set back 10 mm above it in the frame the ground's slope under him changes and his lean turns
 
 ### Requirement: An edge with nothing below
 A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his walk, with no wall between, would be over no ground within 225 ft (68.58 m) below: his walk across the ground drops to 0 there whatever the angle, held or let go, with no slide along the edge, and he stays while the stick pushes on. Slower than 2 ft/s (0.61 m/s) the point SHALL be half his width and 1 ft ahead along the stick (3 ft for Eruptor). Where ground lies within 225 ft below, he SHALL walk off and fall.

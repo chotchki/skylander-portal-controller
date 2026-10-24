@@ -246,12 +246,19 @@ fn a_drop_under_20_ft_s() {
             assert_eq!(weights[3], 0.0, "{depth} m");
         }
         eprintln!("the {depth} m drop's fastest move down: {fastest} ft/s");
-        let landed = if depth < 0.375 { 0.01 } else { 0.05 - depth };
-        assert!(
-            w.hero.pivot.z > 2.0 && w.hero.pivot.y < landed,
-            "{:?}",
-            w.hero.pivot
-        );
+        assert!(w.hero.pivot.z > 2.0, "{:?}", w.hero.pivot);
+        if depth < 0.375 {
+            // Still 5 mm over the step's top, supported, 0.3 m over the
+            // ground he runs on.
+            assert!(
+                w.hero.footing.supported && (w.hero.pivot.y - 0.005).abs() < 2e-3,
+                "{:?} {:?}",
+                w.hero.pivot,
+                w.hero.footing
+            );
+        } else {
+            assert!(w.hero.pivot.y < 0.05 - depth, "{:?}", w.hero.pivot);
+        }
         assert_eq!(w.loco.weights(), [0.0, 0.0, 1.0, 0.0]);
         assert_eq!(*w.loco.air(), Air::Ground);
     }

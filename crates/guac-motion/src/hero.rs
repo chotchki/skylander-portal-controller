@@ -49,9 +49,9 @@
 //!   he counts as on the ground, so his lean turns to that ground and a
 //!   frame begun on the ground (the walk not leaving it) ends supported
 //!   whatever the support check found (along AG.58's door he rode up to
-//!   0.285 m over ground falling away under him, supported); the snap from
+//!   0.288 m over ground falling away under him, supported); the snap from
 //!   over the ground runs only on a frame his lean turns, from under it on
-//!   any (he rode 13.6-25.2 mm up, unsnapped, while his lean held);
+//!   any (he rode up to 25.2 mm up, unsnapped, while his lean held);
 //! - the edge probe's hold turns his facing to the stick at his usual rate;
 //! - his collision shape turns with his lean about his pivot (AG.9: on the
 //!   slopes his proxy's plane distance matched his pivot's height, which only

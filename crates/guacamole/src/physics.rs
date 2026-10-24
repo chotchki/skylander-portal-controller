@@ -913,9 +913,11 @@ mod tests {
     }
 
     /// AG.70 and AG.71: the post-step's scenarios guac-motion runs on parry
-    /// (its lean in the air and near the ground, the float off a step until
-    /// his lean turns, a solid letting him out slowly, the probe under a
-    /// solid over an edge), each in its world on Avian's side, headless.
+    /// (his lean in the air, with his facing and near the ground, the float
+    /// off a step until his lean turns, a still solid letting him out slowly
+    /// and sliding him plain, the probe under a solid over an edge and its
+    /// search through a solid's radius), each in its world on Avian's side,
+    /// headless.
     #[test]
     fn the_post_step_cases_through_avian() {
         let mut failures = Vec::new();
@@ -935,7 +937,7 @@ mod tests {
             }
             ran += 1;
         }
-        assert_eq!(ran, 5);
+        assert_eq!(ran, 8);
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
@@ -1034,7 +1036,7 @@ mod tests {
         use guac_motion::hero::{Hero, Input};
         use guac_motion::parry::ParryWorld;
         use guac_motion::stick::Stick;
-        use guac_motion::tuning::{FOOT, Tuning};
+        use guac_motion::tuning::Tuning;
         use guac_motion::walk::{Footing, Walk};
         let dump = env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP");
         let captures = env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR");
@@ -1102,7 +1104,6 @@ mod tests {
                 hero.set_steps(step(&r[k - 1]), step(&r[k - 2]));
                 hero
             };
-            let _ = FOOT;
             let (mut ours, mut twin) = (seed(), seed());
             let (mut ours_stop, mut flickers, mut apart) = (None, 0usize, 0.0f32);
             for j in k + 1..=last + 30 {
