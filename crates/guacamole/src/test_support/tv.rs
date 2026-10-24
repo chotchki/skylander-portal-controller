@@ -29,6 +29,7 @@ use crate::screen::{SetupView, TvScreen};
 use crate::starfield;
 use crate::title;
 use crate::tv::*;
+use crate::tv_state::*;
 
 pub(crate) fn placement(name: &str, owner: Option<&str>) -> Placement {
     let figure_id = FigureId::new("000009-0000");

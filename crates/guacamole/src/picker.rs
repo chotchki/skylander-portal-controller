@@ -15,7 +15,7 @@ use guac_server::dumps::DumpScan;
 use tracing::{info, warn};
 
 use crate::screen::{SetupView, TvScreen};
-use crate::tv::{Current, ServerLink, Setup};
+use crate::tv_state::{Current, ServerLink, Setup};
 
 /// guacamole's data root, where a pick is stored.
 #[derive(Resource, Clone)]

@@ -105,7 +105,7 @@ use crate::hero_scripts::ScriptSource;
 use crate::motion::ReducedMotion;
 use crate::physics::PreparedBody;
 use crate::turntable::{plain, read_ir};
-use crate::tv::{Redrawn, ScreenRoot, TvCamera};
+use crate::tv_state::{Redrawn, ScreenRoot, TvCamera};
 use crate::warm::Warm;
 
 /// Where a level's extract is: what the extraction sends once the level's
@@ -149,7 +149,7 @@ pub fn level_channel() -> (LevelSender, LevelFeed) {
 /// cameras see and of the turntables' (16 up).
 pub(crate) const LEVEL_LAYER: usize = 2;
 /// The level's camera (the dev view's, the walk's) draws before the TV's own
-/// ([`crate::tv::TV_ORDER`]), under its UI (AG.50): at order 1 it covered Start's
+/// ([`crate::tv_state::TV_ORDER`]), under its UI (AG.50): at order 1 it covered Start's
 /// overlay and the controller message, so a paused level read as a hang.
 /// Clear of the turntables' -1 and -2 and the titles' -1, though those draw
 /// into images of their own.
@@ -2003,7 +2003,7 @@ mod tests {
         LEVEL, START, atmosphere, lights, multi2, segment, write_level, write_props, zone,
     };
     use crate::test_support::turntable::{app, extract};
-    use crate::tv::TV_ORDER;
+    use crate::tv_state::TV_ORDER;
     use crate::warm::PipelineWatch;
 
     use guac_ir::Sha256;

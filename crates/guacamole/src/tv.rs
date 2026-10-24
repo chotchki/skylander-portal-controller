@@ -13,8 +13,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use bevy::asset::RenderAssetUsages;
@@ -28,14 +27,15 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 // Not the prelude's `Button`: that's bevy_ui's deprecated one.
 use bevy::ui_widgets::{Activate, Button};
 use guac_server::config::WindowMode;
-use guac_server::state::{GameList, LauncherStatus};
+use guac_server::state::LauncherStatus;
 use guacamole::character::{CharacterShadingPlugin, GlowPlugin};
 use serde::Serialize;
-use skylander_core::{Element, SLOT_COUNT};
-use skylander_rpcs3_control::{Placement, PlacementOwner};
+use skylander_core::SLOT_COUNT;
+use skylander_rpcs3_control::Placement;
 use tracing::{error, info, warn};
 
-use crate::card_motion::{self, CardFace, Schedule};
+use crate::card_motion::{self, Schedule};
+use crate::card_view::{CardImages, slot_frame, spawn_card};
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
 use crate::input::FocusId;
@@ -50,6 +50,10 @@ use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
 use crate::title;
 use crate::turntable::{CardPlate, CardState, TurntablePlugin, TurntableSystems, Turntables};
+use crate::tv_state::{
+    CardSlot, Current, ExtractBar, ExtractDetail, ExtractTitle, Framing, Pen, Pip, Redrawn,
+    ScreenRoot, ServerLink, Setup, TV_ORDER, TvAssets, TvCamera, TvState, UiTree, node_rect,
+};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
 pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
@@ -79,30 +83,8 @@ const CARDS_PER_ROW: usize = 4;
 /// A screen's title (§3.7's state titles).
 const TITLE: Step = Step::Hero;
 
-/// A card's figure name: the larger of 32 and 40 that still fits a long
-/// name in two rows of four at 1080p, 4K and the desktop window.
-const CARD_NAME: Step = Step::Md;
-
 pub(crate) static TITAN_ONE: &[u8] =
     include_bytes!("../../server/assets/fonts/TitanOne-Regular.ttf");
-
-/// What the TV reads from the server; built once in `main`.
-#[derive(Resource, Clone)]
-pub struct ServerLink {
-    pub status: Arc<Mutex<LauncherStatus>>,
-    pub clients: Arc<AtomicUsize>,
-    pub phone_url: String,
-    pub join_qr_png: Arc<Vec<u8>>,
-    /// The phone's game list; a pick replaces it.
-    pub games: GameList,
-}
-
-#[derive(Resource, Clone)]
-pub struct Setup(pub SetupView);
-
-/// The window mode: TV mode keeps everything inside the overscan inset.
-#[derive(Resource, Clone, Copy)]
-pub struct Framing(pub WindowMode);
 
 /// Portraits decoded so far, by path; `None` for one that wouldn't load.
 #[derive(Resource, Default)]
@@ -139,22 +121,6 @@ impl Portraits {
     }
 }
 
-/// The screen this frame, and since when.
-#[derive(Resource)]
-pub(crate) struct Current {
-    pub(crate) screen: TvScreen,
-    pub(crate) since: Instant,
-    pub(crate) clients: usize,
-}
-
-#[derive(Resource)]
-pub(crate) struct TvAssets {
-    pub(crate) font: Handle<Font>,
-    pub(crate) qr: Option<Handle<Image>>,
-    /// The stars' two sprites (`starfield::Sprites`).
-    pub(crate) stars: starfield::Sprites,
-}
-
 /// The join QR as drawn (Join and the portal header), for the mirror.
 #[derive(Component)]
 pub(crate) struct JoinQr;
@@ -170,16 +136,6 @@ pub(crate) struct PlayersLine;
 /// ServerError's message as drawn.
 #[derive(Component)]
 pub(crate) struct ErrorMessage;
-
-/// The extraction band's lines and bar fill (percent) as drawn.
-#[derive(Component)]
-pub(crate) struct ExtractTitle;
-
-#[derive(Component)]
-pub(crate) struct ExtractDetail;
-
-#[derive(Component)]
-pub(crate) struct ExtractBar(pub(crate) u8);
 
 /// The portal header's game name as drawn.
 #[derive(Component)]
@@ -262,96 +218,9 @@ impl BandShape {
     }
 }
 
-/// The TV's own camera. Every title renders through a `Camera2d` of its own
-/// ([`title`]), so whatever reads the TV's camera (the UI's scale, the layout
-/// report, the mirror, the shots) finds it by this, never by `Camera2d`.
-#[derive(Component, Debug)]
-pub(crate) struct TvCamera;
-
-/// The TV camera's order: last on its target, so its UI lands over the level
-/// drawn under it ([`crate::level::VIEW_ORDER`], AG.50).
-pub(crate) const TV_ORDER: isize = 0;
-
-/// Marks a screen's root node, spawned when its [`TvState`] is entered and
-/// despawned with everything under it when it's left.
-#[derive(Component)]
-pub(crate) struct ScreenRoot;
-
-/// What the TV just redrew: the layout report and the shots wait on these
-/// instead of on the resources behind them, which change without a redraw.
-#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Redrawn {
-    /// A screen was entered and spawned.
-    Screen(TvState),
-    /// A portal cell's content respawned (0-based slot).
-    Slot(u8),
-    /// The band under the game's name, or the hint it replaces.
-    Band,
-    /// A drawn line took new text: the players line, a setup line, the message.
-    Text,
-    /// A choice's focus look turned on or off (`look`).
-    Focus,
-    /// The level came up under the TV's UI (the dev entry, AG.19; the walk,
-    /// AG.21).
-    Level,
-    /// The level's overlay (Start's, the controller message) came or went
-    /// (AG.50).
-    Overlay,
-    /// The portal's alert, or the small join code over the level, came or
-    /// went (AG.29).
-    Alert,
-}
-
 /// The `Update` systems that redraw part of a screen in place.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 struct Redraw;
-
-/// Which screen is up, without its data: [`Current`] keeps that. Set from
-/// `screen_for(..)`'s kind, so Portal to Portal (another game) is no transition.
-#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub(crate) enum TvState {
-    #[default]
-    Starting,
-    Preparing,
-    Setup,
-    NoGiants,
-    Found,
-    Join,
-    Portal,
-    AlreadyRunning,
-    ServerError,
-    Farewell,
-}
-
-impl TvState {
-    const ALL: [Self; 10] = [
-        Self::Starting,
-        Self::Preparing,
-        Self::Setup,
-        Self::NoGiants,
-        Self::Found,
-        Self::Join,
-        Self::Portal,
-        Self::AlreadyRunning,
-        Self::ServerError,
-        Self::Farewell,
-    ];
-
-    pub(crate) fn of(screen: &TvScreen) -> Self {
-        match screen {
-            TvScreen::Starting => Self::Starting,
-            TvScreen::Preparing => Self::Preparing,
-            TvScreen::Setup => Self::Setup,
-            TvScreen::NoGiants => Self::NoGiants,
-            TvScreen::Found => Self::Found,
-            TvScreen::Join => Self::Join,
-            TvScreen::Portal { .. } => Self::Portal,
-            TvScreen::AlreadyRunning => Self::AlreadyRunning,
-            TvScreen::ServerError { .. } => Self::ServerError,
-            TvScreen::Farewell => Self::Farewell,
-        }
-    }
-}
 
 pub struct ServerBridge;
 
@@ -1047,38 +916,9 @@ fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<>
     )
 }
 
-/// What every line is drawn with: the font and the theme, so a size comes
-/// only from a [`Step`] and a colour from a [`Role`].
-pub(crate) struct Pen {
-    font: Handle<Font>,
-    pub(crate) theme: TvTheme,
-}
-
+/// The screens' titles: [`Pen`]'s own lines are in `tv_state`, a title
+/// goes through the title shader, which sits above it.
 impl Pen {
-    pub(crate) fn new(assets: &TvAssets, theme: &TvTheme) -> Self {
-        Self {
-            font: assets.font.clone(),
-            theme: theme.clone(),
-        }
-    }
-
-    fn font(&self, step: Step) -> TextFont {
-        TextFont {
-            font: self.font.clone().into(),
-            font_size: FontSize::Px(self.theme.size(step)),
-            ..default()
-        }
-    }
-
-    /// Centred.
-    pub(crate) fn text(&self, s: &str, step: Step, role: Role) -> impl Bundle + use<> {
-        self.text_at(s, step, role, Justify::Center)
-    }
-
-    fn text_at(&self, s: &str, step: Step, role: Role, justify: Justify) -> impl Bundle + use<> {
-        self.inked(s, step, self.theme.role(role), justify)
-    }
-
     /// A title in caps through the title shader (decision 7), `marker` on its
     /// hidden layout `Text`; a screen's own title gets §2's halo behind it.
     fn title(
@@ -1105,16 +945,6 @@ impl Pen {
     /// A screen's own title, centred, with its halo.
     fn screen_title(&self, parent: &mut ChildSpawnerCommands, s: &str, step: Step) {
         self.title(parent, s, step, Justify::Center, true, ());
-    }
-
-    /// In a colour no role names: a pip's ink, picked against its fill.
-    fn inked(&self, s: &str, step: Step, color: Color, justify: Justify) -> impl Bundle + use<> {
-        (
-            Text::new(s),
-            self.font(step),
-            TextColor(color),
-            TextLayout::justify(justify),
-        )
     }
 }
 
@@ -1338,10 +1168,6 @@ fn spawn_content(ui: &mut ChildSpawnerCommands, state: TvState, sources: &mut So
     }
 }
 
-/// A card on the portal screen, by slot (0-based).
-#[derive(Component, Debug)]
-pub(crate) struct CardSlot(pub(crate) u8);
-
 /// An empty slot's frame, so the cards around it keep their places.
 #[derive(Component, Debug)]
 pub(crate) struct EmptySlot(pub(crate) u8);
@@ -1354,32 +1180,6 @@ pub(crate) struct Cell(pub(crate) u8);
 /// The placement a cell drew, none for its empty frame.
 #[derive(Component)]
 struct Drew(Option<Placement>);
-
-/// A card's owner pip, by slot.
-#[derive(Component, Debug)]
-pub(crate) struct Pip(pub(crate) u8);
-
-/// The element as a word ("Fire").
-pub fn element_label(element: Element) -> &'static str {
-    match element {
-        Element::Air => "Air",
-        Element::Dark => "Dark",
-        Element::Earth => "Earth",
-        Element::Fire => "Fire",
-        Element::Life => "Life",
-        Element::Light => "Light",
-        Element::Magic => "Magic",
-        Element::Tech => "Tech",
-        Element::Undead => "Undead",
-        Element::Water => "Water",
-    }
-}
-
-/// The profile's colour as the store keeps it (`#rgb` or `#rrggbb`); gold if
-/// it won't parse, so a pip never goes invisible.
-pub fn owner_color(owner: &PlacementOwner, theme: &TvTheme) -> Srgba {
-    Srgba::hex(&owner.color).unwrap_or(theme.gold.to_srgba())
-}
 
 /// The window shrunk by the inset (TV) or the margin (desktop), in physical
 /// pixels, with a pixel of slack because layout snaps edges to whole pixels.
@@ -1397,10 +1197,6 @@ pub fn safe_area(width: u32, height: u32, mode: WindowMode) -> Rect {
 
 pub(crate) fn contains(outer: Rect, inner: Rect) -> bool {
     outer.contains(inner.min) && outer.contains(inner.max)
-}
-
-pub(crate) fn node_rect(node: &ComputedNode, at: &UiGlobalTransform) -> Rect {
-    Rect::from_center_size(at.translation, node.size())
 }
 
 /// Frames until `report_layout` logs a redrawn portal: layout and text
@@ -1646,13 +1442,6 @@ fn portrait_of(
         .and_then(|p| portraits.get(p, images))
 }
 
-/// What a card's plate can show: its portrait, and its turntable's image
-/// once the model is up, which it shows instead.
-struct CardImages {
-    portrait: Option<Handle<Image>>,
-    model: Option<Handle<Image>>,
-}
-
 /// A cell's content: the card, moving as `motion` says, or the numbered
 /// empty frame.
 fn spawn_slot(
@@ -1742,34 +1531,6 @@ fn spawn_bar(parent: &mut ChildSpawnerCommands, pen: &Pen, pct: u8, fill: impl C
         });
 }
 
-/// A cell's content box: fills the cell.
-fn slot_box() -> Node {
-    Node {
-        flex_grow: 1.0,
-        flex_basis: px(0),
-        min_width: px(0),
-        min_height: px(0),
-        flex_direction: FlexDirection::Column,
-        ..default()
-    }
-}
-
-/// What a slot draws in its box: the edge and corners, the padding and the
-/// lines centred, clipping anything that doesn't fit.
-fn slot_frame() -> Node {
-    Node {
-        flex_direction: FlexDirection::Column,
-        align_items: AlignItems::Center,
-        justify_content: JustifyContent::Center,
-        row_gap: px(10),
-        padding: UiRect::all(px(16)),
-        border: UiRect::all(px(4)),
-        border_radius: BorderRadius::all(px(24)),
-        overflow: Overflow::clip(),
-        ..default()
-    }
-}
-
 /// An empty frame's node: the box and the frame in one, since it never moves.
 fn slot_content() -> Node {
     Node {
@@ -1779,146 +1540,6 @@ fn slot_content() -> Node {
         min_height: px(0),
         ..slot_frame()
     }
-}
-
-/// Portrait, name, element and owner pip; no level, XP or gold (AH). The card
-/// is §3.3's framed panel edged in gold, the portrait (or the figure's
-/// turning model, AE.13) sits in §3.1's bezel ringed in the figure's element,
-/// and the pip stays top-right. `CardSlot` is
-/// the box the mirror and the tests measure; the card itself is its face, laid
-/// over the box, which rises, and the bezel on it floats and flashes
-/// (`card_motion`), so neither moves the box.
-fn spawn_card(
-    cell: &mut ChildSpawnerCommands,
-    pen: &Pen,
-    slot: u8,
-    placement: &Placement,
-    images: CardImages,
-    motion: Schedule,
-) {
-    spawn_card_as(cell, pen, Some(slot), placement, images, motion);
-}
-
-/// [`spawn_card`], marked as `slot`'s card (`CardSlot`, `CardPlate`, `Pip`)
-/// or, with none, marked as nothing: the start's pass's offscreen card.
-fn spawn_card_as(
-    cell: &mut ChildSpawnerCommands,
-    pen: &Pen,
-    slot: Option<u8>,
-    placement: &Placement,
-    images: CardImages,
-    motion: Schedule,
-) {
-    let theme = &pen.theme;
-    let mut card = cell.spawn(slot_box());
-    if let Some(slot) = slot {
-        card.insert(CardSlot(slot));
-    }
-    card.with_children(|card| {
-        card.spawn((
-            CardFace(motion),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(0),
-                right: px(0),
-                top: px(0),
-                bottom: px(0),
-                ..slot_frame()
-            },
-            surfaces::card(theme),
-        ))
-        .with_children(|face| {
-            let shown = images.model.or_else(|| images.portrait.clone());
-            let (bezel, plate) = surfaces::spawn_bezel(face, theme, placement.element, shown);
-            if let Some(slot) = slot {
-                face.commands().entity(plate).insert(CardPlate {
-                    slot,
-                    portrait: images.portrait,
-                });
-            }
-            card_motion::on_bezel(face.commands().entity(bezel), motion, theme);
-            face.spawn((
-                pen.text(&placement.name, CARD_NAME, Role::Primary),
-                Node {
-                    max_width: percent(100),
-                    ..default()
-                },
-            ));
-            if let Some(element) = placement.element {
-                face.spawn(pen.text(element_label(element), Step::Caption, Role::Muted));
-            }
-            if let Some(owner) = &placement.owner {
-                let color = owner_color(owner, theme);
-                let mut pip = face.spawn(surfaces::pip(theme, color.into()));
-                if let Some(slot) = slot {
-                    pip.insert(Pip(slot));
-                }
-                pip.with_children(|pip| {
-                    let ink = theme.ink_on(color);
-                    pip.spawn(pen.inked(&owner.initial, Step::Body, ink, Justify::Center));
-                });
-            }
-        });
-    });
-}
-
-/// A card for no figure on the portal, drawn by `camera` (offscreen, `size`
-/// pixels) and nowhere else: the start's pass (AE.25) draws one so the UI
-/// pipelines a card's face, bezel, shadows, flash, name and pip draw with
-/// are compiled before the first placement. It carries none of the markers
-/// the mirror, the layout report and the turntables find a card by.
-pub(crate) fn spawn_sample_card(
-    commands: &mut Commands,
-    assets: &TvAssets,
-    theme: &TvTheme,
-    camera: Entity,
-    size: UVec2,
-    plate: Handle<Image>,
-    now: Duration,
-) -> Entity {
-    let pen = Pen::new(assets, theme);
-    let figure_id = skylander_core::FigureId::new("000009-0000");
-    let (toy_type, variant) = figure_id.subtype_parts().expect("a well-formed figure id");
-    let placement = Placement {
-        figure_id,
-        toy_type,
-        variant,
-        name: "Getting ready".into(),
-        element: Some(Element::Fire),
-        portrait: None,
-        owner: Some(PlacementOwner {
-            profile_id: String::new(),
-            initial: "G".into(),
-            color: "#da5ad6".into(),
-            progress: Default::default(),
-        }),
-    };
-    let images = CardImages {
-        portrait: Some(plate),
-        model: None,
-    };
-    commands
-        .spawn((
-            Node {
-                width: px(size.x as f32),
-                height: px(size.y as f32),
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-            bevy::ui::UiTargetCamera(camera),
-            Name::new("prepare: a card"),
-        ))
-        .with_children(|cell| {
-            spawn_card_as(
-                cell,
-                &pen,
-                None,
-                &placement,
-                images,
-                Schedule::placement(0, now),
-            );
-        })
-        .id()
 }
 
 fn spawn_empty(cell: &mut ChildSpawnerCommands, pen: &Pen, slot: u8) {
@@ -1964,62 +1585,6 @@ pub struct PipShot {
     pub color: String,
     /// From `PortalCards`, not drawn.
     pub profile_id: String,
-}
-
-/// Depth-first text and images under `root`, the pip's subtree apart.
-pub(crate) fn walk(
-    root: Entity,
-    children: &Query<&Children>,
-    texts: &Query<&Text>,
-    images: &Query<(), With<ImageNode>>,
-    pips: &Query<(&Pip, &BackgroundColor)>,
-    out: &mut (Vec<String>, bool, Option<(String, Color)>),
-) {
-    let Ok(kids) = children.get(root) else {
-        return;
-    };
-    for kid in kids.iter() {
-        if let Ok((_, fill)) = pips.get(kid) {
-            let mut inner = (Vec::new(), false, None);
-            walk(kid, children, texts, images, pips, &mut inner);
-            out.2 = Some((inner.0.join(""), fill.0));
-            continue;
-        }
-        if let Ok(text) = texts.get(kid) {
-            out.0.push(text.0.clone());
-        }
-        if images.contains(kid) {
-            out.1 = true;
-        }
-        walk(kid, children, texts, images, pips, out);
-    }
-}
-
-/// The laid-out UI tree as [`walk`] reads it: each node's children, its
-/// text and image, and a pip's fill.
-#[derive(SystemParam)]
-pub(crate) struct UiTree<'w, 's> {
-    children: Query<'w, 's, &'static Children>,
-    texts: Query<'w, 's, &'static Text>,
-    images: Query<'w, 's, (), With<ImageNode>>,
-    pips: Query<'w, 's, (&'static Pip, &'static BackgroundColor)>,
-}
-
-impl UiTree<'_, '_> {
-    /// [`walk`] from `root`: its lines, whether it draws an image, and its
-    /// pip's initial and fill.
-    pub(crate) fn walk(&self, root: Entity) -> (Vec<String>, bool, Option<(String, Color)>) {
-        let mut found = (Vec::new(), false, None);
-        walk(
-            root,
-            &self.children,
-            &self.texts,
-            &self.images,
-            &self.pips,
-            &mut found,
-        );
-        found
-    }
 }
 
 /// The screen as drawn, its part of `/api/_test/tv` (openspec AQ.8): the
@@ -2306,43 +1871,6 @@ mod tests {
         );
         assert_eq!(join_address("http://10.0.0.2:8765"), "http://10.0.0.2:8765");
         assert_eq!(join_address(""), "");
-    }
-
-    #[test]
-    fn owner_colours_parse_both_store_forms_and_fall_back_to_gold() {
-        let owner = |c: &str| PlacementOwner {
-            profile_id: "p".into(),
-            initial: "A".into(),
-            color: c.into(),
-            progress: Default::default(),
-        };
-        let theme = TvTheme::default();
-        assert_eq!(
-            owner_color(&owner("#ff0000"), &theme),
-            Srgba::rgb(1.0, 0.0, 0.0)
-        );
-        assert_eq!(
-            owner_color(&owner("#00f"), &theme),
-            Srgba::rgb(0.0, 0.0, 1.0)
-        );
-        assert_eq!(owner_color(&owner("teal"), &theme), theme.gold.to_srgba());
-    }
-
-    #[test]
-    fn every_element_has_a_word() {
-        use Element::*;
-        let all = [
-            Air, Dark, Earth, Fire, Life, Light, Magic, Tech, Undead, Water,
-        ];
-        let words: Vec<&str> = all.iter().map(|e| element_label(*e)).collect();
-        assert_eq!(
-            words,
-            [
-                "Air", "Dark", "Earth", "Fire", "Life", "Light", "Magic", "Tech", "Undead", "Water"
-            ]
-        );
-        let theme = TvTheme::default();
-        assert_ne!(theme.element(Some(Fire)), theme.element(Some(Water)));
     }
 
     /// The shell delta's "Nothing on the join code reacts" (AP.6): a pad

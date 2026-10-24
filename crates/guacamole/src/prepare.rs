@@ -17,7 +17,7 @@
 //!   ([`crate::warm`]) on its hidden stage, with its camera's own
 //!   pipelines (the remaster's main pass, tonemapping, the glow chain);
 //! - a card's UI pipelines: a card drawn offscreen by a camera of its own
-//!   ([`crate::tv::spawn_sample_card`]);
+//!   ([`crate::card_view::spawn_sample_card`]);
 //! - the level camera's output to the TV's target, with the write the level
 //!   draws with ([`crate::level::view_camera`]), under the TV's own as the
 //!   level is, so the TV writes over it as it does over the level
@@ -58,7 +58,7 @@ use tracing::{info, warn};
 use crate::level;
 use crate::theme::TvTheme;
 use crate::turntable::TurntableSystems;
-use crate::tv::{ServerLink, TvAssets, TvCamera};
+use crate::tv_state::{ServerLink, TvAssets, TvCamera};
 use crate::warm::{CensusKey, PipelineWatch, Warm};
 
 /// The most keys the pass draws in one frame: on a warm cache each takes a
@@ -297,7 +297,7 @@ fn begin(
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         ));
-        let root = crate::tv::spawn_sample_card(
+        let root = crate::card_view::spawn_sample_card(
             &mut s.commands,
             assets,
             theme,

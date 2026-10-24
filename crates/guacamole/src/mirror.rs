@@ -1222,7 +1222,7 @@ mod tests {
     use crate::pause::OverlayShot;
     use crate::screen::TvScreen;
     use crate::test_support::tv::{placement, portal_app};
-    use crate::tv::{Current, TvAssets};
+    use crate::tv_state::{Current, TvAssets};
 
     fn snapshot(cards: PortalCards, screen: TvScreen) -> TvSnapshot {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, cards);
@@ -1371,7 +1371,7 @@ mod tests {
         // The level over the screen: its tree hidden, the hero off.
         let mut roots = app
             .world_mut()
-            .query_filtered::<&mut Visibility, With<crate::tv::ScreenRoot>>();
+            .query_filtered::<&mut Visibility, With<crate::tv_state::ScreenRoot>>();
         for mut v in roots.iter_mut(app.world_mut()) {
             *v = Visibility::Hidden;
         }

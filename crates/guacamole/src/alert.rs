@@ -25,7 +25,7 @@ use crate::pause::ShownAt;
 use crate::play::{Alert, Play, PlaySystems};
 use crate::screen::TvScreen;
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::{Current, Pen, Redrawn, TvAssets, UiTree, node_rect};
+use crate::tv_state::{Current, Pen, Redrawn, TvAssets, UiTree, node_rect};
 
 /// Over the pause overlays (900), under the corner join code.
 const ALERT_Z: i32 = 940;

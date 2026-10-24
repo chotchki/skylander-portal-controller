@@ -26,7 +26,7 @@ use serde::Serialize;
 use crate::level::OverLevel;
 use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, prompt};
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::{Pen, Redrawn, TvAssets, UiTree};
+use crate::tv_state::{Pen, Redrawn, TvAssets, UiTree};
 
 /// Under an intro's overlay (1,000) and the portal's alerts, over everything
 /// else.

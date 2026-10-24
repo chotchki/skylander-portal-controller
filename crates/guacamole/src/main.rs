@@ -9,6 +9,7 @@
 
 mod alert;
 mod card_motion;
+mod card_view;
 mod cards;
 mod cli;
 mod driver;
@@ -41,6 +42,7 @@ mod tints;
 mod title;
 mod turntable;
 mod tv;
+mod tv_state;
 mod video;
 mod warm;
 
@@ -79,7 +81,8 @@ use crate::intro_player::OutputLatency;
 use crate::mirror::TvMirror;
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
-use crate::tv::{FAREWELL_BEAT, Framing, ServerBridge, ServerLink, Setup, Tv};
+use crate::tv::{FAREWELL_BEAT, ServerBridge, Tv};
+use crate::tv_state::{Framing, ServerLink, Setup};
 
 fn main() -> Result<()> {
     let command = match cli::parse(std::env::args_os().skip(1)) {

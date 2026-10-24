@@ -25,7 +25,7 @@ use crate::driver::PortalChange;
 use crate::extraction::IntroLibrary;
 use crate::intro::{self, Change, IntroEntry, IntroEvent, IntroQueue, QueuedShot};
 use crate::screen::TvScreen;
-use crate::tv::{Current, node_rect};
+use crate::tv_state::{Current, node_rect};
 use crate::video::{self, Feed};
 
 /// The speaker's lag behind the audio clock when none is stored. PROVISIONAL
@@ -1373,7 +1373,7 @@ mod tests {
         /// leaving the portal under it leaves the next screen's root alone.
         #[test]
         fn an_intro_over_the_portal_leaves_one_screen_root() {
-            use crate::tv::ScreenRoot;
+            use crate::tv_state::ScreenRoot;
             let roots = |tv: &mut Tv| {
                 let world = tv.app.world_mut();
                 let mut q = world.query_filtered::<Entity, With<ScreenRoot>>();

@@ -1,6 +1,8 @@
-use skylander_core::SlotIndex;
+use skylander_core::{Element, SlotIndex};
 
 use super::*;
+use crate::card_motion::CardFace;
+use crate::card_view::spawn_sample_card;
 use crate::driver::PortalChange;
 use crate::test_support::tv::{outer_nodes, placement, portal_app, scale_of, tv_camera};
 

@@ -31,7 +31,7 @@ use tracing::{error, info, warn};
 use crate::level::{LevelSender, LevelSource};
 use crate::screen::TvScreen;
 use crate::turntable::{Shelf, ShelfSender};
-use crate::tv::{Current, ExtractBar, ExtractDetail, ExtractTitle, Setup};
+use crate::tv_state::{Current, ExtractBar, ExtractDetail, ExtractTitle, Setup};
 
 /// What a Giants pick extracts with; built once in `main` from the settings.
 #[derive(Resource, Clone, Debug)]

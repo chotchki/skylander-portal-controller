@@ -111,7 +111,7 @@ use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
 use crate::screen::TvScreen;
 use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero, read_ir};
-use crate::tv::{Current, Redrawn, TvCamera};
+use crate::tv_state::{Current, Redrawn, TvCamera};
 use crate::warm::Warm;
 
 /// Where the TV is, as `/api/_test/tv` reports it.

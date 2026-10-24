@@ -39,7 +39,7 @@ use crate::intro::{IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay};
 use crate::pad::{self, FacesPrinted, HeroPad, LevelPads, Pause, labels};
 use crate::pause::{self, OverlayShot, OverlayShots};
-use crate::tv::Current;
+use crate::tv_state::Current;
 
 /// Long enough that a tap is one move; a hold starts repeating after it.
 pub(crate) const REPEAT_DELAY: Duration = Duration::from_millis(400);
@@ -327,7 +327,7 @@ impl Plugin for InputRouter {
         // hides it, the next pad or key input brings it back).
         app.add_message::<TvInput>()
             // The overlays tell the shots when they come and go.
-            .add_message::<crate::tv::Redrawn>()
+            .add_message::<crate::tv_state::Redrawn>()
             .insert_resource(InputFocusVisible(true))
             .init_resource::<LevelPads>()
             // Between a pad's connection and its first axis event, so its

@@ -26,7 +26,7 @@ use bevy::ui_widgets::Button;
 use crate::motion::{DUR_QUICK, DUR_TAP, Easing, ReducedMotion, Tween};
 use crate::surfaces;
 use crate::theme::TvTheme;
-use crate::tv::Redrawn;
+use crate::tv_state::Redrawn;
 
 /// §3.1's picking scale.
 pub(crate) const FOCUS_SCALE: f32 = 1.05;
