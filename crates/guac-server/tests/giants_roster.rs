@@ -4,7 +4,7 @@
 //! catalogue gave otherwise. Ignored by default: it reads `GUAC_GIANTS_DUMP`
 //! from the environment or the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_roster -- --ignored --nocapture`
+//! `cargo test -p guac-server --release --test giants_roster -- --ignored --nocapture`
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
