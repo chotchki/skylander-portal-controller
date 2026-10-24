@@ -4514,6 +4514,7 @@ dependencies = [
  "openh264",
  "rfd 0.17.2",
  "rodio",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "skylander-core",

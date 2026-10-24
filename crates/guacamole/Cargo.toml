@@ -87,6 +87,15 @@ bevy_transform_interpolation = { version = "0.6", default-features = false, feat
 # version bevy_image already pulls.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# One Bevy for the build and the tests (openspec AQ.30). The tests' `tempfile`
+# turns on rustix's `default` (on unix, as tempfile pulls it), and a feature the
+# build lacks forks every crate above rustix, so `cargo test -p guacamole` built
+# a second Bevy and Avian beside `cargo build -p guacamole`'s (AQ.3: 272.8 s and
+# 1.17 GiB per cold target dir). Named here with the tests' features, nothing
+# else; `.githooks/one-bevy.sh` (pre-push) fails when the two graphs part again.
+[target.'cfg(unix)'.dependencies]
+rustix = "1"
+
 # Pads on macOS through Apple's GameController framework (openspec AG.53):
 # AG.5 found gilrs connects an 8BitDo over Bluetooth there and reads nothing,
 # while GameController reads every element. The objc2 family at the versions
