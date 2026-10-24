@@ -1329,11 +1329,12 @@ fn each_of_the_fights_parts_resumes_alone() {
     let added_rel = scripts::script_path(&scripts::character_archive(&added));
     let mut fewer = list.clone();
     fewer.listed.pop();
-    fs::write(
-        again.dir.path().join(scripts::WALKERS_FILE),
-        serde_json::to_vec(&fewer).unwrap(),
-    )
-    .unwrap();
+    // Through the dir, so the list is as recorded: only the added walker
+    // makes the part read again.
+    again
+        .dir
+        .write_output(scripts::WALKERS_FILE, &serde_json::to_vec(&fewer).unwrap())
+        .unwrap();
     let mut json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     let files = json["parts"][scripts::SCRIPTS].as_array_mut().unwrap();

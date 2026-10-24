@@ -2579,6 +2579,11 @@ mod tests {
             list[0].reason
         );
         assert!(
+            !list[0].reason.contains("no uniform scale"),
+            "kept by the join's stage, not by a missing read: {}",
+            list[0].reason
+        );
+        assert!(
             app.world().resource::<Play>().hero().is_none(),
             "he's out of the level"
         );
