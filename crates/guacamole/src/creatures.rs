@@ -227,7 +227,7 @@ fn placed(a: &guacamole::script_engine::Actor) -> Transform {
 
 /// Each drawn creature at its actor's place as the step left it, eased
 /// between steps.
-fn place_creatures(
+pub(crate) fn place_creatures(
     world: Option<Res<ScriptWorld>>,
     mut drawn: Query<(&DrawnCreature, &mut Transform)>,
 ) {

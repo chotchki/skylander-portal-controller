@@ -448,6 +448,14 @@ pub(crate) struct Play {
     alert: Option<Alert>,
 }
 
+/// Why a hero in the level with no run reads `off` ([`HeroReport::scripts`]):
+/// [`hero_scripts::ask_join`] gave him none, the level's part holding no
+/// file of his or not linking (the level's `scripts_reason` says which).
+/// AH.25's review found such a hero read none, which every off check let
+/// through, on a Mac run whose part didn't link.
+pub(crate) const NO_RUN: &str =
+    "no run: the level's part holds no scripts of his or didn't link; he walks on the stand-in";
+
 /// What `/api/_test/tv` reports of the walk.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub(crate) struct HeroReport {
@@ -468,9 +476,11 @@ pub(crate) struct HeroReport {
     /// In the level: his locomotion as its last step left it (AG.30).
     pub gait: Option<GaitReport>,
     /// In the level (AH.24): his scripts' join (`asked`, `requested`,
-    /// `joined`, or `off` with why), none for a character whose scripts the
-    /// level's part doesn't hold, who walks on AG.16's controller
-    /// (stand-in ledger: `walker`).
+    /// `joined`, or `off` with why); `off` too, with [`NO_RUN`], for a
+    /// character whose scripts the level's part doesn't hold or whose part
+    /// didn't link, who has no run and walks on AG.16's controller
+    /// (stand-in ledger: `walker`; AH.106, so a reader holding a run to his
+    /// scripts stops on it as on any other off). None before he's in.
     pub scripts: Option<String>,
     pub scripts_reason: Option<String>,
     /// His health and full health as his scripts hold them, once they run,
@@ -658,11 +668,18 @@ impl Play {
             heading: hero.map(|h| h.facing.rem_euclid(360.0)),
             camera,
             gait,
-            scripts: run.map(|r| r.join.name().to_owned()),
-            scripts_reason: run.and_then(|r| match &r.join {
-                Join::Off(why) => Some(why.clone()),
-                _ => None,
-            }),
+            // In the level with no run: off, as any other fall-back is.
+            scripts: match run {
+                Some(r) => Some(r.join.name().to_owned()),
+                None => hero.map(|_| "off".to_owned()),
+            },
+            scripts_reason: match run {
+                Some(r) => match &r.join {
+                    Join::Off(why) => Some(why.clone()),
+                    _ => None,
+                },
+                None => hero.map(|_| NO_RUN.to_owned()),
+            },
             health: numbers.health,
             health_max: numbers.health_max,
             behaviour: numbers.behaviour,
@@ -1658,6 +1675,25 @@ mod tests {
         eprintln!("against the wall: {gap} m off it at {:?}", at.pivot);
         assert!((gap - 0.005).abs() < 1e-3, "{gap}");
         assert!(at.pivot.x - from.x > 3.0, "slid along it: {:?}", at.pivot);
+
+        // This level has no script part, so he has no run: he reads `off`
+        // with why, as any hero walking on the stand-in does (AH.106; AH.25's
+        // review found him reading none, which every off check let through).
+        let report = {
+            let mut state: bevy::ecs::system::SystemState<(
+                Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
+                Query<(&Transform, &Projection), With<FollowCamera>>,
+                Res<Play>,
+            )> = bevy::ecs::system::SystemState::new(app.world_mut());
+            let (bodies, cameras, play) = state.get(app.world()).unwrap();
+            play.report(&bodies, &cameras, None, None)
+                .expect("the hero")
+        };
+        assert!(report.position.is_some(), "in the level");
+        assert_eq!(
+            (report.scripts.as_deref(), report.scripts_reason.as_deref()),
+            (Some("off"), Some(NO_RUN))
+        );
 
         // Start pauses it: the mode says so.
         test_pad::press(&mut app, pad, GamepadButton::Start);

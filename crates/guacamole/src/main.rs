@@ -755,11 +755,12 @@ mod tests {
 
     /// The TV's plugins that run headless, which both fixed-step guards
     /// build: the hero's, his scripts', the level's, the clones' tints
-    /// (AH.67), the test hooks' mirror and the library's script runner. A
-    /// plugin `run_tv` gains goes here too: one left out is never looked
-    /// at, so a fixed-step system it adds outside the sets passes both
-    /// guards (AH.67's tints moved into `FixedUpdate` with no set did,
-    /// before they were listed).
+    /// (AH.67), the test hooks' mirror, the library's script runner, the
+    /// creatures' and the dev entry's (AH.25). A plugin `run_tv` gains goes
+    /// here too: one left out is never looked at, so a fixed-step system it
+    /// adds outside the sets passes both guards (AH.67's tints moved into
+    /// `FixedUpdate` with no set did, before they were listed; AH.25's two
+    /// went in unlisted, their three systems unguarded until its review).
     fn fixed_step_app() -> App {
         use bevy::prelude::MinimalPlugins;
         let mut app = App::new();
@@ -772,7 +773,9 @@ mod tests {
             tints::CloneTintsPlugin,
             mirror::Mirror,
             guacamole::scripts::ScriptPlugin,
+            creatures::CreaturesPlugin,
         ));
+        app.add_plugins(dev_entry::plugin(true, Default::default()).expect("a dev build's entry"));
         app
     }
 
@@ -842,11 +845,16 @@ mod tests {
                 }
             }
         }
-        let want: [(TypeId, Frame, &str); 11] = [
+        let want: [(TypeId, Frame, &str); 14] = [
             (
                 mirror::count_pad_steps.system_type_id(),
                 Frame::Pads,
                 "the pads' count",
+            ),
+            (
+                dev_entry::drive.system_type_id(),
+                Frame::Pads,
+                "the dev entry's set-downs, before the step's scripts",
             ),
             (
                 hero_scripts::step_scripts.system_type_id(),
@@ -883,6 +891,16 @@ mod tests {
                 hero_scripts::pose_hands.system_type_id(),
                 Frame::Hands,
                 "his hands",
+            ),
+            (
+                creatures::place_bodies.system_type_id(),
+                Frame::Hands,
+                "the actors' bodies, at the step's end",
+            ),
+            (
+                creatures::place_creatures.system_type_id(),
+                Frame::Hands,
+                "the drawn creatures' places",
             ),
             (
                 hero::step_cameras.system_type_id(),

@@ -233,6 +233,7 @@ impl TestServer {
         self._child.kill_now();
         let repo = repo_root()?;
         let (url, guard) = start_server(self._tmpdir.path(), &repo, "guacamole")?;
+        move_hero_scripts_off(&self.url, Some(&url));
         self.url = url;
         self._child = guard;
         Ok(())
@@ -2463,8 +2464,11 @@ pub async fn gaits_tv(base: &str, since: u64) -> Result<serde_json::Value> {
 /// The scripts' run step by step after step `since`
 /// (`/api/_test/tv/scripts`, openspec AH.24): `{"last": .., "steps": [..]}`.
 /// A step whose hero's join reads `off` fails the read, as [`tv`]'s does,
-/// unless the test expects an off (openspec AH.106: so an off between two
-/// reads of the TV isn't missed).
+/// unless the test expects an off for the reason the TV gives (openspec
+/// AH.106: so an off between two reads of the TV isn't missed; an off for
+/// another reason fails as [`tv`]'s does, AH.25's review). The log carries
+/// no reason: it's the TV's while he's in, and with him gone an expected
+/// off is let through, an unexpected one not.
 pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv/scripts?since={since}"))
@@ -2474,26 +2478,29 @@ pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
         bail!("/api/_test/tv/scripts returned {}", resp.status());
     }
     let log: serde_json::Value = resp.json().await?;
-    if hero_scripts_off_because(base).is_none()
-        && let Some(step) = log["steps"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|s| s["join"] == "off")
-    {
-        // The reason is the TV's (`hero.scripts_reason`), while he's in.
-        let reason = match reqwest::get(format!("{base}/api/_test/tv")).await {
-            Ok(r) => r.json::<serde_json::Value>().await.ok(),
-            Err(_) => None,
-        }
-        .and_then(|s| s["hero"]["scripts_reason"].as_str().map(str::to_owned))
-        .unwrap_or_else(|| "no reason given".to_owned());
-        bail!(
-            "the hero's scripts went off at step {} ({reason}): he walks without them",
-            step["step"]
-        );
+    let Some(step) = log["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| s["join"] == "off")
+    else {
+        return Ok(log);
+    };
+    // The reason is the TV's (`hero.scripts_reason`), while he's in.
+    let reason = match reqwest::get(format!("{base}/api/_test/tv")).await {
+        Ok(r) => r.json::<serde_json::Value>().await.ok(),
+        Err(_) => None,
     }
-    Ok(log)
+    .and_then(|s| s["hero"]["scripts_reason"].as_str().map(str::to_owned));
+    match (hero_scripts_off_because(base), reason) {
+        (Some(because), Some(reason)) if reason.contains(&because) => Ok(log),
+        (Some(_), None) => Ok(log),
+        (_, reason) => bail!(
+            "the hero's scripts went off at step {} ({}): he walks without them",
+            step["step"],
+            reason.as_deref().unwrap_or("no reason given")
+        ),
+    }
 }
 
 /// Skips the intro the TV is playing, as a key would (`/api/_test/tv/skip`).
@@ -2598,18 +2605,46 @@ fn hero_scripts_off_because(base: &str) -> Option<String> {
         .map(|(_, because)| because.clone())
 }
 
+/// The expectation at `base` dropped, or moved to `to` (a TV restarted on
+/// another port): a later TV on that port expects nothing of it.
+fn move_hero_scripts_off(base: &str, to: Option<&str>) {
+    let mut bases = EXPECTS_OFF.lock().unwrap_or_else(|e| e.into_inner());
+    let because = bases.iter().find(|(b, _)| b == base).map(|e| e.1.clone());
+    bases.retain(|(b, _)| b != base);
+    if let (Some(to), Some(because)) = (to, because) {
+        bases.push((to.to_owned(), because));
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        move_hero_scripts_off(&self.url, None);
+    }
+}
+
+/// What a hero in the level with no run reads as (guacamole's `NO_RUN`,
+/// which reports him `off` itself since AH.25's review): an older TV's
+/// none, with him in the level, is held the same.
+const NO_RUN: &str = "no run: the level's part holds no scripts of his or didn't link";
+
 /// A TV snapshot's hero held to his scripts (openspec AH.106): a hero whose
-/// scripts went `off` (his file missing from the part, a join that failed,
-/// his script stopped in play) walks on AG.16's controller with his attack
-/// buttons doing nothing, so every walking check still passes. Read so, it's
-/// an error carrying the TV's reason, unless the test expects an `off` whose
-/// reason holds `expected` (stand-in ledger: `walker`).
+/// scripts went `off` (his file missing from the part or the part not
+/// linking, a join that failed, his script stopped in play) walks on
+/// AG.16's controller with his attack buttons doing nothing, so every
+/// walking check still passes. Read so (or with no run at all while he's
+/// in the level), it's an error carrying the TV's reason, unless the test
+/// expects an `off` whose reason holds `expected` (stand-in ledger:
+/// `walker`).
 pub fn hero_scripts_held(snap: &serde_json::Value, expected: Option<&str>) -> Result<()> {
     let hero = &snap["hero"];
-    if hero["scripts"] != "off" {
+    let no_run = hero["scripts"].is_null() && !hero["position"].is_null();
+    if hero["scripts"] != "off" && !no_run {
         return Ok(());
     }
-    let reason = hero["scripts_reason"].as_str().unwrap_or("no reason given");
+    let reason = match no_run {
+        true => NO_RUN,
+        false => hero["scripts_reason"].as_str().unwrap_or("no reason given"),
+    };
     match expected {
         Some(because) if reason.contains(because) => Ok(()),
         _ => bail!(
@@ -3162,7 +3197,15 @@ mod hero_scripts_tests {
             ]})
         };
         let reason = json!({"hero": {"scripts": "off", "scripts_reason": "his script stopped: x"}});
-        let bodies = [log("joined"), log("off"), reason, log("off")];
+        let bodies = [
+            log("joined"),
+            log("off"),
+            reason.clone(),
+            log("off"),
+            reason.clone(),
+            log("off"),
+            reason,
+        ];
         let served = std::thread::spawn(move || {
             for body in bodies {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -3182,9 +3225,39 @@ mod hero_scripts_tests {
             e.contains("step 3") && e.contains("his script stopped: x"),
             "{e}"
         );
+        // An off expected for another reason still fails (AH.25's review:
+        // any expected off let every off through), the one expected passes.
         expect_hero_scripts_off(&base, WALKING_SCRIPTS_OFF);
+        let e = scripts_tv(&base, 1).await.unwrap_err().to_string();
+        assert!(e.contains("his script stopped: x"), "another reason: {e}");
+        expect_hero_scripts_off(&base, "his script stopped");
         assert!(scripts_tv(&base, 1).await.is_ok(), "expected");
         served.join().unwrap();
+    }
+
+    /// A hero in the level with no run (an older TV's none) is held as an
+    /// off, its reason the harness's own; one not yet in passes. An
+    /// expectation goes with its TV: moved to the port a restart takes,
+    /// dropped with the server.
+    #[test]
+    fn no_run_in_the_level_fails_and_an_expectation_goes_with_its_tv() {
+        let in_level = json!({"hero": {"scripts": null, "position": [1.0, 2.0, 3.0]}});
+        let e = hero_scripts_held(&in_level, None).unwrap_err().to_string();
+        assert!(e.contains(NO_RUN), "{e}");
+        assert!(hero_scripts_held(&in_level, Some("no run")).is_ok());
+        assert!(hero_scripts_held(&in_level, Some(WALKING_SCRIPTS_OFF)).is_err());
+        let waiting = json!({"hero": {"scripts": null, "position": null}});
+        assert!(hero_scripts_held(&waiting, None).is_ok(), "not in yet");
+        let (a, b) = ("http://127.0.0.1:1", "http://127.0.0.1:2");
+        expect_hero_scripts_off(a, WALKING_SCRIPTS_OFF);
+        move_hero_scripts_off(a, Some(b));
+        assert_eq!(hero_scripts_off_because(a), None);
+        assert_eq!(
+            hero_scripts_off_because(b).as_deref(),
+            Some(WALKING_SCRIPTS_OFF)
+        );
+        move_hero_scripts_off(b, None);
+        assert_eq!(hero_scripts_off_because(b), None);
     }
 }
 

@@ -335,7 +335,7 @@ fn take_asks(
 }
 
 /// One step of the entry, before the step's scripts (the module docs).
-fn drive(
+pub(crate) fn drive(
     mut entry: ResMut<DevEntry>,
     runtime: Option<ResMut<ScriptRuntime>>,
     world: Option<ResMut<ScriptWorld>>,
@@ -575,7 +575,7 @@ mod tests {
     use guacamole::scripts::FIRST_FIGHT;
 
     use super::*;
-    use crate::test_support::play::{TRIGGERS, fight_app, until};
+    use crate::test_support::play::{CREATURE_AT, TRIGGERS, fight_app, until};
 
     /// A build without `dev-tools` (which `test-hooks` turns on) passes
     /// `false`: no plugin, so no [`DevEntry`] and nothing lists the fight,
@@ -776,6 +776,58 @@ mod tests {
             "{at:?}"
         );
         assert!((facing - 270.0).abs() < 1e-3, "{facing}");
+    }
+
+    /// The anchor's state the entry sets at F0 (AH.25's review: bent away,
+    /// the seed, the creatures' places and F0's step each passed every test
+    /// before this one): the creature where the plan puts it at F0 (its
+    /// anchor-step set past F0 here, so F0's alone places it), facing its
+    /// way; the session's generator seeded with the asked seed (the draws
+    /// F0's own step made after it on from there); F0's step the one the
+    /// log logged as the state went in.
+    #[test]
+    fn the_anchors_state_goes_in_at_f0() {
+        let mut asked = route(TRIGGERS[0], TRIGGERS[1]);
+        let at = Vec3::from_array(CREATURE_AT) + Vec3::new(1.5, 0.0, 0.0);
+        asked.plan.creatures = vec![(FIGHT_CREATURE.to_owned(), at, 123.0)];
+        asked.plan.creatures_at = 1_000;
+        let (app, _, _) = run(asked);
+        let w = app.world();
+        let level = w.resource::<ScriptSource>().level_unit().unwrap();
+        let world = w.resource::<ScriptWorld>();
+        let h = world.placed_in(level, FIGHT_CREATURE).unwrap();
+        let a = world.actor(h).unwrap();
+        assert!(
+            a.position.distance(at) < 0.25,
+            "set at F0, a step's walk at most: {:?} for {at:?}",
+            a.position
+        );
+        assert!(
+            a.position.distance(Vec3::from_array(CREATURE_AT)) > 1.0,
+            "not where it stood: {:?}",
+            a.position
+        );
+        let turned = (a.angles.facing - 123.0 + 540.0).rem_euclid(360.0) - 180.0;
+        assert!(
+            turned.abs() < 13.0,
+            "a step's turn at most: {}",
+            a.angles.facing
+        );
+        let mut seeded = Generator::seeded(77);
+        let generator = &w.resource::<ScriptRuntime>().generator;
+        let draws = (0..10_000)
+            .position(|_| {
+                let same = seeded == *generator;
+                seeded.next_u32();
+                same
+            })
+            .expect("the asked seed's generator, a few draws on");
+        assert!(draws < 1_000, "{draws} draws in F0's step");
+        assert_eq!(
+            Some(w.resource::<ScriptLog>().last()),
+            entry(&app).f0_step,
+            "F0 the step that ran with the state in"
+        );
     }
 
     /// Once he's in the level an ask is refused, and the run keeps its
