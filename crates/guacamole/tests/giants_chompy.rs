@@ -2287,6 +2287,15 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             .position(|w| w[0] > cut + 0.01 && w[1] <= cut + 0.01);
         if let Some(i) = onto {
             cuts += 1;
+            // Onto the cut, not just under it: his walk across the ground
+            // the step after as the original's after its 63 (21.24-21.33
+            // ft/s, 6.475-6.503 m/s, the whole 21.5 with the band's 10 ft/s
+            // down in it), so a push stopped dead or by a wall isn't one.
+            assert!(
+                (6.465..=6.513).contains(&s[i + 1]),
+                "{s:?}: cut onto {} m/s",
+                s[i + 1]
+            );
             assert!(
                 s[i + 1..].windows(2).all(|w| w[1] <= w[0]),
                 "{s:?}: slowing on"

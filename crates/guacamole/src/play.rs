@@ -3081,6 +3081,47 @@ mod tests {
         );
     }
 
+    /// AH.62: a kept health is keyed by the figure's instance, its placing
+    /// profile and the figure, so one kid's bitten Eruptor taken off doesn't
+    /// bring the other kid's Eruptor in hurt; with no profile unlocked the
+    /// figure is the session's own.
+    #[test]
+    fn a_kept_health_is_the_placing_profiles_figures() {
+        use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
+        let PortalChange::Placed { placement, .. } = placed(0, ERUPTOR, "Eruptor") else {
+            unreachable!("placed")
+        };
+        let owned = |profile: &str, figure: &Placement| {
+            let mut p = figure.clone();
+            p.owner = Some(PlacementOwner {
+                profile_id: profile.into(),
+                initial: "A".into(),
+                color: "#e63946".into(),
+                progress: FigureProgress::default(),
+            });
+            p
+        };
+        let PortalChange::Placed {
+            placement: other, ..
+        } = placed(0, ONE, "One")
+        else {
+            unreachable!("placed")
+        };
+        let (alice, bea) = (owned("alice", &placement), owned("bea", &placement));
+        assert_eq!(instance(&alice), instance(&owned("alice", &placement)));
+        assert_ne!(instance(&alice), instance(&bea), "another profile's");
+        assert_ne!(
+            instance(&alice),
+            instance(&owned("alice", &other)),
+            "another figure"
+        );
+        assert_ne!(instance(&alice), instance(&placement), "no profile's");
+        let mut kept = KeptHealth::default();
+        kept.left(&instance(&alice), 100);
+        assert_eq!(kept.back(&instance(&alice)), Some(100));
+        assert_eq!(kept.back(&instance(&bea)), None, "Bea's comes in full");
+    }
+
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
     /// waypoint facing 0°, settled 5 mm above the floor, drawn there at his
     /// 150 %; the camera at camera 0's rest pose off his feet (55 ft at 32°

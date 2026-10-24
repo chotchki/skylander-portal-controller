@@ -1508,3 +1508,151 @@ fn a_hero_put_down_where_the_last_stood_stands_there() {
     }
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
+
+/// Free in the air as guac-motion's replays read a record: unsupported 0.4
+/// ft or more over the ground finder's point, the first plane his manifold
+/// holds 2 cm or more off.
+fn free_in_the_air(r: &serde_json::Value) -> bool {
+    let pivot = json_vec3(&r["hero"]["position"]);
+    let ground = json_vec3(&r["contacts"]["ground"]["location"]);
+    let high = r["contacts"]["support"].as_u64() != Some(2) && pivot.y - ground.y >= 0.4 / 3.28084;
+    let first = r["contacts"]["planes"]
+        .as_array()
+        .and_then(|p| p.first())
+        .and_then(|p| p["distance"].as_f64());
+    high && first.is_none_or(|d| d >= 0.02)
+}
+
+/// He's set to a record of AG.39's (no mover read there): his pivot, facing
+/// and lean, his footing as its contacts read it, and his walk, where the
+/// engine reads it and in the script's own velocity data, as what moved his
+/// body into it (in the air the walk moves him by itself).
+fn seed_in_the_air(run: &mut Run, r: &serde_json::Value) {
+    use guac_motion::ground::{LEAN_SETTLED, angle};
+    let pivot = json_vec3(&r["hero"]["position"]);
+    let rotation = r["hero"]["rotation"].as_array().unwrap();
+    let rotation = [0, 1, 2].map(|i| rotation[i].as_f64().unwrap() as f32);
+    let ground = &r["contacts"]["ground"];
+    let normal = json_vec3(&ground["normal"]);
+    let walk = json_vec3(&r["hero"]["velocity"]) * FEET_PER_METRE;
+    let length = walk.length();
+    let pitch = (walk.y / length.max(1e-6))
+        .clamp(-1.0, 1.0)
+        .asin()
+        .to_degrees();
+    let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+    hero.pivot = pivot;
+    hero.facing = rotation[1].rem_euclid(360.0);
+    hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;
+    hero.footing = guac_motion::walk::Footing {
+        supported: r["contacts"]["support"].as_u64() == Some(2),
+        height: Some(pivot.y - json_vec3(&ground["location"]).y),
+        slope: if angle(hero.up, normal) <= LEAN_SETTLED {
+            hero.up
+        } else {
+            normal
+        },
+        ground: Some(normal),
+    };
+    hero.walk.velocity = walk;
+    let m = run.minion.unwrap();
+    let d = run
+        .vm
+        .local(m, "description")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    let data = run
+        .vm
+        .field(d, "velocity data")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    for (name, value) in [
+        ("velocity length", length),
+        ("velocity heading", heading_of(walk)),
+        ("velocity pitch", pitch),
+        ("vertical difference", walk.y),
+        ("horizontal length", walk.x.hypot(walk.z)),
+    ] {
+        assert!(run.vm.set_field(data, name, Value::Float(value)), "{name}");
+    }
+}
+
+/// AG.16's falls with his scripts driving (the TV's hero since AH.24): each
+/// of AG.39's 40 falls off the ledge route and through the air, set to its
+/// recording's state at the second record of each run of free ones and fed
+/// each record's pad and view at our 1/60 s, lands within a record of
+/// theirs in 38, as the stand-in does in `replays.rs` (the same two parted:
+/// `g39_w` W-00 two early, `g39_w_rel60` W-00 caught on the cliff). Before
+/// AG.90 his scripts read his separation off where he joined, so above the
+/// spawn's height none of these frames was off the ground for them, no
+/// gravity pulled his walk down and 32 never landed (7 within a record).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AG.39's recordings under GUAC_CAPTURE_DIR; run on the Mac"]
+fn ag39s_falls_land_as_theirs_with_his_scripts_driving() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let root = capture_dir().join("BLUS30968/ag39-falls-1792502813");
+    let (mut falls, mut near, mut never) = (0, 0, 0);
+    let mut groups: Vec<PathBuf> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("{}: {e}", root.display()))
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    groups.sort();
+    for group in groups {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&group)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join("recording.json").is_file())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let text = std::fs::read_to_string(dir.join("recording.json")).unwrap();
+            let records: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let records = records.as_array().unwrap();
+            let label = dir.strip_prefix(&root).unwrap().display().to_string();
+            let mut k = 1;
+            while k + 1 < records.len() {
+                let second = free_in_the_air(&records[k])
+                    && free_in_the_air(&records[k - 1])
+                    && (k < 2 || !free_in_the_air(&records[k - 2]));
+                if !second {
+                    k += 1;
+                    continue;
+                }
+                let theirs = (k + 1..records.len())
+                    .find(|&i| records[i]["contacts"]["support"].as_u64() == Some(2));
+                let end = theirs.map_or(records.len() - 1, |l| (l + 3).min(records.len() - 1));
+                let mut run = at_anchor_a();
+                seed_in_the_air(&mut run, &records[k]);
+                let mut ours = None;
+                for (i, record) in records.iter().enumerate().take(end).skip(k) {
+                    run.bench.view = record["camera"]["rotation"][1].as_f64().unwrap() as f32;
+                    run.bench.pads[0] = record_pad(record);
+                    run.step()
+                        .unwrap_or_else(|h| panic!("{label} step {i}: {h}"));
+                    if run.hero().footing.supported {
+                        ours = Some(i + 1);
+                        break;
+                    }
+                }
+                println!("{label} from record {k}: lands at ours {ours:?}, theirs {theirs:?}");
+                falls += 1;
+                near +=
+                    usize::from(matches!((ours, theirs), (Some(a), Some(b)) if a.abs_diff(b) <= 1));
+                never += usize::from(ours.is_none());
+                k = end.max(k + 1);
+            }
+        }
+    }
+    println!(
+        "{falls} falls, {near} landing within a record of theirs, {never} not landing by theirs + 3; {:.2?}; load after: {}",
+        started.elapsed(),
+        load()
+    );
+    assert_eq!(falls, 40, "AG.39's 40");
+    assert!(near >= 38, "{near} of {falls} within a record of theirs");
+    assert!(never <= 1, "{never} never landing");
+}

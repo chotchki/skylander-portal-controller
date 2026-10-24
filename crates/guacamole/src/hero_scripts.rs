@@ -611,9 +611,10 @@ impl Plugin for HeroScriptsPlugin {
 }
 
 /// AH.62's test hook (`test-hooks` builds): a health asked for over `POST
-/// /api/_test/tv/health`, set where the joined hero's scripts hold it before
-/// the frame's fixed steps, the stand-in for a bite as AH.11's `swap1` poked
-/// the original's hero to 200.
+/// /api/_test/tv/health`, set where the joined hero's scripts hold it in the
+/// frame's `Update` (after its fixed steps, so the next frame's read it),
+/// the stand-in for a bite as AH.11's `swap1` poked the original's hero to
+/// 200.
 #[derive(Resource, Clone, Default)]
 pub(crate) struct AskedHealth(pub(crate) Arc<Mutex<Option<i32>>>);
 

@@ -1197,7 +1197,9 @@ impl ScriptWorld {
                 // facing turns from his facing (Face and Move writes the way
                 // it asks less his facing), and a hero's leans as his
                 // footing's slope does (AG.38's push tilt: his settled lean's,
-                // else the ground finder's). Read as a heading of its own, it
+                // else the ground finder's; which of the two is AG.16's
+                // hypothesis (2), one plane under AG.90's rock passing
+                // either). Read as a heading of its own, it
                 // tilted his push along whatever lay that far from 0° (AG.90:
                 // 7° up on the ledge route's 17° slope whichever way he
                 // walked, where the slope along his climb is 13°).
