@@ -156,6 +156,7 @@ fn write(root: &Path, label: &str, s: &Script) -> PathBuf {
             hero_vars: Vec::new(),
             referents: Vec::new(),
             sched: false,
+            clips_of: Vec::new(),
         },
         resolved: Resolved {
             clip_names: BTreeMap::from([

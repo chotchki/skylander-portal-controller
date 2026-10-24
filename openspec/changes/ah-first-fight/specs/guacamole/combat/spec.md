@@ -62,6 +62,10 @@ A hit that knocks back SHALL push its target from 80 ft/s (24.4 m/s), slowing as
 - **WHEN** a second Chompy's bite lands on Eruptor 0.2 s after the first
 - **THEN** he's pushed for 0.125 s, the least a push lasts, the first having left him 12.5 resistance
 
+#### Scenario: A push off the ground
+- **WHEN** a push carries Eruptor a frame off the ground, within 0.4 ft (12.2 cm) of it
+- **THEN** the next frame it's cut to 21.5 ft/s (6.55 m/s), as any walk of his is there (hero-movement's Slopes), and slows from that, as 63 of the 69 of AH.10's 184 knocks that left the ground that low were (the other 6 ended that frame)
+
 #### Scenario: A sleeping Chompy
 - **WHEN** Eruptor's Lava Lob bursts beside a Chompy still asleep in the pit
 - **THEN** the Chompy neither moves nor loses health

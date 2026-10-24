@@ -1020,6 +1020,20 @@ pub mod fixture {
             self.put32(self.actor_list + 0x08, self.count);
         }
 
+        /// Takes `corpus` off the game's actor list, the rest kept in order
+        /// (a hero taken off the portal: AG.81).
+        pub fn remove_corpus(&mut self, corpus: u32) {
+            let listed: Vec<u32> = (0..self.count)
+                .map(|k| self.get32(self.list_data + 4 * k))
+                .filter(|&c| c != corpus)
+                .collect();
+            for (k, &c) in listed.iter().enumerate() {
+                self.put32(self.list_data + 4 * k as u32, c);
+            }
+            self.count = listed.len() as u32;
+            self.put32(self.actor_list + 0x08, self.count);
+        }
+
         /// The viewport's `_currentMatrix`: position, then tilt, heading, roll.
         pub fn camera(&mut self, position: [f32; 3], rotation: [f32; 3]) {
             self.putfs(self.viewport + 0x3C, &position);

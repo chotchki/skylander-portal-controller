@@ -116,6 +116,13 @@ A hero SHALL walk the opening area's slopes (to 17.3°) at his walk's speed alon
 - **WHEN** Eruptor goes over the ledge route's edge into the corridor and down the cliff below it
 - **THEN** the edges he touches there, the ledge route's own and the overhang's open one, hold him up from up to 44.92° below him and none from 45.04°, which slide him down
 
+### Requirement: A walk turned round every frame
+A hero's walk turned round SHALL keep its pitch, so on a slope one turned to point off the ground leaves it for a frame and the next frame's 10 ft/s takes it back down (Slopes). Turned round every frame, as a stick re-aimed at a point he crosses asks, his walk SHALL turn round every frame and he SHALL hold the slope, off it a frame at a time and never climbing.
+
+#### Scenario: Turned round every frame on the ledge route
+- **WHEN** Eruptor, walked up the ledge route's 17° slope by its first barrel, has the stick turned round every frame at full strength for 2.5 s, 31-36° off the slope's fall line
+- **THEN** his walk turns round every frame; he leaves the ground on 16 of 149 frames, never two running, 4.7-5.2 cm up on the first and at most 1.3 cm on the rest, riding 5.5-8.9 mm over it otherwise, his walk pitched -33.7° to 10.9°, and ends 0.13-0.17 m lower
+
 ### Requirement: Steps and drops
 A hero SHALL ride 5 mm above level ground, and 10 mm above a slope once the snap has set him there. Where the ground falls away he SHALL be held 10 mm above it, set back there in one frame from as high as 189 mm; a frame without support SHALL set him back 5-10 mm up. He SHALL climb no step the original's same character doesn't: the opening area's static collision has no riser between 4 cm and 2.36 m and no drop between 7 cm and 2.5 m bar the ledge route's edge (An edge with nothing below).
 

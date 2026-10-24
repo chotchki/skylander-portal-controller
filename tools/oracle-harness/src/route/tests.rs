@@ -855,6 +855,52 @@ fn a_tilt_goes_in_with_the_presses_and_waits_around_it_as_one_schedule() {
     }
 }
 
+/// AG.90: a rock goes in after a tilt in one schedule, the stick toward the
+/// point and away from it in turn a flip each, both aimed on one line from
+/// where he stood at the run's first look, then let go.
+#[test]
+fn a_rock_turns_the_stick_round_every_flip_in_one_schedule() {
+    let mut fake = Fake::new(SPAWN, 15.0);
+    let to = Point { x: 20.0, z: -93.4 };
+    let route = plan(vec![
+        Step::Tilt {
+            toward: to,
+            flips: 10,
+        },
+        Step::Rock {
+            toward: to,
+            flips: 7,
+        },
+        Step::Wait { flips: 5 },
+        Step::Read {
+            label: "end".into(),
+        },
+    ]);
+    let trace = drive(&mut fake, &route, Knobs::default()).unwrap();
+    assert_eq!(trace.outcome, Outcome::Done);
+    assert_eq!(fake.runs, vec![(3, 22)], "no pause inside it");
+    let bearing = heading_deg(to.x - SPAWN.x, to.z - SPAWN.z);
+    let toward = stick_toward(bearing, 15.0, 1.0);
+    let away = stick_toward(bearing + 180.0, 15.0, 1.0);
+    assert_ne!(toward, away);
+    for (k, pad) in fake.held.iter().enumerate() {
+        let want = match k {
+            0..10 => toward,
+            10..17 if (k - 10) % 2 == 0 => toward,
+            10..17 => away,
+            _ => Stick::CENTRED,
+        };
+        assert_eq!(pad.left, want, "flip {k}");
+    }
+    let (s, h) = push_of(away, 15.0);
+    assert!(
+        s > 0.97 && wrap_deg(h - bearing - 180.0).abs() < 1.0,
+        "{s} {h}"
+    );
+    assert!(RoutePlan::from_ron("(steps: [Rock(toward: (x: 1.0, z: 2.0), flips: 0)])").is_err());
+    assert!(RoutePlan::from_ron("(steps: [Rock(toward: (x: 1.0, z: 2.0), flips: 4)])").is_ok());
+}
+
 /// AH.41, for AG.28: the right stick held with the left at rest, then with
 /// the left aimed as a tilt is, in one schedule with the waits around them.
 #[test]

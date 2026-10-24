@@ -922,6 +922,11 @@ pub struct GiantsChains {
     /// rather than the lava's and the Chompies' clips.
     #[serde(default)]
     pub sched: bool,
+    /// The placements [`CHOMPY_ANIMS`] follows the clips of, by name, in
+    /// value order: none is [`CHOMPIES`] (every file before AG.81's), the
+    /// hero's alone after [`GiantsChains::follow_hero_clips`].
+    #[serde(default)]
+    pub clips_of: Vec<String>,
 }
 
 impl GiantsChains {
@@ -1074,7 +1079,31 @@ impl GiantsChains {
             hero_vars,
             referents,
             sched: sched.is_some(),
+            clips_of: Vec::new(),
         })
+    }
+
+    /// AG.81: [`CHOMPY_ANIMS`] follows the hero's clips by his placement's
+    /// name through the actor list rather than the Chompies', so a hero who
+    /// comes off the portal and back (a corpus of his own each time, AH.11's
+    /// `swap1`) is followed whichever corpus holds him, where [`ANIMS`]
+    /// keeps the corpus he had at the resolve. Refused with the scheduler's
+    /// chains, which hold that slot.
+    pub fn follow_hero_clips(&mut self) -> Result<()> {
+        if self.sched {
+            bail!("the scheduler's chains hold the Chompies' clips' slot");
+        }
+        let hero = self.actors[0].1.clone();
+        let spec = followed_chain(self.updater_index, &[hero.as_str()], chompy_clip_probes())?;
+        if let Err(r) = spec.check() {
+            bail!("the hero's clips break O6's limits (ERR {})", r.wire());
+        }
+        self.chains.slots.insert(CHOMPY_ANIMS, spec);
+        if self.chains.bytes() > crate::verbs::CHAIN_BUDGET {
+            bail!("the chains take {} bytes a record", self.chains.bytes());
+        }
+        self.clips_of = vec![hero];
+        Ok(())
     }
 
     /// What [`CREATURES`] or [`HERO_STATE`] follows.
@@ -1442,17 +1471,23 @@ impl GiantsChains {
             .collect()
     }
 
-    /// Each Chompy's clips in a record, by name, as [`CHOMPY_ANIMS`] read
-    /// them, in its vector's order: a Chompy the list doesn't hold is left
-    /// out, one whose vector didn't read is `None` (AH.55).
-    pub fn chompy_clips(blocks: &Blocks) -> BTreeMap<String, Option<Vec<Clip>>> {
+    /// Each followed placement's clips in a record, by name, as
+    /// [`CHOMPY_ANIMS`] read them, in its vector's order: one the list
+    /// doesn't hold is left out, one whose vector didn't read is `None`
+    /// (AH.55; the hero's under [`GiantsChains::follow_hero_clips`]).
+    pub fn followed_clips(&self, blocks: &Blocks) -> BTreeMap<String, Option<Vec<Clip>>> {
         let Some(b) = blocks.get(&CHOMPY_ANIMS).filter(|b| b.status == 0) else {
             return BTreeMap::new();
+        };
+        let names: Vec<&str> = if self.clips_of.is_empty() {
+            CHOMPIES.to_vec()
+        } else {
+            self.clips_of.iter().map(String::as_str).collect()
         };
         b.items
             .iter()
             .filter_map(|e| {
-                let name = CHOMPIES.get(e.value as usize)?;
+                let name = names.get(e.value as usize)?;
                 let read = e.range(chompy_clip_range::COUNT).is_some();
                 let clips =
                     read.then(|| chompy_item_clips(e).into_iter().map(|(c, _)| c).collect());
@@ -1688,7 +1723,7 @@ impl GiantsChains {
                     flip: d.flip,
                     read: d.read,
                     game_frame: d.game_frame,
-                    clips: Self::chompy_clips(b),
+                    clips: self.followed_clips(b),
                 })
                 .collect();
             std::fs::write(dir.join(CREATURE_CLIPS), serde_json::to_string(&frames)?)?;
@@ -3440,7 +3475,7 @@ mod tests {
         let read: Vec<Option<Vec<(u32, f32)>>> = blocks
             .iter()
             .map(|b| {
-                let by_name = GiantsChains::chompy_clips(b);
+                let by_name = g.followed_clips(b);
                 assert_eq!(by_name.keys().collect::<Vec<_>>(), ["Enemy_Chompy(1)"]);
                 by_name["Enemy_Chompy(1)"]
                     .as_ref()
@@ -3457,6 +3492,93 @@ mod tests {
         );
         // The hero's own clips are untouched by the Chompy's.
         assert_eq!(GiantsChains::clips(&blocks[0]).unwrap().len(), 2);
+    }
+
+    /// AG.81: a hero taken off and put back is a corpus of his own each time
+    /// (AH.11's `swap1`), so [`GiantsChains::follow_hero_clips`] follows his
+    /// clips by his name: the first corpus's while it's listed, none while
+    /// he's off, the new one's once he's back, where [`ANIMS`] keeps reading
+    /// the corpus he had at the resolve; refused beside the scheduler's
+    /// chains, which hold the slot.
+    #[test]
+    fn the_heros_clips_follow_him_back_onto_the_portal() {
+        let mut f = fixture();
+        let mut g = GiantsChains::resolve(&mut f.w, &f.watch, &kinds()).unwrap();
+        g.follow_hero_clips().unwrap();
+        assert_eq!(g.clips_of, ["009_Eruptor"]);
+        let spec = &g.chains.slots[&CHOMPY_ANIMS];
+        assert_eq!(spec.values, [name_hash("009_Eruptor")]);
+        assert_eq!(spec.ranges.len(), 1 + 3 * CHOMPY_CLIP_SLOTS);
+        assert!(g.chains.bytes() <= crate::verbs::CHAIN_BUDGET);
+        let app = f.w.app;
+        let record = |w: &mut World| {
+            let mut payload = w.gather(&[(app + 0x54, 0x14)]).unwrap()[0].clone().unwrap();
+            for spec in g.chains.slots.values() {
+                payload.extend(block_bytes(spec, &evaluate(spec, w).unwrap()));
+            }
+            payload
+        };
+        let first = record(&mut f.w);
+        // Taken off: his corpus leaves the list.
+        f.w.remove_corpus(f.hero);
+        let off = record(&mut f.w);
+        // Put back: a corpus of his name playing his spawn clip alone.
+        let spawn = (
+            "Models/Characters/MinionsMonsters/Eruptor/Eruptor_Spawn02.ma",
+            0x3090_D000,
+            100.0,
+            100.0,
+            0.766_666_7,
+            0.7,
+        );
+        let back = f.w.actor(&Spec {
+            name: "009_Eruptor".into(),
+            skinned: true,
+            ..Spec::default()
+        });
+        let control = anim_control(&mut f.w, spawn);
+        let block = f.w.object(vtable::ANIMATION_COMPONENT, 0x28);
+        let slots = f.w.alloc(32);
+        f.w.put32(block + 0x08, 1);
+        f.w.put32(block + 0x10, slots);
+        f.w.put32(slots, control);
+        f.w.put32(back.corpus + 0x7C, block);
+        let again = record(&mut f.w);
+        let watch = GiantsWatch {
+            list: WatchList::new(vec![crate::watch::Field::new("app", app + 0x54, 0x14)]).unwrap(),
+            ..f.watch.clone()
+        };
+        let blocks: Vec<Blocks> = [first, off, again]
+            .into_iter()
+            .enumerate()
+            .map(|(k, payload)| {
+                let r = WatchRecord {
+                    flip: 10 + k as u64,
+                    host_us: 0,
+                    missing: 0,
+                    read: 0,
+                    payload,
+                };
+                g.chains.split(&watch.list, &r).unwrap().1
+            })
+            .collect();
+        let resolved = g.resolve_names(&mut f.w, &blocks).unwrap();
+        assert_eq!(resolved.clip_names[&0x3090_D000], spawn.0);
+        let ids = |b: &Blocks| -> Vec<(String, Vec<u32>)> {
+            g.followed_clips(b)
+                .into_iter()
+                .map(|(n, c)| (n, c.unwrap().iter().map(|c| c.id).collect()))
+                .collect()
+        };
+        let hero = || "009_Eruptor".to_owned();
+        assert_eq!(ids(&blocks[0]), [(hero(), vec![CLIPS[0].1, CLIPS[1].1])]);
+        assert_eq!(ids(&blocks[1]), []);
+        assert_eq!(ids(&blocks[2]), [(hero(), vec![0x3090_D000])]);
+        // The fixed corpus's chain still reads the one he left.
+        assert_eq!(GiantsChains::clips(&blocks[2]).unwrap().len(), 2);
+        let mut s = g.clone();
+        s.sched = true;
+        assert!(s.follow_hero_clips().is_err());
     }
 
     fn block_bytes(spec: &ChainSpec, b: &ChainBlock) -> Vec<u8> {

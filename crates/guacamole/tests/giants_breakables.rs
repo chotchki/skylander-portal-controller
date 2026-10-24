@@ -640,29 +640,28 @@ fn in_seam(run: &Run, object: u32) -> bool {
 }
 
 /// He walks at `target` for `steps` steps, the stick full ahead with the
-/// view along his way until he comes within 0.1 m of it across the ground,
-/// then lets go: the nearest his pivot came across the ground, how high
-/// over `target` it stood then (m), and whether the level's own collision
-/// was what he stood on there. Held on past it, the stick re-aimed at the
-/// point reverses his walk every step, which lifts him off a slope (AG.90).
-fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool) {
+/// view along his way, re-aimed at it every step, so once there it turns
+/// his walk round every step he crosses it, which holds him on the slope
+/// there as the original's does (AG.90): the nearest his pivot came across
+/// the ground, how high over `target` it stood then (m), whether the
+/// level's own collision was what he stood on there, and the highest he
+/// stood over the ground finder's point once within 0.1 m of it.
+fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool, f32) {
     let mut nearest = (f32::MAX, 0.0, false);
-    let mut arrived = false;
+    let mut highest: Option<f32> = None;
     for k in 0..steps {
         let to = target - run.hero().pivot;
-        arrived |= Vec3::new(to.x, 0.0, to.z).length() < 0.1;
         run.bench.view = heading_of(to);
-        let stick = if arrived {
-            Stick::CENTRED
-        } else {
-            Stick::new(0.0, 1.0)
-        };
-        run.bench.pads[0] = pad([false; 4], stick);
+        run.bench.pads[0] = pad([false; 4], Stick::new(0.0, 1.0));
         run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
         let p = run.hero().pivot;
         let across = ((p - target) * Vec3::new(1.0, 0.0, 1.0)).length();
         if std::env::var("AH21_WALK").is_ok() && k % 10 == 0 {
             println!("walk {k}: {p:.3} {across:.3}");
+        }
+        if across < 0.1 || highest.is_some() {
+            let over = run.hero().footing.height.unwrap_or(f32::INFINITY);
+            highest = Some(highest.map_or(over, |h| h.max(over)));
         }
         if across < nearest.0 {
             let below = run
@@ -675,7 +674,7 @@ fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool) {
             nearest = (across, p.y - target.y, on_level);
         }
     }
-    nearest
+    (nearest.0, nearest.1, nearest.2, highest.unwrap_or(f32::NAN))
 }
 
 /// The ledge route opens (breakables' Up to the walkway): a lob from
@@ -683,9 +682,11 @@ fn walk_at(run: &mut Run, target: Vec3, steps: u32) -> (f32, f32, bool) {
 /// and, him turned to it, lobs twice: the second lob, from his right hand
 /// (2.3 m up since AH.50 poses it), meets the level over the pot and
 /// breaks nothing, the third, from his left, breaks it; the three solids
-/// are out of the seam, and walked at where the first barrel lay he stands
-/// on the ground there, where with it whole his controller climbed onto it
-/// (an oracle check of its own: AH.70). The props the scripts took off are
+/// are out of the seam, and walked at where the first barrel lay, the stick
+/// re-aimed there every step, he holds the ground there (AG.90), where with
+/// it whole it stops him short of it on the ground (his controller climbed
+/// onto it before AG.90; the oracle's check is AH.70's). The props the
+/// scripts took off are
 /// written where `AH21_STATE_OUT` says, for AG.7's reach.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
@@ -694,11 +695,18 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
     let started = Instant::now();
     let mut whole = at_anchor_a();
     let (_, barrel) = whole.placed(LEDGE[0]);
-    let (whole_across, whole_above, on_level) = walk_at(&mut whole, barrel, 180);
+    let (whole_across, whole_above, whole_on_level, _) = walk_at(&mut whole, barrel, 180);
     println!(
-        "{} whole: he comes within {whole_across:.3} m of where it lies across the ground, {whole_above:.3} m above its pivot, on the level's collision {on_level}",
+        "{} whole: he comes within {whole_across:.3} m of where it lies across the ground, {whole_above:.3} m above its pivot, on the level's collision {whole_on_level}",
         LEDGE[0]
     );
+    // Whole, it stops him on the ground short of it. Before AG.90 he climbed
+    // onto it (0.956 m over its pivot, AH.70): pressed against it off the
+    // ground, his scripts never saw him off it and his walk's pitch carried
+    // him up its side. Whether the original's stops him against it is
+    // AH.70's oracle walk.
+    assert!(whole_across > 0.5, "stopped short of it: {whole_across}");
+    assert!(whole_on_level, "whole, on the ground short of it");
     let mut run = at_anchor_a();
     let (_, pot) = run.placed(LEDGE[2]);
     let w = drive(&mut run, 380, |k, run| {
@@ -755,16 +763,23 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
         std::fs::write(&out, serde_json::to_string_pretty(&taken).unwrap()).unwrap();
         println!("wrote {taken:?} to {out}");
     }
-    let (across, above, on_level) = walk_at(&mut run, barrel, 180);
+    let (across, above, on_level, highest) = walk_at(&mut run, barrel, 180);
     println!(
-        "broken: he comes within {across:.3} m of where it lay across the ground, {above:.3} m above its pivot, on the level's collision {on_level}"
+        "broken: he comes within {across:.3} m of where it lay across the ground, {above:.3} m above its pivot, on the level's collision {on_level}; re-aimed there, {highest:.4} m over the ground at the most"
     );
     assert!(across < 0.3, "{across}");
     assert!(on_level, "on the ground where it lay");
+    // The stick re-aimed at it every step turns his walk round every step
+    // he crosses it: he holds the slope there, off it a frame at a time and
+    // never past 0.1 m, inside the 0.4 ft (12.2 cm) where a frame off the
+    // ground puts 10 ft/s down into his walk (AG.90: the original's first
+    // such frame 4.7-5.2 cm up on AG.90's line, our walk here 6.3 cm on its
+    // own; without the fix he climbed 1 m).
     assert!(
-        whole_above - above > 1.0,
-        "lower than on it whole: {above} against {whole_above}"
+        highest < 0.1,
+        "re-aimed there he holds the ground: {highest}"
     );
+
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 
@@ -1150,4 +1165,494 @@ fn the_members_the_breakables_reach_stay_under_the_ceiling() {
         reached.len()
     );
     let _ = FEET_PER_METRE;
+}
+
+/// AG.90's recordings (2026-10-23, the O6 build from anchor A, O5's watch):
+/// `rock_near` (3) walks at a point on the ledge route's 17° slope 2 m short
+/// of `barrel_b_intact(1)`, `rock_lob` (2) lobs, breaking it and `(4)`, and
+/// walks at where it stood; then each turns the stick round every frame for
+/// 150 frames (a stick re-aimed at a point he crosses), and lets go.
+const AG90_RUNS: [&str; 2] = ["ag90-rock-1792773586", "ag90-rock-1792773746"];
+
+/// Each AG.90 recording by its run and label, its records as JSON.
+fn ag90_recordings() -> Vec<(String, Vec<serde_json::Value>)> {
+    let mut out = Vec::new();
+    for run in AG90_RUNS {
+        let dir = capture_dir().join("BLUS30968").join(run);
+        let mut labels: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("rock_"))
+            .collect();
+        labels.sort();
+        for label in labels {
+            let text = std::fs::read_to_string(dir.join(&label).join("recording.json")).unwrap();
+            let records: serde_json::Value = serde_json::from_str(&text).unwrap();
+            out.push((
+                format!("{run}/{label}"),
+                records.as_array().unwrap().clone(),
+            ));
+        }
+    }
+    out
+}
+
+fn json_vec3(v: &serde_json::Value) -> Vec3 {
+    let f = |i: usize| v[i].as_f64().unwrap() as f32;
+    Vec3::new(f(0), f(1), f(2))
+}
+
+/// A record's pad as our step reads it: its left stick's bytes as the
+/// game's floats (128 centred, y 0 forward) and South (attack 1).
+fn record_pad(r: &serde_json::Value) -> Pad {
+    let byte = |b: &serde_json::Value| b.as_u64().unwrap() as u8;
+    let left = &r["pad"]["left"];
+    let stick = Stick::from_bytes(byte(&left["x"]), byte(&left["y"]));
+    let south = r["pad"]["digital2"].as_u64().unwrap() & SOUTH != 0;
+    pad([south, false, false, false], stick)
+}
+
+/// What a step left, ours or a record's: the pivot, its height over the
+/// ground finder's point, whether the support check held him and the
+/// heading of the walk the movement script keeps (none at rest).
+#[derive(Debug, Clone, Copy)]
+struct Stood {
+    pivot: Vec3,
+    height: f32,
+    supported: bool,
+    walk: Option<f32>,
+    /// The walk's pitch, degrees.
+    pitch: f32,
+}
+
+fn theirs(r: &serde_json::Value) -> Stood {
+    let pivot = json_vec3(&r["hero"]["position"]);
+    let ground = json_vec3(&r["contacts"]["ground"]["location"]);
+    let m = &r["mover"];
+    Stood {
+        pivot,
+        height: pivot.y - ground.y,
+        supported: r["contacts"]["support"].as_u64() == Some(2),
+        walk: (m["length"].as_f64().unwrap() > 0.0).then(|| m["heading"].as_f64().unwrap() as f32),
+        pitch: m["pitch"].as_f64().unwrap() as f32,
+    }
+}
+
+fn ours(run: &Run) -> Stood {
+    let h = run.hero();
+    let w = h.walk.velocity;
+    Stood {
+        pivot: h.pivot,
+        height: h.footing.height.unwrap_or(f32::NAN),
+        supported: h.footing.supported,
+        walk: (w.x.hypot(w.z) > 0.0).then(|| heading_of(w)),
+        pitch: guacamole::script_engine::pitch_of(w),
+    }
+}
+
+/// A recording replayed from anchor A: step k reads record k's pad against
+/// the view record k's camera holds and is set beside record k + 1 (O5
+/// samples a frame's state before its pad read, so the frame reading record
+/// k's pad leaves record k + 1, AH.59). The records whose game stick turned
+/// round from the record before's are the rock's; at the record before its
+/// first, he's set to the recording's state there ([`seed_from`]), so what
+/// the rock is compared on is its own and not the approach's drift (our
+/// steps are 1/60 s, the oracle's its own frame times).
+fn rock_replay(
+    records: &[serde_json::Value],
+) -> (Vec<(Stood, Stood)>, std::ops::RangeInclusive<usize>) {
+    let stick = |r: &serde_json::Value| r["stick"][0].as_f64().unwrap();
+    let rock: Vec<usize> = (1..records.len())
+        .filter(|&i| stick(&records[i]) * stick(&records[i - 1]) < 0.0)
+        .collect();
+    let seed = rock[0] - 1;
+    let mut run = at_anchor_a();
+    let mut steps = Vec::new();
+    for k in 0..records.len() - 1 {
+        if k == seed {
+            seed_from(&mut run, &records[k]);
+        }
+        run.bench.view = records[k]["camera"]["rotation"][1].as_f64().unwrap() as f32;
+        run.bench.pads[0] = record_pad(&records[k]);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        steps.push((ours(&run), theirs(&records[k + 1])));
+    }
+    // As steps: record i is step i - 1's.
+    (steps, rock[0] - 1..=rock[rock.len() - 1] - 1)
+}
+
+/// He's set to a record's state: his pivot, facing and lean, his footing
+/// as its contacts read it (the push tilting to his settled lean, else the
+/// ground finder's, AG.38), and the walk his movement script keeps, both
+/// where the engine reads it and in the script's own velocity data.
+fn seed_from(run: &mut Run, r: &serde_json::Value) {
+    use guac_motion::ground::{LEAN_SETTLED, angle};
+    let pivot = json_vec3(&r["hero"]["position"]);
+    let rotation = r["hero"]["rotation"].as_array().unwrap();
+    let rotation = [0, 1, 2].map(|i| rotation[i].as_f64().unwrap() as f32);
+    let ground = &r["contacts"]["ground"];
+    let normal = json_vec3(&ground["normal"]);
+    let m = &r["mover"];
+    let f = |k: &str| m[k].as_f64().unwrap() as f32;
+    let (length, heading, pitch) = (f("length"), f("heading"), f("pitch"));
+    let walk = guacamole::script_engine::direction(heading, pitch) * length;
+    let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+    hero.pivot = pivot;
+    hero.facing = rotation[1].rem_euclid(360.0);
+    hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;
+    hero.footing = guac_motion::walk::Footing {
+        supported: r["contacts"]["support"].as_u64() == Some(2),
+        height: Some(pivot.y - json_vec3(&ground["location"]).y),
+        slope: if angle(hero.up, normal) <= LEAN_SETTLED {
+            hero.up
+        } else {
+            normal
+        },
+        ground: Some(normal),
+    };
+    hero.walk.velocity = walk;
+    let m = run.minion.unwrap();
+    let d = run
+        .vm
+        .local(m, "description")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    let data = run
+        .vm
+        .field(d, "velocity data")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    for (name, value) in [
+        ("velocity length", length),
+        ("velocity heading", heading),
+        ("velocity pitch", pitch),
+        ("vertical difference", f("vertical")),
+        ("horizontal length", f("horizontal")),
+    ] {
+        assert!(run.vm.set_field(data, name, Value::Float(value)), "{name}");
+    }
+}
+
+/// hero-movement's A walk turned round every frame (openspec AG.90): a stick
+/// turned round every frame on the ledge route's 17° slope, as one re-aimed
+/// at a point he crosses asks, turns his walk round every frame and he holds
+/// the ground as the original's Eruptor does, never climbing. Each of AG.90's
+/// five recordings replayed from anchor A on its own pads and views, his
+/// walk the movement script's on the VM, set to the recording's state at
+/// the record before the stick first turns round and set beside it step by
+/// step over the 148 steps it turns round on: his walk turns round every
+/// step, along theirs within 0.05°; its pitch over the rock spans theirs to
+/// 1° at either end (the push tilted to the slope along the stick, AG.38);
+/// he leaves the ground a frame at a time, never two running, as many times
+/// as theirs to 3 (which frame is a knife's edge: a walk 0.6° shallower than
+/// the slope leaves it, and the oracle's own replays part there); he stands
+/// over the ground finder's point within 1 cm of theirs at every step; his
+/// pivot falls over the rock, within 0.1 m of theirs (theirs 0.149-0.184 m,
+/// ours 3-6 cm more: the slow uphill step after each frame off the ground
+/// climbs 2 mm less, AG.16's landing-frame hypothesis (19)). Without AG.90's
+/// fix his scripts never saw him off the ground and he climbed 1 m over the
+/// rock.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AG.90's recordings under GUAC_CAPTURE_DIR; run on the Mac"]
+fn a_walk_turned_round_every_frame_holds_the_slope() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let recordings = ag90_recordings();
+    assert_eq!(recordings.len(), 5, "AG.90's five");
+    let angle = |a: f32, b: f32| (a - b + 180.0).rem_euclid(360.0) - 180.0;
+    for (label, records) in &recordings {
+        let (steps, rock) = rock_replay(records);
+        let (a, b) = (*rock.start(), *rock.end());
+        let rock = &steps[rock];
+        let mut heading = 0f32;
+        let mut height = 0f32;
+        let mut reversed = 0;
+        for (k, (ours, theirs)) in rock.iter().enumerate() {
+            let (o, t) = (ours.walk.unwrap(), theirs.walk.unwrap());
+            heading = heading.max(angle(o, t).abs());
+            height = height.max((ours.height - theirs.height).abs());
+            if k > 0 {
+                let before = rock[k - 1].0.walk.unwrap();
+                reversed += usize::from((angle(o, before).abs() - 180.0).abs() < 5.0);
+            }
+        }
+        let of = |pick: fn(&(Stood, Stood)) -> Stood| {
+            let pitch = rock.iter().map(|s| pick(s).pitch);
+            let low = pitch.clone().fold(f32::MAX, f32::min);
+            let high = pitch.fold(f32::MIN, f32::max);
+            let off: Vec<usize> = (0..rock.len())
+                .filter(|&k| !pick(&rock[k]).supported)
+                .collect();
+            let running = off.windows(2).filter(|w| w[1] == w[0] + 1).count();
+            let fall = pick(&rock[rock.len() - 1]).pivot.y - pick(&rock[0]).pivot.y;
+            (low, high, off.len(), running, fall)
+        };
+        let (ours, theirs) = (of(|s| s.0), of(|s| s.1));
+        println!(
+            "{label}: steps {a}-{b}; the walk turned round {reversed} of {}, along theirs within {heading:.4}°; its pitch {:.2}..{:.2}°, theirs {:.2}..{:.2}°; off the ground {} times ({} running), theirs {} ({}); over the ground within {height:.4} m of theirs; the pivot {:+.4} m over the rock, theirs {:+.4}",
+            rock.len() - 1,
+            ours.0,
+            ours.1,
+            theirs.0,
+            theirs.1,
+            ours.2,
+            ours.3,
+            theirs.2,
+            theirs.3,
+            ours.4,
+            theirs.4,
+        );
+        assert_eq!(reversed, rock.len() - 1, "{label}: turned round every step");
+        assert!(heading < 0.05, "{label}: {heading}");
+        assert!(
+            (ours.0 - theirs.0).abs() < 1.0 && (ours.1 - theirs.1).abs() < 1.0,
+            "{label}: pitch {ours:?} against {theirs:?}"
+        );
+        assert_eq!((ours.3, theirs.3), (0, 0), "{label}: a frame at a time");
+        assert!(
+            ours.2.abs_diff(theirs.2) <= 3,
+            "{label}: {} against {}",
+            ours.2,
+            theirs.2
+        );
+        assert!(height < 0.01, "{label}: {height}");
+        assert!(
+            ours.4 < 0.0 && (ours.4 - theirs.4).abs() < 0.1,
+            "{label}: {} against {}",
+            ours.4,
+            theirs.4
+        );
+    }
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
+/// Chotchki's evening run (AG.75, the TV's log at 03:17:28Z): where the
+/// TV's walk had left Eruptor up the ledge route when his figure came off,
+/// his pivot and heading as the log reads them.
+const EVENING: [f32; 3] = [-12.598_333, 54.720_524, -54.114_693];
+const EVENING_FACING: f32 = 52.166_492;
+
+/// AG.81: a hero put down where the last one stood (the TV's replacement,
+/// `Hero::stand` at the last pivot) stands there. On anchor A's slope and
+/// at chotchki's evening spot, his first 30 steps with his scripts driving
+/// and the stick centred are each on the ground, his pivot within 1 cm of
+/// where he was put (on anchor A's slope the first step lifts his upright
+/// shape 5.4 mm out of the ground the last one stood on leaned), riding
+/// 1.5 cm or less over the ground finder's point, his locomotion on the
+/// ground with no weight on his fall. A hero dropped there fails it (the
+/// original drops its replacement from 0.41 m up: AG.100's).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_hero_put_down_where_the_last_stood_stands_there() {
+    use guac_motion::hero::Hero;
+    use guac_motion::locomotion::{Frame, Gaits, Locomotion, Loops};
+    use guac_motion::tuning::{Tuning, eruptor_solid};
+    let started = Instant::now();
+    for (label, at, facing) in [
+        ("anchor A", ANCHOR_A, ANCHOR_A_FACING),
+        ("evening", EVENING, EVENING_FACING),
+    ] {
+        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+        let at = Vec3::from_array(at);
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, facing);
+        hero.stand(&run.bench.world, &[HERO_BODY]);
+        assert_eq!(hero.pivot, at, "{label}: stood, not moved");
+        assert!(hero.footing.supported, "{label}: stood on the ground");
+        run.bench.heroes.insert(HERO, hero);
+        run.bench.pads = [pad([false; 4], Stick::CENTRED), Pad::default()];
+        // His locomotion as the TV builds it from his palette's loops.
+        let mut locomotion = Locomotion::new(
+            Gaits::ERUPTOR,
+            Loops {
+                idle: 4.0 / 3.0,
+                walk: Some(1.066_666_7),
+                run: Some(0.666_666_7),
+                fall: Some(0.8),
+            },
+        );
+        let (mut highest, mut farthest) = (0.0f32, 0.0f32);
+        for k in 0..30 {
+            run.step().unwrap_or_else(|h| panic!("{label}: {h}"));
+            let h = run.hero();
+            locomotion.step(1.0 / 60.0, Frame::of(h));
+            let height = h.footing.height.unwrap_or(f32::NAN);
+            let moved = h.pivot.distance(at);
+            if k < 6 || std::env::var_os("AG81_STEPS").is_some() {
+                println!(
+                    "{label} {k}: {} by {}, {height:.4} m up, supported {}, walk {}",
+                    h.pivot,
+                    h.pivot - at,
+                    h.footing.supported,
+                    h.walk.velocity
+                );
+            }
+            assert!(
+                h.footing.supported,
+                "{label}: step {k} off the ground at {}",
+                h.pivot
+            );
+            assert!(
+                height > 0.0 && height <= 0.015,
+                "{label}: step {k} {height} m over the ground"
+            );
+            assert!(moved < 0.01, "{label}: step {k} {moved} m from {at}");
+            assert_eq!(locomotion.air().name(), "ground", "{label}: step {k}");
+            assert_eq!(locomotion.weights()[3], 0.0, "{label}: step {k}: his fall");
+            highest = highest.max(height);
+            farthest = farthest.max(moved);
+        }
+        println!(
+            "{label}: at most {highest:.4} m over the ground, {farthest:.4} m from where he was put"
+        );
+    }
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
+/// Free in the air as guac-motion's replays read a record: unsupported 0.4
+/// ft or more over the ground finder's point, the first plane his manifold
+/// holds 2 cm or more off.
+fn free_in_the_air(r: &serde_json::Value) -> bool {
+    let pivot = json_vec3(&r["hero"]["position"]);
+    let ground = json_vec3(&r["contacts"]["ground"]["location"]);
+    let high = r["contacts"]["support"].as_u64() != Some(2) && pivot.y - ground.y >= 0.4 / 3.28084;
+    let first = r["contacts"]["planes"]
+        .as_array()
+        .and_then(|p| p.first())
+        .and_then(|p| p["distance"].as_f64());
+    high && first.is_none_or(|d| d >= 0.02)
+}
+
+/// He's set to a record of AG.39's (no mover read there): his pivot, facing
+/// and lean, his footing as its contacts read it, and his walk, where the
+/// engine reads it and in the script's own velocity data, as what moved his
+/// body into it (in the air the walk moves him by itself).
+fn seed_in_the_air(run: &mut Run, r: &serde_json::Value) {
+    use guac_motion::ground::{LEAN_SETTLED, angle};
+    let pivot = json_vec3(&r["hero"]["position"]);
+    let rotation = r["hero"]["rotation"].as_array().unwrap();
+    let rotation = [0, 1, 2].map(|i| rotation[i].as_f64().unwrap() as f32);
+    let ground = &r["contacts"]["ground"];
+    let normal = json_vec3(&ground["normal"]);
+    let walk = json_vec3(&r["hero"]["velocity"]) * FEET_PER_METRE;
+    let length = walk.length();
+    let pitch = (walk.y / length.max(1e-6))
+        .clamp(-1.0, 1.0)
+        .asin()
+        .to_degrees();
+    let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+    hero.pivot = pivot;
+    hero.facing = rotation[1].rem_euclid(360.0);
+    hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;
+    hero.footing = guac_motion::walk::Footing {
+        supported: r["contacts"]["support"].as_u64() == Some(2),
+        height: Some(pivot.y - json_vec3(&ground["location"]).y),
+        slope: if angle(hero.up, normal) <= LEAN_SETTLED {
+            hero.up
+        } else {
+            normal
+        },
+        ground: Some(normal),
+    };
+    hero.walk.velocity = walk;
+    let m = run.minion.unwrap();
+    let d = run
+        .vm
+        .local(m, "description")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    let data = run
+        .vm
+        .field(d, "velocity data")
+        .map(|v| run.vm.value(v))
+        .unwrap();
+    for (name, value) in [
+        ("velocity length", length),
+        ("velocity heading", heading_of(walk)),
+        ("velocity pitch", pitch),
+        ("vertical difference", walk.y),
+        ("horizontal length", walk.x.hypot(walk.z)),
+    ] {
+        assert!(run.vm.set_field(data, name, Value::Float(value)), "{name}");
+    }
+}
+
+/// AG.16's falls with his scripts driving (the TV's hero since AH.24): each
+/// of AG.39's 40 falls off the ledge route and through the air, set to its
+/// recording's state at the second record of each run of free ones and fed
+/// each record's pad and view at our 1/60 s, lands within a record of
+/// theirs in 38, as the stand-in does in `replays.rs` (the same two parted:
+/// `g39_w` W-00 two early, `g39_w_rel60` W-00 caught on the cliff). Before
+/// AG.90 his scripts read his separation off where he joined, so above the
+/// spawn's height none of these frames was off the ground for them, no
+/// gravity pulled his walk down and 32 never landed (7 within a record).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AG.39's recordings under GUAC_CAPTURE_DIR; run on the Mac"]
+fn ag39s_falls_land_as_theirs_with_his_scripts_driving() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let root = capture_dir().join("BLUS30968/ag39-falls-1792502813");
+    let (mut falls, mut near, mut never) = (0, 0, 0);
+    let mut groups: Vec<PathBuf> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("{}: {e}", root.display()))
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    groups.sort();
+    for group in groups {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&group)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join("recording.json").is_file())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let text = std::fs::read_to_string(dir.join("recording.json")).unwrap();
+            let records: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let records = records.as_array().unwrap();
+            let label = dir.strip_prefix(&root).unwrap().display().to_string();
+            let mut k = 1;
+            while k + 1 < records.len() {
+                let second = free_in_the_air(&records[k])
+                    && free_in_the_air(&records[k - 1])
+                    && (k < 2 || !free_in_the_air(&records[k - 2]));
+                if !second {
+                    k += 1;
+                    continue;
+                }
+                let theirs = (k + 1..records.len())
+                    .find(|&i| records[i]["contacts"]["support"].as_u64() == Some(2));
+                let end = theirs.map_or(records.len() - 1, |l| (l + 3).min(records.len() - 1));
+                let mut run = at_anchor_a();
+                seed_in_the_air(&mut run, &records[k]);
+                let mut ours = None;
+                for (i, record) in records.iter().enumerate().take(end).skip(k) {
+                    run.bench.view = record["camera"]["rotation"][1].as_f64().unwrap() as f32;
+                    run.bench.pads[0] = record_pad(record);
+                    run.step()
+                        .unwrap_or_else(|h| panic!("{label} step {i}: {h}"));
+                    if run.hero().footing.supported {
+                        ours = Some(i + 1);
+                        break;
+                    }
+                }
+                println!("{label} from record {k}: lands at ours {ours:?}, theirs {theirs:?}");
+                falls += 1;
+                near +=
+                    usize::from(matches!((ours, theirs), (Some(a), Some(b)) if a.abs_diff(b) <= 1));
+                never += usize::from(ours.is_none());
+                k = end.max(k + 1);
+            }
+        }
+    }
+    println!(
+        "{falls} falls, {near} landing within a record of theirs, {never} not landing by theirs + 3; {:.2?}; load after: {}",
+        started.elapsed(),
+        load()
+    );
+    assert_eq!(falls, 40, "AG.39's 40");
+    assert!(near >= 38, "{near} of {falls} within a record of theirs");
+    assert!(never <= 1, "{never} never landing");
 }

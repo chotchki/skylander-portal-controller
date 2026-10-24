@@ -89,7 +89,7 @@ use guacamole::character::{
     spawn_character,
 };
 use guacamole::level_scene::{START_FACING, hero_scene};
-use guacamole::scripts::{ScriptRuntime, ScriptWorld};
+use guacamole::scripts::{KeptHealth, ScriptRuntime, ScriptWorld};
 use guacamole::walkers::{self, Walker};
 use serde::Serialize;
 use skylander_core::SlotIndex;
@@ -738,7 +738,8 @@ fn follow_portal(
     mut play: ResMut<Play>,
     mut level: ResMut<Level>,
     mut commands: Commands,
-    bodies: Query<&HeroBody>,
+    bodies: Query<(&HeroBody, Option<&HeroRun>)>,
+    (runtime, mut kept): (Option<Res<ScriptRuntime>>, ResMut<KeptHealth>),
 ) {
     for PortalChanged(change) in heard.read() {
         let slot = match change {
@@ -754,7 +755,18 @@ fn follow_portal(
         play.candidate = None;
         match play.inside.as_mut() {
             None => info!(slot = slot.display(), "the waiting hero left the portal"),
-            Some(inside) => take_off(inside, &mut level, &mut commands, &bodies, slot),
+            Some(inside) => {
+                let gone = take_off(inside, &mut level, &mut commands, &bodies, slot);
+                // His health as his scripts hold it, for his figure's return
+                // to this level (AH.62).
+                if let Some(run) = gone
+                    && let (Join::Joined(minion), Some(rt)) = (&run.join, runtime.as_deref())
+                    && let Some(health) = guacamole::scripts::health(&rt.vm, *minion)
+                {
+                    info!(figure = %run.kept_as, health, "his health kept for his return");
+                    kept.left(&run.kept_as, health);
+                }
+            }
         }
     }
 }
@@ -766,24 +778,39 @@ fn follow_portal(
 /// scripts spawned gone, for the next one's join (AH.24), the level kept as
 /// he left it (AH.27: what its scripts broke and took stays off, its loot
 /// counts where they stood). The level holds from the next
-/// [`judge_portal`] (no hero in it).
+/// [`judge_portal`] (no hero in it). His scripts' run as he left, if they
+/// joined it.
 fn take_off(
     inside: &mut Inside,
     level: &mut Level,
     commands: &mut Commands,
-    bodies: &Query<&HeroBody>,
+    bodies: &Query<(&HeroBody, Option<&HeroRun>)>,
     slot: SlotIndex,
-) {
-    let Some(gone) = inside.hero.take() else {
-        return;
+) -> Option<HeroRun> {
+    let gone = inside.hero.take()?;
+    let run = match bodies.get(gone.hero) {
+        Ok((body, run)) => {
+            inside.left = Some((body.hero.pivot, body.hero.facing));
+            run.cloned()
+        }
+        Err(_) => None,
     };
-    if let Ok(body) = bodies.get(gone.hero) {
-        inside.left = Some((body.hero.pivot, body.hero.facing));
-    }
     level.forget(&gone.lit);
     commands.entity(gone.hero).despawn();
     commands.queue(hero_scripts::reinstall_keeping_level);
     info!(slot = slot.display(), left = ?inside.left, "the hero left the portal: the level holds");
+    run
+}
+
+/// A figure's instance as [`KeptHealth`] keys it: its placing profile (none
+/// with no profile unlocked) and its figure, what its tag's serial stands
+/// for (AH.23).
+fn instance(placement: &Placement) -> String {
+    let profile = placement
+        .owner
+        .as_ref()
+        .map_or("", |o| o.profile_id.as_str());
+    format!("{profile}/{}", placement.figure_id.as_str())
 }
 
 /// `slot`'s figure as the hero-to-be, if it walks.
@@ -1145,6 +1172,7 @@ fn enter(
         rig,
         s.source.as_deref(),
         c.slot,
+        instance(&c.placement),
     );
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
@@ -2971,6 +2999,129 @@ mod tests {
         );
     }
 
+    /// His health and full health as his scripts hold them, once joined.
+    fn health(app: &App) -> (Option<i32>, Option<i32>) {
+        let e = app.world().resource::<Play>().hero().expect("in the level");
+        let run = app.world().entity(e).get::<HeroRun>().expect("his run");
+        let Join::Joined(minion) = run.join else {
+            panic!("not joined: {}", run.join.name());
+        };
+        let numbers =
+            crate::hero_scripts::hero_numbers(&app.world().resource::<ScriptRuntime>().vm, minion);
+        (numbers.health, numbers.health_max)
+    }
+
+    /// AH.62 over AH.20 and AG.29: his health goes off the portal with his
+    /// figure and comes back with it. Bitten to 100 of his 150 (the test
+    /// hook's stand-in for a bite), taken off and put back in the same
+    /// level, his scripts read 100 once he's joined again and keep it, the
+    /// take-off's reinstall of the run (AH.27's carry) leaving it as it was;
+    /// the TV leaving the level (a level change) clears it, so he comes back
+    /// in full.
+    #[test]
+    fn his_health_goes_off_the_portal_and_back_with_his_figure() {
+        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = joined_eruptor(tmp.path());
+        app.update();
+        assert_eq!(health(&app), (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX)));
+        let asked = crate::hero_scripts::AskedHealth::default();
+        app.insert_resource(asked.clone());
+        *asked.0.lock().unwrap() = Some(100);
+        app.update();
+        assert_eq!(health(&app), (Some(100), Some(ATTACK_HEALTH_MAX)), "bitten");
+        assert_eq!(*app.world().resource::<KeptHealth>(), KeptHealth::default());
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_ne!(
+            *app.world().resource::<KeptHealth>(),
+            KeptHealth::default(),
+            "kept through the run's reinstall"
+        );
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "his scripts again", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        assert_eq!(
+            health(&app),
+            (Some(100), Some(ATTACK_HEALTH_MAX)),
+            "as he left"
+        );
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(health(&app).0, Some(100), "his scripts keep it");
+        // A level change: the TV leaves the level and enters it again.
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal);
+        assert_eq!(
+            *app.world().resource::<KeptHealth>(),
+            KeptHealth::default(),
+            "cleared with the level"
+        );
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Portal {
+            game: "Skylanders Giants".into(),
+        };
+        until(&mut app, "the level again", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts in the new entry", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        assert_eq!(
+            health(&app),
+            (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX)),
+            "in full"
+        );
+    }
+
+    /// AH.62: a kept health is keyed by the figure's instance, its placing
+    /// profile and the figure, so one kid's bitten Eruptor taken off doesn't
+    /// bring the other kid's Eruptor in hurt; with no profile unlocked the
+    /// figure is the session's own.
+    #[test]
+    fn a_kept_health_is_the_placing_profiles_figures() {
+        use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
+        let PortalChange::Placed { placement, .. } = placed(0, ERUPTOR, "Eruptor") else {
+            unreachable!("placed")
+        };
+        let owned = |profile: &str, figure: &Placement| {
+            let mut p = figure.clone();
+            p.owner = Some(PlacementOwner {
+                profile_id: profile.into(),
+                initial: "A".into(),
+                color: "#e63946".into(),
+                progress: FigureProgress::default(),
+            });
+            p
+        };
+        let PortalChange::Placed {
+            placement: other, ..
+        } = placed(0, ONE, "One")
+        else {
+            unreachable!("placed")
+        };
+        let (alice, bea) = (owned("alice", &placement), owned("bea", &placement));
+        assert_eq!(instance(&alice), instance(&owned("alice", &placement)));
+        assert_ne!(instance(&alice), instance(&bea), "another profile's");
+        assert_ne!(
+            instance(&alice),
+            instance(&owned("alice", &other)),
+            "another figure"
+        );
+        assert_ne!(instance(&alice), instance(&placement), "no profile's");
+        let mut kept = KeptHealth::default();
+        kept.left(&instance(&alice), 100);
+        assert_eq!(kept.back(&instance(&alice)), Some(100));
+        assert_eq!(kept.back(&instance(&bea)), None, "Bea's comes in full");
+    }
+
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
     /// waypoint facing 0°, settled 5 mm above the floor, drawn there at his
     /// 150 %; the camera at camera 0's rest pose off his feet (55 ft at 32°
@@ -3882,6 +4033,54 @@ mod tests {
             level_lit,
             "his materials lit with the level"
         );
+    }
+
+    /// AG.81: a replacement stands where the last one stood from his first
+    /// step, put down at that pivot rather than dropped onto it (the
+    /// original drops its replacement from 0.41 m up, AG.100's): every one
+    /// of his first 30 steps on the ground at that place, his locomotion on
+    /// the ground with no weight on his fall.
+    #[test]
+    fn a_replacement_stands_his_first_steps_where_the_last_stood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        let left = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .left
+            .unwrap();
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the next one in", |a| mode(a) == Mode::Level);
+        let next = app.world().resource::<Play>().hero().unwrap();
+        for step in 0..30 {
+            let h = hero(&app);
+            assert!(
+                h.footing.supported,
+                "step {step}: off the ground at {}",
+                h.pivot
+            );
+            assert!(
+                h.pivot.distance(left.0) < 1e-3,
+                "step {step}: {} against {}",
+                h.pivot,
+                left.0
+            );
+            let gaits = app.world().entity(next).get::<HeroGaits>().unwrap();
+            assert_eq!(gaits.locomotion.air().name(), "ground", "step {step}");
+            assert_eq!(gaits.locomotion.weights()[3], 0.0, "step {step}: his fall");
+            app.update();
+        }
     }
 
     /// AG.29: a replacement whose model can't be drawn (his hero side gone

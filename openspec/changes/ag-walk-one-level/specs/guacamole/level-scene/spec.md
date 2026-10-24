@@ -126,6 +126,17 @@ Each time a character becomes the hero after the level has started, and each tim
 - **WHEN** Eruptor has been taken off mid-level and Tree Rex is placed
 - **THEN** within 1.5 s Tree Rex's arrival shows him named over his element's colours, and 5-8 s after the placement the level shows again with Tree Rex in Eruptor's place
 
+### Requirement: A character coming in drops onto his place
+A character coming in after the level has started SHALL appear, as the level shows again, about 0.4 m above where the last hero stood and a few centimetres across, fall onto the ground in 7 or 8 frames, and play his spawn animation from 5 or 6 frames after he lands, over about a second after he appeared. He SHALL then stand where he landed: within 7 cm of the last hero's place on gentle ground, further down a steep slope.
+
+#### Scenario: Eruptor put back at rest
+- **WHEN** Eruptor is taken off standing on the gentle slope at the foot of the ledge route and his figure is put back
+- **THEN** 5.4-5.5 s after the placement he appears 0.41 m above his last place and 4.8 cm across, falling, lands 7-8 frames later 4.9-6.8 cm from it, and his spawn animation plays from 5-6 frames after the landing, over within 60 frames of his appearing
+
+#### Scenario: Eruptor put back after a run up the slope
+- **WHEN** Eruptor is taken off running up the ledge route and his figure is put back
+- **THEN** he appears 0.38 m above where he was taken off and 8.5 cm across, slides down the slope as he falls, and lands 8 frames later 0.29-0.30 m from that place
+
 ### Requirement: A figure Giants can't use holds the level
 A figure Giants has no use for (a character from a later game, or a kind it doesn't know, such as a trap or a vehicle) placed at any time SHALL hold the TV within 1.5 s and, within 2.5 s, cover it with a full-screen alert that a toy on the portal can't be used with this game, asking for it to be removed, the level and the figure untouched and the pad's stick and bottom button doing nothing; within 1 s of it coming off the TV SHALL show what it showed before.
 

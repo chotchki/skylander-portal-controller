@@ -42,6 +42,8 @@ struct Step {
     velocity: Vec3,
     walk: Vec3,
     supported: bool,
+    /// His pivot's height over the ground finder's point.
+    height: Option<f32>,
     /// The gate's door within 1 cm of his shape.
     door: bool,
 }
@@ -76,7 +78,17 @@ fn seeded(frames: &[Frame], s: usize) -> Hero {
 /// The controller from record `s` through record `until`, stopping at a gap
 /// in the game's frame count.
 fn run(world: &ParryWorld, frames: &[Frame], s: usize, until: usize) -> Vec<Step> {
-    let mut hero = seeded(frames, s);
+    run_from(world, frames, seeded(frames, s), s, until)
+}
+
+/// [`run`] from a hero seeded by the caller as record `s` holds him.
+fn run_from(
+    world: &ParryWorld,
+    frames: &[Frame],
+    mut hero: Hero,
+    s: usize,
+    until: usize,
+) -> Vec<Step> {
     let mut out = Vec::new();
     for k in s + 1..=until.min(frames.len() - 1) {
         let (a, b) = (&frames[k - 1], &frames[k]);
@@ -105,6 +117,7 @@ fn run(world: &ParryWorld, frames: &[Frame], s: usize, until: usize) -> Vec<Step
             velocity: hero.velocity,
             walk: hero.walk.velocity,
             supported: hero.footing.supported,
+            height: hero.footing.height,
             door,
         });
     }
@@ -710,4 +723,79 @@ fn ag36_and_ag9_free_from_the_start() {
         same_record >= 80 && within_8cm >= 80,
         "{rests} {same_record} {within_8cm}"
     );
+}
+
+/// AG.90's runs (2026-10-23, the O6 build from anchor A): `rock_near` (3)
+/// and `rock_lob` (2), the stick turned round every frame for 150 frames on
+/// the ledge route's 17° slope by `barrel_b_intact(1)`.
+const AG90: [&str; 2] = ["ag90-rock-1792773586", "ag90-rock-1792773746"];
+
+/// hero-movement's A walk turned round every frame (openspec AG.90) on the
+/// stand-in: each AG.90 recording from the record before its stick first
+/// turns round, run free through the 149 records it turns round on: the walk
+/// turns round with it every record, as the original's does, and he holds
+/// the slope: off the ground a frame at a time as many times as theirs to 3
+/// (16 of 16 in all five), never higher than 6 cm over the ground finder's
+/// point (the original's first frame off it 4.66-5.16 cm, every other at
+/// most 1.3 cm), his pivot ending lower than it began and within 0.1 m of
+/// theirs (3-6 cm further down: AG.16's hypothesis (19)).
+#[test]
+#[ignore]
+fn ag90_a_walk_turned_round_every_frame_holds_the_slope() {
+    let world = level();
+    let mut seen = 0;
+    for run_name in AG90 {
+        for (name, dir) in replay_dirs(run_name) {
+            let frames = frames(&dir);
+            assert!(consecutive(&frames), "{name}");
+            let turned: Vec<usize> = (1..frames.len())
+                .filter(|&k| frames[k].stick[0] * frames[k - 1].stick[0] < 0.0)
+                .collect();
+            let (a, b) = (turned[0], *turned.last().unwrap());
+            // His mover data's own fields went stale at `rock_lob`'s lob (an
+            // attack adds his mover again elsewhere; the walk's velocity
+            // data, the description's, stays his), so its `controller
+            // inactive` isn't read: nothing holds his controller off here.
+            let mut hero = seeded(&frames, a - 1);
+            hero.held_off = false;
+            let steps = run_from(&world, &frames, hero, a - 1, b);
+            assert_eq!(steps.len(), b - a + 1, "{name}");
+            let heading = |w: Vec3| w.x.atan2(w.z).to_degrees();
+            let reversed = steps
+                .windows(2)
+                .filter(|w| {
+                    ((heading(w[1].walk) - heading(w[0].walk)).rem_euclid(360.0) - 180.0).abs()
+                        < 5.0
+                })
+                .count();
+            let highest = steps
+                .iter()
+                .filter_map(|s| s.height)
+                .fold(f32::MIN, f32::max);
+            let unsupported = steps.iter().filter(|s| !s.supported).count();
+            let theirs_unsupported = (a..=b)
+                .filter(|&k| footing(&frames[k]).is_some_and(|f| !f.supported))
+                .count();
+            let fall = steps.last().unwrap().pivot.y - steps[0].pivot.y;
+            let their_fall = frames[b].hero.position[1] - frames[a].hero.position[1];
+            eprintln!(
+                "{run_name}/{name}: records {a}-{b}; walk turned round {reversed} of {}; unsupported ours {unsupported} theirs {theirs_unsupported}; highest over the ground {highest:.4} m; pivot {fall:+.4} m over it, theirs {their_fall:+.4}",
+                steps.len() - 1,
+            );
+            assert_eq!(reversed, steps.len() - 1, "{name}");
+            assert!(highest < 0.06, "{name}: {highest}");
+            assert!(unsupported.abs_diff(theirs_unsupported) <= 3, "{name}");
+            let running = steps
+                .windows(2)
+                .filter(|w| !w[0].supported && !w[1].supported)
+                .count();
+            assert_eq!(running, 0, "{name}: a frame at a time");
+            assert!(
+                fall < 0.0 && (fall - their_fall).abs() < 0.1,
+                "{name}: {fall}"
+            );
+            seen += 1;
+        }
+    }
+    assert_eq!(seen, 5);
 }

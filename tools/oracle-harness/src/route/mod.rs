@@ -78,6 +78,13 @@ pub enum Step {
     /// falls inside it (AH.8: an anchor's opening step). It's aimed from where
     /// he stands, against the view, at the look that schedule starts from.
     Tilt { toward: Point, flips: u64 },
+    /// The stick full toward `toward` and full away from it in turn, a flip
+    /// each, toward it first, for `flips` flips, then let go, in the same
+    /// schedule as the presses, tilts and waits around it (AG.90: a stick
+    /// re-aimed each frame at a point he crosses reverses his walk every
+    /// frame). Both ways are aimed as [`Step::Tilt`] is, from where he stands
+    /// at the look the schedule starts from, so they lie on one line.
+    Rock { toward: Point, flips: u64 },
     /// The right stick held at the bytes (`x`, `y`) for `flips` flips (0 and
     /// 255 its travel's ends, 128 centred) with the left stick toward
     /// `toward` as [`Step::Tilt`] aims it, or centred without one, then both
@@ -210,7 +217,9 @@ impl RoutePlan {
                         bail!("step {i}: a point with a positive radius, not {step:?}");
                     }
                 }
-                Step::Hold { toward, flips } | Step::Tilt { toward, flips } => {
+                Step::Hold { toward, flips }
+                | Step::Tilt { toward, flips }
+                | Step::Rock { toward, flips } => {
                     if *flips == 0 || !toward.x.is_finite() || !toward.z.is_finite() {
                         bail!("step {i}: a stick toward a point for at least a flip, not {step:?}");
                     }
@@ -781,6 +790,7 @@ impl Driver {
                 Step::Press { .. }
                 | Step::Wait { .. }
                 | Step::Tilt { .. }
+                | Step::Rock { .. }
                 | Step::RightStick { .. } => {
                     // A run of presses, tilts and waits goes in as one
                     // schedule, so no pause falls between a press and what
@@ -795,6 +805,19 @@ impl Driver {
                                 match schedule.last_mut() {
                                     Some((o, pad)) if *o == at => *pad = tilted,
                                     _ => schedule.push((at, tilted)),
+                                }
+                                schedule.push((at + flips, rest()));
+                                at += flips;
+                            }
+                            Step::Rock { toward, flips } => {
+                                let bearing = seen.bearing(*toward);
+                                for k in 0..*flips {
+                                    let way = if k % 2 == 0 { bearing } else { bearing + 180.0 };
+                                    let pad = walk(stick_toward(way, seen.view, 1.0));
+                                    match schedule.last_mut() {
+                                        Some((o, held)) if *o == at + k => *held = pad,
+                                        _ => schedule.push((at + k, pad)),
+                                    }
                                 }
                                 schedule.push((at + flips, rest()));
                                 at += flips;

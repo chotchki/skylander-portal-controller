@@ -2231,6 +2231,7 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
     let mut reacted = 0;
     let mut held = 0;
     let mut eased = 0;
+    let mut cuts = 0;
     for p in &pushes {
         println!(
             "push at F0 + {}: knock {:.5} s, resistance {:.3} -> {:.3}, {} steps: {:?}",
@@ -2273,13 +2274,43 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             continue;
         }
         assert_eq!(s.len(), 8, "8 steps moving");
+        // A push that carries him a frame off the ground within 0.4 ft of it
+        // is cut to 21.5 ft/s (6.553 m/s) the next step, that frame's 10 ft/s
+        // down cutting his whole walk (hero-movement's Slopes): of AH.10's
+        // 184 knocks, 69 left the ground that low, 63 cut so the record after
+        // and 6 ending there, its eased ones as its others (combat's A push
+        // off the ground; AG.90: before his scripts read his own pivot off
+        // the ground, they never saw such a frame). It slows on from there.
+        let cut = 21.5 / FEET_PER_METRE;
+        let onto = s
+            .windows(2)
+            .position(|w| w[0] > cut + 0.01 && w[1] <= cut + 0.01);
+        if let Some(i) = onto {
+            cuts += 1;
+            // Onto the cut, not just under it: his walk across the ground
+            // the step after as the original's after its 63 (21.24-21.33
+            // ft/s, 6.475-6.503 m/s, the whole 21.5 with the band's 10 ft/s
+            // down in it), so a push stopped dead or by a wall isn't one.
+            assert!(
+                (6.465..=6.513).contains(&s[i + 1]),
+                "{s:?}: cut onto {} m/s",
+                s[i + 1]
+            );
+            assert!(
+                s[i + 1..].windows(2).all(|w| w[1] <= w[0]),
+                "{s:?}: slowing on"
+            );
+            println!("  cut onto 21.5 ft/s at its step {}", i + 1);
+            continue;
+        }
         if reaction {
             reacted += 1;
             // 80 ft/s² a step from the step after the bite, his reaction
             // having put his deceleration back: AH.10's 24.384, 23.914-24.026
             // ... 21.488-21.585 m/s, frame by frame. A step the push carries
-            // him a frame off the ground slows by the air's 50 ft/s² instead
-            // (hero-movement's slopes; AH.20 took F0 + 801's for the order).
+            // him a frame off the ground but higher than the cut's band
+            // slows by the air's 50 ft/s² instead (hero-movement's slopes;
+            // AH.20 took F0 + 801's for the order).
             let air = (50.0 / FEET_PER_METRE) / 60.0;
             let ground = (80.0 / FEET_PER_METRE) / 60.0;
             assert!((s[0] - 24.384).abs() < 0.01, "{s:?}");
@@ -2336,7 +2367,7 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             r.1 = w[1].k;
         }
     }
-    println!("his reactions {runs:?}; eased pushes {eased}");
+    println!("his reactions {runs:?}; eased pushes {eased}; pushes cut off the ground {cuts}");
     for &(a, b) in &runs {
         if b == i64::MAX {
             continue;
