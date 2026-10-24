@@ -315,9 +315,10 @@
 //! packed colour or screen position. A colour the file holds (a literal, a
 //! `global.bld` colour) keeps alpha in its high byte and red in its low, so
 //! it reads byte-swapped into the VM's order, red high (AH.67: the
-//! eruption's dark colour `0xFF141422` is the oracle's (34, 20, 20, 255),
-//! and 80 of the disc's 166 colour literals open on alpha 255, 26 end on
-//! it). A random literal draws a 32-bit number
+//! eruption's dark colour `0xFF141422` is the oracle's (34, 20, 20, 255);
+//! of the 1,102 distinct nonzero colour literals in the 01.00 disc's
+//! archives the high byte is 0 or 255 in 981, as an alpha mostly is, the low
+//! byte in 155). A random literal draws a 32-bit number
 //! from the session's generator ([`Generator`], through [`Host::draw`]): one
 //! MT19937 per session, seeded the original's way from the clock, as the
 //! original's every roll draws from its one MT. An integer literal n reads

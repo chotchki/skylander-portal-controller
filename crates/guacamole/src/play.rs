@@ -1847,6 +1847,25 @@ mod tests {
                 .all(|w| *w == guacamole::character::LIGHTS_FROM_SCENE),
             "{frames:?}"
         );
+        // AH.65: the walk's camera runs the glow chain off its frame's alpha,
+        // so it carries the clear the level's glow masks write over; without
+        // it every part's own alpha would read as a mask and the whole frame
+        // would glow.
+        let camera = app
+            .world_mut()
+            .query_filtered::<Entity, (With<FollowCamera>, With<guacamole::character::FrameGlow>)>()
+            .single(app.world())
+            .expect("the walk's camera, glowing");
+        let clears: Vec<(Entity, RenderLayers)> = app
+            .world_mut()
+            .query_filtered::<(&ChildOf, &RenderLayers), With<MeshMaterial3d<guacamole::character::AlphaClear>>>()
+            .iter(app.world())
+            .map(|(c, l)| (c.parent(), l.clone()))
+            .collect();
+        assert!(
+            clears.contains(&(camera, RenderLayers::layer(LEVEL_LAYER))),
+            "{clears:?}"
+        );
     }
 
     /// AH.24's extract beside [`play_app`]'s: the synthetic script part

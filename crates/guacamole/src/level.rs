@@ -3151,6 +3151,61 @@ pub(crate) mod tests {
         assert_eq!(app.world().resource::<Level>().report().relit, 1);
     }
 
+    /// AG.79 and AH.65: what the upload hands each level material stays
+    /// through a fog's relight: the sky's sort bias (its blended parts first,
+    /// in the scene's order) and a multiplying rim's strength in light, which
+    /// the relight once put back to the bare strength (the coins brown again
+    /// past the first zone change).
+    #[test]
+    fn a_fog_relight_keeps_the_skys_bias_and_a_multiplying_rims_strength() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = lights();
+        let source = write_level(tmp.path(), &l);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let materials = app
+            .world()
+            .resource::<Level>()
+            .loaded()
+            .unwrap()
+            .materials
+            .clone();
+        let drawn = |app: &App| -> Vec<(f32, f32)> {
+            let assets = app.world().resource::<Assets<CharacterMaterial>>();
+            materials
+                .iter()
+                .map(|h| {
+                    let m = assets.get(h).unwrap();
+                    (m.depth_bias, m.uniform.rim.z)
+                })
+                .collect()
+        };
+        // The ground, then the sky's copy: only the sky ranks.
+        let biases: Vec<f32> = drawn(&app).iter().map(|d| d.0).collect();
+        assert_eq!(biases, [0.0, arithmetic::sky_bias(0)]);
+        // The made-up level has no multiplying rim: the ground gets one, so
+        // the relight has a strength to keep.
+        {
+            let mut level = app.world_mut().resource_mut::<Level>();
+            let loaded = level.stage.loaded_mut().unwrap();
+            let (ground, _) = loaded.reference[0].as_mut().unwrap();
+            ground.rim = Some(guac_ir::shading::Rim {
+                weights: guac_ir::shading::Weights::MULTIPLY,
+                ..guac_ir::shading::Rim::new(2.0)
+            });
+        }
+        app.insert_resource(LevelFog {
+            colour: [90, 60, 30],
+            near: 30.0,
+            far: 300.0,
+        });
+        app.update();
+        assert_eq!(app.world().resource::<Level>().report().relit, 1);
+        let after = drawn(&app);
+        assert_eq!(after[0], (0.0, remaster::in_light(2.0)), "in light");
+        assert_eq!(after[1].0, arithmetic::sky_bias(0), "the sky's still first");
+    }
+
     /// AG.19: the keys the level asks the warm for are exactly the keys its
     /// entities draw (each segment's material key on its mesh's shape),
     /// each once.
