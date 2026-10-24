@@ -64,10 +64,15 @@ cargo test -p skylander-e2e-tests -- --ignored --nocapture
 ```
 
 All tests are `#[ignore]`-gated so they don't run under the default
-`cargo test --workspace`. The harness spawns the server binary per
-test via `cargo run -p skylander-server --features test-hooks` (or
-`-p guacamole`, see `E2E_APP` below) with a temp working directory
-containing a generated env file.
+`cargo test --workspace`. Each test binary builds the server once, with
+`cargo build -p skylander-server --features test-hooks` (or `-p guacamole`,
+see `E2E_APP` below) and no timeout on the build, then spawns the built
+binary per test in a temp working directory containing a generated env
+file; the 120 s wait for its URL starts at the spawn. Before each spawn the
+binary is checked against what it was built from (every file under the repo
+in cargo's dep-info for it, their manifests and `Cargo.lock`) and built
+again if one changed, so a run never spawns a binary older than its source
+(openspec AQ.15, [`src/built.rs`](src/built.rs)).
 
 ### Single-test runs
 
@@ -91,7 +96,7 @@ typo can't silently test the wrong app). openspec AA.10.
 E2E_APP=guacamole cargo test -p skylander-e2e-tests -- --ignored --nocapture
 ```
 
-Under `guacamole` the harness runs `cargo run -p guacamole --features
+Under `guacamole` the harness builds and spawns `-p guacamole --features
 test-hooks` with no firmware-pack lookup. The env file it generates in
 the temp working dir points `GUAC_DUMP_DIRS` at a temp dir of synthetic
 dumps, each a `PS3_GAME/PARAM.SFO` built in code (BLUS30968 unless a test
@@ -336,8 +341,9 @@ so a refusal by the phone's own check can't pass for the server's.
   `serving on …` line for its base URL, so loopback (`127.0.0.1`)
   isn't used.
 - `127.0.0.1:<port>` will not respond — use the `serving on` URL.
-- Cold cargo build for the test-hooks-flavored server is ~30–60s; the
-  harness rebuilds incrementally on subsequent test runs.
+- A cold target dir's first build of the test-hooks server takes minutes
+  (its dependencies at opt-level 3, AG.65); it runs before the first spawn
+  with no timeout, so a fresh worktree's first run passes (AG.78).
 
 ## Layout
 
