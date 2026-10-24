@@ -38,7 +38,7 @@ use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::members::{COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
 use guac_script::{
-    MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
+    Generator, MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
 };
 use guacamole::anchors::{ANCHOR_B, CUTSCENE_STATE, FIRST_ALERT, OPENING, ROUTE, SCENE_STEPS};
 use guacamole::player_loop::called;
@@ -408,6 +408,10 @@ struct Script {
     /// serial given (the same figure's again, or another's), its request
     /// that step.
     swaps: &'static [(u32, u32)],
+    /// The session's generator seeded with this at F0, as the TV's dev
+    /// entry seeds it when asked (openspec AH.25): another roll of the same
+    /// fight.
+    seed: Option<u32>,
     /// Steps past the opening's start.
     steps: u32,
 }
@@ -491,6 +495,12 @@ const CHOMPIES: [&str; 4] = [
     "Enemy_Chompy(4)",
 ];
 const NORTICUS: &str = "1.NPC_Norticus_First_Encounter";
+
+/// The creatures spec's warning rule, by Chompy (AH.10): the notice a
+/// Chompy sees him within, ft between middles, and the call a seer alerts
+/// the others within.
+const NOTICE_FT: [f32; 4] = [30.0, 30.0, 30.0, 35.0];
+const CALL_FT: [f32; 4] = [20.0, 20.0, 20.0, 60.0];
 
 fn int_of(run: &Run, v: Option<Value>) -> i32 {
     match v.map(|v| run.vm.value(v)) {
@@ -698,6 +708,9 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
                 run.set_at(name, Vec3::from_array(at), facing);
             }
             run.alert_in(FIRST_ALERT);
+            if let Some(seed) = script.seed {
+                run.generator = Generator::seeded(seed);
+            }
             let m = run.minion.unwrap();
             if let Some(crit) = script.crit {
                 let d = run.minion_description();
@@ -1222,11 +1235,28 @@ fn the_four_wake_on_the_7_ft_rule_from_the_floor_not_the_rim() {
 /// Across the first: the ball goes with him (the original's macro takes his
 /// projectile off before the stream's unloading does), his minion, his
 /// helper and his file's placements go, the new minion ticks first, the
-/// four run on (each one's alert, health and timer carrying on, none
-/// started over) with Setup_001's controller and Norticus as they were, and
-/// he comes back at the 200 his figure's stored data in the portal manager
-/// kept (AH.11's `swap2`: 200 off and on, 200 of 290); the other Eruptor
-/// comes in at his full 290.
+/// four run on (health and timer carrying on, none started over, each one
+/// alerted on him alerted still) with Setup_001's controller and Norticus
+/// as they were, and he comes back at the 200 his figure's stored data in
+/// the portal manager kept (AH.11's `swap2`: 200 off and on, 200 of 290);
+/// the other Eruptor comes in at his full 290.
+///
+/// One not alerted before (`Enemy_Chompy(4)`, asleep for want of AH.140's
+/// idle wander; AH.10's four are all alerted by F0 + 25) takes the join's
+/// alert by the creatures spec's warning rule, since the activation adds
+/// his minion to the targets (`Combat - Add/Remove to Targets Set`), which
+/// calls `Combat - Alert Enemies` at him as the combat manager's 0.25 s
+/// check does (AH.10's first alert: (2)'s call reaching (4) at 19.5-19.7
+/// ft; AH.11's `swap2`, none within notice, left all four idle across both
+/// swaps; the call at the join itself, not the next check, is the macro's
+/// reading, AH.135's for the oracle). Whether (4) is called rests on where
+/// the generator's draws leave the four at F0 + 100: on AG.60's (its start
+/// scripts draw from it), (1) sees him 28.1 ft off and calls (4) 19.2 ft
+/// from it; before AG.60, (1) stood 30.6 ft off, called by (2), and the
+/// seers 26.6 and 23.7 ft from (4); a join alerting every sleeper alike
+/// passes on this roll too, so the rule's other half (a sleeper out of
+/// every call left asleep) is
+/// [`a_join_wakes_only_whom_the_warning_rule_reaches`]'s.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_swap_mid_fight_leaves_the_four_running() {
@@ -1273,15 +1303,20 @@ fn a_swap_mid_fight_leaves_the_four_running() {
     assert_eq!(order[0], (true, "009_Eruptor".to_owned()));
     assert_eq!(order.iter().filter(|(a, _)| *a).count(), 1);
     // The four, Setup_001's controller and Norticus across it: the step
-    // before the take-off, and the first his new minion ticked in.
-    let (before, after) = (at(99), at(101));
+    // before the take-off, the join (F0 + 100, after his activation) and
+    // the first step his new minion ticked in.
+    let (before, join, after) = (at(99), at(100), at(101));
+    let (called, left) = the_join_warns_by_the_rule(&run, before, join, after);
+    println!("the join alerted {called} not alerted before and left {left}");
     for (c, n) in CHOMPIES.iter().enumerate() {
         let (b, a) = (&before.chompies[c], &after.chompies[c]);
         println!(
             "{n}: {:?} -> {:?}, alerted {} -> {}, hp {} -> {}, timer {:.4} -> {:.4} s",
             b.beh, a.beh, b.alerted, a.alerted, b.health, a.health, b.timer, a.timer
         );
-        assert_eq!(a.alerted, b.alerted, "{n}: still alerted");
+        if b.alerted > 0 {
+            assert_eq!(a.alerted, b.alerted, "{n}: alerted on him, alerted still");
+        }
         assert_eq!(a.health, b.health, "{n}");
         assert_eq!(a.invulnerable, b.invulnerable, "{n}");
         assert!(
@@ -1324,6 +1359,119 @@ fn a_swap_mid_fight_leaves_the_four_running() {
 /// spheres as authored, AH.10's middles).
 fn middles(c: Vec3, hero: Vec3) -> f32 {
     ft((c - hero).length())
+}
+
+/// The creatures spec's warning rule at a join, held to `before` (the step
+/// before the take-off), `join` (the join's step, after his activation) and
+/// `after` (the next): those within their notice of him see him (alerted,
+/// no caller), and one not alerted before is alerted at the join exactly
+/// when it sees him or a seer stands within that seer's call, the caller
+/// its communicator, and stays so the next step. Returns how many not
+/// alerted before the join alerted, and how many it left.
+fn the_join_warns_by_the_rule(
+    run: &Run,
+    before: &Snap,
+    join: &Snap,
+    after: &Snap,
+) -> (usize, usize) {
+    let seen: Vec<bool> = (0..4)
+        .map(|c| middles(join.chompies[c].pos, join.hero) <= NOTICE_FT[c])
+        .collect();
+    let seers: Vec<usize> = (0..4)
+        .filter(|&s| {
+            seen[s] && join.chompies[s].alerted > 0 && join.chompies[s].communicator == Value::Null
+        })
+        .collect();
+    println!(
+        "at the join: {:?} ft from him, seen by {:?}",
+        join.chompies
+            .iter()
+            .map(|c| middles(c.pos, join.hero))
+            .collect::<Vec<_>>(),
+        seers.iter().map(|&s| CHOMPIES[s]).collect::<Vec<_>>()
+    );
+    assert!(!seers.is_empty(), "the replacement seen at his join");
+    let (mut called, mut left) = (0, 0);
+    for (c, n) in CHOMPIES.iter().enumerate() {
+        if before.chompies[c].alerted > 0 {
+            continue;
+        }
+        let j = &join.chompies[c];
+        let callers: Vec<usize> = seers
+            .iter()
+            .copied()
+            .filter(|&s| s != c && ft((join.chompies[s].pos - j.pos).length()) <= CALL_FT[s])
+            .collect();
+        println!(
+            "{n}, not alerted before: {:.2} ft from him, from the seers {:?} ft; alerted {} at the join (communicator {:?})",
+            middles(j.pos, join.hero),
+            seers
+                .iter()
+                .map(|&s| (CHOMPIES[s], ft((join.chompies[s].pos - j.pos).length())))
+                .collect::<Vec<_>>(),
+            j.alerted,
+            j.communicator
+        );
+        assert_eq!(
+            j.alerted > 0,
+            seen[c] || !callers.is_empty(),
+            "{n}: the join's alert by the warning rule"
+        );
+        if !seen[c] && !callers.is_empty() {
+            let by: Vec<Value> = callers
+                .iter()
+                .map(|&s| Value::Entity(run.placed(CHOMPIES[s]).0))
+                .collect();
+            assert!(by.contains(&j.communicator), "{n}: called by {by:?}");
+        }
+        assert_eq!(
+            after.chompies[c].alerted, j.alerted,
+            "{n}: as the join left it"
+        );
+        if j.alerted > 0 {
+            called += 1;
+        } else {
+            left += 1;
+        }
+    }
+    (called, left)
+}
+
+/// [`a_swap_mid_fight_leaves_the_four_running`]'s first swap on two other
+/// rolls (the session's generator seeded at F0, as the TV's entry seeds
+/// it), so the join's warning rule is held both ways: on that test's roll
+/// the sleeping `Enemy_Chompy(4)` stands within (1)'s call and is called,
+/// which a join alerting every sleeper alike would match too. Seed 11
+/// leaves the seers (1) and (2) 20.6 and 20.2 ft from (4), outside their
+/// 20 ft call, so it sleeps on; seed 9 has (3) call it from 19.7 ft (the
+/// merge check's review, seeds 1-12: the rule held on all twelve, (4)
+/// called on 3, 9 and 12). The seeds are picked for the halves they
+/// reach, so a change to the draws before F0 + 100 may need others.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_join_wakes_only_whom_the_warning_rule_reaches() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let (mut called, mut left) = (0, 0);
+    for seed in [11, 9] {
+        let (run, snaps, _) = fight_swapping(Script {
+            lob: Some(90),
+            hero_health: Some(200),
+            swaps: &[(100, 1)],
+            seed: Some(seed),
+            steps: 102,
+            ..Script::default()
+        });
+        let at = |k: i64| snaps.iter().find(|s| s.k == k).unwrap();
+        let (c, l) = the_join_warns_by_the_rule(&run, at(99), at(100), at(101));
+        println!("seed {seed}: the join alerted {c} not alerted before and left {l}");
+        (called, left) = (called + c, left + l);
+    }
+    assert!(
+        called > 0 && left > 0,
+        "the rolls reach both halves of the rule (called {called}, left {left}): pick seeds that do"
+    );
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 
 /// What a standing-still fight from anchor B makes of AH.10's numbers
@@ -1372,7 +1520,7 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     );
     for &c in &seers {
         let d = middles(alert.chompies[c].pos, alert.hero);
-        assert!(d <= [30.0, 30.0, 30.0, 35.0][c], "{} at {d}", CHOMPIES[c]);
+        assert!(d <= NOTICE_FT[c], "{} at {d}", CHOMPIES[c]);
     }
     // The calls: those within 20 ft of a seer among the first three (60 of
     // the fourth) are called, the rest aren't.
@@ -1383,7 +1531,7 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
             .filter(|&(s, _)| s != c)
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((s, d)) = caller {
-            let reach = if s == 3 { 60.0 } else { 20.0 };
+            let reach = CALL_FT[s];
             println!(
                 "{} {} ft from {}: alerted {} (communicator {:?})",
                 CHOMPIES[c], d, CHOMPIES[s], ch.alerted, ch.communicator
@@ -1461,11 +1609,13 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
                     if steps.last().is_none_or(|l| l.0 != b.state) {
                         steps.push((b.state, w[1].k));
                     }
-                    // Across the ground, as the velocity model moves it: a
-                    // Chompy stood a few centimetres up settles as it lunges
-                    // (AG.60's draws moved one's approach: Chompy(3) stood
-                    // 6.8 cm over the floor and dropped it in the lunge's
-                    // first step, 36.2 ft/s in space, 33.65 across).
+                    // Across the ground, as AH.10's reader measures it
+                    // (`motion10.py`: x and z). That hides the drop in a
+                    // lunge's first step AH.136 asks about, there with
+                    // AG.60's draws and without: Chompy(3)'s first nip drops
+                    // 7.05 cm with AG.60's start scripts off (AH.136's run at
+                    // e2b71a43, 36.40 ft/s in space, 33.65 across), 6.83 cm
+                    // with them.
                     if b.state == 3 {
                         let d = ft(Vec3::new(b.pos.x - a.pos.x, 0.0, b.pos.z - a.pos.z).length())
                             * 60.0;
