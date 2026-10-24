@@ -1374,8 +1374,14 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
                     if steps.last().is_none_or(|l| l.0 != b.state) {
                         steps.push((b.state, w[1].k));
                     }
+                    // Across the ground, as the velocity model moves it: a
+                    // Chompy stood a few centimetres up settles as it lunges
+                    // (AG.60's draws moved one's approach: Chompy(3) stood
+                    // 6.8 cm over the floor and dropped it in the lunge's
+                    // first step, 36.2 ft/s in space, 33.65 across).
                     if b.state == 3 {
-                        let d = ft((b.pos - a.pos).length()) * 60.0;
+                        let d = ft(Vec3::new(b.pos.x - a.pos.x, 0.0, b.pos.z - a.pos.z).length())
+                            * 60.0;
                         *lunge = lunge.max(d);
                     }
                 } else {

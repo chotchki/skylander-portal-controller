@@ -485,6 +485,24 @@ fn tag_object(program: &Program, o: OperandId) -> Option<Obj> {
     }
 }
 
+/// The file variable a tag's value names, a path of that variable alone
+/// (openspec AG.60: a Titan boulder's `Pebble_Set`, a set reference tag
+/// naming the level's set of pebble templates).
+fn tag_global(program: &Program, o: OperandId) -> Option<GlobalId> {
+    match program.operands.get(o as usize)? {
+        Operand::Path { elems, .. } => match elems.as_slice() {
+            [Elem::Global(g)] => Some(*g),
+            _ => None,
+        },
+        Operand::Expr {
+            a: Some(a),
+            op: None,
+            b: None,
+        } => tag_global(program, *a),
+        _ => None,
+    }
+}
+
 /// What an embedder runs in a held placement's place during a step's walk
 /// ([`Vm::step_with`]): the VM, the placement and the host.
 pub type Native<'a> = dyn FnMut(&mut Vm, PlacementId, &mut dyn Host) -> Result<(), Halt> + 'a;
@@ -2728,7 +2746,16 @@ impl Vm {
                 // breakable's `archetype ref`, AH.20): that object.
                 None => match tag_object(&self.program, o) {
                     Some(obj) => self.canon(Value::Object(obj)),
-                    None => return unsupported("a tag whose value isn't a literal"),
+                    // A tag naming a file variable holds what that variable
+                    // does: a set reference tag, the file's set itself
+                    // (openspec AG.60: a Titan boulder's pebbles).
+                    None => match tag_global(&self.program, o) {
+                        Some(g) => {
+                            let c = self.global_cell(g)?;
+                            self.cells[c as usize].value
+                        }
+                        None => return unsupported("a tag whose value isn't a literal"),
+                    },
                 },
             },
         };

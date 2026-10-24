@@ -627,8 +627,23 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
     };
     assert_eq!(refused.slot, 25);
     assert!(refused.reason.contains("blendHint"), "{}", refused.reason);
+    // AG.60 lists the chest's own script: its palette is in by it too.
+    let r = palettes(
+        parsed(&creature_level(Some("Levels/Synthetic/Scripts/Chest.ai"))),
+        LEVEL,
+        identity(),
+    )
+    .unwrap();
+    assert_eq!(
+        r.ir.palettes
+            .iter()
+            .map(|p| p.owner.as_str())
+            .collect::<Vec<_>>(),
+        [CHEST],
+        "a newly listed script's creature"
+    );
     // Off the whitelist, or no script at all: no palette.
-    for script in [Some("Levels/Synthetic/Scripts/Chest.ai"), None] {
+    for script in [Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai"), None] {
         let r = palettes(parsed(&creature_level(script)), LEVEL, identity()).unwrap();
         assert!(r.ir.palettes.is_empty(), "{script:?}");
     }

@@ -1,5 +1,6 @@
-//! The on-screen test's readers (openspec AH.107; stand-in ledger:
-//! `on-screen`): which scripts ask a point against the gameplay camera
+//! The on-screen test's readers (openspec AH.107), what the host's
+//! every-point-on-screen answer reaches (stand-in ledger: `on-screen`):
+//! which scripts ask a point against the gameplay camera
 //! (`positionmeasurement.collision` with `viewportinfo.default` on either
 //! side), read off the linked op graphs. The host answers every such ask
 //! "on screen" (AH.20), so before the whitelist grows each reader it would

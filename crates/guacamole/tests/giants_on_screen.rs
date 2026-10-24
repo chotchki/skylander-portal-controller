@@ -1,5 +1,6 @@
-//! The on-screen test's readers on the disc (openspec AH.107; stand-in
-//! ledger: `on-screen`): every script the whitelist runs, with AH.34's
+//! The on-screen test's readers on the disc (openspec AH.107), counted
+//! for the host's answer (stand-in ledger: `on-screen`): every script the
+//! whitelist runs, with AH.34's
 //! route scripts and AG.60's start scripts, read for asks of a point
 //! against the gameplay camera ([`guacamole::on_screen`]), each with the
 //! list and macro it sits in.
@@ -38,37 +39,6 @@ const ROUTE: [&str; 23] = [
     "Goat_Running.ai",
     "Eon_Line_Activator.ai",
     "Goat_Jumping_Pit.ai",
-];
-
-/// AG.60's: the start's scripts on the props and what they spawn.
-const START: [&str; 27] = [
-    "Scale.ai",
-    "Windmill_Rotate.ai",
-    "BirdNest.ai",
-    "Placed_Loot_Spinning.ai",
-    "Placed_Loot.ai",
-    "PushBlock_Template.ai",
-    "WoodFence_Spawner.ai",
-    "StoneWall_2.ai",
-    "Falling_Rocks.ai",
-    "Titan_Carriable_Object.ai",
-    "Chest.ai",
-    "Chest_SetGlobalRef.ai",
-    "Wood_Plank.ai",
-    "Fence_Sign.ai",
-    "Bouncing_Wood_Pieces.ai",
-    "Torus_Effect.ai",
-    "Art_Generic_Stone.ai",
-    "Box_Tortoise.ai",
-    "Canon_bottom.ai",
-    "Pushblock_canon.ai",
-    "CannonWarpRing.ai",
-    "Switch_90_Setup.ai",
-    "Boulder_Pebbles.ai",
-    "Boulder_Chunks.ai",
-    "Chest_Lock.ai",
-    "Lock_Flash.ai",
-    "StoneWall_Piece.ai",
 ];
 
 /// The scripts a whitelist runs: those it lists and those of the
@@ -171,11 +141,16 @@ fn the_whitelists_on_screen_readers() {
     let tv_asks = on("the TV's whitelist", &tv);
     let fight_asks = on("the fight's whitelist", &fight);
     let route_asks = on("AH.34's route scripts", &route);
-    let start: Vec<ScriptId> = START
+    let listed: Vec<&str> = scripts::START_PROPS
+        .iter()
+        .chain(&scripts::START_PROPS_FIRST_TICK)
+        .copied()
+        .collect();
+    let start: Vec<ScriptId> = listed
         .iter()
         .filter_map(|s| program.script_named(s))
         .collect();
-    assert_eq!(start.len(), START.len(), "every start script in the part");
+    assert_eq!(start.len(), listed.len(), "every start script in the part");
     let start_asks = on("AG.60's start scripts", &start);
     println!(
         "read in {:.1} s; {}",

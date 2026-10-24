@@ -184,7 +184,7 @@ impl PreparedBody {
     not(test),
     expect(
         dead_code,
-        reason = "nothing in the level moves yet: AG.25's props stand still until their scripts run"
+        reason = "the TV moves a prop's body by its entity (`level::stand_props`, AG.60); this by-id twin of `ParryWorld::set_pose` is held by its tests"
     )
 )]
 pub(crate) fn set_pose(

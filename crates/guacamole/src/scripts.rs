@@ -354,6 +354,9 @@ pub struct ScriptWorld {
     pub(crate) light_templates: HashMap<Obj, Light>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
+    /// The file waypoints' turns the scripts wrote (openspec AG.60); one
+    /// never written reads nothing, its file's turn unread.
+    pub(crate) point_turns: HashMap<Obj, Angles>,
     pub(crate) controllers: [Handle; 2],
     pub(crate) physical: [Handle; 4],
     pub(crate) portal: Handle,
@@ -427,6 +430,7 @@ impl ScriptWorld {
             templates,
             light_templates: files.lights.clone(),
             points: files.points.clone(),
+            point_turns: HashMap::new(),
             controllers: [objects[0], objects[1]],
             physical: [objects[2], objects[3], objects[4], objects[5]],
             portal: objects[6],
@@ -870,7 +874,7 @@ impl ScriptWorld {
                 };
                 let at = named("_RHS");
                 let facing = named("_facingRHS").and_then(|v| v.as_f32());
-                Ok(self.spawn(template, at, facing, spawn, engine))
+                Ok(self.spawn(template, at, facing, call.placement, spawn, engine))
             }
             Class::Remove => {
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
@@ -905,13 +909,16 @@ impl ScriptWorld {
     /// A clone of `template` at the place `at` names (its pivot), facing
     /// `facing` when given, else the template's: the hero for a template a
     /// hero stands for, else a new actor (its handle from `spawn`) with the
-    /// template's file numbers, or a clone's own when it copies a clone. A
+    /// template's file numbers, or a clone's own when it copies a clone, its
+    /// activator `spawner`, the placement whose script spawned it (openspec
+    /// AG.60: the fence's cross beam hangs on the fence that spawned it). A
     /// scripted template's clone is listed for the embedder to run.
     fn spawn(
         &mut self,
         template: Value,
         at: Option<Value>,
         facing: Option<f32>,
+        spawner: Handle,
         spawn: &mut Spawner<'_>,
         engine: &mut dyn Engine,
     ) -> Answer {
@@ -940,6 +947,11 @@ impl ScriptWorld {
         a.obj = None;
         a.template = source;
         a.parent = template;
+        a.activator = if hero.is_some() {
+            Value::Null
+        } else {
+            Value::Entity(spawner)
+        };
         a.waypoints = Vec::new();
         a.removed = false;
         a.clones = Vec::new();
@@ -1139,8 +1151,8 @@ pub const FIRST_FIGHT: [&str; 11] = [
 /// The loot on the way to the first fight (openspec AH.20, design decision
 /// 2's whitelist: the coins in reach and the loot macros): the level's loot
 /// system's first tick and the spinning coins on chapter 1's walkway and on
-/// the line down into the pit, by placement name, so the level's other
-/// coins stay inert.
+/// the line down into the pit, by placement name. AG.60 runs every placed
+/// coin and gem by its script ([`START_PROPS`]), these nine among them.
 pub const PICKUPS: [&str; 10] = [
     "LootSystem_Init",
     "Coin_spinning",
@@ -1168,18 +1180,74 @@ pub const BREAKABLES: [&str; 3] = [
     "init_temp_pottery",
 ];
 
+/// The start's scripts on the props (openspec AG.60, design decision 2's
+/// whitelist), every tick, by script: what level 213's start-up scripts do
+/// to its placements before the hero moves, run on the VM rather than
+/// written as our own (stand-in ledger: `start-set`, struck). The gourds'
+/// and bricks' scales (`Scale.ai`), the propeller's turn, the bird nests'
+/// size and eggs, every placed coin and gem (the spinning ones spin by the
+/// UI's loot update), the push blocks and the cannon (their art, their 15 x
+/// 12 x 15 ft boxes), the walkway's fence (its cross beam and planks; it
+/// makes itself a combat target), the cannon's rubble wall, the sliding
+/// rocks, the chest (its locks, its cylinder; a creature, drawn nowhere)
+/// and the global reference the chests share; then the scripts of what
+/// those spawn. The Titan boulders run their first tick alone
+/// ([`START_PROPS_FIRST_TICK`]). Eon's lines (`Eon_Line_Activator.ai`) stay
+/// off: dialogue, AJ's.
+pub const START_PROPS: [&str; 26] = [
+    "Scale.ai",
+    "Windmill_Rotate.ai",
+    "BirdNest.ai",
+    "Placed_Loot_Spinning.ai",
+    "Placed_Loot.ai",
+    "PushBlock_Template.ai",
+    "WoodFence_Spawner.ai",
+    "StoneWall_2.ai",
+    "Falling_Rocks.ai",
+    "Chest.ai",
+    "Chest_SetGlobalRef.ai",
+    "Wood_Plank.ai",
+    "Fence_Sign.ai",
+    "Bouncing_Wood_Pieces.ai",
+    "Torus_Effect.ai",
+    "Art_Generic_Stone.ai",
+    "Box_Tortoise.ai",
+    "Canon_bottom.ai",
+    "Pushblock_canon.ai",
+    "CannonWarpRing.ai",
+    "Switch_90_Setup.ai",
+    "Boulder_Pebbles.ai",
+    "Boulder_Chunks.ai",
+    "Chest_Lock.ai",
+    "Lock_Flash.ai",
+    "StoneWall_Piece.ai",
+];
+
+/// The Titan boulders' script, its first tick alone (openspec AG.60): its
+/// STARTUP makes each boulder's solid the original's cylinder and lays its
+/// pebbles, then it's held, so the feat it waits for (a Giant lifting it)
+/// stays off for every hero (stand-in ledger: `titan`).
+pub const START_PROPS_FIRST_TICK: [&str; 1] = ["Titan_Carriable_Object.ai"];
+
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
 /// pickups and AH.21's breakables and the members they reach (the
 /// creatures' and the loop's: the destructibles system makes a breakable a
-/// combat target), the first fight's placements left inert until AH.25's
-/// entry brings them.
+/// combat target), and AG.60's start scripts on the props, the first
+/// fight's placements left inert until AH.25's entry brings them.
 pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
     members::register(&mut c.members, members::LOOP);
-    if let Whitelist::Only { placements, .. } = &mut c.whitelist {
+    if let Whitelist::Only {
+        placements,
+        scripts,
+        first_tick,
+    } = &mut c.whitelist
+    {
         placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
+        scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
+        first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
 }
@@ -2348,10 +2416,12 @@ mod tests {
     }
 
     /// The TV's listing (openspec AH.27): the pickups and the breakables
-    /// by name, with the creatures' and the loop's members; the first
-    /// fight's Chompies, Setup_001 and what only a Giant moves (the Titan
-    /// boulders' and the castle wall's scripts) off it, inert, so nothing
-    /// takes them off; the fight's own listing AH.27's with the four.
+    /// by name, with the creatures' and the loop's members; AG.60's start
+    /// scripts on the props every tick; the first fight's Chompies,
+    /// Setup_001 and the castle wall's script off it, inert, and the Titan
+    /// boulders' its first tick alone (their cylinders and pebbles, the feat
+    /// held), so nothing takes them off; the fight's own listing AH.27's
+    /// with the four.
     #[test]
     fn the_tvs_listing_runs_the_breakables_and_no_creature_or_titan_feat() {
         let c = smash_config(Mode::Play);
@@ -2364,17 +2434,24 @@ mod tests {
             !c.whitelist
                 .lists("Setup_001_Controller", "C:/x/Setup_001_Controller.ai")
         );
-        for (name, script) in [
-            (
+        assert!(!c.whitelist.lists(
+            "Breakable_Stone_Wall_Castle_206(1)",
+            "C:/tfb/Content/Levels/Includes/GameElement_Breakable_Wall/Scripts/Breakable_Wall_213.ai",
+        ));
+        assert_eq!(
+            c.whitelist.listing(
                 "Titan_CarriableObject_Boulder_v3_(4)",
                 "C:/tfb/Content/Levels/Includes/Titan_Includes/Titan_CarribleObject/Scripts/Titan_Carriable_Object.ai",
             ),
-            (
-                "Breakable_Stone_Wall_Castle_206(1)",
-                "C:/tfb/Content/Levels/Includes/GameElement_Breakable_Wall/Scripts/Breakable_Wall_213.ai",
-            ),
-        ] {
-            assert!(!c.whitelist.lists(name, script), "{name}");
+            guac_script::Listed::FirstTick
+        );
+        for script in START_PROPS {
+            let path = format!("C:/tfb/Content/Levels/Includes/{script}");
+            assert_eq!(
+                c.whitelist.listing("a prop", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
         }
         assert!(c.whitelist.lists("Eruptor", "C:/x/009_Eruptor.ai"));
         for r in members::CREATURES.iter().chain(members::LOOP) {
