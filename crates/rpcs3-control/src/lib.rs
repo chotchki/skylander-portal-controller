@@ -5,7 +5,7 @@
 //! Phase-16 production control path, no GUI/dialog. `UiaPortalDriver` drives the
 //! emulated Skylanders portal dialog via Windows UI Automation (the legacy /
 //! fallback path; see `docs/research/rpcs3-control.md`). `MockPortalDriver`
-//! (feature `mock`) is an in-memory stand-in for tests.
+//! (feature `mock`) is an in-memory fake for tests.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

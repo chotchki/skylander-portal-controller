@@ -1581,8 +1581,9 @@ fn seed_in_the_air(run: &mut Run, r: &serde_json::Value) {
 /// of AG.39's 40 falls off the ledge route and through the air, set to its
 /// recording's state at the second record of each run of free ones and fed
 /// each record's pad and view at our 1/60 s, lands within a record of
-/// theirs in 38, as the stand-in does in `replays.rs` (the same two parted:
-/// `g39_w` W-00 two early, `g39_w_rel60` W-00 caught on the cliff). Before
+/// theirs in 38, as AG.16's controller does in `replays.rs` with no scripts
+/// (stand-in ledger: `walker`; the same two parted: `g39_w` W-00 two early,
+/// `g39_w_rel60` W-00 caught on the cliff). Before
 /// AG.90 his scripts read his separation off where he joined, so above the
 /// spawn's height none of these frames was off the ground for them, no
 /// gravity pulled his walk down and 32 never landed (7 within a record).

@@ -7,7 +7,7 @@
 //! The controller, one file per family of mechanisms:
 //! - [`hero`]: a game frame in the original's order, and the step lags;
 //! - [`walk`]: the walk the movement script stores (AG.8, AG.10, AG.38);
-//! - [`edge`]: the edge probe's stand-in (AG.36, AG.39);
+//! - [`edge`]: the edge probe (AG.36, AG.39; stand-in ledger: `edge-guard`);
 //! - [`proxy`]: the engine's cast-and-slide move and the wall law (AG.9);
 //! - [`solve`]: the frictionless plane solve under it;
 //! - [`ground`]: the ground finder, support, the snap and the lean (AG.9,
@@ -21,9 +21,9 @@
 //! model an actor no stick drives runs, fed a destination by the scripts'
 //! `move to`, `move from` and `turn to` ([`hero::Hero::step_steered`]).
 //!
-//! The locomotion stand-in beside it ([`locomotion`], AG.30): the clips'
-//! weights, times and rates from the speed the controller's walk reads and
-//! his fall (AG.11).
+//! The locomotion beside it ([`locomotion`], AG.30): the clips' weights,
+//! times and rates from the speed the controller's walk reads and his fall
+//! (AG.11; stand-in ledger: `locomotion`).
 //!
 //! The gameplay camera beside it ([`camera`], AG.17): the follow point, the
 //! camera target, the views and a transition plane's blend; and, behind the

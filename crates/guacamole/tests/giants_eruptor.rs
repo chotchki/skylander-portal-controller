@@ -1,10 +1,11 @@
 //! AH.17's disc tests: Eruptor's scripts on the VM over level 213 with
-//! guacamole's host, headless: the init chain (AH.16), the join's stand-in
-//! (his definition's first tick, then the portal manager's activation of
-//! his minion), and his own script, the movement update and the UI's tick
-//! every step, his walk handed to his controller's engine on the parry
-//! side of the seam over the level's own collision. Ignored by default;
-//! they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
+//! guacamole's host, headless: the init chain (AH.16), the join (his
+//! definition's first tick, then the portal manager's activation of his
+//! minion; stand-in ledger: `join`), and his own script, the movement
+//! update and the UI's tick every step, his walk handed to his controller's
+//! engine on the parry side of the seam over the level's own collision.
+//! Ignored by default; they read `GUAC_GIANTS_DUMP` (process env, else
+//! `.env.dev`):
 //!
 //! `cargo test -p guacamole --release --test giants_eruptor -- --ignored --nocapture --test-threads=1`
 //!
@@ -1164,16 +1165,16 @@ fn pressed_every_other_step_he_throws_and_erupts_at_ah9s_cadence() {
 }
 
 /// hero-movement's Top speed and Turning with his scripts driving him on
-/// the parry twin's open ground, as AG.4's scenarios hold the stand-in to:
-/// 90 % of top speed 0.1167 s from his first move, 6.553 m a game second
-/// within a millimetre at full stick and 21.5 ft/s × the strength at part
-/// stick; his first frame facing the stick's 15° at full stick and turning
-/// at 720°/s at half; a full reversal walking
-/// straight back the next frame at top speed, his facing round in
-/// 0.13-0.15 s (1440°/s). His scripts move him the step the stick is read,
-/// his own script ahead of the movement update (AH.59's order), as the
-/// original's walk from the spawn moves him the frame its read lands (still
-/// at the record that reads the stick, 0.80 m/s at the next).
+/// the parry twin's open ground, as AG.4's scenarios hold AG.16's
+/// controller to (stand-in ledger: `walker`): 90 % of top speed 0.1167 s
+/// from his first move, 6.553 m a game second within a millimetre at full
+/// stick and 21.5 ft/s × the strength at part stick; his first frame facing
+/// the stick's 15° at full stick and turning at 720°/s at half; a full
+/// reversal walking straight back the next frame at top speed, his facing
+/// round in 0.13-0.15 s (1440°/s). His scripts move him the step the stick
+/// is read, his own script ahead of the movement update (AH.59's order), as
+/// the original's walk from the spawn moves him the frame its read lands
+/// (still at the record that reads the stick, 0.80 m/s at the next).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_walk_holds_top_speed_and_turning_with_the_vm_driving() {

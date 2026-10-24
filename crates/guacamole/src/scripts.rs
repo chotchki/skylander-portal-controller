@@ -112,8 +112,8 @@ pub struct Placed {
 }
 
 impl Placed {
-    /// A placement with nothing but its object, name and script: the
-    /// tests' stand-in for one read off a file.
+    /// A placement with nothing but its object, name and script: what the
+    /// tests use in place of one read off a file.
     pub fn named(obj: Obj, name: &str, script: Option<&str>, activity_state: u32) -> Placed {
         Placed {
             obj,
@@ -1248,14 +1248,14 @@ pub fn init_chain(
     vm
 }
 
-/// The portal manager, whose macros the join's stand-in calls as its own
-/// tick would ([`join_request`], [`join_activate`]).
+/// The portal manager, whose macros the join calls as its own tick would
+/// ([`join_request`], [`join_activate`]; stand-in ledger: `join`).
 pub const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 
-/// The join's stand-in, its first half (openspec AH.17; decision 2's table,
-/// The join): what the portal and the portal manager do when a figure goes
-/// on the portal, by the original's own macros with only their scheduling
-/// ours. The portal manager asks for the figure's character file through
+/// The join, its first half (openspec AH.17; stand-in ledger: `join`):
+/// what the portal and the portal manager do when a figure goes on the
+/// portal, by the original's own macros with only their scheduling ours.
+/// The portal manager asks for the figure's character file through
 /// `Portal - Load Portal Object Stream` with the first player's slot's
 /// loaded data (slot 0 of `portal control data.$loaded objects`), as the
 /// portal control's tag handling does; then the character file's running
@@ -1367,10 +1367,10 @@ pub fn join_activate(
 }
 
 /// A figure's health kept across a swap within a level (openspec AH.20;
-/// design decision 2's stand-in row, Health kept across a swap; combat: A
-/// hero's health): in the original the portal manager keeps each figure's
-/// health in its stored data while the level lasts, keyed by the tag, and
-/// clears it at a level change. guacamole keys it by the figure's instance
+/// stand-in ledger: `kept-health`; combat: A hero's health): in the
+/// original the portal manager keeps each figure's health in its stored
+/// data while the level lasts, keyed by the tag, and clears it at a level
+/// change. guacamole keys it by the figure's instance
 /// (its placing profile and figure, what its tag's serial stands for). The
 /// hero taken off mid-level leaves his health here ([`KeptHealth::left`]);
 /// put back in the same level, his join sets it ([`set_health`]) from
@@ -1409,8 +1409,9 @@ pub fn health(vm: &Vm, minion: PlacementId) -> Option<i32> {
     vm.field(c, "hp").map(|v| vm.value(v))?.as_i32()
 }
 
-/// The hero's health set where his scripts hold it, as the swap's stand-in
-/// puts back what he left with. False when he has no health to set.
+/// The hero's health set where his scripts hold it, as a swap puts back
+/// what he left with (stand-in ledger: `kept-health`). False when he has no
+/// health to set.
 pub fn set_health(vm: &mut Vm, minion: PlacementId, health: i32) -> bool {
     let Some(d) = vm.local(minion, "description").map(|v| vm.value(v)) else {
         return false;
@@ -1469,14 +1470,14 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
 }
 
 /// What a run installed again carries over when the level goes on under it
-/// (openspec AH.27): the hero's take-off installs the TV's run again (the
-/// swap's stand-in, `openspec/backlog.md`), and this keeps the level as he
-/// left it: its placements play took off (each breakable broken, each
-/// spinning coin taken: [`LevelState::since`] the join, not the setups that
-/// take themselves off at the level's start, which the fresh run runs
-/// again) stay off, and each kind's loot count stays where it stood rather
-/// than drawn anew. Not carried: the clones in flight (a coin not yet paid,
-/// debris), which the original's swap leaves to land.
+/// (openspec AH.27): the hero's take-off installs the TV's run again (until
+/// AH.105's deactivate path; stand-in ledger: `swap`), and this keeps the
+/// level as he left it: its placements play took off (each breakable
+/// broken, each spinning coin taken: [`LevelState::since`] the join, not the
+/// setups that take themselves off at the level's start, which the fresh run
+/// runs again) stay off, and each kind's loot count stays where it stood
+/// rather than drawn anew. Not carried: the clones in flight (a coin not yet
+/// paid, debris), which the original's swap leaves to land.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LevelState {
     /// The level's placements taken off, in object order.
@@ -1847,9 +1848,10 @@ mod tests {
     use super::*;
     use crate::script_engine::Pad;
 
-    /// The swap's stand-in: a figure taken off mid-level comes back with
-    /// what it left with, another figure with nothing kept, the latest
-    /// leaving winning; a level change clears every figure's.
+    /// Health kept across a swap (stand-in ledger: `kept-health`): a figure
+    /// taken off mid-level comes back with what it left with, another figure
+    /// with nothing kept, the latest leaving winning; a level change clears
+    /// every figure's.
     #[test]
     fn health_is_kept_across_a_swap_and_cleared_at_a_level_change() {
         let mut kept = KeptHealth::default();

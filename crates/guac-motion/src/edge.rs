@@ -1,6 +1,6 @@
 //! The edge probe (openspec AG.16 on AG.36 and AG.39; hero-movement's An edge
-//! with nothing below; design decision 2's edge-guard stand-in, which AJ's VM
-//! deletes once it runs Minion.ai's per-frame macros).
+//! with nothing below; design decision 2's edge guard, which AJ's VM deletes
+//! once it runs Minion.ai's per-frame macros; stand-in ledger: `edge-guard`).
 //!
 //! What stops him at an edge isn't the proxy, the support check or the ground
 //! under him but a script's probe ahead of him (AG.36: at all 453 stops he

@@ -17,13 +17,15 @@
 //!   of its range has no ground and sleeps, as AH.21 runs it.
 //! - The join: the hero placed on the TV is a fighter whose file the part
 //!   holds ([`guac_extract::scripts::FIGHTERS`]) and his scripts join by
-//!   AH.17's stand-in ([`guacamole::scripts::join_request`], then on the next
-//!   step [`guacamole::scripts::join_activate`]), the step the TV enters the
-//!   level; from then on his walk, facing and clips are his scripts' and his
-//!   step the engine's alone ([`ScriptedHero`]). A character whose scripts
-//!   the part doesn't hold walks on AG.16's stand-in and its attack buttons
-//!   do nothing (hero-attacks' Which characters attack); a join that fails,
-//!   or his script stopped in play, puts him back on it, logged.
+//!   AH.17's join ([`guacamole::scripts::join_request`], then on the next
+//!   step [`guacamole::scripts::join_activate`]; stand-in ledger: `join`),
+//!   the step the TV enters the level; from then on his walk, facing and
+//!   clips are his scripts' and his step the engine's alone
+//!   ([`ScriptedHero`]). A character whose scripts the part doesn't hold
+//!   walks on AG.16's controller and its attack buttons do nothing
+//!   (hero-attacks' Which characters attack); a join that fails, or his
+//!   script stopped in play, puts him back on it, logged
+//!   (stand-in ledger: `walker`).
 //! - A step ([`step_scripts`], [`Frame::Scripts`]): the frame's slides,
 //!   his join's next half, then the walking pad's stick and, once he's in,
 //!   its attacks ([`HeroActions`]) read as the first player's pad, then the
@@ -60,8 +62,8 @@
 //! That stands in for the original's own swap (the portal manager
 //! deactivating his minion, the level's scripts running on): a coin or
 //! debris in flight at the swap goes, and a creature's state would start
-//! over, which AH.25's fight needs the deactivate path for
-//! (`openspec/backlog.md`).
+//! over, which AH.25's fight needs the deactivate path for (AH.105;
+//! stand-in ledger: `swap`).
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -213,13 +215,13 @@ pub(crate) fn reinstall(world: &mut World) {
 }
 
 /// The run installed again with the level kept as it stands (openspec
-/// AH.27): what the hero's take-off does mid-level (AG.29's swap, the
-/// stand-in `openspec/backlog.md` names). His minion and what his scripts
-/// spawned go with him; the level's placements the scripts took off (each
-/// breakable broken, each spinning coin taken) stay off and each kind's loot
-/// count stays where it stood ([`LevelState`]), so the next hero walks into
-/// the level as it was left, not its start. Each figure's kept health
-/// ([`KeptHealth`], AH.62) is the level's too and stays as it is.
+/// AH.27): what the hero's take-off does mid-level (AG.29's swap, until
+/// AH.105's deactivate path; stand-in ledger: `swap`). His minion and what
+/// his scripts spawned go with him; the level's placements the scripts took
+/// off (each breakable broken, each spinning coin taken) stay off and each
+/// kind's loot count stays where it stood ([`LevelState`]), so the next hero
+/// walks into the level as it was left, not its start. Each figure's kept
+/// health ([`KeptHealth`], AH.62) is the level's too and stays as it is.
 pub(crate) fn reinstall_keeping_level(world: &mut World) {
     let Some(source) = world.get_resource::<ScriptSource>().cloned() else {
         return;
@@ -301,7 +303,8 @@ pub(crate) enum Join {
     Requested,
     /// His scripts run as this placement.
     Joined(PlacementId),
-    /// His scripts don't run: why. He walks on the stand-in.
+    /// His scripts don't run: why. He walks on AG.16's controller
+    /// (stand-in ledger: `walker`).
     Off(String),
 }
 
@@ -613,8 +616,7 @@ impl Plugin for HeroScriptsPlugin {
 /// AH.62's test hook (`test-hooks` builds): a health asked for over `POST
 /// /api/_test/tv/health`, set where the joined hero's scripts hold it in the
 /// frame's `Update` (after its fixed steps, so the next frame's read it),
-/// the stand-in for a bite as AH.11's `swap1` poked the original's hero to
-/// 200.
+/// doing a bite's work as AH.11's `swap1` poked the original's hero to 200.
 #[derive(Resource, Clone, Default)]
 pub(crate) struct AskedHealth(pub(crate) Arc<Mutex<Option<i32>>>);
 
@@ -1535,9 +1537,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// The swap's stand-in on a joined hero (openspec AH.20): the health
-    /// he left with set where his scripts hold it, which the TV's report
-    /// reads back; kept across his swap, gone at a level change.
+    /// His health kept across a swap, on a joined hero (openspec AH.20;
+    /// stand-in ledger: `kept-health`): the health he left with set where his
+    /// scripts hold it, which the TV's report reads back; kept across his
+    /// swap, gone at a level change.
     #[test]
     fn a_swapped_heros_health_comes_back_as_he_left_it() {
         let mut run = Headless::new();

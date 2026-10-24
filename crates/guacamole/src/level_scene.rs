@@ -6,7 +6,8 @@
 //! - What's drawn ([`drawn`]): every tfbmulti2 segment, the scene's sky
 //!   among them, on its own material, the one with a gloss map (AG.22)
 //!   included. The other effects' (the grass's `0xAA6`, `0xAA8`, the warp)
-//!   are AG.24's stand-ins and draw nothing yet.
+//!   draw nothing yet; AG.24 is to draw the grass and the warp without
+//!   their wind and distortion (stand-in ledger: `grass-warp`).
 //! - The light ([`level_lights`], [`view_scene`]): the atmospheric zone the
 //!   level's definition sets up at its start (AG.41: AG.13 found the game
 //!   lights and fogs the opening area by it, not by the level file's

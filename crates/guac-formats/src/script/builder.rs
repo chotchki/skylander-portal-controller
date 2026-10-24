@@ -1209,7 +1209,8 @@ fn attack_global() -> Vec<u8> {
                     &[El::Local(players)],
                 );
                 // How many tags the save control holds: the file's variable
-                // reached, so a figure's stand-in finds it by name.
+                // reached, so the tag on the portal finds it by name
+                // (stand-in ledger: `join`).
                 let held = w.rhs(
                     "IntMeasurement",
                     &[

@@ -11,9 +11,9 @@
 //!   two areas, the first up to its row's limit and the rest in the
 //!   spillover's, summed as `Save - Portal - Get Portal Param Total Value`
 //!   sums them.
-//! - The tag on the portal ([`put_on_portal`]), a stand-in for the portal's
-//!   tag read and its save control's tag handling, neither of which runs
-//!   (design decision 2's join row): a `Portal - Tag Data` grown in the save
+//! - The tag on the portal ([`put_on_portal`]), in place of the portal's tag
+//!   read and its save control's tag handling, neither of which runs
+//!   (stand-in ledger: `join`): a `Portal - Tag Data` grown in the save
 //!   control's `tag data` as its tag handling grows one, its save sets made
 //!   by the disc's own `Save - Set up Tag Data Fields` over the portal's two
 //!   regions ([`REGION_1`], [`REGION_2`]), the figure's words put in (the

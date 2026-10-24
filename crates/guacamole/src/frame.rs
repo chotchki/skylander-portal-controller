@@ -56,7 +56,8 @@ pub enum Frame {
     /// The rest of the actors' frame: the sequences on, what the scripts
     /// threw flying, the creatures walked, anything else moving after him.
     Actors,
-    /// His locomotion's clips on what his step left (AG.30's stand-in).
+    /// His locomotion's clips on what his step left (AG.30;
+    /// stand-in ledger: `locomotion`).
     Locomotion,
     /// His attach nodes posed on his clips, and what hangs from them (AH.50).
     Hands,

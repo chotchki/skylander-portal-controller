@@ -5,8 +5,9 @@
 //!
 //! - One alert at a time, the one [`crate::play::judge`] rules, full screen
 //!   and opaque in the TV's own look: the original hides the level behind each
-//!   of its portal messages (AG.6, AG.64). Stand-ins for its screens until
-//!   AM's menus; their words are ours.
+//!   of its portal messages (AG.6, AG.64). Ours in place of its screens
+//!   until AM's menus, their words ours too
+//!   (stand-in ledger: `portal-alerts`).
 //! - TV UI over the level (AG.50, [`crate::level::tv_over_level`]): over the
 //!   pause overlays, under the corner join code and an intro.
 //! - The small join code (AA's join requirement: it stays on screen once a

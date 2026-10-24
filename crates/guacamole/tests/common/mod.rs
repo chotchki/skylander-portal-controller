@@ -275,9 +275,9 @@ pub struct Run {
     pub idle0: f64,
     /// A recorded pose's lean ([`lean_of`]) and where he stood in it: while
     /// his pivot holds there, his posed nodes are turned by it before what
-    /// hangs from them is set. AH.68's stand-in for a run set down at a
-    /// recorded pose (guacamole poses him upright, the oracle tilts his
-    /// model to the ground).
+    /// hangs from them is set. A run set down at a recorded pose leans by
+    /// it until AH.68 tilts him (guacamole poses him upright, the oracle
+    /// tilts his model to the ground; stand-in ledger: `upright`).
     pub lean: Option<(Vec3, Quat)>,
 }
 

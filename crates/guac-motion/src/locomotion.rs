@@ -1,8 +1,8 @@
-//! The locomotion stand-in (openspec AG.30, design decision 14;
-//! hero-movement's Idle, walk and run): which of a hero's clips play, at what
-//! weight, time and rate, a game frame at a time, from the speed he walks at
-//! and his fall. Pure: the clips are AE's and AG.14's, posed by `guac-ir`'s
-//! evaluator, and this holds only their loops.
+//! The locomotion (openspec AG.30, design decision 14; hero-movement's Idle,
+//! walk and run; stand-in ledger: `locomotion`): which of a hero's clips
+//! play, at what weight, time and rate, a game frame at a time, from the
+//! speed he walks at and his fall. Pure: the clips are AE's and AG.14's,
+//! posed by `guac-ir`'s evaluator, and this holds only their loops.
 //!
 //! No clip is picked. As AG.11 measured it off 244 O5 recordings, the idle,
 //! walk, run and fall play at once by weight, by `global.bld`'s locomotion
@@ -63,8 +63,8 @@
 //!   recording (AG.27);
 //! - which pose the original shows while held at an edge: its records flip
 //!   each frame, one with the idle at 100 beside a walk at the rest of the
-//!   idle's own weight, the next with the run at the walk's weight; the
-//!   stand-in draws the idle at its own weight and no run (AG.58), and its
+//!   idle's own weight, the next with the run at the walk's weight; this
+//!   draws the idle at its own weight and no run (AG.58), and its
 //!   idle plays on where the original's time steps back a frame each push;
 //! - the fall clip takes what the gaits give up (the weights summing to 1)
 //!   and plays from its start at 100 %, looping: its weight, time and rate

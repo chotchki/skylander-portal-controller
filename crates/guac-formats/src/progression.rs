@@ -3,8 +3,8 @@
 //! figure's save params (where each value sits in the tag's data) and the
 //! most gold a figure holds. The server needs them outside a game (stats and
 //! edits while no level runs, the store's caps), so they're permanent static
-//! reads, not stand-ins; in play AH.16's VM reads the same data and must
-//! agree with this.
+//! reads that no rung deletes; in play AH.16's VM reads the same data and
+//! must agree with this.
 //!
 //! `character/init_setup.bld`'s "Save - Init Portal Save Param Table" builds
 //! both tables. Its body calls "Portal - Define Levelup Table" once, whose

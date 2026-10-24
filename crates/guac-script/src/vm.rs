@@ -1540,8 +1540,9 @@ impl Vm {
             .map(|(ops, _)| ops)
     }
 
-    /// [`Vm::call`] with arguments, as a native caller makes one (a stand-in
-    /// that only schedules the original's macros): each `(parameter,
+    /// [`Vm::call`] with arguments, as a native caller makes one (one that
+    /// only schedules the original's macros, as the join and the player loop
+    /// do; stand-in ledger: `join`, `player-loop`): each `(parameter,
     /// value)` written into the callee's frame as a use op's parameter
     /// binds it, by the parameter its own INTERFACE declares under that
     /// name (any case), a set copied whole; a parameter left out reads 0,

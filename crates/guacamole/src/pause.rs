@@ -1,7 +1,7 @@
 //! The level waiting (openspec AG.20, design decision 12; pad-input's Start
 //! pauses the level and One pad walks the hero): the clock and the two
-//! overlays, stand-ins for the original's pause menu and controller-loss
-//! screen until AM's menus.
+//! overlays, in place of the original's pause menu and controller-loss
+//! screen until AM's menus (stand-in ledger: `pause`).
 //!
 //! - While the level waits, `Time<Virtual>` stops, so no fixed step runs (the
 //!   hero and the camera stand), the hero's drawn transform holds where the

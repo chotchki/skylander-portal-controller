@@ -1626,7 +1626,8 @@ pub(crate) fn view_camera(target: RenderTarget, order: isize) -> impl Bundle {
 }
 
 /// Marks a camera writing the level's output onto a target
-/// ([`view_camera`]): the level's own, and the start's pass's stand-in.
+/// ([`view_camera`]): the level's own, and the one the start's pass draws
+/// to compile its output.
 #[derive(Component, Debug, Default)]
 pub(crate) struct LevelOutput;
 

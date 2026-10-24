@@ -404,8 +404,9 @@ impl Skeleton {
     /// turn sets every joint it tracks to its own local transform at its
     /// time, the joints it doesn't track left to what's under it, as the
     /// palette says a partial clip plays; a clip tracking every joint is its
-    /// own pose there. A stand-in for the original's layer blend, whose
-    /// percent and type AH.49 reads off the palette.
+    /// own pose there. It takes the place of the original's layer blend,
+    /// whose percent and type AH.49 reads off the palette
+    /// (stand-in ledger: `script-clip`).
     pub fn blend_over(&self, clips: &[(&Clip, f64, f64)], over: &[(&Clip, f64)]) -> Vec<Transform> {
         if over.is_empty() {
             return self.blend(clips);

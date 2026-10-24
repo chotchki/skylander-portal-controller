@@ -7,8 +7,8 @@
 //!
 //! A slot left empty on the disc is `None`: 7 of the 67 characters have no
 //! walk and 8 Giants no run, and only 23 a landing. Which of the clips the
-//! character's locomotion uses, and at what speeds, is its scripts' (the
-//! stand-in AG.30 drives).
+//! character's locomotion uses, and at what speeds, is its scripts' (AG.30
+//! picks them meanwhile; stand-in ledger: `locomotion`).
 
 use serde::{Deserialize, Serialize};
 
