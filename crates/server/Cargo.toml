@@ -7,6 +7,10 @@ publish.workspace = true
 [lib]
 name = "skylander_server"
 path = "src/lib.rs"
+# No doctests here, so `cargo test` skips the empty doc-test run (openspec AQ.36);
+# a doc example meant to run drops this, and .githooks/no-doctests.sh fails the
+# push until it does.
+doctest = false
 
 [[bin]]
 name = "skylander-portal-controller"
