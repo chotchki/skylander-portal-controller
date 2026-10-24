@@ -385,7 +385,7 @@ impl Warm {
         let scene = match rig_scene(rig) {
             Ok(scene) => scene,
             Err(e) => {
-                warn!("~the warm has no scene: {e}");
+                warn!("the warm has no scene: {e}");
                 return;
             }
         };
