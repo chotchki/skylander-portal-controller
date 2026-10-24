@@ -42,14 +42,45 @@ pub(crate) fn write_fight(dir: &Path, creature_at: [f32; 3], triggers: [[f32; 3]
 /// The roster builder's bootstrap entry, AH.24's attack (global,
 /// init_setup and the fighter's) and `level` as the level's.
 fn write_parts(dir: &Path, level: &[u8]) {
+    write_parts_with(dir, level, &[]);
+}
+
+/// [`write_parts`] with the walkers' entries (AG.27) between the fighter's
+/// and the level's, and the list that names them, as the extract's script
+/// stage writes them.
+fn write_parts_with(dir: &Path, level: &[u8], walkers: &[(&str, Vec<u8>)]) {
     let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
     let a = attack_builder::attack();
-    let bytes: [&[u8]; 5] = [&d.bootstrap, &a.global, &a.init_setup, &a.fighter, level];
-    for ((rel, _), bytes) in level_scripts::files(LEVEL).iter().zip(bytes) {
+    let mut bytes: Vec<&[u8]> = vec![&d.bootstrap, &a.global, &a.init_setup, &a.fighter];
+    bytes.extend(walkers.iter().map(|(_, b)| b.as_slice()));
+    bytes.push(level);
+    let loads: Vec<String> = walkers.iter().map(|(l, _)| (*l).to_owned()).collect();
+    for ((rel, _), bytes) in level_scripts::files_with(&loads, LEVEL).iter().zip(bytes) {
         let path = dir.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, bytes).unwrap();
     }
+    let list = guac_extract::scripts::WalkerList {
+        listed: loads,
+        left_out: Vec::new(),
+    };
+    std::fs::write(
+        dir.join(guac_extract::scripts::WALKERS_FILE),
+        serde_json::to_vec(&list).unwrap(),
+    )
+    .unwrap();
+}
+
+/// AG.27's beside AH.24's: the same part with the synthetic walker
+/// ([`attack_builder::walker`], stopping as `fault` says) as a character the
+/// extract holds, [`attack_builder::WALKER_LOAD`].
+pub(crate) fn write_walker(dir: &Path, fault: attack_builder::WalkerFault) {
+    let (creature, _) = attack_builder::creature();
+    write_parts_with(
+        dir,
+        &creature,
+        &[(attack_builder::WALKER_LOAD, attack_builder::walker(fault))],
+    );
 }
 
 /// Giants' rows as AH.2 reads them, the table ours: what lays a

@@ -92,7 +92,7 @@ use guacamole::character::{
 };
 use guacamole::level_scene::{START_FACING, hero_scene};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
-use guacamole::walkers::{self, Walker};
+use guacamole::walkers::{self, Kept, Origin, Walk};
 use serde::Serialize;
 use skylander_core::SlotIndex;
 use skylander_rpcs3_control::Placement;
@@ -178,7 +178,13 @@ pub(crate) struct Lineup {
 
 impl Lineup {
     /// `order`'s slots read off `cards` by `shelf`'s roster.
-    fn of(order: &[SlotIndex], cards: &PortalCards, shelf: &Shelf) -> Self {
+    fn of(
+        order: &[SlotIndex],
+        cards: &PortalCards,
+        shelf: &Shelf,
+        source: Option<&ScriptSource>,
+        kept: &[KeptCard],
+    ) -> Self {
         let mut lineup = Self::default();
         for slot in order {
             let Some(placement) = cards.slots[slot.as_usize()].as_ref() else {
@@ -187,10 +193,9 @@ impl Lineup {
             let id = placement.figure_id.as_str();
             match kind(shelf, id) {
                 Kind::Character => {
-                    let walks = shelf
-                        .loads
-                        .get(id)
-                        .is_some_and(|load| walkers::walker(load).is_some());
+                    let walks = shelf.loads.get(id).is_some_and(|load| {
+                        walking(load, source).is_some() && !kept.iter().any(|k| k.slot == *slot)
+                    });
                     lineup.characters.push((*slot, walks));
                 }
                 Kind::MagicItem => lineup.magic += 1,
@@ -310,6 +315,9 @@ impl HeroClips {
 /// read together off the shelf.
 pub(crate) struct HeroModel {
     loaded: Loaded,
+    /// His solid as the disc authors it (AE.22): what a walker on his own
+    /// scripts (AG.27) is built from, at the scale they set.
+    solid: guac_ir::actor::Solid,
     clips: Arc<HeroClips>,
     palette: Option<Arc<Palette>>,
     nodes: Option<Arc<AttachNodes>>,
@@ -340,8 +348,10 @@ fn read_hero_model(
             None
         }
     };
+    let solid = hero.solid;
     Ok(HeroModel {
         loaded,
+        solid,
         clips: Arc::new(HeroClips::of(hero)),
         palette,
         nodes,
@@ -406,8 +416,40 @@ struct Candidate {
     slot: SlotIndex,
     placement: Placement,
     load_file: String,
-    walker: &'static Walker,
+    who: Who,
     model: Model3d,
+}
+
+/// Whose numbers the hero-to-be walks on.
+enum Who {
+    /// Measured (Eruptor's, [`walkers::WALKERS`]).
+    Measured(Walk),
+    /// His own scripts' (AG.27): built once his model is read, off his
+    /// solid.
+    Scripts,
+}
+
+/// A character kept on his card by a join that failed in the level
+/// (AG.27), until his figure leaves the portal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KeptCard {
+    slot: SlotIndex,
+    kept: Kept,
+}
+
+/// Whether a character walks (AG.27): on measured numbers (a table the
+/// build holds), on his own scripts (the level's part holds them and they
+/// ask nothing the TV can't answer), or not (he keeps his card).
+fn walking(load: &str, source: Option<&ScriptSource>) -> Option<Who> {
+    if let Some(w) = walkers::walker(load) {
+        return Some(Who::Measured(Walk::measured(w)));
+    }
+    match source?.walks(load) {
+        Ok(Some(Origin::Scripts)) => Some(Who::Scripts),
+        // A fighter without a measured table, or a character the part
+        // holds no word on, doesn't walk.
+        _ => None,
+    }
 }
 
 /// The hero in the level and what draws him.
@@ -446,6 +488,10 @@ pub(crate) struct Play {
     candidate: Option<Candidate>,
     inside: Option<Inside>,
     alert: Option<Alert>,
+    /// Characters whose scripts didn't run through in the level (AG.27):
+    /// they keep their cards, listed with why, until their figures leave
+    /// the portal.
+    kept: Vec<KeptCard>,
 }
 
 /// Why a hero in the level with no run reads `off` ([`HeroReport::scripts`]):
@@ -707,9 +753,25 @@ pub(crate) struct PlayShots<'w, 's> {
     cameras: Query<'w, 's, (&'static Transform, &'static Projection), With<FollowCamera>>,
     runtime: Option<Res<'w, ScriptRuntime>>,
     earning: Option<Res<'w, crate::progress::Earning>>,
+    source: Option<Res<'w, ScriptSource>>,
 }
 
 impl PlayShots<'_, '_> {
+    /// The characters kept on their cards and why (AG.27): the part's
+    /// (left out of the extract, asking what the TV can't answer) and the
+    /// level's (a join that didn't run through).
+    pub(crate) fn kept(&self) -> Vec<Kept> {
+        let mut out = self
+            .source
+            .as_deref()
+            .map(ScriptSource::kept)
+            .unwrap_or_default();
+        if let Some(play) = self.play.as_deref() {
+            out.extend(play.kept.iter().map(|k| k.kept.clone()));
+        }
+        out
+    }
+
     pub(crate) fn mode(&self) -> Mode {
         match (self.play.as_deref(), self.pads.as_deref()) {
             (Some(play), Some(level_pads)) => play.mode(level_pads),
@@ -806,6 +868,7 @@ impl Plugin for PlayPlugin {
                     choose_hero,
                     load_hero,
                     leave,
+                    keep_cards,
                     judge_portal,
                     enter,
                     pose_hero,
@@ -835,6 +898,7 @@ fn follow_portal(
             PortalChange::Placed { slot, .. } | PortalChange::Cleared { slot } => *slot,
         };
         play.order.retain(|s| *s != slot);
+        play.kept.retain(|k| k.slot != slot);
         if matches!(change, PortalChange::Placed { .. }) {
             play.order.push(slot);
         }
@@ -884,15 +948,24 @@ fn take_off(
 }
 
 /// `slot`'s figure as the hero-to-be, if it walks.
-fn candidate(slot: SlotIndex, cards: &PortalCards, shelf: &Shelf) -> Option<Candidate> {
+fn candidate(
+    slot: SlotIndex,
+    cards: &PortalCards,
+    shelf: &Shelf,
+    source: Option<&ScriptSource>,
+    kept: &[KeptCard],
+) -> Option<Candidate> {
     let placement = cards.slots[slot.as_usize()].as_ref()?;
     let load = shelf.loads.get(placement.figure_id.as_str())?;
-    let walker = walkers::walker(load)?;
+    if kept.iter().any(|k| k.slot == slot) {
+        return None;
+    }
+    let who = walking(load, source)?;
     Some(Candidate {
         slot,
         placement: placement.clone(),
         load_file: load.clone(),
-        walker,
+        who,
         model: Model3d::Shelfless,
     })
 }
@@ -901,21 +974,30 @@ fn candidate(slot: SlotIndex, cards: &PortalCards, shelf: &Shelf) -> Option<Cand
 /// before the level shows, the first figure placed that walks; in it with no
 /// hero, the one character on the portal if it walks (two hold it under the
 /// too-many alert, [`judge`]).
-fn choose_hero(cards: Res<PortalCards>, turntables: Res<Turntables>, mut play: ResMut<Play>) {
+fn choose_hero(
+    cards: Res<PortalCards>,
+    turntables: Res<Turntables>,
+    mut play: ResMut<Play>,
+    source: Option<Res<ScriptSource>>,
+) {
     if play.candidate.is_some() {
         return;
     }
     let Some(shelf) = turntables.shelf() else {
         return;
     };
+    let source = source.as_deref();
     let chosen = match &play.inside {
         None => play
             .order
             .iter()
-            .find_map(|slot| candidate(*slot, &cards, shelf)),
+            .find_map(|slot| candidate(*slot, &cards, shelf, source, &play.kept)),
         Some(inside) if inside.hero.is_none() => {
-            match Lineup::of(&play.order, &cards, shelf).characters.as_slice() {
-                [(slot, true)] => candidate(*slot, &cards, shelf),
+            match Lineup::of(&play.order, &cards, shelf, source, &play.kept)
+                .characters
+                .as_slice()
+            {
+                [(slot, true)] => candidate(*slot, &cards, shelf, source, &play.kept),
                 _ => None,
             }
         }
@@ -1049,6 +1131,39 @@ fn leave(
     commands.queue(hero_scripts::reinstall);
 }
 
+/// A walker whose scripts didn't run through (AG.27: his setup stopped on a
+/// member, his file wouldn't join, his minion didn't activate) keeps his
+/// card: he comes out of the level as a hero taken off the portal does,
+/// listed with why until his figure leaves, and the portal calls for a
+/// Skylander as it does for any other empty hand.
+fn keep_cards(
+    mut play: ResMut<Play>,
+    mut level: ResMut<Level>,
+    mut commands: Commands,
+    bodies: Query<(&HeroBody, Option<&HeroRun>)>,
+    keeps: Query<(Entity, &hero_scripts::KeepsCard, &HeroRun)>,
+) {
+    for (e, keeps, run) in &keeps {
+        let play = &mut *play;
+        let Some(inside) = play.inside.as_mut() else {
+            continue;
+        };
+        if inside.hero.as_ref().map(|h| h.hero) != Some(e) {
+            continue;
+        }
+        warn!(load_file = %run.load_file, reason = %keeps.0, "he keeps his card");
+        play.kept.push(KeptCard {
+            slot: run.slot,
+            kept: Kept {
+                load_file: run.load_file.clone(),
+                reason: keeps.0.clone(),
+            },
+        });
+        take_off(inside, &mut level, &mut commands, &bodies, run.slot);
+        play.candidate = None;
+    }
+}
+
 /// Before the level has started, the TV would enter it now but for the
 /// portal: the hero-to-be's model ready with its keys, no intro playing or
 /// waiting, the start's pass done and the level ready with its solids. The
@@ -1080,11 +1195,12 @@ fn judge_portal(
     current: Option<Res<Current>>,
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
+    source: Option<Res<ScriptSource>>,
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
     let alert = match turntables.shelf().filter(|_| on_portal) {
         Some(shelf) => {
-            let mut lineup = Lineup::of(&play.order, &cards, shelf);
+            let mut lineup = Lineup::of(&play.order, &cards, shelf, source.as_deref(), &play.kept);
             if let Some(c) = play.candidate.as_ref()
                 && matches!(c.model, Model3d::Failed(_))
             {
@@ -1152,14 +1268,21 @@ fn enter(
         Some(_) => return,
     };
     let Some(Candidate {
-        walker,
-        model: Model3d::Ready(_),
+        who,
+        load_file,
+        model: Model3d::Ready(read),
         ..
     }) = play.candidate.as_ref()
     else {
         return;
     };
-    let walker = *walker;
+    // Measured numbers, or his own scripts' (AG.27) over his solid as the
+    // disc authors it.
+    let walker = match who {
+        Who::Measured(w) => w.clone(),
+        Who::Scripts => Walk::scripted(load_file, &read.solid),
+    };
+    let walker = &walker;
     if play.alert.is_some() {
         return;
     }
@@ -1229,7 +1352,13 @@ fn enter(
         nodes,
         scale: walker.scale,
     });
-    let loops = clips.loops(&read.loaded.model);
+    let mut loops = clips.loops(&read.loaded.model);
+    if walker.origin == Origin::Scripts {
+        // His locomotion is the VM's (AH.49): until it picks his clip he
+        // plays his idle, and no gait speed of ours picks one for him.
+        loops.walk = None;
+        loops.run = None;
+    }
     s.commands
         .entity(hero_entity)
         .insert(HeroGaits::new(Locomotion::new(walker.gaits, loops)));
@@ -1239,11 +1368,12 @@ fn enter(
     hero_scripts::ask_join(
         &mut s.commands,
         hero_entity,
-        walker.load_file,
+        walker,
         palette.clone(),
         rig,
         s.source.as_deref(),
         c.slot,
+        Some(drawn.root),
     );
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
@@ -1332,6 +1462,8 @@ fn rest_the_cards(
 /// What [`draw_hero`] made.
 struct DrawnHero {
     model: Arc<Model>,
+    /// The model's root: what his scripts' scale (AG.27) sets.
+    root: Entity,
     joints: Vec<Entity>,
     attachments: SpawnedAttachments,
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
@@ -1343,7 +1475,7 @@ struct DrawnHero {
 fn draw_hero(
     s: &mut EnterSpawner,
     hero: Entity,
-    walker: &Walker,
+    walker: &Walk,
     loaded: &Loaded,
     scene: &Scene,
 ) -> Result<DrawnHero, String> {
@@ -1419,6 +1551,7 @@ fn draw_hero(
     s.commands.entity(body.root).insert(ChildOf(hero));
     Ok(DrawnHero {
         model,
+        root: body.root,
         joints: body.joints,
         attachments,
         scrolling,
@@ -2009,6 +2142,295 @@ mod tests {
         }
         assert_eq!(log(&app), before, "no clip and no clone off");
         assert_eq!(join(&app).as_deref(), Some("off"));
+    }
+
+    /// A walker on the shelf (AG.27): toy 26, the synthetic character the
+    /// script part holds.
+    const WALKER_TOY: u32 = 26;
+    const WALKER: &str = "026_Synthetic";
+
+    /// The walker's made-up app: the attack parts, then the part holding the
+    /// walker stopping as `fault` says, the level, a pad.
+    fn walker_app(
+        dir: &std::path::Path,
+        fault: guac_formats::script::builder::WalkerFault,
+    ) -> (App, Entity) {
+        let (mut app, tx) = play_app_walkers(dir, &[(WALKER_TOY, WALKER)]);
+        write_attack_parts(dir);
+        // His palette, Eruptor's under his name: what the join sets on his
+        // minion's template.
+        let rel = IrFormat::Ron.palette_path("009_Eruptor");
+        let mut palette: Palette =
+            guac_ir::from_ron(&std::fs::read_to_string(dir.join(rel)).unwrap()).unwrap();
+        palette.owner = WALKER.into();
+        std::fs::write(
+            dir.join(IrFormat::Ron.palette_path(WALKER)),
+            guac_ir::to_ron(&palette).unwrap(),
+        )
+        .unwrap();
+        crate::test_support::hero_scripts::write_walker(dir, fault);
+        tx.send(write_level(dir, &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready"
+                && a.world()
+                    .contains_resource::<guacamole::scripts::ScriptRuntime>()
+        });
+        (app, pad)
+    }
+
+    /// The kept cards the TV lists.
+    fn kept(app: &mut App) -> Vec<Kept> {
+        let mut shots = bevy::ecs::system::SystemState::<PlayShots>::new(app.world_mut());
+        let shots = shots.get(app.world()).expect("the walk's params");
+        shots.kept()
+    }
+
+    /// AG.27: a character with his own scripts in the part, no table of
+    /// measured numbers, walks on what his setup wrote: his speed level and
+    /// turn class into his description's movement parameters (ground max
+    /// speed 18.5 ft/s, ground turn rate 720°/s) and his default scale
+    /// (120 %) onto his actor, his solid and his drawn model standing at that
+    /// scale, and the mover (his minion's tick, here) walking him along his
+    /// facing at the speed it wrote, his scripts the only writer of it. His
+    /// minion's script isn't named for his load file: his definition names
+    /// it.
+    #[test]
+    fn a_walker_walks_on_what_his_own_setup_wrote() {
+        use guac_formats::script::builder::{
+            WALKER_MOVEMENT, WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WalkerFault,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::None);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        assert!(kept(&mut app).is_empty());
+        for _ in 0..3 {
+            app.update();
+        }
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+        assert_eq!(
+            (run.origin, run.attacks),
+            (Origin::Scripts, false),
+            "his numbers are his scripts', his attack buttons do nothing"
+        );
+        // What the setup wrote: his movement parameters into his
+        // description, his scale onto his actor.
+        let Join::Joined(minion) = run.join else {
+            panic!("{:?}", run.join);
+        };
+        let movement =
+            guacamole::walkers::Movement::read(&app.world().resource::<ScriptRuntime>().vm, minion)
+                .expect("his movement parameters");
+        assert_eq!(movement.ground_max_speed, WALKER_SPEED);
+        assert_eq!(movement.ground_turn_rate, WALKER_TURN);
+        assert_eq!(
+            guacamole::walkers::Movement::MEMBERS,
+            WALKER_MOVEMENT.map(|(name, _)| name)
+        );
+        let world = app.world().resource::<guacamole::scripts::ScriptWorld>();
+        let actor = world.actor(e.to_bits()).expect("his actor");
+        assert_eq!(actor.scale, [WALKER_SCALE; 3]);
+        // His palette sits on the template his definition defines, which
+        // isn't named for him.
+        let template = app
+            .world()
+            .resource::<ScriptSource>()
+            .walker(WALKER)
+            .and_then(|w| w.template)
+            .expect("his minion's template");
+        assert!(world.palette(template).is_some(), "his palette's lengths");
+        // His solid and his drawn model stand at that scale.
+        let scale = WALKER_SCALE / 100.0;
+        assert_eq!(run.scale, scale);
+        let body = app.world().entity(e).get::<HeroBody>().unwrap();
+        assert_eq!(
+            body.hero.solid(),
+            &run.shape.havok([WALKER_SCALE; 3]).unwrap(),
+            "the solid is built at the scale his scripts set"
+        );
+        let root = run.root.expect("his drawn model's root");
+        assert_eq!(
+            app.world().entity(root).get::<Transform>().unwrap().scale,
+            Vec3::splat(scale)
+        );
+        // The mover walks him along his facing at the speed it wrote: the
+        // scripts' velocity, nothing of the controller's.
+        assert!(
+            app.world()
+                .entity(e)
+                .contains::<crate::hero::ScriptedHero>()
+        );
+        let from = hero(&app).pivot;
+        let frames = 12;
+        for _ in 0..frames {
+            app.update();
+        }
+        let moved = (hero(&app).pivot - from).length();
+        let want = WALKER_SPEED * guac_motion::tuning::FOOT * frames as f32 / 60.0;
+        assert!(
+            (moved - want).abs() < 0.05 * want,
+            "moved {moved} m in {frames} steps, the mover wrote {want}"
+        );
+    }
+
+    /// AG.27: a walker whose setup stops on a member nothing models keeps
+    /// his card, listed with why: he comes out of the level, the controller
+    /// never walks him on a number of ours, and he isn't picked again while
+    /// his figure stands on the portal; the figure leaving clears the list.
+    #[test]
+    fn a_walker_whose_setup_stops_keeps_his_card_listed() {
+        use guac_formats::script::builder::WalkerFault;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InSetup);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his card kept", |a| {
+            !a.world().resource::<Play>().kept.is_empty()
+        });
+        let list = kept(&mut app);
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!(list[0].load_file, WALKER);
+        assert!(
+            list[0].reason.contains("unmodelled member"),
+            "why: {}",
+            list[0].reason
+        );
+        assert!(
+            !list[0].reason.contains("no movement parameters"),
+            "kept by the join's stage, not by a missing read: {}",
+            list[0].reason
+        );
+        assert!(
+            app.world().resource::<Play>().hero().is_none(),
+            "he's out of the level"
+        );
+        // Not picked again while his figure stands there.
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(app.world().resource::<Play>().hero().is_none());
+        assert!(app.world().resource::<Play>().candidate.is_none());
+        // His figure off the portal clears it.
+        clear(&mut app, 0);
+        app.update();
+        assert!(kept(&mut app).is_empty());
+    }
+
+    /// AG.27 with AH.107: a walker whose scripts ask a point against the
+    /// gameplay viewport (the host answers every point "on screen"), or
+    /// whose definition defines no minion, keeps his card from the portal
+    /// on, before the level: never a hero, listed with why, and the portal
+    /// calls for a Skylander as for any hand that can't play.
+    #[test]
+    fn a_walker_asking_the_viewport_keeps_his_card_at_the_portal() {
+        use guac_formats::script::builder::WalkerFault;
+        for (fault, why) in [
+            (WalkerFault::Asks, "viewport"),
+            (WalkerFault::NoMinion, "no minion"),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, _pad) = walker_app(tmp.path(), fault);
+            place(&mut app, 0, WALKER_TOY, "Synthetic");
+            for _ in 0..30 {
+                app.update();
+            }
+            assert!(app.world().resource::<Play>().candidate.is_none());
+            assert_eq!(mode(&app), Mode::Portal);
+            let list = kept(&mut app);
+            assert_eq!(list.len(), 1, "{list:?}");
+            assert_eq!(list[0].load_file, WALKER);
+            assert!(list[0].reason.contains(why), "{}", list[0].reason);
+        }
+    }
+
+    /// AG.27: attacks stay Eruptor's alone. The walker's attack buttons do
+    /// nothing though his scripts run (stand-in ledger: `who-attacks`): no
+    /// action reaches the VM's pad.
+    #[test]
+    fn a_walkers_attack_buttons_do_nothing() {
+        use guac_formats::script::builder::WalkerFault;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::None);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for button in [GamepadButton::South, GamepadButton::West] {
+            test_pad::press(&mut app, pad, button);
+            for _ in 0..5 {
+                app.update();
+            }
+        }
+        let held = app
+            .world()
+            .resource::<crate::hero_scripts::ScriptLog>()
+            .since(0)
+            .iter()
+            .any(|s| s.actions != [false; 4]);
+        assert!(!held, "no attack reached his scripts");
+    }
+
+    /// AG.27: a walker whose script stops in play (after his setup ran
+    /// through) walks on, on AG.16's controller, at what his scripts had
+    /// set: the movement parameters they wrote into his description become
+    /// the controller's numbers (never his actor's engine ones), his scale
+    /// stays theirs, and he's listed nowhere (his card isn't kept).
+    #[test]
+    fn a_walker_whose_script_stops_in_play_walks_on_at_what_it_set() {
+        use guac_formats::script::builder::{WALKER_MOVEMENT, WalkerFault};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InPlay);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        until(&mut app, "his script stopping", |a| {
+            join(a).as_deref() == Some("off")
+        });
+        let e = app.world().resource::<Play>().hero().expect("still in");
+        let reason = match &app.world().entity(e).get::<HeroRun>().unwrap().join {
+            Join::Off(why) => why.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert!(reason.contains("unmodelled member"), "{reason}");
+        assert!(
+            kept(&mut app).is_empty(),
+            "he walks on, his card isn't kept"
+        );
+        assert!(
+            !app.world()
+                .entity(e)
+                .contains::<crate::hero::ScriptedHero>()
+        );
+        let run = app.world().entity(e).get::<HeroRun>().unwrap();
+        let [speed, push, let_go, turn, air_let_go, gravity, terminal] =
+            WALKER_MOVEMENT.map(|(_, v)| v);
+        assert_eq!(
+            *hero(&app).tuning(),
+            guac_motion::tuning::Tuning {
+                max_speed: speed,
+                push,
+                let_go,
+                air_let_go,
+                turn_rate: turn,
+                gravity,
+                terminal,
+                width: run.shape.width,
+            },
+            "what the scripts wrote into his description"
+        );
+        assert_eq!(run.scale, 1.2, "his scale stays his scripts'");
     }
 
     /// AH.24: a character whose attacks don't run (here no script part

@@ -170,6 +170,18 @@ impl Hero {
         &self.solid
     }
 
+    /// His solid rebuilt (his scripts set a new scale, openspec AG.27): the
+    /// pivot stays, the shape grows from it.
+    pub fn set_solid(&mut self, solid: HavokSolid) {
+        self.solid = solid;
+    }
+
+    /// The walk AG.16's controller takes from now on: what a hero whose
+    /// scripts stopped walks on, the numbers they had set (AG.27).
+    pub fn set_tuning(&mut self, tuning: Tuning) {
+        self.tuning = tuning;
+    }
+
     /// The steps one and two frames before the next, for a run that starts
     /// partway into a recording (a replay feeds the recording's own).
     pub fn set_steps(&mut self, before: f32, two_before: f32) {

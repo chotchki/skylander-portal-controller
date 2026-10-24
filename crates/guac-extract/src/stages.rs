@@ -225,6 +225,10 @@ pub struct ScriptStage {
     /// Entries checked and written this run, and the scripts they hold.
     pub entries: usize,
     pub scripts: usize,
+    /// The walkers the scripts part holds (AG.27), and the load files it
+    /// left out this run with why: each keeps his card.
+    pub walkers: usize,
+    pub walkers_left_out: Vec<(String, String)>,
     /// Spawn models read this run, and those refused.
     pub props: usize,
     pub refused_props: Vec<(String, String)>,
@@ -580,18 +584,47 @@ pub fn script_stage(
         });
     };
 
-    let archives = scripts::archives();
-    let files: Vec<String> = archives.iter().map(|a| scripts::script_path(a)).collect();
-    if dir.part_holds(scripts::SCRIPTS, &files)? {
-        count_kept(dir, &files, &mut stage.script_files);
+    // The walkers (AG.27): every modelled character but a fighter, from the
+    // roster the stage before wrote; none with no roster to read.
+    let loads: Vec<String> = match crate::roster::load(dir, ir) {
+        Ok(roster) => scripts::walker_loads(&models::character_loads(&roster)),
+        Err(_) => Vec::new(),
+    };
+    let base = scripts::archives().len();
+    let archives = scripts::archives_with(&loads);
+    // The part is held once it records every one of these walkers as
+    // listed (its file in) or left out (its reason kept): a left-out one
+    // isn't read again each start, a new one is.
+    let prior = scripts::read_walkers(dir.path()).unwrap_or_default();
+    let known = loads
+        .iter()
+        .all(|l| prior.listed.contains(l) || prior.left_out.iter().any(|(o, _)| o == l));
+    let mut held: Vec<String> = scripts::archives_with(&prior.listed)
+        .iter()
+        .map(|a| scripts::script_path(a))
+        .collect();
+    held.push(scripts::WALKERS_FILE.to_owned());
+    if known && dir.part_holds(scripts::SCRIPTS, &held)? {
+        count_kept(dir, &held, &mut stage.script_files);
+        stage.walkers = prior.listed.len();
+        stage.walkers_left_out = prior.left_out;
         stage.parts_kept += 1;
     } else {
-        // Whole or not at all: the entries load together.
+        // Whole or not at all: the entries load together. The base's
+        // failing fails the part; a walker's is left out and listed.
         let mut checked = Vec::with_capacity(archives.len());
+        let mut list = scripts::WalkerList::default();
         let mut failed = None;
-        for archive in &archives {
+        for (i, archive) in archives.iter().enumerate() {
+            let walker = i.checked_sub(base).map(|w| &loads[w]);
             match entry(archive).and_then(|bytes| Ok((scripts::check(&bytes)?, bytes))) {
-                Ok((names, bytes)) => checked.push((names.len(), bytes)),
+                Ok((names, bytes)) => {
+                    list.listed.extend(walker.cloned());
+                    checked.push((archive.clone(), names.len(), bytes));
+                }
+                Err(reason) if walker.is_some() => {
+                    list.left_out.extend(walker.map(|w| (w.clone(), reason)));
+                }
                 Err(reason) => {
                     failed = Some((archive.clone(), reason));
                     break;
@@ -601,12 +634,26 @@ pub fn script_stage(
         match failed {
             Some((archive, reason)) => fail(&mut stage, scripts::SCRIPTS, &archive, reason),
             None => {
-                for ((n, bytes), rel) in checked.iter().zip(&files) {
-                    put(dir, rel, bytes, &mut stage.script_files)?;
+                let mut recorded = Vec::with_capacity(checked.len() + 1);
+                for (archive, n, bytes) in &checked {
+                    let rel = scripts::script_path(archive);
+                    put(dir, &rel, bytes, &mut stage.script_files)?;
+                    recorded.push(rel);
                     stage.entries += 1;
                     stage.scripts += n;
                 }
-                dir.record_part(scripts::SCRIPTS, files.clone())?;
+                let json = serde_json::to_vec_pretty(&list).map_err(|e| {
+                    ExtractError::ScriptsUnreadable {
+                        part: scripts::SCRIPTS.to_owned(),
+                        archive: scripts::WALKERS_FILE.to_owned(),
+                        reason: e.to_string(),
+                    }
+                })?;
+                put(dir, scripts::WALKERS_FILE, &json, &mut stage.script_files)?;
+                recorded.push(scripts::WALKERS_FILE.to_owned());
+                dir.record_part(scripts::SCRIPTS, recorded)?;
+                stage.walkers = list.listed.len();
+                stage.walkers_left_out = list.left_out;
                 stage.parts_read += 1;
             }
         }

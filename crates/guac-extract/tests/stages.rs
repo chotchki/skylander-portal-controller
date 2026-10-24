@@ -61,7 +61,13 @@ const SCRIPT_EVENTS: usize = 3;
 /// scripts and the fighter's Def and hero scripts) and the fighter's
 /// models past his body (two knives, armour, a gun, a spear, a boomerang
 /// and a hat). Their one texture is the character sample's colour map.
-const ENTRIES: usize = 4;
+const BASE_ENTRIES: usize = 4;
+/// AG.27: the roster's other modelled characters, each a walker with an
+/// entry of his own (the model builder's character, no scripts of its own).
+const WALKERS: usize = 10;
+/// What the scripts part records: those and the walkers' list (a file of
+/// it).
+const ENTRIES: usize = BASE_ENTRIES + WALKERS + 1;
 const SCRIPTS: usize = 6;
 const SPAWN_PROPS: usize = 7;
 /// The level's scripts: the spawn's, the chest's and the definition's.
@@ -439,7 +445,15 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     let sc = &done.scripts;
     assert_eq!((sc.parts_read, sc.parts_kept), (2, 0));
     assert!(sc.failed.is_empty(), "{:?}", sc.failed);
-    assert_eq!((sc.entries, sc.scripts), (ENTRIES, SCRIPTS));
+    assert_eq!((sc.entries, sc.scripts), (BASE_ENTRIES + WALKERS, SCRIPTS));
+    assert_eq!((sc.walkers, sc.walkers_left_out.len()), (WALKERS, 1));
+    // The one the dump has no archive for keeps his card, listed with why.
+    assert_eq!(sc.walkers_left_out[0].0, "MinionLoad_016_SpyroDark");
+    assert!(
+        sc.walkers_left_out[0]
+            .1
+            .contains("minionload_016_spyrodark.bld")
+    );
     assert_eq!((sc.props, sc.refused_props.len()), (SPAWN_PROPS, 0));
     assert_eq!(
         (
@@ -1207,6 +1221,71 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
 /// lacks it: its record gone from the manifest, with its files' outputs and
 /// the files themselves (textures too, which another part may share and
 /// so keep). `level` says whether it's chapter 1's part or extract-wide.
+/// AG.27: an extract made before the walkers (its scripts part recorded
+/// with the base's entries alone, no walker's entry and no walkers' list)
+/// isn't current: the start resumes with no version bump, the scripts part
+/// is read again alone (the walkers' entries and the list written, every
+/// other file kept), and the next start is current.
+#[test]
+fn an_extract_made_before_the_walkers_resumes_for_its_scripts_part_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let base: Vec<String> = scripts::archives()
+        .iter()
+        .map(|a| scripts::script_path(a))
+        .collect();
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let files = json["parts"][scripts::SCRIPTS].as_array_mut().unwrap();
+    let gone: Vec<String> = files
+        .iter()
+        .map(|f| f.as_str().unwrap().to_owned())
+        .filter(|f| !base.contains(f))
+        .collect();
+    assert_eq!(gone.len(), WALKERS + 1, "{gone:?}");
+    files.retain(|f| base.iter().any(|b| f == b.as_str()));
+    let outputs = json["outputs"].as_array_mut().unwrap();
+    outputs.retain(|o| !gone.iter().any(|f| o["path"] == f.as_str()));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    for f in &gone {
+        fs::remove_file(dir.join(f)).unwrap();
+    }
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let sc = &done.scripts;
+    assert_eq!(
+        (sc.parts_read, sc.parts_kept),
+        (1, 1),
+        "the scripts part alone"
+    );
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (WALKERS + 1, BASE_ENTRIES),
+        "the walkers' entries and the list; the base's kept"
+    );
+    assert_eq!(
+        done.roster.files.written
+            + done.progression.files.written
+            + done.models.files.written
+            + done.models.palettes.files.written
+            + done.levels.files.written
+            + sc.files.written,
+        WALKERS + 1,
+        "only those: every other part kept"
+    );
+    assert_eq!(sc.walkers, WALKERS);
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
 fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
     let path = dir.join("manifest.json");
     let mut json: serde_json::Value =
@@ -1304,6 +1383,47 @@ fn each_of_the_fights_parts_resumes_alone() {
         (0, ENTRIES)
     );
     assert_eq!(again.dir.manifest().parts[scripts::SCRIPTS].len(), ENTRIES);
+    // AG.27: a second walker added. The list the part was made with drops
+    // one character (as a build whose roster named one fewer would have
+    // written it), so the roster's names a walker the part has no word on:
+    // the part is read again alone, the others' files kept and only his
+    // entry and the list written.
+    let list = scripts::read_walkers(again.dir.path()).unwrap();
+    assert_eq!(list.listed.len(), WALKERS);
+    let added = list.listed.last().unwrap().clone();
+    let added_rel = scripts::script_path(&scripts::character_archive(&added));
+    let mut fewer = list.clone();
+    fewer.listed.pop();
+    // Through the dir, so the list is as recorded: only the added walker
+    // makes the part read again.
+    again
+        .dir
+        .write_output(scripts::WALKERS_FILE, &serde_json::to_vec(&fewer).unwrap())
+        .unwrap();
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let files = json["parts"][scripts::SCRIPTS].as_array_mut().unwrap();
+    files.retain(|f| f != &serde_json::Value::from(added_rel.clone()));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    fs::remove_file(again.dir.path().join(&added_rel)).unwrap();
+    drop(again);
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((sc.parts_read, sc.parts_kept), (1, 1));
+    assert_eq!(sc.walkers, WALKERS);
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (2, ENTRIES - 2),
+        "his entry and the list; every other file kept"
+    );
+    assert!(again.dir.output_done(&added_rel).unwrap());
+    assert_eq!(
+        scripts::read_walkers(again.dir.path())
+            .unwrap()
+            .listed
+            .len(),
+        WALKERS
+    );
     // A part's file gone with its record kept (the review's case): the
     // part isn't in, so it's read again and only that file written.
     let spawn = IrFormat::Ron.spawn_path(scripts::spawn_archives()[0].as_str());
@@ -1515,6 +1635,7 @@ fn the_script_part_reads_back_through_ah13s_readers() {
     let dir = opened.dir.path();
     let m = opened.dir.manifest();
     let mut files = m.parts[scripts::SCRIPTS].clone();
+    files.retain(|f| f.ends_with(".igz"));
     files.extend(m.levels[LEVELS[0]].parts[levels::SCRIPT].clone());
     let mut names = Vec::new();
     for f in &files {

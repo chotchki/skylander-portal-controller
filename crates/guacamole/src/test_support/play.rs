@@ -147,19 +147,35 @@ pub(crate) fn play_app_with(
     dir: &std::path::Path,
     more: impl FnOnce(&mut App),
 ) -> (App, crate::level::LevelSender) {
+    play_app_shelf(dir, &[], more)
+}
+
+/// [`play_app`] with more characters on the shelf, each `(toy, load
+/// file)` with a made-up model and hero side of its own (AG.27).
+pub(crate) fn play_app_walkers(
+    dir: &std::path::Path,
+    walkers: &[(u32, &str)],
+) -> (App, crate::level::LevelSender) {
+    play_app_shelf(dir, walkers, |_| {})
+}
+
+fn play_app_shelf(
+    dir: &std::path::Path,
+    walkers: &[(u32, &str)],
+    more: impl FnOnce(&mut App),
+) -> (App, crate::level::LevelSender) {
     let mut shelf = extract(dir);
-    let ron = guac_ir::to_ron(&model("009_Eruptor")).unwrap();
-    std::fs::write(dir.join(IrFormat::Ron.model_path("009_Eruptor")), ron).unwrap();
-    let hero = IrFormat::Ron.hero_path("009_Eruptor");
-    std::fs::create_dir_all(dir.join(&hero).parent().unwrap()).unwrap();
-    std::fs::write(
-        dir.join(hero),
-        guac_ir::to_ron(&hero_side("009_Eruptor")).unwrap(),
-    )
-    .unwrap();
-    shelf
-        .loads
-        .insert(format!("{ERUPTOR:06x}-0000"), "009_Eruptor".into());
+    for (toy, load) in std::iter::once((ERUPTOR, "009_Eruptor")).chain(walkers.iter().copied()) {
+        let ron = guac_ir::to_ron(&model(load)).unwrap();
+        std::fs::write(dir.join(IrFormat::Ron.model_path(load)), ron).unwrap();
+        let hero = IrFormat::Ron.hero_path(load);
+        std::fs::create_dir_all(dir.join(&hero).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(hero), guac_ir::to_ron(&hero_side(load)).unwrap()).unwrap();
+        shelf.loads.insert(format!("{toy:06x}-0000"), load.into());
+        shelf
+            .kinds
+            .insert(format!("{toy:06x}-0000"), Category::Figure);
+    }
     // On the roster beside the made-up extract's: Eruptor, and a
     // sidekick, which Giants counts as a magic item.
     shelf

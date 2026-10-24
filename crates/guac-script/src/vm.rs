@@ -210,6 +210,8 @@ struct Placement {
     /// `find variable` reaches.
     obj: Option<Obj>,
     started: bool,
+    /// Its first tick, STARTUP's, ran through without stopping.
+    set_up: bool,
     behaviour: Option<u32>,
     shutdown: bool,
     locals: HashMap<Sym, u32>,
@@ -718,6 +720,7 @@ impl Vm {
             script,
             obj: None,
             started: false,
+            set_up: false,
             behaviour: None,
             shutdown: false,
             locals: HashMap::new(),
@@ -1500,7 +1503,19 @@ impl Vm {
                 p.held = true;
             }
         }
-        self.finish(result)
+        let out = self.finish(result);
+        if let Some(p) = self.placements.get_mut(id as usize) {
+            p.set_up |= p.started && p.stopped.is_none() && out.as_ref().is_ok_and(Option::is_none);
+        }
+        out
+    }
+
+    /// Whether a placement's first tick, its STARTUP's, ran through without
+    /// stopping: the character whose setup it is has set himself up
+    /// (openspec AG.27). False for one never ticked, and for one that
+    /// stopped in it.
+    pub fn set_up(&self, id: PlacementId) -> bool {
+        self.placements.get(id as usize).is_some_and(|p| p.set_up)
     }
 
     /// Runs the ops at positions `from..to` of a placement's own script as

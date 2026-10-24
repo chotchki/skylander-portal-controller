@@ -845,7 +845,7 @@ mod tests {
                 }
             }
         }
-        let want: [(TypeId, Frame, &str); 14] = [
+        let want: [(TypeId, Frame, &str); 15] = [
             (
                 mirror::count_pad_steps.system_type_id(),
                 Frame::Pads,
@@ -860,6 +860,11 @@ mod tests {
                 hero_scripts::step_scripts.system_type_id(),
                 Frame::Scripts,
                 "his scripts' step",
+            ),
+            (
+                hero_scripts::apply_scripted_scale.system_type_id(),
+                Frame::Scripts,
+                "his scripts' scale",
             ),
             (
                 guacamole::scripts::step_scripts.system_type_id(),
