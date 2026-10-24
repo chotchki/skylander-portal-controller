@@ -15,7 +15,10 @@
 #      slipped past check+test+fmt and was only caught by CI — after a release
 #      tag had already been cut. Worth the extra ~30 s).
 #   4. cargo test --workspace — typically <60 s on warm cargo cache,
-#      slower on cold.
+#      slower on cold. Run through ram-tmpdir.sh (openspec AQ.35): TMPDIR
+#      on a 2 GiB APFS RAM disk made for the run and detached after, so the
+#      tests' temp-dir flushes don't wait on the SSD (34.5-39.6 s →
+#      16.6-19.8 s). Mac only; elsewhere the command runs as it is.
 # Between 1 and 2, guards that read cargo's metadata and build nothing:
 #   - one-bevy.sh (openspec AQ.30): guacamole's build and its tests resolve
 #     the crates they share with Bevy to the same features, so the tests
@@ -51,7 +54,7 @@ cargo check --workspace
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "cargo test --workspace"
-cargo test --workspace
+step "cargo test --workspace (TMPDIR on a RAM disk: .githooks/ram-tmpdir.sh)"
+.githooks/ram-tmpdir.sh cargo test --workspace
 
 printf "\n\033[1;32m[pre-push] all checks passed.\033[0m\n"

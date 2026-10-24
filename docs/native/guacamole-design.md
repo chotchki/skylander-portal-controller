@@ -455,6 +455,24 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   `guac-script`); the runs take a half to a sixth (`cargo test --workspace` 61 to 32 s, the guacamole
   e2e 596 to 277 s, AH.16's disc tests 526 to 84 s, bit for bit the same numbers). So keep a target dir
   warm rather than starting another.
+- Test runs take `TMPDIR` on a RAM disk (AQ.35):
+  [`.githooks/ram-tmpdir.sh`](../../.githooks/ram-tmpdir.sh) makes a 2 GiB APFS RAM disk, runs the
+  command it's given with `TMPDIR` on it and detaches it after, an interrupted run included.
+  guac-extract's `write_file` flushes every file it saves (`F_FULLFSYNC`, about 4 ms each on the SSD),
+  and every test that extracts into a temp dir paid that; on the disk each flush is still called and
+  answered at once. `.githooks/pre-push` runs `cargo test --workspace` through it, and the guacamole
+  e2e goes the same way
+  (`E2E_APP=guacamole .githooks/ram-tmpdir.sh cargo test -p skylander-e2e-tests --no-fail-fast -- --ignored --test-threads=1 --skip ios_`,
+  [`crates/e2e-tests/README.md`](../../crates/e2e-tests/README.md)). Measured on the Mac, the disk's
+  making (2.1-3.4 s) and detaching (0.3-0.4 s) included, alternated with the SSD under a 1-minute load of
+  3-30: `cargo test --workspace` 34.5-39.6 s → 16.6-19.8 s, [`stages.rs`](../../crates/guac-extract/tests/stages.rs)
+  20.7-22.8 s → 1.0 s (4.0 s at a load of 30), the e2e 277.4 and 280.9 s → 263.3 and 233.0 s; the
+  disk's peak use 20.8 MiB of its 2 GiB. APFS only: an HFS+ disk's
+  whole-second times fail guac-extract's
+  [`identity.rs`](../../crates/guac-extract/tests/identity.rs) every run, so the script refuses one, and a disk
+  it can't make or refuses runs the command on the usual `TMPDIR`. The disc tests don't take it: the ones that
+  write make their throwaway extracts under `GUAC_EXTRACT_DIR`, not `TMPDIR`, and the rest read the dump
+  in memory, so their command stays as it is. Mac only; every command works without it.
 - It reads the dev env file the product reads (the keys are in
   [`.env.dev.example`](../../.env.dev.example)), and only these matter: `GUAC_DUMP_DIRS` (folders in the
   OS's path-list form; set, it overrides the stored folders and the TV skips setup), `GUAC_EXTRACT_DIR`,
