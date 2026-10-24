@@ -30,6 +30,7 @@ use bevy::ui_widgets::{Activate, Button};
 use guac_server::config::WindowMode;
 use guac_server::state::{GameList, LauncherStatus};
 use guacamole::character::{CharacterShadingPlugin, GlowPlugin};
+use serde::Serialize;
 use skylander_core::{Element, SLOT_COUNT};
 use skylander_rpcs3_control::{Placement, PlacementOwner};
 use tracing::{error, info, warn};
@@ -1930,6 +1931,68 @@ fn spawn_empty(cell: &mut ChildSpawnerCommands, pen: &Pen, slot: u8) {
         let number = (slot + 1).to_string();
         frame.spawn(pen.text(&number, Step::Md, Role::Muted));
     });
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CardShot {
+    /// 1-based, as the phone numbers slots.
+    pub slot: u8,
+    /// From `PortalCards`, not drawn.
+    pub figure_id: String,
+    /// Every line drawn on the card outside the pip, top to bottom.
+    pub texts: Vec<String>,
+    /// An image drawn in the portrait frame: the portrait, or the model.
+    pub portrait: bool,
+    /// The card's turntable (AE.13): `model` (its model is on the card),
+    /// `portrait` (no model to show, or one that couldn't be) or `loading`
+    /// (the portrait while the model is read or the extract makes it).
+    pub state: String,
+    /// Why a `portrait` card has no model, as the log has it.
+    pub reason: Option<String>,
+    /// The bezel plate the portrait or the model draws in: x, y, width,
+    /// height in physical pixels.
+    pub plate: Option<[f32; 4]>,
+    pub pip: Option<PipShot>,
+    /// x, y, width, height in physical pixels.
+    pub rect: [f32; 4],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PipShot {
+    pub initial: String,
+    /// The pip's fill as drawn, `#RRGGBB`.
+    pub color: String,
+    /// From `PortalCards`, not drawn.
+    pub profile_id: String,
+}
+
+/// Depth-first text and images under `root`, the pip's subtree apart.
+pub(crate) fn walk(
+    root: Entity,
+    children: &Query<&Children>,
+    texts: &Query<&Text>,
+    images: &Query<(), With<ImageNode>>,
+    pips: &Query<(&Pip, &BackgroundColor)>,
+    out: &mut (Vec<String>, bool, Option<(String, Color)>),
+) {
+    let Ok(kids) = children.get(root) else {
+        return;
+    };
+    for kid in kids.iter() {
+        if let Ok((_, fill)) = pips.get(kid) {
+            let mut inner = (Vec::new(), false, None);
+            walk(kid, children, texts, images, pips, &mut inner);
+            out.2 = Some((inner.0.join(""), fill.0));
+            continue;
+        }
+        if let Ok(text) = texts.get(kid) {
+            out.0.push(text.0.clone());
+        }
+        if images.contains(kid) {
+            out.1 = true;
+        }
+        walk(kid, children, texts, images, pips, out);
+    }
 }
 
 #[cfg(test)]

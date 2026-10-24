@@ -16,6 +16,7 @@ use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crossbeam_channel::{Receiver, TryRecvError};
+use serde::Serialize;
 use tracing::{error, info, warn};
 
 use crate::cards::PortalChanged;
@@ -617,6 +618,24 @@ impl Playback {
             "intro over"
         );
     }
+}
+
+/// The playing intro: the queue's entry, the player's counts, the overlay as drawn.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IntroShot {
+    pub slot: u8,
+    pub figure_id: String,
+    pub movie: String,
+    /// The video's frame count once open; frames presented and passed over.
+    pub frames: Option<usize>,
+    pub shown: usize,
+    pub skipped: usize,
+    /// `waiting`, `starting`, `playing` (a sink) or `none` (wall clock only).
+    pub audio: String,
+    /// The overlay is drawn and covers the whole window.
+    pub full_screen: bool,
+    /// The picture's x, y, width, height in physical pixels, once open.
+    pub video_rect: Option<[f32; 4]>,
 }
 
 #[cfg(test)]

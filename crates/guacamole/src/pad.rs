@@ -1513,7 +1513,8 @@ mod tests {
             use guac_server::config::WindowMode;
 
             use crate::cards::PortalCards;
-            use crate::mirror::{InputShot, Mirror, TvMirror};
+            use crate::input::InputShot;
+            use crate::mirror::{Mirror, TvMirror};
             use crate::test_support::tv::portal_app;
 
             let fake = Fake::default();

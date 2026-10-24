@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::rejection::JsonRejection;
-use bevy::camera::{Projection, RenderTarget};
+use bevy::camera::Projection;
 use bevy::input::InputSystems;
 use bevy::input::gamepad::{
     GamepadButton, GamepadConnection, GamepadConnectionEvent, RawGamepadAxisChangedEvent,
@@ -32,26 +32,25 @@ use bevy::prelude::*;
 use bevy::ui::{ComputedNode, ComputedUiTargetCamera, UiGlobalTransform, UiSystems};
 use serde::{Deserialize, Serialize};
 
-use crate::alert::{AlertScreen, CornerJoin, CornerQr};
+use crate::alert::{AlertScreen, AlertShot, CornerJoin, CornerQr};
 use crate::cards::PortalCards;
-use crate::extraction::{ExtractStatus, Extraction};
+use crate::extraction::{ExtractStatus, Extraction, ExtractionShot};
 use crate::hero::{FollowCamera, HeroActions, HeroBody, HeroGaits, HeroInput};
-use crate::hero_scripts::{HeroRun, ScriptLog, ScriptStep};
-use crate::input::Layer;
-use crate::input::{FocusId, PostedPresses, TestPress};
-use crate::intro::{IntroEntry, IntroEvent, IntroQueue};
-use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroVideo};
-use crate::level::{Level, LevelCamera, LevelReport, draws_over};
-use crate::pad::{FacesPrinted, LevelPads, Pause, labels};
-use crate::pause::{LevelOverlay, PromptGlyph, ShownAt};
+use crate::hero_scripts::{HeroRun, LootShot, ScriptLog, ScriptStep};
+use crate::input::{FocusId, InputShot, PostedPresses, TestPress, input_shot};
+use crate::intro::{IntroEvent, IntroQueue, QueuedShot};
+use crate::intro_player::{self, IntroOverlay, IntroPlayer, IntroShot, IntroVideo};
+use crate::level::{Level, LevelReport, OverlayCameras, draws_over};
+use crate::pad::{FacesPrinted, LevelPads};
+use crate::pause::{Overlays, PromptGlyph, ShownAt};
 use crate::play::{HeroReport, Mode, Play};
 use crate::prepare::{Prepare, PrepareReport};
 use crate::screen::TvScreen;
 use crate::turntable::{CardPlate, CardState, Turntables};
 use crate::tv::{
-    CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing, JoinAddress,
-    JoinQr, Pip, PlayersLine, ScreenRoot, Setup, TvAssets, TvCamera, contains, node_rect,
-    safe_area,
+    CardShot, CardSlot, Current, EmptySlot, ExtractBar, ExtractDetail, ExtractTitle, Framing,
+    JoinAddress, JoinQr, Pip, PipShot, PlayersLine, ScreenRoot, Setup, TvAssets, TvCamera,
+    contains, node_rect, safe_area, walk,
 };
 use crate::warm::{PipelineWatch, Warm, WarmReport};
 use guacamole::frame::{self, Frame};
@@ -116,169 +115,6 @@ pub struct TvSnapshot {
     /// Where each kind of breakable's loot count stands (openspec AH.27),
     /// once the level's loot data is made; none before the scripts run.
     pub loot: Option<LootShot>,
-}
-
-/// The level's loot counts as its scripts hold them (AH.21's running count:
-/// a break drops when its kind's count lands at or under the kind's rate).
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct LootShot {
-    pub common: Option<f32>,
-    pub uncommon: Option<f32>,
-    pub rare: Option<f32>,
-}
-
-/// The portal's alert as drawn.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct AlertShot {
-    /// `wrong_toy`, `too_many_skylanders`, `too_many_items` or
-    /// `place_a_skylander`.
-    pub kind: String,
-    /// Its lines, top to bottom.
-    pub texts: Vec<String>,
-    /// It covers the whole window.
-    pub full_screen: bool,
-    /// Over the level's camera, as an overlay is ([`draws_over`]); false
-    /// with no level camera.
-    pub over_level: bool,
-    /// When it was spawned, on the frame log's clock.
-    pub shown_ms: Option<f64>,
-}
-
-/// The pads as the router reads them, and the level's layer (AG.20).
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct InputShot {
-    /// Who takes the pads: `intro`, `level` or `screen`.
-    pub layer: String,
-    /// Connected, in the order they connected.
-    pub pads: Vec<PadShot>,
-    /// While the level shows and waits: `start` or `controller`.
-    pub pause: Option<String>,
-    /// The waiting level's overlay as drawn.
-    pub overlay: Option<OverlayShot>,
-    /// The walking pad's stick as the hero read it this frame, raw; none
-    /// while no level shows.
-    pub hero_stick: Option<[f32; 2]>,
-    /// The attacks the walking pad holds this frame (AH.24, pad-input's The
-    /// face buttons attack: the first, second, third and a fourth no
-    /// position raises yet); none while no level shows.
-    pub hero_actions: Option<[bool; 4]>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PadShot {
-    pub name: String,
-    pub vendor: Option<u16>,
-    pub product: Option<u16>,
-    /// The resolver's pick: `xbox`, `nintendo` or `position`.
-    pub labels: String,
-    /// The left stick as stored, raw.
-    pub stick: [f32; 2],
-    /// This pad walks the hero.
-    pub walking: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct OverlayShot {
-    /// `paused` or `controller`.
-    pub kind: String,
-    /// Every line drawn on it, top to bottom.
-    pub texts: Vec<String>,
-    /// The drawn prompt: `A`, `B` ... or `position:south`.
-    pub prompt: Option<String>,
-    /// It draws over the level's camera (AG.50): its camera after the
-    /// level's on one target, cleared to no colour and laid over
-    /// ([`crate::level::draws_over`]); false with no level camera.
-    pub over_level: bool,
-    /// When it was spawned, on the frame log's clock (`/api/_test/tv/frames`).
-    pub shown_ms: Option<f64>,
-}
-
-/// A queued intro, from `IntroQueue`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct QueuedShot {
-    /// 1-based.
-    pub slot: u8,
-    pub figure_id: String,
-    pub movie: String,
-}
-
-impl From<&IntroEntry> for QueuedShot {
-    fn from(e: &IntroEntry) -> Self {
-        Self {
-            slot: e.slot.as_u8() + 1,
-            figure_id: e.figure_id.clone(),
-            movie: e.movie.clone(),
-        }
-    }
-}
-
-/// The playing intro: the queue's entry, the player's counts, the overlay as drawn.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct IntroShot {
-    pub slot: u8,
-    pub figure_id: String,
-    pub movie: String,
-    /// The video's frame count once open; frames presented and passed over.
-    pub frames: Option<usize>,
-    pub shown: usize,
-    pub skipped: usize,
-    /// `waiting`, `starting`, `playing` (a sink) or `none` (wall clock only).
-    pub audio: String,
-    /// The overlay is drawn and covers the whole window.
-    pub full_screen: bool,
-    /// The picture's x, y, width, height in physical pixels, once open.
-    pub video_rect: Option<[f32; 4]>,
-}
-
-/// The extraction's state from the resource; the band's lines and bar as drawn.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ExtractionShot {
-    /// `ExtractStatus`'s variant: `Idle`, `Checking`, `Converting`, `Ready`, `Failed`, ...
-    pub state: String,
-    /// A failure's `GUAC-E-*` code.
-    pub code: Option<String>,
-    /// Converting: intros done, of how many.
-    pub converted: Option<[usize; 2]>,
-    /// Ready: toy types with an intro, and whether this start extracted.
-    pub intros: Option<usize>,
-    pub ran: Option<bool>,
-    pub title: Option<String>,
-    pub detail: Option<String>,
-    /// The drawn bar's fill.
-    pub percent: Option<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct CardShot {
-    /// 1-based, as the phone numbers slots.
-    pub slot: u8,
-    /// From `PortalCards`, not drawn.
-    pub figure_id: String,
-    /// Every line drawn on the card outside the pip, top to bottom.
-    pub texts: Vec<String>,
-    /// An image drawn in the portrait frame: the portrait, or the model.
-    pub portrait: bool,
-    /// The card's turntable (AE.13): `model` (its model is on the card),
-    /// `portrait` (no model to show, or one that couldn't be) or `loading`
-    /// (the portrait while the model is read or the extract makes it).
-    pub state: String,
-    /// Why a `portrait` card has no model, as the log has it.
-    pub reason: Option<String>,
-    /// The bezel plate the portrait or the model draws in: x, y, width,
-    /// height in physical pixels.
-    pub plate: Option<[f32; 4]>,
-    pub pip: Option<PipShot>,
-    /// x, y, width, height in physical pixels.
-    pub rect: [f32; 4],
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PipShot {
-    pub initial: String,
-    /// The pip's fill as drawn, `#RRGGBB`.
-    pub color: String,
-    /// From `PortalCards`, not drawn.
-    pub profile_id: String,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1325,48 +1161,6 @@ fn skip_asked(mirror: Res<TvMirror>, queue: Option<ResMut<IntroQueue>>) {
     }
 }
 
-/// Depth-first text and images under `root`, the pip's subtree apart.
-fn walk(
-    root: Entity,
-    children: &Query<&Children>,
-    texts: &Query<&Text>,
-    images: &Query<(), With<ImageNode>>,
-    pips: &Query<(&Pip, &BackgroundColor)>,
-    out: &mut (Vec<String>, bool, Option<(String, Color)>),
-) {
-    let Ok(kids) = children.get(root) else {
-        return;
-    };
-    for kid in kids.iter() {
-        if let Ok((_, fill)) = pips.get(kid) {
-            let mut inner = (Vec::new(), false, None);
-            walk(kid, children, texts, images, pips, &mut inner);
-            out.2 = Some((inner.0.join(""), fill.0));
-            continue;
-        }
-        if let Ok(text) = texts.get(kid) {
-            out.0.push(text.0.clone());
-        }
-        if images.contains(kid) {
-            out.1 = true;
-        }
-        walk(kid, children, texts, images, pips, out);
-    }
-}
-
-/// The overlays as the mirror reads them: each one's root, when it was
-/// spawned and the camera its UI draws through.
-type Overlays<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Entity,
-        &'static LevelOverlay,
-        Option<&'static ShownAt>,
-        Option<&'static ComputedUiTargetCamera>,
-    ),
->;
-
 /// What the portal draws over the screen's tree (AG.29): the screen roots'
 /// visibility, the alert with its lines' root, when it came and its camera,
 /// and the corner join code and its QR.
@@ -1387,88 +1181,6 @@ type PortalDrawn<'w, 's> = (
     Query<'w, 's, &'static ImageNode, With<CornerQr>>,
     Query<'w, 's, (), With<CornerJoin>>,
 );
-
-/// Every camera with its target, and the level's.
-type OverlayCameras<'w, 's> = (
-    Query<'w, 's, (&'static Camera, Option<&'static RenderTarget>)>,
-    Query<'w, 's, Entity, With<LevelCamera>>,
-);
-
-/// The pads in the order they connected, the layer that takes them, and
-/// while the level shows, who walks, why it waits and its overlay as drawn,
-/// over the level's camera or not.
-fn input_shot(
-    intro_playing: bool,
-    (level, gamepads, overlays, glyphs, (cameras, level_cameras), actions): (
-        Option<Res<LevelPads>>,
-        Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
-        Overlays,
-        Query<&PromptGlyph>,
-        OverlayCameras,
-        Option<Res<HeroActions>>,
-    ),
-    (children, texts, images, pips): (
-        &Query<&Children>,
-        &Query<&Text>,
-        &Query<(), With<ImageNode>>,
-        &Query<(&Pip, &BackgroundColor)>,
-    ),
-) -> InputShot {
-    let Some(level) = level else {
-        return InputShot::default();
-    };
-    let seat = level.seat();
-    let pads = level
-        .order()
-        .iter()
-        .filter_map(|e| gamepads.get(*e).ok().map(|g| (*e, g)))
-        .map(|(entity, (pad, name, printed))| {
-            let stick = pad.left_stick();
-            PadShot {
-                name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
-                vendor: pad.vendor_id(),
-                product: pad.product_id(),
-                labels: labels(pad, printed).name().to_owned(),
-                stick: [stick.x, stick.y],
-                walking: seat.and_then(|s| s.walking()) == Some(entity),
-            }
-        })
-        .collect();
-    let overlay = overlays.iter().next().map(|(root, kind, at, target)| {
-        let mut found = (Vec::new(), false, None);
-        walk(root, children, texts, images, pips, &mut found);
-        let ui = target
-            .and_then(ComputedUiTargetCamera::get)
-            .and_then(|c| cameras.get(c).ok());
-        let over_level = ui.is_some_and(|ui| {
-            level_cameras
-                .iter()
-                .filter_map(|c| cameras.get(c).ok())
-                .any(|level| draws_over(ui, level))
-        });
-        OverlayShot {
-            kind: kind.name().to_owned(),
-            texts: found.0,
-            prompt: glyphs.iter().next().map(|g| g.0.name()),
-            over_level,
-            shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
-        }
-    });
-    InputShot {
-        layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
-        pads,
-        pause: seat.and_then(|s| s.pause()).map(|p| {
-            match p {
-                Pause::Start { .. } => "start",
-                Pause::NoPad => "controller",
-            }
-            .to_owned()
-        }),
-        overlay,
-        hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
-        hero_actions: seat.and(actions.map(|a| a.held)),
-    }
-}
 
 fn mirror_tv(
     mirror: Res<TvMirror>,
@@ -1773,11 +1485,15 @@ fn mirror_tv(
 
 #[cfg(test)]
 mod tests {
+    use bevy::camera::RenderTarget;
     use guac_server::config::WindowMode;
     use skylander_core::SlotIndex;
 
     use super::*;
     use crate::driver::PortalChange;
+    use crate::input::PadShot;
+    use crate::level::LevelCamera;
+    use crate::pause::OverlayShot;
     use crate::test_support::tv::{placement, portal_app};
 
     fn snapshot(cards: PortalCards, screen: TvScreen) -> TvSnapshot {

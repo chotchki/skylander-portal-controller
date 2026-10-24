@@ -27,18 +27,20 @@ use bevy::input::gamepad::{
 use bevy::input_focus::{AutoFocus, FocusCause, InputFocus, InputFocusVisible};
 use bevy::math::CompassOctant;
 use bevy::prelude::*;
-use bevy::ui::{InteractionDisabled, Pressed};
+use bevy::ui::{ComputedUiTargetCamera, InteractionDisabled, Pressed};
 // Not the prelude's `Button`: that's bevy_ui's deprecated one.
 use bevy::ui_widgets::{Activate, Button};
+use serde::Serialize;
 use tracing::{debug, info};
 
 use crate::hero::{HeroActions, HeroInput};
 use crate::intro::{IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay};
+use crate::level::{OverlayCameras, draws_over};
 use crate::mirror::TvMirror;
-use crate::pad::{self, HeroPad, LevelPads};
-use crate::pause;
-use crate::tv::Current;
+use crate::pad::{self, FacesPrinted, HeroPad, LevelPads, Pause, labels};
+use crate::pause::{self, OverlayShot, Overlays, PromptGlyph};
+use crate::tv::{Current, Pip, walk};
 
 /// Long enough that a tap is one move; a hold starts repeating after it.
 pub(crate) const REPEAT_DELAY: Duration = Duration::from_millis(400);
@@ -525,6 +527,115 @@ fn act_on_input(
             }
             TvInput::Home | TvInput::Move(_) => {}
         }
+    }
+}
+
+/// The pads as the router reads them, and the level's layer (AG.20).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct InputShot {
+    /// Who takes the pads: `intro`, `level` or `screen`.
+    pub layer: String,
+    /// Connected, in the order they connected.
+    pub pads: Vec<PadShot>,
+    /// While the level shows and waits: `start` or `controller`.
+    pub pause: Option<String>,
+    /// The waiting level's overlay as drawn.
+    pub overlay: Option<OverlayShot>,
+    /// The walking pad's stick as the hero read it this frame, raw; none
+    /// while no level shows.
+    pub hero_stick: Option<[f32; 2]>,
+    /// The attacks the walking pad holds this frame (AH.24, pad-input's The
+    /// face buttons attack: the first, second, third and a fourth no
+    /// position raises yet); none while no level shows.
+    pub hero_actions: Option<[bool; 4]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PadShot {
+    pub name: String,
+    pub vendor: Option<u16>,
+    pub product: Option<u16>,
+    /// The resolver's pick: `xbox`, `nintendo` or `position`.
+    pub labels: String,
+    /// The left stick as stored, raw.
+    pub stick: [f32; 2],
+    /// This pad walks the hero.
+    pub walking: bool,
+}
+
+/// The pads in the order they connected, the layer that takes them, and
+/// while the level shows, who walks, why it waits and its overlay as drawn,
+/// over the level's camera or not.
+pub(crate) fn input_shot(
+    intro_playing: bool,
+    (level, gamepads, overlays, glyphs, (cameras, level_cameras), actions): (
+        Option<Res<LevelPads>>,
+        Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
+        Overlays,
+        Query<&PromptGlyph>,
+        OverlayCameras,
+        Option<Res<HeroActions>>,
+    ),
+    (children, texts, images, pips): (
+        &Query<&Children>,
+        &Query<&Text>,
+        &Query<(), With<ImageNode>>,
+        &Query<(&Pip, &BackgroundColor)>,
+    ),
+) -> InputShot {
+    let Some(level) = level else {
+        return InputShot::default();
+    };
+    let seat = level.seat();
+    let pads = level
+        .order()
+        .iter()
+        .filter_map(|e| gamepads.get(*e).ok().map(|g| (*e, g)))
+        .map(|(entity, (pad, name, printed))| {
+            let stick = pad.left_stick();
+            PadShot {
+                name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
+                vendor: pad.vendor_id(),
+                product: pad.product_id(),
+                labels: labels(pad, printed).name().to_owned(),
+                stick: [stick.x, stick.y],
+                walking: seat.and_then(|s| s.walking()) == Some(entity),
+            }
+        })
+        .collect();
+    let overlay = overlays.iter().next().map(|(root, kind, at, target)| {
+        let mut found = (Vec::new(), false, None);
+        walk(root, children, texts, images, pips, &mut found);
+        let ui = target
+            .and_then(ComputedUiTargetCamera::get)
+            .and_then(|c| cameras.get(c).ok());
+        let over_level = ui.is_some_and(|ui| {
+            level_cameras
+                .iter()
+                .filter_map(|c| cameras.get(c).ok())
+                .any(|level| draws_over(ui, level))
+        });
+        OverlayShot {
+            kind: kind.name().to_owned(),
+            texts: found.0,
+            prompt: glyphs.iter().next().map(|g| g.0.name()),
+            over_level,
+            shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
+        }
+    });
+    InputShot {
+        layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
+        pads,
+        pause: seat.and_then(|s| s.pause()).map(|p| {
+            match p {
+                Pause::Start { .. } => "start",
+                Pause::NoPad => "controller",
+            }
+            .to_owned()
+        }),
+        overlay,
+        hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
+        hero_actions: seat.and(actions.map(|a| a.held)),
     }
 }
 

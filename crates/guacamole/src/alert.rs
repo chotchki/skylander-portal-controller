@@ -16,6 +16,7 @@
 //!   the corner over them, so another kid can still join.
 
 use bevy::prelude::*;
+use serde::Serialize;
 
 use crate::pause::ShownAt;
 use crate::play::{Alert, Play, PlaySystems};
@@ -221,6 +222,23 @@ fn spawn_corner(commands: &mut Commands, pen: &Pen, qr: Option<Handle<Image>>) -
             }
         })
         .id()
+}
+
+/// The portal's alert as drawn.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AlertShot {
+    /// `wrong_toy`, `too_many_skylanders`, `too_many_items` or
+    /// `place_a_skylander`.
+    pub kind: String,
+    /// Its lines, top to bottom.
+    pub texts: Vec<String>,
+    /// It covers the whole window.
+    pub full_screen: bool,
+    /// Over the level's camera, as an overlay is ([`draws_over`]); false
+    /// with no level camera.
+    pub over_level: bool,
+    /// When it was spawned, on the frame log's clock.
+    pub shown_ms: Option<f64>,
 }
 
 #[cfg(test)]

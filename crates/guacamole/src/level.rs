@@ -1970,6 +1970,12 @@ fn scroll_level(
     }
 }
 
+/// Every camera with its target, and the level's.
+pub(crate) type OverlayCameras<'w, 's> = (
+    Query<'w, 's, (&'static Camera, Option<&'static RenderTarget>)>,
+    Query<'w, 's, Entity, With<LevelCamera>>,
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

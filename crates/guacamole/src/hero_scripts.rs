@@ -1240,6 +1240,15 @@ pub(crate) fn playing_on(world: &ScriptWorld, hero: Handle) -> Vec<(u32, f32, f3
         .collect()
 }
 
+/// The level's loot counts as its scripts hold them (AH.21's running count:
+/// a break drops when its kind's count lands at or under the kind's rate).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct LootShot {
+    pub common: Option<f32>,
+    pub uncommon: Option<f32>,
+    pub rare: Option<f32>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

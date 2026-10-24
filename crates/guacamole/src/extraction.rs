@@ -24,6 +24,7 @@ use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
 use guac_ir::{CharacterTable, Roster};
 use guac_server::figures::{FigureList, FigureSet, RosterState};
 use guac_server::progress::{Progression, ProgressionSlot};
+use serde::Serialize;
 use tracing::{error, info, warn};
 
 use crate::level::{LevelSender, LevelSource};
@@ -976,6 +977,24 @@ fn drain_extraction(
         let running_for = extraction.started.map_or(Duration::MAX, |t| t.elapsed());
         drawn.set_if_neq(ExtractBand(band_after(&extraction.status, running_for)));
     }
+}
+
+/// The extraction's state from the resource; the band's lines and bar as drawn.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ExtractionShot {
+    /// `ExtractStatus`'s variant: `Idle`, `Checking`, `Converting`, `Ready`, `Failed`, ...
+    pub state: String,
+    /// A failure's `GUAC-E-*` code.
+    pub code: Option<String>,
+    /// Converting: intros done, of how many.
+    pub converted: Option<[usize; 2]>,
+    /// Ready: toy types with an intro, and whether this start extracted.
+    pub intros: Option<usize>,
+    pub ran: Option<bool>,
+    pub title: Option<String>,
+    pub detail: Option<String>,
+    /// The drawn bar's fill.
+    pub percent: Option<u8>,
 }
 
 #[cfg(test)]
