@@ -17,6 +17,12 @@
 //!   `spawns/<archive>.<ron|postcard>`: the lava ball, the level-up's rings,
 //!   the death stars. A level's own spawn templates draw from its props.
 //!
+//! - The walkers' own entries (openspec AG.27): every modelled character's
+//!   archive beside [`FIGHTERS`]', so each runs on his own scripts. A
+//!   walker's entry that is missing or won't read is left out of the part,
+//!   listed with why in [`WALKERS_FILE`] ([`WalkerList`]), and that
+//!   character keeps his card; the others and the fighters' land.
+//!
 //! Each part lands whole or not at all: its files are loaded together. One
 //! that doesn't read is the stage's failure for that part alone, and the
 //! next start tries it again.
@@ -46,8 +52,15 @@ pub const SCRIPT_DIR: &str = "scripts";
 pub const SPAWN_DIR: &str = "spawns";
 
 /// The characters whose attack scripts run, by load file (design decision
-/// 15; Open question 3, answered 2026-10-19: Eruptor alone).
+/// 15; Open question 3, answered 2026-10-19: Eruptor alone). They key the
+/// spawns part; the walkers ([`walker_loads`]) are a longer list that runs
+/// movement, never attacks (AH.29).
 pub const FIGHTERS: [&str; 1] = ["009_Eruptor"];
+
+/// Which walkers the scripts part holds (openspec AG.27), as a file of the
+/// part (`scripts/walkers.json`, [`WalkerList`]): its being recorded is how
+/// a start tells a part made before the walkers from a current one.
+pub const WALKERS_FILE: &str = "scripts/walkers.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Whitelisted {
@@ -207,14 +220,56 @@ pub fn character_archive(load_file: &str) -> String {
     )
 }
 
+/// The walkers' own load files out of `loads` (the roster's modelled
+/// characters, [`crate::models::character_loads`]): each but a fighter,
+/// whose entry is the fighters' already, in the roster's order.
+pub fn walker_loads(loads: &[&str]) -> Vec<String> {
+    loads
+        .iter()
+        .filter(|l| !FIGHTERS.iter().any(|f| f.eq_ignore_ascii_case(l)))
+        .map(|l| (*l).to_owned())
+        .collect()
+}
+
+/// Which walkers the scripts part holds and which it left out and why: what
+/// [`WALKERS_FILE`] keeps, so the TV links the walkers' entries it was made
+/// with without the roster.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WalkerList {
+    /// Load files whose entries are in the part, in link order.
+    pub listed: Vec<String>,
+    /// Load files whose entries aren't, with the reason: each keeps his card.
+    pub left_out: Vec<(String, String)>,
+}
+
+/// The walkers a start's scripts part holds, read from the extract at `dir`;
+/// none for an extract made before them (no file), the error for one that
+/// won't read.
+pub fn read_walkers(dir: &Path) -> Result<WalkerList, String> {
+    let path = dir.join(WALKERS_FILE);
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("{WALKERS_FILE}: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(WalkerList::default()),
+        Err(e) => Err(format!("{WALKERS_FILE}: {e}")),
+    }
+}
+
 /// The archives the scripts part copies, in load order: `bootstrap.bld`
 /// (its roots take the first export ids), `global.bld`, `init_setup.bld`,
-/// then each fighter's.
+/// then each fighter's. The walkers' follow ([`archives_with`]).
 pub fn archives() -> Vec<String> {
     [BOOTSTRAP, GLOBAL, INIT_SETUP]
         .into_iter()
         .map(str::to_owned)
         .chain(FIGHTERS.iter().map(|f| character_archive(f)))
+        .collect()
+}
+
+/// [`archives`] and then each of `walkers`' (load files).
+pub fn archives_with(walkers: &[String]) -> Vec<String> {
+    archives()
+        .into_iter()
+        .chain(walkers.iter().map(|w| character_archive(w)))
         .collect()
 }
 
@@ -239,9 +294,14 @@ pub fn script_path(archive: &str) -> String {
     format!("{SCRIPT_DIR}/{}.igz", stem(archive))
 }
 
-/// Whether `m` holds both parts: a start is current only then.
+/// Whether `m` holds both parts, the scripts one with its walkers' list
+/// ([`WALKERS_FILE`]): a start is current only then, so an extract made
+/// before the walkers resumes for the scripts part alone.
 pub fn complete(m: &Manifest) -> bool {
-    [SCRIPTS, SPAWNS].iter().all(|p| m.parts.contains_key(*p))
+    m.parts
+        .get(SCRIPTS)
+        .is_some_and(|files| files.iter().any(|f| f == WALKERS_FILE))
+        && m.parts.contains_key(SPAWNS)
 }
 
 /// The `level.bld` `archive` keeps, decompressed, under `usrdir`. Why it

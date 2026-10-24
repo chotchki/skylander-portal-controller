@@ -1559,3 +1559,186 @@ fn attack_fighter() -> Vec<u8> {
     );
     b.build()
 }
+
+/// The character [`walker`] writes: its load file, which names its minion's
+/// script (`026_Synthetic.ai`) and the placement the join finds him by.
+pub const WALKER_LOAD: &str = "026_Synthetic";
+/// What [`walker`]'s minion sets at its STARTUP, our numbers: the speed its
+/// "speed level" stands for (ft/s), the turn rate its "turn class" stands
+/// for (°/s) and its default scale (percent).
+pub const WALKER_SPEED: f32 = 18.5;
+pub const WALKER_TURN: f32 = 720.0;
+pub const WALKER_SCALE: f32 = 120.0;
+/// The tick [`WalkerFault::InPlay`]'s minion reaches the member nothing
+/// models.
+pub const WALKER_FAULT_TICK: i32 = 5;
+
+/// Where [`walker`]'s minion stops, if it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkerFault {
+    /// Never.
+    None,
+    /// At its STARTUP, before it sets anything, on a member nothing models:
+    /// its setup doesn't run through.
+    InSetup,
+    /// On a member nothing models, [`WALKER_FAULT_TICK`] ticks in, with its
+    /// setup done and its mover running.
+    InPlay,
+    /// Never, but its mover asks whether a point of its own is on screen
+    /// against the gameplay camera (`positionmeasurement.collision` with
+    /// `viewportinfo.default`, AH.107's asks): the host answers every point
+    /// "on screen", so the TV doesn't run it.
+    Asks,
+}
+
+/// AG.27's synthetic walker (openspec AG.27; design decisions 1, 2 and 8): a
+/// character's `level.bld` written with this writer, our numbers throughout,
+/// with a definition that defines its minion as [`attack`]'s fighter's does
+/// and a minion that attacks with nothing:
+///
+/// - at its STARTUP the minion sets its health and then its movement
+///   parameters through the members a tuning script reaches
+///   (`actorinfo.movement.actorphysics`): [`WALKER_SPEED`] as its ground max
+///   speed, [`WALKER_TURN`] as its ground turn rate, and its default scale
+///   [`WALKER_SCALE`] (`scalemeasurement.uniform`);
+/// - each tick it plays the mover update's part for itself: its velocity
+///   along its facing, as long as its ground max speed.
+///
+/// `fault` makes it stop on a member nothing models, at its setup or in
+/// play. The scripts' names: the minion's is named for [`WALKER_LOAD`], its
+/// definition's runs from the start.
+pub fn walker(fault: WalkerFault) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let minion_script = {
+        let mut w = Writer::new(&mut b);
+        let creature_ty = w.op(Class::DefineStructure, "Creature Info");
+        let description_ty = w.op(Class::DefineStructure, "Description");
+        let joined_ty = w.op(Class::DefineStructure, "Player Joined Data");
+        let mine_ty = w.op(Class::DefineStructure, "Minion Description");
+        let hp = w.variable("hp", "ValueInfo", Some("IntMeasurement"));
+        let hp_max = w.variable("hp max", "ValueInfo", Some("IntMeasurement"));
+        let creature = structure_var(&mut w, "creature info", creature_ty);
+        let joined = structure_var(&mut w, "player joined data", joined_ty);
+        let description = structure_var(&mut w, "description", description_ty);
+        let mine = structure_var(&mut w, "my Minion Description", mine_ty);
+        let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+        let script = frame_with(
+            &mut w,
+            "C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/026_Synthetic.ai",
+            |w| {
+                structure(w, creature_ty, &[hp]);
+                structure(w, description_ty, &[creature]);
+                structure(w, joined_ty, &[hp_max]);
+                structure(w, mine_ty, &[joined]);
+            },
+            |w| {
+                if fault == WalkerFault::InSetup {
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
+                let health = w.int(ATTACK_HEALTH);
+                w.set(
+                    &[El::Local(description), El::Local(creature), El::Local(hp)],
+                    health,
+                );
+                let full = w.int(ATTACK_HEALTH_MAX);
+                w.set(
+                    &[El::Local(mine), El::Local(joined), El::Local(hp_max)],
+                    full,
+                );
+                let me = El::Member("optoplevelbehavior", "my");
+                let physics = [
+                    me,
+                    El::Member("actorinfo", "movement"),
+                    El::Member("actorphysics", "ground max speed"),
+                ];
+                let speed = w.float(WALKER_SPEED);
+                w.set(&physics, speed);
+                let turn = w.float(WALKER_TURN);
+                w.set(
+                    &[
+                        me,
+                        El::Member("actorinfo", "movement"),
+                        El::Member("actorphysics", "ground turn rate"),
+                    ],
+                    turn,
+                );
+                let scale = w.float(WALKER_SCALE);
+                w.set(
+                    &[
+                        me,
+                        El::Member("placement", "scale"),
+                        El::Member("scalemeasurement", "uniform"),
+                    ],
+                    scale,
+                );
+            },
+            |_| {},
+            |w| {
+                let p = w.behaviour("default");
+                if fault == WalkerFault::Asks {
+                    let me = El::Member("optoplevelbehavior", "my");
+                    let lhs = w.value(&[me, El::Member("positionmeasurement", "collision")]);
+                    let at = w.reference(&[El::Member("viewportinfo", "default")], None);
+                    w.refer(lhs, 0x18, at);
+                    let zero = w.int(0);
+                    let (c, o) = w.open(Class::CheckValue, "if");
+                    w.refer(o, 0x1C, lhs);
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, zero);
+                    w.end_block(c);
+                }
+                // The mover's part: his velocity along his facing, as long
+                // as the ground max speed his setup wrote.
+                let me = El::Member("optoplevelbehavior", "my");
+                let target = w.group(&[me, El::Member("actorinfo", "velocity")], None);
+                let len = w.rhs(
+                    "FloatMeasurement",
+                    &[
+                        me,
+                        El::Member("actorinfo", "movement"),
+                        El::Member("actorphysics", "ground max speed"),
+                    ],
+                );
+                let (head, pitch) = (w.float(0.0), w.float(0.0));
+                let o = w.op(Class::Displace, "displace");
+                w.refer(o, 0x1C, target);
+                w.word(o, 0x20, 1);
+                w.refer(o, 0x24, len);
+                w.refer(o, 0x28, head);
+                w.refer(o, 0x2C, pitch);
+                w.push(o);
+                if fault == WalkerFault::InPlay {
+                    w.inc(&[El::Local(ticks)]);
+                    let at = w.int(WALKER_FAULT_TICK);
+                    let reached = w.check(&[El::Local(ticks)], 1, at);
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                    w.end_block(reached);
+                }
+                w.end_block(p);
+            },
+        );
+        w.declare(script, &[description, mine, ticks]);
+        script
+    };
+    let minion = actor_with(&mut b, WALKER_LOAD, Some(minion_script), 5);
+    let def_script = {
+        let mut w = Writer::new(&mut b);
+        let stub = w.op(Class::DefineMacro, "Portal - Define Minion");
+        w.script(
+            "C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/026_Def_Synthetic.ai",
+            |w| {
+                let rhs = w.reference(&[El::Local(minion)], None);
+                call_stub(w, stub, &[("minion", "ScriptReference", rhs)]);
+            },
+            |_| {},
+            |_| {},
+        )
+    };
+    let definition = actor_with(&mut b, "026_Synthetic_Def", Some(def_script), 4);
+    let blocks = b.section(0x10);
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(definition), Some(minion)]);
+    b.build()
+}

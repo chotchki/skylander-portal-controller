@@ -1979,6 +1979,13 @@ fn write_scripts(dir: &mut guac_extract::IdentityDir, fighting: bool) -> Result<
         dir.write_output(&rel, bytes)?;
         files.push(rel);
     }
+    // The walkers' list (AG.27): none here, the fixture's roster models
+    // only the fighter.
+    dir.write_output(
+        scripts::WALKERS_FILE,
+        &serde_json::to_vec(&scripts::WalkerList::default())?,
+    )?;
+    files.push(scripts::WALKERS_FILE.to_owned());
     dir.record_part(scripts::SCRIPTS, files)?;
     let ir = IrFormat::Ron;
     let identity = dir.manifest().identity.clone();

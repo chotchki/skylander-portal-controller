@@ -279,6 +279,7 @@ fn current(m: &Manifest) -> bool {
             .is_none_or(|t| t.target == crate::transcode::TARGET.tag())
         && crate::levels::complete(m)
         && crate::PARTS.iter().all(|p| m.parts.contains_key(*p))
+        && crate::scripts::complete(m)
 }
 
 fn read_manifest(dir: &Path, id: &DumpIdentity) -> Result<Manifest, Stale> {

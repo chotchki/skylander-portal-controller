@@ -97,6 +97,10 @@ pub struct TvSnapshot {
     /// The hero, once a figure that walks is placed: who, his model's way
     /// to the level and, in it, where he stands and faces.
     pub hero: Option<HeroReport>,
+    /// The characters kept on their cards (AG.27), each with why: the
+    /// extract left his scripts out, they ask what the TV can't answer, or
+    /// they didn't run through in the level.
+    pub kept: Vec<guacamole::walkers::Kept>,
     /// The portal's alert as drawn (AG.29, AG.63, AG.73).
     pub alert: Option<AlertShot>,
     /// The small join code drawn in the corner over the level or an alert
@@ -1198,6 +1202,7 @@ fn mirror_tv(
         input: input_shot,
         mode: play.mode().name().to_owned(),
         hero: play.hero(),
+        kept: play.kept(),
         alert: alert.shot(window),
         join_corner: alert.corner(),
         loot: loot.shot(),

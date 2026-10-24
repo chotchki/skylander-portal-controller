@@ -1419,6 +1419,8 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 placements,
                 order,
                 fighters,
+                walkers,
+                left_out,
                 layout,
                 palettes,
                 ..
@@ -1442,6 +1444,8 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         files: placements,
                         order,
                         fighters,
+                        walkers,
+                        left_out,
                         layout,
                         palettes,
                     },

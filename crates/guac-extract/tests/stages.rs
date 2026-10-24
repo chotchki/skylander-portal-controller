@@ -61,7 +61,13 @@ const SCRIPT_EVENTS: usize = 3;
 /// scripts and the fighter's Def and hero scripts) and the fighter's
 /// models past his body (two knives, armour, a gun, a spear, a boomerang
 /// and a hat). Their one texture is the character sample's colour map.
-const ENTRIES: usize = 4;
+const BASE_ENTRIES: usize = 4;
+/// AG.27: the roster's other modelled characters, each a walker with an
+/// entry of his own (the model builder's character, no scripts of its own).
+const WALKERS: usize = 10;
+/// What the scripts part records: those and the walkers' list (a file of
+/// it).
+const ENTRIES: usize = BASE_ENTRIES + WALKERS + 1;
 const SCRIPTS: usize = 6;
 const SPAWN_PROPS: usize = 7;
 /// The level's scripts: the spawn's, the chest's and the definition's.
@@ -439,7 +445,15 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     let sc = &done.scripts;
     assert_eq!((sc.parts_read, sc.parts_kept), (2, 0));
     assert!(sc.failed.is_empty(), "{:?}", sc.failed);
-    assert_eq!((sc.entries, sc.scripts), (ENTRIES, SCRIPTS));
+    assert_eq!((sc.entries, sc.scripts), (BASE_ENTRIES + WALKERS, SCRIPTS));
+    assert_eq!((sc.walkers, sc.walkers_left_out.len()), (WALKERS, 1));
+    // The one the dump has no archive for keeps his card, listed with why.
+    assert_eq!(sc.walkers_left_out[0].0, "MinionLoad_016_SpyroDark");
+    assert!(
+        sc.walkers_left_out[0]
+            .1
+            .contains("minionload_016_spyrodark.bld")
+    );
     assert_eq!((sc.props, sc.refused_props.len()), (SPAWN_PROPS, 0));
     assert_eq!(
         (
@@ -1304,6 +1318,46 @@ fn each_of_the_fights_parts_resumes_alone() {
         (0, ENTRIES)
     );
     assert_eq!(again.dir.manifest().parts[scripts::SCRIPTS].len(), ENTRIES);
+    // AG.27: a second walker added. The list the part was made with drops
+    // one character (as a build whose roster named one fewer would have
+    // written it), so the roster's names a walker the part has no word on:
+    // the part is read again alone, the others' files kept and only his
+    // entry and the list written.
+    let list = scripts::read_walkers(again.dir.path()).unwrap();
+    assert_eq!(list.listed.len(), WALKERS);
+    let added = list.listed.last().unwrap().clone();
+    let added_rel = scripts::script_path(&scripts::character_archive(&added));
+    let mut fewer = list.clone();
+    fewer.listed.pop();
+    fs::write(
+        again.dir.path().join(scripts::WALKERS_FILE),
+        serde_json::to_vec(&fewer).unwrap(),
+    )
+    .unwrap();
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let files = json["parts"][scripts::SCRIPTS].as_array_mut().unwrap();
+    files.retain(|f| f != &serde_json::Value::from(added_rel.clone()));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    fs::remove_file(again.dir.path().join(&added_rel)).unwrap();
+    drop(again);
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((sc.parts_read, sc.parts_kept), (1, 1));
+    assert_eq!(sc.walkers, WALKERS);
+    assert_eq!(
+        (sc.script_files.written, sc.script_files.kept),
+        (2, ENTRIES - 2),
+        "his entry and the list; every other file kept"
+    );
+    assert!(again.dir.output_done(&added_rel).unwrap());
+    assert_eq!(
+        scripts::read_walkers(again.dir.path())
+            .unwrap()
+            .listed
+            .len(),
+        WALKERS
+    );
     // A part's file gone with its record kept (the review's case): the
     // part isn't in, so it's read again and only that file written.
     let spawn = IrFormat::Ron.spawn_path(scripts::spawn_archives()[0].as_str());
@@ -1515,6 +1569,7 @@ fn the_script_part_reads_back_through_ah13s_readers() {
     let dir = opened.dir.path();
     let m = opened.dir.manifest();
     let mut files = m.parts[scripts::SCRIPTS].clone();
+    files.retain(|f| f.ends_with(".igz"));
     files.extend(m.levels[LEVELS[0]].parts[levels::SCRIPT].clone());
     let mut names = Vec::new();
     for f in &files {

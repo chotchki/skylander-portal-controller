@@ -628,6 +628,11 @@ fn record_levels(dir: &mut guac_extract::IdentityDir) {
         }
     }
     for part in guac_extract::PARTS {
-        dir.record_part(part, Vec::new()).unwrap();
+        // The scripts part carries its walkers' list (AG.27).
+        let files = match part {
+            guac_extract::scripts::SCRIPTS => vec![guac_extract::scripts::WALKERS_FILE.to_owned()],
+            _ => Vec::new(),
+        };
+        dir.record_part(part, files).unwrap();
     }
 }

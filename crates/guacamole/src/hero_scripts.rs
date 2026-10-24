@@ -77,15 +77,16 @@ use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
 use guac_motion::hero::Hero;
 use guac_motion::seam::{BodyId, PhysicsSeam};
-use guac_motion::solid::euler;
+use guac_motion::solid::{SolidInfo, euler};
 use guac_script::{Halt, Handle, Mode, Obj, PlacementId, Program, Value};
 use guacamole::figure::{self, Layout};
 use guacamole::frame::Frame;
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
-    self, Files, KeptHealth, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost,
-    smash_config,
+    self, Files, KeptHealth, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WalkerScripts,
+    WorldHost, smash_config,
 };
+use guacamole::walkers::{self, Fallback, Kept, Origin, Setup, Stage};
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -105,6 +106,12 @@ pub(crate) struct ScriptSource {
     order: Vec<u16>,
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,
+    /// Each walker's scripts (AG.27): the other modelled characters whose
+    /// own scripts the part holds.
+    walkers: Vec<WalkerScripts>,
+    /// The characters the part was made without, with why: each keeps his
+    /// card.
+    left_out: Vec<(String, String)>,
     /// Where a figure's values sit in its tag's words, from the extract's
     /// progression tables (AH.23); none when the extract has no rows to lay
     /// them out by, and then no figure reaches his scripts.
@@ -127,6 +134,56 @@ impl ScriptSource {
             .find(|(f, _)| f == load_file)
             .map(|(_, u)| *u)
     }
+
+    /// The walker `load_file` is, if the part holds his scripts (the file
+    /// names the load file in the case the disc writes it).
+    pub(crate) fn walker(&self, load_file: &str) -> Option<&WalkerScripts> {
+        self.walkers
+            .iter()
+            .find(|w| w.load_file.eq_ignore_ascii_case(load_file))
+    }
+
+    /// Whether `load_file` walks on his own scripts (AG.27): why not when
+    /// the part holds none of his or his scripts ask what the TV can't
+    /// answer yet. A fighter (Eruptor) always does, and a character the part
+    /// holds no word on isn't a walker of this part's (`Ok(None)`: he walks
+    /// only on measured numbers, if any are).
+    pub(crate) fn walks(&self, load_file: &str) -> Result<Option<Origin>, String> {
+        if self.fighter(load_file).is_some() {
+            return Ok(Some(Origin::Measured));
+        }
+        if let Some(w) = self.walker(load_file) {
+            return match w.asks {
+                0 => Ok(Some(Origin::Scripts)),
+                n => Err(format!(
+                    "his scripts ask {n} points against the gameplay viewport the TV answers for every point"
+                )),
+            };
+        }
+        match self
+            .left_out
+            .iter()
+            .find(|(l, _)| l.eq_ignore_ascii_case(load_file))
+        {
+            Some((_, why)) => Err(format!("the extract left his scripts out: {why}")),
+            None => Ok(None),
+        }
+    }
+
+    /// Every character the part keeps on his card, with why (AG.27).
+    pub(crate) fn kept(&self) -> Vec<Kept> {
+        let left = self.left_out.iter().map(|(l, why)| Kept {
+            load_file: l.clone(),
+            reason: format!("the extract left his scripts out: {why}"),
+        });
+        let asking = self.walkers.iter().filter(|w| w.asks > 0).filter_map(|w| {
+            Some(Kept {
+                load_file: w.load_file.clone(),
+                reason: self.walks(&w.load_file).err()?,
+            })
+        });
+        left.chain(asking).collect()
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +196,8 @@ impl ScriptSource {
             files,
             order,
             fighters: Vec::new(),
+            walkers: Vec::new(),
+            left_out: Vec::new(),
             layout: None,
             palettes: Vec::new(),
         }
@@ -151,6 +210,8 @@ pub(crate) struct Part {
     pub(crate) files: Files,
     pub(crate) order: Vec<u16>,
     pub(crate) fighters: Vec<(String, u16)>,
+    pub(crate) walkers: Vec<WalkerScripts>,
+    pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
     pub(crate) palettes: Vec<(String, Vec<f32>)>,
 }
@@ -163,6 +224,8 @@ pub(crate) fn install(world: &mut World, part: Part) {
         files: part.files,
         order: part.order,
         fighters: part.fighters,
+        walkers: part.walkers,
+        left_out: part.left_out,
         layout: part.layout,
         palettes: part.palettes,
     };
@@ -184,7 +247,7 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         source.program.clone(),
         &source.files,
         &source.order,
-        smash_config(Mode::Play),
+        scripts::with_walkers(smash_config(Mode::Play), &source.walkers),
     );
     let Some(level) = source.level_unit() else {
         return;
@@ -339,7 +402,27 @@ pub(crate) struct HeroRun {
     /// His figure's tag data once his scripts join holding it (AH.23), and
     /// the generation its words were made under.
     pub(crate) figure: Option<(Value, i64)>,
+    /// Whether the attack buttons are his scripts' (a fighter's, AH.29;
+    /// stand-in ledger: `who-attacks`): a walker's do nothing.
+    pub(crate) attacks: bool,
+    /// Where his numbers are from (AG.27): a measured walker's scripts
+    /// write the numbers he already carries, a scripted walker's are all he
+    /// has.
+    pub(crate) origin: Origin,
+    /// His solid as the disc authors it, before his scale: his scale is his
+    /// scripts' alone (AH design decision 5), so his solid and his drawn
+    /// model take it from the VM ([`apply_scripted_scale`]).
+    pub(crate) shape: SolidInfo,
+    /// The scale his solid and his drawn model stand at now.
+    pub(crate) scale: f32,
+    /// His drawn model's root, which that scale sets.
+    pub(crate) root: Option<Entity>,
 }
+
+/// A walker whose scripts didn't run through (AG.27): he keeps his card,
+/// the reason listed. [`crate::play`] takes him out of the level.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KeepsCard(pub(crate) String);
 
 /// What poses his attach nodes (AH.50): his model (its skeleton and idle),
 /// his locomotion's other clips, his model's attach list and his scale.
@@ -352,18 +435,29 @@ pub(crate) struct HandRig {
 }
 
 /// Asks for `hero`'s scripts to join the run, if the part holds his file;
-/// true when they will (he then walks on them, [`ScriptedHero`]).
+/// true when they will (he then walks on them, [`ScriptedHero`]). A fighter
+/// (Eruptor) joins to attack and walk, a walker (AG.27) to walk alone.
 pub(crate) fn ask_join(
     commands: &mut Commands,
     hero: Entity,
-    load_file: &str,
+    walk: &walkers::Walk,
     palette: Option<Arc<Palette>>,
     rig: Option<HandRig>,
     source: Option<&ScriptSource>,
     slot: SlotIndex,
     kept_as: String,
+    root: Option<Entity>,
 ) -> bool {
-    let Some(unit) = source.and_then(|s| s.fighter(load_file)) else {
+    let load_file = walk.load_file.as_str();
+    let found = source.and_then(|s| {
+        s.fighter(load_file)
+            .map(|u| (u, true))
+            .or_else(|| match s.walks(load_file) {
+                Ok(Some(_)) => s.walker(load_file).map(|w| (w.unit, false)),
+                _ => None,
+            })
+    });
+    let Some((unit, attacks)) = found else {
         info!(
             load_file,
             "his scripts aren't in the level's part: he walks on the stand-in, his attack buttons do nothing"
@@ -380,10 +474,18 @@ pub(crate) fn ask_join(
             slot,
             kept_as,
             figure: None,
+            attacks,
+            origin: walk.origin,
+            shape: walk.shape,
+            scale: walk.scale,
+            root,
         },
         ScriptedHero,
     ));
-    info!(load_file, unit, "his scripts join at the next step");
+    info!(
+        load_file,
+        unit, attacks, "his scripts join at the next step"
+    );
     true
 }
 
@@ -600,7 +702,9 @@ impl Plugin for HeroScriptsPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    step_scripts.in_set(Frame::Scripts),
+                    (step_scripts, apply_scripted_scale)
+                        .chain()
+                        .in_set(Frame::Scripts),
                     (advance_scripts, draw_clones).chain().in_set(Frame::Actors),
                     pose_hands.in_set(Frame::Hands),
                 )
@@ -611,6 +715,43 @@ impl Plugin for HeroScriptsPlugin {
                 Update,
                 set_asked_health.run_if(resource_exists::<AskedHealth>),
             );
+    }
+}
+
+/// A scripted walker's scale is his scripts' alone (AH design decision 5,
+/// AG.27): once they run, his actor's scale on the VM is the one his solid
+/// is built at and his drawn model stands at. A scale that isn't a uniform
+/// one (a script setting one axis) is left as it was; a measured walker's
+/// stays the measured one.
+pub(crate) fn apply_scripted_scale(
+    world: Res<ScriptWorld>,
+    mut heroes: Query<(Entity, &mut HeroRun, &mut HeroBody)>,
+    mut transforms: Query<&mut Transform>,
+) {
+    for (e, mut run, mut body) in &mut heroes {
+        if run.origin != Origin::Scripts || !matches!(run.join, Join::Joined(_)) {
+            continue;
+        }
+        let Some(a) = world.actor(e.to_bits()) else {
+            continue;
+        };
+        let Some(set) = Setup::read(&a.physics, a.scale, run.shape.width) else {
+            continue;
+        };
+        if (set.scale - run.scale).abs() < 1e-6 {
+            continue;
+        }
+        let Some(solid) = run.shape.havok([set.scale * 100.0; 3]) else {
+            continue;
+        };
+        info!(load_file = %run.load_file, from = run.scale, to = set.scale, "his scripts set his scale");
+        body.hero.set_solid(solid);
+        run.scale = set.scale;
+        if let Some(root) = run.root
+            && let Ok(mut t) = transforms.get_mut(root)
+        {
+            t.scale = Vec3::splat(set.scale);
+        }
     }
 }
 
@@ -876,7 +1017,14 @@ pub(crate) fn step_scripts(
     // characters attack): a hero not joined yet, or whose join failed or
     // whose script stopped, reads none, so nothing of his file the VM still
     // ticks throws for him.
-    let held = if joined.is_some() { held } else { [false; 4] };
+    // A walker's (AG.27) do nothing either way: attacks stay Eruptor's
+    // alone (AH.29; stand-in ledger: `who-attacks`).
+    let attacks = run.as_deref().is_none_or(|r| r.attacks);
+    let held = if joined.is_some() && attacks {
+        held
+    } else {
+        [false; 4]
+    };
     world.read_pads([
         Pad {
             stick: input.0.stick,
@@ -947,7 +1095,40 @@ pub(crate) fn step_scripts(
         off = Some(format!("his script stopped: {h}"));
     }
     if let (Some(e), Some(r), Some(why)) = (hero, run.as_deref_mut(), off) {
-        warn!(load_file = %r.load_file, reason = %why, "he walks on the stand-in now; his attack buttons do nothing");
+        // His setup ran through when his minion's first tick did (STARTUP's);
+        // a stop before that is the join's, after it the play's.
+        let stage = match joined {
+            Some(m) if runtime.vm.set_up(m) => Stage::Playing,
+            _ => Stage::Joining,
+        };
+        // What he does now (AG.27; stand-in ledger: `walker`): Eruptor on
+        // the measured numbers he carries; a walker whose script stopped in
+        // play on what his scripts had set, read off his actor; one whose
+        // join never completed keeps his card.
+        let setup = world
+            .actor(e.to_bits())
+            .and_then(|a| Setup::read(&a.physics, a.scale, r.shape.width));
+        let fallback = match (walkers::fallback(r.origin, stage, &why), setup) {
+            (Fallback::OnWhatTheySet, None) => Fallback::Card(format!(
+                "{why}; his scripts had set no uniform scale to walk on"
+            )),
+            (f, _) => f,
+        };
+        match &fallback {
+            Fallback::Stand => {
+                warn!(load_file = %r.load_file, reason = %why, "he walks on the stand-in now; his attack buttons do nothing");
+            }
+            Fallback::OnWhatTheySet => {
+                warn!(load_file = %r.load_file, reason = %why, "he walks on what his scripts had set now; his attack buttons do nothing");
+                if let (Some(setup), Ok((_, mut body))) = (setup, heroes.get_mut(e)) {
+                    body.hero.set_tuning(setup.tuning);
+                }
+            }
+            Fallback::Card(reason) => {
+                warn!(load_file = %r.load_file, reason = %reason, "his scripts don't run: he keeps his card");
+                commands.entity(e).insert(KeepsCard(reason.clone()));
+            }
+        }
         r.join = Join::Off(why);
         commands.entity(e).remove::<ScriptedHero>();
     }
@@ -1705,6 +1886,8 @@ mod tests {
                 files: linked.placements,
                 order: linked.order,
                 fighters: linked.fighters,
+                walkers: Vec::new(),
+                left_out: Vec::new(),
                 layout: None,
                 palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
             },
@@ -1744,6 +1927,8 @@ mod tests {
                 files: linked.placements,
                 order: linked.order,
                 fighters: linked.fighters,
+                walkers: Vec::new(),
+                left_out: Vec::new(),
                 layout: None,
                 palettes: Vec::new(),
             },

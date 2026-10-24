@@ -198,7 +198,7 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
 }
 
 #[test]
-fn complete_wants_both_parts() {
+fn complete_wants_both_parts_and_the_walkers_list() {
     let mut m: Manifest = serde_json::from_value(serde_json::json!({
         "extractor": "0", "layout": 4, "ir_version": 5,
         "identity": identity(), "source_dir": "/d", "complete": true,
@@ -209,5 +209,53 @@ fn complete_wants_both_parts() {
     m.parts.insert(SCRIPTS.into(), Vec::new());
     assert!(!complete(&m), "the spawn models missing");
     m.parts.insert(SPAWNS.into(), Vec::new());
+    // A scripts part made before the walkers has no list (AG.27): the
+    // start isn't current, so the part resumes alone.
+    assert!(!complete(&m), "the walkers' list missing");
+    m.parts
+        .insert(SCRIPTS.into(), vec![WALKERS_FILE.to_owned()]);
     assert!(complete(&m));
+}
+
+/// AG.27: the walkers are the roster's modelled characters but a fighter
+/// (any case), in the roster's order, their entries after the base's.
+#[test]
+fn the_walkers_are_every_modelled_character_but_a_fighter() {
+    let loads = ["016_Spyro", "009_eruptor", "070_TreeRex", "009_Eruptor"];
+    let walkers = walker_loads(&loads);
+    assert_eq!(walkers, ["016_Spyro", "070_TreeRex"]);
+    assert_eq!(
+        archives_with(&walkers),
+        [
+            "permanent/bootstrap.bld",
+            "permanent/global.bld",
+            "character/init_setup.bld",
+            "character/009_eruptor.bld",
+            "character/016_spyro.bld",
+            "character/070_treerex.bld",
+        ]
+    );
+    // The fighters alone key the spawns part.
+    assert_eq!(spawn_archives().len(), 2);
+    assert_eq!(archives_with(&[]), archives());
+}
+
+/// AG.27: the list a start reads back is the one the stage wrote; an extract
+/// made before it has none (no file, not an error), one that won't parse is
+/// the error.
+#[test]
+fn the_walkers_list_reads_back_and_an_old_extract_has_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert_eq!(read_walkers(tmp.path()).unwrap(), WalkerList::default());
+    let list = WalkerList {
+        listed: vec!["016_Spyro".into()],
+        left_out: vec![("070_TreeRex".into(), "no level.bld".into())],
+    };
+    let path = tmp.path().join(WALKERS_FILE);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&list).unwrap()).unwrap();
+    assert_eq!(read_walkers(tmp.path()).unwrap(), list);
+    std::fs::write(&path, b"not json").unwrap();
+    let e = read_walkers(tmp.path()).unwrap_err();
+    assert!(e.starts_with(WALKERS_FILE), "{e}");
 }
