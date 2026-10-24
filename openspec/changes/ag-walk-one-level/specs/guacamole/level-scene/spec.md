@@ -50,6 +50,13 @@ The level's surfaces SHALL be drawn with the original's shading model in the rem
 - **WHEN** the level shows at the start
 - **THEN** its surfaces fade linearly toward (115, 83, 49) from 30.48 m (100 ft) to 335.28 m (1,100 ft) of depth along the view, wholly past it, the sky not at all, under a key light of (172, 134, 18) heading 73° and 30° down, fills of (56, 50, 71) heading 279° and 30° up and (79, 75, 35) heading 215° and 45° down, and an ambient of (39, 42, 67)
 
+### Requirement: The sky draws behind the level
+The level's sky SHALL draw where nothing else of the level is, after its solid surfaces and before anything else that blends, its own see-through layers (clouds, horizon rings, the cap) over one another in the order the level lists them, none of them hiding the sky or anything behind it where it's clear.
+
+#### Scenario: Clouds under the sky's cap
+- **WHEN** the hero stands on the walkway past the gate with the follow camera behind him
+- **THEN** the sky across the top of the view shows its cap over the cloud layers, with no hard-edged band where a cloud layer's outline cuts it
+
 ### Requirement: The level loads behind the intro
 Guacamole SHALL start loading the level when Giants is picked with its extract ready, with no TV frame over 50 ms on the M3 Max while it loads. When the hero's intro ends, or when he's placed if none plays, the level SHALL show within 1 second once it has loaded, and the portal view SHALL hold until it has.
 

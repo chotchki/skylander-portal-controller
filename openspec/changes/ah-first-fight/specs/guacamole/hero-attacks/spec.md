@@ -59,6 +59,10 @@ His eruption SHALL lay lava round him in three waves 0.15 s apart from its appea
 - **WHEN** Eruptor erupts on open ground facing north
 - **THEN** within 0.85 s six blobs lie 8 ft out at 0°, ±60°, ±120° and 180°, six more 6 ft out at 36° past each and six 4 ft out at 72° past each, and all are gone with the eruption, 1.85-1.90 s after it appeared
 
+#### Scenario: The lava comes in see-through and goes dark
+- **WHEN** Eruptor erupts on the flagstones at the start
+- **THEN** each blob shows the ground through it as it comes, solid 0.25 s after it appears, and about 1.1 s after the eruption appears the lava darkens over 0.5 s to about a quarter of its red and a sixth of its green and blue
+
 ### Requirement: An attack lands when the original's does
 Each attack SHALL start the frame after its press and take effect where the original's does in the hero's attack animation, played at the original's speed: Eruptor's lava ball leaving his hand in the first frame that starts with 84 % or less of his throw (0.5 s at 1.5 times its speed) left, its fourth, and his eruption in the first that starts with half of his eruption left, its 43rd.
 

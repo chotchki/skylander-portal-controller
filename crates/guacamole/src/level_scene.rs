@@ -297,11 +297,23 @@ pub fn level_lights(lights: &Lights, zone: &AtmosphericZone) -> Result<LevelLigh
     })
 }
 
+/// A point light that adds nothing: a slot no light takes.
+pub const DARK: PointLight = PointLight {
+    position: [0.0; 3],
+    colour: [0.0; 3],
+    linear: 0.0,
+    quadratic: 0.0,
+};
+
 /// The scene the level's materials draw in, seen from a camera whose view
 /// is `view_from_world`: the directional lights' travel and the point
 /// lights' positions in its view space (the space the shader lights in),
 /// fog from `fog`, no shadows until AG.23, neutral tints and no replace
-/// colour.
+/// colour. Its point lights fill all three of tfbmulti2's slots, the placed
+/// ones first and the rest [`DARK`] (openspec AH.65): the scripts light
+/// more as attacks go off, each frame's three are the level's buffer's
+/// ([`frame_point_lights`]), so a part's key never changes with how many
+/// are lit and nothing compiles mid-fight.
 pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
     let mut scene = Scene::new();
     scene.lights = lights.directional.map(|mut l| {
@@ -320,6 +332,8 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
                 .to_array(),
             ..*p
         })
+        .chain(std::iter::repeat(DARK))
+        .take(MAX_POINT_LIGHTS)
         .collect();
     scene.fog = true;
     scene.fog_colour = remaster::linear(fog.colour);
@@ -328,17 +342,54 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
 }
 
 /// The scene the hero draws in, seen from a camera whose view is
-/// `view_from_world`: the level's directional lights and fog as
-/// [`view_scene`] gives them, no point light and no shadows (AG.21). So his
-/// masks are the ones a card draws him with (fog on, nothing else), keys
-/// the start's pass compiled from the census. Whether the original lights a
-/// hero by a level's point lights is unread; level 213's one is about 103 m
-/// from the start, under 1 % of its colour there. AG.23's shadows key him
-/// again either way.
+/// `view_from_world`: the level's as [`view_scene`] gives it, its three
+/// point lights too (openspec AH.65: AH.7's and AH.9's frames show his own
+/// ball and eruption lighting him, and of his materials only those that
+/// own their point lights off leave them to the card; AG.21 drew him
+/// without, on his card's keys), so his keys in the level are the census's
+/// [`crate::census::HEROES`], not a card's. No shadows until AG.23.
 pub fn hero_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
-    let mut scene = view_scene(lights, fog, view_from_world);
-    scene.point_lights.clear();
-    scene
+    view_scene(lights, fog, view_from_world)
+}
+
+/// A light the scripts lit, as the level draws it (openspec AH.65): at
+/// `at` (the level's frame, metres), its diffuse decoded as the remaster
+/// decodes every colour and scaled by its multiplier, its linear and
+/// quadratic attenuation the falloff's two terms, its constant dropped as a
+/// placed one's is ([`level_lights`]).
+pub fn script_light(at: Vec3, l: &crate::script_engine::Light) -> PointLight {
+    let [r, g, b, _] = l.diffuse.to_be_bytes();
+    PointLight {
+        position: at.to_array(),
+        colour: remaster::linear([r, g, b]).map(|c| c * l.multiplier),
+        linear: l.attenuation[1],
+        quadratic: l.attenuation[2],
+    }
+}
+
+/// The three point lights a frame draws the level with (openspec AH.65):
+/// of the level's placed ones and those the scripts lit, the three nearest
+/// `focus` (the hero, else the level's start) that add anything, the rest
+/// [`DARK`]. Which three the original's draws take when more are lit is
+/// unread; its point-light manager lights three at most, so past those
+/// only a placed light (level 213's one, about 103 m off) competes.
+pub fn frame_point_lights(
+    placed: &[PointLight],
+    lit: &[PointLight],
+    focus: Vec3,
+) -> [PointLight; 3] {
+    let mut all: Vec<(f32, PointLight)> = placed
+        .iter()
+        .chain(lit)
+        .filter(|p| p.colour.iter().any(|c| *c > 0.0) && (p.linear > 0.0 || p.quadratic > 0.0))
+        .map(|p| (Vec3::from_array(p.position).distance(focus), *p))
+        .collect();
+    all.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = [DARK; MAX_POINT_LIGHTS];
+    for (slot, (_, p)) in out.iter_mut().zip(all) {
+        *slot = p;
+    }
+    out
 }
 
 /// The scene the level's materials are lit in, in the world's frame: the
@@ -391,7 +442,8 @@ pub struct Drawn {
     /// The scene's materials and segments not drawn (other effects').
     pub left_out_materials: usize,
     pub left_out_segments: usize,
-    /// The sky's segments among the drawn, by drawn index.
+    /// The sky's segments among the drawn, by drawn index, in the order the
+    /// scene lists them (the order the original draws its sky in, AG.79).
     pub sky: Vec<usize>,
 }
 
@@ -423,20 +475,68 @@ pub fn unfogged(mut m: model::Material) -> model::Material {
     m
 }
 
-/// `graph`'s drawn part, taking its segments. Unless the sky dome takes the
-/// fog (`sky_fogged`, [`sky_fogged`]), the sky's segments draw on copies of
-/// their materials that own their fog off ([`unfogged`]): one a material
-/// the sky draws with, beside the material itself where the rest of the
-/// scene draws with it too.
+/// `m` as the sky draws it: writing no depth, whatever its states say, and
+/// owning its fog off unless the sky takes the fog (`fogged`). AG.13's
+/// capture of the fresh state has the original draw its 14 sky segments
+/// after the scenery that hides them and before the rest of what blends,
+/// each depth-tested and none written, its opaque dome first and then the
+/// others in the scene's order (AG.79: written, a cloud plane drawn before
+/// the sky's cap cut the cap away in its own outline, the hard-edged slab
+/// across the sky chotchki saw).
+pub fn sky_material(m: model::Material, fogged: bool) -> model::Material {
+    let mut m = if fogged { m } else { unfogged(m) };
+    m.states.depth_write = false;
+    m
+}
+
+/// The sort bias that draws the sky's blended parts before anything else
+/// that blends and in the scene's order, `rank` being the place of the
+/// first sky segment drawing with the material among the sky's: a sorted
+/// part's view depth (metres, increasing toward the camera, back to front)
+/// plus its bias orders the blended pass, and the level's sky reaches 750 m,
+/// so a step of 10 km keeps the ranks apart wherever the camera stands.
+pub fn sky_bias(rank: usize) -> f32 {
+    SKY_BIAS + SKY_BIAS_STEP * rank as f32
+}
+
+/// The first sky rank's bias, and the step between ranks.
+pub const SKY_BIAS: f32 = -1.0e7;
+pub const SKY_BIAS_STEP: f32 = 1.0e4;
+
+/// Each material's sort bias in `drawn`: [`sky_bias`] of its rank for one
+/// the sky draws with, 0 for the rest (sorted by depth alone).
+pub fn depth_biases(drawn: &Drawn) -> Vec<f32> {
+    let mut out = vec![0.0; drawn.materials.len()];
+    let mut ranked = vec![false; drawn.materials.len()];
+    let mut rank = 0;
+    for &i in &drawn.sky {
+        let k = usize::from(drawn.segments[i].material);
+        if !ranked[k] {
+            ranked[k] = true;
+            out[k] = sky_bias(rank);
+            rank += 1;
+        }
+    }
+    out
+}
+
+/// `graph`'s drawn part, taking its segments. The sky's segments draw on
+/// copies of their materials that write no depth and, unless the sky dome
+/// takes the fog (`sky_fogged`, [`sky_fogged`]), own their fog off
+/// ([`sky_material`]): one a material the sky draws with, beside the
+/// material itself where the rest of the scene draws with it too.
 pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
-    let sky: std::collections::HashSet<usize> = graph
-        .sky
-        .iter()
-        .flat_map(|g| g.segments.iter().map(|&s| s as usize))
-        .collect();
+    // The sky's segments in the order the scene lists them, each once.
+    let mut listed: Vec<usize> = Vec::new();
+    for s in graph.sky.iter().flat_map(|g| &g.segments) {
+        if !listed.contains(&(*s as usize)) {
+            listed.push(*s as usize);
+        }
+    }
+    let sky: std::collections::HashSet<usize> = listed.iter().copied().collect();
     let n = graph.materials.len();
-    // Which kinds of segment draw with each material: the sky's own a copy
-    // only when the sky stays unfogged.
+    // Which kinds of segment draw with each material: the sky's on a copy
+    // of its own ([`sky_material`]).
     let (mut by_sky, mut by_rest) = (vec![false; n], vec![false; n]);
     for (i, s) in graph.segments.iter().enumerate() {
         let k = usize::from(s.material);
@@ -447,7 +547,7 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
                 materials: n,
             });
         }
-        if sky.contains(&i) && !sky_fogged {
+        if sky.contains(&i) {
             by_sky[k] = true;
         } else {
             by_rest[k] = true;
@@ -466,7 +566,7 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
             rest[k] = Some((materials.len() - 1) as u16);
         }
         if by_sky[k] {
-            materials.push(unfogged(d));
+            materials.push(sky_material(d, sky_fogged));
             sky_copy[k] = Some((materials.len() - 1) as u16);
         }
     }
@@ -477,7 +577,7 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
     };
     for (i, mut s) in graph.segments.into_iter().enumerate() {
         let is_sky = sky.contains(&i);
-        let index = if is_sky && !sky_fogged {
+        let index = if is_sky {
             sky_copy[usize::from(s.material)]
         } else {
             rest[usize::from(s.material)]
@@ -487,20 +587,22 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
             continue;
         };
         s.material = index;
-        if is_sky {
-            out.sky.push(out.segments.len());
-        }
         out.segments.push(s);
         out.sources.push(i);
     }
+    out.sky = listed
+        .iter()
+        .filter_map(|&i| out.sources.iter().position(|&s| s == i))
+        .collect();
     Ok(out)
 }
 
 /// Every key the drawn part draws in `scene`, each once, with the drawn
-/// material that first draws it: what the warm compiles before the level
-/// shows.
+/// material that first draws it, every glowing part's level glow mask after
+/// (openspec AH.65, [`warm::level_segment_keys`]): what the warm compiles
+/// before the level shows.
 pub fn keys(drawn: &Drawn, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, LevelError> {
-    Ok(warm::segment_keys(
+    Ok(warm::level_segment_keys(
         &drawn.materials,
         &drawn.segments,
         scene,
@@ -804,12 +906,13 @@ mod tests {
         const { assert!(LevelFog::NONE.near > FRESH_STATE_FAR) };
     }
 
-    /// AG.21: the hero draws in the level's lights and fog as the camera
-    /// sees them, without its point light, so a material leaving point
-    /// lights and fog to the scene keys as a card draws it (fog on, nothing
-    /// else), where the level's scene keys the point light too.
+    /// AH.65 (AG.21 drew him without its point lights): the hero draws in
+    /// the level's lights, fog and three point lights' slots as the camera
+    /// sees them, the placed one first and two dark, so a material leaving
+    /// point lights and fog to the scene keys as the level's does, not as a
+    /// card draws it (fog on, nothing else).
     #[test]
-    fn the_hero_draws_in_the_levels_light_and_fog_without_its_point_light() {
+    fn the_hero_draws_in_the_levels_light_fog_and_point_lights() {
         let l = level_lights(&lights(), &zone()).unwrap();
         let fog = LevelFog {
             colour: [115, 83, 49],
@@ -823,8 +926,10 @@ mod tests {
         let level = view_scene(&l, &fog, view);
         let hero = hero_scene(&l, &fog, view);
         assert_eq!(hero.lights, level.lights, "the level's lights, in view");
-        assert_eq!(level.point_lights.len(), 1);
-        assert!(hero.point_lights.is_empty());
+        assert_eq!(level.point_lights.len(), MAX_POINT_LIGHTS);
+        assert_eq!(hero.point_lights, level.point_lights);
+        assert_ne!(level.point_lights[0], DARK, "the placed one first");
+        assert_eq!(level.point_lights[1..], [DARK, DARK]);
         assert!(hero.fog && !hero.shadows);
         assert_eq!(
             (hero.fog_colour, hero.fog_near, hero.fog_far),
@@ -840,8 +945,8 @@ mod tests {
             ..Scene::new()
         };
         let open = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
-        assert_eq!(key(&open, &hero), key(&open, &card));
-        assert_ne!(key(&open, &level), key(&open, &card));
+        assert_eq!(key(&open, &hero), key(&open, &level));
+        assert_ne!(key(&open, &hero), key(&open, &card));
     }
 
     fn slot(role: TextureRole) -> TextureSlot {
@@ -924,8 +1029,9 @@ mod tests {
             .collect()
     }
 
-    /// AG.19: a level material's key in the level's scene (fog on, the one
-    /// point light, no shadows) and the shader defs it becomes. The masks
+    /// AG.19: a level material's key in the level's scene (fog on, its
+    /// three point lights' slots (AH.65), no shadows) and the shader defs it
+    /// becomes. The masks
     /// are level 213's kinds: one leaving shadows, fog and point lights to
     /// the scene (ignore 0x2FF), one owning shadows off (0x3FF), one owning
     /// point lights off too (0x3BFF), and the gloss-mapped one, drawn with
@@ -948,7 +1054,7 @@ mod tests {
         let k = key(&both);
         assert_eq!(
             k.shader.pixel(),
-            0x1B | 1 << bit::FOG | 1 << bit::POINT_LIGHTS
+            0x1B | 1 << bit::FOG | 0b111 << bit::POINT_LIGHTS
         );
         assert_eq!(
             defs(&k),
@@ -964,6 +1070,8 @@ mod tests {
                 def::UV1,
                 def::UV2,
                 def::POINT_LIGHTS[0],
+                def::POINT_LIGHTS[1],
+                def::POINT_LIGHTS[2],
             ])
         );
         // Owning shadows off changes nothing here: the level has none yet.
@@ -993,6 +1101,8 @@ mod tests {
                 def::GEOMETRIC_NORMAL,
                 def::UV1,
                 def::POINT_LIGHTS[0],
+                def::POINT_LIGHTS[1],
+                def::POINT_LIGHTS[2],
             ])
         );
         // Its gloss strength is the third layer's fixed alpha; a gloss map
@@ -1264,6 +1374,78 @@ mod tests {
         assert_eq!(fogged, [(0, true), (2, false), (1, false)]);
     }
 
+    /// AG.79: the sky writes no depth, whatever its materials' states say,
+    /// fogged or not, and its blended parts sort before anything else that
+    /// blends, in the scene's order, wherever their middles are: AG.13's
+    /// capture draws the clouds, the horizon rings and then the cap, none
+    /// written, where a cloud plane drawn first and written cut the cap.
+    #[test]
+    fn the_sky_writes_no_depth_and_blends_first_in_the_scenes_order() {
+        let blended = |depth_write| RenderStates {
+            blend: Blend::Alpha,
+            depth_write,
+            two_sided: false,
+            alpha_test: None,
+        };
+        let mut leaves = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        leaves.states = blended(true);
+        let dome = multi2(mask(0x0, 0x3BFF), mask(0x0, 0x3BFF));
+        let mut clouds = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
+        clouds.states = blended(true);
+        let mut cap = clouds.clone();
+        cap.name = "cap".into();
+        let graph = SceneGraph {
+            world: "Levels/Test/Test_ART_MASTER.ma".into(),
+            materials: vec![
+                LevelMaterial::Multi2(leaves),
+                LevelMaterial::Multi2(cap),
+                LevelMaterial::Multi2(clouds),
+                LevelMaterial::Multi2(dome),
+            ],
+            segments: vec![
+                segment(0, false),
+                segment(1, true),
+                segment(3, false),
+                segment(2, true),
+            ],
+            // The scene lists the dome, then the clouds, then the cap.
+            sky: vec![SkyGroup {
+                name: "sky".into(),
+                segments: vec![2, 3, 1],
+            }],
+        };
+        for fogged in [false, true] {
+            let d = drawn(graph.clone(), fogged).unwrap();
+            let by_segment: Vec<&model::Material> = d
+                .segments
+                .iter()
+                .map(|s| &d.materials[usize::from(s.material)])
+                .collect();
+            assert!(by_segment[0].states.depth_write, "the leaves keep theirs");
+            for (i, m) in by_segment.iter().enumerate().skip(1) {
+                assert!(!m.states.depth_write, "sky segment {i}");
+                assert_eq!(
+                    m.pixel.base >> bit::FOG & 1 == 0 && m.pixel.ignore >> bit::FOG & 1 == 1,
+                    !fogged,
+                    "sky segment {i} owns its fog off unless the sky's fogged"
+                );
+            }
+            let bias = depth_biases(&d);
+            let of = |segment: usize| bias[usize::from(d.segments[segment].material)];
+            assert_eq!(
+                [of(0), of(2), of(3), of(1)],
+                [0.0, sky_bias(0), sky_bias(1), sky_bias(2)]
+            );
+            // Bevy's blended pass sorts by view depth plus bias, back to
+            // front: the cap's middle 600 m nearer than the clouds' still
+            // draws after them, and everything else after the sky.
+            let sorted = |depth: f32, segment: usize| depth + of(segment);
+            assert!(sorted(-700.0, 3) < sorted(-100.0, 1));
+            assert!(sorted(-100.0, 1) < sorted(-1000.0, 0));
+            assert!(sorted(-1.0, 1) < sorted(-250.0, 0));
+        }
+    }
+
     /// The fresh state's camera looks where AC.13's capture of it does:
     /// forward (0.23760, -0.39650, 0.88675) and up (0.10262, 0.91803,
     /// 0.38299), 53.96° from top to bottom.
@@ -1280,6 +1462,63 @@ mod tests {
         let p = fresh_state_projection();
         assert!((p.fov.to_degrees() - 53.96).abs() < 0.005, "{}", p.fov);
         assert!((p.far - 243.84).abs() < 1e-4);
+    }
+
+    /// AH.65: the three point lights a frame draws the level with, the
+    /// nearest the hero first of the placed ones and the scripts', those
+    /// that add nothing (dark, or no falloff) left out, the slots past them
+    /// dark.
+    #[test]
+    fn the_frames_point_lights_are_the_three_nearest_that_add_light() {
+        let at = |x: f32, colour: f32| PointLight {
+            position: [x, 0.0, 0.0],
+            colour: [colour; 3],
+            linear: 1.0,
+            quadratic: 0.0,
+        };
+        // Level 213's one at the origin, 103 m off.
+        let placed = [at(0.0, 0.3)];
+        let hero = Vec3::new(103.0, 0.0, 0.0);
+        let lit = [
+            at(110.0, 0.5),
+            at(100.0, 0.5),
+            at(104.0, 0.0),
+            at(90.0, 0.5),
+        ];
+        let frame = frame_point_lights(&placed, &lit, hero);
+        assert_eq!(frame, [at(100.0, 0.5), at(110.0, 0.5), at(90.0, 0.5)]);
+        let no_falloff = PointLight {
+            linear: 0.0,
+            ..at(103.0, 0.5)
+        };
+        assert_eq!(
+            frame_point_lights(&placed, &[no_falloff], hero),
+            [at(0.0, 0.3), DARK, DARK]
+        );
+        assert_eq!(frame_point_lights(&[], &[], hero), [DARK; 3]);
+    }
+
+    /// AH.65: a light the scripts lit draws its diffuse decoded as every
+    /// colour is, times its multiplier, its linear and quadratic
+    /// attenuation the falloff's terms (Eruptor's ball's light, as the
+    /// point-light manager copies it from `009_Eruptor_projectile_light`).
+    #[test]
+    fn a_scripts_light_draws_its_diffuse_decoded_times_its_multiplier() {
+        let l = crate::script_engine::Light {
+            diffuse: 0x5F29_1BFF,
+            ambient: 0xFF,
+            specular: 0x3B26_12FF,
+            multiplier: 2.0,
+            attenuation: [0.25, 1.5, 0.5],
+            lift: 0.0,
+        };
+        let p = script_light(Vec3::new(1.0, 2.0, 3.0), &l);
+        assert_eq!(p.position, [1.0, 2.0, 3.0]);
+        assert_eq!(
+            p.colour,
+            remaster::linear([0x5F, 0x29, 0x1B]).map(|c| c * 2.0)
+        );
+        assert_eq!((p.linear, p.quadratic), (1.5, 0.5));
     }
 
     fn placement(name: &str, waypoints: Option<u32>) -> guac_ir::level::Placement {

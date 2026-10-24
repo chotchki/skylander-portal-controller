@@ -1894,6 +1894,26 @@ its arithmetic on stored, gamma-encoded values and clips each channel at 8 bits,
 flattens to yellow. The remaster decodes the colour, spec and rim maps and the disc's light colours into
 linear light, renders HDR and tonemaps with TonyMcMapface: "let's do the modern bevy look, I'll decide
 later if there are lighting issues with it." No exposure lift is tuned until he's judged it (AE.18).
+What multiplies stays as stored, since decoding a multiplier moves its neutral: tints and vertex colours
+and a level's gloss map (AG.22). Two multiplies now keep the original's depth instead: a level's rim that
+multiplies takes its decoded map times its strength raised to 2.2 (AG.79: the coins' and chests' metal
+environments at strength 2, the gems' at 4; decoded at the bare strength, a half grey turned a coin brown
+at 0.43 times its colour), and a placement tint the scripts move takes each channel's ratio to neutral raised
+to 2.2 (AH.67: the lava's going-black (34, 20, 20) darkens it to 5.5 % of its red where as stored it kept
+27 %), since (s·c)^2.2 = s^2.2·c^2.2 carries the original's stored-value product into linear light. Neutral
+is untouched either way; the characters' rims and the material tints stay as AE set them (AG.95). A
+level's sky draws as the original's does (AG.13's capture): after its solid scenery, writing no depth, its
+see-through layers in the scene's order before anything else that blends (AG.79: written, a cloud plane
+cut a hard-edged slab out of the cap). A level draws the game's glow as a card does (AH.65): each glowing
+part's mask goes into the frame's own alpha once everything else has drawn and a fullscreen pass has
+cleared it, tested against the level's depth and writing none, and the chain runs off that alpha, so one
+camera keeps the original's order (its mask pass reads the colour pass's depth too) and the chain matches
+its CPU reference to the stored step on the GPU lane. A level is lit by up to three point lights a frame,
+its placed ones and those `global.bld`'s point-light manager hands out for the scripts (Eruptor's ball,
+its burst, his eruption's 22 ft up and fading over 1.5 s), the nearest the hero first; they sit in one
+buffer every level material reads, so a light that moves rewrites no material, and every level key
+carries all three slots, dark ones adding nothing, so none recompiles as lights come and go. What the
+attacks' particles draw (fire, sparks, trails) waits on a particle system (AH.87).
 Giants' render pipeline beyond the characters isn't characterized yet. Trap Team's is (a data-driven
 `tfbRenderer.igx` with a G-buffer, tiled deferred lights, CSM, AO, bloom, DoF, motion blur, FXAA and
 LUTs) and Giants is probably kin, but that's unverified.

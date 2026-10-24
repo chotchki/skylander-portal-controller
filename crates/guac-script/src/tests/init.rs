@@ -619,6 +619,63 @@ fn screen_positions_and_colours_are_read_and_written_by_their_parts() {
     );
 }
 
+/// AH.67: a colour literal keeps alpha in its high byte and red in its low,
+/// so the eruption's dark colour, `0xFF141422` as the file holds it, reads
+/// red 34, green 20, blue 20 and alpha 255, the oracle's going-black tint.
+#[test]
+fn a_colour_literal_reads_red_from_its_low_byte() {
+    let p = program(|w| {
+        let col = w.variable("col", "ScriptColorInfo", Some("ColorMeasurement"));
+        let parts = ["red", "green", "blue", "alpha"].map(|n| (n, var(w, n)));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let dark = w.literal("ColorMeasurement", 0xFF14_1422, false);
+                w.set(&[El::Local(col)], dark);
+                for (name, at) in parts {
+                    let v = w.rhs(INT, &[El::Local(col), El::Member("colormeasurement", name)]);
+                    w.set(&[El::Local(at)], v);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "col"), Some(Value::Color(0x2214_14FF)));
+    for (name, want) in [("red", 34), ("green", 20), ("blue", 20), ("alpha", 255)] {
+        assert_eq!(vm.local(id, name), Some(Value::Int(want)), "{name}");
+    }
+}
+
+/// AH.67: a file's own colour (a `ScriptColorInfo`'s `_value`, as
+/// `global.bld` holds two) is a 32-bit word of the file as a literal is, so
+/// it reads byte-swapped too: `0xFF141422` is red 34, alpha 255.
+#[test]
+fn a_file_colour_reads_red_from_its_low_byte() {
+    let p = program(|w| {
+        let red = var(w, "red");
+        let f = w.b.object(0, "ScriptColorInfo", 0x1C);
+        w.text(f, 0x08, "file colour");
+        w.word(f, 0x18, 0xFF14_1422);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(INT, &[El::Local(f), El::Member("colormeasurement", "red")]);
+                w.set(&[El::Local(red)], v);
+            },
+        );
+    });
+    let g = p.global_named("file colour").expect("a file colour");
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    assert_eq!(vm.global(g), Some(Value::Color(0x2214_14FF)));
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "red"), Some(Value::Int(34)));
+}
+
 #[test]
 fn a_spawned_structure_is_a_copy_the_block_runs_on() {
     let p = program(|w| {

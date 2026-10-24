@@ -108,6 +108,24 @@ pub struct Solid {
     pub shape: i32,
 }
 
+/// A placed light (`tfbLightInfo`, openspec AH.65): what the scripts read
+/// and write through `lightinfo`'s members, as its file holds it until they
+/// do. A clone of one (the point-light manager's pool) starts from its
+/// template's and goes back to it on a reset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Light {
+    /// RGBA as stored, as a tint is.
+    pub diffuse: u32,
+    pub ambient: u32,
+    pub specular: u32,
+    pub multiplier: f32,
+    /// Constant, linear and quadratic.
+    pub attenuation: [f32; 3],
+    /// Feet above what it hangs from: the vertical offset the point-light
+    /// manager writes (its `V Offset`).
+    pub lift: f32,
+}
+
 /// An actor the scripts reach: a placement of a loaded file or a clone a
 /// script made. A hero's place, turn and velocity are his controller's
 /// ([`Engine::hero`]) and never kept here (design decision 21: no copy).
@@ -164,6 +182,8 @@ pub struct Actor {
     /// The engine moves it as a creature walks (openspec AH.18): its
     /// controller body, steered or carried by its scripts' velocity.
     pub walker: Option<Box<Walker>>,
+    /// A light placement's or its clone's values (openspec AH.65).
+    pub light: Option<Light>,
 }
 
 /// A creature the engine moves (openspec AH.18): guac-motion's controller
@@ -223,6 +243,7 @@ impl Actor {
             managed: false,
             active: true,
             walker: None,
+            light: None,
         }
     }
 

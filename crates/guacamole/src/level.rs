@@ -56,9 +56,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use bevy::camera::visibility::RenderLayers;
+use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{CameraOutputMode, ClearColorConfig, Projection, RenderTarget};
 use bevy::image::CompressedImageFormats;
+use bevy::mesh::skinning::SkinnedMesh;
 use bevy::pbr::PreparedMaterial;
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::ErasedRenderAssets;
@@ -67,6 +68,7 @@ use bevy::render::mesh::allocator::MeshAllocator;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::BlendState;
 use bevy::render::renderer::RenderDevice;
+use bevy::render::storage::ShaderBuffer;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::tasks::futures::check_ready;
@@ -77,12 +79,13 @@ use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PR
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
-use guac_ir::shading::Scene;
+use guac_ir::shading::{PointLight, Scene};
 use guac_motion::seam::{BodyId, BodyKind};
 use guac_script::Obj;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
-    CharacterMaterial, CharacterUniform, ShadowLookup, reference_material, remaster, static_mesh,
+    CharacterMaterial, CharacterUniform, FrameGlow, LEVEL_LIGHTS, ScenePointLights, ShadowLookup,
+    reference_material, remaster, spawn_alpha_clear, static_mesh,
 };
 use guacamole::frame::{self, Frame};
 use guacamole::level_scene::{
@@ -190,6 +193,9 @@ struct Built {
     fog: LevelFog,
     /// The sky's bounds, for the log: (min, max).
     sky: Option<(Vec3, Vec3)>,
+    /// Each drawn material's sort bias: the sky's blended parts first, in
+    /// the scene's order (AG.79, `level_scene::depth_biases`).
+    depth_bias: Vec<f32>,
     walk: Walk,
     /// The props (AG.25): each model's segments as (an index into `meshes`,
     /// past the level's own, and its material in `drawn.materials`).
@@ -401,6 +407,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         .fold(None, |b: Option<(Vec3, Vec3)>, p| {
             Some(b.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))))
         });
+    let depth_bias = arithmetic::depth_biases(&drawn);
     // The meshes hold the vertices now.
     drawn
         .segments
@@ -415,6 +422,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         lights,
         fog,
         sky,
+        depth_bias,
         walk,
         prop_models,
         spawn_models,
@@ -547,12 +555,25 @@ pub(crate) struct LevelReport {
     /// From the Giants pick to ready.
     pub pick_to_ready_ms: Option<u64>,
     pub shown: bool,
+    /// The point lights the frame draws the level with (openspec AH.65),
+    /// the lit ones of the level's buffer's three.
+    pub lights: Vec<FrameLight>,
     /// The script part, once linked (AH.22), or why it didn't.
     pub scripts: Option<ScriptsReport>,
     pub scripts_reason: Option<String>,
     /// What stopped it: the reading task's error, a part's file or the
     /// lights it lacks.
     pub reason: Option<String>,
+}
+
+/// A point light the frame draws the level with (openspec AH.65): where,
+/// its colour decoded, its falloff's two terms.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub(crate) struct FrameLight {
+    pub position: [f32; 3],
+    pub colour: [f32; 3],
+    pub linear: f32,
+    pub quadratic: f32,
 }
 
 /// What `/api/_test/tv` reports of the level's props (AG.25).
@@ -808,6 +829,9 @@ pub(crate) struct Loaded {
     /// Materials lit with the level's but in the hero's scene
     /// ([`Level::light_also`]).
     also: Vec<LitAlso>,
+    /// The point lights the level's buffer holds ([`light_frame`]), `None`
+    /// until the first frame writes them.
+    frame_lights: Option<[PointLight; 3]>,
 }
 
 #[cfg(test)]
@@ -1031,7 +1055,8 @@ fn relight(materials: &[LitAlso], scene: &Scene, assets: &mut Assets<CharacterMa
         if let Some(mut m) = assets.get_mut(&lit.material) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
             m.uniform = CharacterUniform::new(&lit.reference, scene, ShadowLookup::NONE, lit.alpha)
-                .lit_in_world();
+                .lit_by_scene();
+            m.scene_lights = LEVEL_LIGHTS;
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
     }
@@ -1081,13 +1106,14 @@ impl Plugin for LevelPlugin {
             // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,
-                light_level.before(bevy::asset::AssetEventSystems),
+                (light_level, light_frame).before(bevy::asset::AssetEventSystems),
             )
             .add_systems(
                 PostUpdate,
-                tv_over_level
+                (tv_over_level, twin_level_glow)
                     .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
-            );
+            )
+            .init_resource::<GlowTwins>();
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .insert_resource(watch)
@@ -1394,7 +1420,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     let scene = world_scene(&up.built.lights, &up.fog);
     let start = up.materials.len();
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
-    for m in &up.built.drawn.materials[start..end] {
+    for (k, m) in up.built.drawn.materials[start..end].iter().enumerate() {
         let texture = |t: &model::TextureSlot| -> Handle<Image> {
             let key = (
                 t.texture.clone(),
@@ -1412,7 +1438,9 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         // Bevy's default rather than fail the level.
         let material = match CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, texture) {
             Ok(mut material) => {
-                material.uniform = material.uniform.lit_in_world();
+                material.uniform = level_uniform(material.uniform);
+                material.scene_lights = LEVEL_LIGHTS;
+                material.depth_bias = up.built.depth_bias[start + k];
                 s.materials.add(material)
             }
             Err(e) => {
@@ -1426,6 +1454,14 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         up.materials.push(material);
     }
     up.materials.len() == up.built.drawn.materials.len()
+}
+
+/// A level material's uniform as it draws: lit in the world's frame with
+/// its point lights off the level's buffer ([`LEVEL_LIGHTS`], openspec
+/// AH.65), a multiplying rim's strength in light (AG.79). The upload and a
+/// fog's relight both finish it here, so a relight keeps the rim's.
+pub(crate) fn level_uniform(u: CharacterUniform) -> CharacterUniform {
+    u.lit_by_scene().multiplies_in_light()
 }
 
 /// A mesh's vertex and index bytes, as the renderer counts them.
@@ -1532,6 +1568,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         spawns,
         start: built.walk.start,
         also: Vec::new(),
+        frame_lights: None,
     }
 }
 
@@ -1564,7 +1601,9 @@ pub(crate) fn stand_props(
 
 /// The camera the level is drawn from into `target` at `order`: the
 /// remaster's at AF's fresh-state camera, replacing what's there
-/// ([`VIEW_OUTPUT`]). The walk's and the dev entry's under the TV; the
+/// ([`VIEW_OUTPUT`]), the game's glow run on its frame (openspec AH.65,
+/// [`FrameGlow`]: whoever spawns it gives it its [`spawn_alpha_clear`] on
+/// its layer). The walk's and the dev entry's under the TV; the
 /// start's pass draws one under it too ([`crate::prepare`]), so the output's
 /// pipeline for the TV's target and that write, and the TV's own write over
 /// it ([`TV_OVER`]), are compiled before the level first shows (AG.42,
@@ -1582,6 +1621,7 @@ pub(crate) fn view_camera(target: RenderTarget, order: isize) -> impl Bundle {
         Projection::Perspective(fresh_state_projection()),
         fresh_state_transform(),
         LevelOutput,
+        FrameGlow,
     )
 }
 
@@ -1723,6 +1763,7 @@ fn show_level(
             Name::new("level view"),
         ))
         .id();
+    spawn_alpha_clear(&mut commands, camera, LEVEL_LAYER);
     level.show(&mut commands, camera, time.elapsed());
     info!(level = ?level.report.level, "the level shows (GUAC_LEVEL_VIEW)");
     redrawn.write(Redrawn::Level);
@@ -1755,8 +1796,12 @@ fn light_level(
         };
         if let Some(mut m) = materials.get_mut(h) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
-            m.uniform =
-                CharacterUniform::new(reference, &scene, ShadowLookup::NONE, *alpha).lit_in_world();
+            m.uniform = level_uniform(CharacterUniform::new(
+                reference,
+                &scene,
+                ShadowLookup::NONE,
+                *alpha,
+            ));
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
     }
@@ -1765,6 +1810,137 @@ fn light_level(
         &hero_scene(&loaded.lights, &fog, Mat4::IDENTITY),
         &mut materials,
     );
+}
+
+/// The frame's three point lights into the level's buffer (openspec
+/// AH.65, [`LEVEL_LIGHTS`]): the level's placed ones and those its scripts
+/// lit ([`ScriptWorld::lit_lights`]), the nearest the hero (else the
+/// level's start) first ([`arithmetic::frame_point_lights`]). Rewritten
+/// only when they change, one buffer whatever the level holds: every level
+/// material, prop, clone and the hero read their point lights off it.
+fn light_frame(
+    mut level: ResMut<Level>,
+    scripts: Option<Res<ScriptWorld>>,
+    heroes: Query<&HeroBody>,
+    buffers: Option<ResMut<Assets<ShaderBuffer>>>,
+) {
+    let level = &mut *level;
+    let Some(loaded) = level.stage.loaded_mut() else {
+        return;
+    };
+    let focus = heroes.iter().next().map_or(loaded.start, |h| h.hero.pivot);
+    let lit: Vec<PointLight> = scripts
+        .as_deref()
+        .map(|w| {
+            w.lit_lights()
+                .iter()
+                .map(|(at, l)| arithmetic::script_light(*at, l))
+                .collect()
+        })
+        .unwrap_or_default();
+    let frame = arithmetic::frame_point_lights(&loaded.lights.points, &lit, focus);
+    if loaded.frame_lights == Some(frame) {
+        return;
+    }
+    loaded.frame_lights = Some(frame);
+    level.report.lights = frame
+        .iter()
+        .filter(|p| *p != &arithmetic::DARK)
+        .map(|p| FrameLight {
+            position: p.position,
+            colour: p.colour,
+            linear: p.linear,
+            quadratic: p.quadratic,
+        })
+        .collect();
+    // Headless (no renderer) there's no buffer to write; the report holds
+    // the lights.
+    if let Some(mut buffers) = buffers
+        && let Some(mut b) = buffers.get_mut(&LEVEL_LIGHTS)
+    {
+        *b = ScenePointLights::new(&frame).buffer();
+    }
+}
+
+/// A level part's glow mask (openspec AH.65): a child of the part drawing
+/// its mesh (on its skin, if it has one) on the level's layer with its
+/// material's level glow ([`CharacterMaterial::level_glow`]).
+#[derive(Component, Debug)]
+pub(crate) struct GlowTwin;
+
+/// A mesh [`twin_level_glow`] has looked at.
+#[derive(Component, Debug)]
+struct Twinned;
+
+/// Each part material's level glow, made once: `None` for one that
+/// doesn't glow.
+#[derive(Resource, Debug, Default)]
+struct GlowTwins(HashMap<AssetId<CharacterMaterial>, Option<Handle<CharacterMaterial>>>);
+
+/// Every glowing part on the level's layer gets its glow mask
+/// ([`GlowTwin`]): the level's own, its props', what its scripts spawn and
+/// the hero's, as each is spawned. The mask goes with the part (a child,
+/// its visibility and its skin), so a clone hidden or taken off takes it
+/// along. What the mask draws is its material's when the part came up: a
+/// tint the scripts lay on a clone later (AH.67) moves its colour, not its
+/// glow amount.
+fn twin_level_glow(
+    mut commands: Commands,
+    mut twins: ResMut<GlowTwins>,
+    materials: Option<ResMut<Assets<CharacterMaterial>>>,
+    parts: Query<
+        (
+            Entity,
+            &Mesh3d,
+            &MeshMaterial3d<CharacterMaterial>,
+            &RenderLayers,
+            Option<&SkinnedMesh>,
+            Has<NoFrustumCulling>,
+        ),
+        (Without<Twinned>, Without<GlowTwin>),
+    >,
+) {
+    let Some(mut materials) = materials else {
+        return;
+    };
+    // A material gone (a level or a hero left) takes its mask's with it.
+    twins.0.retain(|id, _| materials.contains(*id));
+    let level = RenderLayers::layer(LEVEL_LAYER);
+    for (part, mesh, material, layers, skin, unculled) in &parts {
+        commands.entity(part).insert(Twinned);
+        if *layers != level {
+            continue;
+        }
+        let id = material.0.id();
+        let twin = match twins.0.get(&id) {
+            Some(t) => t.clone(),
+            None => {
+                let made = materials
+                    .get(&material.0)
+                    .and_then(CharacterMaterial::level_glow)
+                    .map(|m| materials.add(m));
+                twins.0.insert(id, made.clone());
+                made
+            }
+        };
+        let Some(twin) = twin else {
+            continue;
+        };
+        let mut e = commands.spawn((
+            Mesh3d(mesh.0.clone()),
+            MeshMaterial3d(twin),
+            Transform::IDENTITY,
+            level.clone(),
+            GlowTwin,
+            ChildOf(part),
+        ));
+        if let Some(skin) = skin {
+            e.insert(skin.clone());
+        }
+        if unculled {
+            e.insert(NoFrustumCulling);
+        }
+    }
 }
 
 /// Parts with a scroll track slide their texture coordinates from the
@@ -2794,6 +2970,113 @@ pub(crate) mod tests {
         assert_eq!(p.len(), 0);
     }
 
+    /// AH.65: a level material's uniform as the upload and a fog's relight
+    /// both finish it: its point lights off the level's buffer, its
+    /// multiplying rim's strength in light (AG.79), so a relight keeps the
+    /// rim's (the relight used to put it back to the bare strength).
+    #[test]
+    fn a_level_uniform_reads_the_scenes_lights_and_keeps_the_rims_strength() {
+        let mut u = CharacterUniform::new(
+            &guac_ir::shading::Material::new(),
+            &Scene::new(),
+            ShadowLookup::NONE,
+            0.0,
+        );
+        u.fixed_alpha.w = 2.0;
+        let level = level_uniform(u);
+        assert_eq!(level.misc.w, guacamole::character::LIGHTS_FROM_SCENE);
+        assert_eq!(level.rim.z, remaster::in_light(2.0));
+        assert!((level.rim.z - 2f32.powf(2.2)).abs() < 1e-4);
+    }
+
+    /// AH.65: every glowing part on the level's layer gets its glow mask, a
+    /// child drawing its mesh (on its skin) with its material's level glow;
+    /// one material's mask made once for every part on it; a part that
+    /// doesn't glow, or isn't the level's, gets none.
+    #[test]
+    fn every_glowing_level_part_gets_its_glow_mask() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        let key = guacamole::census::LEVEL[1].key(false).unwrap();
+        let ir = guacamole::census::material_for(&key);
+        let scene = Scene {
+            fog: true,
+            ..Scene::new()
+        };
+        let made = |ir: &model::Material| {
+            CharacterMaterial::from_ir(ir, &scene, ShadowLookup::NONE, |_| Handle::default())
+                .unwrap()
+        };
+        let mut dull = ir.clone();
+        dull.params.glow = model::Glow::None;
+        let (glowing, plain) = {
+            let mut assets = app.world_mut().resource_mut::<Assets<CharacterMaterial>>();
+            (assets.add(made(&ir)), assets.add(made(&dull)))
+        };
+        let mesh = Handle::<Mesh>::default();
+        let mut part = |material: &Handle<CharacterMaterial>, layer: usize| {
+            app.world_mut()
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    RenderLayers::layer(layer),
+                ))
+                .id()
+        };
+        let parts = [
+            part(&glowing, LEVEL_LAYER),
+            part(&glowing, LEVEL_LAYER),
+            part(&plain, LEVEL_LAYER),
+            part(&glowing, LEVEL_LAYER + 1),
+        ];
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(
+            &ChildOf,
+            &MeshMaterial3d<CharacterMaterial>,
+            &RenderLayers,
+        ), With<GlowTwin>>();
+        let twins: Vec<(Entity, Handle<CharacterMaterial>, RenderLayers)> = q
+            .iter(world)
+            .map(|(c, m, l)| (c.parent(), m.0.clone(), l.clone()))
+            .collect();
+        let parents: Vec<Entity> = twins.iter().map(|t| t.0).collect();
+        assert_eq!(parents.len(), 2, "{twins:?}");
+        assert!(parents.contains(&parts[0]) && parents.contains(&parts[1]));
+        assert_eq!(twins[0].1, twins[1].1, "one mask for the material");
+        assert!(
+            twins
+                .iter()
+                .all(|t| t.2 == RenderLayers::layer(LEVEL_LAYER))
+        );
+        let assets = world.resource::<Assets<CharacterMaterial>>();
+        let mask = assets.get(&twins[0].1).unwrap();
+        assert_eq!(mask.key.pass, guacamole::character::Pass::LevelGlow);
+        assert_eq!(mask.key.shader, key.material.shader);
+    }
+
+    /// AH.65: the frame's point lights reach the level's report (and its
+    /// buffer, under a renderer) once it's loaded: chapter 1's placed one,
+    /// the scripts' none yet.
+    #[test]
+    fn the_frames_point_lights_are_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = lights();
+        let source = write_level(tmp.path(), &l);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        app.update();
+        let lit = report(&app).lights;
+        assert_eq!(lit.len(), 1, "{lit:?}");
+        let placed = &level_lights(&l, &zone()).unwrap().points[0];
+        assert_eq!(
+            (lit[0].position, lit[0].colour, lit[0].linear),
+            (placed.position, placed.colour, placed.linear)
+        );
+    }
+
     /// AG.41: the fog AG.13 read reaches every level material: the level's
     /// read sets the TV's `LevelFog` to its start's zone's, 30.48 m to
     /// 335.28 m, and every material is made with it (the sky's too, which
@@ -2861,9 +3144,64 @@ pub(crate) mod tests {
                     .truncate()
                     .abs_diff_eq(Vec3::from_array(lit.lights[0].travel), 1e-6)
             );
-            assert_eq!(u.misc.w, guacamole::character::LIGHTS_IN_WORLD);
+            assert_eq!(u.misc.w, guacamole::character::LIGHTS_FROM_SCENE);
         }
         assert_eq!(app.world().resource::<Level>().report().relit, 1);
+    }
+
+    /// AG.79 and AH.65: what the upload hands each level material stays
+    /// through a fog's relight: the sky's sort bias (its blended parts first,
+    /// in the scene's order) and a multiplying rim's strength in light, which
+    /// the relight once put back to the bare strength (the coins brown again
+    /// past the first zone change).
+    #[test]
+    fn a_fog_relight_keeps_the_skys_bias_and_a_multiplying_rims_strength() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = lights();
+        let source = write_level(tmp.path(), &l);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let materials = app
+            .world()
+            .resource::<Level>()
+            .loaded()
+            .unwrap()
+            .materials
+            .clone();
+        let drawn = |app: &App| -> Vec<(f32, f32)> {
+            let assets = app.world().resource::<Assets<CharacterMaterial>>();
+            materials
+                .iter()
+                .map(|h| {
+                    let m = assets.get(h).unwrap();
+                    (m.depth_bias, m.uniform.rim.z)
+                })
+                .collect()
+        };
+        // The ground, then the sky's copy: only the sky ranks.
+        let biases: Vec<f32> = drawn(&app).iter().map(|d| d.0).collect();
+        assert_eq!(biases, [0.0, arithmetic::sky_bias(0)]);
+        // The made-up level has no multiplying rim: the ground gets one, so
+        // the relight has a strength to keep.
+        {
+            let mut level = app.world_mut().resource_mut::<Level>();
+            let loaded = level.stage.loaded_mut().unwrap();
+            let (ground, _) = loaded.reference[0].as_mut().unwrap();
+            ground.rim = Some(guac_ir::shading::Rim {
+                weights: guac_ir::shading::Weights::MULTIPLY,
+                ..guac_ir::shading::Rim::new(2.0)
+            });
+        }
+        app.insert_resource(LevelFog {
+            colour: [90, 60, 30],
+            near: 30.0,
+            far: 300.0,
+        });
+        app.update();
+        assert_eq!(app.world().resource::<Level>().report().relit, 1);
+        let after = drawn(&app);
+        assert_eq!(after[0], (0.0, remaster::in_light(2.0)), "in light");
+        assert_eq!(after[1].0, arithmetic::sky_bias(0), "the sky's still first");
     }
 
     /// AG.19: the keys the level asks the warm for are exactly the keys its
@@ -2904,20 +3242,7 @@ pub(crate) mod tests {
                 continue;
             }
             count += 1;
-            let mesh = meshes.get(&mesh.0).unwrap();
-            let shape = MeshShape {
-                uv_sets: [
-                    Mesh::ATTRIBUTE_UV_0,
-                    Mesh::ATTRIBUTE_UV_1,
-                    guacamole::character::mesh::ATTRIBUTE_UV_2,
-                ]
-                .into_iter()
-                .filter(|a| mesh.attribute(a.id).is_some())
-                .count() as u8,
-                tangents: mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(),
-                colours: mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some(),
-                skinned: mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some(),
-            };
+            let shape = MeshShape::of_mesh(meshes.get(&mesh.0).unwrap());
             drawn.insert(WarmKey {
                 material: materials.get(&material.0).unwrap().key,
                 mesh: shape,
@@ -3222,7 +3547,7 @@ pub(crate) mod tests {
         let world = || {
             (
                 Vec3::from_array(world_scene(&lit, &LevelFog::NONE).lights[0].travel),
-                guacamole::character::LIGHTS_IN_WORLD,
+                guacamole::character::LIGHTS_FROM_SCENE,
             )
         };
         let rewritten = |app: &App| {

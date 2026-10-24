@@ -19,6 +19,13 @@
 //!   ×2·vertex colour), not colours ([`tint`]): decoded, a neutral tint's
 //!   0.216 would scale every part by 4 · 0.216² = 0.186 instead of 1.0079.
 //!   Weights, exponents, alpha references and fog distances are numbers.
+//! - a level's rim that multiplies (AG.79): its map decoded as the other
+//!   colour maps are, and its strength raised to 2.2 ([`in_light`]), so
+//!   colour × map × strength on stored values comes out as the decoded
+//!   product: a grey of one over the strength stays neutral and the map's
+//!   highlights keep their reach (the coins' bronze, 2 · 0.82 stored at its
+//!   middle, multiplies by 2.9 in linear light, not 1.6 as stored or 1.3 as
+//!   decoded at strength 2). A character's rim keeps its strength (AG.95).
 //!
 //! The camera ([`camera`]) is HDR (an `Rgba16Float` main texture) with 4x
 //! MSAA and TonyMcMapface into an 8-bit sRGB image ([`target`]). No
@@ -89,6 +96,19 @@ pub fn tint(code: [u8; 4]) -> [f32; 4] {
     code.map(|c| f32::from(c) / 255.0)
 }
 
+/// A placement tint the scripts move, as the shader takes it in linear
+/// light (AH.67): each colour channel's ratio to neutral raised to 2.2,
+/// since the original multiplies stored values by it, alpha as stored. At
+/// neutral it's [`tint`]'s to the bit; the eruption's going-black (34, 20,
+/// 20) scales a part by 0.055, 0.016 and 0.016, where as stored it scaled
+/// by 0.27, 0.16 and 0.16.
+pub fn tint_in_light(code: [u8; 4]) -> [f32; 4] {
+    let neutral = 128.0 / 255.0;
+    let [r, g, b, a] = tint(code);
+    let in_light = |c: f32| neutral * (c / neutral).powf(2.2);
+    [in_light(r), in_light(g), in_light(b), a]
+}
+
 /// Whether a role's texture samples through an sRGB view: every colour the
 /// game paints (colour, spec and rim maps, the layers' colour maps), not
 /// the normal maps.
@@ -103,6 +123,13 @@ pub fn is_srgb(role: TextureRole) -> bool {
 pub fn samples_srgb(material: &Material, role: TextureRole) -> bool {
     let gloss = material.pixel.base >> bit::GLOSS_MAP & 1 == 1;
     is_srgb(role) && !(gloss && role == TextureRole::Layer3ColorMap)
+}
+
+/// What a strength the original multiplies stored colours by multiplies
+/// decoded ones by: its 2.2nd power, since (s · c)^2.2 = s^2.2 · c^2.2. A
+/// level's multiplying rim takes it (AG.79, [`super::CharacterUniform::multiplies_in_light`]).
+pub fn in_light(strength: f32) -> f32 {
+    strength.max(0.0).powf(2.2)
 }
 
 /// An IR sampler as Bevy's; one without a mipmap filter samples level 0
@@ -439,6 +466,59 @@ mod tests {
         )
         .unwrap();
         assert_eq!(image.texture_descriptor.format, TextureFormat::Bc1RgbaUnorm);
+    }
+
+    /// AH.67: a moved placement tint reaches the shader in light, neutral
+    /// untouched to the bit, alpha as stored; the lava's going-black darkens
+    /// a part as the original's stored multiply does once decoded.
+    #[test]
+    fn a_moved_placement_tint_multiplies_in_light() {
+        assert_eq!(
+            tint_in_light([128, 128, 128, 255]),
+            tint([128, 128, 128, 255])
+        );
+        assert_eq!(tint_in_light([128, 128, 128, 83])[3], 83.0 / 255.0);
+        let black = tint_in_light([34, 20, 20, 255]);
+        let neutral = 128.0 / 255.0;
+        for (c, code) in [(black[0], 34.0), (black[1], 20.0), (black[2], 20.0)] {
+            // Four times it and a neutral material tint: the part's scale,
+            // the original's stored multiply decoded.
+            let scale = 4.0 * c * neutral;
+            let stored = 4.0 * code / 255.0 * neutral;
+            assert!(
+                (scale - f32::powf(stored, 2.2)).abs() < 0.002,
+                "{code}: {scale}"
+            );
+        }
+        assert!((4.0 * black[0] * neutral - 0.055).abs() < 0.001);
+        assert_eq!(black[3], 1.0);
+        // Brighter than neutral brightens more than as stored.
+        assert!(tint_in_light([200, 128, 128, 255])[0] > 200.0 / 255.0);
+    }
+
+    /// AG.79: a strength on stored values is its 2.2nd power on decoded
+    /// ones, so the coins' bronze at strength 2 stays neutral at a grey of
+    /// one half and multiplies by 2.9 at its middle (0.82 stored), where as
+    /// stored it multiplied by 1.6 and decoded at 2 by 1.3.
+    #[test]
+    fn a_strength_on_stored_values_is_its_power_on_decoded_ones() {
+        assert_eq!(in_light(1.0), 1.0);
+        assert_eq!(in_light(0.0), 0.0);
+        assert_eq!(in_light(-1.0), 0.0, "no strength");
+        let grey = linear([128, 128, 128])[0];
+        assert!(
+            (in_light(2.0) * grey - 1.0).abs() < 0.02,
+            "{}",
+            in_light(2.0) * grey
+        );
+        let middle = linear([209, 209, 209])[0];
+        let stored = 2.0 * 209.0 / 255.0;
+        assert!((in_light(2.0) * middle - f32::powf(stored, 2.2)).abs() < 0.06);
+        assert!(in_light(2.0) * middle > 2.8 && 2.0 * middle < 1.3);
+        // Every texture keeps the view it had: a rim map decodes.
+        let mut coin = material([128, 128, 128, 255]);
+        coin.params.layer4_blend = [0.0, 0.0, 1.0, 0.0];
+        assert!(samples_srgb(&coin, TextureRole::Layer4ColorMap));
     }
 
     #[test]

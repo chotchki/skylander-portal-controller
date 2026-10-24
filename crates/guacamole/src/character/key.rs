@@ -11,7 +11,8 @@
 
 use bevy::material::AlphaMode;
 use bevy::render::render_resource::{
-    BlendComponent, BlendFactor, BlendOperation, BlendState, Face, RenderPipelineDescriptor,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, Face,
+    RenderPipelineDescriptor,
 };
 use bevy::shader::ShaderDefVal;
 use guac_ir::model::{Blend, Mask, RenderStates};
@@ -411,6 +412,23 @@ impl StateKey {
         }
     }
 
+    /// The states a part draws with while its placement's tint holds its
+    /// alpha under full (openspec AH.67): an opaque part blends by its
+    /// alpha, its depth write, sides and alpha test kept; a part that
+    /// blends already keeps its own. The eruption's lava is opaque on the
+    /// disc and fades in on the oracle's frames (AH.54's `e05`: the first
+    /// wave a third in, the ground showing through); what the original sets
+    /// for the faded draw beyond the blend is AH.85's to read.
+    pub fn faded(self) -> Self {
+        match self.blend {
+            Blend::Opaque => Self {
+                blend: Blend::Alpha,
+                ..self
+            },
+            _ => self,
+        }
+    }
+
     /// The game's winding matches Bevy's (counter-clockwise in front) and
     /// it culls back faces too (AC.16), so only a two-sided part keeps them.
     pub fn cull_mode(&self) -> Option<Face> {
@@ -444,13 +462,20 @@ impl StateKey {
     }
 }
 
-/// Which pass a part draws in: the frame's colour, or the glow pass's mask
-/// (the character-shading spec's glow mask, AE.11).
+/// Which pass a part draws in: the frame's colour, the glow pass's mask
+/// (the character-shading spec's glow mask, AE.11), or a level's glow mask
+/// laid into the frame's own alpha (openspec AH.65).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Pass {
     #[default]
     Colour,
     GlowMask,
+    /// A level part's glow mask, written into the frame's alpha after
+    /// everything else has drawn and the alpha was cleared
+    /// ([`super::glow::FrameGlow`]): unblended, alpha alone, tested against
+    /// the level's depth and writing none, as the original's mask pass is
+    /// tested against the colour pass's depth copy (AE.11).
+    LevelGlow,
 }
 
 /// What a pipeline is specialized on: the masks, the states and the pass.
@@ -470,18 +495,20 @@ impl MaterialKey {
         defs
     }
 
-    /// The fragment entry point: the shader's `fragment`, or `glow_mask`
-    /// in the glow pass.
+    /// The fragment entry point: the shader's `fragment`, `glow_mask` in
+    /// the glow pass, `level_glow` in a level's.
     pub fn entry_point(&self) -> &'static str {
         match self.pass {
             Pass::Colour => "fragment",
             Pass::GlowMask => "glow_mask",
+            Pass::LevelGlow => "level_glow",
         }
     }
 
     /// The pipeline's states and entry point: the part's own states in the
     /// colour pass; in the glow pass its culling, depth write and alpha
-    /// test, never blended.
+    /// test, never blended; in a level's, its culling and alpha test, never
+    /// blended, alpha alone written and no depth.
     pub fn apply(&self, descriptor: &mut RenderPipelineDescriptor) {
         self.states.apply(descriptor);
         if let Some(fragment) = descriptor.fragment.as_mut() {
@@ -491,6 +518,17 @@ impl MaterialKey {
                     target.blend = None;
                 }
             }
+            if self.pass == Pass::LevelGlow {
+                for target in fragment.targets.iter_mut().flatten() {
+                    target.blend = None;
+                    target.write_mask = ColorWrites::ALPHA;
+                }
+            }
+        }
+        if self.pass == Pass::LevelGlow
+            && let Some(depth) = descriptor.depth_stencil.as_mut()
+        {
+            depth.depth_write_enabled = Some(false);
         }
     }
 }

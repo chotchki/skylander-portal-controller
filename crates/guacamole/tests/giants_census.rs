@@ -6,9 +6,11 @@
 //! card, the level loader's for chapter 1, its props and what its scripts
 //! spawn), equal to
 //! `guacamole::census`'s tables. A table that drifts prints the rows the
-//! dump gives, in the table's syntax. And every character that walks
-//! (AG.21), drawn in the level as the hero, keys nothing the card tables
-//! don't hold.
+//! dump gives, in the table's syntax. Every glowing part the level draws
+//! keys its level glow mask too (each segment's, not only the first
+//! material's on a key), and every character that walks (AG.21),
+//! drawn in the level as the hero, keys his own rows there: the level's
+//! point lights on (openspec AH.65).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ use guac_ir::shading::Scene;
 use guac_ir::{DumpIdentity, Sha256};
 use guacamole::census::{self, Row};
 use guacamole::character::attach;
+use guacamole::character::key::Pass;
 use guacamole::character::turntable::rig_scene;
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::level_scene;
@@ -106,7 +109,9 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
             }
         }
         if walkers::walker(load).is_some() {
-            let keys = warm::keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
+            // His glowing parts' masks in the level too (AH.65).
+            let keys =
+                warm::level_keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
             cards
                 .heroes
                 .push((load.to_string(), keys.into_iter().map(|(k, _)| k).collect()));
@@ -182,12 +187,24 @@ fn level_keys(dump: &Path) -> Chapter1 {
     Chapter1 {
         keys: start.keys.into_iter().map(|(k, _)| k).collect(),
         props: props.keys(&view).expect("the props' keys"),
-        spawns: guacamole::props::models_keys(&spawned, &view).expect("the spawn models' keys"),
+        spawns: spawn_keys(&spawned, &view),
         materials: start.drawn.materials.len(),
         prop_models: props.models.len(),
         spawn_models: spawned.len(),
         hero,
     }
+}
+
+/// The keys the spawn models draw in `view`, then those a clone draws while
+/// the scripts fade it in (AH.67) that they don't, each once.
+fn spawn_keys(spawned: &[guacamole::props::PropModel], view: &Scene) -> Vec<WarmKey> {
+    let mut keys = guacamole::props::models_keys(spawned, view).expect("the spawn models' keys");
+    for k in guacamole::props::faded_keys(spawned, view).expect("the faded keys") {
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    keys
 }
 
 /// The rows `keys` give, sorted as the tables keep them.
@@ -219,6 +236,41 @@ fn check(what: &str, from_disc: &[WarmKey], table: &[Row], skinned: bool) -> Res
     ))
 }
 
+/// The colour pass's keys of `keys`.
+fn colour(keys: &[WarmKey]) -> Vec<WarmKey> {
+    keys.iter()
+        .filter(|k| k.material.pass == Pass::Colour)
+        .copied()
+        .collect()
+}
+
+/// The level glow masks' keys of `keys` (openspec AH.65).
+fn glows(keys: &[WarmKey]) -> Vec<WarmKey> {
+    keys.iter()
+        .filter(|k| k.material.pass == Pass::LevelGlow)
+        .copied()
+        .collect()
+}
+
+/// `keys` with none twice, in the order first met.
+fn once(keys: impl IntoIterator<Item = WarmKey>) -> Vec<WarmKey> {
+    let mut out: Vec<WarmKey> = Vec::new();
+    for k in keys {
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
+/// `keys` whose rows none of `tables` hold.
+fn beyond(keys: &[WarmKey], tables: &[&[Row]]) -> Vec<WarmKey> {
+    keys.iter()
+        .filter(|k| !tables.iter().any(|t| t.contains(&Row::of(k))))
+        .copied()
+        .collect()
+}
+
 #[test]
 #[ignore = "disc: reads the 01.00 roster's models and chapter 1 off GUAC_GIANTS_DUMP (AE.25)"]
 fn the_census_is_the_discs() {
@@ -227,34 +279,32 @@ fn the_census_is_the_discs() {
     );
     let started = Instant::now();
     let Chapter1 {
-        keys: level,
-        props,
-        spawns,
+        keys: level_all,
+        props: props_all,
+        spawns: spawns_all,
         materials,
         prop_models,
         spawn_models,
         hero: hero_scene,
     } = level_keys(&dump);
     let level_took = started.elapsed();
+    let (level, props, spawns) = (colour(&level_all), colour(&props_all), colour(&spawns_all));
     // The props' keys the level's table doesn't hold already.
-    let props_beyond: Vec<WarmKey> = props
-        .iter()
-        .filter(|k| !census::LEVEL.contains(&Row::of(k)))
-        .copied()
-        .collect();
+    let props_beyond = beyond(&props, &[census::LEVEL]);
     // What the scripts spawn keys past the level's and its props' (AH.24).
-    let spawns_beyond: Vec<WarmKey> = spawns
-        .iter()
-        .filter(|k| {
-            let r = Row::of(k);
-            !census::LEVEL.contains(&r) && !census::LEVEL_PROPS.contains(&r)
-        })
-        .copied()
-        .collect();
+    let spawns_beyond = beyond(&spawns, &[census::LEVEL, census::LEVEL_PROPS]);
+    // The glowing parts' masks, the level's, its props' and its clones'.
+    let glow = once(
+        glows(&level_all)
+            .into_iter()
+            .chain(glows(&props_all))
+            .chain(glows(&spawns_all)),
+    );
     eprintln!(
-        "what the scripts spawn: {} keys off {spawn_models} models, {} past the level's and its props'",
+        "what the scripts spawn: {} keys off {spawn_models} models, {} past the level's and its props'; {} level glow masks",
         spawns.len(),
-        spawns_beyond.len()
+        spawns_beyond.len(),
+        glow.len()
     );
     let started = Instant::now();
     let cards = card_keys(&dump, &hero_scene);
@@ -275,6 +325,37 @@ fn the_census_is_the_discs() {
         props_beyond.len(),
         level_took.as_secs_f64()
     );
+    // Every walker drawn in the level as the hero (AH.65: his keys there
+    // carry its point lights, and his glowing parts draw their masks).
+    assert_eq!(
+        cards
+            .heroes
+            .iter()
+            .map(|(l, _)| l.as_str())
+            .collect::<Vec<_>>(),
+        walkers::WALKERS
+            .iter()
+            .map(|w| w.load_file)
+            .collect::<Vec<_>>(),
+        "every walker's model read"
+    );
+    let heroes = once(cards.heroes.iter().flat_map(|(_, k)| k.iter().copied()));
+    let (hero_skinned, hero_static): (Vec<WarmKey>, Vec<WarmKey>) =
+        colour(&heroes).into_iter().partition(|k| k.mesh.skinned);
+    let hero_static = beyond(
+        &hero_static,
+        &[census::LEVEL, census::LEVEL_PROPS, census::SPAWNS],
+    );
+    let (hero_glow_skinned, hero_glow_static): (Vec<WarmKey>, Vec<WarmKey>) =
+        glows(&heroes).into_iter().partition(|k| k.mesh.skinned);
+    let hero_glow_static = beyond(&hero_glow_static, &[census::LEVEL_GLOW]);
+    for (load, keys) in &cards.heroes {
+        eprintln!(
+            "{load} as the hero: {} keys, {} level glow masks",
+            colour(keys).len(),
+            glows(keys).len()
+        );
+    }
     let checks = [
         check("cards, skinned", &skinned, census::TURNTABLE, true),
         check("cards, static", &unskinned, census::TURNTABLE_STATIC, false),
@@ -291,6 +372,26 @@ fn the_census_is_the_discs() {
             census::SPAWNS,
             false,
         ),
+        check("the level's glow masks", &glow, census::LEVEL_GLOW, false),
+        check("the heroes, skinned", &hero_skinned, census::HEROES, true),
+        check(
+            "the heroes, static",
+            &hero_static,
+            census::HEROES_STATIC,
+            false,
+        ),
+        check(
+            "the heroes' glow masks, skinned",
+            &hero_glow_skinned,
+            census::HEROES_GLOW,
+            true,
+        ),
+        check(
+            "the heroes' glow masks, static",
+            &hero_glow_static,
+            census::HEROES_GLOW_STATIC,
+            false,
+        ),
     ];
     for c in &checks {
         if let Err(why) = c {
@@ -298,39 +399,6 @@ fn the_census_is_the_discs() {
         }
     }
     assert!(checks.iter().all(Result::is_ok), "a table isn't the dump's");
-    // The hero's keys are his card's: the start's pass compiled them.
-    assert_eq!(
-        cards
-            .heroes
-            .iter()
-            .map(|(l, _)| l.as_str())
-            .collect::<Vec<_>>(),
-        walkers::WALKERS
-            .iter()
-            .map(|w| w.load_file)
-            .collect::<Vec<_>>(),
-        "every walker's model read"
-    );
-    for (load, keys) in &cards.heroes {
-        let outside: Vec<String> = keys
-            .iter()
-            .filter(|k| {
-                let table = if k.mesh.skinned {
-                    census::TURNTABLE
-                } else {
-                    census::TURNTABLE_STATIC
-                };
-                !table.contains(&Row::of(k))
-            })
-            .map(|k| Row::of(k).source())
-            .collect();
-        eprintln!(
-            "{load} as the hero: {} keys, {} outside the card tables",
-            keys.len(),
-            outside.len()
-        );
-        assert!(outside.is_empty(), "{load} as the hero: {outside:?}");
-    }
     assert_eq!(
         (cards.models, cards.carried, cards.undrawn),
         (67, 102, 3),
@@ -348,7 +416,18 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (spawn_models, spawns.len(), spawns_beyond.len()),
-        (13, 10, 5),
-        "what the scripts spawn: the spawn part's models, their keys, those past the level's and its props'"
+        (13, 13, 8),
+        "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
+    );
+    assert_eq!(
+        (
+            glow.len(),
+            hero_skinned.len(),
+            hero_static.len(),
+            hero_glow_skinned.len(),
+            hero_glow_static.len()
+        ),
+        (19, 1, 0, 1, 0),
+        "the level's glow masks, the heroes' keys and their glow masks"
     );
 }

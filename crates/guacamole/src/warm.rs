@@ -64,7 +64,7 @@ use guacamole::character::attach;
 use guacamole::character::turntable::{Framing, Sweep, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
-    CharacterMaterial, ShadowLookup, spawn_character, spawn_glow_masks, static_mesh,
+    CharacterMaterial, Pass, ShadowLookup, spawn_character, spawn_glow_masks, static_mesh,
 };
 use serde::Serialize;
 use tracing::{debug, info, warn};
@@ -441,6 +441,39 @@ impl Warm {
         self.update_report();
     }
 
+    /// Puts the hero's keys in the level (each with `model`'s material
+    /// index that draws it) ahead of everything else, drawn in the level's
+    /// `scene` with no card's glow mask (openspec AH.65: his keys in the
+    /// level carry its point lights, and his glowing parts' level glow masks
+    /// are keys of their own): the walk waits on them.
+    pub(crate) fn ask_hero(&mut self, model: &Model, keys: &[(WarmKey, usize)], scene: Arc<Scene>) {
+        let drawn = attach::drawn(model);
+        self.started.get_or_insert_with(Instant::now);
+        for (key, _) in keys {
+            self.note_outside(key);
+        }
+        for (key, material) in keys.iter().rev() {
+            if self.done.contains(key) {
+                continue;
+            }
+            let entry = match self.queue.iter().position(|e| e.key == *key) {
+                Some(at) => self.queue.remove(at),
+                None if self.pending.contains(key) => None,
+                None => Some(Entry {
+                    key: *key,
+                    material: drawn.materials[*material].clone(),
+                    scene: Some(scene.clone()),
+                    glow: false,
+                }),
+            };
+            if let Some(entry) = entry {
+                self.pending.insert(entry.key);
+                self.queue.push_front(entry);
+            }
+        }
+        self.update_report();
+    }
+
     /// Queues a level's keys (each with the material that first draws it)
     /// behind everything already asked for, drawn in the level's `scene`.
     pub(crate) fn ask_level(&mut self, keys: &[(WarmKey, model::Material)], scene: Arc<Scene>) {
@@ -756,11 +789,16 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         texture.clone()
     })
     .map_err(|e| e.to_string())
+    .and_then(|material| as_listed(material, &entry))
     .and_then(|material| {
         if material.key != entry.key.material {
             warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
         }
-        let glow = material.glow_mask().map(|g| s.materials.add(g));
+        let glow = entry
+            .glow
+            .then(|| material.glow_mask())
+            .flatten()
+            .map(|g| s.materials.add(g));
         let colour = s.materials.add(material);
         spawn_character(
             &mut s.commands,
@@ -788,13 +826,16 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
             .entity(*segment)
             .insert(RenderLayers::layer(model_layer(WARM_SLOT)));
     }
-    let masks = spawn_glow_masks(
-        &mut s.commands,
-        &model,
-        &spawned,
-        &[glow],
-        glow_layer(WARM_SLOT),
-    );
+    let masks = match glow {
+        Some(glow) => spawn_glow_masks(
+            &mut s.commands,
+            &model,
+            &spawned,
+            &[Some(glow)],
+            glow_layer(WARM_SLOT),
+        ),
+        None => Vec::new(),
+    };
     // Its glow mask too, unless the glow pass leaves the part out.
     let checks: Vec<Entity> = spawned.segments[..1]
         .iter()
@@ -811,6 +852,17 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         checks,
         since: Instant::now(),
     });
+}
+
+/// A key's material as the entry lists it: the colour pass's as built, or
+/// its level glow mask for a level's glow key (openspec AH.65).
+fn as_listed(material: CharacterMaterial, entry: &Entry) -> Result<CharacterMaterial, String> {
+    match entry.key.material.pass {
+        Pass::LevelGlow => material
+            .level_glow()
+            .ok_or_else(|| "a level glow key on a part that doesn't glow".to_owned()),
+        _ => Ok(material),
+    }
 }
 
 /// What a census key's triangle model says it came off: no dump, since the
@@ -844,6 +896,7 @@ fn draw_static(
         texture.clone()
     })
     .map_err(|e| e.to_string())
+    .and_then(|material| as_listed(material, &entry))
     .and_then(|material| {
         if material.key != entry.key.material {
             warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
@@ -961,7 +1014,7 @@ mod tests {
             let pass = std::mem::take(&mut key.pass);
             let into = match pass {
                 Pass::Colour => &mut colour,
-                Pass::GlowMask => &mut glow,
+                Pass::GlowMask | Pass::LevelGlow => &mut glow,
             };
             into.insert(WarmKey {
                 material: key,
@@ -1145,7 +1198,16 @@ mod tests {
         });
         let body = census::TURNTABLE[0].key(true).unwrap();
         let carried = census::TURNTABLE_STATIC[0].key(false).unwrap();
-        let level = census::LEVEL[0].key(false).unwrap();
+        // The first of the level's opaque keys that writes depth (the sky's
+        // write none since AG.79).
+        let level = census::LEVEL
+            .iter()
+            .map(|r| r.key(false).unwrap())
+            .find(|k| {
+                k.material.states.depth_write
+                    && k.material.states.blend == guac_ir::model::Blend::Opaque
+            })
+            .unwrap();
         for k in [body, carried, level] {
             assert!(k.material.states.depth_write, "a key the glow pass draws");
         }

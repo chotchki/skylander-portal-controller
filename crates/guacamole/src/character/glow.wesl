@@ -95,3 +95,20 @@ fn add_back(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
     let g = filtered(source, centre(at.xy, glow.frame, glow.buffer));
     return vec4<f32>(2.0 * g.rgb, 0.0);
 }
+
+// A level's (AH.65): the mask is the frame's own alpha, which its glow parts
+// wrote after the rest drew; the frame times it, as `extract` takes the
+// frame times a mask image.
+@fragment
+fn extract_alpha(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let c = filtered(source, centre(at.xy, glow.buffer, glow.frame));
+    return vec4<f32>(c.rgb * c.a, c.a);
+}
+
+// A level's add-back: colour added as `add_back` adds it, the alpha set
+// opaque again, the mask it held spent.
+@fragment
+fn add_back_opaque(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let g = filtered(source, centre(at.xy, glow.frame, glow.buffer));
+    return vec4<f32>(2.0 * g.rgb, 1.0);
+}

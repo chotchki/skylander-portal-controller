@@ -864,11 +864,13 @@ fn choose_hero(cards: Res<PortalCards>, turntables: Res<Turntables>, mut play: R
 }
 
 /// The scene the hero's keys are made in: the hero scene's switches (fog
-/// on, no point light, no shadows), which alone key a pipeline; the
-/// level's lights and fog are uniforms, set when he's drawn.
-fn key_scene() -> Scene {
+/// on, its three point lights, no shadows: openspec AH.65), which alone key
+/// a pipeline; the level's lights and fog are uniforms and its buffer, set
+/// when he's drawn.
+pub(crate) fn key_scene() -> Scene {
     Scene {
         fog: true,
+        point_lights: vec![guacamole::level_scene::DARK; guacamole::level_scene::MAX_POINT_LIGHTS],
         ..Scene::new()
     }
 }
@@ -906,12 +908,12 @@ fn load_hero(
         Model3d::Reading(task) => match check_ready(task) {
             None => return,
             Some(Err(why)) => Model3d::Failed(why),
-            Some(Ok(read)) => match warm::keys(&read.loaded.model, &key_scene()) {
+            // His glowing parts' masks in the level too (AH.65).
+            Some(Ok(read)) => match warm::level_keys(&read.loaded.model, &key_scene()) {
                 Err(why) => Model3d::Failed(why.to_string()),
                 Ok(keys) => {
-                    let scene = key_scene();
                     if !warm.covers(keys.iter().map(|(k, _)| k)) {
-                        warm.ask(&read.loaded.model, &keys, &scene);
+                        warm.ask_hero(&read.loaded.model, &keys, Arc::new(key_scene()));
                     }
                     info!(
                         load_file = %c.load_file,
@@ -1217,6 +1219,7 @@ fn enter(
         ))
         .insert(following(follow))
         .id();
+    guacamole::character::spawn_alpha_clear(&mut s.commands, camera, LEVEL_LAYER);
     level.show(&mut s.commands, camera, now);
     pads.show();
     info!(
@@ -1869,8 +1872,27 @@ mod tests {
         assert!(
             frames
                 .iter()
-                .all(|w| *w == guacamole::character::LIGHTS_IN_WORLD),
+                .all(|w| *w == guacamole::character::LIGHTS_FROM_SCENE),
             "{frames:?}"
+        );
+        // AH.65: the walk's camera runs the glow chain off its frame's alpha,
+        // so it carries the clear the level's glow masks write over; without
+        // it every part's own alpha would read as a mask and the whole frame
+        // would glow.
+        let camera = app
+            .world_mut()
+            .query_filtered::<Entity, (With<FollowCamera>, With<guacamole::character::FrameGlow>)>()
+            .single(app.world())
+            .expect("the walk's camera, glowing");
+        let clears: Vec<(Entity, RenderLayers)> = app
+            .world_mut()
+            .query_filtered::<(&ChildOf, &RenderLayers), With<MeshMaterial3d<guacamole::character::AlphaClear>>>()
+            .iter(app.world())
+            .map(|(c, l)| (c.parent(), l.clone()))
+            .collect();
+        assert!(
+            clears.contains(&(camera, RenderLayers::layer(LEVEL_LAYER))),
+            "{clears:?}"
         );
     }
 

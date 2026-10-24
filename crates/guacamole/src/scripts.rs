@@ -29,11 +29,15 @@
 //! deactivation buffer` per placement from its file, `abstractplacement.id`
 //! and `spritematrixmeasurement.id` the object's `_ID` (a clone its
 //! template's), `actorinfo.waypoints` the placement's waypoint objects, the
-//! pads and the portal one object each. World ops: a tell runs its block on
-//! any placement or clone not taken off; a spawn of a template makes a clone
-//! (an entity in the TV, nothing drawn yet); a remove takes a clone or a
-//! placement off; a reset puts a placement's numbers back as its file has
-//! them; a stopped sequence is nothing (none plays yet). Any other op or
+//! pads and the portal one object each, `lightinfo`'s colours, multiplier
+//! and attenuation a placed light's as its file holds them and a clone of
+//! one its template's (openspec AH.65: the point-light manager copies them
+//! onto its pool's lights, which the TV draws). World ops: a tell runs its
+//! block on any placement or clone not taken off; a spawn of a template
+//! makes a clone (an entity in the TV, nothing drawn yet); a remove takes a
+//! clone or a placement off; a reset puts a placement's numbers back as its
+//! file has them, and a light the manager took off back on; a stopped
+//! sequence is nothing (none plays yet). Any other op or
 //! member stops the script that reaches it, named (play mode: that script
 //! alone).
 
@@ -43,7 +47,7 @@ use std::sync::Arc;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use guac_formats::igz::Igz;
-use guac_formats::igz::layouts::{ActorWaypoint, ActorWaypointList, Layout, is_a};
+use guac_formats::igz::layouts::{ActorWaypoint, ActorWaypointList, Layout, LightInfo, is_a};
 use guac_formats::level::Placements;
 use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
@@ -56,7 +60,8 @@ use tracing::{info, warn};
 use crate::frame::Frame;
 use crate::player_loop::PlayerLoop;
 use crate::script_engine::{
-    Actor, Angles, Engine, NoEngine, NodePose, Object, Objects, Pad, Physics, Sequence, Solid,
+    Actor, Angles, Engine, Light, NoEngine, NodePose, Object, Objects, Pad, Physics, Sequence,
+    Solid,
 };
 use crate::script_members::Member;
 
@@ -140,6 +145,10 @@ pub struct Files {
     /// Every waypoint's place in the level, metres (openspec AH.18: what a
     /// `move to` along a path walks to and a measurement is taken from).
     pub points: HashMap<Obj, Vec3>,
+    /// Every placed light's values as its file holds them (openspec AH.65):
+    /// the point-light manager's template and the lights the scripts name
+    /// for it to copy.
+    pub lights: HashMap<Obj, Light>,
 }
 
 impl Files {
@@ -174,6 +183,15 @@ impl Files {
                 }
             }
             let placements = Placements::read(igz).map_err(|e| e.to_string())?;
+            for (index, l) in &placements.lights {
+                out.lights.insert(
+                    Obj {
+                        unit,
+                        index: *index as u32,
+                    },
+                    light_of(l),
+                );
+            }
             for actor in &placements.actors {
                 let p = actor.placement();
                 let waypoints = match actor.info.waypoints {
@@ -293,6 +311,22 @@ fn actor_of(p: &Placed) -> Actor {
     a
 }
 
+/// A placed light's values as its file holds them, nothing lifted.
+fn light_of(l: &LightInfo<'_>) -> Light {
+    Light {
+        diffuse: u32::from_be_bytes(l.diffuse),
+        ambient: u32::from_be_bytes(l.ambient),
+        specular: u32::from_be_bytes(l.specular),
+        multiplier: l.multiplier,
+        attenuation: [
+            l.constant_attenuation,
+            l.linear_attenuation,
+            l.quadratic_attenuation,
+        ],
+        lift: 0.0,
+    }
+}
+
 /// What a clone handle is asked for: the template it copies.
 pub type Spawner<'a> = dyn FnMut(Value) -> Handle + 'a;
 
@@ -315,6 +349,9 @@ pub struct ScriptWorld {
     pub(crate) objects: HashMap<Obj, Handle>,
     /// Every file placement's data, to make a clone of it from.
     pub(crate) templates: HashMap<Obj, Placed>,
+    /// Every placed light's values (openspec AH.65): a light placement's
+    /// members read and write these; a clone of one copies them.
+    pub(crate) light_templates: HashMap<Obj, Light>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
     pub(crate) controllers: [Handle; 2],
@@ -388,6 +425,7 @@ impl ScriptWorld {
             actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
+            light_templates: files.lights.clone(),
             points: files.points.clone(),
             controllers: [objects[0], objects[1]],
             physical: [objects[2], objects[3], objects[4], objects[5]],
@@ -648,6 +686,25 @@ impl ScriptWorld {
         }
     }
 
+    /// The lights the scripts have lit (openspec AH.65), in handle order:
+    /// each clone of a placed light not taken off, where it hangs (its place
+    /// as the point-light manager last hung it, raised by its lift, metres)
+    /// and its values as the manager last copied them.
+    pub fn lit_lights(&self) -> Vec<(Vec3, Light)> {
+        let mut lit: Vec<(Handle, Vec3, Light)> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.obj.is_none() && !a.removed)
+            .filter_map(|(h, a)| {
+                let l = a.light?;
+                let up = Vec3::Y * l.lift * crate::script_engine::METRES_PER_FOOT;
+                Some((*h, a.position + up, l))
+            })
+            .collect();
+        lit.sort_unstable_by_key(|k| k.0);
+        lit.into_iter().map(|(_, at, l)| (at, l)).collect()
+    }
+
     /// The handles of the clones the scripts have made, live or taken off.
     pub fn clones(&self) -> Vec<Handle> {
         let mut c: Vec<Handle> = self
@@ -706,7 +763,12 @@ impl ScriptWorld {
         }
     }
 
-    fn set(&mut self, at: &Access, v: Value, engine: &mut dyn Engine) -> Result<(), HostFault> {
+    pub(crate) fn set(
+        &mut self,
+        at: &Access,
+        v: Value,
+        engine: &mut dyn Engine,
+    ) -> Result<(), HostFault> {
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -819,6 +881,17 @@ impl ScriptWorld {
             Class::Reset => {
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
+                    // A light the point-light manager took off goes back
+                    // on with its template's values (openspec AH.65: the
+                    // manager removes a light it returns to its pool and
+                    // resets one it takes out; a reset leaving it off would
+                    // light nothing after the first request).
+                    if let Some(l) = k.template.and_then(|t| self.light_templates.get(&t))
+                        && k.light.is_some()
+                    {
+                        k.light = Some(*l);
+                        k.removed = false;
+                    }
                 }
                 Ok(Answer::Done)
             }
@@ -879,6 +952,11 @@ impl ScriptWorld {
             && let Some(t) = source
         {
             a.id = self.ids.get(&t).copied().unwrap_or(0);
+        }
+        if a.light.is_none()
+            && let Some(l) = source.and_then(|t| self.light_templates.get(&t))
+        {
+            a.light = Some(*l);
         }
         if let Some(p) = place {
             a.position = p;
@@ -995,9 +1073,12 @@ pub fn config(mode: Mode) -> Config {
 /// `global.bld`'s placements AH.17 ticks every step: the UI's (its tick
 /// advances the combat timer every mover's update reads, and keeps the
 /// loot in play) and the movement update's (each tick moving the scripted
-/// movers). The game systems' tick moves the orbs; the player loop runs
-/// that stretch of it alone (openspec AH.20).
-pub const GLOBAL_EVERY_TICK: [&str; 2] = ["/UI.ai", "movementUpdate.ai"];
+/// movers), and the point-light manager's (openspec AH.65: each tick it
+/// hands its pool's three lights to what asked for one, hangs each on what
+/// it lights, copies the asker's colours onto it and takes it back once
+/// that's gone or faded out). The game systems' tick moves the orbs; the
+/// player loop runs that stretch of it alone (openspec AH.20).
+pub const GLOBAL_EVERY_TICK: [&str; 3] = ["/UI.ai", "movementUpdate.ai", "PointLightManager.ai"];
 
 /// Eruptor's scripts (openspec AH.17): his definition and tuning actor, his
 /// own script on his clone, the eruption's and the magma ball's, every
@@ -1792,6 +1873,7 @@ mod tests {
     /// and the world over them.
     fn world() -> (ScriptWorld, Handle, [Handle; 7]) {
         let files = Files {
+            lights: HashMap::new(),
             placed: vec![Placed {
                 id: 41,
                 buffer: 12.5,
@@ -2085,6 +2167,7 @@ mod tests {
         app.world_mut().run_schedule(FixedUpdate);
         assert!(app.world().get_resource::<ScriptRuntime>().is_none());
         let files = Files {
+            lights: HashMap::new(),
             placed: vec![Placed {
                 id: 41,
                 buffer: 12.5,
@@ -2406,6 +2489,7 @@ mod tests {
         let [hero, chompy, controller] = objects.map(obj);
         // Where AH.8's anchor B has `Enemy_Chompy(1)`.
         let files = Files {
+            lights: HashMap::new(),
             placed: vec![
                 Placed {
                     position: [4.5213137, 22.374975, -23.117332],
