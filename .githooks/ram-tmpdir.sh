@@ -17,9 +17,9 @@
 # at once take 4 GiB), TMPDIR its `tmp/` folder, a `.metadata_never_index` at
 # its root for a Mac with Spotlight on (this one has it off, and the detach
 # measured the same either way: 0.3-0.5 s). A run killed outright
-# (SIGKILL) can't detach; the next run detaches any guac-tmp-<pid> RAM disk
-# whose process is gone. `hdiutil info` lists what's attached. Mac only:
-# anywhere else the command runs as it is.
+# (SIGKILL), in its setup too, can't detach; the next run detaches any
+# guac-tmp-<pid> RAM disk whose process is gone. `hdiutil info` lists what's
+# attached. Mac only: anywhere else the command runs as it is.
 #
 #   .githooks/ram-tmpdir.sh <command> [args...]
 #
@@ -93,11 +93,13 @@ done
 
 dev=
 devfile=$(mktemp "${TMPDIR:-/tmp}/ram-tmpdir.XXXXXX") || exit 1
+# The device $devfile's first line names, if it names one.
+dev_noted() { awk 'NR == 1 && $1 ~ /^\/dev\/disk[0-9]+$/ { print $1 }' "$devfile" 2>/dev/null; }
 cleanup() {
   local rc=$? t used
   trap - EXIT
   trap '' INT TERM HUP
-  [ -n "$dev" ] || dev=$(awk 'NR == 1 { print $1 }' "$devfile" 2>/dev/null)
+  [ -n "$dev" ] || dev=$(dev_noted)
   rm -f "$devfile"
   if [ -n "$dev" ]; then
     used=$(df -k "$mnt" 2>/dev/null | awk 'NR == 2 { printf "%.0f", $3 / 1024 }')
@@ -117,29 +119,46 @@ trap 'exit 129' HUP
 
 # Makes the disk, TMPDIR's folder on it; a step that fails says why and
 # leaves anything attached in $dev for the caller to eject. Attaching and
-# formatting run solo, so a Ctrl-C can't land between attaching the device
-# and noting it.
+# formatting run in one solo process, so a Ctrl-C can't land between
+# attaching the device and noting it, and a run killed outright between the
+# two still gets its named volume for the next run to detach (attaching and
+# formatting as two steps of this script, a KILL between them left an
+# unnamed RAM device that no run detached). The device goes on $devfile's
+# first line, what failed after it.
 make_disk() {
-  local out fs
-  if ! solo diskutil image attach --noMount "ram://$sectors" >"$devfile" 2>&1; then
+  local rc fs
+  solo /bin/sh -c '
+    out=$(diskutil image attach --noMount "ram://$1" 2>&1) || { echo "$out" >"$3"; exit 3; }
+    dev=$(echo "$out" | awk "\$1 ~ /^\\/dev\\/disk[0-9]+\$/ { print \$1; exit }")
+    [ -n "$dev" ] || { echo "$out" >"$3"; exit 4; }
+    echo "$dev" >"$3"
+    diskutil erasevolume APFS "$2" "$dev" >>"$3" 2>&1 || exit 5
+  ' make-disk "$sectors" "$name" "$devfile"
+  rc=$?
+  dev=$(dev_noted)
+  case $rc in
+  0) ;;
+  3)
     say "could not attach a RAM disk: $(tr '\n' ' ' <"$devfile")"
-    : >"$devfile"
-    return 1
-  fi
-  dev=$(awk 'NR == 1 { print $1 }' "$devfile")
-  case $dev in
-  /dev/disk[0-9]*) ;;
-  *)
-    say "unexpected attach output: $(tr '\n' ' ' <"$devfile")"
     dev=
     : >"$devfile"
     return 1
     ;;
-  esac
-  if ! out=$(solo diskutil erasevolume APFS "$name" "$dev" 2>&1); then
-    say "could not format $dev as APFS: $(echo "$out" | tr '\n' ' ')"
+  4)
+    say "attach named no device (check 'hdiutil info' for a ram:// one left): $(tr '\n' ' ' <"$devfile")"
+    dev=
+    : >"$devfile"
     return 1
-  fi
+    ;;
+  5)
+    say "could not format $dev as APFS: $(sed 1d "$devfile" | tr '\n' ' ')"
+    return 1
+    ;;
+  *)
+    say "could not make a RAM disk (exit $rc): $(tr '\n' ' ' <"$devfile")"
+    return 1
+    ;;
+  esac
   fs=$(diskutil info -plist "$mnt" 2>/dev/null | plutil -extract FilesystemType raw - 2>/dev/null)
   if [ "$fs" != apfs ]; then
     say "refused: $mnt is ${fs:-not mounted}, not APFS (an HFS+ disk's whole-second times fail guac-extract's identity.rs)"

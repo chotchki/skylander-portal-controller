@@ -81,7 +81,8 @@ that fails fails each test that spawns with cargo's error (openspec AQ.15,
 
 On the Mac, run the suite through
 [`.githooks/ram-tmpdir.sh`](../../.githooks/ram-tmpdir.sh) (openspec
-AQ.35), as `.githooks/pre-push` runs `cargo test --workspace`:
+AQ.35) from the repo root, as `.githooks/pre-push` runs `cargo test
+--workspace`:
 
 ```
 E2E_APP=guacamole .githooks/ram-tmpdir.sh cargo test -p skylander-e2e-tests --no-fail-fast -- --ignored --test-threads=1 --skip ios_
@@ -99,8 +100,7 @@ folder: chromedriver doesn't read `TMPDIR`). A Ctrl-C mid-run leaves the
 spawned server and its chromedriver (each in a process group of its own)
 and that chromedriver's Chrome running, as it does without the script; the
 script forces the disk off under them (4.1 s) and they're left to kill by
-hand. Without it
-every command here works as written.
+hand. Without it every command here works as written.
 
 ### Single-test runs
 
