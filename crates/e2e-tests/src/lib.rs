@@ -143,12 +143,18 @@ impl TestServer {
     }
 
     /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level
-    /// (openspec AG.21), no intros.
+    /// (openspec AG.21), no intros. Its part can't join his scripts (the
+    /// roster builder's `global.bld` holds no portal manager), so he walks
+    /// on AG.16's controller, the walk its tests judge: the server's reads
+    /// expect that `off` and no other ([`WALKING_SCRIPTS_OFF`], openspec
+    /// AH.106).
     pub fn spawn_guacamole_walking() -> Result<Self> {
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let fixture = IntroFixture::build_walking_in(&tmp.path().join("giants"), &[])?;
         let (dumps, env) = (fixture.dumps.clone(), fixture.env());
-        Self::spawn_guacamole_over(tmp, &dumps, &env)
+        let server = Self::spawn_guacamole_over(tmp, &dumps, &env)?;
+        expect_hero_scripts_off(&server.url, WALKING_SCRIPTS_OFF);
+        Ok(server)
     }
 
     /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level and
@@ -167,6 +173,17 @@ impl TestServer {
     pub fn spawn_guacamole_smashing() -> Result<Self> {
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let fixture = IntroFixture::build_smashing_in(&tmp.path().join("giants"))?;
+        let (dumps, env) = (fixture.dumps.clone(), fixture.env());
+        Self::spawn_guacamole_over(tmp, &dumps, &env)
+    }
+
+    /// guacamole over a Giants dump whose [`E2E_WALKER`] fights on its
+    /// scripts beside AH.25's synthetic first fight ([`E2E_CREATURE`], its
+    /// triggers and the controller waiting on them), no intros
+    /// ([`IntroFixture::build_creature_in`]).
+    pub fn spawn_guacamole_creature() -> Result<Self> {
+        let tmp = tempfile::tempdir().context("create temp dir")?;
+        let fixture = IntroFixture::build_creature_in(&tmp.path().join("giants"))?;
         let (dumps, env) = (fixture.dumps.clone(), fixture.env());
         Self::spawn_guacamole_over(tmp, &dumps, &env)
     }
@@ -216,6 +233,7 @@ impl TestServer {
         self._child.kill_now();
         let repo = repo_root()?;
         let (url, guard) = start_server(self._tmpdir.path(), &repo, "guacamole")?;
+        move_hero_scripts_off(&self.url, Some(&url));
         self.url = url;
         self._child = guard;
         Ok(())
@@ -1512,18 +1530,26 @@ impl IntroFixture {
     /// attack as the script part, the walker's palette holding its throw's
     /// and its second attack's slots: [`E2E_WALKER`] fights on its scripts.
     pub fn build_fighting_in(dir: &Path) -> Result<Self> {
-        Self::build_with_fight(dir, &[], true, true, false)
+        Self::build_with_fight(dir, &[], true, true, LevelEntry::Creature)
     }
 
     /// [`Self::build_fighting_in`] with AH.27's synthetic breakable as the
     /// level's script entry and its barrel standing [`E2E_BARREL`] in the
     /// level's placements, a prop for its solid.
     pub fn build_smashing_in(dir: &Path) -> Result<Self> {
-        Self::build_with_fight(dir, &[], true, true, true)
+        Self::build_with_fight(dir, &[], true, true, LevelEntry::Smash)
+    }
+
+    /// [`Self::build_fighting_in`] with AH.25's synthetic first fight as the
+    /// level's script entry: its creature at [`E2E_CREATURE`], which the
+    /// fight's listing runs (the dev entry asks for it), and its triggers
+    /// at [`E2E_TRIGGERS`].
+    pub fn build_creature_in(dir: &Path) -> Result<Self> {
+        Self::build_with_fight(dir, &[], true, true, LevelEntry::Fight)
     }
 
     fn build_with(dir: &Path, intros: &[FixtureIntro], walking: bool) -> Result<Self> {
-        Self::build_with_fight(dir, intros, walking, false, false)
+        Self::build_with_fight(dir, intros, walking, false, LevelEntry::Creature)
     }
 
     fn build_with_fight(
@@ -1531,7 +1557,7 @@ impl IntroFixture {
         intros: &[FixtureIntro],
         walking: bool,
         fighting: bool,
-        smashing: bool,
+        entry: LevelEntry,
     ) -> Result<Self> {
         use guac_extract::intros::{self, IrFormat};
         use guac_extract::known::KnownDump;
@@ -1585,7 +1611,7 @@ impl IntroFixture {
         write_roster(&mut opened.dir, walking)?;
         write_progression(&mut opened.dir)?;
         write_models(&mut opened.dir, walking, fighting)?;
-        write_level(&mut opened.dir, smashing)?;
+        write_level(&mut opened.dir, entry)?;
         write_scripts(&mut opened.dir, fighting)?;
 
         // Only the intros need ffmpeg.
@@ -1698,6 +1724,32 @@ fn write_roster(dir: &mut guac_extract::IdentityDir, walking: bool) -> Result<()
     Ok(())
 }
 
+/// The level's script entry a fixture writes (AH.22's part): AH.13's
+/// creature, AH.27's breakable or AH.25's first fight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LevelEntry {
+    Creature,
+    Smash,
+    Fight,
+}
+
+/// Where AH.25's synthetic creature stands in a creature fixture: 3.2 m
+/// ahead of the start along the hero's facing, on the floor, where his
+/// ball comes down.
+pub const E2E_CREATURE: [f32; 3] = [E2E_START[0], E2E_FLOOR, E2E_START[2] + 3.2];
+
+/// Where its triggers stand: 8 m to either side of the start and 8 m
+/// back, out of his way.
+pub const E2E_TRIGGERS: [[f32; 3]; 2] = [
+    [E2E_START[0] - 8.0, E2E_FLOOR, E2E_START[2] - 8.0],
+    [E2E_START[0] + 8.0, E2E_FLOOR, E2E_START[2] - 8.0],
+];
+
+/// How many scripts a creature fixture links (AH.25): AH.24's fighting
+/// fixture's five past the level's, and the fight's creature and
+/// controller.
+pub const E2E_FIGHT_SCRIPTS: usize = 7;
+
 /// Where AH.27's synthetic barrel stands in a smashing fixture: 3 m ahead
 /// of the start along the hero's facing, on the floor, inside his ball's
 /// arc.
@@ -1708,12 +1760,12 @@ pub const E2E_BARREL: [f32; 3] = [E2E_START[0], E2E_FLOOR, E2E_START[2] + 3.0];
 /// ending at a wall (AG.21's walk), `213_Init_Location` with its first
 /// waypoint, the three world lights (AG.19) and the start's atmospheric
 /// zone the TV's loader lights and fogs the level with (AG.41), nothing
-/// drawn and no props; with `smashing`, AH.27's breakable as the level's
-/// script entry and its barrel in the placements at [`E2E_BARREL`], its
-/// solid a prop that draws nothing. Its camera is camera 0's definition,
+/// drawn and no props; the level's script entry `entry`'s: with AH.27's
+/// breakable its barrel in the placements at [`E2E_BARREL`], its solid a
+/// prop that draws nothing. Its camera is camera 0's definition,
 /// which guacamole holds until AG.26 reads them off the scripts. Every
 /// number made up.
-fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()> {
+fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
     use guac_ir::RigLight;
@@ -1767,7 +1819,8 @@ fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()
             yon_colour: [100, 90, 80, 0],
         },
     };
-    let smash = smashing.then(|| guac_formats::script::builder::smash(E2E_BARREL));
+    let smash =
+        (entry == LevelEntry::Smash).then(|| guac_formats::script::builder::smash(E2E_BARREL));
     let mut actors = vec![Placement {
         object: 1,
         id: 0,
@@ -1922,9 +1975,12 @@ fn write_level(dir: &mut guac_extract::IdentityDir, smashing: bool) -> Result<()
     // AH.22's two: the level's entry (AH.13's creature, or AH.27's
     // breakable; our numbers) and no creature palettes.
     let rel = guac_extract::levels::script_path(&level);
-    let entry = match smash {
-        Some(s) => s.level,
-        None => guac_formats::script::builder::creature().0,
+    let entry = match (smash, entry) {
+        (Some(s), _) => s.level,
+        (None, LevelEntry::Fight) => {
+            guac_formats::script::builder::fight(E2E_CREATURE, E2E_TRIGGERS)
+        }
+        (None, _) => guac_formats::script::builder::creature().0,
     };
     dir.write_output(&rel, &entry)?;
     dir.record_level_part(&level, guac_extract::levels::SCRIPT, vec![rel])?;
@@ -2407,6 +2463,12 @@ pub async fn gaits_tv(base: &str, since: u64) -> Result<serde_json::Value> {
 
 /// The scripts' run step by step after step `since`
 /// (`/api/_test/tv/scripts`, openspec AH.24): `{"last": .., "steps": [..]}`.
+/// A step whose hero's join reads `off` fails the read, as [`tv`]'s does,
+/// unless the test expects an off for the reason the TV gives (openspec
+/// AH.106: so an off between two reads of the TV isn't missed; an off for
+/// another reason fails as [`tv`]'s does, AH.25's review). The log carries
+/// no reason: it's the TV's while he's in, and with him gone an expected
+/// off is let through, an unexpected one not.
 pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv/scripts?since={since}"))
@@ -2415,7 +2477,30 @@ pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     if !resp.status().is_success() {
         bail!("/api/_test/tv/scripts returned {}", resp.status());
     }
-    Ok(resp.json().await?)
+    let log: serde_json::Value = resp.json().await?;
+    let Some(step) = log["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| s["join"] == "off")
+    else {
+        return Ok(log);
+    };
+    // The reason is the TV's (`hero.scripts_reason`), while he's in.
+    let reason = match reqwest::get(format!("{base}/api/_test/tv")).await {
+        Ok(r) => r.json::<serde_json::Value>().await.ok(),
+        Err(_) => None,
+    }
+    .and_then(|s| s["hero"]["scripts_reason"].as_str().map(str::to_owned));
+    match (hero_scripts_off_because(base), reason) {
+        (Some(because), Some(reason)) if reason.contains(&because) => Ok(log),
+        (Some(_), None) => Ok(log),
+        (_, reason) => bail!(
+            "the hero's scripts went off at step {} ({}): he walks without them",
+            step["step"],
+            reason.as_deref().unwrap_or("no reason given")
+        ),
+    }
 }
 
 /// Skips the intro the TV is playing, as a key would (`/api/_test/tv/skip`).
@@ -2461,8 +2546,23 @@ pub async fn pad_tv(base: &str, body: serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Asks guacamole's dev entry (`POST /api/_test/tv/entry`, openspec AH.25)
+/// for `body` (`{"anchor": "start"}` or `"b"`, optionally `"seed"`).
+pub async fn entry_tv(base: &str, body: serde_json::Value) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/entry"))
+        .json(&body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/entry {body} returned {}", resp.status());
+    }
+    Ok(())
+}
+
 /// guacamole's `/api/_test/tv`: what its TV shows (`TvSnapshot` in
-/// `crates/guacamole/src/mirror.rs`).
+/// `crates/guacamole/src/mirror.rs`). A read whose hero's scripts went off
+/// fails the test unless it said it expects that ([`hero_scripts_held`]).
 pub async fn tv(base: &str) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv"))
@@ -2471,7 +2571,86 @@ pub async fn tv(base: &str) -> Result<serde_json::Value> {
     if !resp.status().is_success() {
         bail!("/api/_test/tv returned {}", resp.status());
     }
-    Ok(resp.json().await?)
+    let snap: serde_json::Value = resp.json().await?;
+    hero_scripts_held(&snap, hero_scripts_off_because(base).as_deref())?;
+    Ok(snap)
+}
+
+/// What a walking fixture's hero's scripts go off for (openspec AH.106,
+/// [`TestServer::spawn_guacamole_walking`]): his join finds no portal
+/// manager in its part.
+pub const WALKING_SCRIPTS_OFF: &str = "no Spyro_PortalManager placement";
+
+/// The TVs whose test expects its hero's scripts to go off, by base URL,
+/// each with what its reason says (openspec AH.106): the walking fixture's
+/// ([`TestServer::spawn_guacamole_walking`]).
+static EXPECTS_OFF: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Says the test reading the TV at `base` expects its hero's scripts to go
+/// off, for a reason holding `because` (a fixture whose part can't join
+/// him, a script stopped on purpose): [`tv`]'s reads there let that `off`
+/// through from then on, and no other.
+pub fn expect_hero_scripts_off(base: &str, because: &str) {
+    let mut bases = EXPECTS_OFF.lock().unwrap_or_else(|e| e.into_inner());
+    bases.retain(|(b, _)| b != base);
+    bases.push((base.to_owned(), because.to_owned()));
+}
+
+fn hero_scripts_off_because(base: &str) -> Option<String> {
+    EXPECTS_OFF
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(b, _)| b == base)
+        .map(|(_, because)| because.clone())
+}
+
+/// The expectation at `base` dropped, or moved to `to` (a TV restarted on
+/// another port): a later TV on that port expects nothing of it.
+fn move_hero_scripts_off(base: &str, to: Option<&str>) {
+    let mut bases = EXPECTS_OFF.lock().unwrap_or_else(|e| e.into_inner());
+    let because = bases.iter().find(|(b, _)| b == base).map(|e| e.1.clone());
+    bases.retain(|(b, _)| b != base);
+    if let (Some(to), Some(because)) = (to, because) {
+        bases.push((to.to_owned(), because));
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        move_hero_scripts_off(&self.url, None);
+    }
+}
+
+/// What a hero in the level with no run reads as (guacamole's `NO_RUN`,
+/// which reports him `off` itself since AH.25's review): an older TV's
+/// none, with him in the level, is held the same.
+const NO_RUN: &str = "no run: the level's part holds no scripts of his or didn't link";
+
+/// A TV snapshot's hero held to his scripts (openspec AH.106): a hero whose
+/// scripts went `off` (his file missing from the part or the part not
+/// linking, a join that failed, his script stopped in play) walks on
+/// AG.16's controller with his attack buttons doing nothing, so every
+/// walking check still passes. Read so (or with no run at all while he's
+/// in the level), it's an error carrying the TV's reason, unless the test
+/// expects an `off` whose reason holds `expected` (stand-in ledger:
+/// `walker`).
+pub fn hero_scripts_held(snap: &serde_json::Value, expected: Option<&str>) -> Result<()> {
+    let hero = &snap["hero"];
+    let no_run = hero["scripts"].is_null() && !hero["position"].is_null();
+    if hero["scripts"] != "off" && !no_run {
+        return Ok(());
+    }
+    let reason = match no_run {
+        true => NO_RUN,
+        false => hero["scripts_reason"].as_str().unwrap_or("no reason given"),
+    };
+    match expected {
+        Some(because) if reason.contains(because) => Ok(()),
+        _ => bail!(
+            "the hero's scripts went off ({reason}): he walks without them; a test expecting that says so (expect_hero_scripts_off)"
+        ),
+    }
 }
 
 /// Polls the TV every 25 ms until `pred` holds; the snapshot and when it
@@ -2938,6 +3117,147 @@ impl Phone {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod hero_scripts_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// AH.106's check: a read whose hero's scripts went off mid-run fails
+    /// the test with the TV's reason; one that says it expects that off
+    /// passes, an off for another reason still failing; a hero whose
+    /// scripts run or join and a TV with no hero pass.
+    #[test]
+    fn a_hero_whose_scripts_go_off_fails_the_read_unless_expected() {
+        let reason = "his script stopped: 009_Eruptor at 412: unmodelled member x.y";
+        let off = json!({"hero": {"scripts": "off", "scripts_reason": reason}});
+        let e = hero_scripts_held(&off, None).unwrap_err().to_string();
+        assert!(e.contains(reason), "{e}");
+        assert!(hero_scripts_held(&off, Some("his script stopped")).is_ok());
+        let e = hero_scripts_held(&off, Some(WALKING_SCRIPTS_OFF)).unwrap_err();
+        assert!(e.to_string().contains(reason), "another reason: {e}");
+        for held in ["joined", "asked", "requested"] {
+            let snap = json!({"hero": {"scripts": held}});
+            assert!(hero_scripts_held(&snap, None).is_ok(), "{held}");
+        }
+        assert!(hero_scripts_held(&json!({"hero": null}), None).is_ok());
+        assert!(hero_scripts_held(&json!({"mode": "portal"}), None).is_ok());
+    }
+
+    /// The read itself (`tv`): against a TV whose hero joins and then goes
+    /// off, the first read passes and the later one fails with the reason,
+    /// unless the test said it expects it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_read_after_his_scripts_go_off_fails_the_test() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let reason = "his minion didn't activate: no minion";
+        let bodies = [
+            json!({"mode": "level", "hero": {"scripts": "joined"}}),
+            json!({"mode": "level", "hero": {"scripts": "off", "scripts_reason": reason}}),
+            json!({"mode": "level", "hero": {"scripts": "off", "scripts_reason": reason}}),
+        ];
+        let served = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        assert_eq!(tv(&base).await.unwrap()["hero"]["scripts"], "joined");
+        let e = tv(&base).await.unwrap_err().to_string();
+        assert!(e.contains(reason), "{e}");
+        expect_hero_scripts_off(&base, "didn't activate");
+        assert_eq!(tv(&base).await.unwrap()["hero"]["scripts"], "off");
+        served.join().unwrap();
+    }
+
+    /// The scripts' log (`scripts_tv`): a step logged with his join `off`
+    /// between two reads of the TV fails the read with the TV's reason,
+    /// unless the test expects an off.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_step_logged_off_fails_the_scripts_read() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let log = |join: &str| {
+            json!({"last": 3, "steps": [
+                {"step": 2, "join": "joined"},
+                {"step": 3, "join": join},
+            ]})
+        };
+        let reason = json!({"hero": {"scripts": "off", "scripts_reason": "his script stopped: x"}});
+        let bodies = [
+            log("joined"),
+            log("off"),
+            reason.clone(),
+            log("off"),
+            reason.clone(),
+            log("off"),
+            reason,
+        ];
+        let served = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        assert_eq!(scripts_tv(&base, 1).await.unwrap()["last"], 3);
+        let e = scripts_tv(&base, 1).await.unwrap_err().to_string();
+        assert!(
+            e.contains("step 3") && e.contains("his script stopped: x"),
+            "{e}"
+        );
+        // An off expected for another reason still fails (AH.25's review:
+        // any expected off let every off through), the one expected passes.
+        expect_hero_scripts_off(&base, WALKING_SCRIPTS_OFF);
+        let e = scripts_tv(&base, 1).await.unwrap_err().to_string();
+        assert!(e.contains("his script stopped: x"), "another reason: {e}");
+        expect_hero_scripts_off(&base, "his script stopped");
+        assert!(scripts_tv(&base, 1).await.is_ok(), "expected");
+        served.join().unwrap();
+    }
+
+    /// A hero in the level with no run (an older TV's none) is held as an
+    /// off, its reason the harness's own; one not yet in passes. An
+    /// expectation goes with its TV: moved to the port a restart takes,
+    /// dropped with the server.
+    #[test]
+    fn no_run_in_the_level_fails_and_an_expectation_goes_with_its_tv() {
+        let in_level = json!({"hero": {"scripts": null, "position": [1.0, 2.0, 3.0]}});
+        let e = hero_scripts_held(&in_level, None).unwrap_err().to_string();
+        assert!(e.contains(NO_RUN), "{e}");
+        assert!(hero_scripts_held(&in_level, Some("no run")).is_ok());
+        assert!(hero_scripts_held(&in_level, Some(WALKING_SCRIPTS_OFF)).is_err());
+        let waiting = json!({"hero": {"scripts": null, "position": null}});
+        assert!(hero_scripts_held(&waiting, None).is_ok(), "not in yet");
+        let (a, b) = ("http://127.0.0.1:1", "http://127.0.0.1:2");
+        expect_hero_scripts_off(a, WALKING_SCRIPTS_OFF);
+        move_hero_scripts_off(a, Some(b));
+        assert_eq!(hero_scripts_off_because(a), None);
+        assert_eq!(
+            hero_scripts_off_because(b).as_deref(),
+            Some(WALKING_SCRIPTS_OFF)
+        );
+        move_hero_scripts_off(b, None);
+        assert_eq!(hero_scripts_off_because(b), None);
     }
 }
 

@@ -257,6 +257,22 @@ guacamole with `TestServer::restart_guacamole`, which kills it and starts
 it again in the same temp dir (the same `.env.dev`, port, database and
 extract); phones connected before see the connection drop.
 
+Every read of `/api/_test/tv` (`tv`, so `wait_for_tv` too) and of the
+scripts' log (`scripts_tv`) holds the hero to his scripts (openspec
+AH.106): a hero whose `hero.scripts` reads `off` (his file missing from
+the part or the part not linking, a join that failed, his script stopped
+in play) walks on the controller with his attack buttons doing nothing
+and would pass every walking check, so the read fails with the TV's
+reason, unless the test said it expects an off for that reason
+(`expect_hero_scripts_off(base, because)`; a log's off is held to the
+TV's reason too). A hero in the level with no run at all reads `off` with
+guacamole's `NO_RUN` (AH.25's review: he read none, which every check let
+through), and a none with him in the level fails here the same. The
+walking fixture's part holds no portal manager, so its hero never joins:
+its spawn expects exactly that off (`WALKING_SCRIPTS_OFF`), and no other
+test expects one. An expectation goes with its server: moved by
+`restart_guacamole`, dropped with the `TestServer`.
+
 [`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (5 tests,
 openspec AB.11, AB.21, AB.22, AB.23 and AP.5) is guacamole-only too and needs ffmpeg (`brew install
 ffmpeg`; found on PATH or in Homebrew's folders). Each test builds an

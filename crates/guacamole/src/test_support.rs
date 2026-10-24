@@ -9,6 +9,7 @@ pub(crate) mod heard;
 pub(crate) mod hero_scripts;
 pub(crate) mod level;
 pub(crate) mod physics;
+pub(crate) mod play;
 pub(crate) mod starfield;
 pub(crate) mod surfaces;
 pub(crate) mod test_pad;

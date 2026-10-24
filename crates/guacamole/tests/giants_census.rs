@@ -127,6 +127,9 @@ struct Chapter1 {
     keys: Vec<WarmKey>,
     props: Vec<WarmKey>,
     spawns: Vec<WarmKey>,
+    /// The first fight's creatures' keys in the hero's scene (AH.25).
+    creatures: Vec<WarmKey>,
+    creature_models: usize,
     materials: usize,
     prop_models: usize,
     spawn_models: usize,
@@ -181,6 +184,8 @@ fn level_keys(dump: &Path) -> Chapter1 {
         .ir;
     let start = level_scene::at_start(scene, &lights, &atmosphere).expect("chapter 1 at its start");
     let view = level_scene::view_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
+    let creatures =
+        guacamole::creature_models::first_fight_models(&placements, &props, &identity());
     let props = LevelProps::new(&props, &placements).expect("chapter 1's props");
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let spawned = spawn_models(dump);
@@ -188,6 +193,9 @@ fn level_keys(dump: &Path) -> Chapter1 {
         keys: start.keys.into_iter().map(|(k, _)| k).collect(),
         props: props.keys(&view).expect("the props' keys"),
         spawns: spawn_keys(&spawned, &view),
+        creatures: guacamole::creature_models::keys(&creatures, &hero)
+            .expect("the creatures' keys"),
+        creature_models: creatures.len(),
         materials: start.drawn.materials.len(),
         prop_models: props.models.len(),
         spawn_models: spawned.len(),
@@ -282,6 +290,8 @@ fn the_census_is_the_discs() {
         keys: level_all,
         props: props_all,
         spawns: spawns_all,
+        creatures: creatures_all,
+        creature_models,
         materials,
         prop_models,
         spawn_models,
@@ -349,6 +359,17 @@ fn the_census_is_the_discs() {
     let (hero_glow_skinned, hero_glow_static): (Vec<WarmKey>, Vec<WarmKey>) =
         glows(&heroes).into_iter().partition(|k| k.mesh.skinned);
     let hero_glow_static = beyond(&hero_glow_static, &[census::LEVEL_GLOW]);
+    // The first fight's creatures, skinned in the hero's scene (AH.25):
+    // what the heroes' tables don't hold.
+    let creatures = beyond(&colour(&creatures_all), &[census::HEROES]);
+    let creature_glow = beyond(&glows(&creatures_all), &[census::HEROES_GLOW]);
+    eprintln!(
+        "the first fight's creatures: {} keys off {creature_models} models ({} past the heroes'), {} level glow masks ({} past)",
+        colour(&creatures_all).len(),
+        creatures.len(),
+        glows(&creatures_all).len(),
+        creature_glow.len()
+    );
     for (load, keys) in &cards.heroes {
         eprintln!(
             "{load} as the hero: {} keys, {} level glow masks",
@@ -392,6 +413,13 @@ fn the_census_is_the_discs() {
             census::HEROES_GLOW_STATIC,
             false,
         ),
+        check("the creatures", &creatures, census::CREATURES, true),
+        check(
+            "the creatures' glow masks",
+            &creature_glow,
+            census::CREATURES_GLOW,
+            true,
+        ),
     ];
     for c in &checks {
         if let Err(why) = c {
@@ -429,5 +457,10 @@ fn the_census_is_the_discs() {
         ),
         (20, 1, 0, 1, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
+    );
+    assert_eq!(
+        (creature_models, creatures.len(), creature_glow.len()),
+        (2, 3, 0),
+        "the first fight's creatures: their models, their keys past the heroes', their glow masks"
     );
 }

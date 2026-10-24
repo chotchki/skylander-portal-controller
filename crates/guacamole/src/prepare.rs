@@ -430,8 +430,8 @@ mod tests {
         // The cards' with their glow pass, the skinned table's then what
         // the figures carry on static meshes; the level's without a card's
         // glow pass, static but for the heroes' (AH.65: his keys in the
-        // level and his glow masks there), its glow masks in the level's
-        // glow pass.
+        // level and his glow masks there) and the first fight's creatures'
+        // (AH.25), its glow masks in the level's glow pass.
         let (on_cards, in_level) = entries.split_at(cards.len());
         assert!(on_cards.iter().all(|e| e.card) && in_level.iter().all(|e| !e.card));
         let shapes: Vec<MeshShape> = on_cards.iter().map(|e| e.key.mesh).collect();
@@ -439,13 +439,18 @@ mod tests {
         assert!(shapes[..skinned].iter().all(|m| m.skinned));
         assert!(shapes[skinned..].iter().all(|m| !m.skinned));
         assert_eq!(shapes.len() - skinned, census::TURNTABLE_STATIC.len());
-        let heroes = census::HEROES.len() + census::HEROES_GLOW.len();
+        let skinned_in_level = census::HEROES.len()
+            + census::HEROES_GLOW.len()
+            + census::CREATURES.len()
+            + census::CREATURES_GLOW.len();
         assert_eq!(
             in_level.iter().filter(|e| e.key.mesh.skinned).count(),
-            heroes
+            skinned_in_level
         );
-        let glows =
-            census::LEVEL_GLOW.len() + census::HEROES_GLOW.len() + census::HEROES_GLOW_STATIC.len();
+        let glows = census::LEVEL_GLOW.len()
+            + census::HEROES_GLOW.len()
+            + census::HEROES_GLOW_STATIC.len()
+            + census::CREATURES_GLOW.len();
         assert_eq!(
             in_level
                 .iter()

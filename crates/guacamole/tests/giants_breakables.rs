@@ -783,32 +783,27 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 
-/// A hero swap keeps the level as he left it (openspec AH.27, the TV's
-/// take-off): a lob from anchor A breaks the ledge route's two barrels and
-/// steps the common count to 0.024279475; the level read off that run and
-/// put back into a fresh one before its first step, as the TV's take-off
-/// installs it again, holds both barrels off (out of the VM, asleep, their
-/// solids out of the seam, the destructibles system listing neither as a
-/// target) and, once the fresh run's loot data is made, the counts where
-/// they stood rather than drawn anew; joined again at anchor A, an
-/// eruption breaks the pot and the gourd and never the barrel, the
-/// uncommon count holding and the common one going on from 0.024279475.
+/// A hero swap keeps the level as he left it (openspec AH.105, the
+/// deactivate path; breakables' Swapped mid-smash): a lob from anchor A
+/// breaks the ledge route's two barrels and steps the common count to
+/// 0.024279475; his figure taken off the portal (the deactivate path, the
+/// run going on) and put back on (the join, then his spawn's 120 steps),
+/// both barrels stay off (out of the VM, their solids out of the seam, the
+/// destructibles system listing neither as a target) and the counts stand
+/// where they stood; at anchor A again, an eruption breaks the pot and the
+/// gourd and never a barrel, the uncommon count holding and the common one
+/// going on from 0.024279475.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_swap_keeps_the_broken_ones_broken_and_the_counts_where_they_stood() {
-    use guacamole::scripts::LevelState;
     println!("load before: {}", load());
     let started = Instant::now();
     let mut run = at_anchor_a();
-    // Taken off by the level's start (its definition and the archetype
-    // setups take themselves off), which the fresh run runs again.
-    let at_join = LevelState::read(&run.vm, &run.world, LEVEL).taken_off;
     let w = drive(&mut run, 200, |k, _| press(0, PRESS, k));
     assert_eq!(
         w.broke().iter().map(|b| b.0).collect::<Vec<_>>(),
         ["barrel_b_intact(1)", "barrel_b_intact(4)"]
     );
-    let kept = LevelState::read(&run.vm, &run.world, LEVEL).since(&at_join);
     let barrels: Vec<Obj> = ["barrel_b_intact(1)", "barrel_b_intact(4)"]
         .iter()
         .map(|n| {
@@ -820,56 +815,38 @@ fn a_swap_keeps_the_broken_ones_broken_and_the_counts_where_they_stood() {
                 .obj
         })
         .collect();
-    assert_eq!(kept.taken_off, barrels, "play's alone");
+    let counts = |run: &Run| {
+        [Rarity::Common, Rarity::Uncommon, Rarity::Rare]
+            .map(|r| scripts::loot_index(&run.vm, &run.world, r))
+    };
+    let before = counts(&run);
+    assert_eq!(before[0], Some(0.024_279_475));
+    // Off the portal and on again where he stands.
+    let values = run.figure_values().expect("his figure's words");
+    let gone = run.deactivate().unwrap_or_else(|h| panic!("{h}"));
     println!(
-        "taken off at the join: {:?}",
-        at_join
+        "taken off: his minion {}, {} of his file's placements, clones {:?}",
+        gone.minion,
+        gone.placements.len(),
+        gone.clones
             .iter()
-            .map(|o| run.world.name(run.handles[o]))
+            .map(|&h| run.world.name(h))
             .collect::<Vec<_>>()
     );
-    let common = |state: &LevelState| {
-        state
-            .loot
-            .iter()
-            .find(|(r, _)| *r == Rarity::Common)
-            .map(|c| c.1)
-    };
-    assert_eq!(common(&kept), Some(0.024_279_475));
-    println!(
-        "kept: {:?} off, counts {:?}",
-        kept.taken_off
-            .iter()
-            .map(|o| run.world.name(run.handles[o]))
-            .collect::<Vec<_>>(),
-        kept.loot
-    );
-
-    // The fresh run, as the TV's take-off installs it again.
-    let (mut fresh, _) = run_on_with(Mode::Strict, Setup { props: true });
-    kept.put_back(&mut fresh.vm, &mut fresh.world);
-    fresh.step().unwrap_or_else(|h| panic!("{h}"));
-    assert!(
-        kept.set_loot(&mut fresh.vm, &fresh.world),
-        "the loot data made"
-    );
-    let again = LevelState::read(&fresh.vm, &fresh.world, LEVEL);
-    assert_eq!(again.loot, kept.loot, "the counts where they stood");
-    fresh.step().unwrap_or_else(|h| panic!("{h}"));
-    fresh.join().unwrap_or_else(|h| panic!("{h}"));
+    run.join_with(values).unwrap_or_else(|h| panic!("{h}"));
     for _ in 0..120 {
-        fresh.step().unwrap_or_else(|h| panic!("{h}"));
+        run.step().unwrap_or_else(|h| panic!("{h}"));
     }
-    to_anchor_a(&mut fresh);
+    to_anchor_a(&mut run);
+    assert_eq!(counts(&run), before, "the counts where they stood");
+    println!("counts across the swap: {before:?}");
     for b in &barrels {
-        assert!(fresh.world.taken_off(*b), "{b:?} off in the fresh run");
-        let h = fresh.handles[b];
-        assert!(!fresh.world.actor(h).unwrap().active, "{b:?} asleep");
-        let p = fresh.vm.placement_of(h);
-        assert!(p.is_none_or(|p| fresh.vm.removed(p)), "{b:?} out of the VM");
-        assert!(!in_seam(&fresh, b.index), "{b:?}'s solid out of the seam");
+        assert!(run.world.taken_off(*b), "{b:?} still off");
+        let p = run.vm.placement_of(run.handles[b]);
+        assert!(p.is_none_or(|p| run.vm.removed(p)), "{b:?} out of the VM");
+        assert!(!in_seam(&run, b.index), "{b:?}'s solid out of the seam");
     }
-    let targets: Vec<String> = destructibles(&fresh)
+    let targets: Vec<String> = destructibles(&run)
         .into_iter()
         .filter(|(_, active)| *active)
         .map(|(n, _)| n)
@@ -877,15 +854,15 @@ fn a_swap_keeps_the_broken_ones_broken_and_the_counts_where_they_stood() {
     for n in ["barrel_b_intact(1)", "barrel_b_intact(4)"] {
         assert!(!targets.contains(&n.to_owned()), "{n} a target again");
     }
-    let w = drive(&mut fresh, 300, |k, _| press(1, PRESS, k));
+    let w = drive(&mut run, 300, |k, _| press(1, PRESS, k));
     println!(
         "the eruption after the swap: broke {:?}, coins {:?}, counts {:?}",
         w.broke(),
         w.coins,
         w.counts
     );
-    // The watch finds the two off from its first step: put back, never
-    // broken again.
+    // The watch finds the two off from its first step: never broken
+    // again.
     let broke: Vec<(&str, u32)> = w.broke();
     assert_eq!(
         broke,

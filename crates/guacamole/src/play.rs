@@ -52,12 +52,13 @@
 //!   and no attack pressed before or under the hold is kept for a step
 //!   after it ([`crate::hero::HeroActions::release`]). No intro plays once
 //!   the level has started ([`crate::intro_player`]).
-//! - The hero taken off takes his scripts with him: the run starts over
-//!   from the level's part with the level kept as he left it
-//!   ([`crate::hero_scripts::reinstall_keeping_level`], AH.27: what its
-//!   scripts broke stays broken, its loot counts where they stood), and the
-//!   next hero in joins it as the first did (AH.24's join), his scripts
-//!   the one writer of his walk from then on.
+//! - The hero taken off takes his scripts with him by the deactivate path
+//!   ([`crate::swap`], openspec AH.105): his minion, his file's placements
+//!   and what his scripts made go, the level's scripts running on as they
+//!   were (what they broke stays broken, a creature where it stood, a clone
+//!   of the level's in flight landing), and the next hero in joins that run
+//!   as the first did (AH.24's join), his scripts the one writer of his walk
+//!   from then on, his health the one his figure's stored data kept.
 //! - A character that doesn't walk yet (AG.27) counts as one on the portal
 //!   but can't come in: alone, it leaves the level asking for a Skylander.
 
@@ -90,7 +91,7 @@ use guacamole::character::{
     spawn_character,
 };
 use guacamole::level_scene::{START_FACING, hero_scene};
-use guacamole::scripts::{KeptHealth, ScriptRuntime, ScriptWorld};
+use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use guacamole::walkers::{self, Walker};
 use serde::Serialize;
 use skylander_core::SlotIndex;
@@ -447,6 +448,14 @@ pub(crate) struct Play {
     alert: Option<Alert>,
 }
 
+/// Why a hero in the level with no run reads `off` ([`HeroReport::scripts`]):
+/// [`hero_scripts::ask_join`] gave him none, the level's part holding no
+/// file of his or not linking (the level's `scripts_reason` says which).
+/// AH.25's review found such a hero read none, which every off check let
+/// through, on a Mac run whose part didn't link.
+pub(crate) const NO_RUN: &str =
+    "no run: the level's part holds no scripts of his or didn't link; he walks on the stand-in";
+
 /// What `/api/_test/tv` reports of the walk.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub(crate) struct HeroReport {
@@ -467,9 +476,11 @@ pub(crate) struct HeroReport {
     /// In the level: his locomotion as its last step left it (AG.30).
     pub gait: Option<GaitReport>,
     /// In the level (AH.24): his scripts' join (`asked`, `requested`,
-    /// `joined`, or `off` with why), none for a character whose scripts the
-    /// level's part doesn't hold, who walks on AG.16's controller
-    /// (stand-in ledger: `walker`).
+    /// `joined`, or `off` with why); `off` too, with [`NO_RUN`], for a
+    /// character whose scripts the level's part doesn't hold or whose part
+    /// didn't link, who has no run and walks on AG.16's controller
+    /// (stand-in ledger: `walker`; AH.106, so a reader holding a run to his
+    /// scripts stops on it as on any other off). None before he's in.
     pub scripts: Option<String>,
     pub scripts_reason: Option<String>,
     /// His health and full health as his scripts hold them, once they run,
@@ -657,11 +668,18 @@ impl Play {
             heading: hero.map(|h| h.facing.rem_euclid(360.0)),
             camera,
             gait,
-            scripts: run.map(|r| r.join.name().to_owned()),
-            scripts_reason: run.and_then(|r| match &r.join {
-                Join::Off(why) => Some(why.clone()),
-                _ => None,
-            }),
+            // In the level with no run: off, as any other fall-back is.
+            scripts: match run {
+                Some(r) => Some(r.join.name().to_owned()),
+                None => hero.map(|_| "off".to_owned()),
+            },
+            scripts_reason: match run {
+                Some(r) => match &r.join {
+                    Join::Off(why) => Some(why.clone()),
+                    _ => None,
+                },
+                None => hero.map(|_| NO_RUN.to_owned()),
+            },
             health: numbers.health,
             health_max: numbers.health_max,
             behaviour: numbers.behaviour,
@@ -713,6 +731,11 @@ impl PlayShots<'_, '_> {
 
 #[cfg(test)]
 impl Play {
+    /// The hero-to-be's model's way to the level, if one's chosen.
+    pub(crate) fn candidate_model(&self) -> Option<&'static str> {
+        self.candidate.as_ref().map(|c| c.model.name())
+    }
+
     /// The level started with no hero in it, seen through `camera`: for the
     /// tests of what reads [`Play::started`].
     pub(crate) fn started_for_tests(camera: Entity) -> Self {
@@ -735,6 +758,30 @@ impl Play {
         };
         play.alert = Some(alert);
         play
+    }
+}
+
+/// The server's word on which slot's figure is the hero in a level
+/// (openspec AH.36): the slot reset refuses that slot (AH.3). Absent when
+/// the server never came up.
+#[derive(Resource, Clone)]
+pub(crate) struct LevelHeroOut(pub(crate) guac_server::progress::LevelHero);
+
+/// The hero's slot while he's in the level, `None` while no level shows or
+/// the portal holds it with no hero in it, told the server whenever it
+/// changes: the level starting with him, another character taking over,
+/// the level ending (AH.36).
+fn tell_level_hero(play: Res<Play>, out: Option<Res<LevelHeroOut>>) {
+    let Some(out) = out else {
+        return;
+    };
+    let hero = play.on_stage().and(play.candidate.as_ref()).map(|c| c.slot);
+    if out.0.get() != hero {
+        info!(
+            slot = hero.map(SlotIndex::display),
+            "the hero's slot told the server"
+        );
+        out.0.set(hero);
     }
 }
 
@@ -763,6 +810,7 @@ impl Plugin for PlayPlugin {
                     enter,
                     pose_hero,
                     rest_the_cards,
+                    tell_level_hero,
                 )
                     .chain()
                     .in_set(PlaySystems)
@@ -781,7 +829,6 @@ fn follow_portal(
     mut level: ResMut<Level>,
     mut commands: Commands,
     bodies: Query<(&HeroBody, Option<&HeroRun>)>,
-    (runtime, mut kept): (Option<Res<ScriptRuntime>>, ResMut<KeptHealth>),
 ) {
     for PortalChanged(change) in heard.read() {
         let slot = match change {
@@ -797,62 +844,43 @@ fn follow_portal(
         play.candidate = None;
         match play.inside.as_mut() {
             None => info!(slot = slot.display(), "the waiting hero left the portal"),
-            Some(inside) => {
-                let gone = take_off(inside, &mut level, &mut commands, &bodies, slot);
-                // His health as his scripts hold it, for his figure's return
-                // to this level (AH.62).
-                if let Some(run) = gone
-                    && let (Join::Joined(minion), Some(rt)) = (&run.join, runtime.as_deref())
-                    && let Some(health) = guacamole::scripts::health(&rt.vm, *minion)
-                {
-                    info!(figure = %run.kept_as, health, "his health kept for his return");
-                    kept.left(&run.kept_as, health);
-                }
-            }
+            Some(inside) => take_off(inside, &mut level, &mut commands, &bodies, slot),
         }
     }
 }
 
 /// The hero off the portal mid-level: his entity and drawn model go, the
 /// level stops lighting his materials, and where he stood and the way he
-/// faced are kept for the next one in. His scripts go with him: the run is
-/// installed again from the level's part, his minion and everything his
-/// scripts spawned gone, for the next one's join (AH.24), the level kept as
-/// he left it (AH.27: what its scripts broke and took stays off, its loot
-/// counts where they stood). The level holds from the next
-/// [`judge_portal`] (no hero in it). His scripts' run as he left, if they
-/// joined it.
+/// faced are kept for the next one in. His scripts go with him first, by
+/// the deactivate path ([`crate::swap`], openspec AH.105), while his entity
+/// is still there for it to read: the level's scripts run on, and the next
+/// one joins that run (AH.24). The level holds from the next
+/// [`judge_portal`] (no hero in it).
 fn take_off(
     inside: &mut Inside,
     level: &mut Level,
     commands: &mut Commands,
     bodies: &Query<(&HeroBody, Option<&HeroRun>)>,
     slot: SlotIndex,
-) -> Option<HeroRun> {
-    let gone = inside.hero.take()?;
-    let run = match bodies.get(gone.hero) {
-        Ok((body, run)) => {
-            inside.left = Some((body.hero.pivot, body.hero.facing));
-            run.cloned()
-        }
-        Err(_) => None,
+) {
+    let Some(gone) = inside.hero.take() else {
+        return;
     };
+    if let Ok((body, run)) = bodies.get(gone.hero) {
+        inside.left = Some((body.hero.pivot, body.hero.facing));
+        if let Some(run) = run {
+            commands.run_system_cached_with(
+                crate::swap::deactivate,
+                crate::swap::Leaving {
+                    hero: gone.hero,
+                    run: run.clone(),
+                },
+            );
+        }
+    }
     level.forget(&gone.lit);
     commands.entity(gone.hero).despawn();
-    commands.queue(hero_scripts::reinstall_keeping_level);
     info!(slot = slot.display(), left = ?inside.left, "the hero left the portal: the level holds");
-    run
-}
-
-/// A figure's instance as [`KeptHealth`] keys it: its placing profile (none
-/// with no profile unlocked) and its figure, what its tag's serial stands
-/// for (AH.23).
-fn instance(placement: &Placement) -> String {
-    let profile = placement
-        .owner
-        .as_ref()
-        .map_or("", |o| o.profile_id.as_str());
-    format!("{profile}/{}", placement.figure_id.as_str())
 }
 
 /// `slot`'s figure as the hero-to-be, if it walks.
@@ -1206,8 +1234,8 @@ fn enter(
         .entity(hero_entity)
         .insert(HeroGaits::new(Locomotion::new(walker.gaits, loops)));
     // His own scripts, where the level's part holds them (AH.24): at the
-    // start, and for a replacement into the run his predecessor's take-off
-    // installed again.
+    // start, and for a replacement into the run his predecessor left
+    // (AH.105).
     hero_scripts::ask_join(
         &mut s.commands,
         hero_entity,
@@ -1216,7 +1244,6 @@ fn enter(
         rig,
         s.source.as_deref(),
         c.slot,
-        instance(&c.placement),
     );
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
@@ -1564,224 +1591,13 @@ mod tests {
     use guac_motion::camera::View;
 
     use super::*;
-    use crate::level::{LevelPlugin, level_channel};
-    use crate::physics::SeamPlugin;
     use crate::test_support::level::{FLOOR, START, WALL, lights, write_level};
+    use crate::test_support::play::*;
     use crate::test_support::test_pad;
-    use crate::test_support::turntable::{app, extract, model, placed};
-
-    const ERUPTOR: u32 = 9;
-    /// The made-up extract's: a character that doesn't walk, a magic item.
-    const ONE: u32 = 1;
-    const ITEM: u32 = 5;
-    /// Added to the roster by [`play_app`].
-    const SIDEKICK: u32 = 6;
-    /// On no roster: a figure Giants can't use (a later game's).
-    const FRYNO: u32 = 0x1c2;
-
-    /// Where the made-up hero side holds the top joint along x in the walk,
-    /// the run and the fall: a pose tells their weights. The idle sways it
-    /// from 0 to 0.5 over its second.
-    const WALK_X: f32 = 1.0;
-    /// Where the made-up attach list puts his hands on the top joint (AH.50).
-    const HAND_Z: f32 = 0.5;
-    const RUN_X: f32 = 2.0;
-    const FALL_X: f32 = 3.0;
-
-    /// A made-up hero side for `load` on the turntables' made-up model's
-    /// skeleton: its walk, run and falling clips Eruptor's lengths (1.0667,
-    /// 0.6667 and 0.8 s), each holding the top joint at its own x.
-    pub(crate) fn hero_side(load: &str) -> guac_ir::hero::Hero {
-        use guac_ir::actor::{Movement, Shape, Solid};
-        use guac_ir::clip::{RotationTrack, Track, VecTrack};
-        use guac_ir::hero::{Locomotion, SlotClip};
-        let slot = |slot: u16, name: &str, duration: f32, x: f32| {
-            Some(SlotClip {
-                slot,
-                label: None,
-                clip: Clip {
-                    name: name.into(),
-                    duration,
-                    frame_duration: 1.0 / 30.0,
-                    frames: (duration * 30.0).round() as u32 + 1,
-                    tracks: vec![Track {
-                        joint: 1,
-                        translation: VecTrack {
-                            constant: [x, 2.0, 0.0],
-                            spline: None,
-                        },
-                        rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
-                        scale: VecTrack {
-                            constant: [1.0; 3],
-                            spline: None,
-                        },
-                    }],
-                },
-            })
-        };
-        guac_ir::hero::Hero {
-            identity: crate::test_support::turntable::identity(),
-            load_file: load.into(),
-            actor: load.into(),
-            scale: [100.0; 3],
-            solid: Solid {
-                shape: Shape::Sphere,
-                solid: true,
-                world: true,
-                actor_surface: false,
-                offset: [0.0; 3],
-                rotation: [0.0; 3],
-                width: 4.0,
-                height: 6.0,
-                length: 3.0,
-                weight: 10.0,
-                rebound: 0.0,
-            },
-            movement: Movement {
-                ground_max_speed: 18.0,
-                ground_acceleration: 160.0,
-                ground_deceleration: 80.0,
-                ground_turn_rate: 360.0,
-                air_max_speed: 30.0,
-                air_acceleration: 160.0,
-                air_deceleration: 20.0,
-                air_turn_rate: 360.0,
-                gravity_max_speed: 120.0,
-                gravity_acceleration: 128.0,
-                jump_max_speed: 0.0,
-                jump_acceleration: 0.0,
-                jump_initial_speed: 0.0,
-                motion_type: 0,
-                tilts_with_ground: true,
-                time_scale: 1.0,
-            },
-            locomotion: Locomotion {
-                walk: slot(1, "MadeUp_Walk.ma", 1.0667, WALK_X),
-                jog: None,
-                run: slot(3, "MadeUp_Run.ma", 0.6667, RUN_X),
-                falling: slot(57, "MadeUp_Falling.ma", 0.8, FALL_X),
-                landing: None,
-            },
-        }
-    }
-
-    /// The turntables' made-up extract with Eruptor's load file on toy 9,
-    /// a made-up model and hero side of its own, and a chapter 1 on
-    /// [`write_level`]'s walk; the TV on the portal view, each figure's
-    /// values followed (AH.1) with no server to send them to.
-    fn play_app(dir: &std::path::Path) -> (App, crate::level::LevelSender) {
-        let mut shelf = extract(dir);
-        let ron = guac_ir::to_ron(&model("009_Eruptor")).unwrap();
-        std::fs::write(dir.join(IrFormat::Ron.model_path("009_Eruptor")), ron).unwrap();
-        let hero = IrFormat::Ron.hero_path("009_Eruptor");
-        std::fs::create_dir_all(dir.join(&hero).parent().unwrap()).unwrap();
-        std::fs::write(
-            dir.join(hero),
-            guac_ir::to_ron(&hero_side("009_Eruptor")).unwrap(),
-        )
-        .unwrap();
-        shelf
-            .loads
-            .insert(format!("{ERUPTOR:06x}-0000"), "009_Eruptor".into());
-        // On the roster beside the made-up extract's: Eruptor, and a
-        // sidekick, which Giants counts as a magic item.
-        shelf
-            .kinds
-            .insert(format!("{ERUPTOR:06x}-0000"), Category::Figure);
-        shelf
-            .kinds
-            .insert(format!("{SIDEKICK:06x}-0000"), Category::Sidekick);
-        let mut app = app(shelf);
-        app.add_message::<Redrawn>()
-            .add_message::<PortalChanged>()
-            .add_plugins((bevy::input::InputPlugin, crate::input::InputRouter))
-            .add_plugins((
-                LevelPlugin,
-                SeamPlugin,
-                PlayPlugin,
-                crate::hero_scripts::HeroScriptsPlugin,
-                crate::progress::ProgressPlugin,
-            ))
-            .init_resource::<IntroQueue>()
-            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
-                1.0 / 60.0,
-            )))
-            .insert_resource(Current {
-                screen: TvScreen::Portal {
-                    game: "Skylanders Giants".into(),
-                },
-                since: std::time::Instant::now(),
-                clients: 1,
-            });
-        // Avian's plugins finish building here, as `App::run` would.
-        app.finish();
-        app.cleanup();
-        app.world_mut().spawn((Camera2d, TvCamera));
-        let (tx, feed) = level_channel();
-        app.insert_resource(feed);
-        (app, tx)
-    }
-
-    fn place(app: &mut App, slot: u8, toy: u32, name: &str) {
-        let change = placed(slot, toy, name);
-        crate::test_support::turntable::set(app, [change.clone()]);
-        app.world_mut().write_message(PortalChanged(change));
-    }
-
-    fn clear(app: &mut App, slot: u8) {
-        let change = PortalChange::Cleared {
-            slot: SlotIndex::new(slot).unwrap(),
-        };
-        crate::test_support::turntable::set(app, [change.clone()]);
-        app.world_mut().write_message(PortalChanged(change));
-    }
+    use crate::test_support::turntable::placed;
 
     fn alert(app: &App) -> Option<Alert> {
         app.world().resource::<Play>().alert()
-    }
-
-    fn mode(app: &App) -> Mode {
-        let pads = app.world().resource::<LevelPads>();
-        app.world().resource::<Play>().mode(pads)
-    }
-
-    fn level_state(app: &App) -> String {
-        app.world().resource::<Level>().report().state.clone()
-    }
-
-    fn hero_model(app: &App) -> Option<&'static str> {
-        app.world()
-            .resource::<Play>()
-            .candidate
-            .as_ref()
-            .map(|c| c.model.name())
-    }
-
-    /// Frames until `done`, up to 5 s of the wall clock (the reading tasks
-    /// run on it).
-    fn until(app: &mut App, what: &str, done: impl Fn(&App) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !done(app) {
-            assert!(
-                Instant::now() < deadline,
-                "{what}: still {:?}, the level {} ({:?}), the hero's model {:?}",
-                mode(app),
-                level_state(app),
-                app.world().resource::<Level>().report().reason,
-                hero_model(app)
-            );
-            app.update();
-        }
-    }
-
-    fn hero(app: &App) -> Hero {
-        let e = app.world().resource::<Play>().hero().expect("in the level");
-        app.world()
-            .entity(e)
-            .get::<HeroBody>()
-            .unwrap()
-            .hero
-            .clone()
     }
 
     fn view(app: &mut App) -> View {
@@ -1860,6 +1676,25 @@ mod tests {
         assert!((gap - 0.005).abs() < 1e-3, "{gap}");
         assert!(at.pivot.x - from.x > 3.0, "slid along it: {:?}", at.pivot);
 
+        // This level has no script part, so he has no run: he reads `off`
+        // with why, as any hero walking on the stand-in does (AH.106; AH.25's
+        // review found him reading none, which every off check let through).
+        let report = {
+            let mut state: bevy::ecs::system::SystemState<(
+                Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
+                Query<(&Transform, &Projection), With<FollowCamera>>,
+                Res<Play>,
+            )> = bevy::ecs::system::SystemState::new(app.world_mut());
+            let (bodies, cameras, play) = state.get(app.world()).unwrap();
+            play.report(&bodies, &cameras, None, None)
+                .expect("the hero")
+        };
+        assert!(report.position.is_some(), "in the level");
+        assert_eq!(
+            (report.scripts.as_deref(), report.scripts_reason.as_deref()),
+            (Some("off"), Some(NO_RUN))
+        );
+
         // Start pauses it: the mode says so.
         test_pad::press(&mut app, pad, GamepadButton::Start);
         app.update();
@@ -1936,143 +1771,6 @@ mod tests {
             clears.contains(&(camera, RenderLayers::layer(LEVEL_LAYER))),
             "{clears:?}"
         );
-    }
-
-    /// AH.24's extract beside [`play_app`]'s: the synthetic script part
-    /// (its attack), Eruptor's palette with his arrival's slot, the throw's
-    /// and the second attack's on the made-up skeleton, and the spawn part
-    /// holding the ball's model.
-    fn write_attack_parts(dir: &std::path::Path) {
-        use guac_formats::script::builder::{
-            ATTACK_ARRIVAL_SLOT, ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
-        };
-        use guac_ir::palette::{PaletteSlot, SlotEntry};
-        crate::test_support::hero_scripts::write_attack(dir);
-        let side = hero_side("009_Eruptor");
-        let walk = side.locomotion.walk.unwrap().clip;
-        let clip = |name: &str, duration: f32| Clip {
-            name: name.into(),
-            duration,
-            ..walk.clone()
-        };
-        let palette = Palette {
-            identity: crate::test_support::turntable::identity(),
-            owner: "009_Eruptor".into(),
-            slots: 40,
-            entries: vec![
-                PaletteSlot {
-                    slot: ATTACK_ARRIVAL_SLOT as u16,
-                    name: None,
-                    label: None,
-                    entry: SlotEntry::Clip {
-                        additive: false,
-                        partial: false,
-                        layered: false,
-                        motion_extraction: 0,
-                        clip: clip("MadeUp_Arrival.ma", 0.1),
-                    },
-                },
-                PaletteSlot {
-                    slot: ATTACK_THROW_SLOT as u16,
-                    name: None,
-                    label: None,
-                    entry: SlotEntry::Clip {
-                        additive: false,
-                        partial: true,
-                        layered: false,
-                        motion_extraction: 0,
-                        clip: clip("MadeUp_Throw.ma", 0.5),
-                    },
-                },
-                PaletteSlot {
-                    slot: ATTACK_SECOND_SLOT as u16,
-                    name: None,
-                    label: None,
-                    entry: SlotEntry::Clip {
-                        additive: false,
-                        partial: false,
-                        layered: false,
-                        motion_extraction: 0,
-                        clip: clip("MadeUp_Eruption.ma", 2.0),
-                    },
-                },
-            ],
-            refused: Vec::new(),
-        };
-        let rel = IrFormat::Ron.palette_path("009_Eruptor");
-        std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
-        std::fs::write(dir.join(rel), guac_ir::to_ron(&palette).unwrap()).unwrap();
-        // His attach list (AH.50): nodes 0-6 on his model's origin, his
-        // hands 7 and 8 on the top joint half a metre ahead of it and behind.
-        let node = |bone: &str, joint: Option<u16>, z: f32| guac_ir::nodes::AttachNode {
-            name: None,
-            bone: Some(bone.into()),
-            joint,
-            offset: guac_ir::model::Transform {
-                translation: [0.0, 0.0, z],
-                rotation: [0.0, 0.0, 0.0, 1.0],
-                scale: [1.0; 3],
-            },
-        };
-        let mut nodes: Vec<_> = (0..7).map(|_| node("*root*", None, 0.0)).collect();
-        nodes.push(node("top", Some(1), HAND_Z));
-        nodes.push(node("top", Some(1), -HAND_Z));
-        let nodes = guac_ir::nodes::AttachNodes {
-            identity: crate::test_support::turntable::identity(),
-            load_file: "009_Eruptor".into(),
-            nodes,
-        };
-        let rel = IrFormat::Ron.nodes_path("009_Eruptor");
-        std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
-        std::fs::write(dir.join(rel), guac_ir::to_ron(&nodes).unwrap()).unwrap();
-        let key = guacamole::census::SPAWNS[0].key(false).unwrap();
-        let material = guacamole::census::material_for(&key);
-        // Its textures, one 4x4 BC1 block of one colour each: built here.
-        let ktx2 = guac_formats::texture::Texture {
-            format: guac_formats::texture::Format::Bc1RgbaUnorm,
-            width: 4,
-            height: 4,
-            levels: vec![vec![0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0]],
-        }
-        .to_ktx2();
-        for t in &material.textures {
-            let path = dir.join(&t.texture);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, &ktx2).unwrap();
-        }
-        let mut segment = key.mesh.triangle(0);
-        segment.positions = vec![[0.0, 0.0, 0.1], [0.1, 0.0, 0.1], [0.0, 0.1, 0.1]];
-        for archive in guac_extract::scripts::spawn_archives() {
-            let props = if archive.contains("009_eruptor") {
-                vec![guac_ir::level::Prop {
-                    path: ATTACK_BALL_MODEL.into(),
-                    skeleton: None,
-                    materials: vec![guac_ir::level::LevelMaterial::Multi2(material.clone())],
-                    segments: vec![segment.clone()],
-                    idle: None,
-                }]
-            } else {
-                Vec::new()
-            };
-            let spawns = guac_ir::spawn::SpawnModels {
-                identity: crate::test_support::turntable::identity(),
-                archive: archive.clone(),
-                props,
-                refused: Vec::new(),
-            };
-            let rel = IrFormat::Ron.spawn_path(&archive);
-            std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
-            std::fs::write(dir.join(rel), guac_ir::to_ron(&spawns).unwrap()).unwrap();
-        }
-    }
-
-    /// The hero's join, once he's in.
-    fn join(app: &App) -> Option<String> {
-        let e = app.world().resource::<Play>().hero()?;
-        app.world()
-            .entity(e)
-            .get::<HeroRun>()
-            .map(|r| r.join.name().to_owned())
     }
 
     /// The scripts' clones as entities: whether each draws, how many parts
@@ -2358,14 +2056,6 @@ mod tests {
 
     // ---- AH.23: his figure in his scripts on the TV --------------------
 
-    /// The extract's progression tables beside [`write_attack_parts`]'s:
-    /// what lays his figure's words out.
-    fn write_figure_rows(dir: &std::path::Path) {
-        let p = crate::test_support::hero_scripts::progression_rows();
-        let rel = IrFormat::Ron.progression_path();
-        std::fs::write(dir.join(rel), guac_ir::to_ron(&p).unwrap()).unwrap();
-    }
-
     /// AH.23 on the TV: his figure in his scripts. Placed by Alice at 999
     /// experience, Eruptor joins with his figure's tag on the portal holding
     /// it; the synthetic second attack's award (a point, through `Game -
@@ -2568,8 +2258,8 @@ mod tests {
     /// props listing it taken off); its coin pays 3 into his figure's
     /// words, read back onto his slot and sent under his generation: 8.
     /// Taken off and placed again, he comes back to the level as he left
-    /// it: the barrel still off in the fresh run, nothing to break, the
-    /// gold his figure's.
+    /// it (openspec AH.105: the run went on): the barrel still off, the same
+    /// placement, nothing to break, the gold his figure's.
     #[test]
     fn eruptor_smashes_the_synthetic_barrel_and_its_coin_reaches_the_row() {
         use guac_formats::script::builder::{
@@ -2763,17 +2453,16 @@ mod tests {
             app.update();
         }
         let world = app.world().resource::<ScriptWorld>();
-        assert!(world.taken_off(barrel_obj), "still off in the fresh run");
-        // The setup ran again (its own take-off isn't play's to carry).
+        assert!(world.taken_off(barrel_obj), "still off: the run went on");
+        // The setup ran once, at the level's start, and stays off.
         let setup = world.handles()[&setup_obj];
         let vm = &app.world().resource::<ScriptRuntime>().vm;
         let p = vm.placement_of(setup).unwrap();
         assert_eq!(vm.local(p, "ran"), Some(guac_script::Value::Int(1)));
-        assert!(world.taken_off(setup_obj));
-        // The fresh run's placements are entities of their own.
+        assert!(world.taken_off(setup_obj) && vm.removed(p));
+        // The level's placements are the run's own still.
         let again = world.handles()[&barrel_obj];
-        assert_ne!(again, barrel);
-        assert!(!world.actor(again).unwrap().active, "asleep");
+        assert_eq!(again, barrel, "the same run");
         let r = props_report(&app);
         assert!(!r.names.contains(&SMASH_BARREL.to_owned()));
         let e = app.world().resource::<crate::progress::Earning>();
@@ -2783,8 +2472,7 @@ mod tests {
             "his figure's gold came back with him"
         );
 
-        // A second swap carries what the first carried: the barrel still off
-        // in the third run, though nothing broke it in the second.
+        // A second swap: the barrel still off, the run the same.
         clear(&mut app, 2);
         until(&mut app, "the call again", |a| {
             alert(a) == Some(Alert::PlaceSkylander)
@@ -2801,10 +2489,8 @@ mod tests {
         }
         let world = app.world().resource::<ScriptWorld>();
         assert!(world.taken_off(barrel_obj), "still off after two swaps");
-        let third = world.handles()[&barrel_obj];
-        assert_ne!(third, again, "the third run's own");
-        assert!(!world.actor(third).unwrap().active, "asleep");
-        assert!(world.taken_off(setup_obj), "the setup ran and went again");
+        assert_eq!(world.handles()[&barrel_obj], barrel, "the same run");
+        assert!(world.taken_off(setup_obj));
         assert!(!props_report(&app).names.contains(&SMASH_BARREL.to_owned()));
 
         // The activity rule follows him once he's in, not the level's start:
@@ -2826,32 +2512,6 @@ mod tests {
     }
 
     // ---- AG.29 over AH.24: the portal's holds and his scripts ------------
-
-    /// Eruptor in the level on AH.24's synthetic part, his scripts joined:
-    /// the app and the pad that took him over.
-    fn joined_eruptor(tmp: &std::path::Path) -> (App, Entity) {
-        let (mut app, tx) = play_app(tmp);
-        write_attack_parts(tmp);
-        tx.send(write_level(tmp, &lights())).unwrap();
-        let pad = test_pad::connect(&mut app, None, None);
-        until(&mut app, "the level and its scripts", |a| {
-            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
-        });
-        place(&mut app, 0, ERUPTOR, "Eruptor");
-        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
-        test_pad::press(&mut app, pad, GamepadButton::East);
-        until(&mut app, "his scripts", |a| {
-            join(a).as_deref() == Some("joined")
-        });
-        (app, pad)
-    }
-
-    /// The scripts' log's last step.
-    fn log_last(app: &App) -> u64 {
-        app.world()
-            .resource::<crate::hero_scripts::ScriptLog>()
-            .last()
-    }
 
     /// The steps the run has made since it was installed.
     fn run_steps(app: &App) -> u64 {
@@ -2955,17 +2615,24 @@ mod tests {
         }
     }
 
-    /// AG.29 over AH.24: the hero taken off takes his scripts with him (the
-    /// run installed again, his helper gone, no step while the level holds
-    /// past its first frame), and Eruptor placed again comes in where he
-    /// stood and joins the fresh run as the first did, once it has made the
-    /// init chain's two steps: his health and full health off his scripts,
-    /// his helper drawn again (one), his walk his scripts' (the stick moves
-    /// him nowhere) and the bottom button throws. The TV's hero, the one
-    /// whose scripts run and the one his scripts move are the same entity.
+    /// AG.29 over AH.24 on the deactivate path (openspec AH.105): the hero
+    /// taken off takes his scripts off the run (his minion and his file's
+    /// placements off it, the synthetic portal manager's deactivation run
+    /// once, his helper drawn no more), the level's run going on (its steps
+    /// counting on, the portal manager's timer carrying on, no step while
+    /// the level holds past its first frame); Eruptor placed again comes in
+    /// where he stood and joins that run, his file's request the first step
+    /// the level runs again (no init chain to wait for): his minion the one
+    /// activator, ticking first, his health and full health off his
+    /// scripts, his helper drawn again (one), his walk his scripts' (the
+    /// stick moves him nowhere) and the bottom button throws. The TV's hero,
+    /// the one whose scripts run and the one his scripts move are the same
+    /// entity.
     #[test]
     fn the_hero_in_where_the_last_stood_joins_his_scripts() {
-        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_THROW_SLOT};
+        use guac_formats::script::builder::{
+            ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_THROW_SLOT,
+        };
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, pad) = joined_eruptor(tmp.path());
         for _ in 0..3 {
@@ -2975,6 +2642,24 @@ mod tests {
         let first = app.world().resource::<Play>().hero().unwrap();
         let stood = hero(&app).pivot;
         let before = run_steps(&app);
+        let pm_timer = |app: &App| {
+            let w = app.world();
+            let vm = &w.resource::<ScriptRuntime>().vm;
+            let pm = guacamole::scripts::portal_manager_placement(vm, w.resource::<ScriptWorld>());
+            vm.active_seconds(pm.expect("the portal manager runs"))
+                .unwrap()
+        };
+        let timer = pm_timer(&app);
+        let deactivations = |app: &App| {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            let g = vm.program().global_named(ATTACK_DEACTIVATIONS).unwrap();
+            vm.global_peek(g)
+        };
+        assert_eq!(deactivations(&app), None, "none yet");
+        let old_minion = {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            vm.placement_of(first.to_bits()).unwrap()
+        };
         let since = log_last(&app);
         clear(&mut app, 0);
         until(&mut app, "the call", |a| {
@@ -2983,14 +2668,26 @@ mod tests {
         app.update();
         let held = run_steps(&app);
         assert!(
-            held < before,
-            "installed again: {held} steps, {before} before"
+            held >= before,
+            "the run went on: {held} steps, {before} before"
+        );
+        assert!(
+            pm_timer(&app) >= timer,
+            "the portal manager's timer carries on"
         );
         for _ in 0..10 {
             app.update();
         }
         assert_eq!(run_steps(&app), held, "no step under the hold");
-        assert!(clones(&mut app).is_empty(), "his helper went with him");
+        assert!(
+            clones(&mut app).iter().all(|(draws, ..)| !draws),
+            "his helper went with him"
+        );
+        {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            assert!(vm.removed(old_minion), "his minion off the run");
+            assert_eq!(deactivations(&app), Some(guac_script::Value::Int(1)));
+        }
         let mut runs = app.world_mut().query::<&HeroRun>();
         assert_eq!(runs.iter(app.world()).count(), 0);
         place(&mut app, 2, ERUPTOR, "Eruptor");
@@ -3015,30 +2712,39 @@ mod tests {
             .iter()
             .map(|s| s.join)
             .collect();
-        // The old run's last steps, then the fresh run's before his file's
-        // placements joined it.
-        let waited = joins
+        // The old run's last steps (the hold's first frame running those
+        // due, with no hero), then his file's request the first step he's
+        // in, his activation the next.
+        let after: Vec<Option<&str>> = joins
             .iter()
-            .skip_while(|j| **j == Some("joined"))
-            .take_while(|j| **j != Some("requested"))
-            .count();
-        assert!(
-            waited as u64 >= crate::hero_scripts::INIT_STEPS,
-            "his file joined after the fresh run's init chain: {joins:?}"
-        );
+            .copied()
+            .filter(Option::is_some)
+            .skip_while(|j| *j == Some("joined"))
+            .take(2)
+            .collect();
+        assert_eq!(after, [Some("requested"), Some("joined")], "{joins:?}");
+        assert!(pm_timer(&app) > timer, "the same portal manager, on");
         let run = app.world().entity(next).get::<HeroRun>().unwrap().clone();
         let Join::Joined(minion) = run.join else {
             unreachable!("joined above")
         };
-        let numbers =
-            crate::hero_scripts::hero_numbers(&app.world().resource::<ScriptRuntime>().vm, minion);
+        let vm = &app.world().resource::<ScriptRuntime>().vm;
+        let order = vm.tick_order();
+        assert_eq!(order[0], (true, "009_Eruptor".to_owned()), "his first");
+        assert_eq!(order.iter().filter(|(a, _)| *a).count(), 1, "the one");
+        assert!(vm.is_activator(minion) && !vm.is_activator(old_minion));
+        let numbers = crate::hero_scripts::hero_numbers(vm, minion);
         assert_eq!(
             (numbers.health, numbers.health_max),
             (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX))
         );
         app.update();
+        let drawn: Vec<_> = clones(&mut app)
+            .into_iter()
+            .filter(|(draws, ..)| *draws)
+            .collect();
         assert_eq!(
-            clones(&mut app),
+            drawn,
             [(true, 1, Visibility::Inherited, false)],
             "his helper again, one"
         );
@@ -3076,16 +2782,23 @@ mod tests {
         (numbers.health, numbers.health_max)
     }
 
-    /// AH.62 over AH.20 and AG.29: his health goes off the portal with his
-    /// figure and comes back with it. Bitten to 100 of his 150 (the test
-    /// hook doing a bite's work), taken off and put back in the same
-    /// level, his scripts read 100 once he's joined again and keep it, the
-    /// take-off's reinstall of the run (AH.27's carry) leaving it as it was;
-    /// the TV leaving the level (a level change) clears it, so he comes back
-    /// in full.
+    /// AH.62 over AH.20 and AG.29, on the deactivate path (openspec
+    /// AH.105): his health goes off the portal with his figure and comes
+    /// back with it, kept by his scripts as the original's portal manager
+    /// keeps a figure's (the synthetic file keeps it where his minion
+    /// writes it each tick). Bitten to 100 of his 150 (the test hook doing a
+    /// bite's work), taken off and put back in the same level, his scripts
+    /// read 100 once he's joined again and keep it; the TV leaving the level
+    /// (a level change) installs the run again with nothing kept, so he
+    /// comes back in full.
     #[test]
     fn his_health_goes_off_the_portal_and_back_with_his_figure() {
-        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX};
+        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_KEPT_HEALTH};
+        let kept = |app: &App| {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            let g = vm.program().global_named(ATTACK_KEPT_HEALTH).unwrap();
+            vm.global_peek(g)
+        };
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, pad) = joined_eruptor(tmp.path());
         app.update();
@@ -3095,7 +2808,6 @@ mod tests {
         *asked.0.lock().unwrap() = Some(100);
         app.update();
         assert_eq!(health(&app), (Some(100), Some(ATTACK_HEALTH_MAX)), "bitten");
-        assert_eq!(*app.world().resource::<KeptHealth>(), KeptHealth::default());
         clear(&mut app, 0);
         until(&mut app, "the call", |a| {
             alert(a) == Some(Alert::PlaceSkylander)
@@ -3103,10 +2815,10 @@ mod tests {
         for _ in 0..3 {
             app.update();
         }
-        assert_ne!(
-            *app.world().resource::<KeptHealth>(),
-            KeptHealth::default(),
-            "kept through the run's reinstall"
+        assert_eq!(
+            kept(&app),
+            Some(guac_script::Value::Int(100)),
+            "kept in the run that went on"
         );
         place(&mut app, 2, ERUPTOR, "Eruptor");
         until(&mut app, "his scripts again", |a| {
@@ -3126,9 +2838,8 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(mode(&app), Mode::Portal);
-        assert_eq!(
-            *app.world().resource::<KeptHealth>(),
-            KeptHealth::default(),
+        assert!(
+            kept(&app).is_none_or(|v| v == guac_script::Value::Int(0)),
             "cleared with the level"
         );
         app.world_mut().resource_mut::<Current>().screen = TvScreen::Portal {
@@ -3144,47 +2855,6 @@ mod tests {
             (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX)),
             "in full"
         );
-    }
-
-    /// AH.62: a kept health is keyed by the figure's instance, its placing
-    /// profile and the figure, so one kid's bitten Eruptor taken off doesn't
-    /// bring the other kid's Eruptor in hurt; with no profile unlocked the
-    /// figure is the session's own.
-    #[test]
-    fn a_kept_health_is_the_placing_profiles_figures() {
-        use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
-        let PortalChange::Placed { placement, .. } = placed(0, ERUPTOR, "Eruptor") else {
-            unreachable!("placed")
-        };
-        let owned = |profile: &str, figure: &Placement| {
-            let mut p = figure.clone();
-            p.owner = Some(PlacementOwner {
-                profile_id: profile.into(),
-                initial: "A".into(),
-                color: "#e63946".into(),
-                progress: FigureProgress::default(),
-            });
-            p
-        };
-        let PortalChange::Placed {
-            placement: other, ..
-        } = placed(0, ONE, "One")
-        else {
-            unreachable!("placed")
-        };
-        let (alice, bea) = (owned("alice", &placement), owned("bea", &placement));
-        assert_eq!(instance(&alice), instance(&owned("alice", &placement)));
-        assert_ne!(instance(&alice), instance(&bea), "another profile's");
-        assert_ne!(
-            instance(&alice),
-            instance(&owned("alice", &other)),
-            "another figure"
-        );
-        assert_ne!(instance(&alice), instance(&placement), "no profile's");
-        let mut kept = KeptHealth::default();
-        kept.left(&instance(&alice), 100);
-        assert_eq!(kept.back(&instance(&alice)), Some(100));
-        assert_eq!(kept.back(&instance(&bea)), None, "Bea's comes in full");
     }
 
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
@@ -3744,6 +3414,43 @@ mod tests {
         assert_eq!(heroes.iter(app.world()).count(), 0);
         let mut cameras = app.world_mut().query::<&FollowCamera>();
         assert_eq!(cameras.iter(app.world()).count(), 0);
+    }
+
+    // ---- AH.36: the hero's slot, told the server ------------------------
+
+    /// AH.36: the slot the server's slot reset refuses is the hero's while
+    /// he's in the level: none before the level starts, his when he comes
+    /// in, none while the portal holds the level with no hero in it, the
+    /// replacement's once he's in, and none once the TV leaves the level.
+    #[test]
+    fn the_heros_slot_is_told_the_server_while_hes_in_the_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hero = guac_server::progress::LevelHero::default();
+        let out = LevelHeroOut(hero.clone());
+        let (mut app, tx) = play_app_with(tmp.path(), move |app| {
+            app.insert_resource(out);
+        });
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        assert_eq!(hero.get(), None, "no level yet");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        assert_eq!(hero.get(), Some(slot(0)), "the level starts with him");
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        assert_eq!(hero.get(), None, "held with no hero in it");
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the replacement in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        assert_eq!(hero.get(), Some(slot(2)), "the replacement's");
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal);
+        assert_eq!(hero.get(), None, "the level ended");
     }
 
     // ---- AG.29, AG.63, AG.73: the portal and the level -------------------

@@ -28,6 +28,10 @@
 //!   and the slot's `entered`. From then on both awards (`Game - Award
 //!   Experience` and its money twin) and every `Save - Get/Set Minion Save
 //!   Val` reach the words.
+//! - Its exit ([`exit`], openspec AH.105): `Portal - Exit Object`'s links
+//!   undone as the figure comes off mid-level, the slot's `entered` 0, the
+//!   first player's `loaded data` none, its tag pair 0 and its object info
+//!   none.
 //! - Reading back ([`read`]): the words through the layout.
 
 use guac_ir::progression::{Progression, SaveKind};
@@ -314,6 +318,36 @@ pub fn enter(vm: &mut Vm, world: &ScriptWorld) -> Result<bool, Halt> {
     }
     vm.set_field(loaded, "entered", Value::Int(1));
     Ok(true)
+}
+
+/// `Portal - Exit Object`'s links for the first player's slot as its figure
+/// comes off mid-level (openspec AH.105, the deactivate path), the rest of
+/// that macro not run: the slot's `entered` 0, the first player's `loaded
+/// data` none where it was the slot (as the portal control's in-game check
+/// clears it), the slot's `tag` pair 0 and its object info none (the next
+/// figure's definition makes its own). Each where the program has its
+/// place.
+pub fn exit(vm: &mut Vm, world: &ScriptWorld) -> Result<(), Halt> {
+    let loaded = slot_zero(vm)?;
+    vm.set_field(loaded, "entered", Value::Int(0));
+    let pm = portal_manager(vm, world)?;
+    let players: Vec<Value> = vm
+        .local(pm, "player data")
+        .and_then(|s| vm.set(s))
+        .map(<[Value]>::to_vec)
+        .unwrap_or_default();
+    for player in players {
+        let player = vm.value(player);
+        if vm.field(player, "loaded data").map(|v| vm.value(v)) == Some(vm.value(loaded)) {
+            vm.set_reference(player, "loaded data", Value::Null);
+        }
+    }
+    if let Some(pair) = vm.field(loaded, "tag") {
+        vm.set_field(pair, "rfid", Value::Int(0));
+        vm.set_field(pair, "prodid", Value::Int(0));
+    }
+    vm.set_reference(loaded, "object info", Value::Null);
+    Ok(())
 }
 
 /// The values in the tag data [`put_on_portal`] made, through `layout`;

@@ -94,7 +94,10 @@
 //! which no box models yet (a reading: no oracle read has seen a removed
 //! placement's SHUTDOWN run). A whitelist listing a script for its first
 //! tick alone ticks its placements until their STARTUP has run, then holds
-//! them, listed ([`Vm::held`]).
+//! them, listed ([`Vm::held`]). A placement the embedder adds under the
+//! handle of one taken off (a character's file loaded again after his swap,
+//! openspec AH.105) runs under that handle from its own first tick; the one
+//! taken off stays off.
 //!
 //! An op's *block* is the `_branchPC` ops after it. An op either skips its
 //! block (counter += block length), runs into it (and may *push* an entry on

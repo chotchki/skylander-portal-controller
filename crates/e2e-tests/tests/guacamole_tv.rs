@@ -15,10 +15,10 @@ use fantoccini::Locator;
 use serde_json::{Value, json};
 
 use skylander_e2e_tests::{
-    E2E_DAMAGED, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP, E2E_MODELLED, E2E_SCRIPTS,
-    E2E_SMASH_SCRIPTS, E2E_START, E2E_WALL, GIANTS_SERIAL, Phone, TestServer, fire_kaos_swap,
-    gaits_tv, guacamole_only, inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv,
-    set_session_profile, tv, wait_for_tv,
+    E2E_CREATURE, E2E_DAMAGED, E2E_FIGHT_SCRIPTS, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP,
+    E2E_MODELLED, E2E_SCRIPTS, E2E_SMASH_SCRIPTS, E2E_START, E2E_WALL, GIANTS_SERIAL, Phone,
+    TestServer, entry_tv, fire_kaos_swap, gaits_tv, guacamole_only, inject_load_outcomes,
+    inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv, wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -1307,6 +1307,179 @@ async fn a_press_breaks_the_barrel_and_its_coins_gold_reaches_the_phone() {
     }
     wait_strip_gold(&phone, &gold.to_string()).await;
     phone.close().await.unwrap();
+}
+
+/// The creature named `name` in `/api/_test/tv`'s `creatures`, `null` when
+/// it's not listed.
+fn creature<'a>(snap: &'a Value, name: &str) -> &'a Value {
+    snap["creatures"]["creatures"]
+        .as_array()
+        .and_then(|cs| cs.iter().find(|c| c["name"] == name))
+        .unwrap_or(&Value::Null)
+}
+
+/// AH.25: the first fight's synthetic creature (written with AH.13's
+/// writer, our numbers: a creature 3.2 m ahead of the start worth 500
+/// experience) on the TV through the dev entry. Over the creature fixture,
+/// Alice on two phones: before the entry the creature is inert (the TV's
+/// listing leaves the first fight's placements out); asked for the level's
+/// start, the run lists the fight and the creature runs from its script,
+/// `/api/_test/tv` reporting its health (1) and behaviour. Alice's Eruptor
+/// placed and taken over, the entry at its anchor; the bottom button
+/// throws, the ball comes down on the creature and its script awards its
+/// experience: the creature gone, his figure at 500 (level 2 on the
+/// fixture's table) on the TV, in Alice's row and on her second phone's
+/// strip, which had read level 1. Her slot reset is refused while he's the
+/// hero in the level, the phone saying so in a kid's words and the row
+/// unchanged.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
+    use guac_formats::script::builder::{ATTACK_BALL, FIGHT_CREATURE, FIGHT_HEALTH, FIGHT_XP};
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_creature().expect("spawn guacamole");
+    let (phone, alice_id, _) = phone_as(&server, "Alice", ALICE).await;
+    let watching = Phone::new(&server.phone_url().await.unwrap(), &server.chromedriver_url)
+        .await
+        .unwrap();
+    let sid = session_id(&watching).await;
+    set_session_profile(&server.url, sid, &alice_id)
+        .await
+        .unwrap();
+    pick_giants(&server, &phone).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready"
+            && !s["level"]["scripts"].is_null()
+            && !s["creatures"].is_null()
+    })
+    .await
+    .expect("the level and its scripts");
+    assert_eq!(snap["level"]["scripts"]["scripts"], E2E_FIGHT_SCRIPTS);
+    assert!(
+        creature(&snap, FIGHT_CREATURE).is_null(),
+        "no entry: the creature inert, walked by nothing: {}",
+        snap["creatures"]
+    );
+    assert!(snap["entry"].is_null(), "no entry asked");
+
+    // The entry: the fight listed, the creature running from its script.
+    entry_tv(&server.url, json!({"anchor": "start"}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        creature(s, FIGHT_CREATURE)["behaviour"] == "idle"
+    })
+    .await
+    .expect("the creature runs once the fight is listed");
+    let c = creature(&snap, FIGHT_CREATURE);
+    assert_eq!(c["health"], json!(FIGHT_HEALTH as f64), "{c}");
+    assert_eq!(
+        (c["awake"].clone(), c["gone"].clone()),
+        (json!(true), json!(false))
+    );
+    assert_eq!(snap["entry"]["anchor"], "start");
+    assert_eq!(snap["entry"]["phase"], "waiting");
+
+    place_named(&phone, "Eruptor").await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] == "paused"
+    })
+    .await
+    .expect("the level waits for a pad");
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "east"}))
+        .await
+        .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level"
+            && s["hero"]["scripts"] == "joined"
+            && s["entry"]["phase"] == "anchored"
+    })
+    .await
+    .expect("his scripts join and the entry is at its anchor");
+    let list = &snap["entry"]["equivalence"];
+    assert_eq!(list["experience"], json!(0), "{list}");
+    assert_eq!(list["triggers_fired"], json!([]), "{list}");
+    let c = creature(&snap, FIGHT_CREATURE);
+    assert_eq!(c["body"], json!(true), "a body in the world: {c}");
+    let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();
+    open_details(&watching, "Eruptor").await;
+    wait_strip(&watching, &["1", "0", "0m"], Duration::from_secs(5)).await;
+
+    // The throw: the creature beaten, its experience his figure's.
+    let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]
+        .as_u64()
+        .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "south"}))
+        .await
+        .unwrap();
+    let xp = FIGHT_XP as u64;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        creature(s, FIGHT_CREATURE)["gone"] == true && s["hero"]["experience"] == xp
+    })
+    .await
+    .expect("the creature beaten and its experience on the TV");
+    assert_eq!(creature(&snap, FIGHT_CREATURE)["body"], json!(false));
+    let steps = scripts_tv(&server.url, since).await.unwrap()["steps"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let ball = steps
+        .iter()
+        .flat_map(|s| s["gone"].as_array().cloned().unwrap_or_default())
+        .find(|c| c["name"] == ATTACK_BALL)
+        .expect("the ball gone with it");
+    let at = &ball["at"];
+    assert!(
+        at[1].as_f64().unwrap() - f64::from(E2E_FLOOR) > 0.1,
+        "on its body, over the floor: {at}"
+    );
+    assert!(
+        (at[2].as_f64().unwrap() - f64::from(E2E_CREATURE[2])).abs() < 1.0,
+        "where it stood: {at}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let (status, body) = stats(&server, &alice_id, &figure).await;
+        if status == 200 && body["xp"] == json!(xp) {
+            assert_eq!(body["level"], json!(2), "{body}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the row: {status} {body}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    wait_strip(&watching, &["2", "0", "0m"], Duration::from_secs(2)).await;
+
+    // Her slot reset, refused while he's the hero in the level.
+    open_details(&phone, "Eruptor").await;
+    assert_eq!(
+        action(&phone, "Reset to pack-fresh").await,
+        (false, "Reset to fresh where it stands".into())
+    );
+    reset_from_details(&phone).await;
+    let toast = phone.last_toast_text().await.unwrap();
+    assert!(
+        toast
+            .as_deref()
+            .is_some_and(|t| t.contains("out in the level")),
+        "{toast:?}"
+    );
+    let (_, kept) = stats(&server, &alice_id, &figure).await;
+    assert_eq!(
+        (kept["level"].clone(), kept["xp"].clone()),
+        (json!(2), json!(xp))
+    );
+    let snap = tv(&server.url).await.unwrap();
+    assert_eq!(snap["hero"]["experience"], json!(xp));
+    phone.close().await.unwrap();
+    watching.close().await.unwrap();
 }
 
 /// Waits up to 5 s for the details' stats strip to read `want` gold.

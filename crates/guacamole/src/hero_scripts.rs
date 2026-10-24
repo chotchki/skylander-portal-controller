@@ -53,17 +53,10 @@
 //!
 //! Leaving the level installs the run again from the part, the level's
 //! start as the next entry finds it. The hero coming off the portal
-//! mid-level (AG.29, [`crate::play`]) installs it again too, his minion and
-//! what his scripts spawned going with him, but with the level kept as he
-//! left it ([`reinstall_keeping_level`], AH.27): what the level's scripts
-//! took off (a breakable broken, a spinning coin taken) stays off and the
-//! loot counts stand where they stood; the hero who comes in where he
-//! stood joins that run as the first did, once it has made [`INIT_STEPS`].
-//! That stands in for the original's own swap (the portal manager
-//! deactivating his minion, the level's scripts running on): a coin or
-//! debris in flight at the swap goes, and a creature's state would start
-//! over, which AH.25's fight needs the deactivate path for (AH.105;
-//! stand-in ledger: `swap`).
+//! mid-level (AG.29, [`crate::play`]) takes his scripts off the run by the
+//! deactivate path ([`crate::swap`], openspec AH.105), the level's scripts
+//! running on; the hero who comes in where he stood joins that run as the
+//! first did.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -83,8 +76,7 @@ use guacamole::figure::{self, Layout};
 use guacamole::frame::Frame;
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
-    self, Files, KeptHealth, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost,
-    smash_config,
+    self, Files, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost, smash_config,
 };
 use serde::Serialize;
 use tracing::{info, warn};
@@ -118,6 +110,11 @@ impl ScriptSource {
     /// run from the level's start.
     pub(crate) fn level_unit(&self) -> Option<u16> {
         self.order.last().copied()
+    }
+
+    /// What the host reads off the part's files.
+    pub(crate) fn files(&self) -> &Files {
+        &self.files
     }
 
     /// The unit `load_file`'s scripts link as, if he's a fighter.
@@ -169,9 +166,6 @@ pub(crate) fn install(world: &mut World, part: Part) {
     install_from(world, &source);
     world.insert_resource(source);
     world.insert_resource(ScriptSteps::default());
-    world.insert_resource(Carried::default());
-    // A level's scripts: every figure comes in full (AH.62).
-    world.insert_resource(KeptHealth::default());
 }
 
 /// The run from `source`, its entities and an earlier run's gone first: the
@@ -179,17 +173,26 @@ pub(crate) fn install(world: &mut World, part: Part) {
 /// scripts, the pickups and the breakables), each of the level's placements
 /// with a model the level's palettes part holds given its palette.
 fn install_from(world: &mut World, source: &ScriptSource) {
+    // The dev entry's fight brings the first fight's placements (AH.25).
+    let fight = crate::dev_entry::fight_listed(world);
+    let config = match fight {
+        true => guacamole::scripts::fight_config(Mode::Play),
+        false => smash_config(Mode::Play),
+    };
     scripts::install_with(
         world,
         source.program.clone(),
         &source.files,
         &source.order,
-        smash_config(Mode::Play),
+        config,
     );
     let Some(level) = source.level_unit() else {
         return;
     };
     let mut script_world = world.resource_mut::<ScriptWorld>();
+    if fight {
+        script_world.walk_first_fight(level);
+    }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
@@ -200,98 +203,23 @@ fn install_from(world: &mut World, source: &ScriptSource) {
 }
 
 /// The run installed again from its part: what leaving the level does, the
-/// level's next entry a fresh start, every figure's kept health gone with
-/// the level (AH.62: a level change).
+/// level's next entry a fresh start, every figure's stored data (its health
+/// kept across a swap, AH.62) gone with the level, as a level change clears
+/// the portal manager's.
 pub(crate) fn reinstall(world: &mut World) {
     let Some(source) = world.get_resource::<ScriptSource>().cloned() else {
         return;
     };
     install_from(world, &source);
     world.insert_resource(ScriptSteps::default());
-    world.insert_resource(Carried::default());
-    if let Some(mut kept) = world.get_resource_mut::<KeptHealth>() {
-        kept.level_changed();
-    }
     info!("the scripts installed again for the level's next entry");
-}
-
-/// The run installed again with the level kept as it stands (openspec
-/// AH.27): what the hero's take-off does mid-level (AG.29's swap, until
-/// AH.105's deactivate path; stand-in ledger: `swap`). His minion and what
-/// his scripts spawned go with him; the level's placements the scripts took
-/// off (each breakable broken, each spinning coin taken) stay off and each
-/// kind's loot count stays where it stood ([`LevelState`]), so the next hero
-/// walks into the level as it was left, not its start. Each figure's kept
-/// health ([`KeptHealth`], AH.62) is the level's too and stays as it is.
-pub(crate) fn reinstall_keeping_level(world: &mut World) {
-    let Some(source) = world.get_resource::<ScriptSource>().cloned() else {
-        return;
-    };
-    let carried = world.remove_resource::<Carried>().unwrap_or_default();
-    let now = match (
-        world.get_resource::<ScriptRuntime>(),
-        world.get_resource::<ScriptWorld>(),
-        source.level_unit(),
-    ) {
-        (Some(rt), Some(w), Some(level)) => LevelState::read(&rt.vm, w, level),
-        _ => LevelState::default(),
-    };
-    // What play took off: in this run since its hero joined (none if he
-    // never did), and what the runs before it carried.
-    let mut played = carried.played;
-    if let Some(at_join) = &carried.at_join {
-        played.extend(now.since(at_join).taken_off);
-    }
-    played.sort_unstable_by_key(|o| (o.unit, o.index));
-    played.dedup();
-    // Counts the last take-off carried that no step has set back yet (the
-    // portal held the level since) go on as they were, not the fresh run's
-    // draw.
-    let loot = match &carried.loot {
-        Some(waiting) => waiting.loot.clone(),
-        None => now.loot,
-    };
-    let kept = LevelState {
-        taken_off: played.clone(),
-        loot,
-    };
-    install_from(world, &source);
-    world.insert_resource(ScriptSteps::default());
-    world.resource_scope(|world, mut rt: Mut<ScriptRuntime>| {
-        let mut w = world.resource_mut::<ScriptWorld>();
-        kept.put_back(&mut rt.vm, &mut w);
-    });
-    info!(
-        taken_off = kept.taken_off.len(),
-        loot = ?kept.loot,
-        "the scripts installed again with the level as he left it"
-    );
-    world.insert_resource(Carried {
-        at_join: None,
-        played,
-        loot: Some(kept),
-    });
-}
-
-/// The level a run carries across the hero's take-offs (openspec AH.27).
-#[derive(Resource, Debug, Default)]
-pub(crate) struct Carried {
-    /// What the level had taken off when this run's hero joined: its
-    /// start's own (the setups that take themselves off) and what the runs
-    /// before carried. None until he joins.
-    pub(crate) at_join: Option<Vec<Obj>>,
-    /// What play took off in the runs before this one, put back into it.
-    pub(crate) played: Vec<Obj>,
-    /// The counts to set back once this run's loot data is made (its first
-    /// step).
-    pub(crate) loot: Option<LevelState>,
 }
 
 /// The steps a run makes before a hero's file joins it: the init chain's
 /// two, as AH.17's headless runs make them (the portal's loaded objects are
 /// set by then). The run on the portal view has made them long before the
-/// first hero comes in; a run his take-off installed again (AG.29) has
-/// made none when the next one does, the level held meanwhile.
+/// first hero comes in, and a swap's next hero joins the run the last one
+/// left (openspec AH.105).
 pub(crate) const INIT_STEPS: u64 = 2;
 
 /// Where a hero's join is.
@@ -333,9 +261,6 @@ pub(crate) struct HeroRun {
     pub(crate) join: Join,
     /// The portal slot his figure stands in: its values make his tag's words.
     pub(crate) slot: SlotIndex,
-    /// His figure's instance, as [`KeptHealth`] keys the health it left
-    /// this level with (AH.62).
-    pub(crate) kept_as: String,
     /// His figure's tag data once his scripts join holding it (AH.23), and
     /// the generation its words were made under.
     pub(crate) figure: Option<(Value, i64)>,
@@ -361,7 +286,6 @@ pub(crate) fn ask_join(
     rig: Option<HandRig>,
     source: Option<&ScriptSource>,
     slot: SlotIndex,
-    kept_as: String,
 ) -> bool {
     let Some(unit) = source.and_then(|s| s.fighter(load_file)) else {
         info!(
@@ -378,7 +302,6 @@ pub(crate) fn ask_join(
             rig,
             join: Join::Asked,
             slot,
-            kept_as,
             figure: None,
         },
         ScriptedHero,
@@ -423,14 +346,16 @@ impl<'a, 'w, 's> TvEngine<'a, 'w, 's> {
 }
 
 /// Each prop standing with its solid in Avian's world, as its placement's
-/// handle and its body: the level's file's placements by their object.
+/// handle and its body: the level's file's placements by their object; then
+/// the heroes' and the creatures' bodies the TV keeps there
+/// ([`crate::creatures`], openspec AH.25).
 pub(crate) fn standing_props(
     level: &Level,
     world: &ScriptWorld,
     source: Option<&ScriptSource>,
 ) -> Vec<(Handle, BodyId)> {
     let Some(unit) = source.and_then(ScriptSource::level_unit) else {
-        return Vec::new();
+        return world.embodied.clone();
     };
     level
         .standing_bodies()
@@ -441,6 +366,7 @@ pub(crate) fn standing_props(
                 .get(&Obj { unit, index })
                 .map(|&h| (h, body))
         })
+        .chain(world.embodied.iter().copied())
         .collect()
 }
 
@@ -507,7 +433,7 @@ pub(crate) struct ScriptSteps {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub(crate) struct ScriptStep {
     /// The log's step, from 1, counting on across the run's installs
-    /// (leaving the level, the hero taken off: AG.29).
+    /// (the level left and entered again).
     pub step: u64,
     pub actions: [bool; 4],
     /// The hero's join: `asked`, `requested`, `joined` or `off`; none
@@ -596,7 +522,6 @@ impl Plugin for HeroScriptsPlugin {
     fn build(&self, app: &mut App) {
         guacamole::frame::ensure(app);
         app.init_resource::<ScriptLog>()
-            .init_resource::<KeptHealth>()
             .add_systems(
                 FixedUpdate,
                 (
@@ -689,7 +614,7 @@ fn set_asked_health(
 }
 
 /// The follow camera's heading as the step before left it; 0 with none.
-fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
+pub(crate) fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
     cameras
         .iter()
         .next()
@@ -712,12 +637,7 @@ pub(crate) fn step_scripts(
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
     mut earning: Option<ResMut<Earning>>,
-    (level, mut carried, real, kept): (
-        Res<Level>,
-        Option<ResMut<Carried>>,
-        Res<Time<Real>>,
-        Option<Res<KeptHealth>>,
-    ),
+    (level, real): (Res<Level>, Res<Time<Real>>),
 ) {
     let began = std::time::Instant::now();
     // The activity rule (openspec AH.27, AG.7's rule as the headless runs
@@ -757,8 +677,6 @@ pub(crate) fn step_scripts(
     let mut engine = TvEngine::new(&mut heroes, &seam, view, &props);
     let mut stopped: Vec<Halt> = Vec::new();
     let mut off: Option<String> = None;
-    // A hero back in the level he left, and the health he left with.
-    let mut came_back: Option<(PlacementId, i32)> = None;
     // The frame's slides, once before any script this step (openspec
     // AH.19), as the original's scripts' updater begins.
     {
@@ -789,10 +707,6 @@ pub(crate) fn step_scripts(
             Ok(minion) => {
                 info!(load_file = %r.load_file, ?minion, "his scripts run");
                 r.join = Join::Joined(minion);
-                came_back = kept
-                    .as_deref()
-                    .and_then(|k| k.back(&r.kept_as))
-                    .map(|health| (minion, health));
             }
             Err(h) => off = Some(format!("his minion didn't activate: {h}")),
         }
@@ -899,14 +813,6 @@ pub(crate) fn step_scripts(
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
     }
-    // Back in the level he left: the health he left with, once his first
-    // tick has set him up full (AH.62; AH.20's test sets it after that tick
-    // too), so the step's report and every later tick read it.
-    if let Some((minion, health)) = came_back
-        && scripts::set_health(vm, minion, health)
-    {
-        info!(health, "his health as he left it");
-    }
     world.end_step();
     scripts::add_scripted(vm, &mut world);
     // What his figure's words hold after the step, onto his slot's values
@@ -921,23 +827,6 @@ pub(crate) fn step_scripts(
         earning.earned(r.slot.as_usize(), values, generation);
     }
     runtime.steps += 1;
-    // A run installed again with the level kept: its loot counts set back
-    // once its loot data is made; and what the level had taken off when
-    // its hero joined, which play's own is told from at his take-off.
-    if let Some(c) = carried.as_deref_mut() {
-        if let Some(state) = &c.loot
-            && state.set_loot(&mut runtime.vm, &world)
-        {
-            info!(loot = ?state.loot, "the loot counts set back where they stood");
-            c.loot = None;
-        }
-        if c.at_join.is_none()
-            && joined.is_some()
-            && let Some(level) = source.as_ref().and_then(|s| s.level_unit())
-        {
-            c.at_join = Some(LevelState::read(&runtime.vm, &world, level).taken_off);
-        }
-    }
     for h in &stopped {
         warn!(%h, "a script stopped");
     }
@@ -952,8 +841,8 @@ pub(crate) fn step_scripts(
         commands.entity(e).remove::<ScriptedHero>();
     }
     // The log's own count, on across the run's installs: a run installed
-    // again mid-level (AG.29's take-off) starts its steps from 1, and a
-    // reader's `since` would skip them.
+    // again (the level left and entered again) starts its steps from 1, and
+    // a reader's `since` would skip them.
     let step = log.last() + 1;
     let mut entry = ScriptStep {
         step,
@@ -1515,37 +1404,6 @@ mod tests {
         );
     }
 
-    /// His health kept across a swap, on a joined hero (openspec AH.20;
-    /// stand-in ledger: `kept-health`): the health he left with set where his
-    /// scripts hold it, which the TV's report reads back; kept across his
-    /// swap, gone at a level change.
-    #[test]
-    fn a_swapped_heros_health_comes_back_as_he_left_it() {
-        let mut run = Headless::new();
-        run.step([false; 4]);
-        run.step([false; 4]);
-        let minion = run.join();
-        assert!(
-            run.vm.is_activator(minion),
-            "his minion ticks first (AH.59)"
-        );
-        run.step([false; 4]);
-        assert_eq!(scripts::health(&run.vm, minion), Some(ATTACK_HEALTH));
-        let mut kept = scripts::KeptHealth::default();
-        kept.left("eruptor", 77);
-        let back = kept.back("eruptor").unwrap();
-        assert!(scripts::set_health(&mut run.vm, minion, back));
-        assert_eq!(hero_numbers(&run.vm, minion).health, Some(77));
-        run.step([false; 4]);
-        assert_eq!(
-            scripts::health(&run.vm, minion),
-            Some(77),
-            "his scripts keep it"
-        );
-        kept.level_changed();
-        assert_eq!(kept.back("eruptor"), None);
-    }
-
     /// AH.62's hook: a health from 1 to 99,999 is kept for the next frame;
     /// anything else is a 400 and keeps nothing.
     #[tokio::test]
@@ -1717,54 +1575,6 @@ mod tests {
         assert!(!rt.vm.inert().contains(&h), "the setup runs");
     }
 
-    /// A take-off before any step since the last (the portal held the
-    /// level throughout) carries what the last one carried: the barrel put
-    /// back off, and the counts still waiting to be set back as they were,
-    /// not the fresh run's (the synthetic part draws none).
-    #[test]
-    fn a_take_off_before_any_step_carries_what_the_last_one_did() {
-        use guac_formats::script::builder::SMASH_BARREL;
-        use guacamole::scripts::Rarity;
-        let tmp = tempfile::tempdir().unwrap();
-        write_smash(tmp.path(), BARREL_AT);
-        let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
-        let level = *linked.order.last().unwrap();
-        let barrel = linked
-            .placements
-            .placed
-            .iter()
-            .find(|p| p.name == SMASH_BARREL && p.obj.unit == level)
-            .unwrap()
-            .obj;
-        let mut world = World::new();
-        install(
-            &mut world,
-            Part {
-                program: Arc::new(linked.program),
-                files: linked.placements,
-                order: linked.order,
-                fighters: linked.fighters,
-                layout: None,
-                palettes: Vec::new(),
-            },
-        );
-        let waiting = LevelState {
-            taken_off: vec![barrel],
-            loot: vec![(Rarity::Common, 0.25), (Rarity::Uncommon, 0.5)],
-        };
-        world.insert_resource(Carried {
-            at_join: None,
-            played: vec![barrel],
-            loot: Some(waiting.clone()),
-        });
-        reinstall_keeping_level(&mut world);
-        assert!(world.resource::<ScriptWorld>().taken_off(barrel));
-        let carried = world.resource::<Carried>();
-        assert_eq!(carried.played, [barrel]);
-        assert_eq!(carried.at_join, None);
-        assert_eq!(carried.loot.as_ref(), Some(&waiting), "the counts waiting");
-    }
-
     /// Where the synthetic barrel stands: 3 m ahead of the headless hero
     /// along his facing, on the open ground, inside the ball's arc.
     const BARREL_AT: [f32; 3] = [0.0, 0.0, 3.0];
@@ -1875,90 +1685,6 @@ mod tests {
         }
         assert_eq!(run.clones_named(SMASH_COIN).len(), 1, "no second coin");
         assert_eq!(run.clones_named(ATTACK_BALL).len(), 2);
-    }
-
-    /// AH.27's carry: the level read off a run where the barrel broke holds
-    /// it, and since the join only it (the setup that took itself off at the
-    /// start isn't play's); put back into a fresh run before its first step
-    /// it's off there too, asleep (no ground) and out of the VM, and a throw
-    /// at where it stood breaks nothing and drops no coin; a run with
-    /// nothing taken off carries nothing, and with no loot data has no
-    /// count to set.
-    #[test]
-    fn a_fresh_run_put_back_keeps_the_barrel_broken() {
-        use guac_formats::script::builder::{ATTACK_BALL, SMASH_BARREL, SMASH_COIN, SMASH_SETUP};
-        let mut run = Headless::smash(BARREL_AT);
-        assert_eq!(
-            LevelState::read(&run.vm, &run.world, run.level),
-            LevelState::default()
-        );
-        let layout = Layout::of(&progression_rows()).unwrap();
-        run.joined_holding(&layout, figure::Values::default());
-        let at_join = LevelState::read(&run.vm, &run.world, run.level).taken_off;
-        let (setup_obj, _) = run.placed(SMASH_SETUP);
-        assert_eq!(
-            at_join,
-            [setup_obj],
-            "the setup took itself off at the start"
-        );
-        let (barrel_obj, _) = run.placed(SMASH_BARREL);
-        run.step([true, false, false, false]);
-        for _ in 0..60 {
-            run.step([false; 4]);
-        }
-        assert!(run.world.taken_off(barrel_obj));
-        let kept = LevelState::read(&run.vm, &run.world, run.level).since(&at_join);
-        assert_eq!(kept.taken_off, [barrel_obj], "play's alone, not the setup");
-        assert_eq!(
-            kept.since(&[barrel_obj]).taken_off,
-            [],
-            "off before the join: not play's"
-        );
-        assert!(kept.loot.is_empty(), "the synthetic part has no loot data");
-        // Another file's placement taken off (his own file's) isn't the
-        // level's to carry.
-        let other = run
-            .files
-            .placed
-            .iter()
-            .find(|p| {
-                p.obj.unit != run.level
-                    && run.world.handles().contains_key(&p.obj)
-                    && !run.world.taken_off(p.obj)
-            })
-            .expect("another file's placement")
-            .obj;
-        assert!(run.world.take_off(other));
-        assert_eq!(
-            LevelState::read(&run.vm, &run.world, run.level)
-                .since(&at_join)
-                .taken_off,
-            [barrel_obj],
-            "the level's own alone"
-        );
-
-        let mut fresh = Headless::smash(BARREL_AT);
-        let (_, barrel) = fresh.placed(SMASH_BARREL);
-        kept.put_back(&mut fresh.vm, &mut fresh.world);
-        assert!(fresh.world.taken_off(barrel_obj));
-        assert!(!fresh.world.actor(barrel).unwrap().active, "asleep");
-        assert!(kept.set_loot(&mut fresh.vm, &fresh.world), "nothing to set");
-        fresh.joined_holding(&layout, figure::Values::default());
-        for (h, active) in fresh.world.activity(&mut fresh.bench) {
-            assert!(h != barrel || !active, "never woken again");
-        }
-        fresh.step([true, false, false, false]);
-        for _ in 0..60 {
-            fresh.step([false; 4]);
-        }
-        assert_eq!(fresh.clones_named(ATTACK_BALL).len(), 1);
-        assert!(fresh.clones_named(SMASH_COIN).is_empty(), "no coin");
-        let ball = fresh.clones_named(ATTACK_BALL)[0];
-        let at = fresh.world.actor(ball).unwrap().position;
-        assert!(
-            at.z > BARREL_AT[2],
-            "it flew on past where the barrel stood: {at}"
-        );
     }
 
     /// AG.60: a clone the scripts make before the level's loaded (the
