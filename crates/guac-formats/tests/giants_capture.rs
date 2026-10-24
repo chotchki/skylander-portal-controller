@@ -4,9 +4,10 @@
 //! Textures block for block, his segments' indexes, UVs, positions and CMP
 //! normals, the idle clip solved from the posed positions and which bind the
 //! game skins with. Ignored by default: it reads `GUAC_GIANTS_DUMP` and
-//! `GUAC_CAPTURE_DIR` (the folder holding AC.13's session; the three captures
-//! are pinned by name in [`CAPTURES`]), each from the environment, else
-//! `.env.dev`:
+//! `GUAC_AC13_CAPTURE_DIR` (the folder holding AC.13's session; the three
+//! captures are pinned by name in [`CAPTURES`]; a key of its own, as AC.21's
+//! is, since `GUAC_CAPTURE_DIR` is the captures root the recording tests read),
+//! each from the environment, else `.env.dev`:
 //!
 //! `cargo test -p guac-formats --release --test giants_capture -- --ignored --nocapture`
 //!
@@ -33,7 +34,7 @@ use rrc_dump::Capture;
 use rrc_dump::replay::{Draw, DrawKind, VertexArray};
 
 /// AC.13's three captures, by name (timestamps, not game bytes). Pinned rather than globbed:
-/// AF writes its own RSXCAPs into `GUAC_CAPTURE_DIR`, and the asserts below are this session's
+/// AF writes its own RSXCAPs under `GUAC_CAPTURE_DIR`, and the asserts below are this session's
 /// (the pass pattern, three distinct idle times).
 const CAPTURES: [&str; 3] = [
     "BLUS30968_20261018112455_capture.rrc.gz",
@@ -636,8 +637,9 @@ struct Session {
 }
 
 fn capture_paths() -> Vec<PathBuf> {
-    let dir = env_or_dotenv("GUAC_CAPTURE_DIR")
-        .expect("set GUAC_CAPTURE_DIR (env or .env.dev) to the folder holding AC.13's session");
+    let dir = env_or_dotenv("GUAC_AC13_CAPTURE_DIR").expect(
+        "set GUAC_AC13_CAPTURE_DIR (env or .env.dev) to the folder holding AC.13's session",
+    );
     CAPTURES
         .iter()
         .map(|name| {
@@ -1075,7 +1077,7 @@ fn ktx2_levels(t: &Texture) -> Vec<Vec<u8>> {
 }
 
 #[test]
-#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and AC.13's captures at GUAC_CAPTURE_DIR"]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and AC.13's captures at GUAC_AC13_CAPTURE_DIR"]
 fn eruptor_textures_match_the_captures() {
     let s = session();
     let t0 = Instant::now();
@@ -1304,7 +1306,7 @@ fn eruptor_textures_match_the_captures() {
 // ---- AC.16 ----
 
 #[test]
-#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and AC.13's captures at GUAC_CAPTURE_DIR"]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and AC.13's captures at GUAC_AC13_CAPTURE_DIR"]
 fn eruptor_segments_match_the_captures() {
     let s = session();
     let hero = &s.hero;
@@ -1481,7 +1483,7 @@ fn eruptor_segments_match_the_captures() {
 // ---- AC.17 ----
 
 #[test]
-#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and AC.13's captures at GUAC_CAPTURE_DIR"]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and AC.13's captures at GUAC_AC13_CAPTURE_DIR"]
 fn eruptor_idle_and_bind_match_the_captures() {
     let s = session();
     let hero = &s.hero;

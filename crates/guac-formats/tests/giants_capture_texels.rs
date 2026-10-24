@@ -12,8 +12,8 @@
 //!   images (`character/009_eruptor.arc`) against four RSX captures of the Skylander Info >
 //!   Upgrades page, taken unattended on AF's oracle in AC.21's session (2026-10-18). It reads
 //!   `GUAC_GIANTS_DUMP` and `GUAC_AC21_CAPTURE_DIR` (the folder holding that session's
-//!   captures, pinned by name in [`CAPTURES`]; its own key, so AC.13's `GUAC_CAPTURE_DIR` pins in
-//!   `giants_capture` stay as they are), each from the environment, else `.env.dev`:
+//!   captures, pinned by name in [`CAPTURES`]; its own key, as AC.13's `GUAC_AC13_CAPTURE_DIR` is
+//!   `giants_capture`'s), each from the environment, else `.env.dev`:
 //!
 //! `cargo test -p guac-formats --release --test giants_capture_texels -- --ignored --nocapture`
 //!
