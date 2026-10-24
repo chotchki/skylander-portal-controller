@@ -929,6 +929,139 @@ mod tests {
         assert_eq!(actor_body(&bare, &a), None);
     }
 
+    /// The start's scripts reach the props on the VM (openspec AG.60), from
+    /// a script built with AH.13's writer that scales its placement to 80 %
+    /// and makes its solid a cylinder: on the fence, with no range, it runs
+    /// with the hero a kilometre off (the wake), and the fence's draw
+    /// shrinks and its solid's rebuilt a cylinder through its actor; on the
+    /// gourd, out of its 160 ft, it sleeps and the gourd stands as its file
+    /// has it.
+    #[test]
+    fn a_start_script_wakes_scales_and_reshapes_its_prop() {
+        use crate::script_engine::{NoEngine, Solid as ActorSolid};
+        use crate::scripts::{
+            Files, Placed, ScriptWorld, WorldHost, headless_handles, headless_objects,
+            headless_spawner, init_chain, smash_config,
+        };
+        use guac_formats::igz::Igz;
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_formats::script::{Class, Graph};
+        use guac_script::{Generator, Mode, Obj, Program, Role, Unit, Whitelist};
+        use std::sync::Arc;
+        const PATH: &str = "C:/tfb/Synthetic/Start.ai";
+        const MY: El<'static> = El::Member("optoplevelbehavior", "my");
+        let mut b = IgzBuilder::new();
+        {
+            let w = &mut Writer::new(&mut b);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            w.end_block(pre);
+            let idle = w.behaviour("idle");
+            let eighty = w.float(80.0);
+            w.set(
+                &[
+                    MY,
+                    El::Member("placement", "scale"),
+                    El::Member("scalemeasurement", "uniform"),
+                ],
+                eighty,
+            );
+            let cylinder = w.int(4);
+            w.set(
+                &[
+                    MY,
+                    El::Member("actorinfo", "collision volume"),
+                    El::Member("collisioninfo", "shape"),
+                ],
+                cylinder,
+            );
+            w.end_block(idle);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let program = Arc::new(
+            Program::link(&[Unit {
+                name: "level",
+                role: Role::Other,
+                igz: &igz,
+                graph: &graph,
+            }])
+            .unwrap(),
+        );
+        let (props, placements) = level();
+        let p = LevelProps::new(&props, &placements).unwrap();
+        // The fence and the gourd as the scripts' files hold them, each
+        // running the script.
+        let placed = |name: &str| {
+            let prop = p.props.iter().find(|x| x.name == name).unwrap();
+            let f = placements
+                .actors
+                .iter()
+                .find(|a| a.object == prop.object)
+                .unwrap();
+            let s = f.solid.unwrap();
+            let obj = Obj {
+                unit: 0,
+                index: f.object,
+            };
+            let placed = Placed {
+                position: f.position,
+                rotation: f.rotation,
+                scale: f.scale,
+                range: f.activation_range,
+                solid: Some(ActorSolid {
+                    width: s.width,
+                    height: s.height,
+                    length: s.length,
+                    shape: s.shape as i32,
+                    ..ActorSolid::default()
+                }),
+                ..Placed::named(obj, name, Some(PATH), f.activity_state)
+            };
+            (prop, obj, placed)
+        };
+        let (fence, fence_obj, fence_file) = placed("fence");
+        let (gourd, gourd_obj, gourd_file) = placed("gourd");
+        let files = Files {
+            placed: vec![fence_file, gourd_file],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        // The TV's members (their registered types), every script run.
+        let mut c = smash_config(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let far = Vec3::from_array(HERO) + Vec3::new(1000.0, 0.0, 0.0);
+        for (h, active) in world.activity_at(&[far]) {
+            vm.set_asleep(h, !active);
+        }
+        let mut spawn = headless_spawner(1 << 40);
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut NoEngine,
+            generator: &mut Generator::seeded(1),
+            spawn: &mut spawn,
+        };
+        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+        let actor = |obj| world.actor(handles[&obj]).unwrap();
+        let a = actor(fence_obj);
+        assert!(a.active, "awake with no range");
+        assert_eq!(actor_transform(a).scale, Vec3::splat(0.8));
+        let body = actor_body(fence, a).unwrap();
+        assert!(
+            matches!(body.collider, Collider::Convex(Convex::Cylinder { .. })),
+            "{:?}",
+            body.collider
+        );
+        let a = actor(gourd_obj);
+        assert!(!a.active, "asleep out of its range");
+        assert_eq!(actor_transform(a), gourd.transform);
+        assert_eq!(actor_body(gourd, a), gourd.body);
+    }
+
     /// A template [`DRAWN_SPAWNS`] names draws its clones (openspec AG.60):
     /// its static model joins the props' models once, its keys and the keys
     /// a tint fading it draws among the props'; a skinned one draws nothing.

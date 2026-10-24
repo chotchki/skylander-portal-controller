@@ -205,7 +205,8 @@ struct Built {
     /// past the level's own, and its material in `drawn.materials`).
     prop_models: Vec<Vec<(usize, u16)>>,
     /// The spawn part's models (AH.24), by path: each one's segments as the
-    /// props' are, past theirs.
+    /// props' are, past theirs; then the level's templates' the TV draws
+    /// the clones of (AG.60), the props' own segments.
     spawn_models: Vec<(String, Vec<(usize, u16)>)>,
     read: Duration,
     took: Duration,
@@ -319,6 +320,15 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         })
         .collect::<Result<Vec<_>, String>>()?;
     drawn.materials.extend(props.materials.iter().cloned());
+    // The level's templates whose clones the TV draws (AG.60,
+    // `props::DRAWN_SPAWNS`): their models are among the props', drawn by
+    // path as the spawn part's are.
+    let level_spawns: Vec<(String, Vec<(usize, u16)>)> = walk
+        .props
+        .spawn_models
+        .iter()
+        .map(|&i| (walk.props.models[i].path.clone(), prop_models[i].clone()))
+        .collect();
     // The meshes hold the props' vertices once built.
     walk.props.models.clear();
     // What the scripts' clones draw (AH.24): the spawn part's models after
@@ -345,7 +355,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         u16::try_from(spawn_materials + usize::from(m))
             .map_err(|_| "past 65,536 materials with the spawn models'".to_owned())
     };
-    let spawn_models = spawns
+    let mut spawn_models = spawns
         .iter()
         .zip(&spawn_ranges)
         .map(|(model, r)| {
@@ -361,6 +371,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             Ok((model.path.clone(), parts))
         })
         .collect::<Result<Vec<_>, String>>()?;
+    spawn_models.extend(level_spawns);
     drawn.materials.extend(spawned.materials.iter().cloned());
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
@@ -1096,7 +1107,8 @@ impl Level {
             .map_or_else(Vec::new, |l| l.props.standing_bodies())
     }
 
-    /// The spawn part's models by path, once the level's loaded: what the
+    /// The spawn part's models by path, once the level's loaded, and the
+    /// level's templates' `props::DRAWN_SPAWNS` names (AG.60): what the
     /// scripts' clones draw (AH.24).
     pub(crate) fn spawn_models(
         &self,
@@ -2736,6 +2748,61 @@ mod tests {
         assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
         assert!(!shown(&mut app).contains(&("prop fence".to_owned(), true)));
         assert_eq!(fence_draw(&mut app).scale, Vec3::splat(0.5));
+    }
+
+    /// AG.60: a level template `props::DRAWN_SPAWNS` names draws its clones
+    /// from its model among the props', found by path as the spawn part's
+    /// are; one it doesn't name draws none.
+    #[test]
+    fn a_drawn_templates_model_is_there_for_its_clones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let scene: guac_ir::level::Scene = guac_ir::from_ron(
+            &std::fs::read_to_string(tmp.path().join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+        )
+        .unwrap();
+        let shape = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let model = |path: &str| guac_ir::level::Prop {
+            path: path.into(),
+            skeleton: None,
+            materials: vec![scene.scenes[0].materials[0].clone()],
+            segments: vec![segment(0, shape, 0.0)],
+            idle: None,
+        };
+        let template = |object, name: &str, model: &str| guac_ir::level::Placement {
+            object,
+            id: 0,
+            name: name.into(),
+            script: None,
+            position: START,
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            model: Some(model.into()),
+            solid: None,
+            movement: None,
+            waypoints: None,
+            activity_state: 5,
+            activation_range: 0.0,
+        };
+        write_props(
+            tmp.path(),
+            vec![model("egg.mdl"), model("hat.mdl")],
+            vec![
+                template(20, "Bird_nest_egg", "egg.mdl"),
+                template(21, "Turban_hat", "hat.mdl"),
+            ],
+        );
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        let models = level.spawn_models().expect("loaded");
+        assert_eq!(models.get("egg.mdl").map(Vec::len), Some(1));
+        assert!(!models.contains_key("hat.mdl"));
     }
 
     /// AG.21: the level's solids come and go with it. A new source's load
