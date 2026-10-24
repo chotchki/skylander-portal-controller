@@ -366,7 +366,7 @@ mod tests {
     /// creature, awake in `battle` with its rock in flight and his ball in
     /// flight, his figure off and an Eruptor on again (the deactivate path,
     /// then AH.17's join). Its behaviour, its count, its health and its
-    /// seconds of ticks carry on through the join's two steps rather than
+    /// seconds of ticks carry on through the join's step rather than
     /// starting over (its health 5, not its first 7); its rock flies on and
     /// lands, taken off by its own script on the floor; his minion, his
     /// helper, his ball and his file's placements are off the run (the

@@ -249,7 +249,7 @@ AH.0 requires this table complete.
 | combat | A push off the ground | AH.10 (its 184 knocks, read at AG.90), AG.90 (`giants_chompy`'s push profiles) |
 | combat | A Giant bitten | AH.29 (headless, Tree Rex) |
 | combat | Eruptor at level 1 and at level 10; Standing after a bite | AH.4 (live), AH.16 (disc), AH.25 |
-| combat | Put back in the same level | AH.11, AH.20 (unit), AH.62 (the TV's unit and the Mac), AH.26 (e2e) |
+| combat | Put back in the same level | AH.11, AH.20 (unit), AH.62 (the TV's unit and the Mac), AH.105 (unit, disc and the Mac: the portal manager's stored data), AH.26 (e2e) |
 | combat | Tree Rex after him; Placed again | AH.11, AH.26 (unit and e2e) |
 | hero-attacks | A Chompy ahead; Nothing in range; The button held; Chompies all round; Bitten while erupting; Bitten as he winds up; From the press to the ball | AH.9, AH.10, AH.17, AH.24, AH.25, AH.30 |
 | hero-attacks | A character whose attacks don't run yet; Eruptor | AH.24, AH.29 |
@@ -267,7 +267,7 @@ AH.0 requires this table complete.
 | pickups | A spinning coin on the walkway; Just dropped; Down the line into the pit; Under him as it drops | AH.9, AH.11, AH.46 (the floor's length), AH.20, AH.27, AH.28 |
 | pickups | Two at once | AH.9 (the original's), AH.20 (disc, AH.11's coin drives replayed), AH.27 |
 | breakables | A barrel by the ledge route; Five in a row; The coins' worth | AH.9, AH.21, AH.27, AH.30 |
-| breakables | Swapped mid-smash | AH.27 (unit and disc) |
+| breakables | Swapped mid-smash | AH.27 (unit and disc), AH.105 (unit and disc, on the deactivate path; the Mac) |
 | breakables | Up to the walkway | AH.8, AH.21, AH.28 |
 | breakables | Tree Rex at a boulder | AH.27 (unit), AH.29 |
 | breakables | An uncommon pot; Eruptor at the stone wall | AH.9 (the original's), AH.21 (unit), AH.27 |

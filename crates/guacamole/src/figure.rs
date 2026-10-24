@@ -28,6 +28,10 @@
 //!   and the slot's `entered`. From then on both awards (`Game - Award
 //!   Experience` and its money twin) and every `Save - Get/Set Minion Save
 //!   Val` reach the words.
+//! - Its exit ([`exit`], openspec AH.105): `Portal - Exit Object`'s links
+//!   undone as the figure comes off mid-level, the slot's `entered` 0, the
+//!   first player's `loaded data` none, its tag pair 0 and its object info
+//!   none.
 //! - Reading back ([`read`]): the words through the layout.
 
 use guac_ir::progression::{Progression, SaveKind};

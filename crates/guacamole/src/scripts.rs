@@ -14,6 +14,10 @@
 //! - [`WorldHost`]: [`guac_script::Host`] over a world, a generator and how
 //!   clones get handles: plain for the headless runs and the disc tests,
 //!   [`ScriptHost`] inside the TV, a `SystemParam` whose clones are entities.
+//! - [`join_request`], [`join_activate`] and [`join_deactivate`]: a
+//!   figure's character joining the run when it goes on the portal and
+//!   leaving it when it comes off mid-level, the original's macros with
+//!   their scheduling ours (openspec AH.17, AH.105; stand-in ledger: `join`).
 //! - [`init_chain`]: the VM AH.16 runs: `global.bld`'s 17 running placements
 //!   for their first tick, `init_setup.bld`'s running placements and level
 //!   213's definition and enemy system every tick, every other running
@@ -1475,9 +1479,9 @@ pub fn health(vm: &Vm, minion: PlacementId) -> Option<i32> {
     vm.field(c, "hp").map(|v| vm.value(v))?.as_i32()
 }
 
-/// The hero's health set where his scripts hold it, as a bite would leave
-/// it: a recorded state's (a test's, AH.62's test hook doing a bite's
-/// work). False when he has no health to set.
+/// The hero's health set where his scripts hold it, as a bite leaves it: a
+/// test's, or AH.62's test hook doing a bite's work. False when he has no
+/// health to set.
 pub fn set_health(vm: &mut Vm, minion: PlacementId, health: i32) -> bool {
     let Some(d) = vm.local(minion, "description").map(|v| vm.value(v)) else {
         return false;
