@@ -106,6 +106,7 @@ fn main() -> Result<()> {
     let (shelf_tx, shelf) = turntable::shelf_channel();
     let (level_tx, level_feed) = level::level_channel();
     let mirror = TvMirror::default();
+    let asked_health = hero_scripts::AskedHealth::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
         Ok(loaded) => loaded,
@@ -125,7 +126,7 @@ fn main() -> Result<()> {
                 root,
                 None,
                 OutputLatency::default(),
-                mirror,
+                (mirror, asked_health),
                 log_guard,
             );
         }
@@ -174,7 +175,7 @@ fn main() -> Result<()> {
         migrator: &setup::MIGRATOR,
         driver_factory: Box::new(move |kind| build_driver(kind, portal_tx)),
         hooks: Hooks::default(),
-        extra_routes: test_routes(&mirror),
+        extra_routes: test_routes(&mirror, &asked_health),
         catalogue: Catalogue::Native {
             games: scan.games(),
             roster,
@@ -208,7 +209,7 @@ fn main() -> Result<()> {
         root,
         Some(job),
         latency,
-        mirror,
+        (mirror, asked_health),
         log_guard,
     )
 }
@@ -345,11 +346,14 @@ impl Plugin for TvPacing {
     }
 }
 
-/// `/api/_test/tv` for the e2e harness; nothing outside `test-hooks`.
+/// `/api/_test/tv` for the e2e harness, and AH.62's health beside it;
+/// nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
+    asked_health: &hero_scripts::AskedHealth,
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
-    cfg!(feature = "test-hooks").then(|| mirror::routes(mirror))
+    cfg!(feature = "test-hooks")
+        .then(|| mirror::routes(mirror).merge(hero_scripts::health_routes(asked_health)))
 }
 
 /// `--setup` alone: the plain dialog, on the main thread before the event
@@ -384,7 +388,7 @@ fn run_tv(
     root: PathBuf,
     job: Option<ExtractJob>,
     latency: OutputLatency,
-    mirror: TvMirror,
+    (mirror, asked_health): (TvMirror, hero_scripts::AskedHealth),
     log_guard: WorkerGuard,
 ) -> Result<()> {
     exit_after_farewell(link.status.clone(), progress.clone());
@@ -425,7 +429,9 @@ fn run_tv(
     #[cfg(feature = "dev-tools")]
     app.add_plugins(shots::Shots);
     if cfg!(feature = "test-hooks") {
-        app.insert_resource(mirror).add_plugins(mirror::Mirror);
+        app.insert_resource(mirror)
+            .insert_resource(asked_health)
+            .add_plugins(mirror::Mirror);
     }
     let exit = app.run();
     info!(?exit, "guacamole exited");

@@ -66,6 +66,10 @@ pub struct Inputs<'a> {
     /// (`sched-f0.json`, `sched-end.json`) and its chains armed in place of
     /// the lava's and the Chompies' clips ([`crate::sched`]).
     pub sched: bool,
+    /// AG.81: the Chompies' clips' chain follows the hero's by name instead
+    /// ([`GiantsChains::follow_hero_clips`]), so a hero taken off and put
+    /// back has his clips recorded whichever corpus holds him.
+    pub hero_clips: bool,
     /// The ring's records.
     pub ring: u32,
     /// `sgenrand(seed)` written into the game's generator at F0, before
@@ -857,6 +861,12 @@ fn drive_live(
                 sched.as_ref(),
             )
             .context("Giants' chains at F0")?;
+            let mut chains = chains;
+            if inputs.hero_clips {
+                chains
+                    .follow_hero_clips()
+                    .context("the hero's clips by name")?;
+            }
             control.chains_arm(&chains.chains)?;
             Some(chains)
         } else {

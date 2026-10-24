@@ -1289,12 +1289,16 @@ pub fn join_activate(
 /// design decision 2's stand-in row, Health kept across a swap; combat: A
 /// hero's health): in the original the portal manager keeps each figure's
 /// health in its stored data while the level lasts, keyed by the tag, and
-/// clears it at a level change. guacamole keys it by the figure. The hero
-/// taken off mid-level leaves his health here ([`KeptHealth::left`]); put
-/// back in the same level, his join sets it ([`set_health`]) from
-/// [`KeptHealth::back`]; a level change clears it. The TV's portal has no
-/// mid-level removal yet (AG.29's), so nothing calls `left` there today.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// clears it at a level change. guacamole keys it by the figure's instance
+/// (its placing profile and figure, what its tag's serial stands for). The
+/// hero taken off mid-level leaves his health here ([`KeptHealth::left`]);
+/// put back in the same level, his join sets it ([`set_health`]) from
+/// [`KeptHealth::back`]; a level change clears it. On the TV (openspec
+/// AH.62) the portal's take-off calls `left`, the join `back` (set once
+/// his first tick is through), leaving the level `level_changed` and a
+/// level's scripts start it empty; the take-off's own reinstall of the run
+/// leaves it alone.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct KeptHealth {
     kept: HashMap<String, i32>,
 }

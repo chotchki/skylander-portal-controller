@@ -131,7 +131,8 @@ usage:
       to <dir>/home-pristine at the start and put back before any boot that finds
       them changed; the pack and the dev's RPCS3 dirs are checked unchanged at the end
   oracle goto --out <dir> --route <route.ron> [--state <file>] [--figure <file>]
-              [--watch | --chains | --sched] [--ring <n>] [--knobs <knobs.ron>] [--boot-secs <n>]
+              [--watch | --chains | --sched | --hero-clips] [--ring <n>] [--knobs <knobs.ron>]
+              [--boot-secs <n>]
               [--max-load <x>] [--seed <n>] [--poke <placement>:<path>=<value>]...
       AH.7's route driver: a fresh RPCS3 from the gameplay state ($GUAC_ORACLE_SAVESTATE
       unless --state) with a fresh copy of the figure ($GUAC_ORACLE_FIGURE unless
@@ -150,7 +151,10 @@ usage:
       --chains O6's chains with it; --sched (AH.59) those with the script scheduler's two
       chains in place of the lava's and the Chompies' clips, the scheduler read at F0 and
       at the end (sched-f0.json, sched-end.json) and each record's groups and awake
-      actors decoded (sched-records.json, named in sched-names.json).
+      actors decoded (sched-records.json, named in sched-names.json); --hero-clips
+      (AG.81) the chains with the hero's clips followed by his name in place of the
+      Chompies', so a hero taken off and put back is recorded whichever corpus holds
+      him (creature-clips.json, under his placement's name).
       Writes <dir> (new, outside every work tree):
       record.json, route.json (every pause), input.ron (what port 0 held from F0 + 1,
       for the headless runner), the reads, the shots, the ring and the end state.
@@ -1093,7 +1097,7 @@ fn watch_cmd(rest: &[&str]) -> Result<()> {
 /// AH.7's `oracle goto`: the route driven on a fresh RPCS3, as the usage says.
 fn goto(mut rest: &[&str]) -> Result<()> {
     let (mut out, mut route, mut state, mut figure, mut knobs) = (None, None, None, None, None);
-    let (mut watch, mut chained, mut sched) = (false, false, false);
+    let (mut watch, mut chained, mut sched, mut hero_clips) = (false, false, false, false);
     let mut ring = 6_000u32;
     let mut boot_wait = divergence::BOOT_WAIT;
     let mut max_load = 32.0f64;
@@ -1112,6 +1116,10 @@ fn goto(mut rest: &[&str]) -> Result<()> {
             }
             ["--sched", tail @ ..] => {
                 (watch, chained, sched) = (true, true, true);
+                rest = tail;
+            }
+            ["--hero-clips", tail @ ..] => {
+                (watch, chained, hero_clips) = (true, true, true);
                 rest = tail;
             }
             [flag, value, tail @ ..] => {
@@ -1183,7 +1191,7 @@ fn goto(mut rest: &[&str]) -> Result<()> {
         Identity::of(&exe, &home.config_dir())?.line(),
         format!(
             "goto {}: home {}, state {} ({}), figure {} ({}), watch {watch}, chains {chained}, sched {sched}, \
-             rows {}",
+             hero clips {hero_clips}, rows {}",
             route_file.display(),
             home.root().display(),
             state.display(),
@@ -1222,6 +1230,7 @@ fn goto(mut rest: &[&str]) -> Result<()> {
         watch,
         chains: chained,
         sched,
+        hero_clips,
         ring,
         seed,
         pokes: &pokes,

@@ -80,7 +80,8 @@ use guacamole::figure::{self, Layout};
 use guacamole::frame::Frame;
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
-    self, Files, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost, smash_config,
+    self, Files, KeptHealth, LevelState, ScriptClone, ScriptRuntime, ScriptWorld, WorldHost,
+    smash_config,
 };
 use serde::Serialize;
 use tracing::{info, warn};
@@ -166,6 +167,8 @@ pub(crate) fn install(world: &mut World, part: Part) {
     world.insert_resource(source);
     world.insert_resource(ScriptSteps::default());
     world.insert_resource(Carried::default());
+    // A level's scripts: every figure comes in full (AH.62).
+    world.insert_resource(KeptHealth::default());
 }
 
 /// The run from `source`, its entities and an earlier run's gone first: the
@@ -194,7 +197,8 @@ fn install_from(world: &mut World, source: &ScriptSource) {
 }
 
 /// The run installed again from its part: what leaving the level does, the
-/// level's next entry a fresh start.
+/// level's next entry a fresh start, every figure's kept health gone with
+/// the level (AH.62: a level change).
 pub(crate) fn reinstall(world: &mut World) {
     let Some(source) = world.get_resource::<ScriptSource>().cloned() else {
         return;
@@ -202,6 +206,9 @@ pub(crate) fn reinstall(world: &mut World) {
     install_from(world, &source);
     world.insert_resource(ScriptSteps::default());
     world.insert_resource(Carried::default());
+    if let Some(mut kept) = world.get_resource_mut::<KeptHealth>() {
+        kept.level_changed();
+    }
     info!("the scripts installed again for the level's next entry");
 }
 
@@ -211,7 +218,8 @@ pub(crate) fn reinstall(world: &mut World) {
 /// spawned go with him; the level's placements the scripts took off (each
 /// breakable broken, each spinning coin taken) stay off and each kind's loot
 /// count stays where it stood ([`LevelState`]), so the next hero walks into
-/// the level as it was left, not its start.
+/// the level as it was left, not its start. Each figure's kept health
+/// ([`KeptHealth`], AH.62) is the level's too and stays as it is.
 pub(crate) fn reinstall_keeping_level(world: &mut World) {
     let Some(source) = world.get_resource::<ScriptSource>().cloned() else {
         return;
@@ -321,6 +329,9 @@ pub(crate) struct HeroRun {
     pub(crate) join: Join,
     /// The portal slot his figure stands in: its values make his tag's words.
     pub(crate) slot: SlotIndex,
+    /// His figure's instance, as [`KeptHealth`] keys the health it left
+    /// this level with (AH.62).
+    pub(crate) kept_as: String,
     /// His figure's tag data once his scripts join holding it (AH.23), and
     /// the generation its words were made under.
     pub(crate) figure: Option<(Value, i64)>,
@@ -346,6 +357,7 @@ pub(crate) fn ask_join(
     rig: Option<HandRig>,
     source: Option<&ScriptSource>,
     slot: SlotIndex,
+    kept_as: String,
 ) -> bool {
     let Some(unit) = source.and_then(|s| s.fighter(load_file)) else {
         info!(
@@ -362,6 +374,7 @@ pub(crate) fn ask_join(
             rig,
             join: Join::Asked,
             slot,
+            kept_as,
             figure: None,
         },
         ScriptedHero,
@@ -578,15 +591,95 @@ pub(crate) struct HeroScriptsPlugin;
 impl Plugin for HeroScriptsPlugin {
     fn build(&self, app: &mut App) {
         guacamole::frame::ensure(app);
-        app.init_resource::<ScriptLog>().add_systems(
-            FixedUpdate,
-            (
-                step_scripts.in_set(Frame::Scripts),
-                (advance_scripts, draw_clones).chain().in_set(Frame::Actors),
-                pose_hands.in_set(Frame::Hands),
+        app.init_resource::<ScriptLog>()
+            .init_resource::<KeptHealth>()
+            .add_systems(
+                FixedUpdate,
+                (
+                    step_scripts.in_set(Frame::Scripts),
+                    (advance_scripts, draw_clones).chain().in_set(Frame::Actors),
+                    pose_hands.in_set(Frame::Hands),
+                )
+                    .run_if(resource_exists::<ScriptRuntime>)
+                    .run_if(resource_exists::<ScriptWorld>),
             )
-                .run_if(resource_exists::<ScriptRuntime>)
-                .run_if(resource_exists::<ScriptWorld>),
+            .add_systems(
+                Update,
+                set_asked_health.run_if(resource_exists::<AskedHealth>),
+            );
+    }
+}
+
+/// AH.62's test hook (`test-hooks` builds): a health asked for over `POST
+/// /api/_test/tv/health`, set where the joined hero's scripts hold it before
+/// the frame's fixed steps, the stand-in for a bite as AH.11's `swap1` poked
+/// the original's hero to 200.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct AskedHealth(pub(crate) Arc<Mutex<Option<i32>>>);
+
+/// The most a health asked for may be: past any figure's full health at
+/// the level cap (AH.2).
+const HEALTH_ASKED_MAX: i32 = 99_999;
+
+/// The route's body; its range is the route's to check.
+#[derive(serde::Deserialize)]
+struct HealthBody {
+    health: i32,
+}
+
+/// `POST /api/_test/tv/health` (`{"health": 200}`): 202 with it kept for
+/// the next frame; 400, keeping nothing, for a health outside 1 to 99,999
+/// or any other body. Generic so a test needs no `AppState`.
+pub(crate) fn health_routes<S: Clone + Send + Sync + 'static>(
+    asked: &AskedHealth,
+) -> axum::Router<S> {
+    use axum::extract::rejection::JsonRejection;
+    let asked = asked.0.clone();
+    axum::Router::new().route(
+        "/api/_test/tv/health",
+        axum::routing::post(move |body: Result<axum::Json<HealthBody>, JsonRejection>| {
+            let kept = match body {
+                Ok(axum::Json(b)) if (1..=HEALTH_ASKED_MAX).contains(&b.health) => {
+                    *asked.lock().unwrap_or_else(|e| e.into_inner()) = Some(b.health);
+                    true
+                }
+                _ => false,
+            };
+            async move {
+                if kept {
+                    axum::http::StatusCode::ACCEPTED
+                } else {
+                    axum::http::StatusCode::BAD_REQUEST
+                }
+            }
+        }),
+    )
+}
+
+/// The health [`AskedHealth`] holds, set on the hero whose scripts joined;
+/// with none joined it's dropped with a warning.
+fn set_asked_health(
+    asked: Res<AskedHealth>,
+    runtime: Option<ResMut<ScriptRuntime>>,
+    runs: Query<&HeroRun>,
+) {
+    let Some(health) = asked.0.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        return;
+    };
+    let joined = runs.iter().find_map(|r| match r.join {
+        Join::Joined(m) => Some(m),
+        _ => None,
+    });
+    let set = match (joined, runtime) {
+        (Some(minion), Some(mut rt)) => scripts::set_health(&mut rt.vm, minion, health),
+        _ => false,
+    };
+    if set {
+        info!(health, "his health set over the test hook");
+    } else {
+        warn!(
+            health,
+            "no hero whose scripts run to take the health asked for"
         );
     }
 }
@@ -615,7 +708,12 @@ pub(crate) fn step_scripts(
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
     mut earning: Option<ResMut<Earning>>,
-    (level, mut carried, real): (Res<Level>, Option<ResMut<Carried>>, Res<Time<Real>>),
+    (level, mut carried, real, kept): (
+        Res<Level>,
+        Option<ResMut<Carried>>,
+        Res<Time<Real>>,
+        Option<Res<KeptHealth>>,
+    ),
 ) {
     let began = std::time::Instant::now();
     // The activity rule (openspec AH.27, AG.7's rule as the headless runs
@@ -655,6 +753,8 @@ pub(crate) fn step_scripts(
     let mut engine = TvEngine::new(&mut heroes, &seam, view, &props);
     let mut stopped: Vec<Halt> = Vec::new();
     let mut off: Option<String> = None;
+    // A hero back in the level he left, and the health he left with.
+    let mut came_back: Option<(PlacementId, i32)> = None;
     // The frame's slides, once before any script this step (openspec
     // AH.19), as the original's scripts' updater begins.
     {
@@ -685,6 +785,10 @@ pub(crate) fn step_scripts(
             Ok(minion) => {
                 info!(load_file = %r.load_file, ?minion, "his scripts run");
                 r.join = Join::Joined(minion);
+                came_back = kept
+                    .as_deref()
+                    .and_then(|k| k.back(&r.kept_as))
+                    .map(|health| (minion, health));
             }
             Err(h) => off = Some(format!("his minion didn't activate: {h}")),
         }
@@ -790,6 +894,14 @@ pub(crate) fn step_scripts(
     match player_loop.walk(vm, &mut host, settled, &mut stopped) {
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
+    }
+    // Back in the level he left: the health he left with, once his first
+    // tick has set him up full (AH.62; AH.20's test sets it after that tick
+    // too), so the step's report and every later tick read it.
+    if let Some((minion, health)) = came_back
+        && scripts::set_health(vm, minion, health)
+    {
+        info!(health, "his health as he left it");
     }
     world.end_step();
     scripts::add_scripted(vm, &mut world);
@@ -1450,6 +1562,37 @@ pub(crate) mod tests {
         );
         kept.level_changed();
         assert_eq!(kept.back("eruptor"), None);
+    }
+
+    /// AH.62's hook: a health from 1 to 99,999 is kept for the next frame;
+    /// anything else is a 400 and keeps nothing.
+    #[tokio::test]
+    async fn the_health_hook_keeps_a_health_in_range_and_refuses_the_rest() {
+        use tower::ServiceExt;
+        let asked = AskedHealth::default();
+        let routes = health_routes::<()>(&asked);
+        for (body, status, kept) in [
+            (r#"{"health":200}"#, 202, Some(200)),
+            (r#"{"health":1}"#, 202, Some(1)),
+            (r#"{"health":0}"#, 400, None),
+            (r#"{"health":100000}"#, 400, None),
+            (r#"{"hp":200}"#, 400, None),
+            ("200", 400, None),
+        ] {
+            *asked.0.lock().unwrap() = None;
+            let response = routes
+                .clone()
+                .oneshot(
+                    axum::http::Request::post("/api/_test/tv/health")
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{body}");
+            assert_eq!(*asked.0.lock().unwrap(), kept, "{body}");
+        }
     }
 
     /// The synthetic attack the e2e suite throws with runs through the
