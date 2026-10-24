@@ -193,7 +193,7 @@ impl TestServer {
         Self::run(tmp, &repo, "guacamole")
     }
 
-    /// `cargo run -p <package> --features test-hooks` in `tmp`, then a
+    /// `package`'s built server in `tmp` ([`start_server`]), then a
     /// chromedriver beside it.
     fn run(tmp: TempDir, repo: &Path, package: &str) -> Result<Self> {
         let (url, guard) = start_server(tmp.path(), repo, package)?;
@@ -617,8 +617,8 @@ fn spawn_reader(
     });
 }
 
-/// `package`'s server with `test-hooks` in `dir`, built before its first
-/// spawn in this test binary with no timeout ([`built::server_binary`]), then
+/// `package`'s server with `test-hooks` in `dir`, built before the run's
+/// first spawn with no timeout ([`built::server_binary`]), then
 /// run as built; returns once the server logs the URL it serves on, which
 /// [`wait_for_url`] gives 120 s from the spawn.
 fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, ChildGuard)> {
@@ -837,9 +837,9 @@ fn repo_root() -> Result<PathBuf> {
 /// chromedriver into its own process group (`Command::process_group(0)`)
 /// and `kill -KILL -<pgid>` on cleanup.
 ///
-/// Same treatment for the server child — `cargo run` forks a chain of
-/// rustc + the eventual server binary; killing only `cargo` itself
-/// can leave the server process running.
+/// Same treatment for the server child — the live spawns' `cargo run`
+/// forks a chain of rustc + the eventual server binary; killing only
+/// `cargo` itself can leave the server process running.
 struct ChildGuard {
     child: Option<Child>,
     /// Process group id of the spawned child. On Unix the child is
