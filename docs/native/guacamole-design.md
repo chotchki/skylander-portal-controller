@@ -2244,9 +2244,10 @@ design decision 14) draw a placed character's own model in its bezel's plate, wh
   CPU) fitted inside the plate's circle with 6% clear, at a 12° downward pitch and a 30° field of view, so
   nothing leaves the card in a turn. One turn every 12 s; under `ReducedMotion` the idle's first pose at
   `GUAC_SHOT_YAW`.
-- The image is the plate's size in pixels (128 at 1080p, 256 at 4K) and clears to the darker stop of
-  the figure's element, opaque, so blended and additive parts and the glow's halo land on what the card
-  shows. The light is the disc's sprite rig fixed to the camera, fog on past everything.
+- The image is the largest plate's size in pixels (128 at 1080p, 256 at 4K, 86 at 720p, where the
+  plates lay out 85 or 86 by where they sit), so no card draws it scaled up, and clears to the darker
+  stop of the figure's element, opaque, so blended and additive parts and the glow's halo land on what
+  the card shows. The light is the disc's sprite rig fixed to the camera, fog on past everything.
 
 What only the TV at couch distance can judge (the titles and the 24 px floor at 10 ft, the focus glow,
 the drift) is on the backlog's TV pass line.

@@ -20,7 +20,7 @@
 //!   past everything, no shadows or point lights. It clears to the darker stop
 //!   of the figure's element (the plate behind a portrait), opaque, so blended
 //!   and additive parts blend on what the card shows and the glow keeps its
-//!   halo. The image is the plate's size in pixels and follows it.
+//!   halo. The image is the largest plate's size in pixels and follows it.
 //! - The model turns about its vertical axis once every
 //!   [`TURN_SECONDS`] playing its idle, and a part with a scroll track
 //!   slides its texture coordinates on the same clock (AE.21,
@@ -141,7 +141,8 @@ pub fn shelf_channel() -> (ShelfSender, ShelfFeed) {
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub(crate) struct FrozenYaw(pub(crate) f32);
 
-/// The bezel plate's size in pixels, which each turntable's image takes.
+/// The largest bezel plate's size in pixels, which each turntable's image
+/// takes ([`follow_plates`]).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PlateSize(pub(crate) UVec2);
 
@@ -800,16 +801,22 @@ pub(crate) struct CardPlate {
     pub(crate) portrait: Option<Handle<Image>>,
 }
 
-/// The plates' size in pixels, from whichever is laid out.
+/// The plates' size in pixels: the largest laid-out plate's, so no card
+/// draws its image scaled up. Plates of one size lay out a pixel apart by
+/// where they sit (85.33 px at 720p rounds to 85 or 86), so the first the
+/// query yields, which follows the order the cards' models came up in,
+/// isn't one size every run.
 fn follow_plates(plates: Query<&ComputedNode, With<CardPlate>>, mut size: ResMut<PlateSize>) {
     let Some(laid) = plates
         .iter()
         .map(|n| n.size().ceil().as_uvec2())
-        .find(|s| s.x > 0 && s.y > 0)
+        .filter(|s| s.x > 0 && s.y > 0)
+        .map(|s| s.x.max(s.y))
+        .max()
     else {
         return;
     };
-    let square = UVec2::splat(laid.x.max(laid.y));
+    let square = UVec2::splat(laid);
     if size.0 != square {
         size.0 = square;
     }
@@ -1758,9 +1765,27 @@ pub(crate) mod tests {
     }
 
     /// What a scene leaves in the world: entities, cameras, and the images,
-    /// meshes, skins and materials it added.
+    /// meshes, skins and materials it added, once Bevy has let go of what
+    /// nothing holds. It frees an asset in the `PreUpdate` after its last
+    /// handle drops, each type's tracking unordered beside the others', so
+    /// a material's textures can go a frame after the material: a settle
+    /// of two updates (the loads landing in the frame that began them)
+    /// still counted a replaced scene's textures. Freed here instead, the
+    /// materials first.
     fn footprint(app: &mut App) -> [usize; 6] {
         let world = app.world_mut();
+        world
+            .run_system_cached(Assets::<CharacterMaterial>::track_assets)
+            .unwrap();
+        world
+            .run_system_cached(Assets::<Image>::track_assets)
+            .unwrap();
+        world
+            .run_system_cached(Assets::<Mesh>::track_assets)
+            .unwrap();
+        world
+            .run_system_cached(Assets::<SkinnedMeshInverseBindposes>::track_assets)
+            .unwrap();
         let cameras = world.query::<&Camera>().iter(world).count();
         [
             world.entities().count_spawned() as usize,
@@ -1824,6 +1849,35 @@ pub(crate) mod tests {
                 app.update();
             }
             assert_eq!(footprint(&mut app), before, "round {round}: cleared");
+        }
+    }
+
+    /// The images take the largest plate's size whichever plate the query
+    /// yields first: two plates of one size laid out a pixel apart, in
+    /// both orders.
+    #[test]
+    fn the_plate_size_is_the_largest_plates_in_either_order() {
+        for heights in [[85.0, 86.0], [86.0, 85.0]] {
+            let mut world = World::new();
+            world.init_resource::<PlateSize>();
+            for (slot, height) in heights.into_iter().enumerate() {
+                world.spawn((
+                    CardPlate {
+                        slot: slot as u8,
+                        portrait: None,
+                    },
+                    ComputedNode {
+                        size: Vec2::new(85.0, height),
+                        ..default()
+                    },
+                ));
+            }
+            world.run_system_cached(follow_plates).unwrap();
+            assert_eq!(
+                world.resource::<PlateSize>().0,
+                UVec2::splat(86),
+                "{heights:?}"
+            );
         }
     }
 }
