@@ -20,6 +20,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::InputSystems;
 use bevy::input::gamepad::{
     Gamepad, GamepadButton, gamepad_connection_system, gamepad_event_processing_system,
@@ -27,7 +28,7 @@ use bevy::input::gamepad::{
 use bevy::input_focus::{AutoFocus, FocusCause, InputFocus, InputFocusVisible};
 use bevy::math::CompassOctant;
 use bevy::prelude::*;
-use bevy::ui::{ComputedUiTargetCamera, InteractionDisabled, Pressed};
+use bevy::ui::{InteractionDisabled, Pressed};
 // Not the prelude's `Button`: that's bevy_ui's deprecated one.
 use bevy::ui_widgets::{Activate, Button};
 use serde::Serialize;
@@ -36,11 +37,9 @@ use tracing::{debug, info};
 use crate::hero::{HeroActions, HeroInput};
 use crate::intro::{IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay};
-use crate::level::{OverlayCameras, draws_over};
-use crate::mirror::TvMirror;
 use crate::pad::{self, FacesPrinted, HeroPad, LevelPads, Pause, labels};
-use crate::pause::{self, OverlayShot, Overlays, PromptGlyph};
-use crate::tv::{Current, Pip, walk};
+use crate::pause::{self, OverlayShot, OverlayShots};
+use crate::tv::Current;
 
 /// Long enough that a tap is one move; a hold starts repeating after it.
 pub(crate) const REPEAT_DELAY: Duration = Duration::from_millis(400);
@@ -115,7 +114,7 @@ impl TestPress {
 
 /// Presses posted over HTTP, waiting for the router, which takes one a
 /// frame, as a hand would.
-#[derive(Clone, Default)]
+#[derive(Resource, Clone, Default)]
 pub(crate) struct PostedPresses(Arc<Mutex<VecDeque<TestPress>>>);
 
 impl PostedPresses {
@@ -353,7 +352,7 @@ fn route_input(
     time: Res<Time>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     pads: Query<(Entity, &Gamepad)>,
-    mirror: Option<Res<TvMirror>>,
+    presses: Option<Res<PostedPresses>>,
     mut repeat: Local<NavRepeat>,
     mut queue: Option<ResMut<IntroQueue>>,
     mut visible: Option<ResMut<InputFocusVisible>>,
@@ -366,7 +365,7 @@ fn route_input(
     let level_pads = level.frames(pads.iter());
     let moved = repeat.step(dpad, stick, time.elapsed());
     frame.inputs.extend(moved.map(TvInput::Move));
-    if let Some(press) = mirror.and_then(|m| m.2.pop()) {
+    if let Some(press) = presses.and_then(|p| p.pop()) {
         info!(?press, "tv press posted");
         frame.pressed = true;
         frame.inputs.push(press.input());
@@ -565,77 +564,71 @@ pub struct PadShot {
 
 /// The pads in the order they connected, the layer that takes them, and
 /// while the level shows, who walks, why it waits and its overlay as drawn,
-/// over the level's camera or not.
-pub(crate) fn input_shot(
-    intro_playing: bool,
-    (level, gamepads, overlays, glyphs, (cameras, level_cameras), actions): (
-        Option<Res<LevelPads>>,
-        Query<(&Gamepad, Option<&Name>, Option<&FacesPrinted>)>,
-        Overlays,
-        Query<&PromptGlyph>,
-        OverlayCameras,
-        Option<Res<HeroActions>>,
-    ),
-    (children, texts, images, pips): (
-        &Query<&Children>,
-        &Query<&Text>,
-        &Query<(), With<ImageNode>>,
-        &Query<(&Pip, &BackgroundColor)>,
-    ),
-) -> InputShot {
-    let Some(level) = level else {
-        return InputShot::default();
-    };
-    let seat = level.seat();
-    let pads = level
-        .order()
-        .iter()
-        .filter_map(|e| gamepads.get(*e).ok().map(|g| (*e, g)))
-        .map(|(entity, (pad, name, printed))| {
-            let stick = pad.left_stick();
-            PadShot {
-                name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
-                vendor: pad.vendor_id(),
-                product: pad.product_id(),
-                labels: labels(pad, printed).name().to_owned(),
-                stick: [stick.x, stick.y],
-                walking: seat.and_then(|s| s.walking()) == Some(entity),
-            }
-        })
-        .collect();
-    let overlay = overlays.iter().next().map(|(root, kind, at, target)| {
-        let mut found = (Vec::new(), false, None);
-        walk(root, children, texts, images, pips, &mut found);
-        let ui = target
-            .and_then(ComputedUiTargetCamera::get)
-            .and_then(|c| cameras.get(c).ok());
-        let over_level = ui.is_some_and(|ui| {
-            level_cameras
-                .iter()
-                .filter_map(|c| cameras.get(c).ok())
-                .any(|level| draws_over(ui, level))
-        });
-        OverlayShot {
-            kind: kind.name().to_owned(),
-            texts: found.0,
-            prompt: glyphs.iter().next().map(|g| g.0.name()),
-            over_level,
-            shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
+/// over the level's camera or not; and the focused choice. Their part of
+/// `/api/_test/tv` (openspec AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct InputShots<'w, 's> {
+    level: Option<Res<'w, LevelPads>>,
+    gamepads: Query<
+        'w,
+        's,
+        (
+            &'static Gamepad,
+            Option<&'static Name>,
+            Option<&'static FacesPrinted>,
+        ),
+    >,
+    overlay: OverlayShots<'w, 's>,
+    actions: Option<Res<'w, HeroActions>>,
+    focus: Option<Res<'w, InputFocus>>,
+    choices: Query<'w, 's, &'static FocusId>,
+}
+
+impl InputShots<'_, '_> {
+    pub(crate) fn shot(&self, intro_playing: bool) -> InputShot {
+        let Some(level) = self.level.as_ref() else {
+            return InputShot::default();
+        };
+        let seat = level.seat();
+        let pads = level
+            .order()
+            .iter()
+            .filter_map(|e| self.gamepads.get(*e).ok().map(|g| (*e, g)))
+            .map(|(entity, (pad, name, printed))| {
+                let stick = pad.left_stick();
+                PadShot {
+                    name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
+                    vendor: pad.vendor_id(),
+                    product: pad.product_id(),
+                    labels: labels(pad, printed).name().to_owned(),
+                    stick: [stick.x, stick.y],
+                    walking: seat.and_then(|s| s.walking()) == Some(entity),
+                }
+            })
+            .collect();
+        InputShot {
+            layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
+            pads,
+            pause: seat.and_then(|s| s.pause()).map(|p| {
+                match p {
+                    Pause::Start { .. } => "start",
+                    Pause::NoPad => "controller",
+                }
+                .to_owned()
+            }),
+            overlay: self.overlay.shot(),
+            hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
+            hero_actions: seat.and(self.actions.as_ref().map(|a| a.held)),
         }
-    });
-    InputShot {
-        layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
-        pads,
-        pause: seat.and_then(|s| s.pause()).map(|p| {
-            match p {
-                Pause::Start { .. } => "start",
-                Pause::NoPad => "controller",
-            }
-            .to_owned()
-        }),
-        overlay,
-        hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
-        hero_actions: seat.and(actions.map(|a| a.held)),
+    }
+
+    /// The focused choice's id.
+    pub(crate) fn focus(&self) -> Option<String> {
+        self.focus
+            .as_ref()
+            .and_then(|f| f.get())
+            .and_then(|e| self.choices.get(e).ok())
+            .map(|id| id.0.to_string())
     }
 }
 

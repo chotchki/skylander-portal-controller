@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use guac_extract::dump::HashProgress;
@@ -30,7 +31,7 @@ use tracing::{error, info, warn};
 use crate::level::{LevelSender, LevelSource};
 use crate::screen::TvScreen;
 use crate::turntable::{Shelf, ShelfSender};
-use crate::tv::{Current, Setup};
+use crate::tv::{Current, ExtractBar, ExtractDetail, ExtractTitle, Setup};
 
 /// What a Giants pick extracts with; built once in `main` from the settings.
 #[derive(Resource, Clone, Debug)]
@@ -995,6 +996,48 @@ pub struct ExtractionShot {
     pub detail: Option<String>,
     /// The drawn bar's fill.
     pub percent: Option<u8>,
+}
+
+/// The extraction's part of `/api/_test/tv` (openspec AQ.8): its state from
+/// the resource, the band's lines and bar as drawn.
+#[derive(SystemParam)]
+pub(crate) struct ExtractionShots<'w, 's> {
+    extraction: Option<Res<'w, Extraction>>,
+    band_title: Query<'w, 's, &'static Text, With<ExtractTitle>>,
+    band_detail: Query<'w, 's, &'static Text, With<ExtractDetail>>,
+    bar: Query<'w, 's, &'static ExtractBar>,
+}
+
+impl ExtractionShots<'_, '_> {
+    pub(crate) fn shot(&self) -> ExtractionShot {
+        let status = self
+            .extraction
+            .as_ref()
+            .map(|e| e.status.clone())
+            .unwrap_or_default();
+        ExtractionShot {
+            state: status.kind().to_string(),
+            code: match &status {
+                ExtractStatus::Failed(f) => Some(f.code().to_string()),
+                _ => None,
+            },
+            converted: match &status {
+                ExtractStatus::Converting { done, total, .. } => Some([*done, *total]),
+                _ => None,
+            },
+            intros: match &status {
+                ExtractStatus::Ready { intros, .. } => Some(*intros),
+                _ => None,
+            },
+            ran: match &status {
+                ExtractStatus::Ready { ran, .. } => Some(*ran),
+                _ => None,
+            },
+            title: self.band_title.iter().next().map(|t| t.0.clone()),
+            detail: self.band_detail.iter().next().map(|t| t.0.clone()),
+            percent: self.bar.iter().next().map(|b| b.0),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -15,14 +15,17 @@
 //!   full-screen alert cover; so while either shows, the join QR stands in
 //!   the corner over them, so another kid can still join.
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::ui::{ComputedNode, ComputedUiTargetCamera, UiGlobalTransform};
 use serde::Serialize;
 
+use crate::level::OverLevel;
 use crate::pause::ShownAt;
 use crate::play::{Alert, Play, PlaySystems};
 use crate::screen::TvScreen;
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::{Current, Pen, Redrawn, TvAssets};
+use crate::tv::{Current, Pen, Redrawn, TvAssets, UiTree, node_rect};
 
 /// Over the pause overlays (900), under the corner join code.
 const ALERT_Z: i32 = 940;
@@ -239,6 +242,59 @@ pub struct AlertShot {
     pub over_level: bool,
     /// When it was spawned, on the frame log's clock.
     pub shown_ms: Option<f64>,
+}
+
+/// The alert and the corner join code as drawn, their part of
+/// `/api/_test/tv` (openspec AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct AlertShots<'w, 's> {
+    alerts: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static AlertScreen,
+            Option<&'static ShownAt>,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            Option<&'static ComputedUiTargetCamera>,
+        ),
+    >,
+    corner_qrs: Query<'w, 's, &'static ImageNode, With<CornerQr>>,
+    corners: Query<'w, 's, (), With<CornerJoin>>,
+    over_level: OverLevel<'w, 's>,
+    tree: UiTree<'w, 's>,
+}
+
+impl AlertShots<'_, '_> {
+    /// The alert, its cover measured against `window`.
+    pub(crate) fn shot(&self, window: Rect) -> Option<AlertShot> {
+        self.alerts
+            .iter()
+            .next()
+            .map(|(root, kind, at, node, place, target)| {
+                let found = self.tree.walk(root);
+                let r = node_rect(node, place);
+                AlertShot {
+                    kind: kind.0.name().to_owned(),
+                    texts: found.0,
+                    full_screen: (r.min - window.min).abs().max_element() <= 1.0
+                        && (r.max - window.max).abs().max_element() <= 1.0,
+                    over_level: self.over_level.over(target),
+                    shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
+                }
+            })
+    }
+
+    /// `qr` drawn as the corner's join code.
+    pub(crate) fn corner_qr(&self, qr: &Handle<Image>) -> bool {
+        self.corner_qrs.iter().any(|image| image.image == *qr)
+    }
+
+    /// The small join code is drawn in the corner.
+    pub(crate) fn corner(&self) -> bool {
+        !self.corners.is_empty()
+    }
 }
 
 #[cfg(test)]

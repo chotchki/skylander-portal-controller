@@ -58,6 +58,7 @@ use std::time::{Duration, Instant};
 
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{CameraOutputMode, ClearColorConfig, Projection, RenderTarget};
+use bevy::ecs::system::SystemParam;
 use bevy::image::CompressedImageFormats;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::pbr::PreparedMaterial;
@@ -1970,11 +1971,30 @@ fn scroll_level(
     }
 }
 
-/// Every camera with its target, and the level's.
-pub(crate) type OverlayCameras<'w, 's> = (
-    Query<'w, 's, (&'static Camera, Option<&'static RenderTarget>)>,
-    Query<'w, 's, Entity, With<LevelCamera>>,
-);
+/// Every camera with its target, and the level's: whether a UI draws over
+/// the level, for the overlay's and the alert's parts of `/api/_test/tv`
+/// (openspec AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct OverLevel<'w, 's> {
+    cameras: Query<'w, 's, (&'static Camera, Option<&'static RenderTarget>)>,
+    level_cameras: Query<'w, 's, Entity, With<LevelCamera>>,
+}
+
+impl OverLevel<'_, '_> {
+    /// The UI on `target`'s camera draws over a level camera
+    /// ([`draws_over`]); false with no level camera.
+    pub(crate) fn over(&self, target: Option<&ComputedUiTargetCamera>) -> bool {
+        let ui = target
+            .and_then(ComputedUiTargetCamera::get)
+            .and_then(|c| self.cameras.get(c).ok());
+        ui.is_some_and(|ui| {
+            self.level_cameras
+                .iter()
+                .filter_map(|c| self.cameras.get(c).ok())
+                .any(|level| draws_over(ui, level))
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

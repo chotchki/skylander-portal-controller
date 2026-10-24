@@ -66,6 +66,7 @@ use std::time::Duration;
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Projection, RenderTarget};
+use bevy::ecs::system::SystemParam;
 use bevy::image::CompressedImageFormats;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
@@ -666,6 +667,46 @@ impl Play {
             behaviour: numbers.behaviour,
             experience: inside.then(|| progress.map_or(0, |p| p.xp)),
             gold: inside.then(|| progress.map_or(0, |p| p.gold)),
+        })
+    }
+}
+
+/// The walk's mode and the hero, their part of `/api/_test/tv` (openspec
+/// AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct PlayShots<'w, 's> {
+    play: Option<Res<'w, Play>>,
+    pads: Option<Res<'w, LevelPads>>,
+    heroes: Query<
+        'w,
+        's,
+        (
+            &'static HeroBody,
+            Option<&'static HeroGaits>,
+            Option<&'static HeroRun>,
+        ),
+    >,
+    cameras: Query<'w, 's, (&'static Transform, &'static Projection), With<FollowCamera>>,
+    runtime: Option<Res<'w, ScriptRuntime>>,
+    earning: Option<Res<'w, crate::progress::Earning>>,
+}
+
+impl PlayShots<'_, '_> {
+    pub(crate) fn mode(&self) -> Mode {
+        match (self.play.as_deref(), self.pads.as_deref()) {
+            (Some(play), Some(level_pads)) => play.mode(level_pads),
+            _ => Mode::Portal,
+        }
+    }
+
+    pub(crate) fn hero(&self) -> Option<HeroReport> {
+        self.play.as_deref().and_then(|p| {
+            p.report(
+                &self.heroes,
+                &self.cameras,
+                self.runtime.as_deref(),
+                self.earning.as_deref(),
+            )
         })
     }
 }

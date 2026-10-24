@@ -19,12 +19,14 @@
 //! level's camera, as AG.21 left them, the controller message never showed
 //! and a held pose read as a freeze (AG.51).
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::Serialize;
 
+use crate::level::OverLevel;
 use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, prompt};
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::{Pen, Redrawn, TvAssets};
+use crate::tv::{Pen, Redrawn, TvAssets, UiTree};
 
 /// Under an intro's overlay (1,000) and the portal's alerts, over everything
 /// else.
@@ -267,6 +269,31 @@ pub(crate) type Overlays<'w, 's> = Query<
         Option<&'static ComputedUiTargetCamera>,
     ),
 >;
+
+/// The level's overlay as drawn, its part of `/api/_test/tv` (openspec
+/// AQ.8): its lines, its prompt and whether it draws over the level.
+#[derive(SystemParam)]
+pub(crate) struct OverlayShots<'w, 's> {
+    overlays: Overlays<'w, 's>,
+    glyphs: Query<'w, 's, &'static PromptGlyph>,
+    over_level: OverLevel<'w, 's>,
+    tree: UiTree<'w, 's>,
+}
+
+impl OverlayShots<'_, '_> {
+    pub(crate) fn shot(&self) -> Option<OverlayShot> {
+        self.overlays.iter().next().map(|(root, kind, at, target)| {
+            let found = self.tree.walk(root);
+            OverlayShot {
+                kind: kind.name().to_owned(),
+                texts: found.0,
+                prompt: self.glyphs.iter().next().map(|g| g.0.name()),
+                over_level: self.over_level.over(target),
+                shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
+            }
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

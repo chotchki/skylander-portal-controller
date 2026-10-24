@@ -49,7 +49,7 @@ use crate::starfield;
 use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
 use crate::title;
-use crate::turntable::{CardPlate, TurntablePlugin, TurntableSystems, Turntables};
+use crate::turntable::{CardPlate, CardState, TurntablePlugin, TurntableSystems, Turntables};
 
 /// How long the farewell shows before the app exits (spec: under 5 s).
 pub const FAREWELL_BEAT: Duration = Duration::from_secs(3);
@@ -1992,6 +1992,214 @@ pub(crate) fn walk(
             out.1 = true;
         }
         walk(kid, children, texts, images, pips, out);
+    }
+}
+
+/// The laid-out UI tree as [`walk`] reads it: each node's children, its
+/// text and image, and a pip's fill.
+#[derive(SystemParam)]
+pub(crate) struct UiTree<'w, 's> {
+    children: Query<'w, 's, &'static Children>,
+    texts: Query<'w, 's, &'static Text>,
+    images: Query<'w, 's, (), With<ImageNode>>,
+    pips: Query<'w, 's, (&'static Pip, &'static BackgroundColor)>,
+}
+
+impl UiTree<'_, '_> {
+    /// [`walk`] from `root`: its lines, whether it draws an image, and its
+    /// pip's initial and fill.
+    pub(crate) fn walk(&self, root: Entity) -> (Vec<String>, bool, Option<(String, Color)>) {
+        let mut found = (Vec::new(), false, None);
+        walk(
+            root,
+            &self.children,
+            &self.texts,
+            &self.images,
+            &self.pips,
+            &mut found,
+        );
+        found
+    }
+}
+
+/// The screen as drawn, its part of `/api/_test/tv` (openspec AQ.8): the
+/// mirror composes it with the other subsystems' parts.
+#[derive(SystemParam)]
+pub(crate) struct ScreenShots<'w, 's> {
+    current: Option<Res<'w, Current>>,
+    assets: Option<Res<'w, TvAssets>>,
+    setup: Res<'w, Setup>,
+    framing: Res<'w, Framing>,
+    portal: Res<'w, PortalCards>,
+    camera: Query<'w, 's, &'static Camera, With<TvCamera>>,
+    cards: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static CardSlot,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+    empties: Query<'w, 's, &'static EmptySlot>,
+    players_line: Query<'w, 's, &'static Text, With<PlayersLine>>,
+    address: Query<'w, 's, &'static Text, With<JoinAddress>>,
+    qr: Query<'w, 's, &'static ImageNode, With<JoinQr>>,
+    screens: Query<'w, 's, &'static Visibility, With<ScreenRoot>>,
+    turntables: Option<Res<'w, Turntables>>,
+    plates: Query<
+        'w,
+        's,
+        (
+            &'static CardPlate,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+    tree: UiTree<'w, 's>,
+}
+
+/// The screen's fields of the snapshot, and the join QR's image for the
+/// corner's code to match.
+pub(crate) struct ScreenShot {
+    pub(crate) screen: String,
+    pub(crate) game: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) players: Option<usize>,
+    pub(crate) join_address: Option<String>,
+    /// The join QR drawn on the screen itself.
+    pub(crate) join_qr: bool,
+    pub(crate) qr: Option<Handle<Image>>,
+    pub(crate) found: Vec<String>,
+    pub(crate) folders: Vec<String>,
+    pub(crate) problems: Vec<String>,
+    pub(crate) cards: Vec<CardShot>,
+    pub(crate) empty_slots: Vec<u8>,
+    pub(crate) window: [f32; 2],
+    pub(crate) cards_outside: Vec<u8>,
+    pub(crate) overlapping: usize,
+}
+
+impl ScreenShots<'_, '_> {
+    /// None before the first screen.
+    pub(crate) fn shot(&self) -> Option<ScreenShot> {
+        let current = self.current.as_ref()?;
+        let size = self
+            .camera
+            .single()
+            .ok()
+            .and_then(Camera::physical_target_size)
+            .unwrap_or_default();
+        let safe = safe_area(size.x, size.y, self.framing.0);
+        // The screen's tree hidden (the level over it, AG.50) draws none of its
+        // cards, lines or QR.
+        let screen_shown = self.screens.iter().all(|v| *v != Visibility::Hidden);
+        let mut drawn: Vec<(CardShot, Rect)> =
+            self.cards
+                .iter()
+                .filter(|_| screen_shown)
+                .map(|(entity, slot, node, at)| {
+                    let found = self.tree.walk(entity);
+                    let placement = self
+                        .portal
+                        .slots
+                        .get(slot.0 as usize)
+                        .and_then(Option::as_ref);
+                    let rect = node_rect(node, at);
+                    let shot = CardShot {
+                        slot: slot.0 + 1,
+                        figure_id: placement
+                            .map(|p| p.figure_id.as_str().to_string())
+                            .unwrap_or_default(),
+                        texts: found.0,
+                        portrait: found.1,
+                        state: self
+                            .turntables
+                            .as_ref()
+                            .and_then(|t| t.card_state(slot.0))
+                            .unwrap_or(CardState::Portrait)
+                            .name()
+                            .into(),
+                        reason: self
+                            .turntables
+                            .as_ref()
+                            .and_then(|t| t.portrait_reason(slot.0))
+                            .map(str::to_owned),
+                        plate: self.plates.iter().find(|(p, ..)| p.slot == slot.0).map(
+                            |(_, n, t)| {
+                                let r = node_rect(n, t);
+                                [r.min.x, r.min.y, r.width(), r.height()]
+                            },
+                        ),
+                        pip: found.2.map(|(initial, fill)| PipShot {
+                            initial,
+                            color: Srgba::from(fill).to_hex(),
+                            profile_id: placement
+                                .and_then(|p| p.owner.as_ref())
+                                .map(|o| o.profile_id.clone())
+                                .unwrap_or_default(),
+                        }),
+                        rect: [rect.min.x, rect.min.y, rect.width(), rect.height()],
+                    };
+                    (shot, rect)
+                })
+                .collect();
+        drawn.sort_by_key(|(c, _)| c.slot);
+        let cards_outside = drawn
+            .iter()
+            .filter(|(_, r)| !contains(safe, *r))
+            .map(|(c, _)| c.slot)
+            .collect();
+        let overlapping = drawn
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (_, a))| drawn[i + 1..].iter().map(move |(_, b)| (*a, *b)))
+            .filter(|(a, b)| !a.intersect(*b).is_empty())
+            .count();
+        let mut empty_slots: Vec<u8> = self
+            .empties
+            .iter()
+            .filter(|_| screen_shown)
+            .map(|e| e.0 + 1)
+            .collect();
+        empty_slots.sort();
+        let (game, message) = match &current.screen {
+            TvScreen::Portal { game } => (Some(game.clone()), None),
+            TvScreen::ServerError { message } => (None, Some(message.clone())),
+            _ => (None, None),
+        };
+        let qr = self.assets.as_ref().and_then(|a| a.qr.clone());
+        let join_qr = qr.as_ref().is_some_and(|handle| {
+            screen_shown && self.qr.iter().any(|image| image.image == *handle)
+        });
+        Some(ScreenShot {
+            screen: current.screen.kind().to_string(),
+            game,
+            message,
+            players: self
+                .players_line
+                .iter()
+                .next()
+                .filter(|_| screen_shown)
+                .and_then(|t| t.0.split_whitespace().next()?.parse().ok()),
+            join_address: self
+                .address
+                .iter()
+                .next()
+                .filter(|_| screen_shown)
+                .map(|t| t.0.clone()),
+            join_qr,
+            qr,
+            found: self.setup.0.found_titles.clone(),
+            folders: self.setup.0.folders.clone(),
+            problems: self.setup.0.problems.clone(),
+            cards: drawn.into_iter().map(|(c, _)| c).collect(),
+            empty_slots,
+            window: [size.x as f32, size.y as f32],
+            cards_outside,
+            overlapping,
+        })
     }
 }
 

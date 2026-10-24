@@ -69,6 +69,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::TransformInterpolation;
 use guac_ir::Model;
@@ -1247,6 +1248,31 @@ pub struct LootShot {
     pub common: Option<f32>,
     pub uncommon: Option<f32>,
     pub rare: Option<f32>,
+}
+
+/// The loot counts' part of `/api/_test/tv` (openspec AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct LootShots<'w> {
+    runtime: Option<Res<'w, ScriptRuntime>>,
+    world: Option<Res<'w, ScriptWorld>>,
+}
+
+impl LootShots<'_> {
+    /// None until the level's loot data is made.
+    pub(crate) fn shot(&self) -> Option<LootShot> {
+        match (self.runtime.as_deref(), self.world.as_deref()) {
+            (Some(rt), Some(w)) => {
+                use guacamole::scripts::{Rarity, loot_index};
+                let shot = LootShot {
+                    common: loot_index(&rt.vm, w, Rarity::Common),
+                    uncommon: loot_index(&rt.vm, w, Rarity::Uncommon),
+                    rare: loot_index(&rt.vm, w, Rarity::Rare),
+                };
+                (shot != LootShot::default()).then_some(shot)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
