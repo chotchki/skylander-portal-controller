@@ -189,9 +189,11 @@ pub(crate) enum Phase {
 pub(crate) struct DevEntry {
     pub(crate) asked: Option<Asked>,
     phase: Phase,
-    /// The hero the route runs on, and the steps run since his join.
+    /// The hero the route runs on, and the steps run since his join; his
+    /// load file, or the one it refused to run on (AH.167).
     hero: Option<Entity>,
     ran: u32,
+    load_file: Option<String>,
     /// F0's step in the scripts' log, and the list read there.
     f0: Option<u64>,
     equivalence: Option<Equivalence>,
@@ -208,6 +210,9 @@ pub(crate) struct DevEntry {
 pub(crate) struct EntryShot {
     pub anchor: Option<Anchor>,
     pub phase: Phase,
+    /// Whose route it runs (AH.167: a fighter's, Eruptor's), or the hero
+    /// it refused to run it on.
+    pub load_file: Option<String>,
     /// The route's last step the entry acted on (from its step 0: F0's once
     /// at the anchor), once it's under way.
     pub route_step: Option<u32>,
@@ -233,6 +238,7 @@ impl DevEntry {
         EntryShot {
             anchor: plan.map(|p| p.anchor),
             phase: self.phase,
+            load_file: self.load_file.clone(),
             route_step: plan
                 .filter(|_| self.phase != Phase::Waiting)
                 .and_then(|p| self.ran.checked_sub(p.settle + 1)),
@@ -372,15 +378,32 @@ pub(crate) fn drive(
     let joined = heroes
         .iter()
         .find(|(_, r, _)| matches!(r.join, Join::Joined(_)))
-        .map(|(e, r, _)| (e, r.slot));
-    let Some((hero, slot)) = joined else {
+        .map(|(e, r, _)| (e, r.slot, r.attacks, r.load_file.clone()));
+    let Some((hero, slot, attacks, load_file)) = joined else {
         return;
     };
+    // The route is AH.8's, run with Eruptor, its anchor AH.4's reads of
+    // him, and the fight his attacks': a hero whose attack buttons reach no
+    // script of his (a walker, AG.27) gets none of it (AH.167).
+    if !attacks {
+        if entry.hero != Some(hero) {
+            let why = format!(
+                "{load_file} doesn't fight: the entry's route and anchor are a fighter's (Eruptor's, AH.8)"
+            );
+            warn!(reason = %why, "the dev entry won't run on him");
+            entry.hero = Some(hero);
+            entry.load_file = Some(load_file);
+            entry.refused = Some(why);
+        }
+        return;
+    }
     if entry.hero != Some(hero) {
         // His activation ran in the step before this one.
         entry.hero = Some(hero);
         entry.ran = 1;
         entry.phase = Phase::Route;
+        entry.load_file = Some(load_file);
+        entry.refused = None;
         info!(anchor = ?plan.anchor, "the dev entry's route starts once he's settled");
     }
     let ran = entry.ran;
@@ -575,7 +598,7 @@ mod tests {
     use guacamole::scripts::FIRST_FIGHT;
 
     use super::*;
-    use crate::test_support::play::{CREATURE_AT, TRIGGERS, fight_app, until};
+    use crate::test_support::play::{CREATURE_AT, TRIGGERS, fight_app, fight_app_walker, until};
 
     /// A build without `dev-tools` (which `test-hooks` turns on) passes
     /// `false`: no plugin, so no [`DevEntry`] and nothing lists the fight,
@@ -733,9 +756,46 @@ mod tests {
         assert!(list.placements.iter().all(|p| p.alerted.is_none()));
         assert_eq!(list.triggers_fired, [FIGHT_TRIGGER_A, FIGHT_TRIGGER_B]);
         assert_eq!(list.loot, [None, None, None]);
-        // The mirror's part reads the same.
+        // The mirror's part reads the same, naming whose route it ran.
         assert_eq!(shot.phase, Phase::Anchored);
         assert_eq!(shot.route_step, Some(40));
+        assert_eq!(shot.load_file.as_deref(), Some("009_Eruptor"));
+        assert_eq!(shot.refused, None);
+    }
+
+    /// AH.167 (found at the AG.27 merge check): the route and the anchor
+    /// are Eruptor's (AH.8's route, AH.4's reads) and the fight his
+    /// attacks', so a walker who joins (AG.27: his attack buttons reach no
+    /// script of his) gets none of it: refused, naming him, never set down,
+    /// no F0 and no list read, the entry waiting for a fighter.
+    #[test]
+    fn a_walker_who_joins_gets_no_route() {
+        use guac_formats::script::builder::WALKER_LOAD;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app_walker(tmp.path(), Some(route(TRIGGERS[0], TRIGGERS[1])));
+        for _ in 0..80 {
+            app.update();
+        }
+        let shot = entry(&app);
+        assert_eq!(shot.phase, Phase::Waiting);
+        assert_eq!(shot.load_file.as_deref(), Some(WALKER_LOAD));
+        assert!(
+            shot.refused
+                .as_deref()
+                .is_some_and(|r| r.contains(WALKER_LOAD) && r.contains("doesn't fight")),
+            "{:?}",
+            shot.refused
+        );
+        assert_eq!((shot.route_step, shot.f0_step), (None, None));
+        assert!(shot.equivalence.is_none());
+        let at = crate::test_support::play::hero(&app).pivot;
+        for t in TRIGGERS {
+            let t = Vec3::from_array(t);
+            assert!(
+                at.with_y(0.0).distance(t.with_y(0.0)) > 1.0,
+                "never set down: {at:?}"
+            );
+        }
     }
 
     /// The level's start: the fight listed and nothing set, at its anchor

@@ -231,3 +231,70 @@ fn a_native_call_passes_arguments_and_reads_returns() {
         "{halt}"
     );
 }
+
+/// The portal manager's script for
+/// [`an_embedders_call_in_a_placements_name_stops_nothing`]: each tick
+/// counts, and its macro `Shut Down` writes a member nothing models, as a
+/// character's shutdown macro the join runs can.
+fn counting_with_a_stopping_macro() -> Arc<Program> {
+    program(|w| {
+        let count = var(w, "count");
+        let def = w.op(Class::DefineMacro, "Shut Down");
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                let at = w.push(def);
+                interface_of(w, &[]);
+                let one = w.int(1);
+                w.set(&[El::Member("test", "unmodelled")], one);
+                w.end_block(at);
+            },
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                w.inc(&[El::Local(count)]);
+                w.end_block(b);
+            },
+        );
+    })
+}
+
+/// An embedder's call in a placement's name (openspec AH.165, the join's
+/// calls on the portal manager's behalf) stops nothing: the macro's stop is
+/// returned, in either mode, and the placement ticks on; one its own tick
+/// stopped stays stopped. [`Vm::call_with`]'s stop stops the placement, as
+/// the player loop's natives want.
+#[test]
+fn an_embedders_call_in_a_placements_name_stops_nothing() {
+    for mode in [Mode::Strict, Mode::Play] {
+        let mut c = config();
+        c.mode = mode;
+        let mut vm = Vm::new(counting_with_a_stopping_macro(), c);
+        let pm = vm.add(HANDLE, "Spyro_PortalManager", 0);
+        let mut host = Members::default();
+        vm.step(&mut host).unwrap();
+        let halt = vm
+            .call_for(pm, "Shut Down", &[], &[], &mut host)
+            .unwrap_err();
+        assert!(
+            matches!(halt.reason, Reason::UnmodelledMember(_)),
+            "{mode:?}: {halt}"
+        );
+        assert!(vm.stopped(pm).is_none(), "{mode:?}: it runs on");
+        vm.step(&mut host).unwrap();
+        assert_eq!(vm.local(pm, "count"), Some(Value::Int(2)), "{mode:?}");
+        // The same call made as a stretch of its tick stops it.
+        vm.call_with(Some(pm), "Shut Down", &[], &[], &mut host)
+            .unwrap_err();
+        assert!(vm.stopped(pm).is_some(), "{mode:?}");
+        vm.step(&mut host).unwrap();
+        assert_eq!(vm.local(pm, "count"), Some(Value::Int(2)), "{mode:?}");
+        // Stopped before, an embedder's call leaves it stopped.
+        let before = vm.stopped(pm).cloned();
+        vm.call_for(pm, "Shut Down", &[], &[], &mut host)
+            .unwrap_err();
+        assert_eq!(vm.stopped(pm).cloned(), before, "{mode:?}");
+    }
+}

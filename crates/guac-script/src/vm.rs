@@ -1591,7 +1591,10 @@ impl Vm {
     /// nothing or an empty set. After the body returns, each of `returns`
     /// is read from the callee's frame before it resets, as a caller's
     /// after-return code reads what a call returned (`None` for one the
-    /// body never made). Returns the ops executed and those values.
+    /// body never made). Returns the ops executed and those values. A stop
+    /// stops `placement`'s script too, as one in its own tick would: what
+    /// the player loop's natives want, the call standing in for that
+    /// placement's tick ([`Vm::call_for`] is the call that stops nothing).
     pub fn call_with(
         &mut self,
         placement: Option<PlacementId>,
@@ -1664,6 +1667,36 @@ impl Vm {
             }
             Some(halt) => Err(halt),
         }
+    }
+
+    /// [`Vm::call_with`] in `placement`'s name for work of the embedder's
+    /// own, not a stretch of that placement's tick (the join's calls on the
+    /// portal manager's behalf, openspec AH.105; stand-in ledger: `join`): a
+    /// stop is returned and logged as `call_with` returns one, and the
+    /// placement runs on, a stop it had before kept. A character's macro
+    /// stopping inside his join or deactivation so leaves the portal
+    /// manager's tick, and the combat it runs, going for the rest of the
+    /// level (openspec AH.165).
+    pub fn call_for(
+        &mut self,
+        placement: PlacementId,
+        name: &str,
+        args: &[(&str, Value)],
+        returns: &[&str],
+        host: &mut dyn Host,
+    ) -> Result<(u32, Vec<Option<Value>>), Halt> {
+        let before = self
+            .placements
+            .get(placement as usize)
+            .map(|p| p.stopped.clone());
+        let out = self.call_with(Some(placement), name, args, returns, host);
+        if out.is_err()
+            && let Some(before) = before
+            && let Some(p) = self.placements.get_mut(placement as usize)
+        {
+            p.stopped = before;
+        }
+        out
     }
 
     /// An operand's value read outside any placement, as a value read on

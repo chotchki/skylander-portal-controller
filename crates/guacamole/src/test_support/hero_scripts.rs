@@ -39,6 +39,19 @@ pub(crate) fn write_fight(dir: &Path, creature_at: [f32; 3], triggers: [[f32; 3]
     write_parts(dir, &attack_builder::fight(creature_at, triggers));
 }
 
+/// AH.25's fight beside AG.27's synthetic walker: the dev entry's level with
+/// a character who walks and doesn't fight (openspec AH.167).
+pub(crate) fn write_fight_with_walker(dir: &Path, creature_at: [f32; 3], triggers: [[f32; 3]; 2]) {
+    write_parts_with(
+        dir,
+        &attack_builder::fight(creature_at, triggers),
+        &[(
+            attack_builder::WALKER_LOAD,
+            attack_builder::walker(attack_builder::WalkerFault::None),
+        )],
+    );
+}
+
 /// The roster builder's bootstrap entry, AH.24's attack (global,
 /// init_setup and the fighter's) and `level` as the level's.
 fn write_parts(dir: &Path, level: &[u8]) {

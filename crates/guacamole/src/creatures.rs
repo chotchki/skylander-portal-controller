@@ -98,7 +98,7 @@ pub(crate) fn place_bodies(
         wanted.push((h, solid, pose));
     }
     if let Some(world) = world.as_deref() {
-        wanted.extend(world.walkers());
+        wanted.extend(world.creature_bodies());
     }
     let mut placed: Vec<(Handle, BodyId)> = Vec::new();
     for (h, solid, pose) in wanted {

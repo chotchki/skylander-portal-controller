@@ -267,7 +267,11 @@ reason, unless the test said it expects an off for that reason
 (`expect_hero_scripts_off(base, because)`; a log's off is held to the
 TV's reason too). A hero in the level with no run at all reads `off` with
 guacamole's `NO_RUN` (AH.25's review: he read none, which every check let
-through), and a none with him in the level fails here the same. The
+through), and a none with him in the level fails here the same. A walker
+(AG.27) whose join fails in the level keeps his card and is out of it the
+frame it fails, so no read finds him as the hero: the TV lists him in
+`kept` with his figure's `slot` and the reason, and both reads hold that
+entry the same, by its reason (openspec AH.166). The
 walking fixture's part holds no portal manager, so its hero never joins:
 its spawn expects exactly that off (`WALKING_SCRIPTS_OFF`), and no other
 test expects one. An expectation goes with its server: moved by

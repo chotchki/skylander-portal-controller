@@ -7,25 +7,27 @@
 //!   chain, the UI's and the movement update's ticks, a fighter's scripts
 //!   once he joins, and AH.20's pickups and AH.21's breakables (the loot
 //!   system's init, the spinning coins in reach, the archetype setups, the
-//!   destructibles system through the player loop). No creature runs (the
-//!   first fight is AH.25's): what the scripts wake past that stays inert
-//!   (decision 6). The level's placements take their palettes off the
+//!   destructibles system through the player loop). No creature runs but
+//!   the first fight's, which AH.25's dev entry lists: what the scripts wake
+//!   past that stays inert (decision 6). The level's placements take their palettes off the
 //!   level's palettes part, as the headless runs do.
 //! - The activity rule ([`step_scripts`], AG.7's rule): each step, each
 //!   managed placement woken or put to sleep by the hero's pivot, by the
 //!   level's start before he's in (as the props stand), so a breakable out
 //!   of its range has no ground and sleeps, as AH.21 runs it.
-//! - The join: the hero placed on the TV is a fighter whose file the part
-//!   holds ([`guac_extract::scripts::FIGHTERS`]) and his scripts join by
-//!   AH.17's join ([`guacamole::scripts::join_request`], then on the next
-//!   step [`guacamole::scripts::join_activate`]; stand-in ledger: `join`),
-//!   the step the TV enters the level; from then on his walk, facing and
-//!   clips are his scripts' and his step the engine's alone
-//!   ([`ScriptedHero`]). A character whose scripts the part doesn't hold
-//!   walks on AG.16's controller and its attack buttons do nothing
-//!   (hero-attacks' Which characters attack); a join that fails, or his
-//!   script stopped in play, puts him back on it, logged
-//!   (stand-in ledger: `walker`).
+//! - The join: the hero placed on the TV whose file the part holds, a
+//!   fighter ([`guac_extract::scripts::FIGHTERS`], Eruptor) to attack and
+//!   walk or a walker (AG.27, every other modelled character) to walk
+//!   alone, joins by AH.17's join ([`guacamole::scripts::join_request`],
+//!   then on the next step [`guacamole::scripts::join_activate`];
+//!   stand-in ledger: `join`), the step the TV enters the level; from then
+//!   on his walk, facing and clips are his scripts' and his step the engine's
+//!   alone ([`ScriptedHero`]), a walker's attack buttons reaching no script
+//!   (hero-attacks' Which characters attack). Eruptor with no run (the part
+//!   lacking his file), a join that fails or his script stopped in play
+//!   walks on AG.16's controller, logged (stand-in ledger: `walker`); a
+//!   walker whose join fails keeps his card ([`KeepsCard`]), one whose
+//!   script stops in play walks on it at what his scripts had set.
 //! - A step ([`step_scripts`], [`Frame::Scripts`]): the frame's slides,
 //!   his join's next half, then the walking pad's stick and, once he's in,
 //!   its attacks ([`HeroActions`]) read as the first player's pad, then the
@@ -173,11 +175,13 @@ impl ScriptSource {
         let left = self.left_out.iter().map(|(l, why)| Kept {
             load_file: l.clone(),
             reason: format!("the extract left his scripts out: {why}"),
+            slot: None,
         });
         let held = self.walkers.iter().filter_map(|w| {
             Some(Kept {
                 load_file: w.load_file.clone(),
                 reason: self.walks(&w.load_file).err()?,
+                slot: None,
             })
         });
         left.chain(held).collect()
@@ -646,9 +650,10 @@ impl Plugin for HeroScriptsPlugin {
 
 /// A scripted walker's scale is his scripts' alone (AH design decision 5,
 /// AG.27): once they run, his actor's scale on the VM is the one his solid
-/// is built at and his drawn model stands at. A scale that isn't a uniform
-/// one (a script setting one axis) is left as it was; a measured walker's
-/// stays the measured one.
+/// is built at, his drawn model stands at and his hands are posed at
+/// ([`pose_hands`], AG.181: they stood at 1.0 while he was drawn at his
+/// scripts' 1.2). A scale that isn't a uniform one (a script setting one
+/// axis) is left as it was; a measured walker's stays the measured one.
 pub(crate) fn apply_scripted_scale(
     world: Res<ScriptWorld>,
     mut heroes: Query<(Entity, &mut HeroRun, &mut HeroBody)>,
@@ -673,6 +678,9 @@ pub(crate) fn apply_scripted_scale(
         info!(load_file = %run.load_file, from = run.scale, to = scale, "his scripts set his scale");
         body.hero.set_solid(solid);
         run.scale = scale;
+        if let Some(rig) = run.rig.as_mut() {
+            rig.scale = scale;
+        }
         if let Some(root) = run.root
             && let Ok(mut t) = transforms.get_mut(root)
         {

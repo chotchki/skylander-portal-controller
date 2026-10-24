@@ -1584,8 +1584,8 @@ pub fn join_request(
 ) -> Result<Vec<PlacementId>, Halt> {
     let pm = portal_manager(vm, host.world)?;
     let loaded = slot_zero(vm)?;
-    vm.call_with(
-        Some(pm),
+    vm.call_for(
+        pm,
         "Portal - Load Portal Object Stream",
         &[("use loaded data", loaded)],
         &[],
@@ -1654,8 +1654,8 @@ pub fn join_activate(
     };
     host.world.hero_template(template, hero);
     let player = Value::Entity(host.world.controllers[0]);
-    vm.call_with(
-        Some(pm),
+    vm.call_for(
+        pm,
         "Game - Activate/Deactivate Minion",
         &[
             ("minion", minion),
@@ -1687,7 +1687,7 @@ pub fn join_activate(
 }
 
 /// What a hero's deactivation took off ([`join_deactivate`]), by handle,
-/// each sorted.
+/// each sorted, and where its macro stopped.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Deactivated {
     /// Whether his minion ran, and the deactivation's macro ran for it.
@@ -1697,6 +1697,11 @@ pub struct Deactivated {
     /// The clones of his file's templates that were on: his minion, his
     /// helpers, what his attacks threw and left.
     pub clones: Vec<Handle>,
+    /// Where the deactivation stopped short of the original's (openspec
+    /// AH.165): its macro stopping (a shutdown macro of his on a member
+    /// nothing models) or the exit's links finding no place in the program.
+    /// The rest ran: the portal manager runs on and his stream is unloaded.
+    pub halted: Option<Halt>,
 }
 
 /// The deactivate path (openspec AH.105; stand-in ledger: `join`): the
@@ -1717,38 +1722,32 @@ pub struct Deactivated {
 /// holds the level in). Not run: the stream's bookkeeping, the exit beam
 /// and its pause (AG.29 holds the level), and the marker actor it leaves
 /// where he stood (AG.81 stands the next one there).
+///
+/// A stop in the macro or the links is kept in [`Deactivated::halted`] and
+/// the rest still runs (openspec AH.165): the macro is the embedder's call
+/// in the portal manager's name ([`Vm::call_for`]), so the portal manager
+/// ticks on, and his stream is unloaded whatever stopped, so nothing of his
+/// file ticks on in the run or runs twice when his figure comes back. What
+/// the macro didn't reach stays as it left it (his minion in a set it would
+/// have taken him out of).
 pub fn join_deactivate(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     files: &Files,
     unit: u16,
     hero: Handle,
-) -> Result<Deactivated, Halt> {
+) -> Deactivated {
     let minion = vm.placement_of(hero).is_some_and(|m| !vm.removed(m));
-    if minion {
-        let pm = portal_manager(vm, host.world)?;
-        let loaded = slot_zero(vm)?;
-        let info = vm.field(loaded, "object info").unwrap_or(Value::Null);
-        let desc = vm
-            .field(info, "minion additional info")
-            .unwrap_or(Value::Null);
-        let player = Value::Entity(host.world.controllers[0]);
-        vm.call_with(
-            Some(pm),
-            "Game - Activate/Deactivate Minion",
-            &[
-                ("minion", Value::Null),
-                ("player", player),
-                ("keep minion ref in player set", Value::Int(1)),
-                ("input minion data", desc),
-                ("restore hp", Value::Int(0)),
-                ("in level transition", Value::Int(0)),
-            ],
-            &[],
-            host,
-        )?;
+    let mut halted = match minion {
+        true => deactivate_minion(vm, host).err(),
+        false => None,
+    };
+    if let Err(h) = crate::figure::exit(vm, host.world) {
+        match &halted {
+            None => halted = Some(h),
+            Some(_) => warn!(%h, "his figure's exit links didn't undo either"),
+        }
     }
-    crate::figure::exit(vm, host.world)?;
     let world = &mut *host.world;
     let mut placements = Vec::new();
     for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
@@ -1788,11 +1787,40 @@ pub fn join_deactivate(
         }
     }
     placements.sort_unstable();
-    Ok(Deactivated {
+    Deactivated {
         minion,
         placements,
         clones,
-    })
+        halted,
+    }
+}
+
+/// `Game - Activate/Deactivate Minion` with no minion, as `Portal - Exit
+/// Object` calls it mid-level: his player's controller, `keep minion ref in
+/// player set` 1, the slot's minion description, no level transition.
+fn deactivate_minion(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
+    let pm = portal_manager(vm, host.world)?;
+    let loaded = slot_zero(vm)?;
+    let info = vm.field(loaded, "object info").unwrap_or(Value::Null);
+    let desc = vm
+        .field(info, "minion additional info")
+        .unwrap_or(Value::Null);
+    let player = Value::Entity(host.world.controllers[0]);
+    vm.call_for(
+        pm,
+        "Game - Activate/Deactivate Minion",
+        &[
+            ("minion", Value::Null),
+            ("player", player),
+            ("keep minion ref in player set", Value::Int(1)),
+            ("input minion data", desc),
+            ("restore hp", Value::Int(0)),
+            ("in level transition", Value::Int(0)),
+        ],
+        &[],
+        host,
+    )?;
+    Ok(())
 }
 
 /// The hero's health as his scripts hold it: his minion's

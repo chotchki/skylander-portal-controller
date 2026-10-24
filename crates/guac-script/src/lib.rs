@@ -443,7 +443,10 @@
 //!   returns a [`Halt`] naming the placement, the script, the position and
 //!   the member or op. *Play*: the same stops only that placement's script
 //!   for good, with a log line naming it and the placement, and every other
-//!   placement runs on. Never a panic.
+//!   placement runs on. Never a panic. An embedder's call in a placement's
+//!   name for work of its own ([`Vm::call_for`]: the join's, on the portal
+//!   manager's behalf) stops nothing in either mode: the stop is returned,
+//!   the placement runs on.
 //! - The budget: no placement may execute more than [`Config::budget`] ops in
 //!   one tick (a call counts the body's ops). It is set above the largest tick
 //!   the disc tests measure ([`DEFAULT_BUDGET`]), so only a script that loops

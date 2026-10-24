@@ -2,13 +2,18 @@
 //! over level 213 with guacamole's host (the walkers' part as the TV links
 //! it, `level_scripts::load` over a throwaway extract made by the real
 //! stages), each joined by AH.17's join, his setup on the VM writing the
-//! `movement parameters` and the scale the mover update reads. Ignored by
-//! default; they read `GUAC_GIANTS_DUMP` and write the extract under
-//! `GUAC_EXTRACT_DIR` (a folder `ag27-verify` there, left for the caller to
-//! remove), from the process env else `.env.dev`, and AG.12's and AE.22's
-//! recordings under `GUAC_CAPTURE_DIR`. `AH18_LIVE_TABLE` (aj-vm's live
-//! member table, process env) names a halt's member and is what the probes'
-//! discovery reads:
+//! `movement parameters` and the scale the mover update reads; and AH.165's
+//! and AH.169's swaps of a walker. Ignored by default; they read
+//! `GUAC_GIANTS_DUMP` and write the extract under `GUAC_EXTRACT_DIR` (a
+//! folder `ag27-verify` there, shared by the tests of one run; a run that
+//! made it removes it as its process exits, one that found it current
+//! leaves it, so two runs at once over one `GUAC_EXTRACT_DIR` can lose it
+//! from under each other: a lane gives its own), from the process env
+//! else `.env.dev`, and AG.12's and AE.22's recordings under
+//! `GUAC_CAPTURE_DIR`. `AH18_LIVE_TABLE` (aj-vm's live member table, process
+//! env, optional) names a halt's member and is what a probe's discovery
+//! reads; without it the probe runs on the members it names (AG.182: the
+//! plain run of every RPCS3-free disc test passes):
 //!
 //! `cargo test -p guacamole --release --test giants_walkers -- --ignored --nocapture --test-threads=1`
 
@@ -97,17 +102,54 @@ fn load1() -> f32 {
         .unwrap_or(f32::NAN)
 }
 
+/// The extract root this process made ([`extract`]), removed as it exits.
+static MADE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Removes [`MADE`]'s root: run by the C runtime's `atexit` as the test
+/// process exits, after every test of the run (the harness's main returns,
+/// or exits with a failure).
+extern "C" fn remove_made() {
+    let made = MADE.lock().ok().and_then(|mut m| m.take());
+    if let Some(root) = made {
+        match std::fs::remove_dir_all(&root) {
+            Ok(()) => eprintln!("removed the extract this run made: {}", root.display()),
+            Err(e) => eprintln!("the extract this run made stays at {}: {e}", root.display()),
+        }
+    }
+}
+
+unsafe extern "C" {
+    /// The C runtime's exit hook (libSystem on macOS).
+    fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
+}
+
 /// The extract the tests read: made by the real stages (all but the intros)
-/// into `GUAC_EXTRACT_DIR/ag27-verify`, kept between tests.
+/// into `GUAC_EXTRACT_DIR/ag27-verify`, kept between the tests of one run.
+/// One this run made goes when the process exits (AG.182: a run left its
+/// 1.9 GB behind); one it found current stays, for the run after.
 fn extract() -> PathBuf {
+    // One test makes it while the others of a parallel run wait.
+    static MAKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _making = MAKING.lock().unwrap_or_else(|e| e.into_inner());
     let dump = dump();
     let base = PathBuf::from(env_or_dotenv("GUAC_EXTRACT_DIR").expect("set GUAC_EXTRACT_DIR"));
     std::fs::create_dir_all(&base).unwrap();
-    let root = ExtractRoot::checked(base.join("ag27-verify")).unwrap();
+    let at = base.join("ag27-verify");
+    let root = ExtractRoot::checked(at.clone()).unwrap();
     let mut opened = open(&dump, &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
     let dir = opened.dir.path().to_path_buf();
     if opened.state == DirState::Current {
         return dir;
+    }
+    {
+        let mut made = MADE.lock().unwrap();
+        if made.is_none() {
+            *made = Some(at);
+            // SAFETY: `atexit` takes a plain function pointer, which it calls
+            // once at exit; `remove_made` touches only `MADE` and the files.
+            let registered = unsafe { atexit(remove_made) };
+            assert_eq!(registered, 0, "the exit hook");
+        }
     }
     println!(
         "making the extract ({:?}); load {:.2}",
@@ -303,6 +345,9 @@ struct W {
     /// The seconds a step lasts (a replay sets the recording's own).
     dt: f32,
     toy: (u32, u16),
+    mode: Mode,
+    /// What play mode stopped, each step's in turn (strict halts instead).
+    stops: Vec<String>,
 }
 
 impl W {
@@ -411,6 +456,8 @@ impl W {
             scale,
             dt: 1.0 / 60.0,
             toy,
+            mode: o.mode,
+            stops: Vec::new(),
         }
     }
 
@@ -445,12 +492,20 @@ impl W {
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
         let r = self.with_host(|vm, host| player_loop.frame(vm, host, joined, &mut stopped));
-        assert!(stopped.is_empty(), "strict mode stops by halting");
+        let play = self.mode == Mode::Play;
+        assert!(play || stopped.is_empty(), "strict mode stops by halting");
+        self.stops
+            .extend(stopped.iter().map(|h| named(&h.to_string())));
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         self.bench.stand_props(&self.world);
         let report = r?;
-        assert!(report.stopped.is_empty(), "strict mode stops by halting");
+        assert!(
+            play || report.stopped.is_empty(),
+            "strict mode stops by halting"
+        );
+        self.stops
+            .extend(report.stopped.iter().map(|h| named(&h.to_string())));
         self.apply_scale();
         for hero in self.bench.heroes.values_mut() {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
@@ -501,6 +556,38 @@ impl W {
         let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
         self.minion = Some(minion);
         Ok(())
+    }
+
+    /// His figure off the portal mid-level as the TV's swap takes it
+    /// (openspec AH.105, AH.165): the deactivate path, whatever stops in it.
+    fn deactivate(&mut self) -> scripts::Deactivated {
+        let files = self.files.clone();
+        let unit = self.unit;
+        let gone =
+            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, HERO));
+        self.minion = None;
+        gone
+    }
+
+    /// The portal manager's placement.
+    fn portal_manager(&self) -> PlacementId {
+        scripts::portal_manager_placement(&self.vm, &self.world).expect("the portal manager runs")
+    }
+
+    /// His file's placements running now, by handle, each with its
+    /// placement.
+    fn file_running(&self) -> Vec<(Handle, PlacementId)> {
+        let mut out: Vec<(Handle, PlacementId)> = self
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == self.unit)
+            .filter_map(|p| self.handles.get(&p.obj).copied())
+            .filter_map(|h| Some((h, self.vm.placement_of(h)?)))
+            .filter(|(_, id)| !self.vm.removed(*id))
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// The init chain's two steps, the join and `settle` steps; the
@@ -956,26 +1043,42 @@ fn dump_fields(vm: &Vm, v: Value, depth: usize, indent: usize, only: &dyn Fn(&st
     }
 }
 
+/// His description's movement and locomotion fields once his setup ran
+/// (`AG27_LOAD`, Tree Rex by default): with every member aj-vm's live table
+/// names a value cell when `AH18_LIVE_TABLE` is set, strict with
+/// `AG27_STRICT`, otherwise on Tree Rex's two named cells
+/// ([`TREE_REX_CELLS`]; strict for another load), so the plain run passes
+/// (AG.182).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn a_probe_of_the_parameters() {
     let l = Level::open();
     let load = std::env::var("AG27_LOAD").unwrap_or_else(|_| TREE_REX.to_owned());
-    let w = W::joined(
-        &l,
-        &load,
-        if std::env::var("AG27_STRICT").is_ok() {
-            STRICT
+    let opts = if std::env::var("AG27_STRICT").is_ok() {
+        STRICT
+    } else if std::env::var_os("AH18_LIVE_TABLE").is_some() {
+        DISCOVER
+    } else {
+        println!(
+            "AH18_LIVE_TABLE unset: no discovery; {load} on {}",
+            if load == TREE_REX {
+                "the two members TREE_REX_CELLS names as value cells"
+            } else {
+                "the registry as it stands (strict)"
+            }
+        );
+        if load == TREE_REX {
+            TREE_REX_CELLS
         } else {
-            DISCOVER
-        },
-        120,
-    )
-    .map_err(|b| {
-        let (_, when, h) = *b;
-        format!("{when}: {}", named(&h.to_string()))
-    })
-    .unwrap();
+            STRICT
+        }
+    };
+    let w = W::joined(&l, &load, opts, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
     let m = w.minion.unwrap();
     let d = w.vm.local(m, "description").map(|v| w.vm.value(v)).unwrap();
     println!("description fields:");
@@ -1609,5 +1712,348 @@ fn a_probe_of_a_walker_that_does_not_move() {
                 w.hero().velocity
             );
         }
+    }
+}
+
+/// What one character's swap came to (openspec AH.165): taken off after
+/// `before` steps and put back, then `after` steps on a full stick.
+#[derive(Debug, Default)]
+struct Swapped {
+    load: String,
+    /// Where the run stopped short of the swap (strict), if it did.
+    short: Option<String>,
+    /// Play mode's stops before the take-off.
+    stops: Vec<String>,
+    set_up: bool,
+    /// His file's placements running at the take-off, and what the
+    /// deactivation took off.
+    running: usize,
+    placements: usize,
+    clones: usize,
+    /// Where the deactivation stopped, if it did.
+    halted: Option<String>,
+    /// The portal manager stopped once he was off.
+    pm_stopped: bool,
+    /// After he's put back: the portal manager's ticks over the steps
+    /// after, whether each placement taken off stayed off and silent,
+    /// whether his file runs again once (a new placement under each handle,
+    /// the same count), his new minion set up, his top speed on the stick
+    /// once his arrival is over and his description's ground top speed.
+    pm_ticks: f32,
+    old_silent: bool,
+    once: bool,
+    set_up_again: bool,
+    top_again: f32,
+    ground_max: Option<f32>,
+}
+
+/// `load` joined (`o`), `before` steps standing, taken off by the deactivate
+/// path and put back at once (the TV holds the level between: no step),
+/// then `before` steps standing again (his arrival: AH.105's review saw the
+/// replacement held 'disabled' about 60 steps) and `after` on a full stick.
+fn swap(l: &Level, load: &str, o: Opts, before: u32, after: u32) -> Swapped {
+    let mut out = Swapped {
+        load: load.to_owned(),
+        ..Swapped::default()
+    };
+    let mut w = match W::joined(l, load, o, before) {
+        Ok(w) => w,
+        Err(b) => {
+            let (_, when, h) = *b;
+            out.short = Some(format!("{when}: {}", named(&h.to_string())));
+            return out;
+        }
+    };
+    out.stops = std::mem::take(&mut w.stops);
+    out.set_up = w.minion.is_some_and(|m| w.vm.set_up(m));
+    let pm = w.portal_manager();
+    let old = w.file_running();
+    out.running = old.len();
+    let first = w.minion.expect("joined");
+    let gone = w.deactivate();
+    out.placements = gone.placements.len();
+    out.clones = gone.clones.len();
+    out.halted = gone.halted.map(|h| named(&h.to_string()));
+    out.pm_stopped = w.vm.stopped(pm).is_some();
+    let silent: Vec<(PlacementId, f32)> = old
+        .iter()
+        .map(|&(_, id)| id)
+        .chain([first])
+        .map(|id| (id, w.vm.active_seconds(id).unwrap_or(0.0)))
+        .collect();
+    if let Err(h) = w.join() {
+        out.short = Some(format!("the join again: {}", named(&h.to_string())));
+        return out;
+    }
+    let ticked = w.vm.active_seconds(pm).unwrap_or(0.0);
+    for k in 0..before + after {
+        w.bench.pads[0] = Pad {
+            stick: match k >= before {
+                true => guac_motion::scenarios::stick(1.0, 90.0),
+                false => Stick::CENTRED,
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        if let Err(h) = w.step() {
+            out.short = Some(format!("after the join again: {}", named(&h.to_string())));
+            return out;
+        }
+        if k >= before {
+            out.top_again = out.top_again.max(w.horizontal_walk());
+        }
+    }
+    out.ground_max = w.parameters().map(|p| p[0]);
+    out.pm_ticks = (w.vm.active_seconds(pm).unwrap_or(0.0) - ticked) * 60.0;
+    out.old_silent = silent
+        .iter()
+        .all(|&(id, s)| w.vm.removed(id) && w.vm.active_seconds(id) == Some(s));
+    let now = w.file_running();
+    out.once =
+        now.len() == old.len() && now.iter().zip(&old).all(|(n, o)| n.0 == o.0 && n.1 != o.1);
+    out.set_up_again = w.minion.is_some_and(|m| w.vm.set_up(m));
+    out
+}
+
+/// AH.165 on the dump (found at the AG.27 merge check: a walker joined,
+/// taken off and placed again into the same run was never tested): headless
+/// as the TV's swap takes it (the deactivate path, his figure's tag on the
+/// portal again, AH.17's join), (1) Whirlwind, whose setup runs through, in
+/// strict mode: nothing stops, his file's placements come off and back on
+/// under their handles once, the ones taken off silent, his new minion set
+/// up and walking at his top speed again, the portal manager ticking every
+/// step after; (2) every walker the TV runs, in play mode as the TV runs
+/// them, each taken off and put back the same way, the deactivations that
+/// stop listed, the portal manager ticking on and his file running once
+/// after every one; (3) Eruptor taken off at points through each of his
+/// three attacks, strict: whether his deactivation stops anywhere.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_walker_taken_off_and_put_back_runs_his_file_once() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    // (1)
+    let whirlwind = swap(&l, "000_AirDragon", STRICT, 120, 120);
+    println!("(1) {whirlwind:?}");
+    assert_eq!(whirlwind.short, None);
+    assert_eq!(whirlwind.halted, None);
+    assert!(whirlwind.set_up && whirlwind.set_up_again);
+    assert!(!whirlwind.pm_stopped);
+    assert!(
+        (whirlwind.pm_ticks - 240.0).abs() < 1e-2,
+        "{}",
+        whirlwind.pm_ticks
+    );
+    assert!(whirlwind.old_silent && whirlwind.once);
+    let top = whirlwind.ground_max.expect("his movement parameters");
+    assert!(
+        (whirlwind.top_again - top).abs() < 1e-3,
+        "{} against {top}",
+        whirlwind.top_again
+    );
+    println!("(1) {:.1?}, load {:.2}", started.elapsed(), load1());
+    // (2)
+    let play = Opts {
+        mode: Mode::Play,
+        discover: false,
+        cells: &[],
+    };
+    let tv: Vec<&WalkerScripts> = l
+        .walkers
+        .iter()
+        .filter(|w| w.asks == 0 && w.minion.is_some())
+        .collect();
+    let mut table = Vec::new();
+    for w in &tv {
+        let t = Instant::now();
+        let s = swap(&l, &w.load_file, play, 60, 60);
+        println!(
+            "{}: set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, top again {:.3} of {:?} ({:.1?}, load {:.2})",
+            s.load,
+            s.set_up,
+            s.stops.len(),
+            s.stops.first(),
+            s.running,
+            s.placements,
+            s.clones,
+            s.halted.as_deref().unwrap_or("ran through"),
+            s.pm_stopped,
+            s.pm_ticks,
+            s.old_silent,
+            s.once,
+            s.set_up_again,
+            s.top_again,
+            s.ground_max,
+            t.elapsed(),
+            load1()
+        );
+        table.push(s);
+    }
+    let halted: Vec<(&str, &str)> = table
+        .iter()
+        .filter_map(|s| Some((s.load.as_str(), s.halted.as_deref()?)))
+        .collect();
+    let walking = table
+        .iter()
+        .filter(|s| s.ground_max.is_some_and(|g| (s.top_again - g).abs() < 1e-3))
+        .count();
+    println!(
+        "(2) {} walkers the TV runs: {} set up, {} set up again, {walking} at their top speed after; {} deactivations stopped {:?}; {:.1?}, load {:.2}",
+        table.len(),
+        table.iter().filter(|s| s.set_up).count(),
+        table.iter().filter(|s| s.set_up_again).count(),
+        halted.len(),
+        halted,
+        started.elapsed(),
+        load1()
+    );
+    for s in &table {
+        assert_eq!(s.short, None, "{}", s.load);
+        assert_eq!(s.set_up, s.set_up_again, "{}", s.load);
+        assert!(!s.pm_stopped, "{}: the portal manager stopped", s.load);
+        assert!(
+            (s.pm_ticks - 120.0).abs() < 1e-2,
+            "{}: the portal manager ticked {}",
+            s.load,
+            s.pm_ticks
+        );
+        assert!(s.old_silent && s.once, "{}: his file twice", s.load);
+    }
+    // (3)
+    let mut eruptor = Vec::new();
+    for action in 0..3usize {
+        for after_press in [1u32, 10, 30, 60] {
+            let mut w = W::joined(&l, "009_Eruptor", STRICT, 120)
+                .map_err(|b| {
+                    let (_, when, h) = *b;
+                    format!("{when}: {}", named(&h.to_string()))
+                })
+                .unwrap();
+            for k in 0..after_press {
+                let mut actions = [false; 4];
+                actions[action] = k == 0;
+                w.bench.pads[0] = Pad {
+                    stick: Stick::CENTRED,
+                    actions,
+                    connected: true,
+                };
+                w.step().unwrap();
+            }
+            let pm = w.portal_manager();
+            let gone = w.deactivate();
+            eruptor.push((
+                action,
+                after_press,
+                gone.clones.len(),
+                gone.halted.map(|h| named(&h.to_string())),
+                w.vm.stopped(pm).is_some(),
+            ));
+        }
+    }
+    for e in &eruptor {
+        println!(
+            "(3) Eruptor, attack {} taken off {} steps after its press: {} clones off, deactivation {}, pm stopped {}",
+            e.0 + 1,
+            e.1,
+            e.2,
+            e.3.as_deref().unwrap_or("ran through"),
+            e.4
+        );
+    }
+    println!(
+        "(3) {} take-offs, {} stopped; {:.1?} in all, load {:.2}",
+        eruptor.len(),
+        eruptor.iter().filter(|e| e.3.is_some()).count(),
+        started.elapsed(),
+        load1()
+    );
+    assert!(eruptor.iter().all(|e| !e.4));
+}
+
+/// AH.169 (the review of AH.165): the walkers the TV keeps at the portal for
+/// what their scripts ask of the viewport (AH.107; AH.150 answers them),
+/// Tree Rex among them, the AG.27 merge check's example of a shutdown that
+/// stops, each joined in play mode as the TV will join them once they're
+/// answered, taken off and put back as
+/// [`a_walker_taken_off_and_put_back_runs_his_file_once`]'s (2) takes the
+/// others: which deactivations stop on the dump, and the portal manager
+/// ticking on and his file running once after every one, whatever stopped.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let play = Opts {
+        mode: Mode::Play,
+        discover: false,
+        cells: &[],
+    };
+    let asking: Vec<&WalkerScripts> = l
+        .walkers
+        .iter()
+        .filter(|w| w.asks > 0 && w.minion.is_some())
+        .collect();
+    let mut table = Vec::new();
+    for w in &asking {
+        let s = swap(&l, &w.load_file, play, 60, 60);
+        println!(
+            "{} (asks {}): set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, short {:?}",
+            s.load,
+            w.asks,
+            s.set_up,
+            s.stops.len(),
+            s.stops.first(),
+            s.running,
+            s.placements,
+            s.clones,
+            s.halted.as_deref().unwrap_or("ran through"),
+            s.pm_stopped,
+            s.pm_ticks,
+            s.old_silent,
+            s.once,
+            s.set_up_again,
+            s.short
+        );
+        table.push(s);
+    }
+    let halted: Vec<(&str, &str)> = table
+        .iter()
+        .filter_map(|s| Some((s.load.as_str(), s.halted.as_deref()?)))
+        .collect();
+    println!(
+        "{} asking walkers: {} set up, {} deactivations stopped {:?}; {:.1?}, load {:.2}",
+        table.len(),
+        table.iter().filter(|s| s.set_up).count(),
+        halted.len(),
+        halted,
+        started.elapsed(),
+        load1()
+    );
+    // Tree Rex with his setup run through (the parameters probe's two
+    // cells), strict, standing and walking 120 steps each side of the swap.
+    let rex = swap(&l, TREE_REX, TREE_REX_CELLS, 120, 120);
+    println!(
+        "{TREE_REX} on his two cells, strict: {rex:?}; {:.1?}, load {:.2}",
+        started.elapsed(),
+        load1()
+    );
+    assert!(!table.is_empty(), "the TV keeps none for asks");
+    if rex.short.is_none() {
+        assert!(rex.set_up && rex.set_up_again, "{rex:?}");
+        assert!(!rex.pm_stopped && rex.old_silent && rex.once, "{rex:?}");
+        assert!((rex.pm_ticks - 240.0).abs() < 1e-2, "{rex:?}");
+    }
+    for s in &table {
+        assert_eq!(s.short, None, "{}", s.load);
+        assert!(!s.pm_stopped, "{}: the portal manager stopped", s.load);
+        assert!(
+            (s.pm_ticks - 120.0).abs() < 1e-2,
+            "{}: the portal manager ticked {}",
+            s.load,
+            s.pm_ticks
+        );
+        assert!(s.old_silent && s.once, "{}: his file twice", s.load);
     }
 }

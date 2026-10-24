@@ -2268,8 +2268,10 @@ impl ScriptWorld {
     }
 
     /// Each creature's controller body, where it stands: what the embedder
-    /// keeps in the seam so a hero's sweep meets it.
-    pub fn walkers(&self) -> Vec<(Handle, HavokSolid, Pose)> {
+    /// keeps in the seam so a hero's sweep meets it. (Named for the
+    /// creatures since AG.27's walkers, the playable characters on their
+    /// own scripts: AH.168.)
+    pub fn creature_bodies(&self) -> Vec<(Handle, HavokSolid, Pose)> {
         let mut out: Vec<(Handle, HavokSolid, Pose)> = self
             .actors
             .iter()

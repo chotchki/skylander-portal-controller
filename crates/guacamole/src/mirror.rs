@@ -101,7 +101,9 @@ pub struct TvSnapshot {
     pub hero: Option<HeroReport>,
     /// The characters kept on their cards (AG.27), each with why: the
     /// extract left his scripts out, they ask what the TV can't answer, or
-    /// they didn't run through in the level.
+    /// they didn't run through in the level (those with their figure's
+    /// `slot`, which the e2e harness holds as a hero's scripts gone off,
+    /// openspec AH.166).
     pub kept: Vec<guacamole::walkers::Kept>,
     /// The portal's alert as drawn (AG.29, AG.63, AG.73).
     pub alert: Option<AlertShot>,

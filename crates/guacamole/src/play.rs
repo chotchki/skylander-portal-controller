@@ -3,9 +3,13 @@
 //! question 4's (a): the original's flow minus its story menus, until the
 //! game's own menus land; stand-in ledger: `entering`).
 //!
-//! - Who: the first figure placed that walks ([`guacamole::walkers`]),
-//!   Eruptor alone until AG.27. Any other figure, a character placed before
-//!   him included, keeps the portal view and its card.
+//! - Who: the first figure placed that walks ([`guacamole::walkers`]):
+//!   Eruptor on his measured numbers, every other modelled character on his
+//!   own scripts where the level's part holds them and they ask nothing the
+//!   TV can't answer (AG.27). Any other figure, a character placed before
+//!   him included, keeps the portal view and its card; a character kept by
+//!   the part, a join that failed in the level or a part that didn't load
+//!   is listed with why (`/api/_test/tv`'s `kept`).
 //! - When: once his intro is over (or none plays), the TV on the portal
 //!   view, the level loaded with its solids ([`Level::walkable`]) and his
 //!   model read with every pipeline it draws compiled. Until then the portal
@@ -59,8 +63,9 @@
 //!   of the level's in flight landing), and the next hero in joins that run
 //!   as the first did (AH.24's join), his scripts the one writer of his walk
 //!   from then on, his health the one his figure's stored data kept.
-//! - A character that doesn't walk yet (AG.27) counts as one on the portal
-//!   but can't come in: alone, it leaves the level asking for a Skylander.
+//! - A character who can't walk (one the part lacks or keeps, AG.27)
+//!   counts as one on the portal but can't come in: alone, it leaves the
+//!   level asking for a Skylander.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -865,6 +870,7 @@ impl Plugin for PlayPlugin {
                 Update,
                 (
                     follow_portal,
+                    keep_unlinked,
                     choose_hero,
                     load_hero,
                     leave,
@@ -1127,8 +1133,57 @@ fn leave(
     pads.hide();
     play.candidate = None;
     play.alert = None;
+    // The level's own list goes with it (AG.183): the next entry's run is a
+    // fresh one, which a walker whose join failed in this one tries again.
+    play.kept.clear();
     // The scripts start over with the level's next entry (AH.24).
     commands.queue(hero_scripts::reinstall);
+}
+
+/// A character on the portal with no measured numbers while the level's
+/// script part didn't load keeps his card, listed with why (AG.183, found
+/// at the AG.27 merge check: he kept it silently, in no list, the TV
+/// waiting on nothing): there are no scripts of his to walk on. One with
+/// measured numbers (Eruptor) walks on them, reading `off` ([`NO_RUN`]).
+fn keep_unlinked(
+    mut play: ResMut<Play>,
+    cards: Res<PortalCards>,
+    turntables: Res<Turntables>,
+    level: Res<Level>,
+    source: Option<Res<ScriptSource>>,
+) {
+    if source.is_some() {
+        return;
+    }
+    let (Some(why), Some(shelf)) = (level.scripts_reason(), turntables.shelf()) else {
+        return;
+    };
+    let play = &mut *play;
+    for &slot in &play.order {
+        if play.kept.iter().any(|k| k.slot == slot) {
+            continue;
+        }
+        let Some(placement) = cards.slots[slot.as_usize()].as_ref() else {
+            continue;
+        };
+        let id = placement.figure_id.as_str();
+        let Some(load) = shelf.loads.get(id) else {
+            continue;
+        };
+        if kind(shelf, id) != Kind::Character || walkers::walker(load).is_some() {
+            continue;
+        }
+        let reason = format!("the level's scripts didn't load, so he has none to walk on: {why}");
+        warn!(load_file = %load, %reason, "he keeps his card");
+        play.kept.push(KeptCard {
+            slot,
+            kept: Kept {
+                load_file: load.clone(),
+                reason,
+                slot: Some(slot.display()),
+            },
+        });
+    }
 }
 
 /// A walker whose scripts didn't run through (AG.27: his setup stopped on a
@@ -1157,6 +1212,7 @@ fn keep_cards(
             kept: Kept {
                 load_file: run.load_file.clone(),
                 reason: keeps.0.clone(),
+                slot: Some(run.slot.display()),
             },
         });
         take_off(inside, &mut level, &mut commands, &bodies, run.slot);
@@ -1810,8 +1866,9 @@ mod tests {
         assert!(at.pivot.x - from.x > 3.0, "slid along it: {:?}", at.pivot);
 
         // This level has no script part, so he has no run: he reads `off`
-        // with why, as any hero walking on the stand-in does (AH.106; AH.25's
-        // review found him reading none, which every off check let through).
+        // with why, as any hero on the stand-in (stand-in ledger: `walker`)
+        // does (AH.106; AH.25's review found him reading none, which every
+        // off check let through).
         let report = {
             let mut state: bevy::ecs::system::SystemState<(
                 Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
@@ -2144,9 +2201,8 @@ mod tests {
         assert_eq!(join(&app).as_deref(), Some("off"));
     }
 
-    /// A walker on the shelf (AG.27): toy 26, the synthetic character the
-    /// script part holds.
-    const WALKER_TOY: u32 = 26;
+    /// A walker on the shelf (AG.27): toy 26 ([`WALKER_TOY`]), the
+    /// synthetic character the script part holds.
     const WALKER: &str = "026_Synthetic";
 
     /// The walker's made-up app: the attack parts, then the part holding the
@@ -2166,6 +2222,16 @@ mod tests {
         std::fs::write(
             dir.join(IrFormat::Ron.palette_path(WALKER)),
             guac_ir::to_ron(&palette).unwrap(),
+        )
+        .unwrap();
+        // His attach list, Eruptor's under his name: what his hands pose.
+        let rel = IrFormat::Ron.nodes_path("009_Eruptor");
+        let mut nodes: AttachNodes =
+            guac_ir::from_ron(&std::fs::read_to_string(dir.join(rel)).unwrap()).unwrap();
+        nodes.load_file = WALKER.into();
+        std::fs::write(
+            dir.join(IrFormat::Ron.nodes_path(WALKER)),
+            guac_ir::to_ron(&nodes).unwrap(),
         )
         .unwrap();
         crate::test_support::hero_scripts::write_walker(dir, fault);
@@ -2259,6 +2325,24 @@ mod tests {
             app.world().entity(root).get::<Transform>().unwrap().scale,
             Vec3::splat(scale)
         );
+        // His hands posed at that scale too (AG.181): each attach node his
+        // model's pose puts it at, times his scripts' scale, not 1.0.
+        let rig = run.rig.as_ref().expect("his attach nodes");
+        assert_eq!(rig.scale, scale);
+        let gaits = app.world().entity(e).get::<HeroGaits>().unwrap();
+        let base = locomotion_clips(&rig.model, &rig.clips, gaits);
+        let unscaled = guacamole::hands::posed(&rig.model.skeleton, &rig.nodes, &base, &[], 1.0);
+        let world = app.world().resource::<guacamole::scripts::ScriptWorld>();
+        let nodes = world.nodes(e.to_bits()).expect("his nodes posed");
+        assert!(unscaled.iter().any(|n| n.at.length() > 0.1));
+        for (posed, at_one) in nodes.iter().zip(&unscaled) {
+            assert!(
+                posed.at.distance(at_one.at * scale) < 1e-4,
+                "{:?} for {:?} at {scale}",
+                posed.at,
+                at_one.at
+            );
+        }
         // The mover walks him along his facing at the speed it wrote: the
         // scripts' velocity, nothing of the controller's.
         assert!(
@@ -2283,9 +2367,15 @@ mod tests {
     /// his card, listed with why: he comes out of the level, the controller
     /// never walks him on a number of ours, and he isn't picked again while
     /// his figure stands on the portal; the figure leaving clears the list.
+    /// He comes out by the deactivate path (AG.180, found at the AG.27
+    /// merge check: this held under the run installed again as under the
+    /// deactivation): his definition taken off the run that goes on, no
+    /// activator left, his slot exited, the portal manager's deactivation
+    /// run once.
     #[test]
     fn a_walker_whose_setup_stops_keeps_his_card_listed() {
-        use guac_formats::script::builder::WalkerFault;
+        use guac_formats::script::builder::{ATTACK_DEACTIVATIONS, WALKER_DEF, WalkerFault};
+        use guac_script::Value;
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InSetup);
         place(&mut app, 0, WALKER_TOY, "Synthetic");
@@ -2294,6 +2384,20 @@ mod tests {
         until(&mut app, "his card kept", |a| {
             !a.world().resource::<Play>().kept.is_empty()
         });
+        app.update();
+        let (def_obj, _) = placement_named(&app, WALKER_DEF);
+        assert!(
+            app.world().resource::<ScriptWorld>().taken_off(def_obj),
+            "his definition off the run"
+        );
+        let order = app.world().resource::<ScriptRuntime>().vm.tick_order();
+        assert!(order.iter().all(|(a, _)| !a), "no activator: {order:?}");
+        assert_eq!(entered(&app), Some(Value::Int(0)), "his slot exited");
+        assert_eq!(
+            file_int(&app, ATTACK_DEACTIVATIONS),
+            Some(Value::Int(1)),
+            "the portal manager's deactivation"
+        );
         let list = kept(&mut app);
         assert_eq!(list.len(), 1, "{list:?}");
         assert_eq!(list[0].load_file, WALKER);
@@ -2302,6 +2406,9 @@ mod tests {
             "why: {}",
             list[0].reason
         );
+        // His figure's slot with it (AH.166): what the e2e harness holds as
+        // his scripts gone off, the hero gone before any read.
+        assert_eq!(list[0].slot, Some(1));
         assert!(
             !list[0].reason.contains("no movement parameters"),
             "kept by the join's stage, not by a missing read: {}",
@@ -2321,6 +2428,122 @@ mod tests {
         clear(&mut app, 0);
         app.update();
         assert!(kept(&mut app).is_empty());
+    }
+
+    /// AG.183 (found at the AG.27 merge check): with the level's script
+    /// part not loading, a character with no measured numbers keeps his
+    /// card listed with why, his figure's slot with it, where he kept it in
+    /// no list; and the TV leaving the level clears the level's list, the
+    /// next entry's run a fresh one.
+    #[test]
+    fn a_walker_on_a_level_whose_scripts_didnt_load_keeps_his_card_listed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app_walkers(tmp.path(), &[(WALKER_TOY, WALKER)]);
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        until(&mut app, "its scripts' reason", |a| {
+            a.world()
+                .resource::<Level>()
+                .report()
+                .scripts_reason
+                .is_some()
+        });
+        assert!(kept(&mut app).is_empty(), "nothing placed");
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        for _ in 0..10 {
+            app.update();
+        }
+        let list = kept(&mut app);
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!(
+            (list[0].load_file.as_str(), list[0].slot),
+            (WALKER, Some(1))
+        );
+        assert!(list[0].reason.contains("didn't load"), "{}", list[0].reason);
+        assert!(app.world().resource::<Play>().candidate.is_none());
+        assert_eq!(mode(&app), Mode::Portal);
+        clear(&mut app, 0);
+        app.update();
+        assert!(kept(&mut app).is_empty(), "his figure gone");
+    }
+
+    /// AG.183: the level's kept list goes when the TV leaves the level.
+    #[test]
+    fn the_levels_kept_cards_go_when_the_tv_leaves_it() {
+        use guac_formats::script::builder::WalkerFault;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InSetup);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his card kept", |a| {
+            !a.world().resource::<Play>().kept.is_empty()
+        });
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.update();
+        assert!(app.world().resource::<Play>().kept.is_empty());
+    }
+
+    /// AH.165 on the TV: a walker whose deactivation stops (his shutdown,
+    /// which the portal manager's deactivation runs, on a member nothing
+    /// models) still comes off the run, and Eruptor placed next joins it
+    /// with the portal manager ticking on: before, the stop left the
+    /// walker's file running and stopped the portal manager, whose tick runs
+    /// combat, the hurts and the health write, for the rest of the level
+    /// while the next hero read `joined`.
+    #[test]
+    fn a_walker_whose_deactivation_stops_leaves_the_portal_manager_ticking() {
+        use guac_formats::script::builder::{WALKER_DEF, WalkerFault};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InDeactivation);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let (def_obj, def) = placement_named(&app, WALKER_DEF);
+        let old_def = app
+            .world()
+            .resource::<ScriptRuntime>()
+            .vm
+            .placement_of(def)
+            .unwrap();
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        app.update();
+        let vm = &app.world().resource::<ScriptRuntime>().vm;
+        assert!(
+            vm.log()
+                .iter()
+                .any(|l| l.text.contains(guacamole::scripts::PORTAL_MANAGER)
+                    && l.text.contains("unmodelled member")),
+            "his shutdown stopped in the deactivation"
+        );
+        assert!(vm.removed(old_def), "his definition off the run");
+        assert!(app.world().resource::<ScriptWorld>().taken_off(def_obj));
+        let before = pm_seconds(&app);
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "Eruptor's scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..10 {
+            app.update();
+        }
+        let after = pm_seconds(&app);
+        assert!(
+            after > before,
+            "the portal manager ticks on: {before} -> {after}"
+        );
+        let w = app.world();
+        let vm = &w.resource::<ScriptRuntime>().vm;
+        let pm = guacamole::scripts::portal_manager_placement(vm, w.resource::<ScriptWorld>());
+        assert!(vm.stopped(pm.unwrap()).is_none());
     }
 
     /// AG.27 with AH.107: a walker whose scripts ask a point against the
@@ -2347,6 +2570,7 @@ mod tests {
             assert_eq!(list.len(), 1, "{list:?}");
             assert_eq!(list[0].load_file, WALKER);
             assert!(list[0].reason.contains(why), "{}", list[0].reason);
+            assert_eq!(list[0].slot, None, "the part's own list: no join");
         }
     }
 
