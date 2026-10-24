@@ -702,13 +702,15 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 /// - `global.bld`'s entry: `Spyro_PortalManager`, running from the level's
 ///   start, whose first tick makes the portal's one loaded slot in
 ///   `portal control data` and points `projectile control data` at it, and
-///   whose macros are the join's: `Portal - Load Portal Object Stream` and
-///   `Manage Projectiles` (nothing), `Portal - Define Minion` (the slot's
-///   spawned object becomes its `minion`) and `Game - Activate/Deactivate
-///   Minion` (its `minion` spawned at its `spawn location`; with no minion,
-///   the deactivate path's call, a deactivation counted in the file's
-///   [`ATTACK_DEACTIVATIONS`], then the character's [`WALKER_SHUTDOWN`]
-///   called, a stub one that defines none skips);
+///   whose macros are the join's: `Portal - Load Portal Object Stream` (the
+///   character's [`WALKER_LOADED`] called) and `Manage Projectiles`
+///   (nothing), `Portal - Define Minion` (the slot's spawned object becomes
+///   its `minion`) and `Game - Activate/Deactivate Minion` (its `minion`
+///   spawned at its `spawn location`, then the character's
+///   [`WALKER_ACTIVATED`] called; with no minion, the deactivate path's
+///   call, a deactivation counted in the file's [`ATTACK_DEACTIVATIONS`],
+///   then the character's [`WALKER_SHUTDOWN`] called), each character's
+///   macro a stub that a part whose character defines none skips;
 /// - the shapes a figure's tag stands in (AH.23): `portal save control`, a
 ///   global whose `tag data` holds each tag's `Portal - Tag Data` (its
 ///   `save data area` of words, its toy id, serial, subtype and load
@@ -1527,9 +1529,12 @@ fn attack_global() -> Vec<u8> {
         w.text(projectiles, 0x08, "projectile control data");
         let deactivations = file_int(&mut w, ATTACK_DEACTIVATIONS);
         // A character's shutdown, which the deactivation runs for him
-        // (openspec AH.165): a stub, so a part whose character defines none
-        // skips it.
+        // (openspec AH.165), and his macros the request and the activation
+        // run (AH.169): stubs, so a part whose character defines none skips
+        // them.
         let shutdown = w.op(Class::DefineMacro, WALKER_SHUTDOWN);
+        let loaded_hook = w.op(Class::DefineMacro, WALKER_LOADED);
+        let activated = w.op(Class::DefineMacro, WALKER_ACTIVATED);
         let minion = w.variable("minion", "ScriptReference", None);
         let location = w.variable("spawn location", "ScriptReference", None);
         let set_up_tag = w.variable("set up tag", "ScriptReference", None);
@@ -1588,6 +1593,7 @@ fn attack_global() -> Vec<u8> {
                     "Portal - Load Portal Object Stream",
                     &[("use loaded data", "ScriptReference")],
                 );
+                call_stub(w, loaded_hook, &[]);
                 w.flow_end();
                 w.end_block(p);
                 let (p, _) = define_with(
@@ -1628,9 +1634,9 @@ fn attack_global() -> Vec<u8> {
                         ("in level transition", "ValueInfo"),
                     ],
                 );
-                // With a minion: spawned where asked. With none (openspec
-                // AH.105, the deactivate path): counted, then his shutdown
-                // run (AH.165).
+                // With a minion: spawned where asked, then his activation's
+                // macro run (AH.169). With none (openspec AH.105, the
+                // deactivate path): counted, then his shutdown run (AH.165).
                 let some = w.check_ref(
                     &[El::Local(minion)],
                     5,
@@ -1639,6 +1645,7 @@ fn attack_global() -> Vec<u8> {
                 let zero = w.int(0);
                 let s = w.spawn(&[El::Local(minion)], &[El::Local(location)], zero);
                 w.end_block(s);
+                call_stub(w, activated, &[]);
                 let none = w.otherwise(some);
                 w.inc(&[El::Local(deactivations)]);
                 call_stub(w, shutdown, &[]);
@@ -1966,6 +1973,14 @@ pub const WALKER_FAULT_TICK: i32 = 5;
 /// hero leaving (a stub there; openspec AH.165), which
 /// [`WalkerFault::InDeactivation`]'s walker defines.
 pub const WALKER_SHUTDOWN: &str = "Synthetic - Shut Down Minion";
+/// The character's macro [`attack`]'s `Portal - Load Portal Object Stream`
+/// runs for his stream (a stub there; openspec AH.169), which
+/// [`WalkerFault::InRequest`]'s walker defines.
+pub const WALKER_LOADED: &str = "Synthetic - Stream Loaded";
+/// The character's macro [`attack`]'s activation runs once his minion is
+/// spawned (a stub there; openspec AH.169), which
+/// [`WalkerFault::InActivation`]'s walker defines.
+pub const WALKER_ACTIVATED: &str = "Synthetic - Minion Activated";
 
 /// Where [`walker`]'s minion stops, if it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1991,6 +2006,16 @@ pub enum WalkerFault {
     /// a member nothing models (openspec AH.165), as the disc's shutdown
     /// macros can.
     InDeactivation,
+    /// Never in his own ticks, but his [`WALKER_LOADED`], which the portal
+    /// manager's `Portal - Load Portal Object Stream` runs in the join's
+    /// request, stops on a member nothing models (openspec AH.169): his
+    /// file's placements never join.
+    InRequest,
+    /// Never in his own ticks, but his [`WALKER_ACTIVATED`], which the
+    /// portal manager's activation runs once his minion is spawned, stops
+    /// on a member nothing models (openspec AH.169): his minion never
+    /// becomes the activator.
+    InActivation,
 }
 
 /// AG.27's synthetic walker (openspec AG.27; design decisions 1, 2 and 8): a
@@ -2008,7 +2033,8 @@ pub enum WalkerFault {
 ///   holds.
 ///
 /// `fault` makes it stop on a member nothing models, at its setup or in
-/// play. The scripts' names: the minion's is [`WALKER_MINION`] on the
+/// play, or in a macro of his the portal manager's join or deactivation
+/// runs ([`WalkerFault`]). The scripts' names: the minion's is [`WALKER_MINION`] on the
 /// template [`WALKER_TEMPLATE`], its definition's runs from the start.
 pub fn walker(fault: WalkerFault) -> Vec<u8> {
     let mut b = IgzBuilder::new();
@@ -2084,8 +2110,14 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 );
             },
             |w| {
-                if fault == WalkerFault::InDeactivation {
-                    let (p, _) = define_with(w, WALKER_SHUTDOWN, &[]);
+                let stops = match fault {
+                    WalkerFault::InDeactivation => Some(WALKER_SHUTDOWN),
+                    WalkerFault::InRequest => Some(WALKER_LOADED),
+                    WalkerFault::InActivation => Some(WALKER_ACTIVATED),
+                    _ => None,
+                };
+                if let Some(name) = stops {
+                    let (p, _) = define_with(w, name, &[]);
                     let one = w.int(1);
                     w.set(&[El::Member("synthetic", "unmodelled")], one);
                     w.flow_end();

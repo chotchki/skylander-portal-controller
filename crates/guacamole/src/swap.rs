@@ -115,7 +115,7 @@ mod tests {
     use guac_motion::parry::ParryWorld;
     use guac_motion::scenarios;
     use guac_motion::seam::PhysicsSeam;
-    use guac_script::{Generator, Handle, Mode, Obj, PlacementId, Value, Vm, Whitelist};
+    use guac_script::{Generator, Halt, Handle, Mode, Obj, PlacementId, Value, Vm, Whitelist};
     use guacamole::level_scripts;
     use guacamole::script_engine::{Engine, Pad};
     use guacamole::scripts::{
@@ -305,6 +305,12 @@ mod tests {
         /// (AH.23), his file's placements this step (it's stepped), his
         /// minion activated after it, before the next step.
         fn join(&mut self) -> PlacementId {
+            self.try_join().unwrap_or_else(|h| panic!("{h}"))
+        }
+
+        /// [`Run::join`], a stop in the request or the activation returned
+        /// as the TV's join gets it (the request's: no step after it).
+        fn try_join(&mut self) -> Result<PlacementId, Halt> {
             let layout = guacamole::figure::Layout::of(&progression_rows()).unwrap();
             let tag = guacamole::figure::Tag {
                 toy_id: 9,
@@ -317,14 +323,36 @@ mod tests {
             let files = self.files.clone();
             let unit = self.fighter;
             let handles = self.world.handles().clone();
-            self.host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))
-                .unwrap_or_else(|h| panic!("{h}"));
+            self.host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))?;
             self.step([false; 4]);
-            let minion = self
-                .host(|vm, host| scripts::join_activate(vm, host, HERO))
-                .unwrap_or_else(|h| panic!("{h}"));
+            let minion = self.host(|vm, host| scripts::join_activate(vm, host, HERO))?;
             self.joined = true;
-            minion
+            Ok(minion)
+        }
+
+        /// What of his file runs: each of its placements and each clone of
+        /// its templates the VM holds and hasn't taken off.
+        fn his_running(&self) -> Vec<Handle> {
+            let unit = self.fighter;
+            let placed = self
+                .files
+                .placed
+                .iter()
+                .filter(|p| p.obj.unit == unit)
+                .filter_map(|p| self.world.handles().get(&p.obj).copied());
+            let clones = self.world.clones().into_iter().filter(|&c| {
+                self.world
+                    .actor(c)
+                    .is_some_and(|a| a.template.is_some_and(|t| t.unit == unit))
+            });
+            placed
+                .chain(clones)
+                .filter(|&h| {
+                    self.vm
+                        .placement_of(h)
+                        .is_some_and(|id| !self.vm.removed(id))
+                })
+                .collect()
         }
 
         /// The deactivate path for him, run through.
@@ -681,5 +709,64 @@ mod tests {
         assert_ne!(again, old_def);
         assert!(run.vm.set_up(second));
         assert_eq!(run.vm.tick_order().iter().filter(|(a, _)| *a).count(), 1);
+    }
+
+    /// AH.169 (the review of AH.165: the request's and the activation's
+    /// calls in the portal manager's name were pinned by nothing, either
+    /// back on `call_with` passing every test): a walker whose join stops in
+    /// its request or its activation (a macro of his the portal manager's
+    /// macro runs, on a member nothing models) gets the stop back, the
+    /// portal manager not stopped; the step the TV runs before his take-off,
+    /// then the deactivate path (as `keep_cards` takes him off) runs
+    /// through, and after it nothing of his file runs, no activator is
+    /// left, his slot is exited and the portal manager ticks on.
+    #[test]
+    fn a_walker_whose_join_stops_leaves_the_portal_manager_ticking() {
+        for fault in [WalkerFault::InRequest, WalkerFault::InActivation] {
+            let mut run = Run::walker(fault);
+            run.step([false; 4]);
+            run.step([false; 4]);
+            let (pm, _) = run.portal_manager();
+            let halt = run.try_join().expect_err("his macro stops");
+            assert!(
+                halt.to_string().contains("unmodelled member"),
+                "{fault:?}: {halt}"
+            );
+            assert_eq!(halt.placement_name, scripts::PORTAL_MANAGER, "{fault:?}");
+            let text = halt.to_string();
+            assert!(
+                run.vm.log().iter().any(|l| l.text == text),
+                "{fault:?}: the stop logged"
+            );
+            assert!(run.vm.stopped(pm).is_none(), "{fault:?}: not stopped");
+            run.step([false; 4]);
+            let gone = run.deactivate_as_it_goes();
+            assert_eq!(gone.halted, None, "{fault:?}");
+            let (def_obj, _) = run.placed(run.fighter, WALKER_DEF);
+            assert!(run.world.taken_off(def_obj), "{fault:?}");
+            let running = run.his_running();
+            assert!(
+                running.is_empty(),
+                "{fault:?}: nothing of his runs: {running:?}"
+            );
+            assert!(
+                run.vm.tick_order().iter().all(|(a, _)| !a),
+                "{fault:?}: no activator"
+            );
+            assert_eq!(run.entered(), Some(Value::Int(0)), "{fault:?}");
+            let (_, ticked) = run.portal_manager();
+            for _ in 0..10 {
+                run.step([false; 4]);
+            }
+            let (pm_again, now) = run.portal_manager();
+            assert_eq!(pm_again, pm);
+            assert!(run.vm.stopped(pm).is_none(), "{fault:?}");
+            assert!(
+                now - ticked > 9.5 / 60.0,
+                "{fault:?}: the portal manager ticks on: {ticked} -> {now}"
+            );
+            let running = run.his_running();
+            assert!(running.is_empty(), "{fault:?}: nor after: {running:?}");
+        }
     }
 }

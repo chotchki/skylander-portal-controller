@@ -3,10 +3,12 @@
 //! it, `level_scripts::load` over a throwaway extract made by the real
 //! stages), each joined by AH.17's join, his setup on the VM writing the
 //! `movement parameters` and the scale the mover update reads; and AH.165's
-//! swap of a walker. Ignored by default; they read `GUAC_GIANTS_DUMP` and
-//! write the extract under `GUAC_EXTRACT_DIR` (a folder `ag27-verify` there,
-//! shared by the tests of one run; a run that made it removes it as its
-//! process exits, one that found it current leaves it), from the process env
+//! and AH.169's swaps of a walker. Ignored by default; they read
+//! `GUAC_GIANTS_DUMP` and write the extract under `GUAC_EXTRACT_DIR` (a
+//! folder `ag27-verify` there, shared by the tests of one run; a run that
+//! made it removes it as its process exits, one that found it current
+//! leaves it, so two runs at once over one `GUAC_EXTRACT_DIR` can lose it
+//! from under each other: a lane gives its own), from the process env
 //! else `.env.dev`, and AG.12's and AE.22's recordings under
 //! `GUAC_CAPTURE_DIR`. `AH18_LIVE_TABLE` (aj-vm's live member table, process
 //! env, optional) names a halt's member and is what a probe's discovery
@@ -1967,4 +1969,91 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
         load1()
     );
     assert!(eruptor.iter().all(|e| !e.4));
+}
+
+/// AH.169 (the review of AH.165): the walkers the TV keeps at the portal for
+/// what their scripts ask of the viewport (AH.107; AH.150 answers them),
+/// Tree Rex among them, the AG.27 merge check's example of a shutdown that
+/// stops, each joined in play mode as the TV will join them once they're
+/// answered, taken off and put back as
+/// [`a_walker_taken_off_and_put_back_runs_his_file_once`]'s (2) takes the
+/// others: which deactivations stop on the dump, and the portal manager
+/// ticking on and his file running once after every one, whatever stopped.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let play = Opts {
+        mode: Mode::Play,
+        discover: false,
+        cells: &[],
+    };
+    let asking: Vec<&WalkerScripts> = l
+        .walkers
+        .iter()
+        .filter(|w| w.asks > 0 && w.minion.is_some())
+        .collect();
+    let mut table = Vec::new();
+    for w in &asking {
+        let s = swap(&l, &w.load_file, play, 60, 60);
+        println!(
+            "{} (asks {}): set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, short {:?}",
+            s.load,
+            w.asks,
+            s.set_up,
+            s.stops.len(),
+            s.stops.first(),
+            s.running,
+            s.placements,
+            s.clones,
+            s.halted.as_deref().unwrap_or("ran through"),
+            s.pm_stopped,
+            s.pm_ticks,
+            s.old_silent,
+            s.once,
+            s.set_up_again,
+            s.short
+        );
+        table.push(s);
+    }
+    let halted: Vec<(&str, &str)> = table
+        .iter()
+        .filter_map(|s| Some((s.load.as_str(), s.halted.as_deref()?)))
+        .collect();
+    println!(
+        "{} asking walkers: {} set up, {} deactivations stopped {:?}; {:.1?}, load {:.2}",
+        table.len(),
+        table.iter().filter(|s| s.set_up).count(),
+        halted.len(),
+        halted,
+        started.elapsed(),
+        load1()
+    );
+    // Tree Rex with his setup run through (the parameters probe's two
+    // cells), strict, standing and walking 120 steps each side of the swap.
+    let rex = swap(&l, TREE_REX, TREE_REX_CELLS, 120, 120);
+    println!(
+        "{TREE_REX} on his two cells, strict: {rex:?}; {:.1?}, load {:.2}",
+        started.elapsed(),
+        load1()
+    );
+    assert!(!table.is_empty(), "the TV keeps none for asks");
+    if rex.short.is_none() {
+        assert!(rex.set_up && rex.set_up_again, "{rex:?}");
+        assert!(!rex.pm_stopped && rex.old_silent && rex.once, "{rex:?}");
+        assert!((rex.pm_ticks - 240.0).abs() < 1e-2, "{rex:?}");
+    }
+    for s in &table {
+        assert_eq!(s.short, None, "{}", s.load);
+        assert!(!s.pm_stopped, "{}: the portal manager stopped", s.load);
+        assert!(
+            (s.pm_ticks - 120.0).abs() < 1e-2,
+            "{}: the portal manager ticked {}",
+            s.load,
+            s.pm_ticks
+        );
+        assert!(s.old_silent && s.once, "{}: his file twice", s.load);
+    }
 }
