@@ -21,12 +21,15 @@ cd "$(git rev-parse --show-toplevel)"
 root=$(pwd -P)
 pkg=${1:-guacamole}
 
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
 graph() {
-  cargo tree -p "$pkg" --prefix depth -f '{p}|{f}' -e "$1" --color never 2>/dev/null
+  cargo tree -p "$pkg" --prefix depth -f '{p}|{f}' -e "$1" --color never 2>"$err" ||
+    { echo "one-bevy: cargo tree -p $pkg -e $1 failed:" >&2; cat "$err" >&2; return 2; }
 }
 
-build=$(graph normal,build) || { echo "one-bevy: cargo tree -p $pkg failed" >&2; exit 2; }
-tests=$(graph normal,build,dev) || { echo "one-bevy: cargo tree -p $pkg failed" >&2; exit 2; }
+build=$(graph normal,build) || exit 2
+tests=$(graph normal,build,dev) || exit 2
 
 awk -v root="$root" -v pkg="$pkg" '
   # One line: <depth><package>|<features>[ (*)]; a line at depth d is a

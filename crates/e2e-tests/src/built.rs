@@ -61,9 +61,7 @@ pub(crate) fn server_binary(repo: &Path, package: &str) -> Result<PathBuf> {
     let mut built = BUILT
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((_, b)) = built.iter().find(|(p, _)| p == package)
-        && b.is_current()
-    {
+    if let Some(b) = current(&built, package) {
         return Ok(b.exe.clone());
     }
     let run = run_id();
@@ -86,6 +84,16 @@ pub(crate) fn server_binary(repo: &Path, package: &str) -> Result<PathBuf> {
     built.retain(|(p, _)| p != package);
     built.push((package.to_owned(), fresh));
     Ok(exe)
+}
+
+/// This process's build of `package`, while it's current: every spawn after a
+/// test binary's first takes this path.
+fn current<'a>(built: &'a [(String, Built)], package: &str) -> Option<&'a Built> {
+    built
+        .iter()
+        .find(|(p, _)| p == package)
+        .map(|(_, b)| b)
+        .filter(|b| b.is_current())
 }
 
 /// A build some test binary of the run left for the others.
@@ -364,6 +372,16 @@ mod tests {
         let (_dir, built) = fixture(150);
         set_mtime(&built.exe, 300);
         assert!(!built.is_current());
+    }
+
+    #[test]
+    fn this_processs_build_is_spawned_again_only_while_current() {
+        let (dir, built) = fixture(150);
+        let kept = vec![("app".to_owned(), built)];
+        assert!(current(&kept, "app").is_some(), "unchanged");
+        assert!(current(&kept, "other").is_none(), "another package's");
+        set_mtime(&dir.path().join("repo/crates/app/src/main.rs"), 160);
+        assert!(current(&kept, "app").is_none(), "a source edited since");
     }
 
     #[test]
