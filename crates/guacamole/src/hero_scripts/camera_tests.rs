@@ -6,7 +6,9 @@
 
 use std::path::Path;
 
-use bevy::input::gamepad::GamepadButton;
+use bevy::input::gamepad::{
+    GamepadAxis, GamepadButton, RawGamepadAxisChangedEvent, RawGamepadEvent,
+};
 use bevy::prelude::*;
 use guac_formats::script::builder::camera::{
     CAMERA_ACTIVATOR, CAMERA_ACTIVATOR_DELAY, CAMERA_ACTIVATOR_RANGE, CAMERA_ACTIVATOR_SECONDS,
@@ -259,15 +261,27 @@ fn pairs(samples: &[Sample]) -> impl Iterator<Item = (&Sample, &Sample)> {
 /// VM the TV draws their viewport, one writer: the eye 30 ft out behind his
 /// feet 25° up, looking at the point 6 ft over them, the picture 68°'s
 /// height and the far clip 600 ft; `/api/_test/tv` says the scripts have
-/// it. Standing still, it holds.
+/// it. Standing still, the right stick held or not, it holds.
 #[test]
 fn a_definitions_camera_takes_the_view() {
     let tmp = tempfile::tempdir().unwrap();
-    let (mut app, _pad) = camera_app(tmp.path(), CameraFault::None);
+    let (mut app, pad) = camera_app(tmp.path(), CameraFault::None);
     run_until(&mut app, "the scripts' view", 30, |s| {
         s.hold == ViewHold::Scripts
     });
-    frames(&mut app, 30);
+    frames(&mut app, 10);
+    // The right stick held at a corner moves nothing (AH.41: the
+    // original's camera reads none).
+    for (axis, value) in [
+        (GamepadAxis::RightStickX, 1.0),
+        (GamepadAxis::RightStickY, 1.0),
+    ] {
+        app.world_mut()
+            .write_message(RawGamepadEvent::from(RawGamepadAxisChangedEvent::new(
+                pad, axis, value,
+            )));
+    }
+    frames(&mut app, 20);
     let all = samples(&app);
     let on: Vec<&Sample> = all.iter().filter(|s| s.hold == ViewHold::Scripts).collect();
     assert!(on.len() >= 30, "{} steps on the scripts' view", on.len());
@@ -291,10 +305,11 @@ fn a_definitions_camera_takes_the_view() {
         assert_eq!(before.hold, ViewHold::Chain(NOT_YET.to_owned()));
         assert_eq!(before.report.scripts.as_deref(), Some("none"));
     }
-    let first = on.first().unwrap().eye;
+    let first = on.first().unwrap();
     assert!(
-        on.iter().all(|s| s.eye.distance(first) < 1e-4),
-        "held still"
+        on.iter()
+            .all(|s| s.eye.distance(first.eye) < 1e-4 && s.feet.distance(first.feet) < 1e-4),
+        "held still, and him with it"
     );
 }
 
