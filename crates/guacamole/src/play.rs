@@ -66,6 +66,7 @@ use std::time::Duration;
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Projection, RenderTarget};
+use bevy::ecs::system::SystemParam;
 use bevy::image::CompressedImageFormats;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
@@ -110,7 +111,7 @@ use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
 use crate::screen::TvScreen;
 use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero, read_ir};
-use crate::tv::{Current, Redrawn, TvCamera};
+use crate::tv_state::{Current, Redrawn, TvCamera};
 use crate::warm::Warm;
 
 /// Where the TV is, as `/api/_test/tv` reports it.
@@ -666,6 +667,46 @@ impl Play {
             behaviour: numbers.behaviour,
             experience: inside.then(|| progress.map_or(0, |p| p.xp)),
             gold: inside.then(|| progress.map_or(0, |p| p.gold)),
+        })
+    }
+}
+
+/// The walk's mode and the hero, their part of `/api/_test/tv` (openspec
+/// AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct PlayShots<'w, 's> {
+    play: Option<Res<'w, Play>>,
+    pads: Option<Res<'w, LevelPads>>,
+    heroes: Query<
+        'w,
+        's,
+        (
+            &'static HeroBody,
+            Option<&'static HeroGaits>,
+            Option<&'static HeroRun>,
+        ),
+    >,
+    cameras: Query<'w, 's, (&'static Transform, &'static Projection), With<FollowCamera>>,
+    runtime: Option<Res<'w, ScriptRuntime>>,
+    earning: Option<Res<'w, crate::progress::Earning>>,
+}
+
+impl PlayShots<'_, '_> {
+    pub(crate) fn mode(&self) -> Mode {
+        match (self.play.as_deref(), self.pads.as_deref()) {
+            (Some(play), Some(level_pads)) => play.mode(level_pads),
+            _ => Mode::Portal,
+        }
+    }
+
+    pub(crate) fn hero(&self) -> Option<HeroReport> {
+        self.play.as_deref().and_then(|p| {
+            p.report(
+                &self.heroes,
+                &self.cameras,
+                self.runtime.as_deref(),
+                self.earning.as_deref(),
+            )
         })
     }
 }
@@ -1523,11 +1564,11 @@ mod tests {
     use guac_motion::camera::View;
 
     use super::*;
-    use crate::level::tests::{FLOOR, START, WALL, lights, write_level};
     use crate::level::{LevelPlugin, level_channel};
-    use crate::pad::test_pad;
     use crate::physics::SeamPlugin;
-    use crate::turntable::tests::{app, extract, model, placed};
+    use crate::test_support::level::{FLOOR, START, WALL, lights, write_level};
+    use crate::test_support::test_pad;
+    use crate::test_support::turntable::{app, extract, model, placed};
 
     const ERUPTOR: u32 = 9;
     /// The made-up extract's: a character that doesn't walk, a magic item.
@@ -1579,7 +1620,7 @@ mod tests {
             })
         };
         guac_ir::hero::Hero {
-            identity: crate::turntable::tests::identity(),
+            identity: crate::test_support::turntable::identity(),
             load_file: load.into(),
             actor: load.into(),
             scale: [100.0; 3],
@@ -1683,7 +1724,7 @@ mod tests {
 
     fn place(app: &mut App, slot: u8, toy: u32, name: &str) {
         let change = placed(slot, toy, name);
-        crate::turntable::tests::set(app, [change.clone()]);
+        crate::test_support::turntable::set(app, [change.clone()]);
         app.world_mut().write_message(PortalChanged(change));
     }
 
@@ -1691,7 +1732,7 @@ mod tests {
         let change = PortalChange::Cleared {
             slot: SlotIndex::new(slot).unwrap(),
         };
-        crate::turntable::tests::set(app, [change.clone()]);
+        crate::test_support::turntable::set(app, [change.clone()]);
         app.world_mut().write_message(PortalChanged(change));
     }
 
@@ -1906,7 +1947,7 @@ mod tests {
             ATTACK_ARRIVAL_SLOT, ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
         };
         use guac_ir::palette::{PaletteSlot, SlotEntry};
-        crate::hero_scripts::tests::write_attack(dir);
+        crate::test_support::hero_scripts::write_attack(dir);
         let side = hero_side("009_Eruptor");
         let walk = side.locomotion.walk.unwrap().clip;
         let clip = |name: &str, duration: f32| Clip {
@@ -1915,7 +1956,7 @@ mod tests {
             ..walk.clone()
         };
         let palette = Palette {
-            identity: crate::turntable::tests::identity(),
+            identity: crate::test_support::turntable::identity(),
             owner: "009_Eruptor".into(),
             slots: 40,
             entries: vec![
@@ -1977,7 +2018,7 @@ mod tests {
         nodes.push(node("top", Some(1), HAND_Z));
         nodes.push(node("top", Some(1), -HAND_Z));
         let nodes = guac_ir::nodes::AttachNodes {
-            identity: crate::turntable::tests::identity(),
+            identity: crate::test_support::turntable::identity(),
             load_file: "009_Eruptor".into(),
             nodes,
         };
@@ -2014,7 +2055,7 @@ mod tests {
                 Vec::new()
             };
             let spawns = guac_ir::spawn::SpawnModels {
-                identity: crate::turntable::tests::identity(),
+                identity: crate::test_support::turntable::identity(),
                 archive: archive.clone(),
                 props,
                 refused: Vec::new(),
@@ -2320,7 +2361,7 @@ mod tests {
     /// The extract's progression tables beside [`write_attack_parts`]'s:
     /// what lays his figure's words out.
     fn write_figure_rows(dir: &std::path::Path) {
-        let p = crate::hero_scripts::tests::progression_rows();
+        let p = crate::test_support::hero_scripts::progression_rows();
         let rel = IrFormat::Ron.progression_path();
         std::fs::write(dir.join(rel), guac_ir::to_ron(&p).unwrap()).unwrap();
     }
@@ -2377,7 +2418,7 @@ mod tests {
                     progress: FigureProgress { xp: 999, ..fresh },
                 });
             }
-            crate::turntable::tests::set(&mut app, [change.clone()]);
+            crate::test_support::turntable::set(&mut app, [change.clone()]);
             app.world_mut().write_message(PortalChanged(change));
             until(&mut app, "the level", |a| mode(a) != Mode::Portal);
             test_pad::press(&mut app, pad, GamepadButton::East);
@@ -2475,7 +2516,7 @@ mod tests {
     fn write_smash_parts(dir: &std::path::Path) {
         use guac_formats::script::builder::{SMASH_BARREL, SMASH_BARREL_SIZE};
         write_attack_parts(dir);
-        let barrel = crate::hero_scripts::tests::write_smash(dir, BARREL_AT);
+        let barrel = crate::test_support::hero_scripts::write_smash(dir, BARREL_AT);
         write_figure_rows(dir);
         let [width, height, length] = SMASH_BARREL_SIZE;
         let solid = guac_ir::actor::Solid {
@@ -2506,7 +2547,7 @@ mod tests {
             activity_state: 4,
             activation_range: 160.0,
         };
-        crate::level::tests::write_props(dir, Vec::new(), vec![placement]);
+        crate::test_support::level::write_props(dir, Vec::new(), vec![placement]);
     }
 
     /// The level's props as `/api/_test/tv` reports them.
@@ -2600,7 +2641,7 @@ mod tests {
             change
         };
         let change = owned(0);
-        crate::turntable::tests::set(&mut app, [change.clone()]);
+        crate::test_support::turntable::set(&mut app, [change.clone()]);
         app.world_mut().write_message(PortalChanged(change));
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
         test_pad::press(&mut app, pad, GamepadButton::East);
@@ -2713,7 +2754,7 @@ mod tests {
         });
         app.update();
         let change = owned(2);
-        crate::turntable::tests::set(&mut app, [change.clone()]);
+        crate::test_support::turntable::set(&mut app, [change.clone()]);
         app.world_mut().write_message(PortalChanged(change));
         until(&mut app, "his scripts again", |a| {
             join(a).as_deref() == Some("joined")
@@ -2750,7 +2791,7 @@ mod tests {
         });
         app.update();
         let change = owned(0);
-        crate::turntable::tests::set(&mut app, [change.clone()]);
+        crate::test_support::turntable::set(&mut app, [change.clone()]);
         app.world_mut().write_message(PortalChanged(change));
         until(&mut app, "his scripts a third time", |a| {
             join(a).as_deref() == Some("joined")
@@ -3651,7 +3692,7 @@ mod tests {
         let cleared = PortalChange::Cleared {
             slot: SlotIndex::new(0).unwrap(),
         };
-        crate::turntable::tests::set(&mut app, [cleared.clone()]);
+        crate::test_support::turntable::set(&mut app, [cleared.clone()]);
         app.world_mut().write_message(PortalChanged(cleared));
         tx.send(write_level(tmp.path(), &lights())).unwrap();
         until(&mut app, "the level", |a| level_state(a) == "ready");
@@ -3727,7 +3768,7 @@ mod tests {
     #[test]
     fn the_roster_says_what_each_figure_is() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut shelf = crate::turntable::tests::extract(tmp.path());
+        let mut shelf = crate::test_support::turntable::extract(tmp.path());
         shelf.kinds.insert("000006-0000".into(), Category::Sidekick);
         shelf
             .kinds
@@ -4034,7 +4075,7 @@ mod tests {
             collider: guac_motion::seam::Collider::Mesh(Arc::new(overhang.mesh())),
         };
         let mut commands = app.world_mut().commands();
-        crate::physics::spawn_body(&mut commands, &body).unwrap();
+        crate::test_support::physics::spawn_body(&mut commands, &body).unwrap();
         app.world_mut().flush();
         place(&mut app, 2, ERUPTOR, "Eruptor");
         until(&mut app, "the next one in", |a| mode(a) == Mode::Level);

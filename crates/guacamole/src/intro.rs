@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::Resource;
 use guac_extract::transcode::TARGET;
+use serde::Serialize;
 use skylander_core::SlotIndex;
 use skylander_rpcs3_control::Placement;
 
@@ -155,6 +156,25 @@ pub fn movie_for(library: Option<&IntroLibrary>, placement: &Placement) -> Optio
 pub fn files(library: &IntroLibrary, movie: &str) -> (PathBuf, PathBuf) {
     let (video, audio) = TARGET.outputs(movie);
     (library.dir.join(video), library.dir.join(audio))
+}
+
+/// A queued intro, from `IntroQueue`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct QueuedShot {
+    /// 1-based.
+    pub slot: u8,
+    pub figure_id: String,
+    pub movie: String,
+}
+
+impl From<&IntroEntry> for QueuedShot {
+    fn from(e: &IntroEntry) -> Self {
+        Self {
+            slot: e.slot.as_u8() + 1,
+            figure_id: e.figure_id.clone(),
+            movie: e.movie.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use guac_server::dumps::DumpScan;
 use tracing::{info, warn};
 
 use crate::screen::{SetupView, TvScreen};
-use crate::tv::{Current, ServerLink, Setup};
+use crate::tv_state::{Current, ServerLink, Setup};
 
 /// guacamole's data root, where a pick is stored.
 #[derive(Resource, Clone)]
@@ -229,8 +229,8 @@ fn leave_found(current: Option<Res<Current>>, mut setup: ResMut<Setup>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::tests::dump;
     use crate::screen::screen_for;
+    use crate::test_support::cli::dump;
     use guac_server::dumps::GIANTS_TITLE_ID;
     use guac_server::setup;
     use guac_server::state::{GameList, LauncherStatus};
@@ -439,8 +439,8 @@ mod tests {
 
     #[test]
     fn found_gives_way_to_join_after_the_beat_or_a_click() {
+        use crate::test_support::tv::{choice, click_on, tv_on};
         use crate::tv::CONTINUE;
-        use crate::tv::choice_tests::{choice, click_on, tv_on};
         let shown = |app: &App| app.world().resource::<Setup>().0.show_found;
         assert!(shown(&found_app(Duration::ZERO)));
         assert!(!shown(&found_app(FOUND_BEAT + LATE)));

@@ -12,18 +12,20 @@ use std::time::{Duration, Instant};
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings};
 use bevy::ecs::entity::Entities;
+use bevy::ecs::system::SystemParam;
 use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crossbeam_channel::{Receiver, TryRecvError};
+use serde::Serialize;
 use tracing::{error, info, warn};
 
 use crate::cards::PortalChanged;
 use crate::driver::PortalChange;
 use crate::extraction::IntroLibrary;
-use crate::intro::{self, Change, IntroEntry, IntroEvent, IntroQueue};
+use crate::intro::{self, Change, IntroEntry, IntroEvent, IntroQueue, QueuedShot};
 use crate::screen::TvScreen;
-use crate::tv::Current;
+use crate::tv_state::{Current, node_rect};
 use crate::video::{self, Feed};
 
 /// The speaker's lag behind the audio clock when none is stored. PROVISIONAL
@@ -619,6 +621,76 @@ impl Playback {
     }
 }
 
+/// The playing intro: the queue's entry, the player's counts, the overlay as drawn.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IntroShot {
+    pub slot: u8,
+    pub figure_id: String,
+    pub movie: String,
+    /// The video's frame count once open; frames presented and passed over.
+    pub frames: Option<usize>,
+    pub shown: usize,
+    pub skipped: usize,
+    /// `waiting`, `starting`, `playing` (a sink) or `none` (wall clock only).
+    pub audio: String,
+    /// The overlay is drawn and covers the whole window.
+    pub full_screen: bool,
+    /// The picture's x, y, width, height in physical pixels, once open.
+    pub video_rect: Option<[f32; 4]>,
+}
+
+/// The intros' part of `/api/_test/tv` (openspec AQ.8): the queue, the
+/// player's counts, the overlay and the picture as drawn.
+#[derive(SystemParam)]
+pub(crate) struct IntroShots<'w, 's> {
+    queue: Option<Res<'w, IntroQueue>>,
+    player: Option<Res<'w, IntroPlayer>>,
+    overlays:
+        Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<IntroOverlay>>,
+    videos: Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<IntroVideo>>,
+}
+
+impl IntroShots<'_, '_> {
+    /// The playing intro, its overlay measured against `window`.
+    pub(crate) fn playing(&self, window: Rect) -> Option<IntroShot> {
+        self.queue.as_ref().and_then(|q| q.playing()).map(|entry| {
+            let now = self
+                .player
+                .as_ref()
+                .and_then(|p| p.now())
+                .filter(|n| n.entry.id == entry.id);
+            let full_screen = self.overlays.iter().any(|(node, at)| {
+                let r = node_rect(node, at);
+                // A pixel of slack, as for the cards.
+                (r.min - window.min).abs().max_element() <= 1.0
+                    && (r.max - window.max).abs().max_element() <= 1.0
+            });
+            IntroShot {
+                slot: entry.slot.as_u8() + 1,
+                figure_id: entry.figure_id.clone(),
+                movie: entry.movie.clone(),
+                frames: now.as_ref().and_then(|n| n.frames),
+                shown: now.as_ref().map_or(0, |n| n.shown),
+                skipped: now.as_ref().map_or(0, |n| n.skipped),
+                audio: now.as_ref().map_or("waiting", |n| n.audio).to_string(),
+                full_screen,
+                video_rect: self.videos.iter().next().map(|(node, at)| {
+                    let r = node_rect(node, at);
+                    [r.min.x, r.min.y, r.width(), r.height()]
+                }),
+            }
+        })
+    }
+
+    /// Intros waiting, in play order.
+    pub(crate) fn queued(&self) -> Vec<QueuedShot> {
+        self.queue
+            .as_ref()
+            .map(|q| q.queued().map(QueuedShot::from).collect())
+            .unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,8 +777,8 @@ mod tests {
         use super::*;
         use crate::cards::PortalCards;
         use crate::mirror::{Mirror, TvMirror, TvSnapshot};
-        use crate::tv::layout_tests::portal_app;
-        use crate::video::test_clip;
+        use crate::test_support::tv::portal_app;
+        use crate::test_support::video::test_clip;
 
         /// Toy types 9 and 10 have intros, 205 (a magic item) none.
         fn library(dir: &Path, clips: &[(&str, usize)]) -> IntroLibrary {
@@ -1109,7 +1181,7 @@ mod tests {
         #[test]
         fn south_during_an_intro_reaches_nothing_under_it() {
             use crate::input::TvInput;
-            use crate::input::heard::{listen, take};
+            use crate::test_support::heard::{listen, take};
             let tmp = tempfile::tempdir().unwrap();
             let lib = library(tmp.path(), &[("eruptor", 100), ("ignitor", 100)]);
             let mut tv = tv(Some(lib));
@@ -1137,7 +1209,8 @@ mod tests {
         #[test]
         fn a_press_under_an_intro_skips_it_and_moves_no_one() {
             use crate::hero::HeroInput;
-            use crate::pad::{LevelPads, test_pad};
+            use crate::pad::LevelPads;
+            use crate::test_support::test_pad;
             use guac_motion::stick::Stick;
             let hero = |tv: &Tv| tv.app.world().resource::<HeroInput>().0;
             let tmp = tempfile::tempdir().unwrap();
@@ -1300,7 +1373,7 @@ mod tests {
         /// leaving the portal under it leaves the next screen's root alone.
         #[test]
         fn an_intro_over_the_portal_leaves_one_screen_root() {
-            use crate::tv::ScreenRoot;
+            use crate::tv_state::ScreenRoot;
             let roots = |tv: &mut Tv| {
                 let world = tv.app.world_mut();
                 let mut q = world.query_filtered::<Entity, With<ScreenRoot>>();

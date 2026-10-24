@@ -37,7 +37,7 @@ use bevy::ui::{
 
 use crate::surfaces;
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::TvCamera;
+use crate::tv_state::TvCamera;
 
 /// Where [`TitleShader`] embeds `title.wesl` (`embedded_asset!`'s path for
 /// this file).
@@ -724,7 +724,7 @@ mod tests {
                 surfaces::css_over(sky, theme.gold, want),
                 "{at}%"
             );
-            let lands = surfaces::linear_over(sky, stop.color);
+            let lands = crate::test_support::surfaces::linear_over(sky, stop.color);
             assert!(lands.red <= last + 1e-6, "fading: {at}%");
             last = lands.red;
         }
@@ -747,8 +747,9 @@ mod tests {
 
     use crate::cards::PortalCards;
     use crate::screen::TvScreen;
-    use crate::tv::layout_tests::{portal_app, tv_camera};
-    use crate::tv::{Current, scale_ui};
+    use crate::test_support::tv::{portal_app, tv_camera};
+    use crate::tv::scale_ui;
+    use crate::tv_state::Current;
 
     /// What bevy_render's `camera_system` does for an image-targeted camera,
     /// which the headless app has no render app to run: the target's size is
@@ -980,7 +981,7 @@ mod tests {
         frames(&mut app, 10);
         let world = app.world_mut();
         world.resource_mut::<Current>().set_changed();
-        world.resource_mut::<crate::tv::Setup>().set_changed();
+        world.resource_mut::<crate::tv_state::Setup>().set_changed();
         world.resource_mut::<UiScale>().set_changed();
         frames(&mut app, 3);
         assert_eq!(only(&mut app).0, camera);

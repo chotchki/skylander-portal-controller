@@ -46,7 +46,7 @@ use crate::motion::ReducedMotion;
 use crate::pause::LevelOverlay;
 use crate::play::Play;
 use crate::turntable::FrozenYaw;
-use crate::tv::{Current, Redrawn, TvCamera};
+use crate::tv_state::{Current, Redrawn, TvCamera};
 
 /// A walk's or an attack's shot's name: its number, what it shows, where he
 /// stands, the way he faces and the scripts' step when they run.

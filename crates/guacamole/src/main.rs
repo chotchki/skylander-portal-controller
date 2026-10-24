@@ -9,6 +9,7 @@
 
 mod alert;
 mod card_motion;
+mod card_view;
 mod cards;
 mod cli;
 mod driver;
@@ -34,11 +35,14 @@ mod screen;
 mod shots;
 mod starfield;
 mod surfaces;
+#[cfg(test)]
+mod test_support;
 mod theme;
 mod tints;
 mod title;
 mod turntable;
 mod tv;
+mod tv_state;
 mod video;
 mod warm;
 
@@ -67,6 +71,7 @@ use guac_server::logging::WorkerGuard;
 use guac_server::progress::ProgressSink;
 use guac_server::state::{LauncherScreen, LauncherStatus};
 use guac_server::{logging, paths, setup};
+use guacamole::character::{CharacterShadingPlugin, GlowPlugin};
 use tracing::{info, warn};
 
 use crate::cards::PortalFeed;
@@ -77,7 +82,9 @@ use crate::intro_player::OutputLatency;
 use crate::mirror::TvMirror;
 use crate::picker::{DataRoot, Picker};
 use crate::screen::SetupView;
-use crate::tv::{FAREWELL_BEAT, Framing, ServerBridge, ServerLink, Setup, Tv};
+use crate::turntable::TurntablePlugin;
+use crate::tv::{FAREWELL_BEAT, ServerBridge, Tv};
+use crate::tv_state::{Framing, ServerLink, Setup};
 
 fn main() -> Result<()> {
     let command = match cli::parse(std::env::args_os().skip(1)) {
@@ -406,7 +413,24 @@ fn run_tv(
         .insert_resource(latency)
         .add_plugins((
             ServerBridge,
-            Tv,
+            // The TV, composed here (openspec AQ.7): a lane adding a screen
+            // or what draws under one edits this list or its own plugin.
+            (
+                // Before `Tv`'s screens, whose `Titles` needs only what this
+                // registers.
+                title::TitleShader,
+                Tv,
+                // The cards' turntables (AE.13): the character material, the
+                // game's glow and the per-slot scenes.
+                (CharacterShadingPlugin, GlowPlugin, TurntablePlugin),
+                // The level, loaded behind the portal from the Giants pick
+                // (AG.19); the warm compiles its keys.
+                level::LevelPlugin,
+                // The start's pass (AE.25): every pipeline the TV draws
+                // Giants with, before the first screen a phone or the setup
+                // acts on.
+                prepare::PreparePlugin,
+            ),
             input::InputRouter,
             Picker,
             extraction::ExtractPlugin,

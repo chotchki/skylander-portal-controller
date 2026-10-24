@@ -19,11 +19,14 @@
 //! level's camera, as AG.21 left them, the controller message never showed
 //! and a held pose read as a freeze (AG.51).
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use serde::Serialize;
 
+use crate::level::OverLevel;
 use crate::pad::{Face, FacesPrinted, Labels, LevelPads, Pause, Prompt, labels, prompt};
 use crate::theme::{Role, Step, TvTheme};
-use crate::tv::{Pen, Redrawn, TvAssets};
+use crate::tv_state::{Pen, Redrawn, TvAssets, UiTree};
 
 /// Under an intro's overlay (1,000) and the portal's alerts, over everything
 /// else.
@@ -235,6 +238,60 @@ pub(crate) fn hold_time(
     } else if !wait && *held {
         time.unpause();
         *held = false;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OverlayShot {
+    /// `paused` or `controller`.
+    pub kind: String,
+    /// Every line drawn on it, top to bottom.
+    pub texts: Vec<String>,
+    /// The drawn prompt: `A`, `B` ... or `position:south`.
+    pub prompt: Option<String>,
+    /// It draws over the level's camera (AG.50): its camera after the
+    /// level's on one target, cleared to no colour and laid over
+    /// ([`crate::level::draws_over`]); false with no level camera.
+    pub over_level: bool,
+    /// When it was spawned, on the frame log's clock (`/api/_test/tv/frames`).
+    pub shown_ms: Option<f64>,
+}
+
+/// The overlays as the mirror reads them: each one's root, when it was
+/// spawned and the camera its UI draws through.
+pub(crate) type Overlays<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static LevelOverlay,
+        Option<&'static ShownAt>,
+        Option<&'static ComputedUiTargetCamera>,
+    ),
+>;
+
+/// The level's overlay as drawn, its part of `/api/_test/tv` (openspec
+/// AQ.8): its lines, its prompt and whether it draws over the level.
+#[derive(SystemParam)]
+pub(crate) struct OverlayShots<'w, 's> {
+    overlays: Overlays<'w, 's>,
+    glyphs: Query<'w, 's, &'static PromptGlyph>,
+    over_level: OverLevel<'w, 's>,
+    tree: UiTree<'w, 's>,
+}
+
+impl OverlayShots<'_, '_> {
+    pub(crate) fn shot(&self) -> Option<OverlayShot> {
+        self.overlays.iter().next().map(|(root, kind, at, target)| {
+            let found = self.tree.walk(root);
+            OverlayShot {
+                kind: kind.name().to_owned(),
+                texts: found.0,
+                prompt: self.glyphs.iter().next().map(|g| g.0.name()),
+                over_level: self.over_level.over(target),
+                shown_ms: at.map(|a| a.0.as_secs_f64() * 1e3),
+            }
+        })
     }
 }
 

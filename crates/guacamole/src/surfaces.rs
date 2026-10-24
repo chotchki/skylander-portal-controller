@@ -429,19 +429,6 @@ pub(crate) fn css_over(backdrop: Color, color: Color, alpha: f32) -> Color {
     Color::LinearRgba(LinearRgba::new(c.x, c.y, c.z, a))
 }
 
-/// What the TV's sRGB target shows for `color` over `backdrop`: the hardware
-/// blends in linear light, the half of the mismatch [`css_over`] corrects.
-#[cfg(test)]
-pub(crate) fn linear_over(backdrop: Color, color: Color) -> LinearRgba {
-    let (b, c) = (backdrop.to_linear(), color.to_linear());
-    let a = c.alpha;
-    LinearRgba::rgb(
-        b.red + (c.red - b.red) * a,
-        b.green + (c.green - b.green) * a,
-        b.blue + (c.blue - b.blue) * a,
-    )
-}
-
 /// The owner pip in its card's top-right corner (design decision 8: the
 /// phone's bottom-right would sit under player 2's UI), a small bezel as the
 /// phone's `.p4-slot-owner`: a gold ring round a plate in the profile's
@@ -497,6 +484,7 @@ pub(crate) fn pip(theme: &TvTheme, fill: Color) -> impl Bundle + use<> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::surfaces::linear_over;
 
     fn stops(gradient: &Gradient) -> Vec<Color> {
         match gradient {

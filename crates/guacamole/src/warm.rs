@@ -966,7 +966,7 @@ fn draw_static(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::turntable::tests::{app, extract, placed, set, settle, states};
+    use crate::test_support::turntable::{app, extract, placed, set, settle, states};
     use crate::turntable::{CardState, Turntables};
     use guacamole::character::key::Pass;
     use guacamole::character::warm::MeshShape;
@@ -1256,7 +1256,7 @@ mod tests {
     /// with its glow mask, and a waiting turntable queues it to be.
     #[test]
     fn a_carried_key_draws_its_glow_mask_off_a_shelf_and_for_a_turntable() {
-        use crate::turntable::tests::{model, rig};
+        use crate::test_support::turntable::{model, rig};
         // Off the shelf, no card waiting: the list's four keys, a frame each.
         let tmp = tempfile::tempdir().unwrap();
         let mut app = app(extract(tmp.path()));

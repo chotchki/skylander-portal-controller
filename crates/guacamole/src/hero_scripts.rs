@@ -69,6 +69,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::TransformInterpolation;
 use guac_ir::Model;
@@ -1240,14 +1241,47 @@ pub(crate) fn playing_on(world: &ScriptWorld, hero: Handle) -> Vec<(u32, f32, f3
         .collect()
 }
 
+/// The level's loot counts as its scripts hold them (AH.21's running count:
+/// a break drops when its kind's count lands at or under the kind's rate).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct LootShot {
+    pub common: Option<f32>,
+    pub uncommon: Option<f32>,
+    pub rare: Option<f32>,
+}
+
+/// The loot counts' part of `/api/_test/tv` (openspec AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct LootShots<'w> {
+    runtime: Option<Res<'w, ScriptRuntime>>,
+    world: Option<Res<'w, ScriptWorld>>,
+}
+
+impl LootShots<'_> {
+    /// None until the level's loot data is made.
+    pub(crate) fn shot(&self) -> Option<LootShot> {
+        match (self.runtime.as_deref(), self.world.as_deref()) {
+            (Some(rt), Some(w)) => {
+                use guacamole::scripts::{Rarity, loot_index};
+                let shot = LootShot {
+                    common: loot_index(&rt.vm, w, Rarity::Common),
+                    uncommon: loot_index(&rt.vm, w, Rarity::Uncommon),
+                    rare: loot_index(&rt.vm, w, Rarity::Rare),
+                };
+                (shot != LootShot::default()).then_some(shot)
+            }
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use std::collections::HashMap;
-    use std::path::Path;
 
     use guac_formats::script::builder::{
-        self as attack_builder, ATTACK_ARRIVAL_SLOT, ATTACK_BALL, ATTACK_HEALTH, ATTACK_HEALTH_MAX,
-        ATTACK_HELPER, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
+        ATTACK_ARRIVAL_SLOT, ATTACK_BALL, ATTACK_HEALTH, ATTACK_HEALTH_MAX, ATTACK_HELPER,
+        ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
     };
     use guac_motion::parry::ParryWorld;
     use guac_motion::scenarios;
@@ -1256,38 +1290,7 @@ pub(crate) mod tests {
     use guacamole::scripts::{headless_handles, headless_objects};
 
     use super::*;
-
-    pub(crate) const LEVEL: &str = "level_213_tutotial";
-
-    /// AH.24's synthetic script part in an extract at `dir`: the roster
-    /// builder's bootstrap entry, AH.24's attack (global, init_setup and the
-    /// fighter's) and AH.13's creature as the level's, at the paths the TV
-    /// links them from.
-    pub(crate) fn write_attack(dir: &Path) {
-        let (creature, _) = attack_builder::creature();
-        write_parts(dir, &creature);
-    }
-
-    /// AH.27's beside it: AH.24's attack with AH.27's breakable as the
-    /// level's entry, the barrel at `at`; the barrel's object index.
-    pub(crate) fn write_smash(dir: &Path, at: [f32; 3]) -> u32 {
-        let s = attack_builder::smash(at);
-        write_parts(dir, &s.level);
-        s.barrel
-    }
-
-    /// The roster builder's bootstrap entry, AH.24's attack (global,
-    /// init_setup and the fighter's) and `level` as the level's.
-    fn write_parts(dir: &Path, level: &[u8]) {
-        let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
-        let a = attack_builder::attack();
-        let bytes: [&[u8]; 5] = [&d.bootstrap, &a.global, &a.init_setup, &a.fighter, level];
-        for ((rel, _), bytes) in level_scripts::files(LEVEL).iter().zip(bytes) {
-            let path = dir.join(rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, bytes).unwrap();
-        }
-    }
+    use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_attack, write_smash};
 
     /// A headless engine: heroes on the parry twin's open ground.
     struct Bench {
@@ -1506,35 +1509,6 @@ pub(crate) mod tests {
             },
             "the award in his words"
         );
-    }
-
-    /// Giants' rows as AH.2 reads them, the table ours: what lays a
-    /// figure's words out in the synthetic part's tests.
-    pub(crate) fn progression_rows() -> guac_ir::progression::Progression {
-        use guac_ir::progression::{Progression, SaveField, SaveKind, SaveParam};
-        let row = |param: &str, kind, word, bit, width, limit| SaveParam {
-            param: param.into(),
-            kind,
-            fields: vec![SaveField {
-                word,
-                bit,
-                member: None,
-            }],
-            width,
-            bits_per_field: 0,
-            limit,
-        };
-        Progression {
-            identity: crate::turntable::tests::identity(),
-            level_xp: vec![0, 1_000],
-            save_params: vec![
-                row("pp_Exp", SaveKind::Plain, 0, 0, 24, 33_000),
-                row("pp_Money", SaveKind::Plain, 0, 24, 16, 65_535),
-                row("pp_CumulativeTime", SaveKind::Plain, 1, 8, 32, 0),
-                row("pp_Exp", SaveKind::Spillover, 28, 24, 16, 63_500),
-            ],
-            gold_cap: 65_000,
-        }
     }
 
     /// His health kept across a swap, on a joined hero (openspec AH.20;

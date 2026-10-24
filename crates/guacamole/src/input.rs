@@ -20,6 +20,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::InputSystems;
 use bevy::input::gamepad::{
     Gamepad, GamepadButton, gamepad_connection_system, gamepad_event_processing_system,
@@ -30,15 +31,15 @@ use bevy::prelude::*;
 use bevy::ui::{InteractionDisabled, Pressed};
 // Not the prelude's `Button`: that's bevy_ui's deprecated one.
 use bevy::ui_widgets::{Activate, Button};
+use serde::Serialize;
 use tracing::{debug, info};
 
 use crate::hero::{HeroActions, HeroInput};
 use crate::intro::{IntroEvent, IntroQueue};
 use crate::intro_player::{self, IntroOverlay};
-use crate::mirror::TvMirror;
-use crate::pad::{self, HeroPad, LevelPads};
-use crate::pause;
-use crate::tv::Current;
+use crate::pad::{self, FacesPrinted, HeroPad, LevelPads, Pause, labels};
+use crate::pause::{self, OverlayShot, OverlayShots};
+use crate::tv_state::Current;
 
 /// Long enough that a tap is one move; a hold starts repeating after it.
 pub(crate) const REPEAT_DELAY: Duration = Duration::from_millis(400);
@@ -113,7 +114,7 @@ impl TestPress {
 
 /// Presses posted over HTTP, waiting for the router, which takes one a
 /// frame, as a hand would.
-#[derive(Clone, Default)]
+#[derive(Resource, Clone, Default)]
 pub(crate) struct PostedPresses(Arc<Mutex<VecDeque<TestPress>>>);
 
 impl PostedPresses {
@@ -326,7 +327,7 @@ impl Plugin for InputRouter {
         // hides it, the next pad or key input brings it back).
         app.add_message::<TvInput>()
             // The overlays tell the shots when they come and go.
-            .add_message::<crate::tv::Redrawn>()
+            .add_message::<crate::tv_state::Redrawn>()
             .insert_resource(InputFocusVisible(true))
             .init_resource::<LevelPads>()
             // Between a pad's connection and its first axis event, so its
@@ -351,7 +352,7 @@ fn route_input(
     time: Res<Time>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     pads: Query<(Entity, &Gamepad)>,
-    mirror: Option<Res<TvMirror>>,
+    presses: Option<Res<PostedPresses>>,
     mut repeat: Local<NavRepeat>,
     mut queue: Option<ResMut<IntroQueue>>,
     mut visible: Option<ResMut<InputFocusVisible>>,
@@ -364,7 +365,7 @@ fn route_input(
     let level_pads = level.frames(pads.iter());
     let moved = repeat.step(dpad, stick, time.elapsed());
     frame.inputs.extend(moved.map(TvInput::Move));
-    if let Some(press) = mirror.and_then(|m| m.2.pop()) {
+    if let Some(press) = presses.and_then(|p| p.pop()) {
         info!(?press, "tv press posted");
         frame.pressed = true;
         frame.inputs.push(press.input());
@@ -528,25 +529,106 @@ fn act_on_input(
     }
 }
 
-/// What the screen layer heard, for the headless tests.
-#[cfg(test)]
-pub(crate) mod heard {
-    use super::*;
+/// The pads as the router reads them, and the level's layer (AG.20).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct InputShot {
+    /// Who takes the pads: `intro`, `level` or `screen`.
+    pub layer: String,
+    /// Connected, in the order they connected.
+    pub pads: Vec<PadShot>,
+    /// While the level shows and waits: `start` or `controller`.
+    pub pause: Option<String>,
+    /// The waiting level's overlay as drawn.
+    pub overlay: Option<OverlayShot>,
+    /// The walking pad's stick as the hero read it this frame, raw; none
+    /// while no level shows.
+    pub hero_stick: Option<[f32; 2]>,
+    /// The attacks the walking pad holds this frame (AH.24, pad-input's The
+    /// face buttons attack: the first, second, third and a fourth no
+    /// position raises yet); none while no level shows.
+    pub hero_actions: Option<[bool; 4]>,
+}
 
-    #[derive(Resource, Default)]
-    pub(crate) struct Heard(pub(crate) Vec<TvInput>);
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PadShot {
+    pub name: String,
+    pub vendor: Option<u16>,
+    pub product: Option<u16>,
+    /// The resolver's pick: `xbox`, `nintendo` or `position`.
+    pub labels: String,
+    /// The left stick as stored, raw.
+    pub stick: [f32; 2],
+    /// This pad walks the hero.
+    pub walking: bool,
+}
 
-    pub(crate) fn listen(app: &mut App) {
-        app.init_resource::<Heard>().add_systems(Update, record);
+/// The pads in the order they connected, the layer that takes them, and
+/// while the level shows, who walks, why it waits and its overlay as drawn,
+/// over the level's camera or not; and the focused choice. Their part of
+/// `/api/_test/tv` (openspec AQ.8).
+#[derive(SystemParam)]
+pub(crate) struct InputShots<'w, 's> {
+    level: Option<Res<'w, LevelPads>>,
+    gamepads: Query<
+        'w,
+        's,
+        (
+            &'static Gamepad,
+            Option<&'static Name>,
+            Option<&'static FacesPrinted>,
+        ),
+    >,
+    overlay: OverlayShots<'w, 's>,
+    actions: Option<Res<'w, HeroActions>>,
+    focus: Option<Res<'w, InputFocus>>,
+    choices: Query<'w, 's, &'static FocusId>,
+}
+
+impl InputShots<'_, '_> {
+    pub(crate) fn shot(&self, intro_playing: bool) -> InputShot {
+        let Some(level) = self.level.as_ref() else {
+            return InputShot::default();
+        };
+        let seat = level.seat();
+        let pads = level
+            .order()
+            .iter()
+            .filter_map(|e| self.gamepads.get(*e).ok().map(|g| (*e, g)))
+            .map(|(entity, (pad, name, printed))| {
+                let stick = pad.left_stick();
+                PadShot {
+                    name: name.map(|n| n.as_str().to_owned()).unwrap_or_default(),
+                    vendor: pad.vendor_id(),
+                    product: pad.product_id(),
+                    labels: labels(pad, printed).name().to_owned(),
+                    stick: [stick.x, stick.y],
+                    walking: seat.and_then(|s| s.walking()) == Some(entity),
+                }
+            })
+            .collect();
+        InputShot {
+            layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
+            pads,
+            pause: seat.and_then(|s| s.pause()).map(|p| {
+                match p {
+                    Pause::Start { .. } => "start",
+                    Pause::NoPad => "controller",
+                }
+                .to_owned()
+            }),
+            overlay: self.overlay.shot(),
+            hero_stick: seat.map(|s| [s.last().stick.x, s.last().stick.y]),
+            hero_actions: seat.and(self.actions.as_ref().map(|a| a.held)),
+        }
     }
 
-    fn record(mut inputs: MessageReader<TvInput>, mut heard: ResMut<Heard>) {
-        heard.0.extend(inputs.read().copied());
-    }
-
-    /// Everything heard since the last call.
-    pub(crate) fn take(app: &mut App) -> Vec<TvInput> {
-        std::mem::take(&mut app.world_mut().resource_mut::<Heard>().0)
+    /// The focused choice's id.
+    pub(crate) fn focus(&self) -> Option<String> {
+        self.focus
+            .as_ref()
+            .and_then(|f| f.get())
+            .and_then(|e| self.choices.get(e).ok())
+            .map(|id| id.0.to_string())
     }
 }
 
