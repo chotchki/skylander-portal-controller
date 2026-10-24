@@ -4360,9 +4360,18 @@ pub(crate) mod layout_tests {
                     );
                 }
             }
-            // Drawn at the plate's own pixels, so the UI never scales it.
+            // Drawn at the largest plate's pixels, so the UI never scales an
+            // image up; the plates lay out a pixel apart at most by where
+            // they sit.
             let size = app.world().resource::<crate::turntable::PlateSize>().0;
-            assert_eq!(size.x as f32, plates[0].1.width().ceil(), "{w}x{h}");
+            let sides = plates.iter().flat_map(|(_, r, _)| [r.width(), r.height()]);
+            let largest = sides.clone().fold(0.0, f32::max);
+            assert_eq!(size.x as f32, largest.ceil(), "{w}x{h}");
+            assert!(
+                sides.clone().all(|s| size.x as f32 - s <= 1.0),
+                "{w}x{h}: {size} for {:?}",
+                sides.collect::<Vec<_>>()
+            );
             let assets = app.world().resource::<Assets<Image>>();
             for id in &images {
                 assert_eq!(assets.get(*id).unwrap().size(), size);

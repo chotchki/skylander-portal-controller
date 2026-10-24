@@ -800,16 +800,22 @@ pub(crate) struct CardPlate {
     pub(crate) portrait: Option<Handle<Image>>,
 }
 
-/// The plates' size in pixels, from whichever is laid out.
+/// The plates' size in pixels: the largest laid-out plate's, so no card
+/// draws its image scaled up. Plates of one size lay out a pixel apart by
+/// where they sit (85.33 px at 720p rounds to 85 or 86), so the first the
+/// query yields, which follows the order the cards' models came up in,
+/// isn't one size every run.
 fn follow_plates(plates: Query<&ComputedNode, With<CardPlate>>, mut size: ResMut<PlateSize>) {
     let Some(laid) = plates
         .iter()
         .map(|n| n.size().ceil().as_uvec2())
-        .find(|s| s.x > 0 && s.y > 0)
+        .filter(|s| s.x > 0 && s.y > 0)
+        .map(|s| s.x.max(s.y))
+        .max()
     else {
         return;
     };
-    let square = UVec2::splat(laid.x.max(laid.y));
+    let square = UVec2::splat(laid);
     if size.0 != square {
         size.0 = square;
     }
@@ -1842,6 +1848,35 @@ pub(crate) mod tests {
                 app.update();
             }
             assert_eq!(footprint(&mut app), before, "round {round}: cleared");
+        }
+    }
+
+    /// The images take the largest plate's size whichever plate the query
+    /// yields first: two plates of one size laid out a pixel apart, in
+    /// both orders.
+    #[test]
+    fn the_plate_size_is_the_largest_plates_in_either_order() {
+        for heights in [[85.0, 86.0], [86.0, 85.0]] {
+            let mut world = World::new();
+            world.init_resource::<PlateSize>();
+            for (slot, height) in heights.into_iter().enumerate() {
+                world.spawn((
+                    CardPlate {
+                        slot: slot as u8,
+                        portrait: None,
+                    },
+                    ComputedNode {
+                        size: Vec2::new(85.0, height),
+                        ..default()
+                    },
+                ));
+            }
+            world.run_system_cached(follow_plates).unwrap();
+            assert_eq!(
+                world.resource::<PlateSize>().0,
+                UVec2::splat(86),
+                "{heights:?}"
+            );
         }
     }
 }
