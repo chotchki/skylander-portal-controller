@@ -459,7 +459,8 @@ mod tests {
         app.world().resource::<Prepare>().preparing()
     }
 
-    /// Headless, nothing to compile: done before the first frame.
+    /// Headless, nothing to compile: done before the first frame, and the
+    /// warm holds the shelf's list alone, none of the census.
     #[test]
     fn without_a_renderer_there_is_nothing_to_prepare() {
         let tmp = tempfile::tempdir().unwrap();
@@ -467,8 +468,20 @@ mod tests {
         app.add_plugins(PreparePlugin);
         assert!(!compiling(&app));
         app.update();
-        assert_eq!(app.world().resource::<Prepare>().report().state, "done");
-        assert_eq!(app.world().resource::<Warm>().report().keys, 0);
+        let report = app.world().resource::<Prepare>().report().clone();
+        assert_eq!(
+            (report.state.as_str(), report.keys, report.frames),
+            ("done", 0, 0)
+        );
+        // The list is read on a task, so it lands in the first frame when
+        // the task beats the frame (under load) and in a later one when not.
+        let until = Instant::now() + Duration::from_secs(5);
+        while app.world().resource::<Warm>().listed().is_empty() {
+            assert!(Instant::now() < until, "the list never read");
+            app.update();
+        }
+        let warm = app.world().resource::<Warm>();
+        assert_eq!(warm.report().keys, warm.listed().len());
     }
 
     /// With a renderer stood in (AE.14's way): the census goes on the
