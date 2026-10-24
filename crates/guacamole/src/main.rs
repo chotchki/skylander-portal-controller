@@ -35,6 +35,7 @@ mod screen;
 mod shots;
 mod starfield;
 mod surfaces;
+mod swap;
 #[cfg(test)]
 mod test_support;
 mod theme;

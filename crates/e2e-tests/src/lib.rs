@@ -143,12 +143,18 @@ impl TestServer {
     }
 
     /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level
-    /// (openspec AG.21), no intros.
+    /// (openspec AG.21), no intros. Its part can't join his scripts (the
+    /// roster builder's `global.bld` holds no portal manager), so he walks
+    /// on AG.16's controller, the walk its tests judge: the server's reads
+    /// expect that `off` and no other ([`WALKING_SCRIPTS_OFF`], openspec
+    /// AH.106).
     pub fn spawn_guacamole_walking() -> Result<Self> {
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let fixture = IntroFixture::build_walking_in(&tmp.path().join("giants"), &[])?;
         let (dumps, env) = (fixture.dumps.clone(), fixture.env());
-        Self::spawn_guacamole_over(tmp, &dumps, &env)
+        let server = Self::spawn_guacamole_over(tmp, &dumps, &env)?;
+        expect_hero_scripts_off(&server.url, WALKING_SCRIPTS_OFF);
+        Ok(server)
     }
 
     /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level and
@@ -2462,7 +2468,8 @@ pub async fn pad_tv(base: &str, body: serde_json::Value) -> Result<()> {
 }
 
 /// guacamole's `/api/_test/tv`: what its TV shows (`TvSnapshot` in
-/// `crates/guacamole/src/mirror.rs`).
+/// `crates/guacamole/src/mirror.rs`). A read whose hero's scripts went off
+/// fails the test unless it said it expects that ([`hero_scripts_held`]).
 pub async fn tv(base: &str) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv"))
@@ -2471,7 +2478,58 @@ pub async fn tv(base: &str) -> Result<serde_json::Value> {
     if !resp.status().is_success() {
         bail!("/api/_test/tv returned {}", resp.status());
     }
-    Ok(resp.json().await?)
+    let snap: serde_json::Value = resp.json().await?;
+    hero_scripts_held(&snap, hero_scripts_off_because(base).as_deref())?;
+    Ok(snap)
+}
+
+/// What a walking fixture's hero's scripts go off for (openspec AH.106,
+/// [`TestServer::spawn_guacamole_walking`]): his join finds no portal
+/// manager in its part.
+pub const WALKING_SCRIPTS_OFF: &str = "no Spyro_PortalManager placement";
+
+/// The TVs whose test expects its hero's scripts to go off, by base URL,
+/// each with what its reason says (openspec AH.106): the walking fixture's
+/// ([`TestServer::spawn_guacamole_walking`]).
+static EXPECTS_OFF: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Says the test reading the TV at `base` expects its hero's scripts to go
+/// off, for a reason holding `because` (a fixture whose part can't join
+/// him, a script stopped on purpose): [`tv`]'s reads there let that `off`
+/// through from then on, and no other.
+pub fn expect_hero_scripts_off(base: &str, because: &str) {
+    let mut bases = EXPECTS_OFF.lock().unwrap_or_else(|e| e.into_inner());
+    bases.retain(|(b, _)| b != base);
+    bases.push((base.to_owned(), because.to_owned()));
+}
+
+fn hero_scripts_off_because(base: &str) -> Option<String> {
+    EXPECTS_OFF
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(b, _)| b == base)
+        .map(|(_, because)| because.clone())
+}
+
+/// A TV snapshot's hero held to his scripts (openspec AH.106): a hero whose
+/// scripts went `off` (his file missing from the part, a join that failed,
+/// his script stopped in play) walks on AG.16's controller with his attack
+/// buttons doing nothing, so every walking check still passes. Read so, it's
+/// an error carrying the TV's reason, unless the test expects an `off` whose
+/// reason holds `expected` (stand-in ledger: `walker`).
+pub fn hero_scripts_held(snap: &serde_json::Value, expected: Option<&str>) -> Result<()> {
+    let hero = &snap["hero"];
+    if hero["scripts"] != "off" {
+        return Ok(());
+    }
+    let reason = hero["scripts_reason"].as_str().unwrap_or("no reason given");
+    match expected {
+        Some(because) if reason.contains(because) => Ok(()),
+        _ => bail!(
+            "the hero's scripts went off ({reason}): he walks without them; a test expecting that says so (expect_hero_scripts_off)"
+        ),
+    }
 }
 
 /// Polls the TV every 25 ms until `pred` holds; the snapshot and when it
@@ -2938,6 +2996,69 @@ impl Phone {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod hero_scripts_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// AH.106's check: a read whose hero's scripts went off mid-run fails
+    /// the test with the TV's reason; one that says it expects that off
+    /// passes, an off for another reason still failing; a hero whose
+    /// scripts run or join and a TV with no hero pass.
+    #[test]
+    fn a_hero_whose_scripts_go_off_fails_the_read_unless_expected() {
+        let reason = "his script stopped: 009_Eruptor at 412: unmodelled member x.y";
+        let off = json!({"hero": {"scripts": "off", "scripts_reason": reason}});
+        let e = hero_scripts_held(&off, None).unwrap_err().to_string();
+        assert!(e.contains(reason), "{e}");
+        assert!(hero_scripts_held(&off, Some("his script stopped")).is_ok());
+        let e = hero_scripts_held(&off, Some(WALKING_SCRIPTS_OFF)).unwrap_err();
+        assert!(e.to_string().contains(reason), "another reason: {e}");
+        for held in ["joined", "asked", "requested"] {
+            let snap = json!({"hero": {"scripts": held}});
+            assert!(hero_scripts_held(&snap, None).is_ok(), "{held}");
+        }
+        assert!(hero_scripts_held(&json!({"hero": null}), None).is_ok());
+        assert!(hero_scripts_held(&json!({"mode": "portal"}), None).is_ok());
+    }
+
+    /// The read itself (`tv`): against a TV whose hero joins and then goes
+    /// off, the first read passes and the later one fails with the reason,
+    /// unless the test said it expects it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_read_after_his_scripts_go_off_fails_the_test() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let reason = "his minion didn't activate: no minion";
+        let bodies = [
+            json!({"mode": "level", "hero": {"scripts": "joined"}}),
+            json!({"mode": "level", "hero": {"scripts": "off", "scripts_reason": reason}}),
+            json!({"mode": "level", "hero": {"scripts": "off", "scripts_reason": reason}}),
+        ];
+        let served = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        assert_eq!(tv(&base).await.unwrap()["hero"]["scripts"], "joined");
+        let e = tv(&base).await.unwrap_err().to_string();
+        assert!(e.contains(reason), "{e}");
+        expect_hero_scripts_off(&base, "didn't activate");
+        assert_eq!(tv(&base).await.unwrap()["hero"]["scripts"], "off");
+        served.join().unwrap();
     }
 }
 

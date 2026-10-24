@@ -766,6 +766,54 @@ fn the_synthetic_breakable_reads_back() {
     assert!(ops[fly + 1].contains("UseMacro"), "{ops:?}");
 }
 
+/// AH.105's synthetic level reads back: the creature a running placement
+/// with no range where it was put, running its script with its two
+/// behaviours; the rock a template running its own, its solid a sphere
+/// that touches the level alone; and the synthetic global's activation
+/// macro branching on a reference (no minion: the deactivate path's call).
+#[test]
+fn the_synthetic_swap_level_reads_back() {
+    use super::builder::{SWAP_CREATURE, SWAP_ROCK, attack, swap};
+    use crate::level::Placements;
+    let level = swap([1.0, 2.0, 3.0]);
+    let igz = Igz::parse(&level).unwrap();
+    let p = Placements::read(&igz).unwrap();
+    let creature = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SWAP_CREATURE))
+        .unwrap();
+    let placed = creature.placement();
+    assert_eq!(placed.placement.activity_state, 4);
+    assert_eq!(placed.placement.init_matrix.position, [1.0, 2.0, 3.0]);
+    assert_eq!(placed.activation_range, 0.0, "no range: awake");
+    assert!(creature.script.unwrap().ends_with("Synthetic_Creature.ai"));
+    let rock = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(SWAP_ROCK))
+        .unwrap();
+    assert_eq!(rock.placement().placement.activity_state, 5, "a template");
+    assert!(rock.script.unwrap().ends_with("Synthetic_Rock.ai"));
+    assert_eq!(rock.collision.unwrap().properties, 0x13);
+    let graph = Graph::read(&igz).unwrap();
+    let script = graph
+        .scripts
+        .iter()
+        .find(|s| s.name.is_some_and(|n| n.ends_with("Synthetic_Creature.ai")))
+        .unwrap();
+    let ops = positions(&graph, script);
+    for behaviour in ["idle", "battle"] {
+        assert!(ops.iter().any(|o| o.contains(behaviour)), "{ops:?}");
+    }
+    assert!(ops.iter().any(|o| o.contains("Spawn")), "{ops:?}");
+    let global = attack().global;
+    let igz = Igz::parse(&global).unwrap();
+    let graph = Graph::read(&igz).unwrap();
+    let ops = positions(&graph, &graph.scripts[0]);
+    assert!(ops.iter().any(|o| o.contains("CheckReference")), "{ops:?}");
+}
+
 /// A placement's tags (openspec AH.18): its `_tagList` a `TagList` whose
 /// `_initialTags` hold each `OpParameter`, read back field for field, the
 /// list's own elements empty as level files hold them.

@@ -715,7 +715,16 @@ impl Vm {
         });
         let id = (self.placements.len() - 1) as PlacementId;
         self.order.push(id);
-        self.handles.entry(handle).or_insert(id);
+        // A handle names its live placement: one added again under a handle
+        // whose placement was taken off (a character's file joining again
+        // after his swap took it off, openspec AH.105) takes it over; a live
+        // one keeps it.
+        match self.handles.get(&handle) {
+            Some(&old) if !self.placements[old as usize].removed => {}
+            _ => {
+                self.handles.insert(handle, id);
+            }
+        }
         // Variables `find variable` made on it before it ran become its
         // locals.
         let key = recv(Value::Entity(handle));

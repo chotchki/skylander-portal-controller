@@ -670,22 +670,6 @@ impl ScriptWorld {
         self.objects.get(&obj).is_some_and(|&h| self.removed(h))
     }
 
-    /// Takes the file placement `obj` off and puts it to sleep: a placement
-    /// a run carries over as taken off from before its install (openspec
-    /// AH.27, [`LevelState`]). Asleep it has no ground, so the destructibles
-    /// system shuts it down as it does a breakable out of range, never
-    /// making it a target again. False for none.
-    pub fn put_away(&mut self, obj: Obj) -> bool {
-        match self.objects.get(&obj).and_then(|h| self.actors.get_mut(h)) {
-            Some(a) => {
-                a.removed = true;
-                a.active = false;
-                true
-            }
-            None => false,
-        }
-    }
-
     /// The lights the scripts have lit (openspec AH.65), in handle order:
     /// each clone of a placed light not taken off, where it hangs (its place
     /// as the point-light manager last hung it, raised by its lift, metres)
@@ -1288,6 +1272,14 @@ pub fn join_request(
         .collect();
     let mut added = Vec::new();
     for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+        // His file loaded again after a swap took it off (openspec AH.105,
+        // [`join_deactivate`]): each placement as the file has it, as a
+        // stream loaded anew makes it.
+        if let Some(&h) = handles.get(&p.obj)
+            && host.world.actors.get(&h).is_some_and(|a| a.removed)
+        {
+            host.world.actors.insert(h, actor_of(p));
+        }
         let (Some(script), RUNNING) = (&p.script, p.activity_state) else {
             continue;
         };
@@ -1366,39 +1358,113 @@ pub fn join_activate(
     minion_placement.ok_or_else(|| outside("the activation spawned no minion".to_owned()))
 }
 
-/// A figure's health kept across a swap within a level (openspec AH.20;
-/// stand-in ledger: `kept-health`; combat: A hero's health): in the
-/// original the portal manager keeps each figure's health in its stored
-/// data while the level lasts, keyed by the tag, and clears it at a level
-/// change. guacamole keys it by the figure's instance
-/// (its placing profile and figure, what its tag's serial stands for). The
-/// hero taken off mid-level leaves his health here ([`KeptHealth::left`]);
-/// put back in the same level, his join sets it ([`set_health`]) from
-/// [`KeptHealth::back`]; a level change clears it. On the TV (openspec
-/// AH.62) the portal's take-off calls `left`, the join `back` (set once
-/// his first tick is through), leaving the level `level_changed` and a
-/// level's scripts start it empty; the take-off's own reinstall of the run
-/// leaves it alone.
-#[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct KeptHealth {
-    kept: HashMap<String, i32>,
+/// What a hero's deactivation took off ([`join_deactivate`]), by handle,
+/// each sorted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Deactivated {
+    /// Whether his minion ran, and the deactivation's macro ran for it.
+    pub minion: bool,
+    /// His file's placements that were on.
+    pub placements: Vec<Handle>,
+    /// The clones of his file's templates that were on: his minion, his
+    /// helpers, what his attacks threw and left.
+    pub clones: Vec<Handle>,
 }
 
-impl KeptHealth {
-    /// `figure` taken off mid-level with `health` left.
-    pub fn left(&mut self, figure: &str, health: i32) {
-        self.kept.insert(figure.to_owned(), health);
+/// The deactivate path (openspec AH.105; stand-in ledger: `join`): the
+/// hero's figure off the portal mid-level, the level's scripts running on.
+/// The original's in-game portal check marks his character stream unloaded,
+/// then `Portal - Exit Object` calls `Game - Activate/Deactivate Minion`
+/// with no minion: his minion out of the minion, target, pause and combat
+/// sets, the projectiles his creature owns removed (`Remove Projectile`),
+/// his hat, low-health actor and camera target removed, his shutdown macros
+/// run, his controller inactive, his minion faded out over 0.06 s and
+/// removed, the enemies where he stood alerted (`Vanish Alert`). That macro
+/// runs here as `Portal - Exit Object` calls it (unless his minion never
+/// activated); then, natively, the exit's links undone
+/// ([`crate::figure::exit`]) and the stream's unloading: every placement of
+/// unit `unit` and every clone of its templates, `hero` among them, taken
+/// off the world and the VM, his minion no longer the activator, his
+/// sequences stopped. Not waited for: the fade (it ignores the pause the TV
+/// holds the level in). Not run: the stream's bookkeeping, the exit beam
+/// and its pause (AG.29 holds the level), and the marker actor it leaves
+/// where he stood (AG.81 stands the next one there).
+pub fn join_deactivate(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    files: &Files,
+    unit: u16,
+    hero: Handle,
+) -> Result<Deactivated, Halt> {
+    let minion = vm.placement_of(hero).is_some_and(|m| !vm.removed(m));
+    if minion {
+        let pm = portal_manager(vm, host.world)?;
+        let loaded = slot_zero(vm)?;
+        let info = vm.field(loaded, "object info").unwrap_or(Value::Null);
+        let desc = vm
+            .field(info, "minion additional info")
+            .unwrap_or(Value::Null);
+        let player = Value::Entity(host.world.controllers[0]);
+        vm.call_with(
+            Some(pm),
+            "Game - Activate/Deactivate Minion",
+            &[
+                ("minion", Value::Null),
+                ("player", player),
+                ("keep minion ref in player set", Value::Int(1)),
+                ("input minion data", desc),
+                ("restore hp", Value::Int(0)),
+                ("in level transition", Value::Int(0)),
+            ],
+            &[],
+            host,
+        )?;
     }
-
-    /// The health `figure` comes back in with, if it left this level.
-    pub fn back(&self, figure: &str) -> Option<i32> {
-        self.kept.get(figure).copied()
+    crate::figure::exit(vm, host.world)?;
+    let world = &mut *host.world;
+    let mut placements = Vec::new();
+    for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+        let Some(&h) = world.objects.get(&p.obj) else {
+            continue;
+        };
+        if let Some(a) = world.actors.get_mut(&h)
+            && !a.removed
+        {
+            a.removed = true;
+            placements.push(h);
+        }
+        vm.remove(h);
     }
-
-    /// A level change: every figure comes in full again.
-    pub fn level_changed(&mut self) {
-        self.kept.clear();
+    let mut clones: Vec<Handle> = world
+        .actors
+        .iter()
+        .filter(|(_, a)| a.obj.is_none() && !a.removed)
+        .filter(|(_, a)| a.template.is_some_and(|t| t.unit == unit))
+        .map(|(h, _)| *h)
+        .collect();
+    clones.sort_unstable();
+    // His minion no longer the activator: the next one's is.
+    vm.set_activator(hero, false);
+    for &h in &clones {
+        if let Some(a) = world.actors.get_mut(&h) {
+            a.removed = true;
+        }
+        vm.remove(h);
     }
+    vm.remove(hero);
+    let gone: std::collections::HashSet<Handle> =
+        clones.iter().chain(&placements).copied().collect();
+    for s in &mut world.sequences {
+        if gone.contains(&s.actor) || s.actor == hero {
+            s.stopped = true;
+        }
+    }
+    placements.sort_unstable();
+    Ok(Deactivated {
+        minion,
+        placements,
+        clones,
+    })
 }
 
 /// The hero's health as his scripts hold it: his minion's
@@ -1409,9 +1475,9 @@ pub fn health(vm: &Vm, minion: PlacementId) -> Option<i32> {
     vm.field(c, "hp").map(|v| vm.value(v))?.as_i32()
 }
 
-/// The hero's health set where his scripts hold it, as a swap puts back
-/// what he left with (stand-in ledger: `kept-health`). False when he has no
-/// health to set.
+/// The hero's health set where his scripts hold it, as a bite would leave
+/// it: a recorded state's (a test's, AH.62's test hook doing a bite's
+/// work). False when he has no health to set.
 pub fn set_health(vm: &mut Vm, minion: PlacementId, health: i32) -> bool {
     let Some(d) = vm.local(minion, "description").map(|v| vm.value(v)) else {
         return false;
@@ -1466,84 +1532,6 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
     match loot_count(vm, world, rarity) {
         Some(count) => vm.set_field(count, "DropRateIndex", Value::Float(index)),
         None => false,
-    }
-}
-
-/// What a run installed again carries over when the level goes on under it
-/// (openspec AH.27): the hero's take-off installs the TV's run again (until
-/// AH.105's deactivate path; stand-in ledger: `swap`), and this keeps the
-/// level as he left it: its placements play took off (each breakable
-/// broken, each spinning coin taken: [`LevelState::since`] the join, not the
-/// setups that take themselves off at the level's start, which the fresh run
-/// runs again) stay off, and each kind's loot count stays where it stood
-/// rather than drawn anew. Not carried: the clones in flight (a coin not yet
-/// paid, debris), which the original's swap leaves to land.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct LevelState {
-    /// The level's placements taken off, in object order.
-    pub taken_off: Vec<Obj>,
-    /// Each kind's count where the loot data held it.
-    pub loot: Vec<(Rarity, f32)>,
-}
-
-impl LevelState {
-    /// The run's state: unit `level`'s placements its scripts took off and
-    /// each kind's count.
-    pub fn read(vm: &Vm, world: &ScriptWorld, level: u16) -> Self {
-        let mut taken_off: Vec<Obj> = world
-            .objects
-            .iter()
-            .filter(|(o, h)| o.unit == level && world.removed(**h))
-            .map(|(o, _)| *o)
-            .collect();
-        taken_off.sort_unstable_by_key(|o| o.index);
-        let loot = [Rarity::Common, Rarity::Uncommon, Rarity::Rare]
-            .into_iter()
-            .filter_map(|r| loot_index(vm, world, r).map(|i| (r, i)))
-            .collect();
-        Self { taken_off, loot }
-    }
-
-    /// What was taken off since `start` (what [`LevelState::read`] found
-    /// taken off then: the level's start's own, the setups taking
-    /// themselves off), the counts as they stand.
-    pub fn since(&self, start: &[Obj]) -> Self {
-        Self {
-            taken_off: self
-                .taken_off
-                .iter()
-                .filter(|o| !start.contains(o))
-                .copied()
-                .collect(),
-            loot: self.loot.clone(),
-        }
-    }
-
-    /// Into a fresh run before its first step: each placement taken off
-    /// again, in the world and in the VM, and put to sleep
-    /// ([`ScriptWorld::put_away`]).
-    pub fn put_back(&self, vm: &mut Vm, world: &mut ScriptWorld) {
-        for &o in &self.taken_off {
-            world.put_away(o);
-            if let Some(&h) = world.objects.get(&o) {
-                vm.remove(h);
-            }
-        }
-    }
-
-    /// Each count set back where it stood, once the fresh run's loot data
-    /// is made (the loot system's first tick): true once done, or with no
-    /// count to set.
-    pub fn set_loot(&self, vm: &mut Vm, world: &ScriptWorld) -> bool {
-        if self.loot.is_empty() {
-            return true;
-        }
-        if loot_count(vm, world, Rarity::Common).is_none() {
-            return false;
-        }
-        self.loot
-            .iter()
-            .all(|&(r, i)| set_loot_index(vm, world, r, i))
     }
 }
 
@@ -1847,25 +1835,6 @@ mod tests {
 
     use super::*;
     use crate::script_engine::Pad;
-
-    /// Health kept across a swap (stand-in ledger: `kept-health`): a figure
-    /// taken off mid-level comes back with what it left with, another figure
-    /// with nothing kept, the latest leaving winning; a level change clears
-    /// every figure's.
-    #[test]
-    fn health_is_kept_across_a_swap_and_cleared_at_a_level_change() {
-        let mut kept = KeptHealth::default();
-        assert_eq!(kept.back("eruptor"), None, "never left: full");
-        kept.left("eruptor", 200);
-        kept.left("tree rex", 430);
-        assert_eq!(kept.back("eruptor"), Some(200));
-        kept.left("eruptor", 150);
-        assert_eq!(kept.back("eruptor"), Some(150), "the latest leaving");
-        assert_eq!(kept.back("bash"), None);
-        kept.level_changed();
-        assert_eq!(kept.back("eruptor"), None, "the next level: full");
-        assert_eq!(kept.back("tree rex"), None);
-    }
 
     const GRUNT: Obj = Obj { unit: 4, index: 7 };
     const SPRITE: Obj = Obj { unit: 4, index: 9 };
@@ -2392,10 +2361,10 @@ mod tests {
 
     /// The TV's activity rule from the points it's given (openspec AH.27):
     /// none, every ranged placement asleep; the level's start before a hero
-    /// is in, as from a hero standing there; a placement put away (carried
-    /// over as taken off) never woken again, asleep.
+    /// is in, as from a hero standing there; a placement taken off (a
+    /// breakable broken) left out of it for good.
     #[test]
-    fn the_activity_rule_from_given_points_and_a_placement_put_away() {
+    fn the_activity_rule_from_given_points_and_a_placement_taken_off() {
         let (mut w, grunt, _) = world();
         let g = w.actors.get_mut(&grunt).unwrap();
         (g.range, g.buffer, g.managed) = (30.0, 1.0, true);
@@ -2405,14 +2374,10 @@ mod tests {
         let mut hero = him(start);
         assert_eq!(w.activity(&mut hero), w.activity_at(&[start]));
         let obj = *w.objects.iter().find(|(_, h)| **h == grunt).unwrap().0;
-        assert!(w.put_away(obj));
+        assert!(w.take_off(obj));
         assert!(w.taken_off(obj));
-        assert!(w.activity_at(&[start]).is_empty(), "never woken");
-        assert!(
-            !w.actors[&grunt].active,
-            "asleep: no ground, as AH.21's sleeping breakable"
-        );
-        assert!(!w.put_away(Obj { unit: 9, index: 9 }));
+        assert!(w.activity_at(&[start]).is_empty(), "left out for good");
+        assert!(!w.take_off(Obj { unit: 9, index: 9 }));
     }
 
     /// Setup_001's 7 ft rule from a recorded state (AH.8's anchor B and the

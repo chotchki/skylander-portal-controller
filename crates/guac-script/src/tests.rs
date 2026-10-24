@@ -1145,6 +1145,57 @@ fn an_embedders_remove_stops_a_placements_script_for_good() {
     assert!(!vm.removed(other));
 }
 
+/// A placement added again under a handle whose placement was taken off
+/// (openspec AH.105: a character's file joining the run again after his
+/// swap took it off) runs under it from its first tick: it ticks from its
+/// own start, the handle names it (asleep, an activator, removed again),
+/// and the one taken off stays off; one added under a live placement's
+/// handle leaves the handle naming the first.
+#[test]
+fn a_placement_added_again_under_a_handle_taken_off_runs_under_it() {
+    let p = program(|w| {
+        let count = var(w, "count");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[El::Local(count)]);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let first = vm.add(1, "009_Eruptor_Def", 0);
+    vm.step(&mut Bare).unwrap();
+    vm.step(&mut Bare).unwrap();
+    assert!(vm.remove(1));
+    let again = vm.add(1, "009_Eruptor_Def", 0);
+    assert_ne!(again, first);
+    assert_eq!(vm.placement_of(1), Some(again));
+    vm.step(&mut Bare).unwrap();
+    assert_eq!(
+        vm.local(again, "count"),
+        Some(Value::Int(1)),
+        "from its start"
+    );
+    assert_eq!(
+        vm.local(first, "count"),
+        Some(Value::Int(2)),
+        "off for good"
+    );
+    assert!(vm.set_activator(1, true));
+    assert!(vm.is_activator(again) && !vm.is_activator(first));
+    assert!(vm.set_asleep(1, true));
+    vm.step(&mut Bare).unwrap();
+    assert_eq!(vm.local(again, "count"), Some(Value::Int(1)), "asleep");
+    assert!(vm.remove(1));
+    assert!(vm.removed(again));
+    // Under a live placement's handle the first keeps it.
+    let live = vm.add(2, "Coin_spinning(1)", 0);
+    let twin = vm.add(2, "Coin_spinning(1)", 0);
+    assert_eq!(vm.placement_of(2), Some(live));
+    assert_ne!(twin, live);
+}
+
 #[test]
 fn a_scripts_rolls_draw_from_the_generator_in_the_order_written() {
     // bite = 11 + random(3), then frac = random(0.5), each tick: one number

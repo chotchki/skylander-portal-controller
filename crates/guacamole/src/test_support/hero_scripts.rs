@@ -1,5 +1,6 @@
-//! AH.24's and AH.27's synthetic script parts and Giants' progression rows,
-//! from hero_scripts' tests; play's tests stand on them too.
+//! AH.24's, AH.27's and AH.105's synthetic script parts and Giants'
+//! progression rows, from hero_scripts' tests; play's and swap's tests stand
+//! on them too.
 
 use std::path::Path;
 
@@ -24,6 +25,12 @@ pub(crate) fn write_smash(dir: &Path, at: [f32; 3]) -> u32 {
     let s = attack_builder::smash(at);
     write_parts(dir, &s.level);
     s.barrel
+}
+
+/// AH.105's beside it: AH.24's attack with AH.105's creature and its rock
+/// as the level's entry, the creature at `at`.
+pub(crate) fn write_swap(dir: &Path, at: [f32; 3]) {
+    write_parts(dir, &attack_builder::swap(at));
 }
 
 /// The roster builder's bootstrap entry, AH.24's attack (global,

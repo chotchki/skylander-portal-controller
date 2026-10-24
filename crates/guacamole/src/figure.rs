@@ -316,6 +316,36 @@ pub fn enter(vm: &mut Vm, world: &ScriptWorld) -> Result<bool, Halt> {
     Ok(true)
 }
 
+/// `Portal - Exit Object`'s links for the first player's slot as its figure
+/// comes off mid-level (openspec AH.105, the deactivate path), the rest of
+/// that macro not run: the slot's `entered` 0, the first player's `loaded
+/// data` none where it was the slot (as the portal control's in-game check
+/// clears it), the slot's `tag` pair 0 and its object info none (the next
+/// figure's definition makes its own). Each where the program has its
+/// place.
+pub fn exit(vm: &mut Vm, world: &ScriptWorld) -> Result<(), Halt> {
+    let loaded = slot_zero(vm)?;
+    vm.set_field(loaded, "entered", Value::Int(0));
+    let pm = portal_manager(vm, world)?;
+    let players: Vec<Value> = vm
+        .local(pm, "player data")
+        .and_then(|s| vm.set(s))
+        .map(<[Value]>::to_vec)
+        .unwrap_or_default();
+    for player in players {
+        let player = vm.value(player);
+        if vm.field(player, "loaded data").map(|v| vm.value(v)) == Some(vm.value(loaded)) {
+            vm.set_reference(player, "loaded data", Value::Null);
+        }
+    }
+    if let Some(pair) = vm.field(loaded, "tag") {
+        vm.set_field(pair, "rfid", Value::Int(0));
+        vm.set_field(pair, "prodid", Value::Int(0));
+    }
+    vm.set_reference(loaded, "object info", Value::Null);
+    Ok(())
+}
+
 /// The values in the tag data [`put_on_portal`] made, through `layout`;
 /// `None` when its save area no longer holds the layout's words.
 pub fn read(vm: &Vm, layout: &Layout, data: Value) -> Option<Values> {

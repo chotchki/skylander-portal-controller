@@ -400,17 +400,35 @@ impl Run {
     /// `values` (AH.23), the request now, the activation after the
     /// definition's first tick.
     pub fn join_with(&mut self, values: Values) -> Result<(), Halt> {
+        self.join_tag(eruptor_tag(values))
+    }
+
+    /// [`Run::join_with`] with the figure's tag given: a toy's own serial
+    /// (openspec AH.105: the portal manager keeps a figure's stored data by
+    /// its tag).
+    pub fn join_tag(&mut self, tag: Tag) -> Result<(), Halt> {
         let files = self.files.clone();
         let handles = self.handles.clone();
         let layout = self.layout.clone();
-        let data = self
-            .with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &eruptor_tag(values)))?;
+        let data = self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
         self.figure = Some(data);
         self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
         self.step()?;
         let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
         self.minion = Some(minion);
         Ok(())
+    }
+
+    /// His figure off the portal mid-level (openspec AH.105): the
+    /// deactivate path, the run going on; [`Run::join_with`] puts the next
+    /// one on.
+    pub fn deactivate(&mut self) -> Result<scripts::Deactivated, Halt> {
+        let files = self.files.clone();
+        let gone =
+            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, ERUPTOR, HERO))?;
+        self.minion = None;
+        self.figure = None;
+        Ok(gone)
     }
 
     /// The hero set down at `at` (dropped onto what's under it) facing

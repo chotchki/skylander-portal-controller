@@ -454,6 +454,12 @@ struct Script {
     /// stride, from F0 + 85 to [`PINNED_TO`], his idle at the oracle's time
     /// at the release.
     pinned: Option<&'static str>,
+    /// His figure taken off the portal at each of these steps and an
+    /// Eruptor put back on (openspec AH.105): the deactivate path, then the
+    /// join with his figure's values as his words held them under the tag
+    /// serial given (the same figure's again, or another's), its request
+    /// that step.
+    swaps: &'static [(u32, u32)],
     /// Steps past the opening's start.
     steps: u32,
 }
@@ -485,6 +491,8 @@ struct ChompySnap {
     speed: f32,
     /// How many its lunge has bitten (`actors hit`).
     bitten: usize,
+    /// Its seconds of ticks (`system.script timer`).
+    timer: f32,
 }
 
 /// What the hurt chain keeps on a creature's description (openspec AH.19,
@@ -658,6 +666,7 @@ impl Run {
                         .local(id, "actors hit")
                         .and_then(|v| self.vm.set(self.vm.value(v)).map(<[Value]>::len))
                         .unwrap_or(0),
+                    timer: self.vm.active_seconds(id).unwrap_or(0.0),
                 }
             })
             .collect();
@@ -713,6 +722,13 @@ impl Run {
 /// them), then `script` from the opening, strict: a snap each step from the
 /// opening on, and the run.
 fn fight(script: Script) -> (Run, Vec<Snap>) {
+    let (run, snaps, _) = fight_swapping(script);
+    (run, snaps)
+}
+
+/// [`fight`], with what each of [`Script::swaps`]' deactivations took off.
+fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>) {
+    let mut swapped = Vec::new();
     let pin = script.pinned.map(ah10_drive);
     let (mut run, _) = joined(Mode::Strict);
     let mut snaps = Vec::new();
@@ -846,7 +862,23 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
         if traced {
             run.vm.trace(Some(2_000_000));
         }
-        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        if let Some(&(_, serial)) = script.swaps.iter().find(|s| f == s.0 as i64) {
+            // Off and on again: the deactivate path, then the join, whose
+            // request step is this one.
+            let values = run.figure_values().expect("his figure's words");
+            swapped.push(
+                run.deactivate()
+                    .unwrap_or_else(|h| panic!("the deactivation at {k}: {h}")),
+            );
+            let tag = guacamole::figure::Tag {
+                serial,
+                ..eruptor_tag(values)
+            };
+            run.join_tag(tag)
+                .unwrap_or_else(|h| panic!("the join again at {k}: {h}"));
+        } else {
+            run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        }
         if traced {
             let program = run.vm.program_arc();
             let ops = run.vm.traced();
@@ -870,7 +902,7 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
             snaps.push(run.snap(f));
         }
     }
-    (run, snaps)
+    (run, snaps, swapped)
 }
 
 /// A JSON triple as a vector.
@@ -1231,6 +1263,113 @@ fn the_four_wake_on_the_7_ft_rule_from_the_floor_not_the_rim() {
         assert_eq!(run.vm.behaviour(id), None, "{} stays inert", w.name);
     }
     println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
+/// A swap mid-fight (openspec AH.105, the deactivate path; combat's A
+/// hero's health): standing still from anchor B with his health set to 200
+/// at F0, a lob at F0 + 90 toward `Enemy_Chompy(2)`, his figure taken off
+/// the portal at F0 + 100 with the ball in flight and put back on (the
+/// join's request that step, its activation the next), then at F0 + 400
+/// another Eruptor (another tag serial) put on in his place the same way.
+/// Across the first: the ball goes with him (the original's macro takes his
+/// projectile off before the stream's unloading does), his minion, his
+/// helper and his file's placements go, the new minion ticks first, the
+/// four run on (each one's alert, health and timer carrying on, none
+/// started over) with Setup_001's controller and Norticus as they were, and
+/// he comes back at the 200 his figure's stored data in the portal manager
+/// kept (AH.11's `swap2`: 200 off and on, 200 of 290); the other Eruptor
+/// comes in at his full 290.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_swap_mid_fight_leaves_the_four_running() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let (run, snaps, gone) = fight_swapping(Script {
+        lob: Some(90),
+        hero_health: Some(200),
+        swaps: &[(100, 1), (400, 2)],
+        steps: 600,
+        ..Script::default()
+    });
+    println!("{} snaps in {:.2?}", snaps.len(), started.elapsed());
+    let at = |k: i64| snaps.iter().find(|s| s.k == k).unwrap();
+    let names = |hs: &[u64]| hs.iter().map(|&h| run.world.name(h)).collect::<Vec<_>>();
+    let first = &gone[0];
+    println!(
+        "taken off at F0 + 100: his minion {}, {} of his file's placements {:?}, clones {:?}",
+        first.minion,
+        first.placements.len(),
+        names(&first.placements),
+        names(&first.clones)
+    );
+    assert!(first.minion, "his minion ran");
+    assert!(first.clones.contains(&HERO), "his minion went");
+    assert!(names(&first.clones).contains(&"009_LavaCollider".to_owned()));
+    assert!(names(&first.placements).contains(&"009_Eruptor_Tuning Actor".to_owned()));
+    // The ball in flight at the swap: gone with him, taken off by the
+    // original's macro (the projectile manager's removal), not left to the
+    // stream's.
+    let balls: Vec<u64> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|&h| run.world.name(h) == "009_LavaProjectile")
+        .collect();
+    assert_eq!(balls.len(), 1, "one throw");
+    assert!(at(99).ball.is_some(), "in flight");
+    assert!(at(100).ball.is_none() && run.world.removed(balls[0]));
+    assert!(!first.clones.contains(&balls[0]), "the macro's removal");
+    // The new minion ticks first, the one activator.
+    let order = run.vm.tick_order();
+    println!("tick order head: {:?}", &order[..3]);
+    assert_eq!(order[0], (true, "009_Eruptor".to_owned()));
+    assert_eq!(order.iter().filter(|(a, _)| *a).count(), 1);
+    // The four, Setup_001's controller and Norticus across it: the step
+    // before the take-off, and the first his new minion ticked in.
+    let (before, after) = (at(99), at(101));
+    for (c, n) in CHOMPIES.iter().enumerate() {
+        let (b, a) = (&before.chompies[c], &after.chompies[c]);
+        println!(
+            "{n}: {:?} -> {:?}, alerted {} -> {}, hp {} -> {}, timer {:.4} -> {:.4} s",
+            b.beh, a.beh, b.alerted, a.alerted, b.health, a.health, b.timer, a.timer
+        );
+        assert_eq!(a.alerted, b.alerted, "{n}: still alerted");
+        assert_eq!(a.health, b.health, "{n}");
+        assert_eq!(a.invulnerable, b.invulnerable, "{n}");
+        assert!(
+            (a.timer - b.timer - 2.0 / 60.0).abs() < 1e-4,
+            "{n}: its timer on"
+        );
+        assert!(!a.gone, "{n}");
+    }
+    assert_eq!(
+        after.controller, before.controller,
+        "Setup_001's controller"
+    );
+    assert_eq!(after.norticus.0, before.norticus.0, "Norticus");
+    // What the four did with him gone and back, by behaviour from the lob.
+    for (c, n) in CHOMPIES.iter().enumerate() {
+        let st: Vec<_> = stays(&snaps, c)
+            .into_iter()
+            .filter(|s| s.2.is_none_or(|end| end >= 90) && s.1 <= 300)
+            .collect();
+        println!("{n} F0 + 90..300: {st:?}");
+    }
+    // His health: 200 at F0, as he left at F0 + 100 and back with him.
+    assert_eq!(at(99).health, 200.0);
+    assert_eq!(at(101).health, 200.0, "his figure's stored data kept it");
+    // Another Eruptor in his place at F0 + 400 (bitten meanwhile): his own
+    // stored data, full.
+    assert!(at(399).health < 200.0, "bitten since");
+    assert_eq!(at(401).health, 290.0, "another figure comes in full");
+    println!(
+        "his health: {} at F0 + 99, {} at F0 + 101, {} at F0 + 399, {} at F0 + 401",
+        at(99).health,
+        at(101).health,
+        at(399).health,
+        at(401).health
+    );
+    println!("load after: {}", load());
 }
 
 /// The middles of a Chompy and the hero: each pivot 3 ft up (both 3 ft

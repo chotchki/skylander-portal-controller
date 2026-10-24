@@ -332,6 +332,18 @@ impl<'b> Writer<'b> {
         p
     }
 
+    /// `if reference <lhs> <relation> <rhs>` (`OpCheckReference`: 1 `==`,
+    /// 5 `!=`): returns its position; the block follows.
+    pub fn check_ref(&mut self, lhs: &[El<'_>], relation: u32, rhs: &[El<'_>]) -> usize {
+        let lhs = self.value(lhs);
+        let rhs = self.reference(rhs, None);
+        let (p, o) = self.open(Class::CheckReference, "ifref");
+        self.refer(o, 0x1C, lhs);
+        self.word(o, 0x20, relation);
+        self.refer(o, 0x24, rhs);
+        p
+    }
+
     /// Ends the check at `check`'s block with the else's skip, which is its
     /// last op; returns the skip's position for [`Writer::close`] after the
     /// else block.
@@ -671,6 +683,15 @@ pub const ATTACK_HEALTH_MAX: i32 = 150;
 /// Experience`, an orb's worth: added to the first word of his figure's save
 /// area, where a figure's first area of experience starts (AH.23).
 pub const ATTACK_AWARD: i32 = 1;
+/// The number [`attack`]'s `global.bld` counts each deactivation in (its
+/// `Game - Activate/Deactivate Minion` called with no minion, openspec
+/// AH.105).
+pub const ATTACK_DEACTIVATIONS: &str = "Synthetic Deactivations";
+/// The number [`attack`]'s fighter file keeps his health in: his minion
+/// writes it each tick and, back in the level he left, starts from it
+/// (openspec AH.105; the original keeps it in the portal manager's stored
+/// data by the figure's tag).
+pub const ATTACK_KEPT_HEALTH: &str = "Synthetic Kept HP";
 
 /// The portal manager's placement name, as the join looks it up.
 const PORTAL_MANAGER: &str = "Spyro_PortalManager";
@@ -684,7 +705,9 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 ///   whose macros are the join's: `Portal - Load Portal Object Stream` and
 ///   `Manage Projectiles` (nothing), `Portal - Define Minion` (the slot's
 ///   spawned object becomes its `minion`) and `Game - Activate/Deactivate
-///   Minion` (its `minion` spawned at its `spawn location`);
+///   Minion` (its `minion` spawned at its `spawn location`; with no minion,
+///   the deactivate path's call, a deactivation counted in the file's
+///   [`ATTACK_DEACTIVATIONS`]);
 /// - the shapes a figure's tag stands in (AH.23): `portal save control`, a
 ///   global whose `tag data` holds each tag's `Portal - Tag Data` (its
 ///   `save data area` of words, its toy id, serial, subtype and load
@@ -700,7 +723,10 @@ const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 ///   defines his minion through a stub of `Portal - Define Minion`), his
 ///   minion (`009_Eruptor`, a template), whose script on its first tick
 ///   sets his health and full health ([`ATTACK_HEALTH`],
-///   [`ATTACK_HEALTH_MAX`]) and, each tick, on action 1 going down starts
+///   [`ATTACK_HEALTH_MAX`]; his health the one the file's
+///   [`ATTACK_KEPT_HEALTH`] kept once he's been in, as the portal manager's
+///   stored data keeps a figure's) and, each tick, keeps his health there
+///   and on action 1 going down starts
 ///   his palette's slot [`ATTACK_THROW_SLOT`] and spawns [`ATTACK_BALL`] at
 ///   his pivot, moved [`ATTACK_BALL_RISE`] ft up and sent at
 ///   [`ATTACK_BALL_SPEED`] ft/s, [`ATTACK_BALL_PITCH`]° up along his
@@ -919,6 +945,151 @@ pub fn smash(barrel_at: [f32; 3]) -> Smash {
     Smash { level, barrel }
 }
 
+/// The creature [`swap`] writes: a placement named as one of the first
+/// fight's, so a listing of the fight runs it.
+pub const SWAP_CREATURE: &str = "Enemy_Chompy(1)";
+/// The rock it throws: a template of the level's file.
+pub const SWAP_ROCK: &str = "Synthetic_Rock";
+/// Its health from its first tick, and after it wakes.
+pub const SWAP_HEALTH: i32 = 7;
+pub const SWAP_HEALTH_AWAKE: i32 = 5;
+/// The tick (from its first, which counts 1) it wakes on and the one it
+/// throws the rock on.
+pub const SWAP_WAKE: i32 = 30;
+pub const SWAP_THROW: i32 = 40;
+/// The rock's rise over the creature's pivot (ft), its speed (ft/s), its
+/// pitch (degrees up) and its fall (ft/s²).
+pub const SWAP_ROCK_RISE: f32 = 5.0;
+pub const SWAP_ROCK_SPEED: f32 = 30.0;
+pub const SWAP_ROCK_PITCH: f32 = 60.0;
+pub const SWAP_ROCK_FALL: f32 = 200.0;
+
+/// AH.105's synthetic level (openspec AH.105; design decision 19), the
+/// level's entry beside [`attack`]'s, our numbers throughout:
+///
+/// - [`SWAP_CREATURE`], running from the level's start with no range, at
+///   `creature_at` (its pivot, metres), whose script holds its `health`
+///   ([`SWAP_HEALTH`] from its first tick) and counts its `ticks`: in
+///   `idle` until tick [`SWAP_WAKE`], when its health drops to
+///   [`SWAP_HEALTH_AWAKE`] and it goes to `battle`, where on tick
+///   [`SWAP_THROW`] it throws [`SWAP_ROCK`];
+/// - [`SWAP_ROCK`], a template whose solid touches the level alone and
+///   falls by its own gravity ([`SWAP_ROCK_FALL`]), spawned at the
+///   creature's pivot, moved [`SWAP_ROCK_RISE`] ft up and sent at
+///   [`SWAP_ROCK_SPEED`] ft/s, [`SWAP_ROCK_PITCH`]° up along its facing; its
+///   script takes it off the tick it touches anything.
+///
+/// A level clone flies while the hero comes off and back on, and a creature
+/// holds a behaviour, a count and a health the swap mustn't start over.
+pub fn swap(creature_at: [f32; 3]) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let rock = b.object(0, "tfbActorInfo", 0xF8);
+    let my = El::Member("optoplevelbehavior", "my");
+    let rock_script = Writer::new(&mut b).script(
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Rock.ai",
+        |_| {},
+        |_| {},
+        |w| {
+            let p = w.behaviour("fly");
+            let zero = w.int(0);
+            let touched = w.check(
+                &[
+                    my,
+                    El::Member("actorinfo", "collision volume"),
+                    El::Member("collisioninfo", "environment contacts"),
+                    El::Member("setvariant", "count"),
+                ],
+                4,
+                zero,
+            );
+            w.remove(&[my]);
+            w.end_block(touched);
+            w.end_block(p);
+        },
+    );
+    let creature_script = {
+        let mut w = Writer::new(&mut b);
+        let health = w.variable("health", "ValueInfo", Some("IntMeasurement"));
+        let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+        let idle = w.op(Class::UserBehavior, "idle");
+        let battle = w.op(Class::UserBehavior, "battle");
+        let script = w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Creature.ai",
+            |w| {
+                let full = w.int(SWAP_HEALTH);
+                w.set(&[El::Local(health)], full);
+            },
+            |_| {},
+            |w| {
+                let p = w.push(idle);
+                w.inc(&[El::Local(ticks)]);
+                let wake = w.int(SWAP_WAKE);
+                let woken = w.check(&[El::Local(ticks)], 2, wake);
+                let awake = w.int(SWAP_HEALTH_AWAKE);
+                w.set(&[El::Local(health)], awake);
+                w.set_behavior(battle);
+                w.end_block(woken);
+                w.end_block(p);
+                let p = w.push(battle);
+                w.inc(&[El::Local(ticks)]);
+                let throw = w.int(SWAP_THROW);
+                let now = w.check(&[El::Local(ticks)], 1, throw);
+                let facing = w.int(0);
+                let s = w.spawn(&[El::Local(rock)], &[my], facing);
+                let so = w.positions[s];
+                displace(w, &[El::Local(so)], 0, SWAP_ROCK_RISE, 0.0, 90.0);
+                displace(
+                    w,
+                    &[El::Local(so), El::Member("actorinfo", "velocity")],
+                    1,
+                    SWAP_ROCK_SPEED,
+                    0.0,
+                    SWAP_ROCK_PITCH,
+                );
+                w.end_block(s);
+                w.end_block(now);
+                w.end_block(p);
+            },
+        );
+        w.declare(script, &[health, ticks]);
+        script
+    };
+    let creature = b.object(0, "tfbActorInfo", 0xF8);
+    let [x, y, z] = creature_at;
+    place(
+        &mut b,
+        creature,
+        SWAP_CREATURE,
+        Some(creature_script),
+        4,
+        &[x, y, z, 0.0, 0.0, 0.0],
+    );
+    b.put_bytes(at(creature, 0xD0), &[0; 8]);
+    place(&mut b, rock, SWAP_ROCK, Some(rock_script), 5, &[0.0; 6]);
+    // A sphere (3) that interacts with the level's mesh (bit 4) alone.
+    collision(&mut b, rock, 0x13, [1.0; 3]);
+    falling(&mut b, rock, SWAP_ROCK_FALL);
+    let blocks = b.section(0x10);
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(creature), Some(rock)]);
+    b.build()
+}
+
+/// `ActorParameters` on the placement at `a`: its own gravity `fall`
+/// (ft/s²) at full speed, as [`attack`]'s ball falls.
+fn falling(b: &mut IgzBuilder, a: Location, fall: f32) {
+    let parameters = b.object(0, "ActorParameters", 0x4C);
+    let movement: Vec<u8> = [
+        0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 120.0, fall, 0.0, 0.0, 0.0,
+    ]
+    .iter()
+    .flat_map(|v| v.to_be_bytes())
+    .collect();
+    b.put_bytes(at(parameters, 0x0C), &movement);
+    b.put_bytes(at(parameters, 0x48), &1.0f32.to_be_bytes());
+    b.pointer(at(a, 0xE0), parameters);
+}
+
 /// A `tfbActorInfo` placement named `name` running `script` (an info from
 /// [`Writer::end`]), at the origin, `state` its activity state, with no
 /// activation range and no buffer: awake from the level's start wherever
@@ -1017,6 +1188,16 @@ fn structure(w: &mut Writer<'_>, def: Location, fields: &[Location]) {
         w.push(*f);
     }
     w.end_block(p);
+}
+
+/// A number the file holds, named `name`, from 0: every placement of the
+/// file reads and writes the one cell, kept while the VM runs.
+fn file_int(w: &mut Writer<'_>, name: &str) -> Location {
+    let v = w.b.object(0, "ValueInfo", 0x24);
+    w.text(v, 0x08, name);
+    w.meta_word(v, 0x1C, "IntMeasurement");
+    w.word(v, 0x20, 0);
+    v
 }
 
 /// A variable holding a structure of type `def`.
@@ -1169,6 +1350,7 @@ fn attack_global() -> Vec<u8> {
         w.refer(save_control, 0x1C, save_ty);
         let projectiles = w.b.object(0, "ScriptReference", 0x20);
         w.text(projectiles, 0x08, "projectile control data");
+        let deactivations = file_int(&mut w, ATTACK_DEACTIVATIONS);
         let minion = w.variable("minion", "ScriptReference", None);
         let location = w.variable("spawn location", "ScriptReference", None);
         let set_up_tag = w.variable("set up tag", "ScriptReference", None);
@@ -1267,9 +1449,19 @@ fn attack_global() -> Vec<u8> {
                         ("in level transition", "ValueInfo"),
                     ],
                 );
+                // With a minion: spawned where asked. With none (openspec
+                // AH.105, the deactivate path): counted.
+                let some = w.check_ref(
+                    &[El::Local(minion)],
+                    5,
+                    &[El::Member("abstractscriptgroup", "null")],
+                );
                 let zero = w.int(0);
                 let s = w.spawn(&[El::Local(minion)], &[El::Local(location)], zero);
                 w.end_block(s);
+                let none = w.otherwise(some);
+                w.inc(&[El::Local(deactivations)]);
+                w.close(none);
                 w.flow_end();
                 w.end_block(p);
                 // A tag's save area: a word per four bytes of the portal's
@@ -1424,28 +1616,7 @@ fn attack_fighter() -> Vec<u8> {
     let ball = actor_with(&mut b, ATTACK_BALL, Some(ball_script), 5);
     // A sphere (3) that interacts with the level's mesh (bit 4) alone.
     collision(&mut b, ball, 0x13, [1.0; 3]);
-    let parameters = b.object(0, "ActorParameters", 0x4C);
-    let movement: Vec<u8> = [
-        0.0f32,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        120.0,
-        ATTACK_BALL_FALL,
-        0.0,
-        0.0,
-        0.0,
-    ]
-    .iter()
-    .flat_map(|v| v.to_be_bytes())
-    .collect();
-    b.put_bytes(at(parameters, 0x0C), &movement);
-    b.put_bytes(at(parameters, 0x48), &1.0f32.to_be_bytes());
-    b.pointer(at(ball, 0xE0), parameters);
+    falling(&mut b, ball, ATTACK_BALL_FALL);
     let model = b.object(0, "tfbPhysicsModel", 0x30);
     crate::model::builder::info(&mut b, model, ATTACK_BALL_MODEL);
     b.pointer(at(ball, 0xDC), model);
@@ -1467,6 +1638,7 @@ fn attack_fighter() -> Vec<u8> {
         let description = structure_var(&mut w, "description", description_ty);
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let clip = w.variable("attack clip", "ScriptReference", None);
+        let kept = file_int(&mut w, ATTACK_KEPT_HEALTH);
         // The portal manager's award, through a stub of it.
         let award = w.op(Class::DefineMacro, "Game - Award Experience");
         let ball_at = ball;
@@ -1485,6 +1657,16 @@ fn attack_fighter() -> Vec<u8> {
                     &[El::Local(description), El::Local(creature), El::Local(hp)],
                     health,
                 );
+                // Back in the level he left (openspec AH.105): the health
+                // his file kept.
+                let zero = w.int(0);
+                let back = w.check(&[El::Local(kept)], 4, zero);
+                let was = w.rhs("IntMeasurement", &[El::Local(kept)]);
+                w.set(
+                    &[El::Local(description), El::Local(creature), El::Local(hp)],
+                    was,
+                );
+                w.end_block(back);
                 let full = w.int(ATTACK_HEALTH_MAX);
                 w.set(
                     &[El::Local(mine), El::Local(joined), El::Local(hp_max)],
@@ -1502,6 +1684,13 @@ fn attack_fighter() -> Vec<u8> {
             |_| {},
             |w| {
                 let p = w.behaviour("default");
+                // His health kept each tick, as the portal manager's loop
+                // keeps it on his figure's stored data.
+                let now = w.rhs(
+                    "IntMeasurement",
+                    &[El::Local(description), El::Local(creature), El::Local(hp)],
+                );
+                w.set(&[El::Local(kept)], now);
                 let first = on_press(w, 1);
                 start_slot(w, clip, ATTACK_THROW_SLOT);
                 let facing = w.int(0);
