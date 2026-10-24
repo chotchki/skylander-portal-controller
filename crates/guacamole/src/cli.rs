@@ -124,19 +124,12 @@ pub fn setup_folders(root: &Path, folders: &[PathBuf], out: &mut dyn Write) -> i
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use guac_formats::sfo::builder::SfoBuilder;
+    use crate::test_support::cli::dump;
 
     fn args(list: &[&str]) -> Result<Command, String> {
         parse(list.iter().map(OsString::from))
-    }
-
-    pub(crate) fn dump(dir: &Path, title_id: &str) {
-        let game = dir.join("PS3_GAME");
-        std::fs::create_dir_all(game.join("USRDIR")).unwrap();
-        let sfo = SfoBuilder::disc_game(title_id, "01.00", "01.00").build();
-        std::fs::write(game.join("PARAM.SFO"), sfo).unwrap();
     }
 
     #[test]

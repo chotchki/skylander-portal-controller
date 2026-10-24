@@ -1778,7 +1778,7 @@ mod tests {
 
     use super::*;
     use crate::driver::PortalChange;
-    use crate::tv::layout_tests::{placement, portal_app};
+    use crate::test_support::tv::{placement, portal_app};
 
     fn snapshot(cards: PortalCards, screen: TvScreen) -> TvSnapshot {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, cards);
@@ -2440,7 +2440,7 @@ mod tests {
     #[tokio::test]
     async fn a_posted_press_reaches_the_router_and_an_unknown_one_is_refused() {
         use crate::input::TvInput;
-        use crate::input::heard::{listen, take};
+        use crate::test_support::heard::{listen, take};
         use tower::ServiceExt;
         let mirror = TvMirror::default();
         let routes = routes::<()>(&mirror);

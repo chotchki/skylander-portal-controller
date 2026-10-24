@@ -705,8 +705,8 @@ mod tests {
         use super::*;
         use crate::cards::PortalCards;
         use crate::mirror::{Mirror, TvMirror, TvSnapshot};
-        use crate::tv::layout_tests::portal_app;
-        use crate::video::test_clip;
+        use crate::test_support::tv::portal_app;
+        use crate::test_support::video::test_clip;
 
         /// Toy types 9 and 10 have intros, 205 (a magic item) none.
         fn library(dir: &Path, clips: &[(&str, usize)]) -> IntroLibrary {
@@ -1109,7 +1109,7 @@ mod tests {
         #[test]
         fn south_during_an_intro_reaches_nothing_under_it() {
             use crate::input::TvInput;
-            use crate::input::heard::{listen, take};
+            use crate::test_support::heard::{listen, take};
             let tmp = tempfile::tempdir().unwrap();
             let lib = library(tmp.path(), &[("eruptor", 100), ("ignitor", 100)]);
             let mut tv = tv(Some(lib));
@@ -1137,7 +1137,8 @@ mod tests {
         #[test]
         fn a_press_under_an_intro_skips_it_and_moves_no_one() {
             use crate::hero::HeroInput;
-            use crate::pad::{LevelPads, test_pad};
+            use crate::pad::LevelPads;
+            use crate::test_support::test_pad;
             use guac_motion::stick::Stick;
             let hero = |tv: &Tv| tv.app.world().resource::<HeroInput>().0;
             let tmp = tempfile::tempdir().unwrap();

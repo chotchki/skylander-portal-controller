@@ -369,8 +369,9 @@ pub(crate) fn drift(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
+    use crate::test_support::starfield::offset_in_period;
 
     /// The widest screen the sky covers without a star shown twice, in design
     /// px: 32:9 at the design height.
@@ -384,14 +385,6 @@ pub(crate) mod tests {
                 .filter(move |j| (i, *j) != (0, 0))
                 .map(move |j| f32::from(i) * Vec2::new(PERIOD.x, 0.0) + f32::from(j) * DRIFT)
         })
-    }
-
-    /// Where `at` sits within the sky's period: the same for every copy of a
-    /// star, so two stars on a screen at the same offset are one star twice.
-    pub(crate) fn offset_in_period(at: Vec2) -> Vec2 {
-        let rows = (at.y / PERIOD.y).floor();
-        let at = at - rows * DRIFT;
-        Vec2::new(at.x.rem_euclid(PERIOD.x), at.y)
     }
 
     #[test]

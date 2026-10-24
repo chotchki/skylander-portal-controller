@@ -175,13 +175,6 @@ impl PreparedBody {
     }
 }
 
-/// Spawns a seam body at once ([`PreparedBody`]'s checks and kinds): the
-/// tests' worlds; the level's are prepared off the frame.
-#[cfg(test)]
-pub(crate) fn spawn_body(commands: &mut Commands, body: &Body) -> Result<Entity, WorldError> {
-    Ok(PreparedBody::new(body)?.spawn(commands))
-}
-
 /// Moves a kinematic body or sensor, refusing as `ParryWorld::set_pose` does
 /// (no such body, a static one, a pose that isn't finite). Queries see it
 /// there once the physics schedule has run (it refits the collider trees),
@@ -382,6 +375,7 @@ mod tests {
     use guac_motion::parry::ParryWorld;
 
     use super::*;
+    use crate::test_support::physics::spawn_body;
 
     /// A headless app with Avian's seam plugins and no renderer, each update
     /// one 1/64 s fixed step, so the physics schedule runs once per update.

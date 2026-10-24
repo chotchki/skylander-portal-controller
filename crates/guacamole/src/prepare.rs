@@ -396,7 +396,7 @@ pub(crate) fn next_batch(batch: usize, last_frame: Duration) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::turntable::tests::{app, extract};
+    use crate::test_support::turntable::{app, extract};
     use crate::warm::PipelineWatch;
     use guacamole::character::warm::MeshShape;
 

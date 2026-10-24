@@ -306,7 +306,8 @@ mod tests {
     use guac_motion::seam::{Body, BodyKind, Collider, Pose, Shape, Vec3};
 
     use super::*;
-    use crate::physics::{SeamBody, SeamPlugin, set_pose, spawn_body};
+    use crate::physics::{SeamBody, SeamPlugin, set_pose};
+    use crate::test_support::physics::spawn_body;
     use avian3d::prelude::{Position, Rotation};
 
     /// Fixed steps run, counted in `FixedUpdate`'s [`frame::Frame::Record`].
@@ -770,7 +771,8 @@ mod tests {
     fn a_pad_walks_him_and_start_or_losing_it_stops_everything() {
         use bevy::input::gamepad::GamepadButton;
 
-        use crate::pad::{LevelPads, Pause, test_pad};
+        use crate::pad::{LevelPads, Pause};
+        use crate::test_support::test_pad;
 
         let bodies = open_ground();
         let mut app = headless_with(1.0 / 60.0, &bodies, |app| {
