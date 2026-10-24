@@ -5,12 +5,12 @@
 //! model, then the tonemapped look measured the way ae-color measured
 //! Open question 1's options, and one tinted hero material recorded.
 //!
-//! The frame is AC.13's savestate frame 4, read at run time from
-//! `GUAC_CAPTURE_DIR` (`BLUS30968_1_1.frame4.json`, its rig, fog and idle
-//! time, and `.frame4.view-proj.txt`, its camera; AE.10 wrote both beside
-//! the savestate), through hero_view's own frame reader, so the lane draws
-//! at the camera hero_view draws at. The models come off `GUAC_GIANTS_DUMP`
-//! through the model stage's reader, in memory.
+//! The frame is AC.13's savestate frame 4, read at run time from AC.13's
+//! session folder, `GUAC_AC13_CAPTURE_DIR` (`BLUS30968_1_1.frame4.json`, its
+//! rig, fog and idle time, and `.frame4.view-proj.txt`, its camera; AE.10
+//! wrote both beside the savestate), through hero_view's own frame reader,
+//! so the lane draws at the camera hero_view draws at. The models come off
+//! `GUAC_GIANTS_DUMP` through the model stage's reader, in memory.
 //!
 //! 1. The main pass: each character's opaque parts through the real
 //!    pipeline into `Rgba16Float` with tonemapping and MSAA off, and 13
@@ -1253,12 +1253,12 @@ fn show(name: &str, s: &Stats) -> String {
 // ---- the lane ----
 
 #[test]
-#[ignore = "GPU lane: Eruptor and Sunburn off GUAC_GIANTS_DUMP at AC.13's frame 4 from GUAC_CAPTURE_DIR, on the M3 Max (AE.12)"]
+#[ignore = "GPU lane: Eruptor and Sunburn off GUAC_GIANTS_DUMP at AC.13's frame 4 from GUAC_AC13_CAPTURE_DIR, on the M3 Max (AE.12)"]
 fn the_remaster_at_an_oracle_frame() {
     let started = Instant::now();
     let dump = env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP to the Giants dump");
-    let captures = env_or_dotenv("GUAC_CAPTURE_DIR")
-        .expect("set GUAC_CAPTURE_DIR to the folder holding AC.13's session");
+    let captures = env_or_dotenv("GUAC_AC13_CAPTURE_DIR")
+        .expect("set GUAC_AC13_CAPTURE_DIR to the folder holding AC.13's session");
     let captures = Path::new(&captures);
     let rig = Rig::read(&captures.join(FRAME)).expect("frame 4's rig");
     let text = std::fs::read_to_string(captures.join(VIEW_PROJ)).expect("frame 4's camera");

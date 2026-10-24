@@ -64,10 +64,18 @@ cargo test -p skylander-e2e-tests -- --ignored --nocapture
 ```
 
 All tests are `#[ignore]`-gated so they don't run under the default
-`cargo test --workspace`. The harness spawns the server binary per
-test via `cargo run -p skylander-server --features test-hooks` (or
-`-p guacamole`, see `E2E_APP` below) with a temp working directory
-containing a generated env file.
+`cargo test --workspace`. A run builds the server once, before its first
+spawn, with `cargo build -p skylander-server --features test-hooks` (or
+`-p guacamole`, see `E2E_APP` below) and no timeout on the build; the run's
+other test binaries take that build from a record under
+`target/e2e-built/`. Each test then spawns the built binary in a temp
+working directory containing a generated env file, and the 120 s wait for
+its URL starts at the spawn. Before each spawn the binary is checked
+against what it was built from (every file under the repo in cargo's
+dep-info for it, their manifests and `Cargo.lock`) and built again if one
+changed, so a run never spawns a binary older than its source. A build
+that fails fails each test that spawns with cargo's error (openspec AQ.15,
+[`src/built.rs`](src/built.rs)).
 
 ### Single-test runs
 
@@ -91,7 +99,7 @@ typo can't silently test the wrong app). openspec AA.10.
 E2E_APP=guacamole cargo test -p skylander-e2e-tests -- --ignored --nocapture
 ```
 
-Under `guacamole` the harness runs `cargo run -p guacamole --features
+Under `guacamole` the harness builds and spawns `-p guacamole --features
 test-hooks` with no firmware-pack lookup. The env file it generates in
 the temp working dir points `GUAC_DUMP_DIRS` at a temp dir of synthetic
 dumps, each a `PS3_GAME/PARAM.SFO` built in code (BLUS30968 unless a test
@@ -336,13 +344,16 @@ so a refusal by the phone's own check can't pass for the server's.
   `serving on …` line for its base URL, so loopback (`127.0.0.1`)
   isn't used.
 - `127.0.0.1:<port>` will not respond — use the `serving on` URL.
-- Cold cargo build for the test-hooks-flavored server is ~30–60s; the
-  harness rebuilds incrementally on subsequent test runs.
+- A cold target dir's first build of the test-hooks server takes minutes
+  (its dependencies at opt-level 3, AG.65), and a fresh worktree's first
+  run still passes (AG.78).
 
 ## Layout
 
 - `src/lib.rs` — `TestServer::spawn()` / `Phone` helpers used by each
   test. Exposes `inject_*` test-hook helpers and `Phone` selectors.
+- [`src/built.rs`](src/built.rs) — the server binary a spawn runs: built
+  once a run, checked against its sources before every spawn (AQ.15).
 - `tests/*.rs` — one file per regression scenario from PLAN 3.6.
 - `tests/screenshot_tour.rs` — generates the per-scene PNGs that
   populate `docs/assets/screens/`. **Re-baselining is per-OS** —

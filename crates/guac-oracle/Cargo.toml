@@ -11,6 +11,10 @@ publish.workspace = true
 [lib]
 name = "guac_oracle"
 path = "src/lib.rs"
+# No doctests here, so `cargo test` skips the empty doc-test run (openspec AQ.36);
+# a doc example meant to run drops this, and .githooks/no-doctests.sh fails the
+# push until it does.
+doctest = false
 
 [dependencies]
 # FLIP, NVlabs' reference: nv-flip-sys vendors the reference's C++ (v1.2, BSD-3-Clause)

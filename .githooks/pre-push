@@ -16,6 +16,13 @@
 #      tag had already been cut. Worth the extra ~30 s).
 #   4. cargo test --workspace — typically <60 s on warm cargo cache,
 #      slower on cold.
+# Between 1 and 2, guards that read cargo's metadata and build nothing:
+#   - one-bevy.sh (openspec AQ.30): guacamole's build and its tests resolve
+#     the crates they share with Bevy to the same features, so the tests
+#     don't build a second Bevy and Avian (~0.5 s).
+#   - no-doctests.sh (openspec AQ.36): the libraries skip their empty doc-test
+#     runs (`doctest = false`), so a doc code block rustdoc would run fails
+#     here rather than going unrun (~0.5 s).
 
 set -euo pipefail
 
@@ -31,6 +38,12 @@ cargo fmt --all --check
 
 step "cargo fmt --all --check (phone)"
 ( cd phone && cargo fmt --all --check )
+
+step "one Bevy for guacamole's build and tests (.githooks/one-bevy.sh)"
+.githooks/one-bevy.sh
+
+step "no doctest left unrun (.githooks/no-doctests.sh)"
+.githooks/no-doctests.sh
 
 step "cargo check --workspace"
 cargo check --workspace

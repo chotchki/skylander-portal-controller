@@ -11,6 +11,10 @@ publish.workspace = true
 [lib]
 name = "guac_extract"
 path = "src/lib.rs"
+# No doctests here, so `cargo test` skips the empty doc-test run (openspec AQ.36);
+# a doc example meant to run drops this, and .githooks/no-doctests.sh fails the
+# push until it does.
+doctest = false
 
 [[bin]]
 name = "guac-extract"
@@ -42,7 +46,3 @@ zstd = "0.13"
 tempfile = "3"
 # SfoBuilder, for the synthetic dumps the identity tests build.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
-# The server's figure list and AE.4's id migration pairs, which
-# tests/giants_roster.rs builds and checks off the disc's roster.
-guac-server = { path = "../guac-server", default-features = false }
-skylander-core = { path = "../core" }

@@ -11,6 +11,10 @@ publish.workspace = true
 [lib]
 name = "guac_server"
 path = "src/lib.rs"
+# No doctests here, so `cargo test` skips the empty doc-test run (openspec AQ.36);
+# a doc example meant to run drops this, and .githooks/no-doctests.sh fails the
+# push until it does.
+doctest = false
 
 [dependencies]
 skylander-core = { path = "../core" }
@@ -85,6 +89,11 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 # The worker tests drive a `MockPortalDriver` whatever features the build has.
 skylander-rpcs3-control = { path = "../rpcs3-control", features = ["mock"] }
+# The disc roster tests/giants_roster.rs builds the figure list from (AE.4).
+# It lived in guac-extract's tests, which made every guac-server edit relink
+# guac-extract's 20 test binaries (openspec AQ.31); guac-extract doesn't
+# depend on this crate, so no cycle.
+guac-extract = { path = "../guac-extract" }
 
 [features]
 default = ["dev-tools"]

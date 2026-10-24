@@ -17,6 +17,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use fantoccini::{Client, ClientBuilder, Locator};
 use tempfile::TempDir;
 
+mod built;
+
 /// A running server instance plus its owned chromedriver. Both children are
 /// killed when this drops.
 pub struct TestServer {
@@ -191,7 +193,7 @@ impl TestServer {
         Self::run(tmp, &repo, "guacamole")
     }
 
-    /// `cargo run -p <package> --features test-hooks` in `tmp`, then a
+    /// `package`'s built server in `tmp` ([`start_server`]), then a
     /// chromedriver beside it.
     fn run(tmp: TempDir, repo: &Path, package: &str) -> Result<Self> {
         let (url, guard) = start_server(tmp.path(), repo, package)?;
@@ -615,54 +617,33 @@ fn spawn_reader(
     });
 }
 
-/// `cargo run -p <package> --features test-hooks` in `dir`; returns once the
-/// server logs the URL it serves on.
+/// `package`'s server with `test-hooks` in `dir`, built before the run's
+/// first spawn with no timeout ([`built::server_binary`]), then
+/// run as built; returns once the server logs the URL it serves on, which
+/// [`wait_for_url`] gives 120 s from the spawn.
 fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, ChildGuard)> {
-    // Build once up front so subsequent spawns are fast; re-invoking
-    // cargo run also rebuilds incrementally if source changed.
-    let mut cmd = Command::new("cargo");
+    let exe = built::server_binary(repo, package)?;
+    let mut cmd = Command::new(&exe);
     cmd.current_dir(dir)
-        .env("CARGO_MANIFEST_DIR", repo)
-        .env("CARGO_TARGET_DIR", repo.join("target"))
-        // Pin BUILD_TOKEN so the spawned server's stale-bundle
-        // check matches the phone bundle. Without this the phone's
-        // baked-in `<git-hash>-dirty` value drifts away from the
-        // server's whenever the working tree's dirty state changes
-        // independently (e.g., editing tests after the last
-        // `trunk build`), which raises a StaleVersion overlay
-        // mid-test and blocks every click. Contributors should
-        // build the phone the same way: `BUILD_TOKEN=e2e-test
-        // trunk build`. Documented in
-        // `crates/e2e-tests/README.md`.
-        .env("BUILD_TOKEN", "e2e-test")
         // guacamole's intros play muted: nobody listens to an e2e run.
         .env("GUAC_MUTE", "1")
         // guacamole's TV takes only the posted pads (`/api/_test/tv/pad`),
         // neither gilrs's nor GameController's: a pad paired with the
         // machine would walk the hero first (AG.52, AG.53).
         .env("GUAC_TEST_POSTED_PADS_ONLY", "1")
-        .args([
-            "run",
-            "--manifest-path",
-            repo.join("Cargo.toml").to_str().unwrap(),
-            "-p",
-            package,
-            "--features",
-            "test-hooks",
-        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Spawn into our own process group so ChildGuard can kill the
-    // entire chain (cargo + rustc + the eventual server binary)
-    // atomically. Without this, killing `cargo` doesn't reliably
-    // take down its descendants. PLAN 10.3.6 process-hygiene.
+    // Spawn into our own process group so ChildGuard can kill the server
+    // and anything it starts in one go. PLAN 10.3.6 process-hygiene.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
 
-    let mut child = cmd.spawn().context("spawn server via cargo run")?;
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawn {}", exe.display()))?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
@@ -856,9 +837,9 @@ fn repo_root() -> Result<PathBuf> {
 /// chromedriver into its own process group (`Command::process_group(0)`)
 /// and `kill -KILL -<pgid>` on cleanup.
 ///
-/// Same treatment for the server child — `cargo run` forks a chain of
-/// rustc + the eventual server binary; killing only `cargo` itself
-/// can leave the server process running.
+/// Same treatment for the server child — the live spawns' `cargo run`
+/// forks a chain of rustc + the eventual server binary; killing only
+/// `cargo` itself can leave the server process running.
 struct ChildGuard {
     child: Option<Child>,
     /// Process group id of the spawned child. On Unix the child is
