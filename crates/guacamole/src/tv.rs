@@ -28,7 +28,6 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::ui_widgets::{Activate, Button};
 use guac_server::config::WindowMode;
 use guac_server::state::LauncherStatus;
-use guacamole::character::{CharacterShadingPlugin, GlowPlugin};
 use serde::Serialize;
 use skylander_core::SLOT_COUNT;
 use skylander_rpcs3_control::Placement;
@@ -39,17 +38,16 @@ use crate::card_view::{CardImages, slot_frame, spawn_card};
 use crate::cards::{PortalCards, drain_portal};
 use crate::extraction::{Band, ExtractBand};
 use crate::input::FocusId;
-use crate::level::LevelPlugin;
 use crate::look::{self, ChoiceFace};
 use crate::motion::ReducedMotion;
 use crate::picker::FolderAsked;
-use crate::prepare::{Prepare, PreparePlugin};
+use crate::prepare::Prepare;
 use crate::screen::{SetupView, TvScreen, screen_for, while_preparing};
 use crate::starfield;
 use crate::surfaces::{self, BUTTON_BORDER, BUTTON_RADIUS};
 use crate::theme::{Role, Step, TvTheme};
 use crate::title;
-use crate::turntable::{CardPlate, CardState, TurntablePlugin, TurntableSystems, Turntables};
+use crate::turntable::{CardPlate, CardState, TurntableSystems, Turntables};
 use crate::tv_state::{
     CardSlot, Current, ExtractBar, ExtractDetail, ExtractTitle, Framing, Pen, Pip, Redrawn,
     ScreenRoot, ServerLink, Setup, TV_ORDER, TvAssets, TvCamera, TvState, UiTree, node_rect,
@@ -285,18 +283,7 @@ impl Plugin for Tv {
         // ahead of `Startup`.
         let assets = tv_assets(app.world_mut());
         app.insert_resource(assets)
-            // Before `Screens`, whose `Titles` needs only what this registers.
-            .add_plugins(title::TitleShader)
             .add_plugins(Screens)
-            // The cards' turntables (AE.13): the character material, the
-            // game's glow and the per-slot scenes.
-            .add_plugins((CharacterShadingPlugin, GlowPlugin, TurntablePlugin))
-            // The level, loaded behind the portal from the Giants pick
-            // (AG.19); the warm compiles its keys.
-            .add_plugins(LevelPlugin)
-            // The start's pass (AE.25): every pipeline the TV draws Giants
-            // with, before the first screen a phone or the setup acts on.
-            .add_plugins(PreparePlugin)
             .add_systems(Startup, spawn_camera)
             .add_systems(Last, report_layout)
             .add_systems(Update, (scale_ui, farewell_exit));
