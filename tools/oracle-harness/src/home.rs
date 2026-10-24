@@ -565,6 +565,8 @@ mod tests {
         );
 
         // A dead instance's file, unlocked, is no bar; the probe holds nothing after.
+        // The drop lets go only because this binary spawns no process: a child
+        // spawned while `held` is open holds its flock too (openspec AQ.34).
         drop(held);
         refuse_running(home.root()).unwrap();
         init(home.root(), &fx.opts()).unwrap();

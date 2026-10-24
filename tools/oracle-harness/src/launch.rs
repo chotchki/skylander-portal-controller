@@ -452,6 +452,11 @@ impl Drop for Oracle {
     }
 }
 
+/// No test in this binary spawns a process; one that does goes in `tests/`, as
+/// `failed_boot.rs` did (openspec AQ.34). A spawn copies every descriptor the
+/// process holds, and a failed one keeps its copies for ms after `spawn`
+/// returns, so the flock, the dropped listeners and the freed port below would
+/// read as still held.
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -631,42 +636,6 @@ mod tests {
             "{err}"
         );
         assert!(!inside.exists());
-    }
-
-    #[test]
-    fn a_boot_that_fails_takes_its_run_dir_and_state_copy_with_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = home(tmp.path());
-        // A file that isn't a program, and a state to copy in.
-        let exe = tmp.path().join("not-rpcs3");
-        std::fs::write(&exe, "x").unwrap();
-        let state = tmp.path().join("BLUS30968_1_0.SAVESTAT.zst");
-        std::fs::write(&state, "not a state").unwrap();
-        let opts = BootOptions {
-            savestate: Some(state),
-            ..BootOptions::default()
-        };
-        let leftovers = || {
-            let prefix = format!("gor-{}-", std::process::id());
-            std::fs::read_dir(std::env::temp_dir())
-                .unwrap()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-                .count()
-        };
-
-        // Refused at the preflight: an RPCS3 holds the home's lock.
-        let held = std::fs::File::create(crate::home::rpcs3_lock_file(home.root())).unwrap();
-        held.lock().unwrap();
-        let err = boot(&exe, &home, &opts).err().unwrap().to_string();
-        assert!(err.contains("an RPCS3 is running"), "{err}");
-        assert_eq!(leftovers(), 0);
-        drop(held);
-
-        // Past the copy, failing at the spawn (or at the GDB port, if another
-        // RPCS3 on this machine holds it): nothing is left either way.
-        assert!(boot(&exe, &home, &opts).is_err());
-        assert_eq!(leftovers(), 0);
     }
 
     #[test]
