@@ -20,7 +20,7 @@
 //!   past everything, no shadows or point lights. It clears to the darker stop
 //!   of the figure's element (the plate behind a portrait), opaque, so blended
 //!   and additive parts blend on what the card shows and the glow keeps its
-//!   halo. The image is the plate's size in pixels and follows it.
+//!   halo. The image is the largest plate's size in pixels and follows it.
 //! - The model turns about its vertical axis once every
 //!   [`TURN_SECONDS`] playing its idle, and a part with a scroll track
 //!   slides its texture coordinates on the same clock (AE.21,
@@ -141,7 +141,8 @@ pub fn shelf_channel() -> (ShelfSender, ShelfFeed) {
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub(crate) struct FrozenYaw(pub(crate) f32);
 
-/// The bezel plate's size in pixels, which each turntable's image takes.
+/// The largest bezel plate's size in pixels, which each turntable's image
+/// takes ([`follow_plates`]).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PlateSize(pub(crate) UVec2);
 

@@ -454,9 +454,10 @@ impl Drop for Oracle {
 
 /// No test in this binary spawns a process; one that does goes in `tests/`, as
 /// `failed_boot.rs` did (openspec AQ.34). A spawn copies every descriptor the
-/// process holds, and a failed one keeps its copies for ms after `spawn`
-/// returns, so the flock, the dropped listeners and the freed port below would
-/// read as still held.
+/// process holds, close-on-exec ones included, for as long as the call takes,
+/// and a failed one keeps its copies past `spawn`'s return, so the flock, the
+/// dropped listeners and the freed port below would read as still held; one
+/// that succeeds races too.
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
