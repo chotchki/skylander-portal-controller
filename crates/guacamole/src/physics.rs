@@ -35,7 +35,8 @@ use avian3d::prelude::{
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use guac_motion::parry::{
-    Solid, WorldError, check_body, check_pose, parry_pose, planes_against, split_motion,
+    Solid, WorldError, check_body, check_pose, grown_for_rays, parry_pose, planes_against,
+    split_motion,
 };
 use guac_motion::seam::{
     Body, BodyId, BodyKind, CAST_SLOP, Cast, Collider as SeamCollider, ContactPlane, Mesh,
@@ -235,6 +236,58 @@ impl AvianSeam<'_, '_> {
             .get(entity)
             .is_ok_and(|(b, ..)| b.kind.is_solid() && !exclude.contains(&b.id))
     }
+
+    /// The first solid surface along a normalized ray, meshes alone when
+    /// `meshes_only`.
+    fn first_hit(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        max_distance: f32,
+        exclude: &[BodyId],
+        meshes_only: bool,
+    ) -> Option<RayHit> {
+        let hit = self.spatial.cast_ray_predicate(
+            origin,
+            dir3(dir),
+            max_distance,
+            false,
+            &SpatialQueryFilter::default(),
+            &|entity| {
+                self.solid(entity, exclude)
+                    && (!meshes_only
+                        || self
+                            .bodies
+                            .get(entity)
+                            .is_ok_and(|(b, ..)| b.mesh.is_some()))
+            },
+        )?;
+        let (body, position, rotation, collider) = self.bodies.get(hit.entity).ok()?;
+        // The same ray against the one collider it hit, for the triangle.
+        let triangle = body.mesh.as_ref().and_then(|_| {
+            collider
+                .shape_scaled()
+                .cast_ray_and_get_normal(
+                    &parry_pose(Pose::new(position.0, rotation.0)),
+                    &Ray::new(origin, dir),
+                    max_distance,
+                    false,
+                )
+                .map(|h| h.subshape)
+        });
+        Some(RayHit {
+            body: body.id,
+            triangle,
+            material: body
+                .mesh
+                .as_ref()
+                .zip(triangle)
+                .and_then(|(m, t)| m.material(t)),
+            distance: hit.distance,
+            point: origin + dir * hit.distance,
+            normal: hit.normal,
+        })
+    }
 }
 
 /// The unit direction a seam query already normalized, as Avian's `Dir3`
@@ -318,39 +371,49 @@ impl PhysicsSeam for AvianSeam<'_, '_> {
         exclude: &[BodyId],
     ) -> Option<RayHit> {
         let (dir, _) = split_motion(direction)?;
-        let hit = self.spatial.cast_ray_predicate(
-            origin,
-            dir3(dir),
-            max_distance,
-            false,
-            &SpatialQueryFilter::default(),
-            &|entity| self.solid(entity, exclude),
-        )?;
-        let (body, position, rotation, collider) = self.bodies.get(hit.entity).ok()?;
-        // The same ray against the one collider it hit, for the triangle.
-        let triangle = body.mesh.as_ref().and_then(|_| {
-            collider
-                .shape_scaled()
-                .cast_ray_and_get_normal(
-                    &parry_pose(Pose::new(position.0, rotation.0)),
-                    &Ray::new(origin, dir),
-                    max_distance,
-                    false,
-                )
-                .map(|h| h.subshape)
-        });
-        Some(RayHit {
-            body: body.id,
-            triangle,
-            material: body
-                .mesh
-                .as_ref()
-                .zip(triangle)
-                .and_then(|(m, t)| m.material(t)),
-            distance: hit.distance,
-            point: origin + dir * hit.distance,
-            normal: hit.normal,
-        })
+        self.first_hit(origin, dir, max_distance, exclude, false)
+    }
+
+    /// The mesh through `SpatialQuery` as [`PhysicsSeam::ray`] has it, each
+    /// convex body's grown shape (guac-motion's `grown_for_rays`, the parry
+    /// side's own) against the ray directly: a level's handful of solids.
+    fn ray_grown(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        grow: f32,
+        exclude: &[BodyId],
+    ) -> Option<RayHit> {
+        let (dir, _) = split_motion(direction)?;
+        let mut best = self.first_hit(origin, dir, max_distance, exclude, true);
+        let ray = Ray::new(origin, dir);
+        for (body, position, rotation, collider) in &self.bodies {
+            if body.mesh.is_some() || !body.kind.is_solid() || exclude.contains(&body.id) {
+                continue;
+            }
+            let reach = best.map_or(max_distance, |b| b.distance);
+            let shape = grown_for_rays(collider.shape_scaled(), grow);
+            let Some(found) = shape.cast_ray_and_get_normal(
+                &parry_pose(Pose::new(position.0, rotation.0)),
+                &ray,
+                reach,
+                false,
+            ) else {
+                continue;
+            };
+            if best.is_none_or(|b| found.time_of_impact < b.distance) {
+                best = Some(RayHit {
+                    body: body.id,
+                    triangle: None,
+                    material: None,
+                    distance: found.time_of_impact,
+                    point: origin + dir * found.time_of_impact,
+                    normal: found.normal,
+                });
+            }
+        }
+        best
     }
 
     fn overlaps(&self, shape: &Shape, at: Pose, exclude: &[BodyId]) -> Vec<BodyId> {
@@ -847,5 +910,229 @@ mod tests {
                 "{shape:?}"
             );
         }
+    }
+
+    /// AG.70 and AG.71: the post-step's scenarios guac-motion runs on parry
+    /// (his lean in the air, with his facing and near the ground, the float
+    /// off a step until his lean turns, a still solid letting him out slowly
+    /// and sliding him plain, the probe under a solid over an edge and its
+    /// search through a solid's radius), each in its world on Avian's side,
+    /// headless.
+    #[test]
+    fn the_post_step_cases_through_avian() {
+        let mut failures = Vec::new();
+        let mut ran = 0;
+        for scenario in guac_motion::scenarios::post_step_scenarios() {
+            let mut app = headless();
+            let mut commands = app.world_mut().commands();
+            for body in &scenario.bodies {
+                spawn_body(&mut commands, body).expect(scenario.name);
+            }
+            app.world_mut().flush();
+            app.update();
+            let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+            let seam = state.get(app.world()).unwrap();
+            if let Err(e) = (scenario.check)(&seam) {
+                failures.push(format!("{}: {e}", scenario.name));
+            }
+            ran += 1;
+        }
+        assert_eq!(ran, 8);
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// A key from the environment, else from the repo's `.env.dev`.
+    fn env_or_dotenv(key: &str) -> Option<String> {
+        if let Ok(v) = std::env::var(key) {
+            return Some(v);
+        }
+        let dotenv = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env.dev");
+        let text = std::fs::read_to_string(dotenv).ok()?;
+        text.lines().find_map(|line| {
+            let (k, v) = line.trim().split_once('=')?;
+            (k.trim() == key).then(|| v.trim().trim_matches('"').to_owned())
+        })
+    }
+
+    /// Level 213's mesh and the gate's door off the dump, as seam bodies:
+    /// the mesh through guac-extract in memory, the door's solid from its
+    /// `CollisionInfo` as the original builds it.
+    fn level_and_door(dump: &std::path::Path) -> Vec<Body> {
+        use guac_extract::levels;
+        use guac_formats::igz::Igz;
+        use guac_formats::igz::layouts::Shape as Kind;
+        use guac_formats::level::Placements;
+        use guac_ir::{DumpIdentity, Sha256};
+        use guac_motion::solid::{SolidInfo, SolidKind, euler};
+        let identity = DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: Sha256([0; 32]),
+        };
+        let level = levels::LEVELS[0];
+        let usrdir = dump.join("PS3_GAME/USRDIR");
+        let archive = std::fs::read(levels::archive_path(&usrdir, level)).expect("the archive");
+        let bld = levels::level_bld(&archive).expect("its level.bld");
+        let igz = Igz::parse(&bld).expect("the level parses");
+        let collision = levels::collision(&igz, level, identity)
+            .expect("the collision")
+            .ir;
+        let m = &collision.meshes[0];
+        let mesh = Mesh::new(
+            m.vertices.iter().map(|v| Vec3::from_array(*v)).collect(),
+            m.triangles.iter().map(|t| t.map(u32::from)).collect(),
+            m.materials.clone(),
+        )
+        .unwrap();
+        let placements = Placements::read(&igz).unwrap();
+        let door = placements
+            .actor("Breakable_Stone_Wall_Castle_206(1)")
+            .expect("the gate's door");
+        let c = door.collision.expect("its CollisionInfo");
+        let kind = match c.shape() {
+            Kind::Box => SolidKind::Box,
+            other => panic!("the door is a box, not {other:?}"),
+        };
+        let placement = door.placement();
+        let solid = SolidInfo {
+            kind,
+            offset: c.transform.position,
+            rotation: c.transform.rotation,
+            width: c.width,
+            height: c.height,
+            length: c.length,
+        }
+        .havok(placement.scale)
+        .expect("a solid door");
+        let at = placement.placement.init_matrix;
+        vec![
+            Body {
+                id: BodyId(1),
+                kind: BodyKind::Static,
+                pose: Pose::IDENTITY,
+                collider: SeamCollider::Mesh(Arc::new(mesh)),
+            },
+            Body {
+                id: BodyId(2),
+                kind: BodyKind::Kinematic,
+                pose: solid.pose(Pose::new(Vec3::from(at.position), euler(at.rotation))),
+                collider: SeamCollider::Convex(solid.in_world()),
+            },
+        ]
+    }
+
+    /// AG.70 on Avian's side (`#[ignore]`d: level 213 and the gate's door
+    /// off `GUAC_GIANTS_DUMP`, AG.58's recordings under `GUAC_CAPTURE_DIR`,
+    /// from the process env, else the repo's `.env.dev`): AG.58's three
+    /// `w58_door` replays, from the record after the slide's frame without
+    /// support, on each record's own stick, view and step through
+    /// `AvianSeam` and `ParryWorld` alike: the two within 1 mm at every
+    /// record, the probe stopping him within a record of theirs past the
+    /// door's end and the stick held, passing as many times as theirs to 1
+    /// while its slow point lies under the door's box with its radius.
+    #[test]
+    #[ignore]
+    fn ag70_past_the_gate_doors_end_through_avian() {
+        use guac_motion::hero::{Hero, Input};
+        use guac_motion::parry::ParryWorld;
+        use guac_motion::stick::Stick;
+        use guac_motion::tuning::Tuning;
+        use guac_motion::walk::{Footing, Walk};
+        let dump = env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP");
+        let captures = env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR");
+        let bodies = level_and_door(std::path::Path::new(&dump));
+        let parry = ParryWorld::new(&bodies).unwrap();
+        let mut app = headless();
+        let mut commands = app.world_mut().commands();
+        for body in &bodies {
+            spawn_body(&mut commands, body).unwrap();
+        }
+        app.world_mut().flush();
+        app.update();
+        let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+        let avian = state.get(app.world()).unwrap();
+        let run = std::path::Path::new(&captures).join("BLUS30968/ag58-wall-1792597650");
+        let f = |v: &serde_json::Value| v.as_f64().unwrap() as f32;
+        let v3 = |v: &serde_json::Value| Vec3::new(f(&v[0]), f(&v[1]), f(&v[2]));
+        let step = |r: &serde_json::Value| {
+            let c = &r["clock"];
+            let rate = f(&c["presentation_rate"]);
+            f(&c["frame_delta"]).clamp(rate * 0.5, rate * 3.0)
+                * f(&c["logic_scale"])
+                * f(&c["object_scale"])
+        };
+        let held = |r: &serde_json::Value| f(&r["mover"]["fields"]["controller inactive"]) != 0.0;
+        let supported = |r: &serde_json::Value| r["contacts"]["support"].as_u64() == Some(2);
+        let mut seen = 0;
+        for name in ["a/w58_door-O-00", "b/w58_door-O-00", "b/w58_door-O-01"] {
+            let text = std::fs::read_to_string(run.join(name).join("recording.json")).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let r = json.as_array().unwrap();
+            let k = (200..r.len()).find(|&k| !supported(&r[k])).unwrap() + 1;
+            let stop = (k..r.len()).find(|&j| held(&r[j])).unwrap();
+            let last = (stop..r.len()).rfind(|&j| !held(&r[j])).unwrap();
+            let theirs = (stop..=last).filter(|&j| !held(&r[j])).count();
+            let seed = || {
+                let s = &r[k];
+                let rotation = [0, 1, 2].map(|i| f(&s["hero"]["rotation"][i]));
+                let mut hero = Hero::new(
+                    guac_motion::scenarios::eruptor_solid(),
+                    Tuning::ERUPTOR,
+                    v3(&s["hero"]["position"]),
+                    rotation[1],
+                );
+                hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;
+                let m = &s["mover"];
+                let (h, p) = (f(&m["heading"]).to_radians(), f(&m["pitch"]).to_radians());
+                hero.walk = Walk {
+                    velocity: Vec3::new(p.cos() * h.sin(), p.sin(), p.cos() * h.cos())
+                        * f(&m["length"]),
+                    landing: None,
+                };
+                let g = &s["contacts"]["ground"];
+                let normal = v3(&g["normal"]);
+                let settled = guac_motion::ground::angle(hero.up, normal)
+                    <= guac_motion::ground::LEAN_SETTLED;
+                hero.footing = Footing {
+                    supported: supported(s),
+                    height: Some(f(&s["hero"]["position"][1]) - f(&g["location"][1])),
+                    slope: if settled { hero.up } else { normal },
+                    ground: Some(normal),
+                };
+                hero.velocity = v3(&s["hero"]["velocity"]);
+                hero.held_off = held(s);
+                hero.set_steps(step(&r[k - 1]), step(&r[k - 2]));
+                hero
+            };
+            let (mut ours, mut twin) = (seed(), seed());
+            let (mut ours_stop, mut flickers, mut apart) = (None, 0usize, 0.0f32);
+            for j in k + 1..=last + 30 {
+                let (a, b) = (&r[j - 1], &r[j]);
+                let stick = Stick::new(f(&b["stick"][0]), f(&b["stick"][1]));
+                let input = Input::stick(stick, f(&a["camera"]["rotation"][1]));
+                ours.step(&avian, &input, step(a), &[]);
+                twin.step(&parry, &input, step(a), &[]);
+                apart = apart.max((ours.pivot - twin.pivot).length());
+                match (ours_stop, ours.held_off) {
+                    (None, true) => ours_stop = Some(j),
+                    (Some(_), false) => flickers += 1,
+                    _ => {}
+                }
+            }
+            eprintln!(
+                "{name} from record {k}: stops on Avian at {ours_stop:?}, theirs {stop}; {flickers} passes, theirs {theirs}; Avian and parry {apart:.2e} m apart at worst"
+            );
+            assert!(apart < 1e-3, "{name}: Avian and parry {apart} m apart");
+            assert!(
+                ours_stop.is_some_and(|s| s.abs_diff(stop) <= 1),
+                "{name}: {ours_stop:?} against {stop}"
+            );
+            assert!(
+                flickers.abs_diff(theirs) <= 1,
+                "{name}: {flickers} against {theirs}"
+            );
+            seen += 1;
+        }
+        assert_eq!(seen, 3);
     }
 }

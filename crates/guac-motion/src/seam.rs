@@ -411,6 +411,27 @@ pub trait PhysicsSeam {
     /// Every body, sensors included, that `shape` at `at` touches or overlaps,
     /// sorted.
     fn overlaps(&self, shape: &Shape, at: Pose, exclude: &[BodyId]) -> Vec<BodyId>;
+
+    /// [`PhysicsSeam::ray`] with every convex body `grow` larger all round,
+    /// its faces moved out and its edges and corners left square (a box
+    /// stays a box), a mesh's triangles as they are: the original's rays
+    /// meet a convex solid with its convex radius (AG.70: the edge probe
+    /// passing under the gate's door to within a millimetre of its face),
+    /// where a hero's world holds each convex solid that much smaller
+    /// ([`crate::solid::HavokSolid::in_world`]). A ray starting inside a
+    /// grown body reports where it leaves it. The default asks
+    /// [`PhysicsSeam::ray`], right for a world with no convex body.
+    fn ray_grown(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        grow: f32,
+        exclude: &[BodyId],
+    ) -> Option<RayHit> {
+        let _ = grow;
+        self.ray(origin, direction, max_distance, exclude)
+    }
 }
 
 /// The order every side reports planes in.

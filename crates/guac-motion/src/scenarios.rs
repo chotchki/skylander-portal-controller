@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use crate::clock::FixedClock;
 use crate::hero::{Hero, Input};
-use crate::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
+use crate::proxy::KEEP;
+use crate::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Quat, Shape, Vec3};
 use crate::solid::{HavokSolid, SolidInfo, SolidKind, euler};
 use crate::stick::Stick;
 use crate::tuning::{FOOT, Tuning};
@@ -1024,4 +1025,383 @@ pub fn an_open_edge_within_45_holds_him_up() -> Scenario {
         );
         Ok(())
     })
+}
+
+/// What AG.70 and AG.71 run on each side of the seam: the engine's
+/// post-step as read (his lean off the ground and with his facing, the snap
+/// only while his lean turns, a frame begun on the ground ending supported
+/// within the snap's reach), a solid he's inside letting him out slowly and
+/// sliding him plain, and the edge probe under a solid hanging over an edge
+/// and its search through a solid's radius.
+pub fn post_step_scenarios() -> Vec<Scenario> {
+    vec![
+        off_the_ground_his_lean_turns_upright(),
+        off_the_ground_his_lean_turns_with_his_facing(),
+        near_ground_he_can_stand_on_he_leans_to_it(),
+        off_a_step_he_floats_until_his_lean_turns(),
+        a_solid_he_is_inside_lets_him_out_slowly(),
+        a_still_solid_slides_him_plain_inside_it_and_the_frame_he_meets_it(),
+        the_probe_passes_under_a_solid_over_an_edge(),
+        a_search_from_inside_a_solids_radius_goes_on_through_it(),
+    ]
+}
+
+/// Up `degrees` off straight up toward +x.
+fn tilted(degrees: f32) -> Vec3 {
+    let a = degrees.to_radians();
+    Vec3::new(a.sin(), a.cos(), 0.0)
+}
+
+/// He leans with the ground, in the air (AG.71: AG.39's falls, 351 of 390
+/// records): dropped from 3 m leaning 10°, his up axis turns back toward
+/// straight up at 120°/s, 2° a frame, the last frame taking what's left.
+pub fn off_the_ground_his_lean_turns_upright() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let mut hero = dropped(Vec3::new(0.0, 3.0, 0.0));
+        hero.up = tilted(10.0);
+        let mut before = crate::ground::angle(hero.up, Vec3::Y);
+        for k in 0..5 {
+            hero.step(seam, &Input::stick(Stick::CENTRED, VIEW), DT, &[]);
+            ensure!(!hero.footing.supported, "frame {k}: landed from 3 m");
+            let now = crate::ground::angle(hero.up, Vec3::Y);
+            let want = (before - 2.0).max(0.0);
+            ensure!(
+                (now - want).abs() < 1e-3,
+                "frame {k}: {now}° off up, want {want}°"
+            );
+            before = now;
+        }
+        Ok(())
+    }
+    Scenario {
+        name: "off_the_ground_his_lean_turns_upright",
+        bodies: bodies(&open_ground(), &[]),
+        check,
+    }
+}
+
+/// He leans with the ground, turning with his facing (AG.71: his lean is
+/// his transform's; over AG.39's falls it predicts his lean in the air to
+/// 0.11°, 2.3° without): dropped from 3 m leaning 10° toward +x with the
+/// stick turning him, each frame his up axis turns about the vertical by
+/// what his facing turned, and 2° back toward straight up.
+pub fn off_the_ground_his_lean_turns_with_his_facing() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let mut hero = dropped(Vec3::new(0.0, 3.0, 0.0));
+        hero.up = tilted(10.0);
+        let side = |up: Vec3| bearing(Vec3::new(up.x, 0.0, up.z));
+        for k in 0..4 {
+            let (facing, toward) = (hero.facing, side(hero.up));
+            let tilt = crate::ground::angle(hero.up, Vec3::Y);
+            hero.step(seam, &Input::stick(stick(1.0, -90.0), 0.0), DT, &[]);
+            ensure!(!hero.footing.supported, "frame {k}: landed from 3 m");
+            let swung = (hero.facing - facing + 180.0).rem_euclid(360.0) - 180.0;
+            ensure!(swung.abs() > 5.0, "frame {k}: his facing turned {swung}°");
+            let now = side(hero.up);
+            let want = (toward + swung).rem_euclid(360.0);
+            ensure!(
+                angle_between(now, want) < 1e-2,
+                "frame {k}: his lean faces {now}°, want {want}° (turned {swung}°)"
+            );
+            let left = crate::ground::angle(hero.up, Vec3::Y);
+            ensure!(
+                (left - (tilt - 2.0)).abs() < 1e-3,
+                "frame {k}: {left}° off up, want {}°",
+                tilt - 2.0
+            );
+        }
+        Ok(())
+    }
+    Scenario {
+        name: "off_the_ground_his_lean_turns_with_his_facing",
+        bodies: bodies(&open_ground(), &[]),
+        check,
+    }
+}
+
+/// He leans with the ground, within the snap's reach of ground he can stand
+/// on (AG.71: the 8 records within 9 cm of the ground finder's point): 0.3 m
+/// over a 20° slope and not on it, his up axis turns toward its normal, not
+/// toward straight up.
+pub fn near_ground_he_can_stand_on_he_leans_to_it() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let n = Vec3::new(0.0, 20f32.to_radians().cos(), -20f32.to_radians().sin());
+        let over = Vec3::new(0.0, 6.0 * 20f32.to_radians().tan() + 0.3, 4.0);
+        let mut hero = dropped(over);
+        hero.step(seam, &Input::stick(Stick::CENTRED, VIEW), DT, &[]);
+        ensure!(
+            !hero.footing.supported,
+            "on the slope at once: {}",
+            hero.pivot
+        );
+        let turned = crate::ground::angle(hero.up, Vec3::Y);
+        ensure!(
+            (turned - 2.0).abs() < 1e-3,
+            "turned {turned}°, want 2° a frame"
+        );
+        ensure!(
+            (crate::ground::angle(hero.up, n) - 18.0).abs() < 1e-3,
+            "turned away from the slope's normal: {}",
+            hero.up
+        );
+        Ok(())
+    }
+    let mut soup = Soup::default();
+    soup.ramp(Vec3::new(0.0, 0.0, -2.0), 20.0, [-6.0, 6.0], 12.0);
+    Scenario {
+        name: "near_ground_he_can_stand_on_he_leans_to_it",
+        bodies: bodies(&soup, &[]),
+        check,
+    }
+}
+
+/// Steps and drops, the post-step as read (AG.70: along the gate's door the
+/// original's Eruptor rode up to 0.288 m over ground falling away under him,
+/// supported, until a new slope turned his lean and the snap set him 10 mm
+/// over it): walked off a 0.1 m step onto level ground he ends every frame
+/// supported, no band pulling his walk down, riding the step's height over
+/// the lower ground; where it falls away at 3° his lean turns and the snap
+/// sets him 10 mm over it.
+pub fn off_a_step_he_floats_until_his_lean_turns() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let mut hero = eruptor(seam, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        let states = run_viewed(seam, &mut hero, 150, 0.0, |_| stick(1.0, 0.0));
+        let (mut floated, mut snapped) = (0, None);
+        for (k, s) in states.iter().enumerate() {
+            let h = s.height.unwrap_or(f32::NAN);
+            if s.pivot.z > 3.0 && s.pivot.z < 9.5 {
+                ensure!(s.supported, "frame {k}: unsupported at {}", s.pivot);
+                ensure!(s.walk.y.abs() < 1e-4, "frame {k}: walk {}", s.walk);
+                ensure!((h - 0.105).abs() < 2e-3, "frame {k}: {h} m up");
+                floated += 1;
+            }
+            if s.pivot.z > 10.0 && snapped.is_none() {
+                ensure!(
+                    (h - 0.01).abs() < 1e-3 || h > 0.1,
+                    "frame {k}: {h} m over the slope at {}",
+                    s.pivot
+                );
+                if (h - 0.01).abs() < 1e-3 {
+                    snapped = Some(k);
+                }
+            }
+        }
+        ensure!(floated > 30, "floated {floated} frames");
+        let last = states.last().unwrap();
+        ensure!(
+            snapped.is_some() && last.supported,
+            "never set down over the slope: {:?}",
+            last
+        );
+        Ok(())
+    }
+    let mut soup = Soup::default();
+    soup.floor(0.1, [-6.0, 6.0], [-6.0, 2.0], 2.0)
+        .floor(0.0, [-6.0, 6.0], [2.0, 10.0], 2.0)
+        .ramp(Vec3::new(0.0, 0.0, 10.0), -3.0, [-6.0, 6.0], 30.0);
+    Scenario {
+        name: "off_a_step_he_floats_until_his_lean_turns",
+        bodies: bodies(&soup, &[]),
+        check,
+    }
+}
+
+/// Walls (AG.70: AG.58's door, 8-9 cm inside it, let him out at 0.983 of
+/// his depth a second over every step): standing 4 cm inside a solid's face
+/// he moves out of it at his depth a second, 0.67 mm the first frame and
+/// 2.5 cm in a second, where the level's mesh still sets him off at once.
+pub fn a_solid_he_is_inside_lets_him_out_slowly() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::Y * KEEP, 0.0);
+        hero.footing = crate::walk::Footing::level(KEEP);
+        let start = hero.pivot;
+        let states = run(seam, &mut hero, 60, |_| Stick::CENTRED);
+        let first = (states[0].pivot - start).x;
+        ensure!(
+            (first + 0.04 / 60.0).abs() < 1e-4,
+            "first frame {first} m along x"
+        );
+        let out = -(states[59].pivot - start).x;
+        let want = 0.04 * (1.0 - (1.0f32 - 1.0 / 60.0).powi(60));
+        ensure!(
+            (out - want).abs() < 5e-4,
+            "out {out} m in a second, want {want}"
+        );
+        Ok(())
+    }
+    // A box whose face stands 4 cm inside his keep: his query sphere (his
+    // own grown by the radius the world takes off the box) reaches x 0.9144
+    // and the keep 5 mm past that.
+    let face = 0.9144 + KEEP - 0.04;
+    let solid = HavokSolid {
+        shape: Shape::Box {
+            half_extents: Vec3::new(1.0, 1.0, 1.0),
+            margin: crate::solid::CONVEX_RADIUS,
+        },
+        centre: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+    };
+    Scenario {
+        name: "a_solid_he_is_inside_lets_him_out_slowly",
+        bodies: bodies(
+            &open_ground(),
+            &[(BodyId(2), solid, Pose::at(Vec3::new(face + 1.0, 1.0, 0.0)))],
+        ),
+        check,
+    }
+}
+
+/// Inside a solid (AG.70: along AG.58's gate's door, his lean tipping him
+/// 2-9 cm into its box, theirs slid at the walk's own share along it, and
+/// the frame he met it the same): walking at top speed 45° into a still
+/// solid's face, more than 2 cm inside it he slides plain, at the push's
+/// share along it, where 1 cm inside the wall law takes him; met halfway
+/// through a frame he slides plain for the rest of it and from the next
+/// frame by the law.
+pub fn a_still_solid_slides_him_plain_inside_it_and_the_frame_he_meets_it() -> Scenario {
+    fn walking(at: f32) -> Hero {
+        let mut hero = Hero::new(
+            eruptor_solid(),
+            Tuning::ERUPTOR,
+            Vec3::new(at, KEEP, 0.0),
+            45.0,
+        );
+        hero.footing = crate::walk::Footing::level(KEEP);
+        hero.walk.velocity = Vec3::new(1.0, 0.0, 1.0).normalize() * 21.5;
+        hero
+    }
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let push = Input::stick(stick(1.0, 45.0), 0.0);
+        let plain = TOP * 45f32.to_radians().sin();
+        let law = TOP * (1.0 - crate::proxy::WALL_SLOWING * (1.0 - 45f32.to_radians().sin()));
+        let along = |hero: &mut Hero| {
+            let z = hero.pivot.z;
+            hero.step(seam, &push, DT, &[]);
+            (hero.pivot.z - z) / DT
+        };
+        // 4 cm inside, then 1 cm: plain, then the law.
+        for (at, want, what) in [(0.0, plain, "4 cm in"), (-0.03, law, "1 cm in")] {
+            let speed = along(&mut walking(at));
+            ensure!(
+                (speed - want).abs() < 5e-3,
+                "{what}: along it at {speed} m/s, want {want}"
+            );
+        }
+        // Touching at x -0.04: met halfway through the frame.
+        let mut hero = walking(-0.04 - 0.5 * plain * DT);
+        let first = along(&mut hero);
+        ensure!(
+            (hero.pivot.x + 0.04).abs() < 1e-3,
+            "never met it: {}",
+            hero.pivot
+        );
+        ensure!(
+            (first - plain).abs() < 5e-3,
+            "the frame he meets it: {first} m/s along it, want {plain}"
+        );
+        let next = along(&mut hero);
+        ensure!(
+            (next - law).abs() < 5e-3,
+            "the frame after: {next} m/s along it, want {law}"
+        );
+        Ok(())
+    }
+    // A box whose face stands 4 cm inside his keep with him at x 0, as
+    // a_solid_he_is_inside_lets_him_out_slowly's.
+    let face = 0.9144 + KEEP - 0.04;
+    let solid = HavokSolid {
+        shape: Shape::Box {
+            half_extents: Vec3::new(1.0, 1.0, 1.0),
+            margin: crate::solid::CONVEX_RADIUS,
+        },
+        centre: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+    };
+    Scenario {
+        name: "a_still_solid_slides_him_plain_inside_it_and_the_frame_he_meets_it",
+        bodies: bodies(
+            &open_ground(),
+            &[(BodyId(2), solid, Pose::at(Vec3::new(face + 1.0, 1.0, 0.0)))],
+        ),
+        check,
+    }
+}
+
+/// An edge with nothing below (AG.70: past the gate's door's end the
+/// original's slow probe passed while its point lay under the door's box
+/// with its radius, 3-7 cm under its bottom, and refused within 1.7 mm past
+/// its face): a solid hanging over an open edge, its bottom 0.07 m over the
+/// floor's level, lets the probe pass anywhere under it past the edge, and
+/// a millimetre past its side the probe refuses.
+pub fn the_probe_passes_under_a_solid_over_an_edge() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let pivot = Vec3::new(0.0, 0.005, 1.0);
+        for (x, z, want) in [(0.5, 3.0, true), (0.999, 3.0, true), (1.001, 3.0, false)] {
+            let point = Vec3::new(x, 0.005, z);
+            let got = crate::edge::walkable(seam, pivot, point, &[]);
+            ensure!(got == want, "at ({x}, {z}): {got}, want {want}");
+        }
+        Ok(())
+    }
+    let mut soup = Soup::default();
+    soup.floor(0.0, [-6.0, 6.0], [-6.0, 2.0], 2.0);
+    // Its box with its radius: x -1..1, y 0.07..2.07, z 1.5..5.5.
+    let solid = HavokSolid {
+        shape: Shape::Box {
+            half_extents: Vec3::new(0.95, 0.95, 1.95),
+            margin: crate::solid::CONVEX_RADIUS,
+        },
+        centre: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+    };
+    Scenario {
+        name: "the_probe_passes_under_a_solid_over_an_edge",
+        bodies: bodies(
+            &soup,
+            &[(BodyId(2), solid, Pose::at(Vec3::new(0.0, 1.07, 3.5)))],
+        ),
+        check,
+    }
+}
+
+/// An edge with nothing below, the probe's search (AG.70): seeing a solid
+/// with its radius, a ray starting inside that radius goes on through it as
+/// one starting inside the solid does. Under a box whose radius takes in the
+/// down search's start (0.1 m over the point; the box's bottom with its
+/// radius at 0.07, as the world holds it at 0.12), the search finds the
+/// floor 1 m below, not the radius's face.
+pub fn a_search_from_inside_a_solids_radius_goes_on_through_it() -> Scenario {
+    fn check(seam: &dyn PhysicsSeam) -> Result<(), String> {
+        let found = crate::ground::find_seeing(
+            seam,
+            Vec3::new(0.5, 0.0, 0.0),
+            crate::solid::MESH_RADIUS,
+            &[],
+        )
+        .ok_or("found nothing")?;
+        ensure!(
+            (found.point.y + 1.0).abs() < 1e-4,
+            "found {found:?}, want the floor at -1"
+        );
+        Ok(())
+    }
+    let mut soup = Soup::default();
+    soup.floor(-1.0, [-6.0, 6.0], [-6.0, 6.0], 2.0);
+    // Its box with its radius: x and z -1..1, y 0.07..2.07.
+    let solid = HavokSolid {
+        shape: Shape::Box {
+            half_extents: Vec3::splat(0.95),
+            margin: crate::solid::CONVEX_RADIUS,
+        },
+        centre: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+    };
+    Scenario {
+        name: "a_search_from_inside_a_solids_radius_goes_on_through_it",
+        bodies: bodies(
+            &soup,
+            &[(BodyId(2), solid, Pose::at(Vec3::new(0.0, 1.07, 0.0)))],
+        ),
+        check,
+    }
 }

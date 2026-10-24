@@ -28,7 +28,7 @@ pub const TOL: f32 = 1.0e-4;
 pub const TOL_CAST: f32 = 1.0e-3;
 pub const AGREE: f32 = 1.0e-5;
 
-/// A call to one of [`PhysicsSeam`]'s four methods with its arguments, so a
+/// A call to one of [`PhysicsSeam`]'s methods with its arguments, so a
 /// case can be asked of any implementation.
 #[derive(Clone, Debug)]
 pub enum Query {
@@ -49,6 +49,14 @@ pub enum Query {
         origin: Vec3,
         direction: Vec3,
         max_distance: f32,
+        exclude: Vec<BodyId>,
+    },
+    /// [`PhysicsSeam::ray_grown`]; its answer is an [`Answer::Ray`].
+    RayGrown {
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        grow: f32,
         exclude: Vec<BodyId>,
     },
     Overlaps {
@@ -98,6 +106,13 @@ pub fn ask(seam: &dyn PhysicsSeam, query: &Query) -> Answer {
             max_distance,
             exclude,
         } => Answer::Ray(seam.ray(*origin, *direction, *max_distance, exclude)),
+        Query::RayGrown {
+            origin,
+            direction,
+            max_distance,
+            grow,
+            exclude,
+        } => Answer::Ray(seam.ray_grown(*origin, *direction, *max_distance, *grow, exclude)),
         Query::Overlaps { shape, at, exclude } => {
             Answer::Overlaps(seam.overlaps(shape, *at, exclude))
         }
@@ -281,6 +296,16 @@ fn ray(origin: Vec3, direction: Vec3, max_distance: f32) -> Query {
     }
 }
 
+fn ray_grown(origin: Vec3, direction: Vec3, grow: f32) -> Query {
+    Query::RayGrown {
+        origin,
+        direction,
+        max_distance: 10.0,
+        grow,
+        exclude: vec![],
+    }
+}
+
 fn overlaps(shape: Shape, at: Vec3) -> Query {
     Query::Overlaps {
         shape,
@@ -373,7 +398,82 @@ pub fn cases() -> Vec<Case> {
         ray_sides(),
         zero_motion(),
         an_open_edge_holds_off_its_edge(),
+        rays_meet_a_convex_with_its_radius(),
     ]
+}
+
+/// The original's rays meet a convex solid with its convex radius and its
+/// edges square (AG.70: the edge probe under the gate's door): a box grown
+/// 0.05 m has its faces 0.05 m out and its corners square, so a ray 0.04 m
+/// past both faces by an edge still meets it, where a rounded one passes;
+/// a ball grows by the same; the floor's triangles stay as they are, and a
+/// ray starting inside the grown shell reports where it leaves it.
+fn rays_meet_a_convex_with_its_radius() -> Case {
+    let block = convex(
+        BALL.0,
+        BodyKind::Kinematic,
+        Pose::at(Vec3::new(0.0, 2.0, 0.0)),
+        Shape::Box {
+            half_extents: Vec3::new(1.0, 0.5, 0.5),
+            margin: 0.0,
+        },
+    );
+    let ball = convex(
+        3,
+        BodyKind::Kinematic,
+        Pose::at(Vec3::new(3.0, 1.0, 0.0)),
+        Shape::Sphere { radius: 0.5 },
+    );
+    Case {
+        name: "rays_meet_a_convex_with_its_radius",
+        bodies: vec![floor(4.0), block, ball],
+        moves: vec![],
+        queries: vec![
+            // Up at the box's bottom face, then by its edge 0.04 m past both
+            // the bottom and the side.
+            ray_grown(Vec3::new(0.0, 0.0, 0.2), Vec3::Y, 0.05),
+            ray_grown(Vec3::new(0.0, 1.46, -1.0), Vec3::Z, 0.05),
+            ray(Vec3::new(0.0, 1.46, -1.0), Vec3::Z, 10.0),
+            // Down onto the ball and down past it onto the floor.
+            ray_grown(Vec3::new(3.0, 3.0, 0.0), Vec3::NEG_Y, 0.05),
+            ray_grown(Vec3::new(-3.0, 1.0, -3.0), Vec3::NEG_Y, 0.05),
+            // From inside the grown shell under the box, down and up.
+            ray_grown(Vec3::new(0.0, 1.47, 0.0), Vec3::Y, 0.05),
+        ],
+        expect: |a| {
+            let bottom = ray_hit(&a[0])?;
+            if bottom.body != BALL {
+                return Err(format!("want the box from below, got {bottom:?}"));
+            }
+            close("the box's grown bottom", bottom.distance, 1.45, TOL)?;
+            close_v("its normal", bottom.normal, Vec3::NEG_Y, TOL)?;
+            let edge = ray_hit(&a[1])?;
+            if edge.body != BALL {
+                return Err(format!("want the box's square edge, got {edge:?}"));
+            }
+            close("its square edge", edge.distance, 0.45, TOL)?;
+            if a[2] != Answer::Ray(None) {
+                return Err(format!("the plain ray passes under it, got {:?}", a[2]));
+            }
+            let ball = ray_hit(&a[3])?;
+            if ball.body != BodyId(3) {
+                return Err(format!("want the ball, got {ball:?}"));
+            }
+            close("the grown ball's top", ball.distance, 1.45, TOL)?;
+            let floor = ray_hit(&a[4])?;
+            if (floor.body, floor.triangle.is_some()) != (FLOOR, true) {
+                return Err(format!("want the floor, got {floor:?}"));
+            }
+            close("the floor as it is", floor.distance, 1.0, TOL)?;
+            let leaving = ray_hit(&a[5])?;
+            if leaving.body != BALL {
+                return Err(format!(
+                    "want the box from inside its shell, got {leaving:?}"
+                ));
+            }
+            close("out of the shell", leaving.distance, 1.08, TOL)
+        },
+    }
 }
 
 /// A sphere dropped onto a plane stops at the expected fraction, and the

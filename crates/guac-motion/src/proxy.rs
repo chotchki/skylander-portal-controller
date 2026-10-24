@@ -30,7 +30,17 @@
 //! keep-contact tolerance as a guess); a moving surface ([`Surfaces`])
 //! counted in the dedupe and pushing him along its normal at its own speed,
 //! its cast still against its pose at the step's start (read; no body moves
-//! in M2's world); the [`RECOVERY`] speed off a plane he's inside; and
+//! in M2's world); the [`RECOVERY`] speed off a triangle of the level or a
+//! moving solid he's inside (a still solid he's inside lets him out at
+//! [`RECOVERY_RATE`] times his depth a second, Havok's penetration recovery
+//! as AG.58's door shows it, 0.983 of it with the depth read a step before,
+//! over 311 records of its three replays, AG.70; a moving one is unmeasured
+//! and keeps AG.16's push); that the wall law doesn't run off a wall he's
+//! over [`INSIDE`] into, nor off a solid the cast meets mid-step for the
+//! rest of that step (AG.70: along the gate's door, his lean tipping him
+//! 2-9 cm into the box, theirs slid at the walk's own share along it,
+//! 1.696 m/s, and the frame he met it the same; a frame at 1.6 cm in and
+//! three he was leaving it took the law, AG.135's); and
 //! (AG.48) that a plane a cast stops him on without moving him (met at a
 //! glance on a rounded edge, where his keep off the plane at the cast's
 //! stop lies behind him) limits the rest of the step's solves as a touching
@@ -63,8 +73,16 @@ pub const WALL_SLOWING: f32 = 0.1235;
 /// creeps at the push's share; from there the wall law (degrees).
 pub const DEAD_ANGLE: f32 = 0.6;
 pub const SHARE_ANGLE: f32 = 1.5;
-/// The fastest the solve moves him off a plane he's inside, m/s.
+/// The fastest the solve moves him off a triangle of the level or a moving
+/// solid he's inside, m/s (a hypothesis, AG.16's).
 pub const RECOVERY: f32 = 1.0;
+/// How fast the solve moves him off a still solid he's inside: this times
+/// how far in he is, m/s per metre (Havok's penetration recovery as AG.58's door
+/// shows it, AG.70).
+pub const RECOVERY_RATE: f32 = 1.0;
+/// A wall he's further inside than this, metres, slides him plain, without
+/// the wall law (AG.70, a hypothesis).
+pub const INSIDE: f32 = 0.02;
 /// A plane this near the skin is touching, metres.
 const TOUCHING: f32 = 1.0e-3;
 /// The velocity model's leave-the-ground test (as read): ground facing up
@@ -203,12 +221,20 @@ impl Proxy<'_> {
         let mut seen = Vec::new();
         // Planes a cast stopped him on without moving him.
         let mut met: Vec<(BodyId, Option<u32>)> = Vec::new();
-        for _ in 0..MAX_CASTS {
+        for cast in 0..MAX_CASTS {
             if remaining <= MIN_TIME {
                 break;
             }
             let planes = self.planes(pos, up, CONTACT_REACH);
-            if grounded && let Some(slid) = wall_law(asked, &planes) {
+            // The law from the walls he starts the step against, and the
+            // level's met on the way; a solid's met on the way slides him
+            // plain for the rest of the step (AG.58's door, AG.70).
+            let walls: Vec<ContactPlane> = planes
+                .iter()
+                .filter(|p| cast == 0 || p.triangle.is_some())
+                .copied()
+                .collect();
+            if grounded && let Some(slid) = wall_law(asked, &walls) {
                 v = slid;
             }
             // A plane short of touching limits nothing: the cast meets it,
@@ -227,8 +253,12 @@ impl Proxy<'_> {
                     min: self.surfaces.velocity(p.body).dot(p.normal)
                         + if p.distance >= 0.0 {
                             -p.distance / remaining
-                        } else {
+                        } else if p.triangle.is_some()
+                            || self.surfaces.velocity(p.body) != Vec3::ZERO
+                        {
                             (-p.distance / remaining).min(RECOVERY)
+                        } else {
+                            -p.distance * RECOVERY_RATE
                         },
                 })
                 .collect();
@@ -312,10 +342,16 @@ fn wall_law(asked: Vec3, planes: &[ContactPlane]) -> Option<Vec3> {
         return None;
     }
     let flat = flat.normalize();
-    let head_on = planes
+    let walls: Vec<&ContactPlane> = planes
         .iter()
         .filter(|p| p.distance <= TOUCHING && p.normal.y < MAX_SLOPE_COS)
         .filter(|p| asked.dot(p.normal) < 0.0)
+        .collect();
+    if walls.iter().any(|p| p.distance < -INSIDE) {
+        return None;
+    }
+    let head_on = walls
+        .iter()
         .filter_map(|p| {
             let n = Vec3::new(p.normal.x, 0.0, p.normal.z);
             (n.length() > 1e-3).then(|| (-flat.dot(n.normalize())).clamp(-1.0, 1.0))
