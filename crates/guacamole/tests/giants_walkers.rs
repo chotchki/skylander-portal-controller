@@ -1,0 +1,1566 @@
+//! AG.27's disc tests: every modelled character on his own scripts, headless
+//! over level 213 with guacamole's host (the walkers' part as the TV links
+//! it, `level_scripts::load` over a throwaway extract made by the real
+//! stages), each joined by AH.17's join, his setup on the VM writing the
+//! `movement parameters` and the scale the mover update reads. Ignored by
+//! default; they read `GUAC_GIANTS_DUMP` and write the extract under
+//! `GUAC_EXTRACT_DIR` (a folder `ag27-verify` there, left for the caller to
+//! remove), from the process env else `.env.dev`, and AG.12's and AE.22's
+//! recordings under `GUAC_CAPTURE_DIR`:
+//!
+//! `cargo test -p guacamole --release --test giants_walkers -- --ignored --nocapture --test-threads=1`
+
+mod common;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use common::*;
+use guac_extract::intros::IrFormat;
+use guac_extract::known::KNOWN_DUMPS;
+use guac_extract::levels;
+use guac_extract::{DirState, ExtractRoot, open, stages};
+use guac_formats::igz::Igz;
+use guac_ir::palette::{LevelPalettes, Palette};
+use guac_ir::roster::{Category, Roster};
+use guac_motion::hero::Hero;
+use guac_motion::parry::ParryWorld;
+use guac_motion::proxy::Surfaces;
+use guac_motion::seam::Vec3;
+use guac_motion::stick::Stick;
+use guac_script::{Generator, Halt, Handle, Mode, Obj, PlacementId, Program, Value, Vm};
+use guacamole::figure::{self, Layout, Tag, Values};
+use guacamole::level_scripts::{self, lengths};
+use guacamole::player_loop::PlayerLoop;
+use guacamole::script_engine::Pad;
+use guacamole::scripts::{
+    self, Files, ScriptWorld, WalkerScripts, WorldHost, headless_handles, headless_objects,
+    headless_spawner,
+};
+use guacamole::walkers::{self, Setup, Walk};
+
+const LEVEL_NAME: &str = "level_213_tutotial";
+
+/// aj-vm's live member table, to name a halt's member id (a dev aid:
+/// `AH18_LIVE_TABLE` also registers each member the registry lacks as a
+/// value cell, [`discovery`]).
+const LIVE_TABLE: &str =
+    "/Users/chotchki/workspace/guacamole-research/aj-vm/notes/members_live_table.tsv";
+
+/// `halt` with an unmodelled member's id replaced by its name in the live
+/// table (`class.member [type]`), the id kept beside it.
+fn named(halt: &str) -> String {
+    let Some(at) = halt.find("unmodelled member ") else {
+        return halt.to_owned();
+    };
+    let id = halt[at + 18..].split_whitespace().next().unwrap_or("");
+    let Ok(table) = std::fs::read_to_string(
+        std::env::var("AH18_LIVE_TABLE").unwrap_or_else(|_| LIVE_TABLE.to_owned()),
+    ) else {
+        return halt.to_owned();
+    };
+    for row in table.lines().filter(|l| !l.starts_with('#')) {
+        let c: Vec<&str> = row.split('\t').collect();
+        if c.len() < 4 {
+            continue;
+        }
+        let ns = c[0].to_ascii_lowercase();
+        let ns = ns.strip_prefix("tfb").unwrap_or(&ns).to_owned();
+        let name = c[2].to_ascii_lowercase();
+        let name = name.trim_start_matches('-').to_owned();
+        let m = guac_script::MemberId::named(&ns, &name);
+        if format!("{:08x}.{:08x}", m.namespace, m.name) == id {
+            return format!("{halt} = {ns}.{name} [{}]", c[3]);
+        }
+    }
+    halt.to_owned()
+}
+
+fn capture_dir() -> PathBuf {
+    PathBuf::from(env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR"))
+}
+
+fn read_ron<T: serde::de::DeserializeOwned>(dir: &Path, rel: &str) -> T {
+    let text = std::fs::read_to_string(dir.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    guac_ir::from_ron(&text).unwrap_or_else(|e| panic!("{rel}: {e}"))
+}
+
+/// The one-minute load average, as `uptime` prints it.
+fn load1() -> f32 {
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    out.split_whitespace()
+        .find_map(|w| w.parse::<f32>().ok())
+        .unwrap_or(f32::NAN)
+}
+
+/// The extract the tests read: made by the real stages (all but the intros)
+/// into `GUAC_EXTRACT_DIR/ag27-verify`, kept between tests.
+fn extract() -> PathBuf {
+    let dump = dump();
+    let base = PathBuf::from(env_or_dotenv("GUAC_EXTRACT_DIR").expect("set GUAC_EXTRACT_DIR"));
+    std::fs::create_dir_all(&base).unwrap();
+    let root = ExtractRoot::checked(base.join("ag27-verify")).unwrap();
+    let mut opened = open(&dump, &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
+    let dir = opened.dir.path().to_path_buf();
+    if opened.state == DirState::Current {
+        return dir;
+    }
+    println!(
+        "making the extract ({:?}); load {:.2}",
+        opened.state,
+        load1()
+    );
+    let started = Instant::now();
+    let done = stages::run(&mut opened.dir, None, IrFormat::Ron, &|_| {}).unwrap();
+    println!(
+        "  stages: roster {:.2} s, models {:.2} s, level {:.2} s, scripts {:.2} s ({} entries, {} scripts, {} walkers, {} left out: {:?}, failed {:?}), {:.1} s in all; load {:.2}",
+        done.roster.took.as_secs_f64(),
+        done.models.took.as_secs_f64(),
+        done.levels.took.as_secs_f64(),
+        done.scripts.took.as_secs_f64(),
+        done.scripts.entries,
+        done.scripts.scripts,
+        done.scripts.walkers,
+        done.scripts.walkers_left_out.len(),
+        done.scripts.walkers_left_out,
+        done.scripts.failed,
+        started.elapsed().as_secs_f64(),
+        load1()
+    );
+    dir
+}
+
+/// How a run is made: its mode, and whether each member the registry lacks
+/// is a value cell (aj-vm's live table, [`LIVE_TABLE`]) so the run goes on
+/// past it. Strict without it is the check; with it, a discovery of what
+/// the scripts would do once the member is modelled.
+#[derive(Debug, Clone, Copy)]
+struct Opts {
+    mode: Mode,
+    discover: bool,
+}
+
+const STRICT: Opts = Opts {
+    mode: Mode::Strict,
+    discover: false,
+};
+const DISCOVER: Opts = Opts {
+    mode: Mode::Strict,
+    discover: true,
+};
+
+/// Each live-table member the registry doesn't hold, as a value cell of its
+/// registered type (the common run's `discovery`, off [`LIVE_TABLE`]).
+fn discover(config: &mut guac_script::Config) {
+    use guac_script::{Kind, MemberSpec};
+    let table = std::fs::read_to_string(LIVE_TABLE).expect("aj-vm's live table");
+    for row in table.lines().filter(|l| !l.starts_with('#')) {
+        let c: Vec<&str> = row.split('\t').collect();
+        if c.len() < 4 {
+            continue;
+        }
+        let ns = c[0].to_ascii_lowercase();
+        let ns = ns.strip_prefix("tfb").unwrap_or(&ns).to_owned();
+        let name = c[2].to_ascii_lowercase();
+        let name = name.trim_start_matches('-').to_owned();
+        let id = guac_script::MemberId::named(&ns, &name);
+        if config.members.get(id).is_some() || guac_script::Builtin::of(id).is_some() {
+            continue;
+        }
+        let min: f32 = c.get(8).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let max: f32 = c.get(9).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let kind = match c[3] {
+            "FloatMeasurement" | "PairedFloatMeasurement" => Kind::Float,
+            "IntMeasurement" | "EnumMeasurement" | "PairedEnumMeasurement" => Kind::Int,
+            "ColorMeasurement" => Kind::Color,
+            "ScreenMeasurement" => Kind::Screen,
+            _ => Kind::Reference,
+        };
+        config
+            .members
+            .value_cell(&ns, &name, MemberSpec::new(kind, min, max));
+    }
+}
+
+/// The level and the part as the TV's load has them.
+struct Level {
+    dir: PathBuf,
+    program: Arc<Program>,
+    files: Files,
+    order: Vec<u16>,
+    fighters: Vec<(String, u16)>,
+    walkers: Vec<WalkerScripts>,
+    left_out: Vec<(String, String)>,
+    layout: Layout,
+    roster: Roster,
+    level_bytes: Vec<u8>,
+    palettes: LevelPalettes,
+    /// The level's own file: the last in link order.
+    level_unit: u16,
+    linked: (usize, u64, Duration, Duration),
+}
+
+impl Level {
+    fn open() -> Level {
+        let dir = extract();
+        let started = Instant::now();
+        let linked = level_scripts::load(&dir, LEVEL_NAME).unwrap_or_else(|e| panic!("{e}"));
+        let link = (linked.files, linked.bytes, linked.took(), started.elapsed());
+        let layout = level_scripts::figure_layout(&dir, IrFormat::Ron).unwrap();
+        let roster: Roster = read_ron(&dir, IrFormat::Ron.roster_path());
+        let usr = dump().join("PS3_GAME/USRDIR");
+        let level_bytes = guac_extract::scripts::entry(
+            &usr,
+            &format!("{}/{LEVEL_NAME}.bld", levels::LEVEL_FOLDER),
+        )
+        .expect("the level's archive");
+        let igz = Igz::parse(&level_bytes).unwrap();
+        let palettes = levels::palettes(&igz, levels::LEVELS[0], identity())
+            .expect("the level's palettes")
+            .ir;
+        Level {
+            dir,
+            program: Arc::new(linked.program),
+            files: linked.placements,
+            order: linked.order,
+            fighters: linked.fighters,
+            walkers: linked.walkers,
+            left_out: linked.left_out,
+            layout,
+            roster,
+            level_unit: (linked.files - 1) as u16,
+            level_bytes,
+            palettes,
+            linked: link,
+        }
+    }
+
+    fn unit_of(&self, load: &str) -> Option<u16> {
+        self.fighters
+            .iter()
+            .find(|(l, _)| l == load)
+            .map(|(_, u)| *u)
+            .or_else(|| {
+                self.walkers
+                    .iter()
+                    .find(|w| w.load_file == load)
+                    .map(|w| w.unit)
+            })
+    }
+
+    /// The load file's first figure (its base where it has one, else the
+    /// first alternate deco): its toy type and variant word.
+    fn toy(&self, load: &str) -> Option<(u32, u16)> {
+        let mut of: Vec<_> = self
+            .roster
+            .figures
+            .iter()
+            .filter(|f| {
+                f.load_file == load && matches!(f.category, Category::Figure | Category::Giant)
+            })
+            .collect();
+        of.sort_by_key(|f| f.variant);
+        of.first().map(|f| (f.toy_type, f.variant))
+    }
+}
+
+/// One character joined into the level on his own, headless.
+struct W {
+    vm: Vm,
+    world: ScriptWorld,
+    bench: Bench,
+    generator: Generator,
+    files: Files,
+    handles: HashMap<Obj, Handle>,
+    next: Handle,
+    minion: Option<PlacementId>,
+    steps: u32,
+    player_loop: PlayerLoop,
+    layout: Layout,
+    unit: u16,
+    walk: Walk,
+    scale: f32,
+    /// The seconds a step lasts (a replay sets the recording's own).
+    dt: f32,
+    toy: (u32, u16),
+}
+
+impl W {
+    /// `load`'s run: his unit's placements waiting to join, the level's
+    /// collision and props, the hero at the level's start. `scripts` lists
+    /// his scripts on the whitelist (a fighter's are listed already).
+    fn new(l: &Level, load: &str, o: Opts) -> W {
+        let unit = l.unit_of(load).unwrap_or_else(|| panic!("{load}: no unit"));
+        let walker = l.walkers.iter().find(|w| w.load_file == load);
+        let mut config = scripts::smash_config(o.mode);
+        if o.discover {
+            discover(&mut config);
+        }
+        if let Some(w) = walker {
+            let mut w = w.clone();
+            w.asks = 0;
+            config = scripts::with_walkers(config, &[w]);
+        }
+        let handles = headless_handles(&l.files);
+        let objects = headless_objects(&handles);
+        let vm = scripts::init_chain(l.program.clone(), &l.files, &handles, &l.order, config);
+        let mut world = ScriptWorld::new(&l.files, &handles, objects);
+        world.set_inert(vm.inert());
+        // His palette's lengths on his template, as the TV's join sets them.
+        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        // As the TV's join: a file whose placements hold none named for the
+        // load file sets none.
+        if let Some(template) = l
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == unit && p.name == load)
+        {
+            world.set_palette(template.obj, lengths(&palette));
+        }
+        // The level's placements' palettes by their models.
+        for p in l.files.placed.iter().filter(|p| p.obj.unit == l.level_unit) {
+            if let Some(model) = &p.model
+                && let Some(pal) = l.palettes.palettes.iter().find(|x| &x.owner == model)
+            {
+                world.set_palette(p.obj, lengths(pal));
+            }
+        }
+        let igz = Igz::parse(&l.level_bytes).unwrap();
+        let (mesh, start) = chapter_1(&igz);
+        let parry = ParryWorld::new(&[mesh]).expect("the level's collision");
+        let walk = if load == "009_Eruptor" {
+            Walk::measured(walkers::walker(load).unwrap())
+        } else {
+            let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
+            Walk::scripted(load, &hero.solid)
+        };
+        let solid = walk.solid().expect("his solid");
+        let mut hero = Hero::new(solid, walk.tuning, start, 0.0);
+        hero.settle(&parry, &[]);
+        let props = {
+            let level = level_props(&igz);
+            let by_object = level
+                .props
+                .iter()
+                .map(|p| {
+                    (
+                        p.object,
+                        handles[&Obj {
+                            unit: l.level_unit,
+                            index: p.object,
+                        }],
+                    )
+                })
+                .collect();
+            Some(StandingProps {
+                level,
+                handles: by_object,
+                standing: HashSet::new(),
+                holds: HashMap::new(),
+            })
+        };
+        let mut bench = Bench {
+            heroes: HashMap::from([(HERO, hero)]),
+            world: parry,
+            view: 15.0,
+            pads: [Pad::default(); 2],
+            bodies: HashMap::new(),
+            props,
+        };
+        world.activity_at(&[bench.heroes[&HERO].pivot]);
+        bench.stand_props(&world);
+        let next = objects[6].max(HERO) + 1;
+        let toy = l.toy(load).unwrap_or_else(|| panic!("{load}: no figure"));
+        let scale = walk.scale;
+        W {
+            vm,
+            world,
+            bench,
+            generator: Generator::seeded(5489),
+            files: l.files.clone(),
+            handles,
+            next,
+            minion: None,
+            steps: 0,
+            player_loop: PlayerLoop::read(&l.program),
+            layout: l.layout.clone(),
+            unit,
+            walk,
+            scale,
+            dt: 1.0 / 60.0,
+            toy,
+        }
+    }
+
+    fn with_host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
+        let mut spawn = headless_spawner(self.next);
+        let t = {
+            let mut host = WorldHost {
+                world: &mut self.world,
+                engine: &mut self.bench,
+                generator: &mut self.generator,
+                spawn: &mut spawn,
+            };
+            f(&mut self.vm, &mut host)
+        };
+        self.next = spawn(Value::Null);
+        t
+    }
+
+    /// One step in the TV's order (`guacamole::frame`; the common run's,
+    /// without the hands, which only an attack reads), then his scripted
+    /// scale ([`hero_scripts::apply_scripted_scale`]'s rule) before the
+    /// engine's frame.
+    fn step(&mut self) -> Result<(), Halt> {
+        let dt = self.dt;
+        self.vm.set_tick_seconds(dt);
+        let pads = self.bench.pads;
+        self.world.read_pads(pads);
+        for (h, active) in self.world.activity(&mut self.bench) {
+            self.vm.set_asleep(h, !active);
+        }
+        let joined = self.minion.is_some();
+        let player_loop = self.player_loop.clone();
+        let mut stopped = Vec::new();
+        let r = self.with_host(|vm, host| player_loop.frame(vm, host, joined, &mut stopped));
+        assert!(stopped.is_empty(), "strict mode stops by halting");
+        self.world.end_step();
+        scripts::add_scripted(&mut self.vm, &mut self.world);
+        self.bench.stand_props(&self.world);
+        let report = r?;
+        assert!(report.stopped.is_empty(), "strict mode stops by halting");
+        self.apply_scale();
+        for hero in self.bench.heroes.values_mut() {
+            hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+        }
+        self.world.advance(dt, &mut self.bench);
+        self.steps += 1;
+        self.bench.place_bodies(&self.world);
+        Ok(())
+    }
+
+    /// A scripted walker's scale is his scripts' alone: his solid is built
+    /// at the one his actor holds (`hero_scripts::apply_scripted_scale`).
+    fn apply_scale(&mut self) {
+        if self.walk.origin != walkers::Origin::Scripts || self.minion.is_none() {
+            return;
+        }
+        let Some(a) = self.world.actor(HERO) else {
+            return;
+        };
+        let Some(set) = Setup::read(&a.physics, a.scale, self.walk.shape.width) else {
+            return;
+        };
+        if (set.scale - self.scale).abs() < 1e-6 {
+            return;
+        }
+        if let Some(solid) = self.walk.shape.havok([set.scale * 100.0; 3]) {
+            self.bench.heroes.get_mut(&HERO).unwrap().set_solid(solid);
+            self.scale = set.scale;
+        }
+    }
+
+    /// The join as the TV does it: his figure's tag on the portal, his
+    /// file's placements, the step, the minion's activation.
+    fn join(&mut self) -> Result<(), Halt> {
+        let files = self.files.clone();
+        let handles = self.handles.clone();
+        let layout = self.layout.clone();
+        let tag = Tag {
+            toy_id: self.toy.0,
+            subtype: u32::from(self.toy.1),
+            serial: 1,
+            values: Values::default(),
+        };
+        self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
+        let unit = self.unit;
+        self.with_host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))?;
+        self.step()?;
+        let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
+        self.minion = Some(minion);
+        Ok(())
+    }
+
+    /// The init chain's two steps, the join and `settle` steps; the
+    /// character as far as he got, when and the halt otherwise.
+    fn joined(l: &Level, load: &str, o: Opts, settle: u32) -> Result<W, Box<(W, String, Halt)>> {
+        let mut w = W::new(l, load, o);
+        let fail = |w: W, when: String, h: Halt| Err(Box::new((w, when, h)));
+        if let Err(h) = w.step() {
+            return fail(w, "init step 1".to_owned(), h);
+        }
+        if let Err(h) = w.step() {
+            return fail(w, "init step 2".to_owned(), h);
+        }
+        if let Err(h) = w.join() {
+            return fail(w, "join".to_owned(), h);
+        }
+        for k in 0..settle {
+            if let Err(h) = w.step() {
+                return fail(w, format!("settle step {k}"), h);
+            }
+        }
+        Ok(w)
+    }
+
+    fn hero(&self) -> &Hero {
+        &self.bench.heroes[&HERO]
+    }
+
+    /// His `movement parameters` as his scripts hold them in his
+    /// description (what the mover update reads), each member's value by
+    /// name: ground and air speed, acceleration, deceleration and turn
+    /// rate, gravity, move type.
+    fn movement(&self) -> Option<BTreeMap<String, f32>> {
+        let m = self.minion?;
+        let d = self.vm.local(m, "description").map(|v| self.vm.value(v))?;
+        let mp = self
+            .vm
+            .field(d, "movement parameters")
+            .map(|v| self.vm.value(v))?;
+        Some(
+            self.vm
+                .fields(mp)
+                .into_iter()
+                .filter_map(|(n, f)| {
+                    let c = self.vm.value(f);
+                    let v = self.vm.field(c, "value").map(|v| self.vm.value(v))?;
+                    Some((n.to_owned(), v.as_f32()?))
+                })
+                .collect(),
+        )
+    }
+
+    /// [`W::movement`] as AG.12 lists it: ground (speed, acceleration,
+    /// deceleration, turn rate), air (the same), gravity (acceleration,
+    /// max speed) and move type.
+    fn parameters(&self) -> Option<[f32; 11]> {
+        let m = self.movement()?;
+        let g = |n: &str| m.get(n).copied();
+        Some([
+            g("ground max speed")?,
+            g("ground acceleration")?,
+            g("ground deceleration")?,
+            g("ground turn rate")?,
+            g("air max speed")?,
+            g("air acceleration")?,
+            g("air deceleration")?,
+            g("air turn rate")?,
+            g("gravity acceleration")?,
+            g("gravity max speed")?,
+            g("move type")?,
+        ])
+    }
+
+    /// His actor's scale, percent, and its `ActorParameters` as the host
+    /// holds them (the engine's, which stay the unconstrained 10,000).
+    fn actor(&self) -> Option<([f32; 3], f32)> {
+        let a = self.world.actor(HERO)?;
+        Some((a.scale, a.physics.ground_max_speed))
+    }
+
+    /// The walk his scripts hand the engine, ft/s (the scripts' own unit,
+    /// a recording's `mover.length`).
+    fn horizontal_walk(&self) -> f32 {
+        let v = self.hero().walk.velocity;
+        v.x.hypot(v.z)
+    }
+}
+
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_probe_of_the_part() {
+    let l = Level::open();
+    println!(
+        "part: {} files, {} bytes; read+parse+link {:.2?} (load wall {:.2?}); {} walkers listed, {} left out: {:?}; order {:?}; level unit {}",
+        l.linked.0,
+        l.linked.1,
+        l.linked.2,
+        l.linked.3,
+        l.walkers.len(),
+        l.left_out.len(),
+        l.left_out,
+        l.order,
+        l.level_unit
+    );
+    for w in &l.walkers {
+        println!(
+            "  {} unit {} asks {} scripts {:?}",
+            w.load_file, w.unit, w.asks, w.scripts
+        );
+    }
+}
+
+/// Each walker's viewport asks the TV's own run doesn't reach: which script
+/// holds them and in which definition.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_probe_of_the_asks() {
+    let l = Level::open();
+    let p = &*l.program;
+    let base = scripts::smash_config(Mode::Play).whitelist;
+    let mut known = std::collections::BTreeSet::new();
+    for (id, s) in p.scripts.iter().enumerate() {
+        if !l.walkers.iter().any(|w| w.unit == s.unit) && base.lists("", &s.name) {
+            known.extend(guacamole::on_screen::reached(p, id as u32).0);
+        }
+    }
+    for w in l.walkers.iter().filter(|w| w.asks > 0) {
+        println!("{} (asks {}):", w.load_file, w.asks);
+        for (id, s) in p
+            .scripts
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.unit == w.unit)
+        {
+            let file = s.name.rsplit(['/', '\\']).next().unwrap();
+            if !w
+                .scripts
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(&format!("/{file}")))
+            {
+                continue;
+            }
+            for a in guacamole::on_screen::reached(p, id as u32).0 {
+                if known.contains(&a) {
+                    continue;
+                }
+                println!(
+                    "  from {file}: ask in {} #{} def {:?}",
+                    p.scripts[a.script as usize].name,
+                    a.position,
+                    a.def.map(|d| p.defs[d as usize].display.clone())
+                );
+            }
+        }
+    }
+}
+
+const TREE_REX: &str = "112_TitanLife";
+const FOOT: f32 = 0.3048;
+
+fn angle(a: f32, b: f32) -> f32 {
+    (a - b + 180.0).rem_euclid(360.0) - 180.0
+}
+
+fn json_f32(v: &serde_json::Value) -> f32 {
+    v.as_f64().unwrap() as f32
+}
+
+fn json_vec3(v: &serde_json::Value) -> Vec3 {
+    Vec3::new(json_f32(&v[0]), json_f32(&v[1]), json_f32(&v[2]))
+}
+
+/// A record's pad as our step reads it: its left stick's bytes.
+fn record_pad(r: &serde_json::Value) -> Pad {
+    let byte = |b: &serde_json::Value| b.as_u64().unwrap() as u8;
+    let left = &r["pad"]["left"];
+    Pad {
+        stick: Stick::from_bytes(byte(&left["x"]), byte(&left["y"])),
+        actions: [false; 4],
+        connected: true,
+    }
+}
+
+/// AG.12's recordings: each walk's label and its records.
+fn ag12_walks() -> Vec<(String, Vec<serde_json::Value>)> {
+    let dir = capture_dir().join("BLUS30968/ag12-walks-1792580915");
+    let mut labels: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("t_"))
+        .collect();
+    labels.sort();
+    labels
+        .into_iter()
+        .map(|label| {
+            let text = std::fs::read_to_string(dir.join(&label).join("recording.json")).unwrap();
+            let records: serde_json::Value = serde_json::from_str(&text).unwrap();
+            (label, records.as_array().unwrap().clone())
+        })
+        .collect()
+}
+
+/// How a replay of one recording went: ours against theirs per step.
+#[derive(Debug, Default)]
+struct Replayed {
+    steps: usize,
+    /// The record's frame times, s.
+    dt: (f32, f32),
+    /// Largest speed difference over every step, over the steps theirs is
+    /// at a plateau (within 1e-3 ft/s of the step before and after), ft/s.
+    speed: f32,
+    plateau: f32,
+    plateau_steps: usize,
+    /// Largest walk heading difference while both move, degrees.
+    heading: f32,
+    /// Largest and last facing difference, degrees.
+    facing: f32,
+    facing_last: f32,
+    /// Largest and last horizontal distance between ours and theirs, both
+    /// from where each started, m.
+    drift: f32,
+    drift_last: f32,
+    /// Where we stood against the record's first position, m.
+    start: f32,
+    /// The steps at which each first reached 90 % of its top speed.
+    ninety: (Option<usize>, Option<usize>),
+}
+
+/// A recording replayed on a fresh Tree Rex: step k reads record k's pad
+/// against the view record k's camera holds and is set beside record k + 1
+/// (O5 samples a frame's state before its pad read), the step's seconds
+/// the record's own frame time (`own_dt`) or 1/60.
+fn replay(l: &Level, load: &str, records: &[serde_json::Value], own_dt: bool) -> Replayed {
+    let mut w = W::joined(l, load, DISCOVER, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
+    let start = w.hero().pivot;
+    let theirs0 = json_vec3(&records[0]["hero"]["position"]);
+    let mut out = Replayed {
+        steps: records.len() - 1,
+        dt: (f32::MAX, 0.0),
+        start: Vec3::new(start.x - theirs0.x, 0.0, start.z - theirs0.z).length(),
+        ..Replayed::default()
+    };
+    let mut ours_v = Vec::new();
+    let mut theirs_v = Vec::new();
+    for k in 0..records.len() - 1 {
+        let r = &records[k];
+        let pr = json_f32(&r["clock"]["presentation_rate"]);
+        let d = json_f32(&r["clock"]["frame_delta"]).clamp(0.5 * pr, 3.0 * pr);
+        if k > 0 {
+            out.dt = (out.dt.0.min(d), out.dt.1.max(d));
+        }
+        w.dt = if own_dt { d } else { 1.0 / 60.0 };
+        w.bench.view = json_f32(&r["camera"]["rotation"][1]);
+        w.bench.pads[0] = record_pad(r);
+        w.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let next = &records[k + 1];
+        let m = &next["mover"];
+        let speed_t = json_f32(&m["length"]);
+        let speed_o = w.horizontal_walk();
+        ours_v.push(speed_o);
+        theirs_v.push(speed_t);
+        out.speed = out.speed.max((speed_o - speed_t).abs());
+        if speed_o > 1e-3 && speed_t > 1e-3 {
+            let wv = w.hero().walk.velocity;
+            let h_o = guacamole::script_engine::heading_of(wv);
+            out.heading = out.heading.max(angle(h_o, json_f32(&m["heading"])).abs());
+        }
+        if own_dt && std::env::var("AG27_TRACE").is_ok() {
+            println!(
+                "  k {k}: stick {:?}, facing ours {:.3} theirs {:.3}, speed ours {:.4} theirs {:.4}",
+                r["stick"],
+                w.hero().facing,
+                json_f32(&next["hero"]["rotation"][1]),
+                speed_o,
+                speed_t
+            );
+        }
+        let f = angle(w.hero().facing, json_f32(&next["hero"]["rotation"][1])).abs();
+        out.facing = out.facing.max(f);
+        out.facing_last = f;
+        let p = w.hero().pivot - start;
+        let t = json_vec3(&next["hero"]["position"]) - theirs0;
+        let drift = Vec3::new(p.x - t.x, 0.0, p.z - t.z).length();
+        out.drift = out.drift.max(drift);
+        out.drift_last = drift;
+    }
+    for k in 1..theirs_v.len() - 1 {
+        if (theirs_v[k] - theirs_v[k - 1]).abs() < 1e-3
+            && (theirs_v[k + 1] - theirs_v[k]).abs() < 1e-3
+        {
+            out.plateau = out.plateau.max((ours_v[k] - theirs_v[k]).abs());
+            out.plateau_steps += 1;
+        }
+    }
+    let top = |v: &[f32]| {
+        let t = v.iter().copied().fold(0.0f32, f32::max);
+        v.iter().position(|s| *s >= 0.9 * t && t > 0.0)
+    };
+    out.ninety = (top(&ours_v), top(&theirs_v));
+    out
+}
+
+/// AG.27 Verify (1): Tree Rex's scripts set AG.12's numbers, and his walk
+/// replays against AG.12's O5 recording.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AG.12's recordings under GUAC_CAPTURE_DIR; run on the Mac"]
+fn tree_rex_walks_on_ag12s_numbers() {
+    println!("load before: {:.2}", load1());
+    let started = Instant::now();
+    let l = Level::open();
+    // Strict over the registry as it stands: where his scripts stop.
+    match W::joined(&l, TREE_REX, STRICT, 120) {
+        Ok(_) => println!("strict, the registry as it stands: his scripts run through"),
+        Err(b) => {
+            let (_, when, h) = *b;
+            println!(
+                "strict, the registry as it stands: {when}: {}",
+                named(&h.to_string())
+            );
+        }
+    }
+    let w = W::joined(&l, TREE_REX, DISCOVER, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
+    let minion = w.minion.unwrap();
+    let params = w.parameters().expect("his movement parameters");
+    let (scale, engine_speed) = w.actor().expect("his actor");
+    let a = w.world.actor(HERO).unwrap();
+    println!(
+        "Tree Rex ({TREE_REX}), unit {}, set up {}, description's movement parameters (ground speed, accel, decel, turn; air the same; gravity accel, max; move type) {:?}, actor scale {:?}, actor's engine ground speed {engine_speed}, solid {:?}; drawn solid {:?}",
+        w.unit,
+        w.vm.set_up(minion),
+        params,
+        scale,
+        a.solid,
+        w.hero().solid()
+    );
+    assert!(w.vm.set_up(minion), "his setup ran through");
+    assert_eq!(
+        params,
+        [
+            20.0, 160.0, 80.0, 360.0, 20.0, 160.0, 50.0, 1440.0, 128.0, 120.0, 0.0
+        ],
+        "AG.12's numbers"
+    );
+    assert_eq!(scale, [100.0; 3]);
+    assert_eq!(
+        (a.solid.width, a.solid.height, a.solid.length, a.solid.shape),
+        (14.0, 21.25, 3.0, 2),
+        "the 14 x 21.25 ft capsule"
+    );
+    assert_eq!(w.scale, 1.0);
+    assert_eq!(
+        w.hero().solid(),
+        &w.walk.shape.havok([100.0; 3]).unwrap(),
+        "the capsule at 100 %"
+    );
+    let walks = ag12_walks();
+    assert_eq!(walks.len(), 14, "AG.12's 14 rings");
+    let mut worst = Replayed::default();
+    for (label, records) in &walks {
+        if label.starts_with("t_south") {
+            // South at rest and while walking: a walker's attack buttons
+            // reach no script (AH.29), so the lunge the oracle's Tree Rex
+            // makes is not compared.
+            continue;
+        }
+        let turns = label.starts_with("t_turns");
+        for own in [false, true] {
+            let r = replay(&l, TREE_REX, records, own);
+            println!(
+                "{label} {}: {} steps, record dt {:.4}-{:.4} s; start {:.4} m off; speed within {:.5} ft/s (plateau {:.5} over {} steps); walk heading within {:.4}°; facing within {:.4}° (last {:.4}°); position drift {:.5} m (last {:.5}); 90 % of top at step {:?} (theirs {:?})",
+                if own { "own dt" } else { "1/60 s" },
+                r.steps,
+                r.dt.0,
+                r.dt.1,
+                r.start,
+                r.speed,
+                r.plateau,
+                r.plateau_steps,
+                r.heading,
+                r.facing,
+                r.facing_last,
+                r.drift,
+                r.drift_last,
+                r.ninety.0,
+                r.ninety.1
+            );
+            assert_eq!(r.ninety.0, r.ninety.1, "{label}: 90 % of top speed");
+            assert!(r.plateau < 1e-3, "{label}: plateau {}", r.plateau);
+            if own {
+                // The record's own frame times: his walk is theirs to the
+                // float, step by step.
+                assert!(r.speed < 1e-3, "{label}: speed {}", r.speed);
+                assert!(r.drift < 1e-3, "{label}: drift {}", r.drift);
+                assert!(r.heading < 0.1, "{label}: heading {}", r.heading);
+                if turns {
+                    assert!(r.facing < 1e-3, "{label}: facing {}", r.facing);
+                }
+                worst.speed = worst.speed.max(r.speed);
+                worst.plateau = worst.plateau.max(r.plateau);
+                worst.heading = worst.heading.max(r.heading);
+                if turns {
+                    worst.facing = worst.facing.max(r.facing);
+                }
+                worst.drift = worst.drift.max(r.drift);
+            } else {
+                assert!(r.drift < 0.05, "{label}: drift {}", r.drift);
+            }
+        }
+    }
+    println!(
+        "worst of the own-dt replays: speed {:.6} ft/s, plateau {:.6}, walk heading {:.4}°, turning recordings' facing {:.6}°, position drift {:.6} m",
+        worst.speed, worst.plateau, worst.heading, worst.facing, worst.drift
+    );
+    // The check discriminates: Eruptor's scripts (21.5 ft/s, 1440°/s) on
+    // the same pads miss Tree Rex's plateau by his 1.5 ft/s at full stick.
+    let (_, records) = &walks[0];
+    let e = replay(&l, "009_Eruptor", records, true);
+    println!(
+        "Eruptor on {}'s pads: speed within {:.4} ft/s, drift {:.4} m",
+        walks[0].0, e.speed, e.drift
+    );
+    assert!(e.speed > 1.0 && e.drift > 0.1, "{e:?}");
+    println!("{:.2?}; load after: {:.2}", started.elapsed(), load1());
+}
+
+/// Prints `v`'s fields down to `depth`, floats and ints as they are.
+fn dump_fields(vm: &Vm, v: Value, depth: usize, indent: usize, only: &dyn Fn(&str) -> bool) {
+    for (name, f) in vm.fields(v) {
+        let value = vm.value(f);
+        let shown = match value {
+            Value::Float(x) => format!("{x}"),
+            Value::Int(i) => format!("{i}"),
+            other => format!("{other:?}"),
+        };
+        if depth > 0 && matches!(value, Value::Struct(_)) && only(name) {
+            println!("{:indent$}{name}:", "", indent = indent);
+            dump_fields(vm, value, depth - 1, indent + 2, &|_| true);
+        } else if indent > 0 {
+            println!("{:indent$}{name} = {shown}", "", indent = indent);
+        }
+    }
+}
+
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_probe_of_the_parameters() {
+    let l = Level::open();
+    let load = std::env::var("AG27_LOAD").unwrap_or_else(|_| TREE_REX.to_owned());
+    let w = W::joined(
+        &l,
+        &load,
+        if std::env::var("AG27_STRICT").is_ok() {
+            STRICT
+        } else {
+            DISCOVER
+        },
+        120,
+    )
+    .map_err(|b| {
+        let (_, when, h) = *b;
+        format!("{when}: {}", named(&h.to_string()))
+    })
+    .unwrap();
+    let m = w.minion.unwrap();
+    let d = w.vm.local(m, "description").map(|v| w.vm.value(v)).unwrap();
+    println!("description fields:");
+    dump_fields(&w.vm, d, 2, 0, &|n| {
+        n.contains("movement") || n.contains("locomotion")
+    });
+    let _ = &w;
+}
+
+/// The literal arguments of every call site in `unit`'s scripts the VM has
+/// run (`Vm::call_sites`): each `param <name> := <number>` its interface
+/// binds, by the site's position, for the parameters named in `names`.
+fn call_arguments(vm: &Vm, unit: u16, names: &[&str]) -> Vec<(String, u32, String, f32, u64)> {
+    use guac_script::{Ins, LiteralClass, Operand};
+    let program = vm.program();
+    let mut out = Vec::new();
+    let mut sites: Vec<_> = vm.call_sites().iter().collect();
+    sites.sort();
+    for (&(script, at), &n) in sites {
+        let info = &program.scripts[script as usize];
+        if info.unit != unit {
+            continue;
+        }
+        let mut k = at as usize + 1;
+        if !matches!(
+            info.ops.get(k).map(|o| &program.ops[*o as usize]),
+            Some(Ins::Interface)
+        ) {
+            continue;
+        }
+        k += 1;
+        while let Some(Ins::Parameter(p)) = info.ops.get(k).map(|o| &program.ops[*o as usize]) {
+            let name = program.sym(p.name);
+            if names.contains(&name)
+                && let Some(mut rhs) = p.rhs
+            {
+                // A bare value is wrapped in an expression of its own.
+                while let Operand::Expr {
+                    a: Some(inner),
+                    op: None,
+                    b: None,
+                } = &program.operands[rhs as usize]
+                {
+                    rhs = *inner;
+                }
+                if let Operand::Path {
+                    literal: Some(lit), ..
+                } = &program.operands[rhs as usize]
+                {
+                    let v = match lit.class {
+                        LiteralClass::Float => f32::from_bits(lit.bits),
+                        LiteralClass::Int => lit.bits as i32 as f32,
+                        _ => f32::NAN,
+                    };
+                    out.push((
+                        info.name.rsplit('/').next().unwrap().to_owned(),
+                        at,
+                        name.to_owned(),
+                        v,
+                        n,
+                    ));
+                }
+            }
+            k += 1;
+        }
+    }
+    out
+}
+
+/// Every field under `v` (down to `depth`, each structure once) holding a
+/// number within 1e-3 of one of `wanted`, by path.
+fn find_numbers(
+    vm: &Vm,
+    v: Value,
+    path: &str,
+    depth: usize,
+    wanted: &[f32],
+    seen: &mut HashSet<u32>,
+    out: &mut Vec<String>,
+) {
+    if let Value::Struct(s) = vm.value(v) {
+        if !seen.insert(s) || depth == 0 {
+            return;
+        }
+        for (name, f) in vm.fields(vm.value(v)) {
+            let value = vm.value(f);
+            let p = format!("{path}.{name}");
+            if let Some(x) = value.as_f32()
+                && wanted.iter().any(|w| (x - w).abs() < 1e-3)
+            {
+                out.push(format!("{p} = {x}"));
+            }
+            find_numbers(vm, value, &p, depth - 1, wanted, seen, out);
+        }
+    }
+}
+
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_probe_of_the_locomotion_cells() {
+    let l = Level::open();
+    let load = std::env::var("AG27_LOAD").unwrap_or_else(|_| "009_Eruptor".to_owned());
+    let w = W::joined(&l, &load, STRICT, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
+    let m = w.minion.unwrap();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let d = w.vm.local(m, "description").unwrap();
+    find_numbers(
+        &w.vm,
+        d,
+        "description",
+        8,
+        &[3.658, 6.401, 0.25, 12.0019, 21.0017, 13.124],
+        &mut seen,
+        &mut out,
+    );
+    for name in [
+        "minion locomotion states",
+        "returned locomotion states",
+        "locomotion states",
+        "locomotion data",
+        "minion locomotion data",
+        "character locomotion states",
+    ] {
+        if let Some(v) = w.vm.local(m, name) {
+            println!("local {name}: {:?}", w.vm.value(v));
+            find_numbers(
+                &w.vm,
+                v,
+                name,
+                8,
+                &[3.658, 6.401, 0.25, 12.0019, 21.0017, 13.124],
+                &mut seen,
+                &mut out,
+            );
+        }
+    }
+    for g in 0..w.vm.program().globals.len() {
+        if let Some(v) = w.vm.global_peek(g as u32) {
+            let obj = w.vm.program().globals[g].0;
+            find_numbers(
+                &w.vm,
+                v,
+                &format!("global {obj:?}"),
+                8,
+                &[3.658, 6.401, 0.25],
+                &mut seen,
+                &mut out,
+            );
+            if let Some(x) = w.vm.value(v).as_f32()
+                && [3.658, 6.401, 0.25].iter().any(|t| (x - t).abs() < 1e-3)
+            {
+                out.push(format!("global {obj:?} = {x}"));
+            }
+        }
+    }
+    for o in &out {
+        println!("  {o}");
+    }
+    for (script, at, name, v, n) in call_arguments(
+        &w.vm,
+        w.unit,
+        &[
+            "walk speed",
+            "run speed",
+            "jog speed",
+            "locomotion switch time",
+        ],
+    ) {
+        println!("  call site {script} #{at} ran {n}x: {name} := {v}");
+    }
+    let program = w.vm.program();
+    for (def, n) in w.vm.calls() {
+        let name = &program.defs[*def as usize].display;
+        if name.contains("Locomotion") {
+            println!("  called {name}: {n}");
+            for var in [
+                "walk speed",
+                "run speed",
+                "jog speed",
+                "locomotion switch time",
+                "movement speed",
+                "states id",
+            ] {
+                if let Some(v) = w.vm.frame(*def, var) {
+                    println!("    frame {var} = {:?}", w.vm.value(v));
+                }
+            }
+        }
+    }
+}
+
+/// AG.27 Verify (2): Eruptor, joined through the part with every walker
+/// linked beside him, walks on AG.8's numbers with his scripts driving
+/// (21.5 ft/s, 1440°/s: the numbers the file `giants_eruptor` holds on the
+/// open ground, here on level 213's own), and his locomotion calls run.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn eruptors_ag8_numbers_hold_with_every_walker_linked() {
+    println!("load before: {:.2}", load1());
+    let started = Instant::now();
+    let l = Level::open();
+    let top = 21.5 * FOOT;
+    for strength in [1.0_f32, 0.5, 0.2] {
+        let mut w = W::joined(&l, "009_Eruptor", STRICT, 120)
+            .map_err(|b| {
+                let (_, when, h) = *b;
+                format!("{when}: {}", named(&h.to_string()))
+            })
+            .unwrap();
+        let mut track = Vec::new();
+        for _ in 0..150u32 {
+            // 90° to the left of the view's forward (heading 105°, the way
+            // AG.12's Tree Rex walks, over open ground in the level).
+            w.bench.pads[0] = Pad {
+                stick: guac_motion::scenarios::stick(strength, 90.0),
+                actions: [false; 4],
+                connected: true,
+            };
+            w.step().unwrap();
+            let h = w.hero();
+            track.push((h.pivot, h.facing, h.velocity));
+        }
+        let turned = (1440.0 * strength / 60.0).min(105.0);
+        let first = track.iter().position(|t| t.2 != Vec3::ZERO).unwrap();
+        let ninety = track
+            .iter()
+            .position(|t| Vec3::new(t.2.x, 0.0, t.2.z).length() >= 0.9 * top * strength)
+            .unwrap();
+        let (a, b) = (track[first + 10].0, track[first + 40].0);
+        let metres = Vec3::new(b.x - a.x, 0.0, b.z - a.z).length();
+        println!(
+            "stick {strength}: first facing {:.4} (1440°/s × S: {turned:.4}); moving from step {first}, 90 % at step {ninety} ({:.4} s on), {metres:.5} m over half a game second from step 10 (21.5 ft/s × S / 2 = {:.5})",
+            track[0].1,
+            (ninety - first) as f32 / 60.0,
+            top * strength / 2.0
+        );
+        assert!(
+            (track[0].1 - turned).abs() < 1e-3,
+            "first frame facing {}",
+            track[0].1
+        );
+        assert_eq!(first, 0, "the step the stick is read");
+        assert!((metres - top * strength / 2.0).abs() < 1e-3, "{metres}");
+        if strength == 1.0 {
+            assert!(((ninety - first) as f32 / 60.0 - 0.1167).abs() < 1e-3);
+        }
+        if strength == 1.0 {
+            let params = w.parameters();
+            println!("  his description's movement parameters: {params:?}");
+        }
+    }
+    // A full reversal at top speed: straight back, his facing round in
+    // 0.13-0.15 s.
+    let mut w = W::joined(&l, "009_Eruptor", STRICT, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
+    let mut track = Vec::new();
+    for k in 0..150u32 {
+        w.bench.pads[0] = Pad {
+            stick: guac_motion::scenarios::stick(1.0, if k < 90 { 90.0 } else { 270.0 }),
+            actions: [false; 4],
+            connected: true,
+        };
+        w.step().unwrap();
+        track.push((w.hero().walk.velocity, w.hero().facing));
+    }
+    let (before, after) = (track[89].0, track[91].0);
+    let round = (90..150)
+        .find(|&k| (track[k].1 - 285.0).abs() < 1e-3)
+        .unwrap();
+    let swing = (round - 89) as f32 / 60.0;
+    println!("reversal: walk {before:?} -> {after:?}, facing round at step {round}, {swing:.4} s");
+    assert!(
+        (after + before).length() < 1e-3,
+        "straight back at top speed"
+    );
+    assert!((0.13..=0.15).contains(&swing), "{swing}");
+    // His locomotion calls ran on the VM, with the script's own arguments:
+    // Define Locomotion States (walk 3.658, run 6.401 m/s), Initialize
+    // Locomotions (switch time 0.25 s).
+    let args = call_arguments(
+        &w.vm,
+        w.unit,
+        &["walk speed", "run speed", "locomotion switch time"],
+    );
+    let has = |name: &str, v: f32| {
+        args.iter()
+            .any(|a| a.2 == name && (a.3 - v).abs() < 1e-6 && a.4 == 1)
+    };
+    println!("locomotion call arguments: {args:?}");
+    assert!(has("walk speed", 3.658), "{args:?}");
+    assert!(has("run speed", 6.401), "{args:?}");
+    assert!(has("locomotion switch time", 0.25), "{args:?}");
+    let program = w.vm.program();
+    let called = |name: &str| {
+        w.vm.calls()
+            .iter()
+            .filter(|(d, _)| program.defs[**d as usize].display == name)
+            .map(|(_, n)| *n)
+            .sum::<u64>()
+    };
+    let counts = [
+        "Minion - Define Locomotion States",
+        "Anim - Add Locomotion State",
+        "Minion - Initialize Locomotions",
+    ]
+    .map(called);
+    println!(
+        "calls run: Define {} Add {} Initialize {}",
+        counts[0], counts[1], counts[2]
+    );
+    assert!(counts[0] >= 1 && counts[1] >= 2 && counts[2] >= 1);
+    println!("{:.2?}; load after: {:.2}", started.elapsed(), load1());
+}
+
+/// AE.22's live read of a figure: the hero's scale and `CollisionInfo`.
+#[derive(Debug, Clone, PartialEq)]
+struct Live {
+    figure: String,
+    scale: [f32; 3],
+    size: [f32; 3],
+    properties: u32,
+}
+
+/// AE.22's reads of `load`'s figures, one per figure the sweep read.
+fn live_reads(load: &str) -> Vec<Live> {
+    let root = capture_dir().join("BLUS30968/ae22-full-1792487613");
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(&root).unwrap().flatten() {
+        let path = e.path().join("figure.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        if v["figure"]["load_file"].as_str() != Some(load) {
+            continue;
+        }
+        let t = &v["tuning"];
+        if t.is_null() {
+            continue;
+        }
+        let c = &t["collision"];
+        out.push(Live {
+            figure: v["figure"]["id"].as_str().unwrap_or("").to_owned(),
+            scale: [0, 1, 2].map(|i| json_f32(&t["scale"][i])),
+            size: [
+                json_f32(&c["width"]),
+                json_f32(&c["height"]),
+                json_f32(&c["length"]),
+            ],
+            properties: c["properties"].as_u64().unwrap_or(0) as u32,
+        });
+    }
+    out.sort_by(|a, b| a.figure.cmp(&b.figure));
+    out
+}
+
+/// What one character's 600 ticks came to.
+#[derive(Debug, Default)]
+struct Audit {
+    load: String,
+    /// Where it stopped, if it did: the phase and the halt with the member
+    /// named.
+    stopped: Option<(String, String)>,
+    ticks: u32,
+    set_up: bool,
+    params: Option<[f32; 11]>,
+    scale: Option<[f32; 3]>,
+    /// The disc's solid (what the TV builds him from) and the solid his
+    /// scripts hold on his actor, width, height, length (feet).
+    solid: Option<[f32; 3]>,
+    scripted_solid: Option<[f32; 3]>,
+    /// His walk's top speed (ft/s) and how far he went on the full-stick
+    /// stretch (m).
+    top: f32,
+    walked: f32,
+    /// His minion's behaviour at the end.
+    behaviour: Option<String>,
+    /// The walk the TV's fall-back would give him if his scripts stopped
+    /// now: `Setup::read` of his actor's `ActorParameters`, ft/s.
+    fallback: Option<f32>,
+}
+
+/// `load` joined and run 600 ticks: 120 standing, 240 with the stick full
+/// toward 90° left of the view, 240 released.
+fn audit(l: &Level, load: &str, o: Opts) -> Audit {
+    let mut a = Audit {
+        load: load.to_owned(),
+        ..Audit::default()
+    };
+    let mut w = match W::joined(l, load, o, 0) {
+        Ok(w) => w,
+        Err(b) => {
+            let (w, when, h) = *b;
+            a.stopped = Some((when, named(&h.to_string())));
+            a.read(&w);
+            return a;
+        }
+    };
+    let mut at = w.hero().pivot;
+    for k in 0..600u32 {
+        w.bench.pads[0] = Pad {
+            stick: if (120..360).contains(&k) {
+                guac_motion::scenarios::stick(1.0, 90.0)
+            } else {
+                Stick::CENTRED
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        if k == 120 {
+            at = w.hero().pivot;
+        }
+        if let Err(h) = w.step() {
+            a.stopped = Some((format!("tick {k}"), named(&h.to_string())));
+            break;
+        }
+        a.ticks = k + 1;
+        a.top = a.top.max(w.horizontal_walk());
+        if k == 359 {
+            let p = w.hero().pivot;
+            a.walked = Vec3::new(p.x - at.x, 0.0, p.z - at.z).length();
+        }
+    }
+    a.read(&w);
+    a
+}
+
+impl Audit {
+    fn read(&mut self, w: &W) {
+        self.set_up = w.minion.is_some_and(|m| w.vm.set_up(m));
+        self.behaviour = w.minion.and_then(|m| w.vm.behaviour(m)).map(str::to_owned);
+        self.fallback = w
+            .world
+            .actor(HERO)
+            .and_then(|a| Setup::read(&a.physics, a.scale, w.walk.shape.width))
+            .map(|s| s.tuning.max_speed);
+        self.params = w.parameters();
+        if let Some(act) = w.world.actor(HERO) {
+            self.scale = Some(act.scale);
+            self.scripted_solid = Some([act.solid.width, act.solid.height, act.solid.length]);
+        }
+        self.solid = Some([w.walk.shape.width, w.walk.shape.height, w.walk.shape.length]);
+    }
+}
+
+/// AG.27 Verify (4): every other modelled character, one placement each,
+/// strict mode over the real level for 600 ticks.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, AE.22's reads under GUAC_CAPTURE_DIR, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_other_modelled_character_walks_or_is_listed() {
+    let started = Instant::now();
+    let l = Level::open();
+    println!(
+        "the part: {} files, {} bytes read; read+parse+link {:.2?}; {} walkers, {} left out; load {:.2}",
+        l.linked.0,
+        l.linked.1,
+        l.linked.2,
+        l.walkers.len(),
+        l.left_out.len(),
+        load1()
+    );
+    let scripts_dir = l.dir.join("scripts");
+    let mut on_disk = 0u64;
+    let mut entries = 0;
+    for e in std::fs::read_dir(&scripts_dir).unwrap().flatten() {
+        on_disk += e.metadata().unwrap().len();
+        entries += 1;
+    }
+    println!("scripts/ in the extract: {entries} files, {on_disk} bytes");
+    let mut table = Vec::new();
+    let mut loads: Vec<String> = l.walkers.iter().map(|w| w.load_file.clone()).collect();
+    loads.retain(|x| x != TREE_REX);
+    loads.insert(0, TREE_REX.to_owned());
+    for load in &loads {
+        let t = Instant::now();
+        let a = audit(&l, load, STRICT);
+        let live = live_reads(load);
+        let matches = |s: Option<[f32; 3]>| {
+            s.is_some_and(|s| {
+                !live.is_empty()
+                    && live
+                        .iter()
+                        .all(|v| v.size.iter().zip(s).all(|(x, y)| (x - y).abs() < 1e-3))
+            })
+        };
+        let dims_ok = matches(a.solid);
+        let script_dims_ok = matches(a.scripted_solid);
+        let scale_ok = a.scale.is_some_and(|s| {
+            !live.is_empty()
+                && live
+                    .iter()
+                    .all(|v| v.scale.iter().zip(s).all(|(x, y)| (x - y).abs() < 1e-3))
+        });
+        println!(
+            "{load}: {} ({:.1?}, load {:.2}); ticks {}, set up {}, params {:?}, scale {:?} vs live {:?} [{}], disc solid {:?} [{}] and scripted solid {:?} [{}] vs live {:?}; top {:.3} ft/s, walked {:.2} m, behaviour {:?}, fall-back speed {:?}",
+            match &a.stopped {
+                Some((when, why)) => format!("STOPPED at {when}: {why}"),
+                None => "RAN".to_owned(),
+            },
+            t.elapsed(),
+            load1(),
+            a.ticks,
+            a.set_up,
+            a.params,
+            a.scale,
+            live.iter().map(|v| v.scale).collect::<Vec<_>>(),
+            scale_ok,
+            a.solid,
+            dims_ok,
+            a.scripted_solid,
+            script_dims_ok,
+            live.iter().map(|v| v.size).collect::<Vec<_>>(),
+            a.top,
+            a.walked,
+            a.behaviour,
+            a.fallback
+        );
+        table.push((a, live, scale_ok, dims_ok, script_dims_ok));
+    }
+    let ran = table.iter().filter(|t| t.0.stopped.is_none()).count();
+    println!(
+        "== {} characters: {ran} ran 600 ticks, {} stopped; scale matches AE.22's live read on {}, the disc's solid on {}, the scripted solid on {}; {} ran without his setup completing; {:.1?}, load {:.2}",
+        table.len(),
+        table.len() - ran,
+        table.iter().filter(|t| t.2).count(),
+        table.iter().filter(|t| t.3).count(),
+        table.iter().filter(|t| t.4).count(),
+        table
+            .iter()
+            .filter(|t| t.0.stopped.is_none() && !t.0.set_up)
+            .count(),
+        started.elapsed(),
+        load1()
+    );
+    let mut by_member: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (a, ..) in &table {
+        if let Some((when, why)) = &a.stopped {
+            let member = why.split("= ").last().unwrap_or(why).to_owned();
+            by_member
+                .entry(member)
+                .or_default()
+                .push(format!("{} ({when})", a.load));
+        }
+    }
+    for (m, who) in &by_member {
+        println!("  stopped on {m}: {} - {who:?}", who.len());
+    }
+    // Wherever a character's setup ran through, his scale and the solid his
+    // scripts hold are AE.22's live read.
+    for (a, _, scale_ok, _, script_ok) in &table {
+        if a.set_up {
+            assert!(*scale_ok, "{}: scale {:?}", a.load, a.scale);
+            assert!(*script_ok, "{}: solid {:?}", a.load, a.scripted_solid);
+        }
+    }
+}
+
+#[test]
+#[ignore = "a probe: reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR"]
+fn a_probe_of_a_walker_that_does_not_move() {
+    let l = Level::open();
+    let load = std::env::var("AG27_LOAD").unwrap_or_else(|_| "013_Crab".to_owned());
+    let mut w = W::joined(&l, &load, STRICT, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
+    for k in 0..20 {
+        w.bench.pads[0] = Pad {
+            stick: guac_motion::scenarios::stick(1.0, 90.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        w.step().unwrap();
+        if k == 10 {
+            let m = w.minion.unwrap();
+            let d = w.vm.local(m, "description").map(|v| w.vm.value(v)).unwrap();
+            println!(
+                "pad connected {:?}, behaviour {:?}",
+                w.world.pads()[0],
+                w.vm.behaviour(m)
+            );
+            dump_fields(&w.vm, d, 2, 0, &|n| {
+                n.contains("velocity") || n.contains("input") || n.contains("controller")
+            });
+            println!(
+                "walk {:?}, hero velocity {:?}",
+                w.hero().walk.velocity,
+                w.hero().velocity
+            );
+        }
+    }
+}
