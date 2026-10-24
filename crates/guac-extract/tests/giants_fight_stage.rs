@@ -292,6 +292,11 @@ fn the_fights_parts_extract_whole_and_resume() {
         owners.iter().any(|o| o.ends_with("/MabuAncient.mdl")),
         "Norticus"
     );
+    // AG.60's start scripts add the chest's, by `Chest.ai`.
+    assert!(
+        owners.iter().any(|o| o.ends_with("/Treasure_Chest.mdl")),
+        "the chest"
+    );
 
     // Every whitelisted script is in the script part and reads.
     let parse_started = Instant::now();

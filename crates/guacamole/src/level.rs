@@ -56,6 +56,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use avian3d::prelude::{Position, Rotation};
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{CameraOutputMode, ClearColorConfig, Projection, RenderTarget};
 use bevy::ecs::system::SystemParam;
@@ -74,6 +75,7 @@ use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
+use bevy_transform_interpolation::prelude::TransformInterpolation;
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::intros::IrFormat;
 use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
@@ -81,7 +83,7 @@ use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
 use guac_ir::shading::{PointLight, Scene};
-use guac_motion::seam::{BodyId, BodyKind};
+use guac_motion::seam::{Body, BodyId, BodyKind};
 use guac_script::Obj;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
@@ -94,7 +96,8 @@ use guacamole::level_scene::{
     fresh_state_transform, fresh_state_view, hero_scene, view_scene, world_scene,
 };
 use guacamole::level_scripts;
-use guacamole::props::{LeftOut, LevelProps, Prop};
+use guacamole::props::{self, LeftOut, LevelProps, Prop};
+use guacamole::script_engine::Actor;
 use guacamole::scripts::ScriptWorld;
 use serde::Serialize;
 use tracing::{info, warn};
@@ -103,7 +106,7 @@ use crate::extraction::Extraction;
 use crate::hero::HeroBody;
 use crate::hero_scripts::ScriptSource;
 use crate::motion::ReducedMotion;
-use crate::physics::PreparedBody;
+use crate::physics::{PreparedBody, SeamBody};
 use crate::turntable::{plain, read_ir};
 use crate::tv_state::{Redrawn, ScreenRoot, TvCamera};
 use crate::warm::Warm;
@@ -202,7 +205,8 @@ struct Built {
     /// past the level's own, and its material in `drawn.materials`).
     prop_models: Vec<Vec<(usize, u16)>>,
     /// The spawn part's models (AH.24), by path: each one's segments as the
-    /// props' are, past theirs.
+    /// props' are, past theirs; then the level's templates' the TV draws
+    /// the clones of (AG.60), the props' own segments.
     spawn_models: Vec<(String, Vec<(usize, u16)>)>,
     read: Duration,
     took: Duration,
@@ -316,6 +320,15 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         })
         .collect::<Result<Vec<_>, String>>()?;
     drawn.materials.extend(props.materials.iter().cloned());
+    // The level's templates whose clones the TV draws (AG.60,
+    // `props::DRAWN_SPAWNS`): their models are among the props', drawn by
+    // path as the spawn part's are.
+    let level_spawns: Vec<(String, Vec<(usize, u16)>)> = walk
+        .props
+        .spawn_models
+        .iter()
+        .map(|&i| (walk.props.models[i].path.clone(), prop_models[i].clone()))
+        .collect();
     // The meshes hold the props' vertices once built.
     walk.props.models.clear();
     // What the scripts' clones draw (AH.24): the spawn part's models after
@@ -342,7 +355,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         u16::try_from(spawn_materials + usize::from(m))
             .map_err(|_| "past 65,536 materials with the spawn models'".to_owned())
     };
-    let spawn_models = spawns
+    let mut spawn_models = spawns
         .iter()
         .zip(&spawn_ranges)
         .map(|(model, r)| {
@@ -358,6 +371,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             Ok((model.path.clone(), parts))
         })
         .collect::<Result<Vec<_>, String>>()?;
+    spawn_models.extend(level_spawns);
     drawn.materials.extend(spawned.materials.iter().cloned());
     let mut images: Vec<(ImageKey, Image)> = Vec::new();
     let slots = drawn
@@ -595,6 +609,11 @@ pub(crate) struct PropsReport {
     /// Props the level's scripts took off (openspec AH.21: breakables
     /// broken), by name: they stand nowhere again.
     pub taken_off: Vec<String>,
+    /// Standing props the scripts have moved, turned, scaled or reshaped
+    /// off their file's (openspec AG.60), by name, and how many solids were
+    /// rebuilt for a changed shape since the load.
+    pub scripted: Vec<String>,
+    pub rebuilt: usize,
     /// The placements left out, by why (template, creature, by script,
     /// nothing to stand, a state no level file holds), and the props whose
     /// model draws nothing.
@@ -609,16 +628,29 @@ pub(crate) struct PropsReport {
 /// A level's props on the TV (AG.25): each one's draw (hidden under the
 /// level's root until it stands) and solid (in Avian's world only while it
 /// stands), stood up and taken down as the hero comes within its range and
-/// leaves it.
+/// leaves it; once the level's scripts run, as each prop's actor stands,
+/// drawn and solid where the scripts leave it (openspec AG.60).
 pub(crate) struct StandingProps {
     props: Vec<Prop>,
     /// Per prop: the entity its model hangs under, if it draws.
     draws: Vec<Option<Entity>>,
-    /// Per prop: its solid, ready to spawn, and its entity while it stands.
+    /// Per prop: its file's solid, ready to spawn, its entity while it
+    /// stands and the body that entity holds.
     bodies: Vec<Option<PreparedBody>>,
     spawned: Vec<Option<Entity>>,
+    holds: Vec<Option<Body>>,
     standing: Vec<bool>,
+    shown: Vec<bool>,
     report: PropsReport,
+}
+
+/// What stands a prop once the level's scripts run (openspec AG.60): each
+/// prop's actor by its object, and how a draw's transform and a standing
+/// body's pose are set (whether that body was there to move).
+pub(crate) struct ByActors<'a> {
+    pub(crate) actor_of: &'a dyn Fn(u32) -> Option<&'a Actor>,
+    pub(crate) place: &'a mut dyn FnMut(Entity, Transform),
+    pub(crate) pose: &'a mut dyn FnMut(Entity, guac_motion::seam::Pose) -> bool,
 }
 
 impl StandingProps {
@@ -653,10 +685,13 @@ impl StandingProps {
             .iter()
             .map(|p| {
                 let model = &models[p.model?];
+                // Eased between steps: the scripts move and turn some (a
+                // spinning coin, the propeller) every step (AG.60).
                 let parent = commands
                     .spawn((
                         Name::new(format!("prop {}", p.name)),
                         p.transform,
+                        TransformInterpolation,
                         Visibility::Hidden,
                         ChildOf(root),
                     ))
@@ -679,59 +714,122 @@ impl StandingProps {
             draws,
             bodies: std::mem::take(&mut walk.prop_bodies),
             spawned: vec![None; n],
+            holds: vec![None; n],
             standing: vec![false; n],
+            shown: vec![false; n],
             report,
         }
     }
 
-    /// Stands up the props within range of `at` and takes down the rest,
-    /// and every one `taken_off` says the level's scripts took off, by its
-    /// object (openspec AH.21: a breakable broken goes at once and never
-    /// stands again): each one's draw shown or hidden, its solid spawned
-    /// into Avian's world or despawned from it.
-    pub(crate) fn stand(
-        &mut self,
-        at: Vec3,
-        taken_off: impl Fn(u32) -> bool,
-        commands: &mut Commands,
-    ) {
+    /// Stands up the props within range of `at` and takes down the rest
+    /// (AG.25's rule), or, once the level's scripts run, each as its actor
+    /// stands (openspec AG.60: the actor is the prop's one holder, AH design
+    /// decision 21): awake by the activity rule or its scripts and not taken
+    /// off (AH.21: a breakable broken goes at once and never stands again),
+    /// drawn where the scripts leave its place, turn and scale unless its
+    /// tint is see-through, solid as they leave it. Each one's draw shown or
+    /// hidden and placed; its solid spawned into Avian's world, moved there,
+    /// rebuilt when its shape changed, or despawned.
+    pub(crate) fn stand(&mut self, at: Vec3, mut by: Option<ByActors>, commands: &mut Commands) {
         self.report.at = Some(at.to_array());
         let mut changed = false;
         for (i, p) in self.props.iter().enumerate() {
-            let off = taken_off(p.object);
+            let actor = by.as_ref().and_then(|b| (b.actor_of)(p.object));
+            let off = actor.is_some_and(|a| a.removed);
             if off && !self.report.taken_off.contains(&p.name) {
                 self.report.taken_off.push(p.name.clone());
             }
-            let stands = p.stands(at) && !off;
-            if stands == self.standing[i] {
-                continue;
+            let stands = match actor {
+                Some(a) => a.active && !a.removed,
+                None => p.stands(at),
+            };
+            let shows = stands && actor.is_none_or(props::actor_shows);
+            if stands != self.standing[i] {
+                changed = true;
+                self.standing[i] = stands;
             }
-            changed = true;
-            self.standing[i] = stands;
+            let place = actor.map_or(p.transform, props::actor_transform);
+            let scripted = place != p.transform;
             if let Some(draw) = self.draws[i] {
-                commands.entity(draw).insert(if stands {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                });
+                if shows != self.shown[i] {
+                    commands.entity(draw).insert(if shows {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    });
+                    self.shown[i] = shows;
+                    changed = true;
+                }
+                if let Some(b) = by.as_mut() {
+                    (b.place)(draw, place);
+                }
             }
-            if stands {
-                self.spawned[i] = self.bodies[i].clone().map(|b| b.spawn(commands));
-            } else if let Some(body) = self.spawned[i].take() {
-                commands.entity(body).despawn();
+            let body = match (stands, actor) {
+                (false, _) => None,
+                (true, Some(a)) => props::actor_body(p, a),
+                (true, None) => p.body.clone(),
+            };
+            if self.report.scripted.contains(&p.name) != (stands && (scripted || body != p.body)) {
+                changed = true;
+                if stands && (scripted || body != p.body) {
+                    self.report.scripted.push(p.name.clone());
+                } else {
+                    self.report.scripted.retain(|n| *n != p.name);
+                }
+            }
+            match (body, self.spawned[i]) {
+                (None, None) => {}
+                (None, Some(e)) => {
+                    commands.entity(e).despawn();
+                    self.spawned[i] = None;
+                    self.holds[i] = None;
+                    changed = true;
+                }
+                (Some(b), held) => {
+                    let same_shape = self.holds[i]
+                        .as_ref()
+                        .is_some_and(|h| h.collider == b.collider && h.kind == b.kind);
+                    match held {
+                        Some(e) if same_shape => {
+                            if self.holds[i].as_ref().map(|h| h.pose) != Some(b.pose)
+                                && let Some(by) = by.as_mut()
+                                && (by.pose)(e, b.pose)
+                            {
+                                self.holds[i] = Some(b);
+                            }
+                        }
+                        _ => {
+                            if let Some(e) = held {
+                                commands.entity(e).despawn();
+                                self.report.rebuilt += 1;
+                            }
+                            // The file's solid was built off the frame; one
+                            // the scripts changed is built here, a convex
+                            // shape at a time.
+                            let prepared = if Some(&b) == p.body.as_ref() {
+                                self.bodies[i].clone()
+                            } else {
+                                PreparedBody::new(&b)
+                                    .inspect_err(|e| warn!(prop = %p.name, error = %e, "a solid the scripts left won't build"))
+                                    .ok()
+                            };
+                            self.spawned[i] = prepared.map(|b| b.spawn(commands));
+                            self.holds[i] = self.spawned[i].map(|_| b);
+                            // A solid rebuilt sensing or blocking counts anew.
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
         if changed {
             let standing: Vec<usize> = (0..self.props.len())
                 .filter(|&i| self.standing[i])
                 .collect();
-            let kind = |i: &usize| self.props[*i].body.as_ref().map(|b| b.kind);
+            let kind = |i: &usize| self.holds[*i].as_ref().map(|b| b.kind);
             let r = &mut self.report;
             r.standing = standing.len();
-            r.drawn = standing
-                .iter()
-                .filter(|&&i| self.draws[i].is_some())
-                .count();
+            r.drawn = standing.iter().filter(|&&i| self.shown[i]).count();
             r.solid = standing
                 .iter()
                 .filter(|i| kind(i) == Some(BodyKind::Kinematic))
@@ -752,7 +850,9 @@ impl StandingProps {
         for body in self.spawned.iter_mut().filter_map(Option::take) {
             commands.entity(body).despawn();
         }
+        self.holds.fill(None);
         self.standing.fill(false);
+        self.shown.fill(false);
     }
 
     pub(crate) fn report(&self) -> &PropsReport {
@@ -765,9 +865,8 @@ impl StandingProps {
     fn standing_bodies(&self) -> Vec<(u32, BodyId)> {
         self.props
             .iter()
-            .zip(&self.spawned)
-            .filter(|(_, spawned)| spawned.is_some())
-            .filter_map(|(p, _)| p.body.as_ref().map(|b| (p.object, b.id)))
+            .zip(&self.holds)
+            .filter_map(|(p, held)| held.as_ref().map(|b| (p.object, b.id)))
             .collect()
     }
 }
@@ -1011,7 +1110,8 @@ impl Level {
             .map_or_else(Vec::new, |l| l.props.standing_bodies())
     }
 
-    /// The spawn part's models by path, once the level's loaded: what the
+    /// The spawn part's models by path, once the level's loaded, and the
+    /// level's templates' `props::DRAWN_SPAWNS` names (AG.60): what the
     /// scripts' clones draw (AH.24).
     pub(crate) fn spawn_models(
         &self,
@@ -1537,7 +1637,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         &mut s.commands,
     );
     // Standing by the start until a hero's step says where he is.
-    props.stand(built.walk.start, |_| false, &mut s.commands);
+    props.stand(built.walk.start, None, &mut s.commands);
     let spawns = built
         .spawn_models
         .iter()
@@ -1584,20 +1684,47 @@ pub(crate) fn stand_props(
     heroes: Query<&HeroBody>,
     scripts: Option<Res<ScriptWorld>>,
     source: Option<Res<ScriptSource>>,
+    mut draws: Query<&mut Transform, Without<SeamBody>>,
+    mut poses: Query<(&mut Position, &mut Rotation), With<SeamBody>>,
 ) {
     let Some(loaded) = level.stage.loaded_mut() else {
         return;
     };
     let at = heroes.iter().next().map_or(loaded.start, |h| h.hero.pivot);
     let unit = source.as_deref().and_then(ScriptSource::level_unit);
-    let taken_off = |object: u32| match (scripts.as_deref(), unit) {
-        (Some(w), Some(unit)) => w.taken_off(Obj {
+    let by = match (scripts.as_deref(), unit) {
+        (Some(world), Some(unit)) => Some(world).zip(Some(unit)),
+        _ => None,
+    };
+    let actor_of = |object: u32| {
+        let (world, unit) = by?;
+        let h = world.handles().get(&Obj {
             unit,
             index: object,
-        }),
-        _ => false,
+        })?;
+        world.actor(*h)
     };
-    loaded.props.stand(at, taken_off, &mut commands);
+    let mut place = |draw: Entity, t: Transform| {
+        if let Ok(mut now) = draws.get_mut(draw)
+            && *now != t
+        {
+            *now = t;
+        }
+    };
+    let mut pose = |body: Entity, p: guac_motion::seam::Pose| {
+        let Ok((mut position, mut rotation)) = poses.get_mut(body) else {
+            return false;
+        };
+        position.0 = p.position;
+        rotation.0 = p.rotation;
+        true
+    };
+    let actors = by.is_some().then_some(ByActors {
+        actor_of: &actor_of,
+        place: &mut place,
+        pose: &mut pose,
+    });
+    loaded.props.stand(at, actors, &mut commands);
 }
 
 /// The camera the level is drawn from into `target` at `order`: the
@@ -2327,7 +2454,7 @@ mod tests {
                     "fence",
                     4,
                     0.0,
-                    2.0,
+                    -10.0,
                     "gourd.mdl",
                     solid(Shape::Box, [23.0, 18.0, 3.0]),
                     Some("WoodFence_Spawner.ai"),
@@ -2358,10 +2485,11 @@ mod tests {
                 .expect("the props' report")
         };
         let r = props(&app);
-        // By script: the fence and `213_Init_Location`.
+        // The fence, with no range, a prop that stands by its actor alone
+        // (openspec AG.60); `213_Init_Location` nothing to stand.
         assert_eq!(
             (r.props, r.models, r.templates, r.creatures, r.by_script),
-            (2, 2, 1, 1, 2),
+            (3, 2, 1, 1, 0),
             "{r:?}"
         );
         assert_eq!((r.standing, r.drawn, r.solid, r.sensors), (1, 1, 1, 0));
@@ -2400,6 +2528,7 @@ mod tests {
             shown(&mut app),
             [
                 ("prop coin".to_owned(), false),
+                ("prop fence".to_owned(), false),
                 ("prop gourd".to_owned(), true)
             ]
         );
@@ -2440,6 +2569,7 @@ mod tests {
             shown(&mut app),
             [
                 ("prop coin".to_owned(), true),
+                ("prop fence".to_owned(), false),
                 ("prop gourd".to_owned(), false)
             ]
         );
@@ -2462,55 +2592,238 @@ mod tests {
         assert_eq!(bodies(&mut app), [1, PROP_BODIES + 20]);
         assert_eq!(down_on_the_gourd(&mut app), Some(PROP_BODIES + 20));
 
-        // AH.21: the level's scripts take the gourd's placement off (broken):
-        // the next fixed step hides its draw and takes its solid out of
-        // Avian's world, for good wherever the hero stands. Another unit's
-        // object of the same index stands as before.
+        // Once the level's scripts run, each prop stands as its actor does
+        // (openspec AG.60): the gourd and the coin by AG.7's rule, as the
+        // activity rule wakes them from where the hero stands (the start
+        // here), the fence, with no range, while its actor is awake (a
+        // deactivation buffer of 0); each drawn and solid where its actor
+        // stands, its file's place here.
+        use guacamole::script_engine::Solid as ActorSolid;
         use guacamole::scripts::{Files, Placed, ScriptWorld, headless_objects};
-        let gourd = Obj { unit: 4, index: 20 };
-        let files = Files {
-            placed: vec![Placed::named(gourd, "gourd", None, 4)],
+        let (gourd, coin, fence) = (
+            Obj { unit: 4, index: 20 },
+            Obj { unit: 4, index: 21 },
+            Obj { unit: 4, index: 24 },
+        );
+        let placed = |obj, name: &str, range, dx: f32, shape, size: [f32; 3]| Placed {
+            position: [START[0] + dx, START[1], START[2]],
+            range,
+            solid: Some(ActorSolid {
+                width: size[0],
+                height: size[1],
+                length: size[2],
+                shape,
+                // The file's bit 3, as each solid's here.
+                interacts_with_actors: 1,
+                ..ActorSolid::default()
+            }),
+            ..Placed::named(obj, name, None, 4)
+        };
+        let files = |fence: Placed| Files {
+            placed: vec![
+                placed(gourd, "gourd", 160.0, 4.5, 3, [7.25, 6.5, 3.0]),
+                placed(coin, "coin", 160.0, 49.25, 0, [3.0, 6.0, 3.0]),
+                fence,
+            ],
             ..Files::default()
         };
-        let handles = HashMap::from([(gourd, 0x20)]);
-        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let fence_file = placed(fence, "fence", 0.0, -10.0, 1, [23.0, 18.0, 3.0]);
+        let handles = HashMap::from([(gourd, 0x20), (coin, 0x21), (fence, 0x24)]);
+        let world_of = |files: &Files| {
+            let mut w = ScriptWorld::new(files, &handles, headless_objects(&handles));
+            w.activity_at(&[start]);
+            w
+        };
+        let mut world = world_of(&files(fence_file.clone()));
         let source = crate::hero_scripts::ScriptSource::of(
             Arc::new(guac_script::Program::default()),
-            files,
+            files(fence_file.clone()),
             vec![2, 4],
         );
         app.insert_resource(source);
         app.insert_resource(world);
-        for _ in 0..3 {
+        // Updates until a fixed step has stood the props as `done` wants.
+        let steps_until = |app: &mut App, done: &dyn Fn(&PropsReport) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !done(&props(app)) {
+                assert!(Instant::now() < deadline, "{:?}", props(app));
+                app.update();
+            }
             app.update();
-        }
-        assert_eq!(props(&app).names, ["gourd"], "not taken off yet");
+        };
+        steps_until(&mut app, &|r| r.names == ["gourd", "fence"]);
+        assert_eq!(props(&app).names, ["gourd", "fence"]);
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 20, PROP_BODIES + 24]);
+        assert_eq!(down_on_the_gourd(&mut app), Some(PROP_BODIES + 20));
+        assert_eq!(
+            props(&app).scripted,
+            Vec::<String>::new(),
+            "where the file has them"
+        );
+
+        // AH.21: the level's scripts take the gourd's placement off (broken):
+        // the next fixed step hides its draw and takes its solid out of
+        // Avian's world, for good wherever the hero stands. Another unit's
+        // object of the same index stands as before.
         world = app.world_mut().remove_resource::<ScriptWorld>().unwrap();
         assert!(world.take_off(gourd));
         assert!(!world.take_off(Obj { unit: 2, index: 20 }));
         app.insert_resource(world);
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !props(&app).names.is_empty() {
+        while props(&app).names != ["fence"] {
             assert!(Instant::now() < deadline, "the gourd never went");
             app.update();
         }
         let r = props(&app);
         assert_eq!(
             (r.standing, r.solid, r.taken_off.clone()),
-            (0, 0, vec!["gourd".to_owned()])
+            (1, 1, vec!["gourd".to_owned()])
         );
         assert_eq!(
             shown(&mut app),
             [
                 ("prop coin".to_owned(), false),
+                ("prop fence".to_owned(), true),
                 ("prop gourd".to_owned(), false)
             ]
         );
-        assert_eq!(bodies(&mut app), [1]);
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
         for _ in 0..3 {
             app.update();
         }
         assert_eq!(down_on_the_gourd(&mut app), Some(1), "the floor, for good");
+
+        // AG.60: a script moving and turning the fence's actor moves its
+        // draw and its solid with it, the solid moved rather than rebuilt.
+        let fence_draw = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&Name, &Transform)>();
+            q.iter(app.world())
+                .find(|(n, _)| n.as_str() == "prop fence")
+                .map(|(_, t)| *t)
+                .unwrap()
+        };
+        let fence_body = |app: &mut App| {
+            let mut q = app.world_mut().query::<(
+                &crate::physics::SeamBody,
+                &avian3d::prelude::Position,
+                &avian3d::prelude::Rotation,
+            )>();
+            q.iter(app.world())
+                .find(|(b, ..)| b.id.0 == PROP_BODIES + 24)
+                .map(|(_, p, r)| (p.0, r.0))
+                .unwrap()
+        };
+        let (was_at, _) = fence_body(&mut app);
+        world = app.world_mut().remove_resource::<ScriptWorld>().unwrap();
+        let moved = Vec3::new(START[0] - 10.0, START[1], START[2] + 3.0);
+        assert!(world.place(0x24, moved, 90.0));
+        app.insert_resource(world);
+        steps_until(&mut app, &|r| !r.scripted.is_empty());
+        let t = fence_draw(&mut app);
+        assert_eq!(t.translation, moved);
+        assert_eq!(t.rotation, guac_motion::solid::euler([0.0, 90.0, 0.0]));
+        let (now_at, turned) = fence_body(&mut app);
+        assert!(
+            (now_at - was_at - Vec3::Z * 3.0).length() < 1e-4,
+            "{was_at} -> {now_at}"
+        );
+        assert!((turned.to_axis_angle().1.to_degrees() - 90.0).abs() < 1e-3);
+        let r = props(&app);
+        assert_eq!(
+            (r.scripted.clone(), r.rebuilt),
+            (vec!["fence".to_owned()], 0)
+        );
+
+        // Its start script making its solid a cylinder at half its size and
+        // its tint see-through: the solid rebuilt, the draw hidden while the
+        // solid stands.
+        let mut changed = fence_file.clone();
+        changed.scale = [50.0; 3];
+        changed.tint = 0x8080_8000;
+        changed.solid = Some(ActorSolid {
+            shape: 4,
+            ..changed.solid.unwrap()
+        });
+        let mut world = world_of(&files(changed.clone()));
+        assert!(world.take_off(gourd), "broken still");
+        app.insert_resource(world);
+        steps_until(&mut app, &|r| r.rebuilt > 0);
+        let r = props(&app);
+        assert_eq!((r.names.clone(), r.rebuilt), (vec!["fence".to_owned()], 1));
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
+        assert!(!shown(&mut app).contains(&("prop fence".to_owned(), true)));
+        assert_eq!(fence_draw(&mut app).scale, Vec3::splat(0.5));
+        assert_eq!((r.solid, r.sensors), (1, 0));
+
+        // Falling down, its script turns its `interacts with actors` off
+        // (`WoodFence_Spawner.ai`'s 'Fall Down'): the solid rebuilt sensing,
+        // stopping nothing until the script removes it.
+        changed.solid = Some(ActorSolid {
+            interacts_with_actors: 0,
+            ..changed.solid.unwrap()
+        });
+        let mut world = world_of(&files(changed));
+        assert!(world.take_off(gourd), "broken still");
+        app.insert_resource(world);
+        steps_until(&mut app, &|r| r.rebuilt > 1);
+        let r = props(&app);
+        assert_eq!((r.solid, r.sensors, r.rebuilt), (0, 1, 2));
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
+    }
+
+    /// AG.60: a level template `props::DRAWN_SPAWNS` names draws its clones
+    /// from its model among the props', found by path as the spawn part's
+    /// are; one it doesn't name draws none.
+    #[test]
+    fn a_drawn_templates_model_is_there_for_its_clones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let scene: guac_ir::level::Scene = guac_ir::from_ron(
+            &std::fs::read_to_string(tmp.path().join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+        )
+        .unwrap();
+        let shape = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let model = |path: &str| guac_ir::level::Prop {
+            path: path.into(),
+            skeleton: None,
+            materials: vec![scene.scenes[0].materials[0].clone()],
+            segments: vec![segment(0, shape, 0.0)],
+            idle: None,
+        };
+        let template = |object, name: &str, model: &str| guac_ir::level::Placement {
+            object,
+            id: 0,
+            name: name.into(),
+            script: None,
+            position: START,
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            model: Some(model.into()),
+            solid: None,
+            movement: None,
+            waypoints: None,
+            activity_state: 5,
+            activation_range: 0.0,
+        };
+        write_props(
+            tmp.path(),
+            vec![model("egg.mdl"), model("hat.mdl")],
+            vec![
+                template(20, "Bird_nest_egg", "egg.mdl"),
+                template(21, "Turban_hat", "hat.mdl"),
+            ],
+        );
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        let models = level.spawn_models().expect("loaded");
+        assert_eq!(models.get("egg.mdl").map(Vec::len), Some(1));
+        assert!(!models.contains_key("hat.mdl"));
     }
 
     /// AG.21: the level's solids come and go with it. A new source's load

@@ -8,17 +8,24 @@
 //!   `guac_formats::level::at_start_of` holds it): a template never stands;
 //!   an UNMANAGED placement with an activation range stands while the hero
 //!   is within it, measured in 3D from the placement's position, the range in
-//!   feet ([`Prop::stands`]); one without a range waits on its script, which
-//!   guacamole doesn't run yet, so it doesn't stand. A creature, a skinned
-//!   model with a script (enemies, NPCs, critters, the chests), is left out
-//!   with its solid until its script runs. What the start's scripts do to the
-//!   props that stand (AG.7: they rescale gourds, turn the Titan boulders'
-//!   solids into cylinders) waits on them too.
+//!   feet ([`Prop::stands`]); one without a range is its scripts' to wake,
+//!   take off or leave, so it stands only by its actor (below). A creature,
+//!   a skinned model with a script (enemies, NPCs, critters, the chests), is
+//!   left out with its solid until its script runs.
+//! - Once the level's scripts run (openspec AG.60), a prop's actor is its one
+//!   holder (AH design decision 21): it stands while its actor is awake and
+//!   not taken off, drawn where the scripts leave its place, turn and scale
+//!   ([`actor_transform`], hidden while its tint is see-through:
+//!   [`actor_shows`]), its solid what they leave of it ([`actor_body`]: a
+//!   gourd `Scale.ai` shrinks, a Titan boulder made a cylinder, a spinning
+//!   coin turning, the walkway fence sensing once its `interacts with
+//!   actors` goes off as it falls).
 //! - What it draws ([`PropModel`]): its model off the props part, each
 //!   tfbmulti2 segment on its material as the level's draw
 //!   ([`level_scene::drawn`]), the other effects' left out (AG.24), placed by
 //!   its position, its Euler angles (AF.9's convention) and its scale. A
 //!   skinned model with no script, or one the stage refused, draws nothing.
+//!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60).
 //! - What it stops ([`solid`]): its `CollisionInfo` as the original builds it
 //!   ([`guac_motion::solid`], AG.7's table), a solid one a kinematic seam
 //!   body, a shaped non-solid one a sensor that stops nothing, a shapeless or
@@ -40,6 +47,7 @@ use guac_motion::solid::{SolidInfo, SolidKind, euler};
 
 use crate::character::warm::WarmKey;
 use crate::level_scene::{self, Drawn, LevelError};
+use crate::script_engine::Actor;
 
 /// The seam body id a prop's solid takes: this plus its object index in
 /// `level.bld`, clear of the level's meshes' ([`level_scene::LEVEL_BODIES`]
@@ -55,7 +63,8 @@ pub enum LeftOut {
     /// until its script runs.
     Creature,
     /// No activation range: its script wakes it, takes it off or leaves it
-    /// (AG.7), and guacamole doesn't run that script yet.
+    /// (AG.7). Since AG.60 a prop stands by its actor, so nothing is left
+    /// out for it; kept for a level read without its scripts' rule.
     ByScript,
     /// Ranged, but with no model to draw and no shaped solid.
     Nothing,
@@ -80,6 +89,9 @@ pub struct Prop {
     /// Its solid where the level has it; `None` for a shapeless or
     /// mesh-typed one.
     pub body: Option<Body>,
+    /// Its `CollisionInfo` as its file holds it: what [`actor_body`] keeps
+    /// of it (its own turn, solid or sensing) under what the scripts change.
+    pub solid: Option<Solid>,
 }
 
 impl Prop {
@@ -115,7 +127,31 @@ pub struct LevelProps {
     /// Ranged placements naming a model that draws nothing, with why: a
     /// prop for its solid, or left out as [`LeftOut::Nothing`] without one.
     pub undrawn: Vec<(String, &'static str)>,
+    /// The models of the templates [`DRAWN_SPAWNS`] names, into `models`:
+    /// what their clones draw (openspec AG.60).
+    pub spawn_models: Vec<usize>,
 }
+
+/// The level's templates whose clones the TV draws (openspec AG.60), by
+/// name: what chapter 1's start scripts spawn that draws, the walkway
+/// fence's cross beam and planks (its spawner draws nothing, its tint
+/// see-through) and the pieces they break into, a bird nest's egg and the
+/// cannon's base. Left out: the Titan boulders' pebbles, laid on the
+/// boulder's attach nodes, which no prop model's extract carries (they'd sit
+/// under the boulder); the chest's locks (the chest is a creature, drawn
+/// nowhere); the push blocks' tortoises and the cannon's top (skinned, as
+/// a prop draws none); the invisible markers. `giants_start` holds it to
+/// what a headless start clones.
+pub const DRAWN_SPAWNS: [&str; 8] = [
+    "Fence Cross Beam",
+    "Wooden Plank_one",
+    "Wooden Plank_Two",
+    "Top_A",
+    "Middle_A",
+    "Bottom_A",
+    "Bird_nest_egg",
+    "Push_Canon_Art_Bottom",
+];
 
 impl LevelProps {
     /// `placements`' props, drawn from `props`' models.
@@ -132,13 +168,33 @@ impl LevelProps {
                 Some(ActivityState::Unmanaged) if skinned && a.script.is_some() => {
                     Some(LeftOut::Creature)
                 }
-                Some(ActivityState::Unmanaged) if a.activation_range <= 0.0 => {
-                    Some(LeftOut::ByScript)
-                }
+                // Ranged or not: one without a range stands by its actor.
                 Some(ActivityState::Unmanaged) => None,
                 _ => Some(LeftOut::State),
             };
             if let Some(why) = why {
+                if why == LeftOut::Template
+                    && DRAWN_SPAWNS.contains(&a.name.as_str())
+                    && let Some(m) = model.filter(|m| m.skeleton.is_none())
+                    && !out
+                        .spawn_models
+                        .iter()
+                        .any(|&i| out.models[i].path == m.path)
+                {
+                    let i = match model_index.get(m.path.as_str()) {
+                        Some(&i) => i,
+                        None => {
+                            let i = out.models.len();
+                            out.models.push(PropModel {
+                                path: m.path.clone(),
+                                drawn: model_drawn(m)?,
+                            });
+                            model_index.insert(m.path.as_str(), i);
+                            i
+                        }
+                    };
+                    out.spawn_models.push(i);
+                }
                 out.left_out.push((a.name.clone(), why));
                 continue;
             }
@@ -179,6 +235,7 @@ impl LevelProps {
                 transform: placed(a),
                 model,
                 body,
+                solid: a.solid,
             });
         }
         Ok(out)
@@ -218,11 +275,84 @@ impl LevelProps {
         models_drawn(&self.models)
     }
 
-    /// Every key the props' models draw in `scene`, each once: what the
-    /// warm compiles beside the level's.
+    /// Every key the props' models draw in `scene`, each once, and those
+    /// the spawned clones' models draw while a tint fades them
+    /// ([`faded_keys`]): what the warm compiles beside the level's.
     pub fn keys(&self, scene: &Scene) -> Result<Vec<WarmKey>, LevelError> {
-        models_keys(&self.models, scene)
+        let mut keys = models_keys(&self.models, scene)?;
+        let spawned: Vec<PropModel> = self
+            .spawn_models
+            .iter()
+            .map(|&i| self.models[i].clone())
+            .collect();
+        for k in faded_keys(&spawned, scene)? {
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+        Ok(keys)
     }
+}
+
+/// Where a prop's actor draws it: its place, its turn (AF.9's Euler angles)
+/// and its scale as the scripts leave them (openspec AG.60: the actor is the
+/// prop's one holder, AH design decision 21).
+pub fn actor_transform(a: &Actor) -> Transform {
+    Transform {
+        translation: a.position,
+        rotation: euler([a.angles.tilt, a.angles.facing, a.angles.roll]),
+        scale: Vec3::from_array(a.scale) / 100.0,
+    }
+}
+
+/// Whether a prop's actor draws: its tint isn't see-through (the walkway
+/// fence's spawner sets its own alpha to 0 and draws as its planks). A tint
+/// in between draws whole: no start script fades a prop.
+pub fn actor_shows(a: &Actor) -> bool {
+    a.tint & 0xFF != 0
+}
+
+/// A prop's solid where its actor stands (openspec AG.60): its file's
+/// `CollisionInfo` turn under the primitive, sizes and offset the scripts
+/// leave on the actor (a Titan boulder's cylinder, the cannon's smaller
+/// box), at the actor's scale, place and turn, solid while the actor's
+/// `interacts with actors` (the file's bit 3 until a script writes it) is
+/// on and sensing while it's off (the walkway fence's goes off as it falls
+/// down, seconds before it's removed); none for a shapeless or mesh-typed
+/// one, or a prop with no `CollisionInfo`.
+pub fn actor_body(prop: &Prop, a: &Actor) -> Option<Body> {
+    let file = prop.solid.as_ref()?;
+    let kind = match a.solid.shape {
+        1 => SolidKind::Box,
+        2 => SolidKind::Capsule,
+        3 => SolidKind::Sphere,
+        4 => SolidKind::Cylinder,
+        5 => SolidKind::Mesh,
+        _ => SolidKind::None,
+    };
+    let havok = SolidInfo {
+        kind,
+        offset: a.solid.offset,
+        rotation: file.rotation,
+        width: a.solid.width,
+        height: a.solid.height,
+        length: a.solid.length,
+    }
+    .havok(a.scale)?;
+    let at = Pose::new(
+        a.position,
+        euler([a.angles.tilt, a.angles.facing, a.angles.roll]),
+    );
+    Some(Body {
+        id: BodyId(PROP_BODIES + prop.object),
+        kind: if a.solid.interacts_with_actors != 0 {
+            BodyKind::Kinematic
+        } else {
+            BodyKind::Sensor
+        },
+        pose: havok.pose(at),
+        collider: Collider::Convex(havok.in_world()),
+    })
 }
 
 /// The models the extract's spawn part holds for one archive (AH.22), as a
@@ -613,11 +743,12 @@ mod tests {
         standing.map(|i| props.props[i].name.as_str()).collect()
     }
 
-    /// AG.7's rule as the props' set: templates, creatures and the
-    /// placements a script wakes stand nowhere; a ranged one stands while
-    /// the hero is within its range, the coin only once he's walked within
-    /// its 160 ft; a solid one is a kinematic body, a non-solid one a sensor,
-    /// a shapeless one none.
+    /// AG.7's rule as the props' set: templates and creatures stand
+    /// nowhere; the placement a script wakes is a prop that never stands by
+    /// the rule alone, only by its actor (openspec AG.60); a ranged one
+    /// stands while the hero is within its range, the coin only once he's
+    /// walked within its 160 ft; a solid one is a kinematic body, a
+    /// non-solid one a sensor, a shapeless one none.
     #[test]
     fn the_rules_set_is_the_props_that_stand() {
         let (props, placements) = level();
@@ -628,12 +759,12 @@ mod tests {
             [
                 ("template", LeftOut::Template),
                 ("chompy", LeftOut::Creature),
-                ("fence", LeftOut::ByScript),
                 ("bugs", LeftOut::Nothing),
                 ("moths", LeftOut::Nothing),
                 ("hero", LeftOut::State),
             ]
         );
+        assert!(p.spawn_models.is_empty(), "no template DRAWN_SPAWNS names");
         assert_eq!(
             p.undrawn,
             [
@@ -643,14 +774,19 @@ mod tests {
         );
         assert_eq!(
             names(&p, 0..p.props.len()),
-            ["gourd", "coin", "trigger", "gem"]
+            ["gourd", "coin", "fence", "trigger", "gem"]
         );
         let models: Vec<&str> = p.models.iter().map(|m| m.path.as_str()).collect();
         assert_eq!(models, ["gourd.mdl", "coin.mdl"]);
         assert_eq!(
             p.props.iter().map(|p| p.model).collect::<Vec<_>>(),
-            [Some(0), Some(1), None, None]
+            [Some(0), Some(1), Some(0), None, None]
         );
+        let fence = &p.props[2];
+        assert!(fence.range <= 0.0 && fence.body.is_some());
+        for at in [HERO, at_x(2.0), at_x(60.0)] {
+            assert!(!fence.stands(Vec3::from_array(at)), "by its actor alone");
+        }
 
         // At the start the coin is 49.25 m off, past its 48.768 m.
         let start = Vec3::from_array(HERO);
@@ -683,6 +819,319 @@ mod tests {
         // Exactly at the range counts as in it, as AG.7's rule has it.
         let edge = Vec3::from_array(at_x(49.25 - 160.0 * FOOT));
         assert!(p.props[1].stands(edge));
+    }
+
+    /// The actor a prop's file makes (openspec AG.60): at its place, turn
+    /// and scale, its `CollisionInfo`'s primitive, sizes and offset.
+    fn actor_of_file(p: &Prop, placement: &Placement) -> Actor {
+        let s = placement.solid.unwrap();
+        let mut a = Actor::blank();
+        a.position = Vec3::from_array(placement.position);
+        a.angles = crate::script_engine::Angles {
+            tilt: placement.rotation[0],
+            facing: placement.rotation[1],
+            roll: placement.rotation[2],
+        };
+        a.scale = placement.scale;
+        a.solid = crate::script_engine::Solid {
+            width: s.width,
+            length: s.length,
+            height: s.height,
+            offset: s.offset,
+            shape: s.shape as i32,
+            interacts_with_actors: i32::from(s.solid),
+            ..crate::script_engine::Solid::default()
+        };
+        assert_eq!(p.object, placement.object);
+        a
+    }
+
+    /// A prop's actor is its one holder (openspec AG.60, AH design decision
+    /// 21): the actor its file makes stands it where the file does, drawn
+    /// and solid alike; what the scripts write to the actor moves the draw
+    /// and the solid with it: `Scale.ai`'s 80 % on a gourd shrinks both, a
+    /// Titan boulder's sphere made a 15 x 18 ft cylinder 9 ft down keeps its
+    /// file's own turn and solid bit, a spinning coin's turn turns both, and
+    /// a tint gone see-through hides the draw.
+    #[test]
+    fn a_props_actor_holds_its_draw_and_its_solid() {
+        let (props, placements) = level();
+        let p = LevelProps::new(&props, &placements).unwrap();
+        let file = |name: &str| {
+            let prop = p.props.iter().find(|x| x.name == name).unwrap();
+            let placement = placements
+                .actors
+                .iter()
+                .find(|a| a.object == prop.object)
+                .unwrap();
+            (prop, actor_of_file(prop, placement))
+        };
+        // The file's actor: the file's draw and solid, to the bit.
+        for name in ["gourd", "fence", "trigger"] {
+            let (prop, a) = file(name);
+            assert_eq!(actor_transform(&a), prop.transform, "{name}");
+            assert_eq!(actor_body(prop, &a), prop.body, "{name}");
+            assert!(actor_shows(&a));
+        }
+        // Scale.ai on the gourd: 80 %.
+        let (gourd, mut a) = file("gourd");
+        a.scale = [80.0; 3];
+        let Some(Body {
+            collider: Collider::Convex(Convex::Sphere { radius }),
+            ..
+        }) = actor_body(gourd, &a)
+        else {
+            panic!("a sphere");
+        };
+        let Some(Body {
+            collider: Collider::Convex(Convex::Sphere { radius: whole }),
+            ..
+        }) = gourd.body
+        else {
+            panic!("a sphere");
+        };
+        assert!(
+            radius < whole * 0.81 && radius > whole * 0.78,
+            "{radius} of {whole}"
+        );
+        assert_eq!(actor_transform(&a).scale, Vec3::splat(0.8));
+        // A Titan boulder's sphere made a cylinder by its STARTUP.
+        let (fence, mut a) = file("fence");
+        a.solid.shape = 4;
+        (a.solid.width, a.solid.height, a.solid.length) = (15.0, 18.0, 3.0);
+        a.solid.offset = [0.0, -9.0 * FOOT, 0.0];
+        let b = actor_body(fence, &a).unwrap();
+        assert!(matches!(
+            b.collider,
+            Collider::Convex(Convex::Cylinder { .. })
+        ));
+        assert_eq!(
+            (b.id, b.kind),
+            (BodyId(PROP_BODIES + 14), BodyKind::Kinematic)
+        );
+        // A coin's turn: the draw and the solid turn together.
+        let (trigger, mut a) = file("trigger");
+        let before = actor_body(trigger, &a).unwrap();
+        a.angles.facing += 7.0;
+        let after = actor_body(trigger, &a).unwrap();
+        let turned = (after.pose.rotation * before.pose.rotation.inverse())
+            .to_axis_angle()
+            .1
+            .to_degrees();
+        assert!((turned - 7.0).abs() < 1e-3, "{turned}");
+        assert_eq!(after.kind, BodyKind::Sensor, "the file's bit, off");
+        assert_eq!(
+            actor_transform(&a).rotation,
+            euler([a.angles.tilt, a.angles.facing, a.angles.roll])
+        );
+        // What blocks is the actor's `interacts with actors`, the file's
+        // bit until a script writes it: on, the trigger's solid; off (the
+        // fence falling down), the fence's senses, its shape and place kept.
+        a.solid.interacts_with_actors = 1;
+        assert_eq!(actor_body(trigger, &a).unwrap().kind, BodyKind::Kinematic);
+        let (fence, mut down) = file("fence");
+        down.solid.interacts_with_actors = 0;
+        let sensing = actor_body(fence, &down).unwrap();
+        let standing = fence.body.clone().unwrap();
+        assert_eq!(
+            (sensing.kind, sensing.collider, sensing.pose),
+            (BodyKind::Sensor, standing.collider, standing.pose)
+        );
+        // The fence's spawner sets its own alpha to 0.
+        a.tint = 0x8080_8000;
+        assert!(!actor_shows(&a));
+        // No `CollisionInfo`, no solid whatever the actor holds.
+        let mut bare = fence.clone();
+        bare.solid = None;
+        assert_eq!(actor_body(&bare, &a), None);
+    }
+
+    /// The start's scripts reach the props on the VM (openspec AG.60), from
+    /// a script built with AH.13's writer that scales its placement to 80 %
+    /// and makes its solid a cylinder: on the fence, with no range, it runs
+    /// with the hero a kilometre off (the wake), and the fence's draw
+    /// shrinks and its solid's rebuilt a cylinder through its actor; on the
+    /// gourd, out of its 160 ft, it sleeps and the gourd stands as its file
+    /// has it.
+    #[test]
+    fn a_start_script_wakes_scales_and_reshapes_its_prop() {
+        use crate::script_engine::{NoEngine, Solid as ActorSolid};
+        use crate::scripts::{
+            Files, Placed, ScriptWorld, WorldHost, headless_handles, headless_objects,
+            headless_spawner, init_chain, smash_config,
+        };
+        use guac_formats::igz::Igz;
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_formats::script::{Class, Graph};
+        use guac_script::{Generator, Mode, Obj, Program, Role, Unit, Whitelist};
+        use std::sync::Arc;
+        const PATH: &str = "C:/tfb/Synthetic/Start.ai";
+        const MY: El<'static> = El::Member("optoplevelbehavior", "my");
+        let mut b = IgzBuilder::new();
+        {
+            let w = &mut Writer::new(&mut b);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            w.end_block(pre);
+            let idle = w.behaviour("idle");
+            let eighty = w.float(80.0);
+            w.set(
+                &[
+                    MY,
+                    El::Member("placement", "scale"),
+                    El::Member("scalemeasurement", "uniform"),
+                ],
+                eighty,
+            );
+            let cylinder = w.int(4);
+            w.set(
+                &[
+                    MY,
+                    El::Member("actorinfo", "collision volume"),
+                    El::Member("collisioninfo", "shape"),
+                ],
+                cylinder,
+            );
+            w.end_block(idle);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let program = Arc::new(
+            Program::link(&[Unit {
+                name: "level",
+                role: Role::Other,
+                igz: &igz,
+                graph: &graph,
+            }])
+            .unwrap(),
+        );
+        let (props, placements) = level();
+        let p = LevelProps::new(&props, &placements).unwrap();
+        // The fence and the gourd as the scripts' files hold them, each
+        // running the script.
+        let placed = |name: &str| {
+            let prop = p.props.iter().find(|x| x.name == name).unwrap();
+            let f = placements
+                .actors
+                .iter()
+                .find(|a| a.object == prop.object)
+                .unwrap();
+            let s = f.solid.unwrap();
+            let obj = Obj {
+                unit: 0,
+                index: f.object,
+            };
+            let placed = Placed {
+                position: f.position,
+                rotation: f.rotation,
+                scale: f.scale,
+                range: f.activation_range,
+                solid: Some(ActorSolid {
+                    width: s.width,
+                    height: s.height,
+                    length: s.length,
+                    shape: s.shape as i32,
+                    interacts_with_actors: i32::from(s.solid),
+                    ..ActorSolid::default()
+                }),
+                ..Placed::named(obj, name, Some(PATH), f.activity_state)
+            };
+            (prop, obj, placed)
+        };
+        let (fence, fence_obj, fence_file) = placed("fence");
+        let (gourd, gourd_obj, gourd_file) = placed("gourd");
+        let files = Files {
+            placed: vec![fence_file, gourd_file],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        // The TV's members (their registered types), every script run.
+        let mut c = smash_config(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let far = Vec3::from_array(HERO) + Vec3::new(1000.0, 0.0, 0.0);
+        for (h, active) in world.activity_at(&[far]) {
+            vm.set_asleep(h, !active);
+        }
+        let mut spawn = headless_spawner(1 << 40);
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut NoEngine,
+            generator: &mut Generator::seeded(1),
+            spawn: &mut spawn,
+        };
+        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+        let actor = |obj| world.actor(handles[&obj]).unwrap();
+        let a = actor(fence_obj);
+        assert!(a.active, "awake with no range");
+        assert_eq!(actor_transform(a).scale, Vec3::splat(0.8));
+        let body = actor_body(fence, a).unwrap();
+        assert!(
+            matches!(body.collider, Collider::Convex(Convex::Cylinder { .. })),
+            "{:?}",
+            body.collider
+        );
+        let a = actor(gourd_obj);
+        assert!(!a.active, "asleep out of its range");
+        assert_eq!(actor_transform(a), gourd.transform);
+        assert_eq!(actor_body(gourd, a), gourd.body);
+    }
+
+    /// A template [`DRAWN_SPAWNS`] names draws its clones (openspec AG.60):
+    /// its static model joins the props' models once, its keys and the keys
+    /// a tint fading it draws among the props'; a skinned one draws nothing.
+    #[test]
+    fn a_drawn_spawns_template_brings_its_model() {
+        let (mut props, mut placements) = level();
+        props.props.push(model("egg.mdl", false));
+        props.props.push(model("tortoise.mdl", true));
+        for (object, name, path) in [
+            (40, "Bird_nest_egg", "egg.mdl"),
+            (41, "Bird_nest_egg", "egg.mdl"),
+            (42, "Push_Canon_Art_Top", "tortoise.mdl"),
+        ] {
+            placements.actors.push(actor(
+                object,
+                name,
+                5,
+                0.0,
+                HERO,
+                0.0,
+                Some(path),
+                None,
+                None,
+            ));
+        }
+        let p = LevelProps::new(&props, &placements).unwrap();
+        let spawned: Vec<&str> = p
+            .spawn_models
+            .iter()
+            .map(|&i| p.models[i].path.as_str())
+            .collect();
+        assert_eq!(spawned, ["egg.mdl"], "once, and no skinned one");
+        assert!(
+            p.props.iter().all(|x| !x.name.starts_with("Bird")),
+            "a template stands nowhere"
+        );
+        let scene = Scene {
+            fog: true,
+            ..Scene::new()
+        };
+        let keys = p.keys(&scene).unwrap();
+        let egg = PropModel {
+            path: "egg.mdl".into(),
+            drawn: model_drawn(&props.props[4]).unwrap(),
+        };
+        for k in models_keys(std::slice::from_ref(&egg), &scene)
+            .unwrap()
+            .into_iter()
+            .chain(faded_keys(std::slice::from_ref(&egg), &scene).unwrap())
+        {
+            assert!(keys.contains(&k), "{k:?}");
+        }
     }
 
     /// Each `CollisionInfo` shape AG.7 settled, as a body where the level
@@ -927,7 +1376,8 @@ mod tests {
     /// stand-in ledger: `titan`): a Titan boulder built as the props build
     /// it off `Titan_CarriableObject_Boulder_v3_(4)`'s placement (AG.7: an
     /// 18 x 16 x 3 ft sphere 2.74 m down, its feat script
-    /// `Titan_Carriable_Object.ai` off the TV's listing), walked into head-on
+    /// `Titan_Carriable_Object.ai` on the TV's listing for its first tick
+    /// alone, AG.60: its STARTUP's cylinder, the feat held), walked into head-on
     /// for 3 s by a Giant-sized capsule (8 x 14 x 3 ft at 100 %, ours: Tree
     /// Rex's own read is AG.27's) on Tree Rex's live 20 ft/s and 360°/s
     /// (AG.12): he stops against it, the boulder stands where it stood with
@@ -965,10 +1415,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.props.len(), 1, "a prop, its feat script not run");
-        assert!(
-            !crate::scripts::smash_config(guac_script::Mode::Play)
+        assert_eq!(
+            crate::scripts::smash_config(guac_script::Mode::Play)
                 .whitelist
-                .lists("Titan_CarriableObject_Boulder_v3_(4)", feat)
+                .listing("Titan_CarriableObject_Boulder_v3_(4)", feat),
+            guac_script::Listed::FirstTick,
+            "its STARTUP alone (openspec AG.60), the feat held"
         );
         let mut bodies = vec![scenarios::level(Soup::default().floor(
             0.0,

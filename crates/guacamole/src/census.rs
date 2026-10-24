@@ -11,9 +11,10 @@
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
-//! static parts they carry) and its chapter 1 another 55, its props 32
-//! more, what its scripts spawn 8 more (3 of them a spawned part fading in,
-//! AH.67), their glowing parts' level glow masks 19 and the walking
+//! static parts they carry) and its chapter 1 another 55, its props 51
+//! more (AG.60's start scripts stand and spawn more of them: 32 before),
+//! what its scripts spawn 6 more beyond those (parts fading in among
+//! them, AH.67), their glowing parts' level glow masks 20 and the walking
 //! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
 //! point lights on). So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
@@ -246,36 +247,57 @@ pub const LEVEL: &[Row] = &[
 ];
 
 /// Every key chapter 1's props draw (AG.25) that [`LEVEL`] doesn't hold:
-/// the models of the placements that can stand there (a template, a
-/// creature or one its script wakes draws nothing yet), in the level's
-/// scene at AF's fresh state, each once.
+/// the models of the placements that can stand there (a template or a
+/// creature draws nothing; one without a range stands by its actor since
+/// AG.60) and of the templates whose clones draw (AG.60's
+/// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades), in
+/// the level's scene at AF's fresh state, each once.
 pub const LEVEL_PROPS: &[Row] = &[
     row(0x0434, 0x1434, O, true, false, false, 1, true, true),
     row(0x3c00, 0x2400, A, false, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, false, true, false, 1, true, false),
     row(0x3c00, 0x3400, O, true, false, false, 1, true, true),
+    row(0x3c00, 0x3400, A, true, false, false, 1, true, true),
+    row(0x3c01, 0x3401, O, true, false, false, 2, true, true),
     row(0x3c01, 0x3401, ADD, false, true, false, 2, true, true),
     row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
+    row(0x3c05, 0x3405, A, false, false, false, 2, true, true),
     row(0x3c06, 0x3406, O, true, false, false, 2, true, true),
     row(0x3c14, 0x3414, O, true, false, false, 1, true, true),
     row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
     row(0x3c20, 0x3420, O, true, false, false, 1, true, true),
     row(0x3c20, 0x3420, O, true, true, false, 1, true, true),
+    row(0x3c20, 0x3420, A, true, false, false, 1, true, true),
+    row(0x3c20, 0x3420, A, true, true, false, 1, true, true),
+    row(0x3c21, 0x3421, O, true, false, false, 2, true, true),
+    row(0x3c21, 0x3421, O, true, true, false, 2, true, true),
+    row(0x3c21, 0x3421, A, true, false, false, 2, true, true),
+    row(0x3c21, 0x3421, A, true, true, false, 2, true, true),
     row(0x3c22, 0x3422, O, true, false, false, 2, true, true),
     row(0x3c23, 0x2423, O, true, false, false, 3, true, false),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, A, true, true, false, 1, true, false),
     row(0x3c24, 0x3424, O, true, false, false, 1, true, true),
     row(0x3c24, 0x3424, O, true, true, false, 1, true, true),
+    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
+    row(0x3c24, 0x3424, A, true, true, false, 1, true, true),
     row(0x3c24, 0x3424, A, true, true, true, 1, true, true),
+    row(0x3c25, 0x3425, O, true, false, false, 2, true, true),
+    row(0x3c25, 0x3425, A, true, false, false, 2, true, true),
     row(0x3c26, 0x3426, O, true, false, false, 2, true, true),
+    row(0x3c28, 0x3428, O, true, false, false, 1, true, true),
     row(0x3c28, 0x3428, O, true, true, false, 1, true, true),
     row(0x3c28, 0x3428, A, false, true, false, 1, true, true),
+    row(0x3c28, 0x3428, A, true, false, false, 1, true, true),
     row(0x3c34, 0x3434, O, true, false, false, 1, true, true),
     row(0x3c34, 0x3434, O, true, true, false, 1, true, true),
     row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
     row(0x3c38, 0x2438, A, true, false, false, 1, true, false),
     row(0x3c38, 0x3438, O, true, false, false, 1, true, true),
     row(0x3c38, 0x3438, A, false, false, false, 1, true, true),
+    row(0x3c38, 0x3438, A, true, false, false, 1, true, true),
     row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
@@ -296,19 +318,18 @@ pub const SPAWNS: &[Row] = &[
     row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, ADD, false, false, false, 1, true, false),
     row(0x3c00, 0x3400, A, false, false, false, 1, true, true),
-    row(0x3c01, 0x3401, O, true, false, false, 2, true, true),
     row(0x3c01, 0x3401, A, true, false, false, 2, true, true),
-    row(0x3c20, 0x3420, A, true, true, false, 1, true, true),
     row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
 ];
 
 /// Every glowing part's level glow mask chapter 1, its props and what its
 /// scripts spawn draw (openspec AH.65, [`crate::character::Pass::LevelGlow`]),
 /// each once, as the colour key's row: the pass is the table's. Every
-/// glowing segment's, not only the first material's on a key: 5 of the 19
-/// share their key with a part drawn first that doesn't glow (the
+/// glowing segment's, not only the first material's on a key: 5 of AH.65's
+/// 19 share their key with a part drawn first that doesn't glow (the
 /// waterfall's foam with its glimmer, an emerald with a watermelon's rind,
-/// the ball's splash with the eruption's lava among them).
+/// the ball's splash with the eruption's lava among them); AG.60's props
+/// add one.
 pub const LEVEL_GLOW: &[Row] = &[
     row(0x0000, 0x1000, A, false, false, false, 1, true, true),
     row(0x0000, 0x1000, A, false, false, true, 1, true, true),
@@ -324,6 +345,7 @@ pub const LEVEL_GLOW: &[Row] = &[
     row(0x3c01, 0x3401, ADD, false, false, false, 2, true, true),
     row(0x3c01, 0x3401, ADD, false, true, false, 2, true, true),
     row(0x3c04, 0x3404, O, true, true, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, true, true, false, 1, true, true),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
     row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
@@ -534,8 +556,8 @@ mod tests {
             (TURNTABLE, true, 33),
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 55),
-            (LEVEL_PROPS, false, 32),
-            (SPAWNS, false, 8),
+            (LEVEL_PROPS, false, 51),
+            (SPAWNS, false, 6),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
         ] {
@@ -555,7 +577,7 @@ mod tests {
         // The level glow masks' (AH.65): rows of the colour keys whose
         // parts glow, keyed in the level's glow pass.
         for (rows, skinned, n) in [
-            (LEVEL_GLOW, false, 19),
+            (LEVEL_GLOW, false, 20),
             (HEROES_GLOW, true, 1),
             (HEROES_GLOW_STATIC, false, 0),
         ] {
@@ -571,7 +593,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 8 + 1 + 19 + 1);
+        assert_eq!(every.len(), 33 + 24 + 55 + 51 + 6 + 1 + 20 + 1);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()

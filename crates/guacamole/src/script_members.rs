@@ -618,6 +618,15 @@ impl ScriptWorld {
     }
 
     fn set_point(&mut self, v: Value, p: Vec3, engine: &mut dyn Engine) -> Result<(), HostFault> {
+        // A file waypoint moves where it's put (openspec AG.60: a push block
+        // lays its track's waypoints from its own place at its start).
+        if let Value::Object(o) = v
+            && self.handle(v).is_none()
+            && let Some(at) = self.points.get_mut(&o)
+        {
+            *at = p;
+            return Ok(());
+        }
         let h = self.handle(v).ok_or(HostFault::Nothing)?;
         match self.objs.get(h) {
             None => self.set_position(h, p, engine),
@@ -834,6 +843,19 @@ impl ScriptWorld {
         }
     }
 
+    /// The owner of the ground facet `h` hangs from, if it hangs from one
+    /// (Face and Move's velocity actor on its mover's ground): what a
+    /// relative facing turns it from.
+    fn ground_hung(&self, h: Handle) -> Option<Handle> {
+        self.actors
+            .get(&h)
+            .and_then(|a| self.object(Some(a.attach)))
+            .and_then(|o| match o {
+                Object::Facet(g, Facet::Ground) => Some(g),
+                _ => None,
+            })
+    }
+
     pub(crate) fn get_member(
         &mut self,
         at: &Access,
@@ -859,6 +881,13 @@ impl ScriptWorld {
                     .range,
             ),
             Member::Orientation => match recv {
+                // A file waypoint's turn (openspec AG.60).
+                Some(Value::Object(o)) if self.handle(Value::Object(o)).is_none() => {
+                    if !self.points.contains_key(&o) {
+                        return Err(HostFault::Nothing);
+                    }
+                    self.objs.value(Object::PointTurn(o))
+                }
                 Some(v) => {
                     let h = self.handle(v).ok_or(HostFault::Nothing)?;
                     self.objs.value(Object::Facet(h, Facet::Orientation))
@@ -871,10 +900,31 @@ impl ScriptWorld {
             | Member::RelativeTilt
             | Member::Roll
             | Member::RelativeRoll => {
-                let Some(Object::Facet(h, Facet::Orientation)) = object else {
-                    return Err(HostFault::Nothing);
+                let a = match object {
+                    // A relative facing on an actor hung from no ground turns
+                    // it by what's written (the setter, AG.60), so it reads
+                    // 0: a script's own `relative facing + k` turns it by k
+                    // (`Boulder_Pebbles.ai`, `Chest_Lock.ai`), where reading
+                    // its facing doubled it each tick. AH.145's recordings
+                    // read a relative roll's slide from 0 the same way.
+                    Some(Object::Facet(h, Facet::Orientation))
+                        if matches!(m, Member::RelativeFacing)
+                            && self.actors.contains_key(&h)
+                            && engine.hero(h).is_none()
+                            && self.ground_hung(h).is_none() =>
+                    {
+                        return Ok(Value::Float(0.0));
+                    }
+                    Some(Object::Facet(h, Facet::Orientation)) => {
+                        self.angles(h, engine).ok_or(HostFault::Nothing)?
+                    }
+                    // One the scripts never turned reads nothing, as before:
+                    // its file's turn isn't read.
+                    Some(Object::PointTurn(o)) => {
+                        *self.point_turns.get(&o).ok_or(HostFault::Nothing)?
+                    }
+                    _ => return Err(HostFault::Nothing),
                 };
-                let a = self.angles(h, engine).ok_or(HostFault::Nothing)?;
                 Value::Float(match m {
                     Member::Facing | Member::RelativeFacing => a.facing,
                     Member::Tilt | Member::RelativeTilt => a.tilt,
@@ -1004,7 +1054,17 @@ impl ScriptWorld {
                 let h = actor.ok_or(HostFault::Nothing)?;
                 self.actors.get(&h).ok_or(HostFault::Nothing)?.parent
             }
-            Member::Activator => recv.ok_or(HostFault::Nothing)?,
+            // A clone's is the placement whose script spawned it (openspec
+            // AG.60: the fence's cross beam places itself from the fence's
+            // facing and width each tick); a file's placement, or a hero,
+            // answers itself (AH.17's reading).
+            Member::Activator => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                match actor.and_then(|h| self.actors.get(&h)) {
+                    Some(a) if a.activator != Value::Null => a.activator,
+                    _ => r,
+                }
+            }
             Member::SeqTimeRemaining
             | Member::SeqPercentRemaining
             | Member::SeqRate
@@ -1220,6 +1280,18 @@ impl ScriptWorld {
             | Member::RelativeTilt
             | Member::Roll
             | Member::RelativeRoll => {
+                // A file waypoint turned (openspec AG.60), from nothing where
+                // the scripts never turned it.
+                if let Some(Object::PointTurn(o)) = object {
+                    let x = float(v)?;
+                    let a = self.point_turns.entry(o).or_default();
+                    match m {
+                        Member::Facing | Member::RelativeFacing => a.facing = x,
+                        Member::Tilt | Member::RelativeTilt => a.tilt = x,
+                        _ => a.roll = x,
+                    }
+                    return Ok(());
+                }
                 let Some(Object::Facet(h, Facet::Orientation)) = object else {
                     return Err(HostFault::Nothing);
                 };
@@ -1231,14 +1303,7 @@ impl ScriptWorld {
                     return Ok(());
                 }
                 let ground = match m {
-                    Member::RelativeFacing => self
-                        .actors
-                        .get(&h)
-                        .and_then(|a| self.object(Some(a.attach)))
-                        .and_then(|o| match o {
-                            Object::Facet(g, Facet::Ground) => Some(g),
-                            _ => None,
-                        }),
+                    Member::RelativeFacing => self.ground_hung(h),
                     _ => None,
                 };
                 // The ground's frame faces its owner's way, so a relative
@@ -1265,6 +1330,14 @@ impl ScriptWorld {
                 let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
                 match m {
                     Member::Facing => a.angles.facing = x,
+                    // One hung from nothing turns by it (openspec AG.60: a
+                    // spinning coin's loot update writes its spin speed each
+                    // tick, and AH.11's recordings have each coin's facing
+                    // step by that speed every frame, 2.82, -5.31 and 4.23
+                    // degrees on the walkway's three).
+                    Member::RelativeFacing if ground.is_none() => {
+                        a.angles.facing = (a.angles.facing + x).rem_euclid(360.0);
+                    }
                     Member::RelativeFacing => {
                         a.angles.facing = x;
                         if let Some((n, facing)) = slope {
@@ -3558,6 +3631,75 @@ mod fight_tests {
         hero.footing.height.unwrap() * FEET_PER_METRE
     }
 
+    /// A spinning coin (openspec AG.60): an actor hung from nothing turns
+    /// by each relative facing written, as the loot update writes its spin
+    /// speed every tick (AH.11's walkway coins stepping 2.82, -5.31 and 4.23
+    /// degrees a frame), round past 360 and back below 0; its absolute
+    /// facing still sets it outright, and a write of 0 leaves it (a placed
+    /// gem, no spin, holds its file's 45 degrees). Its relative facing reads
+    /// 0, so a script adding to it turns it by what it adds.
+    #[test]
+    fn a_relative_facing_turns_an_actor_hung_from_nothing_by_it() {
+        let mut e = pit();
+        let mut w = world();
+        let mut coin = Actor::blank();
+        coin.angles.facing = 350.0;
+        w.actors.insert(C1, coin);
+        let turn = w.objs.value(Object::Facet(C1, Facet::Orientation));
+        let access = |name: &str| Access {
+            placement: C1,
+            receiver: Some(turn),
+            member: MemberId::named("orientationmeasurement", name),
+            other_point: None,
+        };
+        let mut facings = Vec::new();
+        for speed in [4.5f32, 4.5, 4.5, -5.31, 0.0] {
+            w.set_member(
+                &access("relative facing"),
+                Member::RelativeFacing,
+                Value::Float(speed),
+                &mut e,
+            )
+            .unwrap();
+            facings.push(w.actor(C1).unwrap().angles.facing);
+        }
+        let want = [354.5, 359.0, 3.5, 358.19, 358.19];
+        for (got, want) in facings.iter().zip(want) {
+            assert!((got - want).abs() < 1e-3, "{facings:?}");
+        }
+        w.set_member(
+            &access("facing"),
+            Member::Facing,
+            Value::Float(45.0),
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(w.actor(C1).unwrap().angles.facing, 45.0);
+        // It reads 0, so a script's own `relative facing + 4` (a pebble's
+        // bounce, an ejected lock's spin) turns it by 4 a tick, its facing
+        // still read whole.
+        for want in [49.0, 53.0] {
+            let Value::Float(now) = w
+                .get_member(&access("relative facing"), Member::RelativeFacing, &mut e)
+                .unwrap()
+            else {
+                panic!("a float");
+            };
+            assert_eq!(now, 0.0);
+            w.set_member(
+                &access("relative facing"),
+                Member::RelativeFacing,
+                Value::Float(now + 4.0),
+                &mut e,
+            )
+            .unwrap();
+            assert_eq!(
+                w.get_member(&access("facing"), Member::Facing, &mut e),
+                Ok(Value::Float(want))
+            );
+        }
+    }
+
     /// AG.90: an actor hung from a hero's ground and turned there by a
     /// relative facing (Face and Move's velocity actor, turned by the way
     /// the stick asks less his facing) tilts as the slope along his facing
@@ -4396,6 +4538,77 @@ mod light_tests {
         assert_eq!(
             w.get(&at("diffuse color", Value::Entity(BALL), None), e),
             Err(HostFault::Nothing)
+        );
+    }
+
+    /// A file waypoint moves where a script puts it and turns as a script
+    /// turns it (openspec AG.60: a push block lays its track's waypoints
+    /// from its own place and faces along the first, so it stands where
+    /// its file has it, as AG.7's live read does); one never turned reads
+    /// nothing, its file's turn unread; an object no waypoint is has no
+    /// turn.
+    #[test]
+    fn a_file_waypoint_moves_and_turns_as_the_scripts_put_it() {
+        let mut w = world();
+        let e = &mut NoEngine;
+        let wp = Obj {
+            unit: 4,
+            index: 31186,
+        };
+        w.points
+            .insert(wp, Vec3::new(4.787_217_6, 45.873_01, -36.796_494));
+        let to = Vec3::new(2.171_143_8, 46.128_128, -36.826_355);
+        w.set_point(Value::Object(wp), to, e).unwrap();
+        assert_eq!(w.point(Value::Object(wp), e), Some(to));
+        let turn = w
+            .get(
+                &member("matrixmeasurement", "orientation", Value::Object(wp), None),
+                e,
+            )
+            .unwrap();
+        let facing = member("orientationmeasurement", "facing", turn, None);
+        assert_eq!(w.get(&facing, e), Err(HostFault::Nothing), "never turned");
+        w.set(&facing, Value::Float(90.0), e).unwrap();
+        assert_eq!(w.get(&facing, e), Ok(Value::Float(90.0)));
+        let none = Value::Object(Obj { unit: 4, index: 1 });
+        assert_eq!(
+            w.get(&member("matrixmeasurement", "orientation", none, None), e),
+            Err(HostFault::Nothing)
+        );
+        assert_eq!(
+            w.set_point(none, to, e),
+            Err(HostFault::Nothing),
+            "no such waypoint"
+        );
+    }
+
+    /// A clone's activator is the placement whose script spawned it
+    /// (openspec AG.60: the fence's cross beam reads the fence's facing and
+    /// width through it every tick, and each tick's displacements start from
+    /// the fence again); a file's placement answers itself.
+    #[test]
+    fn a_clones_activator_is_the_placement_that_spawned_it() {
+        let mut w = world();
+        let e = &mut NoEngine;
+        w.op(
+            &call(Class::Spawn, Value::Object(TEMPLATE)),
+            &mut |_| CLONE,
+            e,
+        )
+        .unwrap();
+        let activator = |w: &mut ScriptWorld, e: &mut NoEngine, of: Value| {
+            w.get(&member("abstractplacement", "activator", of, None), e)
+        };
+        assert_eq!(
+            activator(&mut w, e, Value::Entity(CLONE)),
+            Ok(Value::Entity(1)),
+            "the spawner, placement 1"
+        );
+        w.actors.insert(BALL, Actor::blank());
+        assert_eq!(
+            activator(&mut w, e, Value::Entity(BALL)),
+            Ok(Value::Entity(BALL)),
+            "itself"
         );
     }
 

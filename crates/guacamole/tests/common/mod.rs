@@ -28,7 +28,7 @@ use guac_server::progress::{Drainer, ProgressSink, ProgressionSlot};
 use guacamole::figure::{self, Layout, Tag, Values};
 use guacamole::level_scene;
 use guacamole::player_loop::PlayerLoop;
-use guacamole::props::{LevelProps, PROP_BODIES};
+use guacamole::props::{self, LevelProps, PROP_BODIES};
 use guacamole::script_engine::{Engine, NodePose, Pad};
 use guacamole::scripts::{
     self, FIRST_FIGHT, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
@@ -103,46 +103,52 @@ pub struct Bench {
 }
 
 /// The level's props in a headless run (openspec AH.21), as the TV stands
-/// them: each solid in the seam while the hero is within its range and the
-/// scripts haven't taken its placement off.
+/// them: each solid in the seam while its actor stands (awake by the
+/// activity rule or its scripts, not taken off) as the scripts leave it
+/// (openspec AG.60: the actor is the prop's one holder); by AG.25's rule
+/// for a prop no actor stands for.
 pub struct StandingProps {
     pub level: LevelProps,
     /// Each prop's placement handle, by its object.
     pub handles: HashMap<u32, Handle>,
     /// The props whose solid is in the seam now, by object.
     pub standing: HashSet<u32>,
+    /// The body each one's solid is in the seam as.
+    pub holds: HashMap<u32, Body>,
 }
 
 impl StandingProps {
-    /// The seam made to hold what stands with the hero at `hero`, less what
-    /// `world` took off; returns the objects taken down.
+    /// The seam made to hold what stands with the hero at `hero`, each as
+    /// its actor in `world` holds it; returns the objects taken down.
     pub fn stand(&mut self, seam: &mut ParryWorld, hero: Vec3, world: &ScriptWorld) -> Vec<u32> {
-        let now: HashSet<u32> = self
-            .level
-            .standing_but(hero, |object| {
-                world.taken_off(Obj {
-                    unit: LEVEL,
-                    index: object,
-                })
-            })
-            .filter(|&i| self.level.props[i].body.is_some())
-            .map(|i| self.level.props[i].object)
-            .collect();
         let mut down = Vec::new();
         for p in &self.level.props {
-            let Some(body) = &p.body else {
-                continue;
+            let actor = self.handles.get(&p.object).and_then(|h| world.actor(*h));
+            let stands = match actor {
+                Some(a) => a.active && !a.removed,
+                None => p.stands(hero),
             };
-            match (now.contains(&p.object), self.standing.contains(&p.object)) {
-                (true, false) => seam.set_body(body).unwrap(),
-                (false, true) => {
-                    seam.remove_body(body.id);
-                    down.push(p.object);
+            let body = match (stands, actor) {
+                (false, _) => None,
+                (true, Some(a)) => props::actor_body(p, a),
+                (true, None) => p.body.clone(),
+            };
+            match body {
+                Some(b) => {
+                    if self.holds.get(&p.object) != Some(&b) {
+                        seam.set_body(&b).unwrap();
+                        self.holds.insert(p.object, b);
+                    }
                 }
-                _ => {}
+                None => {
+                    if let Some(b) = self.holds.remove(&p.object) {
+                        seam.remove_body(b.id);
+                        down.push(p.object);
+                    }
+                }
             }
         }
-        self.standing = now;
+        self.standing = self.holds.keys().copied().collect();
         down
     }
 
@@ -696,6 +702,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
             level,
             handles: by_object,
             standing: HashSet::new(),
+            holds: HashMap::new(),
         }
     });
     let mut bench = Bench {
@@ -706,6 +713,9 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         bodies: HashMap::new(),
         props,
     };
+    // The activity rule from where he stands, as the first step's will
+    // (the VM's sleep is that step's to set): a prop stands by its actor.
+    world.activity_at(&[bench.heroes[&HERO].pivot]);
     bench.stand_props(&world);
     let next = objects[6].max(HERO) + 1;
     (

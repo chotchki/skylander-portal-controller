@@ -58,7 +58,8 @@ pub struct Whitelisted {
 }
 
 /// The whitelist (design decision 2): AH.12's roots and the scripts they
-/// spawn, by archive. AH.34 grows it with AH.8's route.
+/// spawn, by archive, with AG.60's start scripts on the props and theirs.
+/// AH.42 grows it with AH.8's route.
 pub const WHITELIST: [Whitelisted; 5] = [
     Whitelisted {
         archive: BOOTSTRAP,
@@ -142,6 +143,18 @@ pub const WHITELIST: [Whitelisted; 5] = [
             "PushBlock_Template.ai",
             "Push_Block_End.ai",
             "Gate_Spikes.ai",
+            // AG.60: the start's scripts on the props (the propeller, the
+            // bird nests, the placed gems, the cannon's rubble wall, the
+            // sliding rocks, the Titan boulders, the chest and the global
+            // reference the chests share).
+            "Windmill_Rotate.ai",
+            "BirdNest.ai",
+            "Placed_Loot.ai",
+            "StoneWall_2.ai",
+            "Falling_Rocks.ai",
+            "Titan_Carriable_Object.ai",
+            "Chest.ai",
+            "Chest_SetGlobalRef.ai",
             // What those spawn.
             "Art_Generic_Stone.ai",
             "Box_Tortoise.ai",
@@ -158,6 +171,12 @@ pub const WHITELIST: [Whitelisted; 5] = [
             "Torus_Effect.ai",
             "stone_wall_Piece_213.ai",
             "Wood_Plank.ai",
+            // What AG.60's spawn.
+            "StoneWall_Piece.ai",
+            "Boulder_Pebbles.ai",
+            "Boulder_Chunks.ai",
+            "Chest_Lock.ai",
+            "Lock_Flash.ai",
         ],
     },
 ];

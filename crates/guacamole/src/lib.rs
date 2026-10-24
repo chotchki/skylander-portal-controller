@@ -14,6 +14,7 @@ pub mod game_controller;
 pub mod hands;
 pub mod level_scene;
 pub mod level_scripts;
+pub mod on_screen;
 pub mod player_loop;
 pub mod props;
 pub mod script_engine;

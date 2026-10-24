@@ -1130,7 +1130,9 @@ pub(crate) fn clone_transform(a: &guacamole::script_engine::Actor) -> Transform 
 
 /// Each clone the scripts made, drawn from its template's model off the
 /// extract's spawn part while it's on: placed each step, eased between
-/// steps, hidden once taken off.
+/// steps, hidden once taken off. One made before the level's loaded (the
+/// start's scripts run from the part's link, openspec AG.60) waits for its
+/// models.
 pub(crate) fn draw_clones(
     mut commands: Commands,
     world: Res<ScriptWorld>,
@@ -1143,7 +1145,9 @@ pub(crate) fn draw_clones(
         Option<&mut Transform>,
     )>,
 ) {
-    let models = level.spawn_models();
+    let Some(models) = level.spawn_models() else {
+        return;
+    };
     for (entity, _, drawn, transform) in &mut clones {
         let Some(actor) = world.actor(entity.to_bits()) else {
             continue;
@@ -1155,7 +1159,7 @@ pub(crate) fn draw_clones(
                     .template
                     .and_then(|t| world.template(t))
                     .and_then(|p| p.model.as_deref())
-                    .and_then(|m| models.and_then(|ms| ms.get(m)));
+                    .and_then(|m| models.get(m));
                 // A model whose effects draw nothing (its parts left out)
                 // draws nothing here either.
                 let draws = model.is_some_and(|parts| !parts.is_empty()) && !actor.removed;
@@ -1955,5 +1959,27 @@ mod tests {
             at.z > BARREL_AT[2],
             "it flew on past where the barrel stood: {at}"
         );
+    }
+
+    /// AG.60: a clone the scripts make before the level's loaded (the
+    /// start's, run from the part's link) isn't settled as drawing nothing:
+    /// it waits, undecided, for the level's models.
+    #[test]
+    fn a_clone_made_before_the_level_loads_waits_for_its_models() {
+        use bevy::ecs::system::RunSystemOnce;
+        let tmp = tempfile::tempdir().unwrap();
+        write_attack(tmp.path());
+        let files = level_scripts::load(tmp.path(), LEVEL).unwrap().placements;
+        let mut app = App::new();
+        let clone = app.world_mut().spawn(ScriptClone(Value::Null)).id();
+        // Its actor: a placement's, answering for the clone's entity.
+        let mut handles = headless_handles(&files);
+        handles.insert(files.placed[0].obj, clone.to_bits());
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert!(world.actor(clone.to_bits()).is_some());
+        app.insert_resource(world)
+            .insert_resource(Level::new(false));
+        app.world_mut().run_system_once(draw_clones).unwrap();
+        assert!(app.world().entity(clone).get::<CloneDrawn>().is_none());
     }
 }

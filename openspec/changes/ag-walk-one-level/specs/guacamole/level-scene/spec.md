@@ -24,6 +24,14 @@ The level SHALL hold the props the original's level file places, where it puts t
 - **WHEN** the hero stands at the start, 49.3 m from the spinning coin the original wakes within 160 ft (48.8 m)
 - **THEN** that coin isn't there, and it is once he has walked within 48.8 m of it, as on the original's walk to the gate's door
 
+#### Scenario: The props as the start's scripts leave them
+- **WHEN** the level has started
+- **THEN** the gourds by the walkway stand and stop him at the sizes the original's scripts shrink them to, the Titan boulders and the cannon stop him with the shapes its scripts give them, the walkway's fence stands as its cross beam and planks, the bird nests stand at 170 % holding their eggs, and the windmill's propeller turns a degree a frame
+
+#### Scenario: A spinning coin
+- **WHEN** a spinning coin is there
+- **THEN** it turns about its upright each frame by its own speed, as the original's walkway coins do (2.8, 4.2 and 5.3 degrees a frame on the three)
+
 ### Requirement: The level is solid where the original's is
 The hero SHALL stand on, slide along and be stopped by the level's own collision and the solid shapes of the props present, as in the original, and SHALL pass through scenery the original lets him pass through. A prop whose solid has no shape SHALL stop nothing.
 

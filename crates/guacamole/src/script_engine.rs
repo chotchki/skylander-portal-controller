@@ -167,6 +167,10 @@ pub struct Actor {
     pub clones: Vec<Handle>,
     /// A clone's template as a value (`abstractplacement.parent`).
     pub parent: Value,
+    /// The placement whose script spawned a clone
+    /// (`abstractplacement.activator`, openspec AG.60); nothing for a file's
+    /// placement, which answers itself.
+    pub activator: Value,
     /// Set going by a script's velocity: the engine moves it each frame
     /// under its own gravity ([`crate::scripts::ScriptWorld::advance`]).
     pub launched: bool,
@@ -238,6 +242,7 @@ impl Actor {
             controller: Value::Null,
             clones: Vec::new(),
             parent: Value::Null,
+            activator: Value::Null,
             launched: false,
             contacts: Vec::new(),
             managed: false,
@@ -325,6 +330,10 @@ pub enum Object {
     /// A waypoint a script made by growing a set of them, by its index in
     /// the world's list (openspec AH.20: an orb's landing point).
     Waypoint(u32),
+    /// A file waypoint's turn, `matrixmeasurement.orientation` on it
+    /// (openspec AG.60: a push block lays its track's waypoints and faces
+    /// along the first).
+    PointTurn(Obj),
     /// `system.absolute zero`: the world's origin.
     AbsoluteZero,
     /// A contact's normal, as a vector.
