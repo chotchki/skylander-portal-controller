@@ -44,18 +44,32 @@
 //!   ground finder's face, its plane run on past a convex crest, lifted him
 //!   2.3-5.7 m at the ledge route's edge in 29 of AG.39's 48 runs off it,
 //!   none of theirs over 1.2 cm: AG.16's review);
+//! - the post-step as read (AG.70, AG.71), each part checked on the
+//!   recordings: within the snap's 0.375 m over ground facing up past 45°
+//!   he counts as on the ground, so his lean turns to that ground and a
+//!   frame begun on the ground (the walk not leaving it) ends supported
+//!   whatever the support check found (along AG.58's door he rode up to
+//!   0.285 m over ground falling away under him, supported); the snap from
+//!   over the ground runs only on a frame his lean turns, from under it on
+//!   any (he rode 13.6-25.2 mm up, unsnapped, while his lean held);
 //! - the edge probe's hold turns his facing to the stick at his usual rate;
 //! - his collision shape turns with his lean about his pivot (AG.9: on the
 //!   slopes his proxy's plane distance matched his pivot's height, which only
 //!   a leaned sphere gives);
-//! - he leans only while he's on the ground (the post-step's grounded test,
-//!   as read), so not up in the air or on ground steeper than 45°;
+//! - off the ground his up axis turns back toward straight up at the same
+//!   120°/s over the frame's own step (the post-step as read; AG.71: over
+//!   AG.39's falls 109 of 111 frames in the air and 55 of 56 near the
+//!   ground turned as predicted to 0.01°, and AG.48's four air replays'
+//!   lean follows theirs to 0.03°), and his lean turns with his facing
+//!   about the vertical, being his transform's (990 of 1,197 frames in the
+//!   air or near the ground and 6,147 of 6,760 on it that turned him, to
+//!   0.01°);
 //! - the downhill hug rays never run for a hero: they need a ground
 //!   acceleration in his `ActorParameters`, which read 0 through every walk
 //!   (AG.8), so none are built.
 
 use crate::edge;
-use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_REACH, SUPPORT_GAP};
+use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_HEIGHT, SNAP_REACH, SUPPORT_GAP};
 use crate::proxy::{self, AIRBORNE_SHARE, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy, Surfaces};
 use crate::seam::{BodyId, PhysicsSeam, Quat, Vec3};
 use crate::solid::HavokSolid;
@@ -233,7 +247,11 @@ impl Hero {
         let push = input.stick.push(input.view_heading);
         let [before, two_before] = self.steps;
 
-        self.facing = turn_facing(self.facing, push, tuning.turn_rate, two_before);
+        let facing = turn_facing(self.facing, push, tuning.turn_rate, two_before);
+        // His lean is his transform's, so turning him about the vertical
+        // turns it with him (AG.71: 25 records at a swing in the air).
+        self.up = Quat::from_rotation_y((facing - self.facing).to_radians()) * self.up;
+        self.facing = facing;
         if !self.held_off {
             self.walk
                 .face_and_move(push, &self.footing, &tuning, two_before);
@@ -353,36 +371,53 @@ impl Hero {
         let planes = self
             .proxy(seam, exclude, surfaces)
             .planes(self.pivot, self.up, SUPPORT_GAP);
-        let supported = ground::support(&planes).supported && !airborne;
+        let checked = ground::support(&planes).supported && !airborne;
         let found = ground::find(seam, self.pivot, exclude);
         let mut height = found.map(|g| self.pivot.y - g.point.y);
-        if let (Some(g), Some(h)) = (found, height) {
-            let near = walking && h < SNAP_REACH && g.normal.y > MAX_SLOPE_COS;
-            if supported || near {
-                self.up = ground::lean(self.up, g.normal, step);
-                if let Some(to) = ground::snap(h) {
-                    let proxy = self.proxy(seam, exclude, surfaces);
-                    let mut y = g.point.y + to;
-                    let inside = proxy.clearance(
-                        Vec3::new(self.pivot.x, y, self.pivot.z),
-                        self.up,
-                        g.point,
-                        g.normal,
-                    );
-                    if inside < 0.0 && g.normal.y > 1e-3 {
-                        y -= inside / g.normal.y;
-                    }
-                    // Set down, never above where the move left him: past a
-                    // convex crest the face's plane runs on under his shape
-                    // where only the crest is solid (it lifted him 0.34 m
-                    // over a 50° bank's top, metres at the ledge route's edge).
-                    // On a plane the move already left him at least this high.
-                    if h > 0.0 {
-                        y = y.min(self.pivot.y);
-                    }
-                    self.pivot.y = y;
-                    height = Some(y - g.point.y);
+        // Within the snap's reach over ground he can stand on, the post-step
+        // counts him on the ground: his lean turns to it, and a frame begun
+        // on the ground (the walk not leaving it) ends supported.
+        let near = matches!((found, height),
+            (Some(g), Some(h)) if h < SNAP_REACH && g.normal.y > MAX_SLOPE_COS);
+        let supported = checked || (near && walking);
+        let target = match found {
+            Some(g) if checked || near => g.normal,
+            _ => Vec3::Y,
+        };
+        let turned = ground::lean(self.up, target, step);
+        if let Some(up) = turned {
+            self.up = up;
+        }
+        if let (true, Some(g), Some(h)) = (supported, found, height) {
+            // The snap from over the ground runs only while his lean turns;
+            // from under it, always.
+            let snapped = if turned.is_some() {
+                ground::snap(h)
+            } else {
+                (h < 0.0).then_some(SNAP_HEIGHT)
+            };
+            if let Some(to) = snapped {
+                let proxy = self.proxy(seam, exclude, surfaces);
+                let mut y = g.point.y + to;
+                let inside = proxy.clearance(
+                    Vec3::new(self.pivot.x, y, self.pivot.z),
+                    self.up,
+                    g.point,
+                    g.normal,
+                );
+                if inside < 0.0 && g.normal.y > 1e-3 {
+                    y -= inside / g.normal.y;
                 }
+                // Set down, never above where the move left him: past a
+                // convex crest the face's plane runs on under his shape
+                // where only the crest is solid (it lifted him 0.34 m
+                // over a 50° bank's top, metres at the ledge route's edge).
+                // On a plane the move already left him at least this high.
+                if h > 0.0 {
+                    y = y.min(self.pivot.y);
+                }
+                self.pivot.y = y;
+                height = Some(y - g.point.y);
             }
         }
         let settled = found.is_some_and(|g| ground::angle(self.up, g.normal) <= LEAN_SETTLED);

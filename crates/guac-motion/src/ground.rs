@@ -4,19 +4,25 @@
 //!
 //! - The ground finder (ag-motion section 2, as read): a ray straight down
 //!   from 0.1 m over a point, out to 160 m (its 2.5 m doubling past 100),
-//!   else up to 80 m; a normal pointing down is flipped. Its point is what
-//!   the script's 0.4 ft band and the snap measure from.
+//!   else up from the point itself to 80 m (AG.70: its upward segments
+//!   start at the point's own height); a normal pointing down is flipped.
+//!   As the edge probe's search its rays meet a convex solid with its
+//!   convex radius, square-edged ([`find_seeing`]). Its point is what the
+//!   script's 0.4 ft band and the snap measure from.
 //! - The support check: the contact planes within [`SUPPORT_GAP`] of his
 //!   shape, those facing up at all (n.y > 0.08) summed into a surface normal;
 //!   supported when that's within 45° of up (AG.39: the cliff's faces held him
 //!   to 44.92° and not from 45.04°), or when they pin a probe straight down
 //!   (a crease of two steep faces, as read).
-//! - The snap (AG.9): on the ground, a pivot 0.01-0.375 m over the ground's
-//!   point, or under it, is set 0.01 m over it. That's why he rides 10 mm
-//!   above a slope once set there and 5 mm on level ground, where nothing
-//!   lifts him past 10 mm, and is put back down from 189 mm in one frame.
-//! - The lean (AG.9): his up axis turns toward the ground's normal at 120°/s
-//!   until it's within half a degree.
+//! - The snap (AG.9, AG.70): on the ground, a pivot under the ground's
+//!   point is set 0.01 m over it, and one 0.01-0.375 m over it is too on a
+//!   frame his lean turns ([`crate::hero`]: the post-step runs it inside
+//!   the lean's branch). That's why he rides 10 mm above a slope once set
+//!   there and 5 mm on level ground, and is put back down from 189 mm in
+//!   one frame where the ground under him changes.
+//! - The lean (AG.9, AG.71): his up axis turns toward the ground's normal,
+//!   or straight up off the ground, at 120°/s until it's within the
+//!   post-step's 0.99996 of it (0.5125°).
 //!
 //! Hypotheses: the support's reach, [`SUPPORT_GAP`], the read probe's travel
 //! at 1 m/s over 1/60 s: stepped a frame at a time from AG.38's 19,308
@@ -40,9 +46,14 @@ const SUPPORT_FACING: f32 = 0.08;
 /// Where the snap sets him, and how far it reaches.
 pub const SNAP_HEIGHT: f32 = 0.01;
 pub const SNAP_REACH: f32 = 0.375;
-/// His lean's rate and where it stops.
+/// His lean's rate, degrees a second.
 pub const LEAN_RATE: f32 = 120.0;
+/// Within this (degrees) his lean counts as settled on a slope, so the push
+/// tilts along it (AG.38's split, [`crate::walk`]).
 pub const LEAN_SETTLED: f32 = 0.5;
+/// The post-step's own test, as read (0.99996, 0.5125°): his up axis this
+/// near where it's turning doesn't turn.
+pub const LEAN_STILL_COS: f32 = 0.99996;
 
 /// Where the ground finder's ray met a surface, and that surface's normal
 /// turned to face up.
@@ -58,7 +69,8 @@ pub struct Ground {
 /// leaves, its normal facing back along the ray as a front face's would
 /// (parry's non-solid ray), so the tell is the ray's start overlapping the
 /// body it hit; the ray goes on from where it left. A mesh triangle's back
-/// is a hit either way.
+/// is a hit either way. Each convex solid as the world holds it; the edge
+/// probe's search sees one with its convex radius ([`ray_seeing`]).
 pub fn ray(
     seam: &dyn PhysicsSeam,
     origin: Vec3,
@@ -66,14 +78,42 @@ pub fn ray(
     max_distance: f32,
     exclude: &[BodyId],
 ) -> Option<RayHit> {
+    ray_seeing(seam, origin, direction, max_distance, 0.0, exclude)
+}
+
+/// [`ray`] seeing each convex solid `grow` larger than the world holds it,
+/// square-edged ([`PhysicsSeam::ray_grown`]): with [`MESH_RADIUS`](crate::solid::MESH_RADIUS) the
+/// original's rays meet a solid with its convex radius, as the edge probe's
+/// search does (AG.70: under the gate's door it passes to within 1.7 mm of
+/// the box's face with its radius, 5 cm out from the box the world holds),
+/// the tell of a start inside it its radius too.
+pub fn ray_seeing(
+    seam: &dyn PhysicsSeam,
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+    grow: f32,
+    exclude: &[BodyId],
+) -> Option<RayHit> {
     let dir = direction.try_normalize()?;
     let mut travelled = 0.0;
     for _ in 0..8 {
         let from = origin + dir * travelled;
-        let hit = seam.ray(from, dir, max_distance - travelled, exclude)?;
+        let reach = max_distance - travelled;
+        let hit = if grow > 0.0 {
+            seam.ray_grown(from, dir, reach, grow, exclude)
+        } else {
+            seam.ray(from, dir, reach, exclude)
+        }?;
         let inside = hit.triangle.is_none()
             && seam
-                .overlaps(&Shape::Sphere { radius: POINT }, Pose::at(from), exclude)
+                .overlaps(
+                    &Shape::Sphere {
+                        radius: grow + POINT,
+                    },
+                    Pose::at(from),
+                    exclude,
+                )
                 .contains(&hit.body);
         if !inside {
             return Some(RayHit {
@@ -94,11 +134,25 @@ const POINT: f32 = 1.0e-5;
 /// How far past where a ray left a convex solid it goes on from, metres.
 const LEAVE_STEP: f32 = 1.0e-4;
 
-/// The ground under (or over) `at`, the ground finder's way.
+/// The ground under (or over) `at`, the ground finder's way: down from
+/// 0.1 m over it, then up from `at` itself (as read: its upward segments
+/// start at the point's own height; AG.70, the probe passing under the
+/// gate's door, whose box with its radius hangs 3-7 cm over the point and
+/// 3 cm under the down ray's start).
 pub fn find(seam: &dyn PhysicsSeam, at: Vec3, exclude: &[BodyId]) -> Option<Ground> {
-    let origin = at + Vec3::Y * 0.1;
-    let hit = ray(seam, origin, Vec3::NEG_Y, 160.0, exclude)
-        .or_else(|| ray(seam, origin, Vec3::Y, 80.0, exclude))?;
+    find_seeing(seam, at, 0.0, exclude)
+}
+
+/// [`find`] with its rays seeing each convex solid `grow` larger
+/// ([`ray_seeing`]): the edge probe's search, with [`MESH_RADIUS`](crate::solid::MESH_RADIUS).
+pub fn find_seeing(
+    seam: &dyn PhysicsSeam,
+    at: Vec3,
+    grow: f32,
+    exclude: &[BodyId],
+) -> Option<Ground> {
+    let hit = ray_seeing(seam, at + Vec3::Y * 0.1, Vec3::NEG_Y, 160.0, grow, exclude)
+        .or_else(|| ray_seeing(seam, at, Vec3::Y, 80.0, grow, exclude))?;
     let normal = if hit.normal.y < -0.05 {
         -hit.normal
     } else {
@@ -153,15 +207,15 @@ pub fn angle(a: Vec3, b: Vec3) -> f32 {
     a.dot(b).clamp(-1.0, 1.0).acos().to_degrees()
 }
 
-/// His up axis turned toward `normal` by at most 120°/s over `step`,
-/// unmoved within half a degree.
-pub fn lean(up: Vec3, normal: Vec3, step: f32) -> Vec3 {
-    let gap = angle(up, normal);
-    if gap <= LEAN_SETTLED {
-        return up;
+/// His up axis turned toward `target` by at most 120°/s over `step`, or
+/// `None` when it's within [`LEAN_STILL_COS`] of it and stays put.
+pub fn lean(up: Vec3, target: Vec3, step: f32) -> Option<Vec3> {
+    if up.dot(target) >= LEAN_STILL_COS {
+        return None;
     }
+    let gap = angle(up, target);
     let turn = (LEAN_RATE * step).min(gap) / gap;
-    (Quat::IDENTITY.slerp(Quat::from_rotation_arc(up, normal), turn) * up).normalize()
+    Some((Quat::IDENTITY.slerp(Quat::from_rotation_arc(up, target), turn) * up).normalize())
 }
 
 #[cfg(test)]
@@ -169,6 +223,7 @@ mod tests {
     use super::*;
     use crate::parry::ParryWorld;
     use crate::seam::{Body, BodyKind, Collider, Mesh, Pose};
+    use crate::solid::MESH_RADIUS;
     use std::sync::Arc;
 
     fn plane(normal: Vec3, distance: f32) -> ContactPlane {
@@ -218,13 +273,16 @@ mod tests {
         let mut up = from;
         let mut turns = Vec::new();
         for _ in 0..6 {
-            let next = lean(up, to, 1.0 / 60.0);
+            let next = lean(up, to, 1.0 / 60.0).unwrap_or(up);
             turns.push(angle(up, next));
             up = next;
         }
         assert!((turns[0] - 2.0).abs() < 1e-3 && (turns[2] - 2.0).abs() < 1e-3);
         assert!(angle(up, to) <= LEAN_SETTLED, "{}", angle(up, to));
-        assert_eq!(lean(face(1.0), face(1.4), 1.0 / 60.0), face(1.0));
+        assert_eq!(lean(face(1.0), face(1.4), 1.0 / 60.0), None);
+        // The read cosine's 0.5125°: 0.51° stays put, 0.52° turns.
+        assert_eq!(lean(face(0.0), face(0.51), 1.0 / 60.0), None);
+        assert!(lean(face(0.0), face(0.52), 1.0 / 60.0).is_some());
     }
 
     #[test]
@@ -300,8 +358,38 @@ mod tests {
         let hit = ray(&world, at + Vec3::Y * 0.1, Vec3::NEG_Y, 160.0, &[]).unwrap();
         assert_eq!(hit.body, BodyId(1));
         assert!((hit.distance - 2.1).abs() < 1e-3, "{hit:?}");
-        // From above, the box's top is a hit as ever.
+        // From above, the box's top is a hit as ever, and seen with its
+        // radius (AG.70's probe) 0.05 m over the box the world holds.
         let top = find(&world, Vec3::new(0.0, 5.0, 0.0), &[]).unwrap();
-        assert!((top.point.y - 3.0).abs() < 1e-5);
+        assert!((top.point.y - 3.0).abs() < 1e-5, "{top:?}");
+        let top = find_seeing(&world, Vec3::new(0.0, 5.0, 0.0), MESH_RADIUS, &[]).unwrap();
+        assert!((top.point.y - 3.05).abs() < 1e-5, "{top:?}");
+    }
+
+    /// The finder's search up starts at the point itself, its search down
+    /// 0.1 m over it (AG.70: the edge probe under the gate's door). A box
+    /// hanging over the open side of an edge, its bottom with its radius
+    /// 0.07 m over the point: down from inside that radius nothing counts
+    /// and nothing's below, up from the point the box's bottom is found. A
+    /// millimetre past the box's side with its radius, nothing is.
+    #[test]
+    fn the_search_up_starts_at_the_point() {
+        let world = ParryWorld::new(&[Body {
+            id: BodyId(2),
+            kind: BodyKind::Kinematic,
+            pose: Pose::at(Vec3::new(0.0, 1.12, 0.0)),
+            // The world holds it 0.05 m smaller than the original's box
+            // with its radius, whose bottom is at 0.07 and side at x 1.
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(0.95, 1.0, 0.95),
+                margin: 0.0,
+            }),
+        }])
+        .unwrap();
+        let under = find_seeing(&world, Vec3::new(0.9, 0.0, 0.0), MESH_RADIUS, &[]).unwrap();
+        assert!((under.point.y - 0.07).abs() < 1e-5, "{under:?}");
+        assert!(under.normal.y > 0.99, "{under:?}");
+        let past = find_seeing(&world, Vec3::new(1.001, 0.0, 0.0), MESH_RADIUS, &[]);
+        assert_eq!(past, None);
     }
 }

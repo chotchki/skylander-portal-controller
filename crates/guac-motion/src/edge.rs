@@ -24,12 +24,19 @@
 //! foot (AG.36's slow refusals ended 0.896-0.911 m short of an edge, within a
 //! creep step of it); the search is the ground finder's, so ground over the
 //! point counts (AG.39's cliff foot, where his point under the ledge route
-//! 3.06-3.20 m above him let him walk on); that ground deeper than 225 ft
+//! 3.06-3.20 m above him let him walk on), and a solid's bottom over it
+//! does, with its convex radius (AG.70: past the gate's door's end the
+//! probe passes while the point lies under the door's box with its radius
+//! and refuses past it, to within 1.7 mm of its face and the box's end); the
+//! line to the point meets solids as the world holds them, without the
+//! radius (AG.70: under the door, 3 cm into the box's radius, it passed
+//! nothing the original's didn't); that ground deeper than 225 ft
 //! stops him is read, not seen; with the stick let go and his walk at 2 ft/s
 //! or under, nothing is probed.
 
 use crate::ground;
 use crate::seam::{BodyId, PhysicsSeam, Vec3};
+use crate::solid::MESH_RADIUS;
 use crate::stick::Push;
 use crate::tuning::{FOOT, Tuning};
 use crate::walk::across;
@@ -66,9 +73,10 @@ pub fn walkable(seam: &dyn PhysicsSeam, pivot: Vec3, point: Vec3, exclude: &[Bod
     let from = pivot + Vec3::Y * SIGHT_HEIGHT;
     let across = Vec3::new(point.x - from.x, 0.0, point.z - from.z);
     let blocked = across.length() > 1e-6
-        && ground::ray(seam, from, across, across.length(), exclude).is_some();
+        && ground::ray_seeing(seam, from, across, across.length(), 0.0, exclude).is_some();
     blocked
-        || ground::find(seam, point, exclude).is_some_and(|g| point.y - g.point.y <= WALKABLE_RANGE)
+        || ground::find_seeing(seam, point, MESH_RADIUS, exclude)
+            .is_some_and(|g| point.y - g.point.y <= WALKABLE_RANGE)
 }
 
 #[cfg(test)]

@@ -7,9 +7,11 @@
 mod common;
 
 use common::*;
+use guac_motion::hero::Hero;
 use guac_motion::scenarios;
 use guac_motion::seam::{BodyId, Pose, Vec3};
 use guac_motion::stick::Stick;
+use guac_motion::tuning::Tuning;
 
 /// The wall cases live in `guac_motion::scenarios`, so guacamole runs them
 /// on Avian too.
@@ -130,14 +132,26 @@ fn ramp(degrees: f32) -> Soup {
 }
 
 /// Slopes: a steep bank. Set on 50° ground he slides back to its foot and
-/// never higher; 44.9° holds him once he's leaned into it and the snap has
-/// set him (the cliff under the ledge route: held to 44.92°, not from
-/// 45.04°).
+/// never higher; 44.9° holds him leaned into it, as the cliff under the
+/// ledge route held theirs (to 44.92°, not from 45.04°). Upright on it his
+/// pivot rides 0.38 m over the slope, past the snap's reach, where his lean
+/// turns back toward upright as off the ground (AG.71), so he's set there
+/// leaned.
 #[test]
 fn ground_steeper_than_45_doesnt_hold_him() {
     for (degrees, holds) in [(50.0, false), (44.9, true)] {
         let world = world(&ramp(degrees), &[]);
-        let mut hero = eruptor(&world, Vec3::new(0.0, 8.0, 6.0), 0.0);
+        let a = f32::to_radians(degrees);
+        let mut hero = Hero::new(
+            eruptor_solid(),
+            Tuning::ERUPTOR,
+            Vec3::new(0.0, 8.0, 6.0),
+            0.0,
+        );
+        if holds {
+            hero.up = Vec3::new(0.0, a.cos(), -a.sin());
+        }
+        hero.settle(&world, &[]);
         let set = hero.pivot;
         let states = run(&world, &mut hero, 120, |_| Stick::CENTRED);
         assert!(
@@ -240,13 +254,26 @@ fn he_leans_at_120_a_second() {
 }
 
 /// Steps and drops: snapped back down. Lifted 189 mm over level ground he
-/// stood on, he's put back 10 mm over it in one frame.
+/// stood on, he's put back 10 mm over it in one frame on a frame his lean
+/// turns (AG.9's corridor: from 171 and 189 mm, each as the ground's normal
+/// under him changed 8.6° and his lean turned 1.8-2.0°), and with his lean
+/// holding he stays there, supported (AG.70: the snap runs inside the
+/// post-step's lean).
 #[test]
 fn snapped_back_down_from_189_mm() {
     let world = world(&open_ground(), &[]);
     let mut hero = eruptor(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
     hero.pivot.y += 0.189 - 0.005;
-    let after = run(&world, &mut hero, 1, |_| Stick::CENTRED)[0];
+    let mut leaned = hero.clone();
+    let held = run(&world, &mut hero, 3, |_| Stick::CENTRED);
+    assert!(
+        held.iter()
+            .all(|s| s.supported && (s.pivot.y - 0.189).abs() < 1e-5),
+        "{held:?}"
+    );
+    let a = 2f32.to_radians();
+    leaned.up = Vec3::new(a.sin(), a.cos(), 0.0);
+    let after = run(&world, &mut leaned, 1, |_| Stick::CENTRED)[0];
     assert!((after.pivot.y - 0.01).abs() < 1e-5, "{after:?}");
 }
 

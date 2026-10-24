@@ -426,7 +426,12 @@ fn free(f: &Frame) -> bool {
 /// each run of free ones (the frame into it moved him by his walk alone, so
 /// the walk is known), his move over each record theirs stays free (gravity
 /// 136.21 ft/s², the air's steer and its 50 ft/s² slowing) and the record he
-/// lands at.
+/// lands at. 37 land within a record of theirs since his lean turns upright
+/// in the air (AG.71), one fewer than AG.48 left: `g39_w_half` W-00 from
+/// record 210 meets the overhang's open edge at record 212 45.14° below him
+/// where theirs reads 44.92°, the support check's knife edge (its plane's
+/// normal from his centre where the frame's move ended, theirs from where
+/// it began, AG.48's reading: AG.136).
 #[test]
 #[ignore]
 fn ag39_falls_from_their_second_free_record() {
@@ -471,7 +476,7 @@ fn ag39_falls_from_their_second_free_record() {
         "{falls} falls, {held} within 1.1e-3 m/s while free and {landed} landing within a record of theirs; {free_ok} of {free_records} free records within 1.1e-3 m/s; parted: {parted:#?}"
     );
     assert!(
-        falls >= 40 && held >= 31 && landed >= 38,
+        falls >= 40 && held >= 31 && landed >= 37,
         "{falls} {held} {landed}"
     );
     assert!(free_ok >= 194, "{free_ok} of {free_records}");
@@ -799,4 +804,137 @@ fn ag90_a_walk_turned_round_every_frame_holds_the_slope() {
         }
     }
     assert_eq!(seen, 5);
+}
+
+const AG58: &str = "ag58-wall-1792597650";
+
+/// The probe held his walk that record: the script's "controller inactive".
+fn their_hold(f: &Frame) -> bool {
+    f.mover
+        .as_ref()
+        .is_some_and(|m| field(m, "controller inactive") != 0.0)
+}
+
+/// AG.70: past the gate's door's end (AG.58's `w58_door`, 3 replays), from
+/// the record after the slide's frame without support. Their Eruptor slides
+/// on 8-9 cm inside the door's box with its radius (his lean tips him into
+/// it), the box letting him out at his depth a second, so he moves along
+/// the door at his walk's own share along it; the probe stops him past the
+/// door's end, and the stick held, the probe passes every second frame
+/// while the point it looks at slower than 2 ft/s lies under the box with
+/// its radius, then holds him. Ours stops within a record of theirs and
+/// 2 cm of where theirs stopped, flickers as many times as theirs to 1,
+/// the last within 2 records of theirs, and stays within 2 cm of theirs
+/// over the hold.
+#[test]
+#[ignore]
+fn ag70_past_the_gate_doors_end() {
+    let world = level();
+    let mut seen = 0;
+    for (name, frames) in recordings(AG58) {
+        if !name.contains("w58_door-") {
+            continue;
+        }
+        // The frame he meets the door, from the record before it: the cast
+        // meets the box mid-step and he slides on along it plain for the
+        // rest of the step, the wall law only from the next (theirs move
+        // the walk's own share along it, 1.696 m/s, where a wall of the
+        // level gives the law's in the same frame).
+        let met = (2..frames.len()).find(|&j| their_door(&frames[j])).unwrap();
+        let contact = run(&world, &frames, met - 1, met);
+        let off = (contact[0].pivot - Vec3::from(frames[met].hero.position)).length();
+        assert!(
+            off < 3e-3,
+            "{name}: {off} m off theirs at record {met}, meeting the door"
+        );
+        // The slide's frame without support, then the record after it.
+        let lost = (200..frames.len())
+            .find(|&k| footing(&frames[k]).is_some_and(|f| !f.supported))
+            .unwrap();
+        let k = lost + 1;
+        let stop = (k..frames.len()).find(|&j| their_hold(&frames[j])).unwrap();
+        let last = (stop..frames.len())
+            .rfind(|&j| !their_hold(&frames[j]))
+            .unwrap();
+        let theirs = (stop..=last).filter(|&j| !their_hold(&frames[j])).count();
+        let mut hero = seeded(&frames, k);
+        let (mut ours_stop, mut ours_last, mut flickers, mut worst) = (None, None, 0usize, 0.0f32);
+        for j in k + 1..=last + 30 {
+            let (a, b) = (&frames[j - 1], &frames[j]);
+            let view = a.camera.map_or(0.0, |c| c.rotation[1]);
+            let input = Input::stick(Stick::new(b.stick[0], b.stick[1]), view);
+            hero.step(&world, &input, a.clock.step(), &[]);
+            match (ours_stop, hero.held_off) {
+                (None, true) => ours_stop = Some(j),
+                (Some(_), false) => {
+                    flickers += 1;
+                    ours_last = Some(j);
+                }
+                _ => {}
+            }
+            if j >= stop {
+                worst = worst.max((hero.pivot - Vec3::from(b.hero.position)).length());
+            }
+        }
+        eprintln!(
+            "{name}: meeting the door at {met} {off:.4} m off theirs; from record {k}: stops at ours {ours_stop:?} theirs {stop}; flickers ours {flickers} (last {ours_last:?}) theirs {theirs} (last {last}); {worst:.4} m off theirs at worst from their stop"
+        );
+        assert!(
+            ours_stop.is_some_and(|s| s.abs_diff(stop) <= 1),
+            "{name}: stops at {ours_stop:?}, theirs {stop}"
+        );
+        assert!(
+            flickers.abs_diff(theirs) <= 1,
+            "{name}: {flickers} flickers, theirs {theirs}"
+        );
+        assert!(
+            ours_last.is_some_and(|l| l.abs_diff(last) <= 2),
+            "{name}: last flicker {ours_last:?}, theirs {last}"
+        );
+        assert!(worst < 0.02, "{name}: {worst} m off theirs");
+        seen += 1;
+    }
+    assert_eq!(seen, 3);
+}
+
+/// AG.71: his lean off the ground, on AG.39's `air/g39_air_rel` and
+/// `g39_air_rev` (2 replays each) from their second free record to their
+/// landing: up in the air (his pivot and theirs both past the snap's 0.375 m
+/// over the ground) his up axis turns back toward straight up at 120°/s as
+/// theirs does, to 0.05°; his shape's centre is reported (the reversed pair
+/// part 7 cm in height at the overhang's open edge, AG.137).
+#[test]
+#[ignore]
+fn ag71_his_lean_in_the_air() {
+    let world = level();
+    let mut seen = 0;
+    for (name, frames) in recordings(AG39) {
+        if !(name.starts_with("air/g39_air_rel-") || name.starts_with("air/g39_air_rev-")) {
+            continue;
+        }
+        let k = (3..frames.len())
+            .find(|&k| free(&frames[k]) && free(&frames[k - 1]) && !free(&frames[k - 2]))
+            .unwrap();
+        let land = (k..frames.len())
+            .find(|&j| footing(&frames[j]).is_some_and(|f| f.supported))
+            .unwrap();
+        let (mut lean, mut centre) = (0.0f32, 0.0f32);
+        for s in run(&world, &frames, k, land) {
+            let f = &frames[s.k];
+            let up = euler(f.hero.rotation) * Vec3::Y;
+            // The air's rule: both more than the snap's reach over the ground.
+            let high = |h: Option<f32>| h.is_none_or(|h| h >= 0.375);
+            if high(s.height) && high(footing(f).and_then(|f| f.height)) {
+                lean = lean.max(guac_motion::ground::angle(s.up, up));
+            }
+            let theirs = Vec3::from(f.hero.position) + up * REACH;
+            centre = centre.max((s.pivot + s.up * REACH - theirs).length());
+        }
+        eprintln!(
+            "{name} from record {k} to its landing at {land}: lean {lean:.3}° off theirs at worst, his centre {centre:.4} m"
+        );
+        assert!(lean < 0.05, "{name}: lean {lean}° off theirs");
+        seen += 1;
+    }
+    assert_eq!(seen, 4);
 }

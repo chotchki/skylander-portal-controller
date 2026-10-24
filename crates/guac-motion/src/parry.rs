@@ -54,6 +54,41 @@ pub fn convex_shape(shape: &Shape) -> SharedShape {
     }
 }
 
+/// A convex solid's parry shape `grow` larger all round with its edges and
+/// corners square, a rounded box or cylinder taking its border into its
+/// size: what a ray meets of it on either side of the seam
+/// ([`PhysicsSeam::ray_grown`]). A shape that isn't one the seam builds comes
+/// back as it is.
+pub fn grown_for_rays(shape: &SharedShape, grow: f32) -> SharedShape {
+    if let Some(b) = shape.as_ball() {
+        return SharedShape::ball(b.radius + grow);
+    }
+    if let Some(c) = shape.as_capsule() {
+        return SharedShape::capsule(c.segment.a, c.segment.b, c.radius + grow);
+    }
+    let boxed = |h: Vec3| {
+        let h = h + Vec3::splat(grow);
+        SharedShape::cuboid(h.x, h.y, h.z)
+    };
+    if let Some(c) = shape.as_cuboid() {
+        return boxed(c.half_extents);
+    }
+    if let Some(c) = shape.as_round_cuboid() {
+        return boxed(c.inner_shape.half_extents + Vec3::splat(c.border_radius));
+    }
+    if let Some(c) = shape.as_cylinder() {
+        return SharedShape::cylinder(c.half_height + grow, c.radius + grow);
+    }
+    if let Some(c) = shape.as_round_cylinder() {
+        let border = c.border_radius + grow;
+        return SharedShape::cylinder(
+            c.inner_shape.half_height + border,
+            c.inner_shape.radius + border,
+        );
+    }
+    shape.clone()
+}
+
 /// The parry mesh, `MESH_FLAGS` set. Merging duplicate vertices rewrites the
 /// index buffer but keeps the triangles in order, so a triangle's index (and
 /// its material) is the one the mesh was built with.
@@ -234,6 +269,51 @@ impl ParryWorld {
         self.entries
             .iter()
             .filter(move |e| e.kind.is_solid() && !exclude.contains(&e.id))
+    }
+
+    /// The first solid surface along a ray, each convex body `grow` larger
+    /// ([`grown_for_rays`]) when asked.
+    fn first_along(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        grow: Option<f32>,
+        exclude: &[BodyId],
+    ) -> Option<RayHit> {
+        let (dir, _) = split_motion(direction)?;
+        let ray = Ray::new(origin, dir);
+        let mut best: Option<RayHit> = None;
+        for entry in self.solids(exclude) {
+            let reach = best.map_or(max_distance, |b| b.distance);
+            let grown = grow.filter(|_| entry.mesh.is_none());
+            let shape = match grown {
+                Some(g) => grown_for_rays(&entry.shape, g),
+                None => entry.shape.clone(),
+            };
+            if !entry
+                .aabb
+                .loosened(grown.unwrap_or(0.0))
+                .intersects_local_ray(&ray, reach)
+            {
+                continue;
+            }
+            let Some(found) = shape.cast_ray_and_get_normal(&entry.pose, &ray, reach, false) else {
+                continue;
+            };
+            if best.is_none_or(|b| found.time_of_impact < b.distance) {
+                let triangle = entry.triangle(found.subshape);
+                best = Some(RayHit {
+                    body: entry.id,
+                    triangle,
+                    material: entry.material(triangle),
+                    distance: found.time_of_impact,
+                    point: origin + dir * found.time_of_impact,
+                    normal: found.normal,
+                });
+            }
+        }
+        best
     }
 }
 
@@ -541,33 +621,18 @@ impl PhysicsSeam for ParryWorld {
         max_distance: f32,
         exclude: &[BodyId],
     ) -> Option<RayHit> {
-        let (dir, _) = split_motion(direction)?;
-        let ray = Ray::new(origin, dir);
-        let mut best: Option<RayHit> = None;
-        for entry in self.solids(exclude) {
-            let reach = best.map_or(max_distance, |b| b.distance);
-            if !entry.aabb.intersects_local_ray(&ray, reach) {
-                continue;
-            }
-            let Some(found) = entry
-                .shape
-                .cast_ray_and_get_normal(&entry.pose, &ray, reach, false)
-            else {
-                continue;
-            };
-            if best.is_none_or(|b| found.time_of_impact < b.distance) {
-                let triangle = entry.triangle(found.subshape);
-                best = Some(RayHit {
-                    body: entry.id,
-                    triangle,
-                    material: entry.material(triangle),
-                    distance: found.time_of_impact,
-                    point: origin + dir * found.time_of_impact,
-                    normal: found.normal,
-                });
-            }
-        }
-        best
+        self.first_along(origin, direction, max_distance, None, exclude)
+    }
+
+    fn ray_grown(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        grow: f32,
+        exclude: &[BodyId],
+    ) -> Option<RayHit> {
+        self.first_along(origin, direction, max_distance, Some(grow), exclude)
     }
 
     fn overlaps(&self, shape: &Shape, at: Pose, exclude: &[BodyId]) -> Vec<BodyId> {

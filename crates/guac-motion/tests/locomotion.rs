@@ -229,9 +229,12 @@ fn his_fall() {
     );
 }
 
-/// A drop under 20 ft/s: off a 0.3 m step at full stick the snap takes him
-/// down and he runs on with no fall; off a 0.6 m one he drops, and any move
-/// down past 20 ft/s comes within 1.5 ft of the ground, so no fall either.
+/// A drop under 20 ft/s: off a 0.3 m step onto level ground at full stick
+/// he runs on over it, supported, at the step's height (within the snap's
+/// reach a frame begun on the ground ends supported, and the snap waits for
+/// his lean to turn: AG.70), with no fall; off a 0.6 m one he drops, and any
+/// move down past 20 ft/s comes within 1.5 ft of the ground, so no fall
+/// either.
 #[test]
 fn a_drop_under_20_ft_s() {
     for depth in [0.3, 0.6] {
@@ -243,8 +246,9 @@ fn a_drop_under_20_ft_s() {
             assert_eq!(weights[3], 0.0, "{depth} m");
         }
         eprintln!("the {depth} m drop's fastest move down: {fastest} ft/s");
+        let landed = if depth < 0.375 { 0.01 } else { 0.05 - depth };
         assert!(
-            w.hero.pivot.z > 2.0 && w.hero.pivot.y < 0.05 - depth,
+            w.hero.pivot.z > 2.0 && w.hero.pivot.y < landed,
             "{:?}",
             w.hero.pivot
         );
