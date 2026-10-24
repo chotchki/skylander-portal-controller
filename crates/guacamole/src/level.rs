@@ -1076,6 +1076,11 @@ impl Level {
         &self.report
     }
 
+    /// Why the level's script part didn't load, once its load said so.
+    pub(crate) fn scripts_reason(&self) -> Option<&str> {
+        self.report.scripts_reason.as_deref()
+    }
+
     /// The report, with the props as they stand now.
     pub(crate) fn snapshot(&self) -> LevelReport {
         let mut r = self.report.clone();

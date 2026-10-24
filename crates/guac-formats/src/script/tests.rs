@@ -941,12 +941,20 @@ fn a_placements_tags_read_back_field_for_field() {
 /// AG.27's synthetic walker reads back for every fault: two scripts (his
 /// definition's and the minion's, which isn't named for his load file) and
 /// two placements, the minion's template not named for his load file
-/// either; the minion's tick displaces him.
+/// either; the minion's tick displaces him. Only the walker whose
+/// deactivation stops defines the shutdown the portal manager's
+/// deactivation calls (openspec AH.165), which `global.bld` calls through a
+/// stub.
 #[test]
 fn the_synthetic_walker_reads_back() {
-    use super::builder::{WALKER_MINION, WALKER_TEMPLATE, WalkerFault, walker};
+    use super::builder::{WALKER_MINION, WALKER_SHUTDOWN, WALKER_TEMPLATE, WalkerFault, walker};
     use crate::level::Placements;
-    for fault in [WalkerFault::None, WalkerFault::InSetup, WalkerFault::InPlay] {
+    for fault in [
+        WalkerFault::None,
+        WalkerFault::InSetup,
+        WalkerFault::InPlay,
+        WalkerFault::InDeactivation,
+    ] {
         let bytes = walker(fault);
         let igz = Igz::parse(&bytes).unwrap();
         let graph = Graph::read(&igz).unwrap();
@@ -980,5 +988,16 @@ fn the_synthetic_walker_reads_back() {
             .unwrap();
         let ops = positions(&graph, minion).join("\n");
         assert!(ops.contains("Displace"), "{fault:?}: {ops}");
+        let shutdown = format!("DefineMacro {WALKER_SHUTDOWN} ");
+        assert_eq!(
+            ops.contains(&shutdown),
+            fault == WalkerFault::InDeactivation,
+            "{fault:?}: {ops}"
+        );
     }
+    let a = super::builder::attack();
+    let igz = Igz::parse(&a.global).unwrap();
+    let graph = Graph::read(&igz).unwrap();
+    let pm = positions(&graph, &graph.scripts[0]).join("\n");
+    assert!(pm.contains("UseMacro"), "{pm}");
 }

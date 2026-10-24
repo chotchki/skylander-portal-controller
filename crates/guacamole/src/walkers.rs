@@ -247,6 +247,12 @@ pub fn fallback(origin: Origin, stage: Stage, why: &str) -> Fallback {
 pub struct Kept {
     pub load_file: String,
     pub reason: String,
+    /// The portal slot (1-based, as the phone numbers slots) of a figure
+    /// kept by what happened in the level (a join that didn't run through,
+    /// openspec AH.166: the TV takes him out the frame it fails, so a read
+    /// finds no hero and this is where his reason is); none for the part's
+    /// own list, which no join reached.
+    pub slot: Option<u8>,
 }
 
 #[cfg(test)]

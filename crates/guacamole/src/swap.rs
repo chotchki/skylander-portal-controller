@@ -23,7 +23,11 @@
 //!
 //! It runs from his take-off ([`crate::play`]) as a one-shot system, while
 //! his entity is still there for the engine to read (the enemies by where
-//! he stood alerted), before the entity goes.
+//! he stood alerted), before the entity goes. A stop in it (a shutdown macro
+//! of his on a member nothing models) is logged and the rest runs (openspec
+//! AH.165): the portal manager ticks on and his stream is unloaded, so his
+//! file runs once when his figure comes back. A walker kept on his card
+//! (AG.27) comes off the same way.
 
 use bevy::prelude::*;
 use guac_script::Value;
@@ -85,16 +89,16 @@ pub(crate) fn deactivate(
             leaving.hero.to_bits(),
         )
     };
-    match gone {
-        Ok(gone) => info!(
-            load_file = %run.load_file,
-            minion = gone.minion,
-            placements = gone.placements.len(),
-            clones = gone.clones.len(),
-            "his scripts off the run; the level's run on"
-        ),
-        Err(h) => warn!(%h, load_file = %run.load_file, "his deactivation stopped"),
+    if let Some(h) = &gone.halted {
+        warn!(%h, load_file = %run.load_file, "his deactivation stopped short; his stream is unloaded and the portal manager runs on");
     }
+    info!(
+        load_file = %run.load_file,
+        minion = gone.minion,
+        placements = gone.placements.len(),
+        clones = gone.clones.len(),
+        "his scripts off the run; the level's run on"
+    );
     scripts::add_scripted(vm, &mut world);
 }
 
@@ -104,7 +108,8 @@ mod tests {
 
     use guac_formats::script::builder::{
         ATTACK_BALL, ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HELPER, ATTACK_KEPT_HEALTH,
-        SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW,
+        SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW, WALKER_DEF,
+        WALKER_LOAD, WALKER_SCALE, WalkerFault,
     };
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
@@ -117,7 +122,7 @@ mod tests {
         self, Deactivated, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
     };
 
-    use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_swap};
+    use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_swap, write_walker};
 
     /// The hero's handle, the one and the next alike: a headless run reuses
     /// it where the TV's next hero is an entity of his own.
@@ -165,6 +170,11 @@ mod tests {
         level: u16,
         next: Handle,
         steps: u32,
+        /// The player loop the TV walks with, for a walker's run: its native
+        /// ticks count the portal manager's (none while it's stopped).
+        player_loop: Option<guacamole::player_loop::PlayerLoop>,
+        /// Whether his minion has activated (the loop's `joined`).
+        joined: bool,
     }
 
     impl Run {
@@ -172,13 +182,44 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             write_swap(tmp.path(), CREATURE_AT);
             let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
-            let files = linked.placements;
-            let handles = headless_handles(&files);
-            let objects = headless_objects(&handles);
             let mut config = scripts::fight_config(Mode::Strict);
             if let Whitelist::Only { placements, .. } = &mut config.whitelist {
                 placements.push(SWAP_ROCK.to_owned());
             }
+            let fighter = linked
+                .fighters
+                .iter()
+                .find(|(f, _)| f == "009_Eruptor")
+                .unwrap()
+                .1;
+            Self::over(linked, config, fighter)
+        }
+
+        /// AG.27's synthetic walker's part, stopping as `fault` says, run
+        /// as the TV lists it (every walker that asks nothing new), strict:
+        /// the hero's unit his.
+        fn walker(fault: WalkerFault) -> Self {
+            let tmp = tempfile::tempdir().unwrap();
+            write_walker(tmp.path(), fault);
+            let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+            let config =
+                scripts::with_walkers(scripts::smash_config(Mode::Strict), &linked.walkers);
+            let unit = linked
+                .walkers
+                .iter()
+                .find(|w| w.load_file == WALKER_LOAD)
+                .unwrap()
+                .unit;
+            let mut run = Self::over(linked, config, unit);
+            run.player_loop = Some(guacamole::player_loop::PlayerLoop::read(run.vm.program()));
+            run
+        }
+
+        /// The run over `linked` listed by `config`, the hero's file `unit`.
+        fn over(linked: level_scripts::Linked, config: guac_script::Config, unit: u16) -> Self {
+            let files = linked.placements;
+            let handles = headless_handles(&files);
+            let objects = headless_objects(&handles);
             let vm = scripts::init_chain(
                 Arc::new(linked.program),
                 &files,
@@ -200,22 +241,18 @@ mod tests {
             let ground = scenarios::bodies(&scenarios::open_ground(), &[]);
             let parry = ParryWorld::new(&ground).unwrap();
             let hero = scenarios::eruptor(&parry, bevy::math::Vec3::new(0.0, 1.0, 0.0), 0.0);
-            let fighter = linked
-                .fighters
-                .iter()
-                .find(|(f, _)| f == "009_Eruptor")
-                .unwrap()
-                .1;
             Self {
                 vm,
                 world,
                 bench: Bench { hero, world: parry },
                 generator: Generator::seeded(5489),
                 files,
-                fighter,
+                fighter: unit,
                 level: *linked.order.last().unwrap(),
                 next: objects[6].max(HERO) + 1,
                 steps: 0,
+                player_loop: None,
+                joined: false,
             }
         }
 
@@ -248,7 +285,11 @@ mod tests {
                 },
                 Pad::default(),
             ]);
-            let r = self.host(|vm, host| vm.step(host));
+            let (player_loop, joined) = (self.player_loop.clone(), self.joined);
+            let r = self.host(|vm, host| match &player_loop {
+                Some(l) => l.frame(vm, host, joined, &mut Vec::new()),
+                None => vm.step(host),
+            });
             self.world.end_step();
             scripts::add_scripted(&mut self.vm, &mut self.world);
             r.unwrap_or_else(|h| panic!("{h}"));
@@ -262,7 +303,7 @@ mod tests {
 
         /// AH.17's join as the TV makes it: his figure's tag on the portal
         /// (AH.23), his file's placements this step (it's stepped), his
-        /// minion activated after it.
+        /// minion activated after it, before the next step.
         fn join(&mut self) -> PlacementId {
             let layout = guacamole::figure::Layout::of(&progression_rows()).unwrap();
             let tag = guacamole::figure::Tag {
@@ -279,16 +320,33 @@ mod tests {
             self.host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))
                 .unwrap_or_else(|h| panic!("{h}"));
             self.step([false; 4]);
-            self.host(|vm, host| scripts::join_activate(vm, host, HERO))
-                .unwrap_or_else(|h| panic!("{h}"))
+            let minion = self
+                .host(|vm, host| scripts::join_activate(vm, host, HERO))
+                .unwrap_or_else(|h| panic!("{h}"));
+            self.joined = true;
+            minion
         }
 
-        /// The deactivate path for him.
+        /// The deactivate path for him, run through.
         fn deactivate(&mut self) -> Deactivated {
+            let gone = self.deactivate_as_it_goes();
+            assert_eq!(gone.halted, None);
+            gone
+        }
+
+        /// The deactivate path for him, whatever stops in it.
+        fn deactivate_as_it_goes(&mut self) -> Deactivated {
             let files = self.files.clone();
             let unit = self.fighter;
+            self.joined = false;
             self.host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, HERO))
-                .unwrap_or_else(|h| panic!("{h}"))
+        }
+
+        /// The portal manager's placement and its seconds of ticks (its
+        /// native tick counts each step it runs; none once it's stopped).
+        fn portal_manager(&self) -> (PlacementId, f32) {
+            let pm = scripts::portal_manager_placement(&self.vm, &self.world).expect("it runs");
+            (pm, self.vm.active_seconds(pm).unwrap())
         }
 
         /// A placement of a file by its name: its object and handle.
@@ -503,5 +561,125 @@ mod tests {
             Some(ATTACK_HEALTH),
             "a level change: full"
         );
+    }
+
+    /// The walker's run joined: the init chain's two steps, the join, then
+    /// `steps` steps.
+    fn walker_joined(fault: WalkerFault, steps: u32) -> (Run, PlacementId) {
+        let mut run = Run::walker(fault);
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let minion = run.join();
+        for _ in 0..steps {
+            run.step([false; 4]);
+        }
+        (run, minion)
+    }
+
+    /// His actor's scale, percent.
+    fn scale_of(run: &Run) -> [f32; 3] {
+        run.world.actor(HERO).expect("his actor").scale
+    }
+
+    /// AH.165 (found at the AG.27 merge check: nothing tested it): a walker
+    /// joined, taken off and placed again into the same run. His file's
+    /// placements come off and back on under their handles, each running
+    /// once (the ones taken off tick no more); his new minion sets up from
+    /// its own first tick (`set_up` false at the activation, true after
+    /// it) and its setup sets his scale again on the fresh actor the
+    /// activation spawns as him; the portal manager ticks on throughout.
+    #[test]
+    fn a_walker_taken_off_and_put_back_runs_his_file_once() {
+        let mut run = Run::walker(WalkerFault::None);
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let first = run.join();
+        assert!(!run.vm.set_up(first), "his minion hasn't ticked yet");
+        run.step([false; 4]);
+        assert!(run.vm.set_up(first));
+        assert_eq!(scale_of(&run), [WALKER_SCALE; 3]);
+        for _ in 0..5 {
+            run.step([false; 4]);
+        }
+        let (def_obj, def) = run.placed(run.fighter, WALKER_DEF);
+        let old_def = run.vm.placement_of(def).unwrap();
+        let (pm, ticked) = run.portal_manager();
+        let gone = run.deactivate();
+        assert!(gone.minion && gone.placements.contains(&def));
+        assert!(run.vm.removed(old_def) && run.vm.removed(first));
+        assert!(run.world.taken_off(def_obj));
+        assert_eq!(run.file_int(ATTACK_DEACTIVATIONS), Some(Value::Int(1)));
+        assert!(run.vm.tick_order().iter().all(|(a, _)| !a), "no activator");
+        assert_eq!(run.entered(), Some(Value::Int(0)));
+        let second = run.join();
+        assert_ne!(second, first);
+        let again = run.vm.placement_of(def).unwrap();
+        assert_ne!(again, old_def);
+        assert!(!run.vm.removed(again) && !run.world.taken_off(def_obj));
+        assert!(
+            !run.vm.set_up(second),
+            "a minion of his own, not set up yet"
+        );
+        assert_ne!(scale_of(&run), [WALKER_SCALE; 3], "a fresh actor as him");
+        let (def_was, first_was) = (
+            run.vm.active_seconds(old_def).unwrap(),
+            run.vm.active_seconds(first).unwrap(),
+        );
+        for _ in 0..10 {
+            run.step([false; 4]);
+        }
+        assert!(run.vm.set_up(second));
+        assert_eq!(scale_of(&run), [WALKER_SCALE; 3], "his setup's scale again");
+        assert_eq!(
+            run.vm.active_seconds(old_def).unwrap(),
+            def_was,
+            "the definition taken off ticks no more"
+        );
+        assert_eq!(run.vm.active_seconds(first).unwrap(), first_was);
+        assert!(run.vm.active_seconds(again).unwrap() > 0.0);
+        let order = run.vm.tick_order();
+        assert_eq!(order.iter().filter(|(a, _)| *a).count(), 1, "{order:?}");
+        let (pm_again, now) = run.portal_manager();
+        assert_eq!(pm_again, pm);
+        assert!(
+            now > ticked,
+            "the portal manager ticks on: {ticked} -> {now}"
+        );
+        assert!(run.vm.stopped(pm).is_none());
+    }
+
+    /// AH.165: a walker whose deactivation stops (his shutdown, which the
+    /// portal manager's deactivation runs, on a member nothing models) is
+    /// still unloaded, and the portal manager ticks on: before, the stop
+    /// returned before the unloading (his file's placements and minion left
+    /// running, his slot entered) and stopped the portal manager, whose
+    /// tick runs combat, hurts and the health write, for the rest of the
+    /// level. Placed again, his file runs once.
+    #[test]
+    fn a_walker_whose_deactivation_stops_is_still_taken_off() {
+        let (mut run, first) = walker_joined(WalkerFault::InDeactivation, 5);
+        let (def_obj, def) = run.placed(run.fighter, WALKER_DEF);
+        let old_def = run.vm.placement_of(def).unwrap();
+        let (pm, ticked) = run.portal_manager();
+        let gone = run.deactivate_as_it_goes();
+        let halt = gone.halted.as_ref().expect("his shutdown stops");
+        assert!(halt.to_string().contains("unmodelled member"), "{halt}");
+        assert!(gone.minion && gone.placements.contains(&def) && gone.clones.contains(&HERO));
+        assert!(run.vm.removed(old_def) && run.vm.removed(first));
+        assert!(run.world.taken_off(def_obj) && run.world.removed(HERO));
+        assert!(run.vm.tick_order().iter().all(|(a, _)| !a), "no activator");
+        assert_eq!(run.entered(), Some(Value::Int(0)), "his slot exited");
+        assert_eq!(run.file_int(ATTACK_DEACTIVATIONS), Some(Value::Int(1)));
+        assert!(run.vm.stopped(pm).is_none(), "the portal manager runs on");
+        let second = run.join();
+        for _ in 0..10 {
+            run.step([false; 4]);
+        }
+        let (_, now) = run.portal_manager();
+        assert!(now > ticked, "it ticks: {ticked} -> {now}");
+        let again = run.vm.placement_of(def).unwrap();
+        assert_ne!(again, old_def);
+        assert!(run.vm.set_up(second));
+        assert_eq!(run.vm.tick_order().iter().filter(|(a, _)| *a).count(), 1);
     }
 }

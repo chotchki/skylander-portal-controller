@@ -228,7 +228,7 @@ impl Bench {
                 })
                 .unwrap();
         }
-        let walkers = world.walkers();
+        let walkers = world.creature_bodies();
         let awake: Vec<Handle> = walkers.iter().map(|w| w.0).collect();
         for (h, solid, pose) in walkers {
             let next = BodyId(HERO_BODY.0 + 1 + self.bodies.len() as u32);
@@ -426,14 +426,18 @@ impl Run {
 
     /// His figure off the portal mid-level (openspec AH.105): the
     /// deactivate path, the run going on; [`Run::join_with`] puts the next
-    /// one on.
+    /// one on. Strict: a stop in it is the run's (openspec AH.165: the TV
+    /// unloads him whatever stopped).
     pub fn deactivate(&mut self) -> Result<scripts::Deactivated, Halt> {
         let files = self.files.clone();
         let gone =
-            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, ERUPTOR, HERO))?;
+            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, ERUPTOR, HERO));
         self.minion = None;
         self.figure = None;
-        Ok(gone)
+        match gone.halted {
+            Some(h) => Err(h),
+            None => Ok(gone),
+        }
     }
 
     /// The hero set down at `at` (dropped onto what's under it) facing

@@ -2474,8 +2474,10 @@ pub async fn gaits_tv(base: &str, since: u64) -> Result<serde_json::Value> {
 /// unless the test expects an off for the reason the TV gives (openspec
 /// AH.106: so an off between two reads of the TV isn't missed; an off for
 /// another reason fails as [`tv`]'s does, AH.25's review). The log carries
-/// no reason: it's the TV's while he's in, and with him gone an expected
-/// off is let through, an unexpected one not.
+/// no reason: it's the TV's while he's in, else the one a walker kept on his
+/// card carries (AH.166: the TV takes him out of the level the frame his
+/// join fails, so he's gone before any read); with neither an expected off
+/// is let through, an unexpected one not.
 pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv/scripts?since={since}"))
@@ -2493,12 +2495,18 @@ pub async fn scripts_tv(base: &str, since: u64) -> Result<serde_json::Value> {
     else {
         return Ok(log);
     };
-    // The reason is the TV's (`hero.scripts_reason`), while he's in.
+    // The reason is the TV's (`hero.scripts_reason`) while he's in, else a
+    // kept walker's.
     let reason = match reqwest::get(format!("{base}/api/_test/tv")).await {
         Ok(r) => r.json::<serde_json::Value>().await.ok(),
         Err(_) => None,
     }
-    .and_then(|s| s["hero"]["scripts_reason"].as_str().map(str::to_owned));
+    .and_then(|s| {
+        s["hero"]["scripts_reason"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| kept_off(&s))
+    });
     match (hero_scripts_off_because(base), reason) {
         (Some(because), Some(reason)) if reason.contains(&because) => Ok(log),
         (Some(_), None) => Ok(log),
@@ -2634,23 +2642,46 @@ impl Drop for TestServer {
 /// none, with him in the level, is held the same.
 const NO_RUN: &str = "no run: the level's part holds no scripts of his or didn't link";
 
+/// The reason the TV lists for a walker kept on his card by a join that
+/// failed in the level (`kept`'s entries with his `slot`; openspec AG.27,
+/// AH.166), the first; none for the part's own list (a character it holds
+/// no scripts of, or whose scripts ask what the TV can't answer), which no
+/// join reached.
+fn kept_off(snap: &serde_json::Value) -> Option<String> {
+    snap["kept"]
+        .as_array()?
+        .iter()
+        .find(|k| !k["slot"].is_null())
+        .map(|k| {
+            format!(
+                "{} keeps his card: {}",
+                k["load_file"].as_str().unwrap_or("a walker"),
+                k["reason"].as_str().unwrap_or("no reason given")
+            )
+        })
+}
+
 /// A TV snapshot's hero held to his scripts (openspec AH.106): a hero whose
 /// scripts went `off` (his file missing from the part or the part not
 /// linking, a join that failed, his script stopped in play) walks on
 /// AG.16's controller with his attack buttons doing nothing, so every
 /// walking check still passes. Read so (or with no run at all while he's
 /// in the level), it's an error carrying the TV's reason, unless the test
-/// expects an `off` whose reason holds `expected` (stand-in ledger:
-/// `walker`).
+/// expects an `off` whose reason holds `expected`
+/// (stand-in ledger: `walker`). A walker whose join failed in the level is
+/// out of it before any read, his card kept and listed with why (AG.27):
+/// held the same, by that reason (AH.166: the hero read none and passed).
 pub fn hero_scripts_held(snap: &serde_json::Value, expected: Option<&str>) -> Result<()> {
     let hero = &snap["hero"];
     let no_run = hero["scripts"].is_null() && !hero["position"].is_null();
-    if hero["scripts"] != "off" && !no_run {
+    let kept = kept_off(snap);
+    if hero["scripts"] != "off" && !no_run && kept.is_none() {
         return Ok(());
     }
-    let reason = match no_run {
-        true => NO_RUN,
-        false => hero["scripts_reason"].as_str().unwrap_or("no reason given"),
+    let reason = match (no_run, hero["scripts"] == "off") {
+        (true, _) => NO_RUN,
+        (false, true) => hero["scripts_reason"].as_str().unwrap_or("no reason given"),
+        (false, false) => kept.as_deref().unwrap_or("no reason given"),
     };
     match expected {
         Some(because) if reason.contains(because) => Ok(()),
@@ -3154,6 +3185,27 @@ mod hero_scripts_tests {
         assert!(hero_scripts_held(&json!({"mode": "portal"}), None).is_ok());
     }
 
+    /// AH.166: a walker whose join failed in the level is out of it the
+    /// frame it failed (the TV keeps his card), so the hero reads none: the
+    /// reason his kept card carries fails the read unless expected; the
+    /// part's own list (no join reached them) passes.
+    #[test]
+    fn a_walker_kept_by_a_failed_join_fails_the_read_unless_expected() {
+        let why = "his script stopped: 026_Synthetic_Body.ai #3: unmodelled member x.y";
+        let kept = json!({"hero": null, "kept": [
+            {"load_file": "002_SkyTurtle", "reason": "his scripts ask 1 points", "slot": null},
+            {"load_file": "026_Synthetic", "reason": why, "slot": 1},
+        ]});
+        let e = hero_scripts_held(&kept, None).unwrap_err().to_string();
+        assert!(e.contains(why) && e.contains("026_Synthetic"), "{e}");
+        assert!(hero_scripts_held(&kept, Some("his script stopped")).is_ok());
+        assert!(hero_scripts_held(&kept, Some(WALKING_SCRIPTS_OFF)).is_err());
+        let part = json!({"hero": null, "kept": [
+            {"load_file": "002_SkyTurtle", "reason": "his scripts ask 1 points", "slot": null},
+        ]});
+        assert!(hero_scripts_held(&part, None).is_ok(), "the part's list");
+    }
+
     /// The read itself (`tv`): against a TV whose hero joins and then goes
     /// off, the first read passes and the later one fails with the reason,
     /// unless the test said it expects it.
@@ -3239,6 +3291,37 @@ mod hero_scripts_tests {
         assert!(e.contains("his script stopped: x"), "another reason: {e}");
         expect_hero_scripts_off(&base, "his script stopped");
         assert!(scripts_tv(&base, 1).await.is_ok(), "expected");
+        served.join().unwrap();
+    }
+
+    /// AH.166: a step logged `off` whose walker is gone from the level (his
+    /// card kept) fails the scripts' read with his kept card's reason, not
+    /// "no reason given".
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_step_logged_off_for_a_kept_walker_names_his_reason() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let why = "his minion didn't activate: no minion template";
+        let bodies = [
+            json!({"last": 3, "steps": [{"step": 3, "join": "off"}]}),
+            json!({"hero": null, "kept": [{"load_file": "026_Synthetic", "reason": why, "slot": 1}]}),
+        ];
+        let served = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let e = scripts_tv(&base, 1).await.unwrap_err().to_string();
+        assert!(e.contains(why) && !e.contains("no reason given"), "{e}");
         served.join().unwrap();
     }
 

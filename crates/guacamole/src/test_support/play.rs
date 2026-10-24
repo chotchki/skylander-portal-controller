@@ -434,6 +434,50 @@ pub(crate) fn joined_eruptor(tmp: &std::path::Path) -> (App, Entity) {
     (app, pad)
 }
 
+/// A number of the part's files by its name, as the run holds it; none
+/// until something has made it.
+pub(crate) fn file_int(app: &App, name: &str) -> Option<guac_script::Value> {
+    let vm = &app.world().resource::<ScriptRuntime>().vm;
+    let g = vm.program().global_named(name)?;
+    vm.global_peek(g)
+}
+
+/// The first player's slot's `entered` (`Portal - Enter Object`'s and
+/// `Portal - Exit Object`'s mark), as the run holds it.
+pub(crate) fn entered(app: &App) -> Option<guac_script::Value> {
+    let vm = &app.world().resource::<ScriptRuntime>().vm;
+    let g = vm.program().global_named("portal control data")?;
+    let pcd = vm.global_peek(g)?;
+    let slot = vm
+        .field(pcd, "loaded objects")
+        .and_then(|s| vm.set(vm.value(s)).and_then(|e| e.first().copied()))?;
+    vm.field(vm.value(slot), "entered").map(|v| vm.value(v))
+}
+
+/// A placement of the level's part by its name: its object and handle.
+pub(crate) fn placement_named(app: &App, name: &str) -> (guac_script::Obj, guac_script::Handle) {
+    let source = app.world().resource::<crate::hero_scripts::ScriptSource>();
+    let obj = source
+        .files()
+        .placed
+        .iter()
+        .find(|p| p.name == name)
+        .unwrap_or_else(|| panic!("no {name}"))
+        .obj;
+    let world = app.world().resource::<guacamole::scripts::ScriptWorld>();
+    (obj, world.handles()[&obj])
+}
+
+/// The portal manager's seconds of ticks: its native tick counts each step
+/// it runs, none once it's stopped.
+pub(crate) fn pm_seconds(app: &App) -> f32 {
+    let w = app.world();
+    let vm = &w.resource::<ScriptRuntime>().vm;
+    let world = w.resource::<guacamole::scripts::ScriptWorld>();
+    let pm = guacamole::scripts::portal_manager_placement(vm, world).expect("it runs");
+    vm.active_seconds(pm).unwrap()
+}
+
 /// The scripts' log's last step.
 pub(crate) fn log_last(app: &App) -> u64 {
     app.world()
@@ -482,6 +526,56 @@ pub(crate) fn fight_app(
         app.update();
     }
     place(&mut app, 0, ERUPTOR, "Eruptor");
+    until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    test_pad::press(&mut app, pad, GamepadButton::East);
+    until(&mut app, "his scripts", |a| {
+        join(a).as_deref() == Some("joined")
+    });
+    (app, pad)
+}
+
+/// AG.27's synthetic walker on the shelf: his toy.
+pub(crate) const WALKER_TOY: u32 = 26;
+
+/// [`fight_app`] with AG.27's synthetic walker placed and taken in instead
+/// of Eruptor (openspec AH.167), his scripts joined: the app and the pad.
+pub(crate) fn fight_app_walker(
+    tmp: &std::path::Path,
+    asked: Option<crate::dev_entry::Asked>,
+) -> (App, Entity) {
+    use guac_formats::script::builder::WALKER_LOAD;
+    let asks = crate::dev_entry::EntryAsks::default();
+    let entry = crate::dev_entry::plugin(true, asks.clone()).expect("a dev build's entry");
+    let (mut app, tx) = play_app_shelf(tmp, &[(WALKER_TOY, WALKER_LOAD)], |app| {
+        app.add_plugins((crate::creatures::CreaturesPlugin, entry));
+    });
+    write_attack_parts(tmp);
+    write_figure_rows(tmp);
+    // His palette, Eruptor's under his name: what the join sets on his
+    // minion's template.
+    let rel = IrFormat::Ron.palette_path("009_Eruptor");
+    let mut palette: Palette =
+        guac_ir::from_ron(&std::fs::read_to_string(tmp.join(rel)).unwrap()).unwrap();
+    palette.owner = WALKER_LOAD.into();
+    std::fs::write(
+        tmp.join(IrFormat::Ron.palette_path(WALKER_LOAD)),
+        guac_ir::to_ron(&palette).unwrap(),
+    )
+    .unwrap();
+    crate::test_support::hero_scripts::write_fight_with_walker(tmp, CREATURE_AT, TRIGGERS);
+    let source = write_level(tmp, &lights());
+    write_creature_model(tmp);
+    tx.send(source).unwrap();
+    let pad = test_pad::connect(&mut app, None, None);
+    until(&mut app, "the level and its scripts", |a| {
+        level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+    });
+    if let Some(asked) = asked {
+        *asks.0.lock().unwrap() = Some(asked);
+        app.update();
+        app.update();
+    }
+    place(&mut app, 0, WALKER_TOY, "Synthetic");
     until(&mut app, "the level", |a| mode(a) != Mode::Portal);
     test_pad::press(&mut app, pad, GamepadButton::East);
     until(&mut app, "his scripts", |a| {
