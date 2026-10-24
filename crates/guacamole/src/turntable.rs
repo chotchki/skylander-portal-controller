@@ -1758,9 +1758,27 @@ pub(crate) mod tests {
     }
 
     /// What a scene leaves in the world: entities, cameras, and the images,
-    /// meshes, skins and materials it added.
+    /// meshes, skins and materials it added, once Bevy has let go of what
+    /// nothing holds. It frees an asset in the `PreUpdate` after its last
+    /// handle drops, each type's tracking unordered beside the others', so
+    /// a material's textures can go a frame after the material: a settle
+    /// of two updates (the loads landing in the frame that began them)
+    /// still counted a replaced scene's textures. Freed here instead, the
+    /// materials first.
     fn footprint(app: &mut App) -> [usize; 6] {
         let world = app.world_mut();
+        world
+            .run_system_cached(Assets::<CharacterMaterial>::track_assets)
+            .unwrap();
+        world
+            .run_system_cached(Assets::<Image>::track_assets)
+            .unwrap();
+        world
+            .run_system_cached(Assets::<Mesh>::track_assets)
+            .unwrap();
+        world
+            .run_system_cached(Assets::<SkinnedMeshInverseBindposes>::track_assets)
+            .unwrap();
         let cameras = world.query::<&Camera>().iter(world).count();
         [
             world.entities().count_spawned() as usize,
