@@ -1189,12 +1189,14 @@ pub const BREAKABLES: [&str; 3] = [
 /// UI's loot update), the push blocks and the cannon (their art, their 15 x
 /// 12 x 15 ft boxes), the walkway's fence (its cross beam and planks; it
 /// makes itself a combat target), the cannon's rubble wall, the sliding
-/// rocks, the chest (its locks, its cylinder; a creature, drawn nowhere)
-/// and the global reference the chests share; then the scripts of what
-/// those spawn. The Titan boulders run their first tick alone
-/// ([`START_PROPS_FIRST_TICK`]). Eon's lines (`Eon_Line_Activator.ai`) stay
-/// off: dialogue, AJ's.
-pub const START_PROPS: [&str; 26] = [
+/// rocks and the global reference the chests share; then the scripts of
+/// what those spawn. The Titan boulders run their first tick alone
+/// ([`START_PROPS_FIRST_TICK`]). Off: Eon's lines (`Eon_Line_Activator.ai`,
+/// dialogue, AJ's) and the chest's (`Chest.ai` and its locks'), a creature's
+/// left out as the creatures are: undrawn, it took `Active_Collectable` and
+/// stopped on `clonedsequence.clones` (its triggered sound's, unmodelled) the
+/// moment he came within 18 ft (the AG.60 review).
+pub const START_PROPS: [&str; 23] = [
     "Scale.ai",
     "Windmill_Rotate.ai",
     "BirdNest.ai",
@@ -1204,7 +1206,6 @@ pub const START_PROPS: [&str; 26] = [
     "WoodFence_Spawner.ai",
     "StoneWall_2.ai",
     "Falling_Rocks.ai",
-    "Chest.ai",
     "Chest_SetGlobalRef.ai",
     "Wood_Plank.ai",
     "Fence_Sign.ai",
@@ -1218,8 +1219,6 @@ pub const START_PROPS: [&str; 26] = [
     "Switch_90_Setup.ai",
     "Boulder_Pebbles.ai",
     "Boulder_Chunks.ai",
-    "Chest_Lock.ai",
-    "Lock_Flash.ai",
     "StoneWall_Piece.ai",
 ];
 
@@ -2418,10 +2417,10 @@ mod tests {
     /// The TV's listing (openspec AH.27): the pickups and the breakables
     /// by name, with the creatures' and the loop's members; AG.60's start
     /// scripts on the props every tick; the first fight's Chompies,
-    /// Setup_001 and the castle wall's script off it, inert, and the Titan
-    /// boulders' its first tick alone (their cylinders and pebbles, the feat
-    /// held), so nothing takes them off; the fight's own listing AH.27's
-    /// with the four.
+    /// Setup_001, the chest and the castle wall's script off it, inert, and
+    /// the Titan boulders' its first tick alone (their cylinders and pebbles,
+    /// the feat held), so nothing takes them off; the fight's own listing
+    /// AH.27's with the four.
     #[test]
     fn the_tvs_listing_runs_the_breakables_and_no_creature_or_titan_feat() {
         let c = smash_config(Mode::Play);
@@ -2438,6 +2437,15 @@ mod tests {
             "Breakable_Stone_Wall_Castle_206(1)",
             "C:/tfb/Content/Levels/Includes/GameElement_Breakable_Wall/Scripts/Breakable_Wall_213.ai",
         ));
+        // The chest is a creature: its script and its locks' stay off.
+        for (name, script) in [
+            ("Chest(1)", "Spyro_GenericStuff/scripts/Chest.ai"),
+            ("Chest_Lock", "Treasure_Chest/Chest_Lock.ai"),
+            ("Lock_Flash", "Treasure_Chest/Lock_Flash.ai"),
+        ] {
+            let path = format!("C:/tfb/Content/Levels/Includes/{script}");
+            assert!(!c.whitelist.lists(name, &path), "{name}");
+        }
         assert_eq!(
             c.whitelist.listing(
                 "Titan_CarriableObject_Boulder_v3_(4)",

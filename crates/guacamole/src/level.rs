@@ -783,6 +783,7 @@ impl StandingProps {
                     commands.entity(e).despawn();
                     self.spawned[i] = None;
                     self.holds[i] = None;
+                    changed = true;
                 }
                 (Some(b), held) => {
                     let same_shape = self.holds[i]
@@ -814,6 +815,8 @@ impl StandingProps {
                             };
                             self.spawned[i] = prepared.map(|b| b.spawn(commands));
                             self.holds[i] = self.spawned[i].map(|_| b);
+                            // A solid rebuilt sensing or blocking counts anew.
+                            changed = true;
                         }
                     }
                 }
@@ -2610,6 +2613,8 @@ mod tests {
                 height: size[1],
                 length: size[2],
                 shape,
+                // The file's bit 3, as each solid's here.
+                interacts_with_actors: 1,
                 ..ActorSolid::default()
             }),
             ..Placed::named(obj, name, None, 4)
@@ -2739,7 +2744,7 @@ mod tests {
             shape: 4,
             ..changed.solid.unwrap()
         });
-        let mut world = world_of(&files(changed));
+        let mut world = world_of(&files(changed.clone()));
         assert!(world.take_off(gourd), "broken still");
         app.insert_resource(world);
         steps_until(&mut app, &|r| r.rebuilt > 0);
@@ -2748,6 +2753,22 @@ mod tests {
         assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
         assert!(!shown(&mut app).contains(&("prop fence".to_owned(), true)));
         assert_eq!(fence_draw(&mut app).scale, Vec3::splat(0.5));
+        assert_eq!((r.solid, r.sensors), (1, 0));
+
+        // Falling down, its script turns its `interacts with actors` off
+        // (`WoodFence_Spawner.ai`'s 'Fall Down'): the solid rebuilt sensing,
+        // stopping nothing until the script removes it.
+        changed.solid = Some(ActorSolid {
+            interacts_with_actors: 0,
+            ..changed.solid.unwrap()
+        });
+        let mut world = world_of(&files(changed));
+        assert!(world.take_off(gourd), "broken still");
+        app.insert_resource(world);
+        steps_until(&mut app, &|r| r.rebuilt > 1);
+        let r = props(&app);
+        assert_eq!((r.solid, r.sensors, r.rebuilt), (0, 1, 2));
+        assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
     }
 
     /// AG.60: a level template `props::DRAWN_SPAWNS` names draws its clones

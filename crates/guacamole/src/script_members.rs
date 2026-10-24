@@ -843,6 +843,19 @@ impl ScriptWorld {
         }
     }
 
+    /// The owner of the ground facet `h` hangs from, if it hangs from one
+    /// (Face and Move's velocity actor on its mover's ground): what a
+    /// relative facing turns it from.
+    fn ground_hung(&self, h: Handle) -> Option<Handle> {
+        self.actors
+            .get(&h)
+            .and_then(|a| self.object(Some(a.attach)))
+            .and_then(|o| match o {
+                Object::Facet(g, Facet::Ground) => Some(g),
+                _ => None,
+            })
+    }
+
     pub(crate) fn get_member(
         &mut self,
         at: &Access,
@@ -888,6 +901,20 @@ impl ScriptWorld {
             | Member::Roll
             | Member::RelativeRoll => {
                 let a = match object {
+                    // A relative facing on an actor hung from no ground turns
+                    // it by what's written (the setter, AG.60), so it reads
+                    // 0: a script's own `relative facing + k` turns it by k
+                    // (`Boulder_Pebbles.ai`, `Chest_Lock.ai`), where reading
+                    // its facing doubled it each tick. AH.145's recordings
+                    // read a relative roll's slide from 0 the same way.
+                    Some(Object::Facet(h, Facet::Orientation))
+                        if matches!(m, Member::RelativeFacing)
+                            && self.actors.contains_key(&h)
+                            && engine.hero(h).is_none()
+                            && self.ground_hung(h).is_none() =>
+                    {
+                        return Ok(Value::Float(0.0));
+                    }
                     Some(Object::Facet(h, Facet::Orientation)) => {
                         self.angles(h, engine).ok_or(HostFault::Nothing)?
                     }
@@ -1276,14 +1303,7 @@ impl ScriptWorld {
                     return Ok(());
                 }
                 let ground = match m {
-                    Member::RelativeFacing => self
-                        .actors
-                        .get(&h)
-                        .and_then(|a| self.object(Some(a.attach)))
-                        .and_then(|o| match o {
-                            Object::Facet(g, Facet::Ground) => Some(g),
-                            _ => None,
-                        }),
+                    Member::RelativeFacing => self.ground_hung(h),
                     _ => None,
                 };
                 // The ground's frame faces its owner's way, so a relative
@@ -3616,7 +3636,8 @@ mod fight_tests {
     /// speed every tick (AH.11's walkway coins stepping 2.82, -5.31 and 4.23
     /// degrees a frame), round past 360 and back below 0; its absolute
     /// facing still sets it outright, and a write of 0 leaves it (a placed
-    /// gem, no spin, holds its file's 45 degrees).
+    /// gem, no spin, holds its file's 45 degrees). Its relative facing reads
+    /// 0, so a script adding to it turns it by what it adds.
     #[test]
     fn a_relative_facing_turns_an_actor_hung_from_nothing_by_it() {
         let mut e = pit();
@@ -3654,6 +3675,29 @@ mod fight_tests {
         )
         .unwrap();
         assert_eq!(w.actor(C1).unwrap().angles.facing, 45.0);
+        // It reads 0, so a script's own `relative facing + 4` (a pebble's
+        // bounce, an ejected lock's spin) turns it by 4 a tick, its facing
+        // still read whole.
+        for want in [49.0, 53.0] {
+            let Value::Float(now) = w
+                .get_member(&access("relative facing"), Member::RelativeFacing, &mut e)
+                .unwrap()
+            else {
+                panic!("a float");
+            };
+            assert_eq!(now, 0.0);
+            w.set_member(
+                &access("relative facing"),
+                Member::RelativeFacing,
+                Value::Float(now + 4.0),
+                &mut e,
+            )
+            .unwrap();
+            assert_eq!(
+                w.get_member(&access("facing"), Member::Facing, &mut e),
+                Ok(Value::Float(want))
+            );
+        }
     }
 
     /// AG.90: an actor hung from a hero's ground and turned there by a

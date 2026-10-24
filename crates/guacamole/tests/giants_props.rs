@@ -55,6 +55,8 @@ const FRESH: [f32; 3] = [10.190_27, 43.382_67, -93.394_06];
 const AT_THE_DOOR: [f32; 3] = [14.135_68, 43.40, -83.702_29];
 /// AG.7's first run, every output of it.
 const AG7_RUN: &str = "BLUS30968/ag7-level-1792410996";
+/// AG.7's third run, whose solids carry each `CollisionInfo`'s bits.
+const AG7_BITS: &str = "BLUS30968/ag7-level-1792412070";
 
 /// Chapter 1's props, its collision mesh and where the hero starts.
 struct Chapter1 {
@@ -492,6 +494,24 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
     };
     let path = captures.join(AG7_RUN).join("solids-f0.json");
     let live: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    // Each live phantom's `CollisionInfo` bits, which AG.7's third run read
+    // at the same F0 (its solids the first's to 1e-3 m but the hero's lava
+    // and Norticus'), by name and place.
+    let path = captures.join(AG7_BITS).join("solids-f0.json");
+    let bits: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let bits_of = |name: &str, at: Vec3| {
+        bits.iter()
+            .filter(|b| b["name"] == name)
+            .min_by(|x, y| {
+                let d = |b: &Value| {
+                    let t = |i: usize| b["translation"][i].as_f64().unwrap() as f32;
+                    Vec3::new(t(0), t(1), t(2)).distance(at)
+                };
+                d(x).total_cmp(&d(y))
+            })
+            .and_then(|b| b["properties"].as_u64())
+            .unwrap_or_else(|| panic!("{name}: no bits in {AG7_BITS}"))
+    };
     let ours: Vec<(&str, &Body)> = props.holds.iter().map(|(o, b)| (name_of(*o), b)).collect();
     let (mut matched, mut differ, mut theirs_only) = (Vec::new(), Vec::new(), Vec::new());
     for s in live
@@ -529,12 +549,18 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
                 let Collider::Convex(ours) = &body.collider else {
                     panic!("{name}: a mesh")
                 };
-                if same(ours, &shape, 1e-4) && body.pose.position.distance(centre) < 1e-3 {
+                // Blocking or sensing as the live phantom's bit 3 (its
+                // `interacts with actors`) has it.
+                let blocks = bits_of(name, centre) >> 3 & 1 == 1;
+                if same(ours, &shape, 1e-4)
+                    && body.pose.position.distance(centre) < 1e-3
+                    && (body.kind == BodyKind::Kinematic) == blocks
+                {
                     matched.push(name);
                 } else {
                     differ.push(format!(
-                        "{name}: ours {ours:?} at {}, live {shape:?} at {centre}",
-                        body.pose.position
+                        "{name}: ours {ours:?} {:?} at {}, live {shape:?} blocking {blocks} at {centre}",
+                        body.kind, body.pose.position
                     ));
                 }
             }
@@ -546,7 +572,7 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
         .map(|(n, _)| *n)
         .collect();
     eprintln!(
-        "solid after the start's scripts, ours and live alike: {} {matched:?}",
+        "solid after the start's scripts, ours and live alike (shape, place and bit 3): {} {matched:?}",
         matched.len()
     );
     eprintln!("ours and live differ ({}): {differ:?}", differ.len());

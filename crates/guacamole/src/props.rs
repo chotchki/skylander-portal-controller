@@ -18,7 +18,8 @@
 //!   ([`actor_transform`], hidden while its tint is see-through:
 //!   [`actor_shows`]), its solid what they leave of it ([`actor_body`]: a
 //!   gourd `Scale.ai` shrinks, a Titan boulder made a cylinder, a spinning
-//!   coin turning).
+//!   coin turning, the walkway fence sensing once its `interacts with
+//!   actors` goes off as it falls).
 //! - What it draws ([`PropModel`]): its model off the props part, each
 //!   tfbmulti2 segment on its material as the level's draw
 //!   ([`level_scene::drawn`]), the other effects' left out (AG.24), placed by
@@ -312,11 +313,13 @@ pub fn actor_shows(a: &Actor) -> bool {
 }
 
 /// A prop's solid where its actor stands (openspec AG.60): its file's
-/// `CollisionInfo` (its own turn, solid or sensing) under the primitive,
-/// sizes and offset the scripts leave on the actor (a Titan boulder's
-/// cylinder, the cannon's smaller box), at the actor's scale, place and
-/// turn; none for a shapeless or mesh-typed one, or a prop with no
-/// `CollisionInfo`.
+/// `CollisionInfo` turn under the primitive, sizes and offset the scripts
+/// leave on the actor (a Titan boulder's cylinder, the cannon's smaller
+/// box), at the actor's scale, place and turn, solid while the actor's
+/// `interacts with actors` (the file's bit 3 until a script writes it) is
+/// on and sensing while it's off (the walkway fence's goes off as it falls
+/// down, seconds before it's removed); none for a shapeless or mesh-typed
+/// one, or a prop with no `CollisionInfo`.
 pub fn actor_body(prop: &Prop, a: &Actor) -> Option<Body> {
     let file = prop.solid.as_ref()?;
     let kind = match a.solid.shape {
@@ -342,7 +345,7 @@ pub fn actor_body(prop: &Prop, a: &Actor) -> Option<Body> {
     );
     Some(Body {
         id: BodyId(PROP_BODIES + prop.object),
-        kind: if file.solid {
+        kind: if a.solid.interacts_with_actors != 0 {
             BodyKind::Kinematic
         } else {
             BodyKind::Sensor
@@ -836,6 +839,7 @@ mod tests {
             height: s.height,
             offset: s.offset,
             shape: s.shape as i32,
+            interacts_with_actors: i32::from(s.solid),
             ..crate::script_engine::Solid::default()
         };
         assert_eq!(p.object, placement.object);
@@ -915,10 +919,23 @@ mod tests {
             .1
             .to_degrees();
         assert!((turned - 7.0).abs() < 1e-3, "{turned}");
-        assert_eq!(after.kind, BodyKind::Sensor, "the file's bit");
+        assert_eq!(after.kind, BodyKind::Sensor, "the file's bit, off");
         assert_eq!(
             actor_transform(&a).rotation,
             euler([a.angles.tilt, a.angles.facing, a.angles.roll])
+        );
+        // What blocks is the actor's `interacts with actors`, the file's
+        // bit until a script writes it: on, the trigger's solid; off (the
+        // fence falling down), the fence's senses, its shape and place kept.
+        a.solid.interacts_with_actors = 1;
+        assert_eq!(actor_body(trigger, &a).unwrap().kind, BodyKind::Kinematic);
+        let (fence, mut down) = file("fence");
+        down.solid.interacts_with_actors = 0;
+        let sensing = actor_body(fence, &down).unwrap();
+        let standing = fence.body.clone().unwrap();
+        assert_eq!(
+            (sensing.kind, sensing.collider, sensing.pose),
+            (BodyKind::Sensor, standing.collider, standing.pose)
         );
         // The fence's spawner sets its own alpha to 0.
         a.tint = 0x8080_8000;
@@ -1016,6 +1033,7 @@ mod tests {
                     height: s.height,
                     length: s.length,
                     shape: s.shape as i32,
+                    interacts_with_actors: i32::from(s.solid),
                     ..ActorSolid::default()
                 }),
                 ..Placed::named(obj, name, Some(PATH), f.activity_state)
