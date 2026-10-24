@@ -708,16 +708,15 @@ mod tests {
         }
     }
 
-    /// openspec AH.59: every fixed-step system the TV's plugins add (the
-    /// hero's, his scripts', the level's, the test hooks' mirror and the
-    /// library's script runner) sits in one of the step's sets, so the
-    /// step's order is [`guacamole::frame::ORDER`] and nothing runs outside
-    /// it.
-    #[test]
-    fn every_fixed_step_system_is_in_a_frame_set() {
-        use bevy::ecs::schedule::{ApplyDeferred, Schedules, SystemSet};
-        use bevy::prelude::{FixedUpdate, MinimalPlugins};
-        use guacamole::frame::{FramePlugin, ORDER};
+    /// The TV's plugins that run headless, which both fixed-step guards
+    /// build: the hero's, his scripts', the level's, the clones' tints
+    /// (AH.67), the test hooks' mirror and the library's script runner. A
+    /// plugin `run_tv` gains goes here too: one left out is never looked
+    /// at, so a fixed-step system it adds outside the sets passes both
+    /// guards (AH.67's tints moved into `FixedUpdate` with no set did,
+    /// before they were listed).
+    fn fixed_step_app() -> App {
+        use bevy::prelude::MinimalPlugins;
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -725,9 +724,22 @@ mod tests {
             hero::HeroPlugin,
             hero_scripts::HeroScriptsPlugin,
             level::LevelPlugin,
+            tints::CloneTintsPlugin,
             mirror::Mirror,
             guacamole::scripts::ScriptPlugin,
         ));
+        app
+    }
+
+    /// openspec AH.59: every fixed-step system the TV's plugins add
+    /// ([`fixed_step_app`]) sits in one of the step's sets, so the step's
+    /// order is [`guacamole::frame::ORDER`] and nothing runs outside it.
+    #[test]
+    fn every_fixed_step_system_is_in_a_frame_set() {
+        use bevy::ecs::schedule::{ApplyDeferred, Schedules, SystemSet};
+        use bevy::prelude::FixedUpdate;
+        use guacamole::frame::{FramePlugin, ORDER};
+        let mut app = fixed_step_app();
         assert!(app.is_plugin_added::<FramePlugin>());
         let world = app.world_mut();
         let mut fixed = world
@@ -763,19 +775,10 @@ mod tests {
     fn each_fixed_step_system_runs_in_its_phases_set() {
         use bevy::ecs::schedule::{Schedules, SystemSet};
         use bevy::ecs::system::IntoSystem;
-        use bevy::prelude::{FixedUpdate, MinimalPlugins};
+        use bevy::prelude::FixedUpdate;
         use guacamole::frame::{Frame, ORDER};
         use std::any::TypeId;
-        let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            physics::SeamPlugin,
-            hero::HeroPlugin,
-            hero_scripts::HeroScriptsPlugin,
-            level::LevelPlugin,
-            mirror::Mirror,
-            guacamole::scripts::ScriptPlugin,
-        ));
+        let mut app = fixed_step_app();
         let world = app.world_mut();
         let mut fixed = world
             .resource_mut::<Schedules>()
