@@ -13,7 +13,7 @@
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
 //! static parts they carry) and its chapter 1 another 55, its props 32
 //! more, what its scripts spawn 8 more (3 of them a spawned part fading in,
-//! AH.67), their glowing parts' level glow masks 14 and the walking
+//! AH.67), their glowing parts' level glow masks 19 and the walking
 //! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
 //! point lights on). So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
@@ -304,21 +304,30 @@ pub const SPAWNS: &[Row] = &[
 
 /// Every glowing part's level glow mask chapter 1, its props and what its
 /// scripts spawn draw (openspec AH.65, [`crate::character::Pass::LevelGlow`]),
-/// each once, as the colour key's row: the pass is the table's.
+/// each once, as the colour key's row: the pass is the table's. Every
+/// glowing segment's, not only the first material's on a key: 5 of the 19
+/// share their key with a part drawn first that doesn't glow (the
+/// waterfall's foam with its glimmer, an emerald with a watermelon's rind,
+/// the ball's splash with the eruption's lava among them).
 pub const LEVEL_GLOW: &[Row] = &[
     row(0x0000, 0x1000, A, false, false, false, 1, true, true),
     row(0x0000, 0x1000, A, false, false, true, 1, true, true),
     row(0x0001, 0x1001, A, false, true, false, 2, true, true),
     row(0x0001, 0x1001, A, false, true, true, 2, true, true),
     row(0x0001, 0x1001, ADD, false, true, false, 2, true, true),
+    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, false, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, ADD, false, false, false, 1, true, false),
     row(0x3c00, 0x3400, A, false, true, false, 1, true, true),
     row(0x3c00, 0x3400, A, true, true, false, 1, true, true),
+    row(0x3c01, 0x3401, ADD, false, false, false, 2, true, true),
     row(0x3c01, 0x3401, ADD, false, true, false, 2, true, true),
+    row(0x3c04, 0x3404, O, true, true, false, 1, true, true),
     row(0x3c04, 0x3404, A, true, true, false, 1, true, true),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
+    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
 ];
 
@@ -546,7 +555,7 @@ mod tests {
         // The level glow masks' (AH.65): rows of the colour keys whose
         // parts glow, keyed in the level's glow pass.
         for (rows, skinned, n) in [
-            (LEVEL_GLOW, false, 14),
+            (LEVEL_GLOW, false, 19),
             (HEROES_GLOW, true, 1),
             (HEROES_GLOW_STATIC, false, 0),
         ] {
@@ -562,7 +571,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 8 + 1 + 14 + 1);
+        assert_eq!(every.len(), 33 + 24 + 55 + 32 + 8 + 1 + 19 + 1);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()

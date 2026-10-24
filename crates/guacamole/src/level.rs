@@ -3189,20 +3189,7 @@ pub(crate) mod tests {
                 continue;
             }
             count += 1;
-            let mesh = meshes.get(&mesh.0).unwrap();
-            let shape = MeshShape {
-                uv_sets: [
-                    Mesh::ATTRIBUTE_UV_0,
-                    Mesh::ATTRIBUTE_UV_1,
-                    guacamole::character::mesh::ATTRIBUTE_UV_2,
-                ]
-                .into_iter()
-                .filter(|a| mesh.attribute(a.id).is_some())
-                .count() as u8,
-                tangents: mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(),
-                colours: mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some(),
-                skinned: mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some(),
-            };
+            let shape = MeshShape::of_mesh(meshes.get(&mesh.0).unwrap());
             drawn.insert(WarmKey {
                 material: materials.get(&material.0).unwrap().key,
                 mesh: shape,

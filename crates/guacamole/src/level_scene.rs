@@ -598,12 +598,15 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
 }
 
 /// Every key the drawn part draws in `scene`, each once, with the drawn
-/// material that first draws it, its glowing parts' level glow masks after
-/// (openspec AH.65, [`warm::with_level_glow`]): what the warm compiles
+/// material that first draws it, every glowing part's level glow mask after
+/// (openspec AH.65, [`warm::level_segment_keys`]): what the warm compiles
 /// before the level shows.
 pub fn keys(drawn: &Drawn, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, LevelError> {
-    let keys = warm::segment_keys(&drawn.materials, &drawn.segments, scene)?;
-    Ok(warm::with_level_glow(&drawn.materials, keys))
+    Ok(warm::level_segment_keys(
+        &drawn.materials,
+        &drawn.segments,
+        scene,
+    )?)
 }
 
 /// A level as it draws at its start: its drawn part, the world lights and

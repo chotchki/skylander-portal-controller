@@ -881,12 +881,10 @@ fn load_hero(
         Model3d::Reading(task) => match check_ready(task) {
             None => return,
             Some(Err(why)) => Model3d::Failed(why),
-            Some(Ok(read)) => match warm::keys(&read.loaded.model, &key_scene()) {
+            // His glowing parts' masks in the level too (AH.65).
+            Some(Ok(read)) => match warm::level_keys(&read.loaded.model, &key_scene()) {
                 Err(why) => Model3d::Failed(why.to_string()),
                 Ok(keys) => {
-                    // His glowing parts' masks in the level too (AH.65).
-                    let drawn = guacamole::character::attach::drawn(&read.loaded.model);
-                    let keys = warm::with_level_glow(&drawn.materials, keys);
                     if !warm.covers(keys.iter().map(|(k, _)| k)) {
                         warm.ask_hero(&read.loaded.model, &keys, Arc::new(key_scene()));
                     }

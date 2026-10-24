@@ -7,7 +7,8 @@
 //! spawn), equal to
 //! `guacamole::census`'s tables. A table that drifts prints the rows the
 //! dump gives, in the table's syntax. Every glowing part the level draws
-//! keys its level glow mask too, and every character that walks (AG.21),
+//! keys its level glow mask too (each segment's, not only the first
+//! material's on a key), and every character that walks (AG.21),
 //! drawn in the level as the hero, keys his own rows there: the level's
 //! point lights on (openspec AH.65).
 
@@ -108,9 +109,9 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
             }
         }
         if walkers::walker(load).is_some() {
-            let keys = warm::keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
             // His glowing parts' masks in the level too (AH.65).
-            let keys = warm::with_level_glow(&attach::drawn(&model).materials, keys);
+            let keys =
+                warm::level_keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
             cards
                 .heroes
                 .push((load.to_string(), keys.into_iter().map(|(k, _)| k).collect()));
@@ -426,7 +427,7 @@ fn the_census_is_the_discs() {
             hero_glow_skinned.len(),
             hero_glow_static.len()
         ),
-        (14, 1, 0, 1, 0),
+        (19, 1, 0, 1, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
 }

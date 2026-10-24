@@ -38,6 +38,26 @@ impl MeshShape {
         }
     }
 
+    /// A built mesh's shape, off the attributes [`super::segment_mesh`] and
+    /// [`super::static_mesh`] write, while its data is the main world's
+    /// (once extracted a render-world-only mesh keeps none here).
+    pub fn of_mesh(mesh: &bevy::mesh::Mesh) -> Self {
+        use bevy::mesh::Mesh;
+        Self {
+            uv_sets: [
+                Mesh::ATTRIBUTE_UV_0,
+                Mesh::ATTRIBUTE_UV_1,
+                super::mesh::ATTRIBUTE_UV_2,
+            ]
+            .into_iter()
+            .filter(|a| mesh.attribute(a.id).is_some())
+            .count() as u8,
+            tangents: mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(),
+            colours: mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some(),
+            skinned: mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some(),
+        }
+    }
+
     /// One triangle of this shape facing +Z, its colours half grey, on
     /// joint 0 when it's skinned: what the warm draws a key with.
     pub fn triangle(&self, material: u16) -> Segment {
@@ -100,7 +120,59 @@ pub fn segment_keys(
     segments: &[Segment],
     scene: &Scene,
 ) -> Result<Vec<(WarmKey, usize)>, WarmError> {
-    let materials = materials
+    let by_material = material_keys(materials, scene)?;
+    let mut keys: Vec<(WarmKey, usize)> = Vec::new();
+    for (i, s) in segments.iter().enumerate() {
+        let (key, index) = segment_key(&by_material, i, s)?;
+        push_once(&mut keys, key, index);
+    }
+    Ok(keys)
+}
+
+/// Every key `model` draws in a level's `scene` ([`level_segment_keys`]):
+/// the walking hero's, his attachments' after his own.
+pub fn level_keys(model: &Model, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, WarmError> {
+    let drawn = super::attach::drawn(model);
+    let mut segments = model.segments.clone();
+    segments.extend(super::attach::segments(model, &drawn).into_iter().flatten());
+    level_segment_keys(&drawn.materials, &segments, scene)
+}
+
+/// [`segment_keys`]' keys and, after them, every glowing segment's key
+/// again in a level's glow pass ([`Pass::LevelGlow`], openspec AH.65), each
+/// once, with its material's index: what a level's parts, its props, its
+/// clones and its hero draw, their glowing parts' masks laid into the
+/// frame's alpha. Each segment counts, not only the first on its key: two
+/// materials can share a key where only the later one glows (chapter 1's
+/// waterfall foam behind its glimmer, the ball's splash behind the
+/// eruption's lava), and the TV masks every glowing part it draws.
+pub fn level_segment_keys(
+    materials: &[model::Material],
+    segments: &[Segment],
+    scene: &Scene,
+) -> Result<Vec<(WarmKey, usize)>, WarmError> {
+    let by_material = material_keys(materials, scene)?;
+    let mut keys: Vec<(WarmKey, usize)> = Vec::new();
+    let mut glows: Vec<(WarmKey, usize)> = Vec::new();
+    for (i, s) in segments.iter().enumerate() {
+        let (key, index) = segment_key(&by_material, i, s)?;
+        push_once(&mut keys, key, index);
+        if materials[index].params.glow != model::Glow::None {
+            let mut glow = key;
+            glow.material.pass = Pass::LevelGlow;
+            push_once(&mut glows, glow, index);
+        }
+    }
+    keys.extend(glows);
+    Ok(keys)
+}
+
+/// Each material's key in `scene`, built as the TV builds it.
+fn material_keys(
+    materials: &[model::Material],
+    scene: &Scene,
+) -> Result<Vec<MaterialKey>, WarmError> {
+    materials
         .iter()
         .map(|m| {
             CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, |_| Handle::default())
@@ -110,53 +182,32 @@ pub fn segment_keys(
                     error,
                 })
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut keys: Vec<(WarmKey, usize)> = Vec::new();
-    for (i, s) in segments.iter().enumerate() {
-        let index = usize::from(s.material);
-        let material = *materials.get(index).ok_or(WarmError::Segment {
-            segment: i,
-            material: s.material,
-            materials: materials.len(),
-        })?;
-        let key = WarmKey {
-            material,
-            mesh: MeshShape::of(s),
-        };
-        if !keys.iter().any(|(k, _)| *k == key) {
-            keys.push((key, index));
-        }
-    }
-    Ok(keys)
+        .collect()
 }
 
-/// `keys` and, after them, each one whose material glows again in a level's
-/// glow pass ([`Pass::LevelGlow`], openspec AH.65), each once, with the
-/// material's index: what a level's parts, its props, its clones and its
-/// hero draw, their glowing parts' masks laid into the frame's alpha.
-pub fn with_level_glow(
-    materials: &[model::Material],
-    mut keys: Vec<(WarmKey, usize)>,
-) -> Vec<(WarmKey, usize)> {
-    let glows: Vec<(WarmKey, usize)> = keys
-        .iter()
-        .filter(|(_, m)| {
-            materials
-                .get(*m)
-                .is_some_and(|m| m.params.glow != model::Glow::None)
-        })
-        .map(|(k, m)| {
-            let mut k = *k;
-            k.material.pass = Pass::LevelGlow;
-            (k, *m)
-        })
-        .collect();
-    for g in glows {
-        if !keys.iter().any(|(k, _)| *k == g.0) {
-            keys.push(g);
-        }
+/// Segment `i`'s key on its material's, with that material's index.
+fn segment_key(
+    by_material: &[MaterialKey],
+    i: usize,
+    s: &Segment,
+) -> Result<(WarmKey, usize), WarmError> {
+    let index = usize::from(s.material);
+    let material = *by_material.get(index).ok_or(WarmError::Segment {
+        segment: i,
+        material: s.material,
+        materials: by_material.len(),
+    })?;
+    let key = WarmKey {
+        material,
+        mesh: MeshShape::of(s),
+    };
+    Ok((key, index))
+}
+
+fn push_once(keys: &mut Vec<(WarmKey, usize)>, key: WarmKey, index: usize) {
+    if !keys.iter().any(|(k, _)| *k == key) {
+        keys.push((key, index));
     }
-    keys
 }
 
 /// A one-triangle model drawing `material` on `shape`, under one joint at
@@ -291,70 +342,112 @@ mod tests {
         m
     }
 
-    /// AH.65: a glowing material's keys come again in a level's glow pass,
-    /// each once, after the colour pass's, with its material's index; a
-    /// material without a glow attribute keys none.
+    /// AH.65: every glowing segment's key comes again in a level's glow
+    /// pass, each once, after the colour pass's, with its material's index;
+    /// a material without a glow attribute keys none. A key whose first
+    /// material doesn't glow and whose later one does keys its mask too
+    /// (the waterfall's foam behind its glimmer): the TV masks that part,
+    /// so the census must.
     #[test]
-    fn the_glowing_parts_keys_come_again_in_the_level_glow_pass() {
-        let shape = MeshShape {
+    fn every_glowing_segments_key_comes_again_in_the_level_glow_pass() {
+        let glowing = |m: model::Material, glow: Glow| model::Material {
+            params: Params { glow, ..m.params },
+            ..m
+        };
+        let blended = RenderStates {
+            blend: Blend::Alpha,
+            depth_write: false,
+            ..OPAQUE
+        };
+        let materials = vec![
+            material("glimmer", 0x1C, OPAQUE),
+            glowing(material("foam", 0x1C, OPAQUE), Glow::Amount(64)),
+            glowing(material("halo", 0x1C, blended), Glow::LayerAlpha),
+            material("rim", 0x04, OPAQUE),
+        ];
+        let plain = MeshShape {
             uv_sets: 1,
             tangents: true,
             colours: false,
             skinned: false,
         };
-        let key = |pixel: u32, pass: Pass| WarmKey {
+        let coloured = MeshShape {
+            colours: true,
+            ..plain
+        };
+        let on = |material: u16, shape: MeshShape| shape.triangle(material);
+        let segments = vec![
+            on(0, plain),
+            on(1, plain),
+            on(2, plain),
+            on(3, plain),
+            on(1, coloured),
+        ];
+        let scene = fogged();
+        let key = |m: usize, shape: MeshShape, pass: Pass| WarmKey {
             material: MaterialKey {
-                shader: super::super::key::ShaderKey::new(pixel, pixel).unwrap(),
-                states: super::super::key::StateKey::OPAQUE,
                 pass,
+                ..CharacterMaterial::from_ir(&materials[m], &scene, ShadowLookup::NONE, |_| {
+                    Handle::default()
+                })
+                .unwrap()
+                .key
             },
             mesh: shape,
         };
-        let material = |glow: model::Glow| model::Material {
-            name: "m".into(),
-            pixel: model::Mask { base: 0, ignore: 0 },
-            vertex: model::Mask { base: 0, ignore: 0 },
-            textures: Vec::new(),
-            params: model::Params {
-                fixed_alpha: [-1.0; 4],
-                layer1_extra: [1.0; 4],
-                layer2_extra: None,
-                layer2_blend: None,
-                layer3_blend: None,
-                layer4_blend: [0.0; 4],
-                layer4_values: [0.0; 4],
-                material_tint: [128; 4],
-                glow,
-            },
-            states: model::RenderStates {
-                blend: model::Blend::Opaque,
-                depth_write: true,
-                two_sided: false,
-                alpha_test: None,
-            },
-            scrolls: Vec::new(),
-            tracks: Vec::new(),
-        };
-        let materials = [
-            material(model::Glow::Amount(64)),
-            material(model::Glow::None),
-            material(model::Glow::LayerAlpha),
-        ];
-        let keys = vec![
-            (key(0x400, Pass::Colour), 0),
-            (key(0x404, Pass::Colour), 1),
-            (key(0x408, Pass::Colour), 2),
-            (key(0x400, Pass::Colour), 0),
-        ];
-        let out = with_level_glow(&materials, keys.clone());
-        assert_eq!(out[..4], keys[..]);
+        // The glimmer and the foam share a key.
+        assert_eq!(key(0, plain, Pass::Colour), key(1, plain, Pass::Colour));
+        let out = level_segment_keys(&materials, &segments, &scene).unwrap();
         assert_eq!(
-            out[4..],
+            out,
             [
-                (key(0x400, Pass::LevelGlow), 0),
-                (key(0x408, Pass::LevelGlow), 2)
+                (key(0, plain, Pass::Colour), 0),
+                (key(2, plain, Pass::Colour), 2),
+                (key(3, plain, Pass::Colour), 3),
+                (key(1, coloured, Pass::Colour), 1),
+                (key(1, plain, Pass::LevelGlow), 1),
+                (key(2, plain, Pass::LevelGlow), 2),
+                (key(1, coloured, Pass::LevelGlow), 1),
             ]
         );
+        // The colour pass's are segment_keys' own.
+        assert_eq!(
+            out[..4],
+            segment_keys(&materials, &segments, &scene).unwrap()[..]
+        );
+        // A model's in a level: its segments' (no attachments here).
+        let m = model(materials.clone(), segments.clone());
+        assert_eq!(level_keys(&m, &scene).unwrap(), out);
+    }
+
+    /// A built mesh reads back as the shape it was built from: what the TV
+    /// keys a drawn part's mask on (AH.65).
+    #[test]
+    fn a_built_mesh_reads_back_as_its_shape() {
+        for uv_sets in 1..=3 {
+            for (tangents, colours, skinned) in [
+                (true, false, false),
+                (true, true, false),
+                (false, true, false),
+                (true, false, true),
+                (true, true, true),
+            ] {
+                let shape = MeshShape {
+                    uv_sets,
+                    tangents,
+                    colours,
+                    skinned,
+                };
+                let triangle = shape.triangle(0);
+                let mesh = if skinned {
+                    segment_mesh(&triangle)
+                } else {
+                    static_mesh(&triangle)
+                }
+                .unwrap();
+                assert_eq!(MeshShape::of_mesh(&mesh), shape);
+            }
+        }
     }
 
     #[test]
