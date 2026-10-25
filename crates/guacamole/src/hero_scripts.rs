@@ -103,6 +103,8 @@ use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
     self, Files, ScriptClone, ScriptRuntime, ScriptWorld, WalkerScripts, WorldHost, smash_config,
 };
+#[cfg(feature = "unmodel")]
+use guacamole::unmodel::{UNMODEL_KEY, Unmodel, take_out};
 use guacamole::walkers::{self, Fallback, Kept, Movement, Origin, Stage};
 use serde::Serialize;
 use tracing::{info, warn};
@@ -298,12 +300,21 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         true => guacamole::scripts::fight_config(Mode::Play),
         false => smash_config(Mode::Play),
     };
+    #[allow(unused_mut)]
+    let mut config = scripts::with_walkers(config, &source.walkers);
+    #[cfg(feature = "unmodel")]
+    if let Some(Unmodel(request)) = world.get_resource::<Unmodel>() {
+        match take_out(&mut config, request) {
+            Ok(name) => info!("{UNMODEL_KEY}: {name} taken out of the run's registry"),
+            Err(why) => tracing::error!("{UNMODEL_KEY}: {why}; the run installed unchanged"),
+        }
+    }
     scripts::install_with(
         world,
         source.program.clone(),
         &source.files,
         &source.order,
-        scripts::with_walkers(config, &source.walkers),
+        config,
     );
     fresh_camera(world, source);
     let Some(level) = source.level_unit() else {

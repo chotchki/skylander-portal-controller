@@ -156,6 +156,8 @@ guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # stop at `Minion.ai` #842, the fall-back's subject since AG.160 modelled the
 # member it stopped on.
 guac-script = { path = "../guac-script", features = ["test-fixtures"] }
+# Turns `unmodel` on for the tests, whose lib is built without `test-hooks`.
+guacamole = { path = ".", features = ["unmodel"] }
 # The live GameController check prints the backend's own log lines.
 tracing-subscriber = { workspace = true }
 
@@ -178,7 +180,11 @@ default = ["dev-tools"]
 # a console window on Windows.
 dev-tools = ["guac-server/dev-tools"]
 # The /api/_test/* endpoints for the e2e harness. Never in release builds.
-test-hooks = ["dev-tools", "guac-server/test-hooks"]
+test-hooks = ["dev-tools", "guac-server/test-hooks", "unmodel"]
+# `GUAC_TEST_UNMODEL` (AG.221): a member taken out of the TV's run, so a walker
+# stops in play on the dump. On under `test-hooks` and in test builds (the
+# dev-dependency on this crate below); the key is read in `test-hooks` only.
+unmodel = ["guac-script/test-fixtures"]
 # AB.7's spike, kept out of `cargo test`: `cargo run --release -p guacamole
 # --features video-spike --example video_spike` (the TV pass in
 # openspec/backlog.md runs it on the TV, ex-AB.16).

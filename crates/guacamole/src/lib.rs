@@ -24,5 +24,7 @@ pub mod props;
 pub mod script_engine;
 mod script_members;
 pub mod scripts;
+#[cfg(feature = "unmodel")]
+pub mod unmodel;
 pub mod viewport;
 pub mod walkers;

@@ -2688,6 +2688,12 @@ pub enum WalkerFault {
     /// On a member nothing models, [`WALKER_FAULT_TICK`] ticks in, with its
     /// setup done and its mover running.
     InPlay,
+    /// [`InPlay`](Self::InPlay) on a member the registry models instead:
+    /// [`WALKER_FAULT_TICK`] ticks in, with its setup done and its mover
+    /// running, it sets `(namespace, name)` to 1. It runs on through with
+    /// the member registered and stops on it once it is taken out of the
+    /// run's registry (openspec AG.221's `GUAC_TEST_UNMODEL`).
+    InPlayOn(&'static str, &'static str),
     /// Never, but its mover asks whether a point of its own is on screen
     /// against the gameplay camera (`positionmeasurement.collision` with
     /// `viewportinfo.default`, AH.107's asks), its answer gating nothing:
@@ -3036,12 +3042,17 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                 );
                 w.end_block(first);
                 w.end_block(call);
-                if fault == WalkerFault::InPlay {
+                let member = match fault {
+                    WalkerFault::InPlay => Some(("synthetic", "unmodelled")),
+                    WalkerFault::InPlayOn(namespace, name) => Some((namespace, name)),
+                    _ => None,
+                };
+                if let Some((namespace, name)) = member {
                     w.inc(&[El::Local(ticks)]);
                     let at = w.int(WALKER_FAULT_TICK);
                     let reached = w.check(&[El::Local(ticks)], 1, at);
                     let one = w.int(1);
-                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                    w.set(&[El::Member(namespace, name)], one);
                     w.end_block(reached);
                 }
                 w.end_block(p);
