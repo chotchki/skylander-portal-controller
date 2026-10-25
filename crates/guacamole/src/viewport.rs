@@ -23,7 +23,15 @@
 //!   shake);
 //! - its roll turns the picture about the way it looks, clockwise as seen
 //!   from the eye for a positive roll; level 213's camera writes 0 every
-//!   frame, so no roll is measured.
+//!   frame, so no roll is measured;
+//! - an actor is on screen (`positionmeasurement.collision` against it,
+//!   openspec AH.150) when its pivot is in front of the eye, no farther
+//!   along the view than the far clip, and lands inside the picture: the
+//!   pivot standing for the actor where the engine may test its bounds (one
+//!   whose pivot is just off the edge, its body showing, reads off here),
+//!   the picture's sides set by the 16:9 screen above (only the shape
+//!   counts, not the pixels) and its top and bottom by the measured field
+//!   of view. No oracle read of the test exists.
 
 use bevy::math::{Quat, Vec3};
 use bevy::transform::components::Transform;
@@ -139,6 +147,18 @@ impl Viewport {
             (1.0 - ny) * 0.5 * SCREEN_HEIGHT,
         ))
     }
+
+    /// Whether `p` is on screen (the module docs' hypothesis): in front of
+    /// the eye, within the far clip along the view, inside the picture.
+    pub fn shows(&self, p: Vec3) -> bool {
+        let depth = (p - self.eye).dot(self.forward());
+        if depth > self.far() {
+            return false;
+        }
+        self.project(p).is_some_and(|(x, y)| {
+            (0.0..=SCREEN_WIDTH).contains(&x) && (0.0..=SCREEN_HEIGHT).contains(&y)
+        })
+    }
 }
 
 /// The picture's height, degrees, for a field of view of `fov` (the module
@@ -225,6 +245,46 @@ mod tests {
         assert_eq!(pack_screen(640.0, 360.0), (640 * 16) << 16 | (360 * 16));
         assert_eq!(pack_screen(-1.0, 0.5) >> 16, u32::from((-16i16) as u16));
         assert_eq!(pack_screen(5000.0, 0.0) >> 16, 0x7FFF);
+    }
+
+    /// AH.150's on-screen test: what it looks at is on screen; behind the
+    /// eye, past the far clip, past either side or the top it isn't; the
+    /// sides are the 16:9 picture's, wider than its height.
+    #[test]
+    fn a_point_is_on_screen_inside_the_picture_and_the_far_clip() {
+        let v = Viewport {
+            eye: Vec3::new(1.0, 2.0, 3.0),
+            angles: Angles {
+                facing: 15.0,
+                tilt: -23.36,
+                roll: 0.0,
+            },
+            far_clip: 100.0,
+            ..Viewport::default()
+        };
+        let at = |d: f32| v.eye + v.forward() * d;
+        assert!(v.shows(at(10.0)));
+        assert!(!v.shows(at(-10.0)), "behind the eye");
+        // 100 ft is 30.48 m.
+        assert!(v.shows(at(30.4)) && !v.shows(at(30.6)), "the far clip");
+        let right = v.rotation() * Vec3::X;
+        let up = v.rotation() * Vec3::Y;
+        let half_y = (v.fov_y() * 0.5).to_radians().tan();
+        let half_x = half_y * SCREEN_WIDTH / SCREEN_HEIGHT;
+        let side = |k: f32| at(10.0) + right * (10.0 * half_x * k);
+        assert!(
+            v.shows(side(0.99)) && !v.shows(side(1.01)),
+            "the right side"
+        );
+        assert!(
+            v.shows(side(-0.99)) && !v.shows(side(-1.01)),
+            "the left side"
+        );
+        let top = |k: f32| at(10.0) + up * (10.0 * half_y * k);
+        assert!(v.shows(top(0.99)) && !v.shows(top(1.01)), "the top");
+        // Past the picture's height but inside its width: off at the top,
+        // on at the side.
+        assert!(!v.shows(top(1.5)) && v.shows(side(1.5 * half_y / half_x)));
     }
 
     /// Handed back, the scripts don't take it again.

@@ -3560,6 +3560,7 @@ impl Vm {
             member,
             other_point: other,
             via,
+            op: self.run.at_op,
         }
     }
 

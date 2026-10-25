@@ -642,6 +642,10 @@ pub(crate) struct GaitStep {
     /// The step's edge probe held him, so the speed it read is his walk's
     /// vertical part alone (AG.58).
     pub held: bool,
+    /// The way he faces as the step left him, degrees in [0, 360): his
+    /// scripts' heading on his scripts, the controller's on the stand-in;
+    /// what `hero.heading` reports (openspec AG.188).
+    pub facing: f32,
 }
 
 /// The hero's locomotion step by step, oldest first; a hero coming in
@@ -693,9 +697,9 @@ pub(crate) fn log_gaits(
     time: Res<Time>,
     mirror: Res<TvMirror>,
     input: Option<Res<HeroInput>>,
-    heroes: Query<&HeroGaits>,
+    heroes: Query<(&HeroGaits, &HeroBody)>,
 ) {
-    let Some(g) = heroes.iter().next() else {
+    let Some((g, body)) = heroes.iter().next() else {
         return;
     };
     let l = &g.locomotion;
@@ -720,6 +724,7 @@ pub(crate) fn log_gaits(
             air: l.air().name(),
             moving: l.moving(),
             held: l.held(),
+            facing: crate::hero::heading(&body.hero),
         });
 }
 
@@ -1632,6 +1637,7 @@ mod tests {
             air: "ground",
             moving: n > 1,
             held: false,
+            facing: 0.0,
         };
         let get = |since: &'static str| {
             let routes = routes::<()>(&mirror);
@@ -1671,6 +1677,74 @@ mod tests {
             (1.into(), "walk".into())
         );
         assert_eq!(json["steps"].as_array().unwrap().len(), 1);
+    }
+
+    /// AG.188: a step of the gait log carries the way he faces as the step
+    /// left him, the heading `hero.heading` reports: two steps into a turn
+    /// to his right (24° a step at Eruptor's 1440°/s), 312°, short of the
+    /// stick's 270°; in the log and in `/api/_test/tv/gaits`' JSON.
+    #[tokio::test]
+    async fn a_gait_step_carries_his_facing_after_a_turn() {
+        use bevy::ecs::system::RunSystemOnce;
+        use guac_motion::hero::Input;
+        use guac_motion::locomotion::{Frame, Gaits, Locomotion, Loops};
+        use guac_motion::parry::ParryWorld;
+        use guac_motion::scenarios;
+        use tower::ServiceExt;
+        let ground = scenarios::bodies(&scenarios::open_ground(), &[]);
+        let parry = ParryWorld::new(&ground).unwrap();
+        let mut hero = scenarios::eruptor(&parry, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        let right = Input::stick(scenarios::stick(1.0, -90.0), 0.0);
+        let mirror = TvMirror::default();
+        let mut app = App::new();
+        app.insert_resource(mirror.clone())
+            .init_resource::<Time>()
+            .insert_resource(HeroInput(right));
+        let loops = Loops {
+            idle: 2.0,
+            walk: Some(1.0),
+            run: Some(0.8),
+            fall: None,
+        };
+        let mut gaits = HeroGaits::new(Locomotion::new(Gaits::ERUPTOR, loops));
+        let e = app.world_mut().spawn_empty().id();
+        for _ in 0..2 {
+            hero.step(&parry, &right, 1.0 / 60.0, &[]);
+            gaits.locomotion.step(1.0 / 60.0, Frame::of(&hero));
+            app.world_mut().entity_mut(e).insert((
+                HeroBody {
+                    before: hero.pivot,
+                    hero: hero.clone(),
+                    exclude: Vec::new(),
+                },
+                gaits.clone(),
+            ));
+            app.world_mut().run_system_once(log_gaits).unwrap();
+        }
+        let want = crate::hero::heading(&hero);
+        assert!((want - 312.0).abs() < 1e-3, "two steps in: {want}");
+        let steps = mirror.5.lock().unwrap().since(0).steps;
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[1].facing, want);
+        assert!(
+            (steps[0].facing - 336.0).abs() < 1e-3,
+            "{}",
+            steps[0].facing
+        );
+        let response = routes::<()>(&mirror)
+            .oneshot(
+                axum::http::Request::get("/api/_test/tv/gaits?since=0")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["steps"][1]["facing"], serde_json::json!(want));
     }
 
     /// AG.20: `/api/_test/tv/pad` takes one act a body for pads 0 to 3 and

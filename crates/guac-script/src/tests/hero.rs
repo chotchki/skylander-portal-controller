@@ -15,11 +15,14 @@ const FLOAT: &str = "FloatMeasurement";
 struct Members {
     values: HashMap<MemberId, Value>,
     reads: u32,
+    /// The op each read came with ([`Access::op`]).
+    ops: Vec<Option<OpId>>,
 }
 
 impl Host for Members {
     fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
         self.reads += 1;
+        self.ops.push(at.op);
         if at.member == MemberId::named("test", "distance") {
             return Ok(Value::Float(
                 if at.other_point == Some(Value::Entity(HANDLE)) {
@@ -350,4 +353,42 @@ fn an_embedders_call_in_a_placements_name_stops_nothing() {
             .unwrap_err();
         assert_eq!(vm.stopped(pm).cloned(), before, "{mode:?}");
     }
+}
+
+/// AH.150: each member read comes with the op reading it, so a host can
+/// answer one asker apart from another: two `set`s reading `my.test.speed`
+/// are two ops, each the op at its own position in the list.
+#[test]
+fn a_member_read_comes_with_the_op_reading_it() {
+    let p = program(|w| {
+        let (a, b) = (var(w, "a"), var(w, "b"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                for v in [a, b] {
+                    let speed = w.rhs(
+                        FLOAT,
+                        &[
+                            El::Member("optoplevelbehavior", "my"),
+                            El::Member("test", "speed"),
+                        ],
+                    );
+                    w.set(&[El::Local(v)], speed);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p.clone(), config());
+    let id = vm.add(HANDLE, "Hero", 0);
+    let mut host = Members::default();
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    let sets: Vec<OpId> = p.scripts[0]
+        .ops
+        .iter()
+        .copied()
+        .filter(|&o| matches!(p.ops[o as usize], Ins::SetValue { .. }))
+        .collect();
+    assert_eq!(sets.len(), 2);
+    assert_eq!(host.ops, vec![Some(sets[0]), Some(sets[1])]);
 }

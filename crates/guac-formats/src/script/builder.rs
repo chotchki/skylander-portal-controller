@@ -2218,6 +2218,10 @@ pub const WALKER_MOVEMENT: [(&str, f32); 7] = [
 /// The tick [`WalkerFault::InPlay`]'s minion reaches the member nothing
 /// models.
 pub const WALKER_FAULT_TICK: i32 = 5;
+
+/// How far behind his start [`WalkerFault::GatedAsk`]'s walker puts the
+/// gameplay camera, feet.
+pub const WALKER_VIEW_BACK: f32 = 20.0;
 /// The character's shutdown macro [`attack`]'s deactivation runs for the
 /// hero leaving (a stub there; openspec AH.165), which
 /// [`WalkerFault::InDeactivation`]'s walker defines.
@@ -2249,9 +2253,15 @@ pub enum WalkerFault {
     InPlay,
     /// Never, but its mover asks whether a point of its own is on screen
     /// against the gameplay camera (`positionmeasurement.collision` with
-    /// `viewportinfo.default`, AH.107's asks): the host answers every point
-    /// "on screen", so the TV doesn't run it.
+    /// `viewportinfo.default`, AH.107's asks), its answer gating nothing:
+    /// not read, the TV doesn't run it; read cosmetic (AH.150), it does.
     Asks,
+    /// Never, but the ask gates his walk (openspec AH.150): his STARTUP
+    /// places the gameplay camera as a camera's script would,
+    /// [`WALKER_VIEW_BACK`] feet behind where he stands looking along +z,
+    /// level, and each tick he stands (his walk set to nothing, the tick
+    /// ended) while his own point is off screen to it.
+    GatedAsk,
     /// Never, but his definition defines no minion (no `Portal - Define
     /// Minion` call): nothing joins as him.
     NoMinion,
@@ -2390,6 +2400,25 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     ],
                     scale,
                 );
+                if fault == WalkerFault::GatedAsk {
+                    // The gameplay camera, as a camera's script leaves it.
+                    let view = El::Member("viewportinfo", "default");
+                    camera::put_at(w, &[view], &[me]);
+                    let (len, head, pitch) =
+                        (w.float(WALKER_VIEW_BACK), w.float(180.0), w.float(0.0));
+                    camera::displace_by(w, &[view], 0, len, head, pitch);
+                    for name in ["facing", "tilt"] {
+                        let level = w.float(0.0);
+                        w.set(
+                            &[
+                                view,
+                                El::Member("matrixmeasurement", "orientation"),
+                                El::Member("orientationmeasurement", name),
+                            ],
+                            level,
+                        );
+                    }
+                }
             },
             |w| {
                 let stops = match fault {
@@ -2417,6 +2446,29 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
             },
             |w| {
                 let p = w.behaviour("default");
+                if fault == WalkerFault::GatedAsk {
+                    // Off screen he stands: his walk nothing, his tick over.
+                    let me = El::Member("optoplevelbehavior", "my");
+                    let lhs = w.value(&[me, El::Member("positionmeasurement", "collision")]);
+                    let at = w.reference(&[El::Member("viewportinfo", "default")], None);
+                    w.refer(lhs, 0x18, at);
+                    let zero = w.int(0);
+                    let (c, o) = w.open(Class::CheckValue, "if");
+                    w.refer(o, 0x1C, lhs);
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, zero);
+                    let (len, head, pitch) = (w.float(0.0), w.float(0.0), w.float(0.0));
+                    camera::displace_by(
+                        w,
+                        &[me, El::Member("actorinfo", "velocity")],
+                        1,
+                        len,
+                        head,
+                        pitch,
+                    );
+                    w.flow_end();
+                    w.end_block(c);
+                }
                 if fault == WalkerFault::Asks {
                     let me = El::Member("optoplevelbehavior", "my");
                     let lhs = w.value(&[me, El::Member("positionmeasurement", "collision")]);

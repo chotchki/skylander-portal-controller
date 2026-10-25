@@ -379,6 +379,10 @@ pub struct ScriptWorld {
     pub(crate) viewport: Handle,
     /// What the camera's scripts leave the viewport as (openspec AG.28).
     pub(crate) view: crate::viewport::Viewport,
+    /// The on-screen asks answered off that view while the scripts drive
+    /// it, by op (openspec AH.150's gating reads); every other ask reads on
+    /// screen (AH.20; stand-in ledger: `on-screen`).
+    pub(crate) view_asks: std::collections::HashSet<guac_script::OpId>,
     pub(crate) objs: Objects,
     pub(crate) sequences: Vec<Sequence>,
     /// Each template's animation palette: every slot's clip length,
@@ -465,6 +469,7 @@ impl ScriptWorld {
             portal: objects[6],
             viewport,
             view: crate::viewport::Viewport::default(),
+            view_asks: Default::default(),
             objs,
             sequences: Vec::new(),
             palettes: HashMap::new(),
@@ -498,6 +503,19 @@ impl ScriptWorld {
     /// viewport (openspec AG.28).
     pub fn hand_back_view(&mut self) {
         self.view.source = crate::viewport::Source::HandedBack;
+    }
+
+    /// The on-screen asks, by op, answered off the camera's scripts' view
+    /// while they drive it (openspec AH.150: the asks read as gating play,
+    /// [`crate::on_screen::answered`]); the rest read on screen (AH.20).
+    pub fn answer_from_view(&mut self, asks: impl IntoIterator<Item = guac_script::OpId>) {
+        self.view_asks = asks.into_iter().collect();
+    }
+
+    /// Whether the ask at `op` is answered off the camera's scripts' view
+    /// ([`ScriptWorld::answer_from_view`]).
+    pub fn answers_from_view(&self, op: guac_script::OpId) -> bool {
+        self.view_asks.contains(&op)
     }
 
     /// The placements the VM leaves inert: a script waking one is listed.
@@ -1424,22 +1442,41 @@ pub struct WalkerScripts {
     pub template: Option<Obj>,
     /// The points his scripts ask against the gameplay viewport that
     /// neither Eruptor's run nor the level's reach already (AH.107's
-    /// readers): the host answers every such ask "on screen", so a walker
-    /// with any keeps his card until the camera answers them.
+    /// readers) and no one has read for what they gate yet (AH.150's
+    /// [`crate::on_screen::READ`]): the host would answer each "on screen",
+    /// so a walker with any keeps his card.
     pub asks: usize,
+    /// Those new asks read as gating nothing in play (AH.150): the host's
+    /// every-point answer stands for them, holding no one.
+    pub cosmetic: usize,
+    /// Those new asks read as gating play (AH.150): the host answers them
+    /// off the gameplay camera's view, holding no one.
+    pub answered: usize,
 }
 
-/// The file name of a script's source path.
-fn file_name(path: &str) -> &str {
+/// The file name of a script's source path, either separator.
+pub(crate) fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-/// Each of `walkers`' scripts on the whitelist and the new asks they reach.
+/// Each of `walkers`' scripts on the whitelist and the new asks they reach,
+/// each counted by the disc's reads ([`crate::on_screen::READ`]).
 pub fn walker_scripts(
     program: &Program,
     files: &Files,
     walkers: &[(String, u16)],
 ) -> Vec<WalkerScripts> {
+    walker_scripts_reading(program, files, walkers, crate::on_screen::READ)
+}
+
+/// [`walker_scripts`] with the asks counted by `reads`.
+pub fn walker_scripts_reading(
+    program: &Program,
+    files: &Files,
+    walkers: &[(String, u16)],
+    reads: &[crate::on_screen::Read],
+) -> Vec<WalkerScripts> {
+    use crate::on_screen::{Verdict, read_of};
     use std::collections::BTreeSet;
     // What the TV's own run reaches, AH.107's count: not a walker's to add.
     let base = smash_config(Mode::Play).whitelist;
@@ -1481,13 +1518,20 @@ pub fn walker_scripts(
             }
             names.sort_by_key(|n| n.to_ascii_lowercase());
             names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+            let new: Vec<Option<Verdict>> = asks
+                .difference(&known)
+                .map(|a| read_of(program, a, reads).map(|r| r.verdict))
+                .collect();
+            let count = |v: Option<Verdict>| new.iter().filter(|x| **x == v).count();
             WalkerScripts {
                 load_file: load.clone(),
                 unit: *unit,
                 scripts: names,
                 minion,
                 template: template.map(|t| t.obj),
-                asks: asks.difference(&known).count(),
+                asks: count(None),
+                cosmetic: count(Some(Verdict::Cosmetic)),
+                answered: count(Some(Verdict::Gates)),
             }
         })
         .collect()
@@ -1549,10 +1593,10 @@ fn defined_minion<'f>(
         })
 }
 
-/// `config` with the scripts of every walker that asks nothing new of the
-/// gameplay viewport listed to run every tick (AG.27); a walker that does,
-/// or whose definition names no minion, stays off the whitelist, so what
-/// it would wake stays inert.
+/// `config` with the scripts of every walker whose new asks of the gameplay
+/// viewport are all read (AG.27, AH.150) listed to run every tick; a walker
+/// with one not read yet, or whose definition names no minion, stays off
+/// the whitelist, so what it would wake stays inert.
 pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
     if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
         for w in walkers.iter().filter(|w| w.asks == 0 && w.minion.is_some()) {
@@ -2293,6 +2337,12 @@ pub fn install_with(
     // What a listed script wakes off the whitelist is logged and listed
     // (decision 6), as the headless runs list it.
     script_world.set_inert(vm.inert());
+    // The asks read as gating play, answered off the camera's view
+    // (openspec AH.150).
+    script_world.answer_from_view(crate::on_screen::answered(
+        vm.program(),
+        crate::on_screen::READ,
+    ));
     world.insert_resource(script_world);
     world.insert_resource(ScriptRuntime {
         vm,
@@ -2389,6 +2439,7 @@ mod tests {
             member: MemberId::named(namespace, name),
             other_point: None,
             via: None,
+            op: None,
         }
     }
 
