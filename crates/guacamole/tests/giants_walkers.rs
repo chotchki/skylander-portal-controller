@@ -1539,8 +1539,8 @@ fn every_walkers_stand_in_gaits_are_his_own_locomotion_states() {
         let g = walkers::ScriptedGaits::of(
             &states,
             |slot| palette.clip(slot as u16).map(|c| c.name.as_str()),
-            slot_name(&hero.locomotion.walk),
-            slot_name(&hero.locomotion.run),
+            at(&hero.locomotion.walk).map(|(n, s)| (n, s.map(u32::from))),
+            at(&hero.locomotion.run).map(|(n, s)| (n, s.map(u32::from))),
         )
         .unwrap_or_else(|| panic!("{load}: no walk or run of his scripts' {states:?}"));
         println!(
@@ -1570,6 +1570,137 @@ fn every_walkers_stand_in_gaits_are_his_own_locomotion_states() {
     }
     assert_eq!(kinds.values().map(Vec::len).sum::<usize>(), loads.len());
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
+/// AG.30's locomotion for `load` as the TV builds it at his fall-back: a
+/// walker's off his own scripts' locomotion states (AG.219,
+/// `walkers::stand_in`), Eruptor's on his measured gaits, both from his
+/// join's rest; and the four his picks are read by.
+fn stand_in_of(
+    w: &W,
+    l: &Level,
+    load: &str,
+) -> (guac_motion::locomotion::Locomotion, guacamole::picks::Four) {
+    use guac_motion::locomotion::{Gaits, Locomotion, Loops};
+    let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+    let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
+    let states = walkers::locomotion_states(&w.vm, &w.world, HERO).expect("his states");
+    let four = four_of(&palette, &hero, &states);
+    let side = &hero.locomotion;
+    let duration = |c: &Option<guac_ir::hero::SlotClip>| c.as_ref().map(|c| c.clip.duration);
+    let joined = Loops {
+        idle: four.0[0]
+            .and_then(|s| palette.clip(s as u16))
+            .map_or(1.0, |c| c.duration),
+        walk: None,
+        run: None,
+        fall: duration(&side.falling),
+    };
+    let own = match w.walk.origin {
+        walkers::Origin::Scripts => walkers::stand_in(
+            &states,
+            &palette,
+            side.walk.as_ref().map(|c| (&c.clip, Some(c.slot))),
+            side.run.as_ref().map(|c| (&c.clip, Some(c.slot))),
+            joined,
+        )
+        .expect("his own stand-in"),
+        walkers::Origin::Measured => Locomotion::new(
+            Gaits::ERUPTOR,
+            Loops {
+                walk: duration(&side.walk),
+                run: duration(&side.run),
+                ..joined
+            },
+        ),
+    };
+    (own, four)
+}
+
+/// AG.219's AG.30 locomotion draws what his own scripts draw (AH.198's
+/// review; stand-in ledger: `locomotion`): every walker and Eruptor on his
+/// scripts, on the registry as it stands, a part stick for 120 steps then a
+/// full one for 180, his scripts' picks read each step beside AG.30's
+/// locomotion built as his fall-back builds it ([`stand_in_of`]) and
+/// stepped on the same frames from his join's rest; on every step at a
+/// speed held 30 steps, moving and not held at an edge, its four weights
+/// and the rate of each gait the picks weight are the picks' within 1e-4.
+/// Left out: Wrecking Ball (`023_ForceFieldGrub`), whose scripts start a
+/// weighted idle each step (AG.222).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_walkers_stand_in_draws_what_his_scripts_draw() {
+    use guac_motion::locomotion::{Clip, Frame};
+    use guacamole::picks::Picked;
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut loads: Vec<String> = vec!["009_Eruptor".to_owned()];
+    loads.extend(l.walkers.iter().map(|w| w.load_file.clone()));
+    let (mut held, mut worst_w, mut worst_r) = (0usize, 0.0f32, 0.0f32);
+    for load in loads.iter().filter(|x| x.as_str() != "023_ForceFieldGrub") {
+        let mut w = joined_on_the_tv(&l, load, PLAY, 120, true, true);
+        let (mut own, four) = stand_in_of(&w, &l, load);
+        let mut speeds: Vec<f32> = Vec::new();
+        let (mut n, mut most_w, mut most_r) = (0usize, 0.0f32, 0.0f32);
+        for k in 0..300u32 {
+            let push = if k < 120 { 0.45 } else { 1.0 };
+            w.bench.pads[0] = Pad {
+                stick: guac_motion::scenarios::stick(push, 0.0),
+                actions: [false; 4],
+                connected: true,
+            };
+            w.step().unwrap();
+            let h = w.hero();
+            let speed = h.gait_speed;
+            own.step(w.dt, Frame::of(h));
+            speeds.push(speed);
+            let steady = speeds.len() > 30
+                && speeds[speeds.len() - 31..]
+                    .iter()
+                    .all(|s| (s - speed).abs() < 1e-3);
+            if !steady || speed < 0.5 || h.probe_held {
+                continue;
+            }
+            let p = Picked::read(&w.world, HERO, four, speed).expect("his picks");
+            let (pw, sw) = (p.weights(), own.weights());
+            let dw = pw
+                .iter()
+                .zip(sw)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            let rates = p.rates();
+            let dr = [(1, Clip::Walk), (2, Clip::Run)]
+                .iter()
+                .filter(|(i, _)| pw[*i] > 1e-3)
+                .map(|&(i, c)| (rates[i - 1] - own.play(c).rate).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                dw < 1e-4,
+                "{load} step {k} at {speed}: picks {pw:?}, stand-in {sw:?}"
+            );
+            assert!(
+                dr < 1e-4,
+                "{load} step {k} at {speed}: rates {rates:?} against the stand-in's"
+            );
+            n += 1;
+            most_w = most_w.max(dw);
+            most_r = most_r.max(dr);
+        }
+        assert!(n > 60, "{load}: {n} steady steps");
+        println!(
+            "{load}: {n} steady steps, weights within {most_w:.2e}, rates within {most_r:.2e}"
+        );
+        held += 1;
+        worst_w = worst_w.max(most_w);
+        worst_r = worst_r.max(most_r);
+    }
+    assert_eq!(held, loads.len() - 1);
+    println!(
+        "{held} held: weights within {worst_w:.2e}, rates within {worst_r:.2e}; {:.1?} in all, load {:.2}",
+        started.elapsed(),
+        load1()
+    );
 }
 
 /// AG.27 Verify (2): Eruptor, joined through the part with every walker
@@ -3465,9 +3596,10 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
 }
 
 /// The four clips his gait reports name, by his palette's slots: his
-/// scripts' standing state's clip for the idle, then his hero side's walk,
-/// run and fall found by name (the TV names them off his model's idle and
-/// his hero side, `hero_scripts::pick_gaits`).
+/// scripts' standing state's clip for the idle (his model's on all 67),
+/// then his hero side's walk, run and fall at the hero side's slots where
+/// his palette holds them there (`Four::at`; the TV names them off his
+/// model's idle and his hero side, `HeroClips::four`).
 fn four_of(
     palette: &Palette,
     hero: &guac_ir::Hero,
@@ -3478,22 +3610,14 @@ fn four_of(
         .find(|s| s.speed == 0.0)
         .and_then(|s| s.slot)
         .and_then(|s| palette.clip(s as u16))
-        .map(|c| c.name.as_str());
+        .map(|c| (c.name.as_str(), None));
     let l = &hero.locomotion;
-    guacamole::picks::Four::of(
-        palette,
-        [
-            idle,
-            slot_name(&l.walk),
-            slot_name(&l.run),
-            slot_name(&l.falling),
-        ],
-    )
+    guacamole::picks::Four::at(palette, [idle, at(&l.walk), at(&l.run), at(&l.falling)])
 }
 
-/// A hero side's locomotion slot's clip name.
-fn slot_name(c: &Option<guac_ir::hero::SlotClip>) -> Option<&str> {
-    c.as_ref().map(|c| c.clip.name.as_str())
+/// A hero side's locomotion slot's clip name and its slot.
+fn at(c: &Option<guac_ir::hero::SlotClip>) -> Option<(&str, Option<u16>)> {
+    c.as_ref().map(|c| (c.clip.name.as_str(), Some(c.slot)))
 }
 
 /// AH.198 and AG.219 headless on the dump, the TV's hand-over in the
@@ -3504,10 +3628,12 @@ fn slot_name(c: &Option<guac_ir::hero::SlotClip>) -> Option<&str> {
 /// `walkers::stand_in`; Eruptor's his measured gaits) and carrying it on
 /// from the picks' last (`Locomotion::take_over`), stepped on his walk on
 /// the controller after. Ninjini and Swarm stop at `Minion.ai` #842 the
-/// TV's way ([`PLAY_842`]); Eruptor and Tree Rex (a walker with a walk and
-/// a run) are forced off as AG.173's control is, nothing on the dump
-/// stopping them. Beside each walker, AG.27's locomotion (no walk or run of
-/// ours) on the same walk: his idle at any speed.
+/// TV's way ([`PLAY_842`]); Eruptor, Tree Rex (a walker with a walk and a
+/// run), Dino-Rang (his run at two slots of his palette, his scripts
+/// playing his hero side's) and Double Trouble (one clip for his walk and
+/// run, at three) are forced off as AG.173's control is, nothing on the dump stopping
+/// them. Beside each walker, AG.27's locomotion (no walk or run of ours) on
+/// the same walk: his idle at any speed.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
@@ -3521,6 +3647,10 @@ fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
         ("101_BugmanGiant", PLAY_842, false),
         ("009_Eruptor", PLAY, true),
         (TREE_REX, PLAY, true),
+        // His run at slots 2 and 3, his scripts playing 3 (AH.198's review:
+        // 11 of the 67 so); and his walk and run one clip, at 1, 2 and 3.
+        ("006_DinoRang", PLAY, true),
+        ("018_Wizard", PLAY, true),
     ] {
         let mut w = joined_on_the_tv(&l, load, o, 120, true, true);
         let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
@@ -3563,8 +3693,8 @@ fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
                         walkers::Origin::Scripts => walkers::stand_in(
                             &states,
                             &palette,
-                            side.walk.as_ref().map(|c| &c.clip),
-                            side.run.as_ref().map(|c| &c.clip),
+                            side.walk.as_ref().map(|c| (&c.clip, Some(c.slot))),
+                            side.run.as_ref().map(|c| (&c.clip, Some(c.slot))),
                             joined,
                         )
                         .expect("his own stand-in"),
@@ -3577,7 +3707,15 @@ fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
                             },
                         ),
                     };
-                    own.take_over(p.handover());
+                    let h = p.handover();
+                    own.take_over(h);
+                    // Each gait the picks weight carries on where it played.
+                    for (i, c) in [(1, Clip::Walk), (2, Clip::Run)] {
+                        if p.weights()[i] > 0.0 {
+                            let given = h.plays[i].expect("where it played");
+                            assert_eq!(own.play(c), given, "{load}: {c:?}");
+                        }
+                    }
                     let ours = Locomotion::new(w.walk.gaits, joined);
                     let (from, picked) = (own.weights(), p.weights());
                     let frame = Frame::of(w.hero());

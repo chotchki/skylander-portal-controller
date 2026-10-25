@@ -295,16 +295,41 @@ pub(crate) struct HeroClips {
     pub(crate) walk: Option<Clip>,
     pub(crate) run: Option<Clip>,
     pub(crate) fall: Option<Clip>,
+    /// The slots his hero side gives the walk, the run and the fall in his
+    /// model's animation set, his palette's.
+    pub(crate) slots: [Option<u16>; 3],
 }
 
 impl HeroClips {
     fn of(hero: guac_ir::hero::Hero) -> Self {
         let l = hero.locomotion;
+        let slot = |s: &Option<guac_ir::hero::SlotClip>| s.as_ref().map(|s| s.slot);
         Self {
+            slots: [slot(&l.walk), slot(&l.run), slot(&l.falling)],
             walk: l.walk.map(|s| s.clip),
             run: l.run.map(|s| s.clip),
             fall: l.falling.map(|s| s.clip),
         }
+    }
+
+    /// The palette slots of the four his gait reports and his scripts'
+    /// picks name (openspec AH.49, AH.198): `idle` by name, his walk, run
+    /// and fall at his hero side's slots where `palette` holds them there
+    /// ([`guacamole::picks::Four::at`]), which is where his scripts play
+    /// them.
+    pub(crate) fn four(&self, palette: &Palette, idle: &str) -> guacamole::picks::Four {
+        fn named(c: &Option<Clip>, slot: Option<u16>) -> Option<(&str, Option<u16>)> {
+            c.as_ref().map(|c| (c.name.as_str(), slot))
+        }
+        guacamole::picks::Four::at(
+            palette,
+            [
+                Some((idle, None)),
+                named(&self.walk, self.slots[0]),
+                named(&self.run, self.slots[1]),
+                named(&self.fall, self.slots[2]),
+            ],
+        )
     }
 
     /// The loops [`Locomotion`] keeps, the idle's from `model`.
@@ -1935,6 +1960,67 @@ mod tests {
         g.picked = None;
         let r = GaitReport::of_gaits(&g);
         assert_eq!((r.clip.as_str(), r.weights), ("idle", [1.0, 0.0, 0.0, 0.0]));
+    }
+
+    /// AH.198's review: the four his picks and his hand-over name sit at his
+    /// hero side's slots, where his scripts play them, though his palette
+    /// holds his run at an earlier slot too (DinoRang's 2 and 3 on the dump,
+    /// 11 of the 67 so), which the first by name would take.
+    #[test]
+    fn his_four_are_at_his_hero_sides_slots() {
+        use guac_ir::palette::{PaletteSlot, SlotEntry};
+        use guacamole::picks::Four;
+        let clips = HeroClips::of(crate::test_support::play::hero_side(WALKER));
+        let (walk, run, fall) = (clips.walk.clone(), clips.run.clone(), clips.fall.clone());
+        let (walk, run, fall) = (walk.unwrap(), run.unwrap(), fall.unwrap());
+        assert_eq!(clips.slots.map(|s| s.is_some()), [true; 3]);
+        let mut idle = walk.clone();
+        idle.name = "Synthetic_Idle.ma".into();
+        let entry = |slot: u16, clip: &Clip| PaletteSlot {
+            slot,
+            name: None,
+            label: None,
+            entry: SlotEntry::Clip {
+                additive: false,
+                partial: false,
+                layered: false,
+                motion_extraction: 0,
+                clip: clip.clone(),
+            },
+        };
+        let [w, r, f] = clips.slots.map(Option::unwrap);
+        assert!(
+            r > 1 && w < r - 1,
+            "room for an earlier run: {:?}",
+            clips.slots
+        );
+        let mut entries = vec![
+            entry(0, &idle),
+            entry(w, &walk),
+            entry(r - 1, &run),
+            entry(r, &run),
+            entry(f, &fall),
+        ];
+        entries.sort_by_key(|e| e.slot);
+        let palette = Palette {
+            identity: crate::test_support::turntable::identity(),
+            owner: WALKER.into(),
+            slots: 64,
+            entries,
+            refused: Vec::new(),
+        };
+        let by_name = Four::of(
+            &palette,
+            [
+                Some("Synthetic_Idle.ma"),
+                Some(walk.name.as_str()),
+                Some(run.name.as_str()),
+                Some(fall.name.as_str()),
+            ],
+        );
+        assert_eq!(by_name.0[2], Some(u32::from(r - 1)), "the first by name");
+        let four = clips.four(&palette, "Synthetic_Idle.ma");
+        assert_eq!(four, Four([0, w, r, f].map(|s| Some(u32::from(s)))));
     }
 
     fn alert(app: &App) -> Option<Alert> {

@@ -259,10 +259,14 @@ pub fn locomotion_states(
 /// The walk and the run AG.30's locomotion mixes by speed off a walker's own
 /// locomotion states ([`locomotion_states`]; openspec AG.219): his walk at
 /// the speed of the state whose clip is his hero side's walk, his run at
-/// the one's whose clip is his run (by the clips' names, `clip` naming a
-/// state's slot's; the faster where two name one), so AG.30's draws
-/// only clips both his scripts and his hero side hold. With one of the two
-/// his scripts define (a giant's walk, a runner's run) that one's speed is
+/// the one's whose clip is his run (`walk` and `run` each his hero side's
+/// clip name and its slot, `clip` naming a state's slot's clip; the faster
+/// where two play one), so AG.30's draws only clips both his scripts and
+/// his hero side hold. A state draws one gait: the one his hero side puts
+/// at its slot, else the one whose clip it plays (AH.198's review: Double
+/// Trouble's and Drill Sergeant's walk and run are one clip, at slots 1 and
+/// 3, and their scripts define only a run, on 3). With one of the two his
+/// scripts define (a giant's walk, a runner's run) that one's speed is
 /// both; `None` with neither.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScriptedGaits {
@@ -276,18 +280,35 @@ impl ScriptedGaits {
     pub fn of<'a>(
         states: &[LocomotionState],
         clip: impl Fn(u32) -> Option<&'a str>,
-        walk: Option<&str>,
-        run: Option<&str>,
+        walk: Option<(&str, Option<u32>)>,
+        run: Option<(&str, Option<u32>)>,
     ) -> Option<ScriptedGaits> {
-        let speed_of = |name: Option<&str>| {
-            let name = name?;
-            states
-                .iter()
-                .filter(|s| s.speed > 0.0 && s.slot.and_then(&clip) == Some(name))
-                .map(|s| s.speed)
-                .reduce(f32::max)
+        // The states playing `gait`'s clip, at its own slot only where
+        // `at_slot`, leaving out those another gait has at its own.
+        let playing = |gait: Option<(&str, Option<u32>)>, at_slot: bool, taken: &[usize]| {
+            let Some((name, slot)) = gait else {
+                return Vec::new();
+            };
+            (0..states.len())
+                .filter(|i| {
+                    let s = &states[*i];
+                    s.speed > 0.0
+                        && !taken.contains(i)
+                        && s.slot.and_then(&clip) == Some(name)
+                        && (!at_slot || (slot.is_some() && s.slot == slot))
+                })
+                .collect::<Vec<usize>>()
         };
-        let (w, r) = (speed_of(walk), speed_of(run));
+        let (mut ws, mut rs) = (playing(walk, true, &[]), playing(run, true, &[]));
+        let taken: Vec<usize> = ws.iter().chain(&rs).copied().collect();
+        if ws.is_empty() {
+            ws = playing(walk, false, &taken);
+        }
+        if rs.is_empty() {
+            rs = playing(run, false, &taken);
+        }
+        let speed_of = |i: Vec<usize>| i.into_iter().map(|i| states[i].speed).reduce(f32::max);
+        let (w, r) = (speed_of(ws), speed_of(rs));
         let (walk_speed, run_speed) = match (w, r) {
             (Some(w), Some(r)) => (w, r),
             (Some(one), None) | (None, Some(one)) => (one, one),
@@ -306,16 +327,20 @@ impl ScriptedGaits {
 
 /// A walker's AG.30 locomotion on his own scripts' (openspec AG.219): AG.30's
 /// mix at the speeds his states give his hero side's `walk` and `run`
-/// ([`ScriptedGaits`]), over those of the two clips his scripts play (found
-/// in his `palette` by name), his idle and his fall as `loops` has them.
-/// `None` where his scripts play neither: he keeps his idle.
+/// ([`ScriptedGaits`]; each with the slot his hero side gives it), over
+/// those of the two clips his scripts play (found in his `palette`), his
+/// idle and his fall as `loops` has them. `None` where his scripts play
+/// neither: he keeps his idle.
 pub fn stand_in(
     states: &[LocomotionState],
     palette: &Palette,
-    walk: Option<&Clip>,
-    run: Option<&Clip>,
+    walk: Option<(&Clip, Option<u16>)>,
+    run: Option<(&Clip, Option<u16>)>,
     loops: Loops,
 ) -> Option<Locomotion> {
+    fn side(g: Option<(&Clip, Option<u16>)>) -> Option<(&str, Option<u32>)> {
+        g.map(|(c, s)| (c.name.as_str(), s.map(u32::from)))
+    }
     let g = ScriptedGaits::of(
         states,
         |slot| {
@@ -323,14 +348,14 @@ pub fn stand_in(
                 .clip(u16::try_from(slot).ok()?)
                 .map(|c| c.name.as_str())
         },
-        walk.map(|c| c.name.as_str()),
-        run.map(|c| c.name.as_str()),
+        side(walk),
+        side(run),
     )?;
     Some(Locomotion::new(
         g.gaits,
         Loops {
-            walk: walk.filter(|_| g.walk).map(|c| c.duration),
-            run: run.filter(|_| g.run).map(|c| c.duration),
+            walk: walk.filter(|_| g.walk).map(|(c, _)| c.duration),
+            run: run.filter(|_| g.run).map(|(c, _)| c.duration),
             ..loops
         },
     ))
@@ -548,7 +573,10 @@ mod tests {
     /// gait the state whose clip his hero side names for it (on the dump's
     /// own shapes: Eruptor's walk and run; Ninjini's walk alone; a Bouncer's
     /// hero side holding a run no state of his plays; a runner with no
-    /// walk; one clip for all three gaits), by name, not slot.
+    /// walk; one clip for all three gaits), by name, not slot; a state
+    /// drawing one gait, the one his hero side puts at its slot where one
+    /// does (AH.198's review: Double Trouble's walk and run one clip at
+    /// slots 1 and 3, his scripts' one state on 3, his run alone).
     #[test]
     fn the_stand_ins_gaits_are_his_scripts_states() {
         let state = |slot: u32, speed: f32| LocomotionState {
@@ -557,34 +585,70 @@ mod tests {
         };
         let names = ["Idle.ma", "Walk.ma", "Jog.ma", "Run.ma", "Run.ma"];
         let clip = |slot: u32| names.get(slot as usize).copied();
+        let n = |name: &'static str| Some((name, None));
         let eruptor = [state(0, 0.0), state(1, 12.001898), state(3, 21.00168)];
-        let g = ScriptedGaits::of(&eruptor, clip, Some("Walk.ma"), Some("Run.ma")).unwrap();
+        let g = ScriptedGaits::of(&eruptor, clip, n("Walk.ma"), n("Run.ma")).unwrap();
         assert_eq!(g.gaits, Gaits::ERUPTOR, "his Define call's, read back");
         assert!(g.walk && g.run);
         let ninjini = [state(0, 0.0), state(1, 20.493124)];
-        let g = ScriptedGaits::of(&ninjini, clip, Some("Walk.ma"), None).unwrap();
+        let g = ScriptedGaits::of(&ninjini, clip, n("Walk.ma"), None).unwrap();
         assert_eq!(
             (g.gaits.walk_speed, g.gaits.run_speed),
             (20.493124, 20.493124)
         );
         assert!(g.walk && !g.run);
-        let bouncer = ScriptedGaits::of(&ninjini, clip, Some("Walk.ma"), Some("Run.ma")).unwrap();
+        let bouncer = ScriptedGaits::of(&ninjini, clip, n("Walk.ma"), n("Run.ma")).unwrap();
         assert!(bouncer.walk && !bouncer.run, "a run his scripts don't play");
         let runner = [state(0, 0.0), state(3, 16.0769)];
-        let g = ScriptedGaits::of(&runner, clip, None, Some("Run.ma")).unwrap();
+        let g = ScriptedGaits::of(&runner, clip, None, n("Run.ma")).unwrap();
         assert_eq!((g.gaits.walk_speed, g.gaits.run_speed), (16.0769, 16.0769));
         assert!(!g.walk && g.run);
+        // Two states playing his run: the faster is his run.
+        let g = ScriptedGaits::of(&[state(3, 15.0), state(4, 19.686)], clip, None, n("Run.ma"))
+            .unwrap();
+        assert_eq!(g.gaits.run_speed, 19.686, "the faster of two");
         // Slot 4 holds slot 3's clip: by name, either plays his run.
-        let g =
-            ScriptedGaits::of(&[state(4, 19.686)], clip, Some("Run.ma"), Some("Run.ma")).unwrap();
+        let g = ScriptedGaits::of(&[state(4, 19.686)], clip, n("Run.ma"), n("Run.ma")).unwrap();
         assert!(g.walk && g.run && g.gaits.walk_speed == g.gaits.run_speed);
+        // Double Trouble: his walk and run one clip, at slots 1, 2 and 3;
+        // his scripts' run state on 3, his hero side's run there.
+        let trouble = ["Idle.ma", "Run.ma", "Run.ma", "Run.ma"];
+        let at = |slot: u32| trouble.get(slot as usize).copied();
+        let one = [state(0, 0.0), state(3, 19.686)];
+        let g = ScriptedGaits::of(
+            &one,
+            at,
+            Some(("Run.ma", Some(1))),
+            Some(("Run.ma", Some(3))),
+        )
+        .unwrap();
+        assert!(!g.walk && g.run, "his one state his run's: {g:?}");
+        assert_eq!((g.gaits.walk_speed, g.gaits.run_speed), (19.686, 19.686));
+        let g = ScriptedGaits::of(&one, at, n("Run.ma"), n("Run.ma")).unwrap();
+        assert!(g.walk && g.run, "no slots given: by name, both");
+        // Dino-Rang: his run at 2 and 3, his scripts' on 3; his walk on 1.
+        let dino = ["Idle.ma", "Walk.ma", "Run.ma", "Run.ma"];
+        let at = |slot: u32| dino.get(slot as usize).copied();
+        let states = [state(0, 0.0), state(1, 5.718783), state(3, 18.055342)];
+        let g = ScriptedGaits::of(
+            &states,
+            at,
+            Some(("Walk.ma", Some(1))),
+            Some(("Run.ma", Some(3))),
+        )
+        .unwrap();
+        assert!(g.walk && g.run);
         assert_eq!(
-            ScriptedGaits::of(&[state(0, 0.0)], clip, Some("Walk.ma"), Some("Run.ma")),
+            (g.gaits.walk_speed, g.gaits.run_speed),
+            (5.718783, 18.055342)
+        );
+        assert_eq!(
+            ScriptedGaits::of(&[state(0, 0.0)], clip, n("Walk.ma"), n("Run.ma")),
             None,
             "standing only"
         );
         assert_eq!(
-            ScriptedGaits::of(&eruptor, clip, Some("Sneak.ma"), None),
+            ScriptedGaits::of(&eruptor, clip, n("Sneak.ma"), None),
             None,
             "no state plays his hero side's"
         );
@@ -617,7 +681,8 @@ mod tests {
             speed,
         };
         let states = [state(0, 0.0), state(1, 12.0), state(3, 21.0)];
-        let mut l = stand_in(&states, &palette, Some(walk), Some(run), joined).unwrap();
+        let (walk_at, run_at) = (Some((walk, Some(1))), Some((run, Some(3))));
+        let mut l = stand_in(&states, &palette, walk_at, run_at, joined).unwrap();
         assert_eq!(
             *l.loops(),
             Loops {
@@ -636,7 +701,7 @@ mod tests {
         }
         assert_eq!(l.weights(), [0.0, 1.0, 0.0, 0.0]);
         // His walk alone (a giant's): his hero side's run stays out.
-        let mut l = stand_in(&states[..2], &palette, Some(walk), Some(run), joined).unwrap();
+        let mut l = stand_in(&states[..2], &palette, walk_at, run_at, joined).unwrap();
         assert_eq!((l.loops().walk, l.loops().run), (Some(walk.duration), None));
         for _ in 0..60 {
             l.step(1.0 / 60.0, at(24.0));
@@ -655,6 +720,6 @@ mod tests {
             before.step(1.0 / 60.0, at(24.0));
         }
         assert_eq!(before.weights(), [1.0, 0.0, 0.0, 0.0]);
-        assert!(stand_in(&states[..1], &palette, Some(walk), Some(run), joined).is_none());
+        assert!(stand_in(&states[..1], &palette, walk_at, run_at, joined).is_none());
     }
 }

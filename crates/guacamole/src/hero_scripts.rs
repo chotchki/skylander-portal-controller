@@ -1333,8 +1333,8 @@ pub(crate) fn pick_gaits(
             let own = walkers::stand_in(
                 &states,
                 palette,
-                rig.clips.walk.as_ref(),
-                rig.clips.run.as_ref(),
+                rig.clips.walk.as_ref().map(|c| (c, rig.clips.slots[0])),
+                rig.clips.run.as_ref().map(|c| (c, rig.clips.slots[1])),
                 *was.loops(),
             )?;
             info!(
@@ -1347,15 +1347,7 @@ pub(crate) fn pick_gaits(
             Some(own)
         };
         let four = match (&run.palette, &run.rig) {
-            (Some(p), Some(rig)) => guacamole::picks::Four::of(
-                p,
-                [
-                    Some(rig.model.idle.name.as_str()),
-                    rig.clips.walk.as_ref().map(|c| c.name.as_str()),
-                    rig.clips.run.as_ref().map(|c| c.name.as_str()),
-                    rig.clips.fall.as_ref().map(|c| c.name.as_str()),
-                ],
-            ),
+            (Some(p), Some(rig)) => rig.clips.four(p, &rig.model.idle.name),
             _ => guacamole::picks::Four::default(),
         };
         gaits.pick(
