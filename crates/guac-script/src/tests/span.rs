@@ -201,6 +201,8 @@ fn a_stretch_in_play_mode_returns_its_stop_and_stops_its_placement() {
 struct Points {
     /// Each remembered point asked for: the receiver it was asked on.
     asked: Vec<Option<Value>>,
+    /// The reference cell each was read through ([`Access::via`]).
+    via: Vec<Option<u32>>,
     /// The object handed back for each receiver, and where each was put.
     objects: HashMap<String, u64>,
     put: HashMap<u64, f32>,
@@ -211,10 +213,11 @@ impl Host for Points {
     fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
         if at.member == MemberId::named("placementreference", "remembered") {
             self.asked.push(at.receiver);
+            self.via.push(at.via);
             let n = self.objects.len() as u64 + 100;
             let h = *self
                 .objects
-                .entry(format!("{:?}", at.receiver))
+                .entry(format!("{:?} {:?}", at.receiver, at.via))
                 .or_insert(n);
             return Ok(Value::Entity(h));
         }
@@ -350,6 +353,102 @@ fn a_reference_naming_nothing_keeps_its_own_point() {
         "on the actor named"
     );
     assert_eq!(host.asked.len(), 3);
+}
+
+/// Two references to one actor keep two points (openspec AG.28: the
+/// camera's look-from and look-at name one follower clone and sit 55 ft
+/// apart): each asks on the actor through its own cell, and what one keeps
+/// the other doesn't read. A member through no reference names none.
+#[test]
+fn two_references_to_one_actor_keep_their_own_points() {
+    let p = program(|w| {
+        let from = w.variable("from", "PlacementReference", None);
+        let at = w.variable("at", "PlacementReference", None);
+        let (a, b) = (fvar(w, "a"), fvar(w, "b"));
+        idle(
+            w,
+            |w| {
+                for r in [from, at] {
+                    setref(
+                        w,
+                        &[El::Local(r)],
+                        &[El::Member("optoplevelbehavior", "my")],
+                    );
+                }
+            },
+            |w| {
+                for (r, d) in [(from, 55.0), (at, 9.0)] {
+                    let d = w.float(d);
+                    w.set(
+                        &[
+                            El::Local(r),
+                            El::Member("placementreference", "remembered"),
+                            El::Member("positionmeasurement", "distance"),
+                        ],
+                        d,
+                    );
+                }
+                for (r, out) in [(from, a), (at, b)] {
+                    let back = w.rhs(
+                        FLOAT,
+                        &[
+                            El::Local(r),
+                            El::Member("placementreference", "remembered"),
+                            El::Member("positionmeasurement", "distance"),
+                        ],
+                    );
+                    w.set(&[El::Local(out)], back);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p, points_config());
+    let id = vm.add(HANDLE, "Camera", 0);
+    let mut host = Points::default();
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(
+        vm.local(id, "a"),
+        Some(Value::Float(55.0)),
+        "the look-from's"
+    );
+    assert_eq!(vm.local(id, "b"), Some(Value::Float(9.0)), "the look-at's");
+    assert!(host.asked.iter().all(|r| *r == Some(Value::Entity(HANDLE))));
+    let (f, t) = (host.via[0], host.via[1]);
+    assert!(f.is_some() && t.is_some() && f != t, "{:?}", host.via);
+    assert_eq!((host.via[2], host.via[3]), (f, t), "each its own again");
+}
+
+/// A stretch run apart stops alone in play mode (openspec AG.28: the
+/// camera's frame in the portal manager's tick): its stop is kept and
+/// logged, the placement runs on, the stretch never runs again while any
+/// other runs; strict mode halts as a stretch does.
+#[test]
+fn a_stretch_run_apart_stops_alone_in_play_mode() {
+    let (p, at) = statements(false);
+    let (mut vm, id) = run(&p, Config::new(Mode::Play), 1);
+    let cut = (at.looped, at.looped + 2);
+    assert_eq!(vm.run_span_apart(id, cut.0, cut.1, &mut Bare), Ok(false));
+    assert!(vm.stopped(id).is_none(), "the placement runs on");
+    let why = vm.span_stopped(id, cut.0).expect("kept").clone();
+    assert!(matches!(why.reason, Reason::Unsupported(_)), "{why}");
+    assert!(vm.log().iter().any(|l| l.text == why.to_string()), "logged");
+    // Skipped from then on; any other stretch, and the tick, run.
+    let c = int(&vm, id, "c");
+    assert_eq!(vm.run_span_apart(id, cut.0, cut.1, &mut Bare), Ok(false));
+    assert_eq!(int(&vm, id, "c"), c);
+    assert_eq!(vm.run_span(id, at.check, at.last, &mut Bare), Ok(true));
+    assert_eq!(int(&vm, id, "c"), c + 3);
+    vm.tick(id, &mut Bare).unwrap();
+    assert_eq!(int(&vm, id, "e"), 2);
+    // One that runs whole runs as `run_span` does.
+    assert_eq!(
+        vm.run_span_apart(id, at.first, at.check, &mut Bare),
+        Ok(true)
+    );
+    // Strict: the halt, the placement stopped, nothing kept apart.
+    let (mut vm, id) = run(&p, Config::new(Mode::Strict), 1);
+    assert!(vm.run_span_apart(id, cut.0, cut.1, &mut Bare).is_err());
+    assert!(vm.stopped(id).is_some() && vm.span_stopped(id, cut.0).is_none());
 }
 
 /// A set of engine objects grows by what the host makes (an orb's landing

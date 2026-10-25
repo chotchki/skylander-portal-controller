@@ -36,7 +36,9 @@ use guac_extract::levels;
 use guac_formats::igz::Igz;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
-use guac_script::members::{COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
+use guac_script::members::{
+    CAMERA, COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP,
+};
 use guac_script::{
     Generator, MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
 };
@@ -241,6 +243,7 @@ fn probe_the_route() {
                             receiver: Some(Value::Entity(h)),
                             member: MemberId::named("positionmeasurement", "distance"),
                             other_point: Some(Value::Entity(HERO)),
+                            via: None,
                         },
                     )
                 });
@@ -2033,6 +2036,7 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .chain(COMBAT)
             .chain(LOOP)
             .chain(FIGURE)
+            .chain(CAMERA)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -2083,9 +2087,10 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
     }
     println!("load after: {}", load());
     assert!(past.is_empty(), "{past:?}");
+    // AG.28's camera volumes and activator raise AH.34's ceiling by one.
     assert!(
-        reached.len() <= 324,
-        "past AH.34's ceiling: {}",
+        reached.len() <= 325,
+        "past AG.28's ceiling: {}",
         reached.len()
     );
 }

@@ -531,7 +531,10 @@ pub(crate) fn set_down(body: &mut HeroBody, seam: &AvianSeam, at: Vec3, facing: 
 }
 
 /// The follow camera at rest on camera 0's definition over his feet,
-/// looking along `view` (a heading) when given, its drawn place there.
+/// looking along `view` (a heading) when given, its drawn place there. While
+/// the camera's scripts drive (AG.28) their view replaces it the next step:
+/// this rest holds only on a part with no camera system, or once they've
+/// stopped (stand-in ledger: `camera`).
 fn rest_camera(
     cameras: &mut Query<(&mut FollowCamera, &mut Transform)>,
     feet: Vec3,
@@ -546,7 +549,8 @@ fn rest_camera(
     };
     for (mut follow, mut transform) in cameras.iter_mut() {
         follow.camera = GameCamera::new(def, feet);
-        *transform = viewed(&follow.camera.view());
+        follow.drawn = follow.camera.view();
+        *transform = viewed(&follow.drawn);
     }
 }
 

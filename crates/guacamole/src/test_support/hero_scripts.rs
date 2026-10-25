@@ -62,9 +62,28 @@ fn write_parts(dir: &Path, level: &[u8]) {
 /// and the level's, and the list that names them, as the extract's script
 /// stage writes them.
 fn write_parts_with(dir: &Path, level: &[u8], walkers: &[(&str, Vec<u8>)]) {
-    let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
     let a = attack_builder::attack();
-    let mut bytes: Vec<&[u8]> = vec![&d.bootstrap, &a.global, &a.init_setup, &a.fighter];
+    write_files(dir, [&a.global, &a.init_setup, &a.fighter], level, walkers);
+}
+
+/// AG.28's synthetic camera ([`attack_builder::camera::camera`]) as the
+/// part: its `global.bld`, `init_setup.bld` and fighter's entries and its
+/// level's, the level's placements at `at`.
+pub(crate) fn write_camera(
+    dir: &Path,
+    at: attack_builder::camera::CameraAt,
+    fault: attack_builder::camera::CameraFault,
+) {
+    let c = attack_builder::camera::camera(at, fault);
+    write_files(dir, [&c.global, &c.init_setup, &c.fighter], &c.level, &[]);
+}
+
+/// The roster builder's bootstrap entry, `global.bld`'s, `init_setup.bld`'s
+/// and the fighter's (`entries`), the walkers' and `level` as the level's.
+fn write_files(dir: &Path, entries: [&[u8]; 3], level: &[u8], walkers: &[(&str, Vec<u8>)]) {
+    let d = guac_formats::roster::builder::disc(&guac_formats::roster::builder::sample());
+    let mut bytes: Vec<&[u8]> = vec![&d.bootstrap];
+    bytes.extend(entries);
     bytes.extend(walkers.iter().map(|(_, b)| b.as_slice()));
     bytes.push(level);
     let loads: Vec<String> = walkers.iter().map(|(l, _)| (*l).to_owned()).collect();

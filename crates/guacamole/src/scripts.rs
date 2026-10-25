@@ -377,6 +377,8 @@ pub struct ScriptWorld {
     pub(crate) portal: Handle,
     /// `viewportinfo.default`: the gameplay camera, as one object.
     pub(crate) viewport: Handle,
+    /// What the camera's scripts leave the viewport as (openspec AG.28).
+    pub(crate) view: crate::viewport::Viewport,
     pub(crate) objs: Objects,
     pub(crate) sequences: Vec<Sequence>,
     /// Each template's animation palette: every slot's clip length,
@@ -395,6 +397,9 @@ pub struct ScriptWorld {
     pub(crate) ray: Ray,
     /// The points references naming nothing keep, by the reference's cell.
     pub(crate) kept_points: HashMap<u32, Vec3>,
+    /// The points references to actors keep, by the actor and the
+    /// reference's cell (openspec AG.28).
+    pub(crate) kept_via: HashMap<(Handle, u32), Vec3>,
     /// The waypoints scripts made ([`Object::Waypoint`]), each where it was
     /// last put, none until it's put somewhere.
     pub(crate) waypoints_made: Vec<Option<Vec3>>,
@@ -459,6 +464,7 @@ impl ScriptWorld {
             physical: [objects[2], objects[3], objects[4], objects[5]],
             portal: objects[6],
             viewport,
+            view: crate::viewport::Viewport::default(),
             objs,
             sequences: Vec::new(),
             palettes: HashMap::new(),
@@ -469,6 +475,7 @@ impl ScriptWorld {
             normalized: 0.0,
             ray: Ray::default(),
             kept_points: HashMap::new(),
+            kept_via: HashMap::new(),
             waypoints_made: Vec::new(),
             scripted: Vec::new(),
             time_scale: FULL_SPEED,
@@ -479,6 +486,18 @@ impl ScriptWorld {
             fired: Vec::new(),
             embodied: Vec::new(),
         }
+    }
+
+    /// The viewport as the camera's scripts leave it (openspec AG.28).
+    pub fn viewport(&self) -> &crate::viewport::Viewport {
+        &self.view
+    }
+
+    /// The view handed back to the TV for good: the camera's scripts
+    /// stopped in play, and from here on the TV's own camera stands for the
+    /// viewport (openspec AG.28).
+    pub fn hand_back_view(&mut self) {
+        self.view.source = crate::viewport::Source::HandedBack;
     }
 
     /// The placements the VM leaves inert: a script waking one is listed.
@@ -658,6 +677,22 @@ impl ScriptWorld {
     /// such actor.
     pub fn place(&mut self, h: Handle, at: Vec3, facing: f32) -> bool {
         self.place_moving(h, at, facing, Vec3::ZERO)
+    }
+
+    /// Every point the scripts have remembered through a reference to
+    /// `actor` set to `at`: a recorded state's follow actor at rest, its
+    /// intent, velocity and target points together (openspec AG.28's
+    /// verify; `Camera - Update Player Cam Target` keeps those three apart
+    /// on one clone). Returns how many were set.
+    pub fn rest_remembered(&mut self, actor: Handle, at: Vec3) -> usize {
+        let mut n = 0;
+        for ((h, _), p) in &mut self.kept_via {
+            if *h == actor {
+                *p = at;
+                n += 1;
+            }
+        }
+        n
     }
 
     /// [`ScriptWorld::place`] moving at `velocity` (ft/s): a recorded
@@ -1195,6 +1230,8 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::COMBAT);
     // His figure's tag on the portal (AH.23): the portal's regions.
     members::register(&mut c.members, members::FIGURE);
+    // The gameplay camera's (openspec AG.28), over the cells it takes over.
+    members::register(&mut c.members, members::CAMERA);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
         .copied()
@@ -1309,15 +1346,43 @@ pub const START_PROPS: [&str; 23] = [
 /// stays off for every hero (stand-in ledger: `titan`).
 pub const START_PROPS_FIRST_TICK: [&str; 1] = ["Titan_Carriable_Object.ai"];
 
+/// The gameplay camera's level scripts (openspec AG.28, design decision 2's
+/// whitelist, AH.42's way), every tick, by script: the camera volumes, each
+/// switching to the camera its placement's id names over the seconds its
+/// tilt holds once the hero is inside it (`Pop_To_Camera_x.ai` polling
+/// every 0.08 s), and the sliding rocks' activator, which drops the rocks
+/// (their `Falling_Rocks.ai` shakes the camera) and switches to camera 7
+/// two seconds on. Their camera system is `global.bld`'s macros, which the
+/// portal manager's tick calls ([`crate::player_loop`]).
+pub const CAMERA_SCRIPTS: [&str; 8] = [
+    "Pop_To_Camera_x.ai",
+    "Pop_to_Camera_5.ai",
+    "Special_Pop_To_Camera.ai",
+    "Jump_Pad_Camera_Pop.ai",
+    "Special_Camera_Transition_213.ai",
+    "Pop_To_X_Special_213.ai",
+    "Pop_to_42_end.ai",
+    "Activator_Sliding_Rocks.ai",
+];
+
+/// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
+/// file name, any case.
+pub fn is_camera_script(path: &str) -> bool {
+    guac_extract::scripts::listed(&CAMERA_SCRIPTS, path)
+}
+
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
 /// pickups and AH.21's breakables and the members they reach (the
 /// creatures' and the loop's: the destructibles system makes a breakable a
-/// combat target), and AG.60's start scripts on the props, the first
-/// fight's placements left inert until AH.25's entry brings them.
+/// combat target), AG.60's start scripts on the props and AG.28's camera
+/// volumes and activator, the first fight's placements left inert until
+/// AH.25's entry brings them.
 pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
     members::register(&mut c.members, members::LOOP);
+    // The camera's again, over the creatures' cells for the viewport.
+    members::register(&mut c.members, members::CAMERA);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -1327,6 +1392,7 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -2211,7 +2277,17 @@ pub fn install_with(
         "portal",
     ];
     let objects = names.map(|n| world.spawn(ScriptObject(n)).id().to_bits());
-    let player_loop = PlayerLoop::read(&program);
+    let mut player_loop = PlayerLoop::read(&program);
+    // The camera's frame runs on the camera's members (openspec AG.28),
+    // which AH.16's listing doesn't register: its run steps without it.
+    if config
+        .members
+        .get(guac_script::MemberId::named("actorinfo", "players"))
+        .is_none()
+    {
+        player_loop.camera = None;
+        player_loop.cam_target = None;
+    }
     let vm = init_chain(program, files, &handles, order, config);
     let mut script_world = ScriptWorld::new(files, &handles, objects);
     // What a listed script wakes off the whitelist is logged and listed
@@ -2312,6 +2388,7 @@ mod tests {
             receiver,
             member: MemberId::named(namespace, name),
             other_point: None,
+            via: None,
         }
     }
 

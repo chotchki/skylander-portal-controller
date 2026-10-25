@@ -31,7 +31,7 @@ use guac_motion::scenarios;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN};
 
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
@@ -112,6 +112,11 @@ impl Engine for Bench {
     }
     fn view_heading(&self) -> f32 {
         self.view
+    }
+    /// The view his walks steer by (openspec AG.28): AH.17's runs hold the
+    /// stick to camera 0's heading, not the camera's scripts.
+    fn holds_view(&self) -> bool {
+        true
     }
     fn pad(&self, n: usize) -> Pad {
         self.pads.get(n).copied().unwrap_or_default()
@@ -683,7 +688,7 @@ fn his_scripts_run_600_steps_standing() {
 /// 600 steps: each one the VM asked a value of registered (strict mode halts
 /// on any other), the rest reached only on a path through nothing (a
 /// viewport effect the camera's cell doesn't hold); the count against AH.34's
-/// ceiling.
+/// ceiling as AG.28's whitelist raised it.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_members_he_reaches_stay_under_the_ceiling() {
@@ -701,6 +706,7 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
             .chain(HERO_MEMBERS)
             .chain(COMBAT)
             .chain(FIGURE)
+            .chain(CAMERA)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -747,9 +753,11 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
     }
     println!("load after: {}", load());
     assert!(past.is_empty(), "{past:?}");
+    // AH.34's ceiling, and AG.28's camera volumes and activator one more
+    // (`segmentgenerator.segment width`).
     assert!(
-        reached.len() <= 324,
-        "past AH.34's ceiling: {}",
+        reached.len() <= 325,
+        "past AG.28's ceiling: {}",
         reached.len()
     );
 }

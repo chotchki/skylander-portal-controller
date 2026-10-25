@@ -13,6 +13,10 @@
 //! and the portal manager's tick at `Spyro_PortalManager`'s, after the UI's,
 //! whose tick moves the game timer. The portal manager's, once a step:
 //!
+//! - the gameplay camera's frame (openspec AG.28): `Camera - System -
+//!   Update` over `camera control data`, the tick's first statement, from
+//!   the level's start, run apart ([`Vm::run_span_apart`]): stopped in
+//!   play, the TV's camera takes the view and the rest runs on;
 //! - the head: its `script timer local` set from its clock (the state
 //!   system's immunity after a hurt reaction and a dropped coin's age read
 //!   it);
@@ -20,9 +24,12 @@
 //!   hurt list's upkeep (every 0.25 s the hurts older than the last check
 //!   dropped), the combat manager (its shared alert every 0.25 s of game
 //!   time) and the projectile manager;
-//! - then for each player playing while nothing pauses the game, the
-//!   stretch from `XP Balls - Collect XP Balls` to the health kept on the
-//!   figure: orbs in reach taken and flying in, each paying its worth
+//! - then for each player playing, his camera target stepped after his
+//!   last move (`Camera - Update Player Cam Target`, the statement ahead of
+//!   his orbs, run apart as the camera's frame is), and while nothing
+//!   pauses the game the stretch from `XP Balls - Collect XP Balls` to the
+//!   health kept on the figure: orbs in reach taken and flying in, each
+//!   paying its worth
 //!   through `Game - Award Experience` as it arrives, the loot check every
 //!   0.25 s of game time (`Loot - Player Check For Loot`), the coins taken
 //!   sliding in and paying through `Game - Award Money`
@@ -116,6 +123,13 @@ pub const UPDATES: [&str; 4] = [
 pub struct PlayerLoop {
     /// None when the program has no portal manager: the loop runs nothing.
     pub script: Option<ScriptId>,
+    /// `Camera - System - Update` over `camera control data`: the tick's
+    /// first statement, ahead of its clock's local (openspec AG.28).
+    pub camera: Option<Range<u32>>,
+    /// Per player playing, ahead of his orbs: the statement around `Camera -
+    /// Update Player Cam Target`, his camera target stepped after his last
+    /// move (openspec AG.28).
+    pub cam_target: Option<Range<u32>>,
     /// `if portal control data.$players dying ...`: the defeated heroes'
     /// sequence.
     pub death: Option<Range<u32>>,
@@ -202,6 +216,70 @@ fn calls_in(program: &Program, ops: &[u32], r: &Range<u32>, name: &str) -> Optio
         .find(|&q| called(program, ops[q as usize]) == Some(name))
 }
 
+/// `ops[range]` split at each statement's end ([`statement_end`]), the
+/// last held to the range.
+fn statements(program: &Program, ops: &[u32], range: Range<u32>) -> Vec<Range<u32>> {
+    let mut out = Vec::new();
+    let mut p = range.start;
+    while p < range.end {
+        let next = statement_end(program, ops, p).max(p + 1).min(range.end);
+        out.push(p..next);
+        p = next;
+    }
+    out
+}
+
+/// The blocks inside statement `s`: its op's block less an `else` closing
+/// it, then that else's block, and so on down an else-if chain.
+fn blocks(program: &Program, ops: &[u32], s: &Range<u32>) -> Vec<Range<u32>> {
+    let mut out = Vec::new();
+    let mut start = s.start + 1;
+    let mut end = (start + program.branch(ops[s.start as usize])).min(s.end);
+    loop {
+        let last = end.checked_sub(1).map(|e| ops[e as usize]);
+        match last {
+            Some(op) if end > start && program.ops[op as usize] == Ins::Skip => {
+                let skip = program.branch(op);
+                out.push(start..end - 1);
+                if skip == 0 {
+                    return out;
+                }
+                start = end;
+                end = (end + skip).min(s.end);
+            }
+            _ => {
+                out.push(start..end);
+                return out;
+            }
+        }
+    }
+}
+
+/// Inside statement `r`, the outermost statement holding position `q` but
+/// not `without`: a stretch nested in a block another stretch shares.
+fn stretch_holding(
+    program: &Program,
+    ops: &[u32],
+    r: &Range<u32>,
+    q: u32,
+    without: u32,
+) -> Option<Range<u32>> {
+    let mut within = blocks(program, ops, r);
+    loop {
+        let s = within
+            .iter()
+            .flat_map(|b| statements(program, ops, b.clone()))
+            .find(|s| s.contains(&q))?;
+        if !s.contains(&without) {
+            return Some(s);
+        }
+        if s.start == q {
+            return None;
+        }
+        within = blocks(program, ops, &s);
+    }
+}
+
 impl PlayerLoop {
     /// The loop over `program`'s portal manager: each stretch found by what
     /// it calls and checked, or left out (logged) when the script lacks it.
@@ -244,6 +322,10 @@ impl PlayerLoop {
                 out.hurts = Some(r.clone());
             }
         }
+        out.camera = body
+            .iter()
+            .find(|r| is(r, "Camera - System - Update"))
+            .cloned();
         out.combat = body
             .iter()
             .find(|r| is(r, "Combat - Manage Combat"))
@@ -270,6 +352,15 @@ impl PlayerLoop {
                     out.player = Some(from..statement_end(program, ops, health));
                 }
             }
+            // His camera target, in the playing branch ahead of the orbs:
+            // the statement that holds its call and not theirs.
+            if let (Some(q), Some(from)) = (
+                calls_in(program, ops, r, "Camera - Update Player Cam Target"),
+                collect,
+            ) && q < from
+            {
+                out.cam_target = stretch_holding(program, ops, r, q, from);
+            }
             if let Some(next) = body.get(i + 1)
                 && next.end - next.start == 1
                 && matches!(
@@ -281,6 +372,8 @@ impl PlayerLoop {
             }
         }
         for (name, found) in [
+            ("the camera's frame", &out.camera),
+            ("a player's camera target", &out.cam_target),
             ("the death sequence", &out.death),
             ("the hurts' upkeep", &out.hurts),
             ("the combat manager", &out.combat),
@@ -408,6 +501,11 @@ impl PlayerLoop {
         if !vm.is_held(pm) {
             return Ok(());
         }
+        // The camera's frame stops alone (openspec AG.28): stopped in play,
+        // the view is the TV's and the rest of the tick runs on.
+        if let Some(r) = &self.camera {
+            vm.run_span_apart(pm, r.start, r.end, host)?;
+        }
         let now = vm.active_seconds(pm).unwrap_or(0.0);
         // False only when no op of the program names the local: nothing
         // reads it then (a synthetic portal manager's).
@@ -419,7 +517,7 @@ impl PlayerLoop {
             {
                 vm.run_span(pm, r.start, r.end, host)?;
             }
-            if let Some(r) = &self.player {
+            if self.player.is_some() || self.cam_target.is_some() {
                 let paused = global_number(vm, "Pause Layer") > 0.0;
                 let players = vm
                     .local(pm, "player data")
@@ -434,7 +532,15 @@ impl PlayerLoop {
                         .field(player, "playing")
                         .and_then(|v| vm.value(v).as_f32())
                         .unwrap_or(0.0);
-                    if playing != 0.0 && !paused {
+                    if playing == 0.0 {
+                        continue;
+                    }
+                    if let Some(r) = &self.cam_target {
+                        vm.run_span_apart(pm, r.start, r.end, host)?;
+                    }
+                    if let Some(r) = &self.player
+                        && !paused
+                    {
                         vm.run_span(pm, r.start, r.end, host)?;
                     }
                 }
@@ -445,6 +551,15 @@ impl PlayerLoop {
         }
         vm.count_tick(pm);
         Ok(())
+    }
+
+    /// Why the camera's frame or a player's camera target stopped in play,
+    /// if one did (openspec AG.28): then the TV's camera has the view.
+    pub fn camera_stopped<'v>(&self, vm: &'v Vm, pm: PlacementId) -> Option<&'v Halt> {
+        [&self.camera, &self.cam_target]
+            .into_iter()
+            .flatten()
+            .find_map(|r| vm.span_stopped(pm, r.start))
     }
 
     /// The game systems' tick as the loop runs it, for `gs` in its own
@@ -560,15 +675,22 @@ mod tests {
         ("Loot - Player Check For Loot", "check"),
         ("Loot - Player Collecting Loot", "collecting"),
     ];
+    /// The camera's macros the synthetic tick calls (openspec AG.28), each
+    /// counting its calls the same way: the frame, the tick's first
+    /// statement, and a playing player's camera target, ahead of his orbs.
+    const CAMERA_CALLED: [(&str, &str); 2] = [
+        ("Camera - System - Update", "camera"),
+        ("Camera - Update Player Cam Target", "cam target"),
+    ];
 
     /// A portal manager in the original's shape, our ops: its STARTUP
-    /// makes two players, the first playing; its tick's body sets its
-    /// clock's local, ends at a gate that stays shut (the VM's own first
-    /// tick stops there), then the death sequence's check (finalizing a
-    /// dying player), the hurts' upkeep every 0.25 s, the combat and
-    /// projectile managers, the per-player loop (orbs, the loot check every
-    /// 0.25 s, loot collecting, health remembered) and the last frame's
-    /// time.
+    /// makes two players, the first playing; its tick's body calls the
+    /// camera's frame, sets its clock's local, ends at a gate that stays
+    /// shut (the VM's own first tick stops there), then the death
+    /// sequence's check (finalizing a dying player), the hurts' upkeep every
+    /// 0.25 s, the combat and projectile managers, the per-player loop (the
+    /// camera target while he plays, orbs, the loot check every 0.25 s, loot
+    /// collecting, health remembered) and the last frame's time.
     fn portal_manager() -> Arc<Program> {
         portal_manager_with(|_| {})
     }
@@ -598,6 +720,10 @@ mod tests {
                 .iter()
                 .map(|(name, _)| w.op(Class::DefineMacro, name))
                 .collect();
+            let camera: Vec<_> = CAMERA_CALLED
+                .iter()
+                .map(|(name, _)| w.op(Class::DefineMacro, name))
+                .collect();
             let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
             let (start, _) = w.open(Class::StartUp, "STARTUP");
             for _ in 0..2 {
@@ -620,7 +746,11 @@ mod tests {
             let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
             w.end_block(shut);
             let (section, _) = w.open(Class::MacroSection, "MACROS");
-            for (def, (_, cell)) in defs.iter().zip(CALLED) {
+            for (def, (_, cell)) in defs
+                .iter()
+                .zip(CALLED)
+                .chain(camera.iter().zip(CAMERA_CALLED))
+            {
                 let p = w.push(*def);
                 let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
                 let enter = w.flow(Class::FlowMacro);
@@ -638,6 +768,7 @@ mod tests {
             w.end_block(p);
             w.end_block(types);
             // The tick's body.
+            w.call(camera[0], &[]);
             let now = w.rhs(FLOAT, &[clock()]);
             w.set(&[El::Local(local)], now);
             let shut_gate = w.int(1);
@@ -660,6 +791,10 @@ mod tests {
             w.call(defs[2], &[]);
             let two = w.int(2);
             let l = w.loop_value(two);
+            let one = w.int(1);
+            let plays = w.check(&[El::Local(scratch), El::Local(playing)], 1, one);
+            w.call(camera[1], &[]);
+            w.close(plays);
             w.call(defs[3], &[]);
             let now = w.rhs(FLOAT, &[clock()]);
             let c = w.check(&[El::Local(scratch), El::Local(timer)], 0, now);
@@ -706,6 +841,13 @@ mod tests {
 
     impl Bench {
         fn new() -> Self {
+            Self::with(Mode::Strict, &[])
+        }
+
+        /// The bench in `mode`, the counters named in `unmodelled` left
+        /// unregistered: a macro counting on one stops on a member nothing
+        /// models.
+        fn with(mode: Mode, unmodelled: &[&str]) -> Self {
             let program = portal_manager();
             let player_loop = PlayerLoop::read(&program);
             let files = Files {
@@ -714,8 +856,11 @@ mod tests {
             };
             let handles = HashMap::from([(PM, PM_HANDLE)]);
             let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
-            let mut config = Config::new(Mode::Strict);
-            for (_, cell) in CALLED {
+            let mut config = Config::new(mode);
+            for (_, cell) in CALLED.iter().chain(&CAMERA_CALLED) {
+                if unmodelled.contains(cell) {
+                    continue;
+                }
                 config
                     .members
                     .value_cell("test", cell, MemberSpec::new(Kind::Int, 0.0, 0.0));
@@ -805,6 +950,92 @@ mod tests {
         // A script without the stretches: none found, nothing to run.
         let empty = PlayerLoop::read(&Program::default());
         assert_eq!(empty, PlayerLoop::default());
+    }
+
+    /// The camera's stretches (openspec AG.28): its frame the tick's first
+    /// statement, and in the per-player loop the statement holding the
+    /// camera target's call and not the orbs'; the frame runs every step
+    /// from the level's start, joined or not, the camera target once a
+    /// step for each player playing once a hero has joined.
+    #[test]
+    fn the_cameras_frame_runs_every_step_and_his_target_while_he_plays() {
+        let program = portal_manager();
+        let l = PlayerLoop::read(&program);
+        let ops = &program.scripts[l.script.unwrap() as usize].ops;
+        let camera = l.camera.clone().unwrap();
+        assert_eq!(
+            called(&program, ops[camera.start as usize]),
+            Some("Camera - System - Update")
+        );
+        assert_eq!(
+            tick_body(&program, ops)[0],
+            camera,
+            "the tick's first statement"
+        );
+        let target = l.cam_target.clone().unwrap();
+        let player = l.player.clone().unwrap();
+        assert!(target.end <= player.start, "{target:?} ahead of {player:?}");
+        assert!(target.clone().any(
+            |q| called(&program, ops[q as usize]) == Some("Camera - Update Player Cam Target")
+        ));
+        let mut bench = Bench::new();
+        let (frames, targets) = (bench.count("camera"), bench.count("cam target"));
+        for _ in 0..3 {
+            bench.step(false);
+        }
+        assert_eq!(bench.count("camera"), frames + 3, "unjoined, each step");
+        assert_eq!(
+            bench.count("cam target"),
+            targets,
+            "no player while unjoined"
+        );
+        for _ in 0..2 {
+            bench.step(true);
+        }
+        assert_eq!(bench.count("camera"), frames + 5);
+        assert_eq!(
+            bench.count("cam target"),
+            targets + 2,
+            "the one playing, once a step"
+        );
+    }
+
+    /// A camera stretch stopped in play stops alone (openspec AG.28): the
+    /// player's camera target on a member nothing models stops that stretch
+    /// for good, which `camera_stopped` names (the TV then hands the view
+    /// back), and the portal manager, the camera's frame and his orbs run on
+    /// every step after.
+    #[test]
+    fn a_camera_target_stopped_in_play_stops_that_stretch_alone() {
+        let mut bench = Bench::with(Mode::Play, &["cam target"]);
+        let (frames, orbs) = (bench.count("camera"), bench.count("collect"));
+        assert!(
+            bench
+                .player_loop
+                .camera_stopped(&bench.vm, bench.pm)
+                .is_none()
+        );
+        for _ in 0..3 {
+            bench.step(true);
+        }
+        let why = bench
+            .player_loop
+            .camera_stopped(&bench.vm, bench.pm)
+            .expect("the camera target's stop");
+        assert!(why.to_string().contains("unmodelled member"), "{why}");
+        // The camera target's stretch, not the frame's.
+        let (frame, target) = (
+            bench.player_loop.camera.clone().unwrap(),
+            bench.player_loop.cam_target.clone().unwrap(),
+        );
+        assert!(bench.vm.span_stopped(bench.pm, target.start).is_some());
+        assert!(bench.vm.span_stopped(bench.pm, frame.start).is_none());
+        assert!(
+            bench.vm.stopped(bench.pm).is_none(),
+            "the portal manager runs on"
+        );
+        assert_eq!(bench.count("camera"), frames + 3, "the frame runs on");
+        assert_eq!(bench.count("collect"), orbs + 3, "his orbs run on");
     }
 
     const GS: Obj = Obj { unit: 0, index: 2 };
@@ -1089,7 +1320,7 @@ mod tests {
         let handles: HashMap<Obj, u64> = named.iter().map(|&(o, h, ..)| (o, h)).collect();
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         let mut config = Config::new(Mode::Strict);
-        for (_, cell) in CALLED {
+        for (_, cell) in CALLED.iter().chain(&CAMERA_CALLED) {
             config
                 .members
                 .value_cell("test", cell, MemberSpec::new(Kind::Int, 0.0, 0.0));

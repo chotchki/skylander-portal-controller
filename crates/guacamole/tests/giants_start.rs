@@ -57,10 +57,11 @@ fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
         started.elapsed().as_secs_f64(),
         load()
     );
-    // The members the run reached, against AH.34's ceiling.
+    // The members the run reached, against AH.34's ceiling as AG.28's
+    // camera volumes and activator raised it.
     let reached = run.vm.reached().len();
-    println!("members reached: {reached} (AH.34's ceiling 324)");
-    assert!(reached <= 324, "{reached}");
+    println!("members reached: {reached} (AG.28's ceiling 325)");
+    assert!(reached <= 325, "{reached}");
 
     // The clones the start made, by template, and which the TV draws.
     let mut clones: BTreeMap<String, usize> = BTreeMap::new();

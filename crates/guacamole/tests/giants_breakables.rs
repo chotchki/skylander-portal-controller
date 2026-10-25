@@ -24,7 +24,9 @@ use std::time::Instant;
 use common::*;
 use guac_motion::seam::{PhysicsSeam, Shape, Vec3};
 use guac_motion::stick::Stick;
-use guac_script::members::{COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP};
+use guac_script::members::{
+    CAMERA, COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP,
+};
 use guac_script::{Handle, MemberId, Mode, Obj, Value};
 use guacamole::script_engine::{FEET_PER_METRE, Pad, heading_of};
 use guacamole::scripts::{self, Rarity};
@@ -1080,7 +1082,8 @@ fn the_stone_wall_and_a_titan_boulder_stand_under_his_attacks() {
 
 /// The members the breakables reach (design decision 2's count): a lob and
 /// an eruption from anchor A and the five hurts, every member registered,
-/// under AH.34's ceiling of 324; the ones past the fight's tables named.
+/// under AH.34's ceiling of 324 and AG.28's one more; the ones past the
+/// fight's tables named.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_members_the_breakables_reach_stay_under_the_ceiling() {
@@ -1106,6 +1109,7 @@ fn the_members_the_breakables_reach_stay_under_the_ceiling() {
             .chain(COMBAT)
             .chain(LOOP)
             .chain(FIGURE)
+            .chain(CAMERA)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -1136,8 +1140,9 @@ fn the_members_the_breakables_reach_stay_under_the_ceiling() {
     }
     println!("load after: {}", load());
     assert!(past.is_empty(), "{past:?}");
+    // AG.28's camera volumes and activator raise AH.34's ceiling by one.
     assert!(
-        reached.len() <= 324,
+        reached.len() <= 325,
         "past AH.34's ceiling: {}",
         reached.len()
     );

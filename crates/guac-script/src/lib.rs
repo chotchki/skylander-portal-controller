@@ -121,6 +121,13 @@
 //! manager's own ops this way, its orbs, award and loot check among them,
 //! only which stretches run and when being guacamole's.
 //!
+//! A stretch run *apart* ([`Vm::run_span_apart`]) stops alone: in play mode
+//! what would stop the placement's script stops that stretch for good,
+//! logged and kept ([`Vm::span_stopped`]), and the placement's other
+//! stretches and ticks run on. The portal manager's tick opens on the
+//! gameplay camera's frame (openspec AG.28), which runs so: the camera
+//! stopping hands the view to the TV and leaves the player loop running.
+//!
 //! # A script's frame
 //!
 //! Every script opens with PRESCRIPT, whose block holds STARTUP, SHUTDOWN,
@@ -292,12 +299,15 @@
 //!   host member compare equal. `undefined` reads 0 as a number and as an
 //!   object none.
 //! - A placement reference keeps a point of its own
-//!   (`placementreference.remembered`), which the host keeps on the actor
-//!   it names; one naming nothing still has it, the host keeping it on the
-//!   reference itself (its receiver is the reference's cell). A reading:
-//!   the orbs' delayed spawn remembers where an orb comes out through its
-//!   `orb` reference before the orb exists, then moves the spawn point
-//!   there (AH.20).
+//!   (`placementreference.remembered`): each reference its own, two naming
+//!   one actor keeping two, so the host is told the reference's cell
+//!   ([`Access::via`]) beside the actor it names (openspec AG.28: the
+//!   camera's look-from and look-at points name one follower clone and sit
+//!   55 ft apart, and kept on the actor the view looked nowhere). One
+//!   naming nothing still has it, its receiver the reference's cell. A
+//!   reading: the orbs' delayed spawn remembers where an orb comes out
+//!   through its `orb` reference before the orb exists, then moves the
+//!   spawn point there (AH.20).
 //!
 //! # Values and arithmetic
 //!

@@ -261,6 +261,8 @@ pub(crate) enum PadAct {
     Disconnect,
     /// The left stick held there, raw, until the next.
     Stick(Vec2),
+    /// The right stick, the same way.
+    RightStick(Vec2),
     /// Down for a frame, then up.
     Press(GamepadButton),
     /// Down until released (AH.24: a held attack).
@@ -337,6 +339,9 @@ struct PadBody {
     #[serde(default)]
     disconnect: bool,
     stick: Option<[f32; 2]>,
+    /// The right stick, raw, held until the next (AG.28's verify: the
+    /// original's does nothing to the view, and the TV's reads none).
+    rstick: Option<[f32; 2]>,
     press: Option<String>,
     hold: Option<String>,
     release: Option<String>,
@@ -361,6 +366,7 @@ impl PadBody {
             self.connect.is_some(),
             self.disconnect,
             self.stick.is_some(),
+            self.rstick.is_some(),
             self.press.is_some(),
             self.hold.is_some(),
             self.release.is_some(),
@@ -383,6 +389,12 @@ impl PadBody {
                 return None;
             }
             PadAct::Stick(Vec2::new(x, y))
+        } else if let Some([x, y]) = self.rstick {
+            let travel = |v: f32| v.is_finite() && (-1.0..=1.0).contains(&v);
+            if !(travel(x) && travel(y)) {
+                return None;
+            }
+            PadAct::RightStick(Vec2::new(x, y))
         } else if let Some(b) = self.hold {
             PadAct::Hold(pad_button(&b)?)
         } else if let Some(b) = self.release {
@@ -511,6 +523,14 @@ fn drive_posted_pads(
                 for (axis, value) in [
                     (GamepadAxis::LeftStickX, v.x),
                     (GamepadAxis::LeftStickY, v.y),
+                ] {
+                    raw.write(RawGamepadAxisChangedEvent::new(pad, axis, value).into());
+                }
+            }
+            PadAct::RightStick(v) => {
+                for (axis, value) in [
+                    (GamepadAxis::RightStickX, v.x),
+                    (GamepadAxis::RightStickY, v.y),
                 ] {
                     raw.write(RawGamepadAxisChangedEvent::new(pad, axis, value).into());
                 }
@@ -1685,6 +1705,10 @@ mod tests {
             (r#"{"pad":0,"stick":[0.26,-0.25]}"#, 202),
             (r#"{"pad":4,"connect":{}}"#, 400),
             (r#"{"pad":0,"stick":[1.5,0]}"#, 400),
+            // AG.28's verify: the right stick, raw, held until the next.
+            (r#"{"pad":0,"rstick":[1,-1]}"#, 202),
+            (r#"{"pad":0,"rstick":[0,1.5]}"#, 400),
+            (r#"{"pad":0,"rstick":[0,0],"stick":[0,0]}"#, 400),
             (r#"{"pad":0,"press":"jump"}"#, 400),
             (r#"{"pad":0,"press":"start","stick":[0,0]}"#, 400),
             (r#"{"pad":0}"#, 400),
@@ -1981,10 +2005,10 @@ mod tests {
             .insert_resource(mirror.clone())
             .add_systems(PostUpdate, pin_camera);
         let feet = Vec3::new(10.19, 43.38, -93.39);
-        let follow = FollowCamera {
-            camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
-            planes: Vec::new(),
-        };
+        let follow = FollowCamera::new(
+            GameCamera::new(CameraDef::LEVEL_213_START, feet),
+            Vec::new(),
+        );
         let followed = crate::hero::viewed(&follow.camera.view());
         let camera = app
             .world_mut()

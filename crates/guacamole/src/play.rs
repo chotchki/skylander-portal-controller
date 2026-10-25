@@ -609,6 +609,14 @@ pub(crate) struct CameraReport {
     pub fov_y: f32,
     pub near: f32,
     pub far: f32,
+    /// Who has the view (openspec AG.28): `on` while the camera's scripts on
+    /// the VM drive it; `off` once one of them stopped in play and the TV's
+    /// own camera has followed him since from where they left it, with why
+    /// (stand-in ledger: `camera`); `none` before a hero joins their run or
+    /// with no camera system in the level's part, with why. A run judging
+    /// the scripts' camera holds them to `on` to the end.
+    pub scripts: Option<String>,
+    pub scripts_reason: Option<String>,
 }
 
 impl CameraReport {
@@ -625,6 +633,22 @@ impl CameraReport {
             fov_y: p.fov.to_degrees(),
             near: p.near,
             far: p.far,
+            scripts: None,
+            scripts_reason: None,
+        })
+    }
+
+    /// [`CameraReport::of`] with who has the view.
+    pub(crate) fn held(
+        transform: &Transform,
+        projection: &Projection,
+        follow: &FollowCamera,
+    ) -> Option<Self> {
+        let (scripts, reason) = follow.hold.report();
+        Some(Self {
+            scripts: Some(scripts.to_owned()),
+            scripts_reason: reason,
+            ..Self::of(transform, projection)?
         })
     }
 }
@@ -676,7 +700,7 @@ impl Play {
     pub(crate) fn report(
         &self,
         bodies: &Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
-        cameras: &Query<(&Transform, &Projection), With<FollowCamera>>,
+        cameras: &Query<(&Transform, &Projection, &FollowCamera)>,
         runtime: Option<&ScriptRuntime>,
         earning: Option<&crate::progress::Earning>,
     ) -> Option<HeroReport> {
@@ -705,7 +729,7 @@ impl Play {
             .inside
             .as_ref()
             .and_then(|i| cameras.get(i.camera).ok())
-            .and_then(|(t, p)| CameraReport::of(t, p));
+            .and_then(|(t, p, f)| CameraReport::held(t, p, f));
         Some(HeroReport {
             slot: c.slot.as_u8() + 1,
             figure_id: c.placement.figure_id.as_str().to_owned(),
@@ -755,7 +779,15 @@ pub(crate) struct PlayShots<'w, 's> {
             Option<&'static HeroRun>,
         ),
     >,
-    cameras: Query<'w, 's, (&'static Transform, &'static Projection), With<FollowCamera>>,
+    cameras: Query<
+        'w,
+        's,
+        (
+            &'static Transform,
+            &'static Projection,
+            &'static FollowCamera,
+        ),
+    >,
     runtime: Option<Res<'w, ScriptRuntime>>,
     earning: Option<Res<'w, crate::progress::Earning>>,
     source: Option<Res<'w, ScriptSource>>,
@@ -1460,10 +1492,10 @@ fn enter(
         }
         return;
     };
-    let follow = FollowCamera {
-        camera: GameCamera::new(CameraDef::LEVEL_213_START, feet),
-        planes: Vec::new(),
-    };
+    let follow = FollowCamera::new(
+        GameCamera::new(CameraDef::LEVEL_213_START, feet),
+        Vec::new(),
+    );
     let camera = s
         .commands
         .spawn((
@@ -1872,7 +1904,7 @@ mod tests {
         let report = {
             let mut state: bevy::ecs::system::SystemState<(
                 Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
-                Query<(&Transform, &Projection), With<FollowCamera>>,
+                Query<(&Transform, &Projection, &FollowCamera)>,
                 Res<Play>,
             )> = bevy::ecs::system::SystemState::new(app.world_mut());
             let (bodies, cameras, play) = state.get(app.world()).unwrap();
@@ -2769,7 +2801,7 @@ mod tests {
             let reported = |app: &mut App| {
                 let mut state: bevy::ecs::system::SystemState<(
                     Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
-                    Query<(&Transform, &Projection), With<FollowCamera>>,
+                    Query<(&Transform, &Projection, &FollowCamera)>,
                     Option<Res<ScriptRuntime>>,
                     Option<Res<crate::progress::Earning>>,
                     Res<Play>,

@@ -312,6 +312,9 @@ enum Spot {
         /// The path's `_otherPoint`, read as the path was walked: what a
         /// distance or a heading on it is measured from.
         other: Option<Value>,
+        /// The reference cell the receiver was read through, for a
+        /// reference's own members ([`Access::via`]).
+        via: Option<u32>,
     },
     /// A part of a packed screen position or colour, read from and written
     /// back through the place that holds it (crate docs, Members).
@@ -378,6 +381,7 @@ enum Base {
         member: MemberId,
         cell: Option<u32>,
         other: Option<Value>,
+        via: Option<u32>,
     },
 }
 
@@ -391,11 +395,13 @@ impl Base {
                 member,
                 cell,
                 other,
+                via,
             } => Spot::Member {
                 receiver,
                 member,
                 cell,
                 other,
+                via,
             },
         }
     }
@@ -579,6 +585,9 @@ pub struct Vm {
     slid: bool,
     /// A slider's own write, which doesn't end it.
     sliding: bool,
+    /// The stretches run apart ([`Vm::run_span_apart`]) that stopped in
+    /// play mode, by placement and first position: they don't run again.
+    spans_stopped: HashMap<(PlacementId, u32), Halt>,
 }
 
 /// A `slide value` under way: where it writes, from what to what, over how
@@ -659,6 +668,7 @@ impl Vm {
             frame: 0,
             slid: false,
             sliding: false,
+            spans_stopped: HashMap::new(),
             run: Run {
                 placement: None,
                 ctx: 0,
@@ -1567,6 +1577,41 @@ impl Vm {
             None => Ok(ran),
             Some(halt) => Err(halt),
         }
+    }
+
+    /// [`Vm::run_span`] for a stretch that stops alone (crate docs, A
+    /// stretch of a tick): in play mode what would stop the placement's
+    /// script stops this stretch for good, logged, the placement running on
+    /// and the stretch skipped from then on ([`Vm::span_stopped`]); strict
+    /// mode halts as `run_span` does. The gameplay camera's frame runs so in
+    /// the portal manager's tick (openspec AG.28): it stopping leaves the
+    /// player loop's other stretches running and hands the view to the TV.
+    pub fn run_span_apart(
+        &mut self,
+        id: PlacementId,
+        from: u32,
+        to: u32,
+        host: &mut dyn Host,
+    ) -> Result<bool, Halt> {
+        if self.spans_stopped.contains_key(&(id, from)) {
+            return Ok(false);
+        }
+        match self.run_span(id, from, to, host) {
+            Err(h) if self.config.mode == Mode::Play => {
+                if let Some(p) = self.placements.get_mut(id as usize) {
+                    p.stopped = None;
+                }
+                self.spans_stopped.insert((id, from), h);
+                Ok(false)
+            }
+            other => other,
+        }
+    }
+
+    /// Why the stretch of `id`'s script from `from` stopped, if it did
+    /// ([`Vm::run_span_apart`]).
+    pub fn span_stopped(&self, id: PlacementId, from: u32) -> Option<&Halt> {
+        self.spans_stopped.get(&(id, from))
     }
 
     /// Runs the macro `name` as a parameterless call from a fresh context,
@@ -3003,12 +3048,14 @@ impl Vm {
                 receiver,
                 member,
                 cell,
+                via,
                 ..
             } => Spot::Member {
                 receiver,
                 member,
                 cell,
                 other: None,
+                via,
             },
             other => other,
         };
@@ -3294,11 +3341,13 @@ impl Vm {
                             member,
                             cell,
                             other,
+                            via,
                         } => Base::Member {
                             receiver,
                             member,
                             cell,
                             other,
+                            via,
                         },
                         other => match self.read(other, host)? {
                             Value::Cell(c) => Base::Cell(c),
@@ -3387,7 +3436,19 @@ impl Vm {
                             return self.slider_member(id, m);
                         }
                         let key = if key == Recv::Head { recv(v) } else { key };
-                        self.member(Some(v), m, key)
+                        // A reference keeps its own remembered point, apart
+                        // from any other reference to the same actor (crate
+                        // docs, Variables, structures and sets).
+                        let via = match prev {
+                            Spot::Cell(c)
+                                if self.cells[c as usize].kind == CellKind::Reference
+                                    && m == MemberId::named("placementreference", "remembered") =>
+                            {
+                                Some(c)
+                            }
+                            _ => None,
+                        };
+                        self.member_via(Some(v), m, key, via)
                     }
                 }
             }
@@ -3433,6 +3494,17 @@ impl Vm {
 
     /// A member that isn't the VM's own.
     fn member(&mut self, receiver: Option<Value>, m: MemberId, key: Recv) -> Result<Spot, Fault> {
+        self.member_via(receiver, m, key, None)
+    }
+
+    /// [`Vm::member`] read through the reference cell `via`.
+    fn member_via(
+        &mut self,
+        receiver: Option<Value>,
+        m: MemberId,
+        key: Recv,
+        via: Option<u32>,
+    ) -> Result<Spot, Fault> {
         let Some((spec, place)) = self.config.members.get(m) else {
             return Err(Fault::Member(m));
         };
@@ -3452,15 +3524,23 @@ impl Vm {
             member: m,
             cell,
             other: self.run.other_point,
+            via,
         })
     }
 
-    fn access(&self, receiver: Option<Value>, member: MemberId, other: Option<Value>) -> Access {
+    fn access(
+        &self,
+        receiver: Option<Value>,
+        member: MemberId,
+        other: Option<Value>,
+        via: Option<u32>,
+    ) -> Access {
         Access {
             placement: self.my_handle(),
             receiver,
             member,
             other_point: other,
+            via,
         }
     }
 
@@ -3501,9 +3581,10 @@ impl Vm {
                 member,
                 cell: None,
                 other,
+                via,
             } => {
                 self.uses.entry(member).or_default().0 += 1;
-                let at = self.access(receiver, member, other);
+                let at = self.access(receiver, member, other, via);
                 if self
                     .config
                     .members
@@ -3633,6 +3714,7 @@ impl Vm {
                 member,
                 cell,
                 other,
+                via,
             } => {
                 let Some((spec, _)) = self.config.members.get(member) else {
                     return Err(Fault::Member(member));
@@ -3652,7 +3734,7 @@ impl Vm {
                         self.value_cell_values[slot as usize] = v;
                         Ok(())
                     }
-                    None => match host.set(&self.access(receiver, member, other), v) {
+                    None => match host.set(&self.access(receiver, member, other, via), v) {
                         Ok(()) | Err(HostFault::Nothing) => Ok(()),
                         Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
                     },
@@ -3708,6 +3790,7 @@ impl Vm {
                 member,
                 cell,
                 other,
+                via,
             } => match cell {
                 Some(slot) => {
                     let default = self
@@ -3718,7 +3801,7 @@ impl Vm {
                     self.value_cell_values[slot as usize] = default;
                     Ok(())
                 }
-                None => match host.reset(&self.access(receiver, member, other)) {
+                None => match host.reset(&self.access(receiver, member, other, via)) {
                     Ok(()) | Err(HostFault::Nothing) => Ok(()),
                     Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
                 },
@@ -3963,7 +4046,19 @@ impl Vm {
             // compares by its fields).
             return self.bound.get(x as usize) == self.bound.get(y as usize);
         }
-        a == b || (!a.is_number() && self.materialize(a) == self.materialize(b))
+        if a == b {
+            return true;
+        }
+        // Two run-time value cells are two places however alike they read:
+        // `shake x` and `shake y` both at 0 are not one value to a keyframer
+        // looking for the one it runs (openspec AG.28).
+        if let (Value::Cell(x), Value::Cell(y)) = (a, b)
+            && self.cells.get(x as usize).map(|c| c.kind) == Some(CellKind::Value)
+            && self.cells.get(y as usize).map(|c| c.kind) == Some(CellKind::Value)
+        {
+            return false;
+        }
+        !a.is_number() && self.materialize(a) == self.materialize(b)
     }
 
     // ---- cells, structures and sets ----
