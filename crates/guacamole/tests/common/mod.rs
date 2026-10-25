@@ -686,6 +686,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         }
     }
     world.walk_first_fight(LEVEL);
+    world.walk_goats(LEVEL);
     let (mesh, start) = chapter_1(&igzs[LEVEL as usize]);
     let parry = ParryWorld::new(&[mesh]).expect("the level's collision");
     let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, start, 0.0);

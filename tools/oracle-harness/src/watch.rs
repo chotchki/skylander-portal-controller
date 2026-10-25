@@ -115,6 +115,7 @@ use crate::control::Control;
 use crate::fight::{FightFrame, FightWatch};
 use crate::mover::MoverWatch;
 use crate::outputs::hex;
+use crate::places::PlaceWatch;
 use crate::verbs::{
     Chain, ChainBlock, ChainReply, ChainSpec, PadRead, Refusal, Reply, ReplyError, Verb,
     WATCH_HEADER, WATCH_MAX_BYTES, WATCH_MAX_RANGES, WATCH_REPLY_BYTES,
@@ -574,6 +575,10 @@ pub struct GiantsWatch {
     /// (AH.5): none in a list written before it.
     #[serde(default)]
     pub mt: Option<u32>,
+    /// Level placements and their script numbers (AG.176): none in a list
+    /// written before it, or one [`GiantsWatch::with_places`] didn't grow.
+    #[serde(default)]
+    pub places: Option<PlaceWatch>,
 }
 
 /// A `Generic_FollowActor` on the watch list (AG.13).
@@ -937,6 +942,7 @@ impl GiantsWatch {
             mover,
             fight: None,
             mt: Some(mt),
+            places: None,
         })
     }
 
@@ -960,6 +966,17 @@ impl GiantsWatch {
         fields.extend(fight.list_fields());
         self.list = WatchList::new(fields)?;
         self.fight = Some(fight);
+        Ok(self)
+    }
+
+    /// The list grown with level placements and their numbers (AG.176);
+    /// refused when the grown list passes O5's range or byte caps.
+    pub fn with_places(mut self, places: PlaceWatch) -> Result<Self> {
+        let mut fields = self.list.fields().to_vec();
+        fields.retain(|f| !f.name.starts_with("place.") && !f.name.starts_with("cells."));
+        fields.extend(places.list_fields());
+        self.list = WatchList::new(fields)?;
+        self.places = Some(places);
         Ok(self)
     }
 

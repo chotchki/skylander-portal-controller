@@ -1,8 +1,8 @@
 //! The on-screen test's readers on the disc (openspec AH.107), counted
 //! for the host's answer (stand-in ledger: `on-screen`): every script the
 //! whitelist runs, with AH.34's
-//! route scripts, AG.60's start scripts and AG.28's camera volumes and
-//! activator, read for asks of a point
+//! route scripts, AG.60's start scripts, AG.28's camera volumes and
+//! activator and AG.177's jumping goats, read for asks of a point
 //! against the gameplay camera ([`guacamole::on_screen`]), each with the
 //! list and macro it sits in.
 
@@ -163,6 +163,16 @@ fn the_whitelists_on_screen_readers() {
         "every camera script in the part"
     );
     let camera_asks = on("AG.28's camera volumes and activator", &camera);
+    let goats: Vec<ScriptId> = scripts::GOAT_SCRIPTS
+        .iter()
+        .filter_map(|s| program.script_named(s))
+        .collect();
+    assert_eq!(
+        goats.len(),
+        scripts::GOAT_SCRIPTS.len(),
+        "the goats' script in the part"
+    );
+    let goat_asks = on("AG.177's jumping goats", &goats);
     println!(
         "read in {:.1} s; {}",
         started.elapsed().as_secs_f64(),
@@ -201,4 +211,9 @@ fn the_whitelists_on_screen_readers() {
     // volumes and the activator call place the viewport, they don't test a
     // point against it.
     assert!(camera_asks.is_empty(), "{camera_asks:?}");
+    // AG.177's goats add none: listed on the TV, its asks stay the two.
+    assert!(
+        goat_asks.keys().all(|k| tv_asks.contains_key(k)),
+        "{goat_asks:?}"
+    );
 }

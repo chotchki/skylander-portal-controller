@@ -42,7 +42,14 @@
 //!   [`CAMERA_ACTIVATOR_RANGE`] ft, which opens the rocks, keeps itself
 //!   awake and two seconds on switches to [`CAMERA_ROCKS`] over two with
 //!   ease 20 and 20; and a rock ([`CAMERA_ROCK`], `Falling_Rocks.ai`), which
-//!   shakes the camera by [`CAMERA_SHAKE`] the tick it finds itself open.
+//!   shakes the camera by [`CAMERA_SHAKE`] the tick it finds itself open;
+//!   and a goat ([`CAMERA_GOAT`], `Goat_Jumping_Pit.ai`, openspec AG.177)
+//!   that, once his feet are within [`CAMERA_GOAT_RANGE`] ft of it across
+//!   the ground, runs by `move to` to its rock ([`CAMERA_GOAT_ROCK`], a
+//!   `Falling_Rocks.ai` of its own) until within [`CAMERA_GOAT_REACH`] ft and
+//!   there sets that rock's `Open` by `find variable` as it jumps; the rock,
+//!   found open, waits its clock plus a `random(1)` (`Timer`) and then
+//!   shakes the camera by [`CAMERA_SHAKE`].
 //!
 //! [`CameraFault::Frame`] makes the update stop on a member nothing models
 //! [`CAMERA_FAULT_TICK`] ticks after it first finds a target;
@@ -138,6 +145,18 @@ pub const CAMERA_EASE: i32 = 20;
 pub const CAMERA_ROCK: &str = "Sliding_Rock_1";
 pub const CAMERA_SHAKE: f32 = 1.0;
 pub const CAMERA_SHAKE_SECONDS: f32 = 0.5;
+/// The goat: its name, how near his feet startle it (ft, across the
+/// ground), how near its rock it runs before it jumps (ft) and that rock.
+pub const CAMERA_GOAT: &str = "Sheep_1";
+pub const CAMERA_GOAT_RANGE: f32 = 10.0;
+pub const CAMERA_GOAT_REACH: f32 = 3.0;
+pub const CAMERA_GOAT_ROCK: &str = "Sliding_Rock(5)";
+/// The goat's movement numbers ([`super::moving`]'s order): 20 ft/s on the
+/// ground and in the air, 160 ft/s² up, 80 down, turning 720°/s, falling
+/// at 32 ft/s² to 120 ft/s.
+pub const CAMERA_GOAT_MOVEMENT: [f32; 13] = [
+    20.0, 160.0, 80.0, 720.0, 20.0, 160.0, 80.0, 720.0, 120.0, 32.0, 0.0, 0.0, 0.0,
+];
 /// How fast his minion walks with the stick held (ft/s).
 pub const CAMERA_WALK_SPEED: f32 = 10.0;
 /// The number the activator opens the rocks by, in the level's file.
@@ -176,13 +195,15 @@ pub enum CameraFault {
 }
 
 /// Where the level's placements stand (metres, their pivots): the plane's
-/// box, the volume's, the activator and the rock.
+/// box, the volume's, the activator and the rock, the goat and its rock.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraAt {
     pub plane: [f32; 3],
     pub volume: [f32; 3],
     pub activator: [f32; 3],
     pub rock: [f32; 3],
+    pub goat: [f32; 3],
+    pub goat_rock: [f32; 3],
 }
 
 /// What [`camera`] writes: [`Attack`]'s three entries with the camera
@@ -1074,6 +1095,133 @@ fn camera_level(spots: CameraAt, fault: CameraFault) -> Vec<u8> {
         [0.0; 3],
         0.0,
     );
+    // The goat, then its rock: placed in that order, the goat ticks first, as
+    // `Sheep_1` before `Sliding_Rock(5)` in the original's walk, so the rock
+    // finds itself open the step it's opened.
+    let goat = b.object(0, "tfbActorInfo", 0xF8);
+    let goat_rock = b.object(0, "tfbActorInfo", 0xF8);
+    // The goat's rock: found open, it waits a roll of up to a second on its
+    // clock and shakes the camera once.
+    let goat_rock_script = {
+        let mut w = Writer::new(&mut b);
+        let shake = w.op(Class::DefineMacro, "Game - Shake Cam");
+        let waiting = w.op(Class::UserBehavior, "Waiting");
+        let delay = w.op(Class::UserBehavior, "Delay");
+        let fallen = w.op(Class::UserBehavior, "Fallen");
+        let open = w.variable("Open", "ValueInfo", Some(INT));
+        let due = w.variable("Timer", "ValueInfo", Some(FLOAT));
+        // A path of its own (the part's scripts are found by path), the
+        // same file name: it keeps its `Open` where the activator's rock
+        // reads the file's number.
+        let script = w.script(
+            "C:/tfb/Content/Levels/Level_213/Scripts/Goat/Falling_Rocks.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                let p = w.push(waiting);
+                let one = w.int(1);
+                let opened = w.check(&[El::Local(open)], 1, one);
+                let now = timer(w);
+                let roll = w.literal(FLOAT, 1.0f32.to_bits(), true);
+                let then = w.expr(now, Some((0, roll)));
+                w.set(&[El::Local(due)], then);
+                w.set_behavior(delay);
+                w.end_block(opened);
+                w.end_block(p);
+                let p = w.push(delay);
+                let now = timer(w);
+                let ready = w.check(&[El::Local(due)], 0, now);
+                let m = w.float(CAMERA_SHAKE);
+                call_stub(w, shake, &[("magnitude", "ValueInfo", m)]);
+                w.set_behavior(fallen);
+                w.end_block(ready);
+                w.end_block(p);
+                let p = w.push(fallen);
+                w.end_block(p);
+            },
+        );
+        w.declare(script, &[open, due]);
+        script
+    };
+    placed(
+        &mut b,
+        goat_rock,
+        CAMERA_GOAT_ROCK,
+        Some(goat_rock_script),
+        2,
+        spots.goat_rock,
+        [0.0; 3],
+        0.0,
+    );
+    // The goat: startled by his feet near it, it runs to its rock and, there,
+    // opens it as it jumps.
+    let goat_script = {
+        let mut w = Writer::new(&mut b);
+        let wait = w.op(Class::UserBehavior, "Wait");
+        let run = w.op(Class::UserBehavior, "Run");
+        let end = w.op(Class::UserBehavior, "End");
+        w.script(
+            "C:/tfb/Content/Levels/Level_213/Scripts/Goat_Jumping_Pit.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                let p = w.push(wait);
+                let near = w.value(&[my, El::Member("positionmeasurement", "horizontal distance")]);
+                let him = w.reference(
+                    &[
+                        El::Member("actorinfo", "players"),
+                        El::Member("setvariant", "first"),
+                    ],
+                    None,
+                );
+                w.refer(near, 0x18, him);
+                let range = w.float(CAMERA_GOAT_RANGE);
+                let (startled, o) = w.open(Class::CheckValue, "if");
+                w.refer(o, 0x1C, near);
+                w.word(o, 0x20, 0);
+                w.refer(o, 0x24, range);
+                w.set_behavior(run);
+                w.end_block(startled);
+                w.end_block(p);
+                let p = w.push(run);
+                let to = w.reference(&[El::Local(goat_rock)], None);
+                let reach = w.float(CAMERA_GOAT_REACH);
+                let (there, o) = w.open(Class::MoveTo, "move to||working|until within|with anim");
+                w.refer(o, 0x20, to);
+                w.word(o, 0x24, 0);
+                w.refer(o, 0x28, reach);
+                let owner = w.group(&[El::Local(goat_rock)], None);
+                let (found, f) = w.open(Class::FindVariable, "find variable|||owned by");
+                w.class_word(f, 0x1C, "ValueInfo");
+                w.meta_word(f, 0x20, INT);
+                w.text(f, 0x24, "open");
+                w.word(f, 0x28, 0);
+                w.refer(f, 0x30, owner);
+                let one = w.int(1);
+                w.set(&[El::Local(f)], one);
+                w.end_block(found);
+                w.set_behavior(end);
+                w.end_block(there);
+                w.end_block(p);
+                let p = w.push(end);
+                w.end_block(p);
+            },
+        )
+    };
+    placed(
+        &mut b,
+        goat,
+        CAMERA_GOAT,
+        Some(goat_script),
+        1,
+        spots.goat,
+        [0.0; 3],
+        0.0,
+    );
+    // A sphere (3), solid (bit 3), on the level's mesh (bit 4), and its
+    // movement numbers: what the engine walks it by.
+    collision(&mut b, goat, 0x1B, [3.0; 3]);
+    moving(&mut b, goat, &CAMERA_GOAT_MOVEMENT);
     let blocks = b.section(0x10);
     crate::igz::layouts::builder::list(
         &mut b,
@@ -1085,6 +1233,8 @@ fn camera_level(spots: CameraAt, fault: CameraFault) -> Vec<u8> {
             Some(volume),
             Some(activator),
             Some(rock),
+            Some(goat),
+            Some(goat_rock),
         ],
     );
     b.build()

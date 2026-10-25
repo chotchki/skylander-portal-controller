@@ -507,6 +507,42 @@ fn a_roll_up_to_a_paths_value_draws_each_read() {
     assert!(dice.0.is_empty(), "one draw a read");
 }
 
+/// `random(X)` over a path holding a fraction rolls a fraction up to it,
+/// whatever its literal's class: an integer literal over 0.5 (the coins'
+/// sparkle wait, `random(treasure sparkle spawn rate time)`: AG.176) reads
+/// 0.5 x the number x 2^-32, never the whole roll of 0.
+#[test]
+fn a_roll_up_to_a_fraction_is_a_fraction_whatever_its_literal() {
+    let p = program(|w| {
+        let (top, wait) = (var(w, "top"), var(w, "wait"));
+        idle(
+            w,
+            |w| {
+                let half = w.float(0.5);
+                w.set(&[El::Local(top)], half);
+            },
+            |w| {
+                let roll = w.rhs(INT, &[El::Local(top)]);
+                w.b.put_bytes(roll.offset_by(0x24).unwrap(), &[1]);
+                w.set(&[El::Local(wait)], roll);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Coin", 0);
+    let words = [0x8000_0000u32, 0x2000_0000, 0xFFFF_FFC0];
+    let mut dice = Dice(words.to_vec());
+    for w in words {
+        vm.tick(id, &mut dice).unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(
+            vm.local(id, "wait"),
+            Some(Value::Float(0.5 * (w as f32 * (1.0 / 4_294_967_296.0))))
+        );
+    }
+    assert_eq!(vm.local(id, "wait"), Some(Value::Float(0.5)));
+    assert!(dice.0.is_empty(), "one draw a read");
+}
+
 /// `undefined` holds no set: a change into it goes nowhere and a membership
 /// check of it skips its block, as its writes do (the Chompy's STARTUP adds
 /// itself to a set its file names so).

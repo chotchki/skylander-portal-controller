@@ -22,7 +22,9 @@ use crate::identity::Identity;
 use crate::launch::{self, BootOptions};
 use crate::outputs::{Kind, Rpcs3Outputs, hex};
 use crate::pine::PineClient;
+use crate::places::{PlaceSpec, PlaceWatch, PlacesFile};
 use crate::rng::{self, Peek};
+use crate::route::census::Disc;
 use crate::watch::{GiantsWatch, RawRecord, RingCheck, WatchFile};
 
 /// How long a savestate boot gets to reach Start Paused's pause unless the
@@ -51,6 +53,10 @@ pub struct Inputs<'a> {
     pub figure: &'a Path,
     /// From the spawn to Start Paused's pause ([`BOOT_WAIT`] for a warm home).
     pub boot_wait: Duration,
+    /// Level placements a set W replay watches too, with the disc they're
+    /// found by (AG.176); none watches none.
+    pub places: &'a [PlaceSpec],
+    pub disc: Option<&'a Disc>,
 }
 
 /// Runs replay `replay` of `plan` into `out/<label>/` (refused inside any
@@ -171,6 +177,18 @@ fn drive(inputs: &Inputs, plan: &Plan, dir: &Path, identity: &str) -> Result<Dri
     // Set O: O6's chains armed first, so each record carries them too.
     let watched = if plan.watches() {
         let watch = GiantsWatch::resolve(&mut pine).context("the watch list at F0")?;
+        let watch = if inputs.places.is_empty() {
+            watch
+        } else {
+            let disc = inputs
+                .disc
+                .context("watching places needs the disc ($GUAC_GIANTS_DUMP)")?;
+            let frame = actors::read(&mut pine)?;
+            let float_type = watch.mover.as_ref().map(|m| m.float_type);
+            let places = PlaceWatch::resolve(&mut pine, &frame, disc, inputs.places, float_type)
+                .context("the places at F0")?;
+            watch.with_places(places)?
+        };
         let chains = if plan.chains() {
             let chains = GiantsChains::resolve(&mut pine, &watch, &chains::fight_kinds())
                 .context("Giants' chains at F0")?;
@@ -298,6 +316,17 @@ pub(crate) fn read_watch(
         reads,
     };
     file.write(&dir.join(WatchFile::FILE))?;
+    // The places record by record, their behaviours named at this pause
+    // (AG.176).
+    if let Some(places) = &watch.places {
+        let placed = PlacesFile::of(pine, places, &watch.list, &ring.records)?;
+        let path = rrc_dump::output::refuse_repo_output(&dir.join(PlacesFile::FILE))?;
+        fs::write(
+            &path,
+            serde_json::to_string(&placed).expect("the places serialise"),
+        )
+        .with_context(|| format!("writing {}", path.display()))?;
+    }
     let recording = watch.recording(&ring.records, &file.pads)?;
     let frames_without_clips = recording
         .frames()

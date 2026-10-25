@@ -118,7 +118,7 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
     // and the sliding rocks' activator.
     let counts: Vec<usize> = WHITELIST.iter().map(|w| w.scripts.len()).collect();
     assert_eq!(counts[..4], [1, 22, 3, 8]);
-    assert_eq!(counts[70], 54);
+    assert_eq!(counts[70], 55);
     // Each walker's: his definition, his tuning actor, his minion's script
     // and what his file's other running placements run (3 to 5), 244 in all.
     assert_eq!(counts[4..70], WALKER_COUNTS);

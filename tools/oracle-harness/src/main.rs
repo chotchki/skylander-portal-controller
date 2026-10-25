@@ -194,6 +194,7 @@ usage:
               [--replays <n>] [--first <n>] [--end <flips>] [--every <flips>]
               [--warmup <script>] [--state <file>] [--figure <file>] [--attempts <n>]
               [--boot-secs <n>] [--gap-secs <n>] [--perturb <change>]...
+              [--place <name>[=<variable>,...]]...
       AF.11's measurement: <n> replays (10) of each script under each set, interleaved
       (replay 0 of every script and set, then replay 1, ...), each a fresh RPCS3 from
       the gameplay state ($GUAC_ORACLE_SAVESTATE unless --state) with a fresh copy of
@@ -201,7 +202,11 @@ usage:
       (1800) only and saved there, set B every <every> (60) flips; a SCREENSHOT at the
       end of both; set C (AF.12) set B's pauses with a SCREENSHOT at F0 and at each;
       set W (AG.1) set A with O5's watch armed at F0 on Giants' list and read at the
-      end (<replay>/watch.json and recording.json).
+      end (<replay>/watch.json and recording.json). Each --place (AG.176, sets W and O
+      only, off $GUAC_GIANTS_DUMP) puts one of level 213's placements on that list,
+      found at F0 by its offset on the disc: where it stands, its wake state, the
+      behaviour its script runs and its clock, and the script numbers named after
+      the =, every frame (<replay>/places.json).
       Each --perturb (AF.12) replaces the scripts by their perturbed copies, named
       <script>_<change>: shift:<at>[,<at>...]:<by> moves those steps <by> flips (a
       press and its release together when both are named), stick:<at>:<x>,<y> sets
@@ -1313,10 +1318,12 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
     let mut boot_wait = divergence::BOOT_WAIT;
     let (mut end, mut every) = (divergence::END, divergence::EVERY);
     let mut perturbations = Vec::new();
+    let mut places = Vec::new();
     let mut gap = Duration::from_secs(30);
     while let [flag, value, tail @ ..] = rest {
         rest = tail;
         match *flag {
+            "--place" => places.push(oracle_harness::places::PlaceSpec::parse(value)?),
             "--gap-secs" => {
                 gap = Duration::from_secs(value.parse().context("--gap-secs takes seconds")?)
             }
@@ -1367,6 +1374,18 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
     let warmup = warmup
         .map(|w| Plan::named(&w, Set::B, end, every))
         .transpose()?;
+    // Places ride O5's watch, so only a watching set takes them, and they're
+    // found by the disc's offsets.
+    let disc = if places.is_empty() {
+        None
+    } else {
+        if plans.iter().any(|p| !p.watches()) {
+            bail!("--place watches places on O5's list: every set has to be W or O");
+        }
+        let dump = env::path(env::GIANTS_DUMP)
+            .context("--place finds placements on the disc: set $GUAC_GIANTS_DUMP")?;
+        Some(route::census::Disc::read(&dump.join("PS3_GAME/USRDIR"))?)
+    };
     let exe = required(env::ORACLE_EXE)?;
     let home = OracleHome::open(&required(env::ORACLE_HOME)?)?;
     std::fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
@@ -1403,6 +1422,8 @@ fn divergence_run(mut rest: &[&str]) -> Result<()> {
         state: &state,
         figure: &figure,
         boot_wait,
+        places: &places,
+        disc: disc.as_ref(),
     };
     // Replays share the home: what a state's load doesn't put back has to come
     // through each replay unchanged, or the next one isn't independent.

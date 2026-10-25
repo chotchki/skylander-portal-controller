@@ -1446,18 +1446,20 @@ fn the_join_warns_by_the_rule(
 /// it), so the join's warning rule is held both ways: on that test's roll
 /// the sleeping `Enemy_Chompy(4)` stands within (1)'s call and is called,
 /// which a join alerting every sleeper alike would match too. Seed 11
-/// leaves the seers (1) and (2) 20.6 and 20.2 ft from (4), outside their
-/// 20 ft call, so it sleeps on; seed 9 has (3) call it from 19.7 ft (the
-/// merge check's review, seeds 1-12: the rule held on all twelve, (4)
-/// called on 3, 9 and 12). The seeds are picked for the halves they
-/// reach, so a change to the draws before F0 + 100 may need others.
+/// leaves the seers (1) and (2) 22.8 and 22.8 ft from (4), outside their
+/// 20 ft call, so it sleeps on; seed 6 has (1) call it from 19.2 ft (AG.177,
+/// 2026-10-25, after the coins' sparkle timers rolled fractions and the
+/// goats joined the run, seeds 1-16: the rule held on all sixteen, (4)
+/// called on 6, 13, 14 and 16; the merge check's review had 9 calling it
+/// on the draws before). The seeds are picked for the halves they reach, so
+/// a change to the draws before F0 + 100 may need others.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_join_wakes_only_whom_the_warning_rule_reaches() {
     println!("load before: {}", load());
     let started = Instant::now();
     let (mut called, mut left) = (0, 0);
-    for seed in [11, 9] {
+    for seed in [11, 6] {
         let (run, snaps, _) = fight_swapping(Script {
             lob: Some(90),
             hero_health: Some(200),

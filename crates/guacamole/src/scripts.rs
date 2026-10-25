@@ -744,6 +744,32 @@ impl ScriptWorld {
         walkers.len()
     }
 
+    /// Makes each placement of the file linked as `unit` that runs one of
+    /// [`GOAT_SCRIPTS`] and has movement numbers a creature the engine moves
+    /// ([`ScriptWorld::walk`], openspec AG.177): the jumping goats run their
+    /// waypoints by `move to` before the jump that opens the third rock.
+    pub fn walk_goats(&mut self, unit: u16) -> usize {
+        let mut walkers: Vec<Handle> = self
+            .objects
+            .iter()
+            .filter(|(o, _)| o.unit == unit)
+            .filter(|(o, _)| {
+                self.templates.get(o).is_some_and(|p| {
+                    p.physics.is_some()
+                        && p.script
+                            .as_deref()
+                            .is_some_and(|s| guac_extract::scripts::listed(&GOAT_SCRIPTS, s))
+                })
+            })
+            .map(|(_, h)| *h)
+            .collect();
+        walkers.sort_unstable();
+        for &h in &walkers {
+            self.walk(h);
+        }
+        walkers.len()
+    }
+
     /// A placement's name: its file's, or its template's for a clone.
     pub fn name(&self, h: Handle) -> String {
         self.actors
@@ -1510,6 +1536,14 @@ pub const CAMERA_SCRIPTS: [&str; 8] = [
     "Activator_Sliding_Rocks.ai",
 ];
 
+/// The jumping goats (openspec AG.177, design decision 2's whitelist,
+/// AH.42's way), every tick, by script: `Sheep_1` and `Sheep_3` idle until a
+/// minion comes within 30 ft, startle, run their waypoints and jump, and the
+/// jump's landing at its fourth waypoint opens `Sliding_Rock(5)`, the rock
+/// slide's third rock, whose fall shakes the camera a third time. How they're
+/// drawn and walk is AH's route line's.
+pub const GOAT_SCRIPTS: [&str; 1] = ["Goat_Jumping_Pit.ai"];
+
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
 pub fn is_camera_script(path: &str) -> bool {
@@ -1538,6 +1572,7 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c

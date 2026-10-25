@@ -71,8 +71,9 @@ pub struct Whitelisted {
 }
 
 /// The whitelist (design decision 2): AH.12's roots and the scripts they
-/// spawn, by archive, with AG.60's start scripts on the props and theirs and
-/// AG.28's camera volumes and activator, and AG.162's 66 walkers' own.
+/// spawn, by archive, with AG.60's start scripts on the props and theirs,
+/// AG.28's camera volumes and activator, AG.177's jumping goats, and
+/// AG.162's 66 walkers' own.
 /// AH.42 grows it with AH.8's route.
 pub const WHITELIST: [Whitelisted; 71] = [
     Whitelisted {
@@ -769,6 +770,8 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "Pop_To_X_Special_213.ai",
             "Pop_to_42_end.ai",
             "Activator_Sliding_Rocks.ai",
+            // AG.177: the jumping goats, whose jump opens the third rock.
+            "Goat_Jumping_Pit.ai",
         ],
     },
 ];

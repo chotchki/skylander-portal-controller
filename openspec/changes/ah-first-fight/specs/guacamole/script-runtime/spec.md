@@ -32,6 +32,10 @@ Every roll the game makes SHALL cover the original's range the way the original 
 - **WHEN** a fraction roll of 0.5 draws one of the generator's 128 highest numbers
 - **THEN** it reads 0.5, and the number just below them reads under 0.5
 
+#### Scenario: A roll up to a fraction the game keeps
+- **WHEN** a coin in play rolls the wait to its next sparkle up to the 0.5 s the game keeps for it
+- **THEN** the wait is a fraction from 0 to 0.5 s, so a coin sparkles about every quarter second and not every frame, as the original's three coins stood 0.013, 0.246 and 0.280 s from their next sparkle
+
 #### Scenario: Two sessions
 - **WHEN** chapter 1 is played twice from its start with the same input
 - **THEN** the rolls differ between the two
