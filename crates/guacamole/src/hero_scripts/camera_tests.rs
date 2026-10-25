@@ -13,9 +13,9 @@ use bevy::prelude::*;
 use guac_extract::intros::IrFormat;
 use guac_formats::script::builder::camera::{
     CAMERA_ACTIVATOR, CAMERA_ACTIVATOR_DELAY, CAMERA_ACTIVATOR_RANGE, CAMERA_ACTIVATOR_SECONDS,
-    CAMERA_BACK, CAMERA_EASE, CAMERA_LOOK_UP, CAMERA_PLANE_SIZE, CAMERA_ROCKS, CAMERA_SHAKE,
-    CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_NAME, CAMERA_VOLUME_SECONDS,
-    CameraAt, CameraFault, SyntheticCam,
+    CAMERA_BACK, CAMERA_EASE, CAMERA_LOOK_UP, CAMERA_PLANE_SIZE, CAMERA_ROCK, CAMERA_ROCKS,
+    CAMERA_SHAKE, CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_NAME,
+    CAMERA_VOLUME_SECONDS, CameraAt, CameraFault, SyntheticCam,
 };
 use guac_formats::script::builder::{WALKER_LOAD, WalkerFault};
 use guac_ir::palette::Palette;
@@ -914,4 +914,55 @@ fn a_portal_manager_stopped_in_play_hands_the_view_to_the_chain() {
     assert!(vm.stopped(pm).is_some(), "the portal manager stopped");
     assert_eq!(join(&app).as_deref(), Some("joined"), "his own run on");
     follows_him(&mut app, pad, &stop);
+}
+
+/// AG.191, the other side: a stop in play that is neither the camera's nor
+/// the portal manager's (the rock's own script, the tick after its shake)
+/// leaves the camera's scripts the view, so the activator's switch two
+/// seconds after the wake still runs on it, `/api/_test/tv` reading `on`
+/// the whole way.
+#[test]
+fn a_props_stop_in_play_leaves_the_scripts_the_view() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _pad) = camera_app(tmp.path(), CameraFault::Rock);
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    let near = Vec3::from_array(spots().activator) + Vec3::new(0.0, START[1] - FLOOR, 5.0);
+    set_down(&mut app, near);
+    let from = samples(&app).len();
+    let switch = ((CAMERA_ACTIVATOR_DELAY + CAMERA_ACTIVATOR_SECONDS) * 60.0) as usize;
+    frames(&mut app, switch + 30);
+    let w = app.world();
+    let vm = &w.resource::<ScriptRuntime>().vm;
+    let source = w.resource::<ScriptSource>();
+    let rock = source
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == CAMERA_ROCK)
+        .and_then(|p| w.resource::<ScriptWorld>().handles().get(&p.obj).copied())
+        .and_then(|h| vm.placement_of(h))
+        .expect("the rock");
+    let halt = vm.stopped(rock).expect("the rock stopped").to_string();
+    assert!(halt.contains("unmodelled member"), "{halt}");
+    let pm = guacamole::scripts::portal_manager_placement(vm, w.resource::<ScriptWorld>())
+        .expect("the portal manager");
+    assert!(vm.stopped(pm).is_none(), "the portal manager runs on");
+    let after = &samples(&app)[from..];
+    assert!(after.iter().any(|s| s.shake != 0.0), "the rock shook first");
+    for s in after {
+        assert_eq!(s.hold, ViewHold::Scripts, "step {}", s.step);
+        assert_eq!(s.report.scripts.as_deref(), Some("on"), "step {}", s.step);
+    }
+    assert!(
+        after.iter().any(|s| s.pct < 1.0),
+        "the switch ran on the scripts' view"
+    );
+    assert_eq!(last(&app).pct, 1.0);
+    assert_eq!(join(&app).as_deref(), Some("joined"));
+    assert_eq!(
+        *app.world().resource::<crate::hero::CameraScripts>(),
+        crate::hero::CameraScripts::On
+    );
 }

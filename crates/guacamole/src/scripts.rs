@@ -515,9 +515,9 @@ impl ScriptWorld {
     /// keeps the velocity it holds for him, and each step it hands the engine
     /// that velocity, slowed to nothing, over his walk (`movementUpdate.ai`
     /// #608-#610). A write to his place still moves him (a level's `teleport
-    /// to`, which stops his walk as it sets him down, a displace, a
-    /// measurement), as it would move him in the original, where his scripts
-    /// don't stop. His scripts joining him again
+    /// to`, which sets him down facing as it says and stops his walk, a
+    /// displace, a measurement), as it would move him in the original, where
+    /// his scripts don't stop. His scripts joining him again
     /// ([`ScriptWorld::hero_template`], the join's) gives them both back.
     pub fn hand_back_walk(&mut self, hero: Handle) {
         self.walking_alone.insert(hero);

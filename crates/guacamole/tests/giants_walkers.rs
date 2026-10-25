@@ -2468,8 +2468,9 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
     }
     let mut table = Vec::new();
     // Ninjini on the fall-back, then falling at his description's 128 as he
-    // did before AG.173, then Eruptor's stand-in on the same seeds (his
-    // stop forced: none comes on the dump), the controller's own landings.
+    // did before AG.173, then Eruptor's fall-back on the same seeds (his
+    // stop forced: none comes on the dump), the controller's own landings
+    // (stand-in ledger: `walker`).
     for (load, gravity) in [
         (NINJINI, None),
         (NINJINI, Some(128.0)),
@@ -2504,6 +2505,7 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
         let (mut falls, mut near, mut never) = (0, 0, 0);
         let (mut free, mut worst) = (0usize, 0.0f32);
         let mut gains = Vec::new();
+        let mut recorded: Vec<f64> = Vec::new();
         for (label, records) in &recordings {
             let mut k = 1;
             while k + 1 < records.len() {
@@ -2517,6 +2519,15 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
                 let theirs = (k + 1..records.len())
                     .find(|&i| records[i]["contacts"]["support"].as_u64() == Some(2));
                 let end = theirs.map_or(records.len() - 1, |t| (t + 3).min(records.len() - 1));
+                // The drop's own gains over the same records: free with the
+                // two before, over the frame time two records back (AG.10's).
+                for i in (k + 1).max(2)..=end {
+                    if (i - 2..=i).all(|j| free_in_the_air(&records[j])) {
+                        let vy = |j: usize| json_vec3(&records[j]["hero"]["velocity"]).y / FOOT;
+                        let dt = json_f32(&records[i - 2]["clock"]["frame_delta"]);
+                        recorded.push(f64::from((vy(i - 1) - vy(i)) / dt));
+                    }
+                }
                 seed_in_the_air(&mut w, &records[k]);
                 let mut ours = None;
                 for (i, record) in records.iter().enumerate().take(end).skip(k) {
@@ -2544,20 +2555,28 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
                 k = end.max(k + 1);
             }
         }
-        let mean = gains.iter().sum::<f32>() / gains.len().max(1) as f32;
+        // In f64: an f32 sum of 400-odd gains drifts by 1e-3 over them.
+        let mean_of = |g: &[f64]| g.iter().sum::<f64>() / g.len().max(1) as f64;
+        let ours: Vec<f64> = gains.iter().map(|&g| f64::from(g)).collect();
+        let (mean, theirs) = (mean_of(&ours), mean_of(&recorded));
         println!(
-            "{load} off his scripts ({stop:?}), falling at {} ft/s² to {}: {falls} falls, {near} landing within a record of theirs, {never} not by theirs + 3; {free} free steps gaining {mean:.4} ft/s² on average, the most from 136.21 {worst:.4}; load {:.2}",
+            "{load} off his scripts ({stop:?}), falling at {} ft/s² to {}: {falls} falls, {near} landing within a record of theirs, {never} not by theirs + 3; {free} free steps gaining {mean:.4} ft/s² on average, the most from 136.21 {worst:.4}; the drops' own {} records gaining {theirs:.4}; load {:.2}",
             tuning.gravity,
             tuning.terminal,
+            recorded.len(),
             load1()
         );
-        table.push((gravity, tuning, falls, near, never, worst));
+        table.push((gravity, tuning, falls, near, never, worst, mean - theirs));
     }
-    let (_, tuning, falls, near, never, worst) = table[0];
+    let (_, tuning, falls, near, never, worst, off) = table[0];
     assert_eq!((tuning.gravity, tuning.terminal), (136.21, 120.0));
     assert_eq!(falls, 40, "AG.39's 40");
     assert!(worst < 1e-2, "{worst} ft/s² off AG.10's");
-    assert!(table[1].5 > 8.0, "the description's 128 misses it");
+    assert!(off.abs() < 1e-2, "{off} ft/s² off the drops' own gain");
+    assert!(
+        table[1].5 > 8.0 && table[1].6.abs() > 8.0,
+        "the description's 128 misses it"
+    );
     println!("on the fall-back: {near} of {falls} within a record, {never} not landing");
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
 }

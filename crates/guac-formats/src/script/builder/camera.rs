@@ -51,7 +51,10 @@
 //! fighter's minion stop on one [`CAMERA_FAULT_TICK`] ticks in (openspec
 //! AG.190, AH.151); [`CameraFault::PortalManager`] makes the portal
 //! manager's tick call `Manage Projectiles` once a hero has joined, which
-//! stops on one on its [`CAMERA_FAULT_TICK`]th call (AG.191). `global.bld`
+//! stops on one on its [`CAMERA_FAULT_TICK`]th call (AG.191);
+//! [`CameraFault::Rock`] makes the rock's script stop on one the tick after
+//! its shake, a stop neither the camera's nor the portal manager's (AG.191's
+//! review). `global.bld`
 //! holds AH.151's mover update beside the portal manager
 //! ([`super::attack_with_mover`]'s), which the walking minion keeps his walk
 //! with.
@@ -147,9 +150,8 @@ pub const CAMERA_FAULT_TICK: i32 = 120;
 /// `Manage Projectiles` in.
 pub const CAMERA_PM_CALLS: &str = "Synthetic Projectile Manager Calls";
 
-/// Whether a camera script stops: never ([`CameraFault::None`]), the update
-/// on a member nothing models once it has had a target a while, or the
-/// volume's script on one once he's inside it.
+/// Whether a script of the part stops in play: never ([`CameraFault::None`])
+/// or where each other variant says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraFault {
     None,
@@ -167,6 +169,10 @@ pub enum CameraFault {
     /// and the call stops on a member nothing models on its
     /// [`CAMERA_FAULT_TICK`]th (openspec AG.191).
     PortalManager,
+    /// The rock's script, the tick after its shake, on a member nothing
+    /// models: a prop's own stop, which leaves the camera's scripts the view
+    /// (openspec AG.191's review).
+    Rock,
 }
 
 /// Where the level's placements stand (metres, their pivots): the plane's
@@ -1049,6 +1055,10 @@ fn camera_level(spots: CameraAt, fault: CameraFault) -> Vec<u8> {
                 w.end_block(opened);
                 w.end_block(p);
                 let p = w.push(fallen);
+                if fault == CameraFault::Rock {
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
                 w.end_block(p);
             },
         )
