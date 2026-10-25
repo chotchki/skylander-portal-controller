@@ -20,7 +20,7 @@ use guac_formats::script::builder::camera::{
 };
 use guac_formats::script::builder::{WALKER_LOAD, WalkerFault};
 use guac_ir::palette::Palette;
-use guac_script::{PlacementId, Vm, eased};
+use guac_script::{Generator, PlacementId, TICK_SECONDS, Value, Vm, eased};
 use guacamole::frame::Frame;
 use guacamole::script_engine::{METRES_PER_FOOT as FT, direction};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
@@ -561,16 +561,42 @@ fn the_sliding_rocks_switch_after_their_wake_and_shake_the_eye() {
     assert_eq!(last(&app).pct, 1.0);
 }
 
-/// AG.177: a goat opening a rock as it jumps, and the rock's shake. Away
-/// from the goat nothing moves it and its rock stays shut; set down within
-/// its range across the ground, the goat runs to its rock by `move to`
-/// (the engine walking it) and, there (where the original's goat lands its
-/// jump), sets the rock's `Open`;
-/// the rock, found open the step it was opened, waits its clock plus a roll
-/// under a second (its `Timer`) and the step its clock passes that shakes
-/// the eye by the shake's law.
-#[test]
-fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
+/// What [`goat_opens_its_rock`] read: the step the goat opened its rock
+/// and the one the rock fell (indices into the steps from his set-down),
+/// the rock's `Timer`, the clock it read that wait by and the clock its
+/// falling step read.
+struct GoatRun {
+    jumped: usize,
+    falls: usize,
+    timer: f32,
+    read: f32,
+    fell_by: f32,
+}
+
+/// The rock's check, `Timer <= script timer`, by the scripts' own
+/// comparison (within their 1e-4).
+fn passed(timer: f32, clock: f32) -> bool {
+    guac_script::compare(0, Value::Float(timer), Value::Float(clock)) == Some(true)
+}
+
+/// The rock's `random(1)` on a generator seeded `seed`: its first roll.
+fn first_roll(seed: u32) -> f32 {
+    Generator::seeded(seed)
+        .random(Value::Float(1.0))
+        .and_then(|v| v.as_f32())
+        .unwrap()
+}
+
+/// AG.177's goat on the TV, the run seeded `seed` before his set-down (the
+/// session's generator, seeded from the clock as the TV seeds it, for
+/// `None`). Away from the goat nothing moves it and its rock stays shut;
+/// set down within its range across the ground, the goat runs to its rock
+/// by `move to` (the engine walking it) and, there (where the original's
+/// goat lands its jump), sets the rock's `Open`; the rock, found open the
+/// step it was opened, waits its clock plus a roll of up to a second (its
+/// `Timer`) and shakes the eye by the shake's law the first step after
+/// whose clock passes that wait.
+fn goat_opens_its_rock(seed: Option<u32>) -> GoatRun {
     let tmp = tempfile::tempdir().unwrap();
     let (mut app, _pad) = camera_app(tmp.path(), CameraFault::None);
     run_until(&mut app, "the scripts' view", 30, |s| {
@@ -590,6 +616,10 @@ fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
         "the goat waits 14 m off and its rock stays shut: {:?}",
         last(&app)
     );
+    if let Some(seed) = seed {
+        // As the dev entry seeds a run (AH.25).
+        app.world_mut().resource_mut::<ScriptRuntime>().generator = Generator::seeded(seed);
+    }
     // Within its range across the ground: 2 ft inside it, on his side.
     let near = goat_at + Vec3::new(0.0, START[1] - FLOOR, (CAMERA_GOAT_RANGE - 2.0) * FT);
     set_down(&mut app, near);
@@ -599,6 +629,10 @@ fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
     });
     frames(&mut app, 120);
     let after = &samples(&app)[from..];
+    assert!(
+        after.windows(2).all(|w| w[1].step == w[0].step + 1),
+        "a sample a step"
+    );
     let startled = after
         .iter()
         .position(|s| s.goat.as_deref() == Some("run"))
@@ -627,9 +661,19 @@ fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
     let s = &after[jumped];
     assert_eq!(s.goat_rock_open, Some(1.0));
     assert_eq!(s.goat_rock.as_deref(), Some("delay"));
-    let (timer, clock) = (s.goat_rock_timer.unwrap(), s.goat_rock_clock.unwrap());
-    let roll = timer - clock;
-    assert!((0.0..1.0).contains(&roll), "its wait {roll} s");
+    // A step's clock as its scripts read it is the one the step before
+    // left: the rock read its wait by the clock of the sample before
+    // (AG.227: the jump's own sample is a step on). `random(1)` rolls from
+    // 0 up to 1, both ends, added to that clock in single precision.
+    let (timer, read) = (
+        s.goat_rock_timer.unwrap(),
+        after[jumped - 1].goat_rock_clock.unwrap(),
+    );
+    assert!(
+        read <= timer && timer <= read + 1.0,
+        "its wait {} s",
+        timer - read
+    );
     // It shakes the step its clock passes that wait, by the shake's law.
     let shaking: Vec<usize> = after
         .iter()
@@ -638,11 +682,17 @@ fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
         .map(|(i, _)| i)
         .collect();
     let first = *shaking.first().expect("a shake");
-    // A step's clock as its scripts read it is the one the step before
-    // left: passed at the shake's step, not yet at the one before.
+    // From the step after it opened on, it holds its wait against its
+    // clock as it reads it, by the scripts' `<=` within their 1e-4, and
+    // falls the first step that holds.
+    let falls = (jumped + 1..after.len())
+        .find(|&k| passed(timer, after[k - 1].goat_rock_clock.unwrap()))
+        .expect("its clock passes its wait");
+    assert_eq!(
+        first, falls,
+        "the shake at {first}, its clock past its wait at {falls}"
+    );
     assert_eq!(after[first].goat_rock.as_deref(), Some("fallen"));
-    assert!(after[first - 1].goat_rock_clock.unwrap() >= timer);
-    assert!(after[first - 2].goat_rock_clock.unwrap() < timer);
     let peak = 2.5 * CAMERA_SHAKE;
     let shake_frames = (CAMERA_SHAKE_SECONDS * 60.0).round() as usize;
     for &i in &shaking {
@@ -653,6 +703,53 @@ fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
             after[i].shake
         );
     }
+    GoatRun {
+        jumped,
+        falls,
+        timer,
+        read,
+        fell_by: after[falls - 1].goat_rock_clock.unwrap(),
+    }
+}
+
+/// AG.177: a goat opening a rock as it jumps, and the rock's shake, on the
+/// session's generator: each run rolls the rock's wait anew.
+#[test]
+fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
+    goat_opens_its_rock(None);
+}
+
+/// AG.227: the goat's rock over a roll under a step, the first seed from 1
+/// whose first roll is (7, 0.0053 s). Its `Timer` is the clock it read plus
+/// that roll, bit for bit, and it falls the next step; against the jump's
+/// own clock, a step on, the wait read -0.0114 s, the flake's.
+#[test]
+fn a_goat_opens_its_rock_over_a_roll_under_a_step() {
+    let seed = (1..).find(|&s| first_roll(s) < TICK_SECONDS).unwrap();
+    let run = goat_opens_its_rock(Some(seed));
+    assert_eq!(
+        run.read + first_roll(seed),
+        run.timer,
+        "the clock it read and the rock's roll, the run's first"
+    );
+    assert_eq!(run.falls, run.jumped + 1, "it falls the step after");
+}
+
+/// AG.227: the goat's rock over a wait within the scripts' tolerance of a
+/// step's clock (seed 389, the first from 1 that lands so on this run's
+/// clocks: its `Timer` 9.6e-5 s past the clock its falling step reads). The
+/// rock's `<=` holds within 1e-4, so it falls that step, a step before its
+/// clock reaches the wait.
+#[test]
+fn a_goat_opens_its_rock_over_a_wait_within_the_scripts_tolerance() {
+    let run = goat_opens_its_rock(Some(389));
+    assert_eq!(run.read + first_roll(389), run.timer);
+    assert!(
+        run.fell_by < run.timer,
+        "its falling step read {} s, short of its wait {} s",
+        run.fell_by,
+        run.timer
+    );
 }
 
 /// AG.28: the stick held through a switch. Held to his left the whole way,
