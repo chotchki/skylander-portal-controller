@@ -7,7 +7,8 @@
 //! listing; and a walker's fall-back once his script stops in play, as the
 //! TV takes it (AH.151, AG.173, AG.190, AG.211: Ninjini and the seven giants,
 //! whose minions stop at `Minion.ai` #842 only in a run that takes
-//! `collisioninfo.object collisions` out of its registry, [`PLAY_842`]: since
+//! `collisioninfo.object collisions` out of its registry, [`PLAY_842`], as
+//! Hot Head's and Tree Rex's two do on the TV's key, [`PLAY_KEY`]: since
 //! AG.160 modelled it nothing on the dump stops in play). Ignored by default; they read
 //! `GUAC_GIANTS_DUMP` and write the extract under `GUAC_EXTRACT_DIR` (a
 //! folder `ag27-verify` there, shared by the tests of one run; a run that
@@ -3452,8 +3453,8 @@ const PLAY_KEY: Opts = Opts {
 };
 
 /// `load` joined as the TV joins him (play mode, steering by the view the
-/// TV draws; `o`, [`PLAY`] or [`PLAY_842`]), `settle` steps standing after,
-/// his fall-back taking his walk (`hold_walk`) and the view
+/// TV draws; `o`, [`PLAY`], [`PLAY_842`] or [`PLAY_KEY`]), `settle` steps
+/// standing after, his fall-back taking his walk (`hold_walk`) and the view
 /// (`hand_back_view`) as the TV's does or not.
 fn joined_on_the_tv(
     l: &Level,

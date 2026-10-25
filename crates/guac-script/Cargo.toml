@@ -34,6 +34,7 @@ guac-script = { path = ".", features = ["test-fixtures"] }
 # Test switches: `Members::without`, a member taken out of a run's registry so
 # a script stops where its absence stopped it (guacamole's disc tests hold the
 # fall-back to the stop at `Minion.ai` #842 that AG.160 took away). Test-only:
-# guacamole's tests enable it from their [dev-dependencies]; nothing that
-# ships does.
+# guacamole's tests enable it from their [dev-dependencies], and its
+# `test-hooks` builds through its `unmodel` feature (AG.221's
+# `GUAC_TEST_UNMODEL`); nothing that ships does.
 test-fixtures = []
