@@ -329,7 +329,7 @@ fn the_fights_parts_extract_whole_and_resume() {
     }
     println!(
         "  {held} whitelisted scripts, all in the script part ({} walkers' of them)",
-        scripts::walker_scripts().len()
+        scripts::whitelisted_walker_scripts().len()
     );
     assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 54);
     println!(

@@ -108,6 +108,10 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
     // one entry each (never twice, never a fighter's).
     assert_eq!(archives[4..70], WALKER_ARCHIVES);
     assert_eq!(WHITELIST.len(), 71);
+    let mut once = archives.clone();
+    once.sort_unstable();
+    once.dedup();
+    assert_eq!(once.len(), archives.len(), "an archive listed twice");
     // AH.12's roots: 17 running in global.bld and 5 it spawns, Eruptor's
     // eight, the level's 18 and the 15 they spawn there; AG.60's 8 start
     // scripts on the props and the 5 they spawn; AG.28's 7 camera volumes
@@ -156,8 +160,8 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
 }
 
 #[test]
-fn the_walkers_scripts_are_the_walkers_archives_alone() {
-    let listed = walker_scripts();
+fn the_whitelisted_walker_scripts_are_the_walkers_archives_alone() {
+    let listed = whitelisted_walker_scripts();
     assert_eq!(listed.len(), 244);
     // His minion's, his definition's and his portal entry's are in; a
     // fighter's, the globals' and the level's are not.

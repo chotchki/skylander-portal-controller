@@ -134,9 +134,11 @@ pub const WHITELIST: [Whitelisted; 71] = [
     },
     // AG.162: the 66 walkers' (AG.27), by archive, each the scripts the TV's
     // listing runs for him: his file's running placements (his definition,
-    // his tuning actor, a portal entry or a shockwave) and his minion's, the
+    // his tuning actor and, where his file runs one, a portal entry, a
+    // shockwave, the combo UI or the ghost include) and his minion's, the
     // template his definition's `Portal - Define Minion` names. Read off the
-    // dump by `giants_walkers`' `a_probe_of_the_part`, in the roster's order.
+    // dump by `giants_walkers`' `a_probe_of_the_part`, in the roster's order;
+    // `the_whitelist_holds_each_listed_walkers_scripts` there holds them to it.
     Whitelisted {
         archive: "character/000_airdragon.bld",
         scripts: &[
@@ -792,7 +794,7 @@ pub fn level_scripts(level: &str) -> &'static [&'static str] {
 /// but the bootstrap's, `global.bld`'s, `init_setup.bld`'s, the fighters' and
 /// a level's. A creature placed running one of them is followed to its
 /// palette ([`crate::levels::palettes`]) as one running its level's is.
-pub fn walker_scripts() -> Vec<&'static str> {
+pub fn whitelisted_walker_scripts() -> Vec<&'static str> {
     let base = archives();
     WHITELIST
         .iter()

@@ -621,9 +621,9 @@ pub fn script(igz: &Igz<'_>) -> Result<usize, String> {
 }
 
 /// The palettes part: every slot of each skinned model a placement running
-/// one of the level's whitelisted scripts names, each model once, in
-/// object order. A model with no skeleton (a breakable, a coin) has none;
-/// one whose skeleton won't read refuses the part.
+/// one of the level's whitelisted scripts or a walker's (AG.162) names, each
+/// model once, in object order. A model with no skeleton (a breakable, a
+/// coin) has none; one whose skeleton won't read refuses the part.
 pub fn palettes(
     igz: &Igz<'_>,
     level: &str,
@@ -633,7 +633,7 @@ pub fn palettes(
     // off the whitelist runs none of its scripts, theirs included.
     let mut listed = crate::scripts::level_scripts(level).to_vec();
     if !listed.is_empty() {
-        listed.extend(crate::scripts::walker_scripts());
+        listed.extend(crate::scripts::whitelisted_walker_scripts());
     }
     let placements = FormatPlacements::read(igz).map_err(s)?;
     let mut creatures: BTreeMap<usize, &str> = BTreeMap::new();
