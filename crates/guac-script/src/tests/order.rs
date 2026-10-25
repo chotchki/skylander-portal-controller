@@ -251,3 +251,46 @@ fn a_reset_placement_ticks_after_what_joins_behind_it() {
     assert_eq!(seen(&vm, &[x, child, mover]), ints(&[7, 8, 9]));
     assert_eq!(vm.active_seconds(mover), Some(vm.config().tick_seconds));
 }
+
+/// Placements waking in one activity pass wake in the order they went to
+/// sleep, whatever order the pass names them in (openspec AH.195: AF.8's
+/// fresh state holds level 213's asleep placements in the order its load
+/// put them to sleep in, and 54 of the 56 that woke in one frame woke in
+/// that order); those a pass puts to sleep join the asleep list in their awake
+/// list's order. C sleeps first, then B and D in one pass named D first;
+/// woken together, named in handle order, they tick C, B, D after A.
+#[test]
+fn placements_waking_together_wake_in_the_order_they_slept() {
+    let mut vm = Vm::new(counting(), Config::new(Mode::Strict));
+    let ids = [
+        vm.add(0x10, "A", 0),
+        vm.add(0x20, "B", 0),
+        vm.add(0x30, "C", 0),
+        vm.add(0x40, "D", 0),
+    ];
+    let mut host = Engine::default();
+    vm.set_activity(&[(0x30, false)]);
+    vm.set_activity(&[(0x40, false), (0x10, true), (0x20, false), (0x99, false)]);
+    assert!(ids[1..].iter().all(|&id| vm.asleep(id)) && !vm.asleep(ids[0]));
+    vm.step(&mut host).unwrap();
+    assert_eq!(seen(&vm, &ids[..1]), ints(&[0]), "A alone");
+    vm.set_activity(&[(0x10, true), (0x20, true), (0x30, true), (0x40, true)]);
+    vm.step(&mut host).unwrap();
+    assert_eq!(
+        seen(&vm, &ids),
+        ints(&[1, 3, 2, 4]),
+        "C, then B and D as they slept"
+    );
+    let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+    assert_eq!(order, ["A", "C", "B", "D"]);
+    // One put to sleep alone joins the asleep list's end too.
+    vm.set_asleep(0x30, true);
+    vm.set_activity(&[(0x10, false)]);
+    vm.set_activity(&[(0x10, true), (0x30, true)]);
+    vm.step(&mut host).unwrap();
+    assert_eq!(
+        seen(&vm, &ids),
+        ints(&[8, 5, 7, 6]),
+        "B, D, then C and A as they slept"
+    );
+}

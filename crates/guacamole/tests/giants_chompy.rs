@@ -1444,20 +1444,21 @@ fn the_join_warns_by_the_rule(
 /// it), so the join's warning rule is held both ways: on that test's roll
 /// the sleeping `Enemy_Chompy(4)` stands within (1)'s call and is called,
 /// which a join alerting every sleeper alike would match too. Seed 11
-/// leaves the seers (1) and (2) 22.8 and 22.8 ft from (4), outside their
-/// 20 ft call, so it sleeps on; seed 6 has (1) call it from 19.2 ft (AG.177,
-/// 2026-10-25, after the coins' sparkle timers rolled fractions and the
-/// goats joined the run, seeds 1-16: the rule held on all sixteen, (4)
-/// called on 6, 13, 14 and 16; the merge check's review had 9 calling it
-/// on the draws before). The seeds are picked for the halves they reach, so
-/// a change to the draws before F0 + 100 may need others.
+/// leaves the seers (2) and (3) 25.3 and 21.8 ft from (4), outside their
+/// 20 ft call, so it sleeps on; seed 10 has (1) call it from 18.6 ft
+/// (AH.195, 2026-10-25, after the level's placements took the order its
+/// load adds them in, which moved every draw from the first step on, seeds
+/// 1-16: the rule held on all sixteen, (4) called on 10 and 12; AG.177 had
+/// it called on 6, 13, 14 and 16 on the draws before, the merge check's
+/// review on 9). The seeds are picked for the halves they reach, so a
+/// change to the draws before F0 + 100 may need others.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_join_wakes_only_whom_the_warning_rule_reaches() {
     println!("load before: {}", load());
     let started = Instant::now();
     let (mut called, mut left) = (0, 0);
-    for seed in [11, 6] {
+    for seed in [11, 10] {
         let (run, snaps, _) = fight_swapping(Script {
             lob: Some(90),
             hero_health: Some(200),
@@ -3577,7 +3578,7 @@ fn follow_orbs(
             if life.down.is_none() && !now.launching.contains(orb) {
                 life.down = Some(f);
                 let d = *at - run.hero().pivot;
-                life.down_ground = Some(feet(Vec3::new(d.x, 0.0, d.z).length()));
+                life.down_ground = Some(feet(d.x.hypot(d.z)));
             }
         }
         for orb in &now.collecting {
@@ -3592,7 +3593,9 @@ fn follow_orbs(
                     .find(|a| a.0 == *orb)
                     .map_or(Vec3::ZERO, |a| a.2);
                 let d = at - hero_at_start;
-                let ground = feet(Vec3::new(d.x, 0.0, d.z).length());
+                // As the take measures it (`positionmeasurement.horizontal
+                // distance`, the host's hypot).
+                let ground = feet(d.x.hypot(d.z));
                 life.taken_from = Some((feet(d.length()), ground));
                 // Landed and taken in one step (the orbs' control lands it
                 // ahead of the portal manager's collecting, AH.59's order):
@@ -3748,7 +3751,14 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         let taken = l.taken.expect("every orb taken, as he walks in");
         assert!(taken >= down, "never taken in the air");
         let (space, ground) = l.taken_from.unwrap();
-        assert!(ground <= 20.0, "within 20 ft across the ground: {ground}");
+        // The take reads the step's own points, which `taken_from` has off
+        // the step before's end, so to a few micrometres: AH.195's order,
+        // moving every draw, landed an orb the take found within 20 ft at
+        // 20.000011 by that reading.
+        assert!(
+            ground <= 20.0 + 1e-4,
+            "within 20 ft across the ground: {ground}"
+        );
         if l.down_ground.unwrap() <= 20.0 {
             // Down within reach: taken the step it lands, as AH.10's (every
             // orb landed within 20 ft of him went that frame, 178 of 178).

@@ -350,9 +350,7 @@ mod tests {
         /// One step as the TV's: the activity rule, the pads, every tick,
         /// the clones added, his engine step, the engine's frame.
         fn step(&mut self, actions: [bool; 4]) {
-            for (h, active) in self.world.activity(&mut self.bench) {
-                self.vm.set_asleep(h, !active);
-            }
+            self.vm.set_activity(&self.world.activity(&mut self.bench));
             self.world.read_pads([
                 Pad {
                     stick: self.stick,

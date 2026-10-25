@@ -771,6 +771,54 @@ fn the_synthetic_breakable_reads_back() {
 /// behaviours; the rock a template running its own, its solid a sphere
 /// that touches the level alone; and the synthetic global's activation
 /// macro branching on a reference (no minion: the deactivate path's call).
+/// openspec AH.195: the load-order level's objects lie in one order and
+/// its root list holds them in another; the two awake from the load have no
+/// range and no buffer, the two sleepers their range; each runs its script.
+#[test]
+fn the_synthetic_load_order_level_reads_back() {
+    use super::builder::{
+        LOAD_OBJECTS, LOAD_ROOT, LOAD_SLEEPER_AT, LOAD_SLEEPER_RANGE, load_order,
+    };
+    use crate::igz::layouts::{Layout, ObjectRef, RootList};
+    use crate::level::Placements;
+    let level = load_order();
+    let igz = Igz::parse(&level).unwrap();
+    let p = Placements::read(&igz).unwrap();
+    let names: Vec<&str> = p.actors.iter().map(|a| a.name().unwrap()).collect();
+    assert_eq!(names, LOAD_OBJECTS, "the objects' order");
+    let root = RootList::read(&igz, 0).unwrap();
+    let listed: Vec<&str> = root
+        .elements
+        .iter()
+        .map(|e| match e {
+            ObjectRef::Object(i) => p
+                .actors
+                .iter()
+                .find(|a| a.index == *i)
+                .unwrap()
+                .name()
+                .unwrap(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(listed, LOAD_ROOT, "the root list's");
+    for a in &p.actors {
+        let placed = a.placement();
+        assert_eq!(placed.placement.activity_state, 4);
+        assert_eq!(placed.activation_range_buffer, 0.0);
+        assert!(a.script.unwrap().ends_with(".ai"));
+        match a.name().unwrap() {
+            n if n.contains("Sleeper") => {
+                assert_eq!(placed.activation_range, LOAD_SLEEPER_RANGE);
+                assert!(LOAD_SLEEPER_AT.contains(&placed.placement.init_matrix.position));
+            }
+            _ => assert_eq!(placed.activation_range, 0.0, "awake from the load"),
+        }
+    }
+    let graph = Graph::read(&igz).unwrap();
+    assert_eq!(graph.scripts.len(), 3);
+}
+
 #[test]
 fn the_synthetic_swap_level_reads_back() {
     use super::builder::{SWAP_CREATURE, SWAP_ROCK, attack, swap};

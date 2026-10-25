@@ -1510,12 +1510,35 @@ in a frame: the hero's own script, the game systems (the destructibles, the acto
 UI (the game timer), the portal manager (the death sequence, the combat and projectile managers, the
 pickups), the level's placements as they woke, the mover update, then the actors move.
 
+A level's load takes its placements in the order the file's root list holds them (its first object), not
+the order its objects lie in (AH.195: one
+`--sched` read at AF.8's fresh state, AH.59's way, beside the file's own root list); every actor of the
+five files the scripts load with is on its file's list once. Those awake from the load (no range,
+no buffer) join the awake list then in that order (29 at the state, none out of it); the rest wait on the
+asleep list in that order (468 at the state, none out of it), and the activity check walks that list, so
+those waking in one frame join the awake list's end in its order (54 of the 56 that woke 13.18 s before
+the state, the other two at their end). One going back to sleep joins the asleep list's end. A placement woken ticks
+in its wake frame, and what that tick spawns stands right behind it and first ticks a frame later
+(`Bird_nest_egg` behind `Bird_nest(1)` a frame younger; a boulder waking mid-walk with its five pebbles
+behind it at 0.0 s): AH.210. Three of the state's placements stand where an earlier frame put them:
+`Propellar_Prop`, whose range the intro's STARTUP takes to 0 and its SHUTDOWN puts back, so it slept and
+woke from the list's end; `Sliding_Rock(5)`, which the goats' STARTUP resets (`Goat_Jumping_Pit.ai` and
+`Goat_Running.ai`, op 2), sending it round to the end behind them, so it reads the `open` `Sheep_1` sets the
+frame it's set; and `Norticus_First_Encounter(1)`, woken 0.68 s before the state. The globals ahead of the
+level's keep the recorded head order ([`frame::AWAKE_HEAD`](../../crates/guacamole/src/frame.rs)):
+`global.bld`'s root list orders them too, but for `Spyro_PortalManager`.
+
 guacamole's fixed step runs that order in one schedule, [`frame.rs`](../../crates/guacamole/src/frame.rs)'s
 sets (pads, scripts, solids, hero, actors, locomotion, hands, camera, record), every fixed-step system in
 one: the VM walks the activators first and the rest in the order they woke, the player loop's slices in
 their placements' places, and the mover update, reset at the music controller's, last (`guac-script`'s
-crate docs, The tick). A script's own `reset` of a placement doesn't send it round yet (AH.80). Avian's
-step in `FixedPostUpdate` stands for the next frame's physics.
+crate docs, The tick). A level's running placements join it as the load adds them (`scripts::load_order`:
+awake from the load first, then those that wait asleep, each in the root list's order), and those waking in
+one activity pass wake in the order they went to sleep (`Vm::set_activity`): at the fresh state 52 of the 55
+level placements the read and a run joined at the spawn both hold awake stand in the same order (the three
+above the rest, `giants_camera`). A script's own `reset` of a placement doesn't send it round yet (AH.80), so
+`Sliding_Rock(5)` still ticks ahead of the goats (AH.209). Avian's step in `FixedPostUpdate` stands for the
+next frame's physics.
 
 ### How far it drifts from itself (AF.11)
 

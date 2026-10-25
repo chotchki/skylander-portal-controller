@@ -74,11 +74,20 @@
 //! alone (openspec AH.80).
 //!
 //! The embedder puts placements to sleep and wakes them by its activity
-//! rule ([`Vm::set_asleep`]); one asleep isn't ticked and keeps its state,
-//! and waking puts it at its group's end: placements tick in the order they
-//! woke. AH.10's encounter end shows it too (Norticus, woken last, takes his
-//! scene the frame the last Chompy goes, and `Setup_001_Controller`, woken
-//! first, sees it a frame later). A placement a tick spawns with a script
+//! rule ([`Vm::set_activity`], a pass at a time, or [`Vm::set_asleep`]);
+//! one asleep isn't ticked and keeps its state, and waking puts it at its
+//! group's end: placements tick in the order they woke. AH.10's encounter
+//! end shows it too (Norticus, woken last, takes his scene the frame the
+//! last Chompy goes, and `Setup_001_Controller`, woken first, sees it a
+//! frame later). The asleep wait on a list of their own, each joining its
+//! end as it goes to sleep, and those waking in one pass wake in that
+//! list's order, whatever order the pass names them in (openspec AH.195:
+//! AF.8's fresh state holds level 213's 468 asleep placements in its file's
+//! root-list order, the order its load put them to sleep in, and 54 of
+//! the 56 that woke in one frame 13.18 s before it in that order too
+//! (the other two at their end, an earlier frame's doing), behind the 29
+//! awake from the load; the embedder adds a file's placements in that
+//! order). A placement a tick spawns with a script
 //! of its own ([`Host::adopt`]) joins the end and ticks that same tick:
 //! AH.54's recordings list the eruption's first wave of lava at the
 //! eruption's own first record, which its first tick spawns. A held

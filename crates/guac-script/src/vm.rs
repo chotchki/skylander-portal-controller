@@ -525,6 +525,10 @@ pub struct Vm {
     /// from sleep moved to its group's end.
     activators: Vec<PlacementId>,
     order: Vec<PlacementId>,
+    /// The asleep placements in the order they went to sleep (crate docs,
+    /// The tick): the original's asleep list, each joining its end. Those
+    /// waking in one activity pass ([`Vm::set_activity`]) wake in this order.
+    sleeping: Vec<PlacementId>,
     /// Placements sent round their states ([`Vm::requeue`]), in that order:
     /// off their group's list until the walk has passed every group, then
     /// back on its end and ticked there.
@@ -636,6 +640,7 @@ impl Vm {
             placements: Vec::new(),
             activators: Vec::new(),
             order: Vec::new(),
+            sleeping: Vec::new(),
             rejoin: Vec::new(),
             cursor: None,
             cells: Vec::new(),
@@ -856,20 +861,69 @@ impl Vm {
 
     /// Puts the placement running under `handle` to sleep or wakes it
     /// (crate docs, The tick): an inactive placement isn't ticked and keeps
-    /// its state, its STARTUP running on its first tick awake; one woken
-    /// ticks after every placement already awake. False when no placement
-    /// runs under it.
+    /// its state, its STARTUP running on its first tick awake; one put to
+    /// sleep joins the asleep list's end, and one woken ticks after every
+    /// placement already awake. False when no placement runs under it.
     pub fn set_asleep(&mut self, handle: Handle, asleep: bool) -> bool {
         let Some(&id) = self.handles.get(&handle) else {
             return false;
         };
-        let p = &mut self.placements[id as usize];
-        let woken = p.asleep && !asleep;
-        p.asleep = asleep;
-        if woken {
-            self.move_to_end(id);
+        if asleep {
+            self.sleep(id);
+        } else {
+            self.wake(id);
         }
         true
+    }
+
+    /// One pass of the embedder's activity rule, each placement's handle
+    /// with whether it's awake (crate docs, The tick): those going to sleep
+    /// first, in their awake list's order, each joining the asleep list's
+    /// end; then those waking, in the asleep list's order, each joining its
+    /// group's end. So placements waking together tick in the order they
+    /// went to sleep, whatever order the pass names them in. A handle no
+    /// placement runs under is skipped.
+    pub fn set_activity(&mut self, activity: &[(Handle, bool)]) {
+        let awake: HashMap<PlacementId, bool> = activity
+            .iter()
+            .filter_map(|&(h, a)| self.handles.get(&h).map(|&id| (id, a)))
+            .collect();
+        let listed: Vec<PlacementId> = self
+            .activators
+            .iter()
+            .chain(&self.order)
+            .chain(&self.rejoin)
+            .copied()
+            .collect();
+        for id in listed {
+            if awake.get(&id) == Some(&false) {
+                self.sleep(id);
+            }
+        }
+        for id in self.sleeping.clone() {
+            if awake.get(&id) == Some(&true) {
+                self.wake(id);
+            }
+        }
+    }
+
+    /// `id` asleep, on the asleep list's end if it wasn't already.
+    fn sleep(&mut self, id: PlacementId) {
+        let p = &mut self.placements[id as usize];
+        if !p.asleep {
+            p.asleep = true;
+            self.sleeping.push(id);
+        }
+    }
+
+    /// `id` awake: off the asleep list and on its group's end, if it slept.
+    fn wake(&mut self, id: PlacementId) {
+        let p = &mut self.placements[id as usize];
+        if p.asleep {
+            p.asleep = false;
+            self.sleeping.retain(|&s| s != id);
+            self.move_to_end(id);
+        }
     }
 
     /// Makes the placement running under `handle` an activator, or not

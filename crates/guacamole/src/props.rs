@@ -1053,9 +1053,7 @@ mod tests {
         let mut vm = init_chain(program, &files, &handles, &[0], c);
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         let far = Vec3::from_array(HERO) + Vec3::new(1000.0, 0.0, 0.0);
-        for (h, active) in world.activity_at(&[far]) {
-            vm.set_asleep(h, !active);
-        }
+        vm.set_activity(&world.activity_at(&[far]));
         let mut spawn = headless_spawner(1 << 40);
         let mut host = WorldHost {
             world: &mut world,

@@ -1242,6 +1242,143 @@ pub fn swap(creature_at: [f32; 3]) -> Vec<u8> {
     b.build()
 }
 
+/// [`load_order`]'s placements: two awake from the load (no range, no
+/// buffer), the opener and the reader, and two that wait asleep for the
+/// activity rule, each [`LOAD_SLEEPER_RANGE`] ft around it at
+/// [`LOAD_SLEEPER_AT`] (metres).
+pub const LOAD_OPENER: &str = "Synthetic_Opener";
+pub const LOAD_READER: &str = "Synthetic_Reader";
+pub const LOAD_SLEEPER_A: &str = "Synthetic_Sleeper_A";
+pub const LOAD_SLEEPER_B: &str = "Synthetic_Sleeper_B";
+pub const LOAD_SLEEPER_RANGE: f32 = 10.0;
+pub const LOAD_SLEEPER_AT: [[f32; 3]; 2] = [[20.0, 0.0, 0.0], [21.0, 0.0, 0.0]];
+/// The objects' order in the file and its root list's (openspec AH.195):
+/// the load takes the list's.
+pub const LOAD_OBJECTS: [&str; 4] = [LOAD_READER, LOAD_SLEEPER_B, LOAD_OPENER, LOAD_SLEEPER_A];
+pub const LOAD_ROOT: [&str; 4] = [LOAD_SLEEPER_A, LOAD_OPENER, LOAD_SLEEPER_B, LOAD_READER];
+
+/// AH.195's synthetic level (openspec AH.195; design decision 19), its
+/// placements' objects in [`LOAD_OBJECTS`]'s order and its root list in
+/// [`LOAD_ROOT`]'s, our numbers throughout. Every script first reads the
+/// file's `Counter` into its `seen` and counts it on, so `seen` is its
+/// place in the step's walk; then
+///
+/// - [`LOAD_OPENER`], its first tick, sets the reader's `Open` to 1 by
+///   `find variable` (as `Sheep_1` sets `Sliding_Rock(5)`'s);
+/// - [`LOAD_READER`] counts its `Ticks` and, the tick it finds itself open,
+///   keeps that count in `Saw`: 1 when the opener ticked ahead of it in the
+///   first step, 2 a step later;
+/// - [`LOAD_SLEEPER_A`] and [`LOAD_SLEEPER_B`] only count.
+pub fn load_order() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let counter = b.object(0, "ValueInfo", 0x24);
+    b.string(at(counter, 0x08), "Counter");
+    let placed: Vec<Location> = LOAD_OBJECTS
+        .iter()
+        .map(|_| b.object(0, "tfbActorInfo", 0xF8))
+        .collect();
+    let obj = |name: &str| placed[LOAD_OBJECTS.iter().position(|n| *n == name).unwrap()];
+    let reader = obj(LOAD_READER);
+    {
+        let mut w = Writer::new(&mut b);
+        w.meta_word(counter, 0x1C, "IntMeasurement");
+        w.word(counter, 0x20, 0);
+    }
+    // Its place in the walk, then what `then` writes.
+    let counting = |b: &mut IgzBuilder,
+                    path: &str,
+                    extra: &[&str],
+                    then: &dyn Fn(&mut Writer<'_>, &[Location])| {
+        let mut w = Writer::new(b);
+        let seen = w.variable("seen", "ValueInfo", Some("IntMeasurement"));
+        let vars: Vec<Location> = extra
+            .iter()
+            .map(|n| w.variable(n, "ValueInfo", Some("IntMeasurement")))
+            .collect();
+        let script = w.script(
+            path,
+            |_| {},
+            |_| {},
+            |w| {
+                let p = w.behaviour("idle");
+                let v = w.rhs("IntMeasurement", &[El::Local(counter)]);
+                w.set(&[El::Local(seen)], v);
+                w.inc(&[El::Local(counter)]);
+                then(w, &vars);
+                w.end_block(p);
+            },
+        );
+        let mut all = vec![seen];
+        all.extend(&vars);
+        w.declare(script, &all);
+        script
+    };
+    let opener_script = counting(
+        &mut b,
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Opener.ai",
+        &["Done"],
+        &|w, vars| {
+            let zero = w.int(0);
+            let first = w.check(&[El::Local(vars[0])], 1, zero);
+            let owner = w.group(&[El::Local(reader)], None);
+            let (found, f) = w.open(Class::FindVariable, "find variable|||owned by");
+            w.class_word(f, 0x1C, "ValueInfo");
+            w.meta_word(f, 0x20, "IntMeasurement");
+            w.text(f, 0x24, "open");
+            w.word(f, 0x28, 0);
+            w.refer(f, 0x30, owner);
+            let one = w.int(1);
+            w.set(&[El::Local(f)], one);
+            w.end_block(found);
+            let one = w.int(1);
+            w.set(&[El::Local(vars[0])], one);
+            w.end_block(first);
+        },
+    );
+    let reader_script = counting(
+        &mut b,
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Reader.ai",
+        &["Open", "Ticks", "Saw"],
+        &|w, vars| {
+            let [open, ticks, saw] = [vars[0], vars[1], vars[2]];
+            w.inc(&[El::Local(ticks)]);
+            let one = w.int(1);
+            let opened = w.check(&[El::Local(open)], 1, one);
+            let t = w.rhs("IntMeasurement", &[El::Local(ticks)]);
+            w.set(&[El::Local(saw)], t);
+            let two = w.int(2);
+            w.set(&[El::Local(open)], two);
+            w.end_block(opened);
+        },
+    );
+    let sleeper_script = counting(
+        &mut b,
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Sleeper.ai",
+        &[],
+        &|_, _| {},
+    );
+    for (name, &a) in LOAD_OBJECTS.iter().zip(&placed) {
+        let (script, at_m, range) = match *name {
+            LOAD_OPENER => (opener_script, [0.0; 3], 0.0),
+            LOAD_READER => (reader_script, [0.0; 3], 0.0),
+            LOAD_SLEEPER_A => (sleeper_script, LOAD_SLEEPER_AT[0], LOAD_SLEEPER_RANGE),
+            _ => (sleeper_script, LOAD_SLEEPER_AT[1], LOAD_SLEEPER_RANGE),
+        };
+        let [x, y, z] = at_m;
+        place(&mut b, a, name, Some(script), 4, &[x, y, z, 0.0, 0.0, 0.0]);
+        let ranges: Vec<u8> = [range, 0.0f32]
+            .iter()
+            .flat_map(|v| v.to_be_bytes())
+            .collect();
+        b.put_bytes(at(a, 0xD0), &ranges);
+    }
+    let blocks = b.section(0x10);
+    let listed: Vec<Option<Location>> = LOAD_ROOT.iter().map(|n| Some(obj(n))).collect();
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &listed);
+    b.build()
+}
+
 /// The creature [`fight`] writes, named as one of the first fight's, so the
 /// TV's fight listing runs it (openspec AH.25).
 pub const FIGHT_CREATURE: &str = "Enemy_Chompy(1)";

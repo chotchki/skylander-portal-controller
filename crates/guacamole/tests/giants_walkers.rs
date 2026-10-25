@@ -524,9 +524,7 @@ impl W {
         self.vm.set_tick_seconds(dt);
         let pads = self.bench.pads;
         self.world.read_pads(pads);
-        for (h, active) in self.world.activity(&mut self.bench) {
-            self.vm.set_asleep(h, !active);
-        }
+        self.vm.set_activity(&self.world.activity(&mut self.bench));
         // Off his scripts he's off the player loop's joined run, as on the
         // TV (`hero_scripts::step_scripts`' `settled`).
         let joined = self.minion.is_some() && self.off.is_none();
