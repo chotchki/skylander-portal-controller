@@ -789,7 +789,7 @@ pub fn attack() -> Attack {
 /// scripts.
 pub fn attack_with_mover() -> Attack {
     Attack {
-        global: attack_global_with(None, true, false),
+        global: attack_global_with(None, true, false, false),
         ..attack()
     }
 }
@@ -804,8 +804,124 @@ pub fn attack_with_mover() -> Attack {
 /// there. It plays no clip and weights nothing.
 pub fn attack_with_locomotion() -> Attack {
     Attack {
-        global: attack_global_with(None, true, true),
+        global: attack_global_with(None, true, true, false),
         ..attack()
+    }
+}
+
+/// [`attack`] with AH.191's creature descriptions in its `global.bld`, in
+/// the shape Giants' `Combat.ai` keeps them: `combat control data`, a
+/// global whose `creature descriptions` each name their `creature`, and
+/// [`CREATURE_DEFINITION`], which a [`walker_described`] minion's setup
+/// calls. The call finds the description whose `creature` is the caller
+/// and makes one there only when none is (`made` 1, found 2), setting the
+/// caller's own `description` to it; nothing takes one out, as nothing of
+/// the TV's runs a removed minion's SHUTDOWN, where Giants' `Minion -
+/// Shutdown` does.
+pub fn attack_with_creatures() -> Attack {
+    Attack {
+        global: attack_global_with(None, false, false, true),
+        ..attack()
+    }
+}
+
+/// [`attack_with_creatures`]' structures, global and macro.
+struct Creatures {
+    description_ty: Location,
+    control_ty: Location,
+    creature: Location,
+    descriptions: Location,
+    control: Location,
+}
+
+impl Creatures {
+    fn new(w: &mut Writer<'_>) -> Self {
+        let description_ty = w.op(Class::DefineStructure, "Combat - Creature Description");
+        let control_ty = w.op(Class::DefineStructure, "Combat Control Data");
+        let creature = w.variable("creature", "ScriptReference", None);
+        let descriptions = w.variable("creature descriptions", "ScriptSet", None);
+        w.refer(descriptions, 0x24, description_ty);
+        let control = w.b.object(0, "ScriptStructure", 0x20);
+        w.text(control, 0x08, "combat control data");
+        w.refer(control, 0x1C, control_ty);
+        Self {
+            description_ty,
+            control_ty,
+            creature,
+            descriptions,
+            control,
+        }
+    }
+
+    fn structures(&self, w: &mut Writer<'_>) {
+        structure(w, self.description_ty, &[self.creature]);
+        structure(w, self.control_ty, &[self.descriptions]);
+    }
+
+    /// `find variable <name>` owned by the caller: its block follows.
+    fn callers(
+        w: &mut Writer<'_>,
+        name: &str,
+        container: &str,
+        contents: Option<&str>,
+    ) -> (usize, Location) {
+        let (p, found) = w.open(Class::FindVariable, "find variable|||owned by");
+        w.class_word(found, 0x1C, container);
+        if let Some(c) = contents {
+            w.meta_word(found, 0x20, c);
+        }
+        w.text(found, 0x24, name);
+        w.word(found, 0x28, 0);
+        let owner = w.reference(&[El::Member("optoplevelbehavior", "my")], None);
+        w.refer(found, 0x30, owner);
+        (p, found)
+    }
+
+    /// [`CREATURE_DEFINITION`]: the caller's `description` set to the one
+    /// whose `creature` he is, `made` 2; none, one more in the set, his,
+    /// `made` 1.
+    fn definition(&self, w: &mut Writer<'_>) {
+        let (p, _) = define_with(w, CREATURE_DEFINITION, &[]);
+        let me = El::Member("optoplevelbehavior", "my");
+        let (fd, description) = Self::callers(w, "description", "ScriptReference", None);
+        let (fm, made) = Self::callers(w, "made", "ValueInfo", Some("IntMeasurement"));
+        let zero = w.int(0);
+        w.set(&[El::Local(made)], zero);
+        let set = w.stack(
+            StackClass::Set,
+            &[El::Local(self.control), El::Local(self.descriptions)],
+        );
+        let zero = w.int(0);
+        let (at, each) = w.open(Class::ForEach, "for each");
+        w.refer(each, 0x20, set);
+        w.refer(each, 0x28, zero);
+        let his = w.check_ref(&[El::Local(each), El::Local(self.creature)], 1, &[me]);
+        setref(w, &[El::Local(description)], &[El::Local(each)]);
+        let two = w.int(2);
+        w.set(&[El::Local(made)], two);
+        w.end_block(his);
+        w.end_loop(at);
+        let zero = w.int(0);
+        let none = w.check(&[El::Local(made)], 1, zero);
+        let all = [El::Local(self.control), El::Local(self.descriptions)];
+        w.inc(&[all[0], all[1], El::Member("setvariant", "count")]);
+        setref(
+            w,
+            &[El::Local(description)],
+            &[all[0], all[1], El::Member("setvariant", "last")],
+        );
+        setref(
+            w,
+            &[El::Local(description), El::Local(self.creature)],
+            &[me],
+        );
+        let one = w.int(1);
+        w.set(&[El::Local(made)], one);
+        w.end_block(none);
+        w.end_block(fm);
+        w.end_block(fd);
+        w.flow_end();
+        w.end_block(p);
     }
 }
 
@@ -1767,16 +1883,19 @@ fn walk_by_stick(w: &mut Writer<'_>) {
 
 /// [`attack`]'s `global.bld` entry: the portal manager and its globals.
 fn attack_global() -> Vec<u8> {
-    attack_global_with(None, false, false)
+    attack_global_with(None, false, false, false)
 }
 
 /// [`attack_global`], with AG.28's camera system beside the portal manager
-/// when `camera` says how it runs ([`camera::camera`]), and AH.151's mover
-/// update ([`attack_with_mover`]) when `mover`.
+/// when `camera` says how it runs ([`camera::camera`]), AH.151's mover
+/// update ([`attack_with_mover`]) when `mover`, AG.219's locomotion
+/// definitions when `locomotion` and AH.191's creature descriptions
+/// ([`attack_with_creatures`]) when `creatures`.
 fn attack_global_with(
     camera: Option<camera::CameraFault>,
     mover: bool,
     locomotion: bool,
+    creatures: bool,
 ) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
@@ -1854,6 +1973,7 @@ fn attack_global_with(
         let word = w.variable("word", "ScriptReference", None);
         let shifted = w.variable("shifted", "ValueInfo", Some("IntMeasurement"));
         let tags_held = w.variable("tags held", "ValueInfo", Some("IntMeasurement"));
+        let described = creatures.then(|| Creatures::new(&mut w));
         frame_ticking(
             &mut w,
             "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/Spyro_PortalManager.ai",
@@ -1870,6 +1990,9 @@ fn attack_global_with(
                 structure(w, save_ty, &[save_tags]);
                 structure(w, player_ty, &[loaded_data]);
                 structure(w, control_ty, &[loaded, joined]);
+                if let Some(c) = &described {
+                    c.structures(w);
+                }
             },
             |w| {
                 // The portal's one loaded slot, and two players.
@@ -2080,6 +2203,9 @@ fn attack_global_with(
                 w.end_block(p);
                 if let Some(c) = &cam {
                     update.set(Some(c.macros(w)));
+                }
+                if let Some(c) = &described {
+                    c.definition(w);
                 }
             },
             |w| {
@@ -2491,6 +2617,66 @@ pub const WALKER_ACTIVATED: &str = "Synthetic - Minion Activated";
 /// (OLD)`.
 pub const WALKER_LOOKUP: &str = "Synthetic - Find Mover";
 
+/// A synthetic walker's names and the two numbers that tell one from
+/// another (openspec AH.191): his ground max speed (ft/s) and ground turn
+/// rate (°/s), the rest of his movement parameters [`WALKER_MOVEMENT`]'s.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WalkerSpec {
+    /// Each name the link and the TV's listing tell him from another
+    /// walker by: none of one walker's is the other's.
+    pub load: &'static str,
+    pub template: &'static str,
+    pub minion: &'static str,
+    pub def: &'static str,
+    pub def_script: &'static str,
+    /// The folder his scripts' paths name.
+    pub folder: &'static str,
+    pub speed: f32,
+    pub turn: f32,
+}
+
+impl WalkerSpec {
+    /// His movement parameters: [`WALKER_MOVEMENT`] with his speed and turn.
+    pub fn movement(&self) -> [(&'static str, f32); 7] {
+        WALKER_MOVEMENT.map(|(name, v)| match name {
+            "ground max speed" => (name, self.speed),
+            "ground turn rate" => (name, self.turn),
+            _ => (name, v),
+        })
+    }
+}
+
+/// [`walker`]'s names and numbers, the constants above.
+pub const WALKER: WalkerSpec = WalkerSpec {
+    load: WALKER_LOAD,
+    template: WALKER_TEMPLATE,
+    minion: WALKER_MINION,
+    def: WALKER_DEF,
+    def_script: "026_Def_Synthetic.ai",
+    folder: "Synthetic",
+    speed: WALKER_SPEED,
+    turn: WALKER_TURN,
+};
+
+/// A second walker with numbers of his own, what [`WALKER`] is put in after
+/// or before (openspec AH.191).
+pub const WALKER_OTHER: WalkerSpec = WalkerSpec {
+    load: "027_Synthetic",
+    template: "027_Synthetic_L",
+    minion: "027_Synthetic_Body.ai",
+    def: "027_Synthetic_Def",
+    def_script: "027_Def_Synthetic.ai",
+    folder: "Synthetic2",
+    speed: 12.5,
+    turn: 360.0,
+};
+
+/// The macro [`attack_with_creatures`]' `global.bld` defines, in the shape
+/// of Giants' `Combat.ai` one of the name: the caller's description found
+/// in `combat control data`'s `creature descriptions` by its `creature`
+/// being him, or made there when none is.
+pub const CREATURE_DEFINITION: &str = "Combat - Creature Definition";
+
 /// Where [`walker`]'s minion stops, if it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkerFault {
@@ -2562,6 +2748,22 @@ pub enum WalkerFault {
 /// runs ([`WalkerFault`]). The scripts' names: the minion's is [`WALKER_MINION`] on the
 /// template [`WALKER_TEMPLATE`], its definition's runs from the start.
 pub fn walker(fault: WalkerFault) -> Vec<u8> {
+    walker_with(&WALKER, fault, false)
+}
+
+/// [`walker`] as `spec` names and numbers him, his description his
+/// setup's [`CREATURE_DEFINITION`] call finds or makes (openspec AH.191),
+/// as Giants' minions' setups run `Combat.ai`'s: `description` a reference
+/// to the one in `combat control data`'s `creature descriptions` whose
+/// `creature` is him, his movement parameters written into it only when
+/// the call made it (its `made` 1), as the original's hook-up runs only in
+/// the making. The part's `global.bld` is [`attack_with_creatures`]'.
+pub fn walker_described(spec: &WalkerSpec) -> Vec<u8> {
+    walker_with(spec, WalkerFault::None, true)
+}
+
+fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8> {
+    let movement_numbers = spec.movement();
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     let minion_script = {
@@ -2582,7 +2784,10 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
         let movement = structure_var(&mut w, "movement parameters", movement_ty);
         let creature = structure_var(&mut w, "creature info", creature_ty);
         let joined = structure_var(&mut w, "player joined data", joined_ty);
-        let description = structure_var(&mut w, "description", description_ty);
+        let description = match described {
+            true => w.variable("description", "ScriptReference", None),
+            false => structure_var(&mut w, "description", description_ty),
+        };
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
         // The lookup's trap (openspec AG.171): a set of candidates, one a
@@ -2596,10 +2801,15 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
         let turn = w.variable("turn", "ValueInfo", Some("FloatMeasurement"));
         let decoys = w.variable("decoys", "ScriptSet", None);
         let nothing = w.variable("nothing", "ScriptReference", None);
+        // Whether his description's call made it (1) or found it (2).
+        let made = described.then(|| w.variable("made", "ValueInfo", Some("IntMeasurement")));
         let lookup = std::cell::Cell::new(None);
         let script = frame_with(
             &mut w,
-            &format!("C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/{WALKER_MINION}"),
+            &format!(
+                "C:/tfb/Content/Levels/Includes/Minions/{}/scripts/{}",
+                spec.folder, spec.minion
+            ),
             |w| {
                 structure(w, creature_ty, &[hp]);
                 structure(w, param_ty, &[value]);
@@ -2612,6 +2822,10 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 if fault == WalkerFault::InSetup {
                     let one = w.int(1);
                     w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
+                if described {
+                    let def = w.op(Class::DefineMacro, CREATURE_DEFINITION);
+                    call_stub(w, def, &[]);
                 }
                 let health = w.int(ATTACK_HEALTH);
                 w.set(
@@ -2629,7 +2843,12 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     0,
                     &[El::Local(description), El::Local(creature)],
                 );
-                for (&param, (_, v)) in params.iter().zip(WALKER_MOVEMENT) {
+                // Described, only into a description the call made.
+                let making = made.map(|m| {
+                    let one = w.int(1);
+                    w.check(&[El::Local(m)], 1, one)
+                });
+                for (&param, (_, v)) in params.iter().zip(movement_numbers) {
                     let v = w.float(v);
                     w.set(
                         &[
@@ -2640,6 +2859,9 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                         ],
                         v,
                     );
+                }
+                if let Some(c) = making {
+                    w.end_block(c);
                 }
                 let me = El::Member("optoplevelbehavior", "my");
                 let scale = w.float(WALKER_SCALE);
@@ -2825,28 +3047,30 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 w.end_block(p);
             },
         );
-        w.declare(
-            script,
-            &[
-                description,
-                mine,
-                ticks,
-                decoys,
-                nothing,
-                desired,
-                my_facing,
-                dif,
-                turn,
-            ],
-        );
+        let mut locals = vec![
+            description,
+            mine,
+            ticks,
+            decoys,
+            nothing,
+            desired,
+            my_facing,
+            dif,
+            turn,
+        ];
+        locals.extend(made);
+        w.declare(script, &locals);
         script
     };
-    let minion = actor_with(&mut b, WALKER_TEMPLATE, Some(minion_script), 5);
+    let minion = actor_with(&mut b, spec.template, Some(minion_script), 5);
     let def_script = {
         let mut w = Writer::new(&mut b);
         let stub = w.op(Class::DefineMacro, "Portal - Define Minion");
         w.script(
-            "C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/026_Def_Synthetic.ai",
+            &format!(
+                "C:/tfb/Content/Levels/Includes/Minions/{}/scripts/{}",
+                spec.folder, spec.def_script
+            ),
             |w| {
                 if fault != WalkerFault::NoMinion {
                     let rhs = w.reference(&[El::Local(minion)], None);
@@ -2857,7 +3081,7 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
             |_| {},
         )
     };
-    let definition = actor_with(&mut b, WALKER_DEF, Some(def_script), 4);
+    let definition = actor_with(&mut b, spec.def, Some(def_script), 4);
     let blocks = b.section(0x10);
     crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(definition), Some(minion)]);
     b.build()

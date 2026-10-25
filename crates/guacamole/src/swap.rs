@@ -104,13 +104,14 @@ pub(crate) fn deactivate(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use guac_formats::script::builder::{
         ATTACK_BALL, ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HELPER, ATTACK_KEPT_HEALTH,
-        SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW, WALKER_DEF,
-        WALKER_LOAD, WALKER_MINION, WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WALKER_VIEW_BACK,
-        WalkerFault,
+        SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW, WALKER, WALKER_DEF,
+        WALKER_LOAD, WALKER_MINION, WALKER_OTHER, WALKER_SCALE, WALKER_SPEED, WALKER_TURN,
+        WALKER_VIEW_BACK, WalkerFault, WalkerSpec,
     };
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
@@ -126,10 +127,12 @@ mod tests {
         headless_objects,
     };
 
-    use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_swap, write_walker};
+    use crate::test_support::hero_scripts::{
+        LEVEL, progression_rows, write_swap, write_walker, write_walkers_described,
+    };
 
-    /// The hero's handle, the one and the next alike: a headless run reuses
-    /// it where the TV's next hero is an entity of his own.
+    /// The first hero's handle. The next joins under one of his own, as the
+    /// TV's next hero is an entity of his own (openspec AH.191).
     const HERO: Handle = 0x7000_0000;
     /// Where the creature stands: 5 m ahead of him along his facing.
     const CREATURE_AT: [f32; 3] = [0.0, 0.0, 5.0];
@@ -137,18 +140,19 @@ mod tests {
     /// before (the creature ticks from step 1), his ball 2.
     const SWAP_AT: u32 = SWAP_THROW as u32 + 5;
 
-    /// One hero on the parry twin's open ground.
+    /// One hero on the parry twin's open ground, under `handle`.
     struct Bench {
         hero: Hero,
+        handle: Handle,
         world: ParryWorld,
     }
 
     impl Engine for Bench {
         fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
-            (h == HERO).then_some(&mut self.hero)
+            (h == self.handle).then_some(&mut self.hero)
         }
         fn heroes(&self) -> Vec<Handle> {
-            vec![HERO]
+            vec![self.handle]
         }
         fn seam(&self) -> &dyn PhysicsSeam {
             &self.world
@@ -254,6 +258,31 @@ mod tests {
             (run, him)
         }
 
+        /// AH.191's part: [`WALKER`] and [`WALKER_OTHER`], each finding or
+        /// making his description in `combat control data`, run as the TV
+        /// lists them, strict, the hero's unit [`WALKER`]'s; each one's unit
+        /// by his load file.
+        fn walkers_described() -> (Self, HashMap<&'static str, u16>) {
+            let tmp = tempfile::tempdir().unwrap();
+            write_walkers_described(tmp.path());
+            let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+            let config =
+                scripts::with_walkers(scripts::smash_config(Mode::Strict), &linked.walkers);
+            let units: HashMap<&'static str, u16> = [WALKER, WALKER_OTHER]
+                .iter()
+                .map(|s| {
+                    let w = linked.walkers.iter().find(|w| w.load_file == s.load);
+                    (
+                        s.load,
+                        w.unwrap_or_else(|| panic!("{} linked", s.load)).unit,
+                    )
+                })
+                .collect();
+            let mut run = Self::over(linked, config, units[WALKER.load]);
+            run.player_loop = Some(guacamole::player_loop::PlayerLoop::read(run.vm.program()));
+            (run, units)
+        }
+
         /// The run over `linked` listed by `config`, the hero's file `unit`.
         fn over(linked: level_scripts::Linked, config: guac_script::Config, unit: u16) -> Self {
             let files = linked.placements;
@@ -283,7 +312,11 @@ mod tests {
             Self {
                 vm,
                 world,
-                bench: Bench { hero, world: parry },
+                bench: Bench {
+                    hero,
+                    handle: HERO,
+                    world: parry,
+                },
                 generator: Generator::seeded(5489),
                 files,
                 fighter: unit,
@@ -365,7 +398,8 @@ mod tests {
             let handles = self.world.handles().clone();
             self.host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))?;
             self.step([false; 4]);
-            let minion = self.host(|vm, host| scripts::join_activate(vm, host, HERO))?;
+            let hero = self.bench.handle;
+            let minion = self.host(|vm, host| scripts::join_activate(vm, host, hero))?;
             self.joined = true;
             Ok(minion)
         }
@@ -402,12 +436,17 @@ mod tests {
             gone
         }
 
-        /// The deactivate path for him, whatever stops in it.
+        /// The deactivate path for him, whatever stops in it; the next hero
+        /// an actor of his own, as the TV's next is an entity of his own.
         fn deactivate_as_it_goes(&mut self) -> Deactivated {
             let files = self.files.clone();
             let unit = self.fighter;
             self.joined = false;
-            self.host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, HERO))
+            let hero = self.bench.handle;
+            let gone = self.host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, hero));
+            self.bench.handle = self.next;
+            self.next += 1;
+            gone
         }
 
         /// The portal manager's placement and its seconds of ticks (its
@@ -779,7 +818,7 @@ mod tests {
 
     /// His actor's scale, percent.
     fn scale_of(run: &Run) -> [f32; 3] {
-        run.world.actor(HERO).expect("his actor").scale
+        run.world.actor(run.bench.handle).expect("his actor").scale
     }
 
     /// AH.165 (found at the AG.27 merge check: nothing tested it): a walker
@@ -1012,5 +1051,121 @@ mod tests {
                 then.push(0.0).heading
             );
         }
+    }
+
+    /// His description and how he walks on it: its structure, his walk
+    /// along his facing (ft/s) after 12 steps, then his turn over the first
+    /// step with the stick swung from straight right to straight left, and
+    /// the stick's strength there.
+    fn walks_on(run: &mut Run, minion: PlacementId) -> (Value, f32, f32, f32) {
+        run.stick = Stick::CENTRED;
+        for _ in 0..12 {
+            run.step([false; 4]);
+        }
+        let desc = run
+            .vm
+            .local(minion, "description")
+            .map(|v| run.vm.value(v))
+            .expect("his description");
+        let walk = walk_ft(run);
+        let (right, left) = (Stick::from_bytes(255, 128), Stick::from_bytes(0, 128));
+        run.stick = right;
+        for _ in 0..60 {
+            run.step([false; 4]);
+        }
+        let before = run.bench.hero.facing;
+        run.stick = left;
+        run.step([false; 4]);
+        let turned = (run.bench.hero.facing - before + 180.0).rem_euclid(360.0) - 180.0;
+        run.stick = Stick::CENTRED;
+        (desc, walk, turned, left.push(0.0).strength)
+    }
+
+    /// His movement parameters as his description holds them against
+    /// `spec`'s, member for member.
+    fn holds_his_own(run: &Run, minion: PlacementId, spec: &WalkerSpec, who: &str) {
+        let m = guacamole::walkers::Movement::read(&run.vm, minion).expect("his parameters");
+        let want = spec.movement();
+        let of = |name: &str| want.iter().find(|(n, _)| *n == name).unwrap().1;
+        assert_eq!(m.ground_max_speed, of("ground max speed"), "{who}");
+        assert_eq!(m.ground_acceleration, of("ground acceleration"), "{who}");
+        assert_eq!(m.ground_deceleration, of("ground deceleration"), "{who}");
+        assert_eq!(m.ground_turn_rate, of("ground turn rate"), "{who}");
+        assert_eq!(m.air_deceleration, of("air deceleration"), "{who}");
+    }
+
+    /// AH.191 (found at AG.211's headless run: Whirlwind put in after
+    /// Ninjini walked at Ninjini's 24 ft/s): a walker put in after another
+    /// walks at his own numbers, either way round. Both find or make their
+    /// description by who they are, as Giants' minions do through
+    /// `Combat.ai`'s `Combat - Creature Definition`, which makes one (his
+    /// movement parameters off his setup's numbers) only when none names
+    /// him; the second joins as an actor of his own, as the TV's next hero
+    /// is an entity of his own, so the first's (left in the set: nothing
+    /// runs a removed minion's SHUTDOWN) answers for nobody.
+    #[test]
+    fn a_walker_put_in_after_another_walks_at_his_own_numbers() {
+        for (first, second) in [(WALKER, WALKER_OTHER), (WALKER_OTHER, WALKER)] {
+            let (mut run, units) = Run::walkers_described();
+            run.step([false; 4]);
+            run.step([false; 4]);
+            run.fighter = units[first.load];
+            let a = run.join();
+            let (desc_a, walk_a, turn_a, strength) = walks_on(&mut run, a);
+            holds_his_own(&run, a, &first, first.load);
+            assert!(
+                (walk_a - first.speed).abs() < 1e-3,
+                "{}: {walk_a}",
+                first.load
+            );
+            let want = first.turn * strength / 60.0;
+            assert!((turn_a - want).abs() < 1e-3, "{}: {turn_a}", first.load);
+            let gone = run.deactivate();
+            assert!(gone.minion && gone.clones.contains(&HERO));
+            run.fighter = units[second.load];
+            let b = run.join();
+            let (desc_b, walk_b, turn_b, strength) = walks_on(&mut run, b);
+            let who = format!("{} after {}", second.load, first.load);
+            assert_ne!(desc_b, desc_a, "{who}: a description of his own");
+            holds_his_own(&run, b, &second, &who);
+            assert!(
+                (walk_b - second.speed).abs() < 1e-3,
+                "{who}: his walk {walk_b} ft/s, his {}",
+                second.speed
+            );
+            let want = second.turn * strength / 60.0;
+            assert!(
+                (turn_b - want).abs() < 1e-3,
+                "{who}: turned {turn_b}° in a step, his {want}°"
+            );
+            assert_ne!(run.bench.handle, HERO, "{who}: an actor of his own");
+        }
+    }
+
+    /// AH.191: the join refuses a minion under a handle an actor of the run
+    /// held (the last minion's, as the headless runs had it), before
+    /// anything of the activation runs: the slot not entered, no activator,
+    /// nothing added under it.
+    #[test]
+    fn a_minion_joins_under_a_handle_of_his_own() {
+        let (mut run, units) = Run::walkers_described();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        run.join();
+        for _ in 0..5 {
+            run.step([false; 4]);
+        }
+        let last = run.bench.handle;
+        run.deactivate();
+        run.bench.handle = last;
+        run.fighter = units[WALKER_OTHER.load];
+        let halt = run
+            .try_join()
+            .expect_err("the last minion's handle refused");
+        let text = halt.to_string();
+        assert!(text.contains(&format!("{last:#x}")), "{text}");
+        assert_eq!(run.entered(), Some(Value::Int(0)), "not entered");
+        assert!(run.vm.tick_order().iter().all(|(a, _)| !a), "no activator");
+        assert!(run.world.removed(last), "the last one's actor left off");
     }
 }

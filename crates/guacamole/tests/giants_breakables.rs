@@ -717,7 +717,7 @@ fn the_ledge_routes_three_break_and_he_walks_where_they_stood() {
             run.bench.view = heading_of(to);
         }
         if k == 199 || k == 259 {
-            run.bench.heroes.get_mut(&HERO).unwrap().facing = heading_of(to).rem_euclid(360.0);
+            run.hero_mut().facing = heading_of(to).rem_euclid(360.0);
         }
         let mut p = press(0, PRESS, k);
         p.actions[0] |= (200..206).contains(&k) || (260..266).contains(&k);
@@ -1093,7 +1093,7 @@ fn the_members_the_breakables_reach_stay_under_the_ceiling() {
     drive(&mut run, 400, |k, run| {
         if k == 149 {
             let to = pot - run.hero().pivot;
-            run.bench.heroes.get_mut(&HERO).unwrap().facing = heading_of(to).rem_euclid(360.0);
+            run.hero_mut().facing = heading_of(to).rem_euclid(360.0);
         }
         let mut p = press(0, PRESS, k);
         p.actions[0] |= (150..156).contains(&k);
@@ -1279,7 +1279,7 @@ fn seed_from(run: &mut Run, r: &serde_json::Value) {
     let f = |k: &str| m[k].as_f64().unwrap() as f32;
     let (length, heading, pitch) = (f("length"), f("heading"), f("pitch"));
     let walk = guacamole::script_engine::direction(heading, pitch) * length;
-    let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+    let hero = run.hero_mut();
     hero.pivot = pivot;
     hero.facing = rotation[1].rem_euclid(360.0);
     hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;
@@ -1441,7 +1441,7 @@ fn a_hero_put_down_where_the_last_stood_stands_there() {
         hero.stand(&run.bench.world, &[HERO_BODY]);
         assert_eq!(hero.pivot, at, "{label}: stood, not moved");
         assert!(hero.footing.supported, "{label}: stood on the ground");
-        run.bench.heroes.insert(HERO, hero);
+        run.bench.heroes.insert(run.hero, hero);
         run.bench.pads = [pad([false; 4], Stick::CENTRED), Pad::default()];
         // His locomotion as the TV builds it from his palette's loops.
         let mut locomotion = Locomotion::new(
@@ -1522,7 +1522,7 @@ fn seed_in_the_air(run: &mut Run, r: &serde_json::Value) {
         .clamp(-1.0, 1.0)
         .asin()
         .to_degrees();
-    let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+    let hero = run.hero_mut();
     hero.pivot = pivot;
     hero.facing = rotation[1].rem_euclid(360.0);
     hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;

@@ -136,8 +136,7 @@ fn probe_the_route() {
         if std::env::var("AH18_FIGHT").is_ok() {
             if k == OPENING + 89 || k == OPENING + 159 {
                 let to = run.at("Enemy_Chompy(2)") - run.hero().pivot;
-                run.bench.heroes.get_mut(&HERO).unwrap().facing =
-                    guacamole::script_engine::heading_of(to).rem_euclid(360.0);
+                run.hero_mut().facing = guacamole::script_engine::heading_of(to).rem_euclid(360.0);
             }
             if (OPENING + 90..OPENING + 96).contains(&k) {
                 run.bench.pads[0].actions[0] = true;
@@ -776,8 +775,7 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
         }
         if script.lob.is_some_and(|s| f == s as i64 - 1) && pin.is_none() {
             let to = run.at("Enemy_Chompy(2)") - run.hero().pivot;
-            run.bench.heroes.get_mut(&HERO).unwrap().facing =
-                guacamole::script_engine::heading_of(to).rem_euclid(360.0);
+            run.hero_mut().facing = guacamole::script_engine::heading_of(to).rem_euclid(360.0);
         }
         pad.actions[0] =
             at(script.lob) || script.stun && (120..300).contains(&f) && (f - 120) % 2 == 0;
@@ -4153,7 +4151,7 @@ fn spinning_coins_fly_to_him_and_pay_as_ah11s() {
         // it (the fall line's first coin, which wakes as he comes within its
         // range and can't be taken for 0.7 s) to be taken and paid.
         for _ in 0..120 {
-            let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+            let hero = run.hero_mut();
             hero.pivot = drive.hero[0];
             hero.walk.velocity = Vec3::ZERO;
             run.step().unwrap_or_else(|h| panic!("{}: {h}", drive.name));
@@ -4179,7 +4177,7 @@ fn spinning_coins_fly_to_him_and_pay_as_ah11s() {
         let mut timer_before = timer(&run);
         for s in 0..steps {
             let at = drive.hero_at(s as f32 / 60.0);
-            let hero = run.bench.heroes.get_mut(&HERO).unwrap();
+            let hero = run.hero_mut();
             hero.pivot = at;
             hero.walk.velocity = Vec3::ZERO;
             let from = at;
