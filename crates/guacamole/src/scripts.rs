@@ -679,6 +679,22 @@ impl ScriptWorld {
         self.place_moving(h, at, facing, Vec3::ZERO)
     }
 
+    /// Every point the scripts have remembered through a reference to
+    /// `actor` set to `at`: a recorded state's follow actor at rest, its
+    /// intent, velocity and target points together (openspec AG.28's
+    /// verify; `Camera - Update Player Cam Target` keeps those three apart
+    /// on one clone). Returns how many were set.
+    pub fn rest_remembered(&mut self, actor: Handle, at: Vec3) -> usize {
+        let mut n = 0;
+        for ((h, _), p) in &mut self.kept_via {
+            if *h == actor {
+                *p = at;
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// [`ScriptWorld::place`] moving at `velocity` (ft/s): a recorded
     /// state's creature mid-stride, which a lob's lead reads (AH.60).
     pub fn place_moving(&mut self, h: Handle, at: Vec3, facing: f32, velocity: Vec3) -> bool {

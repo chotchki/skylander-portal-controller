@@ -147,6 +147,8 @@ tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 serde_json = { workspace = true }
+# The oracle's recording reader, for AG.28's headless verify (tests/giants_camera.rs).
+guac-oracle = { path = "../guac-oracle" }
 tempfile = "3"
 # The builders (SfoBuilder, the sample disc) for the setup and extraction tests.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }

@@ -150,6 +150,59 @@ fn a_reference_binds_a_host_members_number() {
     assert_eq!(vm.local(id, "plain"), Some(Value::Float(9.0)));
 }
 
+/// `if reference` over two value cells is a check of places, not of
+/// numbers: `a` and `b` both 0 are two cells (a keyframer looking for the
+/// value it runs found `shake x` where it held `shake y`, openspec AG.28),
+/// and `r2`, another reference to `a`, is the same one as `r`.
+#[test]
+fn two_value_cells_holding_the_same_number_are_two_places() {
+    let p = program(|w| {
+        let (a, b) = (var(w, "a"), var(w, "b"));
+        let r = w.variable("r", "ScriptReference", None);
+        let s = w.variable("s", "ScriptReference", None);
+        let r2 = w.variable("r2", "ScriptReference", None);
+        let (apart, together) = (var(w, "apart"), var(w, "together"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                for (v, cell) in [(r, a), (s, b), (r2, a)] {
+                    let l = w.value(&[El::Local(v)]);
+                    let rhs = w.reference(&[El::Local(cell)], None);
+                    let o = w.op(Class::SetReference, "set reference");
+                    w.refer(o, 0x1C, l);
+                    w.refer(o, 0x20, rhs);
+                    w.push(o);
+                }
+                for (x, y, count) in [(r, s, apart), (r, r2, together)] {
+                    let l = w.value(&[El::Local(x)]);
+                    let rhs = w.reference(&[El::Local(y)], None);
+                    let (c, o) = w.open(Class::CheckReference, "if reference");
+                    w.refer(o, 0x1C, l);
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, rhs);
+                    w.inc(&[El::Local(count)]);
+                    w.end_block(c);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config());
+    let id = vm.add(HANDLE, "Hero", 0);
+    let mut host = Members::default();
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    assert_ne!(
+        vm.local(id, "apart"),
+        Some(Value::Int(1)),
+        "a and b are two"
+    );
+    assert_eq!(
+        vm.local(id, "together"),
+        Some(Value::Int(1)),
+        "r and r2 are one"
+    );
+}
+
 /// A measurement's other point is the path's own (`_otherPoint`), still
 /// there when the host is asked for the member at the path's end.
 #[test]

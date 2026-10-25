@@ -1107,7 +1107,28 @@ impl ScriptWorld {
             },
             Member::ContactType => {
                 let (_, m, found) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
-                Value::Int(if found { i32::from(m.unwrap_or(0)) } else { -1 })
+                // An awake actor with no solid touches nothing, so a ground
+                // it hasn't is no reason to read -1 (openspec AG.28: the
+                // camera's target is one, dropped from `New CameraTargets
+                // Set` by `Camera - Clean Up Targets` on that reading where
+                // the level's mesh ends under it, which AG.13's corridor
+                // recordings never do; a hypothesis, the ground facet of such
+                // an actor not read).
+                let free = match object {
+                    Some(Object::Facet(h, Facet::Ground)) => {
+                        engine.hero(h).is_none()
+                            && self
+                                .actors
+                                .get(&h)
+                                .is_some_and(|a| a.havok().is_none() && !(a.managed && !a.active))
+                    }
+                    _ => false,
+                };
+                Value::Int(match (found, free) {
+                    (true, _) => i32::from(m.unwrap_or(0)),
+                    (false, true) => 0,
+                    (false, false) => -1,
+                })
             }
             Member::ContactNormal => {
                 let (n, _, _) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
@@ -2167,13 +2188,19 @@ impl ScriptWorld {
             return self.set_velocity(h, v, engine);
         }
         let at = self.point(target, engine).ok_or(HostFault::Nothing)?;
-        let head = if mode == 2 {
+        // Turned by the target's whole orientation, its tilt and roll too
+        // (openspec AG.28: the camera's shake up is along the viewport's
+        // up, which leans forward with its tilt: AG.13's rock slide
+        // moves the eye along (-2, 1, 1) of its two axes' shake at 15
+        // degrees facing and 23.36 down, where turned by the facing alone
+        // it went (-1.9, 1, 0.5)).
+        let d = if mode == 2 {
             let h = self.handle(target).ok_or(HostFault::Nothing)?;
-            head + self.angles(h, engine).map_or(0.0, |a| a.facing)
+            let a = self.angles(h, engine).unwrap_or_default();
+            guac_motion::solid::euler([a.tilt, a.facing, a.roll]) * direction(head, pitch)
         } else {
-            head
-        };
-        let d = direction(head, pitch) * (len * METRES_PER_FOOT);
+            direction(head, pitch)
+        } * (len * METRES_PER_FOOT);
         let to = if mode == 1 { d } else { at + d };
         self.set_point(target, to, engine)
     }
@@ -3957,6 +3984,94 @@ mod fight_tests {
             (a.position, a.angles.facing),
             (Vec3::new(8.0, 0.0, -6.0), -90.0)
         );
+    }
+
+    /// `displace` turned by the target (combine 2) turns by its whole
+    /// orientation (openspec AG.28): up from a viewport looking 23.36 down
+    /// at 15 degrees leans forward, where at no tilt it is straight up.
+    #[test]
+    fn a_displace_turned_by_the_target_leans_with_its_tilt() {
+        let mut e = pit();
+        let mut w = world();
+        let displaced = |w: &mut ScriptWorld, e: &mut Pit, tilt: f32, mode: u32| {
+            let mut a = Actor::blank();
+            a.position = Vec3::new(1.0, 2.0, 3.0);
+            a.angles.facing = 15.0;
+            a.angles.tilt = tilt;
+            w.actors.insert(C2, a);
+            let call = OpCall {
+                placement: C2,
+                receiver: Value::Entity(C2),
+                class: Class::Displace,
+                operands: vec![
+                    ("_NP", Some(Value::Entity(C2))),
+                    ("_lenNP", Some(Value::Float(1.0))),
+                    ("_headNP", Some(Value::Float(0.0))),
+                    ("_pitchNP", Some(Value::Float(90.0))),
+                ],
+                words: vec![("_combineMode", mode)],
+                sets: Vec::new(),
+            };
+            assert_eq!(ask(w, e, &call), Answer::Done);
+            w.actor(C2).unwrap().position - Vec3::new(1.0, 2.0, 3.0)
+        };
+        let foot = 0.3048;
+        let up = displaced(&mut w, &mut e, 0.0, 2);
+        assert!((up - Vec3::Y * foot).length() < 1e-5, "{up}");
+        let t = 23.36f32.to_radians();
+        let (s, c) = 15f32.to_radians().sin_cos();
+        let leaning = displaced(&mut w, &mut e, -23.36, 2);
+        let want = Vec3::new(t.sin() * s, t.cos(), t.sin() * c) * foot;
+        assert!((leaning - want).length() < 1e-5, "{leaning} against {want}");
+        // In the world's axes (combine 0) it is straight up whatever the tilt.
+        let world_up = displaced(&mut w, &mut e, -23.36, 0);
+        assert!((world_up - Vec3::Y * foot).length() < 1e-5, "{world_up}");
+    }
+
+    /// The type of the ground under an awake actor with no solid and none
+    /// found reads 0, not -1 (openspec AG.28: the camera's target, a clone
+    /// of `Generic_FollowActor`, over the edge of the level's mesh); with a
+    /// solid, or asleep, -1 stays.
+    #[test]
+    fn a_solidless_actor_with_no_ground_found_reads_a_type_of_0() {
+        let mut e = pit();
+        let mut w = world();
+        let type_under = |w: &mut ScriptWorld, e: &mut Pit, h: Handle| {
+            let ground = get(w, e, "abstractplacement", "ground", h, h);
+            w.get(
+                &Access {
+                    placement: h,
+                    receiver: Some(ground),
+                    member: MemberId::named("contactinfo", "type"),
+                    other_point: None,
+                    via: None,
+                },
+                e,
+            )
+            .unwrap()
+        };
+        // Far over the floor: nothing within the ray's 160 m.
+        let mut free = Actor::blank();
+        free.position = Vec3::new(0.0, 500.0, 0.0);
+        w.actors.insert(C2, free);
+        assert_eq!(type_under(&mut w, &mut e, C2), Value::Int(0));
+        // A creature with a solid, far over the floor: still none.
+        w.actors.insert(C1, chompy(Vec3::new(0.0, 500.0, 0.0), 0.0));
+        assert_eq!(type_under(&mut w, &mut e, C1), Value::Int(-1));
+    }
+
+    /// A follow actor at rest has every point remembered through a
+    /// reference to it on the recorded one, and no other actor's moves.
+    #[test]
+    fn a_follow_actor_at_rest_has_its_remembered_points_set_together() {
+        let mut w = world();
+        let (here, there) = (Vec3::new(1.0, 2.0, 3.0), Vec3::new(9.0, 9.0, 9.0));
+        for (h, c) in [(C1, 4), (C1, 5), (C1, 6), (C2, 4)] {
+            w.kept_via.insert((h, c), there);
+        }
+        assert_eq!(w.rest_remembered(C1, here), 3);
+        assert_eq!(w.kept_via[&(C1, 5)], here);
+        assert_eq!(w.kept_via[&(C2, 4)], there);
     }
 
     #[test]

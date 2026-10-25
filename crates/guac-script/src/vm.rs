@@ -4013,7 +4013,19 @@ impl Vm {
             // compares by its fields).
             return self.bound.get(x as usize) == self.bound.get(y as usize);
         }
-        a == b || (!a.is_number() && self.materialize(a) == self.materialize(b))
+        if a == b {
+            return true;
+        }
+        // Two run-time value cells are two places however alike they read:
+        // `shake x` and `shake y` both at 0 are not one value to a keyframer
+        // looking for the one it runs (openspec AG.28).
+        if let (Value::Cell(x), Value::Cell(y)) = (a, b)
+            && self.cells.get(x as usize).map(|c| c.kind) == Some(CellKind::Value)
+            && self.cells.get(y as usize).map(|c| c.kind) == Some(CellKind::Value)
+        {
+            return false;
+        }
+        !a.is_number() && self.materialize(a) == self.materialize(b)
     }
 
     // ---- cells, structures and sets ----
