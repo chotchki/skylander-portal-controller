@@ -2577,7 +2577,8 @@ pub async fn entry_tv(base: &str, body: serde_json::Value) -> Result<()> {
 
 /// guacamole's `/api/_test/tv`: what its TV shows (`TvSnapshot` in
 /// `crates/guacamole/src/mirror.rs`). A read whose hero's scripts went off
-/// fails the test unless it said it expects that ([`hero_scripts_held`]).
+/// ([`hero_scripts_held`]) or whose camera's scripts did
+/// ([`camera_scripts_held`]) fails the test unless it said it expects that.
 pub async fn tv(base: &str) -> Result<serde_json::Value> {
     let resp = reqwest::Client::new()
         .get(format!("{base}/api/_test/tv"))

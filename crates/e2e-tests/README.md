@@ -274,8 +274,15 @@ frame it fails, so no read finds him as the hero: the TV lists him in
 entry the same, by its reason (openspec AH.166). The
 walking fixture's part holds no portal manager, so its hero never joins:
 its spawn expects exactly that off (`WALKING_SCRIPTS_OFF`), and no other
-test expects one. An expectation goes with its server: moved by
-`restart_guacamole`, dropped with the `TestServer`.
+test expects one. The same `tv` reads hold the camera to its scripts
+(openspec AG.28, `camera_scripts_held`): once one of them, the portal
+manager or the hero's own script stops in play (AG.191, AG.190) the TV's
+chain follows him from where they left the view and every follow check
+still passes on it, so a read whose `hero.camera.scripts` is `off` fails
+with the TV's reason unless the test calls `expect_camera_scripts_off(base,
+because)`; `none` (no hero joined yet, or a part with no camera system:
+every synthetic fixture's) passes. An expectation goes with its server:
+both lists moved by `restart_guacamole`, dropped with the `TestServer`.
 
 [`tests/guacamole_intro.rs`](tests/guacamole_intro.rs) (5 tests,
 openspec AB.11, AB.21, AB.22, AB.23 and AP.5) is guacamole-only too and needs ffmpeg (`brew install

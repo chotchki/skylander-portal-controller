@@ -30,6 +30,20 @@ pub const BAND_RISE: f32 = 20.0;
 /// Seconds in the original's nominal frame: a step at full speed.
 pub const NOMINAL_STEP: f32 = 1.0 / 60.0;
 
+/// How fast every scripted mover falls off the ground above [`BAND`], ft/s²,
+/// and the fastest it falls, ft/s: the movement update's own numbers
+/// (`movementUpdate.ai`'s `Movement - Update Force on Mover`: 136.21 times
+/// the mover's time since its last update, the vertical speed set to -120
+/// past it), literals the same for every character, which AG.10 measured as
+/// Eruptor's fall. A character's description holds a gravity of its own
+/// (128 to 120 on each of the 46 AG.27's audit read one off), which the
+/// movement update never falls a mover by: `Movement - Remove Mover` ties
+/// it to his `ActorParameters` once a script takes him off the movers, the
+/// engine's fall for those frames (an action's, AG.1's 128 and 120 cap), so
+/// it's never his walk's (openspec AG.173).
+pub const MOVER_GRAVITY: f32 = 136.21;
+pub const MOVER_TERMINAL: f32 = 120.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tuning {
     /// Top speed at full stick, ft/s (`Speed_Slow`'s live 21.5 for Eruptor).
@@ -67,17 +81,18 @@ impl Tuning {
     };
 
     /// Eruptor in chapter 1 with no hat and no heroics: 21.5 ft/s, 160 ft/s²
-    /// up, 80 down (50 in the air), 1440°/s (AG.8, AG.38, AG.39); 136.21 ft/s²
-    /// off the ground (AG.10) to 120 ft/s (as read: no fall in reach is long
-    /// enough to show it, AG.47); 4 ft wide (AG.8's `live_hero`).
+    /// up, 80 down (50 in the air), 1440°/s (AG.8, AG.38, AG.39); the
+    /// movers' fall, 136.21 ft/s² off the ground (AG.10) to 120 ft/s (as
+    /// read: no fall in reach is long enough to show it, AG.47); 4 ft wide
+    /// (AG.8's `live_hero`).
     pub const ERUPTOR: Tuning = Tuning {
         max_speed: 21.5,
         push: 160.0,
         let_go: 80.0,
         air_let_go: 50.0,
         turn_rate: 1440.0,
-        gravity: 136.21,
-        terminal: 120.0,
+        gravity: MOVER_GRAVITY,
+        terminal: MOVER_TERMINAL,
         width: 4.0,
     };
 }

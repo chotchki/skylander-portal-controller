@@ -19,8 +19,13 @@
 //!   locomotion (AG.30: his idle, walk, run and fall by the weights
 //!   [`crate::hero::HeroGaits`] steps, his hero side's clips read with his
 //!   model); the camera at camera 0's rest pose follows him on AG.17's
-//!   chain, no triggers ([`crate::hero`]); the level's input layer takes
-//!   the pads ([`crate::pad`]). The camera is the level's
+//!   chain until he joins the run, from then on the camera's scripts have
+//!   the view (AG.28: the `Pop_To_Camera_*` volumes, the planes' blend and
+//!   the sliding rocks' activator through `viewportinfo.default`), the
+//!   chain the view's again for good once one of them, the portal manager
+//!   or his own script stops in play ([`crate::hero`],
+//!   stand-in ledger: `camera`); the level's input layer takes the pads
+//!   ([`crate::pad`]). The camera is the level's
 //!   ([`crate::level::view_camera`]: its output onto the TV's target with
 //!   the replacing write the start's pass compiled, AG.44), first on the
 //!   target, so the level fills the TV under its UI
@@ -66,6 +71,11 @@
 //! - A character who can't walk (one the part lacks or keeps, AG.27)
 //!   counts as one on the portal but can't come in: alone, it leaves the
 //!   level asking for a Skylander.
+//! - A hero whose script stops in play walks on in the level on AG.16's
+//!   controller ([`crate::hero_scripts`], stand-in ledger: `walker`), his
+//!   walk and facing the controller's alone and the view the TV's chain's
+//!   (AH.151, AG.190), `/api/_test/tv`'s `hero.scripts` and
+//!   `hero.camera.scripts` both `off` with his reason.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -2243,6 +2253,15 @@ mod tests {
         dir: &std::path::Path,
         fault: guac_formats::script::builder::WalkerFault,
     ) -> (App, Entity) {
+        walker_app_with(dir, fault, false)
+    }
+
+    /// [`walker_app`], over AH.151's synthetic mover update when `mover`.
+    fn walker_app_with(
+        dir: &std::path::Path,
+        fault: guac_formats::script::builder::WalkerFault,
+        mover: bool,
+    ) -> (App, Entity) {
         let (mut app, tx) = play_app_walkers(dir, &[(WALKER_TOY, WALKER)]);
         write_attack_parts(dir);
         // His palette, Eruptor's under his name: what the join sets on his
@@ -2266,7 +2285,10 @@ mod tests {
             guac_ir::to_ron(&nodes).unwrap(),
         )
         .unwrap();
-        crate::test_support::hero_scripts::write_walker(dir, fault);
+        match mover {
+            true => crate::test_support::hero_scripts::write_walker_moving(dir, fault),
+            false => crate::test_support::hero_scripts::write_walker(dir, fault),
+        }
         tx.send(write_level(dir, &lights())).unwrap();
         let pad = test_pad::connect(&mut app, None, None);
         until(&mut app, "the level and its scripts", |a| {
@@ -2327,10 +2349,13 @@ mod tests {
                 .expect("his movement parameters");
         assert_eq!(movement.ground_max_speed, WALKER_SPEED);
         assert_eq!(movement.ground_turn_rate, WALKER_TURN);
-        assert_eq!(
-            guacamole::walkers::Movement::MEMBERS,
-            WALKER_MOVEMENT.map(|(name, _)| name)
-        );
+        // Each member the fall-back reads is one his setup wrote, his
+        // description's gravity not among them (AG.173: every mover falls
+        // at the mover update's own).
+        let written = WALKER_MOVEMENT.map(|(name, _)| name);
+        let read = guacamole::walkers::Movement::MEMBERS;
+        assert!(read.iter().all(|m| written.contains(m)), "{read:?}");
+        assert!(!read.iter().any(|m| m.starts_with("gravity")), "{read:?}");
         let world = app.world().resource::<guacamole::scripts::ScriptWorld>();
         let actor = world.actor(e.to_bits()).expect("his actor");
         assert_eq!(actor.scale, [WALKER_SCALE; 3]);
@@ -2638,13 +2663,19 @@ mod tests {
     /// AG.27: a walker whose script stops in play (after his setup ran
     /// through) walks on, on AG.16's controller, at what his scripts had
     /// set: the movement parameters they wrote into his description become
-    /// the controller's numbers (never his actor's engine ones), his scale
-    /// stays theirs, and he's listed nowhere (his card isn't kept).
+    /// the controller's numbers (never his actor's engine ones), falling as
+    /// every mover falls (AG.173: 136.21 ft/s² to 120, not the 96 to 90 his
+    /// description holds), his scale stays theirs, and he's listed nowhere
+    /// (his card isn't kept). AH.151: over a mover update that hands the
+    /// engine, each tick, the walk his stopped minion no longer keeps (still,
+    /// as the original's #608-#610 do), the stick still takes him to his top
+    /// speed: the update's writes to his walk are dropped and counted.
     #[test]
     fn a_walker_whose_script_stops_in_play_walks_on_at_what_it_set() {
-        use guac_formats::script::builder::{WALKER_MOVEMENT, WalkerFault};
+        use guac_formats::script::builder::{MOVER_PLACEMENT, WALKER_MOVEMENT, WalkerFault};
+        use guacamole::scripts::{HeroWrite, ScriptWorld};
         let tmp = tempfile::tempdir().unwrap();
-        let (mut app, pad) = walker_app(tmp.path(), WalkerFault::InPlay);
+        let (mut app, pad) = walker_app_with(tmp.path(), WalkerFault::InPlay, true);
         place(&mut app, 0, WALKER_TOY, "Synthetic");
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
         test_pad::press(&mut app, pad, GamepadButton::East);
@@ -2670,8 +2701,7 @@ mod tests {
                 .contains::<crate::hero::ScriptedHero>()
         );
         let run = app.world().entity(e).get::<HeroRun>().unwrap();
-        let [speed, push, let_go, turn, air_let_go, gravity, terminal] =
-            WALKER_MOVEMENT.map(|(_, v)| v);
+        let [speed, push, let_go, turn, air_let_go, ..] = WALKER_MOVEMENT.map(|(_, v)| v);
         assert_eq!(
             *hero(&app).tuning(),
             guac_motion::tuning::Tuning {
@@ -2680,13 +2710,33 @@ mod tests {
                 let_go,
                 air_let_go,
                 turn_rate: turn,
-                gravity,
-                terminal,
+                gravity: 136.21,
+                terminal: 120.0,
                 width: run.shape.width,
             },
-            "what the scripts wrote into his description"
+            "what the scripts wrote into his description, a mover's fall"
         );
         assert_eq!(run.scale, 1.2, "his scale stays his scripts'");
+        // The stick held: up to his top speed on the controller, though
+        // the update writes him still each tick.
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        let mut top = 0.0f32;
+        for _ in 0..60 {
+            app.update();
+            top = top.max(hero(&app).walk.velocity.length());
+        }
+        let walk = hero(&app).walk.velocity.length();
+        assert!((walk - speed).abs() < 1e-3, "{walk} ft/s, top {top}");
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.walks_alone(e.to_bits()));
+        let (_, mover) = placement_named(&app, MOVER_PLACEMENT);
+        let dropped = world.hero_writes();
+        assert!(
+            dropped
+                .get(&(mover, HeroWrite::Walk))
+                .is_some_and(|&n| n >= 60),
+            "the update's writes to his walk dropped: {dropped:?}"
+        );
     }
 
     /// AH.24: a character whose attacks don't run (here no script part

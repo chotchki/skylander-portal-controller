@@ -429,6 +429,23 @@ pub struct ScriptWorld {
     /// headless runs keep theirs in parry's), each actor's handle and body:
     /// what an engine maps an actor and a body by.
     pub embodied: Vec<(Handle, guac_motion::seam::BodyId)>,
+    /// The heroes off their scripts (openspec AH.151): AG.16's controller is
+    /// the one writer of each one's walk and facing, so a script's write to
+    /// either is dropped ([`ScriptWorld::hand_back_walk`]).
+    pub(crate) walking_alone: std::collections::HashSet<Handle>,
+    /// What scripts wrote to those, by the placement that wrote it.
+    pub(crate) written: std::collections::BTreeMap<(Handle, HeroWrite), u32>,
+}
+
+/// A script's write to a hero off his scripts (openspec AH.151): to his
+/// walk (`actorinfo.velocity`, by a member or a displace) or to his facing
+/// (a member or a `turn to`), which the host drops, or to his place (a
+/// `teleport to`, a displace, a measurement, an attach), which it keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HeroWrite {
+    Walk,
+    Facing,
+    Place,
 }
 
 /// A placement off the whitelist a whitelisted script woke (design decision
@@ -490,7 +507,81 @@ impl ScriptWorld {
             woken: Vec::new(),
             fired: Vec::new(),
             embodied: Vec::new(),
+            walking_alone: Default::default(),
+            written: Default::default(),
         }
+    }
+
+    /// `hero`'s walk and facing handed back to AG.16's controller for good
+    /// (openspec AH.151; stand-in ledger: `walker`): his scripts stopped, so
+    /// from here on a script's write to his walk or his facing is dropped,
+    /// counted by its writer ([`ScriptWorld::hero_writes`]). The
+    /// mover update is why: his minion's `Movement - Face and Move` no longer
+    /// keeps the velocity it holds for him, and each step it hands the engine
+    /// that velocity, slowed to nothing, over his walk (`movementUpdate.ai`
+    /// #608-#610). A write to his place still moves him (a level's `teleport
+    /// to`, which sets him down facing as it says and stops his walk, a
+    /// displace, a measurement), as it would move him in the original, where
+    /// his scripts don't stop. His scripts joining him again
+    /// ([`ScriptWorld::hero_template`], the join's) gives them both back.
+    pub fn hand_back_walk(&mut self, hero: Handle) {
+        self.walking_alone.insert(hero);
+    }
+
+    /// Whether `hero`'s walk is the controller's alone
+    /// ([`ScriptWorld::hand_back_walk`]).
+    pub fn walks_alone(&self, hero: Handle) -> bool {
+        self.walking_alone.contains(&hero)
+    }
+
+    /// What scripts wrote to a hero off his scripts
+    /// ([`ScriptWorld::hand_back_walk`]): each by the placement that wrote it
+    /// (its handle) and what it wrote, and how many; his walk and facing
+    /// dropped, his place kept.
+    pub fn hero_writes(&self) -> &std::collections::BTreeMap<(Handle, HeroWrite), u32> {
+        &self.written
+    }
+
+    /// Whether a write of `what` to `hero` by placement `by` is dropped, his
+    /// walk being the controller's alone: counted, the first of each logged.
+    pub(crate) fn drops(&mut self, by: Handle, hero: Handle, what: HeroWrite) -> bool {
+        if !self.walking_alone.contains(&hero) {
+            return false;
+        }
+        self.count_write(by, what, "dropped: the controller walks him");
+        true
+    }
+
+    /// A write to `hero`'s place by placement `by`, kept: counted while he's
+    /// off his scripts.
+    pub(crate) fn writes_place(&mut self, by: Handle, hero: Handle) {
+        if self.walking_alone.contains(&hero) {
+            self.count_write(
+                by,
+                HeroWrite::Place,
+                "kept: his place is the level's to set",
+            );
+        }
+    }
+
+    /// One more of `by`'s writes of `what` counted, its first logged.
+    fn count_write(&mut self, by: Handle, what: HeroWrite, then: &str) {
+        let n = self.written.entry((by, what)).or_default();
+        if *n == 0 {
+            let writer = self
+                .actors
+                .get(&by)
+                .and_then(|a| a.obj.or(a.template))
+                .and_then(|o| self.templates.get(&o))
+                .map_or("", |p| p.name.as_str());
+            info!(
+                writer,
+                ?what,
+                then,
+                "a script wrote to a hero off his scripts"
+            );
+        }
+        *n += 1;
     }
 
     /// The viewport as the camera's scripts leave it (openspec AG.28).
@@ -750,9 +841,11 @@ impl ScriptWorld {
     }
 
     /// A spawn of `template` makes `hero` the clone: the hero's actor, his
-    /// numbers from the template's file.
+    /// numbers from the template's file. His scripts joining him so, his
+    /// walk and facing are theirs again (openspec AH.151).
     pub fn hero_template(&mut self, template: Obj, hero: Handle) {
         self.hero_templates.insert(template, hero);
+        self.walking_alone.remove(&hero);
     }
 
     /// One frame of `dt` seconds for what the engine runs between the

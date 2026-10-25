@@ -47,7 +47,17 @@
 //! [`CameraFault::Frame`] makes the update stop on a member nothing models
 //! [`CAMERA_FAULT_TICK`] ticks after it first finds a target;
 //! [`CameraFault::Volume`] makes the volume's script stop on one the tick
-//! he's inside it, in place of its switch.
+//! he's inside it, in place of its switch; [`CameraFault::Hero`] makes the
+//! fighter's minion stop on one [`CAMERA_FAULT_TICK`] ticks in (openspec
+//! AG.190, AH.151); [`CameraFault::PortalManager`] makes the portal
+//! manager's tick call `Manage Projectiles` once a hero has joined, which
+//! stops on one on its [`CAMERA_FAULT_TICK`]th call (AG.191);
+//! [`CameraFault::Rock`] makes the rock's script stop on one the tick after
+//! its shake, a stop neither the camera's nor the portal manager's (AG.191's
+//! review). `global.bld`
+//! holds AH.151's mover update beside the portal manager
+//! ([`super::attack_with_mover`]'s), which the walking minion keeps his walk
+//! with.
 
 use super::*;
 
@@ -132,12 +142,16 @@ pub const CAMERA_SHAKE_SECONDS: f32 = 0.5;
 pub const CAMERA_WALK_SPEED: f32 = 10.0;
 /// The number the activator opens the rocks by, in the level's file.
 pub const CAMERA_ROCKS_OPEN: &str = "Synthetic Rocks Open";
-/// The update's ticks with a target before [`CameraFault::Frame`] stops it.
+/// The update's ticks with a target before [`CameraFault::Frame`] stops it,
+/// the minion's before [`CameraFault::Hero`] stops it and the projectile
+/// manager's calls before [`CameraFault::PortalManager`] stops it.
 pub const CAMERA_FAULT_TICK: i32 = 120;
+/// The number `global.bld` counts [`CameraFault::PortalManager`]'s calls of
+/// `Manage Projectiles` in.
+pub const CAMERA_PM_CALLS: &str = "Synthetic Projectile Manager Calls";
 
-/// Whether a camera script stops: never ([`CameraFault::None`]), the update
-/// on a member nothing models once it has had a target a while, or the
-/// volume's script on one once he's inside it.
+/// Whether a script of the part stops in play: never ([`CameraFault::None`])
+/// or where each other variant says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraFault {
     None,
@@ -147,6 +161,18 @@ pub enum CameraFault {
     /// The volume's script, the tick he's inside it, on a member nothing
     /// models (its switch never made).
     Volume,
+    /// The fighter's minion, [`CAMERA_FAULT_TICK`] ticks in, on a member
+    /// nothing models: his scripts stop in play (openspec AG.190, AH.151).
+    Hero,
+    /// The portal manager's own stretch, not the camera's: its tick calls
+    /// `Manage Projectiles` once a hero has joined, as the original's does,
+    /// and the call stops on a member nothing models on its
+    /// [`CAMERA_FAULT_TICK`]th (openspec AG.191).
+    PortalManager,
+    /// The rock's script, the tick after its shake, on a member nothing
+    /// models: a prop's own stop, which leaves the camera's scripts the view
+    /// (openspec AG.191's review).
+    Rock,
 }
 
 /// Where the level's placements stand (metres, their pivots): the plane's
@@ -174,9 +200,9 @@ pub struct Camera {
 pub fn camera(at: CameraAt, fault: CameraFault) -> Camera {
     let a = attack();
     Camera {
-        global: attack_global_with(Some(fault)),
+        global: attack_global_with(Some(fault), true),
         init_setup: a.init_setup,
-        fighter: attack_fighter_with(true),
+        fighter: attack_fighter_with(true, fault == CameraFault::Hero),
         level: camera_level(at, fault),
     }
 }
@@ -1029,6 +1055,10 @@ fn camera_level(spots: CameraAt, fault: CameraFault) -> Vec<u8> {
                 w.end_block(opened);
                 w.end_block(p);
                 let p = w.push(fallen);
+                if fault == CameraFault::Rock {
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
                 w.end_block(p);
             },
         )
