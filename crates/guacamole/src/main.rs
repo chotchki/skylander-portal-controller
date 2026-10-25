@@ -845,7 +845,7 @@ mod tests {
                 }
             }
         }
-        let want: [(TypeId, Frame, &str); 15] = [
+        let want: [(TypeId, Frame, &str); 16] = [
             (
                 mirror::count_pad_steps.system_type_id(),
                 Frame::Pads,
@@ -886,6 +886,11 @@ mod tests {
                 hero_scripts::draw_clones.system_type_id(),
                 Frame::Actors,
                 "the clones' draws",
+            ),
+            (
+                hero_scripts::pick_gaits.system_type_id(),
+                Frame::Locomotion,
+                "his scripts' picks of his clips",
             ),
             (
                 hero::step_gaits.system_type_id(),

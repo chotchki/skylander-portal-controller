@@ -442,11 +442,6 @@ pub(crate) fn ask_join(
     true
 }
 
-/// Each slot's clip length at 100 %, 0 where a slot holds no clip.
-pub(crate) fn lengths(palette: &Palette) -> Vec<f32> {
-    guacamole::level_scripts::lengths(palette)
-}
-
 /// What the scripts reach that the TV's entities own (decision 21): the
 /// heroes' controllers on their entities, Avian's side of the seam, the
 /// follow camera's view as the step before left it, and which body in the
@@ -661,6 +656,9 @@ impl Plugin for HeroScriptsPlugin {
                         .chain()
                         .in_set(Frame::Scripts),
                     (advance_scripts, draw_clones).chain().in_set(Frame::Actors),
+                    pick_gaits
+                        .in_set(Frame::Locomotion)
+                        .before(crate::hero::step_gaits),
                     pose_hands.in_set(Frame::Hands),
                 )
                     .run_if(resource_exists::<ScriptRuntime>)
@@ -912,7 +910,7 @@ pub(crate) fn step_scripts(
                         .map(|p| p.obj)
                 })
         {
-            world.set_palette(template, lengths(palette));
+            world.set_palette_of(template, palette);
         }
         let mut host = WorldHost {
             world: &mut world,
@@ -1246,9 +1244,53 @@ pub(crate) fn advance_scripts(
     }
 }
 
+/// What his scripts' locomotion left on him this step, for each hero whose
+/// scripts run (openspec AH.49): his gaits' `picked`, and the step before's
+/// weights kept for his pose's easing. With it, AG.30's picker is off for him
+/// ([`crate::hero::step_gaits`]); with none (no locomotion of his scripts
+/// weights anything on him, or they've stopped and he walks on the
+/// stand-in), it picks as before.
+pub(crate) fn pick_gaits(
+    world: Res<ScriptWorld>,
+    mut heroes: Query<(
+        Entity,
+        &HeroRun,
+        &HeroBody,
+        &mut HeroGaits,
+        Has<ScriptedHero>,
+    )>,
+) {
+    for (e, run, body, mut gaits, scripted) in &mut heroes {
+        let gaits = &mut *gaits;
+        gaits.picked_before = gaits
+            .picked
+            .as_ref()
+            .map(guacamole::picks::Picked::by_slot)
+            .unwrap_or_default();
+        let four = match (&run.palette, &run.rig) {
+            (Some(p), Some(rig)) => guacamole::picks::Four::of(
+                p,
+                [
+                    Some(rig.model.idle.name.as_str()),
+                    rig.clips.walk.as_ref().map(|c| c.name.as_str()),
+                    rig.clips.run.as_ref().map(|c| c.name.as_str()),
+                    rig.clips.fall.as_ref().map(|c| c.name.as_str()),
+                ],
+            ),
+            _ => guacamole::picks::Four::default(),
+        };
+        gaits.picked = scripted
+            .then(|| {
+                guacamole::picks::Picked::read(&world, e.to_bits(), four, body.hero.gait_speed)
+            })
+            .flatten();
+    }
+}
+
 /// His attach nodes posed by the clips on him as this step left them, his
-/// locomotion's (his idle alone with no gaits) with his scripts' laid over,
-/// and what hangs from them set there (the module docs; AH.50).
+/// locomotion's (his scripts' picks, else the stand-in's; his idle alone
+/// with neither) with his scripts' laid over, and what hangs from them set
+/// there (the module docs; AH.50).
 pub(crate) fn pose_hands(
     mut world: ResMut<ScriptWorld>,
     seam: AvianSeam,
@@ -1262,9 +1304,14 @@ pub(crate) fn pose_hands(
         let Some(rig) = &run.rig else {
             continue;
         };
-        let base = match gaits {
-            Some(g) => play::locomotion_clips(&rig.model, &rig.clips, g),
-            None => vec![(&rig.model.idle, 0.0, 1.0)],
+        let base = match (gaits, &run.palette) {
+            (Some(g), Some(palette)) if g.picked.is_some() => g
+                .picked
+                .as_ref()
+                .map(|p| p.posed(&[], palette, (1.0, 0.0)))
+                .unwrap_or_default(),
+            (Some(g), _) => play::locomotion_clips(&rig.model, &rig.clips, g),
+            (None, _) => vec![(&rig.model.idle, 0.0, 1.0)],
         };
         let over = match &run.palette {
             Some(p) => guacamole::hands::playing(&world, e.to_bits(), p),
@@ -1412,12 +1459,13 @@ pub(crate) struct HeroNumbers {
 
 /// The clips the scripts play on the hero now, for his pose: each one's
 /// palette slot, its time (seconds into it) and its rate (percent), oldest
-/// first.
+/// first; his locomotion's aren't among them (openspec AH.49:
+/// [`crate::script_engine::Sequence::laid_over`]).
 pub(crate) fn playing_on(world: &ScriptWorld, hero: Handle) -> Vec<(u32, f32, f32)> {
     world
         .sequences()
         .iter()
-        .filter(|s| s.actor == hero && !s.done && !s.stopped && s.length > 0.0)
+        .filter(|s| s.actor == hero && s.plays() && s.laid_over())
         .filter_map(|s| world.clip_of(s).map(|(_, slot)| (slot, s.time, s.rate)))
         .collect()
 }

@@ -388,6 +388,13 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// Each template's palette's animation info as its file holds it, slot
+    /// by slot (openspec AH.49): a template given none reads every slot a
+    /// base clip with no layered bit.
+    pub(crate) clip_info: HashMap<Obj, Vec<ClipInfo>>,
+    /// What the scripts wrote on a palette slot's clip itself (openspec
+    /// AH.49): a sequence started from it starts with these.
+    pub(crate) clip_state: HashMap<(Obj, u32), ClipState>,
     /// The template whose clone is a hero, and the hero's handle: a spawn
     /// of it answers with him.
     pub(crate) hero_templates: HashMap<Obj, Handle>,
@@ -429,6 +436,68 @@ pub struct ScriptWorld {
     /// headless runs keep theirs in parry's), each actor's handle and body:
     /// what an engine maps an actor and a body by.
     pub embodied: Vec<(Handle, guac_motion::seam::BodyId)>,
+}
+
+/// A palette slot's animation info as its file holds it (openspec AH.49;
+/// `guac_ir::palette::SlotEntry::Clip`'s flags): what `animationinfo.type`
+/// reads and whether its layered bit starts set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ClipInfo {
+    /// `animationinfo.type`: 0 a base clip, 1 partial (its tracks drive
+    /// some joints), 2 additive; additive wins over partial, as the
+    /// original's getter reads the two flags.
+    pub kind: u8,
+    /// The wrapper's layered flag as stored: the layered bit's start.
+    pub layered: bool,
+}
+
+impl ClipInfo {
+    pub const BASE: u8 = 0;
+    pub const PARTIAL: u8 = 1;
+    pub const ADDITIVE: u8 = 2;
+
+    /// The flags a palette entry's clip carries.
+    pub fn of(additive: bool, partial: bool, layered: bool) -> Self {
+        let kind = if additive {
+            Self::ADDITIVE
+        } else if partial {
+            Self::PARTIAL
+        } else {
+            Self::BASE
+        };
+        Self { kind, layered }
+    }
+}
+
+/// Each slot's animation info in `palette`, a base clip with no layered bit
+/// where a slot holds no clip.
+pub fn clip_infos(palette: &guac_ir::palette::Palette) -> Vec<ClipInfo> {
+    let mut out = vec![ClipInfo::default(); usize::from(palette.slots)];
+    for e in &palette.entries {
+        if let guac_ir::palette::SlotEntry::Clip {
+            additive,
+            partial,
+            layered,
+            ..
+        } = &e.entry
+            && let Some(i) = out.get_mut(usize::from(e.slot))
+        {
+            *i = ClipInfo::of(*additive, *partial, *layered);
+        }
+    }
+    out
+}
+
+/// What the scripts wrote on a palette slot's clip (openspec AH.49), each
+/// `None` until written: the layered bit (`animationinfo.is layered`, which
+/// only a clip takes), whether it loops (`sequence.looping`) and its weight
+/// (`animationinfo.blend percent`). A sequence started from the clip starts
+/// with them.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ClipState {
+    pub layered: Option<bool>,
+    pub looping: Option<bool>,
+    pub blend: Option<f32>,
 }
 
 /// A placement off the whitelist a whitelisted script woke (design decision
@@ -473,6 +542,8 @@ impl ScriptWorld {
             objs,
             sequences: Vec::new(),
             palettes: HashMap::new(),
+            clip_info: HashMap::new(),
+            clip_state: HashMap::new(),
             hero_templates: HashMap::new(),
             nodes: HashMap::new(),
             pads: [Pad::default(); 2],
@@ -690,6 +761,30 @@ impl ScriptWorld {
         self.palettes.get(&template).map(Vec::as_slice)
     }
 
+    /// Each palette slot's animation info for `template`'s clones and
+    /// itself, as its file holds it (openspec AH.49).
+    pub fn set_clip_info(&mut self, template: Obj, info: Vec<ClipInfo>) {
+        self.clip_info.insert(template, info);
+    }
+
+    /// `palette` for `template`'s clones and itself: each slot's clip
+    /// length ([`ScriptWorld::set_palette`]) and its animation info
+    /// ([`ScriptWorld::set_clip_info`]).
+    pub fn set_palette_of(&mut self, template: Obj, palette: &guac_ir::palette::Palette) {
+        self.set_palette(template, crate::level_scripts::lengths(palette));
+        self.set_clip_info(template, clip_infos(palette));
+    }
+
+    /// Slot `slot` of `template`'s palette's animation info as its file
+    /// holds it: a base clip with no layered bit where none was given.
+    pub fn clip_info(&self, template: Obj, slot: u32) -> ClipInfo {
+        self.clip_info
+            .get(&template)
+            .and_then(|i| i.get(slot as usize))
+            .copied()
+            .unwrap_or_default()
+    }
+
     /// An actor set down at `at` facing `facing`, at rest, as a recorded
     /// state has it (a scripted test's or the dev entry's). False for no
     /// such actor.
@@ -798,6 +893,12 @@ impl ScriptWorld {
     /// The sequences started so far, in the order started.
     pub fn sequences(&self) -> &[Sequence] {
         &self.sequences
+    }
+
+    /// The sequences, to set where a recorded state has them (a replay's
+    /// start: openspec AH.49's, each clip at its record's time and rate).
+    pub fn sequences_mut(&mut self) -> &mut [Sequence] {
+        &mut self.sequences
     }
 
     /// Whether a remove took the placement or clone under `h` off.
@@ -997,7 +1098,10 @@ impl ScriptWorld {
                 _ => Answer::Skip,
             }),
             Class::Spawn => {
-                let Some(template) = first else {
+                // Nothing to clone (openspec AG.160: the locomotion clones a
+                // state's sound control, which a character whose states
+                // play no footsteps leaves none): the block is skipped.
+                let Some(template) = first.filter(|t| *t != Value::Null) else {
                     return Ok(Answer::Skip);
                 };
                 let named = |name: &str| {
@@ -1224,7 +1328,12 @@ pub fn config(mode: Mode) -> Config {
 /// it lights, copies the asker's colours onto it and takes it back once
 /// that's gone or faded out). The game systems' tick moves the orbs; the
 /// player loop runs that stretch of it alone (openspec AH.20).
-pub const GLOBAL_EVERY_TICK: [&str; 3] = ["/UI.ai", "movementUpdate.ai", "PointLightManager.ai"];
+pub const GLOBAL_EVERY_TICK: [&str; 4] = [
+    "Macros_Animation.ai",
+    "/UI.ai",
+    "movementUpdate.ai",
+    "PointLightManager.ai",
+];
 
 /// Eruptor's scripts (openspec AH.17): his definition and tuning actor, his
 /// own script on his clone, the eruption's and the magma ball's, every
@@ -1250,6 +1359,8 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::FIGURE);
     // The gameplay camera's (openspec AG.28), over the cells it takes over.
     members::register(&mut c.members, members::CAMERA);
+    // What the walkers' scripts reach past those (openspec AG.160).
+    members::register(&mut c.members, members::WALKERS);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
         .copied()

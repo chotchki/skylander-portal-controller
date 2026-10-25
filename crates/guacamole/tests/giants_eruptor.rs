@@ -31,7 +31,7 @@ use guac_motion::scenarios;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN};
+use guac_script::members::{CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, WALKERS};
 
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
@@ -247,17 +247,6 @@ fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
     }
 }
 
-/// Each slot's clip length at 100 %, 0 where a slot is empty or a network.
-fn lengths(p: &guac_ir::palette::Palette) -> Vec<f32> {
-    let mut out = vec![0.0; usize::from(p.slots)];
-    for e in &p.entries {
-        if let guac_ir::palette::SlotEntry::Clip { clip, .. } = &e.entry {
-            out[usize::from(e.slot)] = clip.duration;
-        }
-    }
-    out
-}
-
 /// Each live-table member the registry doesn't hold, as a value cell of its
 /// registered type, by name: the discovery aid.
 fn discovery(config: &mut guac_script::Config) -> HashMap<MemberId, String> {
@@ -355,7 +344,7 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
         .expect("Eruptor's template")
         .obj;
     let rig = eruptor_rig(&part);
-    world.set_palette(template, lengths(&rig.palette));
+    world.set_palette_of(template, &rig.palette);
     let (parry, start) = if open {
         let ground = scenarios::bodies(&scenarios::open_ground(), &[]);
         (ParryWorld::new(&ground).unwrap(), Vec3::new(0.0, 1.0, 0.0))
@@ -707,6 +696,7 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
             .chain(COMBAT)
             .chain(FIGURE)
             .chain(CAMERA)
+            .chain(WALKERS)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };
@@ -992,7 +982,14 @@ fn west_erupts_43_steps_into_the_clip_for_111_steps() {
     for ((_, steps), range) in stays.iter().zip([66..=67, 30..=31, 15..=16]) {
         assert!(range.contains(steps), "{stays:?}");
     }
-    let clip = run.world.sequences()[1].clone();
+    // His eruption's clip (slot 32), past his locomotion's (AH.49).
+    let clip = run
+        .world
+        .sequences()
+        .iter()
+        .find(|s| run.world.clip_of(s).map(|c| c.1) == Some(32))
+        .expect("the eruption's clip")
+        .clone();
     assert_eq!((clip.length, clip.rate), (2.0, 140.0));
     let e = seen
         .iter()

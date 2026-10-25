@@ -47,6 +47,7 @@ use guac_motion::locomotion::{Frame, Locomotion};
 use guac_motion::proxy::Surfaces;
 use guac_motion::seam::BodyId;
 use guac_motion::stick::Stick;
+use guacamole::picks::Picked;
 
 use guacamole::frame;
 use guacamole::scripts::ScriptWorld;
@@ -153,17 +154,30 @@ pub(crate) struct HeroBody {
 
 /// A hero's locomotion (AG.30; stand-in ledger: `locomotion`): stepped
 /// after him, with the weights the step before left, so his pose eases
-/// between steps as his transform does.
+/// between steps as his transform does. While his scripts pick his clips on
+/// the VM (openspec AH.49, [`guacamole::picks`]) the stand-in isn't stepped
+/// (one side picks): what they picked is `picked`, its weights the step
+/// before left `picked_before`.
 #[derive(Component, Debug, Clone)]
 pub(crate) struct HeroGaits {
     pub(crate) locomotion: Locomotion,
     pub(crate) before: [f32; 4],
+    pub(crate) picked: Option<Picked>,
+    pub(crate) picked_before: Vec<(u32, f32)>,
+    /// Steps since he came in, whichever side picked: the gait log's key.
+    pub(crate) steps: u64,
 }
 
 impl HeroGaits {
     pub(crate) fn new(locomotion: Locomotion) -> Self {
         let before = locomotion.weights();
-        Self { locomotion, before }
+        Self {
+            locomotion,
+            before,
+            picked: None,
+            picked_before: Vec::new(),
+            steps: 0,
+        }
     }
 }
 
@@ -382,11 +396,16 @@ pub(crate) fn step_heroes(
 }
 
 /// One game frame of each hero's locomotion, on the speed his step's walk
-/// read and his move and footing after it.
+/// read and his move and footing after it; none for a hero whose scripts
+/// picked his clips this step (openspec AH.49: AG.30's picker off for him).
 pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut HeroGaits)>) {
     let step = time.delta_secs();
     for (body, mut gaits) in &mut heroes {
         let gaits = &mut *gaits;
+        gaits.steps += 1;
+        if gaits.picked.is_some() {
+            continue;
+        }
         gaits.before = gaits.locomotion.weights();
         gaits.locomotion.step(step, Frame::of(&body.hero));
     }
@@ -579,6 +598,58 @@ mod tests {
     /// The hero steps once a fixed step at 1/60 s, and on Avian's side of the
     /// seam walks where the controller on parry walks, step for step, to
     /// float noise.
+    /// AH.49: while his scripts pick his clips (his gaits' `picked`), the
+    /// stand-in isn't stepped, one side picking: its weights, clips and step
+    /// count stay where they were as he walks; his gaits' own step count runs
+    /// on. Without picks it steps as before.
+    #[test]
+    fn a_hero_whose_scripts_pick_his_clips_steps_no_stand_in() {
+        use bevy::ecs::system::RunSystemOnce;
+        use guac_motion::locomotion::{Gaits, Loops};
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let mut hero = Hero::new(
+            guac_motion::tuning::eruptor_solid(),
+            guac_motion::tuning::Tuning::ERUPTOR,
+            Vec3::ZERO,
+            0.0,
+        );
+        hero.gait_speed = 21.5;
+        let loops = Loops {
+            idle: 4.0 / 3.0,
+            walk: Some(1.0667),
+            run: Some(0.6667),
+            fall: None,
+        };
+        let mut gaits = HeroGaits::new(Locomotion::new(Gaits::ERUPTOR, loops));
+        gaits.picked = Some(guacamole::picks::Picked::default());
+        let e = app
+            .world_mut()
+            .spawn((
+                HeroBody {
+                    hero,
+                    exclude: Vec::new(),
+                    before: Vec3::ZERO,
+                },
+                gaits,
+            ))
+            .id();
+        let stood = app.world().get::<HeroGaits>(e).unwrap().locomotion.clone();
+        for _ in 0..30 {
+            app.world_mut().run_system_once(step_gaits).unwrap();
+        }
+        let g = app.world().get::<HeroGaits>(e).unwrap();
+        assert_eq!(g.locomotion, stood, "the stand-in stands");
+        assert_eq!(g.steps, 30);
+        app.world_mut().get_mut::<HeroGaits>(e).unwrap().picked = None;
+        for _ in 0..10 {
+            app.world_mut().run_system_once(step_gaits).unwrap();
+        }
+        let g = app.world().get::<HeroGaits>(e).unwrap();
+        assert_eq!((g.locomotion.steps(), g.steps), (10, 40));
+        assert!(g.locomotion.moving(), "picking for him again");
+    }
+
     #[test]
     fn the_hero_steps_at_60_hz_as_on_parry() {
         let bodies = open_ground();

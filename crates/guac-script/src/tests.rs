@@ -881,6 +881,85 @@ fn arithmetic_runs_in_single_precision_in_the_order_written() {
     assert_eq!(vm.local(id, "h"), Some(Value::Float(3.5)));
 }
 
+/// A division by 0 fails its expression (AH.49; crate docs, Values and
+/// arithmetic): the write it feeds drops, so the place keeps what it held,
+/// and the check it feeds skips its block whatever its relation; dividing
+/// by anything else writes and checks as before. `$math scratch = (walk /
+/// idle speed)` at rest is the locomotion's case: the scratch keeps the 0
+/// it was set to, and the idle's rate goes to 100 %.
+#[test]
+fn a_division_by_0_drops_its_write_and_skips_its_check() {
+    let p = program(|w| {
+        let (q, f, skipped, ran) = (var(w, "q"), var(w, "f"), var(w, "skipped"), var(w, "ran"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let five = w.int(5);
+                w.set(&[El::Local(q)], five);
+                let (seven, zero) = (w.int(7), w.int(0));
+                let div = w.expr(seven, Some((3, zero)));
+                w.set(&[El::Local(q)], div);
+                let zero = w.float(0.0);
+                w.set(&[El::Local(f)], zero);
+                let (rest, idle_speed) = (w.float(3.557_094e-19), w.float(0.0));
+                let div = w.expr(rest, Some((3, idle_speed)));
+                w.set(&[El::Local(f)], div);
+                // `!=` would pass for any number: the check still skips.
+                let (one, zero) = (w.int(1), w.int(0));
+                let div = w.expr(one, Some((3, zero)));
+                let at = w.check(&[El::Local(q)], 5, div);
+                let yes = w.int(1);
+                w.set(&[El::Local(skipped)], yes);
+                w.end_block(at);
+                let (ten, two) = (w.int(10), w.int(2));
+                let div = w.expr(ten, Some((3, two)));
+                let at = w.check(&[El::Local(q)], 1, div);
+                let yes = w.int(1);
+                w.set(&[El::Local(ran)], yes);
+                w.end_block(at);
+            },
+        );
+    });
+    let (vm, id) = run(&p, Config::new(Mode::Strict), 1);
+    assert_eq!(vm.local(id, "q"), Some(Value::Int(5)), "the write dropped");
+    assert_eq!(vm.local(id, "f"), Some(Value::Float(0.0)));
+    assert_eq!(vm.local(id, "skipped"), None, "never written");
+    assert_eq!(vm.local(id, "ran"), Some(Value::Int(1)), "10 / 2 is 5");
+}
+
+/// A write through an object named by namespace and name drops, the tick
+/// running on (openspec AG.160: `105_FireFeet_Alt`'s write to its base's
+/// renamed file variable, which strict mode stopped on as a write to a
+/// constant).
+#[test]
+fn a_write_through_a_named_object_drops() {
+    let p = program(|w| {
+        let ran = var(w, "ran");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let l = w.value(&[El::Named("ParticleInfo", "*^105 fire wave par to use")]);
+                let r = w.reference(&[El::Named("ParticleInfo", "105_FireWave_Interior")], None);
+                let o = w.op(Class::SetReference, "set reference");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, r);
+                w.push(o);
+                let five = w.int(5);
+                w.set(
+                    &[El::Named("ParticleInfo", "*^105 fire wave par to use")],
+                    five,
+                );
+                let yes = w.int(1);
+                w.set(&[El::Local(ran)], yes);
+            },
+        );
+    });
+    let (vm, id) = run(&p, Config::new(Mode::Strict), 1);
+    assert_eq!(vm.local(id, "ran"), Some(Value::Int(1)));
+}
+
 fn hurts() -> Arc<Program> {
     program(|w| {
         let count = var(w, "count");

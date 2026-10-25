@@ -673,7 +673,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         .expect("Eruptor's template")
         .obj;
     let rig = eruptor_rig(&part);
-    world.set_palette(template, lengths(&rig.palette));
+    world.set_palette_of(template, &rig.palette);
     // The creatures' palettes, by the model each placement names.
     let palettes = levels::palettes(&igzs[LEVEL as usize], levels::LEVELS[0], identity())
         .expect("the level's palettes")
@@ -682,7 +682,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         if let Some(model) = &p.model
             && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
         {
-            world.set_palette(p.obj, lengths(pal));
+            world.set_palette_of(p.obj, pal);
         }
     }
     world.walk_first_fight(LEVEL);

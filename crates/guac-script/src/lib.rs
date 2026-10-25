@@ -304,6 +304,15 @@
 //!   changes; read, a host member's is asked anew. Two references to one
 //!   host member compare equal. `undefined` reads 0 as a number and as an
 //!   object none.
+//! - An object named by namespace and name (EXNM) holds nothing to write
+//!   into: a write through it drops, as one through a path through nothing
+//!   does. An alternate's file names its base's file variables that way,
+//!   renamed (`105_FireFeet_Alt`'s `105_FireFeet.ai` #137 sets
+//!   `*^105 fire wave par to use`, which its base declares as `105 fire wave
+//!   par to use`), so the two load side by side; no file defines the
+//!   renamed one, so the original's load resolves it to nothing and the
+//!   write lands nowhere (openspec AG.160, a reading of the link; no oracle
+//!   run plays the alternate). Read, it is its name.
 //! - A placement reference keeps a point of its own
 //!   (`placementreference.remembered`): each reference its own, two naming
 //!   one actor keeping two, so the host is told the reference's cell
@@ -336,9 +345,15 @@
 //! - An expression is `a <op> b` (+ - * /) or `a` alone, read left side
 //!   first, nested as the data nests it: the order written is the order
 //!   computed, which single precision makes observable.
-//! - Integer division by 0 (and `i32::MIN / -1`) gives 0, as the oracle's
-//!   PPU does; float division follows IEEE. Nothing counts as the integer 0
-//!   in arithmetic.
+//! - A division by 0 fails the expression, as a path through nothing does:
+//!   the write it feeds drops and the check it feeds skips. That's an
+//!   integer 0, a float 0 of either sign, or nothing (which counts as the
+//!   integer 0 in arithmetic). The original's evaluator tests the divisor
+//!   against 0.0 before it divides (aj-vm's 0x7a028, read as an aid), and
+//!   AG.11's recordings show it: at rest the locomotion sets its idle's rate
+//!   from his walk over the idle's speed of 0, and the idle plays at 100 %,
+//!   the rate the failed write leaves (AH.49). `i32::MIN / -1` gives 0, as
+//!   the PPU's `divw` does; any other float division follows IEEE.
 //! - A path read for its value through a reference to a number reads the
 //!   number.
 //!
@@ -531,7 +546,7 @@ pub use program::{
 };
 pub use slide::{between, eased};
 pub use stall::{Stall, StallDetector, StallLimit};
-pub use value::{Value, arith, arith_in, compare, convert, random_literal};
+pub use value::{ArithFault, Value, arith, arith_in, compare, convert, random_literal};
 pub use vm::{
     Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId, Precision, Reason,
     SLIDERS, StepReport, TICK_SECONDS, Vm,

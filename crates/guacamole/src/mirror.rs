@@ -702,28 +702,33 @@ pub(crate) fn log_gaits(
     let Some((g, body)) = heroes.iter().next() else {
         return;
     };
-    let l = &g.locomotion;
+    // His scripts' picks while they pick his clips (openspec AH.49), else
+    // the stand-in's.
+    let r = crate::play::GaitReport::of_gaits(g);
     let stick = input.map_or(guac_motion::stick::Stick::CENTRED, |i| i.0.stick);
     mirror
         .5
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(GaitStep {
-            step: l.steps(),
+            step: g.steps,
             time: time.elapsed_secs_f64(),
             stick: [stick.x, stick.y],
             strength: stick.push(0.0).strength,
-            speed_ft: l.speed(),
-            run_share: l.run_share(),
-            weights: l.weights(),
-            rates: [
-                l.play(guac_motion::locomotion::Clip::Walk).rate,
-                l.play(guac_motion::locomotion::Clip::Run).rate,
-            ],
-            clip: l.top().name(),
-            air: l.air().name(),
-            moving: l.moving(),
-            held: l.held(),
+            speed_ft: r.speed_ft,
+            run_share: r.run_share,
+            weights: r.weights,
+            rates: r.rates,
+            clip: match &g.picked {
+                Some(p) => p.top(),
+                None => g.locomotion.top().name(),
+            },
+            air: match &g.picked {
+                Some(p) => p.air(),
+                None => g.locomotion.air().name(),
+            },
+            moving: r.moving,
+            held: r.held,
             facing: crate::hero::heading(&body.hero),
         });
 }
@@ -934,7 +939,7 @@ fn log_drawn(
         delta_ms: time.delta().as_secs_f64() * 1e3,
         work_ms,
         at_ms,
-        steps: gaits.locomotion.steps(),
+        steps: gaits.steps,
         overstep: fixed.overstep_fraction(),
         hero: seven(drawn),
         pivot: body.hero.pivot.to_array(),
@@ -1711,6 +1716,7 @@ mod tests {
         for _ in 0..2 {
             hero.step(&parry, &right, 1.0 / 60.0, &[]);
             gaits.locomotion.step(1.0 / 60.0, Frame::of(&hero));
+            gaits.steps += 1;
             app.world_mut().entity_mut(e).insert((
                 HeroBody {
                     before: hero.pivot,

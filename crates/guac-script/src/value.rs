@@ -86,19 +86,46 @@ pub fn truncate(f: f32) -> i32 {
     f as i32
 }
 
+/// Why [`arith`] has no value for an expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithFault {
+    /// A division by 0: an integer 0, a float 0 of either sign, or nothing
+    /// (which counts as the integer 0). The original's evaluator fails the
+    /// expression rather than divide (aj-vm's 0x7a028 tests the divisor's
+    /// word against 0.0 ahead of both its integer and its float division),
+    /// so the write it feeds drops and the check it feeds skips (crate docs,
+    /// Values and arithmetic).
+    ByZero,
+    /// An operator past 3, or operands it doesn't compute.
+    Unsupported,
+}
+
 /// `a <operator> b`, codes 0 + 1 - 2 * 3 /. Two integers stay an integer
-/// (wrapping; 0 for a division by 0 and for `i32::MIN / -1`); anything with a
-/// float is computed in single precision. Nothing counts as the integer 0.
-/// `None` for an operator past 3 or an operand that isn't a number.
-pub fn arith(operator: u32, a: Value, b: Value) -> Option<Value> {
+/// (wrapping; 0 for `i32::MIN / -1`); anything with a float is computed in
+/// single precision. Nothing counts as the integer 0. A division by 0 is
+/// [`ArithFault::ByZero`]; an operator past 3 or an operand that isn't a
+/// number [`ArithFault::Unsupported`].
+pub fn arith(operator: u32, a: Value, b: Value) -> Result<Value, ArithFault> {
     arith_in(Precision::Single, operator, a, b)
 }
 
 /// [`arith`] at a [`Precision`]: in [`Precision::Double`] anything with a
 /// fraction is computed and kept in double precision.
-pub fn arith_in(precision: Precision, operator: u32, a: Value, b: Value) -> Option<Value> {
+pub fn arith_in(
+    precision: Precision,
+    operator: u32,
+    a: Value,
+    b: Value,
+) -> Result<Value, ArithFault> {
     let zero = |v: Value| if v == Value::Null { Value::Int(0) } else { v };
     let (a, b) = (zero(a), zero(b));
+    if operator == 3 && b.is_number() && b.as_f64() == Some(0.0) {
+        return Err(ArithFault::ByZero);
+    }
+    arith_of(precision, operator, a, b).ok_or(ArithFault::Unsupported)
+}
+
+fn arith_of(precision: Precision, operator: u32, a: Value, b: Value) -> Option<Value> {
     let double = precision == Precision::Double
         || matches!(a, Value::Double(_))
         || matches!(b, Value::Double(_));
@@ -150,6 +177,7 @@ pub fn arith_in(precision: Precision, operator: u32, a: Value, b: Value) -> Opti
             0 => x.wrapping_add(y),
             1 => x.wrapping_sub(y),
             2 => x.wrapping_mul(y),
+            // `i32::MIN / -1`: the PPU's `divw` overflows to 0.
             3 => x.checked_div(y).unwrap_or(0),
             _ => return None,
         })),
@@ -289,20 +317,20 @@ mod tests {
     fn a_colours_bytes_add_and_subtract_each_held_to_0_255() {
         let white = Value::Color(0xFFFF_FFFF);
         let tint = Value::Color(14_149_367); // 0x00D7E6F7
-        assert_eq!(arith(1, white, tint), Some(Value::Color(0xFF28_1908)));
+        assert_eq!(arith(1, white, tint), Ok(Value::Color(0xFF28_1908)));
         assert_eq!(
             arith(1, Value::Color(0x1050_9020), Value::Color(0xFF28_1908)),
-            Some(Value::Color(0x0028_7718)),
+            Ok(Value::Color(0x0028_7718)),
             "each byte stops at 0"
         );
         assert_eq!(
             arith(0, Value::Color(0x80F0_0102), Value::Color(0x8020_0304)),
-            Some(Value::Color(0xFFFF_0406)),
+            Ok(Value::Color(0xFFFF_0406)),
             "each byte stops at 255"
         );
-        assert_eq!(arith(2, white, tint), None);
-        assert_eq!(arith(3, white, tint), None);
-        assert_eq!(arith(0, white, Value::Int(1)), None);
+        assert_eq!(arith(2, white, tint), Err(ArithFault::Unsupported));
+        assert_eq!(arith(3, white, tint), Err(ArithFault::Unsupported));
+        assert_eq!(arith(0, white, Value::Int(1)), Err(ArithFault::Unsupported));
     }
 
     #[test]
@@ -376,25 +404,55 @@ mod tests {
         // Integers wrap and keep their type; a float makes it float.
         assert_eq!(
             arith(0, Value::Int(i32::MAX), one),
-            Some(Value::Int(i32::MIN))
+            Ok(Value::Int(i32::MIN))
         );
-        assert_eq!(arith(3, Value::Int(7), Value::Int(2)), Some(Value::Int(3)));
-        assert_eq!(arith(3, Value::Int(7), Value::Int(0)), Some(Value::Int(0)));
+        assert_eq!(arith(3, Value::Int(7), Value::Int(2)), Ok(Value::Int(3)));
         assert_eq!(
             arith(3, Value::Int(i32::MIN), Value::Int(-1)),
-            Some(Value::Int(0))
+            Ok(Value::Int(0))
         );
         assert_eq!(
             arith(3, Value::Int(7), Value::Float(2.0)),
-            Some(Value::Float(3.5))
+            Ok(Value::Float(3.5))
         );
+        assert_eq!(arith(2, Value::Null, Value::Int(5)), Ok(Value::Int(0)));
+        assert_eq!(arith(4, one, one), Err(ArithFault::Unsupported));
+        assert_eq!(arith(0, Value::Color(1), one), Err(ArithFault::Unsupported));
+    }
+
+    /// A division by 0 fails, whatever the 0 (an integer, a float of either
+    /// sign, nothing) and whatever is divided, in either precision: the
+    /// original's evaluator never divides by it (AH.49: at rest the
+    /// locomotion's idle rate is the walk over the idle's speed of 0, and
+    /// the recordings play the idle at 100 %, where a division would set it
+    /// to infinity). A divisor that only rounds near 0 still divides.
+    #[test]
+    fn a_division_by_0_fails() {
+        for zero in [
+            Value::Int(0),
+            Value::Float(0.0),
+            Value::Float(-0.0),
+            Value::Double(0.0),
+            Value::Null,
+        ] {
+            for a in [Value::Int(7), Value::Float(3.6e-19), Value::Int(0)] {
+                assert_eq!(
+                    arith(3, a, zero),
+                    Err(ArithFault::ByZero),
+                    "{a:?} / {zero:?}"
+                );
+                assert_eq!(
+                    arith_in(Precision::Double, 3, a, zero),
+                    Err(ArithFault::ByZero)
+                );
+            }
+        }
         assert_eq!(
-            arith(3, Value::Float(1.0), Value::Int(0)),
-            Some(Value::Float(f32::INFINITY))
+            arith(3, Value::Float(1.0), Value::Float(1e-30)),
+            Ok(Value::Float(1.0 / 1e-30))
         );
-        assert_eq!(arith(2, Value::Null, Value::Int(5)), Some(Value::Int(0)));
-        assert_eq!(arith(4, one, one), None);
-        assert_eq!(arith(0, Value::Color(1), one), None);
+        // Only the divisor: 0 over anything else is 0.
+        assert_eq!(arith(3, Value::Int(0), Value::Int(5)), Ok(Value::Int(0)));
     }
 
     #[test]
