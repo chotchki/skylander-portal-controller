@@ -84,7 +84,10 @@ pub const ERUPTOR: u16 = 3;
 /// The level's file.
 pub const LEVEL: u16 = 4;
 
-/// The hero's handle in a headless run: past every placement's and object's.
+/// The first hero's handle in a headless run: past every placement's and
+/// object's. The next hero after a take-off joins under one of his own
+/// ([`Run::hero`]), as the TV's next hero is an entity of his own
+/// (openspec AH.191).
 pub const HERO: Handle = 0x7000_0000;
 /// The hero's body in the seam; each creature's counts up from past it.
 pub const HERO_BODY: BodyId = BodyId(9_000);
@@ -211,12 +214,24 @@ impl Bench {
     /// The props standing by where the hero is, less what the scripts took
     /// off; the objects taken down.
     pub fn stand_props(&mut self, world: &ScriptWorld) -> Vec<u32> {
-        let Some(hero) = self.heroes.get(&HERO).map(|h| h.pivot) else {
+        let Some(hero) = self.heroes.values().next().map(|h| h.pivot) else {
             return Vec::new();
         };
         match &mut self.props {
             Some(p) => p.stand(&mut self.world, hero, world),
             None => Vec::new(),
+        }
+    }
+
+    /// The hero under `new` from here, where he was `old`'s: his body in the
+    /// seam the same one (openspec AH.191: the next hero after a take-off
+    /// joins as an actor of his own).
+    pub fn rekey(&mut self, old: Handle, new: Handle) {
+        if let Some(h) = self.heroes.remove(&old) {
+            self.heroes.insert(new, h);
+        }
+        if let Some(b) = self.bodies.remove(&old) {
+            self.bodies.insert(new, b);
         }
     }
 
@@ -271,6 +286,8 @@ pub struct Run {
     pub files: Files,
     pub handles: HashMap<Obj, Handle>,
     pub next: Handle,
+    /// The hero's handle: [`HERO`], then after each take-off one of his own.
+    pub hero: Handle,
     pub minion: Option<PlacementId>,
     pub steps: u32,
     /// The portal manager's tick as the player loop runs it (AH.20).
@@ -321,10 +338,10 @@ impl Run {
     /// time this step), and what hangs from them set there (AH.50).
     pub fn pose_hands(&mut self) {
         let idle = self.idle0 + f64::from(self.steps) / 60.0;
-        self.rig.pose(&mut self.world, HERO, idle);
+        self.rig.pose(&mut self.world, self.hero, idle);
         if let Some((at, lean)) = self.lean
             && self.hero().pivot.distance(at) < 0.01
-            && let Some(nodes) = self.world.nodes(HERO)
+            && let Some(nodes) = self.world.nodes(self.hero)
         {
             let leaned = nodes
                 .iter()
@@ -333,7 +350,7 @@ impl Run {
                     turn: lean * n.turn,
                 })
                 .collect();
-            self.world.set_nodes(HERO, leaned);
+            self.world.set_nodes(self.hero, leaned);
         }
         self.world.place_hung(&mut self.bench);
     }
@@ -427,19 +444,25 @@ impl Run {
         self.figure = Some(data);
         self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
         self.step()?;
-        let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
+        let hero = self.hero;
+        let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, hero))?;
         self.minion = Some(minion);
         Ok(())
     }
 
     /// His figure off the portal mid-level (openspec AH.105): the
     /// deactivate path, the run going on; [`Run::join_with`] puts the next
-    /// one on. Strict: a stop in it is the run's (openspec AH.165: the TV
-    /// unloads him whatever stopped).
+    /// one on, as an actor of his own (AH.191). Strict: a stop in it is the
+    /// run's (openspec AH.165: the TV unloads him whatever stopped).
     pub fn deactivate(&mut self) -> Result<scripts::Deactivated, Halt> {
         let files = self.files.clone();
+        let hero = self.hero;
         let gone =
-            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, ERUPTOR, HERO));
+            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, ERUPTOR, hero));
+        let next = self.next;
+        self.next += 1;
+        self.bench.rekey(hero, next);
+        self.hero = next;
         self.minion = None;
         self.figure = None;
         match gone.halted {
@@ -451,7 +474,7 @@ impl Run {
     /// The hero set down at `at` (dropped onto what's under it) facing
     /// `facing`, at rest: a scripted hero's teleport.
     pub fn put(&mut self, at: Vec3, facing: f32) {
-        let hero = self.bench.heroes.get_mut(&HERO).unwrap();
+        let hero = self.bench.heroes.get_mut(&self.hero).unwrap();
         hero.pivot = at + Vec3::Y;
         hero.facing = facing;
         hero.walk.velocity = Vec3::ZERO;
@@ -484,7 +507,14 @@ impl Run {
     }
 
     pub fn hero(&self) -> &Hero {
-        &self.bench.heroes[&HERO]
+        &self.bench.heroes[&self.hero]
+    }
+
+    pub fn hero_mut(&mut self) -> &mut Hero {
+        self.bench
+            .heroes
+            .get_mut(&self.hero)
+            .expect("his controller")
     }
 
     /// His figure's values as its tag's words hold them, once he's joined.
@@ -734,6 +764,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
             files,
             handles,
             next,
+            hero: HERO,
             minion: None,
             steps: 0,
             player_loop,

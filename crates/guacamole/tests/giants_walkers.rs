@@ -335,6 +335,9 @@ struct W {
     files: Files,
     handles: HashMap<Obj, Handle>,
     next: Handle,
+    /// The hero's handle: [`HERO`], then after each take-off one of his own
+    /// (openspec AH.191), as the TV's next hero is an entity of his own.
+    hero: Handle,
     minion: Option<PlacementId>,
     steps: u32,
     player_loop: PlayerLoop,
@@ -467,6 +470,7 @@ impl W {
             files: l.files.clone(),
             handles,
             next,
+            hero: HERO,
             minion: None,
             steps: 0,
             player_loop: PlayerLoop::read(&l.program),
@@ -614,12 +618,12 @@ impl W {
         {
             self.bench
                 .heroes
-                .get_mut(&HERO)
+                .get_mut(&self.hero)
                 .unwrap()
                 .set_tuning(m.tuning(width));
         }
         if self.hold_walk {
-            self.world.hand_back_walk(HERO);
+            self.world.hand_back_walk(self.hero);
         }
         // As the TV's `step_scripts`: the view handed back until the next
         // join (AG.211) whenever the scripts have it (`CameraScripts::On`
@@ -653,7 +657,7 @@ impl W {
         if self.walk.origin != walkers::Origin::Scripts || self.minion.is_none() {
             return;
         }
-        let Some(a) = self.world.actor(HERO) else {
+        let Some(a) = self.world.actor(self.hero) else {
             return;
         };
         let Some(scale) = walkers::uniform_scale(a.scale) else {
@@ -663,7 +667,11 @@ impl W {
             return;
         }
         if let Some(solid) = self.walk.shape.havok([scale * 100.0; 3]) {
-            self.bench.heroes.get_mut(&HERO).unwrap().set_solid(solid);
+            self.bench
+                .heroes
+                .get_mut(&self.hero)
+                .unwrap()
+                .set_solid(solid);
             self.scale = scale;
         }
     }
@@ -684,7 +692,8 @@ impl W {
         let unit = self.unit;
         self.with_host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))?;
         self.step()?;
-        let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, HERO))?;
+        let hero = self.hero;
+        let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, hero))?;
         self.minion = Some(minion);
         Ok(())
     }
@@ -719,7 +728,7 @@ impl W {
         let (pivot, facing) = (self.hero().pivot, self.hero().facing);
         let mut hero = Hero::new(walk.solid().expect("his solid"), walk.tuning, pivot, facing);
         hero.settle(&self.bench.world, &[HERO_BODY]);
-        self.bench.heroes.insert(HERO, hero);
+        self.bench.heroes.insert(self.hero, hero);
         self.unit = unit;
         self.toy = l.toy(load).unwrap_or_else(|| panic!("{load}: no figure"));
         self.scale = walk.scale;
@@ -732,8 +741,15 @@ impl W {
     fn deactivate(&mut self) -> scripts::Deactivated {
         let files = self.files.clone();
         let unit = self.unit;
+        let hero = self.hero;
         let gone =
-            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, HERO));
+            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, hero));
+        // The next hero an actor of his own, as the TV's next is an entity
+        // of his own (AH.191).
+        let next = self.next;
+        self.next += 1;
+        self.bench.rekey(hero, next);
+        self.hero = next;
         self.minion = None;
         // The TV's take-off ends a fall-back with the hero it despawns: the
         // next join is a hero on his scripts again. The TV's camera stays
@@ -786,7 +802,7 @@ impl W {
     }
 
     fn hero(&self) -> &Hero {
-        &self.bench.heroes[&HERO]
+        &self.bench.heroes[&self.hero]
     }
 
     /// His `movement parameters` as his scripts hold them in his
@@ -834,10 +850,17 @@ impl W {
         ])
     }
 
+    /// His minion's `description`: the structure his setup's `Combat -
+    /// Creature Definition` found or made (AH.191).
+    fn description(&self) -> Option<Value> {
+        let m = self.minion?;
+        self.vm.local(m, "description").map(|v| self.vm.value(v))
+    }
+
     /// His actor's scale, percent, and its `ActorParameters` as the host
     /// holds them (the engine's, which stay the unconstrained 10,000).
     fn actor(&self) -> Option<([f32; 3], f32)> {
-        let a = self.world.actor(HERO)?;
+        let a = self.world.actor(self.hero)?;
         Some((a.scale, a.physics.ground_max_speed))
     }
 
@@ -1148,7 +1171,7 @@ fn tree_rex_walks_on_ag12s_numbers() {
     let minion = w.minion.unwrap();
     let params = w.parameters().expect("his movement parameters");
     let (scale, engine_speed) = w.actor().expect("his actor");
-    let a = w.world.actor(HERO).unwrap();
+    let a = w.world.actor(w.hero).unwrap();
     println!(
         "Tree Rex ({TREE_REX}), unit {}, set up {}, description's movement parameters (ground speed, accel, decel, turn; air the same; gravity accel, max; move type) {:?}, actor scale {:?}, actor's engine ground speed {engine_speed}, solid {:?}; drawn solid {:?}",
         w.unit,
@@ -1532,7 +1555,7 @@ fn every_walkers_stand_in_gaits_are_his_own_locomotion_states() {
         let w = W::joined(&l, load, PLAY, 120)
             .map_err(|b| format!("{load}: {}", b.1))
             .unwrap();
-        let states = walkers::locomotion_states(&w.vm, &w.world, HERO)
+        let states = walkers::locomotion_states(&w.vm, &w.world, w.hero)
             .unwrap_or_else(|| panic!("{load}: his locomotion states"));
         let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
         let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
@@ -1584,7 +1607,7 @@ fn stand_in_of(
     use guac_motion::locomotion::{Gaits, Locomotion, Loops};
     let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
     let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
-    let states = walkers::locomotion_states(&w.vm, &w.world, HERO).expect("his states");
+    let states = walkers::locomotion_states(&w.vm, &w.world, w.hero).expect("his states");
     let four = four_of(&palette, &hero, &states);
     let side = &hero.locomotion;
     let duration = |c: &Option<guac_ir::hero::SlotClip>| c.as_ref().map(|c| c.clip.duration);
@@ -1662,7 +1685,7 @@ fn every_walkers_stand_in_draws_what_his_scripts_draw() {
             if !steady || speed < 0.5 || h.probe_held {
                 continue;
             }
-            let p = Picked::read(&w.world, HERO, four, speed).expect("his picks");
+            let p = Picked::read(&w.world, w.hero, four, speed).expect("his picks");
             let (pw, sw) = (p.weights(), own.weights());
             let dw = pw
                 .iter()
@@ -1967,7 +1990,7 @@ impl Audit {
             .and_then(|m| Movement::read(&w.vm, m))
             .map(|m| m.ground_max_speed);
         self.params = w.parameters();
-        if let Some(act) = w.world.actor(HERO) {
+        if let Some(act) = w.world.actor(w.hero) {
             self.scale = Some(act.scale);
             self.scripted_solid = Some([act.solid.width, act.solid.height, act.solid.length]);
         }
@@ -2215,6 +2238,12 @@ struct Swapped {
     /// The step his fall-back after the put-back took him off his scripts,
     /// if one did (AH.151: his walk AG.16's controller's from there).
     off_again: Option<u32>,
+    /// His description and its movement parameters at the take-off and
+    /// after the put-back (AH.191: his own again, a structure of its own).
+    desc_first: Option<Value>,
+    params_first: Option<[f32; 11]>,
+    desc_again: Option<Value>,
+    params_again: Option<[f32; 11]>,
 }
 
 /// `load` joined (`o`), `before` steps standing, taken off by the deactivate
@@ -2236,6 +2265,8 @@ fn swap(l: &Level, load: &str, o: Opts, before: u32, after: u32) -> Swapped {
     };
     out.stops = std::mem::take(&mut w.stops);
     out.set_up = w.minion.is_some_and(|m| w.vm.set_up(m));
+    out.desc_first = w.description();
+    out.params_first = w.parameters();
     let pm = w.portal_manager();
     let old = w.file_running();
     out.running = old.len();
@@ -2274,6 +2305,8 @@ fn swap(l: &Level, load: &str, o: Opts, before: u32, after: u32) -> Swapped {
         }
     }
     out.ground_max = w.parameters().map(|p| p[0]);
+    out.desc_again = w.description();
+    out.params_again = w.parameters();
     out.pm_ticks = (w.vm.active_seconds(pm).unwrap_or(0.0) - ticked) * 60.0;
     out.old_silent = silent
         .iter()
@@ -2295,6 +2328,23 @@ fn falling_back() -> Vec<&'static str> {
         .into_iter()
         .chain(GIANTS)
         .collect()
+}
+
+/// A swap table's put-back descriptions (AH.191): every walker set up
+/// again reads a description of his own, not the one he left, holding his
+/// numbers as it did, member for member.
+fn put_back_descriptions(table: &[Swapped]) {
+    let mut own = 0;
+    for s in table.iter().filter(|s| s.set_up_again) {
+        assert_ne!(
+            s.desc_again, s.desc_first,
+            "{}: the description he left",
+            s.load
+        );
+        assert_eq!(s.params_again, s.params_first, "{}: his numbers", s.load);
+        own += 1;
+    }
+    println!("put back: {own} on a description of their own, their numbers again");
 }
 
 /// A swap table's put-back walks held (AH.151): every walker set up again
@@ -2443,6 +2493,8 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
     }
     put_back_walks(&off, &falling_back());
     table.extend(off);
+    put_back_descriptions(&table);
+    put_back_descriptions(std::slice::from_ref(&whirlwind));
     for s in &table {
         assert_eq!(s.short, None, "{}", s.load);
         assert_eq!(s.set_up, s.set_up_again, "{}", s.load);
@@ -2591,7 +2643,9 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
     }
     put_back_walks(&off, &GIANTS);
     table.extend(off);
+    put_back_descriptions(&table);
     if rex.short.is_none() {
+        put_back_descriptions(std::slice::from_ref(&rex));
         assert!(rex.set_up && rex.set_up_again, "{rex:?}");
         assert!(!rex.pm_stopped && rex.old_silent && rex.once, "{rex:?}");
         assert!((rex.pm_ticks - 240.0).abs() < 1e-2, "{rex:?}");
@@ -2607,6 +2661,212 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         );
         assert!(s.old_silent && s.once, "{}: his file twice", s.load);
     }
+}
+
+/// Whirlwind and Warnado, two of the four AH.191 put in after each other
+/// with Ninjini ([`NINJINI`]).
+const WHIRLWIND: &str = "000_AirDragon";
+const WARNADO: &str = "002_SkyTurtle";
+
+/// One walker put in after another (openspec AH.191): what his description
+/// reads and how he walks on it.
+#[derive(Debug, Default)]
+struct After {
+    first: String,
+    second: String,
+    /// Where the run stopped short, if it did.
+    short: Option<String>,
+    /// The first's description and its numbers at his take-off.
+    first_desc: Option<Value>,
+    first_params: Option<[f32; 11]>,
+    /// The second's after the put-in, his top walk on the stick (ft/s) and
+    /// the most he turned in a step (°).
+    desc: Option<Value>,
+    params: Option<[f32; 11]>,
+    top: f32,
+    turn_step: f32,
+    /// A fall-back after the put-in, if one came.
+    off: Option<u32>,
+}
+
+/// `first` joined (`o`), `before` steps standing, `second` swapped in where
+/// he stood as the TV's swap brings him ([`W::swap_in`]), `before` steps
+/// standing (his arrival), then `after` on a full stick at 90°.
+fn put_in_after(l: &Level, first: &str, second: &str, o: Opts, before: u32, after: u32) -> After {
+    let mut out = After {
+        first: first.to_owned(),
+        second: second.to_owned(),
+        ..After::default()
+    };
+    let mut w = match W::joined(l, first, o, before) {
+        Ok(w) => w,
+        Err(b) => {
+            let (_, when, h) = *b;
+            out.short = Some(format!("{first}, {when}: {}", named(&h.to_string())));
+            return out;
+        }
+    };
+    out.first_desc = w.description();
+    out.first_params = w.parameters();
+    if let Err(h) = w.swap_in(l, second) {
+        out.short = Some(format!("{second}'s join: {}", named(&h.to_string())));
+        return out;
+    }
+    for k in 0..before + after {
+        w.bench.pads[0] = Pad {
+            stick: match k >= before {
+                true => guac_motion::scenarios::stick(1.0, 90.0),
+                false => Stick::CENTRED,
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        let facing = w.hero().facing;
+        if let Err(h) = w.step() {
+            out.short = Some(format!("{second}, step {k}: {}", named(&h.to_string())));
+            return out;
+        }
+        if k >= before {
+            out.top = out.top.max(w.horizontal_walk());
+            let turned = (w.hero().facing - facing + 180.0).rem_euclid(360.0) - 180.0;
+            out.turn_step = out.turn_step.max(turned.abs());
+        }
+    }
+    out.desc = w.description();
+    out.params = w.parameters();
+    out.off = w.off.as_ref().map(|o| o.0);
+    out
+}
+
+/// `load`'s movement parameters joined alone (play mode, his setup's first
+/// tick through).
+fn alone(l: &Level, load: &str) -> Option<[f32; 11]> {
+    W::joined(l, load, PLAY, 1)
+        .ok()
+        .and_then(|w| w.parameters())
+}
+
+/// `a` held against his own numbers `own` (AH.191): his description not
+/// the first's, his movement parameters his own member for member (f32
+/// against f32), on his scripts, his top walk his ground max speed and his
+/// most in a step his ground turn rate's step, each within 1e-3.
+fn walks_on_his_own(a: &After, own: [f32; 11]) {
+    let who = format!("{} after {}", a.second, a.first);
+    assert_eq!(a.short, None, "{who}");
+    assert_ne!(a.desc, a.first_desc, "{who}: the first's description");
+    assert_eq!(a.params, Some(own), "{who}: his own numbers");
+    assert_eq!(a.off, None, "{who}: fell back");
+    assert!(
+        (a.top - own[0]).abs() < 1e-3,
+        "{who}: walked at {} ft/s, his {}",
+        a.top,
+        own[0]
+    );
+    let step = own[3] / 60.0;
+    assert!(
+        (a.turn_step - step).abs() < 1e-3,
+        "{who}: turned {}° in a step, his {step}°",
+        a.turn_step
+    );
+}
+
+/// AH.191 (found at AG.211's headless run): a walker put in after another
+/// walks at his own numbers. Under the last minion's handle his setup's
+/// `Combat - Creature Definition` found the last one's description in
+/// `combat control data`'s `creature descriptions` (its `creature` that
+/// handle) and made none, so Whirlwind after Ninjini read Ninjini's 24 ft/s
+/// and 540°/s; the harness's next hero is an actor of his own now, as the
+/// TV's is. The box's four: Whirlwind after Ninjini, Ninjini after
+/// Whirlwind, Warnado after Whirlwind and Whirlwind after Warnado, each
+/// joined in play mode, 60 steps standing, swapped in, 60 standing, 60 on
+/// a full stick.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_walker_put_in_after_another_walks_at_his_own_numbers() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    for (first, second) in [
+        (NINJINI, WHIRLWIND),
+        (WHIRLWIND, NINJINI),
+        (WHIRLWIND, WARNADO),
+        (WARNADO, WHIRLWIND),
+    ] {
+        let own = alone(&l, second).expect("his numbers alone");
+        let theirs = alone(&l, first).expect("the first's alone");
+        let a = put_in_after(&l, first, second, PLAY, 60, 60);
+        println!(
+            "{second} after {first}: alone {own:?}, the first's {theirs:?}; the first's description {:?} reads {:?}, his {:?} reads {:?}; top {} ft/s, most in a step {}°, off {:?}, short {:?}; load {:.2}",
+            a.first_desc,
+            a.first_params,
+            a.desc,
+            a.params,
+            a.top,
+            a.turn_step,
+            a.off,
+            a.short,
+            load1()
+        );
+        assert_ne!(own, theirs, "{second} and {first}: numbers of their own");
+        assert_eq!(a.first_params, Some(theirs), "{first}: his own");
+        walks_on_his_own(&a, own);
+    }
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
+/// AH.191 for every walker with a minion: each put in after the first
+/// walker (in the part's order) whose ground max speed and ground turn
+/// rate both differ from his (else the first with either, else any member),
+/// walking at his own numbers as [`walks_on_his_own`] holds them.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_walker_put_in_after_one_with_other_numbers_walks_at_his_own() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let numbers: Vec<(String, Option<[f32; 11]>)> = l
+        .walkers
+        .iter()
+        .filter(|w| w.minion.is_some())
+        .map(|w| (w.load_file.clone(), alone(&l, &w.load_file)))
+        .collect();
+    println!(
+        "{} walkers, {} with numbers alone; {:.1?}, load {:.2}",
+        numbers.len(),
+        numbers.iter().filter(|(_, n)| n.is_some()).count(),
+        started.elapsed(),
+        load1()
+    );
+    let mut table = Vec::new();
+    for (load, own) in &numbers {
+        let own = own.unwrap_or_else(|| panic!("{load}: no numbers alone"));
+        let differs = |n: &[f32; 11]| {
+            (n[0] != own[0]) as u8 * 2 + (n[3] != own[3]) as u8 * 2 + (*n != own) as u8
+        };
+        // The first of the most different (`min_by_key` keeps the first).
+        let first = numbers
+            .iter()
+            .filter_map(|(p, n)| Some((p.clone(), differs(n.as_ref()?))))
+            .filter(|(_, d)| *d > 0)
+            .min_by_key(|(_, d)| std::cmp::Reverse(*d))
+            .map(|(p, _)| p)
+            .unwrap_or_else(|| panic!("{load}: no walker with other numbers"));
+        let a = put_in_after(&l, &first, load, PLAY, 60, 60);
+        println!(
+            "{load} after {first}: his {:?}, the first's {:?}; read {:?}; top {} ft/s, most in a step {}°, off {:?}, short {:?}",
+            own, a.first_params, a.params, a.top, a.turn_step, a.off, a.short
+        );
+        table.push((a, own));
+    }
+    for (a, own) in &table {
+        walks_on_his_own(a, *own);
+    }
+    println!(
+        "{} put in after another, each at his own numbers; {:.1?} in all, load {:.2}",
+        table.len(),
+        started.elapsed(),
+        load1()
+    );
 }
 
 /// The fourteen walkers whose scripts ask the gameplay viewport past the
@@ -3423,7 +3683,7 @@ fn seed_in_the_air(w: &mut W, r: &serde_json::Value) {
     let rotation = [0, 1, 2].map(|i| rotation[i].as_f64().unwrap() as f32);
     let ground = &r["contacts"]["ground"];
     let normal = json_vec3(&ground["normal"]);
-    let hero = w.bench.heroes.get_mut(&HERO).unwrap();
+    let hero = w.bench.heroes.get_mut(&w.hero).unwrap();
     hero.pivot = pivot;
     hero.facing = rotation[1].rem_euclid(360.0);
     hero.up = guac_motion::solid::euler(rotation) * Vec3::Y;
@@ -3514,7 +3774,7 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
         let mut tuning = *w.hero().tuning();
         if let Some(g) = gravity {
             tuning.gravity = g;
-            w.bench.heroes.get_mut(&HERO).unwrap().set_tuning(tuning);
+            w.bench.heroes.get_mut(&w.hero).unwrap().set_tuning(tuning);
         }
         let (mut falls, mut near, mut never) = (0, 0, 0);
         let (mut free, mut worst) = (0usize, 0.0f32);
@@ -3655,7 +3915,7 @@ fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
         let mut w = joined_on_the_tv(&l, load, o, 120, true, true);
         let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
         let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
-        let states = walkers::locomotion_states(&w.vm, &w.world, HERO).expect("his states");
+        let states = walkers::locomotion_states(&w.vm, &w.world, w.hero).expect("his states");
         let four = four_of(&palette, &hero, &states);
         let side = &hero.locomotion;
         let duration = |c: &Option<guac_ir::hero::SlotClip>| c.as_ref().map(|c| c.clip.duration);
@@ -3683,7 +3943,7 @@ fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
             let speed = w.hero().gait_speed;
             match (&w.off, &mut stand_in) {
                 (None, _) => {
-                    last = Picked::read(&w.world, HERO, four, speed);
+                    last = Picked::read(&w.world, w.hero, four, speed);
                     on += 1;
                 }
                 (Some(_), None) => {
@@ -3973,11 +4233,11 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
         Vec3::new(b.x - a.x, 0.0, b.z - a.z).length()
     };
     let eye_back = track[179].2;
-    // His top beside what his description holds: in this harness a walker
-    // put in after another reads the first's (AH.191; the TV's swap gives
-    // Whirlwind his own 23 ft/s), so not compared here.
+    // His top beside what his description holds: his own numbers since the
+    // harness's next hero is an actor of his own (AH.191), as on the TV.
     let top = track[60..180].iter().map(|t| t.5).fold(0.0f32, f32::max);
     let ground = w.parameters().map(|p| p[0]);
+    let own = alone(&l, &next);
     println!(
         "first step: the view {:?}, the drawn eye moved {:?} m from the chain's, {:?} m from his feet; walked back {walked_back:?} m at top {top:?} ft/s (his {ground:?}), the eye {eye_back:?} m from his feet at the end of it; every step the scripts' {}; {:.1?} in all, load {:.2}",
         first.0,
@@ -4003,6 +4263,16 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
         "{next}'s animation info, as the TV's join sets it"
     );
     assert_eq!(points, [Some(0.0); 3], "his camera points on his minion");
+    // His own numbers, not Ninjini's 24 ft/s and 540°/s (AH.191), member for
+    // member; his top on them within 0.01 ft/s (steering by the scripts'
+    // camera as it swings round behind him, his walk back on the stick
+    // turns all the way: 22.997707 on this tree, Ninjini's run 23.998549).
+    assert_eq!(w.parameters(), own, "{next}'s own numbers");
+    let own_top = own.expect("his numbers alone")[0];
+    assert!(
+        (top - own_top).abs() < 0.01,
+        "{next} walked back at {top} ft/s, his {own_top}"
+    );
     // From his first step on the view is the scripts' and the TV draws it.
     assert!(
         track.iter().all(|t| t.0 == Source::Scripts && t.3 < 1e-6),
@@ -4040,7 +4310,7 @@ fn matched_clips(w: &W, record: &serde_json::Value) -> Vec<(usize, Option<usize>
         .sequences()
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.actor == HERO && s.plays())
+        .filter(|(_, s)| s.actor == w.hero && s.plays())
         .map(|(i, _)| i)
         .collect();
     let mut used = HashSet::new();

@@ -2023,11 +2023,24 @@ pub fn join_request(
 /// original's scheduler holds the hero's minion alone in its first group,
 /// so his script ticks ahead of every other placement). Returns its
 /// placement.
+///
+/// `hero` must name no actor the run has held (openspec AH.191): the
+/// original's activation clones the template afresh, and his setup's
+/// `Combat - Creature Definition` makes his description (his movement
+/// parameters off his setup's numbers) only when none in `combat control
+/// data`'s `creature descriptions` has him as its `creature`. Under the
+/// last minion's handle he found the last one's and walked at its numbers,
+/// so a held handle is refused before anything runs.
 pub fn join_activate(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     hero: Handle,
 ) -> Result<PlacementId, Halt> {
+    if host.world.actors.contains_key(&hero) {
+        return Err(outside(format!(
+            "{hero:#x} names an actor of the run's already: a minion joins as a new one"
+        )));
+    }
     let pm = portal_manager(vm, host.world)?;
     crate::figure::enter(vm, host.world)?;
     let loaded = slot_zero(vm)?;

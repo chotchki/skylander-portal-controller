@@ -161,6 +161,26 @@ pub(crate) fn write_walker_locomotion(dir: &Path, fault: attack_builder::WalkerF
     );
 }
 
+/// AH.191's: two walkers with numbers of their own
+/// ([`attack_builder::WALKER`], [`attack_builder::WALKER_OTHER`]), each
+/// finding or making his description in `combat control data` as Giants'
+/// minions do ([`attack_builder::walker_described`] over
+/// [`attack_builder::attack_with_creatures`]).
+pub(crate) fn write_walkers_described(dir: &Path) {
+    let (creature, _) = attack_builder::creature();
+    let a = attack_builder::attack_with_creatures();
+    let walkers: Vec<(&str, Vec<u8>)> = [attack_builder::WALKER, attack_builder::WALKER_OTHER]
+        .iter()
+        .map(|s| (s.load, attack_builder::walker_described(s)))
+        .collect();
+    write_files(
+        dir,
+        [&a.global, &a.init_setup, &a.fighter],
+        &creature,
+        &walkers,
+    );
+}
+
 /// Giants' rows as AH.2 reads them, the table ours: what lays a
 /// figure's words out in the synthetic part's tests.
 pub(crate) fn progression_rows() -> guac_ir::progression::Progression {

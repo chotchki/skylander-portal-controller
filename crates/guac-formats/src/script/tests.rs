@@ -1010,3 +1010,79 @@ fn the_synthetic_walker_reads_back() {
     let uses = pm.lines().filter(|l| l.contains("UseMacro")).count();
     assert_eq!(uses, 3, "{pm}");
 }
+
+/// AH.191's two walkers read back: each his own scripts and placements by
+/// his names, his minion's setup calling one macro more than the plain
+/// walker's (`Combat - Creature Definition`) and checking `made` once, and
+/// the part's `global.bld` defining the call once, with a `for each` over
+/// the creature descriptions, beside every macro the plain one defines.
+#[test]
+fn the_described_walkers_read_back() {
+    use super::builder::{
+        CREATURE_DEFINITION, WALKER, WALKER_OTHER, WalkerFault, attack, attack_with_creatures,
+        walker, walker_described,
+    };
+    use crate::level::Placements;
+    let ops_of = |bytes: &[u8], minion: &str| -> String {
+        let igz = Igz::parse(bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let s = graph
+            .scripts
+            .iter()
+            .find(|s| s.name.is_some_and(|n| n.ends_with(minion)))
+            .unwrap();
+        positions(&graph, s).join("\n")
+    };
+    let count = |ops: &str, what: &str| ops.lines().filter(|l| l.contains(what)).count();
+    let plain = ops_of(&walker(WalkerFault::None), WALKER.minion);
+    for spec in [WALKER, WALKER_OTHER] {
+        let bytes = walker_described(&spec);
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let mut names: Vec<&str> = graph
+            .scripts
+            .iter()
+            .map(|s| s.name.unwrap_or_default().rsplit('/').next().unwrap())
+            .collect();
+        names.sort();
+        let mut want = [spec.def_script, spec.minion];
+        want.sort();
+        assert_eq!(names, want);
+        let placed = Placements::read(&igz).unwrap();
+        let actors: Vec<&str> = placed
+            .actors
+            .iter()
+            .map(|a| a.name().unwrap_or(""))
+            .collect();
+        assert_eq!(actors, [spec.template, spec.def]);
+        let ops = ops_of(&bytes, spec.minion);
+        assert_eq!(
+            count(&ops, "UseMacro"),
+            count(&plain, "UseMacro") + 1,
+            "{ops}"
+        );
+        assert_eq!(
+            count(&ops, "CheckValue"),
+            count(&plain, "CheckValue") + 1,
+            "{ops}"
+        );
+    }
+    let global = |bytes: &[u8]| -> String {
+        let igz = Igz::parse(bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        positions(&graph, &graph.scripts[0]).join("\n")
+    };
+    let (plain, described) = (
+        global(&attack().global),
+        global(&attack_with_creatures().global),
+    );
+    let defined = format!("DefineMacro {CREATURE_DEFINITION} ");
+    assert_eq!(
+        (count(&plain, &defined), count(&described, &defined)),
+        (0, 1)
+    );
+    assert_eq!(count(&described, "ForEach"), count(&plain, "ForEach") + 1);
+    for l in plain.lines().filter(|l| l.contains("DefineMacro")) {
+        assert!(described.contains(l), "{l}");
+    }
+}
