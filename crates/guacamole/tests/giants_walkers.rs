@@ -3048,7 +3048,8 @@ const GIANTS_OFF: [GiantOff; 7] = [
 
 /// The most f32 steps a fallen-back walk's top is from what his scripts
 /// set: the controller's walk is f32 throughout and its length a hypot of
-/// two f32 parts (7 the most on this tree, Thumpback's).
+/// two f32 parts (7 the most on this tree, Thumpback's; the Mac TV's walks
+/// 12 at most, AG.212).
 const WALK_ULPS: u32 = 8;
 
 /// AH.151's and AG.190's on-dump case since AH.150 (the fallback merge's
@@ -3442,6 +3443,8 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
             .collect::<Vec<_>>()
     );
     let joined_view = w.world.viewport().source;
+    // The TV's camera, its chain the view's, is the same across the swap.
+    let chain_kept = w.chain.is_some();
     let mut track = Vec::new();
     for k in 0..300u32 {
         w.bench.pads[0] = Pad {
@@ -3484,8 +3487,9 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
         Vec3::new(b.x - a.x, 0.0, b.z - a.z).length()
     };
     let eye_back = track[179].2;
-    // His top beside what his description holds: on this tree a walker put
-    // in after another reads the first's (AH.191), so not compared here.
+    // His top beside what his description holds: in this harness a walker
+    // put in after another reads the first's (AH.191; the TV's swap gives
+    // Whirlwind his own 23 ft/s), so not compared here.
     let top = track[60..180].iter().map(|t| t.5).fold(0.0f32, f32::max);
     let ground = w.parameters().map(|p| p[0]);
     println!(
@@ -3504,6 +3508,7 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     // his camera points made afresh on his minion.
     use guacamole::viewport::Source;
     assert_eq!((off_view, off_until_join), (Source::HandedBack, true));
+    assert!(chain_kept, "the chain the view's across the take-off");
     assert_eq!(joined_view, Source::Engine);
     assert!(!w.world.view_back_at_a_join());
     assert_eq!(points, [Some(0.0); 3], "his camera points on his minion");

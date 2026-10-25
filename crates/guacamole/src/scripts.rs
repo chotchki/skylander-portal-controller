@@ -3352,4 +3352,39 @@ mod tests {
         assert!(c.whitelist.lists("Macros_UI", "C:/x/UI.ai"));
         assert!(!c.whitelist.lists("Spinner", "C:/x/Spinner.ai"));
     }
+
+    /// AG.211 on the world alone: a fall-back's hand-back lasts until a
+    /// hero's scripts join (`hero_template`), the scripts' next write the
+    /// view's again; one of a view the scripts never had is nothing; a stop
+    /// of the camera's scripts after a fall-back makes it for good, a join
+    /// after that leaving every write going nowhere.
+    #[test]
+    fn a_fall_backs_hand_back_ends_at_a_join_unless_a_stop_came_after_it() {
+        use crate::viewport::Source;
+        let (mut w, grunt, _) = world();
+        let source = |w: &ScriptWorld| (w.viewport().source, w.view_back_at_a_join());
+        w.hand_back_view_until_a_join();
+        assert_eq!(source(&w), (Source::Engine, false), "nothing to hand back");
+        assert!(w.view.take(), "the scripts place it");
+        w.hand_back_view_until_a_join();
+        assert_eq!(source(&w), (Source::HandedBack, true));
+        assert!(!w.view.take(), "a write meanwhile goes nowhere");
+        w.hero_template(GRUNT, grunt);
+        assert_eq!(
+            source(&w),
+            (Source::Engine, false),
+            "the join gives it back"
+        );
+        assert!(w.view.take(), "their next write takes it");
+        w.hand_back_view_until_a_join();
+        w.hand_back_view();
+        assert_eq!(
+            source(&w),
+            (Source::HandedBack, false),
+            "the stop's for good"
+        );
+        w.hero_template(GRUNT, grunt);
+        assert_eq!(source(&w), (Source::HandedBack, false), "a join after it");
+        assert!(!w.view.take());
+    }
 }
