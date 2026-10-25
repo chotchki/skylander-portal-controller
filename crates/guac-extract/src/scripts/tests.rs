@@ -18,25 +18,107 @@ fn identity() -> DumpIdentity {
     }
 }
 
+const WALKER_ARCHIVES: [&str; 66] = [
+    "character/000_airdragon.bld",
+    "character/000_airdragon_alt.bld",
+    "character/001_gryphon.bld",
+    "character/002_skyturtle.bld",
+    "character/003_stormgiant.bld",
+    "character/004_rock_dragon.bld",
+    "character/005_landshark.bld",
+    "character/006_dinorang.bld",
+    "character/007_gemgolem.bld",
+    "character/008_firedragon.bld",
+    "character/010_flameknight.bld",
+    "character/010_flameknight_legendary.bld",
+    "character/011_fireelf.bld",
+    "character/012_seadragon.bld",
+    "character/013_crab.bld",
+    "character/014_gillgrunt.bld",
+    "character/015_yeti.bld",
+    "character/015_yeti_legendary.bld",
+    "character/016_spyro.bld",
+    "character/017_skullorc.bld",
+    "character/018_wizard.bld",
+    "character/018_wizard_alt.bld",
+    "character/023_forcefieldgrub.bld",
+    "character/016_spyro_dark.bld",
+    "character/020_metal_dragon.bld",
+    "character/021_drillbot.bld",
+    "character/022_bomb_troll.bld",
+    "character/019_goldencheat.bld",
+    "character/024_lifedragon.bld",
+    "character/025_bambazooker.bld",
+    "character/026_stealthelf.bld",
+    "character/026_stealthelf_legendary.bld",
+    "character/027_ent.bld",
+    "character/032_cynder.bld",
+    "character/029_shadowmaid.bld",
+    "character/030_pandoranelite.bld",
+    "character/031_ghosteater.bld",
+    "character/016_spyro_legendary.bld",
+    "character/030_pandoranelite_legendary.bld",
+    "character/004_rock_dragon_legendary.bld",
+    "character/019_goldencheat_legendary.bld",
+    "character/100_eagle.bld",
+    "character/100_eagle_legendary.bld",
+    "character/101_bugmangiant.bld",
+    "character/102_titan_earth.bld",
+    "character/102_titan_earth_alt.bld",
+    "character/103_earthdragon.bld",
+    "character/103_earthdragon_alt.bld",
+    "character/104_oilblazer.bld",
+    "character/105_firefeet.bld",
+    "character/105_firefeet_alt.bld",
+    "character/106_icesorc.bld",
+    "character/106_icesorc_legendary.bld",
+    "character/107_whale.bld",
+    "character/108_alchemist.bld",
+    "character/108_alchemist_red.bld",
+    "character/109_djini.bld",
+    "character/109_djini_alt.bld",
+    "character/110_robotgiant.bld",
+    "character/110_robotgiant_legendary.bld",
+    "character/111_turretmaster.bld",
+    "character/112_titanlife.bld",
+    "character/112_titanlife_alt.bld",
+    "character/113_myconman.bld",
+    "character/114_mummy.bld",
+    "character/115_ostrich.bld",
+];
+
+const WALKER_COUNTS: [usize; 66] = [
+    4, 4, 5, 4, 4, 3, 4, 3, 3, 3, 4, 4, 3, 3, 4, 3, 4, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 4, 5, 5, 5,
+    5, 4, 3, 4, 4, 3, 4, 3, 3, 5, 5, 4, 4, 4, 3, 3, 3, 4, 4, 3, 3, 4, 4, 4, 4, 4, 3, 3, 4, 4, 4, 4,
+    4, 4,
+];
+
 #[test]
 fn the_whitelist_lists_each_archive_once_by_file_name() {
     let archives: Vec<&str> = WHITELIST.iter().map(|w| w.archive).collect();
-    assert_eq!(
-        archives,
-        [
-            "permanent/bootstrap.bld",
-            "permanent/global.bld",
-            "character/init_setup.bld",
-            "character/009_eruptor.bld",
-            "level/level_213_tutotial.bld",
-        ]
-    );
+    let base = [
+        "permanent/bootstrap.bld",
+        "permanent/global.bld",
+        "character/init_setup.bld",
+        "character/009_eruptor.bld",
+    ];
+    assert_eq!(archives[..4], base);
+    assert_eq!(archives[70], "level/level_213_tutotial.bld");
+    // AG.162: the 66 walkers' archives between them, the roster's order,
+    // one entry each (never twice, never a fighter's).
+    assert_eq!(archives[4..70], WALKER_ARCHIVES);
+    assert_eq!(WHITELIST.len(), 71);
     // AH.12's roots: 17 running in global.bld and 5 it spawns, Eruptor's
     // eight, the level's 18 and the 15 they spawn there; AG.60's 8 start
     // scripts on the props and the 5 they spawn; AG.28's 7 camera volumes
     // and the sliding rocks' activator.
     let counts: Vec<usize> = WHITELIST.iter().map(|w| w.scripts.len()).collect();
-    assert_eq!(counts, [1, 22, 3, 8, 54]);
+    assert_eq!(counts[..4], [1, 22, 3, 8]);
+    assert_eq!(counts[70], 54);
+    // Each walker's: his definition, his tuning actor, his minion's script
+    // and what his file's other running placements run (3 to 5), 244 in all.
+    assert_eq!(counts[4..70], WALKER_COUNTS);
+    assert_eq!(counts[4..70].iter().sum::<usize>(), 244);
     for w in WHITELIST {
         let mut names: Vec<String> = w.scripts.iter().map(|s| s.to_lowercase()).collect();
         names.sort();
@@ -71,6 +153,33 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
             .iter()
             .any(|w| w.archive == character_archive(FIGHTERS[0]))
     );
+}
+
+#[test]
+fn the_walkers_scripts_are_the_walkers_archives_alone() {
+    let listed = walker_scripts();
+    assert_eq!(listed.len(), 244);
+    // His minion's, his definition's and his portal entry's are in; a
+    // fighter's, the globals' and the level's are not.
+    for s in [
+        "000_AirDragon.ai",
+        "000_AirDragon_Def.ai",
+        "PortalEntry_Air.ai",
+    ] {
+        assert!(listed.contains(&s), "{s}");
+    }
+    for s in [
+        "009_LavaAttack.ai",
+        "Init_Setup.ai",
+        "GameSystems.ai",
+        "Scale.ai",
+    ] {
+        assert!(!listed.contains(&s), "{s}");
+    }
+    // The part's archives are the base's and then these, one each.
+    for a in WALKER_ARCHIVES {
+        assert!(!archives().iter().any(|b| b == a), "{a}");
+    }
 }
 
 #[test]

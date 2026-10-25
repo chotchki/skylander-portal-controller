@@ -72,8 +72,9 @@ pub struct Whitelisted {
 
 /// The whitelist (design decision 2): AH.12's roots and the scripts they
 /// spawn, by archive, with AG.60's start scripts on the props and theirs and
-/// AG.28's camera volumes and activator. AH.42 grows it with AH.8's route.
-pub const WHITELIST: [Whitelisted; 5] = [
+/// AG.28's camera volumes and activator, and AG.162's 66 walkers' own.
+/// AH.42 grows it with AH.8's route.
+pub const WHITELIST: [Whitelisted; 71] = [
     Whitelisted {
         archive: BOOTSTRAP,
         // The empty base every update callback specializes.
@@ -129,6 +130,573 @@ pub const WHITELIST: [Whitelisted; 5] = [
             "Accolades_Macros_Fire.ai",
             "PortalEntry_Fire.ai",
             "PortalEntry_LightForce.ai",
+        ],
+    },
+    // AG.162: the 66 walkers' (AG.27), by archive, each the scripts the TV's
+    // listing runs for him: his file's running placements (his definition,
+    // his tuning actor, a portal entry or a shockwave) and his minion's, the
+    // template his definition's `Portal - Define Minion` names. Read off the
+    // dump by `giants_walkers`' `a_probe_of_the_part`, in the roster's order.
+    Whitelisted {
+        archive: "character/000_airdragon.bld",
+        scripts: &[
+            "000_AirDragon.ai",
+            "000_AirDragon_Def.ai",
+            "000_AirDragon_Tuning.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/000_airdragon_alt.bld",
+        scripts: &[
+            "000_AirDragon.ai",
+            "000_AirDragon_Alt_Def.ai",
+            "000_AirDragon_Tuning.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/001_gryphon.bld",
+        scripts: &[
+            "001_Gryphon.ai",
+            "001_Gryphon_Def.ai",
+            "001_Gryphon_Tuning.ai",
+            "FX_Shockwave_Air.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/002_skyturtle.bld",
+        scripts: &[
+            "002_Def_SkyTurtle.ai",
+            "002_SkyTurtle.ai",
+            "002_SkyTurtle_Tuning.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/003_stormgiant.bld",
+        scripts: &[
+            "003_Def_StormGiant.ai",
+            "003_StormGiant.ai",
+            "003_StormGiant_Tuning.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/004_rock_dragon.bld",
+        scripts: &[
+            "004_RockDragon.ai",
+            "004_RockDragon_Tuning.ai",
+            "Def_RockDragon.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/005_landshark.bld",
+        scripts: &[
+            "005_Def_LandShark.ai",
+            "005_LandShark.ai",
+            "005_LandShark_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/006_dinorang.bld",
+        scripts: &[
+            "006_Def_Dinorang.ai",
+            "006_DinoRang.ai",
+            "006_DinoRang_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/007_gemgolem.bld",
+        scripts: &[
+            "007_GemGolem.ai",
+            "007_GemGolem_Def.ai",
+            "007_GemGolem_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/008_firedragon.bld",
+        scripts: &[
+            "008_Def_FireDragon.ai",
+            "008_FireDragon.ai",
+            "008_FireDragon_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/010_flameknight.bld",
+        scripts: &[
+            "010_Def_FlameKnight.ai",
+            "010_FlameKnight.ai",
+            "010_FlameKnight_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/010_flameknight_legendary.bld",
+        scripts: &[
+            "010_Def_FlameKnight_Legendary.ai",
+            "010_FlameKnight.ai",
+            "010_FlameKnight_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/011_fireelf.bld",
+        scripts: &[
+            "011_Def_FireElf.ai",
+            "011_FireElf.ai",
+            "011_FireElf_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/012_seadragon.bld",
+        scripts: &[
+            "012_Def_WaterDragon.ai",
+            "012_SeaDragon_Tuning.ai",
+            "012_WaterDragon2.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/013_crab.bld",
+        scripts: &[
+            "013_Crab.ai",
+            "013_Crab_Def.ai",
+            "013_Crab_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/014_gillgrunt.bld",
+        scripts: &[
+            "014_GillGrunt.ai",
+            "014_GillGrunt_Def.ai",
+            "014_GillGrunt_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/015_yeti.bld",
+        scripts: &[
+            "015_Yeti.ai",
+            "015_Yeti_Tuning.ai",
+            "Def_Yeti.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/015_yeti_legendary.bld",
+        scripts: &[
+            "015_Yeti.ai",
+            "015_Yeti_Tuning.ai",
+            "Def_Yeti_Legendary.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/016_spyro.bld",
+        scripts: &["016_Def_Spryo.ai", "016_Spyro.ai", "016_Spyro_Tuning.ai"],
+    },
+    Whitelisted {
+        archive: "character/017_skullorc.bld",
+        scripts: &[
+            "017_SkullOrc.ai",
+            "017_SkullOrc_Def.ai",
+            "017_SkullOrc_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/018_wizard.bld",
+        scripts: &["018_Def_Wizard.ai", "018_Wizard.ai", "018_Wizard_Tuning.ai"],
+    },
+    Whitelisted {
+        archive: "character/018_wizard_alt.bld",
+        scripts: &[
+            "018_Def_Wizard_Alt.ai",
+            "018_Wizard.ai",
+            "018_Wizard_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/023_forcefieldgrub.bld",
+        scripts: &[
+            "023_Def_ForceFieldGrub.ai",
+            "023_ForceFieldGrub_main.ai",
+            "023_ForceFieldGrub_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/016_spyro_dark.bld",
+        scripts: &[
+            "016_Def_SpyroDark.ai",
+            "016_Spyro.ai",
+            "016_Spyro_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/020_metal_dragon.bld",
+        scripts: &[
+            "020_Def_Metal_Dragon.ai",
+            "020_Metal_Dragon.ai",
+            "020_MetalDragon_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/021_drillbot.bld",
+        scripts: &[
+            "021_DrillBot.ai",
+            "021_DrillBot_Tuning.ai",
+            "Def_DrillBot.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/022_bomb_troll.bld",
+        scripts: &["022_BombTroll_Tuning.ai", "022_Troll.ai", "Def_Troll.ai"],
+    },
+    Whitelisted {
+        archive: "character/019_goldencheat.bld",
+        scripts: &[
+            "019_Def_GoldenCheat.ai",
+            "019_GoldenCheat.ai",
+            "019_GoldenCheat_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/024_lifedragon.bld",
+        scripts: &[
+            "024_LifeDragon.ai",
+            "024_LifeDragon_Def.ai",
+            "024_LifeDragon_Tuning.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/025_bambazooker.bld",
+        scripts: &[
+            "025_BamBazooker.ai",
+            "025_BamBazooker_Tuning.ai",
+            "025_Def_BamBazooker.ai",
+            "FX_Shockwave.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/026_stealthelf.bld",
+        scripts: &[
+            "026_Def_StealthElf.ai",
+            "026_StealthElf.ai",
+            "026_StealthElf_Tuning.ai",
+            "FX_Combo_UI.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/026_stealthelf_legendary.bld",
+        scripts: &[
+            "026_Def_StealthElf_Legendary.ai",
+            "026_StealthElf.ai",
+            "026_StealthElf_Tuning.ai",
+            "FX_Combo_UI.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/027_ent.bld",
+        scripts: &[
+            "027_Ent.ai",
+            "027_Ent_Def_Minion.ai",
+            "027_Ent_Tuning.ai",
+            "FX_Combo_UI.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/032_cynder.bld",
+        scripts: &[
+            "032_Cynder.ai",
+            "032_Cynder_Tuning.ai",
+            "032_Def_Cynder.ai",
+            "Minion_Include_Ghost.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/029_shadowmaid.bld",
+        scripts: &[
+            "029_ShadowMaid.ai",
+            "029_ShadowMaid_Def.ai",
+            "029_ShadowMaid_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/030_pandoranelite.bld",
+        scripts: &[
+            "030_Def_PandoranElite.ai",
+            "030_PandoranElite.ai",
+            "030_PandoranElite_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/031_ghosteater.bld",
+        scripts: &[
+            "031_Def_GhostEater.ai",
+            "031_GhostEater.ai",
+            "031_GhostEater_Tuning.ai",
+            "Minion_Include_Ghost.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/016_spyro_legendary.bld",
+        scripts: &[
+            "016_Def_SpryoLegendary.ai",
+            "016_Spyro.ai",
+            "016_Spyro_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/030_pandoranelite_legendary.bld",
+        scripts: &[
+            "030_Def_PandoranEliteLegendary.ai",
+            "030_PandoranElite.ai",
+            "030_PandoranElite_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/004_rock_dragon_legendary.bld",
+        scripts: &[
+            "004_RockDragon.ai",
+            "004_RockDragon_Tuning.ai",
+            "Def_RockDragonLegendary.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/019_goldencheat_legendary.bld",
+        scripts: &[
+            "019_Def_GoldenCheatLegendary.ai",
+            "019_GoldenCheat.ai",
+            "019_GoldenCheat_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/100_eagle.bld",
+        scripts: &[
+            "100_Eagle.ai",
+            "100_Eagle_Def.ai",
+            "100_Eagle_Tuning.ai",
+            "FX_Combo_UI.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/100_eagle_legendary.bld",
+        scripts: &[
+            "100_Eagle.ai",
+            "100_Eagle_L_Def.ai",
+            "100_Eagle_Tuning.ai",
+            "FX_Combo_UI.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/101_bugmangiant.bld",
+        scripts: &[
+            "101_BugmanGiant.ai",
+            "101_BugmanGiant_Def.ai",
+            "101_BugmanGiant_Tuning.ai",
+            "PortalEntry_Air.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/102_titan_earth.bld",
+        scripts: &[
+            "102_TitanEarth.ai",
+            "102_TitanEarth_Def.ai",
+            "102_TitanEarth_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/102_titan_earth_alt.bld",
+        scripts: &[
+            "102_TitanEarth.ai",
+            "102_TitanEarth_Alt_Def.ai",
+            "102_TitanEarth_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/103_earthdragon.bld",
+        scripts: &[
+            "103_EarthDragon.ai",
+            "103_EarthDragon_Tuning.ai",
+            "103_EarthDragonDef.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/103_earthdragon_alt.bld",
+        scripts: &[
+            "103_EarthDragon.ai",
+            "103_EarthDragon_Alt_Def.ai",
+            "103_EarthDragon_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/104_oilblazer.bld",
+        scripts: &[
+            "104_OilBlazer.ai",
+            "104_OilBlazer_Def.ai",
+            "104_OilBlazer_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/105_firefeet.bld",
+        scripts: &[
+            "105_FireFeet.ai",
+            "105_FireFeet_Def.ai",
+            "105_FireFeet_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/105_firefeet_alt.bld",
+        scripts: &[
+            "105_FireFeet.ai",
+            "105_FireFeet_Alt_Def.ai",
+            "105_FireFeet_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/106_icesorc.bld",
+        scripts: &[
+            "106_IceSorc.ai",
+            "106_IceSorc_Def.ai",
+            "106_IceSorc_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/106_icesorc_legendary.bld",
+        scripts: &[
+            "106_IceSorc.ai",
+            "106_IceSorc_Legendary_Def.ai",
+            "106_IceSorc_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/107_whale.bld",
+        scripts: &[
+            "107_Whale.ai",
+            "107_Whale_Def.ai",
+            "107_Whale_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/108_alchemist.bld",
+        scripts: &[
+            "108_Alchemist.ai",
+            "108_Alchemist_Def.ai",
+            "108_Alchemist_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/108_alchemist_red.bld",
+        scripts: &[
+            "108_Alchemist.ai",
+            "108_Alchemist_Legendary_Def.ai",
+            "108_Alchemist_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/109_djini.bld",
+        scripts: &[
+            "109_Djini.ai",
+            "109_Djini_Def.ai",
+            "109_Djini_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/109_djini_alt.bld",
+        scripts: &[
+            "109_Djini.ai",
+            "109_Djini_Alt_Def.ai",
+            "109_Djini_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/110_robotgiant.bld",
+        scripts: &[
+            "110_RobotGiant.ai",
+            "110_RobotGiant_Def.ai",
+            "110_RobotGiant_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/110_robotgiant_legendary.bld",
+        scripts: &[
+            "110_RobotGiant.ai",
+            "110_RobotGiant_Legendary_Def.ai",
+            "110_RobotGiant_Tuning.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/111_turretmaster.bld",
+        scripts: &[
+            "111_Def_TurretMaster.ai",
+            "111_TurretMaster.ai",
+            "111_TurretMaster_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/112_titanlife.bld",
+        scripts: &[
+            "112_TitanLife.ai",
+            "112_TitanLife_Def.ai",
+            "112_TitanLife_Tuning.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/112_titanlife_alt.bld",
+        scripts: &[
+            "112_TitanLife.ai",
+            "112_TitanLife_Alt_Def.ai",
+            "112_TitanLife_Tuning.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/113_myconman.bld",
+        scripts: &[
+            "113_Myconman.ai",
+            "113_Myconman_Def.ai",
+            "113_Myconman_Tuning.ai",
+            "PortalEntry_Life.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/114_mummy.bld",
+        scripts: &[
+            "114_Mummy.ai",
+            "114_Mummy_Def.ai",
+            "114_Mummy_Tuning.ai",
+            "FX_Combo_UI.ai",
+        ],
+    },
+    Whitelisted {
+        archive: "character/115_ostrich.bld",
+        scripts: &[
+            "115_Def_Ostrich.ai",
+            "115_Ostrich.ai",
+            "115_Ostrich_Tuning.ai",
+            "FX_Combo_UI.ai",
         ],
     },
     Whitelisted {
@@ -218,6 +786,23 @@ pub fn level_scripts(level: &str) -> &'static [&'static str] {
         .iter()
         .find(|w| w.archive == archive)
         .map_or(&[], |w| w.scripts)
+}
+
+/// The whitelisted scripts of the walkers' archives (AG.162): every entry
+/// but the bootstrap's, `global.bld`'s, `init_setup.bld`'s, the fighters' and
+/// a level's. A creature placed running one of them is followed to its
+/// palette ([`crate::levels::palettes`]) as one running its level's is.
+pub fn walker_scripts() -> Vec<&'static str> {
+    let base = archives();
+    WHITELIST
+        .iter()
+        .filter(|w| {
+            w.archive
+                .starts_with(&format!("{}/", models::CHARACTER_DIR))
+        })
+        .filter(|w| !base.iter().any(|b| b == w.archive))
+        .flat_map(|w| w.scripts.iter().copied())
+        .collect()
 }
 
 /// `character/<load file>.bld`, lower-cased as the disc names them.

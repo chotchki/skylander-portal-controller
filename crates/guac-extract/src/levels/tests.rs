@@ -642,6 +642,22 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
         [CHEST],
         "a newly listed script's creature"
     );
+    // AG.162 lists the walkers' scripts: a creature running one (a portal
+    // entry, a definition, by file name any case) is followed to its palette.
+    for script in [
+        "Levels/Synthetic/Scripts/PortalEntry_Air.ai",
+        "C:/tfb/Minions/AirDragon/scripts/000_airdragon_DEF.AI",
+    ] {
+        let r = palettes(parsed(&creature_level(Some(script))), LEVEL, identity()).unwrap();
+        assert_eq!(
+            r.ir.palettes
+                .iter()
+                .map(|p| p.owner.as_str())
+                .collect::<Vec<_>>(),
+            [CHEST],
+            "{script}"
+        );
+    }
     // Off the whitelist, or no script at all: no palette.
     for script in [Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai"), None] {
         let r = palettes(parsed(&creature_level(script)), LEVEL, identity()).unwrap();
@@ -649,5 +665,9 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
     }
     // A level off the whitelist runs none of its scripts.
     let r = palettes(parsed(&spec), "level_999_elsewhere", identity()).unwrap();
+    assert!(r.ir.palettes.is_empty());
+    // Nor a walker's script there: the level runs none of its own.
+    let walker = creature_level(Some("Levels/Synthetic/Scripts/PortalEntry_Air.ai"));
+    let r = palettes(parsed(&walker), "level_999_elsewhere", identity()).unwrap();
     assert!(r.ir.palettes.is_empty());
 }
