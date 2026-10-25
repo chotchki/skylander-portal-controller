@@ -2816,6 +2816,13 @@ impl Vm {
                 }
             }
             Answer::Done | Answer::Skip => {
+                // A start that started nothing reads as nothing after, not
+                // as the last one it started (crate docs, Left to the host).
+                if class == Class::StartSequence
+                    && let Some(st) = self.op_state.get_mut(&op)
+                {
+                    st.cached = None;
+                }
                 if branch {
                     self.skip(program, op);
                 }

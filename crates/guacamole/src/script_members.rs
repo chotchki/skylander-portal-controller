@@ -124,6 +124,9 @@ pub(crate) enum Member {
     SeqRate,
     SeqLooping,
     SeqRawDuration,
+    /// `sequence.allow restart` (openspec AH.184): a clip's, which a copy
+    /// started from it takes, or a sequence's own.
+    AllowRestart,
     // AH.49's: a clip's or a sequence's animation info.
     /// `animationinfo.blend percent`: the weight the engine blends by.
     Blend,
@@ -403,6 +406,7 @@ impl Member {
         add("sequence", "playback rate", Member::SeqRate);
         add("sequence", "looping", Member::SeqLooping);
         add("sequence", "raw duration", Member::SeqRawDuration);
+        add("sequence", "allow restart", Member::AllowRestart);
         add("animationinfo", "blend percent", Member::Blend);
         add("animationinfo", "is layered", Member::IsLayered);
         add("animationinfo", "type", Member::ClipKind);
@@ -1233,6 +1237,21 @@ impl ScriptWorld {
                     _ => Value::Float(s.length),
                 }
             }
+            // A clip's (what its next copy starts with) or a sequence's.
+            Member::AllowRestart => Value::Int(i32::from(match object {
+                Some(Object::Clip { template, slot }) => self
+                    .clip_flags(template, slot)
+                    .1
+                    .allow_restart
+                    .unwrap_or(false),
+                Some(Object::Sequence(i)) => {
+                    self.sequences
+                        .get(i as usize)
+                        .ok_or(HostFault::Nothing)?
+                        .allow_restart
+                }
+                _ => return Err(HostFault::Nothing),
+            })),
             Member::Distance => {
                 let (a, b) = (me(self, engine)?, other(self, engine)?);
                 let d = a - b;
@@ -1765,6 +1784,24 @@ impl ScriptWorld {
                     _ => s.time = s.length * (1.0 - float(v)? * 0.01),
                 }
             }
+            Member::AllowRestart => {
+                let on = v.as_i32().ok_or(HostFault::Nothing)? != 0;
+                match object {
+                    Some(Object::Clip { template, slot }) => {
+                        self.clip_state
+                            .entry((template, slot))
+                            .or_default()
+                            .allow_restart = Some(on);
+                    }
+                    Some(Object::Sequence(i)) => {
+                        self.sequences
+                            .get_mut(i as usize)
+                            .ok_or(HostFault::Nothing)?
+                            .allow_restart = on;
+                    }
+                    _ => return Err(HostFault::Nothing),
+                }
+            }
             Member::Distance
             | Member::HorizontalDistance
             | Member::VerticalOffset
@@ -1877,13 +1914,24 @@ impl ScriptWorld {
                     })
                     .unwrap_or_default()
             }
+            // The copies playing on him, not their clips (openspec AH.184:
+            // the original's set holds the sequences its play started,
+            // aj-vm's 0x6aa68 and 0x118b10, read as aids), a whole base
+            // clip's at the front, the latest first, the rest after in the
+            // order started (its insert at 0 and append).
             Member::PlayingAnimations => {
                 let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
-                self.sequences
-                    .iter()
-                    .filter(|s| s.actor == h && !s.done && !s.stopped && s.length > 0.0)
-                    .map(|s| s.template)
-                    .collect()
+                let playing = |whole: bool| {
+                    self.sequences
+                        .iter()
+                        .enumerate()
+                        .filter(move |(_, s)| s.actor == h && s.plays() && s.is_layered() != whole)
+                        .map(|(i, _)| Object::Sequence(i as u32))
+                };
+                let mut v: Vec<Object> = playing(true).collect();
+                v.reverse();
+                v.extend(playing(false));
+                v.into_iter().map(|o| self.objs.value(o)).collect()
             }
             Member::PlayingSounds => Vec::new(),
             // The level's and the props' contacts, not another actor's.
@@ -1994,6 +2042,23 @@ impl ScriptWorld {
         )
     }
 
+    /// A play of the sequence at `i` on `actor` (openspec AH.184): refused
+    /// while it plays with time left and no `allow restart` (the op fails
+    /// and its block is skipped), else started again from its start, his.
+    fn start_again(&mut self, i: usize, actor: Handle) -> Answer {
+        let s = &mut self.sequences[i];
+        if s.refuses_restart() {
+            return Answer::Skip;
+        }
+        s.actor = actor;
+        s.restart();
+        self.restarts.push(i as u32);
+        Answer::Run {
+            receiver: None,
+            result: Some(self.objs.value(Object::Sequence(i as u32))),
+        }
+    }
+
     fn length_of(&self, v: Value) -> f32 {
         match self.object(Some(v)) {
             Some(Object::Clip { template, slot }) => self
@@ -2036,6 +2101,27 @@ impl ScriptWorld {
                 let Some(actor) = self.handle(call.receiver) else {
                     return Some(Ok(Answer::Skip));
                 };
+                // One copy per clip and actor (openspec AH.184): a sequence
+                // played is itself while it's his or stopped (the original's
+                // stop clears its activator), else its clip's on him; a clip
+                // played on him while its copy plays is that copy.
+                let mut template = template;
+                if let Some(Object::Sequence(i)) = self.object(Some(template))
+                    && let Some(s) = self.sequences.get(i as usize)
+                {
+                    if s.actor == actor || s.stopped {
+                        return Some(Ok(self.start_again(i as usize, actor)));
+                    }
+                    template = s.template;
+                }
+                if matches!(self.object(Some(template)), Some(Object::Clip { .. }))
+                    && let Some(i) = self
+                        .sequences
+                        .iter()
+                        .rposition(|s| s.actor == actor && s.template == template && s.plays())
+                {
+                    return Some(Ok(self.start_again(i, actor)));
+                }
                 let length = self.length_of(template);
                 // A clip's own looping, weight and layered bit (AH.49).
                 let (info, state) = match self.object(Some(template)) {
@@ -2054,6 +2140,7 @@ impl ScriptWorld {
                     blend: state.blend.unwrap_or(FULL_BLEND),
                     kind: info.kind,
                     layered: state.layered.unwrap_or(info.layered),
+                    allow_restart: state.allow_restart.unwrap_or(false),
                 });
                 let s = self
                     .objs
@@ -2064,10 +2151,29 @@ impl ScriptWorld {
                 })
             }
             Class::StopSequence => {
-                if let Some(Object::Sequence(i)) = self.object(first)
-                    && let Some(s) = self.sequences.get_mut(i as usize)
-                {
-                    s.stopped = true;
+                // A sequence stops itself; a clip its copies on the
+                // receiver, whose ever else plays on (openspec AH.184: the
+                // stop hands the clip the receiver, aj-vm's 0x9ba54 and its
+                // clones' stop at 0x9ac14, read as aids).
+                match self.object(first) {
+                    Some(Object::Sequence(i)) => {
+                        if let Some(s) = self.sequences.get_mut(i as usize) {
+                            s.stopped = true;
+                        }
+                    }
+                    Some(Object::Clip { .. }) => {
+                        let clip = first;
+                        if let Some(actor) = self.handle(call.receiver) {
+                            for s in self
+                                .sequences
+                                .iter_mut()
+                                .filter(|s| s.actor == actor && Some(s.template) == clip)
+                            {
+                                s.stopped = true;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 Ok(Answer::Done)
             }
@@ -5493,5 +5599,568 @@ mod animation_tests {
         play(&mut w, &mut e, clips[2]);
         let s = w.sequences().last().unwrap().clone();
         assert!(!s.weighted() && !s.laid_over());
+    }
+}
+
+/// One sequence per clip and actor (openspec AH.184), on the VM: scripts
+/// written with AH.13's writer play a clip of his palette again, stop it on
+/// him and on another actor, and read what plays on him, over Eruptor's
+/// palette as `picks`' tests have it (his walk at slot 1, 1.0667 s; his idle
+/// at slot 0, a base clip).
+#[cfg(test)]
+mod copy_tests {
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::Location;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph};
+    use guac_script::{
+        Generator, Mode, Obj, PlacementId, Program, Role, Unit, Value, Vm, Whitelist,
+    };
+
+    use super::*;
+    use crate::script_engine::{DONE_MARGIN, NoEngine};
+    use crate::scripts::{
+        Files, Placed, WorldHost, headless_handles, headless_objects, headless_spawner,
+        hero_config, init_chain,
+    };
+
+    const PATH: &str = "C:/tfb/Synthetic/Copies.ai";
+    const MY: El<'static> = El::Member("optoplevelbehavior", "my");
+    const PALETTE: El<'static> = El::Member("animationinfo", "animation palette");
+    const PLAYING: El<'static> = El::Member("actorinfo", "playing animations");
+    const INT: &str = "IntMeasurement";
+    const ME: Obj = Obj {
+        unit: 0,
+        index: 100_000,
+    };
+    const STEP: f32 = 1.0 / 60.0;
+
+    /// The script's placement and the actor it tells, run tick by tick.
+    struct Run {
+        vm: Vm,
+        world: ScriptWorld,
+        id: PlacementId,
+        me: Handle,
+        other: Handle,
+    }
+
+    impl Run {
+        /// `script` (given the object it names the other actor by) as his,
+        /// running from the level's start, strict, his palette Eruptor's.
+        fn new(script: impl FnOnce(&mut Writer<'_>, Location)) -> Run {
+            let mut b = IgzBuilder::new();
+            let other = {
+                let w = &mut Writer::new(&mut b);
+                let other = w.b.object(0, "tfbActorInfo", 0xF8);
+                script(w, other);
+                other
+            };
+            let bytes = b.build();
+            let igz = Igz::parse(&bytes).unwrap();
+            let graph = Graph::read(&igz).unwrap();
+            let program = Arc::new(
+                Program::link(&[Unit {
+                    name: "level",
+                    role: Role::Other,
+                    igz: &igz,
+                    graph: &graph,
+                }])
+                .unwrap(),
+            );
+            let other = Obj {
+                unit: 0,
+                index: igz.objects().iter().position(|o| o.at == other).unwrap() as u32,
+            };
+            let files = Files {
+                placed: vec![
+                    Placed::named(ME, "walker", Some(PATH), 4),
+                    Placed::named(other, "other", None, 4),
+                ],
+                ..Files::default()
+            };
+            let handles = headless_handles(&files);
+            let mut c = hero_config(Mode::Strict);
+            c.whitelist = Whitelist::All;
+            let vm = init_chain(program, &files, &handles, &[0], c);
+            let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            world.set_palette_of(ME, &crate::picks::tests::palette());
+            let me = handles[&ME];
+            Run {
+                id: vm.placement_of(me).unwrap(),
+                vm,
+                world,
+                me,
+                other: handles[&other],
+            }
+        }
+
+        /// One tick of the scripts and the engine's frame after it.
+        fn tick(&mut self) {
+            let mut spawn = headless_spawner(1 << 40);
+            let mut host = WorldHost {
+                world: &mut self.world,
+                engine: &mut NoEngine,
+                generator: &mut Generator::seeded(1),
+                spawn: &mut spawn,
+            };
+            self.vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+            self.world.advance(STEP, &mut NoEngine);
+        }
+
+        /// The sequences of palette slot `slot` on `actor`, in the order
+        /// started, by index.
+        fn copies(&self, actor: Handle, slot: u32) -> Vec<(usize, &Sequence)> {
+            self.world
+                .sequences()
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    s.actor == actor && self.world.clip_of(s).is_some_and(|(_, x)| x == slot)
+                })
+                .collect()
+        }
+
+        fn local(&self, name: &str) -> Value {
+            self.vm.local(self.id, name).unwrap_or(Value::Null)
+        }
+
+        /// What a reference local names, as the host's object.
+        fn names(&self, name: &str) -> Option<Object> {
+            match self.local(name) {
+                Value::Entity(h) => self.world.objs.get(h),
+                _ => None,
+            }
+        }
+    }
+
+    /// `setref <var> = my.animation palette [slot]`.
+    fn clip(w: &mut Writer<'_>, var: Location, slot: i32) {
+        let lhs = w.value(&[El::Local(var)]);
+        let rhs = w.reference(&[MY, PALETTE], None);
+        let index = w.int(slot);
+        let o = w.op(Class::SetReference, "setref||=");
+        w.refer(o, 0x1C, lhs);
+        w.refer(o, 0x20, rhs);
+        w.refer(o, 0x24, index);
+        w.push(o);
+    }
+
+    /// `setref <lhs> = <rhs>`.
+    fn setref(w: &mut Writer<'_>, lhs: &[El<'_>], rhs: &[El<'_>]) {
+        let l = w.value(lhs);
+        let r = w.reference(rhs, None);
+        let o = w.op(Class::SetReference, "set reference");
+        w.refer(o, 0x1C, l);
+        w.refer(o, 0x20, r);
+        w.push(o);
+    }
+
+    /// `start sequence <what> { body }`: the op, which a path reads as what
+    /// it started.
+    fn start(
+        w: &mut Writer<'_>,
+        what: &[El<'_>],
+        body: impl FnOnce(&mut Writer<'_>, Location),
+    ) -> Location {
+        let lhs = w.group(what, None);
+        let (p, o) = w.open(Class::StartSequence, "start sequence");
+        w.refer(o, 0x1C, lhs);
+        body(w, o);
+        w.end_block(p);
+        o
+    }
+
+    /// `stop sequence <what>`.
+    fn stop(w: &mut Writer<'_>, what: &[El<'_>]) {
+        let np = w.group(what, None);
+        let o = w.op(Class::StopSequence, "stop sequence");
+        w.refer(o, 0x1C, np);
+        w.push(o);
+    }
+
+    /// `tell <what> { body }`.
+    fn tell(w: &mut Writer<'_>, what: &[El<'_>], body: impl FnOnce(&mut Writer<'_>)) {
+        let lhs = w.group(what, None);
+        let (p, o) = w.open(Class::Control, "control||||controlled");
+        w.refer(o, 0x20, lhs);
+        body(w);
+        w.end_block(p);
+    }
+
+    /// `if <var> == <n> { body }`.
+    fn when(w: &mut Writer<'_>, var: Location, n: i32, body: impl FnOnce(&mut Writer<'_>)) {
+        let rhs = w.int(n);
+        let p = w.check(&[El::Local(var)], 1, rhs);
+        body(w);
+        w.end_block(p);
+    }
+
+    /// A clip played on him while its copy plays is that copy (aj-vm's
+    /// 0x68e2c, read as an aid): his walk, played every tick, is one
+    /// sequence; the play is refused (its block skipped, the op reading as
+    /// nothing after) while the copy has time left, and starts it again in
+    /// its pass's last two frames (0x118d28's test of what's left, by
+    /// [`DONE_MARGIN`]); with its `allow restart` set every play starts it
+    /// again; stopped by its clip and played again by itself, it's still
+    /// the one copy.
+    #[test]
+    fn a_clip_played_twice_on_one_actor_is_one_sequence_started_again() {
+        let mut r = Run::new(|w, _| {
+            let clip_var = w.variable("clip", "ScriptReference", None);
+            let kept = w.variable("kept", "ScriptReference", None);
+            let last = w.variable("last", "ScriptReference", None);
+            let started = w.variable("started", "ValueInfo", Some(INT));
+            let phase = w.variable("phase", "ValueInfo", Some(INT));
+            w.script(
+                PATH,
+                |w| {
+                    clip(w, clip_var, 1);
+                    let one = w.int(1);
+                    w.set(
+                        &[El::Local(clip_var), El::Member("sequence", "looping")],
+                        one,
+                    );
+                },
+                |_| {},
+                |w| {
+                    let b = w.behaviour("walk");
+                    when(w, phase, 0, |w| {
+                        let o = start(w, &[El::Local(clip_var)], |w, o| {
+                            w.inc(&[El::Local(started)]);
+                            setref(w, &[El::Local(kept)], &[El::Local(o)]);
+                        });
+                        setref(w, &[El::Local(last)], &[El::Local(o)]);
+                    });
+                    when(w, phase, 1, |w| {
+                        let one = w.int(1);
+                        w.set(
+                            &[El::Local(kept), El::Member("sequence", "allow restart")],
+                            one,
+                        );
+                        start(w, &[El::Local(clip_var)], |w, _| {
+                            w.inc(&[El::Local(started)]);
+                        });
+                    });
+                    when(w, phase, 2, |w| {
+                        stop(w, &[El::Local(clip_var)]);
+                        start(w, &[El::Local(kept)], |w, _| {
+                            w.inc(&[El::Local(started)]);
+                        });
+                        let four = w.int(4);
+                        w.set(&[El::Local(phase)], four);
+                    });
+                    w.end_block(b);
+                },
+            );
+        });
+        let me = r.me;
+        let (mut started, mut restarts) = (0, 0);
+        for k in 0..80 {
+            // Due a start: none yet, or its pass's last two frames.
+            let due = r
+                .copies(me, 1)
+                .first()
+                .is_none_or(|(_, s)| s.time_remaining() <= 0.0);
+            let since = r.world.start_count();
+            r.tick();
+            let copies = r.copies(me, 1);
+            assert_eq!(copies.len(), 1, "tick {k}: one copy of his walk");
+            let (i, s) = copies[0];
+            assert!(s.plays() && s.looping, "tick {k}");
+            if due {
+                started += 1;
+                restarts += usize::from(k > 0);
+            }
+            assert_eq!(r.local("started"), Value::Int(started), "tick {k}");
+            assert_eq!(r.names("kept"), Some(Object::Sequence(i as u32)));
+            // The op reads as what it started, nothing when refused.
+            let last = due.then_some(Object::Sequence(i as u32));
+            assert_eq!(r.names("last"), last, "tick {k}");
+            assert_eq!(r.world.restarts().len(), restarts, "tick {k}");
+            // What the scripts' log reads as started this tick.
+            let want: Vec<usize> = if due { vec![i] } else { Vec::new() };
+            assert_eq!(r.world.started_since(since), want, "tick {k}");
+        }
+        assert_eq!((started, restarts), (2, 1), "his walk's second pass");
+        let left = r.copies(me, 1)[0].1.length - r.copies(me, 1)[0].1.time;
+        assert!(left > DONE_MARGIN, "{left}");
+        // With its restart flag every play starts it again.
+        r.vm.set_local(r.id, "phase", Value::Int(1));
+        let before = r.world.start_count();
+        for k in 0..10 {
+            r.tick();
+            started += 1;
+            assert_eq!(r.local("started"), Value::Int(started), "tick {k}");
+            let copies = r.copies(me, 1);
+            assert_eq!(copies.len(), 1);
+            assert!(
+                (copies[0].1.time - STEP).abs() < 1e-6,
+                "{}",
+                copies[0].1.time
+            );
+        }
+        // Ten starts of the one copy: the log reads it once over them.
+        let i = r.copies(me, 1)[0].0;
+        assert_eq!(
+            r.world.started_since(before),
+            vec![i],
+            "once, not ten times"
+        );
+        // Stopped by its clip, then played by itself: the same copy again.
+        r.vm.set_local(r.id, "phase", Value::Int(2));
+        r.tick();
+        assert_eq!(r.local("started"), Value::Int(started + 1));
+        let copies = r.copies(me, 1);
+        assert_eq!(copies.len(), 1);
+        assert!(copies[0].1.plays() && (copies[0].1.time - STEP).abs() < 1e-6);
+        assert_eq!(r.local("phase"), Value::Int(4));
+    }
+
+    /// A stop of a clip stops its copy on the receiver alone (the stop hands
+    /// the clip the receiver, aj-vm's 0x9ba54; the clip stops its clones on
+    /// it, 0x9ac14): his walk and another actor's copy of the same clip,
+    /// his stopped by his stop, his idle playing on, the other's walk
+    /// playing on until a stop told to it. His copy, playing, played on the
+    /// other is a play of its clip on the other, a copy of the other's own
+    /// (0x68e2c: a copy another actor holds hands the play to its clip); a
+    /// copy stopped is no one's (the stop clears its activator), so his,
+    /// played on the other then, is the other's now.
+    #[test]
+    fn a_stop_of_a_clip_stops_its_copy_on_the_receiver_alone() {
+        let mut r = Run::new(|w, other| {
+            let clip_var = w.variable("clip", "ScriptReference", None);
+            let idle_var = w.variable("idle", "ScriptReference", None);
+            let mine = w.variable("mine", "ScriptReference", None);
+            let phase = w.variable("phase", "ValueInfo", Some(INT));
+            w.script(
+                PATH,
+                |w| {
+                    clip(w, clip_var, 1);
+                    start(w, &[El::Local(clip_var)], |w, o| {
+                        setref(w, &[El::Local(mine)], &[El::Local(o)]);
+                    });
+                    clip(w, idle_var, 0);
+                    start(w, &[El::Local(idle_var)], |_, _| {});
+                },
+                |_| {},
+                |w| {
+                    let b = w.behaviour("walk");
+                    when(w, phase, 7, |w| {
+                        tell(w, &[El::Local(other)], |w| {
+                            start(w, &[El::Local(mine)], |_, _| {});
+                        });
+                        let zero = w.int(0);
+                        w.set(&[El::Local(phase)], zero);
+                    });
+                    when(w, phase, 1, |w| {
+                        stop(w, &[El::Local(clip_var)]);
+                        let two = w.int(2);
+                        w.set(&[El::Local(phase)], two);
+                    });
+                    when(w, phase, 3, |w| {
+                        tell(w, &[El::Local(other)], |w| stop(w, &[El::Local(clip_var)]));
+                        let four = w.int(4);
+                        w.set(&[El::Local(phase)], four);
+                    });
+                    when(w, phase, 5, |w| {
+                        tell(w, &[El::Local(other)], |w| {
+                            start(w, &[El::Local(mine)], |_, _| {});
+                        });
+                        let six = w.int(6);
+                        w.set(&[El::Local(phase)], six);
+                    });
+                    w.end_block(b);
+                },
+            );
+        });
+        let (me, other) = (r.me, r.other);
+        let plays = |r: &Run, actor| -> Vec<bool> {
+            r.copies(actor, 1).iter().map(|(_, s)| s.plays()).collect()
+        };
+        r.tick();
+        r.tick();
+        assert_eq!((plays(&r, me), plays(&r, other)), (vec![true], vec![]));
+        let his = r.copies(me, 1)[0].0;
+        assert_eq!(r.names("mine"), Some(Object::Sequence(his as u32)));
+        let n = r.world.sequences().len();
+        r.vm.set_local(r.id, "phase", Value::Int(7));
+        r.tick();
+        assert_eq!(r.local("phase"), Value::Int(0));
+        assert_eq!(r.world.sequences().len(), n + 1, "a copy of the other's");
+        assert_eq!((plays(&r, me), plays(&r, other)), (vec![true], vec![true]));
+        assert_eq!(r.copies(me, 1)[0].0, his, "his still his");
+        r.vm.set_local(r.id, "phase", Value::Int(1));
+        r.tick();
+        assert_eq!(r.local("phase"), Value::Int(2));
+        assert_eq!((plays(&r, me), plays(&r, other)), (vec![false], vec![true]));
+        let idle: Vec<bool> = r.copies(me, 0).iter().map(|(_, s)| s.plays()).collect();
+        assert_eq!(idle, [true], "his idle plays on");
+        r.vm.set_local(r.id, "phase", Value::Int(3));
+        r.tick();
+        assert_eq!(r.local("phase"), Value::Int(4));
+        assert_eq!(
+            (plays(&r, me), plays(&r, other)),
+            (vec![false], vec![false])
+        );
+        let started = r.world.sequences().len();
+        r.vm.set_local(r.id, "phase", Value::Int(5));
+        r.tick();
+        assert_eq!(r.local("phase"), Value::Int(6));
+        assert_eq!(r.world.sequences().len(), started, "no new copy");
+        assert_eq!(plays(&r, me), Vec::<bool>::new(), "his copy is the other's");
+        assert_eq!(plays(&r, other), vec![true, false], "his, then its own");
+    }
+
+    /// `actorinfo.playing animations` holds the copies playing on him, not
+    /// their clips (aj-vm's 0x6aa68; 0x118b10 inserts a whole base clip's
+    /// copy at the front and appends the rest): his walk, layered, then his
+    /// idle, a whole clip; the set counts two, its first his idle's copy;
+    /// the walk's copy is in it, the walk's clip isn't; the walk's clip's
+    /// `allow restart`, set before it played, is the clip's and its copy's;
+    /// his walk's copy stopped, the set holds his idle's alone.
+    #[test]
+    fn the_playing_set_holds_his_copies_a_whole_clips_first() {
+        let mut r = Run::new(|w, _| {
+            let walk_clip = w.variable("walk clip", "ScriptReference", None);
+            let idle_clip = w.variable("idle clip", "ScriptReference", None);
+            let walk = w.variable("walk", "ScriptReference", None);
+            let idle = w.variable("idle", "ScriptReference", None);
+            let first = w.variable("first", "ScriptReference", None);
+            let count = w.variable("count", "ValueInfo", Some(INT));
+            let copy_in = w.variable("copy in", "ValueInfo", Some(INT));
+            let clip_in = w.variable("clip in", "ValueInfo", Some(INT));
+            let walk_restarts = w.variable("walk restarts", "ValueInfo", Some(INT));
+            let idle_restarts = w.variable("idle restarts", "ValueInfo", Some(INT));
+            let clip_restarts = w.variable("clip restarts", "ValueInfo", Some(INT));
+            let phase = w.variable("phase", "ValueInfo", Some(INT));
+            w.script(
+                PATH,
+                |w| {
+                    clip(w, walk_clip, 1);
+                    for member in [
+                        ("animationinfo", "is layered"),
+                        ("sequence", "allow restart"),
+                    ] {
+                        let one = w.int(1);
+                        w.set(&[El::Local(walk_clip), El::Member(member.0, member.1)], one);
+                    }
+                    start(w, &[El::Local(walk_clip)], |w, o| {
+                        setref(w, &[El::Local(walk)], &[El::Local(o)]);
+                    });
+                    clip(w, idle_clip, 0);
+                    start(w, &[El::Local(idle_clip)], |w, o| {
+                        setref(w, &[El::Local(idle)], &[El::Local(o)]);
+                    });
+                },
+                |_| {},
+                |w| {
+                    let b = w.behaviour("walk");
+                    when(w, phase, 1, |w| {
+                        stop(w, &[El::Local(walk)]);
+                        let two = w.int(2);
+                        w.set(&[El::Local(phase)], two);
+                    });
+                    let n = w.rhs(INT, &[MY, PLAYING, El::Member("setvariant", "count")]);
+                    w.set(&[El::Local(count)], n);
+                    setref(
+                        w,
+                        &[El::Local(first)],
+                        &[MY, PLAYING, El::Member("setvariant", "first")],
+                    );
+                    for (element, flag) in [(walk, copy_in), (walk_clip, clip_in)] {
+                        let p = w.check_in(&[MY, PLAYING], 0, &[El::Local(element)]);
+                        let one = w.int(1);
+                        w.set(&[El::Local(flag)], one);
+                        w.end_block(p);
+                    }
+                    for (copy, flag) in [
+                        (walk, walk_restarts),
+                        (idle, idle_restarts),
+                        (walk_clip, clip_restarts),
+                    ] {
+                        let r = w.rhs(
+                            INT,
+                            &[El::Local(copy), El::Member("sequence", "allow restart")],
+                        );
+                        w.set(&[El::Local(flag)], r);
+                    }
+                    w.end_block(b);
+                },
+            );
+        });
+        r.tick();
+        r.tick();
+        let (walk, idle) = (r.copies(r.me, 1), r.copies(r.me, 0));
+        assert_eq!((walk.len(), idle.len()), (1, 1));
+        let (walk, idle) = (walk[0].0 as u32, idle[0].0 as u32);
+        assert!(walk < idle, "his walk started first");
+        assert_eq!(r.names("walk"), Some(Object::Sequence(walk)));
+        assert_eq!(r.local("count"), Value::Int(2));
+        assert_eq!(
+            r.names("first"),
+            Some(Object::Sequence(idle)),
+            "the whole clip's first"
+        );
+        assert_eq!(r.local("copy in"), Value::Int(1), "the copy is in the set");
+        assert_eq!(r.local("clip in"), Value::Null, "its clip isn't");
+        // A clip's `allow restart` goes with the copy it starts.
+        assert_eq!(r.local("clip restarts"), Value::Int(1));
+        assert_eq!(r.local("walk restarts"), Value::Int(1));
+        assert_eq!(r.local("idle restarts"), Value::Int(0));
+        // His walk's copy stopped: no longer in the set.
+        r.vm.set_local(r.id, "phase", Value::Int(1));
+        r.tick();
+        assert_eq!(r.local("phase"), Value::Int(2));
+        assert_eq!(r.local("count"), Value::Int(1));
+        assert_eq!(r.names("first"), Some(Object::Sequence(idle)));
+    }
+
+    /// A copy played out is its clip's no longer: the engine's sweep takes
+    /// a copy that doesn't loop and has nothing left out of its clip's
+    /// copies (aj-vm's 0x118568 through 0x1183f4, read as aids), so the
+    /// clip's next play on him makes a new one: his walk, not looping,
+    /// played out, then played again.
+    #[test]
+    fn a_clip_played_once_its_copy_played_out_is_a_new_copy() {
+        let mut r = Run::new(|w, _| {
+            let clip_var = w.variable("clip", "ScriptReference", None);
+            let phase = w.variable("phase", "ValueInfo", Some(INT));
+            w.script(
+                PATH,
+                |w| {
+                    clip(w, clip_var, 1);
+                    start(w, &[El::Local(clip_var)], |_, _| {});
+                },
+                |_| {},
+                |w| {
+                    let b = w.behaviour("walk");
+                    when(w, phase, 1, |w| {
+                        start(w, &[El::Local(clip_var)], |_, _| {});
+                        let two = w.int(2);
+                        w.set(&[El::Local(phase)], two);
+                    });
+                    w.end_block(b);
+                },
+            );
+        });
+        let me = r.me;
+        r.tick();
+        assert_eq!(r.copies(me, 1).len(), 1, "his walk started");
+        let mut ticks = 0;
+        while r.copies(me, 1)[0].1.plays() {
+            r.tick();
+            ticks += 1;
+            assert!(ticks < 200, "his walk never played out");
+        }
+        let n = r.world.sequences().len();
+        r.vm.set_local(r.id, "phase", Value::Int(1));
+        r.tick();
+        assert_eq!(r.local("phase"), Value::Int(2));
+        assert_eq!(r.world.sequences().len(), n + 1, "a new copy");
+        let plays: Vec<bool> = r.copies(me, 1).iter().map(|(_, s)| s.plays()).collect();
+        assert_eq!(plays, [false, true], "the played-out one, then the new one");
     }
 }

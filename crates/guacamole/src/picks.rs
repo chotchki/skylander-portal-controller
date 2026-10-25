@@ -716,6 +716,143 @@ pub(crate) mod tests {
         );
     }
 
+    /// Wrecking Ball's case (openspec AG.222, AH.184): his main script plays
+    /// his idle every step he isn't busy (`023_ForceFieldGrub_main.ai`
+    /// #765-#766, `tell my { start sequence palette [0] }`) while his
+    /// locomotion weights it; that play hands back his locomotion's own copy
+    /// of the idle, refused while it plays, so at his top speed, his run at
+    /// 100 and his idle at 0, his run draws whole and nothing piles up. A
+    /// script built with AH.13's writer: his locomotion's three clips played
+    /// in STARTUP as `global.bld`'s does, weighted every tick, then the idle
+    /// played as his file plays it.
+    #[test]
+    fn his_idle_played_every_step_is_his_locomotions_own() {
+        use std::sync::Arc;
+
+        use guac_formats::igz::Igz;
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_formats::script::{Class, Graph};
+        use guac_script::{Generator, Mode, Obj, Program, Role, Unit, Whitelist};
+
+        use crate::script_engine::NoEngine;
+        use crate::scripts::{
+            Files, Placed, WorldHost, headless_handles, headless_objects, headless_spawner,
+            hero_config, init_chain,
+        };
+
+        const PATH: &str = "C:/tfb/Synthetic/Ball.ai";
+        const MY: El<'static> = El::Member("optoplevelbehavior", "my");
+        const PALETTE: El<'static> = El::Member("animationinfo", "animation palette");
+        // His idle, walk and run, each weight his locomotion writes at his
+        // top speed.
+        const WRITTEN: [(i32, f32); 3] = [(0, 0.0), (1, 0.0), (3, 100.0)];
+        let mut b = IgzBuilder::new();
+        {
+            let w = &mut Writer::new(&mut b);
+            let clip = w.variable("clip", "ScriptReference", None);
+            let seqs = WRITTEN
+                .map(|(slot, _)| w.variable(&format!("state {slot}"), "ScriptReference", None));
+            w.script(
+                PATH,
+                |w| {
+                    for ((slot, _), seq) in WRITTEN.iter().zip(seqs) {
+                        let lhs = w.value(&[El::Local(clip)]);
+                        let rhs = w.reference(&[MY, PALETTE], None);
+                        let index = w.int(*slot);
+                        let o = w.op(Class::SetReference, "setref||=");
+                        w.refer(o, 0x1C, lhs);
+                        w.refer(o, 0x20, rhs);
+                        w.refer(o, 0x24, index);
+                        w.push(o);
+                        for member in [("animationinfo", "is layered"), ("sequence", "looping")] {
+                            let one = w.int(1);
+                            w.set(&[El::Local(clip), El::Member(member.0, member.1)], one);
+                        }
+                        let started = w.group(&[El::Local(clip)], None);
+                        let (p, o) = w.open(Class::StartSequence, "start sequence");
+                        w.refer(o, 0x1C, started);
+                        let l = w.value(&[El::Local(seq)]);
+                        let r = w.reference(&[El::Local(o)], None);
+                        let set = w.op(Class::SetReference, "set reference");
+                        w.refer(set, 0x1C, l);
+                        w.refer(set, 0x20, r);
+                        w.push(set);
+                        w.end_block(p);
+                    }
+                },
+                |_| {},
+                |w| {
+                    let walk = w.behaviour("walk");
+                    for ((_, weight), seq) in WRITTEN.iter().zip(seqs) {
+                        let weight = w.float(*weight);
+                        w.set(
+                            &[El::Local(seq), El::Member("animationinfo", "blend percent")],
+                            weight,
+                        );
+                    }
+                    // tell my { start sequence palette [0] }
+                    let me = w.group(&[MY], None);
+                    let (tell, o) = w.open(Class::Control, "control||||controlled");
+                    w.refer(o, 0x20, me);
+                    let palette = w.group(&[PALETTE], None);
+                    let (p, o) = w.open(Class::StartSequence, "start sequence");
+                    w.refer(o, 0x1C, palette);
+                    let zero = w.int(0);
+                    w.refer(o, 0x20, zero);
+                    w.end_block(p);
+                    w.end_block(tell);
+                    w.end_block(walk);
+                },
+            );
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let program = Arc::new(
+            Program::link(&[Unit {
+                name: "level",
+                role: Role::Other,
+                igz: &igz,
+                graph: &graph,
+            }])
+            .unwrap(),
+        );
+        let obj = Obj { unit: 0, index: 9 };
+        let files = Files {
+            placed: vec![Placed::named(obj, "ball", Some(PATH), 4)],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut c = hero_config(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        world.set_palette_of(obj, &palette());
+        let mut spawn = headless_spawner(1 << 40);
+        let me = handles[&obj];
+        for _ in 0..120 {
+            let mut host = WorldHost {
+                world: &mut world,
+                engine: &mut NoEngine,
+                generator: &mut Generator::seeded(1),
+                spawn: &mut spawn,
+            };
+            vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+            world.advance(1.0 / 60.0, &mut NoEngine);
+        }
+        let slots: Vec<u32> = world
+            .sequences()
+            .iter()
+            .filter(|s| s.actor == me && s.plays())
+            .filter_map(|s| world.clip_of(s).map(|(_, slot)| slot))
+            .collect();
+        assert_eq!(slots, [0, 1, 3], "one copy of each of his clips");
+        let p = Picked::read(&world, me, four(), 22.25).expect("his locomotion");
+        assert_eq!(p.weights(), [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(p.top(), "run");
+    }
+
     /// Nothing weighted with weight (the frame his scripts' influence
     /// slides back from 0): his idle alone at its time, never no clip.
     #[test]

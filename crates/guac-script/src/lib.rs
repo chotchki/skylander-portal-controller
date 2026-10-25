@@ -501,7 +501,11 @@
 //! whether the op's block runs. `remove` and `stop sequence` go once per
 //! object a set names, and a removal once per placement: one already off
 //! isn't removed again. A path through nothing answers for it, as in the
-//! original: a branch op skips, any other does nothing.
+//! original: a branch op skips, any other does nothing. A `start sequence`
+//! the host answers as starting nothing (no template, or a play it refuses)
+//! reads as nothing on a path after, not as the sequence it last started:
+//! the original writes what each start handed back, nothing included, into
+//! the op (openspec AH.184).
 //!
 //! What the VM does itself: a spawn of a structure or a set copies it (its
 //! structures and sets copied too) and runs the block with the copy as the
