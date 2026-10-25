@@ -152,6 +152,10 @@ guac-oracle = { path = "../guac-oracle" }
 tempfile = "3"
 # The builders (SfoBuilder, the sample disc) for the setup and extraction tests.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# A member taken out of a run's registry (`Members::without`): the disc tests'
+# stop at `Minion.ai` #842, the fall-back's subject since AG.160 modelled the
+# member it stopped on.
+guac-script = { path = "../guac-script", features = ["test-fixtures"] }
 # The live GameController check prints the backend's own log lines.
 tracing-subscriber = { workspace = true }
 

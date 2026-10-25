@@ -149,6 +149,19 @@ impl Members {
         self
     }
 
+    /// The registry without `namespace.name`, its entry and its name both
+    /// gone, so a script reaching it stops as on a member never registered
+    /// (the halt naming its two hashes): a test's switch for the stop a
+    /// member's absence made, the member registered again by the next
+    /// config built. False when it wasn't registered. Test-only (the
+    /// `test-fixtures` feature): nothing that ships unregisters a member.
+    #[cfg(feature = "test-fixtures")]
+    pub fn without(&mut self, namespace: &str, name: &str) -> bool {
+        let id = MemberId::named(namespace, name);
+        self.names.remove(&id);
+        self.entries.remove(&id).is_some()
+    }
+
     pub fn get(&self, id: MemberId) -> Option<(&MemberSpec, Place)> {
         self.entries.get(&id).map(|(s, p)| (s, *p))
     }

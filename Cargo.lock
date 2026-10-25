@@ -4443,6 +4443,7 @@ version = "0.1.0"
 dependencies = [
  "guac-formats",
  "guac-oracle",
+ "guac-script",
  "thiserror 1.0.69",
 ]
 

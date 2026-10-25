@@ -26,6 +26,7 @@
 
 use guac_ir::clip::Clip;
 use guac_ir::palette::{Palette, SlotEntry};
+use guac_motion::locomotion::{Handover, Play};
 use guac_script::Handle;
 
 use crate::scripts::ScriptWorld;
@@ -193,9 +194,26 @@ impl Picked {
         NAMES[best]
     }
 
+    /// Where this left him, for AG.30's locomotion to carry on from once his
+    /// scripts stop picking (openspec AH.198): the four as drawn, each where
+    /// it plays (its rate in AG.30's terms, 1 its authored speed),
+    /// and the speed read.
+    pub fn handover(&self) -> Handover {
+        Handover {
+            weights: self.weights(),
+            plays: self.four.0.map(|slot| {
+                self.clip_of(slot).map(|c| Play {
+                    time: f64::from(c.time),
+                    rate: c.rate * 0.01,
+                })
+            }),
+            speed: self.speed,
+        }
+    }
+
     /// `falling` while his fall clip carries weight, else `ground`: the
     /// report's air reads the clip the script's fall check brings in, there
-    /// being no state of the stand-in's to read.
+    /// being no state of AG.30's to read.
     pub fn air(&self) -> &'static str {
         if self.weight_of(self.four.0[3]) > 0.0 {
             "falling"
@@ -291,14 +309,14 @@ impl Picked {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use guac_ir::clip::{RotationTrack, Track, VecTrack};
     use guac_ir::palette::PaletteSlot;
     use guac_ir::{DumpIdentity, Sha256};
 
     use super::*;
 
-    fn clip(name: &str, duration: f32) -> Clip {
+    pub(crate) fn clip(name: &str, duration: f32) -> Clip {
         Clip {
             name: name.into(),
             duration,
@@ -321,7 +339,7 @@ mod tests {
 
     /// Eruptor's palette's locomotion slots as his file holds them: idle 0,
     /// walk 1, run 3, a lean 12 (additive) and his fall 57.
-    fn palette() -> Palette {
+    pub(crate) fn palette() -> Palette {
         let entry = |slot: u16, name: &str, length: f32, additive: bool| PaletteSlot {
             slot,
             name: None,
@@ -432,6 +450,33 @@ mod tests {
             (57, 70.0, 100.0),
         ]);
         assert_eq!((falling.top(), falling.air()), ("fall", "falling"));
+    }
+
+    /// AH.198: what AG.30's locomotion carries on from is the four as drawn, each
+    /// where it plays at AG.30's rate (1 its authored speed), the
+    /// speed read; a slot not playing hands over nothing.
+    #[test]
+    fn the_handover_is_the_four_as_drawn_where_they_play() {
+        use guac_motion::locomotion::Play;
+        let p = picked([
+            (0, 40.0, 100.0),
+            (1, 60.0, 124.0),
+            (3, 40.0, 117.0),
+            (57, 0.0, 100.0),
+        ]);
+        let h = p.handover();
+        assert_eq!(h.weights, p.weights());
+        assert_eq!(
+            h.plays,
+            [100.0f32, 124.0, 117.0, 100.0].map(|r| Some(Play {
+                time: 0.5,
+                rate: r * 0.01
+            }))
+        );
+        assert_eq!(h.speed, 14.0);
+        let mut no_fall = p.clone();
+        no_fall.clips.pop();
+        assert_eq!(no_fall.handover().plays[3], None);
     }
 
     /// Eased between steps: each weight from the step before's toward this

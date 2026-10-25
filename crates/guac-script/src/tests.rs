@@ -1003,6 +1003,40 @@ fn strict_mode_halts_naming_the_unmodelled_member() {
     );
 }
 
+/// A member taken out of the registry (`Members::without`, the disc tests'
+/// switch for the stop at `Minion.ai` #842) stops a script exactly where and
+/// as one never registered stops it, the halt naming its two hashes;
+/// registered, the script runs on.
+#[test]
+fn a_member_taken_out_stops_as_one_never_registered() {
+    let run = |c: Config| {
+        let mut vm = Vm::new(hurts(), c);
+        let id = vm.add(HANDLE, "Enemy_Chompy(1)", 0);
+        vm.step(&mut Bare).unwrap();
+        (vm.stopped(id).cloned(), vm.local(id, "count"))
+    };
+    let registered = || {
+        let mut c = Config::new(Mode::Play);
+        c.members
+            .value_cell("actorinfo", "health", MemberSpec::new(Kind::Int, 0.0, 0.0));
+        c
+    };
+    let (never, at) = run(Config::new(Mode::Play));
+    let never = never.expect("never registered, it stops");
+    assert_eq!(at, Some(Value::Int(1)), "at the member");
+    let id = MemberId::named("actorinfo", "health");
+    assert_eq!(
+        never.reason,
+        Reason::UnmodelledMember(format!("{:08x}.{:08x}", id.namespace, id.name))
+    );
+    assert_eq!(run(registered()), (None, Some(Value::Int(2))));
+    let mut c = registered();
+    assert!(c.members.without("actorinfo", "health"));
+    assert!(!c.members.without("actorinfo", "health"), "gone already");
+    assert!(c.members.get(id).is_none());
+    assert_eq!(run(c), (Some(never), Some(Value::Int(1))));
+}
+
 #[test]
 fn play_mode_stops_one_placements_script_and_runs_the_rest() {
     let healthy = program(|w| {

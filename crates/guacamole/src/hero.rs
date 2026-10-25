@@ -155,7 +155,7 @@ pub(crate) struct HeroBody {
 /// A hero's locomotion (AG.30; stand-in ledger: `locomotion`): stepped
 /// after him, with the weights the step before left, so his pose eases
 /// between steps as his transform does. While his scripts pick his clips on
-/// the VM (openspec AH.49, [`guacamole::picks`]) the stand-in isn't stepped
+/// the VM (openspec AH.49, [`guacamole::picks`]) AG.30's isn't stepped
 /// (one side picks): what they picked is `picked`, its weights the step
 /// before left `picked_before`.
 #[derive(Component, Debug, Clone)]
@@ -178,6 +178,43 @@ impl HeroGaits {
             picked_before: Vec::new(),
             steps: 0,
         }
+    }
+
+    /// This step's picks (`None` where his scripts weight nothing on him or
+    /// have stopped), the step before's weights kept for his pose's easing.
+    /// Where AG.30's locomotion draws him and has neither a walk nor a run (a
+    /// walker's, which AG.27 built with none of ours), `own` is asked for
+    /// the one his own scripts' locomotion gives him and it takes this one's
+    /// place (openspec AG.219). Where the picks end, AG.30's carries on
+    /// from where they left him (AH.198): his weights, his clips' times and
+    /// rates and his speed theirs, so a fall-back mid-run neither pops his
+    /// pose to the idle AG.30's stood in since his join nor sets him
+    /// off again at the speed AH.151's controller keeps him at.
+    pub(crate) fn pick(
+        &mut self,
+        now: Option<Picked>,
+        own: impl FnOnce(&Locomotion) -> Option<Locomotion>,
+    ) {
+        self.picked_before = self
+            .picked
+            .as_ref()
+            .map(Picked::by_slot)
+            .unwrap_or_default();
+        if now.is_none() {
+            let loops = self.locomotion.loops();
+            if loops.walk.is_none()
+                && loops.run.is_none()
+                && let Some(own) = own(&self.locomotion)
+            {
+                self.locomotion = own;
+                self.before = self.locomotion.weights();
+            }
+            if let Some(last) = &self.picked {
+                self.locomotion.take_over(last.handover());
+                self.before = self.locomotion.weights();
+            }
+        }
+        self.picked = now;
     }
 }
 
@@ -566,8 +603,8 @@ mod tests {
         }
     }
 
-    /// AH.49: while his scripts pick his clips (his gaits' `picked`), the
-    /// stand-in isn't stepped, one side picking: its weights, clips and step
+    /// AH.49: while his scripts pick his clips (his gaits' `picked`), AG.30's
+    /// locomotion isn't stepped, one side picking: its weights, clips and step
     /// count stay where they were as he walks; his gaits' own step count runs
     /// on. Without picks it steps as before.
     #[test]
@@ -616,6 +653,200 @@ mod tests {
         let g = app.world().get::<HeroGaits>(e).unwrap();
         assert_eq!((g.locomotion.steps(), g.steps), (10, 40));
         assert!(g.locomotion.moving(), "picking for him again");
+    }
+
+    /// AH.198: his scripts' picks ending mid-run (his fall-back at his 21.5
+    /// ft/s, AH.151's controller keeping him at it): AG.30's locomotion carries on
+    /// from where they left him, his run whole at its rate and place in its
+    /// stride, never his idle, which it stood in from his join to the stop,
+    /// and no set-off; his pose eased from the picks' weights.
+    #[test]
+    fn a_fall_back_mid_run_carries_the_stand_in_on_from_his_picks() {
+        use bevy::ecs::system::RunSystemOnce;
+        use guac_motion::locomotion::{Clip, Gaits, Loops};
+        use guacamole::picks::{Four, Picked, Weighted};
+        const DT: f32 = 1.0 / 60.0;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let mut hero = Hero::new(
+            guac_motion::tuning::eruptor_solid(),
+            guac_motion::tuning::Tuning::ERUPTOR,
+            Vec3::ZERO,
+            0.0,
+        );
+        hero.gait_speed = 21.5;
+        let loops = Loops {
+            idle: 4.0 / 3.0,
+            walk: Some(1.0667),
+            run: Some(0.6667),
+            fall: Some(0.8),
+        };
+        let e = app
+            .world_mut()
+            .spawn((
+                HeroBody {
+                    hero,
+                    exclude: Vec::new(),
+                    before: Vec3::ZERO,
+                },
+                HeroGaits::new(Locomotion::new(Gaits::ERUPTOR, loops)),
+            ))
+            .id();
+        // His run alone at 102.37 %, as his scripts pick it at 21.5 ft/s.
+        let run_rate = 21.5 / Gaits::ERUPTOR.run_speed;
+        let picks = |k: u32| Picked {
+            clips: vec![
+                Weighted {
+                    slot: 0,
+                    time: 0.9,
+                    rate: 100.0,
+                    weight: 0.0,
+                },
+                Weighted {
+                    slot: 1,
+                    time: 0.3,
+                    rate: 160.0,
+                    weight: 0.0,
+                },
+                Weighted {
+                    slot: 3,
+                    time: 0.1 + k as f32 * DT * run_rate,
+                    rate: run_rate * 100.0,
+                    weight: 100.0,
+                },
+            ],
+            four: Four([Some(0), Some(1), Some(3), Some(57)]),
+            speed: 21.5,
+        };
+        let step = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs_f32(DT));
+            app.world_mut().run_system_once(step_gaits).unwrap();
+        };
+        for k in 0..30 {
+            app.world_mut()
+                .get_mut::<HeroGaits>(e)
+                .unwrap()
+                .pick(Some(picks(k)), |_| None);
+            step(&mut app);
+        }
+        let last = picks(29);
+        let g = app.world().get::<HeroGaits>(e).unwrap();
+        assert_eq!(g.locomotion.weights(), [1.0, 0.0, 0.0, 0.0], "stood since");
+        // His script stops in play: from his fall-back no picks are read.
+        app.world_mut()
+            .get_mut::<HeroGaits>(e)
+            .unwrap()
+            .pick(None, |_| None);
+        step(&mut app);
+        let g = app.world().get::<HeroGaits>(e).unwrap();
+        assert_eq!(g.before, [0.0, 0.0, 1.0, 0.0], "eased from the picks'");
+        assert!(g.locomotion.moving(), "no set-off");
+        let w = g.locomotion.weights();
+        assert!(
+            w[0] == 0.0 && (w[2] - 1.0).abs() < 1e-6,
+            "his run whole: {w:?}"
+        );
+        let run = g.locomotion.play(Clip::Run);
+        assert!((run.rate - run_rate).abs() < 1e-6, "{run:?}");
+        let at = f64::from(last.clips[2].time) + f64::from(DT * run_rate);
+        assert!((run.time - at).abs() < 1e-6, "{run:?} against {at}");
+        for _ in 0..30 {
+            step(&mut app);
+            let w = app
+                .world()
+                .get::<HeroGaits>(e)
+                .unwrap()
+                .locomotion
+                .weights();
+            assert!(w[0] == 0.0 && (w[2] - 1.0).abs() < 1e-6, "{w:?}");
+        }
+    }
+
+    /// AG.219: a walker's AG.30 locomotion (no walk or run of ours, AG.27) is his
+    /// own scripts' wherever it draws him: at his picks' end his own takes
+    /// its place and carries on from the picks, his walk at their weight and
+    /// at the rate his own speed gives; never asked while his scripts pick
+    /// or once he has it. Without it the same end draws his idle.
+    #[test]
+    fn a_walkers_stand_in_is_his_own_where_it_draws_him() {
+        use guac_motion::locomotion::{Gaits, Loops};
+        use guacamole::picks::{Four, Picked, Weighted};
+        let joined = Loops {
+            idle: 1.3333,
+            walk: None,
+            run: None,
+            fall: Some(0.8),
+        };
+        let none = Gaits {
+            walk_speed: 0.0,
+            run_speed: 0.0,
+        };
+        let own = || {
+            Locomotion::new(
+                Gaits {
+                    walk_speed: 20.0,
+                    run_speed: 20.0,
+                },
+                Loops {
+                    walk: Some(1.3333),
+                    ..joined
+                },
+            )
+        };
+        let picks = Picked {
+            clips: vec![
+                Weighted {
+                    slot: 0,
+                    time: 0.2,
+                    rate: 100.0,
+                    weight: 0.0,
+                },
+                Weighted {
+                    slot: 1,
+                    time: 0.7,
+                    rate: 120.0,
+                    weight: 100.0,
+                },
+            ],
+            four: Four([Some(0), Some(1), None, Some(57)]),
+            speed: 24.0,
+        };
+        let at = Frame {
+            speed: 24.0,
+            falling: 0.0,
+            height: Some(0.005),
+            held: false,
+        };
+        let mut asked = 0;
+        let mut g = HeroGaits::new(Locomotion::new(none, joined));
+        g.pick(Some(picks.clone()), |_| {
+            asked += 1;
+            Some(own())
+        });
+        assert_eq!(asked, 0, "not while his scripts pick");
+        g.pick(None, |_| {
+            asked += 1;
+            Some(own())
+        });
+        assert_eq!(asked, 1);
+        assert_eq!(g.locomotion.loops().walk, Some(1.3333));
+        assert_eq!(g.before, [0.0, 1.0, 0.0, 0.0], "the picks' weights");
+        g.locomotion.step(1.0 / 60.0, at);
+        assert_eq!(g.locomotion.weights(), [0.0, 1.0, 0.0, 0.0]);
+        let rate = g.locomotion.play(guac_motion::locomotion::Clip::Walk).rate;
+        assert!((rate - 1.2).abs() < 1e-6, "24 over his 20: {rate}");
+        g.pick(None, |_| {
+            asked += 1;
+            None
+        });
+        assert_eq!(asked, 1, "he has his own");
+        let mut before = HeroGaits::new(Locomotion::new(none, joined));
+        before.pick(Some(picks), |_| None);
+        before.pick(None, |_| None);
+        before.locomotion.step(1.0 / 60.0, at);
+        assert_eq!(before.locomotion.weights(), [1.0, 0.0, 0.0, 0.0]);
     }
 
     /// The hero steps once a fixed step at 1/60 s, and on Avian's side of the

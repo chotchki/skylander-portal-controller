@@ -705,6 +705,15 @@ pub const MOVER_PLACEMENT: &str = "Synthetic_MovementUpdate";
 pub const MOVER_KEEP: &str = "Synthetic - Keep Walk";
 pub const MOVER_KEPT: &str = "Synthetic Kept Walk";
 
+/// AG.219's synthetic locomotion definitions ([`attack_with_locomotion`]):
+/// the placement in `global.bld`, the macro [`walker`]'s minion calls in his
+/// setup, and the states it gives him, each a slot of his palette and a
+/// movement speed (ft/s), as `Minion - Define Locomotion States` leaves a
+/// walker's: his idle standing, his walk (slot 1) and his run (slot 3).
+pub const LOCOMOTION_PLACEMENT: &str = "Synthetic_Animation";
+pub const LOCOMOTION_DEFINE: &str = "Synthetic - Define Locomotions";
+pub const LOCOMOTION_STATES: [(i32, f32); 3] = [(0, 0.0), (1, 9.0), (3, 17.0)];
+
 /// AH.24's synthetic fight (openspec AH.24; design decision 19), a scripted
 /// attack written with this writer, our numbers throughout:
 ///
@@ -780,7 +789,22 @@ pub fn attack() -> Attack {
 /// scripts.
 pub fn attack_with_mover() -> Attack {
     Attack {
-        global: attack_global_with(None, true),
+        global: attack_global_with(None, true, false),
+        ..attack()
+    }
+}
+
+/// [`attack_with_mover`] with AG.219's synthetic locomotion definitions in
+/// its `global.bld` ([`LOCOMOTION_PLACEMENT`], running `Macros_Animation.ai`,
+/// the TV's every-tick name), in the shape the original's keep them: its
+/// `locomotions`, a set of structures each naming a `character` and its
+/// `base locomotion states`, each state an `animation` (a clip of his
+/// palette) and a `movement speed`. [`walker`]'s minion calls its
+/// [`LOCOMOTION_DEFINE`] in his setup, which gives him [`LOCOMOTION_STATES`]
+/// there. It plays no clip and weights nothing.
+pub fn attack_with_locomotion() -> Attack {
+    Attack {
+        global: attack_global_with(None, true, true),
         ..attack()
     }
 }
@@ -1731,13 +1755,17 @@ fn walk_by_stick(w: &mut Writer<'_>) {
 
 /// [`attack`]'s `global.bld` entry: the portal manager and its globals.
 fn attack_global() -> Vec<u8> {
-    attack_global_with(None, false)
+    attack_global_with(None, false, false)
 }
 
 /// [`attack_global`], with AG.28's camera system beside the portal manager
 /// when `camera` says how it runs ([`camera::camera`]), and AH.151's mover
 /// update ([`attack_with_mover`]) when `mover`.
-fn attack_global_with(camera: Option<camera::CameraFault>, mover: bool) -> Vec<u8> {
+fn attack_global_with(
+    camera: Option<camera::CameraFault>,
+    mover: bool,
+    locomotion: bool,
+) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     let info = {
@@ -2063,6 +2091,20 @@ fn attack_global_with(camera: Option<camera::CameraFault>, mover: bool) -> Vec<u
         let script = mover_update(&mut b);
         placed.push(Some(actor_with(&mut b, MOVER_PLACEMENT, Some(script), 4)));
     }
+    if locomotion {
+        let actor = b.object(0, "tfbActorInfo", 0xF8);
+        let script = locomotion_definitions(&mut b, actor);
+        place(
+            &mut b,
+            actor,
+            LOCOMOTION_PLACEMENT,
+            Some(script),
+            4,
+            &[0.0; 6],
+        );
+        b.put_bytes(at(actor, 0xD0), &[0; 8]);
+        placed.push(Some(actor));
+    }
     let blocks = b.section(0x10);
     crate::igz::layouts::builder::list(&mut b, root, blocks, &placed);
     b.build()
@@ -2109,6 +2151,78 @@ fn mover_update(b: &mut IgzBuilder) -> Location {
         },
         |_| {},
     )
+}
+
+/// AG.219's synthetic locomotion definitions ([`attack_with_locomotion`]),
+/// the placement's actor `actor`: its `locomotions` as `global.bld`'s
+/// locomotion script keeps them, and [`LOCOMOTION_DEFINE`], which a
+/// walker's minion calls in his setup as his own scripts call `Minion -
+/// Define Locomotion States`: it finds that set on the placement, as `Anim -
+/// Initialize Character Locomotions` does, and gives the caller an entry of
+/// [`LOCOMOTION_STATES`], each state's clip his own palette's slot.
+fn locomotion_definitions(b: &mut IgzBuilder, actor: Location) -> Location {
+    let mut w = Writer::new(b);
+    let state_ty = w.op(Class::DefineStructure, "Anim - Locomotion State");
+    let data_ty = w.op(Class::DefineStructure, "Anim - Locomotion Data");
+    let animation = w.variable("animation", "ScriptReference", None);
+    let speed = w.variable("movement speed", "ValueInfo", Some("FloatMeasurement"));
+    let character = w.variable("character", "ScriptReference", None);
+    let states = w.variable("base locomotion states", "ScriptSet", None);
+    w.refer(states, 0x24, state_ty);
+    let locomotions = w.variable("locomotions", "ScriptSet", None);
+    w.refer(locomotions, 0x24, data_ty);
+    let info = frame_with(
+        &mut w,
+        "C:/tfb/Content/Levels/Includes/Global/scripts/Macros_Animation.ai",
+        |w| {
+            structure(w, state_ty, &[animation, speed]);
+            structure(w, data_ty, &[character, states]);
+        },
+        |_| {},
+        |w| {
+            let (p, _, _) = define_params(w, LOCOMOTION_DEFINE, &[]);
+            // find variable `locomotions` owned by the placement
+            let (f, found) = w.open(Class::FindVariable, "find variable|||owned by");
+            w.class_word(found, 0x1C, "ScriptSet");
+            w.refer(found, 0x20, data_ty);
+            w.text(found, 0x24, "locomotions");
+            w.word(found, 0x28, 0);
+            let owner = w.reference(&[El::Local(actor)], None);
+            w.refer(found, 0x30, owner);
+            let (count, last) = (
+                El::Member("setvariant", "count"),
+                El::Member("setvariant", "last"),
+            );
+            let entry = [El::Local(found), last];
+            w.inc(&[El::Local(found), count]);
+            setref(
+                w,
+                &[entry[0], entry[1], El::Local(character)],
+                &[El::Member("optoplevelbehavior", "my")],
+            );
+            let state = [entry[0], entry[1], El::Local(states)];
+            for (slot, v) in LOCOMOTION_STATES {
+                w.inc(&[state[0], state[1], state[2], count]);
+                // setref <its last state>.animation = animation palette [slot]
+                let lhs = w.value(&[state[0], state[1], state[2], last, El::Local(animation)]);
+                let rhs = w.reference(&[El::Member("animationinfo", "animation palette")], None);
+                let index = w.int(slot);
+                let o = w.op(Class::SetReference, "setref||=");
+                w.refer(o, 0x1C, lhs);
+                w.refer(o, 0x20, rhs);
+                w.refer(o, 0x24, index);
+                w.push(o);
+                let v = w.float(v);
+                w.set(&[state[0], state[1], state[2], last, El::Local(speed)], v);
+            }
+            w.end_block(f);
+            w.flow_end();
+            w.end_block(p);
+        },
+        |_| {},
+    );
+    w.declare(info, &[locomotions]);
+    info
 }
 
 /// A mover's walk kept for [`mover_update`] (openspec AH.151): the speed
@@ -2525,6 +2639,10 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     ],
                     scale,
                 );
+                // His locomotion's states, where the part defines them
+                // (AG.219, [`attack_with_locomotion`]; skipped elsewhere).
+                let define = w.op(Class::DefineMacro, LOCOMOTION_DEFINE);
+                call_stub(w, define, &[]);
                 if fault == WalkerFault::GatedAsk {
                     // The gameplay camera, as a camera's script leaves it.
                     let view = El::Member("viewportinfo", "default");
