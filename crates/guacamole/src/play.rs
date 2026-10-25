@@ -2474,7 +2474,21 @@ mod tests {
         fault: guac_formats::script::builder::WalkerFault,
         write: fn(&std::path::Path, guac_formats::script::builder::WalkerFault),
     ) -> (App, Entity) {
+        walker_app_unmodelling(dir, fault, write, None)
+    }
+
+    /// [`walker_app_writing`] with `GUAC_TEST_UNMODEL` asking for `unmodel`
+    /// (AG.221), as `main` hands the TV the key.
+    fn walker_app_unmodelling(
+        dir: &std::path::Path,
+        fault: guac_formats::script::builder::WalkerFault,
+        write: fn(&std::path::Path, guac_formats::script::builder::WalkerFault),
+        unmodel: Option<&str>,
+    ) -> (App, Entity) {
         let (mut app, tx) = play_app_walkers(dir, &[(WALKER_TOY, WALKER)]);
+        if let Some(member) = unmodel {
+            app.insert_resource(guacamole::unmodel::Unmodel(member.into()));
+        }
         write_attack_parts(dir);
         // His palette, Eruptor's under his name: what the join sets on his
         // minion's template.
@@ -2946,6 +2960,52 @@ mod tests {
                 .is_some_and(|&n| n >= 60),
             "the update's writes to his walk dropped: {dropped:?}"
         );
+    }
+
+    /// AG.221: `GUAC_TEST_UNMODEL` takes a registered member out of the TV's
+    /// run, so a walker whose minion reaches it in play stops there and
+    /// falls back as the disc's walkers did before AG.160: the same walker
+    /// without the key runs on, joined, and the key naming no registered
+    /// member leaves the run as it was.
+    #[test]
+    fn a_walker_stops_in_play_on_the_member_the_key_takes_out() {
+        use guac_formats::script::builder::WalkerFault;
+        const MEMBER: &str = "redoctaneperipheralscriptobject.size of region 1";
+        let fault = WalkerFault::InPlayOn("redoctaneperipheralscriptobject", "size of region 1");
+        let run = |unmodel: Option<&str>| {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, pad) = walker_app_unmodelling(
+                tmp.path(),
+                fault,
+                crate::test_support::hero_scripts::write_walker,
+                unmodel,
+            );
+            place(&mut app, 0, WALKER_TOY, "Synthetic");
+            until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+            test_pad::press(&mut app, pad, GamepadButton::East);
+            until(&mut app, "his scripts", |a| {
+                join(a).as_deref() == Some("joined")
+            });
+            // Well past the tick his minion reaches the member on.
+            for _ in 0..90 {
+                app.update();
+            }
+            let e = app.world().resource::<Play>().hero().expect("still in");
+            app.world().entity(e).get::<HeroRun>().unwrap().join.clone()
+        };
+        match run(Some(MEMBER)) {
+            Join::Off(why) => assert!(
+                // The registry has forgotten its name: the halt names its hashes.
+                why.contains("#97 OpSetValue: unmodelled member 04b51d94.d81e088c"),
+                "{why}"
+            ),
+            other => panic!("with the member out: {other:?}"),
+        }
+        let none = run(None);
+        assert!(matches!(none, Join::Joined(_)), "the member in: {none:?}");
+        // Refused: not registered, so the run is the one without the key.
+        assert!(matches!(run(Some("synthetic.nothing")), Join::Joined(_)));
+        assert!(matches!(run(Some("")), Join::Joined(_)));
     }
 
     /// AG.219: a walker whose script stops in play walks drawn on his own

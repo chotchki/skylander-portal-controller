@@ -4506,6 +4506,7 @@ dependencies = [
  "guac-oracle",
  "guac-script",
  "guac-server",
+ "guacamole",
  "http-body-util",
  "image",
  "mp4",

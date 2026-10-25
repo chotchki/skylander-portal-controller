@@ -423,39 +423,44 @@ fn run_tv(
         .insert_resource(Setup(setup_view))
         .insert_resource(Framing(mode))
         .insert_resource(DataRoot(root))
-        .insert_resource(latency)
-        .add_plugins((
-            ServerBridge,
-            // The TV, composed here (openspec AQ.7): a lane adding a screen
-            // or what draws under one edits this list or its own plugin.
-            (
-                // Before `Tv`'s screens, whose `Titles` needs only what this
-                // registers.
-                title::TitleShader,
-                Tv,
-                // The cards' turntables (AE.13): the character material, the
-                // game's glow and the per-slot scenes.
-                (CharacterShadingPlugin, GlowPlugin, TurntablePlugin),
-                // The level, loaded behind the portal from the Giants pick
-                // (AG.19); the warm compiles its keys.
-                level::LevelPlugin,
-                // The start's pass (AE.25): every pipeline the TV draws
-                // Giants with, before the first screen a phone or the setup
-                // acts on.
-                prepare::PreparePlugin,
-            ),
-            input::InputRouter,
-            Picker,
-            extraction::ExtractPlugin,
-            intro_player::IntroPlugin,
-            physics::SeamPlugin,
-            play::PlayPlugin,
-            alert::AlertPlugin,
-            progress::ProgressPlugin,
-            hero_scripts::HeroScriptsPlugin,
-            tints::CloneTintsPlugin,
-            creatures::CreaturesPlugin,
-        ));
+        .insert_resource(latency);
+    // AG.221: a member taken out of the TV's run, `test-hooks` builds only.
+    #[cfg(feature = "test-hooks")]
+    if let Some(unmodel) = guacamole::unmodel::unmodel_request(|key| std::env::var(key).ok()) {
+        app.insert_resource(unmodel);
+    }
+    app.add_plugins((
+        ServerBridge,
+        // The TV, composed here (openspec AQ.7): a lane adding a screen
+        // or what draws under one edits this list or its own plugin.
+        (
+            // Before `Tv`'s screens, whose `Titles` needs only what this
+            // registers.
+            title::TitleShader,
+            Tv,
+            // The cards' turntables (AE.13): the character material, the
+            // game's glow and the per-slot scenes.
+            (CharacterShadingPlugin, GlowPlugin, TurntablePlugin),
+            // The level, loaded behind the portal from the Giants pick
+            // (AG.19); the warm compiles its keys.
+            level::LevelPlugin,
+            // The start's pass (AE.25): every pipeline the TV draws
+            // Giants with, before the first screen a phone or the setup
+            // acts on.
+            prepare::PreparePlugin,
+        ),
+        input::InputRouter,
+        Picker,
+        extraction::ExtractPlugin,
+        intro_player::IntroPlugin,
+        physics::SeamPlugin,
+        play::PlayPlugin,
+        alert::AlertPlugin,
+        progress::ProgressPlugin,
+        hero_scripts::HeroScriptsPlugin,
+        tints::CloneTintsPlugin,
+        creatures::CreaturesPlugin,
+    ));
     // AH.25's dev entry, in a dev build only.
     if let Some(entry) = dev_entry::plugin(cfg!(feature = "dev-tools"), entry_asks) {
         app.add_plugins(entry);

@@ -200,6 +200,9 @@ struct Opts {
     discover: bool,
     cells: &'static [Cell],
     without: &'static [(&'static str, &'static str)],
+    /// `GUAC_TEST_UNMODEL`'s value (AG.221), taken out through the TV's own
+    /// [`guacamole::unmodel::take_out`] rather than `without`'s pairs.
+    key: Option<&'static str>,
 }
 
 const STRICT: Opts = Opts {
@@ -207,12 +210,14 @@ const STRICT: Opts = Opts {
     discover: false,
     cells: &[],
     without: &[],
+    key: None,
 };
 const DISCOVER: Opts = Opts {
     mode: Mode::Strict,
     discover: true,
     cells: &[],
     without: &[],
+    key: None,
 };
 /// Tree Rex strict on the registry: the two members his walk reached past it
 /// until AH.49 and AG.160 modelled them, his minion's first tick writing
@@ -241,6 +246,9 @@ fn add_cells(config: &mut guac_script::Config, o: Opts) {
             config.members.without(ns, name),
             "{ns}.{name}: not registered, so not taken out"
         );
+    }
+    if let Some(key) = o.key {
+        guacamole::unmodel::take_out(config, key).unwrap_or_else(|e| panic!("{key}: {e}"));
     }
 }
 
@@ -3258,6 +3266,7 @@ const PLAY: Opts = Opts {
     discover: false,
     cells: &[],
     without: &[],
+    key: None,
 };
 /// [`PLAY`] with `collisioninfo.object collisions` taken out of the registry
 /// (`Members::without`, test-only): the member AG.160 modelled, which
@@ -3268,6 +3277,13 @@ const PLAY: Opts = Opts {
 /// what it reads then). Nothing else in the run changes.
 const PLAY_842: Opts = Opts {
     without: &[("collisioninfo", "object collisions")],
+    ..PLAY
+};
+/// [`PLAY_842`] the way a `test-hooks` TV is asked for it (AG.221):
+/// `GUAC_TEST_UNMODEL=collisioninfo.object collisions`, through the TV's own
+/// `take_out`.
+const PLAY_KEY: Opts = Opts {
+    key: Some("collisioninfo.object collisions"),
     ..PLAY
 };
 
@@ -4424,4 +4440,133 @@ fn tree_rexs_clips_on_his_scripts_against_ag12s_recordings() {
     assert!(records_n > 4_000, "{records_n}");
     assert_eq!(within, records_n, "{missed:?}");
     assert_eq!(rates_within, rates);
+}
+
+/// AG.221 headless: Ninjini on the run `GUAC_TEST_UNMODEL=collisioninfo.object
+/// collisions` makes ([`PLAY_KEY`]: the key taken out by the TV's own
+/// `take_out`, the registry the TV's listing builds) stops at `Minion.ai`
+/// #842 and falls back as [`PLAY_842`] does: the same stop on the same step
+/// with the same reason, at his scripts' top speed on the controller, the
+/// view handed back and following him. A name the registry doesn't hold is
+/// refused.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn ninjini_falls_back_on_the_run_the_key_makes() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut runs = Vec::new();
+    for (what, o) in [("PLAY_842", PLAY_842), ("PLAY_KEY", PLAY_KEY)] {
+        let mut w = joined_on_the_tv(&l, NINJINI, o, 120, true, true);
+        let m = w.minion.expect("joined");
+        assert!(w.vm.set_up(m), "his setup ran through");
+        let top = Movement::read(&w.vm, m)
+            .expect("his movement parameters")
+            .ground_max_speed;
+        let walk = walk_off(&mut w, 240);
+        println!(
+            "{NINJINI} {what}: stop {:?}; after it {} steps, walk top {:.4} last {:.4} ft/s (his description's {top}), {:.2} m walked; the TV's eye {:.3} m from his feet at the hand-back, {:.3} at the end, moved {:.2} m; load {:.2}",
+            walk.stop,
+            walk.steps,
+            walk.top,
+            walk.last,
+            walk.walked,
+            walk.gap.0,
+            walk.gap.1,
+            walk.eye_moved,
+            load1()
+        );
+        runs.push((top, walk));
+    }
+    let (top, key) = &runs[1];
+    let (when, why) = key.stop.as_ref().expect("his script stops in play");
+    assert!(
+        why.contains("Minion.ai #842") && why.contains("unmodelled member 075b657b.bb4361e7"),
+        "{why}"
+    );
+    assert!(*when > 120, "after his join's 120 steps standing: {when}");
+    assert_eq!(key.stop, runs[0].1.stop, "the stop PLAY_842 makes");
+    assert_eq!(key.steps, runs[0].1.steps);
+    assert!((key.top - top).abs() < 1e-3, "at his top speed: {key:?}");
+    assert!(key.walked > 10.0, "{key:?}");
+    assert!(
+        (key.gap.1 - key.gap.0).abs() < 0.3 && key.eye_moved > 10.0,
+        "the view following him: {key:?}"
+    );
+    // Refused, the run is the registry as it stands: no stop.
+    let mut config = guacamole::scripts::smash_config(Mode::Play);
+    assert!(guacamole::unmodel::take_out(&mut config, "collisioninfo.no such member").is_err());
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
+/// AG.221's reach on the dump: every character on the run the key makes
+/// ([`PLAY_KEY`]), joined as the TV joins him, 120 steps standing and the
+/// stick on for 120: which stop in play at `Minion.ai` #842, and what each
+/// has of his scripts' walk and run (AG.219's kinds). Twelve do: the nine
+/// [`falling_back`] names (walk alone) plus `104_OilBlazer` (walk alone) and
+/// Tree Rex's two (`112_TitanLife`, `112_TitanLife_Alt`: a walk AND a run),
+/// the walker a Mac run forcing the fall-back reads the run on.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn the_key_stops_twelve_and_tree_rex_has_a_walk_and_a_run() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut stopped: BTreeMap<(bool, bool), Vec<String>> = BTreeMap::new();
+    let mut ran_on: BTreeMap<(bool, bool), Vec<String>> = BTreeMap::new();
+    for load in l.walkers.iter().map(|w| w.load_file.clone()) {
+        let mut w = W::new(&l, &load, PLAY_KEY).on_the_tvs_view();
+        w.hold_walk = true;
+        w.hand_back_view = true;
+        w.step().unwrap();
+        w.step().unwrap();
+        w.join().unwrap();
+        for _ in 0..120 {
+            w.step().unwrap();
+        }
+        let states = walkers::locomotion_states(&w.vm, &w.world, w.hero)
+            .unwrap_or_else(|| panic!("{load}: his locomotion states"));
+        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(&load));
+        let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(&load));
+        let g = walkers::ScriptedGaits::of(
+            &states,
+            |slot| palette.clip(slot as u16).map(|c| c.name.as_str()),
+            at(&hero.locomotion.walk).map(|(n, s)| (n, s.map(u32::from))),
+            at(&hero.locomotion.run).map(|(n, s)| (n, s.map(u32::from))),
+        );
+        let kind = g.map_or((false, false), |g| (g.walk, g.run));
+        let walk = walk_off(&mut w, 120);
+        let at_842 = walk.stop.as_ref().is_some_and(|(_, why)| {
+            why.contains("Minion.ai #842") && why.contains("unmodelled member 075b657b.bb4361e7")
+        });
+        println!(
+            "{load}: kind (walk, run) {kind:?}; stop {:?}",
+            walk.stop.as_ref().map(|(n, why)| (n, why.len()))
+        );
+        match walk.stop {
+            Some(_) => {
+                assert!(at_842, "{load}: stopped elsewhere: {:?}", walk.stop);
+                stopped.entry(kind).or_default().push(load);
+            }
+            None => ran_on.entry(kind).or_default().push(load),
+        }
+    }
+    for (kind, who) in &stopped {
+        println!("stopped, (walk, run) {kind:?}: {} {who:?}", who.len());
+    }
+    for (kind, who) in &ran_on {
+        println!("ran on, (walk, run) {kind:?}: {}", who.len());
+    }
+    let mut all: Vec<&str> = stopped.values().flatten().map(String::as_str).collect();
+    all.sort_unstable();
+    let mut twelve = falling_back();
+    twelve.extend(["104_OilBlazer", "112_TitanLife", "112_TitanLife_Alt"]);
+    twelve.sort_unstable();
+    assert_eq!(all, twelve, "the key stops these twelve");
+    assert_eq!(
+        stopped.get(&(true, true)).map(Vec::as_slice),
+        Some(&["112_TitanLife".to_owned(), "112_TitanLife_Alt".to_owned()][..]),
+        "Tree Rex's two, a walk and a run"
+    );
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
 }
