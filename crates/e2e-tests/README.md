@@ -276,8 +276,9 @@ walking fixture's part holds no portal manager, so its hero never joins:
 its spawn expects exactly that off (`WALKING_SCRIPTS_OFF`), and no other
 test expects one. The same `tv` reads hold the camera to its scripts
 (openspec AG.28, `camera_scripts_held`): once one of them, the portal
-manager or the hero's own script stops in play (AG.191, AG.190) the TV's
-chain follows him from where they left the view and every follow check
+manager or the hero's own script stops in play (AG.191, AG.190; the last
+until the next hero's scripts join, AG.211) the TV's chain follows him
+from where they left the view and every follow check
 still passes on it, so a read whose `hero.camera.scripts` is `off` fails
 with the TV's reason unless the test calls `expect_camera_scripts_off(base,
 because)`; `none` (no hero joined yet, or a part with no camera system:

@@ -40,7 +40,8 @@
 //!   of scripted templates made outside it added; then the camera's scripts
 //!   judged ([`CameraScripts`], AG.28): theirs the view once a hero has
 //!   joined and they place the viewport, handed back for good once one of
-//!   them or the portal manager stops (AG.191). After the hero's step, the
+//!   them or the portal manager stops (AG.191), and from his fall-back until
+//!   the next hero's scripts join (AG.190, AG.211). After the hero's step, the
 //!   engine's frame ([`advance_scripts`], [`Frame::Actors`]): the sequences
 //!   on, what the scripts threw flying through the seam.
 //! - His script stopped in play (AG.27's fall-back, stand-in ledger: `walker`):
@@ -50,8 +51,11 @@
 //!   host (AH.151, [`ScriptWorld::hand_back_walk`]: the mover update would
 //!   hand the engine the velocity his stopped minion no longer keeps), and
 //!   the view handed to the TV's chain where it stood (AG.190: nothing
-//!   steps his camera target off the joined run); a take-off is no
-//!   fall-back and leaves the scripts the view.
+//!   steps his camera target off the joined run) until the next hero's
+//!   scripts join the run (AG.211: their activation makes his camera target
+//!   afresh on his minion, the camera's frame never stopped, so their next
+//!   write takes the view back, [`ScriptWorld::hand_back_view_until_a_join`]);
+//!   a take-off is no fall-back and leaves the scripts the view.
 //! - The engine the host reads ([`TvEngine`], decision 21): the hero's
 //!   controller by query on his entity, Avian's side of the seam, the
 //!   follow camera's view, each standing prop's body as its placement (a
@@ -1042,7 +1046,8 @@ pub(crate) fn step_scripts(
     runtime.steps += 1;
     // The camera's scripts (openspec AG.28): theirs the view once a hero has
     // joined their run and they place the viewport, the chain's for good once
-    // one of them stops in play.
+    // one of them stops in play, and from a hero's fall-back until the next
+    // hero joins (AG.190, AG.211).
     let now = camera_state(
         &camera,
         &runtime,
@@ -1054,7 +1059,7 @@ pub(crate) fn step_scripts(
         match &now {
             CameraScripts::On => info!("the camera's scripts have the view"),
             CameraScripts::Stopped(why) => warn!(reason = %why, "the camera's scripts stopped"),
-            CameraScripts::Idle(_) => {}
+            CameraScripts::HeroOff(_) | CameraScripts::Idle(_) => {}
         }
         *camera = now;
     }
@@ -1106,13 +1111,14 @@ pub(crate) fn step_scripts(
             // the velocity his stopped minion no longer keeps.
             world.hand_back_walk(e.to_bits());
             // And the view the TV's (openspec AG.190): nothing steps his
-            // camera target once he's off the player loop's joined run.
+            // camera target once he's off the player loop's joined run, until
+            // the next hero's scripts join it (AG.211).
             if *camera == CameraScripts::On {
                 let reason =
                     format!("his scripts stopped, so nothing steps his camera target: {why}");
-                warn!(load_file = %r.load_file, %reason, "the camera's scripts stopped");
-                world.hand_back_view();
-                *camera = CameraScripts::Stopped(reason);
+                warn!(load_file = %r.load_file, %reason, "the camera's scripts lose the view until a hero joins their run");
+                world.hand_back_view_until_a_join();
+                *camera = CameraScripts::HeroOff(reason);
             }
         }
         r.join = Join::Off(why);
@@ -1151,7 +1157,9 @@ pub(crate) fn step_scripts(
 /// play (the view handed back to the TV's camera); driving once a hero has
 /// joined their run and they place the viewport, from then on; idle, with
 /// why, before that or with no camera system in the part. A hero falling
-/// back stops them too ([`step_scripts`], AG.190), a take-off doesn't.
+/// back hands the view back too ([`step_scripts`], AG.190), until the next
+/// hero's scripts join and the camera's scripts write it again (AG.211:
+/// [`ScriptWorld::hero_template`] gives it back); a take-off doesn't.
 fn camera_state(
     now: &CameraScripts,
     runtime: &ScriptRuntime,

@@ -643,8 +643,9 @@ pub(crate) struct GaitStep {
     /// vertical part alone (AG.58).
     pub held: bool,
     /// The way he faces as the step left him, degrees in [0, 360): his
-    /// scripts' heading on his scripts, the controller's on the stand-in;
-    /// what `hero.heading` reports (openspec AG.188).
+    /// scripts' heading on his scripts, the controller's on the
+    /// stand-in (stand-in ledger: `walker`); what `hero.heading` reports
+    /// (openspec AG.188).
     pub facing: f32,
 }
 
