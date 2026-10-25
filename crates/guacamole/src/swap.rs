@@ -109,12 +109,13 @@ mod tests {
     use guac_formats::script::builder::{
         ATTACK_BALL, ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HELPER, ATTACK_KEPT_HEALTH,
         SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW, WALKER_DEF,
-        WALKER_LOAD, WALKER_SCALE, WalkerFault,
+        WALKER_LOAD, WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WalkerFault,
     };
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
     use guac_motion::scenarios;
     use guac_motion::seam::PhysicsSeam;
+    use guac_motion::stick::Stick;
     use guac_script::{Generator, Halt, Handle, Mode, Obj, PlacementId, Value, Vm, Whitelist};
     use guacamole::level_scripts;
     use guacamole::script_engine::{Engine, Pad};
@@ -175,6 +176,8 @@ mod tests {
         player_loop: Option<guacamole::player_loop::PlayerLoop>,
         /// Whether his minion has activated (the loop's `joined`).
         joined: bool,
+        /// The first pad's stick each step reads.
+        stick: Stick,
     }
 
     impl Run {
@@ -253,6 +256,7 @@ mod tests {
                 steps: 0,
                 player_loop: None,
                 joined: false,
+                stick: Stick::CENTRED,
             }
         }
 
@@ -279,9 +283,9 @@ mod tests {
             }
             self.world.read_pads([
                 Pad {
+                    stick: self.stick,
                     actions,
                     connected: true,
-                    ..Pad::default()
                 },
                 Pad::default(),
             ]);
@@ -767,6 +771,77 @@ mod tests {
             );
             let running = run.his_running();
             assert!(running.is_empty(), "{fault:?}: nor after: {running:?}");
+        }
+    }
+    /// AG.171 (found at AG.27's verify: Wham-Shell and Drill Sergeant set
+    /// up and stood still): a parameter bound to `its` keeps its own
+    /// variable, whatever a `find subset` left `its` on. The synthetic
+    /// walker's mover walks him only once his lookup hands his description
+    /// back first in the set it binds to `its`, the call coming right after
+    /// a `find subset` over his creature info that reads its right side
+    /// through nothing; read as that candidate, `its` put his creature info
+    /// first in the set and he stood still, as the two did when
+    /// `PortalControl.ai`'s legendary lookup left `its` on a toy table row
+    /// before `Movement - Add Mover` looked up their joined data.
+    #[test]
+    fn a_walker_walks_though_a_find_subset_left_its_on_a_candidate() {
+        let (mut run, minion) = walker_joined(WalkerFault::None, 1);
+        assert!(run.vm.set_up(minion));
+        let decoys = run
+            .vm
+            .local(minion, "decoys")
+            .map(|v| run.vm.value(v))
+            .and_then(|v| run.vm.set(v).map(<[Value]>::len));
+        assert_eq!(decoys, Some(1), "the candidate `its` is left on");
+        let from = run.bench.hero.pivot;
+        let steps = 12;
+        for _ in 0..steps {
+            run.step([false; 4]);
+        }
+        let walk = run.bench.hero.walk.velocity;
+        assert!(
+            (walk.x.hypot(walk.z) - WALKER_SPEED).abs() < 1e-3,
+            "his walk {walk:?}, his setup wrote {WALKER_SPEED} ft/s"
+        );
+        let moved = (run.bench.hero.pivot - from).length();
+        let want = WALKER_SPEED * guac_motion::tuning::FOOT * steps as f32 / 60.0;
+        assert!(
+            (moved - want).abs() < 0.02 * want,
+            "moved {moved} m in {steps} steps, the mover wrote {want}"
+        );
+    }
+    /// AG.172 (found at AG.27's verify: Tree Rex turned the other way round
+    /// from the oracle's at AG.12's 180° swings): a target straight behind
+    /// turns him the positive way, either way round. The synthetic walker
+    /// turns as `Movement - Face and Move` does, through
+    /// `system.normalized angle`; held to the right until he faces it
+    /// (-90°), the stick swung full left asks for 90°, 180° on (and from
+    /// 90°, -90° asks for -180°): he turns up by his 720°/s x the stick
+    /// over the tick both times. On the [-180, 180) angle he turned down.
+    #[test]
+    fn a_walker_straight_behind_turns_the_positive_way() {
+        let (right, left) = (Stick::from_bytes(255, 128), Stick::from_bytes(0, 128));
+        for (first, then) in [(right, left), (left, right)] {
+            let (mut run, _) = walker_joined(WalkerFault::None, 1);
+            run.stick = first;
+            for _ in 0..30 {
+                run.step([false; 4]);
+            }
+            let faced = first.push(0.0).heading;
+            let before = run.bench.hero.facing;
+            assert!(
+                (before - faced).rem_euclid(360.0) < 1e-4,
+                "he faces the first stick's {faced}°: {before}"
+            );
+            run.stick = then;
+            run.step([false; 4]);
+            let turned = (run.bench.hero.facing - before + 180.0).rem_euclid(360.0) - 180.0;
+            let want = WALKER_TURN * then.push(0.0).strength / 60.0;
+            assert!(
+                (turned - want).abs() < 1e-3,
+                "from {before}° toward {}°: turned {turned}°, want +{want}°",
+                then.push(0.0).heading
+            );
         }
     }
 }

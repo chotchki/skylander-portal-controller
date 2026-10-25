@@ -1343,18 +1343,159 @@ fn call_stub(w: &mut Writer<'_>, stub: Location, args: &[(&str, &str, Location)]
 /// Opens a macro definition `name` with an INTERFACE declaring `params`
 /// (name and class), each binding a zero: returns its position and object.
 fn define_with(w: &mut Writer<'_>, name: &str, params: &[(&str, &str)]) -> (usize, Location) {
+    let (p, def, _) = define_params(w, name, params);
+    (p, def)
+}
+
+/// [`define_with`], with its INTERFACE's parameter ops in `params`' order,
+/// what its body reads them through.
+fn define_params(
+    w: &mut Writer<'_>,
+    name: &str,
+    params: &[(&str, &str)],
+) -> (usize, Location, Vec<Location>) {
     let (p, def) = w.open(Class::DefineMacro, name);
     let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+    let mut ops = Vec::with_capacity(params.len());
     for (n, class) in params {
         let o = parameter_of(w, n, class, def);
         let zero = w.int(0);
         w.refer(o, 0x30, zero);
         w.push(o);
+        ops.push(o);
     }
     let flow = w.flow(Class::FlowMacro);
     w.push(flow);
     w.close(iface);
-    (p, def)
+    (p, def, ops)
+}
+
+/// `set [set] <set> <code> <element>` (`OpChangeMembership`: 0 adds, 1
+/// takes out), its set a `SetStack` and its element a `ScriptGroupStack`
+/// as Giants' files write them.
+fn change_membership(w: &mut Writer<'_>, set: &[El<'_>], code: u32, element: &[El<'_>]) {
+    let lhs = w.stack(StackClass::Set, set);
+    let rhs = w.group(element, None);
+    let o = w.op(Class::ChangeMembership, "set [set]||to");
+    w.refer(o, 0x1C, lhs);
+    w.word(o, 0x20, code);
+    w.refer(o, 0x24, rhs);
+    w.push(o);
+}
+
+/// `Movement - Face and Move`'s turn in our ops (openspec AG.172): with the
+/// first player's stick held, his facing turned toward the stick's way
+/// against the gameplay camera's facing by `rate` (a path to his turn
+/// rate, °/s) x the stick's magnitude over the tick, both and their
+/// difference through `system.normalized angle`, down where the difference
+/// reads under 0 and up otherwise, landing on the stick's way when it's
+/// within the turn. `vars`: the stick's way, his facing, the difference
+/// and the turn, each a float variable.
+fn turn_to_stick(w: &mut Writer<'_>, vars: [Location; 4], rate: &[El<'_>]) {
+    let [desired, mine, dif, turn] = vars;
+    let normalized = [El::Member("system", "normalized angle")];
+    let my_facing = [
+        El::Member("optoplevelbehavior", "my"),
+        El::Member("matrixmeasurement", "orientation"),
+        El::Member("orientationmeasurement", "facing"),
+    ];
+    let stick = |part: &'static str| {
+        [
+            El::Member("scriptcontroller", "controller 1"),
+            El::Member("scriptcontroller", "main stick"),
+            El::Member("joystickmeasurement", part),
+        ]
+    };
+    let float = |w: &mut Writer<'_>, path: &[El<'_>]| w.rhs("FloatMeasurement", path);
+    let zero = w.int(0);
+    let held = w.check(&stick("magnitude"), 4, zero);
+    // The stick's way against the camera, then his facing, then the
+    // difference, each normalized.
+    let heading = float(w, &stick("heading"));
+    let camera = float(
+        w,
+        &[
+            El::Member("viewportinfo", "default"),
+            El::Member("matrixmeasurement", "orientation"),
+            El::Member("orientationmeasurement", "facing"),
+        ],
+    );
+    let way = w.expr(heading, Some((0, camera)));
+    w.set(&normalized, way);
+    let n = float(w, &normalized);
+    w.set(&[El::Local(desired)], n);
+    let f = float(w, &my_facing);
+    w.set(&normalized, f);
+    let n = float(w, &normalized);
+    w.set(&[El::Local(mine)], n);
+    let (d, m) = (
+        float(w, &[El::Local(desired)]),
+        float(w, &[El::Local(mine)]),
+    );
+    let apart = w.expr(d, Some((1, m)));
+    w.set(&normalized, apart);
+    let n = float(w, &normalized);
+    w.set(&[El::Local(dif)], n);
+    // The turn: his rate x the tick's seconds (frame rate scale / 60) x the
+    // stick's magnitude.
+    let (r, frs) = (
+        float(w, rate),
+        float(w, &[El::Member("system", "frame rate scale")]),
+    );
+    let per = w.expr(r, Some((2, frs)));
+    w.set(&[El::Local(turn)], per);
+    let (t, sixty) = (float(w, &[El::Local(turn)]), w.float(60.0));
+    let per = w.expr(t, Some((3, sixty)));
+    w.set(&[El::Local(turn)], per);
+    let (t, s) = (float(w, &[El::Local(turn)]), float(w, &stick("magnitude")));
+    let per = w.expr(t, Some((2, s)));
+    w.set(&[El::Local(turn)], per);
+    // Within the turn he lands on the stick's way; past it he turns by the
+    // turn, down under 0 and up otherwise.
+    let lands = |w: &mut Writer<'_>| {
+        let d = float(w, &[El::Local(desired)]);
+        w.set(&my_facing, d);
+    };
+    let by = |w: &mut Writer<'_>, operator: u32| {
+        let (m, t) = (float(w, &[El::Local(mine)]), float(w, &[El::Local(turn)]));
+        let to = w.expr(m, Some((operator, t)));
+        w.set(&my_facing, to);
+    };
+    let zero = w.int(0);
+    let below = w.check(&[El::Local(dif)], 3, zero);
+    {
+        let (z, t) = (w.int(0), float(w, &[El::Local(turn)]));
+        let least = w.expr(z, Some((1, t)));
+        let near = w.check(&[El::Local(dif)], 2, least);
+        lands(w);
+        let far = w.otherwise(near);
+        by(w, 1);
+        w.close(far);
+    }
+    let above = w.otherwise(below);
+    {
+        let t = float(w, &[El::Local(turn)]);
+        let near = w.check(&[El::Local(dif)], 0, t);
+        lands(w);
+        let far = w.otherwise(near);
+        by(w, 0);
+        w.close(far);
+    }
+    w.close(above);
+    w.end_block(held);
+}
+
+/// `find subset <lhs> <relation> <rhs>`, `lhs` a path with one [`El::Null`]
+/// slot and `rhs` read through a `ValueRHSVariant`, as Giants' files write
+/// them: returns its position; the block follows.
+fn find_subset(w: &mut Writer<'_>, lhs: &[El<'_>], relation: u32, rhs: Location) -> usize {
+    let lhs = w.value(lhs);
+    let rhs = w.expr(rhs, None);
+    let (p, o) = w.open(Class::FindSubSet, "find subset|of||||subset");
+    w.refer(o, 0x1C, lhs);
+    w.word(o, 0x20, relation);
+    w.refer(o, 0x24, rhs);
+    p
 }
 
 /// Puts the structure type `def` (an op from [`Writer::op`]) at the next
@@ -1981,6 +2122,11 @@ pub const WALKER_LOADED: &str = "Synthetic - Stream Loaded";
 /// spawned (a stub there; openspec AH.169), which
 /// [`WalkerFault::InActivation`]'s walker defines.
 pub const WALKER_ACTIVATED: &str = "Synthetic - Minion Activated";
+/// [`walker`]'s lookup (openspec AG.171): a macro that adds its `mover` to
+/// the set it returns, `found`, which each call binds to `its`, as
+/// Giants' `Movement - Add Mover` calls `Game - Get Player Joined Data
+/// (OLD)`.
+pub const WALKER_LOOKUP: &str = "Synthetic - Find Mover";
 
 /// Where [`walker`]'s minion stops, if it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2030,7 +2176,17 @@ pub enum WalkerFault {
 ///   default scale [`WALKER_SCALE`] (`scalemeasurement.uniform`);
 /// - each tick it plays the mover update's part for itself: its velocity
 ///   along its facing, as long as the ground max speed its description
-///   holds.
+///   holds, once its lookup ([`WALKER_LOOKUP`]) hands its description back
+///   first in the set it returns. Before the call a `find subset` over a
+///   set holding its creature info reads its right side through nothing,
+///   which leaves `its` on that candidate, and the call binds the set to
+///   `its` (openspec AG.171: Giants' `Movement - Add Mover` after
+///   `PortalControl.ai`'s legendary lookup), so he walks only where binding
+///   a parameter to `its` keeps the parameter's own empty set;
+/// - with the first pad's stick held his facing turns toward it as
+///   `Movement - Face and Move` turns a hero, by the ground turn rate his
+///   description holds, through `system.normalized angle` (openspec AG.172:
+///   a target straight behind turns him the way that angle's +180 does).
 ///
 /// `fault` makes it stop on a member nothing models, at its setup or in
 /// play, or in a macro of his the portal manager's join or deactivation
@@ -2060,6 +2216,18 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
         let description = structure_var(&mut w, "description", description_ty);
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+        // The lookup's trap (openspec AG.171): a set of candidates, one a
+        // `find subset` leaves `its` on, and a reference to nothing its
+        // right side reads through.
+        // His turn's numbers (openspec AG.172), as `Movement - Face and
+        // Move` keeps them.
+        let desired = w.variable("desired", "ValueInfo", Some("FloatMeasurement"));
+        let my_facing = w.variable("my facing", "ValueInfo", Some("FloatMeasurement"));
+        let dif = w.variable("dif", "ValueInfo", Some("FloatMeasurement"));
+        let turn = w.variable("turn", "ValueInfo", Some("FloatMeasurement"));
+        let decoys = w.variable("decoys", "ScriptSet", None);
+        let nothing = w.variable("nothing", "ScriptReference", None);
+        let lookup = std::cell::Cell::new(None);
         let script = frame_with(
             &mut w,
             &format!("C:/tfb/Content/Levels/Includes/Minions/Synthetic/scripts/{WALKER_MINION}"),
@@ -2085,6 +2253,12 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 w.set(
                     &[El::Local(mine), El::Local(joined), El::Local(hp_max)],
                     full,
+                );
+                change_membership(
+                    w,
+                    &[El::Local(decoys)],
+                    0,
+                    &[El::Local(description), El::Local(creature)],
                 );
                 for (&param, (_, v)) in params.iter().zip(WALKER_MOVEMENT) {
                     let v = w.float(v);
@@ -2123,6 +2297,15 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     w.flow_end();
                     w.end_block(p);
                 }
+                // The lookup: `mover` added to the set it returns.
+                let (p, def, ops) = define_params(
+                    w,
+                    WALKER_LOOKUP,
+                    &[("mover", "ScriptReference"), ("found", "ScriptSet")],
+                );
+                change_membership(w, &[El::Local(ops[1])], 0, &[El::Local(ops[0])]);
+                w.end_block(p);
+                lookup.set(Some(def));
             },
             |w| {
                 let p = w.behaviour("default");
@@ -2138,9 +2321,52 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                     w.refer(o, 0x24, zero);
                     w.end_block(c);
                 }
-                // The mover's part: his velocity along his facing, as long
+                turn_to_stick(
+                    w,
+                    [desired, my_facing, dif, turn],
+                    &[
+                        El::Local(description),
+                        El::Local(movement),
+                        El::Local(params[3]),
+                        El::Local(value),
+                    ],
+                );
+                // A `find subset` over his candidates whose right side reads
+                // through nothing: none matches, `its` left on the one.
+                let through_nothing = w.rhs("IntMeasurement", &[El::Local(nothing), El::Local(hp)]);
+                let f = find_subset(
+                    w,
+                    &[El::Local(decoys), El::Null, El::Local(hp)],
+                    1,
+                    through_nothing,
+                );
+                w.end_block(f);
+                // The lookup, its set bound to `its`, and in its
+                // after-return code the mover's part once his description
+                // comes back first: his velocity along his facing, as long
                 // as the ground max speed his setup wrote into his
                 // description.
+                let def = lookup.get().expect("the lookup is defined");
+                let np = w.group(&[El::Local(def)], None);
+                let (call, o) = w.open(Class::UseMacro, "use macro");
+                w.refer(o, 0x1C, np);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let mover = parameter_of(w, "mover", "ScriptReference", def);
+                let rhs = w.reference(&[El::Local(description)], None);
+                w.refer(mover, 0x30, rhs);
+                w.push(mover);
+                let found = parameter_of(w, "found", "ScriptSet", def);
+                let its = w.reference(&[El::Member("abstractscriptgroup", "its")], None);
+                w.refer(found, 0x30, its);
+                w.push(found);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                let first = w.check_ref(
+                    &[El::Local(found), El::Member("setvariant", "first")],
+                    1,
+                    &[El::Local(description)],
+                );
                 let me = El::Member("optoplevelbehavior", "my");
                 let target = w.group(&[me, El::Member("actorinfo", "velocity")], None);
                 let len = w.rhs(
@@ -2160,6 +2386,8 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 w.refer(o, 0x28, head);
                 w.refer(o, 0x2C, pitch);
                 w.push(o);
+                w.end_block(first);
+                w.end_block(call);
                 if fault == WalkerFault::InPlay {
                     w.inc(&[El::Local(ticks)]);
                     let at = w.int(WALKER_FAULT_TICK);
@@ -2171,7 +2399,20 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 w.end_block(p);
             },
         );
-        w.declare(script, &[description, mine, ticks]);
+        w.declare(
+            script,
+            &[
+                description,
+                mine,
+                ticks,
+                decoys,
+                nothing,
+                desired,
+                my_facing,
+                dif,
+                turn,
+            ],
+        );
         script
     };
     let minion = actor_with(&mut b, WALKER_TEMPLATE, Some(minion_script), 5);

@@ -958,6 +958,8 @@ fn tree_rex_walks_on_ag12s_numbers() {
     let walks = ag12_walks();
     assert_eq!(walks.len(), 14, "AG.12's 14 rings");
     let mut worst = Replayed::default();
+    // The worst facing over the rings that swing the stick 180°.
+    let mut swings = 0.0f32;
     for (label, records) in &walks {
         if label.starts_with("t_south") {
             // South at rest and while walking: a walker's attack buttons
@@ -994,14 +996,18 @@ fn tree_rex_walks_on_ag12s_numbers() {
                 assert!(r.speed < 1e-3, "{label}: speed {}", r.speed);
                 assert!(r.drift < 1e-3, "{label}: drift {}", r.drift);
                 assert!(r.heading < 0.1, "{label}: heading {}", r.heading);
-                if turns {
-                    assert!(r.facing < 1e-3, "{label}: facing {}", r.facing);
-                }
+                // Every ring, the 180° swings of `t_full` and `t_half`
+                // among them (AG.172: a target straight behind turns him
+                // the positive way, as the oracle's Tree Rex turned; on the
+                // [-180, 180) normalized angle these were 119-180° off).
+                assert!(r.facing < 1e-3, "{label}: facing {}", r.facing);
                 worst.speed = worst.speed.max(r.speed);
                 worst.plateau = worst.plateau.max(r.plateau);
                 worst.heading = worst.heading.max(r.heading);
                 if turns {
                     worst.facing = worst.facing.max(r.facing);
+                } else {
+                    swings = swings.max(r.facing);
                 }
                 worst.drift = worst.drift.max(r.drift);
             } else {
@@ -1010,8 +1016,8 @@ fn tree_rex_walks_on_ag12s_numbers() {
         }
     }
     println!(
-        "worst of the own-dt replays: speed {:.6} ft/s, plateau {:.6}, walk heading {:.4}°, turning recordings' facing {:.6}°, position drift {:.6} m",
-        worst.speed, worst.plateau, worst.heading, worst.facing, worst.drift
+        "worst of the own-dt replays: speed {:.6} ft/s, plateau {:.6}, walk heading {:.4}°, turning recordings' facing {:.6}°, the 180° swings' facing {:.6}°, position drift {:.6} m",
+        worst.speed, worst.plateau, worst.heading, worst.facing, swings, worst.drift
     );
     // The check discriminates: Eruptor's scripts (21.5 ft/s, 1440°/s) on
     // the same pads miss Tree Rex's plateau by his 1.5 ft/s at full stick.
@@ -1666,6 +1672,17 @@ fn every_other_modelled_character_walks_or_is_listed() {
     }
     for (m, who) in &by_member {
         println!("  stopped on {m}: {} - {who:?}", who.len());
+    }
+    // AG.171: Wham-Shell and Drill Sergeant, set up and standing still on a
+    // full stick before (their mover's controller lost to a stale `its`),
+    // walk at their scripts' top speed.
+    for load in ["013_Crab", "021_DrillBot"] {
+        let (a, ..) = table
+            .iter()
+            .find(|t| t.0.load == load)
+            .unwrap_or_else(|| panic!("{load} in the table"));
+        assert_eq!(a.outcome(), "walks at his top speed", "{load}: {a:?}");
+        assert!(a.walked > 10.0, "{load} walked {} m", a.walked);
     }
     // Wherever a character's setup ran through, his scale and the solid his
     // scripts hold are AE.22's live read.
