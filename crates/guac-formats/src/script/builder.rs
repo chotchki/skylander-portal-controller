@@ -698,6 +698,13 @@ pub const ATTACK_KEPT_HEALTH: &str = "Synthetic Kept HP";
 /// The portal manager's placement name, as the join looks it up.
 const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 
+/// AH.151's synthetic mover update ([`attack_with_mover`]): its placement in
+/// `global.bld`, the macro a mover's tick keeps its walk through and the
+/// file's number that keeps it (ft/s).
+pub const MOVER_PLACEMENT: &str = "Synthetic_MovementUpdate";
+pub const MOVER_KEEP: &str = "Synthetic - Keep Walk";
+pub const MOVER_KEPT: &str = "Synthetic Kept Walk";
+
 /// AH.24's synthetic fight (openspec AH.24; design decision 19), a scripted
 /// attack written with this writer, our numbers throughout:
 ///
@@ -760,6 +767,21 @@ pub fn attack() -> Attack {
         global: attack_global(),
         init_setup: b.build(),
         fighter: attack_fighter(),
+    }
+}
+
+/// [`attack`] with AH.151's synthetic mover update in its `global.bld`
+/// ([`MOVER_PLACEMENT`], running `movementUpdate.ai`, the TV's every-tick
+/// name): each tick the first player's velocity set to the walk his
+/// mover's tick kept through [`MOVER_KEEP`] this tick, still once nothing
+/// keeps it, as the original's mover update hands the engine a mover's
+/// kept velocity over whatever his walk was. [`walker`]'s minion keeps
+/// his; the fighter's doesn't, so this part's Eruptor stands still on his
+/// scripts.
+pub fn attack_with_mover() -> Attack {
+    Attack {
+        global: attack_global_with(None, true),
+        ..attack()
     }
 }
 
@@ -1513,9 +1535,14 @@ fn structure(w: &mut Writer<'_>, def: Location, fields: &[Location]) {
 /// A number the file holds, named `name`, from 0: every placement of the
 /// file reads and writes the one cell, kept while the VM runs.
 fn file_int(w: &mut Writer<'_>, name: &str) -> Location {
+    file_number(w, name, "IntMeasurement")
+}
+
+/// [`file_int`] of a measurement class of its own, starting at 0.
+fn file_number(w: &mut Writer<'_>, name: &str, class: &str) -> Location {
     let v = w.b.object(0, "ValueInfo", 0x24);
     w.text(v, 0x08, name);
-    w.meta_word(v, 0x1C, "IntMeasurement");
+    w.meta_word(v, 0x1C, class);
     w.word(v, 0x20, 0);
     v
 }
@@ -1681,6 +1708,15 @@ fn walk_by_stick(w: &mut Writer<'_>) {
         0.0,
         0.0,
     );
+    // Kept for a mover update (AH.151), which writes it back.
+    keep_walk(
+        w,
+        &[
+            my,
+            El::Member("actorinfo", "velocity"),
+            El::Member("vectormeasurement", "length"),
+        ],
+    );
     let still = w.otherwise(held);
     displace(
         w,
@@ -1695,18 +1731,24 @@ fn walk_by_stick(w: &mut Writer<'_>) {
 
 /// [`attack`]'s `global.bld` entry: the portal manager and its globals.
 fn attack_global() -> Vec<u8> {
-    attack_global_with(None)
+    attack_global_with(None, false)
 }
 
 /// [`attack_global`], with AG.28's camera system beside the portal manager
-/// when `camera` says how it runs ([`camera::camera`]).
-fn attack_global_with(camera: Option<camera::CameraFault>) -> Vec<u8> {
+/// when `camera` says how it runs ([`camera::camera`]), and AH.151's mover
+/// update ([`attack_with_mover`]) when `mover`.
+fn attack_global_with(camera: Option<camera::CameraFault>, mover: bool) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     let info = {
         let mut w = Writer::new(&mut b);
         let cam = camera.map(|fault| camera::System::new(&mut w, fault));
         let update = std::cell::Cell::new(None);
+        // AG.191's fault: the portal manager's own stretch stopping, the
+        // projectile manager's, once a hero has joined.
+        let stops = camera == Some(camera::CameraFault::PortalManager);
+        let projectiles_def = std::cell::Cell::new(None);
+        let managed = stops.then(|| file_int(&mut w, camera::CAMERA_PM_CALLS));
         // The structures the join reads through: the portal's loaded slots,
         // each one's object info.
         let info_ty = w.op(Class::DefineStructure, "Object Info");
@@ -1827,13 +1869,22 @@ fn attack_global_with(camera: Option<camera::CameraFault>) -> Vec<u8> {
                 call_stub(w, loaded_hook, &[]);
                 w.flow_end();
                 w.end_block(p);
-                let (p, _) = define_with(
+                let (p, def) = define_with(
                     w,
                     "Manage Projectiles",
                     &[("control data", "ScriptReference")],
                 );
+                if let Some(managed) = managed {
+                    w.inc(&[El::Local(managed)]);
+                    let at = w.int(camera::CAMERA_FAULT_TICK);
+                    let reached = w.check(&[El::Local(managed)], 1, at);
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                    w.end_block(reached);
+                }
                 w.flow_end();
                 w.end_block(p);
+                projectiles_def.set(Some(def));
                 let (p, _) = define_with(
                     w,
                     "Portal - Define Minion",
@@ -1996,25 +2047,90 @@ fn attack_global_with(camera: Option<camera::CameraFault>) -> Vec<u8> {
                 if let Some(def) = update.get() {
                     camera::System::tick(w, def);
                 }
+                // The projectile manager, as the original's tick calls it
+                // once a hero has joined (AG.191's fault alone).
+                if let Some(def) = projectiles_def.get().filter(|_| stops) {
+                    let data = w.reference(&[El::Local(projectiles)], None);
+                    call_stub(w, def, &[("control data", "ScriptReference", data)]);
+                }
             },
             |_| {},
         )
     };
     let manager = actor_with(&mut b, PORTAL_MANAGER, Some(info), 4);
+    let mut placed = vec![Some(manager)];
+    if mover {
+        let script = mover_update(&mut b);
+        placed.push(Some(actor_with(&mut b, MOVER_PLACEMENT, Some(script), 4)));
+    }
     let blocks = b.section(0x10);
-    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(manager)]);
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &placed);
     b.build()
+}
+
+/// AH.151's synthetic mover update (`global.bld`'s `movementUpdate.ai` in
+/// the shape of the original's, our numbers): a mover's tick keeps the walk
+/// it means to make ([`MOVER_KEEP`], the speed into the file's
+/// [`MOVER_KEPT`]), as `Movement - Face and Move` keeps a mover's velocity,
+/// and each tick, after the movers' own, the update sets the first
+/// player's velocity to that speed, along the way it already goes, then
+/// slows it to nothing, as `Movement - Update Force on Mover` slows one
+/// nobody keeps (`movementUpdate.ai` #608-#610 handing it to the engine).
+/// While his scripts run it writes back what his own tick set; once they
+/// stop it writes him still.
+fn mover_update(b: &mut IgzBuilder) -> Location {
+    let mut w = Writer::new(b);
+    let kept = file_number(&mut w, MOVER_KEPT, "FloatMeasurement");
+    frame_ticking(
+        &mut w,
+        "C:/tfb/Content/Levels/Includes/Global/scripts/movementUpdate.ai",
+        |_| {},
+        |_| {},
+        |w| {
+            let (p, _, ops) = define_params(w, MOVER_KEEP, &[("speed", "ValueInfo")]);
+            let speed = w.rhs("FloatMeasurement", &[El::Local(ops[0])]);
+            w.set(&[El::Local(kept)], speed);
+            w.flow_end();
+            w.end_block(p);
+        },
+        |w| {
+            let now = w.rhs("FloatMeasurement", &[El::Local(kept)]);
+            w.set(
+                &[
+                    El::Member("actorinfo", "players"),
+                    El::Member("setvariant", "first"),
+                    El::Member("actorinfo", "velocity"),
+                    El::Member("vectormeasurement", "length"),
+                ],
+                now,
+            );
+            let zero = w.float(0.0);
+            w.set(&[El::Local(kept)], zero);
+        },
+        |_| {},
+    )
+}
+
+/// A mover's walk kept for [`mover_update`] (openspec AH.151): the speed
+/// `len` reads, through a stub of [`MOVER_KEEP`] (a part with no mover
+/// update skips it).
+fn keep_walk(w: &mut Writer<'_>, len: &[El<'_>]) {
+    let keep = w.op(Class::DefineMacro, MOVER_KEEP);
+    let speed = w.rhs("FloatMeasurement", len);
+    call_stub(w, keep, &[("speed", "ValueInfo", speed)]);
 }
 
 /// [`attack`]'s fighter entry: his definition, his minion, the ball and the
 /// helper.
 fn attack_fighter() -> Vec<u8> {
-    attack_fighter_with(false)
+    attack_fighter_with(false, false)
 }
 
 /// [`attack_fighter`], his minion walking by the stick against the view when
-/// `walks` ([`camera::camera`]'s).
-fn attack_fighter_with(walks: bool) -> Vec<u8> {
+/// `walks` ([`camera::camera`]'s), and stopping on a member nothing models
+/// [`camera::CAMERA_FAULT_TICK`] ticks in when `stops`
+/// ([`camera::CameraFault::Hero`]).
+fn attack_fighter_with(walks: bool, stops: bool) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     // The ball: its solid a 1 ft sphere that touches the level and nothing
@@ -2072,6 +2188,7 @@ fn attack_fighter_with(walks: bool) -> Vec<u8> {
         let description = structure_var(&mut w, "description", description_ty);
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let clip = w.variable("attack clip", "ScriptReference", None);
+        let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
         let kept = file_int(&mut w, ATTACK_KEPT_HEALTH);
         // The portal manager's award, through a stub of it.
         let award = w.op(Class::DefineMacro, "Game - Award Experience");
@@ -2153,10 +2270,18 @@ fn attack_fighter_with(walks: bool) -> Vec<u8> {
                 if walks {
                     walk_by_stick(w);
                 }
+                if stops {
+                    w.inc(&[El::Local(ticks)]);
+                    let at = w.int(camera::CAMERA_FAULT_TICK);
+                    let reached = w.check(&[El::Local(ticks)], 1, at);
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                    w.end_block(reached);
+                }
                 w.end_block(p);
             },
         );
-        w.declare(script, &[description, mine, clip]);
+        w.declare(script, &[description, mine, clip, ticks]);
         script
     };
     let minion = actor_with(&mut b, "009_Eruptor", Some(minion_script), 5);
@@ -2494,6 +2619,17 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
                 w.refer(o, 0x28, head);
                 w.refer(o, 0x2C, pitch);
                 w.push(o);
+                // Kept for a mover update (AH.151), as Face and Move keeps a
+                // mover's velocity.
+                keep_walk(
+                    w,
+                    &[
+                        El::Local(description),
+                        El::Local(movement),
+                        El::Local(params[0]),
+                        El::Local(value),
+                    ],
+                );
                 w.end_block(first);
                 w.end_block(call);
                 if fault == WalkerFault::InPlay {

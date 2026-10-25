@@ -41,7 +41,7 @@
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
-use guac_motion::camera::{CameraDef, GameCamera, LookFrom, NEAR, TransitionPlane, View};
+use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
 use guac_motion::locomotion::{Frame, Locomotion};
 use guac_motion::proxy::Surfaces;
@@ -50,7 +50,7 @@ use guac_motion::stick::Stick;
 
 use guacamole::frame;
 use guacamole::scripts::ScriptWorld;
-use guacamole::viewport::Viewport;
+use guacamole::viewport::{chain_from, scripts_view};
 use tracing::warn;
 
 use crate::physics::AvianSeam;
@@ -242,51 +242,6 @@ impl Default for CameraScripts {
     fn default() -> Self {
         Self::Idle(NOT_YET.to_owned())
     }
-}
-
-/// The view the camera's scripts left, as the TV draws it: their eye and
-/// turn, looking at the point along it nearest his feet (where the chain
-/// would aim), their picture and far clip.
-pub(crate) fn scripts_view(v: &Viewport, feet: Option<Vec3>) -> View {
-    let forward = v.forward();
-    let along = feet.map_or(10.0, |f| (f - v.eye).dot(forward)).max(1.0);
-    View {
-        eye: v.eye,
-        aim: v.eye + forward * along,
-        fov_y: v.fov_y(),
-        far_clip: v.far_clip,
-    }
-}
-
-/// The chain at rest where `view` stands, his feet at `feet` (openspec
-/// AG.28: the view handed back from where it stood): its follow point at
-/// his feet's height under the point of the view's line nearest them across
-/// the ground, a camera of its own whose eye sits at the view's and whose
-/// aim is that point, so its first frame draws the view unmoved and its
-/// follow point then closes on his feet as the chain's does.
-pub(crate) fn chain_from(view: &View, feet: Vec3) -> GameCamera {
-    let foot = guac_motion::tuning::FOOT;
-    let look = (view.aim - view.eye).normalize_or_zero();
-    let across = look.with_y(0.0);
-    let along = if across.length_squared() > 1e-8 {
-        ((feet - view.eye).dot(across) / across.length_squared()).max(0.1)
-    } else {
-        (view.aim - view.eye).length()
-    };
-    let aim = view.eye + look * along;
-    let follow = aim.with_y(feet.y);
-    let back = view.eye - follow;
-    let distance = back.length().max(1e-3);
-    let def = CameraDef {
-        id: u32::MAX,
-        distance: distance / foot,
-        pitch: (back.y / distance).clamp(-1.0, 1.0).asin().to_degrees(),
-        look_from: LookFrom::Heading(guac_motion::camera::bearing(back)),
-        look_at: (aim.y - feet.y) / foot,
-        fov_y: view.fov_y,
-        far_clip: view.far_clip,
-    };
-    GameCamera::resting(def, follow, feet, feet)
 }
 
 /// The camera's drawn transform: at the eye, looking at the aim.

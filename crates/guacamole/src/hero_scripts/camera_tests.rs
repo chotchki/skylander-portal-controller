@@ -10,12 +10,15 @@ use bevy::input::gamepad::{
     GamepadAxis, GamepadButton, RawGamepadAxisChangedEvent, RawGamepadEvent,
 };
 use bevy::prelude::*;
+use guac_extract::intros::IrFormat;
 use guac_formats::script::builder::camera::{
     CAMERA_ACTIVATOR, CAMERA_ACTIVATOR_DELAY, CAMERA_ACTIVATOR_RANGE, CAMERA_ACTIVATOR_SECONDS,
     CAMERA_BACK, CAMERA_EASE, CAMERA_LOOK_UP, CAMERA_PLANE_SIZE, CAMERA_ROCKS, CAMERA_SHAKE,
     CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_NAME, CAMERA_VOLUME_SECONDS,
     CameraAt, CameraFault, SyntheticCam,
 };
+use guac_formats::script::builder::{WALKER_LOAD, WalkerFault};
+use guac_ir::palette::Palette;
 use guac_script::{PlacementId, Vm, eased};
 use guacamole::frame::Frame;
 use guacamole::script_engine::{METRES_PER_FOOT as FT, direction};
@@ -25,10 +28,11 @@ use guacamole::viewport::{Source, Viewport};
 use super::ScriptSource;
 use crate::hero::{FollowCamera, HeroBody, NOT_YET, ViewHold};
 use crate::play::{CameraReport, Mode};
-use crate::test_support::hero_scripts::write_camera;
+use crate::test_support::hero_scripts::{write_camera, write_camera_with_walker};
 use crate::test_support::level::{FLOOR, START, lights, write_level};
 use crate::test_support::play::{
-    ERUPTOR, join, level_state, mode, place, play_app, until, write_attack_parts,
+    ERUPTOR, WALKER_TOY, clear, join, level_state, mode, place, play_app, play_app_walkers, until,
+    write_attack_parts,
 };
 use crate::test_support::test_pad;
 
@@ -691,4 +695,223 @@ fn a_stopped_volume_script_hands_the_view_to_the_chain() {
         end.eye.distance(end.feet) < stop.eye.distance(stop.feet),
         "the TV's camera closes on him where he stands"
     );
+}
+
+/// The TV on AG.28's synthetic camera with AG.27's synthetic walker beside
+/// the fighter (openspec AG.190), the walker stopping as `fault` says: him
+/// placed and taken in, his scripts joined. The app and the pad.
+fn camera_walker_app(tmp: &Path, fault: WalkerFault) -> (App, Entity) {
+    let (mut app, tx) = play_app_walkers(tmp, &[(WALKER_TOY, WALKER_LOAD)]);
+    app.init_resource::<Samples>()
+        .add_systems(FixedUpdate, record.in_set(Frame::Record));
+    write_attack_parts(tmp);
+    // His palette, Eruptor's under his name: what the join sets on his
+    // minion's template.
+    let rel = IrFormat::Ron.palette_path("009_Eruptor");
+    let mut palette: Palette =
+        guac_ir::from_ron(&std::fs::read_to_string(tmp.join(rel)).unwrap()).unwrap();
+    palette.owner = WALKER_LOAD.into();
+    std::fs::write(
+        tmp.join(IrFormat::Ron.palette_path(WALKER_LOAD)),
+        guac_ir::to_ron(&palette).unwrap(),
+    )
+    .unwrap();
+    write_camera_with_walker(tmp, spots(), CameraFault::None, fault);
+    tx.send(write_level(tmp, &lights())).unwrap();
+    let pad = test_pad::connect(&mut app, None, None);
+    until(&mut app, "the level and its scripts", |a| {
+        level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+    });
+    place(&mut app, 0, WALKER_TOY, "Synthetic");
+    until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    test_pad::press(&mut app, pad, GamepadButton::East);
+    until(&mut app, "his scripts", |a| {
+        join(a).as_deref() == Some("joined")
+    });
+    (app, pad)
+}
+
+/// The step the view went to the TV's camera, and the one before: where it
+/// stood when it went.
+fn handed_back(app: &App) -> (Sample, Sample) {
+    let all = samples(app);
+    let at = all
+        .iter()
+        .position(|s| matches!(s.hold, ViewHold::HandedBack(_)))
+        .expect("handed back");
+    assert!(at > 0, "the scripts had the view first");
+    (all[at - 1].clone(), all[at].clone())
+}
+
+/// Walked on with the stick held a second, then let go a second: the TV's
+/// camera follows him from where the view went, at the distance the
+/// scripts left, and nothing the scripts write reaches the viewport.
+fn follows_him(app: &mut App, pad: Entity, stop: &Sample) {
+    let kept = last(app).view;
+    test_pad::stick(app, pad, 0.0, 1.0);
+    frames(app, 60);
+    test_pad::stick(app, pad, 0.0, 0.0);
+    frames(app, 120);
+    let end = last(app);
+    assert!(matches!(end.hold, ViewHold::HandedBack(_)));
+    assert_eq!(end.report.scripts.as_deref(), Some("off"));
+    assert!(end.feet.distance(stop.feet) > 1.0, "he walked");
+    assert!(end.eye.distance(stop.eye) > 1.0, "it followed him");
+    let gap = |s: &Sample| s.eye.distance(s.feet);
+    assert!(
+        (gap(&end) - gap(stop)).abs() < 0.3,
+        "{} m from his feet, {} when it went",
+        gap(&end),
+        gap(stop)
+    );
+    assert_eq!(end.view.eye, kept.eye, "the scripts write nowhere");
+}
+
+/// AG.190: a walker whose minion stops in play after the scripts have the
+/// view falls back on AG.16's controller, and his fall-back hands the view
+/// to the TV's camera as a camera script's stop does: nothing steps his
+/// camera target off the player loop's joined run, so the chain takes the
+/// view from where it stood, `/api/_test/tv` saying `off` with his reason,
+/// and follows him as he walks on.
+#[test]
+fn a_walker_falling_back_hands_the_view_to_the_chain() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, pad) = camera_walker_app(tmp.path(), WalkerFault::InPlay);
+    run_until(&mut app, "his fall-back", 60, |s| {
+        matches!(s.hold, ViewHold::HandedBack(_))
+    });
+    let (before, stop) = handed_back(&app);
+    assert_eq!(before.hold, ViewHold::Scripts);
+    assert_eq!(before.report.scripts.as_deref(), Some("on"));
+    assert_eq!(join(&app).as_deref(), Some("off"));
+    // He walks his scripts' 18.5 ft/s up to the step he stops: the chain's
+    // first step closes on him by one follow step, no jump.
+    assert!(
+        stop.eye.distance(before.eye) < 0.25,
+        "the eye {} then {}",
+        before.eye,
+        stop.eye
+    );
+    assert!(stop.look.distance(before.look) < 0.02);
+    assert_eq!(stop.report.scripts.as_deref(), Some("off"));
+    let why = stop.report.scripts_reason.clone().unwrap_or_default();
+    assert!(
+        why.contains("his scripts stopped") && why.contains("unmodelled member"),
+        "{why}"
+    );
+    assert_eq!(stop.view.source, Source::HandedBack);
+    follows_him(&mut app, pad, &stop);
+}
+
+/// AG.190 and AH.151 on Eruptor: his minion stopping in play, he falls back
+/// on his measured table, the view goes to the TV's camera with his reason,
+/// and the stick takes him to 21.5 ft/s though the part's mover update
+/// writes him still each tick (his minion kept his walk for it, and keeps
+/// it no more): its writes to his walk are dropped.
+#[test]
+fn eruptor_falling_back_walks_at_his_top_speed_and_hands_the_view_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, pad) = camera_app(tmp.path(), CameraFault::Hero);
+    run_until(&mut app, "his fall-back", 200, |s| {
+        matches!(s.hold, ViewHold::HandedBack(_))
+    });
+    let (before, stop) = handed_back(&app);
+    assert_eq!(before.hold, ViewHold::Scripts);
+    let why = stop.report.scripts_reason.clone().unwrap_or_default();
+    assert!(
+        why.contains("his scripts stopped") && why.contains("unmodelled member"),
+        "{why}"
+    );
+    assert_eq!(join(&app).as_deref(), Some("off"));
+    let e = hero_entity(&app);
+    test_pad::stick(&mut app, pad, 0.0, 1.0);
+    frames(&mut app, 30);
+    let body = &app.world().entity(e).get::<HeroBody>().unwrap().hero;
+    let walk = body.walk.velocity.length();
+    assert!((walk - 21.5).abs() < 1e-3, "{walk} ft/s");
+    assert_eq!(*body.tuning(), guac_motion::tuning::Tuning::ERUPTOR);
+    let world = app.world().resource::<ScriptWorld>();
+    assert!(world.walks_alone(e.to_bits()));
+    let walk_writes: u32 = world
+        .hero_writes()
+        .iter()
+        .filter(|((_, what), _)| *what == guacamole::scripts::HeroWrite::Walk)
+        .map(|(_, n)| n)
+        .sum();
+    assert!(
+        walk_writes >= 30,
+        "the update's writes dropped: {walk_writes}"
+    );
+    test_pad::stick(&mut app, pad, 0.0, 0.0);
+    follows_him(&mut app, pad, &stop);
+}
+
+/// AG.190: a swap mid-level isn't a fall-back. Eruptor taken off the portal
+/// and put back leaves the scripts the view: no step hands it to the TV's
+/// camera, and once he's joined again `/api/_test/tv` reads `on`.
+#[test]
+fn a_swap_mid_level_leaves_the_scripts_the_view() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, pad) = camera_app(tmp.path(), CameraFault::None);
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    clear(&mut app, 0);
+    frames(&mut app, 30);
+    place(&mut app, 1, ERUPTOR, "Eruptor");
+    until(&mut app, "him back in", |a| {
+        a.world().resource::<crate::play::Play>().hero().is_some()
+    });
+    test_pad::press(&mut app, pad, GamepadButton::East);
+    until(&mut app, "his scripts again", |a| {
+        join(a).as_deref() == Some("joined")
+    });
+    frames(&mut app, 30);
+    assert!(
+        samples(&app)
+            .iter()
+            .all(|s| !matches!(s.hold, ViewHold::HandedBack(_))),
+        "never handed back"
+    );
+    let end = last(&app);
+    assert_eq!(end.hold, ViewHold::Scripts);
+    assert_eq!(end.report.scripts.as_deref(), Some("on"));
+    assert_eq!(
+        *app.world().resource::<crate::hero::CameraScripts>(),
+        crate::hero::CameraScripts::On
+    );
+}
+
+/// AG.191: the portal manager stopped by a stretch of its own that isn't
+/// the camera's (its projectile manager, here) stops its tick for good, the
+/// camera's frame in it: the view goes to the TV's camera from where it
+/// stood, `/api/_test/tv` saying `off` with the portal manager's stop, and
+/// the TV's camera follows him as he walks on (his own scripts running on).
+#[test]
+fn a_portal_manager_stopped_in_play_hands_the_view_to_the_chain() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, pad) = camera_app(tmp.path(), CameraFault::PortalManager);
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    run_until(&mut app, "the portal manager's stop", 200, |s| {
+        matches!(s.hold, ViewHold::HandedBack(_))
+    });
+    let (before, stop) = handed_back(&app);
+    assert_eq!(before.hold, ViewHold::Scripts);
+    assert!(stop.eye.distance(before.eye) < 1e-3);
+    let why = stop.report.scripts_reason.clone().unwrap_or_default();
+    assert!(
+        why.contains("the portal manager stopped") && why.contains("unmodelled member"),
+        "{why}"
+    );
+    assert_eq!(stop.view.source, Source::HandedBack);
+    let w = app.world();
+    let vm = &w.resource::<ScriptRuntime>().vm;
+    let pm = guacamole::scripts::portal_manager_placement(vm, w.resource::<ScriptWorld>())
+        .expect("the portal manager");
+    assert!(vm.stopped(pm).is_some(), "the portal manager stopped");
+    assert_eq!(join(&app).as_deref(), Some("joined"), "his own run on");
+    follows_him(&mut app, pad, &stop);
 }

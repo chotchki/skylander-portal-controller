@@ -11,8 +11,9 @@
 //!   and no walk of his own: the fall-back after his script stops in play is
 //!   a [`Tuning`] read off the `movement parameters` his scripts had written
 //!   into his description ([`Movement`]), never a number of ours beside
-//!   them. One whose setup doesn't run through keeps his card
-//!   ([`Fallback::Card`], listed with why).
+//!   them, his fall the mover update's own (openspec AG.173). One whose
+//!   setup doesn't run through keeps his card ([`Fallback::Card`], listed
+//!   with why).
 //!
 //! The hero's drawn model and its keys are the card's model (AE's), drawn
 //! in [`crate::level_scene::hero_scene`]: the keys the census's card tables
@@ -146,7 +147,10 @@ pub fn uniform_scale(scale: [f32; 3]) -> Option<f32> {
 /// (ft/s, ft/s², °/s): what the mover update reads, and what the fall-back
 /// walks him on once his script stops. Read, never chosen. His actor's own
 /// `ActorParameters` aren't these: the engine's, they stay the
-/// unconstrained 10,000 ft/s on every character (AG.12's live read).
+/// unconstrained 10,000 ft/s on every character (AG.12's live read). His
+/// description's gravity isn't read: the mover update falls every mover at
+/// its own 136.21 ft/s² to 120 ft/s ([`tuning::MOVER_GRAVITY`], openspec
+/// AG.173), so the fall-back falls him there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Movement {
     pub ground_max_speed: f32,
@@ -154,20 +158,16 @@ pub struct Movement {
     pub ground_deceleration: f32,
     pub ground_turn_rate: f32,
     pub air_deceleration: f32,
-    pub gravity_acceleration: f32,
-    pub gravity_max_speed: f32,
 }
 
 impl Movement {
     /// The members read, in the fields' order.
-    pub const MEMBERS: [&'static str; 7] = [
+    pub const MEMBERS: [&'static str; 5] = [
         "ground max speed",
         "ground acceleration",
         "ground deceleration",
         "ground turn rate",
         "air deceleration",
-        "gravity acceleration",
-        "gravity max speed",
     ];
 
     /// `minion`'s, off his `description` local on `vm`; `None` while any of
@@ -179,20 +179,18 @@ impl Movement {
             let m = vm.value(vm.field(params, name)?);
             vm.value(vm.field(m, "value")?).as_f32()
         };
-        let [a, b, c, d, e, f, g] = Self::MEMBERS;
+        let [a, b, c, d, e] = Self::MEMBERS;
         Some(Movement {
             ground_max_speed: member(a)?,
             ground_acceleration: member(b)?,
             ground_deceleration: member(c)?,
             ground_turn_rate: member(d)?,
             air_deceleration: member(e)?,
-            gravity_acceleration: member(f)?,
-            gravity_max_speed: member(g)?,
         })
     }
 
     /// AG.16's controller's numbers off these, under his solid's authored
-    /// `width` (feet).
+    /// `width` (feet), falling as every mover falls (AG.173).
     pub fn tuning(&self, width: f32) -> Tuning {
         Tuning {
             max_speed: self.ground_max_speed,
@@ -200,8 +198,8 @@ impl Movement {
             let_go: self.ground_deceleration,
             air_let_go: self.air_deceleration,
             turn_rate: self.ground_turn_rate,
-            gravity: self.gravity_acceleration,
-            terminal: self.gravity_max_speed,
+            gravity: tuning::MOVER_GRAVITY,
+            terminal: tuning::MOVER_TERMINAL,
             width,
         }
     }
@@ -278,6 +276,8 @@ mod tests {
     /// reads as the controller's numbers in the scripts' own units, his
     /// width from his authored solid (Tree Rex's, AG.12's), and a scale as a
     /// fraction; one that isn't uniform, or isn't set, reads as none.
+    /// AG.173: he falls as every mover does, 136.21 ft/s² to 120 ft/s, not
+    /// at the 128 his description holds.
     #[test]
     fn his_movement_parameters_are_the_controllers_numbers() {
         let tree_rex = Movement {
@@ -286,8 +286,6 @@ mod tests {
             ground_deceleration: 80.0,
             ground_turn_rate: 360.0,
             air_deceleration: 50.0,
-            gravity_acceleration: 128.0,
-            gravity_max_speed: 120.0,
         };
         assert_eq!(
             tree_rex.tuning(14.0),
@@ -297,30 +295,69 @@ mod tests {
                 let_go: 80.0,
                 air_let_go: 50.0,
                 turn_rate: 360.0,
-                gravity: 128.0,
+                gravity: 136.21,
                 terminal: 120.0,
                 width: 14.0,
             }
         );
-        // Eruptor's description (AG.27's disc read) is AG.8's live table but
-        // for gravity: it holds 128 ft/s², where AG.10 measured his fall at
-        // 136.21. The fall-back walks on the description's.
+        // Eruptor's description (AG.27's disc read) is AG.8's live table, and
+        // read through it his fall is AG.10's measured one.
         let eruptor = Movement {
             ground_max_speed: 21.5,
             ground_turn_rate: 1440.0,
             ..tree_rex
         };
-        assert_eq!(
-            eruptor.tuning(Tuning::ERUPTOR.width),
-            Tuning {
-                gravity: 128.0,
-                ..Tuning::ERUPTOR
-            }
-        );
+        assert_eq!(eruptor.tuning(Tuning::ERUPTOR.width), Tuning::ERUPTOR);
         assert_eq!(uniform_scale([100.0; 3]), Some(1.0));
         assert_eq!(uniform_scale([150.0; 3]), Some(1.5));
         assert_eq!(uniform_scale([150.0, 100.0, 150.0]), None);
         assert_eq!(uniform_scale([0.0; 3]), None);
+    }
+
+    /// AG.173: a walker fallen back on what his scripts set falls off a ledge
+    /// as AG.10 measured Eruptor's fall, frame for frame: 136.21 ft/s² over
+    /// the step before, the same on Tree Rex's walk as on Eruptor's measured
+    /// table (his description's 128 would gain 0.137 ft/s a frame less).
+    #[test]
+    fn the_fall_backs_fall_is_the_measured_one() {
+        use guac_motion::parry::ParryWorld;
+        use guac_motion::scenarios::{bodies, open_ground};
+        use guac_motion::seam::Vec3;
+        let world = ParryWorld::new(&bodies(&open_ground(), &[])).unwrap();
+        let tree_rex = Movement {
+            ground_max_speed: 20.0,
+            ground_acceleration: 160.0,
+            ground_deceleration: 80.0,
+            ground_turn_rate: 360.0,
+            air_deceleration: 50.0,
+        };
+        let solid = tuning::eruptor_solid();
+        let at = Vec3::new(0.0, 6.0, 0.0);
+        let mut fallen = guac_motion::hero::Hero::new(solid, tree_rex.tuning(14.0), at, 0.0);
+        let mut measured = guac_motion::hero::Hero::new(solid, Tuning::ERUPTOR, at, 0.0);
+        let input = guac_motion::hero::Input::stick(guac_motion::stick::Stick::CENTRED, 0.0);
+        let dt = tuning::NOMINAL_STEP;
+        // Up in the air the whole way down to the crest's band, where each
+        // walk is cut to its own top speed.
+        let mut falling = 0;
+        while fallen.footing.high() {
+            let before = fallen.walk.velocity.y;
+            fallen.step(&world, &input, dt, &[]);
+            measured.step(&world, &input, dt, &[]);
+            assert_eq!(
+                (fallen.walk.velocity, fallen.pivot),
+                (measured.walk.velocity, measured.pivot),
+                "frame {falling}: as the measured fall"
+            );
+            let gained = before - fallen.walk.velocity.y;
+            assert!(
+                (gained - 136.21 * dt).abs() < 1e-4,
+                "frame {falling}: {gained} ft/s gained"
+            );
+            falling += 1;
+            assert!(falling < 120, "still falling");
+        }
+        assert!(falling > 20, "{falling} frames up in the air");
     }
 
     /// AG.27: only Eruptor falls back to numbers the build holds; a walker

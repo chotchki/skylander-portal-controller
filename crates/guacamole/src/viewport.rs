@@ -27,6 +27,7 @@
 
 use bevy::math::{Quat, Vec3};
 use bevy::transform::components::Transform;
+use guac_motion::camera::{CameraDef, GameCamera, LookFrom, View};
 
 use crate::script_engine::{Angles, direction};
 
@@ -154,6 +155,51 @@ pub fn fov_y(fov: f32) -> f32 {
 pub fn pack_screen(x: f32, y: f32) -> u32 {
     let half = |v: f32| (v * 16.0).trunc().clamp(-32768.0, 32767.0) as i16 as u16;
     u32::from(half(x)) << 16 | u32::from(half(y))
+}
+
+/// The view the camera's scripts left, as the TV draws it: their eye and
+/// turn, looking at the point along it nearest his feet (where the chain
+/// would aim), their picture and far clip.
+pub fn scripts_view(v: &Viewport, feet: Option<Vec3>) -> View {
+    let forward = v.forward();
+    let along = feet.map_or(10.0, |f| (f - v.eye).dot(forward)).max(1.0);
+    View {
+        eye: v.eye,
+        aim: v.eye + forward * along,
+        fov_y: v.fov_y(),
+        far_clip: v.far_clip,
+    }
+}
+
+/// The chain at rest where `view` stands, his feet at `feet` (openspec
+/// AG.28: the view handed back from where it stood): its follow point at
+/// his feet's height under the point of the view's line nearest them across
+/// the ground, a camera of its own whose eye sits at the view's and whose
+/// aim is that point, so its first frame draws the view unmoved and its
+/// follow point then closes on his feet as the chain's does.
+pub fn chain_from(view: &View, feet: Vec3) -> GameCamera {
+    let foot = guac_motion::tuning::FOOT;
+    let look = (view.aim - view.eye).normalize_or_zero();
+    let across = look.with_y(0.0);
+    let along = if across.length_squared() > 1e-8 {
+        ((feet - view.eye).dot(across) / across.length_squared()).max(0.1)
+    } else {
+        (view.aim - view.eye).length()
+    };
+    let aim = view.eye + look * along;
+    let follow = aim.with_y(feet.y);
+    let back = view.eye - follow;
+    let distance = back.length().max(1e-3);
+    let def = CameraDef {
+        id: u32::MAX,
+        distance: distance / foot,
+        pitch: (back.y / distance).clamp(-1.0, 1.0).asin().to_degrees(),
+        look_from: LookFrom::Heading(guac_motion::camera::bearing(back)),
+        look_at: (aim.y - feet.y) / foot,
+        fov_y: view.fov_y,
+        far_clip: view.far_clip,
+    };
+    GameCamera::resting(def, follow, feet, feet)
 }
 
 #[cfg(test)]

@@ -78,6 +78,24 @@ pub(crate) fn write_camera(
     write_files(dir, [&c.global, &c.init_setup, &c.fighter], &c.level, &[]);
 }
 
+/// [`write_camera`] with AG.27's synthetic walker beside the fighter
+/// ([`attack_builder::walker`], stopping as `walker` says), the character
+/// [`attack_builder::WALKER_LOAD`] (openspec AG.190).
+pub(crate) fn write_camera_with_walker(
+    dir: &Path,
+    at: attack_builder::camera::CameraAt,
+    fault: attack_builder::camera::CameraFault,
+    walker: attack_builder::WalkerFault,
+) {
+    let c = attack_builder::camera::camera(at, fault);
+    write_files(
+        dir,
+        [&c.global, &c.init_setup, &c.fighter],
+        &c.level,
+        &[(attack_builder::WALKER_LOAD, attack_builder::walker(walker))],
+    );
+}
+
 /// The roster builder's bootstrap entry, `global.bld`'s, `init_setup.bld`'s
 /// and the fighter's (`entries`), the walkers' and `level` as the level's.
 fn write_files(dir: &Path, entries: [&[u8]; 3], level: &[u8], walkers: &[(&str, Vec<u8>)]) {
@@ -110,6 +128,20 @@ pub(crate) fn write_walker(dir: &Path, fault: attack_builder::WalkerFault) {
     let (creature, _) = attack_builder::creature();
     write_parts_with(
         dir,
+        &creature,
+        &[(attack_builder::WALKER_LOAD, attack_builder::walker(fault))],
+    );
+}
+
+/// [`write_walker`] over AH.151's synthetic mover update
+/// ([`attack_builder::attack_with_mover`]): the first player's velocity
+/// handed what his mover's tick kept, each tick.
+pub(crate) fn write_walker_moving(dir: &Path, fault: attack_builder::WalkerFault) {
+    let (creature, _) = attack_builder::creature();
+    let a = attack_builder::attack_with_mover();
+    write_files(
+        dir,
+        [&a.global, &a.init_setup, &a.fighter],
         &creature,
         &[(attack_builder::WALKER_LOAD, attack_builder::walker(fault))],
     );

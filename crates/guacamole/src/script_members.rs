@@ -55,7 +55,7 @@ use crate::script_engine::{
     Angles, Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object,
     Sequence, Walker, angles_of, direction, heading_of, normalized, pitch_of,
 };
-use crate::scripts::{ScriptWorld, Spawner};
+use crate::scripts::{HeroWrite, ScriptWorld, Spawner};
 
 /// What a member answers, by what it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -540,14 +540,18 @@ impl ScriptWorld {
         Some(a.position)
     }
 
+    /// Actor `h` put at `p` by placement `by`.
     fn set_position(
         &mut self,
+        by: Handle,
         h: Handle,
         p: Vec3,
         engine: &mut dyn Engine,
     ) -> Result<(), HostFault> {
         if let Some(hero) = engine.hero(h) {
             hero.pivot = p;
+            // Off his scripts, still his place (openspec AH.151): counted.
+            self.writes_place(by, h);
             return Ok(());
         }
         match self.actors.get_mut(&h) {
@@ -653,7 +657,13 @@ impl ScriptWorld {
         Some(Quat::from_rotation_y(facing.to_radians()) * node.turn)
     }
 
-    fn set_point(&mut self, v: Value, p: Vec3, engine: &mut dyn Engine) -> Result<(), HostFault> {
+    fn set_point(
+        &mut self,
+        by: Handle,
+        v: Value,
+        p: Vec3,
+        engine: &mut dyn Engine,
+    ) -> Result<(), HostFault> {
         // A file waypoint moves where it's put (openspec AG.60: a push block
         // lays its track's waypoints from its own place at its start).
         if let Value::Object(o) = v
@@ -665,7 +675,7 @@ impl ScriptWorld {
         }
         let h = self.handle(v).ok_or(HostFault::Nothing)?;
         match self.objs.get(h) {
-            None => self.set_position(h, p, engine),
+            None => self.set_position(by, h, p, engine),
             Some(Object::RayStart) => {
                 self.ray.start = p;
                 Ok(())
@@ -1434,8 +1444,13 @@ impl ScriptWorld {
                     }
                     return Ok(());
                 }
-                if let Some(hero) = engine.hero(h) {
-                    if matches!(m, Member::Facing | Member::RelativeFacing) {
+                if engine.hero(h).is_some() {
+                    // Off his scripts his facing is the controller's
+                    // (openspec AH.151).
+                    if matches!(m, Member::Facing | Member::RelativeFacing)
+                        && !self.drops(at.placement, h, HeroWrite::Facing)
+                        && let Some(hero) = engine.hero(h)
+                    {
                         hero.facing = x.rem_euclid(360.0);
                     }
                     return Ok(());
@@ -1577,6 +1592,11 @@ impl ScriptWorld {
                 let Some(Object::Facet(h, Facet::Velocity)) = object else {
                     return Err(HostFault::Nothing);
                 };
+                // Off his scripts his walk is the controller's (openspec
+                // AH.151): the mover update's hand-over among these.
+                if self.drops(at.placement, h, HeroWrite::Walk) {
+                    return Ok(());
+                }
                 let x = float(v)?;
                 let mut u = self.velocity(h, engine).ok_or(HostFault::Nothing)?;
                 use VectorField as V;
@@ -1624,7 +1644,7 @@ impl ScriptWorld {
                 if let Some(at_node) = self.point(v, engine)
                     && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)))
                 {
-                    self.set_position(h, at_node, engine)?;
+                    self.set_position(at.placement, h, at_node, engine)?;
                 }
                 if let Some(a) = self.actors.get_mut(&h) {
                     a.attach = v;
@@ -1694,7 +1714,7 @@ impl ScriptWorld {
                     }
                     _ => b + direction(heading_of(d), x) * d.length(),
                 };
-                self.set_point(r, to, engine)?;
+                self.set_point(at.placement, r, to, engine)?;
             }
             Member::NormalizedAngle => self.normalized = normalized(float(v)?),
             // The gameplay camera's picture (openspec AG.28).
@@ -1949,7 +1969,7 @@ impl ScriptWorld {
                     return Some(Err(HostFault::Nothing));
                 };
                 Ok(
-                    match self.displace(target, mode, len, head, pitch, engine) {
+                    match self.displace(call.placement, target, mode, len, head, pitch, engine) {
                         Ok(()) => Answer::Done,
                         Err(e) => return Some(Err(e)),
                     },
@@ -2063,8 +2083,14 @@ impl ScriptWorld {
             .ok_or(HostFault::Nothing)?;
         let facing = self.angles(h, engine).ok_or(HostFault::Nothing)?.facing;
         let faces = normalized(facing - to).abs() <= 0.01;
-        if let Some(hero) = engine.hero(h) {
-            hero.facing = to.rem_euclid(360.0);
+        if engine.hero(h).is_some() {
+            // Off his scripts his facing is the controller's (openspec
+            // AH.151): the turn runs on, as one made at once does.
+            if !self.drops(call.placement, h, HeroWrite::Facing)
+                && let Some(hero) = engine.hero(h)
+            {
+                hero.facing = to.rem_euclid(360.0);
+            }
             return Ok(Answer::Run {
                 receiver: None,
                 result: None,
@@ -2114,6 +2140,9 @@ impl ScriptWorld {
                 hero.facing = f.rem_euclid(360.0);
             }
             hero.walk.velocity = Vec3::ZERO;
+            // Off his scripts, the level setting him down still does
+            // (openspec AH.151): counted.
+            self.writes_place(call.placement, h);
             return Ok(Answer::Done);
         }
         let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
@@ -2164,11 +2193,13 @@ impl ScriptWorld {
         Ok(Answer::Found(found.into_iter().map(|(_, t)| t).collect()))
     }
 
-    /// OpDisplace: `len` feet along a heading and a pitch, added in the
-    /// world's axes (mode 0), set outright (1) or added turned by the
-    /// target's facing (2); on a velocity facet, ft/s.
+    /// OpDisplace by placement `by`: `len` feet along a heading and a
+    /// pitch, added in the world's axes (mode 0), set outright (1) or added
+    /// turned by the target's facing (2); on a velocity facet, ft/s.
+    #[allow(clippy::too_many_arguments)]
     fn displace(
         &mut self,
+        by: Handle,
         target: Value,
         mode: u32,
         len: f32,
@@ -2177,6 +2208,11 @@ impl ScriptWorld {
         engine: &mut dyn Engine,
     ) -> Result<(), HostFault> {
         if let Some(Object::Facet(h, Facet::Velocity)) = self.object(Some(target)) {
+            // Off his scripts his walk is the controller's (openspec
+            // AH.151).
+            if self.drops(by, h, HeroWrite::Walk) {
+                return Ok(());
+            }
             let mut v = self.velocity(h, engine).ok_or(HostFault::Nothing)?;
             let head = if mode == 2 {
                 head + self.angles(h, engine).map_or(0.0, |a| a.facing)
@@ -2202,7 +2238,7 @@ impl ScriptWorld {
             direction(head, pitch)
         } * (len * METRES_PER_FOOT);
         let to = if mode == 1 { d } else { at + d };
-        self.set_point(target, to, engine)
+        self.set_point(by, target, to, engine)
     }
 }
 
@@ -3318,6 +3354,101 @@ mod tests {
             "{moved}"
         );
         assert!(w.sequences().is_empty());
+    }
+
+    /// AH.151: off his scripts AG.16's controller is the one writer of his
+    /// walk and facing. A script's write to his velocity (a member, as the
+    /// mover update's #608-#610, or a displace), to his facing and a `turn
+    /// to` are dropped, counted by their writer, and the turn runs on; a
+    /// `teleport to` still sets him down (and stops his walk, as it does on
+    /// his scripts) and a displace still moves him, each counted; his
+    /// scripts joining him again give both back.
+    #[test]
+    fn off_his_scripts_the_controller_alone_writes_his_walk_and_facing() {
+        const MOVER: Handle = BALL;
+        let mut e = bench();
+        let mut hero = Hero::new(
+            eruptor_solid(),
+            Tuning::ERUPTOR,
+            Vec3::new(-5.0, 0.0, -5.0),
+            0.0,
+        );
+        hero.settle(&e.world, &[]);
+        let walk = Vec3::new(0.0, 0.0, 21.5);
+        hero.walk.velocity = walk;
+        hero.facing = 90.0;
+        e.hero = Some(hero);
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        let to = Vec3::new(2.0, 0.0, -6.0);
+        w.actors.insert(CHOMPY, ball(to, 0.0));
+        w.hand_back_walk(HERO);
+        assert!(w.walks_alone(HERO));
+        let velocity = w.objs.value(Object::Facet(HERO, Facet::Velocity));
+        let by = |a: Access| Access {
+            placement: MOVER,
+            ..a
+        };
+        let length = by(at("vectormeasurement", "length", Some(velocity), None));
+        w.set_member(
+            &length,
+            Member::Vector(VectorField::Length),
+            Value::Float(0.0),
+            &mut e,
+        )
+        .unwrap();
+        w.displace(MOVER, velocity, 1, 0.0, 0.0, 0.0, &mut e)
+            .unwrap();
+        let turn = w.objs.value(Object::Facet(HERO, Facet::Orientation));
+        let facing = by(at("orientationmeasurement", "facing", Some(turn), None));
+        w.set_member(&facing, Member::Facing, Value::Float(180.0), &mut e)
+            .unwrap();
+        let turn_to = OpCall {
+            placement: MOVER,
+            receiver: Value::Entity(HERO),
+            class: Class::TurnTo,
+            operands: vec![("_facingRHS", Some(Value::Float(270.0)))],
+            words: Vec::new(),
+            sets: Vec::new(),
+        };
+        let answer = w.op(&turn_to, &mut |_| 0, &mut e).unwrap();
+        assert!(matches!(answer, Answer::Run { .. }), "{answer:?}");
+        let h = e.hero.as_ref().unwrap();
+        assert_eq!((h.walk.velocity, h.facing), (walk, 90.0), "none landed");
+        let dropped = w.hero_writes();
+        assert_eq!(dropped.get(&(MOVER, HeroWrite::Walk)), Some(&2));
+        assert_eq!(dropped.get(&(MOVER, HeroWrite::Facing)), Some(&2));
+        // The level setting him down still does.
+        let teleport = OpCall {
+            placement: MOVER,
+            receiver: Value::Entity(HERO),
+            class: Class::TeleportTo,
+            operands: vec![
+                ("_LHS", Some(Value::Entity(CHOMPY))),
+                ("_facingRHS", Some(Value::Float(45.0))),
+            ],
+            words: Vec::new(),
+            sets: Vec::new(),
+        };
+        w.op(&teleport, &mut |_| 0, &mut e).unwrap();
+        let h = e.hero.as_ref().unwrap();
+        assert_eq!((h.pivot, h.facing, h.walk.velocity), (to, 45.0, Vec3::ZERO));
+        // A displace of his place as well (a foot along +z), each counted.
+        w.displace(MOVER, Value::Entity(HERO), 0, 1.0, 0.0, 0.0, &mut e)
+            .unwrap();
+        let moved = e.hero.as_ref().unwrap().pivot - to;
+        assert!(
+            (moved - Vec3::Z * METRES_PER_FOOT).length() < 1e-6,
+            "{moved}"
+        );
+        assert_eq!(w.hero_writes().get(&(MOVER, HeroWrite::Place)), Some(&2));
+        // His scripts joining him again (the join's `hero_template`), they
+        // write him.
+        w.hero_template(Obj { unit: 0, index: 0 }, HERO);
+        assert!(!w.walks_alone(HERO));
+        w.set_member(&facing, Member::Facing, Value::Float(180.0), &mut e)
+            .unwrap();
+        assert_eq!(e.hero.as_ref().unwrap().facing, 180.0);
     }
 }
 
@@ -4825,7 +4956,7 @@ mod light_tests {
         w.points
             .insert(wp, Vec3::new(4.787_217_6, 45.873_01, -36.796_494));
         let to = Vec3::new(2.171_143_8, 46.128_128, -36.826_355);
-        w.set_point(Value::Object(wp), to, e).unwrap();
+        w.set_point(1, Value::Object(wp), to, e).unwrap();
         assert_eq!(w.point(Value::Object(wp), e), Some(to));
         let turn = w
             .get(
@@ -4843,7 +4974,7 @@ mod light_tests {
             Err(HostFault::Nothing)
         );
         assert_eq!(
-            w.set_point(none, to, e),
+            w.set_point(1, none, to, e),
             Err(HostFault::Nothing),
             "no such waypoint"
         );

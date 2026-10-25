@@ -4,13 +4,16 @@
 //!
 //! - The run: once the level's script part links, the VM runs the TV's
 //!   listing ([`guacamole::scripts::smash_config`], openspec AH.27): the init
-//!   chain, the UI's and the movement update's ticks, a fighter's scripts
-//!   once he joins, and AH.20's pickups and AH.21's breakables (the loot
-//!   system's init, the spinning coins in reach, the archetype setups, the
-//!   destructibles system through the player loop). No creature runs but
-//!   the first fight's, which AH.25's dev entry lists: what the scripts wake
-//!   past that stays inert (decision 6). The level's placements take their palettes off the
-//!   level's palettes part, as the headless runs do.
+//!   chain, the UI's and the movement update's ticks, a fighter's or a
+//!   walker's scripts once he joins ([`guacamole::scripts::with_walkers`],
+//!   AG.27), AH.20's pickups and AH.21's breakables (the loot system's init,
+//!   the spinning coins in reach, the archetype setups, the destructibles
+//!   system through the player loop), AG.60's start scripts on the props
+//!   and AG.28's camera volumes and activator
+//!   ([`guacamole::scripts::CAMERA_SCRIPTS`]). No creature runs but the
+//!   first fight's, which AH.25's dev entry lists: what the scripts wake
+//!   past that stays inert (decision 6). The level's placements take their
+//!   palettes off the level's palettes part, as the headless runs do.
 //! - The activity rule ([`step_scripts`], AG.7's rule): each step, each
 //!   managed placement woken or put to sleep by the hero's pivot, by the
 //!   level's start before he's in (as the props stand), so a breakable out
@@ -34,9 +37,21 @@
 //!   walk in the original's order ([`guacamole::frame`], openspec AH.59): his
 //!   minion first, every awake placement as it woke with the player loop's
 //!   slices in their placements' places, the mover update last; the clones
-//!   of scripted templates made outside it added. After the hero's step,
-//!   the engine's frame ([`advance_scripts`], [`Frame::Actors`]): the
-//!   sequences on, what the scripts threw flying through the seam.
+//!   of scripted templates made outside it added; then the camera's scripts
+//!   judged ([`CameraScripts`], AG.28): theirs the view once a hero has
+//!   joined and they place the viewport, handed back for good once one of
+//!   them or the portal manager stops (AG.191). After the hero's step, the
+//!   engine's frame ([`advance_scripts`], [`Frame::Actors`]): the sequences
+//!   on, what the scripts threw flying through the seam.
+//! - His script stopped in play (AG.27's fall-back, stand-in ledger: `walker`):
+//!   AG.16's controller walks him from that step on Eruptor's
+//!   measured table or a walker's `movement parameters`, falling as every
+//!   mover does (AG.173), his walk and facing the controller's alone in the
+//!   host (AH.151, [`ScriptWorld::hand_back_walk`]: the mover update would
+//!   hand the engine the velocity his stopped minion no longer keeps), and
+//!   the view handed to the TV's chain where it stood (AG.190: nothing
+//!   steps his camera target off the joined run); a take-off is no
+//!   fall-back and leaves the scripts the view.
 //! - The engine the host reads ([`TvEngine`], decision 21): the hero's
 //!   controller by query on his entity, Avian's side of the seam, the
 //!   follow camera's view, each standing prop's body as its placement (a
@@ -261,8 +276,12 @@ pub(crate) struct CameraPlacements(Vec<Handle>);
 
 /// The run from `source`, its entities and an earlier run's gone first: the
 /// TV's listing ([`scripts::smash_config`], openspec AH.27: Eruptor's
-/// scripts, the pickups and the breakables), each of the level's placements
-/// with a model the level's palettes part holds given its palette.
+/// scripts, the pickups, the breakables, AG.60's start scripts and AG.28's
+/// camera volumes and activator; the first fight's with the dev entry's,
+/// [`guacamole::scripts::fight_config`]) with the walkers' (AG.27,
+/// [`scripts::with_walkers`]), each of the level's placements with a model
+/// the level's palettes part holds given its palette, the camera's scripts
+/// idle until a hero joins ([`fresh_camera`]).
 fn install_from(world: &mut World, source: &ScriptSource) {
     // The dev entry's fight brings the first fight's placements (AH.25).
     let fight = crate::dev_entry::fight_listed(world);
@@ -1080,6 +1099,21 @@ pub(crate) fn step_scripts(
                 commands.entity(e).insert(KeepsCard(reason.clone()));
             }
         }
+        if matches!(fallback, Fallback::Stand | Fallback::OnWhatTheySet) {
+            // His walk and facing the controller's alone from here (openspec
+            // AH.151): the mover update would hand the engine, over his walk,
+            // the velocity his stopped minion no longer keeps.
+            world.hand_back_walk(e.to_bits());
+            // And the view the TV's (openspec AG.190): nothing steps his
+            // camera target once he's off the player loop's joined run.
+            if *camera == CameraScripts::On {
+                let reason =
+                    format!("his scripts stopped, so nothing steps his camera target: {why}");
+                warn!(load_file = %r.load_file, %reason, "the camera's scripts stopped");
+                world.hand_back_view();
+                *camera = CameraScripts::Stopped(reason);
+            }
+        }
         r.join = Join::Off(why);
         commands.entity(e).remove::<ScriptedHero>();
     }
@@ -1110,11 +1144,13 @@ pub(crate) fn step_scripts(
 }
 
 /// The camera's scripts' state after a step (openspec AG.28): stopped for
-/// good once the portal manager's camera frame, a player's camera target or
-/// a camera volume's or activator's script stops in play (the view handed
-/// back to the TV's camera); driving once a hero has joined their run and
-/// they place the viewport, from then on; idle, with why, before that or
-/// with no camera system in the part.
+/// good once the portal manager's camera frame, a player's camera target,
+/// any stretch of the portal manager's (AG.191: its tick and the frame in
+/// it stop with it) or a camera volume's or activator's script stops in
+/// play (the view handed back to the TV's camera); driving once a hero has
+/// joined their run and they place the viewport, from then on; idle, with
+/// why, before that or with no camera system in the part. A hero falling
+/// back stops them too ([`step_scripts`], AG.190), a take-off doesn't.
 fn camera_state(
     now: &CameraScripts,
     runtime: &ScriptRuntime,
@@ -1131,10 +1167,19 @@ fn camera_state(
     let Some(pm) = scripts::portal_manager_placement(&runtime.vm, world) else {
         return CameraScripts::Idle("the level's part runs no portal manager".to_owned());
     };
+    // The portal manager stopped by any stretch of its own (openspec
+    // AG.191): its tick, the camera's frame in it, never runs again. A
+    // stretch run apart puts its own stop back, so only another's stays.
     let stopped = runtime
         .player_loop
         .camera_stopped(&runtime.vm, pm)
         .map(|h| format!("the camera's frame stopped: {h}"))
+        .or_else(|| {
+            runtime
+                .vm
+                .stopped(pm)
+                .map(|h| format!("the portal manager stopped, the camera's frame with it: {h}"))
+        })
         .or_else(|| {
             placements
                 .iter()
