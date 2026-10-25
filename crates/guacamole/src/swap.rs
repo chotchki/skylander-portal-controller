@@ -112,9 +112,9 @@ mod tests {
 
     use guac_formats::script::builder::{
         ATTACK_BALL, ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HELPER, ATTACK_KEPT_HEALTH,
-        SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW, WALKER, WALKER_DEF,
-        WALKER_LOAD, WALKER_MINION, WALKER_OTHER, WALKER_SCALE, WALKER_SPEED, WALKER_TURN,
-        WALKER_VIEW_BACK, WalkerFault, WalkerSpec,
+        CREATURE_DEFINITION, SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW,
+        WALKER, WALKER_DEF, WALKER_LOAD, WALKER_MINION, WALKER_OTHER, WALKER_SCALE, WALKER_SPEED,
+        WALKER_TURN, WALKER_VIEW_BACK, WalkerFault, WalkerSpec,
     };
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
@@ -1170,5 +1170,44 @@ mod tests {
         assert_eq!(run.entered(), Some(Value::Int(0)), "not entered");
         assert!(run.vm.tick_order().iter().all(|(a, _)| !a), "no activator");
         assert!(run.world.removed(last), "the last one's actor left off");
+    }
+
+    /// AH.191's synthetic `Combat - Creature Definition` finds a minion's
+    /// description by who he is: called again for the same minion it finds
+    /// the one it made (`made` 2, the same structure), where the next
+    /// minion, an actor of his own, gets one made (`made` 1). The cause the
+    /// writer models rests on this half, and no other test reaches it: the
+    /// join refuses a minion under the last one's identity (the swap review:
+    /// a definition that always made passed every swap test).
+    #[test]
+    fn the_synthetic_definition_finds_a_minion_by_who_he_is() {
+        let read =
+            |run: &Run, m: PlacementId, name: &str| run.vm.local(m, name).map(|v| run.vm.value(v));
+        let (mut run, units) = Run::walkers_described();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        run.fighter = units[WALKER.load];
+        let a = run.join();
+        for _ in 0..5 {
+            run.step([false; 4]);
+        }
+        let first = read(&run, a, "description");
+        assert_eq!(
+            read(&run, a, "made"),
+            Some(Value::Int(1)),
+            "made at his setup"
+        );
+        run.host(|vm, host| vm.call_for(a, CREATURE_DEFINITION, &[], &[], host))
+            .expect("the call");
+        assert_eq!(read(&run, a, "made"), Some(Value::Int(2)), "found again");
+        assert_eq!(read(&run, a, "description"), first, "the one he had");
+        run.deactivate();
+        run.fighter = units[WALKER_OTHER.load];
+        let b = run.join();
+        for _ in 0..5 {
+            run.step([false; 4]);
+        }
+        assert_eq!(read(&run, b, "made"), Some(Value::Int(1)), "made for him");
+        assert_ne!(read(&run, b, "description"), first, "his own");
     }
 }
