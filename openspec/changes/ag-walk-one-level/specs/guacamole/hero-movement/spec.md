@@ -55,8 +55,8 @@ A hero SHALL turn to face the way he walks, the short way, at 1440°/s × S for 
 - **THEN** from the next frame he walks back the way he came at top speed, without stopping, his facing swinging round in 0.13-0.15 s of game time
 
 #### Scenario: A target straight behind
-- **WHEN** the way the stick asks him to face is exactly 180° from his facing, either way round (Tree Rex at 7 of the 12 swings in AG.12's rings that come within 3e-5° of it)
-- **THEN** he turns with his facing increasing, at his turn rate × S, as the oracle's Tree Rex did at all 7; 1.5e-5° to 3e-5° short of 180° (the other 5) he turns the short way, as the oracle's did
+- **WHEN** the way the stick asks him to face is exactly 180° from his facing, either way round (Tree Rex at 7 of the 12 swings in AG.12's rings that come within 3.1e-5° of it)
+- **THEN** he turns with his facing increasing, at his turn rate × S, as the oracle's Tree Rex did at all 7; 1.5e-5° to 3.1e-5° short of 180° (the other 5) he turns the short way, as the oracle's did
 
 #### Scenario: From rest at the start
 - **WHEN** the stick is pushed fully forward with Eruptor at rest at the level's start, which points it 15° from his facing

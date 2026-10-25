@@ -301,10 +301,11 @@ pub fn pitch_of(v: Vec3) -> f32 {
 /// which Rust's `%` is), less 360 over 180 and plus 360 at or under -180.
 /// It lands in (-180, 180], one already there unchanged, so a target
 /// straight behind reads +180 and `Movement - Face and Move` turns him the
-/// positive way: AG.12's 12 ties within 3e-5° of 180° all turn as the
-/// oracle's did on this rule, 4 on the [-180, 180) one it replaces, whose
-/// trip through +360 also moved a value already in range by an ulp. The
-/// setter at 0x0a3200, read as an aid, does the same.
+/// positive way: AG.12's 12 ties within 3.1e-5° of 180° all turn as the
+/// oracle's did on this rule, 5 on the [-180, 180) one it replaces. The
+/// remainder has to be exact too: `rem_euclid`'s trip through +360 moves a
+/// value already in range by an ulp, which on this boundary turns 2 of the
+/// 12 the wrong way. The setter at 0x0a3200, read as an aid, does the same.
 pub fn normalized(degrees: f32) -> f32 {
     let d = degrees % 360.0;
     if d > 180.0 {

@@ -996,11 +996,18 @@ fn tree_rex_walks_on_ag12s_numbers() {
                 assert!(r.speed < 1e-3, "{label}: speed {}", r.speed);
                 assert!(r.drift < 1e-3, "{label}: drift {}", r.drift);
                 assert!(r.heading < 0.1, "{label}: heading {}", r.heading);
-                // Every ring, the 180° swings of `t_full` and `t_half`
-                // among them (AG.172: a target straight behind turns him
-                // the positive way, as the oracle's Tree Rex turned; on the
-                // [-180, 180) normalized angle these were 119-180° off).
-                assert!(r.facing < 1e-3, "{label}: facing {}", r.facing);
+                // His facing is the oracle's to the bit at every step of
+                // every ring, the 180° swings of `t_full` and `t_half` among
+                // them (AG.172: a target straight behind turns him the
+                // positive way, as the oracle's Tree Rex turned; on the
+                // [-180, 180) normalized angle these were 119-180° off),
+                // but `t_half`-W-01 and -02, 3 ulps (9.2e-5°) short from
+                // step 357 on (AG.185).
+                if matches!(label.as_str(), "t_half-W-01" | "t_half-W-02") {
+                    assert!(r.facing < 1e-4, "{label}: facing {}", r.facing);
+                } else {
+                    assert_eq!(r.facing, 0.0, "{label}: facing");
+                }
                 worst.speed = worst.speed.max(r.speed);
                 worst.plateau = worst.plateau.max(r.plateau);
                 worst.heading = worst.heading.max(r.heading);
@@ -1016,7 +1023,7 @@ fn tree_rex_walks_on_ag12s_numbers() {
         }
     }
     println!(
-        "worst of the own-dt replays: speed {:.6} ft/s, plateau {:.6}, walk heading {:.4}°, turning recordings' facing {:.6}°, the 180° swings' facing {:.6}°, position drift {:.6} m",
+        "worst of the own-dt replays: speed {:.6} ft/s, plateau {:.6}, walk heading {:.4}°, turning recordings' facing {:e}°, the 180° swings' facing {:e}°, position drift {:.6} m",
         worst.speed, worst.plateau, worst.heading, worst.facing, swings, worst.drift
     );
     // The check discriminates: Eruptor's scripts (21.5 ft/s, 1440°/s) on

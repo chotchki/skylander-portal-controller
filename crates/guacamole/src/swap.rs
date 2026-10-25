@@ -784,7 +784,7 @@ mod tests {
     /// `PortalControl.ai`'s legendary lookup left `its` on a toy table row
     /// before `Movement - Add Mover` looked up their joined data.
     #[test]
-    fn a_walker_walks_though_a_find_subset_left_its_on_a_candidate() {
+    fn a_walker_walks_through_a_find_subset_left_its_on_a_candidate() {
         let (mut run, minion) = walker_joined(WalkerFault::None, 1);
         assert!(run.vm.set_up(minion));
         let decoys = run
