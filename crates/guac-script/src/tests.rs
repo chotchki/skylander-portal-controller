@@ -418,6 +418,121 @@ fn a_call_binds_by_name_returns_through_its_frame_and_resets_it() {
     assert_eq!(vm.frame(add, "b"), Some(Value::Int(0)));
 }
 
+/// `set [set] <set> add <element>` (`OpChangeMembership` code 0).
+fn add_to(w: &mut Writer<'_>, set: Location, element: &[El<'_>]) {
+    let lhs = w.stack(StackClass::Set, &[El::Local(set)]);
+    let rhs = w.group(element, None);
+    let o = w.op(Class::ChangeMembership, "set [set]||to");
+    w.refer(o, 0x1C, lhs);
+    w.word(o, 0x20, 0);
+    w.refer(o, 0x24, rhs);
+    w.push(o);
+}
+
+/// A set parameter named `name` binding into `def`, at no position.
+fn set_parameter(w: &mut Writer<'_>, name: &str, def: Location) -> Location {
+    let o = w.op(Class::MacroParameter, "parameter");
+    w.text(o, 0x1C, name);
+    w.class_word(o, 0x20, "ScriptSet");
+    w.word(o, 0x28, u32::MAX);
+    w.refer(o, 0x38, def);
+    o
+}
+
+#[test]
+fn a_parameter_bound_to_its_keeps_its_own_variable() {
+    // Macros (openspec AG.171): while a parameter's right side is read,
+    // `its` is that parameter. A `find subset` whose right side reads
+    // through nothing leaves `its` on its candidate (a structure); a set
+    // parameter bound to `its` right after still holds only what the body
+    // adds (B), never the candidate (read as it, Giants' `Movement - Add
+    // Mover` found a toy table row first in a joined-data lookup and two
+    // heroes stood still).
+    let lookup = std::cell::Cell::new(None);
+    let p = program(|w| {
+        let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+        let (tp, thing_ty) = w.open(Class::DefineStructure, "Thing");
+        let hp = var(w, "hp");
+        w.push(hp);
+        w.end_block(tp);
+        w.end_block(section);
+        w.end("C:/tfb/Synthetic/Types.ai");
+        let thing = w.variable("thing", "ScriptStructure", None);
+        w.refer(thing, 0x24, thing_ty);
+        let candidates = w.variable("candidates", "ScriptSet", None);
+        let nothing = w.variable("nothing", "ScriptReference", None);
+        let got = w.variable("got", "ScriptSet", None);
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                // Lookup: B added to the set it returns.
+                let (at, d) = w.open(Class::DefineMacro, "Lookup");
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let found = set_parameter(w, "found", d);
+                let zero = w.int(0);
+                w.refer(found, 0x30, zero);
+                w.push(found);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                add_to(w, found, &[El::Named("SpriteInfo", "B")]);
+                w.end_block(at);
+                lookup.set(Some(d));
+            },
+            |_| {},
+            |w| {
+                let d = lookup.get().unwrap();
+                let bh = w.behaviour("idle");
+                add_to(w, candidates, &[El::Local(thing)]);
+                // find subset candidates.null.hp == nothing.hp: none
+                // matches, and the right side reads through nothing.
+                let lhs = w.value(&[El::Local(candidates), El::Null, El::Local(hp)]);
+                let through_nothing = w.rhs(INT, &[El::Local(nothing), El::Local(hp)]);
+                let rhs = w.expr(through_nothing, None);
+                let (at, fs) = w.open(Class::FindSubSet, "find subset|of||||subset");
+                w.refer(fs, 0x1C, lhs);
+                w.word(fs, 0x20, 1);
+                w.refer(fs, 0x24, rhs);
+                w.end_block(at);
+                // Lookup(found := its), then got gets what it returned.
+                let np = w.group(&[El::Local(d)], None);
+                let (call, o) = w.open(Class::UseMacro, "use macro");
+                w.refer(o, 0x1C, np);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let found = set_parameter(w, "found", d);
+                let its = w.reference(&[El::Member("abstractscriptgroup", "its")], None);
+                w.refer(found, 0x30, its);
+                w.push(found);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                add_to(w, got, &[El::Local(found)]);
+                w.end_block(call);
+                w.end_block(bh);
+            },
+        );
+    });
+    // Script 1: script 0 holds the structure.
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 1);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    let candidates = vm.local(id, "candidates").unwrap();
+    assert_eq!(vm.set(candidates).map(<[Value]>::len), Some(1));
+    let got = vm.local(id, "got").unwrap();
+    let names: Vec<String> = vm
+        .set(got)
+        .unwrap()
+        .iter()
+        .map(|v| match v {
+            Value::Named(_, n) => vm.program().sym(*n).to_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(names, ["b"], "what the body added, and only that");
+}
+
 #[test]
 fn a_specialization_reads_its_bases_parameters_from_its_own_frame() {
     let p = program(|w| {

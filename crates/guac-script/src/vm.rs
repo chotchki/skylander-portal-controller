@@ -2425,7 +2425,10 @@ impl Vm {
     }
 
     /// A call's parameter: its right side in the caller's context, into the
-    /// callee's frame.
+    /// callee's frame. While it's read, `its` is the parameter itself, its
+    /// variable as the frame holds it (crate docs, Macros), so `:= its`
+    /// leaves the variable as it was, whatever a `find subset` left `its`
+    /// at (openspec AG.171).
     fn bind(&mut self, program: &Program, p: Param, host: &mut dyn Host) -> Result<(), Fault> {
         let Some(call) = self.run.calls.last().copied() else {
             return unsupported("a parameter outside a call");
@@ -2435,6 +2438,22 @@ impl Vm {
         let Some(rhs) = p.rhs else {
             return Ok(());
         };
+        let saved_its = self.run.its;
+        self.run.its = self.cells[cell as usize].value;
+        let bound = self.bind_cell(program, p, cell, rhs, host);
+        self.run.its = saved_its;
+        bound
+    }
+
+    /// [`Vm::bind`]'s write: `rhs` into the frame's `cell`.
+    fn bind_cell(
+        &mut self,
+        program: &Program,
+        p: Param,
+        cell: u32,
+        rhs: OperandId,
+        host: &mut dyn Host,
+    ) -> Result<(), Fault> {
         let kind = self.cells[cell as usize].kind;
         match kind {
             CellKind::Set => {

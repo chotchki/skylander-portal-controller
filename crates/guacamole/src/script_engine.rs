@@ -296,10 +296,25 @@ pub fn pitch_of(v: Vec3) -> f32 {
     v.y.atan2(across) * 57.295_78
 }
 
-/// `system.normalized angle`'s range: a write lands in [-180, 180).
+/// `system.normalized angle`'s write, the original's (openspec AG.172): the
+/// remainder by 360 with the sign of what's written (exact, C's `fmodf`,
+/// which Rust's `%` is), less 360 over 180 and plus 360 at or under -180.
+/// It lands in (-180, 180], one already there unchanged, so a target
+/// straight behind reads +180 and `Movement - Face and Move` turns him the
+/// positive way: AG.12's 12 ties within 3.1e-5° of 180° all turn as the
+/// oracle's did on this rule, 5 on the [-180, 180) one it replaces. The
+/// remainder has to be exact too: `rem_euclid`'s trip through +360 moves a
+/// value already in range by an ulp, which on this boundary turns 2 of the
+/// 12 the wrong way. The setter at 0x0a3200, read as an aid, does the same.
 pub fn normalized(degrees: f32) -> f32 {
-    let d = degrees.rem_euclid(360.0);
-    if d >= 180.0 { d - 360.0 } else { d }
+    let d = degrees % 360.0;
+    if d > 180.0 {
+        d - 360.0
+    } else if d <= -180.0 {
+        d + 360.0
+    } else {
+        d
+    }
 }
 
 /// A host object a member hands back: an actor's facet, an attach node, a
@@ -644,14 +659,23 @@ mod tests {
         assert!((pitch_of(v) - 63.6).abs() < 1e-3);
     }
 
+    /// AG.172: (-180, 180], the original's write: straight behind either
+    /// way reads +180, and a value already in range comes back to the bit
+    /// (through +360 and back, AG.12's -75.00033 came back -75.000336).
     #[test]
     fn a_normalized_angle_lands_in_minus_180_to_180() {
         assert_eq!(normalized(190.0), -170.0);
         assert_eq!(normalized(-190.0), 170.0);
-        assert_eq!(normalized(180.0), -180.0);
-        assert_eq!(normalized(-180.0), -180.0);
+        assert_eq!(normalized(180.0), 180.0);
+        assert_eq!(normalized(-180.0), 180.0);
+        assert_eq!(normalized(540.0), 180.0);
+        assert_eq!(normalized(-540.0), 180.0);
         assert_eq!(normalized(15.0), 15.0);
         assert_eq!(normalized(375.0), 15.0);
+        assert_eq!(normalized(-345.0), 15.0);
+        for x in [-75.00033_f32, -179.99998, 179.99998, -1e-6, 104.99966] {
+            assert_eq!(normalized(x).to_bits(), x.to_bits(), "{x} unchanged");
+        }
     }
 
     #[test]

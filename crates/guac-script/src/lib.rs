@@ -204,7 +204,13 @@
 //!   reads its right side in the caller's context and writes it into the
 //!   callee's frame, matched by name (ignoring case), else by parameter id. A
 //!   value is written whole, a set combined in by the parameter's combine
-//!   code, a reference read at its index. Then `flow macro` enters the body.
+//!   code, a reference read at its index. While a parameter's right side is
+//!   read, `its` is that parameter, its variable as the frame holds it, so
+//!   a parameter bound to `its` keeps what it holds, whatever a `find
+//!   subset` left `its` at (the original's parameter op makes itself `its`
+//!   before it reads its right side; AG.171: read as a `find subset`'s
+//!   last candidate, Giants' `Movement - Add Mover` lost two heroes'
+//!   controllers). Then `flow macro` enters the body.
 //! - Entering pushes the definition and skips the definition's own INTERFACE
 //!   block: a parameter's default there is never read. A parameter the call
 //!   leaves out reads 0, nothing or an empty set.
