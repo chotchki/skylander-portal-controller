@@ -193,7 +193,8 @@ fn the_fights_parts_extract_whole_and_resume() {
     assert!(md.failed.is_empty() && lv.failed.is_empty() && sc.failed.is_empty());
     assert!(done.intros.is_ok(), "ffmpeg is needed for the whole run");
     assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 8, 2));
-    assert_eq!(sc.entries, 4);
+    // The fighter's archive and the three base ones, then AG.27's 66 walkers.
+    assert_eq!((sc.entries, sc.walkers), (4 + 66, 66));
     let m = opened.dir.manifest().clone();
     for prefix in [
         "palettes/",
@@ -298,8 +299,11 @@ fn the_fights_parts_extract_whole_and_resume() {
         "the chest"
     );
 
-    // Every whitelisted script is in the script part and reads.
+    // Every whitelisted script is in the script part and reads: the base's,
+    // Eruptor's, the level's and (AG.162) each of the 66 walkers' own.
     let parse_started = Instant::now();
+    let mut held = 0;
+    assert_eq!(WHITELIST.len(), 5 + 66);
     for w in WHITELIST {
         let rel = match w.archive.strip_prefix("level/") {
             Some(level) => levels::script_path(level.strip_suffix(".bld").unwrap()),
@@ -315,6 +319,7 @@ fn the_fights_parts_extract_whole_and_resume() {
                 "{s} not in {rel}"
             );
         }
+        held += w.scripts.len();
         println!(
             "  {rel}: {} bytes, {} scripts, the {} whitelisted in it",
             bytes.len(),
@@ -322,6 +327,11 @@ fn the_fights_parts_extract_whole_and_resume() {
             w.scripts.len()
         );
     }
+    println!(
+        "  {held} whitelisted scripts, all in the script part ({} walkers' of them)",
+        scripts::whitelisted_walker_scripts().len()
+    );
+    assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 54);
     println!(
         "  the script part read back and parsed in {:.2} s",
         parse_started.elapsed().as_secs_f64()

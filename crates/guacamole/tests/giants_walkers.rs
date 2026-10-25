@@ -2,8 +2,9 @@
 //! over level 213 with guacamole's host (the walkers' part as the TV links
 //! it, `level_scripts::load` over a throwaway extract made by the real
 //! stages), each joined by AH.17's join, his setup on the VM writing the
-//! `movement parameters` and the scale the mover update reads; and AH.165's
-//! and AH.169's swaps of a walker. Ignored by default; they read
+//! `movement parameters` and the scale the mover update reads; AH.165's
+//! and AH.169's swaps of a walker; and AG.162's whitelist against the TV's
+//! listing. Ignored by default; they read
 //! `GUAC_GIANTS_DUMP` and write the extract under `GUAC_EXTRACT_DIR` (a
 //! folder `ag27-verify` there, shared by the tests of one run; a run that
 //! made it removes it as its process exits, one that found it current
@@ -704,6 +705,55 @@ fn a_probe_of_the_part() {
             w.load_file, w.unit, w.asks, w.scripts
         );
     }
+}
+
+/// AG.162: the extract's whitelist holds each walker the TV lists (no new
+/// viewport ask, a minion his definition names) once, in link order, with
+/// exactly the scripts the TV's listing runs for him, and no other walker.
+/// The unit tests only count the names and `giants_fight_stage` only finds
+/// each in his archive, so a name swapped for another script of his file
+/// fails here alone.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn the_whitelist_holds_each_listed_walkers_scripts() {
+    use guac_extract::scripts::{WHITELIST, character_archive};
+    let l = Level::open();
+    let listed: Vec<&WalkerScripts> = l
+        .walkers
+        .iter()
+        .filter(|w| w.asks == 0 && w.minion.is_some())
+        .collect();
+    let archives: Vec<String> = l
+        .walkers
+        .iter()
+        .map(|w| character_archive(&w.load_file))
+        .collect();
+    let entries: Vec<_> = WHITELIST
+        .iter()
+        .filter(|e| archives.iter().any(|a| a == e.archive))
+        .collect();
+    assert_eq!(
+        entries.iter().map(|e| e.archive).collect::<Vec<_>>(),
+        listed
+            .iter()
+            .map(|w| character_archive(&w.load_file))
+            .collect::<Vec<_>>(),
+        "the whitelist's walkers are the TV's listed ones, in link order"
+    );
+    let key = |s: &String| s.to_ascii_lowercase();
+    for (w, e) in listed.iter().zip(&entries) {
+        let mut ours: Vec<String> = e.scripts.iter().map(|s| format!("/{s}")).collect();
+        ours.sort_by_key(key);
+        let mut tv = w.scripts.clone();
+        tv.sort_by_key(key);
+        assert_eq!(ours, tv, "{}", w.load_file);
+    }
+    println!(
+        "{} walkers listed, {} on the whitelist, {} scripts",
+        listed.len(),
+        entries.len(),
+        entries.iter().map(|e| e.scripts.len()).sum::<usize>()
+    );
 }
 
 /// Each walker's viewport asks the TV's own run doesn't reach: which script

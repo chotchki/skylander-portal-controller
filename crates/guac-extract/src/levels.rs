@@ -23,8 +23,8 @@
 //!   file's placements, structures and sets. The same file in either IR
 //!   format.
 //! - The palettes (AH.22): every slot of each skinned model a placement
-//!   running a whitelisted script names ([`crate::scripts::WHITELIST`]):
-//!   chapter 1's Chompies and Norticus.
+//!   running a whitelisted script names ([`crate::scripts::WHITELIST`]: the
+//!   level's and the walkers' own, AG.162): chapter 1's Chompies and Norticus.
 //!
 //! A part that doesn't read is the level stage's failure for that part
 //! alone: the other parts land, and the next start tries it again.
@@ -621,22 +621,27 @@ pub fn script(igz: &Igz<'_>) -> Result<usize, String> {
 }
 
 /// The palettes part: every slot of each skinned model a placement running
-/// one of the level's whitelisted scripts names, each model once, in
-/// object order. A model with no skeleton (a breakable, a coin) has none;
-/// one whose skeleton won't read refuses the part.
+/// one of the level's whitelisted scripts or a walker's (AG.162) names, each
+/// model once, in object order. A model with no skeleton (a breakable, a
+/// coin) has none; one whose skeleton won't read refuses the part.
 pub fn palettes(
     igz: &Igz<'_>,
     level: &str,
     identity: DumpIdentity,
 ) -> Result<Read<LevelPalettes>, String> {
-    let listed = crate::scripts::level_scripts(level);
+    // The level's whitelisted scripts and the walkers' own (AG.162); a level
+    // off the whitelist runs none of its scripts, theirs included.
+    let mut listed = crate::scripts::level_scripts(level).to_vec();
+    if !listed.is_empty() {
+        listed.extend(crate::scripts::whitelisted_walker_scripts());
+    }
     let placements = FormatPlacements::read(igz).map_err(s)?;
     let mut creatures: BTreeMap<usize, &str> = BTreeMap::new();
     for a in &placements.actors {
         let Some(model) = a.info.model else {
             continue;
         };
-        if !a.script.is_some_and(|p| crate::scripts::listed(listed, p)) {
+        if !a.script.is_some_and(|p| crate::scripts::listed(&listed, p)) {
             continue;
         }
         let Some(info) = placements.models.get(&model) else {
