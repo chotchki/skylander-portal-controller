@@ -136,8 +136,8 @@ impl Picked {
             .filter(|(s, _)| Some(*s) != idle && Some(*s) != fall)
             .map(|(_, w)| w.max(0.0))
             .sum();
-        // Standing, the idle and the fall leave all of it: the idle takes
-        // the rest (or, with no idle weighted, the moving gaits by weight).
+        // Standing (no moving gait weighs anything), the idle takes the rest
+        // and each gait draws 0, not 0 over 0.
         let (i, rest) = if moving > 0.0 {
             (i, rest)
         } else {
@@ -150,8 +150,10 @@ impl Picked {
                     i
                 } else if Some(s) == fall {
                     f
-                } else {
+                } else if moving > 0.0 {
                     rest * w.max(0.0) / moving
+                } else {
+                    0.0
                 };
                 (s, share)
             })
@@ -615,5 +617,29 @@ mod tests {
             ("Eruptor_Idle.ma", 1.0)
         );
         assert_eq!(p.weights(), [0.0; 4]);
+    }
+
+    /// Standing at rest the script weights his idle 100 and his walk and run
+    /// 0 (AG.11's records at rest): the idle draws whole and the gaits 0,
+    /// never 0 over 0 (the review of AH.49: the TV's gait report read the
+    /// walk and run as NaN on 154 of Tree Rex's 389 steps on the Mac).
+    #[test]
+    fn standing_his_gaits_draw_0() {
+        let p = picked([
+            (0, 100.0, 100.0),
+            (1, 0.0, 100.0),
+            (3, 0.0, 100.0),
+            (57, 0.0, 100.0),
+        ]);
+        assert_eq!(p.weights(), [1.0, 0.0, 0.0, 0.0]);
+        let four = p.drawn_four(&[(0, 100.0), (1, 0.0), (3, 0.0)], (0.5, 1.0 / 60.0));
+        assert_eq!(four.map(|c| c.1), [1.0, 0.0, 0.0, 0.0]);
+        let pal = palette();
+        let posed = p.posed(&[], &pal, (1.0, 1.0 / 60.0));
+        assert_eq!(posed.len(), 1);
+        assert_eq!(
+            (posed[0].0.name.as_str(), posed[0].2),
+            ("Eruptor_Idle.ma", 1.0)
+        );
     }
 }

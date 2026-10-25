@@ -595,9 +595,6 @@ mod tests {
         }
     }
 
-    /// The hero steps once a fixed step at 1/60 s, and on Avian's side of the
-    /// seam walks where the controller on parry walks, step for step, to
-    /// float noise.
     /// AH.49: while his scripts pick his clips (his gaits' `picked`), the
     /// stand-in isn't stepped, one side picking: its weights, clips and step
     /// count stay where they were as he walks; his gaits' own step count runs
@@ -650,6 +647,9 @@ mod tests {
         assert!(g.locomotion.moving(), "picking for him again");
     }
 
+    /// The hero steps once a fixed step at 1/60 s, and on Avian's side of the
+    /// seam walks where the controller on parry walks, step for step, to
+    /// float noise.
     #[test]
     fn the_hero_steps_at_60_hz_as_on_parry() {
         let bodies = open_ground();
