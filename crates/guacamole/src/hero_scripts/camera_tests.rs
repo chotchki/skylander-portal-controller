@@ -746,7 +746,7 @@ fn a_goat_opens_its_rock_over_a_wait_within_the_scripts_tolerance() {
     assert_eq!(run.read + first_roll(389), run.timer);
     assert!(
         run.fell_by < run.timer,
-        "its falling step read {} s, short of its wait {} s",
+        "its falling step read {} s, its wait {} s: not short of it",
         run.fell_by,
         run.timer
     );
