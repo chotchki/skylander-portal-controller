@@ -22,8 +22,9 @@
 //!   chain until he joins the run, from then on the camera's scripts have
 //!   the view (AG.28: the `Pop_To_Camera_*` volumes, the planes' blend and
 //!   the sliding rocks' activator through `viewportinfo.default`), the
-//!   chain the view's again for good once one of them, the portal manager
-//!   or his own script stops in play ([`crate::hero`],
+//!   chain the view's again for good once one of them or the portal manager
+//!   stops in play, and once his own script stops until the next hero's
+//!   scripts join (AG.190, AG.211; [`crate::hero`],
 //!   stand-in ledger: `camera`); the level's input layer takes the pads
 //!   ([`crate::pad`]). The camera is the level's
 //!   ([`crate::level::view_camera`]: its output onto the TV's target with
@@ -75,7 +76,8 @@
 //!   controller ([`crate::hero_scripts`], stand-in ledger: `walker`), his
 //!   walk and facing the controller's alone and the view the TV's chain's
 //!   (AH.151, AG.190), `/api/_test/tv`'s `hero.scripts` and
-//!   `hero.camera.scripts` both `off` with his reason.
+//!   `hero.camera.scripts` both `off` with his reason, until the next hero
+//!   in joins the run and the camera's scripts take the view back (AG.211).
 
 use std::sync::Arc;
 use std::time::Duration;

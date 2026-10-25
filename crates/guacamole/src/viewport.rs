@@ -47,15 +47,17 @@ pub const SCREEN_HEIGHT: f32 = 720.0;
 pub const FOV: f32 = 68.0;
 
 /// Who stands for the viewport: until the camera's scripts place it, and
-/// again for good once they stop, the TV's own camera does (its view the
-/// engine's).
+/// again once they stop (for good) or the hero falls back (until the next
+/// hero's scripts join, openspec AG.211), the TV's own camera does (its view
+/// the engine's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Source {
     #[default]
     Engine,
     Scripts,
-    /// The scripts' camera stopped in play: the TV's chain has the view
-    /// from here on, and a write to the viewport goes nowhere.
+    /// The scripts' camera stopped in play, or the hero fell back: the TV's
+    /// chain has the view, for good or until a hero's join (openspec
+    /// AG.211), and a write to the viewport goes nowhere meanwhile.
     HandedBack,
 }
 

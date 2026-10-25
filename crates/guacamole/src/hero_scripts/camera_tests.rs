@@ -883,6 +883,132 @@ fn a_swap_mid_level_leaves_the_scripts_the_view() {
     );
 }
 
+/// Eruptor in place of the hero on the portal (slot 0 cleared, Eruptor
+/// placed in slot 1), taken in and his scripts joined; the index of the
+/// first step recorded after the clear.
+fn swap_for_eruptor(app: &mut App, pad: Entity) -> usize {
+    let from = samples(app).len();
+    clear(app, 0);
+    frames(app, 30);
+    place(app, 1, ERUPTOR, "Eruptor");
+    until(app, "him in", |a| {
+        a.world().resource::<crate::play::Play>().hero().is_some()
+    });
+    test_pad::press(app, pad, GamepadButton::East);
+    until(app, "his scripts", |a| join(a).as_deref() == Some("joined"));
+    frames(app, 30);
+    from
+}
+
+/// AG.211: a hero's fall-back hands the view to the chain until the next
+/// hero's scripts join the run, not for good. The walker falls back (his
+/// minion stopping in play) and walks off on the chain's view; taken off,
+/// Eruptor put in and joined, the camera's scripts have the view again
+/// from their first write after his join (`on`, `CameraScripts::On`, the
+/// viewport theirs), drawing their camera on him, as they would have done
+/// had no one fallen back.
+#[test]
+fn a_hero_put_in_after_a_fall_back_takes_the_scripts_view_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, pad) = camera_walker_app(tmp.path(), WalkerFault::InPlay);
+    run_until(&mut app, "his fall-back", 60, |s| {
+        matches!(s.hold, ViewHold::HandedBack(_))
+    });
+    let (_, stop) = handed_back(&app);
+    assert_eq!(
+        *app.world().resource::<crate::hero::CameraScripts>(),
+        crate::hero::CameraScripts::HeroOff(stop.report.scripts_reason.clone().unwrap())
+    );
+    assert!(app.world().resource::<ScriptWorld>().view_back_at_a_join());
+    // Walked off to his -x side (clear of the plane ahead and the volume at
+    // his +x) on the chain's view.
+    test_pad::stick(&mut app, pad, 1.0, 0.0);
+    frames(&mut app, 30);
+    test_pad::stick(&mut app, pad, 0.0, 0.0);
+    frames(&mut app, 30);
+    let walked = last(&app);
+    assert!(matches!(walked.hold, ViewHold::HandedBack(_)));
+    assert!(walked.feet.distance(stop.feet) > 1.0, "he walked");
+    assert!(
+        walked.eye.distance(stop.eye) > 1.0,
+        "the chain followed him"
+    );
+    let from = swap_for_eruptor(&mut app, pad);
+    let after = &samples(&app)[from..];
+    let back = after
+        .iter()
+        .position(|s| s.hold == ViewHold::Scripts)
+        .expect("the scripts' view again");
+    for s in &after[..back] {
+        assert!(matches!(s.hold, ViewHold::HandedBack(_)), "step {}", s.step);
+        assert_eq!(s.report.scripts.as_deref(), Some("off"));
+    }
+    assert!(
+        after.len() - back >= 25,
+        "{} steps on it",
+        after.len() - back
+    );
+    for s in &after[back..] {
+        assert_eq!(s.hold, ViewHold::Scripts, "step {}", s.step);
+        assert_eq!(s.report.scripts.as_deref(), Some("on"));
+        assert_eq!(s.report.scripts_reason, None);
+        assert_eq!(s.view.source, Source::Scripts);
+        assert_view(
+            s,
+            view_of(between(CAMERA_START, CAMERA_START, 0.0), s.feet),
+            "camera 0 on Eruptor",
+        );
+    }
+    assert_eq!(
+        *app.world().resource::<crate::hero::CameraScripts>(),
+        crate::hero::CameraScripts::On
+    );
+    assert!(!app.world().resource::<ScriptWorld>().view_back_at_a_join());
+}
+
+/// AG.211, the other side: a stop of the camera's own (its frame's) or the
+/// portal manager's (its projectile manager's, AG.191) hands the view back
+/// for good, a hero's join after it or not: Eruptor taken off and put back
+/// in, joined again, the view stays the chain's, `off` with the stop's
+/// reason.
+#[test]
+fn a_camera_or_portal_manager_stop_keeps_the_chain_the_view_through_a_swap() {
+    for (fault, why) in [
+        (CameraFault::Frame, "the camera's frame stopped"),
+        (CameraFault::PortalManager, "the portal manager stopped"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = camera_app(tmp.path(), fault);
+        run_until(&mut app, "the scripts' view", 30, |s| {
+            s.hold == ViewHold::Scripts
+        });
+        run_until(&mut app, "the stop", 200, |s| {
+            matches!(s.hold, ViewHold::HandedBack(_))
+        });
+        let (_, stop) = handed_back(&app);
+        assert!(!app.world().resource::<ScriptWorld>().view_back_at_a_join());
+        let from = swap_for_eruptor(&mut app, pad);
+        let after = &samples(&app)[from..];
+        assert!(after.len() >= 30, "{fault:?}: {} steps", after.len());
+        for s in after {
+            assert!(
+                matches!(s.hold, ViewHold::HandedBack(_)),
+                "{fault:?}: step {}",
+                s.step
+            );
+            assert_eq!(s.report.scripts.as_deref(), Some("off"));
+            assert_eq!(s.report.scripts_reason, stop.report.scripts_reason);
+            assert_eq!(s.view.source, Source::HandedBack);
+        }
+        let reason = stop.report.scripts_reason.clone().unwrap_or_default();
+        assert!(reason.contains(why), "{fault:?}: {reason}");
+        assert!(matches!(
+            *app.world().resource::<crate::hero::CameraScripts>(),
+            crate::hero::CameraScripts::Stopped(_)
+        ));
+    }
+}
+
 /// AG.191: the portal manager stopped by a stretch of its own that isn't
 /// the camera's (its projectile manager, here) stops its tick for good, the
 /// camera's frame in it: the view goes to the TV's camera from where it

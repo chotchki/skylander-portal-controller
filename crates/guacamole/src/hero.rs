@@ -51,7 +51,7 @@ use guac_motion::stick::Stick;
 use guacamole::frame;
 use guacamole::scripts::ScriptWorld;
 use guacamole::viewport::{chain_from, scripts_view};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::physics::AvianSeam;
 
@@ -201,8 +201,10 @@ pub(crate) enum ViewHold {
     Chain(String),
     /// The camera's scripts on the VM.
     Scripts,
-    /// The camera's scripts stopped in play: the chain has had the view
-    /// since, from where it stood, for good (stand-in ledger: `camera`).
+    /// The camera's scripts stopped in play, or the hero fell back in play:
+    /// the chain has had the view since, from where it stood
+    /// (stand-in ledger: `camera`), for good after a stop, until the next
+    /// hero's scripts join after a fall-back (openspec AG.211).
     HandedBack(String),
 }
 
@@ -236,6 +238,12 @@ pub(crate) enum CameraScripts {
     On,
     /// Stopped in play, with why: the view goes to the chain for good.
     Stopped(String),
+    /// The hero fell back in play, with why (openspec AG.190): off the
+    /// player loop's joined run nothing steps his camera target, so the
+    /// view goes to the chain until the next hero's scripts join their run,
+    /// whose activation makes his target afresh (AG.211); a stop of theirs
+    /// meanwhile makes it for good.
+    HeroOff(String),
 }
 
 impl Default for CameraScripts {
@@ -350,8 +358,9 @@ pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut Her
 /// One game frame of the gameplay camera: the view the camera's scripts
 /// left this step while they drive (openspec AG.28), else the chain on the
 /// hero's pivot as his step began. One hero walks (pad-input's One pad walks
-/// the hero): with none, or a second, the chain waits. Their stopping hands
-/// the chain the view from where it stood.
+/// the hero): with none, or a second, the chain waits. Their stopping, or
+/// the hero's falling back (openspec AG.190), hands the chain the view from
+/// where it stood; once they drive again (AG.211) it's theirs.
 pub(crate) fn step_cameras(
     time: Res<Time>,
     heroes: Query<&HeroBody>,
@@ -370,6 +379,9 @@ pub(crate) fn step_cameras(
         let follow = &mut *follow;
         let place = match (&state, world.as_deref()) {
             (CameraScripts::On, Some(world)) => {
+                if let ViewHold::HandedBack(why) = &follow.hold {
+                    info!(was = %why, "the camera's scripts have the view again: a hero joined their run");
+                }
                 follow.hold = ViewHold::Scripts;
                 let v = world.viewport();
                 follow.drawn = scripts_view(v, feet);
@@ -377,7 +389,9 @@ pub(crate) fn step_cameras(
             }
             _ => {
                 match &state {
-                    CameraScripts::Stopped(why) if follow.hold == ViewHold::Scripts => {
+                    CameraScripts::Stopped(why) | CameraScripts::HeroOff(why)
+                        if follow.hold == ViewHold::Scripts =>
+                    {
                         follow.camera = chain_from(&follow.drawn, feet.unwrap_or(follow.drawn.aim));
                         follow.hold = ViewHold::HandedBack(why.clone());
                         warn!(
@@ -385,7 +399,9 @@ pub(crate) fn step_cameras(
                             "the camera's scripts stopped: the TV's camera follows him from where they left the view"
                         );
                     }
-                    CameraScripts::Stopped(why) | CameraScripts::Idle(why)
+                    CameraScripts::Stopped(why)
+                    | CameraScripts::HeroOff(why)
+                    | CameraScripts::Idle(why)
                         if !matches!(follow.hold, ViewHold::HandedBack(_)) =>
                     {
                         follow.hold = ViewHold::Chain(why.clone());

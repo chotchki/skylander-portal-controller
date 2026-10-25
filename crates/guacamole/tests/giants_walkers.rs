@@ -360,8 +360,9 @@ struct W {
     hold_walk: bool,
     hand_back_view: bool,
     /// The view the TV draws, when the run steers by it (`tv_view`): the
-    /// scripts' viewport, or once handed back the chain's, which the stick
-    /// reads the step after (`bench.view`).
+    /// scripts' viewport, or once handed back the chain's until they write
+    /// it again after a join (AG.211), which the stick reads the step after
+    /// (`bench.view`).
     tv_view: bool,
     drawn: Option<guac_motion::camera::View>,
     chain: Option<guac_motion::camera::GameCamera>,
@@ -582,6 +583,11 @@ impl W {
         self.bench.place_bodies(&self.world);
         if self.tv_view {
             let feet = self.hero().pivot;
+            // The scripts' view again once they write it after a join
+            // (AG.211), as the TV's camera takes it at `CameraScripts::On`.
+            if self.world.viewport().scripted() {
+                self.chain = None;
+            }
             let drawn = match self.chain.as_mut() {
                 Some(chain) => {
                     chain.step(before, dt, &[]);
@@ -598,9 +604,11 @@ impl W {
     /// His fall-back as the TV's `step_scripts` takes it once his minion's
     /// script stops in play: AG.16's controller on the movement parameters
     /// his scripts wrote (Eruptor's on his measured table), his walk the
-    /// controller's alone in the host (AH.151) and the view handed to the
-    /// TV's chain where it stood (AG.190), each as `hold_walk` and
-    /// `hand_back_view` say.
+    /// controller's alone in the host (AH.151, as `hold_walk` says) and the
+    /// view handed back where the scripts have it (AG.190, as
+    /// `hand_back_view` says), in every run as on the TV, the TV's chain
+    /// taking it where it stood in a run steering by the view
+    /// ([`W::on_the_tvs_view`]).
     fn fall_back(&mut self, why: String) {
         self.off = Some((self.steps, why));
         let width = self.walk.shape.width;
@@ -616,13 +624,20 @@ impl W {
         if self.hold_walk {
             self.world.hand_back_walk(HERO);
         }
-        if self.hand_back_view && self.tv_view {
-            let feet = self.hero().pivot;
-            let drawn = self.drawn.unwrap_or_else(|| {
-                guacamole::viewport::scripts_view(self.world.viewport(), Some(feet))
-            });
-            self.chain = Some(guacamole::viewport::chain_from(&drawn, feet));
-            self.world.hand_back_view();
+        // As the TV's `step_scripts`: the view handed back until the next
+        // join (AG.211) whenever the scripts have it (`CameraScripts::On`
+        // there), so the asks AH.150 answers off it read AH.20's answer
+        // meanwhile in every run; the chain built only where the run steers
+        // by the view the TV draws.
+        if self.hand_back_view && self.world.viewport().scripted() {
+            if self.tv_view {
+                let feet = self.hero().pivot;
+                let drawn = self.drawn.unwrap_or_else(|| {
+                    guacamole::viewport::scripts_view(self.world.viewport(), Some(feet))
+                });
+                self.chain = Some(guacamole::viewport::chain_from(&drawn, feet));
+            }
+            self.world.hand_back_view_until_a_join();
         }
     }
 
@@ -677,6 +692,43 @@ impl W {
         Ok(())
     }
 
+    /// The next hero in where this one stood, as the TV's swap brings him
+    /// (openspec AH.105): `load`'s palette on his minion's template, his
+    /// controller on his own numbers at this one's place and facing, then
+    /// the join. Takes this one off first ([`W::deactivate`]) if he's on.
+    fn swap_in(&mut self, l: &Level, load: &str) -> Result<(), Halt> {
+        if self.minion.is_some() {
+            self.deactivate();
+        }
+        let unit = l.unit_of(load).unwrap_or_else(|| panic!("{load}: no unit"));
+        let walker = l.walkers.iter().find(|w| w.load_file == load);
+        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        if let Some(template) = walker.and_then(|w| w.template).or_else(|| {
+            l.files
+                .placed
+                .iter()
+                .find(|p| p.obj.unit == unit && p.name == load)
+                .map(|p| p.obj)
+        }) {
+            self.world.set_palette(template, lengths(&palette));
+        }
+        let walk = if load == "009_Eruptor" {
+            Walk::measured(walkers::walker(load).unwrap())
+        } else {
+            let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
+            Walk::scripted(load, &hero.solid)
+        };
+        let (pivot, facing) = (self.hero().pivot, self.hero().facing);
+        let mut hero = Hero::new(walk.solid().expect("his solid"), walk.tuning, pivot, facing);
+        hero.settle(&self.bench.world, &[HERO_BODY]);
+        self.bench.heroes.insert(HERO, hero);
+        self.unit = unit;
+        self.toy = l.toy(load).unwrap_or_else(|| panic!("{load}: no figure"));
+        self.scale = walk.scale;
+        self.walk = walk;
+        self.join()
+    }
+
     /// His figure off the portal mid-level as the TV's swap takes it
     /// (openspec AH.105, AH.165): the deactivate path, whatever stops in it.
     fn deactivate(&mut self) -> scripts::Deactivated {
@@ -686,9 +738,9 @@ impl W {
             self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, HERO));
         self.minion = None;
         // The TV's take-off ends a fall-back with the hero it despawns: the
-        // next join is a hero on his scripts again.
+        // next join is a hero on his scripts again. The TV's camera stays
+        // (its chain, when it has the view).
         self.off = None;
-        self.chain = None;
         gone
     }
 
@@ -1941,6 +1993,9 @@ struct Swapped {
     set_up_again: bool,
     top_again: f32,
     ground_max: Option<f32>,
+    /// The step his fall-back after the put-back took him off his scripts,
+    /// if one did (AH.151: his walk AG.16's controller's from there).
+    off_again: Option<u32>,
 }
 
 /// `load` joined (`o`), `before` steps standing, taken off by the deactivate
@@ -2008,7 +2063,73 @@ fn swap(l: &Level, load: &str, o: Opts, before: u32, after: u32) -> Swapped {
     out.once =
         now.len() == old.len() && now.iter().zip(&old).all(|(n, o)| n.0 == o.0 && n.1 != o.1);
     out.set_up_again = w.minion.is_some_and(|m| w.vm.set_up(m));
+    out.off_again = w.off.as_ref().map(|o| o.0);
     out
+}
+
+/// The walkers that stop in play at `Minion.ai` #842 on this tree once the
+/// stick goes on: Ninjini's two and [`GIANTS`].
+fn falling_back() -> Vec<&'static str> {
+    [NINJINI, "109_Djini_Alt"]
+        .into_iter()
+        .chain(GIANTS)
+        .collect()
+}
+
+/// A swap table's put-back walks held (AH.151): every walker set up again
+/// at his scripts' top speed after the put-back, on his scripts within
+/// 1e-3 ft/s or, fallen back, on AG.16's controller within
+/// [`WALK_ULPS`] of their number; those that fall back against
+/// [`falling_back`]'s, a difference reported.
+fn put_back_walks(table: &[Swapped]) {
+    let mut walking = 0;
+    for s in table.iter().filter(|s| s.set_up_again) {
+        let top = s.ground_max.expect("his movement parameters");
+        match s.off_again {
+            Some(_) => assert!(
+                ulps(s.top_again, top) <= WALK_ULPS,
+                "{}: fallen back at {} against his {top}",
+                s.load,
+                s.top_again
+            ),
+            None => assert!(
+                (s.top_again - top).abs() < 1e-3,
+                "{}: {} against his {top}",
+                s.load,
+                s.top_again
+            ),
+        }
+        walking += 1;
+    }
+    let expected = falling_back();
+    let fell: Vec<&str> = table
+        .iter()
+        .filter(|s| s.off_again.is_some())
+        .map(|s| s.load.as_str())
+        .collect();
+    for s in table.iter().filter(|s| s.set_up_again) {
+        let want = expected.contains(&s.load.as_str());
+        if want != s.off_again.is_some() {
+            println!(
+                "REPORT {}: {} after the put-back, this tree's {}",
+                s.load,
+                if s.off_again.is_some() {
+                    "falls back"
+                } else {
+                    "walks on his scripts"
+                },
+                if want {
+                    "a fall-back at #842"
+                } else {
+                    "his scripts' walk"
+                }
+            );
+        }
+    }
+    println!(
+        "put back: {walking} set up again at their top speed, {} of them fallen back: {fell:?}",
+        fell.len()
+    );
 }
 
 /// AH.165 on the dump (found at the AG.27 merge check: a walker joined,
@@ -2065,7 +2186,7 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
         let t = Instant::now();
         let s = swap(&l, &w.load_file, play, 60, 60);
         println!(
-            "{}: set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, top again {:.3} of {:?} ({:.1?}, load {:.2})",
+            "{}: set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, top again {:?} of {:?} ({:.1?}, load {:.2})",
             s.load,
             s.set_up,
             s.stops.len(),
@@ -2104,6 +2225,9 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
         started.elapsed(),
         load1()
     );
+    // The put-back walks (this tree, 2026-10-25: 46 of the 66 set up again,
+    // all 46 at their top speed, the 9 that stop at #842 on the controller).
+    put_back_walks(&table);
     for s in &table {
         assert_eq!(s.short, None, "{}", s.load);
         assert_eq!(s.set_up, s.set_up_again, "{}", s.load);
@@ -2195,7 +2319,7 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
     for w in &asking {
         let s = swap(&l, &w.load_file, play, 60, 60);
         println!(
-            "{} (asks {}): set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, short {:?}",
+            "{} (asks {}): set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, top again {:?} of {:?}, short {:?}",
             s.load,
             w.asks + w.cosmetic + w.answered,
             s.set_up,
@@ -2210,6 +2334,8 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
             s.old_silent,
             s.once,
             s.set_up_again,
+            s.top_again,
+            s.ground_max,
             s.short
         );
         table.push(s);
@@ -2236,6 +2362,9 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         load1()
     );
     assert_eq!(table.len(), ASKING.len(), "the fourteen");
+    // The put-back walks (this tree, 2026-10-25: 11 of the 14 set up again,
+    // all at their top speed, the 7 giants on the controller).
+    put_back_walks(&table);
     if rex.short.is_none() {
         assert!(rex.set_up && rex.set_up_again, "{rex:?}");
         assert!(!rex.pm_stopped && rex.old_silent && rex.once, "{rex:?}");
@@ -2286,11 +2415,17 @@ struct OnTheTv {
     /// Every stop play mode logged, each step's in turn.
     stops: Vec<String>,
     /// His walk's top speed on the full stick, ft/s, and how far it took
-    /// him, metres.
+    /// him, metres: on his scripts, or once they stop on AG.16's controller
+    /// at what they set (the fall-back, AH.151).
     top: f32,
     walked: f32,
     /// His description's ground max speed as his scripts wrote it.
     ground_max: Option<f32>,
+    /// The step his fall-back took him off his scripts, if one did.
+    off: Option<u32>,
+    /// Who stood for the viewport at the end: handed back from a fall-back
+    /// on, as the TV's (AG.190), whether the run steers by it or not.
+    view: guacamole::viewport::Source,
 }
 
 impl OnTheTv {
@@ -2304,8 +2439,8 @@ impl OnTheTv {
                 self.stops.first().map_or("no stop", String::as_str)
             ),
             (true, Some(why)) => format!(
-                "joins; his script stops in play ({why}) and he walks on what it set ({:?} ft/s)",
-                self.ground_max
+                "joins; his script stops in play ({why}), falling back at step {:?}, and he walks on what it set: top {:?} ft/s (his {:?}), {:.2} m",
+                self.off, self.top, self.ground_max, self.walked
             ),
             (true, None) => format!(
                 "joins and walks on his scripts: top {:.3} ft/s (his {:?}), {:.2} m",
@@ -2361,6 +2496,8 @@ fn on_the_tv(l: &Level, load: &str, o: Opts) -> OnTheTv {
     out.stopped = w.vm.stopped(minion).map(|h| named(&h.to_string()));
     out.stops.extend(w.stops.iter().cloned());
     out.ground_max = w.parameters().map(|p| p[0]);
+    out.off = w.off.as_ref().map(|o| o.0);
+    out.view = w.world.viewport().source;
     out
 }
 
@@ -2529,12 +2666,60 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
         table.push(r);
     }
     for r in &table {
+        println!(
+            "  {}: set up {}, off at {:?}, top {:?} ft/s, walked {:?} m, his {:?}",
+            r.load, r.set_up, r.off, r.top, r.walked, r.ground_max
+        );
+    }
+    // This tree's fall-backs (the fallback merge's integration, 2026-10-25):
+    // each giant's step and how far the stick at 90° took him, m.
+    let fallen: [(&str, u32, f32); 7] = [
+        ("101_BugmanGiant", 124, 19.72424),
+        ("102_Titan_Earth", 124, 13.7622175),
+        ("102_Titan_Earth_Alt", 124, 13.7622175),
+        ("107_Whale", 124, 19.288462),
+        ("110_RobotGiant", 125, 23.729307),
+        ("110_RobotGiant_Legendary", 125, 23.729307),
+        ("114_Mummy", 124, 20.23483),
+    ];
+    assert_eq!(fallen.map(|f| f.0), GIANTS);
+    let mut moved = Vec::new();
+    for r in &table {
         let why = r.verdict();
         assert!(!why.contains("viewport"), "{}: {why}", r.load);
-        if r.set_up && r.stopped.is_none() {
-            let top = r.ground_max.expect("his movement");
-            assert!((r.top - top).abs() < 1e-3, "{}: {why}", r.load);
+        if !r.set_up {
+            continue;
         }
+        let top = r.ground_max.expect("his movement");
+        match r.off {
+            // Off his scripts (AH.151): AG.16's controller at their number,
+            // to f32's steps, and the view handed back as the TV's (AG.190).
+            Some(_) => {
+                assert!(ulps(r.top, top) <= WALK_ULPS, "{}: {why}", r.load);
+                assert_eq!(
+                    r.view,
+                    guacamole::viewport::Source::HandedBack,
+                    "{}",
+                    r.load
+                );
+            }
+            None => assert!((r.top - top).abs() < 1e-3, "{}: {why}", r.load),
+        }
+        match fallen.iter().find(|f| f.0 == r.load) {
+            Some(&(_, step, walked)) if r.off == Some(step) => {
+                assert_eq!(r.walked, walked, "{}: walked", r.load);
+            }
+            Some(&(_, step, _)) => moved.push(format!(
+                "{} (this tree's fall-back at step {step}, now {:?})",
+                r.load, r.off
+            )),
+            None => assert_eq!(r.off, None, "{}: a fall-back this tree hasn't", r.load),
+        }
+    }
+    if !moved.is_empty() {
+        println!(
+            "REPORT: no longer falling back as on this tree, distances not compared: {moved:?}"
+        );
     }
     let drill = table.iter().find(|r| r.load == "021_DrillBot").unwrap();
     assert!(
@@ -2602,6 +2787,9 @@ fn joined_on_the_tv(
 #[derive(Debug, Default)]
 struct OffWalk {
     stop: Option<(u32, String)>,
+    /// His fall-back forced ([`walk_off`]'s `force_after`): his scripts
+    /// didn't stop by then.
+    forced: bool,
     /// His walk's length after the stop: the most and the last, ft/s.
     top: f32,
     last: f32,
@@ -2621,12 +2809,20 @@ struct OffWalk {
     stops: Vec<String>,
 }
 
-/// `w` on a full stick straight ahead for `steps` steps.
-fn walk_off(w: &mut W, steps: u32) -> OffWalk {
+/// `w` on a full stick straight ahead for `steps` steps; his fall-back
+/// forced after `force_after` of them if his scripts haven't stopped by
+/// then (as AG.173's test forces Eruptor's).
+fn walk_off(w: &mut W, steps: u32, force_after: Option<u32>) -> OffWalk {
     let mut out = OffWalk::default();
     let mut from = None;
     let mut eye0 = None;
-    for _ in 0..steps {
+    for k in 0..steps {
+        if force_after == Some(k) && w.off.is_none() {
+            out.forced = true;
+            w.fall_back(format!(
+                "forced: his scripts ran on through the stick's first {k} steps"
+            ));
+        }
         w.bench.pads[0] = Pad {
             stick: guac_motion::scenarios::stick(1.0, 0.0),
             actions: [false; 4],
@@ -2693,7 +2889,7 @@ fn a_walker_off_his_scripts_walks_at_his_top_speed_with_the_view_following() {
         let top = Movement::read(&w.vm, m)
             .expect("his movement parameters")
             .ground_max_speed;
-        let walk = walk_off(&mut w, 240);
+        let walk = walk_off(&mut w, 240, None);
         println!(
             "{NINJINI} hold walk {hold}, hand back view {hand_back}: stop {:?}; after it {} steps, walk top {:.4} last {:.4} ft/s (his description's {top}), {:.2} m walked; the TV's eye {:.3} m from his feet at the hand-back, {:.3} at the end, moved {:.2} m; the scripts' eye {:.3} m from him at the end; written {:?}; play mode's stops {:?}; load {:.2}",
             walk.stop,
@@ -2755,6 +2951,209 @@ fn a_walker_off_his_scripts_walks_at_his_top_speed_with_the_view_following() {
         "the scripts' view left behind: {no_hand_back:?}"
     );
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
+/// The seven giants AH.150 lets join (Swarm, both Crushers, Thumpback, both
+/// Bouncers, Eye-Brawl): on this tree each one's minion stops in play at
+/// `Minion.ai` #842 on his first moving step, as Ninjini's does.
+const GIANTS: [&str; 7] = [
+    "101_BugmanGiant",
+    "102_Titan_Earth",
+    "102_Titan_Earth_Alt",
+    "107_Whale",
+    "110_RobotGiant",
+    "110_RobotGiant_Legendary",
+    "114_Mummy",
+];
+
+/// How far apart two numbers of one sign are in f32 steps (units in the
+/// last place): the precision a number the controller computes in f32 is
+/// held to against one the scripts wrote.
+fn ulps(a: f32, b: f32) -> u32 {
+    (a.to_bits() as i64 - b.to_bits() as i64).unsigned_abs() as u32
+}
+
+/// What one of [`GIANTS`] came to on this tree (the fallback merge's
+/// integration, `7f64e622`, headless, 2026-10-25): his stop's step, his
+/// walk's top (ft/s), how far he walked after the stop and how far the
+/// TV's eye moved with him (m), and the writes to his walk dropped. Each
+/// number as f32 prints it.
+struct GiantOff {
+    load: &'static str,
+    stop: u32,
+    top: f32,
+    walked: f32,
+    eye_moved: f32,
+    writes: u32,
+}
+
+const GIANTS_OFF: [GiantOff; 7] = [
+    GiantOff {
+        load: "101_BugmanGiant",
+        stop: 124,
+        top: 20.000008,
+        walked: 13.043735,
+        eye_moved: 13.218856,
+        writes: 714,
+    },
+    GiantOff {
+        load: "102_Titan_Earth",
+        stop: 124,
+        top: 20.000008,
+        walked: 13.015394,
+        eye_moved: 13.038585,
+        writes: 714,
+    },
+    GiantOff {
+        load: "102_Titan_Earth_Alt",
+        stop: 124,
+        top: 20.000008,
+        walked: 13.015394,
+        eye_moved: 13.038585,
+        writes: 714,
+    },
+    GiantOff {
+        load: "107_Whale",
+        stop: 124,
+        top: 20.000013,
+        walked: 12.958654,
+        eye_moved: 12.986823,
+        writes: 714,
+    },
+    GiantOff {
+        load: "110_RobotGiant",
+        stop: 125,
+        top: 24.000002,
+        walked: 12.702467,
+        eye_moved: 12.890366,
+        writes: 711,
+    },
+    GiantOff {
+        load: "110_RobotGiant_Legendary",
+        stop: 125,
+        top: 24.000002,
+        walked: 12.702467,
+        eye_moved: 12.890366,
+        writes: 711,
+    },
+    GiantOff {
+        load: "114_Mummy",
+        stop: 124,
+        top: 20.000008,
+        walked: 13.736573,
+        eye_moved: 14.038888,
+        writes: 714,
+    },
+];
+
+/// The most f32 steps a fallen-back walk's top is from what his scripts
+/// set: the controller's walk is f32 throughout and its length a hypot of
+/// two f32 parts (7 the most on this tree, Thumpback's).
+const WALK_ULPS: u32 = 8;
+
+/// AH.151's and AG.190's on-dump case since AH.150 (the fallback merge's
+/// check): each of [`GIANTS`] joined as the TV joins him, steering by the
+/// view the TV draws, 120 steps standing, then a full stick for 240: his
+/// stop at `Minion.ai` #842, his walk on AG.16's controller at what his
+/// scripts set (within [`WALK_ULPS`] of it), the update's writes to his
+/// walk dropped, the view the chain's from where it stood until a join,
+/// following him; against this tree's numbers ([`GIANTS_OFF`]). A giant
+/// whose scripts no longer stop by the stick's 60th step (AG.160's member
+/// modelled) has his fall-back forced there, as AG.173's test forces
+/// Eruptor's, and is reported: the fall-back still runs on the dump, held
+/// to his scripts' number and the view following him, though not to this
+/// tree's distances.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut no_longer = Vec::new();
+    for want in &GIANTS_OFF {
+        let load = want.load;
+        let t = Instant::now();
+        let mut w = joined_on_the_tv(&l, load, 120, true, true);
+        let m = w.minion.expect("joined");
+        assert!(w.vm.set_up(m), "{load}: his setup ran through");
+        assert!(
+            w.world.viewport().scripted(),
+            "{load}: the scripts have the view standing"
+        );
+        let top = Movement::read(&w.vm, m)
+            .expect("his movement parameters")
+            .ground_max_speed;
+        let walk = walk_off(&mut w, 240, Some(60));
+        let walk_writes: u32 = walk
+            .written
+            .iter()
+            .filter(|(_, what, _)| what == "Walk")
+            .map(|(.., n)| n)
+            .sum();
+        println!(
+            "{load}: the view {:?} after (back at a join {}); stop {:?}, forced {}; after it {} steps, walk top {:?} last {:?} ft/s (his description's {top:?}, {} f32 steps off), walked {:?} m; the TV's eye {:?} m from his feet at the hand-back, {:?} at the end, moved {:?} m; the scripts' eye {:?} m from him at the end; {walk_writes} walk writes dropped; written {:?}; play mode's stops {:?} ({:.1?}, load {:.2})",
+            w.world.viewport().source,
+            w.world.view_back_at_a_join(),
+            walk.stop,
+            walk.forced,
+            walk.steps,
+            walk.top,
+            walk.last,
+            ulps(walk.top, top),
+            walk.walked,
+            walk.gap.0,
+            walk.gap.1,
+            walk.eye_moved,
+            walk.scripts_gap,
+            walk.written,
+            walk.stops,
+            t.elapsed(),
+            load1()
+        );
+        // Whatever stopped him: his scripts' walk on the controller, theirs
+        // the one writer dropped, the view the chain's until a join and
+        // following him.
+        assert!(
+            ulps(walk.top, top) <= WALK_ULPS,
+            "{load}: top {} against his {top}",
+            walk.top
+        );
+        assert!(walk_writes > 100, "{load}: {walk_writes} writes dropped");
+        assert_eq!(
+            w.world.viewport().source,
+            guacamole::viewport::Source::HandedBack,
+            "{load}"
+        );
+        assert!(w.world.view_back_at_a_join(), "{load}: until a join");
+        assert!(
+            (walk.gap.1 - walk.gap.0).abs() < 0.3 && (walk.eye_moved - walk.walked).abs() < 0.5,
+            "{load}: the view following him: {walk:?}"
+        );
+        let (when, why) = walk.stop.clone().expect("a fall-back");
+        if walk.forced {
+            println!(
+                "REPORT {load}: his scripts no longer stop by the stick's 60th step (this tree's at step {}, `Minion.ai` #842): his fall-back forced at step {when}, this tree's distances not compared",
+                want.stop
+            );
+            no_longer.push(load);
+            continue;
+        }
+        assert!(
+            why.contains("Minion.ai #842") && why.contains("unmodelled member 075b657b.bb4361e7"),
+            "{load}: {why}"
+        );
+        assert_eq!(when, want.stop, "{load}: his stop's step");
+        assert_eq!(walk.top, want.top, "{load}: his top");
+        assert_eq!(walk.walked, want.walked, "{load}: walked");
+        assert_eq!(walk.eye_moved, want.eye_moved, "{load}: the eye moved");
+        assert_eq!(walk_writes, want.writes, "{load}: writes dropped");
+    }
+    println!(
+        "{} of the seven stop at #842 as on this tree; no longer: {no_longer:?}; {:.1?} in all, load {:.2}",
+        GIANTS_OFF.len() - no_longer.len(),
+        started.elapsed(),
+        load1()
+    );
 }
 
 /// A record of AG.39's free in the air: unsupported 0.4 ft or more over the
@@ -2947,4 +3346,194 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
     );
     println!("on the fall-back: {near} of {falls} within a record, {never} not landing");
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
+/// A field of `v` as the VM holds it.
+fn vm_field(vm: &Vm, v: Value, name: &str) -> Option<Value> {
+    vm.field(v, name).map(|f| vm.value(f))
+}
+
+/// The first player's camera points as the portal manager keeps them
+/// (`player data`'s `cam control data`): the intent point, the velocity
+/// point and the camera target, each where its actor stands.
+fn cam_points(w: &W) -> [Option<Vec3>; 3] {
+    let at = |name: &str| -> Option<Vec3> {
+        let pm = scripts::portal_manager_placement(&w.vm, &w.world)?;
+        let players = w.vm.local(pm, "player data").map(|v| w.vm.value(v))?;
+        let p0 = w.vm.value(*w.vm.set(players)?.first()?);
+        let cc = vm_field(&w.vm, p0, "cam control data")?;
+        match vm_field(&w.vm, cc, name)? {
+            Value::Entity(h) => w.world.actor(h).map(|a| a.position),
+            _ => None,
+        }
+    };
+    [at("intent target"), at("velocity target"), at("cam target")]
+}
+
+/// Each camera the level defined, by id: where its follower (`cam infos`'
+/// `camera`) stands.
+fn cam_followers(w: &W) -> Vec<(i64, Vec3)> {
+    let Some(g) = w.vm.program().global_named("camera control data") else {
+        return Vec::new();
+    };
+    let Some(cc) = w.vm.global_peek(g).map(|v| w.vm.value(v)) else {
+        return Vec::new();
+    };
+    let Some(infos) = vm_field(&w.vm, cc, "cam infos") else {
+        return Vec::new();
+    };
+    let all = w.vm.set(infos).map(<[Value]>::to_vec).unwrap_or_default();
+    all.into_iter()
+        .filter_map(|e| {
+            let e = w.vm.value(e);
+            let id = vm_field(&w.vm, e, "cam def")
+                .and_then(|d| vm_field(&w.vm, d, "id"))
+                .and_then(|v| v.as_f32())? as i64;
+            match vm_field(&w.vm, e, "camera")? {
+                Value::Entity(h) => w.world.actor(h).map(|a| (id, a.position)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// AG.211 headless on the dump: Ninjini falls back as the TV takes it (his
+/// minion's stop at `Minion.ai` #842, the view to the chain), walks off on
+/// the controller, comes off the portal, and the next hero (`AG211_NEXT`,
+/// Whirlwind by default, who walks on his scripts) comes in where he stood
+/// and joins the run: the join's activation makes his camera target afresh
+/// on his minion, the camera's frame never stopped, so the scripts take
+/// the view back at their first write and it follows him on their camera,
+/// walked back the way Ninjini came (the way Ninjini went ends at the drop
+/// AG.36's edge probe held him at).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let next = std::env::var("AG211_NEXT").unwrap_or_else(|_| "000_AirDragon".to_owned());
+    let mut w = joined_on_the_tv(&l, NINJINI, 120, true, true);
+    let walk = walk_off(&mut w, 240, Some(60));
+    let feet = w.hero().pivot;
+    let chain_eye = w.drawn.expect("drawn").eye;
+    println!(
+        "{NINJINI}: stop {:?}, {:.2} m walked; the view {:?} (back at a join {}), the chain's eye {chain_eye:?} {:?} m from his feet, the scripts' {:?} m; his camera points {:?} m from him",
+        walk.stop.as_ref().map(|s| s.0),
+        walk.walked,
+        w.world.viewport().source,
+        w.world.view_back_at_a_join(),
+        chain_eye.distance(feet),
+        w.world.viewport().eye.distance(feet),
+        cam_points(&w).map(|p| p.map(|p| p.distance(feet)))
+    );
+    let off_view = w.world.viewport().source;
+    let off_until_join = w.world.view_back_at_a_join();
+    w.swap_in(&l, &next).unwrap();
+    let joined_feet = w.hero().pivot;
+    let points = cam_points(&w).map(|p| p.map(|p| p.distance(joined_feet)));
+    println!(
+        "{next} joined where he stood ({:?} m off): the view {:?}, his camera points {points:?} m from his feet, the cameras' followers {:?}",
+        joined_feet.distance(feet),
+        w.world.viewport().source,
+        cam_followers(&w)
+            .iter()
+            .map(|(id, p)| (*id, p.distance(joined_feet)))
+            .collect::<Vec<_>>()
+    );
+    let joined_view = w.world.viewport().source;
+    let mut track = Vec::new();
+    for k in 0..300u32 {
+        w.bench.pads[0] = Pad {
+            stick: if (60..180).contains(&k) {
+                guac_motion::scenarios::stick(1.0, 180.0)
+            } else {
+                Stick::CENTRED
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        let before = w.drawn.expect("drawn");
+        w.step().unwrap();
+        let p = w.hero().pivot;
+        let d = w.drawn.expect("drawn");
+        let v = *w.world.viewport();
+        track.push((
+            v.source,
+            d.eye.distance(before.eye),
+            d.eye.distance(p),
+            d.eye.distance(v.eye),
+            p,
+            w.horizontal_walk(),
+            w.off.is_some(),
+        ));
+        if k < 4 || k % 30 == 0 {
+            println!(
+                "  {k}: the view {:?}, the drawn eye {:?} m from his feet and {:?} m from the scripts', moved {:?} m; walk {:?} ft/s",
+                v.source,
+                d.eye.distance(p),
+                d.eye.distance(v.eye),
+                d.eye.distance(before.eye),
+                w.horizontal_walk()
+            );
+        }
+    }
+    let first = &track[0];
+    let walked_back = {
+        let (a, b) = (track[59].4, track[179].4);
+        Vec3::new(b.x - a.x, 0.0, b.z - a.z).length()
+    };
+    let eye_back = track[179].2;
+    // His top beside what his description holds: on this tree a walker put
+    // in after another reads the first's (AH.191), so not compared here.
+    let top = track[60..180].iter().map(|t| t.5).fold(0.0f32, f32::max);
+    let ground = w.parameters().map(|p| p[0]);
+    println!(
+        "first step: the view {:?}, the drawn eye moved {:?} m from the chain's, {:?} m from his feet; walked back {walked_back:?} m at top {top:?} ft/s (his {ground:?}), the eye {eye_back:?} m from his feet at the end of it; every step the scripts' {}; {:.1?} in all, load {:.2}",
+        first.0,
+        first.1,
+        first.2,
+        track
+            .iter()
+            .all(|t| t.0 == guacamole::viewport::Source::Scripts && t.3 < 1e-6),
+        started.elapsed(),
+        load1()
+    );
+    // His fall-back hands the view back until a join; the next hero's join
+    // gives it back before his first step (`ScriptWorld::hero_template`),
+    // his camera points made afresh on his minion.
+    use guacamole::viewport::Source;
+    assert_eq!((off_view, off_until_join), (Source::HandedBack, true));
+    assert_eq!(joined_view, Source::Engine);
+    assert!(!w.world.view_back_at_a_join());
+    assert_eq!(points, [Some(0.0); 3], "his camera points on his minion");
+    // From his first step on the view is the scripts' and the TV draws it.
+    assert!(
+        track.iter().all(|t| t.0 == Source::Scripts && t.3 < 1e-6),
+        "the scripts' view every step"
+    );
+    // Walked back the way Ninjini came, it follows him at their distance.
+    let standing = track[59].2;
+    assert!(walked_back > 10.0, "walked back {walked_back} m");
+    assert!(
+        (eye_back - standing).abs() < 0.3,
+        "the eye {eye_back} m from his feet, {standing} standing"
+    );
+    let eye_walked = track[60..180].iter().map(|t| t.1).sum::<f32>();
+    assert!(eye_walked > 10.0, "the eye moved {eye_walked} m with him");
+    if walk.forced {
+        println!(
+            "REPORT {NINJINI}: his scripts no longer stop by the stick's 60th step: his fall-back forced, this tree's numbers not compared"
+        );
+        return;
+    }
+    // From where (this tree, 2026-10-25): their eye at the first write 0.263
+    // m from where the chain's stood, 16.750 m from his feet (the chain's
+    // 16.564 from Ninjini's).
+    assert_eq!(walk.stop.as_ref().map(|s| s.0), Some(124));
+    assert_eq!(
+        first.1, 0.26322174,
+        "the first step's move from the chain's eye"
+    );
+    assert_eq!(first.2, 16.750097, "the eye from his feet");
 }

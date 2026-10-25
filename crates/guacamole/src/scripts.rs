@@ -379,6 +379,9 @@ pub struct ScriptWorld {
     pub(crate) viewport: Handle,
     /// What the camera's scripts leave the viewport as (openspec AG.28).
     pub(crate) view: crate::viewport::Viewport,
+    /// The view handed back at a hero's fall-back, until the next join
+    /// (openspec AG.211, [`ScriptWorld::hand_back_view_until_a_join`]).
+    pub(crate) view_until_join: bool,
     /// The on-screen asks answered off that view while the scripts drive
     /// it, by op (openspec AH.150's gating reads); every other ask reads on
     /// screen (AH.20; stand-in ledger: `on-screen`).
@@ -486,6 +489,7 @@ impl ScriptWorld {
             portal: objects[6],
             viewport,
             view: crate::viewport::Viewport::default(),
+            view_until_join: false,
             view_asks: Default::default(),
             objs,
             sequences: Vec::new(),
@@ -591,9 +595,32 @@ impl ScriptWorld {
 
     /// The view handed back to the TV for good: the camera's scripts
     /// stopped in play, and from here on the TV's own camera stands for the
-    /// viewport (openspec AG.28).
+    /// viewport (openspec AG.28). A hand-back until a join
+    /// ([`ScriptWorld::hand_back_view_until_a_join`]) becomes this one.
     pub fn hand_back_view(&mut self) {
         self.view.source = crate::viewport::Source::HandedBack;
+        self.view_until_join = false;
+    }
+
+    /// The view handed back to the TV while no hero's scripts step a camera
+    /// target (openspec AG.190: the hero fell back in play, off the player
+    /// loop's joined run), until the next hero's scripts join the run
+    /// (AG.211): the join's activation makes his camera target afresh on
+    /// his minion and the camera's frame never stopped, so from there their
+    /// next write to the viewport takes it back
+    /// ([`ScriptWorld::hero_template`]). The scripts' camera stopping keeps
+    /// it for good; a view the scripts don't have is left as it is.
+    pub fn hand_back_view_until_a_join(&mut self) {
+        if self.view.scripted() {
+            self.view.source = crate::viewport::Source::HandedBack;
+            self.view_until_join = true;
+        }
+    }
+
+    /// Whether the view is handed back until the next join
+    /// ([`ScriptWorld::hand_back_view_until_a_join`]), not for good.
+    pub fn view_back_at_a_join(&self) -> bool {
+        self.view_until_join
     }
 
     /// The on-screen asks, by op, answered off the camera's scripts' view
@@ -842,10 +869,17 @@ impl ScriptWorld {
 
     /// A spawn of `template` makes `hero` the clone: the hero's actor, his
     /// numbers from the template's file. His scripts joining him so, his
-    /// walk and facing are theirs again (openspec AH.151).
+    /// walk and facing are theirs again (openspec AH.151), and a view handed
+    /// back at a fall-back until a join is the camera's scripts' to take at
+    /// their next write (AG.211).
     pub fn hero_template(&mut self, template: Obj, hero: Handle) {
         self.hero_templates.insert(template, hero);
         self.walking_alone.remove(&hero);
+        if self.view_until_join {
+            self.view_until_join = false;
+            self.view.source = crate::viewport::Source::Engine;
+            info!("a hero joins: the camera's scripts take the view at their next write");
+        }
     }
 
     /// One frame of `dt` seconds for what the engine runs between the
