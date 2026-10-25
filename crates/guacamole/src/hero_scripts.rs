@@ -1948,6 +1948,65 @@ mod tests {
         );
     }
 
+    /// The scripts' log over a copy started again (openspec AH.184): his
+    /// throw pressed again while its clip plays is refused, nothing logged;
+    /// pressed in its clip's last two frames it starts that copy again,
+    /// which the log reads as his throw started once more, and the copy is
+    /// one entry among the clips it logs as ended when they play out.
+    #[test]
+    fn a_throw_started_again_is_logged_started_and_kept_once() {
+        let throw = ATTACK_THROW_SLOT as u32;
+        let mut run = Headless::new();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        run.join();
+        let mut steps = ScriptSteps::default();
+        let log = |run: &Headless, steps: &mut ScriptSteps| -> Vec<u32> {
+            let mut entry = ScriptStep::default();
+            record(&run.world, Some(HERO), true, steps, &mut entry);
+            entry.started.iter().map(|s| s.slot).collect()
+        };
+        for _ in 0..3 {
+            run.step([false; 4]);
+        }
+        log(&run, &mut steps);
+        run.step([true, false, false, false]);
+        assert_eq!(log(&run, &mut steps), [throw]);
+        let copy = |run: &Headless| {
+            let at: Vec<usize> = (0..run.world.sequences().len())
+                .filter(|&i| {
+                    let s = &run.world.sequences()[i];
+                    s.actor == HERO && run.world.clip_of(s).is_some_and(|(_, x)| x == throw)
+                })
+                .collect();
+            assert_eq!(at.len(), 1, "one copy of his throw");
+            at[0]
+        };
+        let i = copy(&run);
+        let n = run.world.sequences().len();
+        // Pressed again with time left: refused.
+        run.step([false; 4]);
+        run.step([true, false, false, false]);
+        assert_eq!(log(&run, &mut steps), Vec::<u32>::new(), "refused");
+        let mut k = 0;
+        while run.world.sequences()[i].time_remaining() > 0.0 {
+            run.step([false; 4]);
+            assert_eq!(log(&run, &mut steps), Vec::<u32>::new());
+            k += 1;
+            assert!(k < 60, "his throw never reached its end");
+        }
+        // In its last two frames: started again, the one copy.
+        run.step([true, false, false, false]);
+        assert_eq!(log(&run, &mut steps), [throw], "started again");
+        assert_eq!(copy(&run), i);
+        assert_eq!(run.world.sequences().len(), n, "no new copy");
+        assert_eq!(
+            steps.playing.iter().filter(|&&(j, ..)| j == i).count(),
+            1,
+            "kept once, so ended once"
+        );
+    }
+
     // ---- AH.27: the breakables on the TV's listing ------------------------
 
     /// The TV's install (openspec AH.27): the run on the TV's listing, the
