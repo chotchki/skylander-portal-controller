@@ -45,7 +45,9 @@
 //!   shakes the camera by [`CAMERA_SHAKE`] the tick it finds itself open.
 //!
 //! [`CameraFault::Frame`] makes the update stop on a member nothing models
-//! [`CAMERA_FAULT_TICK`] ticks after it first finds a target.
+//! [`CAMERA_FAULT_TICK`] ticks after it first finds a target;
+//! [`CameraFault::Volume`] makes the volume's script stop on one the tick
+//! he's inside it, in place of its switch.
 
 use super::*;
 
@@ -133,14 +135,18 @@ pub const CAMERA_ROCKS_OPEN: &str = "Synthetic Rocks Open";
 /// The update's ticks with a target before [`CameraFault::Frame`] stops it.
 pub const CAMERA_FAULT_TICK: i32 = 120;
 
-/// Whether the camera's update stops: never ([`CameraFault::None`]), or on
-/// a member nothing models once it has had a target a while.
+/// Whether a camera script stops: never ([`CameraFault::None`]), the update
+/// on a member nothing models once it has had a target a while, or the
+/// volume's script on one once he's inside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraFault {
     None,
     /// [`CAMERA_FAULT_TICK`] ticks after it first finds a target, on a
     /// member nothing models.
     Frame,
+    /// The volume's script, the tick he's inside it, on a member nothing
+    /// models (its switch never made).
+    Volume,
 }
 
 /// Where the level's placements stand (metres, their pivots): the plane's
@@ -171,7 +177,7 @@ pub fn camera(at: CameraAt, fault: CameraFault) -> Camera {
         global: attack_global_with(Some(fault)),
         init_setup: a.init_setup,
         fighter: attack_fighter_with(true),
-        level: camera_level(at),
+        level: camera_level(at, fault),
     }
 }
 
@@ -813,7 +819,7 @@ fn timer(w: &mut Writer<'_>) -> Location {
 }
 
 /// The level's entry (the module docs).
-fn camera_level(spots: CameraAt) -> Vec<u8> {
+fn camera_level(spots: CameraAt, fault: CameraFault) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
     let plane = b.object(0, "tfbActorInfo", 0xF8);
@@ -927,6 +933,10 @@ fn camera_level(spots: CameraAt) -> Vec<u8> {
                         El::Member("orientationmeasurement", "tilt"),
                     ],
                 );
+                if fault == CameraFault::Volume {
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
                 switch_to(w, switch, id, seconds);
                 w.set_behavior(end);
                 w.end_block(inside);

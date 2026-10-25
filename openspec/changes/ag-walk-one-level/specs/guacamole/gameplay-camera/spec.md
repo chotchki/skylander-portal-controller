@@ -33,7 +33,7 @@ When a script switches cameras, the view SHALL move to the new camera over the s
 
 #### Scenario: The rock slide up the corridor
 - **WHEN** Eruptor comes within 32 ft (9.75 m) of the sliding rocks' trigger at the top of the corridor east of the clearing
-- **THEN** from 0.25-0.40 s later the eye shakes to and fro along one line, mostly across the view, up to 0.682 m off its place, until 2 s later the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 54 m north of the start and 10.5 m above it, its far clip from 800 to 1,000 ft
+- **THEN** the eye shakes to and fro along one line, mostly across the view, up to 0.682 m off its place, a wave for each rock that falls, each starting a draw's fraction of a second after its rock is set loose (0.25-0.40 s after he comes within range in AG.13's two walks) and the last running into the switch; 2 s after he comes within range the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 54 m north of the start and 10.5 m above it, its far clip from 800 to 1,000 ft
 
 #### Scenario: The stick held through a switch
 - **WHEN** the stick is held while the view moves to another camera

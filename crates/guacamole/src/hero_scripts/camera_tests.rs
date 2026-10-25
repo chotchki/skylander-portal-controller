@@ -13,8 +13,8 @@ use bevy::prelude::*;
 use guac_formats::script::builder::camera::{
     CAMERA_ACTIVATOR, CAMERA_ACTIVATOR_DELAY, CAMERA_ACTIVATOR_RANGE, CAMERA_ACTIVATOR_SECONDS,
     CAMERA_BACK, CAMERA_EASE, CAMERA_LOOK_UP, CAMERA_PLANE_SIZE, CAMERA_ROCKS, CAMERA_SHAKE,
-    CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_SECONDS, CameraAt,
-    CameraFault, SyntheticCam,
+    CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_NAME, CAMERA_VOLUME_SECONDS,
+    CameraAt, CameraFault, SyntheticCam,
 };
 use guac_script::{PlacementId, Vm, eased};
 use guacamole::frame::Frame;
@@ -632,4 +632,63 @@ fn a_stopped_camera_script_hands_the_view_to_the_chain() {
         gap(&stop)
     );
     assert_eq!(end.view.eye, kept.eye, "the scripts write nowhere");
+}
+
+/// AG.28: a camera volume's script stopped in play (a member nothing models,
+/// the tick he's inside it, its switch never made) hands the view to the
+/// TV's own camera from where it stood, as the update's stop does: the step
+/// it stops the view unmoved, `/api/_test/tv` saying `off` with the volume's
+/// stop for why, and nothing the scripts write reaching the viewport again,
+/// though their update runs on.
+#[test]
+fn a_stopped_volume_script_hands_the_view_to_the_chain() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _pad) = camera_app(tmp.path(), CameraFault::Volume);
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 10);
+    let inside = Vec3::from_array(spots().volume).with_y(START[1]);
+    set_down(&mut app, inside);
+    run_until(&mut app, "the volume's stop", 60, |s| {
+        matches!(s.hold, ViewHold::HandedBack(_))
+    });
+    let all = samples(&app);
+    let at = all.len() - 1;
+    let (before, stop) = (all[at - 1].clone(), all[at].clone());
+    assert_eq!(before.hold, ViewHold::Scripts);
+    // Set down 4 m off, he isn't under the view's line: the TV's camera
+    // takes it where it stood and its first step closes on him by one
+    // follow step, no jump.
+    assert!(
+        stop.eye.distance(before.eye) < 0.25,
+        "the eye {} then {}",
+        before.eye,
+        stop.eye
+    );
+    assert!(stop.look.distance(before.look) < 0.02);
+    assert_eq!(stop.report.scripts.as_deref(), Some("off"));
+    let why = stop.report.scripts_reason.clone().unwrap_or_default();
+    assert!(
+        why.contains("a camera script stopped")
+            && why.contains(CAMERA_VOLUME_NAME)
+            && why.contains("unmodelled member"),
+        "{why}"
+    );
+    assert_eq!(stop.view.source, Source::HandedBack);
+    assert!(
+        all.iter().all(|s| s.pct == 1.0),
+        "the volume's switch never made"
+    );
+    let kept = stop.view;
+    frames(&mut app, 120);
+    let end = last(&app);
+    assert!(matches!(end.hold, ViewHold::HandedBack(_)));
+    assert_eq!(end.report.scripts.as_deref(), Some("off"));
+    assert!(end.step > stop.step + 100, "the run went on");
+    assert_eq!(end.view.eye, kept.eye, "the scripts write nowhere");
+    assert!(
+        end.eye.distance(end.feet) < stop.eye.distance(stop.feet),
+        "the TV's camera closes on him where he stands"
+    );
 }

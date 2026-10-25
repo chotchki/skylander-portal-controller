@@ -841,6 +841,13 @@ mod tests {
 
     impl Bench {
         fn new() -> Self {
+            Self::with(Mode::Strict, &[])
+        }
+
+        /// The bench in `mode`, the counters named in `unmodelled` left
+        /// unregistered: a macro counting on one stops on a member nothing
+        /// models.
+        fn with(mode: Mode, unmodelled: &[&str]) -> Self {
             let program = portal_manager();
             let player_loop = PlayerLoop::read(&program);
             let files = Files {
@@ -849,8 +856,11 @@ mod tests {
             };
             let handles = HashMap::from([(PM, PM_HANDLE)]);
             let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
-            let mut config = Config::new(Mode::Strict);
+            let mut config = Config::new(mode);
             for (_, cell) in CALLED.iter().chain(&CAMERA_CALLED) {
+                if unmodelled.contains(cell) {
+                    continue;
+                }
                 config
                     .members
                     .value_cell("test", cell, MemberSpec::new(Kind::Int, 0.0, 0.0));
@@ -988,6 +998,44 @@ mod tests {
             targets + 2,
             "the one playing, once a step"
         );
+    }
+
+    /// A camera stretch stopped in play stops alone (openspec AG.28): the
+    /// player's camera target on a member nothing models stops that stretch
+    /// for good, which `camera_stopped` names (the TV then hands the view
+    /// back), and the portal manager, the camera's frame and his orbs run on
+    /// every step after.
+    #[test]
+    fn a_camera_target_stopped_in_play_stops_that_stretch_alone() {
+        let mut bench = Bench::with(Mode::Play, &["cam target"]);
+        let (frames, orbs) = (bench.count("camera"), bench.count("collect"));
+        assert!(
+            bench
+                .player_loop
+                .camera_stopped(&bench.vm, bench.pm)
+                .is_none()
+        );
+        for _ in 0..3 {
+            bench.step(true);
+        }
+        let why = bench
+            .player_loop
+            .camera_stopped(&bench.vm, bench.pm)
+            .expect("the camera target's stop");
+        assert!(why.to_string().contains("unmodelled member"), "{why}");
+        // The camera target's stretch, not the frame's.
+        let (frame, target) = (
+            bench.player_loop.camera.clone().unwrap(),
+            bench.player_loop.cam_target.clone().unwrap(),
+        );
+        assert!(bench.vm.span_stopped(bench.pm, target.start).is_some());
+        assert!(bench.vm.span_stopped(bench.pm, frame.start).is_none());
+        assert!(
+            bench.vm.stopped(bench.pm).is_none(),
+            "the portal manager runs on"
+        );
+        assert_eq!(bench.count("camera"), frames + 3, "the frame runs on");
+        assert_eq!(bench.count("collect"), orbs + 3, "his orbs run on");
     }
 
     const GS: Obj = Obj { unit: 0, index: 2 };

@@ -384,9 +384,11 @@ struct Gaps {
     far: Vec<f32>,
     /// The records driven.
     steps: usize,
-    /// Per record after step k: the VM's eye, far clip and share.
+    /// Per record after step k: the VM's eye, far clip and camera 0's
+    /// follow point (NaN with none).
     eyes: Vec<Vec3>,
     fars: Vec<f32>,
+    magics: Vec<Vec3>,
 }
 
 /// The recording through the VM's camera from the recorded rest at F0, the
@@ -421,7 +423,9 @@ fn drive(run: &mut Run, r: &Rec, fed: bool, camera_0_only: bool) -> Gaps {
         g.steps += 1;
         g.eyes.push(v.eye);
         g.fars.push(v.far_clip);
-        if let Some((_, m)) = follower(run, 0) {
+        let m = follower(run, 0).map(|m| m.1);
+        g.magics.push(m.unwrap_or(Vec3::NAN));
+        if let Some(m) = m {
             g.magic.push((m - r.magic[k + 1]).length());
         }
         if let Some((_, t)) = cam_target(run) {
@@ -650,6 +654,57 @@ fn best_curve(times: &[f32], shares: &[f32], len: f32) -> (f32, f32) {
     best
 }
 
+/// `Game - Shake Cam`'s wave along its axis from record `start`, on the
+/// steps `dt` (`dt[k]` the step from record k to k + 1): five keys of 0.2 s
+/// of game time, each sliding from the last one's value to its own `keys`
+/// entry and held there the tick its time runs out, the next key starting
+/// on the tick after with none of that step's overshoot carried. Read off
+/// AG.13's recorded waves (the review, 2026-10-24: their key ends fall on
+/// 12 or 13 records as the steps' jitter has it, and the VM's the same).
+fn keyframed(dt: &[f32], start: usize, keys: &[f32; 5], n: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32];
+    let (mut i, mut elapsed, mut from) = (0usize, 0.0f32, 0.0f32);
+    for j in start + 1..start + n {
+        if i >= keys.len() {
+            out.push(0.0);
+            continue;
+        }
+        elapsed += dt[j - 1];
+        if elapsed >= 0.2 {
+            out.push(keys[i]);
+            from = keys[i];
+            i += 1;
+            elapsed = 0.0;
+        } else {
+            out.push(from + (keys[i] - from) * elapsed / 0.2);
+        }
+    }
+    out
+}
+
+/// The records before `end` where a wave starts along the axis (ft): at
+/// rest or cut to nothing, then moving off.
+fn wave_starts(along: &[f32], end: usize) -> Vec<usize> {
+    (0..end.saturating_sub(1))
+        .filter(|&k| along[k].abs() < 1e-4 && along[k + 1].abs() > 0.05)
+        .collect()
+}
+
+/// A whole wave's five key values (ft along the axis) from `start`: its
+/// extremes in turn, then nothing.
+fn wave_keys(along: &[f32], start: usize) -> Option<[f32; 5]> {
+    let mut keys = [0.0f32; 5];
+    let mut j = start + 1;
+    for key in keys.iter_mut().take(4) {
+        while j + 1 < along.len() && (along[j + 1] - along[j]) * (along[j] - along[j - 1]) > 0.0 {
+            j += 1;
+        }
+        *key = along[j];
+        j += 1;
+    }
+    (j < along.len()).then_some(keys)
+}
+
 /// The sliding rocks' switch on AG.13's two corridor walks: the VM's far
 /// clip record by record against the recorded one, and each's own best
 /// 40/20/40 curve on game time (the recorded steps summed), plus the shake.
@@ -709,22 +764,10 @@ fn the_sliding_rocks_switch_on_ag13s_corridor_walks() {
         let offs = |eyes: &dyn Fn(usize) -> Vec3, magics: &dyn Fn(usize) -> Vec3, k: usize| {
             eyes(k) - def.view(magics(k)).eye
         };
-        let mut vm_magic = Vec::new();
-        {
-            // Re-run to read the VM's follower each record.
-            let mut run2 = fresh();
-            let f = &r.frames;
-            set_hero(&mut run2, &f[0]);
-            let (mh, _) = follower(&mut run2, 0).unwrap();
-            place(&mut run2, mh, r.magic[0]);
-            let (th, _) = cam_target(&run2).unwrap();
-            place(&mut run2, th, r.target[0]);
-            vm_magic.push(r.magic[0]);
-            for k in 0..g.steps {
-                tick(&mut run2, f[k].clock.step(), pivot(&f[k + 1]), 0.0).unwrap();
-                vm_magic.push(follower(&mut run2, 0).map_or(Vec3::NAN, |m| m.1));
-            }
-        }
+        // The VM's follow point each record, off the same run.
+        let vm_magic: Vec<Vec3> = std::iter::once(r.magic[0])
+            .chain(g.magics.iter().copied())
+            .collect();
         let vm_eyes: Vec<Vec3> = std::iter::once(eye(&r.frames[0]))
             .chain(g.eyes.iter().copied())
             .collect();
@@ -767,59 +810,51 @@ fn the_sliding_rocks_switch_on_ag13s_corridor_walks() {
                 (s[peak.0] - axis * s[peak.0].dot(axis)).length()
             );
         }
-        // The second rock's wave starts from nothing where the first's is
-        // cut (`Calc - Adjust Value Keyframer` stops the running one): the
-        // waves' shape is the law, their starts the rocks' random delays.
-        let cut = |s: &[Vec3]| -> Option<usize> {
-            let first = (0..switch_at).find(|&k| s[k].length() > 1e-3)?;
-            let big = (first..switch_at).find(|&k| s[k].length() > 0.3 * 0.3048)?;
-            (big..switch_at).find(|&k| s[k].length() < 1e-4)
-        };
-        // A cut with a whole second wave after it (55 records) on each side.
-        let whole = |s: &[Vec3]| {
-            cut(s).filter(|&c| (c + 1..c + 56).all(|k| k < switch_at && s[k].length() > 1e-4))
-        };
-        if let (Some(a), Some(b)) = (whole(&rec_shake), whole(&vm_shake)) {
-            // Both on game time since the cut: the VM's series read at the
-            // recording's elapsed times.
-            let at = |t_now: f32| -> Vec3 {
-                let t_cut = t[b];
-                let want = t_cut + t_now;
-                let i = (b..switch_at).rfind(|&k| t[k] <= want).unwrap();
-                let w = ((want - t[i]) / (t[i + 1] - t[i])).clamp(0.0, 1.0);
-                vm_shake[i] * (1.0 - w) + vm_shake[i + 1] * w
-            };
-            let diffs: Vec<f32> = (1..56)
-                .map(|j| (rec_shake[a + j] - at(t[a + j] - t[a])).length() / 0.3048)
-                .collect();
-            let mut d = diffs.clone();
-            let peak = |s: &[Vec3], from: usize| {
-                (from..switch_at).map(|k| s[k]).fold(Vec3::ZERO, |m, v| {
-                    if v.length() > m.length() { v } else { m }
-                }) / 0.3048
-            };
-            println!(
-                "  the second wave: cut at record {a} (recording) and {b} (VM); the {} records after, on game time since the cut, the VM's shake off the recording's by at most {:.4} ft (median {:.4}); peak vector (ft) recording {:?} VM {:?}",
-                diffs.len(),
-                quantile(&mut d, 1.0),
-                quantile(&mut d, 0.5),
-                peak(&rec_shake, a),
-                peak(&vm_shake, b),
-            );
-        } else {
-            let peak = |s: &[Vec3]| {
-                (0..switch_at).map(|k| s[k]).fold(Vec3::ZERO, |m, v| {
-                    if v.length() > m.length() { v } else { m }
-                }) / 0.3048
-            };
-            println!(
-                "  no cut with a whole wave after it on both sides (recording {:?}, VM {:?}); peak vector (ft) recording {:?} VM {:?}",
-                whole(&rec_shake),
-                whole(&vm_shake),
-                peak(&rec_shake),
-                peak(&vm_shake)
-            );
+        // The waves' law (the review, 2026-10-24): each rock's wave starts
+        // from nothing where the last one's is cut (`Calc - Adjust Value
+        // Keyframer` stops the running one), its starts the rocks' draws;
+        // every wave before the switch on each side keyframed on its own
+        // steps from its own start to the VM's first whole wave's keys.
+        let dt: Vec<f32> = r.frames[..g.steps].iter().map(|f| f.clock.step()).collect();
+        let along = |s: &[Vec3]| -> Vec<f32> { s.iter().map(|v| v.dot(axis) / 0.3048).collect() };
+        let (rec_along, vm_along) = (along(&rec_shake), along(&vm_shake));
+        // A whole wave: a second (60 records) or more before the next.
+        let vm_starts = wave_starts(&vm_along, switch_at);
+        let keys = vm_starts
+            .iter()
+            .enumerate()
+            .filter(|&(i, &k)| vm_starts.get(i + 1).copied().unwrap_or(switch_at) >= k + 60)
+            .find_map(|(_, &k)| wave_keys(&vm_along[..switch_at], k))
+            .expect("a whole wave of the VM's");
+        let mut waves = Vec::new();
+        for (what, series) in [("recorded", &rec_along), ("VM", &vm_along)] {
+            let starts = wave_starts(series, switch_at);
+            for (i, &k) in starts.iter().enumerate() {
+                let end = starts.get(i + 1).copied().unwrap_or(switch_at);
+                let law = keyframed(&dt, k, &keys, end - k);
+                let miss = (k..end)
+                    .map(|j| (law[j - k] - series[j]).abs())
+                    .fold(0.0f32, f32::max);
+                waves.push((what, k, end, miss));
+            }
         }
+        println!(
+            "  the waves before the switch (start..end: the keyframer's miss, ft) on the VM's keys {keys:?}: {}",
+            waves
+                .iter()
+                .map(|(w, k, e, m)| format!("{w} {k}..{e}: {m:.1e}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        assert!(
+            waves.iter().filter(|w| w.0 == "VM").count() >= 2
+                && waves.iter().filter(|w| w.0 == "recorded").count() >= 2,
+            "{waves:?}"
+        );
+        // Every one of them to 3.1e-5 ft on the review's run (2026-10-24):
+        // a key that carried the step's overshoot, or started a tick later,
+        // misses the recorded waves by 0.04-0.74 ft.
+        assert!(waves.iter().all(|w| w.3 < 1e-4), "{waves:?}");
         // The peak of the shake, as a vector (ft): the law, whatever the
         // rocks' random starts do to when.
         let peak_of = |s: &[Vec3]| {
