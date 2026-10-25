@@ -2327,10 +2327,13 @@ fn swap(l: &Level, load: &str, o: Opts, before: u32, after: u32) -> Swapped {
     out
 }
 
-/// The walkers whose minions stop in play at `Minion.ai` #842 once the stick
-/// goes on in a run that takes `collisioninfo.object collisions` out of its
-/// registry ([`PLAY_842`]), as every run did before AG.160 modelled it:
-/// Ninjini's two and [`GIANTS`]. On the registry as it stands none does.
+/// Ninjini's two and [`GIANTS`], the nine the swap tables walk on a run that
+/// takes `collisioninfo.object collisions` out of its registry
+/// ([`PLAY_842`]), each stopping in play at `Minion.ai` #842 once the stick
+/// goes on. Not every walker that stops there: on that run `104_OilBlazer`
+/// and Tree Rex's two stop at #842 too (AG.221's scan,
+/// [`the_key_stops_twelve_and_tree_rex_has_a_walk_and_a_run`]), the eight
+/// Giants' twelve files in all. On the registry as it stands none does.
 fn falling_back() -> Vec<&'static str> {
     [NINJINI, "109_Djini_Alt"]
         .into_iter()
@@ -4493,7 +4496,8 @@ fn ninjini_falls_back_on_the_run_the_key_makes() {
         (key.gap.1 - key.gap.0).abs() < 0.3 && key.eye_moved > 10.0,
         "the view following him: {key:?}"
     );
-    // Refused, the run is the registry as it stands: no stop.
+    // A name the registry doesn't hold is refused (that the refused run then
+    // walks on is `play`'s unit test's, and the Mac's bad-key run's).
     let mut config = guacamole::scripts::smash_config(Mode::Play);
     assert!(guacamole::unmodel::take_out(&mut config, "collisioninfo.no such member").is_err());
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());

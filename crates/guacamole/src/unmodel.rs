@@ -25,10 +25,18 @@ pub const UNMODEL_KEY: &str = "GUAC_TEST_UNMODEL";
 pub struct Unmodel(pub String);
 
 /// [`UNMODEL_KEY`] as `read` finds it: always `None` without `test-hooks`,
-/// whatever `read` answers, so a release build can't be told to.
+/// whatever `read` answers, so a test build (`unmodel` on, `test-hooks`
+/// off) can't be told to either; a build without `unmodel` has no module.
 #[cfg(feature = "unmodel")]
 pub fn unmodel_request(read: impl FnOnce(&str) -> Option<String>) -> Option<Unmodel> {
-    if !cfg!(feature = "test-hooks") {
+    requested(cfg!(feature = "test-hooks"), read)
+}
+
+/// [`unmodel_request`] with the build's `test-hooks` given, so its tests
+/// read the key in every build, not only under `test-hooks`.
+#[cfg(feature = "unmodel")]
+fn requested(test_hooks: bool, read: impl FnOnce(&str) -> Option<String>) -> Option<Unmodel> {
+    if !test_hooks {
         return None;
     }
     read(UNMODEL_KEY).map(Unmodel)
@@ -73,25 +81,34 @@ mod tests {
 
     /// AG.221: the key is read by name, and only in a `test-hooks` build:
     /// whatever the process env holds, any other build asks for nothing.
+    /// The read is held in every build through [`requested`], so a key
+    /// renamed or never read fails `cargo test --workspace` too, which runs
+    /// without `test-hooks`.
     #[test]
     fn the_unmodel_key_is_read_in_test_hooks_builds_only() {
-        let asked = unmodel_request(|key| {
+        let named = |key: &str| {
             assert_eq!(key, "GUAC_TEST_UNMODEL");
-            Some("collisioninfo.object collisions".into())
-        });
+            Some("collisioninfo.object collisions".to_owned())
+        };
+        let wanted = Some(Unmodel("collisioninfo.object collisions".into()));
+        assert_eq!(requested(true, named), wanted);
+        assert_eq!(requested(true, |_| None), None, "unset asks for nothing");
+        assert_eq!(
+            requested(false, |_| panic!("read without test-hooks")),
+            None
+        );
+        // `cargo test --workspace` lands on `false`; the `test-hooks` run on `true`.
         match cfg!(feature = "test-hooks") {
-            true => assert_eq!(
-                asked,
-                Some(Unmodel("collisioninfo.object collisions".into()))
-            ),
-            false => assert_eq!(asked, None),
+            true => assert_eq!(unmodel_request(named), wanted),
+            false => assert_eq!(unmodel_request(named), None),
         }
-        assert_eq!(unmodel_request(|_| None), None, "unset asks for nothing");
     }
 
     /// AG.221: a registered member is taken out of the run's registry and
-    /// named as it spells; an unknown name, an empty one and a name missing
-    /// a half are refused with the registry as it was.
+    /// named in lower case; an unknown name, an empty one, a name missing a
+    /// half and one the VM only keeps by name are refused with the registry
+    /// as it was (eight refusals); a second member named is the one taken
+    /// out.
     #[test]
     fn the_key_takes_a_registered_member_out_and_refuses_anything_else() {
         let id = guac_script::MemberId::named("collisioninfo", "object collisions");
@@ -127,5 +144,19 @@ mod tests {
         assert!(config.members.get(id).is_none());
         // Once out it isn't registered, so it isn't taken out twice.
         assert!(take_out(&mut config, "collisioninfo.object collisions").is_err());
+        // Another member is the one taken out when named, and only it.
+        let other =
+            guac_script::MemberId::named("redoctaneperipheralscriptobject", "size of region 1");
+        assert!(config.members.get(other).is_some());
+        assert_eq!(
+            take_out(
+                &mut config,
+                "redoctaneperipheralscriptobject.size of region 1"
+            )
+            .as_deref(),
+            Ok("redoctaneperipheralscriptobject.size of region 1")
+        );
+        assert!(config.members.get(other).is_none());
+        assert_eq!(config.members.len(), registered - 2);
     }
 }
