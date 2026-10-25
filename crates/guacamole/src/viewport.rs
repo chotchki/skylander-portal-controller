@@ -248,8 +248,8 @@ mod tests {
     }
 
     /// AH.150's on-screen test: what it looks at is on screen; behind the
-    /// eye, past the far clip, past either side or the top it isn't; the
-    /// sides are the 16:9 picture's, wider than its height.
+    /// eye, past the far clip, past either side, the top or the bottom it
+    /// isn't; the sides are the 16:9 picture's, wider than its height.
     #[test]
     fn a_point_is_on_screen_inside_the_picture_and_the_far_clip() {
         let v = Viewport {
@@ -282,6 +282,7 @@ mod tests {
         );
         let top = |k: f32| at(10.0) + up * (10.0 * half_y * k);
         assert!(v.shows(top(0.99)) && !v.shows(top(1.01)), "the top");
+        assert!(v.shows(top(-0.99)) && !v.shows(top(-1.01)), "the bottom");
         // Past the picture's height but inside its width: off at the top,
         // on at the side.
         assert!(!v.shows(top(1.5)) && v.shows(side(1.5 * half_y / half_x)));
