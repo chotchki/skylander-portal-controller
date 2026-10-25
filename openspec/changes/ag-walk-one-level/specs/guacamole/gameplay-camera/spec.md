@@ -33,7 +33,11 @@ When a script switches cameras, the view SHALL move to the new camera over the s
 
 #### Scenario: The rock slide up the corridor
 - **WHEN** Eruptor comes within 32 ft (9.75 m) of the sliding rocks' trigger at the top of the corridor east of the clearing
-- **THEN** the eye shakes to and fro, mostly across the view, up to 0.682 m off its place, a wave for each of three rocks that falls: the trigger sets two loose and each falls a roll of up to a second later, and a goat on the ledge above, startled once he is within 30 ft of it, sets the third loose as it lands its jump, that wave starting 1.45-2.0 s after he comes within range in four walks and running into the switch; a rock that falls while a wave stands at the new one's peak leaves that wave running; 2 s after he comes within range the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 54 m north of the start and 10.5 m above it, its far clip from 800 to 1,000 ft
+- **THEN** the eye shakes to and fro, mostly across the view, up to 0.682 m off its place, a wave for each of three rocks that falls: the trigger sets two loose, each falling a roll of up to a second later, and a goat on the ledge above, startled once he is within 30 ft of it, sets the third loose as it lands its jump, that wave starting 1.45-2.0 s after he comes within range in four walks; a rock that falls while a wave stands at the new one's peak leaves that wave running
+
+#### Scenario: The switch at the corridor's top
+- **WHEN** Eruptor comes within 32 ft (9.75 m) of the sliding rocks' trigger
+- **THEN** 2 s later the view moves over 2.00 s to a camera 57 ft (17.37 m) from the follow point and 28° up, aimed 6 ft above it and always facing the same point 54 m north of the start and 10.5 m above it, its far clip from 800 to 1,000 ft, the rock slide's third wave running on into it
 
 #### Scenario: The stick held through a switch
 - **WHEN** the stick is held while the view moves to another camera
