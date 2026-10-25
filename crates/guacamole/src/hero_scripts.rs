@@ -55,7 +55,10 @@
 //!   scripts join the run (AG.211: their activation makes his camera target
 //!   afresh on his minion, the camera's frame never stopped, so their next
 //!   write takes the view back, [`ScriptWorld::hand_back_view_until_a_join`]);
-//!   a take-off is no fall-back and leaves the scripts the view.
+//!   a take-off is no fall-back and leaves the scripts the view. His clips
+//!   AG.30's from there (stand-in ledger: `locomotion`), carried on from
+//!   where his scripts' picks left him (AH.198, [`pick_gaits`]), a walker's
+//!   mixing the walk and run his own scripts define (AG.219).
 //! - The engine the host reads ([`TvEngine`], decision 21): the hero's
 //!   controller by query on his entity, Avian's side of the seam, the
 //!   follow camera's view, each standing prop's body as its placement (a
@@ -90,6 +93,7 @@ use guac_ir::Model;
 use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
 use guac_motion::hero::Hero;
+use guac_motion::locomotion::Locomotion;
 use guac_motion::seam::{BodyId, PhysicsSeam};
 use guac_motion::solid::{SolidInfo, euler};
 use guac_script::{Halt, Handle, Mode, Obj, PlacementId, Program, Value};
@@ -1302,10 +1306,14 @@ pub(crate) fn advance_scripts(
 /// scripts run (openspec AH.49): his gaits' `picked`, and the step before's
 /// weights kept for his pose's easing. With it, AG.30's picker is off for him
 /// ([`crate::hero::step_gaits`]); with none (no locomotion of his scripts
-/// weights anything on him, or they've stopped and he walks on the
-/// stand-in), it picks as before.
+/// weights anything on him, or they've stopped and he walks on AG.30's,
+/// stand-in ledger: `locomotion`), it picks as before, from where the picks
+/// left him (AH.198, [`HeroGaits::pick`]), a walker's on the walk and run
+/// his own scripts define (AG.219, [`walkers::stand_in`]), where AG.27 gave
+/// him none.
 pub(crate) fn pick_gaits(
     world: Res<ScriptWorld>,
+    runtime: Option<Res<ScriptRuntime>>,
     mut heroes: Query<(
         Entity,
         &HeroRun,
@@ -1315,34 +1323,47 @@ pub(crate) fn pick_gaits(
     )>,
 ) {
     for (e, run, body, mut gaits, scripted) in &mut heroes {
-        let gaits = &mut *gaits;
-        gaits.picked_before = gaits
-            .picked
-            .as_ref()
-            .map(guacamole::picks::Picked::by_slot)
-            .unwrap_or_default();
+        let own = |was: &Locomotion| {
+            let (Some(rt), Some(palette), Some(rig)) = (&runtime, &run.palette, &run.rig) else {
+                return None;
+            };
+            if run.origin != Origin::Scripts {
+                return None;
+            }
+            let states = walkers::locomotion_states(&rt.vm, &world, e.to_bits())?;
+            let own = walkers::stand_in(
+                &states,
+                palette,
+                rig.clips.walk.as_ref().map(|c| (c, rig.clips.slots[0])),
+                rig.clips.run.as_ref().map(|c| (c, rig.clips.slots[1])),
+                *was.loops(),
+            )?;
+            info!(
+                load_file = %run.load_file,
+                walk = ?own.loops().walk,
+                run = ?own.loops().run,
+                gaits = ?own.gaits(),
+                "AG.30's locomotion draws him on his scripts' walk and run"
+            );
+            Some(own)
+        };
         let four = match (&run.palette, &run.rig) {
-            (Some(p), Some(rig)) => guacamole::picks::Four::of(
-                p,
-                [
-                    Some(rig.model.idle.name.as_str()),
-                    rig.clips.walk.as_ref().map(|c| c.name.as_str()),
-                    rig.clips.run.as_ref().map(|c| c.name.as_str()),
-                    rig.clips.fall.as_ref().map(|c| c.name.as_str()),
-                ],
-            ),
+            (Some(p), Some(rig)) => rig.clips.four(p, &rig.model.idle.name),
             _ => guacamole::picks::Four::default(),
         };
-        gaits.picked = scripted
-            .then(|| {
-                guacamole::picks::Picked::read(&world, e.to_bits(), four, body.hero.gait_speed)
-            })
-            .flatten();
+        gaits.pick(
+            scripted
+                .then(|| {
+                    guacamole::picks::Picked::read(&world, e.to_bits(), four, body.hero.gait_speed)
+                })
+                .flatten(),
+            own,
+        );
     }
 }
 
 /// His attach nodes posed by the clips on him as this step left them, his
-/// locomotion's (his scripts' picks, else the stand-in's; his idle alone
+/// locomotion's (his scripts' picks, else AG.30's; his idle alone
 /// with neither) with his scripts' laid over, and what hangs from them set
 /// there (the module docs; AH.50).
 pub(crate) fn pose_hands(

@@ -1031,7 +1031,13 @@ impl ScriptWorld {
     /// The palette slot a started sequence plays (its template's object and
     /// the slot), if it's a clip of one: a sound or anything else isn't.
     pub fn clip_of(&self, s: &Sequence) -> Option<(Obj, u32)> {
-        match self.objs.get(self.handle(s.template)?)? {
+        self.clip_named(s.template)
+    }
+
+    /// The palette slot `v` names (a clip of `animationinfo.animation
+    /// palette`, as a script holds one): its template's object and the slot.
+    pub fn clip_named(&self, v: Value) -> Option<(Obj, u32)> {
+        match self.objs.get(self.handle(v)?)? {
             Object::Clip { template, slot } => Some((template, slot)),
             _ => None,
         }

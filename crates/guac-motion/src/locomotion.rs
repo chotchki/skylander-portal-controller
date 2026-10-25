@@ -311,6 +311,21 @@ impl Frame {
     }
 }
 
+/// Where his scripts' locomotion on the VM left him as it hands him to
+/// this one (openspec AH.198: his script stopping in play mid-run, or a
+/// step it weights nothing on him): what [`Locomotion::take_over`] carries
+/// on from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Handover {
+    /// Idle, walk, run and fall as they drew him, in [`Clip::ALL`]'s order,
+    /// summing to 1.
+    pub weights: [f32; 4],
+    /// Where each of the four plays, `None` for one they didn't play.
+    pub plays: [Option<Play>; 4],
+    /// The speed their last step read, ft/s.
+    pub speed: f32,
+}
+
 /// A hero's locomotion: his clips' weights, times and rates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Locomotion {
@@ -431,6 +446,64 @@ impl Locomotion {
 
     pub fn weight(&self, clip: Clip) -> f32 {
         self.weights()[clip.index()]
+    }
+
+    /// Carries on from where `h` left him, his weights `h`'s (bar a clip he
+    /// lacks) and each clip where it played, so the next frame steps on
+    /// from there rather than from wherever this stood last: moving at its
+    /// speed he's set off already and the idle slides on out from its
+    /// weight, stood still it slides on in, each over its own full time as
+    /// any switch begun part way does; a fall's weight is the fall's slide
+    /// in that far. The fall reads the frame before as this one's last left
+    /// it (a fast fall high up starts a frame later than his own would).
+    pub fn take_over(&mut self, h: Handover) {
+        let fall = match self.loops.fall {
+            Some(_) => h.weights[3].clamp(0.0, 1.0),
+            None => 0.0,
+        };
+        let share = 1.0 - fall;
+        let idle = if share > 0.0 {
+            (h.weights[0] / share).clamp(0.0, 1.0)
+        } else {
+            self.still.value()
+        };
+        let (walk, run) = (h.weights[1].max(0.0), h.weights[2].max(0.0));
+        self.speed = h.speed;
+        self.moving = over(h.speed, 0.0);
+        self.run_share = if walk + run > 0.0 {
+            run / (walk + run)
+        } else {
+            self.gaits.run_share(h.speed)
+        };
+        let slide = |to: f32, time: f32| Slide {
+            from: idle,
+            to,
+            time,
+            ease: EASE,
+            elapsed: 0.0,
+        };
+        self.still = match self.moving {
+            true if idle > 0.0 => slide(0.0, SET_OFF),
+            false if idle < 1.0 => slide(1.0, COME_TO_REST),
+            _ => Slide::at(idle),
+        };
+        self.air = if fall > 0.0 {
+            Air::Falling(Slide {
+                from: 1.0,
+                to: 0.0,
+                time: FALL_IN,
+                ease: 0.0,
+                elapsed: f64::from(fall * FALL_IN),
+            })
+        } else {
+            Air::Ground
+        };
+        for (play, given) in self.plays.iter_mut().zip(h.plays) {
+            if let Some(given) = given {
+                *play = given;
+            }
+        }
+        self.held = false;
     }
 
     /// The heaviest clip, the first in [`Clip::ALL`]'s order of equals.
@@ -1038,6 +1111,91 @@ mod tests {
         assert!(!l.moving());
         l.step(DT, on_ground(1.1e-4));
         assert!(l.moving());
+    }
+
+    /// AH.198: taken over from where his scripts' locomotion left him, the
+    /// next frames step on from there: mid-run at 21.5 ft/s his run stays
+    /// whole, keeping its place in its stride, with no set-off (taken over
+    /// standing as at his join, the first frame would show his idle whole
+    /// and set him off); mid set-off the idle slides on out from its weight
+    /// over a full set-off; standing it slides on in; a fall's weight is
+    /// the fall's slide in that far, landing by its own rule.
+    #[test]
+    fn taken_over_it_steps_on_from_where_it_was_left() {
+        let played = |time: f64, rate: f32| Some(Play { time, rate });
+        let mut l = eruptor();
+        l.take_over(Handover {
+            weights: [0.0, 0.0, 1.0, 0.0],
+            plays: [
+                played(0.9, 1.0),
+                played(0.3, 1.6),
+                played(0.5, 1.0237),
+                None,
+            ],
+            speed: 21.5,
+        });
+        assert_eq!(l.weights(), [0.0, 0.0, 1.0, 0.0]);
+        assert!(l.moving());
+        l.step(DT, on_ground(21.5));
+        assert_eq!(l.weights(), [0.0, 0.0, 1.0, 0.0]);
+        let run = l.play(Clip::Run);
+        assert!(close(run.rate, 21.5 / R, 1e-6), "{run:?}");
+        assert!((run.time - (0.5 + f64::from(DT * run.rate))).abs() < 1e-6);
+        assert_eq!(l.play(Clip::Walk).rate, 1.6, "a pure run keeps the walk's");
+        let mut fresh = eruptor();
+        fresh.step(DT, on_ground(21.5));
+        assert_eq!(fresh.weight(Clip::Idle), 1.0, "what it carries on from");
+        // Mid set-off: the picks' weights as they were, the idle out over a
+        // full 0.25 s from its 0.4.
+        let mut l = eruptor();
+        l.take_over(Handover {
+            weights: [0.4, 0.36, 0.24, 0.0],
+            plays: [None; 4],
+            speed: 15.0,
+        });
+        let w = l.weights();
+        for (got, want) in w.iter().zip([0.4, 0.36, 0.24, 0.0]) {
+            assert!(close(*got, want, 1e-6), "{w:?}");
+        }
+        let mut idle = Vec::new();
+        for _ in 0..16 {
+            l.step(DT, on_ground(15.0));
+            idle.push(l.weight(Clip::Idle));
+        }
+        assert!(
+            idle[0] < 0.4 && idle.windows(2).all(|p| p[1] <= p[0]),
+            "{idle:?}"
+        );
+        assert!(idle[13] > 0.0 && idle[14] == 0.0, "{idle:?}");
+        // Standing with the idle at 0.7: it slides back in.
+        let mut l = eruptor();
+        l.take_over(Handover {
+            weights: [0.7, 0.3, 0.0, 0.0],
+            plays: [None; 4],
+            speed: 0.0,
+        });
+        assert!(!l.moving() && close(l.weight(Clip::Idle), 0.7, 1e-6));
+        for _ in 0..20 {
+            l.step(DT, on_ground(0.0));
+        }
+        assert_eq!(l.weights(), [1.0, 0.0, 0.0, 0.0]);
+        // A fall 30 % in: the gaits share the rest, falling on.
+        let mut l = eruptor();
+        l.take_over(Handover {
+            weights: [0.0, 0.0, 0.7, 0.3],
+            plays: [None; 4],
+            speed: 21.5,
+        });
+        let w = l.weights();
+        assert!(close(w[2], 0.7, 1e-6) && close(w[3], 0.3, 1e-6), "{w:?}");
+        let fall = Frame {
+            speed: 25.0,
+            falling: 30.0,
+            height: Some(2.0),
+            held: false,
+        };
+        l.step(DT, fall);
+        assert!(close(l.weight(Clip::Fall), 0.3 + DT / FALL_IN, 1e-5));
     }
 
     /// A character without a run walks at any speed; without a walk he

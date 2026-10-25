@@ -704,7 +704,7 @@ pub(crate) fn log_gaits(
         return;
     };
     // His scripts' picks while they pick his clips (openspec AH.49), else
-    // the stand-in's.
+    // AG.30's (stand-in ledger: `locomotion`).
     let r = crate::play::GaitReport::of_gaits(g);
     let stick = input.map_or(guac_motion::stick::Stick::CENTRED, |i| i.0.stick);
     mirror

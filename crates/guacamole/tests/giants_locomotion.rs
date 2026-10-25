@@ -25,7 +25,7 @@
 //! clips it played) is then the record's own: each of the five clips'
 //! weight, against the recorded weight, raw, both of the forms a record
 //! holds the gaits in included (`gaits.rs` compares the idle and the run's
-//! share because the stand-in draws one form only).
+//! share because AG.30's locomotion draws one form only).
 
 mod common;
 #[path = "../../guac-motion/tests/oracle/mod.rs"]
@@ -93,8 +93,8 @@ fn walk(a: &Record, b: &Record) -> (Vec3, bool) {
 
 /// A record's idle weight and the run's share of the gaits, both forms a
 /// record holds the gaits in read alike (`gaits.rs`' `held_weights`, which
-/// the stand-in is compared by): applied to the VM's weights too, it gives
-/// the stand-in's own measure on the same records.
+/// AG.30's locomotion is compared by): applied to the VM's weights too, it
+/// gives AG.30's own measure on the same records.
 fn held_weights(rec: &[f32]) -> (f32, Option<f32>) {
     let [idle, walk, run] = [rec[0], rec[1], rec[2]];
     if idle == 1.0 && walk > 0.0 && walk < 1.0 && run == 0.0 {
@@ -610,7 +610,7 @@ fn the_vms_picks_against_ag11s_recordings() {
     }
     println!("load after: {}", load());
     assert_eq!(replays, 244);
-    // Every fall in and gone on its record (the stand-in brings 47 back on
+    // Every fall in and gone on its record (AG.30's brings 47 back on
     // theirs).
     assert_eq!((t.falls, t.falls_in), (48, 48));
     assert_eq!(t.gone.get(&0), Some(&48), "{:?}", t.gone);

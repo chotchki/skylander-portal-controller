@@ -22,10 +22,12 @@
 //! idle and share what AH.49's replays hold to the recordings. His scripts'
 //! other clips are laid over these ([`crate::hands::playing`]). The reports
 //! name four of them by their clips: his model's idle and his hero side's
-//! walk, run and fall (AG.14), found in his palette by name.
+//! walk, run and fall (AG.14), found in his palette at his hero side's
+//! slots where it holds them there, by name otherwise ([`Four::at`]).
 
 use guac_ir::clip::Clip;
 use guac_ir::palette::{Palette, SlotEntry};
+use guac_motion::locomotion::{Handover, Play};
 use guac_script::Handle;
 
 use crate::scripts::ScriptWorld;
@@ -60,6 +62,25 @@ impl Four {
                 .find(|e| matches!(&e.entry, SlotEntry::Clip { clip, .. } if clip.name == name))
                 .map(|e| u32::from(e.slot))
         }))
+    }
+
+    /// [`Four::of`], each clip at the slot given beside its name where
+    /// `palette` holds that clip there (his hero side's, AG.14), by name
+    /// otherwise. A palette can hold one clip at several slots, and his
+    /// scripts' locomotion plays his hero side's: 11 of Giants' 67
+    /// characters hold their run at slot 2 as at 3, or at 1, 2 and 3, where
+    /// their scripts play 3, which the first by name misses (AH.198's
+    /// review).
+    pub fn at(palette: &Palette, clips: [Option<(&str, Option<u16>)>; 4]) -> Self {
+        let mut four = Four::of(palette, clips.map(|c| c.map(|(name, _)| name)));
+        for (slot, clip) in four.0.iter_mut().zip(clips) {
+            if let Some((name, Some(at))) = clip
+                && palette.clip(at).is_some_and(|c| c.name == name)
+            {
+                *slot = Some(u32::from(at));
+            }
+        }
+        four
     }
 }
 
@@ -193,9 +214,26 @@ impl Picked {
         NAMES[best]
     }
 
+    /// Where this left him, for AG.30's locomotion to carry on from once his
+    /// scripts stop picking (openspec AH.198): the four as drawn, each where
+    /// it plays (its rate in AG.30's terms, 1 its authored speed),
+    /// and the speed read.
+    pub fn handover(&self) -> Handover {
+        Handover {
+            weights: self.weights(),
+            plays: self.four.0.map(|slot| {
+                self.clip_of(slot).map(|c| Play {
+                    time: f64::from(c.time),
+                    rate: c.rate * 0.01,
+                })
+            }),
+            speed: self.speed,
+        }
+    }
+
     /// `falling` while his fall clip carries weight, else `ground`: the
     /// report's air reads the clip the script's fall check brings in, there
-    /// being no state of the stand-in's to read.
+    /// being no state of AG.30's to read.
     pub fn air(&self) -> &'static str {
         if self.weight_of(self.four.0[3]) > 0.0 {
             "falling"
@@ -291,14 +329,14 @@ impl Picked {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use guac_ir::clip::{RotationTrack, Track, VecTrack};
     use guac_ir::palette::PaletteSlot;
     use guac_ir::{DumpIdentity, Sha256};
 
     use super::*;
 
-    fn clip(name: &str, duration: f32) -> Clip {
+    pub(crate) fn clip(name: &str, duration: f32) -> Clip {
         Clip {
             name: name.into(),
             duration,
@@ -321,7 +359,7 @@ mod tests {
 
     /// Eruptor's palette's locomotion slots as his file holds them: idle 0,
     /// walk 1, run 3, a lean 12 (additive) and his fall 57.
-    fn palette() -> Palette {
+    pub(crate) fn palette() -> Palette {
         let entry = |slot: u16, name: &str, length: f32, additive: bool| PaletteSlot {
             slot,
             name: None,
@@ -392,6 +430,58 @@ mod tests {
         assert_eq!(none, Four([Some(0), None, None, None]));
     }
 
+    /// A palette holding his run at slots 2 and 3, his scripts playing 3
+    /// (DinoRang's shape on the dump): by name alone the four's run is 2,
+    /// his run reads 0 and the hand-over carries on from no run; at his
+    /// hero side's slot it's 3, read whole and handed over where it plays.
+    /// A slot holding another clip, or none given, falls back to the name.
+    #[test]
+    fn the_four_are_at_his_hero_sides_slots_where_his_palette_holds_them() {
+        let mut twice = palette();
+        let mut run2 = twice.entries[2].clone();
+        run2.slot = 2;
+        twice.entries.insert(2, run2);
+        let names = [
+            Some("Eruptor_Idle.ma"),
+            Some("Eruptor_Walk.ma"),
+            Some("Eruptor_Run.ma"),
+            Some("Eruptor_Falling.ma"),
+        ];
+        let by_name = Four::of(&twice, names);
+        assert_eq!(by_name, Four([Some(0), Some(1), Some(2), Some(57)]));
+        let sides = [None, Some(1), Some(3), Some(57)];
+        let at = Four::at(
+            &twice,
+            [0, 1, 2, 3].map(|i| names[i].map(|n| (n, sides[i]))),
+        );
+        assert_eq!(at, Four([Some(0), Some(1), Some(3), Some(57)]));
+        let run = |four: Four| Picked {
+            four,
+            ..picked([
+                (0, 0.0, 100.0),
+                (1, 0.0, 162.5),
+                (3, 100.0, 123.2),
+                (57, 0.0, 100.0),
+            ])
+        };
+        assert_eq!(run(by_name).weights(), [0.0; 4], "his run unread");
+        assert_eq!(run(by_name).handover().plays[2], None);
+        assert_eq!(run(at).weights(), [0.0, 0.0, 1.0, 0.0]);
+        let rate = run(at).handover().plays[2].map(|p| p.rate);
+        assert!(rate.is_some_and(|r| (r - 1.232).abs() < 1e-6), "{rate:?}");
+        // Slot 5 holds no run, and no slot given: by name.
+        let wrong = Four::at(
+            &twice,
+            [
+                None,
+                None,
+                Some(("Eruptor_Run.ma", Some(5))),
+                Some(("Eruptor_Falling.ma", None)),
+            ],
+        );
+        assert_eq!(wrong, Four([None, None, Some(2), Some(57)]));
+    }
+
     /// A record's two forms mid-set-off (AG.11): the idle at 40 % beside the
     /// gaits' own split of 100 (walk 60, run 40), or the gaits as the rest
     /// of the idle's (walk 36, run 24). Both draw alike: the idle 0.4, the
@@ -432,6 +522,33 @@ mod tests {
             (57, 70.0, 100.0),
         ]);
         assert_eq!((falling.top(), falling.air()), ("fall", "falling"));
+    }
+
+    /// AH.198: what AG.30's locomotion carries on from is the four as drawn, each
+    /// where it plays at AG.30's rate (1 its authored speed), the
+    /// speed read; a slot not playing hands over nothing.
+    #[test]
+    fn the_handover_is_the_four_as_drawn_where_they_play() {
+        use guac_motion::locomotion::Play;
+        let p = picked([
+            (0, 40.0, 100.0),
+            (1, 60.0, 124.0),
+            (3, 40.0, 117.0),
+            (57, 0.0, 100.0),
+        ]);
+        let h = p.handover();
+        assert_eq!(h.weights, p.weights());
+        assert_eq!(
+            h.plays,
+            [100.0f32, 124.0, 117.0, 100.0].map(|r| Some(Play {
+                time: 0.5,
+                rate: r * 0.01
+            }))
+        );
+        assert_eq!(h.speed, 14.0);
+        let mut no_fall = p.clone();
+        no_fall.clips.pop();
+        assert_eq!(no_fall.handover().plays[3], None);
     }
 
     /// Eased between steps: each weight from the step before's toward this

@@ -295,16 +295,41 @@ pub(crate) struct HeroClips {
     pub(crate) walk: Option<Clip>,
     pub(crate) run: Option<Clip>,
     pub(crate) fall: Option<Clip>,
+    /// The slots his hero side gives the walk, the run and the fall in his
+    /// model's animation set, his palette's.
+    pub(crate) slots: [Option<u16>; 3],
 }
 
 impl HeroClips {
     fn of(hero: guac_ir::hero::Hero) -> Self {
         let l = hero.locomotion;
+        let slot = |s: &Option<guac_ir::hero::SlotClip>| s.as_ref().map(|s| s.slot);
         Self {
+            slots: [slot(&l.walk), slot(&l.run), slot(&l.falling)],
             walk: l.walk.map(|s| s.clip),
             run: l.run.map(|s| s.clip),
             fall: l.falling.map(|s| s.clip),
         }
+    }
+
+    /// The palette slots of the four his gait reports and his scripts'
+    /// picks name (openspec AH.49, AH.198): `idle` by name, his walk, run
+    /// and fall at his hero side's slots where `palette` holds them there
+    /// ([`guacamole::picks::Four::at`]), which is where his scripts play
+    /// them.
+    pub(crate) fn four(&self, palette: &Palette, idle: &str) -> guacamole::picks::Four {
+        fn named(c: &Option<Clip>, slot: Option<u16>) -> Option<(&str, Option<u16>)> {
+            c.as_ref().map(|c| (c.name.as_str(), slot))
+        }
+        guacamole::picks::Four::at(
+            palette,
+            [
+                Some((idle, None)),
+                named(&self.walk, self.slots[0]),
+                named(&self.run, self.slots[1]),
+                named(&self.fall, self.slots[2]),
+            ],
+        )
     }
 
     /// The loops [`Locomotion`] keeps, the idle's from `model`.
@@ -587,7 +612,7 @@ pub(crate) struct GaitReport {
 
 impl GaitReport {
     /// What his gaits show: his scripts' picks while they pick his clips
-    /// (openspec AH.49), else the stand-in's.
+    /// (openspec AH.49), else AG.30's (stand-in ledger: `locomotion`).
     pub(crate) fn of_gaits(g: &HeroGaits) -> Self {
         let Some(p) = &g.picked else {
             return Self {
@@ -1475,8 +1500,9 @@ fn enter(
     });
     let mut loops = clips.loops(&read.loaded.model);
     if walker.origin == Origin::Scripts {
-        // His locomotion is the VM's (AH.49): until it picks his clip he
-        // plays his idle, and no gait speed of ours picks one for him.
+        // His locomotion is the VM's (AH.49): no gait speed of ours picks
+        // his clip; until his setup defines his walk and run he plays his
+        // idle, and where the VM's picks stop AG.30's mixes those (AG.219).
         loops.walk = None;
         loops.run = None;
     }
@@ -1753,7 +1779,7 @@ fn pose_hero(
 
 /// His joints `alpha` of the way from his locomotion's last step to its
 /// next, a step `step` seconds long: the clips his scripts' locomotion
-/// weights on him out of `palette` (openspec AH.49), else the stand-in's,
+/// weights on him out of `palette` (openspec AH.49), else AG.30's,
 /// each where [`drawn_clips`] puts it; his scripts' others laid over.
 fn gait_pose(
     model: &Model,
@@ -1767,8 +1793,8 @@ fn gait_pose(
     let playing = match (&gaits.picked, palette) {
         (Some(p), Some(palette)) => {
             let mut playing = p.posed(&gaits.picked_before, palette, (alpha, step));
-            // Under reduced motion his idle holds its start, as the
-            // stand-in's does.
+            // Under reduced motion his idle holds its start, as AG.30's
+            // does.
             if held && let Some(idle) = p.four.0[0].and_then(|s| palette.clip(s as u16)) {
                 for c in playing.iter_mut().filter(|c| std::ptr::eq(c.0, idle)) {
                     c.1 = 0.0;
@@ -1885,8 +1911,8 @@ mod tests {
     /// the drawn log read their picks: the heaviest of the four, his walk's
     /// speed, the run's share of the walk and run as written, the idle at
     /// its own weight and the gaits the rest by theirs, the rates in
-    /// hundredths; drawn, eased from the step before's weights. The stand-in's numbers (standing in his
-    /// idle) never show.
+    /// hundredths; drawn, eased from the step before's weights. AG.30's
+    /// numbers (standing in his idle) never show.
     #[test]
     fn his_gaits_read_his_scripts_picks_while_they_pick() {
         use guacamole::picks::{Four, Picked, Weighted};
@@ -1930,10 +1956,71 @@ mod tests {
         for (got, want) in drawn.iter().map(|d| d.1).zip([0.7, 0.18, 0.12, 0.0]) {
             assert!((got - want).abs() < 1e-6, "{drawn:?}");
         }
-        // Without picks, the stand-in's: his idle alone.
+        // Without picks, AG.30's: his idle alone.
         g.picked = None;
         let r = GaitReport::of_gaits(&g);
         assert_eq!((r.clip.as_str(), r.weights), ("idle", [1.0, 0.0, 0.0, 0.0]));
+    }
+
+    /// AH.198's review: the four his picks and his hand-over name sit at his
+    /// hero side's slots, where his scripts play them, though his palette
+    /// holds his run at an earlier slot too (DinoRang's 2 and 3 on the dump,
+    /// 11 of the 67 so), which the first by name would take.
+    #[test]
+    fn his_four_are_at_his_hero_sides_slots() {
+        use guac_ir::palette::{PaletteSlot, SlotEntry};
+        use guacamole::picks::Four;
+        let clips = HeroClips::of(crate::test_support::play::hero_side(WALKER));
+        let (walk, run, fall) = (clips.walk.clone(), clips.run.clone(), clips.fall.clone());
+        let (walk, run, fall) = (walk.unwrap(), run.unwrap(), fall.unwrap());
+        assert_eq!(clips.slots.map(|s| s.is_some()), [true; 3]);
+        let mut idle = walk.clone();
+        idle.name = "Synthetic_Idle.ma".into();
+        let entry = |slot: u16, clip: &Clip| PaletteSlot {
+            slot,
+            name: None,
+            label: None,
+            entry: SlotEntry::Clip {
+                additive: false,
+                partial: false,
+                layered: false,
+                motion_extraction: 0,
+                clip: clip.clone(),
+            },
+        };
+        let [w, r, f] = clips.slots.map(Option::unwrap);
+        assert!(
+            r > 1 && w < r - 1,
+            "room for an earlier run: {:?}",
+            clips.slots
+        );
+        let mut entries = vec![
+            entry(0, &idle),
+            entry(w, &walk),
+            entry(r - 1, &run),
+            entry(r, &run),
+            entry(f, &fall),
+        ];
+        entries.sort_by_key(|e| e.slot);
+        let palette = Palette {
+            identity: crate::test_support::turntable::identity(),
+            owner: WALKER.into(),
+            slots: 64,
+            entries,
+            refused: Vec::new(),
+        };
+        let by_name = Four::of(
+            &palette,
+            [
+                Some("Synthetic_Idle.ma"),
+                Some(walk.name.as_str()),
+                Some(run.name.as_str()),
+                Some(fall.name.as_str()),
+            ],
+        );
+        assert_eq!(by_name.0[2], Some(u32::from(r - 1)), "the first by name");
+        let four = clips.four(&palette, "Synthetic_Idle.ma");
+        assert_eq!(four, Four([0, w, r, f].map(|s| Some(u32::from(s)))));
     }
 
     fn alert(app: &App) -> Option<Alert> {
@@ -2371,6 +2458,22 @@ mod tests {
         fault: guac_formats::script::builder::WalkerFault,
         mover: bool,
     ) -> (App, Entity) {
+        walker_app_writing(
+            dir,
+            fault,
+            match mover {
+                true => crate::test_support::hero_scripts::write_walker_moving,
+                false => crate::test_support::hero_scripts::write_walker,
+            },
+        )
+    }
+
+    /// [`walker_app`] over the parts `write` writes.
+    fn walker_app_writing(
+        dir: &std::path::Path,
+        fault: guac_formats::script::builder::WalkerFault,
+        write: fn(&std::path::Path, guac_formats::script::builder::WalkerFault),
+    ) -> (App, Entity) {
         let (mut app, tx) = play_app_walkers(dir, &[(WALKER_TOY, WALKER)]);
         write_attack_parts(dir);
         // His palette, Eruptor's under his name: what the join sets on his
@@ -2394,10 +2497,7 @@ mod tests {
             guac_ir::to_ron(&nodes).unwrap(),
         )
         .unwrap();
-        match mover {
-            true => crate::test_support::hero_scripts::write_walker_moving(dir, fault),
-            false => crate::test_support::hero_scripts::write_walker(dir, fault),
-        }
+        write(dir, fault);
         tx.send(write_level(dir, &lights())).unwrap();
         let pad = test_pad::connect(&mut app, None, None);
         until(&mut app, "the level and its scripts", |a| {
@@ -2846,6 +2946,88 @@ mod tests {
                 .is_some_and(|&n| n >= 60),
             "the update's writes to his walk dropped: {dropped:?}"
         );
+    }
+
+    /// AG.219: a walker whose script stops in play walks drawn on his own
+    /// scripts' locomotion: over a part whose locomotion script keeps his
+    /// walk (slot 1) and run (slot 3) as the original's keeps a walker's
+    /// (`LOCOMOTION_STATES`), AG.30's locomotion that draws him on AG.16's
+    /// controller mixes his hero side's walk and run by speed at their
+    /// speeds, his run whole at his top speed at its rate, his gait report's
+    /// run rate a number; over the part without them it draws his idle at
+    /// any speed (AG.27's, no walk or run of ours).
+    #[test]
+    fn a_walker_fallen_back_walks_and_runs_on_his_scripts_definitions() {
+        use guac_formats::script::builder::{LOCOMOTION_STATES, WALKER_SPEED, WalkerFault};
+        use guac_motion::locomotion::{Clip as Gait, Gaits};
+        let fallen_back = |write: fn(&std::path::Path, WalkerFault)| {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, pad) = walker_app_writing(tmp.path(), WalkerFault::InPlay, write);
+            // His palette holding his hero side's walk and run at their
+            // slots, as a walker's does (the synthetic one his attacks').
+            let rel = tmp.path().join(IrFormat::Ron.palette_path(WALKER));
+            let mut palette: Palette =
+                guac_ir::from_ron(&std::fs::read_to_string(&rel).unwrap()).unwrap();
+            let side = crate::test_support::play::hero_side(WALKER).locomotion;
+            for c in [side.walk, side.run].into_iter().flatten() {
+                palette.entries.push(guac_ir::palette::PaletteSlot {
+                    slot: c.slot,
+                    name: None,
+                    label: None,
+                    entry: guac_ir::palette::SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: c.clip,
+                    },
+                });
+            }
+            palette.entries.sort_by_key(|e| e.slot);
+            std::fs::write(&rel, guac_ir::to_ron(&palette).unwrap()).unwrap();
+            place(&mut app, 0, WALKER_TOY, "Synthetic");
+            until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+            test_pad::press(&mut app, pad, GamepadButton::East);
+            until(&mut app, "his scripts", |a| {
+                join(a).as_deref() == Some("joined")
+            });
+            until(&mut app, "his script stopping", |a| {
+                join(a).as_deref() == Some("off")
+            });
+            test_pad::stick(&mut app, pad, 0.0, 1.0);
+            for _ in 0..90 {
+                app.update();
+            }
+            let e = app.world().resource::<Play>().hero().expect("in");
+            let report = app
+                .world()
+                .entity(e)
+                .get::<HeroGaits>()
+                .map(GaitReport::of_gaits)
+                .expect("his gaits");
+            (gaits(&app), report, hero(&app).walk.velocity.length())
+        };
+        let (own, report, walk) =
+            fallen_back(crate::test_support::hero_scripts::write_walker_locomotion);
+        assert!((walk - WALKER_SPEED).abs() < 1e-3, "{walk}");
+        let (w, r) = (LOCOMOTION_STATES[1].1, LOCOMOTION_STATES[2].1);
+        assert_eq!(
+            *own.gaits(),
+            Gaits {
+                walk_speed: w,
+                run_speed: r
+            }
+        );
+        assert!(own.loops().walk.is_some() && own.loops().run.is_some());
+        assert_eq!(own.weights(), [0.0, 0.0, 1.0, 0.0], "his run whole");
+        let rate = own.play(Gait::Run).rate;
+        assert!((rate - WALKER_SPEED / r).abs() < 1e-5, "{rate}");
+        assert_eq!(report.clip, "run");
+        assert!(report.rates.iter().all(|r| r.is_finite()), "{report:?}");
+        let (before, report, _) =
+            fallen_back(crate::test_support::hero_scripts::write_walker_moving);
+        assert_eq!(before.weights(), [1.0, 0.0, 0.0, 0.0], "his idle, before");
+        assert_eq!(report.clip, "idle");
     }
 
     /// AH.24: a character whose attacks don't run (here no script part

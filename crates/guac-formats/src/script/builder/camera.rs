@@ -221,7 +221,7 @@ pub struct Camera {
 pub fn camera(at: CameraAt, fault: CameraFault) -> Camera {
     let a = attack();
     Camera {
-        global: attack_global_with(Some(fault), true),
+        global: attack_global_with(Some(fault), true, false),
         init_setup: a.init_setup,
         fighter: attack_fighter_with(true, fault == CameraFault::Hero),
         level: camera_level(at, fault),

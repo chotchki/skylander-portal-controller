@@ -147,6 +147,20 @@ pub(crate) fn write_walker_moving(dir: &Path, fault: attack_builder::WalkerFault
     );
 }
 
+/// [`write_walker_moving`] with AG.219's synthetic locomotion definitions
+/// ([`attack_builder::attack_with_locomotion`]): the first player's walk
+/// and run as his scripts would define them.
+pub(crate) fn write_walker_locomotion(dir: &Path, fault: attack_builder::WalkerFault) {
+    let (creature, _) = attack_builder::creature();
+    let a = attack_builder::attack_with_locomotion();
+    write_files(
+        dir,
+        [&a.global, &a.init_setup, &a.fighter],
+        &creature,
+        &[(attack_builder::WALKER_LOAD, attack_builder::walker(fault))],
+    );
+}
+
 /// Giants' rows as AH.2 reads them, the table ours: what lays a
 /// figure's words out in the synthetic part's tests.
 pub(crate) fn progression_rows() -> guac_ir::progression::Progression {

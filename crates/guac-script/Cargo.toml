@@ -27,3 +27,13 @@ guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # The oracle's MT19937 model (`guac_oracle::rng`), the reference the
 # generator is checked against (AH.15).
 guac-oracle = { path = "../guac-oracle" }
+# This crate's own test switches, for its unit tests.
+guac-script = { path = ".", features = ["test-fixtures"] }
+
+[features]
+# Test switches: `Members::without`, a member taken out of a run's registry so
+# a script stops where its absence stopped it (guacamole's disc tests hold the
+# fall-back to the stop at `Minion.ai` #842 that AG.160 took away). Test-only:
+# guacamole's tests enable it from their [dev-dependencies]; nothing that
+# ships does.
+test-fixtures = []

@@ -5,7 +5,10 @@
 //! `movement parameters` and the scale the mover update reads; AH.165's
 //! and AH.169's swaps of a walker; AG.162's whitelist against the TV's
 //! listing; and a walker's fall-back once his script stops in play, as the
-//! TV takes it (AH.151, AG.173, AG.190: Ninjini). Ignored by default; they read
+//! TV takes it (AH.151, AG.173, AG.190, AG.211: Ninjini and the seven giants,
+//! whose minions stop at `Minion.ai` #842 only in a run that takes
+//! `collisioninfo.object collisions` out of its registry, [`PLAY_842`]: since
+//! AG.160 modelled it nothing on the dump stops in play). Ignored by default; they read
 //! `GUAC_GIANTS_DUMP` and write the extract under `GUAC_EXTRACT_DIR` (a
 //! folder `ag27-verify` there, shared by the tests of one run; a run that
 //! made it removes it as its process exits, one that found it current
@@ -188,22 +191,28 @@ type Cell = (&'static str, &'static str, guac_script::Kind, f32, f32);
 /// live table names (`discover`, `AH18_LIVE_TABLE`, the common run's
 /// `discovery`) so the run goes on past each. Strict with neither is the
 /// check; with them, what the scripts would do once those are modelled.
+/// `without` takes members the registry holds out of it again (namespace,
+/// name; `Members::without`, a test-only switch): a script reaching one
+/// stops in play as before it was modelled, the TV's fall-back taking him.
 #[derive(Debug, Clone, Copy)]
 struct Opts {
     mode: Mode,
     discover: bool,
     cells: &'static [Cell],
+    without: &'static [(&'static str, &'static str)],
 }
 
 const STRICT: Opts = Opts {
     mode: Mode::Strict,
     discover: false,
     cells: &[],
+    without: &[],
 };
 const DISCOVER: Opts = Opts {
     mode: Mode::Strict,
     discover: true,
     cells: &[],
+    without: &[],
 };
 /// Tree Rex strict on the registry: the two members his walk reached past it
 /// until AH.49 and AG.160 modelled them, his minion's first tick writing
@@ -226,6 +235,12 @@ fn add_cells(config: &mut guac_script::Config, o: Opts) {
         config
             .members
             .value_cell(ns, name, guac_script::MemberSpec::new(kind, min, max));
+    }
+    for &(ns, name) in o.without {
+        assert!(
+            config.members.without(ns, name),
+            "{ns}.{name}: not registered, so not taken out"
+        );
     }
 }
 
@@ -675,7 +690,8 @@ impl W {
     }
 
     /// The next hero in where this one stood, as the TV's swap brings him
-    /// (openspec AH.105): `load`'s palette on his minion's template, his
+    /// (openspec AH.105): `load`'s palette on his minion's template with its
+    /// clips' animation info (AH.49's, as the TV's join sets it), his
     /// controller on his own numbers at this one's place and facing, then
     /// the join. Takes this one off first ([`W::deactivate`]) if he's on.
     fn swap_in(&mut self, l: &Level, load: &str) -> Result<(), Halt> {
@@ -692,7 +708,7 @@ impl W {
                 .find(|p| p.obj.unit == unit && p.name == load)
                 .map(|p| p.obj)
         }) {
-            self.world.set_palette(template, lengths(&palette));
+            self.world.set_palette_of(template, &palette);
         }
         let walk = if load == "009_Eruptor" {
             Walk::measured(walkers::walker(load).unwrap())
@@ -1496,6 +1512,197 @@ fn a_probe_of_the_locomotion_cells() {
     }
 }
 
+/// AG.219's reading on the dump: each walker's locomotion states as his own
+/// scripts define them (`walkers::locomotion_states`, off `global.bld`'s
+/// locomotion script's `locomotions` for him once his setup has run), and
+/// AG.30's gaits for him off them by his hero side's clips' names
+/// (`walkers::ScriptedGaits`): Eruptor's his Define call's 3.658 and 6.401
+/// m/s as AG.11 measured them (`Gaits::ERUPTOR`), and every walker's walk,
+/// run or both his hero side's and his scripts'.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_walkers_stand_in_gaits_are_his_own_locomotion_states() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut loads: Vec<String> = vec!["009_Eruptor".to_owned()];
+    loads.extend(l.walkers.iter().map(|w| w.load_file.clone()));
+    let mut kinds: BTreeMap<(bool, bool), Vec<String>> = BTreeMap::new();
+    for load in &loads {
+        let w = W::joined(&l, load, PLAY, 120)
+            .map_err(|b| format!("{load}: {}", b.1))
+            .unwrap();
+        let states = walkers::locomotion_states(&w.vm, &w.world, HERO)
+            .unwrap_or_else(|| panic!("{load}: his locomotion states"));
+        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
+        let g = walkers::ScriptedGaits::of(
+            &states,
+            |slot| palette.clip(slot as u16).map(|c| c.name.as_str()),
+            at(&hero.locomotion.walk).map(|(n, s)| (n, s.map(u32::from))),
+            at(&hero.locomotion.run).map(|(n, s)| (n, s.map(u32::from))),
+        )
+        .unwrap_or_else(|| panic!("{load}: no walk or run of his scripts' {states:?}"));
+        println!(
+            "{load}: states {:?}; walk {} run {} at {:?}",
+            states
+                .iter()
+                .map(|s| (
+                    s.slot,
+                    s.speed,
+                    s.slot
+                        .and_then(|x| palette.clip(x as u16))
+                        .map(|c| c.name.as_str())
+                ))
+                .collect::<Vec<_>>(),
+            g.walk,
+            g.run,
+            g.gaits
+        );
+        if load == "009_Eruptor" {
+            assert_eq!(g.gaits, guac_motion::locomotion::Gaits::ERUPTOR);
+            assert!(g.walk && g.run);
+        }
+        kinds.entry((g.walk, g.run)).or_default().push(load.clone());
+    }
+    for ((walk, run), who) in &kinds {
+        println!("walk {walk} run {run}: {} {who:?}", who.len());
+    }
+    assert_eq!(kinds.values().map(Vec::len).sum::<usize>(), loads.len());
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
+/// AG.30's locomotion for `load` as the TV builds it at his fall-back: a
+/// walker's off his own scripts' locomotion states (AG.219,
+/// `walkers::stand_in`), Eruptor's on his measured gaits, both from his
+/// join's rest; and the four his picks are read by.
+fn stand_in_of(
+    w: &W,
+    l: &Level,
+    load: &str,
+) -> (guac_motion::locomotion::Locomotion, guacamole::picks::Four) {
+    use guac_motion::locomotion::{Gaits, Locomotion, Loops};
+    let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+    let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
+    let states = walkers::locomotion_states(&w.vm, &w.world, HERO).expect("his states");
+    let four = four_of(&palette, &hero, &states);
+    let side = &hero.locomotion;
+    let duration = |c: &Option<guac_ir::hero::SlotClip>| c.as_ref().map(|c| c.clip.duration);
+    let joined = Loops {
+        idle: four.0[0]
+            .and_then(|s| palette.clip(s as u16))
+            .map_or(1.0, |c| c.duration),
+        walk: None,
+        run: None,
+        fall: duration(&side.falling),
+    };
+    let own = match w.walk.origin {
+        walkers::Origin::Scripts => walkers::stand_in(
+            &states,
+            &palette,
+            side.walk.as_ref().map(|c| (&c.clip, Some(c.slot))),
+            side.run.as_ref().map(|c| (&c.clip, Some(c.slot))),
+            joined,
+        )
+        .expect("his own stand-in"),
+        walkers::Origin::Measured => Locomotion::new(
+            Gaits::ERUPTOR,
+            Loops {
+                walk: duration(&side.walk),
+                run: duration(&side.run),
+                ..joined
+            },
+        ),
+    };
+    (own, four)
+}
+
+/// AG.219's AG.30 locomotion draws what his own scripts draw (AH.198's
+/// review; stand-in ledger: `locomotion`): every walker and Eruptor on his
+/// scripts, on the registry as it stands, a part stick for 120 steps then a
+/// full one for 180, his scripts' picks read each step beside AG.30's
+/// locomotion built as his fall-back builds it ([`stand_in_of`]) and
+/// stepped on the same frames from his join's rest; on every step at a
+/// speed held 30 steps, moving and not held at an edge, its four weights
+/// and the rate of each gait the picks weight are the picks' within 1e-4.
+/// Left out: Wrecking Ball (`023_ForceFieldGrub`), whose scripts start a
+/// weighted idle each step (AG.222).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_walkers_stand_in_draws_what_his_scripts_draw() {
+    use guac_motion::locomotion::{Clip, Frame};
+    use guacamole::picks::Picked;
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut loads: Vec<String> = vec!["009_Eruptor".to_owned()];
+    loads.extend(l.walkers.iter().map(|w| w.load_file.clone()));
+    let (mut held, mut worst_w, mut worst_r) = (0usize, 0.0f32, 0.0f32);
+    for load in loads.iter().filter(|x| x.as_str() != "023_ForceFieldGrub") {
+        let mut w = joined_on_the_tv(&l, load, PLAY, 120, true, true);
+        let (mut own, four) = stand_in_of(&w, &l, load);
+        let mut speeds: Vec<f32> = Vec::new();
+        let (mut n, mut most_w, mut most_r) = (0usize, 0.0f32, 0.0f32);
+        for k in 0..300u32 {
+            let push = if k < 120 { 0.45 } else { 1.0 };
+            w.bench.pads[0] = Pad {
+                stick: guac_motion::scenarios::stick(push, 0.0),
+                actions: [false; 4],
+                connected: true,
+            };
+            w.step().unwrap();
+            let h = w.hero();
+            let speed = h.gait_speed;
+            own.step(w.dt, Frame::of(h));
+            speeds.push(speed);
+            let steady = speeds.len() > 30
+                && speeds[speeds.len() - 31..]
+                    .iter()
+                    .all(|s| (s - speed).abs() < 1e-3);
+            if !steady || speed < 0.5 || h.probe_held {
+                continue;
+            }
+            let p = Picked::read(&w.world, HERO, four, speed).expect("his picks");
+            let (pw, sw) = (p.weights(), own.weights());
+            let dw = pw
+                .iter()
+                .zip(sw)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            let rates = p.rates();
+            let dr = [(1, Clip::Walk), (2, Clip::Run)]
+                .iter()
+                .filter(|(i, _)| pw[*i] > 1e-3)
+                .map(|&(i, c)| (rates[i - 1] - own.play(c).rate).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                dw < 1e-4,
+                "{load} step {k} at {speed}: picks {pw:?}, stand-in {sw:?}"
+            );
+            assert!(
+                dr < 1e-4,
+                "{load} step {k} at {speed}: rates {rates:?} against the stand-in's"
+            );
+            n += 1;
+            most_w = most_w.max(dw);
+            most_r = most_r.max(dr);
+        }
+        assert!(n > 60, "{load}: {n} steady steps");
+        println!(
+            "{load}: {n} steady steps, weights within {most_w:.2e}, rates within {most_r:.2e}"
+        );
+        held += 1;
+        worst_w = worst_w.max(most_w);
+        worst_r = worst_r.max(most_r);
+    }
+    assert_eq!(held, loads.len() - 1);
+    println!(
+        "{held} held: weights within {worst_w:.2e}, rates within {worst_r:.2e}; {:.1?} in all, load {:.2}",
+        started.elapsed(),
+        load1()
+    );
+}
+
 /// AG.27 Verify (2): Eruptor, joined through the part with every walker
 /// linked beside him, walks on AG.8's numbers with his scripts driving
 /// (21.5 ft/s, 1440°/s: the numbers the file `giants_eruptor` holds on the
@@ -2079,8 +2286,10 @@ fn swap(l: &Level, load: &str, o: Opts, before: u32, after: u32) -> Swapped {
     out
 }
 
-/// The walkers that stop in play at `Minion.ai` #842 on this tree once the
-/// stick goes on: Ninjini's two and [`GIANTS`].
+/// The walkers whose minions stop in play at `Minion.ai` #842 once the stick
+/// goes on in a run that takes `collisioninfo.object collisions` out of its
+/// registry ([`PLAY_842`]), as every run did before AG.160 modelled it:
+/// Ninjini's two and [`GIANTS`]. On the registry as it stands none does.
 fn falling_back() -> Vec<&'static str> {
     [NINJINI, "109_Djini_Alt"]
         .into_iter()
@@ -2091,9 +2300,10 @@ fn falling_back() -> Vec<&'static str> {
 /// A swap table's put-back walks held (AH.151): every walker set up again
 /// at his scripts' top speed after the put-back, on his scripts within
 /// 1e-3 ft/s or, fallen back, on AG.16's controller within
-/// [`WALK_ULPS`] of their number; those that fall back against
-/// [`falling_back`]'s, a difference reported.
-fn put_back_walks(table: &[Swapped]) {
+/// [`WALK_ULPS`] of their number; the ones that fall back exactly
+/// `expected` (the table's run's: none on the registry as it stands,
+/// [`falling_back`]'s on [`PLAY_842`]).
+fn put_back_walks(table: &[Swapped], expected: &[&str]) {
     let mut walking = 0;
     for s in table.iter().filter(|s| s.set_up_again) {
         let top = s.ground_max.expect("his movement parameters");
@@ -2113,35 +2323,16 @@ fn put_back_walks(table: &[Swapped]) {
         }
         walking += 1;
     }
-    let expected = falling_back();
     let fell: Vec<&str> = table
         .iter()
         .filter(|s| s.off_again.is_some())
         .map(|s| s.load.as_str())
         .collect();
-    for s in table.iter().filter(|s| s.set_up_again) {
-        let want = expected.contains(&s.load.as_str());
-        if want != s.off_again.is_some() {
-            println!(
-                "REPORT {}: {} after the put-back, this tree's {}",
-                s.load,
-                if s.off_again.is_some() {
-                    "falls back"
-                } else {
-                    "walks on his scripts"
-                },
-                if want {
-                    "a fall-back at #842"
-                } else {
-                    "his scripts' walk"
-                }
-            );
-        }
-    }
     println!(
         "put back: {walking} set up again at their top speed, {} of them fallen back: {fell:?}",
         fell.len()
     );
+    assert_eq!(fell, expected, "fallen back after the put-back");
 }
 
 /// AH.165 on the dump (found at the AG.27 merge check: a walker joined,
@@ -2154,8 +2345,12 @@ fn put_back_walks(table: &[Swapped]) {
 /// step after; (2) every walker the TV runs, in play mode as the TV runs
 /// them, each taken off and put back the same way, the deactivations that
 /// stop listed, the portal manager ticking on and his file running once
-/// after every one; (3) Eruptor taken off at points through each of his
-/// three attacks, strict: whether his deactivation stops anywhere.
+/// after every one, every one set up again on his scripts at his top speed
+/// (AG.160), and the nine [`falling_back`] names again without
+/// `collisioninfo.object collisions` ([`PLAY_842`]), each falling back after
+/// his put-back at his stop at `Minion.ai` #842 (AH.151); (3) Eruptor taken
+/// off at points through each of his three attacks, strict: whether his
+/// deactivation stops anywhere.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn a_walker_taken_off_and_put_back_runs_his_file_once() {
@@ -2183,11 +2378,6 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
     );
     println!("(1) {:.1?}, load {:.2}", started.elapsed(), load1());
     // (2)
-    let play = Opts {
-        mode: Mode::Play,
-        discover: false,
-        cells: &[],
-    };
     let tv: Vec<&WalkerScripts> = l
         .walkers
         .iter()
@@ -2196,7 +2386,7 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
     let mut table = Vec::new();
     for w in &tv {
         let t = Instant::now();
-        let s = swap(&l, &w.load_file, play, 60, 60);
+        let s = swap(&l, &w.load_file, PLAY, 60, 60);
         println!(
             "{}: set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, top again {:?} of {:?} ({:.1?}, load {:.2})",
             s.load,
@@ -2237,9 +2427,22 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
         started.elapsed(),
         load1()
     );
-    // The put-back walks (this tree, 2026-10-25: 46 of the 66 set up again,
-    // all 46 at their top speed, the 9 that stop at #842 on the controller).
-    put_back_walks(&table);
+    // The put-back walks: on the registry as it stands every walker set up
+    // again walks on his scripts (AG.160).
+    put_back_walks(&table, &[]);
+    // And the nine whose stop at #842 a run without the member makes again,
+    // each falling back after his put-back as the TV takes it (AH.151).
+    let mut off = Vec::new();
+    for load in falling_back() {
+        let s = swap(&l, load, PLAY_842, 60, 60);
+        println!(
+            "{load} without object collisions: set up again {}, off again at {:?}, top again {:?} of {:?}",
+            s.set_up_again, s.off_again, s.top_again, s.ground_max
+        );
+        off.push(s);
+    }
+    put_back_walks(&off, &falling_back());
+    table.extend(off);
     for s in &table {
         assert_eq!(s.short, None, "{}", s.load);
         assert_eq!(s.set_up, s.set_up_again, "{}", s.load);
@@ -2310,18 +2513,16 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
 /// taken off and put back as
 /// [`a_walker_taken_off_and_put_back_runs_his_file_once`]'s (2) takes the
 /// others: which deactivations stop on the dump, and the portal manager
-/// ticking on and his file running once after every one, whatever stopped.
+/// ticking on and his file running once after every one, whatever stopped;
+/// every one set up again on his scripts (AG.160), and the seven giants
+/// again without `collisioninfo.object collisions` ([`PLAY_842`]), each
+/// falling back after his put-back (AH.151).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
     let started = Instant::now();
     println!("load before: {:.2}", load1());
     let l = Level::open();
-    let play = Opts {
-        mode: Mode::Play,
-        discover: false,
-        cells: &[],
-    };
     let asking: Vec<&WalkerScripts> = l
         .walkers
         .iter()
@@ -2329,7 +2530,7 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         .collect();
     let mut table = Vec::new();
     for w in &asking {
-        let s = swap(&l, &w.load_file, play, 60, 60);
+        let s = swap(&l, &w.load_file, PLAY, 60, 60);
         println!(
             "{} (asks {}): set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, top again {:?} of {:?}, short {:?}",
             s.load,
@@ -2374,9 +2575,22 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         load1()
     );
     assert_eq!(table.len(), ASKING.len(), "the fourteen");
-    // The put-back walks (this tree, 2026-10-25: 11 of the 14 set up again,
-    // all at their top speed, the 7 giants on the controller).
-    put_back_walks(&table);
+    // The put-back walks: on the registry as it stands every one set up
+    // again walks on his scripts (AG.160).
+    put_back_walks(&table, &[]);
+    // The seven giants without object collisions: each falls back after his
+    // put-back at his stop at #842, as the TV takes it (AH.151).
+    let mut off = Vec::new();
+    for load in GIANTS {
+        let s = swap(&l, load, PLAY_842, 60, 60);
+        println!(
+            "{load} without object collisions: set up again {}, off again at {:?}, top again {:?} of {:?}",
+            s.set_up_again, s.off_again, s.top_again, s.ground_max
+        );
+        off.push(s);
+    }
+    put_back_walks(&off, &GIANTS);
+    table.extend(off);
     if rex.short.is_none() {
         assert!(rex.set_up && rex.set_up_again, "{rex:?}");
         assert!(!rex.pm_stopped && rex.old_silent && rex.once, "{rex:?}");
@@ -2516,12 +2730,14 @@ fn on_the_tv(l: &Level, load: &str, o: Opts) -> OnTheTv {
 /// AH.150's headless check: each of the fourteen's asks of the gameplay
 /// viewport read for what it gates (`on_screen::READ`, none left unread),
 /// every walker listed as the TV lists them with no ask let through, and
-/// each of the fourteen joined in play mode as the TV joins him: who walks
-/// on his scripts, who falls back on what they set, who keeps his card and
-/// why, the why never the ask. Then Drill Sergeant and Tree Rex at their
+/// each of the fourteen joined in play mode as the TV joins him, the why
+/// never the ask: since AG.160 every one joins and walks on his scripts at
+/// their top speed. The seven giants again without `collisioninfo.object
+/// collisions` ([`PLAY_842`]): each one's minion stops at `Minion.ai` #842
+/// and he falls back on what his scripts set, at the step and over the
+/// distance he did before AG.160. Then Drill Sergeant and Tree Rex at their
 /// scripts' top speed, both strict on the registry (Tree Rex's two value
-/// cells gone since AH.49 and AG.160 modelled their members); and since
-/// AG.160 every one of the fourteen joins and walks on his scripts.
+/// cells gone since AH.49 and AG.160 modelled their members).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() {
@@ -2659,15 +2875,10 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
     );
     assert_eq!((gating, cosmetic), (9, 1));
     // As the TV joins them.
-    let play = Opts {
-        mode: Mode::Play,
-        discover: false,
-        cells: &[],
-    };
     let mut table = Vec::new();
     for load in ASKING {
         let t = Instant::now();
-        let r = on_the_tv(&l, load, play);
+        let r = on_the_tv(&l, load, PLAY);
         println!(
             "{load}: {} ({:.1?}, load {:.2}); stops {:?}",
             r.verdict(),
@@ -2683,8 +2894,22 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
             r.load, r.set_up, r.off, r.top, r.walked, r.ground_max
         );
     }
-    // This tree's fall-backs (the fallback merge's integration, 2026-10-25):
-    // each giant's step and how far the stick at 90° took him, m.
+    for r in &table {
+        let why = r.verdict();
+        assert!(!why.contains("viewport"), "{}: {why}", r.load);
+        if !r.set_up {
+            continue;
+        }
+        let top = r.ground_max.expect("his movement");
+        assert!((r.top - top).abs() < 1e-3, "{}: {why}", r.load);
+        assert_eq!(r.off, None, "{}: {why}", r.load);
+    }
+    // The seven giants again on a run without object collisions, so each
+    // one's minion stops at `Minion.ai` #842 as before AG.160 modelled it:
+    // the fall-back's step and how far the stick at 90° took him, m (the
+    // fallback merge's integration `7f64e622` read them on its natural
+    // stop, 2026-10-25), on AG.16's controller at their number to f32's
+    // steps (AH.151) and the view handed back as the TV's (AG.190).
     let fallen: [(&str, u32, f32); 7] = [
         ("101_BugmanGiant", 124, 19.72424),
         ("102_Titan_Earth", 124, 13.7622175),
@@ -2695,43 +2920,27 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
         ("114_Mummy", 124, 20.23483),
     ];
     assert_eq!(fallen.map(|f| f.0), GIANTS);
-    let mut moved = Vec::new();
-    for r in &table {
+    for (load, step, walked) in fallen {
+        let t = Instant::now();
+        let r = on_the_tv(&l, load, PLAY_842);
         let why = r.verdict();
-        assert!(!why.contains("viewport"), "{}: {why}", r.load);
-        if !r.set_up {
-            continue;
-        }
-        let top = r.ground_max.expect("his movement");
-        match r.off {
-            // Off his scripts (AH.151): AG.16's controller at their number,
-            // to f32's steps, and the view handed back as the TV's (AG.190).
-            Some(_) => {
-                assert!(ulps(r.top, top) <= WALK_ULPS, "{}: {why}", r.load);
-                assert_eq!(
-                    r.view,
-                    guacamole::viewport::Source::HandedBack,
-                    "{}",
-                    r.load
-                );
-            }
-            None => assert!((r.top - top).abs() < 1e-3, "{}: {why}", r.load),
-        }
-        match fallen.iter().find(|f| f.0 == r.load) {
-            Some(&(_, step, walked)) if r.off == Some(step) => {
-                assert_eq!(r.walked, walked, "{}: walked", r.load);
-            }
-            Some(&(_, step, _)) => moved.push(format!(
-                "{} (this tree's fall-back at step {step}, now {:?})",
-                r.load, r.off
-            )),
-            None => assert_eq!(r.off, None, "{}: a fall-back this tree hasn't", r.load),
-        }
-    }
-    if !moved.is_empty() {
         println!(
-            "REPORT: no longer falling back as on this tree, distances not compared: {moved:?}"
+            "{load} without object collisions: {why} ({:.1?}, load {:.2}); stops {:?}",
+            t.elapsed(),
+            load1(),
+            r.stops
         );
+        let top = r.ground_max.expect("his movement");
+        assert!(
+            r.stopped
+                .as_deref()
+                .is_some_and(|s| s.contains("Minion.ai #842")),
+            "{load}: {why}"
+        );
+        assert!(ulps(r.top, top) <= WALK_ULPS, "{load}: {why}");
+        assert_eq!(r.view, guacamole::viewport::Source::HandedBack, "{load}");
+        assert_eq!(r.off, Some(step), "{load}: his fall-back's step");
+        assert_eq!(r.walked, walked, "{load}: walked");
     }
     let drill = table.iter().find(|r| r.load == "021_DrillBot").unwrap();
     assert!(
@@ -2779,25 +2988,43 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
 }
 
-/// Ninjini, on the TV's listing (no viewport ask) and stopping in play.
+/// Ninjini, on the TV's listing (no viewport ask): his minion stops in play
+/// at `Minion.ai` #842 in a run without `collisioninfo.object collisions`
+/// ([`PLAY_842`]), as in every run until AG.160 modelled it.
 const NINJINI: &str = "109_Djini";
+/// Play mode on the registry as it stands, as the TV runs the scripts.
 const PLAY: Opts = Opts {
     mode: Mode::Play,
     discover: false,
     cells: &[],
+    without: &[],
+};
+/// [`PLAY`] with `collisioninfo.object collisions` taken out of the registry
+/// (`Members::without`, test-only): the member AG.160 modelled, which
+/// `Minion - Titan Abilities` asks at `Minion.ai` #842 on the first step he
+/// moves, so Ninjini's two and the seven giants stop in play there as they
+/// did on the fallback merge's tree (`126da6a4`) and the fall-back takes
+/// each the TV's way (his minion's script stopped, his locomotion's reading
+/// what it reads then). Nothing else in the run changes.
+const PLAY_842: Opts = Opts {
+    without: &[("collisioninfo", "object collisions")],
+    ..PLAY
 };
 
 /// `load` joined as the TV joins him (play mode, steering by the view the
-/// TV draws), `settle` steps standing after, his fall-back taking his walk
-/// (`hold_walk`) and the view (`hand_back_view`) as the TV's does or not.
+/// TV draws; `o`, [`PLAY`] or [`PLAY_842`]), `settle` steps standing after,
+/// his fall-back taking his walk (`hold_walk`) and the view
+/// (`hand_back_view`) as the TV's does or not.
 fn joined_on_the_tv(
     l: &Level,
     load: &str,
+    o: Opts,
     settle: u32,
     hold_walk: bool,
     hand_back_view: bool,
 ) -> W {
-    let mut w = W::new(l, load, PLAY).on_the_tvs_view();
+    assert_eq!(o.mode, Mode::Play, "as the TV runs them");
+    let mut w = W::new(l, load, o).on_the_tvs_view();
     w.hold_walk = hold_walk;
     w.hand_back_view = hand_back_view;
     w.step().unwrap();
@@ -2813,9 +3040,6 @@ fn joined_on_the_tv(
 #[derive(Debug, Default)]
 struct OffWalk {
     stop: Option<(u32, String)>,
-    /// His fall-back forced ([`walk_off`]'s `force_after`): his scripts
-    /// didn't stop by then.
-    forced: bool,
     /// His walk's length after the stop: the most and the last, ft/s.
     top: f32,
     last: f32,
@@ -2835,20 +3059,13 @@ struct OffWalk {
     stops: Vec<String>,
 }
 
-/// `w` on a full stick straight ahead for `steps` steps; his fall-back
-/// forced after `force_after` of them if his scripts haven't stopped by
-/// then (as AG.173's test forces Eruptor's).
-fn walk_off(w: &mut W, steps: u32, force_after: Option<u32>) -> OffWalk {
+/// `w` on a full stick straight ahead for `steps` steps, his fall-back
+/// where his minion's script stops in play, as the TV's.
+fn walk_off(w: &mut W, steps: u32) -> OffWalk {
     let mut out = OffWalk::default();
     let mut from = None;
     let mut eye0 = None;
-    for k in 0..steps {
-        if force_after == Some(k) && w.off.is_none() {
-            out.forced = true;
-            w.fall_back(format!(
-                "forced: his scripts ran on through the stick's first {k} steps"
-            ));
-        }
+    for _ in 0..steps {
         w.bench.pads[0] = Pad {
             stick: guac_motion::scenarios::stick(1.0, 0.0),
             actions: [false; 4],
@@ -2886,24 +3103,36 @@ fn walk_off(w: &mut W, steps: u32, force_after: Option<u32>) -> OffWalk {
 }
 
 /// AH.151's and AG.190's Verify headless: Ninjini (`109_Djini`) on the TV's
-/// listing in play mode, steering by the view the TV draws, stops in play
-/// once the stick goes on (`Minion.ai` #842, `collisioninfo.object
-/// collisions`, since AG.28 registered the cell he stopped on at
-/// `MusicController.ai` #1227) and falls back on AG.16's controller at what
-/// his scripts set: at his 24 ft/s with the mover update's writes to his
-/// walk dropped, the view the chain's from where it stood, following him.
-/// Beside it, each half undone: without the hold the update writes him
-/// still each step (one step's push, 2.667 ft/s); without the hand-back the
-/// scripts' view stays where his camera target stopped.
+/// listing in play mode, steering by the view the TV draws, without
+/// `collisioninfo.object collisions` ([`PLAY_842`]: nothing on the dump
+/// stops in play since AG.160 modelled it), stops in play once the stick
+/// goes on (`Minion.ai` #842, where every run stopped him before AG.160)
+/// and falls back on AG.16's controller at what his scripts set: at his 24
+/// ft/s with the mover update's writes to his walk dropped, the view the
+/// chain's from where it stood, following him. Beside it, each half undone:
+/// without the hold the update writes him still each step (one step's
+/// push, 2.667 ft/s); without the hand-back the scripts' view stays where
+/// his camera target stopped. And on the registry as it stands his scripts
+/// run on through the same walk.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn a_walker_off_his_scripts_walks_at_his_top_speed_with_the_view_following() {
     let started = Instant::now();
     println!("load before: {:.2}", load1());
     let l = Level::open();
+    // AG.160: the registry as it stands, no stop on the same walk.
+    let mut w = joined_on_the_tv(&l, NINJINI, PLAY, 120, true, true);
+    let on = walk_off(&mut w, 240);
+    println!(
+        "{NINJINI} on the registry as it stands: stop {:?}, play mode's stops {:?}; load {:.2}",
+        on.stop,
+        on.stops,
+        load1()
+    );
+    assert_eq!((on.stop, on.stops.len()), (None, 0), "his scripts run on");
     let mut runs = Vec::new();
     for (hold, hand_back) in [(true, true), (false, true), (true, false)] {
-        let mut w = joined_on_the_tv(&l, NINJINI, 120, hold, hand_back);
+        let mut w = joined_on_the_tv(&l, NINJINI, PLAY_842, 120, hold, hand_back);
         let m = w.minion.expect("joined");
         assert!(w.vm.set_up(m), "his setup ran through");
         assert!(w.off.is_none(), "on his scripts standing: {:?}", w.off);
@@ -2915,7 +3144,7 @@ fn a_walker_off_his_scripts_walks_at_his_top_speed_with_the_view_following() {
         let top = Movement::read(&w.vm, m)
             .expect("his movement parameters")
             .ground_max_speed;
-        let walk = walk_off(&mut w, 240, None);
+        let walk = walk_off(&mut w, 240);
         println!(
             "{NINJINI} hold walk {hold}, hand back view {hand_back}: stop {:?}; after it {} steps, walk top {:.4} last {:.4} ft/s (his description's {top}), {:.2} m walked; the TV's eye {:.3} m from his feet at the hand-back, {:.3} at the end, moved {:.2} m; the scripts' eye {:.3} m from him at the end; written {:?}; play mode's stops {:?}; load {:.2}",
             walk.stop,
@@ -2935,8 +3164,8 @@ fn a_walker_off_his_scripts_walks_at_his_top_speed_with_the_view_following() {
     }
     let (_, _, top, both) = &runs[0];
     let (when, why) = both.stop.as_ref().expect("his script stops in play");
-    // Where he stops on this tree (AG.28 took his stop at `MusicController.ai`
-    // #1227 away): moved again, this run's subject moves with it.
+    // Where he stops without the member (AG.28 took his stop at
+    // `MusicController.ai` #1227 away, AG.160 this one but for the switch).
     assert!(
         why.contains("Minion.ai #842") && why.contains("unmodelled member 075b657b.bb4361e7"),
         "{why}"
@@ -2980,8 +3209,10 @@ fn a_walker_off_his_scripts_walks_at_his_top_speed_with_the_view_following() {
 }
 
 /// The seven giants AH.150 lets join (Swarm, both Crushers, Thumpback, both
-/// Bouncers, Eye-Brawl): on this tree each one's minion stops in play at
-/// `Minion.ai` #842 on his first moving step, as Ninjini's does.
+/// Bouncers, Eye-Brawl): in a run without `collisioninfo.object collisions`
+/// ([`PLAY_842`]) each one's minion stops in play at `Minion.ai` #842 a few
+/// steps into the stick, as Ninjini's does and as every run's did until
+/// AG.160 modelled it.
 const GIANTS: [&str; 7] = [
     "101_BugmanGiant",
     "102_Titan_Earth",
@@ -2999,11 +3230,12 @@ fn ulps(a: f32, b: f32) -> u32 {
     (a.to_bits() as i64 - b.to_bits() as i64).unsigned_abs() as u32
 }
 
-/// What one of [`GIANTS`] came to on this tree (the fallback merge's
-/// integration, `7f64e622`, headless, 2026-10-25): his stop's step, his
-/// walk's top (ft/s), how far he walked after the stop and how far the
-/// TV's eye moved with him (m), and the writes to his walk dropped. Each
-/// number as f32 prints it.
+/// What one of [`GIANTS`] came to at his stop at `Minion.ai` #842 (the
+/// fallback merge's integration, `7f64e622`, headless, 2026-10-25, its
+/// natural stop; [`PLAY_842`]'s since AG.160): his stop's step, his walk's
+/// top (ft/s), how far he walked after the stop and how far the TV's eye
+/// moved with him (m), and the writes to his walk dropped. Each number as
+/// f32 prints it.
 struct GiantOff {
     load: &'static str,
     stop: u32,
@@ -3074,33 +3306,29 @@ const GIANTS_OFF: [GiantOff; 7] = [
 
 /// The most f32 steps a fallen-back walk's top is from what his scripts
 /// set: the controller's walk is f32 throughout and its length a hypot of
-/// two f32 parts (7 the most on this tree, Thumpback's; the Mac TV's walks
-/// 12 at most, AG.212).
+/// two f32 parts (7 the most headless, Thumpback's; the Mac TV's walks 12
+/// at most, AG.212).
 const WALK_ULPS: u32 = 8;
 
 /// AH.151's and AG.190's on-dump case since AH.150 (the fallback merge's
 /// check): each of [`GIANTS`] joined as the TV joins him, steering by the
-/// view the TV draws, 120 steps standing, then a full stick for 240: his
-/// stop at `Minion.ai` #842, his walk on AG.16's controller at what his
-/// scripts set (within [`WALK_ULPS`] of it), the update's writes to his
-/// walk dropped, the view the chain's from where it stood until a join,
-/// following him; against this tree's numbers ([`GIANTS_OFF`]). A giant
-/// whose scripts no longer stop by the stick's 60th step (AG.160's member
-/// modelled) has his fall-back forced there, as AG.173's test forces
-/// Eruptor's, and is reported: the fall-back still runs on the dump, held
-/// to his scripts' number and the view following him, though not to this
-/// tree's distances.
+/// view the TV draws, without `collisioninfo.object collisions`
+/// ([`PLAY_842`]: since AG.160 nothing stops on the registry as it
+/// stands), 120 steps standing, then a full stick for 240: his stop at
+/// `Minion.ai` #842, his walk on AG.16's controller at what his scripts set
+/// (within [`WALK_ULPS`] of it), the update's writes to his walk dropped,
+/// the view the chain's from where it stood until a join, following him;
+/// against [`GIANTS_OFF`]'s numbers.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
     let started = Instant::now();
     println!("load before: {:.2}", load1());
     let l = Level::open();
-    let mut no_longer = Vec::new();
     for want in &GIANTS_OFF {
         let load = want.load;
         let t = Instant::now();
-        let mut w = joined_on_the_tv(&l, load, 120, true, true);
+        let mut w = joined_on_the_tv(&l, load, PLAY_842, 120, true, true);
         let m = w.minion.expect("joined");
         assert!(w.vm.set_up(m), "{load}: his setup ran through");
         assert!(
@@ -3110,7 +3338,7 @@ fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
         let top = Movement::read(&w.vm, m)
             .expect("his movement parameters")
             .ground_max_speed;
-        let walk = walk_off(&mut w, 240, Some(60));
+        let walk = walk_off(&mut w, 240);
         let walk_writes: u32 = walk
             .written
             .iter()
@@ -3118,11 +3346,10 @@ fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
             .map(|(.., n)| n)
             .sum();
         println!(
-            "{load}: the view {:?} after (back at a join {}); stop {:?}, forced {}; after it {} steps, walk top {:?} last {:?} ft/s (his description's {top:?}, {} f32 steps off), walked {:?} m; the TV's eye {:?} m from his feet at the hand-back, {:?} at the end, moved {:?} m; the scripts' eye {:?} m from him at the end; {walk_writes} walk writes dropped; written {:?}; play mode's stops {:?} ({:.1?}, load {:.2})",
+            "{load}: the view {:?} after (back at a join {}); stop {:?}; after it {} steps, walk top {:?} last {:?} ft/s (his description's {top:?}, {} f32 steps off), walked {:?} m; the TV's eye {:?} m from his feet at the hand-back, {:?} at the end, moved {:?} m; the scripts' eye {:?} m from him at the end; {walk_writes} walk writes dropped; written {:?}; play mode's stops {:?} ({:.1?}, load {:.2})",
             w.world.viewport().source,
             w.world.view_back_at_a_join(),
             walk.stop,
-            walk.forced,
             walk.steps,
             walk.top,
             walk.last,
@@ -3137,9 +3364,9 @@ fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
             t.elapsed(),
             load1()
         );
-        // Whatever stopped him: his scripts' walk on the controller, theirs
-        // the one writer dropped, the view the chain's until a join and
-        // following him.
+        // His fall-back: his scripts' walk on the controller, theirs the one
+        // writer dropped, the view the chain's until a join and following
+        // him.
         assert!(
             ulps(walk.top, top) <= WALK_ULPS,
             "{load}: top {} against his {top}",
@@ -3156,15 +3383,7 @@ fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
             (walk.gap.1 - walk.gap.0).abs() < 0.3 && (walk.eye_moved - walk.walked).abs() < 0.5,
             "{load}: the view following him: {walk:?}"
         );
-        let (when, why) = walk.stop.clone().expect("a fall-back");
-        if walk.forced {
-            println!(
-                "REPORT {load}: his scripts no longer stop by the stick's 60th step (this tree's at step {}, `Minion.ai` #842): his fall-back forced at step {when}, this tree's distances not compared",
-                want.stop
-            );
-            no_longer.push(load);
-            continue;
-        }
+        let (when, why) = walk.stop.clone().expect("his script stops in play");
         assert!(
             why.contains("Minion.ai #842") && why.contains("unmodelled member 075b657b.bb4361e7"),
             "{load}: {why}"
@@ -3176,8 +3395,7 @@ fn the_seven_giants_fall_back_at_their_scripts_speed_with_the_view_following() {
         assert_eq!(walk_writes, want.writes, "{load}: writes dropped");
     }
     println!(
-        "{} of the seven stop at #842 as on this tree; no longer: {no_longer:?}; {:.1?} in all, load {:.2}",
-        GIANTS_OFF.len() - no_longer.len(),
+        "the seven stop at #842 and fall back; {:.1?} in all, load {:.2}",
         started.elapsed(),
         load1()
     );
@@ -3224,7 +3442,9 @@ fn seed_in_the_air(w: &mut W, r: &serde_json::Value) {
 }
 
 /// AG.173's Verify: a walker whose script stopped in play (Ninjini, his
-/// stop as the TV's) falls on the fall-back as AG.10 measured Eruptor's on
+/// stop at `Minion.ai` #842 in a run without `collisioninfo.object
+/// collisions`, [`PLAY_842`], taken as the TV takes it) falls on the
+/// fall-back as AG.10 measured Eruptor's on
 /// the same drop: each of AG.39's 40 falls off the ledge route into the
 /// corridor, him set to its second free record and fed each record's stick
 /// and view at our 1/60 s, his downward speed gaining 136.21 ft/s² over the
@@ -3263,15 +3483,15 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
     let mut table = Vec::new();
     // Ninjini on the fall-back, then falling at his description's 128 as he
     // did before AG.173, then Eruptor's fall-back on the same seeds (his
-    // stop forced: none comes on the dump), the controller's own landings
-    // (stand-in ledger: `walker`).
-    for (load, gravity) in [
-        (NINJINI, None),
-        (NINJINI, Some(128.0)),
-        ("009_Eruptor", None),
+    // stop forced: his scripts never stop on the dump), the controller's own
+    // landings (stand-in ledger: `walker`).
+    for (load, o, gravity) in [
+        (NINJINI, PLAY_842, None),
+        (NINJINI, PLAY_842, Some(128.0)),
+        ("009_Eruptor", PLAY, None),
     ] {
         // His stop as the TV's: joined, standing, then the stick on.
-        let mut w = W::new(&l, load, PLAY);
+        let mut w = W::new(&l, load, o);
         w.step().unwrap();
         w.step().unwrap();
         w.join().unwrap();
@@ -3375,6 +3595,227 @@ fn a_stopped_walkers_fall_is_ag10s_on_the_same_drop() {
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
 }
 
+/// The four clips his gait reports name, by his palette's slots: his
+/// scripts' standing state's clip for the idle (his model's on all 67),
+/// then his hero side's walk, run and fall at the hero side's slots where
+/// his palette holds them there (`Four::at`; the TV names them off his
+/// model's idle and his hero side, `HeroClips::four`).
+fn four_of(
+    palette: &Palette,
+    hero: &guac_ir::Hero,
+    states: &[walkers::LocomotionState],
+) -> guacamole::picks::Four {
+    let idle = states
+        .iter()
+        .find(|s| s.speed == 0.0)
+        .and_then(|s| s.slot)
+        .and_then(|s| palette.clip(s as u16))
+        .map(|c| (c.name.as_str(), None));
+    let l = &hero.locomotion;
+    guacamole::picks::Four::at(palette, [idle, at(&l.walk), at(&l.run), at(&l.falling)])
+}
+
+/// A hero side's locomotion slot's clip name and its slot.
+fn at(c: &Option<guac_ir::hero::SlotClip>) -> Option<(&str, Option<u16>)> {
+    c.as_ref().map(|c| (c.clip.name.as_str(), Some(c.slot)))
+}
+
+/// AH.198 and AG.219 headless on the dump, the TV's hand-over in the
+/// harness: each hero walked on a full stick on his scripts, their picks
+/// read every step (`Picked::read`, as `pick_gaits` reads them), his
+/// fall-back then taking him to AG.30's locomotion as the TV's does (a
+/// walker's built off his own scripts' locomotion states,
+/// `walkers::stand_in`; Eruptor's his measured gaits) and carrying it on
+/// from the picks' last (`Locomotion::take_over`), stepped on his walk on
+/// the controller after. Ninjini and Swarm stop at `Minion.ai` #842 the
+/// TV's way ([`PLAY_842`]); Eruptor, Tree Rex (a walker with a walk and a
+/// run), Dino-Rang (his run at two slots of his palette, his scripts
+/// playing his hero side's) and Double Trouble (one clip for his walk and
+/// run, at three) are forced off as AG.173's control is, nothing on the dump stopping
+/// them. Beside each walker, AG.27's locomotion (no walk or run of ours) on
+/// the same walk: his idle at any speed.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
+    use guac_motion::locomotion::{Clip, EASE, Frame, Gaits, Locomotion, Loops, SET_OFF};
+    use guacamole::picks::Picked;
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    for (load, o, force) in [
+        (NINJINI, PLAY_842, false),
+        ("101_BugmanGiant", PLAY_842, false),
+        ("009_Eruptor", PLAY, true),
+        (TREE_REX, PLAY, true),
+        // His run at slots 2 and 3, his scripts playing 3 (AH.198's review:
+        // 11 of the 67 so); and his walk and run one clip, at 1, 2 and 3.
+        ("006_DinoRang", PLAY, true),
+        ("018_Wizard", PLAY, true),
+    ] {
+        let mut w = joined_on_the_tv(&l, load, o, 120, true, true);
+        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
+        let states = walkers::locomotion_states(&w.vm, &w.world, HERO).expect("his states");
+        let four = four_of(&palette, &hero, &states);
+        let side = &hero.locomotion;
+        let duration = |c: &Option<guac_ir::hero::SlotClip>| c.as_ref().map(|c| c.clip.duration);
+        let joined = Loops {
+            idle: four.0[0]
+                .and_then(|s| palette.clip(s as u16))
+                .map_or(1.0, |c| c.duration),
+            walk: None,
+            run: None,
+            fall: duration(&side.falling),
+        };
+        let mut last: Option<Picked> = None;
+        let mut stand_in: Option<(Locomotion, Locomotion)> = None;
+        let (mut on, mut after) = (0u32, Vec::new());
+        for k in 0..240u32 {
+            if force && k == 60 {
+                w.fall_back(format!("forced: {load}'s scripts ran on"));
+            }
+            w.bench.pads[0] = Pad {
+                stick: guac_motion::scenarios::stick(1.0, 0.0),
+                actions: [false; 4],
+                connected: true,
+            };
+            w.step().unwrap();
+            let speed = w.hero().gait_speed;
+            match (&w.off, &mut stand_in) {
+                (None, _) => {
+                    last = Picked::read(&w.world, HERO, four, speed);
+                    on += 1;
+                }
+                (Some(_), None) => {
+                    // The TV's hand-over, the step his scripts went off.
+                    let p = last.as_ref().expect("picks up to his fall-back");
+                    let mut own = match w.walk.origin {
+                        walkers::Origin::Scripts => walkers::stand_in(
+                            &states,
+                            &palette,
+                            side.walk.as_ref().map(|c| (&c.clip, Some(c.slot))),
+                            side.run.as_ref().map(|c| (&c.clip, Some(c.slot))),
+                            joined,
+                        )
+                        .expect("his own stand-in"),
+                        walkers::Origin::Measured => Locomotion::new(
+                            Gaits::ERUPTOR,
+                            Loops {
+                                walk: duration(&side.walk),
+                                run: duration(&side.run),
+                                ..joined
+                            },
+                        ),
+                    };
+                    let h = p.handover();
+                    own.take_over(h);
+                    // Each gait the picks weight carries on where it played.
+                    for (i, c) in [(1, Clip::Walk), (2, Clip::Run)] {
+                        if p.weights()[i] > 0.0 {
+                            let given = h.plays[i].expect("where it played");
+                            assert_eq!(own.play(c), given, "{load}: {c:?}");
+                        }
+                    }
+                    let ours = Locomotion::new(w.walk.gaits, joined);
+                    let (from, picked) = (own.weights(), p.weights());
+                    let frame = Frame::of(w.hero());
+                    let before = own.weights();
+                    own.step(w.dt, frame);
+                    let mut theirs = ours;
+                    theirs.step(w.dt, frame);
+                    after.push((from, picked, before, own.weights(), theirs.weights(), speed));
+                    stand_in = Some((own, theirs));
+                }
+                (Some(_), Some((own, theirs))) => {
+                    let frame = Frame::of(w.hero());
+                    let before = own.weights();
+                    own.step(w.dt, frame);
+                    theirs.step(w.dt, frame);
+                    after.push((
+                        before,
+                        [0.0; 4],
+                        before,
+                        own.weights(),
+                        theirs.weights(),
+                        speed,
+                    ));
+                }
+            }
+        }
+        let (own, theirs) = stand_in.expect("fallen back");
+        let (from, picked, ..) = after[0];
+        // No pop at the hand-over: over a set-off's time from it no weight
+        // moves a step more than an eased set-off's steepest step (its
+        // rate's peak, 1/(1 - EASE) over SET_OFF). Later the edge probe
+        // that holds him at the walk's end moves the run's weight to the
+        // walk in a frame, as the original's does (AG.58).
+        let steepest = 1.0 / (1.0 - EASE) / SET_OFF * w.dt;
+        let set_off = (SET_OFF / w.dt).ceil() as usize + 1;
+        let jump = after[..set_off]
+            .iter()
+            .map(|a| {
+                a.2.iter()
+                    .zip(a.3)
+                    .map(|(x, y)| (x - y).abs())
+                    .fold(0.0f32, f32::max)
+            })
+            .fold(0.0f32, f32::max);
+        // Once a set-off's slide is through, never his idle at his top
+        // speed (the edge probe holds him still at the walk's end, AG.36,
+        // where it comes back in).
+        let top = after.iter().map(|a| a.5).fold(0.0f32, f32::max);
+        let at_top: Vec<_> = after[set_off..]
+            .iter()
+            .filter(|a| (a.5 - top).abs() < 1e-3)
+            .collect();
+        let idle_most = at_top.iter().map(|a| a.3[0]).fold(0.0f32, f32::max);
+        println!(
+            "{load}: {on} steps on his scripts, off {:?}; states {states:?}; picks' last {picked:?}, the stand-in from {from:?}; after {} steps: {:?} at {:.4} ft/s, rates walk {:.4} run {:.4} (gaits {:?}, loops {:?}); the most a weight moved a step over the {set_off} from the hand-over {jump:.6} (an eased set-off's {steepest:.6}); at his top {top:.4} ft/s on {} steps after a set-off: the idle at most {idle_most:.6}, his last there {:?}; AG.27's stand-in {:?}; load {:.2}",
+            w.off.as_ref().map(|o| o.0),
+            after.len(),
+            own.weights(),
+            after.last().unwrap().5,
+            own.play(guac_motion::locomotion::Clip::Walk).rate,
+            own.play(guac_motion::locomotion::Clip::Run).rate,
+            own.gaits(),
+            own.loops(),
+            at_top.len(),
+            at_top.last().map(|a| a.3),
+            theirs.weights(),
+            load1()
+        );
+        assert!(on > 0, "{load}: on his scripts first");
+        assert!(at_top.len() > 60, "{load}: at his top speed a while");
+        for (a, b) in from.iter().zip(picked) {
+            assert!(
+                (a - b).abs() < 1e-6,
+                "{load}: {from:?} against the picks' {picked:?}"
+            );
+        }
+        assert!(
+            jump <= steepest + 1e-6,
+            "{load}: a step's {jump} past {steepest}"
+        );
+        assert!(idle_most == 0.0, "{load}: his idle at a run: {idle_most}");
+        let w4 = at_top.last().unwrap().3;
+        assert!(
+            (w4.iter().sum::<f32>() - 1.0).abs() < 1e-6,
+            "{load}: {w4:?}"
+        );
+        assert!(
+            [Clip::Walk, Clip::Run]
+                .iter()
+                .all(|&c| own.play(c).rate.is_finite()),
+            "{load}"
+        );
+        if w.walk.origin == walkers::Origin::Scripts {
+            let theirs_at_top = at_top.iter().map(|a| a.4[0]).fold(1.0f32, f32::min);
+            assert_eq!(theirs_at_top, 1.0, "{load}: AG.27's draws his idle");
+        }
+    }
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+}
+
 /// A field of `v` as the VM holds it.
 fn vm_field(vm: &Vm, v: Value, name: &str) -> Option<Value> {
     vm.field(v, name).map(|f| vm.value(f))
@@ -3425,7 +3866,9 @@ fn cam_followers(w: &W) -> Vec<(i64, Vec3)> {
 }
 
 /// AG.211 headless on the dump: Ninjini falls back as the TV takes it (his
-/// minion's stop at `Minion.ai` #842, the view to the chain), walks off on
+/// minion's stop at `Minion.ai` #842 in a run without `collisioninfo.object
+/// collisions`, [`PLAY_842`], whose registry the next hero joins on too;
+/// the view to the chain), walks off on
 /// the controller, comes off the portal, and the next hero (`AG211_NEXT`,
 /// Whirlwind by default, who walks on his scripts) comes in where he stood
 /// and joins the run: the join's activation makes his camera target afresh
@@ -3440,8 +3883,8 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     println!("load before: {:.2}", load1());
     let l = Level::open();
     let next = std::env::var("AG211_NEXT").unwrap_or_else(|_| "000_AirDragon".to_owned());
-    let mut w = joined_on_the_tv(&l, NINJINI, 120, true, true);
-    let walk = walk_off(&mut w, 240, Some(60));
+    let mut w = joined_on_the_tv(&l, NINJINI, PLAY_842, 120, true, true);
+    let walk = walk_off(&mut w, 240);
     let feet = w.hero().pivot;
     let chain_eye = w.drawn.expect("drawn").eye;
     println!(
@@ -3469,6 +3912,23 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
             .collect::<Vec<_>>()
     );
     let joined_view = w.world.viewport().source;
+    // His palette's animation info on his minion's template, as the TV's
+    // join sets it (AH.49: `set_palette_of`).
+    let template = l
+        .walkers
+        .iter()
+        .find(|x| x.load_file == next)
+        .and_then(|x| x.template)
+        .expect("his minion's template");
+    let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(&next));
+    let infos = scripts::clip_infos(&palette);
+    let held: Vec<scripts::ClipInfo> = (0..infos.len() as u32)
+        .map(|slot| w.world.clip_info(template, slot))
+        .collect();
+    let flagged = infos
+        .iter()
+        .filter(|i| **i != scripts::ClipInfo::default())
+        .count();
     // The TV's camera, its chain the view's, is the same across the swap.
     let chain_kept = w.chain.is_some();
     let mut track = Vec::new();
@@ -3537,6 +3997,11 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     assert!(chain_kept, "the chain the view's across the take-off");
     assert_eq!(joined_view, Source::Engine);
     assert!(!w.world.view_back_at_a_join());
+    assert!(flagged > 0, "{next}'s palette flags some clip");
+    assert_eq!(
+        held, infos,
+        "{next}'s animation info, as the TV's join sets it"
+    );
     assert_eq!(points, [Some(0.0); 3], "his camera points on his minion");
     // From his first step on the view is the scripts' and the TV draws it.
     assert!(
@@ -3552,15 +4017,11 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     );
     let eye_walked = track[60..180].iter().map(|t| t.1).sum::<f32>();
     assert!(eye_walked > 10.0, "the eye moved {eye_walked} m with him");
-    if walk.forced {
-        println!(
-            "REPORT {NINJINI}: his scripts no longer stop by the stick's 60th step: his fall-back forced, this tree's numbers not compared"
-        );
-        return;
-    }
-    // From where (this tree, 2026-10-25): their eye at the first write 0.263
-    // m from where the chain's stood, 16.750 m from his feet (the chain's
-    // 16.564 from Ninjini's).
+    // From where (the fallback merge's tree, 2026-10-25, on his natural stop
+    // there): their eye at the first write 0.263 m from where the chain's
+    // stood, 16.750 m from his feet (the chain's 16.564 from Ninjini's).
+    let (_, why) = walk.stop.as_ref().expect("his script stops in play");
+    assert!(why.contains("Minion.ai #842"), "{why}");
     assert_eq!(walk.stop.as_ref().map(|s| s.0), Some(124));
     assert_eq!(
         first.1, 0.26322174,

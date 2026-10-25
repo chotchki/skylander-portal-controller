@@ -19,11 +19,13 @@
 //! in [`crate::level_scene::hero_scene`]: the keys the census's card tables
 //! hold, so the start's pass has compiled them (`tests/giants_census.rs`).
 
-use guac_motion::locomotion::Gaits;
+use guac_ir::clip::Clip;
+use guac_ir::palette::Palette;
+use guac_motion::locomotion::{Gaits, Locomotion, Loops};
 use guac_motion::solid::{HavokSolid, SolidInfo};
 use guac_motion::tuning::{self, Tuning};
 
-use guac_script::{PlacementId, Vm};
+use guac_script::{Handle, PlacementId, Value, Vm};
 
 /// A character that walks on measured numbers: its load file (the roster's,
 /// the model's key) and the numbers it walks on.
@@ -203,6 +205,160 @@ impl Movement {
             width,
         }
     }
+}
+
+/// One state of a walker's locomotion as his scripts define it on the VM
+/// (`Minion - Define Locomotion States`, each `Anim - Add Locomotion State`
+/// it calls): the palette slot of its clip and its movement speed, ft/s
+/// (the speed he plays the clip at its own rate, at his scale where his
+/// call adjusts for it), as `global.bld`'s locomotion script keeps them for
+/// him and picks his clips by (AH.49, AG.161).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocomotionState {
+    pub slot: Option<u32>,
+    pub speed: f32,
+}
+
+/// `actor`'s locomotion states in the order his scripts defined them: the
+/// base states of the entry `Macros_Animation.ai`'s `locomotions` keeps
+/// for him (the newest, where his locomotion was initialized again). `None`
+/// until his setup has initialized his locomotion, or where no locomotion
+/// script runs.
+pub fn locomotion_states(
+    vm: &Vm,
+    world: &crate::scripts::ScriptWorld,
+    actor: Handle,
+) -> Option<Vec<LocomotionState>> {
+    let animation = crate::scripts::running(vm, world, "Macros_Animation.ai")?;
+    let entries = vm.set(vm.local(animation, "locomotions")?)?;
+    let field = |v: Value, name: &str| vm.field(v, name).map(|f| vm.value(f));
+    let entry = entries
+        .iter()
+        .rev()
+        .map(|e| vm.value(*e))
+        .find(|e| field(*e, "character") == Some(Value::Entity(actor)))?;
+    let states = vm.set(field(entry, "base locomotion states")?)?;
+    Some(
+        states
+            .iter()
+            .map(|s| {
+                let s = vm.value(*s);
+                LocomotionState {
+                    slot: field(s, "animation")
+                        .and_then(|a| world.clip_named(a))
+                        .map(|(_, slot)| slot),
+                    speed: field(s, "movement speed")
+                        .and_then(|v| v.as_f32())
+                        .unwrap_or(0.0),
+                }
+            })
+            .collect(),
+    )
+}
+
+/// The walk and the run AG.30's locomotion mixes by speed off a walker's own
+/// locomotion states ([`locomotion_states`]; openspec AG.219): his walk at
+/// the speed of the state whose clip is his hero side's walk, his run at
+/// the one's whose clip is his run (`walk` and `run` each his hero side's
+/// clip name and its slot, `clip` naming a state's slot's clip; the faster
+/// where two play one), so AG.30's draws only clips both his scripts and
+/// his hero side hold. A state draws one gait: the one his hero side puts
+/// at its slot, else the one whose clip it plays (AH.198's review: Double
+/// Trouble's and Drill Sergeant's walk and run are one clip, at slots 1 and
+/// 3, and their scripts define only a run, on 3). With one of the two his
+/// scripts define (a giant's walk, a runner's run) that one's speed is
+/// both; `None` with neither.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScriptedGaits {
+    pub gaits: Gaits,
+    /// Whether his scripts define his hero side's walk and run.
+    pub walk: bool,
+    pub run: bool,
+}
+
+impl ScriptedGaits {
+    pub fn of<'a>(
+        states: &[LocomotionState],
+        clip: impl Fn(u32) -> Option<&'a str>,
+        walk: Option<(&str, Option<u32>)>,
+        run: Option<(&str, Option<u32>)>,
+    ) -> Option<ScriptedGaits> {
+        // The states playing `gait`'s clip, at its own slot only where
+        // `at_slot`, leaving out those another gait has at its own.
+        let playing = |gait: Option<(&str, Option<u32>)>, at_slot: bool, taken: &[usize]| {
+            let Some((name, slot)) = gait else {
+                return Vec::new();
+            };
+            (0..states.len())
+                .filter(|i| {
+                    let s = &states[*i];
+                    s.speed > 0.0
+                        && !taken.contains(i)
+                        && s.slot.and_then(&clip) == Some(name)
+                        && (!at_slot || (slot.is_some() && s.slot == slot))
+                })
+                .collect::<Vec<usize>>()
+        };
+        let (mut ws, mut rs) = (playing(walk, true, &[]), playing(run, true, &[]));
+        let taken: Vec<usize> = ws.iter().chain(&rs).copied().collect();
+        if ws.is_empty() {
+            ws = playing(walk, false, &taken);
+        }
+        if rs.is_empty() {
+            rs = playing(run, false, &taken);
+        }
+        let speed_of = |i: Vec<usize>| i.into_iter().map(|i| states[i].speed).reduce(f32::max);
+        let (w, r) = (speed_of(ws), speed_of(rs));
+        let (walk_speed, run_speed) = match (w, r) {
+            (Some(w), Some(r)) => (w, r),
+            (Some(one), None) | (None, Some(one)) => (one, one),
+            (None, None) => return None,
+        };
+        Some(ScriptedGaits {
+            gaits: Gaits {
+                walk_speed,
+                run_speed,
+            },
+            walk: w.is_some(),
+            run: r.is_some(),
+        })
+    }
+}
+
+/// A walker's AG.30 locomotion on his own scripts' (openspec AG.219): AG.30's
+/// mix at the speeds his states give his hero side's `walk` and `run`
+/// ([`ScriptedGaits`]; each with the slot his hero side gives it), over
+/// those of the two clips his scripts play (found in his `palette`), his
+/// idle and his fall as `loops` has them. `None` where his scripts play
+/// neither: he keeps his idle.
+pub fn stand_in(
+    states: &[LocomotionState],
+    palette: &Palette,
+    walk: Option<(&Clip, Option<u16>)>,
+    run: Option<(&Clip, Option<u16>)>,
+    loops: Loops,
+) -> Option<Locomotion> {
+    fn side(g: Option<(&Clip, Option<u16>)>) -> Option<(&str, Option<u32>)> {
+        g.map(|(c, s)| (c.name.as_str(), s.map(u32::from)))
+    }
+    let g = ScriptedGaits::of(
+        states,
+        |slot| {
+            palette
+                .clip(u16::try_from(slot).ok()?)
+                .map(|c| c.name.as_str())
+        },
+        side(walk),
+        side(run),
+    )?;
+    Some(Locomotion::new(
+        g.gaits,
+        Loops {
+            walk: walk.filter(|_| g.walk).map(|(c, _)| c.duration),
+            run: run.filter(|_| g.run).map(|(c, _)| c.duration),
+            ..loops
+        },
+    ))
 }
 
 /// Where a hero's scripts stood when they went off, and so what he does
@@ -411,5 +567,159 @@ mod tests {
         assert_eq!((w.gaits.walk_speed, w.gaits.run_speed), (0.0, 0.0));
         assert_eq!(w.shape.width, 14.0);
         assert!(w.solid().is_some());
+    }
+
+    /// AG.219: AG.30's gaits for him are his scripts' states' speeds, each
+    /// gait the state whose clip his hero side names for it (on the dump's
+    /// own shapes: Eruptor's walk and run; Ninjini's walk alone; a Bouncer's
+    /// hero side holding a run no state of his plays; a runner with no
+    /// walk; one clip for all three gaits), by name, not slot; a state
+    /// drawing one gait, the one his hero side puts at its slot where one
+    /// does (AH.198's review: Double Trouble's walk and run one clip at
+    /// slots 1 and 3, his scripts' one state on 3, his run alone).
+    #[test]
+    fn the_stand_ins_gaits_are_his_scripts_states() {
+        let state = |slot: u32, speed: f32| LocomotionState {
+            slot: Some(slot),
+            speed,
+        };
+        let names = ["Idle.ma", "Walk.ma", "Jog.ma", "Run.ma", "Run.ma"];
+        let clip = |slot: u32| names.get(slot as usize).copied();
+        let n = |name: &'static str| Some((name, None));
+        let eruptor = [state(0, 0.0), state(1, 12.001898), state(3, 21.00168)];
+        let g = ScriptedGaits::of(&eruptor, clip, n("Walk.ma"), n("Run.ma")).unwrap();
+        assert_eq!(g.gaits, Gaits::ERUPTOR, "his Define call's, read back");
+        assert!(g.walk && g.run);
+        let ninjini = [state(0, 0.0), state(1, 20.493124)];
+        let g = ScriptedGaits::of(&ninjini, clip, n("Walk.ma"), None).unwrap();
+        assert_eq!(
+            (g.gaits.walk_speed, g.gaits.run_speed),
+            (20.493124, 20.493124)
+        );
+        assert!(g.walk && !g.run);
+        let bouncer = ScriptedGaits::of(&ninjini, clip, n("Walk.ma"), n("Run.ma")).unwrap();
+        assert!(bouncer.walk && !bouncer.run, "a run his scripts don't play");
+        let runner = [state(0, 0.0), state(3, 16.0769)];
+        let g = ScriptedGaits::of(&runner, clip, None, n("Run.ma")).unwrap();
+        assert_eq!((g.gaits.walk_speed, g.gaits.run_speed), (16.0769, 16.0769));
+        assert!(!g.walk && g.run);
+        // Two states playing his run: the faster is his run.
+        let g = ScriptedGaits::of(&[state(3, 15.0), state(4, 19.686)], clip, None, n("Run.ma"))
+            .unwrap();
+        assert_eq!(g.gaits.run_speed, 19.686, "the faster of two");
+        // Slot 4 holds slot 3's clip: by name, either plays his run.
+        let g = ScriptedGaits::of(&[state(4, 19.686)], clip, n("Run.ma"), n("Run.ma")).unwrap();
+        assert!(g.walk && g.run && g.gaits.walk_speed == g.gaits.run_speed);
+        // Double Trouble: his walk and run one clip, at slots 1, 2 and 3;
+        // his scripts' run state on 3, his hero side's run there.
+        let trouble = ["Idle.ma", "Run.ma", "Run.ma", "Run.ma"];
+        let at = |slot: u32| trouble.get(slot as usize).copied();
+        let one = [state(0, 0.0), state(3, 19.686)];
+        let g = ScriptedGaits::of(
+            &one,
+            at,
+            Some(("Run.ma", Some(1))),
+            Some(("Run.ma", Some(3))),
+        )
+        .unwrap();
+        assert!(!g.walk && g.run, "his one state his run's: {g:?}");
+        assert_eq!((g.gaits.walk_speed, g.gaits.run_speed), (19.686, 19.686));
+        let g = ScriptedGaits::of(&one, at, n("Run.ma"), n("Run.ma")).unwrap();
+        assert!(g.walk && g.run, "no slots given: by name, both");
+        // Dino-Rang: his run at 2 and 3, his scripts' on 3; his walk on 1.
+        let dino = ["Idle.ma", "Walk.ma", "Run.ma", "Run.ma"];
+        let at = |slot: u32| dino.get(slot as usize).copied();
+        let states = [state(0, 0.0), state(1, 5.718783), state(3, 18.055342)];
+        let g = ScriptedGaits::of(
+            &states,
+            at,
+            Some(("Walk.ma", Some(1))),
+            Some(("Run.ma", Some(3))),
+        )
+        .unwrap();
+        assert!(g.walk && g.run);
+        assert_eq!(
+            (g.gaits.walk_speed, g.gaits.run_speed),
+            (5.718783, 18.055342)
+        );
+        assert_eq!(
+            ScriptedGaits::of(&[state(0, 0.0)], clip, n("Walk.ma"), n("Run.ma")),
+            None,
+            "standing only"
+        );
+        assert_eq!(
+            ScriptedGaits::of(&eruptor, clip, n("Sneak.ma"), None),
+            None,
+            "no state plays his hero side's"
+        );
+    }
+
+    /// AG.219: a walker's AG.30 locomotion on his scripts' states walks and runs his
+    /// hero side's clips by speed, at the rates their speeds give, where the
+    /// one AG.27 built him (no walk or run of ours) draws his idle at
+    /// any speed; a run his scripts don't play stays out of it; with
+    /// neither he keeps his idle.
+    #[test]
+    fn a_walkers_stand_in_walks_and_runs_his_scripts_gaits() {
+        use guac_motion::locomotion::{Clip as Gait, Frame};
+        let at = |speed: f32| Frame {
+            speed,
+            falling: 0.0,
+            height: Some(0.005),
+            held: false,
+        };
+        let palette = crate::picks::tests::palette();
+        let (walk, run) = (palette.clip(1).unwrap(), palette.clip(3).unwrap());
+        let joined = Loops {
+            idle: 1.3333,
+            walk: None,
+            run: None,
+            fall: Some(0.8),
+        };
+        let state = |slot: u32, speed: f32| LocomotionState {
+            slot: Some(slot),
+            speed,
+        };
+        let states = [state(0, 0.0), state(1, 12.0), state(3, 21.0)];
+        let (walk_at, run_at) = (Some((walk, Some(1))), Some((run, Some(3))));
+        let mut l = stand_in(&states, &palette, walk_at, run_at, joined).unwrap();
+        assert_eq!(
+            *l.loops(),
+            Loops {
+                walk: Some(walk.duration),
+                run: Some(run.duration),
+                ..joined
+            }
+        );
+        for _ in 0..60 {
+            l.step(1.0 / 60.0, at(24.0));
+        }
+        assert_eq!(l.weights(), [0.0, 0.0, 1.0, 0.0]);
+        assert!((l.play(Gait::Run).rate - 24.0 / 21.0).abs() < 1e-6);
+        for _ in 0..60 {
+            l.step(1.0 / 60.0, at(12.0));
+        }
+        assert_eq!(l.weights(), [0.0, 1.0, 0.0, 0.0]);
+        // His walk alone (a giant's): his hero side's run stays out.
+        let mut l = stand_in(&states[..2], &palette, walk_at, run_at, joined).unwrap();
+        assert_eq!((l.loops().walk, l.loops().run), (Some(walk.duration), None));
+        for _ in 0..60 {
+            l.step(1.0 / 60.0, at(24.0));
+        }
+        assert_eq!(l.weights(), [0.0, 1.0, 0.0, 0.0]);
+        assert!((l.play(Gait::Walk).rate - 2.0).abs() < 1e-6, "24 over 12");
+        // AG.27's, before: his idle at any speed.
+        let mut before = Locomotion::new(
+            Gaits {
+                walk_speed: 0.0,
+                run_speed: 0.0,
+            },
+            joined,
+        );
+        for _ in 0..60 {
+            before.step(1.0 / 60.0, at(24.0));
+        }
+        assert_eq!(before.weights(), [1.0, 0.0, 0.0, 0.0]);
+        assert!(stand_in(&states[..1], &palette, walk_at, run_at, joined).is_none());
     }
 }
