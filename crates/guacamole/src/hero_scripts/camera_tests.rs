@@ -13,9 +13,10 @@ use bevy::prelude::*;
 use guac_extract::intros::IrFormat;
 use guac_formats::script::builder::camera::{
     CAMERA_ACTIVATOR, CAMERA_ACTIVATOR_DELAY, CAMERA_ACTIVATOR_RANGE, CAMERA_ACTIVATOR_SECONDS,
-    CAMERA_BACK, CAMERA_EASE, CAMERA_LOOK_UP, CAMERA_PLANE_SIZE, CAMERA_ROCK, CAMERA_ROCKS,
-    CAMERA_SHAKE, CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_NAME,
-    CAMERA_VOLUME_SECONDS, CameraAt, CameraFault, SyntheticCam,
+    CAMERA_BACK, CAMERA_EASE, CAMERA_GOAT, CAMERA_GOAT_RANGE, CAMERA_GOAT_REACH, CAMERA_GOAT_ROCK,
+    CAMERA_LOOK_UP, CAMERA_PLANE_SIZE, CAMERA_ROCK, CAMERA_ROCKS, CAMERA_SHAKE,
+    CAMERA_SHAKE_SECONDS, CAMERA_START, CAMERA_VOLUME, CAMERA_VOLUME_NAME, CAMERA_VOLUME_SECONDS,
+    CameraAt, CameraFault, SyntheticCam,
 };
 use guac_formats::script::builder::{WALKER_LOAD, WalkerFault};
 use guac_ir::palette::Palette;
@@ -38,13 +39,16 @@ use crate::test_support::test_pad;
 
 /// Where the synthetic level's placements stand: the plane 2.5 m ahead of
 /// the start across the walk to the wall, the volume 4 m to his +x side,
-/// the activator 14 m off behind him (asleep) and its rock beyond it.
+/// the activator 14 m off behind him (asleep) and its rock beyond it, the
+/// goat 12 m to his +x side and 8 m back and its rock 4 m on from it.
 fn spots() -> CameraAt {
     CameraAt {
         plane: [START[0], FLOOR + 1.8, START[2] + 2.5],
         volume: [START[0] + 4.0, FLOOR + 1.8, START[2]],
         activator: [START[0] - 10.0, FLOOR, START[2] - 10.0],
         rock: [START[0] - 10.0, FLOOR, START[2] - 12.0],
+        goat: [START[0] + 12.0, FLOOR, START[2] - 8.0],
+        goat_rock: [START[0] + 16.0, FLOOR, START[2] - 8.0],
     }
 }
 
@@ -72,6 +76,14 @@ struct Sample {
     shake: f32,
     /// The activator's behaviour.
     activator: Option<String>,
+    /// The goat's behaviour and place, and its rock's behaviour, `Open`,
+    /// `Timer` and clock (openspec AG.177).
+    goat: Option<String>,
+    goat_at: Option<Vec3>,
+    goat_rock: Option<String>,
+    goat_rock_open: Option<f32>,
+    goat_rock_timer: Option<f32>,
+    goat_rock_clock: Option<f32>,
 }
 
 #[derive(Resource, Default)]
@@ -92,11 +104,12 @@ fn control(vm: &Vm, field: &str) -> f32 {
 /// The placement running [`CAMERA_ACTIVATOR`] in the run, found through
 /// the part's files (its behaviour tells its wake).
 fn activator(vm: &Vm, world: &ScriptWorld, source: &ScriptSource) -> Option<PlacementId> {
-    let p = source
-        .files
-        .placed
-        .iter()
-        .find(|p| p.name == CAMERA_ACTIVATOR)?;
+    placed(vm, world, source, CAMERA_ACTIVATOR)
+}
+
+/// The placement named `name` in the run, through the part's files.
+fn placed(vm: &Vm, world: &ScriptWorld, source: &ScriptSource, name: &str) -> Option<PlacementId> {
+    let p = source.files.placed.iter().find(|p| p.name == name)?;
     vm.placement_of(*world.handles().get(&p.obj)?)
 }
 
@@ -134,6 +147,24 @@ fn record(
         activator: activator(vm, &world, &source)
             .and_then(|id| vm.behaviour(id))
             .map(str::to_owned),
+        goat: placed(vm, &world, &source, CAMERA_GOAT)
+            .and_then(|id| vm.behaviour(id))
+            .map(str::to_owned),
+        goat_at: placed(vm, &world, &source, CAMERA_GOAT)
+            .and_then(|id| vm.handle_of(id))
+            .and_then(|h| world.actor(h))
+            .map(|a| a.position),
+        goat_rock: placed(vm, &world, &source, CAMERA_GOAT_ROCK)
+            .and_then(|id| vm.behaviour(id))
+            .map(str::to_owned),
+        goat_rock_open: placed(vm, &world, &source, CAMERA_GOAT_ROCK)
+            .and_then(|id| vm.local(id, "Open"))
+            .and_then(|v| v.as_f32()),
+        goat_rock_timer: placed(vm, &world, &source, CAMERA_GOAT_ROCK)
+            .and_then(|id| vm.local(id, "Timer"))
+            .and_then(|v| v.as_f32()),
+        goat_rock_clock: placed(vm, &world, &source, CAMERA_GOAT_ROCK)
+            .and_then(|id| vm.active_seconds(id)),
     });
 }
 
@@ -528,6 +559,100 @@ fn the_sliding_rocks_switch_after_their_wake_and_shake_the_eye() {
         );
     }
     assert_eq!(last(&app).pct, 1.0);
+}
+
+/// AG.177: a goat opening a rock as it jumps, and the rock's shake. Away
+/// from the goat nothing moves it and its rock stays shut; set down within
+/// its range across the ground, the goat runs to its rock by `move to`
+/// (the engine walking it) and, there (where the original's goat lands its
+/// jump), sets the rock's `Open`;
+/// the rock, found open the step it was opened, waits its clock plus a roll
+/// under a second (its `Timer`) and the step its clock passes that shakes
+/// the eye by the shake's law.
+#[test]
+fn a_goat_opens_its_rock_as_it_jumps_and_the_rock_shakes_the_eye() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _pad) = camera_app(tmp.path(), CameraFault::None);
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let goat_at = Vec3::from_array(spots().goat);
+    assert!(
+        samples(&app)
+            .iter()
+            .all(|s| s.goat.as_deref() == Some("wait")
+                && s.goat_rock.as_deref() == Some("waiting")
+                && s.goat_rock_open == Some(0.0)
+                && s.shake == 0.0
+                && s.goat_at
+                    .is_some_and(|p| p.xz().distance(goat_at.xz()) < 1e-3)),
+        "the goat waits 14 m off and its rock stays shut: {:?}",
+        last(&app)
+    );
+    // Within its range across the ground: 2 ft inside it, on his side.
+    let near = goat_at + Vec3::new(0.0, START[1] - FLOOR, (CAMERA_GOAT_RANGE - 2.0) * FT);
+    set_down(&mut app, near);
+    let from = samples(&app).len();
+    run_until(&mut app, "the goat's jump", 600, |s| {
+        s.goat.as_deref() == Some("end")
+    });
+    frames(&mut app, 120);
+    let after = &samples(&app)[from..];
+    let startled = after
+        .iter()
+        .position(|s| s.goat.as_deref() == Some("run"))
+        .expect("startled");
+    assert_eq!(startled, 0, "startled the step he's in its range");
+    let rock_at = Vec3::from_array(spots().goat_rock);
+    let jumped = after
+        .iter()
+        .position(|s| s.goat.as_deref() == Some("end"))
+        .unwrap();
+    // It ran there: the engine walked it from its spot to within its reach.
+    let ran = after[jumped].goat_at.unwrap();
+    assert!(
+        ran.xz().distance(rock_at.xz()) <= CAMERA_GOAT_REACH * FT + 1e-3,
+        "the goat jumped {:.3} m from its rock",
+        ran.xz().distance(rock_at.xz())
+    );
+    assert!(jumped > startled + 10, "it ran {} steps", jumped - startled);
+    assert!(
+        after[..jumped]
+            .iter()
+            .all(|s| s.goat_rock_open == Some(0.0))
+    );
+    // Opened the step it jumped, and found open the same step: its rock
+    // ticks after it.
+    let s = &after[jumped];
+    assert_eq!(s.goat_rock_open, Some(1.0));
+    assert_eq!(s.goat_rock.as_deref(), Some("delay"));
+    let (timer, clock) = (s.goat_rock_timer.unwrap(), s.goat_rock_clock.unwrap());
+    let roll = timer - clock;
+    assert!((0.0..1.0).contains(&roll), "its wait {roll} s");
+    // It shakes the step its clock passes that wait, by the shake's law.
+    let shaking: Vec<usize> = after
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.shake != 0.0)
+        .map(|(i, _)| i)
+        .collect();
+    let first = *shaking.first().expect("a shake");
+    // A step's clock as its scripts read it is the one the step before
+    // left: passed at the shake's step, not yet at the one before.
+    assert_eq!(after[first].goat_rock.as_deref(), Some("fallen"));
+    assert!(after[first - 1].goat_rock_clock.unwrap() >= timer);
+    assert!(after[first - 2].goat_rock_clock.unwrap() < timer);
+    let peak = 2.5 * CAMERA_SHAKE;
+    let shake_frames = (CAMERA_SHAKE_SECONDS * 60.0).round() as usize;
+    for &i in &shaking {
+        let want = peak * (1.0 - (i - first) as f32 / shake_frames as f32);
+        assert!(
+            (after[i].shake - want).abs() < 1e-3,
+            "{i}: {}",
+            after[i].shake
+        );
+    }
 }
 
 /// AG.28: the stick held through a switch. Held to his left the whole way,

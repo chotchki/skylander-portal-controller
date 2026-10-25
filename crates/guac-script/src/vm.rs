@@ -3923,10 +3923,19 @@ impl Vm {
                 let v = self.deref_with(v, host)?;
                 match literal {
                     // `random(Enemy_DMG_Rand_Small)`: a roll up to the
-                    // path's value, by the literal's class.
+                    // path's value, a fraction when the literal's class says
+                    // so or the value is one. An integer literal over a
+                    // fraction rolls a fraction: the coins' sparkle waits
+                    // `random(treasure sparkle spawn rate time)`, 0.5, and
+                    // the oracle's timers sat 0.013-0.280 s past the clock
+                    // (AG.176), where a whole roll of 0.5 would hold them on
+                    // it.
                     Some(l) if l.random => {
                         let n = match (l.class, v.as_f32()) {
                             (LiteralClass::Float, Some(f)) => Value::Float(f),
+                            (_, Some(f)) if matches!(v, Value::Float(_) | Value::Double(_)) => {
+                                Value::Float(f)
+                            }
                             (_, Some(_)) => Value::Int(v.as_i32().unwrap_or(0)),
                             (_, None) => {
                                 return unsupported(format!("a roll up to {v:?}"));

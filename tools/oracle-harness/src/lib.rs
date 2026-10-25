@@ -22,7 +22,9 @@
 //! ([`route`], AH.7), and the fight's metrics over a group of the oracle's
 //! replays with the event floors AF.12's method gives them ([`fightlog`],
 //! AH.9), and a session of figures placed and taken off through menus and a
-//! level, every file the game opens stamped with the flip ([`session`], AG.6).
+//! level, every file the game opens stamped with the flip ([`session`], AG.6),
+//! and level placements with their script numbers on the watch list
+//! ([`places`], AG.176).
 //!
 //! It never writes inside a work tree of this repo: every path it creates goes
 //! through `rrc_dump::output::refuse_repo_output` first, because what an oracle
@@ -50,6 +52,7 @@ pub mod mover;
 pub mod outputs;
 pub mod pad;
 pub mod pine;
+pub mod places;
 pub mod rng;
 pub mod route;
 pub mod rpcs3_log;

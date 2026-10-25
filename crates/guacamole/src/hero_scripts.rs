@@ -309,6 +309,7 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     if fight {
         script_world.walk_first_fight(level);
     }
+    script_world.walk_goats(level);
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)

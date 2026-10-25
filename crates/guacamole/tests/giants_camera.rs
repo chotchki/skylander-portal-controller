@@ -396,6 +396,25 @@ struct Gaps {
 /// AG.17 fed its chain) or the scripts' own. Stops where a record isn't the
 /// next game frame; `camera_0_only` also where the far clip leaves 800.
 fn drive(run: &mut Run, r: &Rec, fed: bool, camera_0_only: bool) -> Gaps {
+    drive_with(run, r, fed, camera_0_only, &mut |_, _, _| {})
+}
+
+/// Where [`drive_with`]'s hook is called: before step k (record k to k + 1)
+/// or after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Before,
+    After,
+}
+
+/// [`drive`] with `hook` called around each step k.
+fn drive_with(
+    run: &mut Run,
+    r: &Rec,
+    fed: bool,
+    camera_0_only: bool,
+    hook: &mut dyn FnMut(Phase, usize, &mut Run),
+) -> Gaps {
     let f = &r.frames;
     set_hero(run, &f[0]);
     let (mh, _) = follower(run, 0).unwrap();
@@ -410,9 +429,11 @@ fn drive(run: &mut Run, r: &Rec, fed: bool, camera_0_only: bool) -> Gaps {
             break;
         }
         let step = f[k].clock.step();
+        hook(Phase::Before, k, run);
         if let Err(h) = tick(run, step, pivot(&f[k + 1]), f[k + 1].hero.rotation[1]) {
             panic!("{}: step {k}: {h}", r.name);
         }
+        hook(Phase::After, k, run);
         if fed {
             let (th, _) = cam_target(run).unwrap();
             place(run, th, r.target[k + 1]);
@@ -656,11 +677,16 @@ fn best_curve(times: &[f32], shares: &[f32], len: f32) -> (f32, f32) {
 
 /// `Game - Shake Cam`'s wave along its axis from record `start`, on the
 /// steps `dt` (`dt[k]` the step from record k to k + 1): five keys of 0.2 s
-/// of game time, each sliding from the last one's value to its own `keys`
-/// entry and held there the tick its time runs out, the next key starting
-/// on the tick after with none of that step's overshoot carried. Read off
-/// AG.13's recorded waves (the review, 2026-10-24: their key ends fall on
-/// 12 or 13 records as the steps' jitter has it, and the VM's the same).
+/// of game time, each sliding from where the last one left the value to its
+/// own `keys` entry and held there the tick its time runs out, the next key
+/// starting on the tick after with none of that step's overshoot carried.
+/// Read off AG.13's recorded waves (the review, 2026-10-24: their key ends
+/// fall on 12 or 13 records as the steps' jitter has it, and the VM's the
+/// same). A key also ends the tick its keyframer's `slide value` (slid from
+/// 1 to 0 over the same 0.2 s) compares equal to 0, within the scripts'
+/// 1e-4 (script-runtime's comparisons): 2e-5 s short of its time, the next
+/// key starts from where this one's slide stood (AG.177: one VM wave of
+/// twelve met that tick, no recorded one has).
 fn keyframed(dt: &[f32], start: usize, keys: &[f32; 5], n: usize) -> Vec<f32> {
     let mut out = vec![0.0f32];
     let (mut i, mut elapsed, mut from) = (0usize, 0.0f32, 0.0f32);
@@ -669,14 +695,19 @@ fn keyframed(dt: &[f32], start: usize, keys: &[f32; 5], n: usize) -> Vec<f32> {
             out.push(0.0);
             continue;
         }
-        elapsed += dt[j - 1];
-        if elapsed >= 0.2 {
-            out.push(keys[i]);
-            from = keys[i];
+        elapsed += dt[j - 1] * 100.0 / 100.0;
+        let done = elapsed + 1e-6 >= 0.2;
+        let value = if done {
+            keys[i]
+        } else {
+            from + (keys[i] - from) * elapsed / 0.2
+        };
+        out.push(value);
+        let slide = if done { 0.0 } else { 1.0 - elapsed / 0.2 };
+        if done || slide <= 1e-4 {
+            from = value;
             i += 1;
             elapsed = 0.0;
-        } else {
-            out.push(from + (keys[i] - from) * elapsed / 0.2);
         }
     }
     out
@@ -810,51 +841,8 @@ fn the_sliding_rocks_switch_on_ag13s_corridor_walks() {
                 (s[peak.0] - axis * s[peak.0].dot(axis)).length()
             );
         }
-        // The waves' law (the review, 2026-10-24): each rock's wave starts
-        // from nothing where the last one's is cut (`Calc - Adjust Value
-        // Keyframer` stops the running one), its starts the rocks' draws;
-        // every wave before the switch on each side keyframed on its own
-        // steps from its own start to the VM's first whole wave's keys.
-        let dt: Vec<f32> = r.frames[..g.steps].iter().map(|f| f.clock.step()).collect();
-        let along = |s: &[Vec3]| -> Vec<f32> { s.iter().map(|v| v.dot(axis) / 0.3048).collect() };
-        let (rec_along, vm_along) = (along(&rec_shake), along(&vm_shake));
-        // A whole wave: a second (60 records) or more before the next.
-        let vm_starts = wave_starts(&vm_along, switch_at);
-        let keys = vm_starts
-            .iter()
-            .enumerate()
-            .filter(|&(i, &k)| vm_starts.get(i + 1).copied().unwrap_or(switch_at) >= k + 60)
-            .find_map(|(_, &k)| wave_keys(&vm_along[..switch_at], k))
-            .expect("a whole wave of the VM's");
-        let mut waves = Vec::new();
-        for (what, series) in [("recorded", &rec_along), ("VM", &vm_along)] {
-            let starts = wave_starts(series, switch_at);
-            for (i, &k) in starts.iter().enumerate() {
-                let end = starts.get(i + 1).copied().unwrap_or(switch_at);
-                let law = keyframed(&dt, k, &keys, end - k);
-                let miss = (k..end)
-                    .map(|j| (law[j - k] - series[j]).abs())
-                    .fold(0.0f32, f32::max);
-                waves.push((what, k, end, miss));
-            }
-        }
-        println!(
-            "  the waves before the switch (start..end: the keyframer's miss, ft) on the VM's keys {keys:?}: {}",
-            waves
-                .iter()
-                .map(|(w, k, e, m)| format!("{w} {k}..{e}: {m:.1e}"))
-                .collect::<Vec<_>>()
-                .join("; ")
-        );
-        assert!(
-            waves.iter().filter(|w| w.0 == "VM").count() >= 2
-                && waves.iter().filter(|w| w.0 == "recorded").count() >= 2,
-            "{waves:?}"
-        );
-        // Every one of them to 3.1e-5 ft on the review's run (2026-10-24):
-        // a key that carried the step's overshoot, or started a tick later,
-        // misses the recorded waves by 0.04-0.74 ft.
-        assert!(waves.iter().all(|w| w.3 < 1e-4), "{waves:?}");
+        // The waves' law and the eye outside them: the three waves' test
+        // (AG.177).
         // The peak of the shake, as a vector (ft): the law, whatever the
         // rocks' random starts do to when.
         let peak_of = |s: &[Vec3]| {
@@ -1087,4 +1075,667 @@ fn ag40s_crossings_through_the_plane() {
     );
     assert!(worst[3] < 4.3e-6 && worst[4] < 4.3e-6, "{worst:?}");
     assert!(own[0] < 0.093 && own[1] < 0.42, "{own:?}");
+}
+
+// ---- (3) the rock slide's draws off the oracle's generator (AG.176) ----
+
+/// A wave starts this many records after the record its rock's `Start
+/// Fall` first shows at: the shake's first key moves the eye from the next
+/// step on, so `wave_starts` (still at k, moving at k + 1) reads it two on
+/// (AG.176's walks: all six of their waves before the switch).
+const WAVE_AFTER_FALL: usize = 2;
+
+/// AG.176's corridor walks: AG.13's script, state and figure under set W
+/// again, with the generator's `_mti` and first word on every record (AH.5)
+/// and the rock slide's placements and the goats on O5's list too
+/// (`places.json`: each one's wake state, behaviour, clock and named
+/// numbers), so a rock's `Timer` (its clock plus its `random(1)`) is read the
+/// frame it's drawn.
+const AG176: &str = "ag176-rocks-1792925213";
+/// The rock slide's rocks: the two the activator opens and the one the
+/// jumping goats open (AG.177).
+const ROCKS: [&str; 3] = ["Sliding_Rock", "Sliding_Rock(1)", "Sliding_Rock(5)"];
+
+/// The bytes of watch field `name` in each record of a replay's
+/// `watch.json`, none where its range wasn't readable.
+fn watched(dir: &Path, name: &str) -> Vec<Option<Vec<u8>>> {
+    let text = std::fs::read_to_string(dir.join("watch.json")).unwrap();
+    let watch: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let list = &watch["watch"]["list"];
+    let ranges: Vec<(u64, u64)> = list["ranges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["addr"].as_u64().unwrap(), r["len"].as_u64().unwrap()))
+        .collect();
+    let field = list["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == name)
+        .unwrap_or_else(|| panic!("no {name} on {}'s list", dir.display()));
+    let (addr, len) = (
+        field["addr"].as_u64().unwrap(),
+        field["len"].as_u64().unwrap(),
+    );
+    let i = ranges
+        .iter()
+        .position(|&(a, l)| a <= addr && addr + len <= a + l)
+        .unwrap();
+    let off: u64 = ranges[..i].iter().map(|r| r.1).sum::<u64>() + addr - ranges[i].0;
+    watch["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let missing = r["missing"].as_u64().unwrap_or(0);
+            (missing & (1 << i) == 0).then(|| {
+                let hex = r["payload"].as_str().unwrap();
+                (0..len)
+                    .map(|b| {
+                        let at = 2 * (off + b) as usize;
+                        u8::from_str_radix(&hex[at..at + 2], 16).unwrap()
+                    })
+                    .collect()
+            })
+        })
+        .collect()
+}
+
+/// The generator at F0 (the replay's `peek-00000.json`) and the numbers it
+/// had drawn since F0 at each record (AH.6's count off the `mt` field).
+fn draws_at(dir: &Path) -> (guac_oracle::rng::Mt19937, Vec<u64>) {
+    use guac_oracle::fight::draws::{MtWords, draws_since};
+    let text = std::fs::read_to_string(dir.join("peek-00000.json")).unwrap();
+    let peek: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let words: Vec<u32> = peek["mt"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_u64().unwrap() as u32)
+        .collect();
+    let f0 = guac_oracle::rng::Mt19937::from_parts(peek["mti"].as_u64().unwrap() as u32, &words)
+        .unwrap();
+    let be = |b: &[u8]| u32::from_be_bytes(b.try_into().unwrap());
+    let mt: Vec<(u32, MtWords)> = watched(dir, "mt")
+        .into_iter()
+        .enumerate()
+        .map(|(k, b)| {
+            let b = b.expect("every record holds the generator's words");
+            (
+                k as u32,
+                MtWords {
+                    mti: be(&b[..4]),
+                    word0: be(&b[4..8]),
+                },
+            )
+        })
+        .collect();
+    let counts = draws_since(&f0, &mt, 64).unwrap();
+    (f0, counts.into_iter().map(|(_, n)| n).collect())
+}
+
+/// The state `n` draws past `f0`, as the VM's generator takes it.
+fn generator_at(f0: &guac_oracle::rng::Mt19937, n: u64) -> guac_script::Generator {
+    let mut g = f0.clone();
+    g.advance(n);
+    guac_script::Generator::from_state(g.mti(), g.words()).unwrap()
+}
+
+/// One place in one record of `places.json`.
+#[derive(Debug, Clone)]
+struct PlaceRow {
+    behaviour: Option<String>,
+    clock: f32,
+    timer: Option<Value>,
+}
+
+/// Each place's rows, record by record.
+fn place_rows(dir: &Path) -> BTreeMap<String, Vec<PlaceRow>> {
+    let text = std::fs::read_to_string(dir.join("places.json")).unwrap();
+    let p: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let names: BTreeMap<String, String> = p["behaviours"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+        .collect();
+    let mut out: BTreeMap<String, Vec<PlaceRow>> = BTreeMap::new();
+    for rec in p["records"].as_array().unwrap() {
+        for place in rec[1].as_array().unwrap() {
+            let number = |v: &serde_json::Value| match (v.get("Float"), v.get("Int")) {
+                (Some(f), _) => Some(Value::Float(f.as_f64().unwrap() as f32)),
+                (_, Some(i)) => Some(Value::Int(i.as_i64().unwrap() as i32)),
+                _ => None,
+            };
+            out.entry(place["name"].as_str().unwrap().to_owned())
+                .or_default()
+                .push(PlaceRow {
+                    behaviour: names
+                        .get(&place["behaviour"].as_u64().unwrap().to_string())
+                        .cloned(),
+                    clock: place["active_seconds"].as_f64().unwrap() as f32,
+                    timer: place["variables"].get("Timer").and_then(number),
+                });
+        }
+    }
+    out
+}
+
+/// A rock's wait as it was drawn: the frame that drew it (k: from record k
+/// to k + 1), how many numbers that frame drew before it, the roll, and the
+/// record its `Start Fall` first shows at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Drawn {
+    frame: usize,
+    before: u64,
+    roll: f32,
+    falls: usize,
+}
+
+/// The roll among `words` (in draw order) whose `random(1)` added to `clock`
+/// in single precision is `timer`, by its place: `Falling_Rocks.ai`'s
+/// `Timer = system.script timer + random(1)`. None when none is, or more
+/// than one.
+fn roll_among(words: &[u32], clocks: &[f32], timer: f32) -> Option<(u64, f32)> {
+    let mut hits = Vec::new();
+    for (j, &w) in words.iter().enumerate() {
+        let Some(Value::Float(roll)) = guac_script::random_literal(Value::Float(1.0), w) else {
+            continue;
+        };
+        if clocks.iter().any(|&c| c + roll == timer) {
+            hits.push((j as u64, roll));
+        }
+    }
+    (hits.len() == 1).then(|| hits[0])
+}
+
+/// Each rock's draw in the original, off its rows and the stream: the frame
+/// its Timer turned from the integer it starts as to a float in, the word in
+/// that frame's draws whose roll makes it.
+fn oracle_draws(dir: &Path) -> (BTreeMap<String, Drawn>, guac_oracle::rng::Mt19937, Vec<u64>) {
+    let (f0, draws) = draws_at(dir);
+    let rows = place_rows(dir);
+    let mut out = BTreeMap::new();
+    for rock in ROCKS {
+        let r = &rows[rock];
+        let Some(k) = (0..r.len() - 1).find(|&k| {
+            matches!(r[k].timer, Some(Value::Int(_)))
+                && matches!(r[k + 1].timer, Some(Value::Float(_)))
+                && r[k + 1].behaviour.as_deref() == Some("Delay")
+        }) else {
+            continue;
+        };
+        let Some(Value::Float(timer)) = r[k + 1].timer else {
+            unreachable!()
+        };
+        let mut g = f0.clone();
+        g.advance(draws[k]);
+        let words: Vec<u32> = (draws[k]..draws[k + 1]).map(|_| g.next_u32()).collect();
+        let (before, roll) = roll_among(&words, &[r[k].clock, r[k + 1].clock], timer)
+            .unwrap_or_else(|| panic!("{}: no one draw makes {rock}'s Timer", dir.display()));
+        let falls = (k..r.len())
+            .find(|&j| r[j].behaviour.as_deref() == Some("Start Fall"))
+            .expect("the rock falls");
+        out.insert(
+            rock.to_owned(),
+            Drawn {
+                frame: k,
+                before,
+                roll,
+                falls,
+            },
+        );
+    }
+    (out, f0, draws)
+}
+
+/// The VM's rocks along a recording (the target fed), the generator set to
+/// each of `seeds`' states before its step: each rock's draw as [`Drawn`] (its
+/// `before` the VM's own draws before it in that step) and the steps' draws
+/// counted; with the run's gaps.
+fn vm_draws(
+    r: &Rec,
+    seeds: &[(usize, guac_script::Generator)],
+) -> (BTreeMap<String, Drawn>, Vec<u64>, Gaps) {
+    let (found, counts, g, _) = vm_draws_shaking(r, seeds);
+    (found, counts, g)
+}
+
+/// [`vm_draws`] with `camera control data`'s `shake x` after each step (ft,
+/// along the view's across: the keyframer's own output).
+fn vm_draws_shaking(
+    r: &Rec,
+    seeds: &[(usize, guac_script::Generator)],
+) -> (BTreeMap<String, Drawn>, Vec<u64>, Gaps, Vec<f32>) {
+    let mut run = fresh();
+    let ids: Vec<(String, guac_script::PlacementId)> = ROCKS
+        .iter()
+        .filter_map(|&n| {
+            let p = run.files.placed.iter().find(|p| p.name == n)?;
+            let h = run.handles.get(&p.obj)?;
+            Some((n.to_owned(), run.vm.placement_of(*h)?))
+        })
+        .collect();
+    let mut found: BTreeMap<String, Drawn> = BTreeMap::new();
+    let mut counts = Vec::new();
+    let mut shake_x = vec![0.0f32];
+    // The generator and each rock's behaviour and clock before the step.
+    type Before = (guac_script::Generator, Vec<(Option<String>, f32)>);
+    let mut before: Option<Before> = None;
+    let g = drive_with(&mut run, r, true, false, &mut |phase, k, run| match phase {
+        Phase::Before => {
+            if let Some((_, s)) = seeds.iter().find(|(at, _)| *at == k) {
+                run.generator = s.clone();
+            }
+            let rows = ids
+                .iter()
+                .map(|(_, id)| {
+                    (
+                        run.vm.behaviour(*id).map(str::to_owned),
+                        run.vm.active_seconds(*id).unwrap_or(f32::NAN),
+                    )
+                })
+                .collect();
+            before = Some((run.generator.clone(), rows));
+        }
+        Phase::After => {
+            let (mut g0, rows) = before.take().unwrap();
+            let mut words = Vec::new();
+            while g0 != run.generator {
+                assert!(words.len() < 100_000, "step {k}: the generator ran away");
+                words.push(g0.next_u32());
+            }
+            counts.push(words.len() as u64);
+            let cc = global(run, "camera control data");
+            shake_x.push(
+                field(run, cc, "shake x")
+                    .and_then(|v| v.as_f32())
+                    .unwrap_or(f32::NAN),
+            );
+            for ((name, id), (was, clock)) in ids.iter().zip(rows) {
+                let now = run.vm.behaviour(*id).map(str::to_owned);
+                // The VM names a behaviour lowercased.
+                let is = |b: &Option<String>, name: &str| {
+                    b.as_deref().is_some_and(|b| b.eq_ignore_ascii_case(name))
+                };
+                if is(&was, "Waiting")
+                    && is(&now, "Delay")
+                    && let Some(Value::Float(timer)) = run.vm.local(*id, "Timer")
+                {
+                    let after = run.vm.active_seconds(*id).unwrap_or(f32::NAN);
+                    let (j, roll) = roll_among(&words, &[clock, after], timer)
+                        .unwrap_or_else(|| panic!("step {k}: no one draw makes {name}'s Timer"));
+                    found.insert(
+                        name.clone(),
+                        Drawn {
+                            frame: k,
+                            before: j,
+                            roll,
+                            falls: usize::MAX,
+                        },
+                    );
+                }
+                if is(&now, "Start Fall")
+                    && let Some(d) = found.get_mut(name)
+                    && d.falls == usize::MAX
+                {
+                    d.falls = k + 1;
+                }
+            }
+        }
+    });
+    (found, counts, g, shake_x)
+}
+
+/// The shake along its axis (ft) record by record: the eye less camera 0's
+/// offset from the follow point.
+fn shake_along(eyes: &[Vec3], magics: &[Vec3]) -> Vec<f32> {
+    let def = CameraDef::LEVEL_213_START;
+    let axis = Vec3::new(-0.818, 0.411, 0.403).normalize();
+    eyes.iter()
+        .zip(magics)
+        .map(|(&e, &m)| (e - def.view(m).eye).dot(axis) / 0.3048)
+        .collect()
+}
+
+/// AG.176: the rock slide's waves off the oracle's own draws. On AG.176's
+/// two corridor walks the original's rocks are found drawing their waits
+/// (each Timer is its clock plus one word's `random(1)` among its frame's
+/// draws). The VM's generator set to the original's state at the start of
+/// the frame the first two drew in (`Generator::from_state`) draws what its
+/// own scripts draw ahead of the rocks there first, which isn't what the
+/// original drew (the coins' sparkles: AG.215), so it's set that many
+/// numbers earlier still: then its rocks draw the original's two words, in
+/// the original's order, and their waves start where the recording's do.
+/// The third rock, set off the same way at the goat's jump (AG.177), starts
+/// its wave within its draw's second of the recording's: the goats' walk is
+/// AH's route line's.
+#[test]
+#[ignore = "reads the Giants dump and AG.176's recordings"]
+fn the_rock_slides_waves_off_the_oracles_draws() {
+    let load = load();
+    let pair = ["Sliding_Rock", "Sliding_Rock(1)"];
+    let third = "Sliding_Rock(5)";
+    let mut worst_start = 0usize;
+    let mut worst_third = 0usize;
+    for (name, dir) in replay_dirs(AG176) {
+        let r = rec(name.clone(), &dir);
+        let (oracle, f0, draws) = oracle_draws(&dir);
+        let first = pair.map(|n| oracle[n]);
+        assert_eq!(
+            first[0].frame, first[1].frame,
+            "{name}: one frame draws both"
+        );
+        let frame = first[0].frame;
+        println!(
+            "{name}: the original's rocks draw in the frame from record {frame}, which drew {} numbers: {}",
+            draws[frame + 1] - draws[frame],
+            ROCKS
+                .iter()
+                .filter_map(|n| oracle.get(*n).map(|d| (n, d)))
+                .map(|(n, d)| format!(
+                    "{n} after {} of that frame's draws (frame {}, roll {}, falls at record {})",
+                    d.before, d.frame, d.roll, d.falls
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        let rec_starts: Vec<usize> = ROCKS.map(|n| oracle[n].falls + WAVE_AFTER_FALL).to_vec();
+        let describe = |vm: &BTreeMap<String, Drawn>| {
+            ROCKS
+                .iter()
+                .map(|n| match vm.get(*n) {
+                    Some(d) => format!(
+                        "{n} in step {} after {} of its draws there, roll {} ({}), falls at record {} (recording {})",
+                        d.frame,
+                        d.before,
+                        d.roll,
+                        if d.roll == oracle[*n].roll { "the original's" } else { "not the original's" },
+                        d.falls,
+                        oracle[*n].falls
+                    ),
+                    None => format!("{n}: no draw"),
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        // (1) At the frame's start.
+        let (vm, counts, _) = vm_draws(&r, &[(frame, generator_at(&f0, draws[frame]))]);
+        println!(
+            "  the VM seeded at the frame's start, the original's state {} draws past F0: {}; numbers drawn per step, VM / original: {}",
+            draws[frame],
+            describe(&vm),
+            (frame.saturating_sub(3)..(frame + 3).min(counts.len()))
+                .map(|k| format!("{k}: {} / {}", counts[k], draws[k + 1] - draws[k]))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let got = pair.map(|n| vm[n]);
+        // The rocks draw in the step the original's frame drew them, in the
+        // original's order, one right after the other.
+        assert!(got.iter().all(|d| d.frame == frame), "{name}: {got:?}");
+        assert_eq!(
+            got[1].before - got[0].before,
+            first[1].before - first[0].before
+        );
+        let ahead = got[0].before;
+        // (2) On the rocks' words: what the VM draws ahead of them less.
+        let seed = draws[frame] + first[0].before - ahead;
+        let mut seeds = vec![(frame, generator_at(&f0, seed))];
+        let (vm, _, _) = vm_draws(&r, &seeds);
+        let got = pair.map(|n| vm[n]);
+        assert_eq!(got[0].before, ahead);
+        for (g, o) in got.iter().zip(&first) {
+            assert_eq!((g.roll, g.falls), (o.roll, o.falls), "{name}");
+        }
+        // (3) The third rock on its own word too, where the VM's goat
+        // opens it.
+        let (o5, v5) = (oracle[third], vm[third]);
+        seeds.push((
+            v5.frame,
+            generator_at(&f0, draws[o5.frame] + o5.before - v5.before),
+        ));
+        let (vm, _, g) = vm_draws(&r, &seeds);
+        let mut eyes = vec![eye(&r.frames[0])];
+        eyes.extend(g.eyes.iter().copied());
+        let mut magics = vec![r.magic[0]];
+        magics.extend(g.magics.iter().copied());
+        let switch_at = r.frames.iter().position(|f| far(f) > 800.0).unwrap();
+        let vm_starts = wave_starts(&shake_along(&eyes, &magics), switch_at + 1);
+        println!(
+            "  the VM on the rocks' words, the original's state {seed} draws past F0 at step {frame} and {} at step {}: {}; waves start at records {vm_starts:?} (recording {rec_starts:?})",
+            draws[o5.frame] + o5.before - v5.before,
+            v5.frame,
+            describe(&vm)
+        );
+        assert_eq!(vm[third].roll, o5.roll, "{name}: the third rock's roll");
+        let vm_falls = ROCKS.map(|n| vm[n].falls + WAVE_AFTER_FALL);
+        // The recording's own waves start two records after its rocks fall.
+        let rec_along = shake_along(&r.frames.iter().map(eye).collect::<Vec<_>>(), &r.magic);
+        let seen = wave_starts(&rec_along, switch_at + 1);
+        let before_switch: Vec<usize> = {
+            let mut v: Vec<usize> = rec_starts
+                .iter()
+                .copied()
+                .filter(|&k| k < switch_at)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(
+            seen, before_switch,
+            "{name}: the recording's waves against its rocks' falls"
+        );
+        let mut sorted_rec = rec_starts.clone();
+        sorted_rec.sort_unstable();
+        let mut sorted_vm = vm_falls.to_vec();
+        sorted_vm.sort_unstable();
+        for i in 0..2 {
+            let d = vm_starts[i].abs_diff(sorted_rec[i]);
+            worst_start = worst_start.max(d);
+            assert!(
+                d <= 1,
+                "{name}: wave {i}: VM {vm_starts:?}, recording {sorted_rec:?}"
+            );
+            assert_eq!(
+                sorted_vm[i], vm_starts[i],
+                "{name}: a wave two records after its fall"
+            );
+        }
+        // The third: its fall two records before its wave, within its
+        // draw's second of the recording's.
+        let d = (vm[third].falls + WAVE_AFTER_FALL).abs_diff(oracle[third].falls + WAVE_AFTER_FALL);
+        worst_third = worst_third.max(d);
+        assert!(d <= 60, "{name}: the third wave {d} records off");
+    }
+    println!(
+        "[{load}] the first two waves' starts off the original's draws within {worst_start} record(s) of the recordings', the third's within {worst_third}"
+    );
+}
+
+/// Where a wave started at record `start` has run its five keys, on the
+/// steps `dt` (`dt[k]` the step from record k to k + 1): the keyframer's
+/// law ([`keyframed`]), each key 0.2 s of game time, the next from the tick
+/// after.
+fn wave_end(dt: &[f32], start: usize) -> usize {
+    let (mut keys, mut elapsed) = (0, 0.0f32);
+    let mut j = start + 1;
+    while keys < 5 && j <= dt.len() {
+        elapsed += dt[j - 1] * 100.0 / 100.0;
+        if elapsed + 1e-6 >= 0.2 {
+            keys += 1;
+            elapsed = 0.0;
+        }
+        j += 1;
+    }
+    j
+}
+
+/// AG.13's two corridor walks and AG.176's two, each with its replay dir.
+fn corridor_walks() -> Vec<(Rec, PathBuf)> {
+    replay_dirs(AG13)
+        .into_iter()
+        .filter(|(n, _)| n.contains("corridor"))
+        .chain(replay_dirs(AG176))
+        .map(|(n, d)| (rec(n, &d), d))
+        .collect()
+}
+
+/// AG.177: the rock slide's three waves on the VM, the goats on its
+/// listing. On AG.13's and AG.176's corridor walks (the target fed, the
+/// VM's own draws) all three rocks fall and each shakes the camera; every
+/// wave the keyframer starts follows its law on its own steps from its
+/// start to the next: the recording's on its eye along the shake's axis
+/// (its rocks' falls two records on where `places.json` holds them, AG.176's;
+/// where its eye moves off camera 0's offset otherwise, AG.13's, a third
+/// starting with the switch read there too), the VM's on `shake x` itself
+/// (a rock's call inside a wave that has reached the new wave's peak leaves
+/// that axis running, `Game - Shake Cam`'s rule, where `shake y` may start
+/// again: the eye's direction turns, so its axis reads neither); and on
+/// every record outside every wave, either side's, the VM's eye is on the
+/// recorded one to 5e-5 m.
+#[test]
+#[ignore = "reads the Giants dump and the recordings"]
+fn the_rock_slides_three_waves_on_the_corridor_walks() {
+    let load = load();
+    let walks = corridor_walks();
+    let mut runs = Vec::new();
+    for (r, dir) in &walks {
+        let (vm, _, g, shake_x) = vm_draws_shaking(r, &[]);
+        let switch_at = r.frames.iter().position(|f| far(f) > 800.0).unwrap();
+        let mut vm_falls: Vec<usize> = ROCKS
+            .iter()
+            .filter_map(|n| vm.get(*n))
+            .map(|d| d.falls)
+            .collect();
+        vm_falls.sort_unstable();
+        assert_eq!(vm_falls.len(), 3, "{}: the VM's rocks {vm:?}", r.name);
+        let rec_starts: Vec<usize> = if dir.join("places.json").is_file() {
+            let rows = place_rows(dir);
+            let mut v: Vec<usize> = ROCKS
+                .iter()
+                .filter_map(|n| {
+                    rows[*n]
+                        .iter()
+                        .position(|row| row.behaviour.as_deref() == Some("Start Fall"))
+                })
+                .map(|k| k + WAVE_AFTER_FALL)
+                .collect();
+            v.sort_unstable();
+            v
+        } else {
+            let rec_along = shake_along(&r.frames.iter().map(eye).collect::<Vec<_>>(), &r.magic);
+            wave_starts(&rec_along, switch_at + 1)
+        };
+        runs.push((vm_falls, rec_starts, shake_x, g, switch_at));
+    }
+    // The keys: the recording's first whole wave on its eye (a second or
+    // more to the next), the VM's first whole wave on `shake x`.
+    let whole = |starts: &[usize], series: &[f32], until: usize| {
+        starts
+            .iter()
+            .enumerate()
+            .filter(|&(i, &k)| starts.get(i + 1).copied().unwrap_or(until) >= k + 60)
+            .find_map(|(_, &k)| wave_keys(&series[..until], k))
+    };
+    let mut eye_keys = None;
+    let mut x_keys = None;
+    let x_starts = |x: &[f32]| -> Vec<usize> {
+        (0..x.len() - 1)
+            .filter(|&k| x[k].abs() < 1e-4 || (x[k + 1] - x[k]).abs() > 0.5)
+            .filter(|&k| {
+                x[k + 1].abs() > 1e-3 && (x[k].abs() < 1e-4 || x[k + 1].abs() < x[k].abs())
+            })
+            .filter(|&k| x[k].abs() < 1e-4)
+            .collect()
+    };
+    for ((r, _), (_, rec_starts, shake_x, _, switch_at)) in walks.iter().zip(&runs) {
+        let rec_along = shake_along(&r.frames.iter().map(eye).collect::<Vec<_>>(), &r.magic);
+        if eye_keys.is_none() {
+            eye_keys = whole(rec_starts, &rec_along, *switch_at);
+        }
+        if x_keys.is_none() {
+            x_keys = whole(&x_starts(shake_x), shake_x, *switch_at);
+        }
+    }
+    let (eye_keys, x_keys) = (
+        eye_keys.expect("a whole recorded wave"),
+        x_keys.expect("a whole VM wave"),
+    );
+    let mut worst_law = 0.0f32;
+    let (mut worst_eye, mut outside, mut inside) = (0.0f32, 0usize, 0usize);
+    for ((r, _), (vm_falls, rec_starts, shake_x, g, switch_at)) in walks.iter().zip(&runs) {
+        let dt: Vec<f32> = r.frames[..g.steps].iter().map(|f| f.clock.step()).collect();
+        let rec_along = shake_along(&r.frames.iter().map(eye).collect::<Vec<_>>(), &r.magic);
+        let vm_starts = x_starts(shake_x);
+        let mut laws = Vec::new();
+        for (what, starts, series, keys, until) in [
+            ("recorded", rec_starts, &rec_along, &eye_keys, *switch_at),
+            ("VM", &vm_starts, shake_x, &x_keys, shake_x.len()),
+        ] {
+            for (i, &k) in starts.iter().enumerate().filter(|(_, k)| **k < until) {
+                // The next wave's call cuts this one to nothing the step
+                // after its rock's fall shows, a record before it starts.
+                let end = starts
+                    .get(i + 1)
+                    .map_or(until, |&n| n + 1 - WAVE_AFTER_FALL)
+                    .min(until);
+                let law = keyframed(&dt, k, keys, end - k);
+                let miss = (k..end)
+                    .map(|j| (law[j - k] - series[j]).abs())
+                    .fold(0.0f32, f32::max);
+                worst_law = worst_law.max(miss);
+                laws.push(format!("{what} {k}..{end}: {miss:.1e}"));
+            }
+        }
+        // Each VM rock's fall starts an `x` wave two records on, or its
+        // call (the step after the fall shows) comes inside one at the new
+        // wave's peak and leaves it running.
+        for &f in vm_falls {
+            let k = f + WAVE_AFTER_FALL;
+            assert!(
+                vm_starts.contains(&k) || shake_x[f + 1].abs() + 1e-4 >= x_keys[0],
+                "{}: the fall at {f}: x starts {vm_starts:?}",
+                r.name
+            );
+        }
+        // The eye, fed the recorded target, outside every wave.
+        let windows: Vec<(usize, usize)> = vm_falls
+            .iter()
+            .map(|&f| f + WAVE_AFTER_FALL)
+            .chain(rec_starts.iter().copied())
+            .map(|k| (k, wave_end(&dt, k)))
+            .collect();
+        // A wave the next cuts runs on into the next's window, so the windows
+        // join up to the last one's end.
+        let inside_any = |k: usize| windows.iter().any(|&(a, b)| (a..b).contains(&k));
+        let mut worst = (0.0f32, 0usize);
+        for (i, &miss) in g.eye.iter().enumerate() {
+            let k = i + 1;
+            if inside_any(k) {
+                inside += 1;
+                continue;
+            }
+            outside += 1;
+            if miss > worst.0 {
+                worst = (miss, k);
+            }
+        }
+        worst_eye = worst_eye.max(worst.0);
+        println!(
+            "{}: the VM's rocks fall at {vm_falls:?}, its x waves start at {vm_starts:?}; the recording's waves at {rec_starts:?} (the switch from record {switch_at}); the keyframer's misses (ft): {}; outside the waves the eye within {:.2e} m (worst at record {}) over {} records",
+            r.name,
+            laws.join("; "),
+            worst.0,
+            worst.1,
+            g.eye.len()
+        );
+        assert_eq!(rec_starts.len(), 3, "{}: the recording's waves", r.name);
+    }
+    println!(
+        "[{load}] keys: the eye's {eye_keys:?}, x's {x_keys:?}; every wave to {worst_law:.1e} ft of the law; outside the waves ({outside} records; {inside} inside) the eye within {worst_eye:.2e} m"
+    );
+    assert!(worst_law < 1e-4, "{worst_law}");
+    assert!(worst_eye < 5e-5, "{worst_eye}");
 }

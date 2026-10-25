@@ -298,6 +298,12 @@ fn the_fights_parts_extract_whole_and_resume() {
         owners.iter().any(|o| o.ends_with("/Treasure_Chest.mdl")),
         "the chest"
     );
+    // AG.177's jumping goats add `Sheep_1` and `Sheep_3`'s, by
+    // `Goat_Jumping_Pit.ai`: without it the TV's goats have no clip lengths.
+    assert!(
+        owners.iter().any(|o| o.ends_with("/MountainGoat.mdl")),
+        "the jumping goats"
+    );
 
     // Every whitelisted script is in the script part and reads: the base's,
     // Eruptor's, the level's and (AG.162) each of the 66 walkers' own.
@@ -331,7 +337,8 @@ fn the_fights_parts_extract_whole_and_resume() {
         "  {held} whitelisted scripts, all in the script part ({} walkers' of them)",
         scripts::whitelisted_walker_scripts().len()
     );
-    assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 54);
+    // The level's 55 with AG.177's jumping goats.
+    assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 55);
     println!(
         "  the script part read back and parsed in {:.2} s",
         parse_started.elapsed().as_secs_f64()

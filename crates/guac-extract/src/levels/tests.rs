@@ -642,6 +642,24 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
         [CHEST],
         "a newly listed script's creature"
     );
+    // AG.177 lists the jumping goats' script: a creature running it is
+    // followed to its palette too (the goats' clip lengths on the TV).
+    let r = palettes(
+        parsed(&creature_level(Some(
+            "C:/tfb/Content/Levels/Level_213/Scripts/Goat_Jumping_Pit.ai",
+        ))),
+        LEVEL,
+        identity(),
+    )
+    .unwrap();
+    assert_eq!(
+        r.ir.palettes
+            .iter()
+            .map(|p| p.owner.as_str())
+            .collect::<Vec<_>>(),
+        [CHEST],
+        "the jumping goats' creature"
+    );
     // AG.162 lists the walkers' scripts: a creature running one (a portal
     // entry, a definition, by file name any case) is followed to its palette.
     for script in [

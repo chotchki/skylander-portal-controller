@@ -1291,6 +1291,18 @@ fn falling(b: &mut IgzBuilder, a: Location, fall: f32) {
     b.pointer(at(a, 0xE0), parameters);
 }
 
+/// `ActorParameters` on the placement at `a` with its movement numbers, in
+/// the file's order (ft and degrees per second): ground and air speed,
+/// acceleration, deceleration and turn rate, the gravity's top speed and
+/// acceleration, and the jump's three; time scale 1.
+pub(super) fn moving(b: &mut IgzBuilder, a: Location, numbers: &[f32; 13]) {
+    let parameters = b.object(0, "ActorParameters", 0x4C);
+    let movement: Vec<u8> = numbers.iter().flat_map(|v| v.to_be_bytes()).collect();
+    b.put_bytes(at(parameters, 0x0C), &movement);
+    b.put_bytes(at(parameters, 0x48), &1.0f32.to_be_bytes());
+    b.pointer(at(a, 0xE0), parameters);
+}
+
 /// A `tfbActorInfo` placement named `name` running `script` (an info from
 /// [`Writer::end`]), at the origin, `state` its activity state, with no
 /// activation range and no buffer: awake from the level's start wherever

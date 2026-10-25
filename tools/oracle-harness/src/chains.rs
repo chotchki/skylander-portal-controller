@@ -2408,6 +2408,7 @@ mod tests {
             mover: None,
             fight: None,
             mt: None,
+            places: None,
         }
     }
 
