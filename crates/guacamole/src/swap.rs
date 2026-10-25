@@ -3,7 +3,10 @@
 //! the portal mid-level takes his scripts off the run by the deactivate
 //! path ([`guacamole::scripts::join_deactivate`]), the level's scripts
 //! running on, and the next hero joins that run by AH.17's join, his
-//! minion the activator, ticking first.
+//! minion the activator, ticking first. The next is an entity of his own,
+//! as the original clones each minion afresh: his setup finds his
+//! description by who he is, so under the last one's handle he'd walk at
+//! the last one's numbers (openspec AH.191; the join refuses one).
 //!
 //! - What goes: what the original's portal manager takes off when a figure
 //!   leaves (its `Game - Activate/Deactivate Minion` with no minion, run as
