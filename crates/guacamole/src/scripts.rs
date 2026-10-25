@@ -388,6 +388,10 @@ pub struct ScriptWorld {
     pub(crate) view_asks: std::collections::HashSet<guac_script::OpId>,
     pub(crate) objs: Objects,
     pub(crate) sequences: Vec<Sequence>,
+    /// Each sequence a play started again (its clip's copy on its actor
+    /// handed back, openspec AH.184), by its index, in the order started:
+    /// a start the list of sequences doesn't show.
+    pub(crate) restarts: Vec<u32>,
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
@@ -510,14 +514,16 @@ pub fn clip_infos(palette: &guac_ir::palette::Palette) -> Vec<ClipInfo> {
 
 /// What the scripts wrote on a palette slot's clip (openspec AH.49), each
 /// `None` until written: the layered bit (`animationinfo.is layered`, which
-/// only a clip takes), whether it loops (`sequence.looping`) and its weight
-/// (`animationinfo.blend percent`). A sequence started from the clip starts
-/// with them.
+/// only a clip takes), whether it loops (`sequence.looping`), its weight
+/// (`animationinfo.blend percent`) and whether a play of it while it plays
+/// starts it again (`sequence.allow restart`, AH.184). A sequence started
+/// from the clip starts with them.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ClipState {
     pub layered: Option<bool>,
     pub looping: Option<bool>,
     pub blend: Option<f32>,
+    pub allow_restart: Option<bool>,
 }
 
 /// A placement off the whitelist a whitelisted script woke (design decision
@@ -562,6 +568,7 @@ impl ScriptWorld {
             view_asks: Default::default(),
             objs,
             sequences: Vec::new(),
+            restarts: Vec::new(),
             palettes: HashMap::new(),
             clip_info: HashMap::new(),
             clip_state: HashMap::new(),
@@ -1052,6 +1059,34 @@ impl ScriptWorld {
     /// The sequences started so far, in the order started.
     pub fn sequences(&self) -> &[Sequence] {
         &self.sequences
+    }
+
+    /// The sequences a play started again since the run began, by index
+    /// into [`ScriptWorld::sequences`], in order (openspec AH.184): a
+    /// clip played while its copy on the actor plays is that copy, so the
+    /// list of sequences doesn't grow.
+    pub fn restarts(&self) -> &[u32] {
+        &self.restarts
+    }
+
+    /// Where [`ScriptWorld::started_since`] counts from now: the sequences
+    /// and the restarts so far.
+    pub fn start_count(&self) -> (usize, usize) {
+        (self.sequences.len(), self.restarts.len())
+    }
+
+    /// The sequences started since `since` (a [`ScriptWorld::start_count`]),
+    /// by index, each once: those new since, then those a play started again
+    /// (openspec AH.184), in the order started again.
+    pub fn started_since(&self, since: (usize, usize)) -> Vec<usize> {
+        let from = since.0.min(self.sequences.len());
+        let mut out: Vec<usize> = (from..self.sequences.len()).collect();
+        for &i in &self.restarts[since.1.min(self.restarts.len())..] {
+            if !out.contains(&(i as usize)) {
+                out.push(i as usize);
+            }
+        }
+        out
     }
 
     /// The sequences, to set where a recorded state has them (a replay's

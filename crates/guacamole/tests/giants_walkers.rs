@@ -1625,8 +1625,10 @@ fn stand_in_of(
 /// stepped on the same frames from his join's rest; on every step at a
 /// speed held 30 steps, moving and not held at an edge, its four weights
 /// and the rate of each gait the picks weight are the picks' within 1e-4.
-/// Left out: Wrecking Ball (`023_ForceFieldGrub`), whose scripts start a
-/// weighted idle each step (AG.222).
+/// Wrecking Ball (`023_ForceFieldGrub`) among them: his main script plays
+/// his idle every step he isn't busy, which hands back his locomotion's own
+/// copy of it, refused while it plays (AG.222, AH.184), where the host made
+/// a new one at 100 each step and his picks drew his idle.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn every_walkers_stand_in_draws_what_his_scripts_draw() {
@@ -1638,7 +1640,7 @@ fn every_walkers_stand_in_draws_what_his_scripts_draw() {
     let mut loads: Vec<String> = vec!["009_Eruptor".to_owned()];
     loads.extend(l.walkers.iter().map(|w| w.load_file.clone()));
     let (mut held, mut worst_w, mut worst_r) = (0usize, 0.0f32, 0.0f32);
-    for load in loads.iter().filter(|x| x.as_str() != "023_ForceFieldGrub") {
+    for load in &loads {
         let mut w = joined_on_the_tv(&l, load, PLAY, 120, true, true);
         let (mut own, four) = stand_in_of(&w, &l, load);
         let mut speeds: Vec<f32> = Vec::new();
@@ -1695,12 +1697,171 @@ fn every_walkers_stand_in_draws_what_his_scripts_draw() {
         worst_w = worst_w.max(most_w);
         worst_r = worst_r.max(most_r);
     }
-    assert_eq!(held, loads.len() - 1);
+    assert_eq!(held, loads.len());
     println!(
         "{held} held: weights within {worst_w:.2e}, rates within {worst_r:.2e}; {:.1?} in all, load {:.2}",
         started.elapsed(),
         load1()
     );
+}
+
+/// His entries in `Macros_Animation.ai`'s `locomotions`, oldest first: each
+/// one's `switch locomotion state` and its `base locomotion states` set.
+fn locomotion_entries(w: &W) -> Vec<(Value, Value)> {
+    let Some(anim) = w
+        .world
+        .handles()
+        .iter()
+        .find(|(o, _)| {
+            w.world
+                .template(**o)
+                .and_then(|p| p.script.as_deref())
+                .is_some_and(|s| s.ends_with("Macros_Animation.ai"))
+        })
+        .and_then(|(_, h)| w.vm.placement_of(*h))
+    else {
+        return Vec::new();
+    };
+    let field = |v: Value, name: &str| w.vm.field(v, name).map(|f| w.vm.value(f));
+    let Some(entries) = w.vm.local(anim, "locomotions").and_then(|e| w.vm.set(e)) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .map(|e| w.vm.value(*e))
+        .filter(|e| field(*e, "character") == Some(Value::Entity(HERO)))
+        .map(|e| {
+            (
+                field(e, "switch locomotion state").unwrap_or(Value::Null),
+                field(e, "base locomotion states").unwrap_or(Value::Null),
+            )
+        })
+        .collect()
+}
+
+/// The live copies of each palette clip on him, by slot.
+fn live_copies(w: &W) -> BTreeMap<u32, usize> {
+    let mut live = BTreeMap::new();
+    for s in w
+        .world
+        .sequences()
+        .iter()
+        .filter(|s| s.actor == HERO && s.plays())
+    {
+        if let Some((_, slot)) = w.world.clip_of(s) {
+            *live.entry(slot).or_default() += 1;
+        }
+    }
+    live
+}
+
+/// AH.184 Verify: a locomotion initialized again leaves one copy of each
+/// clip. `Anim - Initialize Character Locomotions` runs again for a
+/// character who has one (Wrecking Ball's after a burp,
+/// `023_ForceFieldGrub_main.ai` #713; any minion's in deep water,
+/// `Minion.ai` #2556; Eruptor's at `$Action 3`, which no figure reaches until
+/// AK): a copy of the old one takes over as the old one fades out (the old
+/// one taken off by the locomotion's 2 s cleanup), stopping each state's
+/// clip on him and playing it again (`Macros_Animation.ai` #1155-#1156). Called here in his minion's name
+/// with his own states at his top speed, on a full stick, as the TV joins
+/// him: at every step after, each clip plays on him once (the stop of a clip
+/// stops his copy of it, a play of it hands it back), and once the switch is
+/// through his picks weight his clips as before it. Their rates are
+/// printed, not held: the new one's are its own (Tree Rex's run, which his
+/// old one played at 11.6 % beside his walk, it leaves at 100 % over the 60
+/// steps), the locomotion's rate writing starting over with its states.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn a_locomotion_initialized_again_leaves_one_copy_of_each_clip() {
+    use guacamole::picks::Picked;
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let mut held = Vec::new();
+    for load in ["009_Eruptor", "112_TitanLife", "023_ForceFieldGrub"] {
+        let mut w = joined_on_the_tv(&l, load, PLAY, 120, true, true);
+        let (_, four) = stand_in_of(&w, &l, load);
+        w.bench.pads[0] = Pad {
+            stick: guac_motion::scenarios::stick(1.0, 0.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        for _ in 0..90 {
+            w.step().unwrap();
+        }
+        let speed = w.hero().gait_speed;
+        let was = Picked::read(&w.world, HERO, four, speed).expect("his picks");
+        let before = locomotion_entries(&w);
+        assert_eq!(before.len(), 1, "{load}: one locomotion");
+        let states = before[0].1;
+        let minion = w.minion.expect("his minion");
+        let (ops, _) = w
+            .with_host(|vm, host| {
+                vm.call_for(
+                    minion,
+                    "Anim - Initialize Character Locomotions",
+                    &[
+                        ("character", Value::Entity(HERO)),
+                        ("locomotion states", states),
+                        ("has extra locomotions", Value::Int(1)),
+                        ("switch time", Value::Float(0.25)),
+                    ],
+                    &[],
+                    host,
+                )
+            })
+            .unwrap_or_else(|h| panic!("{load}: {h}"));
+        let after: Vec<Option<f32>> = locomotion_entries(&w)
+            .iter()
+            .map(|e| e.0.as_f32())
+            .collect();
+        // The most copies of one clip at once, and where.
+        let (mut most, mut at, mut clips) = (0usize, String::new(), 0usize);
+        for k in 0..60u32 {
+            w.step().unwrap();
+            let live = live_copies(&w);
+            for (slot, n) in &live {
+                if *n > most {
+                    (most, at) = (*n, format!("slot {slot} at step {k}"));
+                }
+            }
+            clips = clips.max(live.len());
+        }
+        let now = w.hero().gait_speed;
+        let p = Picked::read(&w.world, HERO, four, now).expect("his picks");
+        // The weights, and the rate of each gait weighted.
+        let (wa, wb) = (was.weights(), p.weights());
+        let dw = wa
+            .iter()
+            .zip(wb)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        let dr = [1, 2]
+            .iter()
+            .filter(|&&i| wa[i] > 1e-3 || wb[i] > 1e-3)
+            .map(|&i| (was.rates()[i - 1] - p.rates()[i - 1]).abs())
+            .fold(0.0f32, f32::max);
+        println!(
+            "{load}: initialized again ({ops} ops) at {speed:.4} ft/s, entries {} -> {after:?} -> {}; the most copies of one clip {most} ({at}), up to {clips} clips at once; {} sequences; his picks {:?} ({}) rates {:?} at {now:.4} ft/s, against {:?} rates {:?} before: weights within {dw:.2e}, the weighted gaits' rates within {dr:.2e}; load {:.2}",
+            before.len(),
+            locomotion_entries(&w).len(),
+            w.world.sequences().len(),
+            p.weights(),
+            p.top(),
+            p.rates(),
+            was.weights(),
+            was.rates(),
+            load1()
+        );
+        held.push((load, most, after.len(), (now - speed).abs(), dw));
+    }
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+    for (load, most, entries, dv, dw) in held {
+        assert_eq!(most, 1, "{load}: one copy a clip at every step after");
+        assert_eq!(entries, 2, "{load}: a second locomotion beside the old");
+        assert!(dv < 1e-3, "{load}: at his top still");
+        assert!(dw < 1e-4, "{load}: his weights as before");
+    }
 }
 
 /// AG.27 Verify (2): Eruptor, joined through the part with every walker

@@ -1030,8 +1030,10 @@ fn started(steps: &[Value]) -> Vec<u64> {
 /// by a posted pad, Eruptor's scripts join and his health reads off them
 /// (120 of 150) with his figure's experience and gold (0, a fresh one); the
 /// bottom button starts his throw's clip and spawns the ball, which falls
-/// onto the made-up floor and is taken off; held it throws once, the
-/// attack held reading in the input's; a right shoulder starts the second
+/// onto the made-up floor and is taken off; held once that throw's clip
+/// has played out it throws once, the attack held reading in the input's
+/// (a play of his throw's clip while it still plays is refused, openspec
+/// AH.184); a right shoulder starts the second
 /// attack's clip and awards a point, which his figure's words take and the
 /// TV and Alice's row show (AH.23); the top button does nothing.
 #[tokio::test(flavor = "current_thread")]
@@ -1124,6 +1126,17 @@ async fn a_press_throws_from_his_scripts() {
         above.abs() < 0.05,
         "the ball came down on the floor: {above} m over it"
     );
+
+    // His throw's clip played out first: a play of it while it still plays
+    // on him is refused (openspec AH.184).
+    scripts_until(&server.url, since, Duration::from_secs(5), |s| {
+        s.iter().any(|st| {
+            st["ended"]
+                .as_array()
+                .is_some_and(|e| e.contains(&json!(20)))
+        })
+    })
+    .await;
 
     // Held: one throw, the attack held as the input reads it.
     let since = scripts_tv(&server.url, u64::MAX).await.unwrap()["last"]

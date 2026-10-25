@@ -303,6 +303,7 @@ mod tests {
                 blend: 100.0,
                 kind,
                 layered,
+                allow_restart: false,
             });
         };
         sequence(&mut world, 0, 0, true, false); // his idle

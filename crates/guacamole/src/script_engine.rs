@@ -453,7 +453,10 @@ impl Objects {
 }
 
 /// A sequence a script started: a clip of an actor's palette (or a sound,
-/// which plays nothing here), its time and its rate.
+/// which plays nothing here), its time and its rate. A clip's is its copy
+/// on the actor: one per clip and actor while it plays, which a play of the
+/// clip again hands back and a stop of the clip stops (openspec AH.184,
+/// [`Sequence::refuses_restart`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sequence {
     /// The actor it plays on.
@@ -479,6 +482,10 @@ pub struct Sequence {
     /// Its clip's layered bit when it started: a script sets it on the clip,
     /// never on a sequence (openspec AH.49).
     pub layered: bool,
+    /// `sequence.allow restart`: whether a play of its clip while it still
+    /// plays starts it again (openspec AH.184), its clip's when it started
+    /// (no clip on the disc has it, no script sets it on one).
+    pub allow_restart: bool,
 }
 
 /// What a script reads of a sequence with this little left (seconds of
@@ -516,6 +523,26 @@ impl Sequence {
     /// Still playing a clip: not played out, not stopped, with a length.
     pub fn plays(&self) -> bool {
         !self.done && !self.stopped && self.length > 0.0
+    }
+
+    /// Whether a play of its clip on its actor is refused (openspec AH.184):
+    /// while it still has time left by the [`DONE_MARGIN`] rule, unless its
+    /// `allow restart` is set. The original's play hands back the actor's
+    /// copy of the clip (aj-vm's 0x68e2c, read as an aid), and its engine
+    /// won't start an animation already playing on the actor whose sequence
+    /// has more left than that margin and no restart flag (0x118d28,
+    /// through 0x36a160), so the play fails and its block is skipped; in a
+    /// pass's last two frames, or with the flag, it starts again.
+    pub fn refuses_restart(&self) -> bool {
+        self.plays() && !self.allow_restart && self.left() > 0.0
+    }
+
+    /// Started again from its start. What a script wrote on it (its rate,
+    /// weight, looping) it keeps, as the original's copy does.
+    pub fn restart(&mut self) {
+        self.time = 0.0;
+        self.done = false;
+        self.stopped = false;
     }
 
     /// What's left of it in its own time, seconds at 100 %, as a script
@@ -740,6 +767,7 @@ mod tests {
             blend: 100.0,
             kind: 0,
             layered: false,
+            allow_restart: false,
         };
         assert_eq!(s.percent_remaining(), 100.0);
         assert!((s.time_remaining() - 0.5 / 1.5).abs() < 1e-6);
@@ -792,6 +820,7 @@ mod tests {
             blend: 100.0,
             kind: 0,
             layered: false,
+            allow_restart: false,
         };
         // The frame a wait on its end sees it over, and what each frame
         // before reads.

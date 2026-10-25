@@ -2211,9 +2211,11 @@ pub const CAMERA: &[Registered] = &[
 /// the members a strict run of each modelled character over level 213 stopped
 /// on, as aj-vm's live table registers them. A Giant's footstep reads the
 /// actors his solid touches (`Minion - Titan Abilities`: past 5 ft/s, a
-/// destructible touching him is hurt); the rest are cosmetic here: a
-/// particle clone's draw order and whether a footstep sound may start again
-/// while it plays, nothing drawing particles or playing sounds yet.
+/// destructible touching him is hurt); a particle clone's draw order is
+/// cosmetic here, nothing drawing particles yet; whether a sequence may start
+/// again while it plays is the host's, which a play of a clip already playing
+/// on its actor reads (openspec AH.184; the walkers set it only on sounds,
+/// which play nothing yet).
 pub const WALKERS: &[Registered] = &[
     m(
         "collisioninfo",
@@ -2240,7 +2242,7 @@ pub const WALKERS: &[Registered] = &[
         "false|true",
         0.0,
         1.0,
-        Cell,
+        Host,
     ),
 ];
 
@@ -2393,8 +2395,9 @@ mod tests {
 
     /// AG.160's rows by aj-vm's live table: what a Giant's footstep reads
     /// a set the host keeps, read whole; a particle's draw order and a
-    /// sound's restart enums by their labels, held to their ranges, cells
-    /// reading their first label until written.
+    /// sequence's restart enums by their labels, held to their ranges, the
+    /// draw order a cell reading its first label until written, the restart
+    /// the host's (AH.184).
     #[test]
     fn the_walkers_members_register_by_their_class_and_labels() {
         let objects = find(WALKERS, "collisioninfo", "object collisions").unwrap();
@@ -2406,7 +2409,7 @@ mod tests {
         assert_eq!(convert(&front.spec(), Value::Int(7)), Some(Value::Int(2)));
         assert_eq!(front.spec().default, Value::Int(0));
         let restart = find(WALKERS, "sequence", "allow restart").unwrap();
-        assert_eq!((restart.kind(), restart.keeper), (Kind::Int, Keeper::Cell));
+        assert_eq!((restart.kind(), restart.keeper), (Kind::Int, Keeper::Host));
         assert_eq!(label(&restart, "true"), Some(Value::Int(1)));
         assert_eq!(
             convert(&restart.spec(), Value::Float(1.0)),

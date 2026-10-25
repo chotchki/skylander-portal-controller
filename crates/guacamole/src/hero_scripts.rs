@@ -566,8 +566,9 @@ pub(crate) fn actor_of(props: &[(Handle, BodyId)], body: BodyId) -> Option<Handl
 /// The steps the run has made since it was installed, for the log.
 #[derive(Resource, Debug, Default)]
 pub(crate) struct ScriptSteps {
-    /// Started sequences and clones already logged.
-    sequences: usize,
+    /// Started sequences (a [`ScriptWorld::start_count`]) and clones
+    /// already logged.
+    started: (usize, usize),
     clones: HashSet<Handle>,
     gone: HashSet<Handle>,
     /// The clones made while a clip his scripts started once he'd joined
@@ -1222,8 +1223,10 @@ fn record(
     entry: &mut ScriptStep,
 ) {
     let sequences = world.sequences();
-    let from = steps.sequences.min(sequences.len());
-    for (i, s) in sequences.iter().enumerate().skip(from) {
+    // A clip played again while its copy plays starts that copy again
+    // (openspec AH.184), which the list of sequences doesn't show.
+    for i in world.started_since(steps.started) {
+        let s = &sequences[i];
         if Some(s.actor) != hero {
             continue;
         }
@@ -1233,10 +1236,11 @@ fn record(
                 length: s.length,
                 rate: s.rate,
             });
+            steps.playing.retain(|&(j, ..)| j != i);
             steps.playing.push((i, slot, settled));
         }
     }
-    steps.sequences = sequences.len();
+    steps.started = world.start_count();
     let named = |h: Handle| -> Spawned {
         let a = world.actor(h);
         Spawned {
