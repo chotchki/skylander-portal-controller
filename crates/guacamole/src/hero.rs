@@ -323,6 +323,13 @@ pub(crate) fn spawn_camera(commands: &mut Commands, camera: FollowCamera) -> Ent
     commands.spawn(following(camera)).id()
 }
 
+/// The way he faces, degrees in [0, 360): what `/api/_test/tv` reports as
+/// `hero.heading` and each step of `/api/_test/tv/gaits` as `facing`
+/// (openspec AG.188).
+pub(crate) fn heading(hero: &Hero) -> f32 {
+    hero.facing.rem_euclid(360.0)
+}
+
 /// His drawn transform: the pivot, his facing turned before his lean.
 fn placed(hero: &Hero) -> Transform {
     Transform::from_translation(hero.pivot).with_rotation(hero.rotation())

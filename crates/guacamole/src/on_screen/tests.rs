@@ -182,3 +182,95 @@ fn an_ask_in_a_macro_is_its_callers() {
             .is_some_and(|d| p.defs[d as usize].display == "Synthetic - Never Called")
     }));
 }
+
+/// AH.150: an ask is read by its script's file name in any case, its
+/// position and the definition holding it, all three; the program's asks
+/// read as gating play are the ones the host answers off the camera's view,
+/// a cosmetic one and one not read left out.
+#[test]
+fn an_ask_is_read_by_its_file_position_and_definition() {
+    let p = program();
+    let asks = every_ask(&p);
+    let own = *asks.iter().find(|a| a.def.is_none()).unwrap();
+    let in_macro = *asks
+        .iter()
+        .find(|a| {
+            a.def
+                .is_some_and(|d| p.defs[d as usize].display == "Synthetic - Off Screen")
+        })
+        .unwrap();
+    let read = |file, position, def, verdict| Read {
+        file,
+        position,
+        def,
+        verdict,
+        gates: "",
+    };
+    let reads = [
+        read("asks.AI", own.position, None, Verdict::Gates),
+        read(
+            "Calls.ai",
+            in_macro.position,
+            Some("synthetic - off screen"),
+            Verdict::Cosmetic,
+        ),
+    ];
+    assert_eq!(read_of(&p, &own, &reads), Some(&reads[0]));
+    assert_eq!(read_of(&p, &in_macro, &reads), Some(&reads[1]));
+    for wrong in [
+        read("Calls.ai", in_macro.position, None, Verdict::Cosmetic),
+        read(
+            "Calls.ai",
+            in_macro.position + 1,
+            Some("Synthetic - Off Screen"),
+            Verdict::Cosmetic,
+        ),
+        read(
+            "Stub.ai",
+            in_macro.position,
+            Some("Synthetic - Off Screen"),
+            Verdict::Cosmetic,
+        ),
+    ] {
+        assert_eq!(read_of(&p, &in_macro, &[wrong]), None, "{wrong:?}");
+    }
+    // A gating read in the cosmetic one's file, naming no ask: the file is
+    // scanned, its cosmetic ask still left out.
+    let with_gating_beside = [
+        reads[0],
+        reads[1],
+        read("Calls.ai", 0, None, Verdict::Gates),
+    ];
+    assert_eq!(answered(&p, &with_gating_beside), HashSet::from([own.op]));
+    let both_gate = [
+        reads[0],
+        Read {
+            verdict: Verdict::Gates,
+            ..reads[1]
+        },
+    ];
+    assert_eq!(
+        answered(&p, &both_gate),
+        HashSet::from([own.op, in_macro.op])
+    );
+}
+
+/// The disc's reads name each ask once.
+#[test]
+fn the_discs_reads_name_each_ask_once() {
+    let mut seen = HashSet::new();
+    for r in READ {
+        assert!(
+            seen.insert((r.file.to_ascii_lowercase(), r.position)),
+            "{r:?}"
+        );
+        assert!(!r.gates.is_empty(), "{r:?}");
+    }
+    assert_eq!(READ.len(), 10);
+    assert_eq!(
+        READ.iter()
+            .filter(|r| r.verdict == Verdict::Cosmetic)
+            .count(),
+        1
+    );
+}

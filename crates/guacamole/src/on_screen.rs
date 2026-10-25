@@ -12,6 +12,14 @@
 //! macro named as a value (an update macro put in a set), a parameter's
 //! binding, a file variable's members (AH.12's rule, by the program's own
 //! links). Spawned templates' scripts are roots of their own.
+//!
+//! Each ask a walker's scripts reach past the TV's own run is read for what
+//! its answer gates (openspec AH.150, [`READ`]): one that gates play (a
+//! target, a removal, a chase) is answered off the gameplay camera's view
+//! while the camera's scripts drive it ([`crate::viewport::Viewport::shows`],
+//! its hypotheses there), one that gates nothing in play (a shake) keeps
+//! the every-point answer, and either way it holds no one. An ask not read
+//! yet still holds the walker on his card.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -223,25 +231,169 @@ pub fn reached(program: &Program, script: ScriptId) -> (Vec<Ask>, BTreeSet<DefId
 pub fn every_ask(program: &Program) -> Vec<Ask> {
     let mut asks = BTreeSet::new();
     for s in 0..program.scripts.len() as ScriptId {
-        let own = blocks(program, s);
-        let len = program.scripts[s as usize].ops.len() as u32;
-        for p in 0..len {
-            let def = own
-                .iter()
-                .filter(|(a, e, _)| (*a..=*e).contains(&p))
-                .max_by_key(|(a, _, _)| *a)
-                .map(|(_, _, d)| *d);
-            scan(
-                program,
-                s,
-                std::iter::once(p),
-                def,
-                &mut asks,
-                &mut Vec::new(),
-            );
-        }
+        asks_in(program, s, &mut asks);
     }
     asks.into_iter().collect()
+}
+
+/// Every on-screen ask `script`'s list holds, wherever it sits.
+fn asks_in(program: &Program, s: ScriptId, asks: &mut BTreeSet<Ask>) {
+    let own = blocks(program, s);
+    let len = program.scripts[s as usize].ops.len() as u32;
+    for p in 0..len {
+        let def = own
+            .iter()
+            .filter(|(a, e, _)| (*a..=*e).contains(&p))
+            .max_by_key(|(a, _, _)| *a)
+            .map(|(_, _, d)| *d);
+        scan(program, s, std::iter::once(p), def, asks, &mut Vec::new());
+    }
+}
+
+/// What an ask's answer gates, read off its script's own ops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Nothing in play: the host's every-point answer stands.
+    Cosmetic,
+    /// Play: answered off the gameplay camera's view while its scripts
+    /// drive it.
+    Gates,
+}
+
+/// One ask read (openspec AH.150): its script by file name, its position
+/// in that list, the definition whose block holds it (`None` for the
+/// script's own ops), the verdict and what the answer gates, in our words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Read {
+    pub file: &'static str,
+    pub position: u32,
+    pub def: Option<&'static str>,
+    pub verdict: Verdict,
+    pub gates: &'static str,
+}
+
+/// The asks the fourteen walkers' scripts reach past the TV's own run on
+/// the 1.00 disc (openspec AH.150; AH.107's reader, `giants_walkers`' probe
+/// of the asks), each read off its own ops. AH.107's five, which the TV's
+/// own run reaches, keep the every-point answer and aren't listed. The host
+/// knows an ask by its op, so two places holding one op (`101_BugmanGiant.ai`
+/// #2059 and #2103) must read alike.
+pub const READ: &[Read] = &[
+    Read {
+        file: "Minion.ai",
+        position: 2920,
+        def: Some("World - Shake Objects Now"),
+        verdict: Verdict::Cosmetic,
+        gates: "which shake objects (the breakables, `destructibles.ai`'s) bounce or twist at a \
+                giant's footstep or slam, each with its shake sound and a draw or two; nothing reads \
+                the shake's flags back",
+    },
+    Read {
+        file: "002_SkyTurtle.ai",
+        position: 1421,
+        def: Some("002 - Manage Tornados"),
+        verdict: Verdict::Gates,
+        gates: "a tornado's chase target: the foes within 60 ft of it on screen",
+    },
+    Read {
+        file: "002_SkyTurtle.ai",
+        position: 1432,
+        def: Some("002 - Manage Tornados"),
+        verdict: Verdict::Gates,
+        gates: "a tornado's chase target with no foe found: foes and breakables within 60 ft of it \
+                on screen",
+    },
+    Read {
+        file: "021_DrillBot.ai",
+        position: 706,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the upgrade-4 gun's target: let go once off screen, the gun turning back and his \
+                third attack's shots aiming anew",
+    },
+    Read {
+        file: "025_BamBazooker.ai",
+        position: 3243,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the mortar's target: the autoaim's only while on screen, else the ground 35 ft \
+                ahead",
+    },
+    Read {
+        file: "029_ShadowMaid.ai",
+        position: 1704,
+        def: Some("029 - Manage Orbiting Skulls"),
+        verdict: Verdict::Gates,
+        gates: "a launched skull leaving the screen: shut down 0.15 s later, the first one off \
+                starting the starfall",
+    },
+    Read {
+        file: "029_ShadowMaid.ai",
+        position: 2496,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "a launched orbiting skull leaving the screen: taken off 0.15 s later, the first \
+                one off starting the starfall",
+    },
+    Read {
+        file: "029_ShadowMaid.ai",
+        position: 2569,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the starfall's targets: foes and breakables within 80 ft on screen",
+    },
+    Read {
+        file: "101_BugmanGiant.ai",
+        position: 2059,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "his first attack's lock-on: the autoaim's target taken, and him turned to it, \
+                only while it's on screen",
+    },
+    Read {
+        file: "101_BugmanGiant.ai",
+        position: 2103,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "his first attack's lock-on from the throwing hand: the autoaim's target taken \
+                only while it's on screen",
+    },
+];
+
+/// The read of `ask` in `reads`: its script's file name (any case), its
+/// position and the definition holding it all as read.
+pub fn read_of<'r>(program: &Program, ask: &Ask, reads: &'r [Read]) -> Option<&'r Read> {
+    let file = crate::scripts::file_name(&program.scripts.get(ask.script as usize)?.name);
+    let def = ask.def.map(|d| program.defs[d as usize].display.as_str());
+    reads.iter().find(|r| {
+        r.position == ask.position
+            && r.file.eq_ignore_ascii_case(file)
+            && match (r.def, def) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                _ => false,
+            }
+    })
+}
+
+/// The ops of every ask in `program` that `reads` reads as gating play:
+/// what the host answers off the gameplay camera's view
+/// ([`crate::scripts::ScriptWorld::answer_from_view`]).
+pub fn answered(program: &Program, reads: &[Read]) -> HashSet<OpId> {
+    let mut asks = BTreeSet::new();
+    for (s, script) in program.scripts.iter().enumerate() {
+        let file = crate::scripts::file_name(&script.name);
+        if reads
+            .iter()
+            .any(|r| r.verdict == Verdict::Gates && r.file.eq_ignore_ascii_case(file))
+        {
+            asks_in(program, s as ScriptId, &mut asks);
+        }
+    }
+    asks.iter()
+        .filter(|a| read_of(program, a, reads).is_some_and(|r| r.verdict == Verdict::Gates))
+        .map(|a| a.op)
+        .collect()
 }
 
 #[cfg(test)]

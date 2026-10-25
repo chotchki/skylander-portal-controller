@@ -266,6 +266,11 @@ pub struct Access {
     /// AG.28: the camera's look-from and look-at points name one follower
     /// clone and sit 55 ft apart). `None` otherwise.
     pub via: Option<u32>,
+    /// The op whose read or write this is (its id in the program), so a
+    /// host can answer one asker apart from another (openspec AH.150: the
+    /// on-screen asks it answers from the gameplay camera). `None` outside
+    /// an op's run.
+    pub op: Option<crate::program::OpId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

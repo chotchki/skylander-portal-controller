@@ -109,7 +109,8 @@ mod tests {
     use guac_formats::script::builder::{
         ATTACK_BALL, ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HELPER, ATTACK_KEPT_HEALTH,
         SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW, WALKER_DEF,
-        WALKER_LOAD, WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WalkerFault,
+        WALKER_LOAD, WALKER_MINION, WALKER_SCALE, WALKER_SPEED, WALKER_TURN, WALKER_VIEW_BACK,
+        WalkerFault,
     };
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
@@ -118,9 +119,11 @@ mod tests {
     use guac_motion::stick::Stick;
     use guac_script::{Generator, Halt, Handle, Mode, Obj, PlacementId, Value, Vm, Whitelist};
     use guacamole::level_scripts;
+    use guacamole::on_screen::{self, Read, Verdict};
     use guacamole::script_engine::{Engine, Pad};
     use guacamole::scripts::{
-        self, Deactivated, Files, ScriptWorld, WorldHost, headless_handles, headless_objects,
+        self, Deactivated, Files, ScriptWorld, WalkerScripts, WorldHost, headless_handles,
+        headless_objects,
     };
 
     use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_swap, write_walker};
@@ -216,6 +219,39 @@ mod tests {
             let mut run = Self::over(linked, config, unit);
             run.player_loop = Some(guacamole::player_loop::PlayerLoop::read(run.vm.program()));
             run
+        }
+
+        /// [`Run::walker`] with his new asks of the gameplay viewport read
+        /// as `verdict` (openspec AH.150; none read with `None`): the
+        /// walkers counted by those reads and the run listed and answered
+        /// as the TV's would be by them. His count comes back with it.
+        fn walker_read(fault: WalkerFault, verdict: Option<Verdict>) -> (Self, WalkerScripts) {
+            let tmp = tempfile::tempdir().unwrap();
+            write_walker(tmp.path(), fault);
+            let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+            let reads: Vec<Read> = verdict.map_or_else(Vec::new, |v| his_asks_read(&linked, v));
+            let units: Vec<(String, u16)> = linked
+                .walkers
+                .iter()
+                .map(|w| (w.load_file.clone(), w.unit))
+                .collect();
+            let walkers = scripts::walker_scripts_reading(
+                &linked.program,
+                &linked.placements,
+                &units,
+                &reads,
+            );
+            let him = walkers
+                .iter()
+                .find(|w| w.load_file == WALKER_LOAD)
+                .unwrap()
+                .clone();
+            let config = scripts::with_walkers(scripts::smash_config(Mode::Strict), &walkers);
+            let answered = on_screen::answered(&linked.program, &reads);
+            let mut run = Self::over(linked, config, him.unit);
+            run.world.answer_from_view(answered);
+            run.player_loop = Some(guacamole::player_loop::PlayerLoop::read(run.vm.program()));
+            (run, him)
         }
 
         /// The run over `linked` listed by `config`, the hero's file `unit`.
@@ -592,6 +628,139 @@ mod tests {
             scripts::health(&fresh.vm, minion),
             Some(ATTACK_HEALTH),
             "a level change: full"
+        );
+    }
+
+    /// The synthetic walker's asks, each read as `verdict` by his minion's
+    /// file and its position there (openspec AH.150's reads, ours).
+    fn his_asks_read(linked: &level_scripts::Linked, verdict: Verdict) -> Vec<Read> {
+        on_screen::every_ask(&linked.program)
+            .into_iter()
+            .filter(|a| {
+                linked.program.scripts[a.script as usize]
+                    .name
+                    .ends_with(WALKER_MINION)
+            })
+            .map(|a| Read {
+                file: WALKER_MINION,
+                position: a.position,
+                def: None,
+                verdict,
+                gates: "the synthetic walker's",
+            })
+            .collect()
+    }
+
+    /// His walk along the ground, ft/s.
+    fn walk_ft(run: &Run) -> f32 {
+        let v = run.bench.hero.walk.velocity;
+        v.x.hypot(v.z)
+    }
+
+    /// AH.150: a walker whose new ask of the gameplay viewport is read as
+    /// gating nothing in play joins and walks on his scripts, his asks
+    /// counted cosmetic and none holding him; not read, it holds him, his
+    /// minion's script off the listing (the TV keeps his card, `play`'s
+    /// `a_walker_asking_the_viewport_keeps_his_card_at_the_portal`).
+    #[test]
+    fn a_walker_whose_ask_is_read_cosmetic_joins_and_walks() {
+        let (run, him) = Run::walker_read(WalkerFault::Asks, None);
+        assert_eq!((him.asks, him.cosmetic, him.answered), (1, 0, 0));
+        let script = |run: &Run| {
+            run.vm
+                .program()
+                .scripts
+                .iter()
+                .find(|s| s.name.ends_with(WALKER_MINION))
+                .unwrap()
+                .name
+                .clone()
+        };
+        let listed = |run: &Run| run.vm.config().whitelist.lists("", &script(run));
+        assert!(!listed(&run), "not read: his minion off the listing");
+        let (mut run, him) = Run::walker_read(WalkerFault::Asks, Some(Verdict::Cosmetic));
+        assert_eq!((him.asks, him.cosmetic, him.answered), (0, 1, 0));
+        assert!(listed(&run));
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let minion = run.join();
+        for _ in 0..12 {
+            run.step([false; 4]);
+        }
+        assert!(run.vm.set_up(minion), "his setup ran through");
+        assert!(
+            (walk_ft(&run) - WALKER_SPEED).abs() < 1e-3,
+            "his walk {} ft/s, his setup wrote {WALKER_SPEED}",
+            walk_ft(&run)
+        );
+    }
+
+    /// AH.150: a walker whose ask gates his walk, read as gating play, is
+    /// answered off the view the camera's scripts left (his own STARTUP's,
+    /// [`WALKER_VIEW_BACK`] ft behind his start looking along +z): ahead
+    /// of the eye he walks at his setup's speed, behind it he stands, back
+    /// in front he walks again. Read as cosmetic, the ask keeps AH.20's
+    /// every-point answer and he walks behind the eye too.
+    #[test]
+    fn a_walkers_gating_ask_is_answered_off_the_cameras_view() {
+        let (mut run, him) = Run::walker_read(WalkerFault::GatedAsk, Some(Verdict::Gates));
+        assert_eq!((him.asks, him.cosmetic, him.answered), (0, 0, 1));
+        run.step([false; 4]);
+        run.step([false; 4]);
+        let start = run.bench.hero.pivot;
+        let minion = run.join();
+        run.step([false; 4]);
+        assert!(run.vm.set_up(minion));
+        let view = *run.world.viewport();
+        assert!(view.scripted(), "his STARTUP placed the camera");
+        let back = WALKER_VIEW_BACK * guac_motion::tuning::FOOT;
+        assert!(
+            (view.eye - (start - bevy::math::Vec3::Z * back)).length() < 1e-4,
+            "the eye {} ft behind his start: {:?} from {start:?}",
+            WALKER_VIEW_BACK,
+            view.eye
+        );
+        for _ in 0..6 {
+            run.step([false; 4]);
+        }
+        assert!(view.shows(run.bench.hero.pivot));
+        assert!(
+            (walk_ft(&run) - WALKER_SPEED).abs() < 1e-3,
+            "on screen: {}",
+            walk_ft(&run)
+        );
+        let behind = view.eye - bevy::math::Vec3::Z * 3.0;
+        run.bench.hero.pivot = behind;
+        for _ in 0..3 {
+            run.step([false; 4]);
+        }
+        assert!(!view.shows(behind));
+        assert_eq!(walk_ft(&run), 0.0, "off screen he stands");
+        assert!((run.bench.hero.pivot - behind).length() < 1e-4);
+        run.bench.hero.pivot = start;
+        for _ in 0..3 {
+            run.step([false; 4]);
+        }
+        assert!(
+            (walk_ft(&run) - WALKER_SPEED).abs() < 1e-3,
+            "back on: {}",
+            walk_ft(&run)
+        );
+
+        let (mut run, him) = Run::walker_read(WalkerFault::GatedAsk, Some(Verdict::Cosmetic));
+        assert_eq!((him.asks, him.cosmetic, him.answered), (0, 1, 0));
+        run.step([false; 4]);
+        run.step([false; 4]);
+        run.join();
+        run.step([false; 4]);
+        run.bench.hero.pivot = behind;
+        for _ in 0..3 {
+            run.step([false; 4]);
+        }
+        assert!(
+            (walk_ft(&run) - WALKER_SPEED).abs() < 1e-3,
+            "every point on screen: {}",
+            walk_ft(&run)
         );
     }
 

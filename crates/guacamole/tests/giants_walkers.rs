@@ -40,6 +40,7 @@ use guac_motion::stick::Stick;
 use guac_script::{Generator, Halt, Handle, Mode, Obj, PlacementId, Program, Value, Vm};
 use guacamole::figure::{self, Layout, Tag, Values};
 use guacamole::level_scripts::{self, lengths};
+use guacamole::on_screen;
 use guacamole::player_loop::PlayerLoop;
 use guacamole::script_engine::Pad;
 use guacamole::scripts::{
@@ -357,8 +358,9 @@ impl W {
     fn new(l: &Level, load: &str, o: Opts) -> W {
         let unit = l.unit_of(load).unwrap_or_else(|| panic!("{load}: no unit"));
         let walker = l.walkers.iter().find(|w| w.load_file == load);
-        // As the TV lists them: every walker that asks nothing new of the
-        // viewport, and this one (asks let through, so his scripts run).
+        // As the TV lists them: every walker whose new asks of the viewport
+        // are all read (AH.150), and this one (any unread let through, so
+        // his scripts run).
         let mut config = scripts::with_walkers(scripts::smash_config(o.mode), &l.walkers);
         add_cells(&mut config, o);
         if let Some(w) = walker {
@@ -371,6 +373,9 @@ impl W {
         let vm = scripts::init_chain(l.program.clone(), &l.files, &handles, &l.order, config);
         let mut world = ScriptWorld::new(&l.files, &handles, objects);
         world.set_inert(vm.inert());
+        // As the TV's: the asks read as gating play off the camera's view
+        // (openspec AH.150).
+        world.answer_from_view(on_screen::answered(&l.program, on_screen::READ));
         // His palette's lengths on his template, as the TV's join sets them.
         let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
         // As the TV's join: on the minion's template his definition names, a
@@ -1996,11 +2001,11 @@ fn a_walker_taken_off_and_put_back_runs_his_file_once() {
     assert!(eruptor.iter().all(|e| !e.4));
 }
 
-/// AH.169 (the review of AH.165): the walkers the TV keeps at the portal for
-/// what their scripts ask of the viewport (AH.107; AH.150 answers them),
-/// Tree Rex among them, the AG.27 merge check's example of a shutdown that
-/// stops, each joined in play mode as the TV will join them once they're
-/// answered, taken off and put back as
+/// AH.169 (the review of AH.165): the walkers the TV kept at the portal for
+/// what their scripts ask of the viewport until AH.150 read the asks
+/// ([`ASKING`]), Tree Rex among them, the AG.27 merge check's example of a
+/// shutdown that stops, each joined in play mode as the TV joins them,
+/// taken off and put back as
 /// [`a_walker_taken_off_and_put_back_runs_his_file_once`]'s (2) takes the
 /// others: which deactivations stop on the dump, and the portal manager
 /// ticking on and his file running once after every one, whatever stopped.
@@ -2018,7 +2023,7 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
     let asking: Vec<&WalkerScripts> = l
         .walkers
         .iter()
-        .filter(|w| w.asks > 0 && w.minion.is_some())
+        .filter(|w| ASKING.contains(&w.load_file.as_str()) && w.minion.is_some())
         .collect();
     let mut table = Vec::new();
     for w in &asking {
@@ -2026,7 +2031,7 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         println!(
             "{} (asks {}): set up {}, {} stops before ({:?}); running {}, off {} placements and {} clones; deactivation {}; pm stopped {}, ticks after {:.2}; old silent {}, once {}, set up again {}, short {:?}",
             s.load,
-            w.asks,
+            w.asks + w.cosmetic + w.answered,
             s.set_up,
             s.stops.len(),
             s.stops.first(),
@@ -2064,7 +2069,7 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         started.elapsed(),
         load1()
     );
-    assert!(!table.is_empty(), "the TV keeps none for asks");
+    assert_eq!(table.len(), ASKING.len(), "the fourteen");
     if rex.short.is_none() {
         assert!(rex.set_up && rex.set_up_again, "{rex:?}");
         assert!(!rex.pm_stopped && rex.old_silent && rex.once, "{rex:?}");
@@ -2081,4 +2086,318 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         );
         assert!(s.old_silent && s.once, "{}: his file twice", s.load);
     }
+}
+
+/// The fourteen walkers whose scripts ask the gameplay viewport past the
+/// TV's own run (AH.107's reader, AG.27's review): the ten AG.27's verify
+/// held and the review's four, each minion the one his definition names.
+const ASKING: [&str; 14] = [
+    "002_SkyTurtle",
+    "021_DrillBot",
+    "025_BamBazooker",
+    "029_ShadowMaid",
+    "101_BugmanGiant",
+    "102_Titan_Earth",
+    "102_Titan_Earth_Alt",
+    "104_OilBlazer",
+    "107_Whale",
+    "110_RobotGiant",
+    "110_RobotGiant_Legendary",
+    "112_TitanLife",
+    "112_TitanLife_Alt",
+    "114_Mummy",
+];
+
+/// How each of [`ASKING`] comes out on the TV's terms: joined in play mode
+/// as the TV joins him, listed with every walker as the TV lists them, 600
+/// ticks as AG.27's audit (120 standing, 240 on a full stick, 240 let go).
+#[derive(Debug, Default)]
+struct OnTheTv {
+    load: String,
+    set_up: bool,
+    /// His minion's stop, if it stopped.
+    stopped: Option<String>,
+    /// Every stop play mode logged, each step's in turn.
+    stops: Vec<String>,
+    /// His walk's top speed on the full stick, ft/s, and how far it took
+    /// him, metres.
+    top: f32,
+    walked: f32,
+    /// His description's ground max speed as his scripts wrote it.
+    ground_max: Option<f32>,
+}
+
+impl OnTheTv {
+    /// The TV's call on him (`hero_scripts`' fall-back, AG.27): a join that
+    /// never ran through keeps his card, a stop after it walks him on what
+    /// his scripts set, none walks him on his scripts.
+    fn verdict(&self) -> String {
+        match (self.set_up, &self.stopped) {
+            (false, _) => format!(
+                "keeps his card: his join never ran through ({})",
+                self.stops.first().map_or("no stop", String::as_str)
+            ),
+            (true, Some(why)) => format!(
+                "joins; his script stops in play ({why}) and he walks on what it set ({:?} ft/s)",
+                self.ground_max
+            ),
+            (true, None) => format!(
+                "joins and walks on his scripts: top {:.3} ft/s (his {:?}), {:.2} m",
+                self.top, self.ground_max, self.walked
+            ),
+        }
+    }
+}
+
+fn on_the_tv(l: &Level, load: &str, o: Opts) -> OnTheTv {
+    let mut out = OnTheTv {
+        load: load.to_owned(),
+        ..OnTheTv::default()
+    };
+    let mut w = match W::joined(l, load, o, 0) {
+        Ok(w) => w,
+        Err(b) => {
+            let (w, when, h) = *b;
+            out.stops = w.stops.clone();
+            out.stops.push(format!("{when}: {}", named(&h.to_string())));
+            return out;
+        }
+    };
+    let mut at = w.hero().pivot;
+    for k in 0..600u32 {
+        w.bench.pads[0] = Pad {
+            stick: if (120..360).contains(&k) {
+                guac_motion::scenarios::stick(1.0, 90.0)
+            } else {
+                Stick::CENTRED
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        if k == 120 {
+            at = w.hero().pivot;
+        }
+        if let Err(h) = w.step() {
+            out.stops
+                .push(format!("tick {k}: {}", named(&h.to_string())));
+            break;
+        }
+        if (120..360).contains(&k) {
+            out.top = out.top.max(w.horizontal_walk());
+        }
+        if k == 359 {
+            let p = w.hero().pivot;
+            out.walked = Vec3::new(p.x - at.x, 0.0, p.z - at.z).length();
+        }
+    }
+    let minion = w.minion.expect("joined");
+    out.set_up = w.vm.set_up(minion);
+    out.stopped = w.vm.stopped(minion).map(|h| named(&h.to_string()));
+    out.stops.extend(w.stops.iter().cloned());
+    out.ground_max = w.parameters().map(|p| p[0]);
+    out
+}
+
+/// AH.150's headless check: each of the fourteen's asks of the gameplay
+/// viewport read for what it gates (`on_screen::READ`, none left unread),
+/// every walker listed as the TV lists them with no ask let through, and
+/// each of the fourteen joined in play mode as the TV joins him: who walks
+/// on his scripts, who falls back on what they set, who keeps his card and
+/// why, the why never the ask. Then Drill Sergeant and Tree Rex at their
+/// scripts' top speed: Drill Sergeant strict, Tree Rex strict on his two
+/// value cells (`TREE_REX_CELLS`; his setup stops on AH.49's
+/// `animationinfo.blend percent` without them, AG.160).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() {
+    let started = Instant::now();
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let p = &*l.program;
+    let base = scripts::smash_config(Mode::Play).whitelist;
+    let mut known = std::collections::BTreeSet::new();
+    for (id, s) in p.scripts.iter().enumerate() {
+        if !l.walkers.iter().any(|w| w.unit == s.unit) && base.lists("", &s.name) {
+            known.extend(on_screen::reached(p, id as u32).0);
+        }
+    }
+    // Each walker's new asks, by their reads.
+    let unread: Vec<&str> = l
+        .walkers
+        .iter()
+        .filter(|w| w.asks > 0)
+        .map(|w| w.load_file.as_str())
+        .collect();
+    assert!(unread.is_empty(), "asks no one has read: {unread:?}");
+    let listing = scripts::with_walkers(scripts::smash_config(Mode::Play), &l.walkers).whitelist;
+    let expected: [(&str, usize, usize); 14] = [
+        ("002_SkyTurtle", 0, 2),
+        ("021_DrillBot", 0, 1),
+        ("025_BamBazooker", 0, 1),
+        ("029_ShadowMaid", 0, 3),
+        ("101_BugmanGiant", 1, 2),
+        ("102_Titan_Earth", 1, 0),
+        ("102_Titan_Earth_Alt", 1, 0),
+        ("104_OilBlazer", 1, 0),
+        ("107_Whale", 1, 0),
+        ("110_RobotGiant", 1, 0),
+        ("110_RobotGiant_Legendary", 1, 0),
+        ("112_TitanLife", 1, 0),
+        ("112_TitanLife_Alt", 1, 0),
+        ("114_Mummy", 1, 0),
+    ];
+    for (load, cosmetic, answered) in expected {
+        let w = l
+            .walkers
+            .iter()
+            .find(|w| w.load_file == load)
+            .unwrap_or_else(|| panic!("{load}: a walker"));
+        let name = l
+            .roster
+            .figures
+            .iter()
+            .find(|f| f.load_file == load)
+            .and_then(|f| f.name.texts.first())
+            .map_or("?", String::as_str);
+        println!(
+            "{load} ({name}): asks {} unread, {} cosmetic, {} answered off the view; minion {:?}",
+            w.asks, w.cosmetic, w.answered, w.minion
+        );
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, s) in p
+            .scripts
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.unit == w.unit)
+        {
+            let file = s.name.rsplit(['/', '\\']).next().unwrap();
+            if !w
+                .scripts
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(&format!("/{file}")))
+            {
+                continue;
+            }
+            for a in on_screen::reached(p, id as u32).0 {
+                if known.contains(&a) || !seen.insert(a) {
+                    continue;
+                }
+                let r = on_screen::read_of(p, &a, on_screen::READ).expect("read");
+                println!(
+                    "  {} #{} in {:?}, op {}: {:?}, {}",
+                    r.file, a.position, r.def, a.op, r.verdict, r.gates
+                );
+            }
+        }
+        assert_eq!((w.cosmetic, w.answered), (cosmetic, answered), "{load}");
+        let minion = p
+            .scripts
+            .iter()
+            .find(|s| {
+                s.unit == w.unit
+                    && w.minion.as_deref().is_some_and(|m| {
+                        s.name
+                            .to_ascii_lowercase()
+                            .ends_with(&m.to_ascii_lowercase())
+                    })
+            })
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| panic!("{load}: his minion's script"));
+        assert!(listing.lists("", &minion), "{load}: on the TV's listing");
+    }
+    // The TV's run answers the gating ones off the camera's view, the
+    // shake's not.
+    let mut tv = bevy::ecs::world::World::new();
+    scripts::install_with(
+        &mut tv,
+        l.program.clone(),
+        &l.files,
+        &l.order,
+        scripts::with_walkers(scripts::smash_config(Mode::Play), &l.walkers),
+    );
+    let every = on_screen::every_ask(p);
+    let (mut gating, mut cosmetic) = (0, 0);
+    for a in &every {
+        let Some(r) = on_screen::read_of(p, a, on_screen::READ) else {
+            continue;
+        };
+        let answered = tv.resource::<ScriptWorld>().answers_from_view(a.op);
+        match r.verdict {
+            on_screen::Verdict::Gates => {
+                assert!(
+                    answered,
+                    "{r:?} in unit {}",
+                    p.scripts[a.script as usize].unit
+                );
+                gating += 1;
+            }
+            on_screen::Verdict::Cosmetic => {
+                assert!(!answered, "{r:?}");
+                cosmetic += 1;
+            }
+        }
+    }
+    println!(
+        "the TV's run: {gating} gating asks answered off the view, {cosmetic} cosmetic on the stand-in's answer; reads {:.1?}, load {:.2}",
+        started.elapsed(),
+        load1()
+    );
+    assert_eq!((gating, cosmetic), (9, 1));
+    // As the TV joins them.
+    let play = Opts {
+        mode: Mode::Play,
+        discover: false,
+        cells: &[],
+    };
+    let mut table = Vec::new();
+    for load in ASKING {
+        let t = Instant::now();
+        let r = on_the_tv(&l, load, play);
+        println!(
+            "{load}: {} ({:.1?}, load {:.2}); stops {:?}",
+            r.verdict(),
+            t.elapsed(),
+            load1(),
+            r.stops
+        );
+        table.push(r);
+    }
+    for r in &table {
+        let why = r.verdict();
+        assert!(!why.contains("viewport"), "{}: {why}", r.load);
+        if r.set_up && r.stopped.is_none() {
+            let top = r.ground_max.expect("his movement");
+            assert!((r.top - top).abs() < 1e-3, "{}: {why}", r.load);
+        }
+    }
+    let drill = table.iter().find(|r| r.load == "021_DrillBot").unwrap();
+    assert!(
+        drill.set_up && drill.stopped.is_none(),
+        "{}",
+        drill.verdict()
+    );
+    // Strict: Drill Sergeant on the registry, Tree Rex on his two cells.
+    for (load, o) in [("021_DrillBot", STRICT), (TREE_REX, TREE_REX_CELLS)] {
+        let t = Instant::now();
+        let a = audit(&l, load, o);
+        println!(
+            "{load} strict{}: {} [{}], top {:.4} ft/s, walked {:.2} m, params {:?} ({:.1?}, load {:.2})",
+            if o.cells.is_empty() {
+                ""
+            } else {
+                " on his two cells"
+            },
+            a.outcome(),
+            a.stopped
+                .as_ref()
+                .map_or("RAN".to_owned(), |s| format!("{s:?}")),
+            a.top,
+            a.walked,
+            a.params,
+            t.elapsed(),
+            load1()
+        );
+        assert_eq!(a.outcome(), "walks at his top speed", "{load}: {a:?}");
+    }
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
 }

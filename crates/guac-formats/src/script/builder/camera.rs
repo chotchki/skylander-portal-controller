@@ -721,7 +721,7 @@ impl System {
 
 /// `set <path>.positionmeasurement.distance.@<other> = 0`: the point at
 /// `other`.
-fn put_at(w: &mut Writer<'_>, path: &[El<'_>], other: &[El<'_>]) {
+pub(super) fn put_at(w: &mut Writer<'_>, path: &[El<'_>], other: &[El<'_>]) {
     let mut p = path.to_vec();
     p.push(El::Member("positionmeasurement", "distance"));
     let lhs = w.value(&p);
@@ -735,7 +735,7 @@ fn put_at(w: &mut Writer<'_>, path: &[El<'_>], other: &[El<'_>]) {
 }
 
 /// `displace <np> <combine> <len> at <head>, <pitch>`, each operand read.
-fn displace_by(
+pub(super) fn displace_by(
     w: &mut Writer<'_>,
     np: &[El<'_>],
     combine: u32,

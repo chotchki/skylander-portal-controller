@@ -740,7 +740,7 @@ impl Play {
                 _ => None,
             },
             position: hero.map(|h| h.pivot.to_array()),
-            heading: hero.map(|h| h.facing.rem_euclid(360.0)),
+            heading: hero.map(crate::hero::heading),
             camera,
             gait,
             // In the level with no run: off, as any other fall-back is.

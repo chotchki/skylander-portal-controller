@@ -244,6 +244,7 @@ fn probe_the_route() {
                             member: MemberId::named("positionmeasurement", "distance"),
                             other_point: Some(Value::Entity(HERO)),
                             via: None,
+                            op: None,
                         },
                     )
                 });

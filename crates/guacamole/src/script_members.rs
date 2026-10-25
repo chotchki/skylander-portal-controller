@@ -1335,10 +1335,20 @@ impl ScriptWorld {
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 let b = self.handle(o).ok_or(HostFault::Nothing)?;
                 if b == self.viewport {
-                    // Against the gameplay camera: on screen, yes for every
-                    // point (AH.20; stand-in ledger: `on-screen`): the one
-                    // reader the fight reaches is the orbs' idle bounce,
-                    // which only shows on screen.
+                    // An ask read as gating play, off the view the camera's
+                    // scripts leave while they drive it (openspec AH.150;
+                    // its hypotheses `Viewport::shows`').
+                    if at.op.is_some_and(|op| self.view_asks.contains(&op)) && self.view.scripted()
+                    {
+                        let p = self
+                            .point(Value::Entity(a), engine)
+                            .ok_or(HostFault::Nothing)?;
+                        return Ok(Value::Int(i32::from(self.view.shows(p))));
+                    }
+                    // Every other: on screen, yes for every point (AH.20;
+                    // stand-in ledger: `on-screen`): the fight's one reader
+                    // is the orbs' idle bounce, which only shows on screen,
+                    // and AH.150's cosmetic asks gate nothing in play.
                     return Ok(Value::Int(1));
                 }
                 if self.objs.get(b) == Some(Object::RayCast) {
@@ -2669,6 +2679,7 @@ mod tests {
             member: MemberId::named(ns, name),
             other_point: other,
             via: None,
+            op: None,
         }
     }
 
@@ -3095,6 +3106,56 @@ mod tests {
         }
     }
 
+    /// AH.150: an ask read as gating play is answered off the view the
+    /// camera's scripts leave while they drive it, on screen ahead of the
+    /// eye and off screen behind it or past its side; any other op's ask,
+    /// and the same op's before the scripts hold the view or once it's
+    /// handed back, reads on screen for every point (AH.20).
+    #[test]
+    fn a_gating_ask_is_answered_off_the_scripts_view() {
+        const ASK: guac_script::OpId = 77;
+        let mut e = bench();
+        let mut w = world();
+        w.answer_from_view([ASK]);
+        let ask = |w: &mut ScriptWorld, e: &mut Bench, op: Option<guac_script::OpId>| {
+            let at = Access {
+                op,
+                ..at(
+                    "positionmeasurement",
+                    "collision",
+                    Some(Value::Entity(BALL)),
+                    Some(Value::Entity(w.viewport)),
+                )
+            };
+            w.get_member(&at, Member::Collision, e).unwrap()
+        };
+        let place = |w: &mut ScriptWorld, p: Vec3| {
+            w.actors.insert(BALL, ball(p, 0.0));
+        };
+        // Before the scripts place the view: every point.
+        place(&mut w, Vec3::new(0.0, 0.0, -50.0));
+        assert_eq!(ask(&mut w, &mut e, Some(ASK)), Value::Int(1), "engine's");
+        // The scripts' view: from 10 m back looking along +z, level.
+        w.view.take();
+        w.view.eye = Vec3::new(0.0, 1.0, -10.0);
+        w.view.angles = Angles {
+            facing: 0.0,
+            tilt: 0.0,
+            roll: 0.0,
+        };
+        w.view.far_clip = 500.0;
+        place(&mut w, Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(ask(&mut w, &mut e, Some(ASK)), Value::Int(1), "ahead");
+        place(&mut w, Vec3::new(0.0, 1.0, -20.0));
+        assert_eq!(ask(&mut w, &mut e, Some(ASK)), Value::Int(0), "behind");
+        place(&mut w, Vec3::new(30.0, 1.0, 0.0));
+        assert_eq!(ask(&mut w, &mut e, Some(ASK)), Value::Int(0), "aside");
+        assert_eq!(ask(&mut w, &mut e, Some(ASK + 1)), Value::Int(1), "unread");
+        assert_eq!(ask(&mut w, &mut e, None), Value::Int(1), "no op");
+        w.hand_back_view();
+        assert_eq!(ask(&mut w, &mut e, Some(ASK)), Value::Int(1), "handed back");
+    }
+
     /// Two actors the seam doesn't hold (a thrown ball and a breakable the
     /// loot system lists, AH.20) touch by their solids where they stand;
     /// one with no solid isn't modelled.
@@ -3494,6 +3555,7 @@ mod fight_tests {
                 member: MemberId::named(ns, name),
                 other_point: Some(Value::Entity(other)),
                 via: None,
+                op: None,
             },
             e,
         )
@@ -3731,6 +3793,7 @@ mod fight_tests {
                     member: MemberId::named("collisioninfo", "contacts with me"),
                     other_point: None,
                     via: None,
+                    op: None,
                 },
                 &mut e,
             )
@@ -3773,6 +3836,7 @@ mod fight_tests {
                     member: MemberId::named("positionmeasurement", "separation"),
                     other_point: Some(ground),
                     via: None,
+                    op: None,
                 },
                 e,
             )
@@ -3826,6 +3890,7 @@ mod fight_tests {
             member: MemberId::named("orientationmeasurement", name),
             other_point: None,
             via: None,
+            op: None,
         };
         let mut facings = Vec::new();
         for speed in [4.5f32, 4.5, 4.5, -5.31, 0.0] {
@@ -3907,6 +3972,7 @@ mod fight_tests {
             member: MemberId::named("orientationmeasurement", "relative facing"),
             other_point: None,
             via: None,
+            op: None,
         };
         for (asked, up) in [
             (257.4f32, true),
@@ -4047,6 +4113,7 @@ mod fight_tests {
                     member: MemberId::named("contactinfo", "type"),
                     other_point: None,
                     via: None,
+                    op: None,
                 },
                 e,
             )
@@ -4121,6 +4188,7 @@ mod fight_tests {
                     member: MemberId::named("actorinfo", name),
                     other_point: None,
                     via: None,
+                    op: None,
                 },
                 e,
             )
@@ -4166,6 +4234,7 @@ mod fight_tests {
                     member: MemberId::named("collisioninfo", "contacts with me"),
                     other_point: None,
                     via: None,
+                    op: None,
                 },
                 &mut e,
             )
@@ -4748,6 +4817,7 @@ mod light_tests {
             member: MemberId::named(ns, name),
             other_point: other,
             via: None,
+            op: None,
         }
     }
 

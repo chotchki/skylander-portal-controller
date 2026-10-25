@@ -145,10 +145,11 @@ impl ScriptSource {
     }
 
     /// Whether `load_file` walks on his own scripts (AG.27): why not when
-    /// the part holds none of his or his scripts ask what the TV can't
-    /// answer yet. A fighter (Eruptor) always does, and a character the part
-    /// holds no word on isn't a walker of this part's (`Ok(None)`: he walks
-    /// only on measured numbers, if any are).
+    /// the part holds none of his or his scripts ask the gameplay viewport
+    /// something no one has read yet (AH.150's reads). A fighter (Eruptor)
+    /// always does, and a character the part holds no word on isn't a
+    /// walker of this part's (`Ok(None)`: he walks only on measured
+    /// numbers, if any are).
     pub(crate) fn walks(&self, load_file: &str) -> Result<Option<Origin>, String> {
         if self.fighter(load_file).is_some() {
             return Ok(Some(Origin::Measured));
@@ -158,7 +159,7 @@ impl ScriptSource {
                 (_, None) => Err("his definition names no minion his file holds".to_owned()),
                 (0, Some(_)) => Ok(Some(Origin::Scripts)),
                 (n, Some(_)) => Err(format!(
-                    "his scripts ask {n} points against the gameplay viewport the TV answers for every point"
+                    "his scripts ask {n} points against the gameplay viewport not read for what they gate, which the TV would answer on screen for every point"
                 )),
             };
         }

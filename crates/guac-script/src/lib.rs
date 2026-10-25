@@ -314,6 +314,10 @@
 //!   reading: the orbs' delayed spawn remembers where an orb comes out
 //!   through its `orb` reference before the orb exists, then moves the
 //!   spawn point there (AH.20).
+//! - Every member the host answers comes with the op that reads or writes
+//!   it ([`Access::op`]), so the host can answer one asker apart from
+//!   another (openspec AH.150: a point against the gameplay camera, on
+//!   screen for every point but the asks it reads off the camera).
 //!
 //! # Values and arithmetic
 //!
