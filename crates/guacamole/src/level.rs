@@ -2262,6 +2262,40 @@ mod tests {
         }
     }
 
+    /// Sends `source` to the loader and runs one update. The read runs on a
+    /// task, so the update may find it finished and step on to `uploading`
+    /// (or `failed`); `task_done` makes that so: the load begun by its own
+    /// system, the task spun on until it is finished, then the update (no
+    /// sleeps), and false leaves the update to race the task as a frame does.
+    /// Either way the load is the new source's by the time this returns.
+    fn send_source(app: &mut App, source: &LevelSource, task_done: bool) {
+        use bevy::ecs::system::RunSystemOnce;
+        let (tx, feed) = level_channel();
+        tx.send(source.clone()).unwrap();
+        app.insert_resource(feed);
+        if task_done {
+            app.world_mut().run_system_once(receive_level).unwrap();
+            let level = app.world().resource::<Level>();
+            let Stage::Reading(task) = &level.stage else {
+                panic!("the load didn't begin reading: {}", state(app));
+            };
+            while !task.is_finished() {
+                std::thread::yield_now();
+            }
+        }
+        app.update();
+        let level = app.world().resource::<Level>();
+        assert!(level.source.as_ref() == Some(source), "the new load begun");
+        assert!(
+            matches!(
+                level.stage,
+                Stage::Reading(_) | Stage::Uploading(_) | Stage::Failed
+            ),
+            "a load begun, whatever stage its read has reached: {}",
+            state(app)
+        );
+    }
+
     fn report(app: &App) -> LevelReport {
         app.world().resource::<Level>().report().clone()
     }
@@ -2402,17 +2436,19 @@ mod tests {
     /// parts alone (the first's never turn up).
     #[test]
     fn a_new_source_waits_on_its_own_parts_alone() {
+        for done in [false, true] {
+            a_new_source_waits_on_its_own_parts(done);
+        }
+    }
+
+    fn a_new_source_waits_on_its_own_parts(done: bool) {
         let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let first = write_level(a.path(), &lights());
         let second = write_level(b.path(), &lights());
         let mut app = level_app(a.path(), first, true);
         until(&mut app, &["waiting"], |_| {});
         assert_eq!(report(&app).not_resident, 11);
-        let (tx, feed) = level_channel();
-        tx.send(second).unwrap();
-        app.insert_resource(feed);
-        app.update();
-        assert_eq!(state(&app), "reading");
+        send_source(&mut app, &second, done);
         until(&mut app, &["waiting"], |_| {});
         assert_eq!(report(&app).not_resident, 11, "the first's parts let go");
         let watch = app.world().resource::<LevelWatch>().clone();
@@ -2909,6 +2945,12 @@ mod tests {
     /// never stands on a level that's gone.
     #[test]
     fn a_new_load_takes_the_old_levels_solids_with_it() {
+        for done in [false, true] {
+            a_new_load_takes_the_old_solids(done);
+        }
+    }
+
+    fn a_new_load_takes_the_old_solids(done: bool) {
         let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let first = write_level(a.path(), &lights());
         let second = write_level(b.path(), &lights());
@@ -2920,11 +2962,7 @@ mod tests {
         };
         assert_eq!(bodies(&mut app), 1, "write_walk's one mesh");
         assert_eq!(report(&app).triangles, 4);
-        let (tx, feed) = level_channel();
-        tx.send(second).unwrap();
-        app.insert_resource(feed);
-        app.update();
-        assert_eq!(state(&app), "reading");
+        send_source(&mut app, &second, done);
         assert_eq!(bodies(&mut app), 0, "the old level's gone");
         until(&mut app, &["ready"], |_| {});
         assert_eq!(bodies(&mut app), 1);
@@ -3291,6 +3329,12 @@ mod tests {
     /// whose parts name another dump is refused.
     #[test]
     fn a_level_without_its_world_lights_fails_and_says_why() {
+        for done in [false, true] {
+            a_level_without_its_world_lights_fails(done);
+        }
+    }
+
+    fn a_level_without_its_world_lights_fails(done: bool) {
         let tmp = tempfile::tempdir().unwrap();
         let mut dark = lights();
         dark.directional.retain(|l| l.name != "_worldLight2");
@@ -3302,11 +3346,7 @@ mod tests {
         // Another dump's level is refused by its parts' identity.
         let mut other = source;
         other.identity.manifest_hash = Sha256([9; 32]);
-        let (tx, feed) = level_channel();
-        tx.send(other).unwrap();
-        app.insert_resource(feed);
-        app.update();
-        assert_eq!(state(&app), "reading");
+        send_source(&mut app, &other, done);
         until(&mut app, &["failed"], |_| {});
         assert_eq!(
             app.world().resource::<Level>().report().reason.as_deref(),
