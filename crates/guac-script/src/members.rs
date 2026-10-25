@@ -1835,8 +1835,12 @@ pub const HERO: &[Registered] = &[
         0.0,
         Cell,
     ),
-    // A clip's flags, per clip, as the locomotion script writes them; the
-    // file's own aren't read (each reads 0, a base clip, until written).
+    // A clip's or a sequence's animation info (openspec AH.49), the host's:
+    // `type` (read only) from the palette's partial and additive flags,
+    // `is layered` from those or the layered bit a script sets on a clip
+    // (a sequence started from it takes it), `blend percent` the weight the
+    // engine blends a sequence by (100 until written), as the locomotion
+    // script writes them every tick.
     m(
         "animationinfo",
         "is layered",
@@ -1844,7 +1848,7 @@ pub const HERO: &[Registered] = &[
         "false|true",
         0.0,
         1.0,
-        Cell,
+        Host,
     ),
     m(
         "animationinfo",
@@ -1853,6 +1857,26 @@ pub const HERO: &[Registered] = &[
         "Base|Partial|Additive",
         0.0,
         2.0,
+        Host,
+    ),
+    m(
+        "animationinfo",
+        "blend percent",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    // The sounds playing (the landing's check for its stinger, AH.49):
+    // cosmetic, nothing plays a sound, so the set reads none.
+    m(
+        "soundinfo",
+        "active sound effects",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
         Cell,
     ),
 ];
@@ -2183,6 +2207,43 @@ pub const CAMERA: &[Registered] = &[
     ),
 ];
 
+/// What the walkers' scripts reach past every table above (openspec AG.160):
+/// the members a strict run of each modelled character over level 213 stopped
+/// on, as aj-vm's live table registers them. A Giant's footstep reads the
+/// actors his solid touches (`Minion - Titan Abilities`: past 5 ft/s, a
+/// destructible touching him is hurt); the rest are cosmetic here: a
+/// particle clone's draw order and whether a footstep sound may start again
+/// while it plays, nothing drawing particles or playing sounds yet.
+pub const WALKERS: &[Registered] = &[
+    m(
+        "collisioninfo",
+        "object collisions",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "placement",
+        "bring to front",
+        "EnumMeasurement",
+        "nope|expensive|cheap",
+        0.0,
+        2.0,
+        Cell,
+    ),
+    m(
+        "sequence",
+        "allow restart",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Cell,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2309,7 +2370,13 @@ mod tests {
             .chain(FIGURE)
             .filter(|r| find(CAMERA, r.namespace, r.name).is_none())
             .collect();
-        for r in earlier.into_iter().chain(CAMERA) {
+        // The walkers' are none of the earlier tables' (AG.160).
+        for r in WALKERS {
+            for t in [INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA] {
+                assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
+            }
+        }
+        for r in earlier.into_iter().chain(CAMERA).chain(WALKERS) {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -2321,6 +2388,45 @@ mod tests {
             if let Some(b) = Builtin::of(id) {
                 assert_eq!(r.keeper, Keeper::Vm, "{}", b.name());
             }
+        }
+    }
+
+    /// AG.160's rows by aj-vm's live table: what a Giant's footstep reads
+    /// a set the host keeps, read whole; a particle's draw order and a
+    /// sound's restart enums by their labels, held to their ranges, cells
+    /// reading their first label until written.
+    #[test]
+    fn the_walkers_members_register_by_their_class_and_labels() {
+        let objects = find(WALKERS, "collisioninfo", "object collisions").unwrap();
+        assert_eq!((objects.kind(), objects.keeper), (Kind::Set, Keeper::Host));
+        let front = find(WALKERS, "placement", "bring to front").unwrap();
+        assert_eq!((front.kind(), front.keeper), (Kind::Int, Keeper::Cell));
+        assert_eq!(label(&front, "cheap"), Some(Value::Int(2)));
+        assert_eq!(label(&front, "nope"), Some(Value::Int(0)));
+        assert_eq!(convert(&front.spec(), Value::Int(7)), Some(Value::Int(2)));
+        assert_eq!(front.spec().default, Value::Int(0));
+        let restart = find(WALKERS, "sequence", "allow restart").unwrap();
+        assert_eq!((restart.kind(), restart.keeper), (Kind::Int, Keeper::Cell));
+        assert_eq!(label(&restart, "true"), Some(Value::Int(1)));
+        assert_eq!(
+            convert(&restart.spec(), Value::Float(1.0)),
+            Some(Value::Int(1))
+        );
+        let mut members = Members::new();
+        register(&mut members, WALKERS);
+        for r in WALKERS {
+            let (spec, place) = members.get(MemberId::named(r.namespace, r.name)).unwrap();
+            assert_eq!(
+                place,
+                if r.keeper == Keeper::Cell {
+                    Place::ValueCell
+                } else {
+                    Place::Host
+                },
+                "{}",
+                r.path()
+            );
+            assert_eq!((spec.min, spec.max), (r.min, r.max), "{}", r.path());
         }
     }
 
@@ -2507,10 +2613,39 @@ mod tests {
         let contacts = find(HERO, "collisioninfo", "environment contacts").unwrap();
         assert_eq!(contacts.kind(), Kind::Set);
         assert_eq!(contacts.keeper, Keeper::Host);
-        // A clip's flags read 0, a base clip, until written.
+        // A clip's animation info is the host's (AH.49): its flags by
+        // their labels, a weight in percent held to 0-100; the sounds
+        // playing a cell that reads none.
         let layered = find(HERO, "animationinfo", "is layered").unwrap();
-        assert_eq!(layered.spec().default, Value::Int(0));
-        assert_eq!(layered.keeper, Keeper::Cell);
+        assert_eq!((layered.kind(), layered.keeper), (Kind::Int, Keeper::Host));
+        assert_eq!(label(&layered, "true"), Some(Value::Int(1)));
+        let kind = find(HERO, "animationinfo", "type").unwrap();
+        assert_eq!(kind.keeper, Keeper::Host);
+        assert_eq!(label(&kind, "Partial"), Some(Value::Int(1)));
+        assert_eq!(label(&kind, "Additive"), Some(Value::Int(2)));
+        let blend = find(HERO, "animationinfo", "blend percent").unwrap();
+        assert_eq!(
+            (blend.class, blend.units, blend.keeper),
+            ("FloatMeasurement", "percent", Keeper::Host)
+        );
+        assert_eq!(
+            convert(&blend.spec(), Value::Float(130.0)),
+            Some(Value::Float(100.0))
+        );
+        assert_eq!(
+            convert(&blend.spec(), Value::Float(-3.0)),
+            Some(Value::Float(0.0))
+        );
+        assert_eq!(
+            convert(&blend.spec(), Value::Int(55)),
+            Some(Value::Float(55.0))
+        );
+        let sounds = find(HERO, "soundinfo", "active sound effects").unwrap();
+        assert_eq!(
+            (sounds.kind(), sounds.keeper),
+            (Kind::Reference, Keeper::Cell)
+        );
+        assert_eq!(sounds.spec().default, Value::Null);
     }
 
     /// A slider's own members, the VM's: named as the registry spells them,

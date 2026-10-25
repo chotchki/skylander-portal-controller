@@ -15,7 +15,7 @@ use crate::program::{
     OpId, Operand, OperandId, Param, Program, ScriptId, Sym, Tag,
 };
 use crate::slide::{between, eased};
-use crate::value::{Value, arith_in, compare, convert, random_literal};
+use crate::value::{ArithFault, Value, arith_in, compare, convert, random_literal};
 use crate::whitelist::{Listed, Whitelist};
 
 /// A placement as the host knows it (an entity's bits).
@@ -3728,6 +3728,9 @@ impl Vm {
                 };
                 self.write(base.spot(), part.set(w, v), host)
             }
+            // An object named by namespace and name holds nothing to write
+            // into (crate docs, Variables, structures and sets).
+            Spot::Const(Value::Named(..)) => Err(Fault::Nothing),
             Spot::Const(_) => unsupported("a write to a constant"),
             Spot::Member {
                 receiver,
@@ -3892,8 +3895,13 @@ impl Vm {
                 };
                 let y = self.rhs(program, *b, host, depth + 1)?;
                 match arith_in(self.config.precision, *op, x, y) {
-                    Some(v) => Ok(v),
-                    None => unsupported(format!("arithmetic {op} on {x:?} and {y:?}")),
+                    Ok(v) => Ok(v),
+                    // The original's evaluator fails a division by 0: the
+                    // write drops, the check skips.
+                    Err(ArithFault::ByZero) => Err(Fault::Nothing),
+                    Err(ArithFault::Unsupported) => {
+                        unsupported(format!("arithmetic {op} on {x:?} and {y:?}"))
+                    }
                 }
             }
             Some(Operand::Path { elems, literal, .. }) => {

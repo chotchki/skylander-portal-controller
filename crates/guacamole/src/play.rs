@@ -586,6 +586,29 @@ pub(crate) struct GaitReport {
 }
 
 impl GaitReport {
+    /// What his gaits show: his scripts' picks while they pick his clips
+    /// (openspec AH.49), else the stand-in's.
+    pub(crate) fn of_gaits(g: &HeroGaits) -> Self {
+        let Some(p) = &g.picked else {
+            return Self {
+                step: g.steps,
+                ..Self::of(&g.locomotion)
+            };
+        };
+        Self {
+            clip: p.top().to_owned(),
+            speed_ft: p.speed,
+            speed: p.speed * guac_motion::tuning::FOOT,
+            run_share: p.run_share(),
+            weights: p.weights(),
+            rates: p.rates(),
+            air: p.air().to_owned(),
+            moving: p.moving(),
+            held: false,
+            step: g.steps,
+        }
+    }
+
     pub(crate) fn of(l: &Locomotion) -> Self {
         Self {
             clip: l.top().name().to_owned(),
@@ -719,9 +742,7 @@ impl Play {
         let c = self.candidate.as_ref()?;
         let body = self.on_stage().and_then(|h| bodies.get(h.hero).ok());
         let hero = body.map(|(b, ..)| &b.hero);
-        let gait = body
-            .and_then(|(_, g, _)| g)
-            .map(|g| GaitReport::of(&g.locomotion));
+        let gait = body.and_then(|(_, g, _)| g).map(GaitReport::of_gaits);
         let run = body.and_then(|(_, _, r)| r);
         let numbers = match (run.map(|r| &r.join), runtime) {
             (Some(Join::Joined(minion)), Some(rt)) => hero_scripts::hero_numbers(&rt.vm, *minion),
@@ -1694,7 +1715,15 @@ fn pose_hero(
         _ => Vec::new(),
     };
     let pose = match gaits.get(inside.hero).ok() {
-        Some(g) => gait_pose(&inside.model, &inside.clips, g, step, still, &over),
+        Some(g) => gait_pose(
+            &inside.model,
+            &inside.clips,
+            g,
+            inside.palette.as_deref(),
+            step,
+            still,
+            &over,
+        ),
         None => guacamole::character::mesh::pose(&inside.model, seconds),
     };
     let carried = inside
@@ -1723,17 +1752,32 @@ fn pose_hero(
 }
 
 /// His joints `alpha` of the way from his locomotion's last step to its
-/// next, a step `step` seconds long, each clip where [`drawn_clips`] puts
-/// it.
+/// next, a step `step` seconds long: the clips his scripts' locomotion
+/// weights on him out of `palette` (openspec AH.49), else the stand-in's,
+/// each where [`drawn_clips`] puts it; his scripts' others laid over.
 fn gait_pose(
     model: &Model,
     clips: &HeroClips,
     gaits: &HeroGaits,
+    palette: Option<&Palette>,
     (alpha, step): (f32, f64),
     held: bool,
     over: &[(&Clip, f64)],
 ) -> Vec<Transform> {
-    let playing = gait_clips(model, clips, drawn_clips(gaits, (alpha, step), held));
+    let playing = match (&gaits.picked, palette) {
+        (Some(p), Some(palette)) => {
+            let mut playing = p.posed(&gaits.picked_before, palette, (alpha, step));
+            // Under reduced motion his idle holds its start, as the
+            // stand-in's does.
+            if held && let Some(idle) = p.four.0[0].and_then(|s| palette.clip(s as u16)) {
+                for c in playing.iter_mut().filter(|c| std::ptr::eq(c.0, idle)) {
+                    c.1 = 0.0;
+                }
+            }
+            playing
+        }
+        _ => gait_clips(model, clips, drawn_clips(gaits, (alpha, step), held)),
+    };
     guacamole::character::mesh::blended_over(model, &playing, over)
 }
 
@@ -1793,12 +1837,20 @@ pub(crate) fn script_clips<'p>(
 /// [`locomotion::Clip::ALL`]'s order: its time this step less what's left
 /// of the step at its rate (from its restart, where it restarted), none
 /// before 0, and its weight eased from the step before's; the idle at its
-/// start when `held`.
+/// start when `held`. His scripts' picks' four while they pick (openspec
+/// AH.49), their weights each one's share of all they weight.
 pub(crate) fn drawn_clips(
     gaits: &HeroGaits,
     (alpha, step): (f32, f64),
     held: bool,
 ) -> [(f64, f32); 4] {
+    if let Some(p) = &gaits.picked {
+        let mut four = p.drawn_four(&gaits.picked_before, (alpha, step));
+        if held {
+            four[0].0 = 0.0;
+        }
+        return four;
+    }
     let now = gaits.locomotion.weights();
     let back = f64::from(1.0 - alpha) * step;
     std::array::from_fn(|i| {
@@ -1828,6 +1880,61 @@ mod tests {
     use crate::test_support::play::*;
     use crate::test_support::test_pad;
     use crate::test_support::turntable::placed;
+
+    /// AH.49: while his scripts pick his clips, his gait report, its log and
+    /// the drawn log read their picks: the heaviest of the four, his walk's
+    /// speed, the run's share of the walk and run as written, the idle at
+    /// its own weight and the gaits the rest by theirs, the rates in
+    /// hundredths; drawn, eased from the step before's weights. The stand-in's numbers (standing in his
+    /// idle) never show.
+    #[test]
+    fn his_gaits_read_his_scripts_picks_while_they_pick() {
+        use guacamole::picks::{Four, Picked, Weighted};
+        let w = |slot, weight, rate| Weighted {
+            slot,
+            time: 0.5,
+            rate,
+            weight,
+        };
+        let loops = Loops {
+            idle: 4.0 / 3.0,
+            walk: Some(1.0667),
+            run: Some(0.6667),
+            fall: Some(0.8),
+        };
+        let mut g = HeroGaits::new(Locomotion::new(
+            guac_motion::locomotion::Gaits::ERUPTOR,
+            loops,
+        ));
+        g.picked = Some(Picked {
+            clips: vec![w(0, 40.0, 100.0), w(1, 60.0, 124.0), w(3, 40.0, 117.0)],
+            four: Four([Some(0), Some(1), Some(3), Some(57)]),
+            speed: 14.0,
+        });
+        g.picked_before = vec![(0, 100.0), (1, 0.0), (3, 0.0)];
+        g.steps = 7;
+        let r = GaitReport::of_gaits(&g);
+        assert_eq!(
+            (r.clip.as_str(), r.air.as_str(), r.step),
+            ("idle", "ground", 7)
+        );
+        assert!((r.speed_ft - 14.0).abs() < 1e-6 && r.moving);
+        assert!((r.run_share - 0.4).abs() < 1e-6);
+        for (got, want) in r.weights.iter().zip([0.4, 0.36, 0.24, 0.0]) {
+            assert!((got - want).abs() < 1e-6, "{:?}", r.weights);
+        }
+        assert_eq!(r.rates, [1.24, 1.17]);
+        // Halfway through the step: idle 70, walk 30, run 20: the idle its
+        // own 0.7, the gaits the rest by their weights.
+        let drawn = drawn_clips(&g, (0.5, 1.0 / 60.0), false);
+        for (got, want) in drawn.iter().map(|d| d.1).zip([0.7, 0.18, 0.12, 0.0]) {
+            assert!((got - want).abs() < 1e-6, "{drawn:?}");
+        }
+        // Without picks, the stand-in's: his idle alone.
+        g.picked = None;
+        let r = GaitReport::of_gaits(&g);
+        assert_eq!((r.clip.as_str(), r.weights), ("idle", [1.0, 0.0, 0.0, 0.0]));
+    }
 
     fn alert(app: &App) -> Option<Alert> {
         app.world().resource::<Play>().alert()

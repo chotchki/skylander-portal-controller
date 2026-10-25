@@ -57,7 +57,9 @@ pub fn posed(
 
 /// The clips `actor`'s scripts play on him out of `palette`, each at its
 /// time this step, oldest first (a later one lies over it): every sequence
-/// on him that hasn't played out or been stopped, by its palette slot.
+/// on him that hasn't played out or been stopped, by its palette slot, but
+/// his locomotion's, which it lays these over (openspec AH.49:
+/// [`crate::script_engine::Sequence::laid_over`]).
 pub fn playing<'p>(
     world: &ScriptWorld,
     actor: Handle,
@@ -66,7 +68,7 @@ pub fn playing<'p>(
     world
         .sequences()
         .iter()
-        .filter(|s| s.actor == actor && !s.done && !s.stopped && s.length > 0.0)
+        .filter(|s| s.actor == actor && s.plays() && s.laid_over())
         .filter_map(|s| {
             let (_, slot) = world.clip_of(s)?;
             let clip = palette.clip(u16::try_from(slot).ok()?)?;
@@ -242,5 +244,77 @@ mod tests {
             "{:?}",
             base_only[0]
         );
+    }
+
+    /// AH.49: what his scripts play is laid over his locomotion's weighted
+    /// clips, not among them: a throw (partial) and a whole clip his
+    /// scripts play are laid over, oldest first; his idle, walk and run (base
+    /// clips the locomotion set the layered bit on) and a lean (additive)
+    /// aren't, nor anything stopped or played out.
+    #[test]
+    fn what_is_laid_over_leaves_out_his_locomotions_clips() {
+        use crate::script_engine::{Object, Sequence};
+        use crate::scripts::{Files, headless_objects};
+        use std::collections::HashMap;
+        let files = Files {
+            lights: HashMap::new(),
+            placed: Vec::new(),
+            ids: HashMap::new(),
+            points: HashMap::new(),
+        };
+        let handles = HashMap::new();
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let template = guac_script::Obj { unit: 3, index: 9 };
+        let clip = |name: &str| Clip {
+            name: name.into(),
+            ..swing()
+        };
+        let palette = Palette {
+            identity: identity(),
+            owner: "009_Eruptor".into(),
+            slots: 6,
+            entries: (0..6u16)
+                .map(|slot| guac_ir::palette::PaletteSlot {
+                    slot,
+                    name: None,
+                    label: None,
+                    entry: guac_ir::palette::SlotEntry::Clip {
+                        additive: slot == 4,
+                        partial: slot == 2,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: clip(&format!("clip{slot}.ma")),
+                    },
+                })
+                .collect(),
+            refused: Vec::new(),
+        };
+        let sequence = |world: &mut ScriptWorld, slot: u32, kind: u8, layered: bool, done: bool| {
+            let template = world.objs.value(Object::Clip { template, slot });
+            world.sequences.push(Sequence {
+                actor: 7,
+                template,
+                length: 1.0,
+                time: 0.25 * slot as f32 / 4.0,
+                rate: 100.0,
+                looping: false,
+                stopped: false,
+                done,
+                blend: 100.0,
+                kind,
+                layered,
+            });
+        };
+        sequence(&mut world, 0, 0, true, false); // his idle
+        sequence(&mut world, 1, 0, true, false); // his walk
+        sequence(&mut world, 2, 1, false, false); // a throw
+        sequence(&mut world, 3, 0, false, false); // a whole clip
+        sequence(&mut world, 4, 2, true, false); // a lean
+        sequence(&mut world, 5, 1, false, true); // a throw played out
+        let names: Vec<&str> = playing(&world, 7, &palette)
+            .iter()
+            .map(|(c, _)| c.name.as_str())
+            .collect();
+        assert_eq!(names, ["clip2.ma", "clip3.ma"]);
     }
 }

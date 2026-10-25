@@ -41,7 +41,7 @@ use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::{Generator, Halt, Handle, Mode, Obj, PlacementId, Program, Value, Vm};
 use guacamole::figure::{self, Layout, Tag, Values};
-use guacamole::level_scripts::{self, lengths};
+use guacamole::level_scripts;
 use guacamole::on_screen;
 use guacamole::player_loop::PlayerLoop;
 use guacamole::script_engine::Pad;
@@ -205,31 +205,13 @@ const DISCOVER: Opts = Opts {
     discover: true,
     cells: &[],
 };
-/// The two members Tree Rex's walk reaches past the registry: his minion's
-/// first tick writes AH.49's blend percent (`112_TitanLife.ai` #501), and
-/// the mover's first step with the stick on asks his object collisions
-/// (`Minion.ai` #842, where four others stop). With these two value cells
-/// his setup and all 12 replays run through.
-const TREE_REX_CELLS: Opts = Opts {
-    mode: Mode::Strict,
-    discover: false,
-    cells: &[
-        (
-            "animationinfo",
-            "blend percent",
-            guac_script::Kind::Float,
-            0.0,
-            100.0,
-        ),
-        (
-            "collisioninfo",
-            "object collisions",
-            guac_script::Kind::Reference,
-            0.0,
-            0.0,
-        ),
-    ],
-};
+/// Tree Rex strict on the registry: the two members his walk reached past it
+/// until AH.49 and AG.160 modelled them, his minion's first tick writing
+/// AH.49's blend percent (`112_TitanLife.ai` #501) and the mover's first
+/// step with the stick on asking his object collisions (`Minion.ai` #842,
+/// where four others stopped), are the host's now: no value cell stands in
+/// for either.
+const TREE_REX_CELLS: Opts = STRICT;
 
 /// `o`'s value cells into `config`.
 fn add_cells(config: &mut guac_script::Config, o: Opts) {
@@ -393,7 +375,7 @@ impl W {
         // As the TV's: the asks read as gating play off the camera's view
         // (openspec AH.150).
         world.answer_from_view(on_screen::answered(&l.program, on_screen::READ));
-        // His palette's lengths on his template, as the TV's join sets them.
+        // His palette on his template, as the TV's join sets it.
         let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
         // As the TV's join: on the minion's template his definition names, a
         // fighter's the one named for him.
@@ -404,14 +386,14 @@ impl W {
                 .find(|p| p.obj.unit == unit && p.name == load)
                 .map(|p| p.obj)
         }) {
-            world.set_palette(template, lengths(&palette));
+            world.set_palette_of(template, &palette);
         }
         // The level's placements' palettes by their models.
         for p in l.files.placed.iter().filter(|p| p.obj.unit == l.level_unit) {
             if let Some(model) = &p.model
                 && let Some(pal) = l.palettes.palettes.iter().find(|x| &x.owner == model)
             {
-                world.set_palette(p.obj, lengths(pal));
+                world.set_palette_of(p.obj, pal);
             }
         }
         let igz = Igz::parse(&l.level_bytes).unwrap();
@@ -1121,8 +1103,9 @@ fn replay(l: &Level, load: &str, o: Opts, records: &[serde_json::Value], own_dt:
 }
 
 /// AG.27 Verify (1): Tree Rex's scripts set AG.12's numbers, and his walk
-/// replays against AG.12's O5 recording, with the two members his scripts
-/// reach past the registry value cells ([`TREE_REX_CELLS`]).
+/// replays against AG.12's O5 recording, strict on the registry
+/// ([`TREE_REX_CELLS`]: the two members his scripts reached past it were
+/// value cells here until AH.49 and AG.160 modelled them).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AG.12's recordings under GUAC_CAPTURE_DIR; run on the Mac"]
 fn tree_rex_walks_on_ag12s_numbers() {
@@ -1299,7 +1282,7 @@ fn a_probe_of_the_parameters() {
         println!(
             "AH18_LIVE_TABLE unset: no discovery; {load} on {}",
             if load == TREE_REX {
-                "the two members TREE_REX_CELLS names as value cells"
+                "the registry, strict (TREE_REX_CELLS: no value cell since AH.49 and AG.160)"
             } else {
                 "the registry as it stands (strict)"
             }
@@ -1706,6 +1689,8 @@ struct Audit {
     /// The walk the TV's fall-back would give him if his scripts stopped
     /// now: his description's ground max speed (`Movement::read`), ft/s.
     fallback: Option<f32>,
+    /// Every member his run reached, by name (AG.160's count).
+    reached: Vec<String>,
 }
 
 impl Audit {
@@ -1780,6 +1765,11 @@ impl Audit {
             self.scripted_solid = Some([act.solid.width, act.solid.height, act.solid.length]);
         }
         self.solid = Some([w.walk.shape.width, w.walk.shape.height, w.walk.shape.length]);
+        self.reached =
+            w.vm.reached()
+                .iter()
+                .map(|m| w.vm.config().members.name(*m))
+                .collect();
     }
 }
 
@@ -1904,6 +1894,28 @@ fn every_other_modelled_character_walks_or_is_listed() {
     for (m, who) in &by_member {
         println!("  stopped on {m}: {} - {who:?}", who.len());
     }
+    // Every member the 66 runs reached, by namespace (AG.160), against
+    // AH.34's ceiling of 324 over the fight's whitelist.
+    let mut reached: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for (a, ..) in &table {
+        for m in &a.reached {
+            let (ns, name) = m.split_once('.').unwrap_or(("?", m));
+            reached
+                .entry(ns.to_owned())
+                .or_default()
+                .insert(name.to_owned());
+        }
+    }
+    let total: usize = reached.values().map(|s| s.len()).sum();
+    println!(
+        "members reached over the 66 runs: {total} in {} namespaces",
+        reached.len()
+    );
+    for (ns, names) in &reached {
+        println!("  {ns}: {}", names.len());
+    }
+    // AG.160: none stops, each on what his own scripts set.
+    assert_eq!(ran, table.len(), "{by_member:?}");
     // AG.171: Wham-Shell and Drill Sergeant, set up and standing still on a
     // full stick before (their mover's controller lost to a stale `its`),
     // walk at their scripts' top speed.
@@ -2353,11 +2365,11 @@ fn the_asking_walkers_come_off_whatever_their_deactivation_does() {
         started.elapsed(),
         load1()
     );
-    // Tree Rex with his setup run through (the parameters probe's two
-    // cells), strict, standing and walking 120 steps each side of the swap.
+    // Tree Rex strict on the registry (his setup runs through since AH.49
+    // and AG.160), standing and walking 120 steps each side of the swap.
     let rex = swap(&l, TREE_REX, TREE_REX_CELLS, 120, 120);
     println!(
-        "{TREE_REX} on his two cells, strict: {rex:?}; {:.1?}, load {:.2}",
+        "{TREE_REX} strict: {rex:?}; {:.1?}, load {:.2}",
         started.elapsed(),
         load1()
     );
@@ -2507,9 +2519,9 @@ fn on_the_tv(l: &Level, load: &str, o: Opts) -> OnTheTv {
 /// each of the fourteen joined in play mode as the TV joins him: who walks
 /// on his scripts, who falls back on what they set, who keeps his card and
 /// why, the why never the ask. Then Drill Sergeant and Tree Rex at their
-/// scripts' top speed: Drill Sergeant strict, Tree Rex strict on his two
-/// value cells (`TREE_REX_CELLS`; his setup stops on AH.49's
-/// `animationinfo.blend percent` without them, AG.160).
+/// scripts' top speed, both strict on the registry (Tree Rex's two value
+/// cells gone since AH.49 and AG.160 modelled their members); and since
+/// AG.160 every one of the fourteen joins and walks on his scripts.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() {
@@ -2727,7 +2739,18 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
         "{}",
         drill.verdict()
     );
-    // Strict: Drill Sergeant on the registry, Tree Rex on his two cells.
+    // AG.160: as the TV joins them, every one of the fourteen joins and
+    // walks on his scripts, none stopping in play.
+    for r in &table {
+        assert!(
+            r.set_up && r.stopped.is_none(),
+            "{}: {}",
+            r.load,
+            r.verdict()
+        );
+    }
+    // Strict: Drill Sergeant and Tree Rex on the registry (since AH.49 and
+    // AG.160 no member of Tree Rex's is a value cell).
     for (load, o) in [("021_DrillBot", STRICT), (TREE_REX, TREE_REX_CELLS)] {
         let t = Instant::now();
         let a = audit(&l, load, o);
@@ -2736,7 +2759,7 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
             if o.cells.is_empty() {
                 ""
             } else {
-                " on his two cells"
+                " on value cells"
             },
             a.outcome(),
             a.stopped
@@ -2749,6 +2772,9 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
             load1()
         );
         assert_eq!(a.outcome(), "walks at his top speed", "{load}: {a:?}");
+        if load == TREE_REX {
+            assert!((a.top - 20.0).abs() < 1e-3, "his 20 ft/s: {}", a.top);
+        }
     }
     println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
 }
@@ -3541,4 +3567,130 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
         "the first step's move from the chain's eye"
     );
     assert_eq!(first.2, 16.750097, "the eye from his feet");
+}
+
+/// Tree Rex's live clips (each one his scripts play on him, in the order
+/// started) matched to a record's by length: the record's i-th control is
+/// ours of the same length, the n-th of its length for the n-th, as both
+/// lists keep the order the clips started in.
+fn matched_clips(w: &W, record: &serde_json::Value) -> Vec<(usize, Option<usize>)> {
+    let ours: Vec<usize> = w
+        .world
+        .sequences()
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.actor == HERO && s.plays())
+        .map(|(i, _)| i)
+        .collect();
+    let mut used = HashSet::new();
+    record["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let period = json_f32(&c["period"]);
+            let found = ours.iter().copied().find(|&s| {
+                !used.contains(&s) && (w.world.sequences()[s].length - period).abs() < 1e-3
+            });
+            if let Some(s) = found {
+                used.insert(s);
+            }
+            (i, found)
+        })
+        .collect()
+}
+
+/// AG.161 Verify: Tree Rex's locomotion picked on the VM (`global.bld`'s
+/// locomotion script every tick, AH.49) against AG.12's recordings, record
+/// by record: each of the 12 rings walked on his own scripts at the
+/// records' own frame times from his settled spawn (as
+/// [`tree_rex_walks_on_ag12s_numbers`] walks them), his clips' times and
+/// rates set to the first record's, then at every step each control the
+/// next record holds (his head turn, idle, walk, run and two leans) against
+/// ours of its length: its weight within 0.1 %, its rate within 0.1 % where
+/// it weighs anything.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AG.12's recordings under GUAC_CAPTURE_DIR; run on the Mac"]
+fn tree_rexs_clips_on_his_scripts_against_ag12s_recordings() {
+    println!("load before: {:.2}", load1());
+    let started = Instant::now();
+    let l = Level::open();
+    let (mut records_n, mut within, mut rates, mut rates_within) = (0, 0, 0, 0);
+    let mut worst = (0.0f32, String::new());
+    let mut missed: BTreeMap<String, usize> = BTreeMap::new();
+    for (label, records) in &ag12_walks() {
+        if label.starts_with("t_south") {
+            continue;
+        }
+        let mut w = W::joined(&l, TREE_REX, TREE_REX_CELLS, 120)
+            .map_err(|b| {
+                let (_, when, h) = *b;
+                format!("{when}: {}", named(&h.to_string()))
+            })
+            .unwrap();
+        // Each clip at the first record's time and rate.
+        for (i, ours) in matched_clips(&w, &records[0]) {
+            let c = &records[0]["clips"][i];
+            if let Some(s) = ours {
+                let q = &mut w.world.sequences_mut()[s];
+                q.time = (json_f32(&c["period"]) - json_f32(&c["remaining"])).clamp(0.0, q.length);
+                q.rate = json_f32(&c["rate"]);
+            }
+        }
+        let (mut ring_records, mut ring_within) = (0, 0);
+        for k in 0..records.len() - 1 {
+            let r = &records[k];
+            let pr = json_f32(&r["clock"]["presentation_rate"]);
+            w.dt = json_f32(&r["clock"]["frame_delta"]).clamp(0.5 * pr, 3.0 * pr);
+            w.bench.view = json_f32(&r["camera"]["rotation"][1]);
+            w.bench.pads[0] = record_pad(r);
+            w.step().unwrap_or_else(|h| panic!("{label} step {k}: {h}"));
+            let next = &records[k + 1];
+            let mut miss: f32 = 0.0;
+            for (i, ours) in matched_clips(&w, next) {
+                let c = &next["clips"][i];
+                let (weight, rate) = (json_f32(&c["weight"]), json_f32(&c["rate"]));
+                let mine = ours.map(|s| {
+                    let q = &w.world.sequences()[s];
+                    (q.blend, q.rate)
+                });
+                let off = mine.map_or(f32::NAN, |m| (m.0 - weight).abs());
+                // A control with no clip of ours stays a miss.
+                miss = if miss.is_nan() || off.is_nan() {
+                    f32::NAN
+                } else {
+                    miss.max(off)
+                };
+                if weight > 0.0 {
+                    rates += 1;
+                    if mine.is_some_and(|m| (m.1 - rate).abs() <= 0.1) {
+                        rates_within += 1;
+                    }
+                }
+            }
+            records_n += 1;
+            ring_records += 1;
+            if miss <= 0.1 {
+                within += 1;
+                ring_within += 1;
+            } else {
+                *missed.entry(label.clone()).or_default() += 1;
+            }
+            if miss.is_nan() || miss > worst.0 {
+                worst = (miss, format!("{label} record {}", k + 1));
+            }
+        }
+        println!("{label}: {ring_within} of {ring_records} records' clips within 0.1 %");
+    }
+    println!(
+        "Tree Rex's clips: {within} of {records_n} records within 0.1 % on every control (worst {:.4} %: {}); rates {rates_within} of {rates} within 0.1 %; past by ring {missed:?}; {:.1?}, load {:.2}",
+        worst.0,
+        worst.1,
+        started.elapsed(),
+        load1()
+    );
+    assert!(records_n > 4_000, "{records_n}");
+    assert_eq!(within, records_n, "{missed:?}");
+    assert_eq!(rates_within, rates);
 }

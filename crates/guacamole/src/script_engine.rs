@@ -470,6 +470,15 @@ pub struct Sequence {
     pub stopped: bool,
     /// Whether it has played to its end.
     pub done: bool,
+    /// `animationinfo.blend percent`: the weight the engine blends it by,
+    /// its clip's when it started (100 unless a script wrote the clip's).
+    pub blend: f32,
+    /// `animationinfo.type` of its clip (`ClipInfo`'s kinds): 0 base, 1
+    /// partial, 2 additive.
+    pub kind: u8,
+    /// Its clip's layered bit when it started: a script sets it on the clip,
+    /// never on a sequence (openspec AH.49).
+    pub layered: bool,
 }
 
 /// What a script reads of a sequence with this little left (seconds of
@@ -482,6 +491,33 @@ pub struct Sequence {
 pub const DONE_MARGIN: f32 = 0.033_333_335;
 
 impl Sequence {
+    /// `animationinfo.is layered`: its layered bit, or a partial or additive
+    /// clip, as the original's getter reads the flags (AH.49).
+    pub fn is_layered(&self) -> bool {
+        self.layered || self.kind != 0
+    }
+
+    /// A base clip with its layered bit set: one of the clips a locomotion
+    /// blends by weight (AH.49: `global.bld`'s locomotion script sets the
+    /// bit on each of its idle, walk, run and fall before it plays them).
+    /// The engine poses these together by their weights, and lays every
+    /// other clip but an additive one over them.
+    pub fn weighted(&self) -> bool {
+        self.kind == 0 && self.layered
+    }
+
+    /// A clip laid over the weighted ones, joint by joint, as AH.50
+    /// measured his throws over his idle: any not [`Sequence::weighted`]
+    /// but an additive one (his leans, which nothing draws yet).
+    pub fn laid_over(&self) -> bool {
+        !self.weighted() && self.kind != 2
+    }
+
+    /// Still playing a clip: not played out, not stopped, with a length.
+    pub fn plays(&self) -> bool {
+        !self.done && !self.stopped && self.length > 0.0
+    }
+
     /// What's left of it in its own time, seconds at 100 %, as a script
     /// reads it: none once it's within [`DONE_MARGIN`] of its end at its
     /// rate.
@@ -701,6 +737,9 @@ mod tests {
             looping: false,
             stopped: false,
             done: false,
+            blend: 100.0,
+            kind: 0,
+            layered: false,
         };
         assert_eq!(s.percent_remaining(), 100.0);
         assert!((s.time_remaining() - 0.5 / 1.5).abs() < 1e-6);
@@ -750,6 +789,9 @@ mod tests {
             looping: false,
             stopped: false,
             done: false,
+            blend: 100.0,
+            kind: 0,
+            layered: false,
         };
         // The frame a wait on its end sees it over, and what each frame
         // before reads.

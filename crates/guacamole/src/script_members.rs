@@ -55,7 +55,12 @@ use crate::script_engine::{
     Angles, Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object,
     Sequence, Walker, angles_of, direction, heading_of, normalized, pitch_of,
 };
-use crate::scripts::{HeroWrite, ScriptWorld, Spawner};
+use crate::scripts::{ClipInfo, ClipState, HeroWrite, ScriptWorld, Spawner};
+
+/// A clip's weight until a script writes one: a script's throw, which none
+/// weights, blends whole (AH.50's recordings hold every throw at 100), and
+/// the locomotion writes each of its own every tick (openspec AH.49).
+const FULL_BLEND: f32 = 100.0;
 
 /// What a member answers, by what it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +124,13 @@ pub(crate) enum Member {
     SeqRate,
     SeqLooping,
     SeqRawDuration,
+    // AH.49's: a clip's or a sequence's animation info.
+    /// `animationinfo.blend percent`: the weight the engine blends by.
+    Blend,
+    /// `animationinfo.is layered`.
+    IsLayered,
+    /// `animationinfo.type`, read only.
+    ClipKind,
     Distance,
     Heading,
     Pitch,
@@ -169,6 +181,11 @@ pub(crate) enum Member {
     /// `collisioninfo.contacts with me`: the actors whose solids touch this
     /// one's (within [`CONTACT_REACH`]), nearest first.
     ContactsWithMe,
+    /// `collisioninfo.object collisions` (openspec AG.160): read as the same
+    /// set, the actors his solid touches. A reading of the two getters, each
+    /// a set the owner's actor refreshes before it's read (aj-vm's 0x733b4
+    /// and 0x73594); no oracle read tells them apart.
+    ObjectCollisions,
     // AH.65's.
     /// A placed light's or its clone's `lightinfo` values.
     Light(LightField),
@@ -386,6 +403,9 @@ impl Member {
         add("sequence", "playback rate", Member::SeqRate);
         add("sequence", "looping", Member::SeqLooping);
         add("sequence", "raw duration", Member::SeqRawDuration);
+        add("animationinfo", "blend percent", Member::Blend);
+        add("animationinfo", "is layered", Member::IsLayered);
+        add("animationinfo", "type", Member::ClipKind);
         add("positionmeasurement", "distance", Member::Distance);
         add("positionmeasurement", "heading", Member::Heading);
         add("positionmeasurement", "pitch", Member::Pitch);
@@ -454,6 +474,11 @@ impl Member {
         add("actorinfo", "inactive", Member::Inactive);
         add("actorinfo", "removed", Member::Removed);
         add("collisioninfo", "contacts with me", Member::ContactsWithMe);
+        add(
+            "collisioninfo",
+            "object collisions",
+            Member::ObjectCollisions,
+        );
         t
     }
 }
@@ -1161,6 +1186,36 @@ impl ScriptWorld {
                     _ => r,
                 }
             }
+            // A clip itself (openspec AH.49): whether it loops, its weight,
+            // its layered bit and its kind, as a sequence started from it
+            // starts with them.
+            Member::SeqLooping | Member::Blend | Member::IsLayered | Member::ClipKind
+                if matches!(object, Some(Object::Clip { .. })) =>
+            {
+                let Some(Object::Clip { template, slot }) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let (info, state) = self.clip_flags(template, slot);
+                match m {
+                    Member::SeqLooping => Value::Int(i32::from(state.looping.unwrap_or(false))),
+                    Member::Blend => Value::Float(state.blend.unwrap_or(FULL_BLEND)),
+                    Member::IsLayered => Value::Int(i32::from(
+                        state.layered.unwrap_or(info.layered) || info.kind != ClipInfo::BASE,
+                    )),
+                    _ => Value::Int(i32::from(info.kind)),
+                }
+            }
+            Member::Blend | Member::IsLayered | Member::ClipKind => {
+                let Some(Object::Sequence(i)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = self.sequences.get(i as usize).ok_or(HostFault::Nothing)?;
+                match m {
+                    Member::Blend => Value::Float(s.blend),
+                    Member::IsLayered => Value::Int(i32::from(s.is_layered())),
+                    _ => Value::Int(i32::from(s.kind)),
+                }
+            }
             Member::SeqTimeRemaining
             | Member::SeqPercentRemaining
             | Member::SeqRate
@@ -1339,6 +1394,7 @@ impl ScriptWorld {
             | Member::Inactive
             | Member::Removed
             | Member::ContactsWithMe
+            | Member::ObjectCollisions
             | Member::Players => return Err(HostFault::Nothing),
             Member::Collision => {
                 let a = actor.ok_or(HostFault::Nothing)?;
@@ -1660,6 +1716,41 @@ impl ScriptWorld {
                     a.attach = v;
                 }
             }
+            // On a clip (openspec AH.49): what a sequence started from it
+            // starts with. The layered bit takes a write only on a clip,
+            // never on a sequence playing (the original's setter tests the
+            // object's parent, which only a started one has; aj-vm's
+            // 0x36a4b8, read as an aid); `type` takes none.
+            Member::SeqLooping | Member::Blend | Member::IsLayered
+                if matches!(object, Some(Object::Clip { .. })) =>
+            {
+                let Some(Object::Clip { template, slot }) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let state = self.clip_state.entry((template, slot)).or_default();
+                match m {
+                    Member::SeqLooping => {
+                        state.looping = Some(v.as_i32().ok_or(HostFault::Nothing)? != 0);
+                    }
+                    Member::Blend => state.blend = Some(float(v)?),
+                    _ => state.layered = Some(v.as_i32().ok_or(HostFault::Nothing)? != 0),
+                }
+            }
+            Member::Blend => {
+                let Some(Object::Sequence(i)) = object else {
+                    return Err(HostFault::Nothing);
+                };
+                let s = self
+                    .sequences
+                    .get_mut(i as usize)
+                    .ok_or(HostFault::Nothing)?;
+                s.blend = float(v)?;
+            }
+            Member::IsLayered | Member::ClipKind => {
+                if !matches!(object, Some(Object::Sequence(_))) {
+                    return Err(HostFault::Nothing);
+                }
+            }
             Member::SeqRate | Member::SeqLooping | Member::SeqPercentRemaining => {
                 let Some(Object::Sequence(i)) = object else {
                     return Err(HostFault::Nothing);
@@ -1829,7 +1920,7 @@ impl ScriptWorld {
                     .waypoints
                     .clone()
             }
-            Member::ContactsWithMe => {
+            Member::ContactsWithMe | Member::ObjectCollisions => {
                 let Some(Object::Facet(h, Facet::Collision)) = self.object(recv) else {
                     return Err(HostFault::Nothing);
                 };
@@ -1891,6 +1982,18 @@ impl ScriptWorld {
 
     /// A clip's length, seconds at 100 %: 0 for an empty slot or anything
     /// that isn't a clip (a sound plays nothing here).
+    /// Slot `slot` of `template`'s palette: its file's animation info and
+    /// what the scripts wrote on it (openspec AH.49).
+    fn clip_flags(&self, template: Obj, slot: u32) -> (ClipInfo, ClipState) {
+        (
+            self.clip_info(template, slot),
+            self.clip_state
+                .get(&(template, slot))
+                .copied()
+                .unwrap_or_default(),
+        )
+    }
+
     fn length_of(&self, v: Value) -> f32 {
         match self.object(Some(v)) {
             Some(Object::Clip { template, slot }) => self
@@ -1934,15 +2037,23 @@ impl ScriptWorld {
                     return Some(Ok(Answer::Skip));
                 };
                 let length = self.length_of(template);
+                // A clip's own looping, weight and layered bit (AH.49).
+                let (info, state) = match self.object(Some(template)) {
+                    Some(Object::Clip { template, slot }) => self.clip_flags(template, slot),
+                    _ => (ClipInfo::default(), ClipState::default()),
+                };
                 self.sequences.push(Sequence {
                     actor,
                     template,
                     length,
                     time: 0.0,
                     rate: 100.0,
-                    looping: false,
+                    looping: state.looping.unwrap_or(false),
                     stopped: false,
                     done: false,
+                    blend: state.blend.unwrap_or(FULL_BLEND),
+                    kind: info.kind,
+                    layered: state.layered.unwrap_or(info.layered),
                 });
                 let s = self
                     .objs
@@ -4336,6 +4447,64 @@ mod fight_tests {
         assert_eq!(set(&mut w, &mut e, "inactive"), vec![Value::Entity(C1)]);
     }
 
+    /// AG.160: a clone of nothing makes nothing: its block is skipped (the
+    /// locomotion clones each state's sound control, which a character
+    /// whose states play no footsteps has none of; a blank clone answering
+    /// for it stopped `031_GhostEater`'s first tick).
+    #[test]
+    fn a_clone_of_nothing_is_skipped() {
+        let mut e = pit();
+        let mut w = world();
+        let call = op(
+            Class::Spawn,
+            C1,
+            vec![("_LHS", Some(Value::Null))],
+            Vec::new(),
+        );
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        let before = w.actors.len();
+        assert_eq!(ask(&mut w, &mut e, &call), Answer::Skip);
+        assert_eq!(w.actors.len(), before, "no clone");
+    }
+
+    /// AG.160: a Giant's footstep reads `object collisions` on his solid,
+    /// the actors his solid touches (`Minion - Titan Abilities`): a Chompy
+    /// against him, none past reach, none taken off; nothing without one.
+    #[test]
+    fn object_collisions_are_the_actors_his_solid_touches() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        e.bodies.insert(HERO, BodyId(9));
+        let mut w = world();
+        let r = 3.0 * FOOT;
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        let at = |x: f32, z: f32| pivot + Vec3::new(x, 0.0, z);
+        let facet = w.objs.value(Object::Facet(HERO, Facet::Collision));
+        let read = |w: &mut ScriptWorld, e: &mut Pit| {
+            w.elements(
+                &Access {
+                    placement: HERO,
+                    receiver: Some(facet),
+                    member: MemberId::named("collisioninfo", "object collisions"),
+                    other_point: None,
+                    via: None,
+                    op: None,
+                },
+                e,
+            )
+            .unwrap()
+        };
+        assert_eq!(read(&mut w, &mut e), Vec::<Value>::new());
+        w.actors.insert(C1, chompy(at(0.0, 2.0 * r + 0.005), 0.0));
+        w.actors.insert(C2, chompy(at(0.0, -2.0 * r - 0.5), 0.0));
+        let mut gone = chompy(at(2.0 * r + 0.002, 0.0), 0.0);
+        gone.removed = true;
+        w.actors.insert(C3, gone);
+        assert_eq!(read(&mut w, &mut e), vec![Value::Entity(C1)]);
+    }
+
     /// The review of AH.18: what touches a hero is what's awake and on:
     /// a Chompy taken off or asleep against him isn't among his contacts.
     #[test]
@@ -5127,5 +5296,202 @@ mod light_tests {
         w.op(&call(Class::Remove, Value::Entity(CLONE)), &mut |_| 0, e)
             .unwrap();
         assert!(w.lit_lights().is_empty());
+    }
+}
+
+/// A clip's and a sequence's animation info (openspec AH.49): the palette's
+/// flags, what a script writes on a clip, and what a sequence started from
+/// it starts with.
+#[cfg(test)]
+mod animation_tests {
+    use guac_formats::script::Class;
+    use guac_script::{Answer, MemberId, Obj, OpCall};
+
+    use super::fight_tests::{C1, chompy, pit, world};
+    use super::*;
+
+    const TEMPLATE: Obj = Obj { unit: 4, index: 77 };
+
+    /// Slot 0 a base clip, 1 partial, 2 additive (and partial: additive
+    /// wins), 3 a base clip its file marks layered.
+    fn palette(w: &mut ScriptWorld) -> Vec<Value> {
+        w.set_palette(TEMPLATE, vec![1.0, 0.5, 0.8, 0.4]);
+        w.set_clip_info(
+            TEMPLATE,
+            vec![
+                ClipInfo::of(false, false, false),
+                ClipInfo::of(false, true, false),
+                ClipInfo::of(true, true, false),
+                ClipInfo::of(false, false, true),
+            ],
+        );
+        let mut c = chompy(Vec3::ZERO, 0.0);
+        c.obj = Some(TEMPLATE);
+        w.actors.insert(C1, c);
+        (0..4)
+            .map(|slot| {
+                w.objs.value(Object::Clip {
+                    template: TEMPLATE,
+                    slot,
+                })
+            })
+            .collect()
+    }
+
+    fn on(receiver: Value, ns: &str, name: &str) -> Access {
+        Access {
+            placement: C1,
+            receiver: Some(receiver),
+            member: MemberId::named(ns, name),
+            other_point: None,
+            via: None,
+            op: None,
+        }
+    }
+
+    fn play(w: &mut ScriptWorld, e: &mut super::fight_tests::Pit, clip: Value) -> Value {
+        let call = OpCall {
+            placement: C1,
+            receiver: Value::Entity(C1),
+            class: Class::StartSequence,
+            operands: vec![("_LHS", Some(clip))],
+            words: Vec::new(),
+            sets: Vec::new(),
+        };
+        match w.op(&call, &mut |_| 0, e).unwrap() {
+            Answer::Run {
+                result: Some(s), ..
+            } => s,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// `type` and `is layered` read off the palette's flags, as the
+    /// original's getters read the wrapper's bits: partial 1, additive 2
+    /// (over partial), a partial or additive clip layered whatever its bit;
+    /// a clip's weight 100 until written.
+    #[test]
+    fn a_clips_kind_and_layered_bit_come_from_its_palettes_flags() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        let read = |w: &mut ScriptWorld, e: &mut super::fight_tests::Pit, c: Value, name: &str| {
+            w.get(&on(c, "animationinfo", name), e).unwrap()
+        };
+        let kinds: Vec<Value> = clips
+            .iter()
+            .map(|c| read(&mut w, &mut e, *c, "type"))
+            .collect();
+        assert_eq!(kinds, [0, 1, 2, 0].map(Value::Int));
+        let layered: Vec<Value> = clips
+            .iter()
+            .map(|c| read(&mut w, &mut e, *c, "is layered"))
+            .collect();
+        assert_eq!(layered, [0, 1, 1, 1].map(Value::Int));
+        assert_eq!(
+            read(&mut w, &mut e, clips[0], "blend percent"),
+            Value::Float(100.0)
+        );
+        // `type` takes no write.
+        assert_eq!(
+            w.set(
+                &on(clips[0], "animationinfo", "type"),
+                Value::Int(2),
+                &mut e
+            ),
+            Err(HostFault::Nothing)
+        );
+    }
+
+    /// The locomotion's way (AH.49): it sets a clip's layered bit and its
+    /// looping before it plays it, and its weight on what it started. The
+    /// sequence starts with the clip's looping, bit and weight; a write of
+    /// the bit on a sequence playing is no write (the original's setter
+    /// tests for a parent, which only a started one has), its weight its
+    /// own.
+    #[test]
+    fn a_sequence_starts_with_what_its_clip_was_given() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        let set = |w: &mut ScriptWorld,
+                   e: &mut super::fight_tests::Pit,
+                   c: Value,
+                   ns: &str,
+                   name: &str,
+                   v: Value| { w.set(&on(c, ns, name), v, e).unwrap() };
+        set(
+            &mut w,
+            &mut e,
+            clips[0],
+            "animationinfo",
+            "is layered",
+            Value::Int(1),
+        );
+        set(
+            &mut w,
+            &mut e,
+            clips[0],
+            "sequence",
+            "looping",
+            Value::Int(1),
+        );
+        set(
+            &mut w,
+            &mut e,
+            clips[3],
+            "animationinfo",
+            "blend percent",
+            Value::Float(30.0),
+        );
+        assert_eq!(
+            w.get(&on(clips[0], "sequence", "looping"), &mut e).unwrap(),
+            Value::Int(1)
+        );
+        let walk = play(&mut w, &mut e, clips[0]);
+        let s = w.sequences().last().unwrap().clone();
+        assert!(s.looping && s.layered && s.weighted() && !s.laid_over());
+        assert_eq!((s.kind, s.blend), (0, 100.0));
+        // A clip the file marks layered starts layered; its written weight
+        // goes with it.
+        play(&mut w, &mut e, clips[3]);
+        let s = w.sequences().last().unwrap().clone();
+        assert!(s.weighted() && !s.looping);
+        assert_eq!(s.blend, 30.0);
+        // The bit stays as it started; the weight is the sequence's own.
+        w.set(
+            &on(walk, "animationinfo", "is layered"),
+            Value::Int(0),
+            &mut e,
+        )
+        .unwrap();
+        w.set(
+            &on(walk, "animationinfo", "blend percent"),
+            Value::Float(42.0),
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(
+            w.get(&on(walk, "animationinfo", "is layered"), &mut e)
+                .unwrap(),
+            Value::Int(1)
+        );
+        assert_eq!(
+            w.get(&on(walk, "animationinfo", "blend percent"), &mut e)
+                .unwrap(),
+            Value::Float(42.0)
+        );
+        assert_eq!(
+            w.get(&on(clips[0], "animationinfo", "blend percent"), &mut e)
+                .unwrap(),
+            Value::Float(100.0)
+        );
+        // A clip never given its bit or looping starts with neither: a
+        // throw, partial, laid over whatever weights; an additive one
+        // neither weighted nor laid over (a lean, drawn by nothing yet).
+        play(&mut w, &mut e, clips[1]);
+        let s = w.sequences().last().unwrap().clone();
+        assert!(!s.looping && s.is_layered() && !s.weighted() && s.laid_over());
+        play(&mut w, &mut e, clips[2]);
+        let s = w.sequences().last().unwrap().clone();
+        assert!(!s.weighted() && !s.laid_over());
     }
 }
