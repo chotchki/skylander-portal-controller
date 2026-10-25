@@ -2294,6 +2294,22 @@ mod tests {
             "a load begun, whatever stage its read has reached: {}",
             state(app)
         );
+        // Its report is its own: one update in, nothing the last load
+        // reached (its upload, the parts it waited on, its ready, its
+        // refusal) is left in it; a refused read reports its own reason.
+        if !matches!(level.stage, Stage::Failed) {
+            let r = level.report();
+            assert_eq!(
+                (
+                    r.uploaded_ms,
+                    r.not_resident,
+                    r.ready_ms,
+                    r.reason.as_deref()
+                ),
+                (None, 0, None, None),
+                "the last load's report let go"
+            );
+        }
     }
 
     fn report(app: &App) -> LevelReport {
