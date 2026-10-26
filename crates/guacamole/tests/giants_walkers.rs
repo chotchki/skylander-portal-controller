@@ -4771,3 +4771,81 @@ fn wrecking_balls_clips_on_his_scripts_against_ag226s_recording() {
     assert_eq!(held.rates_within, held.rates, "{held:?}");
     assert!(held.worst_time.0 <= 1e-4, "{held:?}");
 }
+
+/// AH.195's rule at a join: a character file's running placements join the
+/// VM in the order its root list holds them, as the original's load adds a
+/// file's (`scripts::join_request` through `scripts::load_order`), not the
+/// order its objects lie in. Of the 67 character files the part links (185
+/// running placements), Cynder's alone lies otherwise (AH.195's review:
+/// `Minion_Include_Ghost` his first object and last on his list, behind
+/// his definition and tuning actor); his join adds them in his list's order.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_character_files_placements_join_in_its_root_lists_order() {
+    println!("load before: {:.2}", load1());
+    let l = Level::open();
+    let units: Vec<(&str, u16)> = l
+        .fighters
+        .iter()
+        .map(|(n, u)| (n.as_str(), *u))
+        .chain(l.walkers.iter().map(|w| (w.load_file.as_str(), w.unit)))
+        .collect();
+    let mut out_of_order = Vec::new();
+    let mut running = 0;
+    for &(name, unit) in &units {
+        let placed: Vec<&guacamole::scripts::Placed> = l
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == unit && p.activity_state == 4 && p.script.is_some())
+            .collect();
+        running += placed.len();
+        if placed.windows(2).any(|w| w[0].load > w[1].load) {
+            out_of_order.push(name);
+        }
+    }
+    println!(
+        "{} character files, {running} running placements; objects out of root-list order: {out_of_order:?}",
+        units.len()
+    );
+    assert_eq!((units.len(), running), (67, 185));
+    assert_eq!(out_of_order, ["032_Cynder"]);
+    let mut w = W::new(&l, "032_Cynder", PLAY);
+    w.step().unwrap();
+    w.step().unwrap();
+    let (files, handles, layout, unit) =
+        (w.files.clone(), w.handles.clone(), w.layout.clone(), w.unit);
+    let tag = Tag {
+        toy_id: w.toy.0,
+        subtype: u32::from(w.toy.1),
+        serial: 1,
+        values: Values::default(),
+    };
+    w.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))
+        .unwrap();
+    let added = w
+        .with_host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))
+        .unwrap();
+    let joined: Vec<(String, u32)> = added
+        .iter()
+        .map(|&id| {
+            let h = w.vm.handle_of(id).unwrap();
+            let p = files
+                .placed
+                .iter()
+                .find(|p| handles.get(&p.obj) == Some(&h))
+                .unwrap();
+            (p.name.clone(), p.load)
+        })
+        .collect();
+    println!("Cynder's join adds {joined:?}");
+    assert_eq!(
+        joined.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        [
+            "032_Cynder_Def",
+            "032_Cynder_Tuning Actor",
+            "Minion_Include_Ghost"
+        ],
+        "in his root list's order"
+    );
+}

@@ -766,11 +766,6 @@ fn the_synthetic_breakable_reads_back() {
     assert!(ops[fly + 1].contains("UseMacro"), "{ops:?}");
 }
 
-/// AH.105's synthetic level reads back: the creature a running placement
-/// with no range where it was put, running its script with its two
-/// behaviours; the rock a template running its own, its solid a sphere
-/// that touches the level alone; and the synthetic global's activation
-/// macro branching on a reference (no minion: the deactivate path's call).
 /// openspec AH.195: the load-order level's objects lie in one order and
 /// its root list holds them in another; the two awake from the load have no
 /// range and no buffer, the two sleepers their range; each runs its script.
@@ -819,6 +814,11 @@ fn the_synthetic_load_order_level_reads_back() {
     assert_eq!(graph.scripts.len(), 3);
 }
 
+/// AH.105's synthetic level reads back: the creature a running placement
+/// with no range where it was put, running its script with its two
+/// behaviours; the rock a template running its own, its solid a sphere
+/// that touches the level alone; and the synthetic global's activation
+/// macro branching on a reference (no minion: the deactivate path's call).
 #[test]
 fn the_synthetic_swap_level_reads_back() {
     use super::builder::{SWAP_CREATURE, SWAP_ROCK, attack, swap};

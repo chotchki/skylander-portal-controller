@@ -268,3 +268,36 @@ fn a_placement_that_never_started_or_stopped_runs_no_shutdown() {
     assert_eq!(vm.local(fresh, "shut"), None, "never started");
     assert_eq!(vm.local(faulty, "shut"), None, "stopped");
 }
+
+/// Nor for a held one (listed for its first tick alone): its STARTUP ran,
+/// then the VM holds it, so its SHUTDOWN isn't the VM's to run when the
+/// embedder takes it off.
+#[test]
+fn a_held_placement_taken_off_runs_no_shutdown() {
+    let p = program(|w| {
+        let (count, shut) = (var(w, "count"), var(w, "shut"));
+        shutting(
+            w,
+            "C:/tfb/Synthetic/Once.ai",
+            |w| {
+                w.inc(&[El::Local(shut)]);
+            },
+            |_| {},
+            |w| {
+                w.inc(&[El::Local(count)]);
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.whitelist = Whitelist::with_first_ticks(&[], &[], &["Once.ai"]);
+    let mut vm = Vm::new(p, c);
+    let once = vm.add(0x10, "Once", 0);
+    let mut host = Engine::default();
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.held(), vec![0x10], "held after its first tick");
+    assert_eq!(vm.local(once, "count"), Some(Value::Int(1)));
+    assert!(vm.remove(0x10));
+    assert_eq!(vm.shut_down(&mut host).unwrap().ticked, 0);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(once, "shut"), None, "held");
+}

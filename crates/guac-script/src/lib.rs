@@ -538,8 +538,9 @@
 //! division (they stop as unsupported), the set properties (unmodelled members); and, with no
 //! stop, a reference's type check against the stack's edit type,
 //! `for each`'s shuffled order (any order that visits each member once)
-//! and the scheduler's placement groups (activity by distance is the
-//! embedder's, through [`Vm::set_asleep`]), so SHUTDOWN's
+//! and the scheduler's placement groups past its awake and asleep lists
+//! (activity by distance is the embedder's, a pass at a time through
+//! [`Vm::set_activity`]), so SHUTDOWN's
 //! restart isn't either: the original runs STARTUP again at once when an
 //! active placement's SHUTDOWN block falls through, where the VM ends the
 //! tick and starts it on the next.

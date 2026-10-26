@@ -2017,8 +2017,10 @@ pub fn init_chain(
 /// (`Propellar_Prop` and `Sliding_Rock(5)` at their end, an earlier
 /// frame's doing), and the 468 still asleep in it. One woken later joins
 /// the awake list's end ([`Vm::set_activity`]), as a character file's
-/// running placements do at his join ([`join_request`], in his file's
-/// order: on the disc Eruptor's two lie in his file as on its root list).
+/// running placements do at his join ([`join_request`], in this order too:
+/// of the 67 character files the part links, Cynder's alone lies otherwise,
+/// his `Minion_Include_Ghost` first among its objects and last on its root
+/// list, behind his definition and tuning actor; AH.195's review).
 pub fn load_order(files: &Files, unit: u16) -> Vec<&Placed> {
     let head = |p: &Placed| {
         crate::frame::AWAKE_HEAD
@@ -2043,9 +2045,10 @@ pub const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 /// loaded data (slot 0 of `portal control data.$loaded objects`), as the
 /// portal control's tag handling does; then the character file's running
 /// placements (its definition, its tuning actor) join the VM, listed for
-/// every tick, under `handles`: the definition's first tick registers the
-/// minion into that loaded data (`Portal - Define Minion`). The portal's tag,
-/// the level streaming and the entry beam aren't run (AJ's, AM's).
+/// every tick, under `handles`, in the order its load adds them
+/// ([`load_order`], openspec AH.195): the definition's first tick registers
+/// the minion into that loaded data (`Portal - Define Minion`). The portal's
+/// tag, the level streaming and the entry beam aren't run (AJ's, AM's).
 pub fn join_request(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
@@ -2070,7 +2073,7 @@ pub fn join_request(
         .map(|(i, s)| ((s.unit, s.name.as_str()), i as u32))
         .collect();
     let mut added = Vec::new();
-    for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+    for p in load_order(files, unit) {
         // His file loaded again after a swap took it off (openspec AH.105,
         // [`join_deactivate`]): each placement as the file has it, as a
         // stream loaded anew makes it.

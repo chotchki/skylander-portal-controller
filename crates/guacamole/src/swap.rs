@@ -1264,6 +1264,11 @@ mod tests {
             let gone = run.deactivate();
             assert!(gone.minion, "{k}");
             assert_eq!(descriptions(&mut run), [], "{k}: none at the take-off");
+            // Every SHUTDOWN of his, his stream's too, ran in the
+            // deactivation, none left for the next step's end, where the
+            // join's placements under the same handles could meet it.
+            let left = run.host(|vm, host| vm.shut_down(host).unwrap().ticked);
+            assert_eq!(left, 0, "{k}: none of his SHUTDOWNs left");
             for _ in 0..3 {
                 run.step([false; 4]);
             }

@@ -1548,7 +1548,9 @@ sets (pads, scripts, solids, hero, actors, locomotion, hands, camera, record), e
 one: the VM walks the activators first and the rest in the order they woke, the player loop's slices in
 their placements' places, and the mover update, reset at the music controller's, last (`guac-script`'s
 crate docs, The tick). A level's running placements join it as the load adds them (`scripts::load_order`:
-awake from the load first, then those that wait asleep, each in the root list's order), and those waking in
+awake from the load first, then those that wait asleep, each in the root list's order), a character file's at
+his join the same way (`scripts::join_request`; of the 67 the part links Cynder's alone lies otherwise, its
+`Minion_Include_Ghost` first among its objects and last on its list), and those waking in
 one activity pass wake in the order they went to sleep (`Vm::set_activity`): at the fresh state 52 of the 55
 level placements the read and a run joined at the spawn both hold awake stand in the same order (the three
 above the rest, `giants_camera`). A script's own `reset` of a placement doesn't send it round yet (AH.80), so
