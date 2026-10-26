@@ -395,7 +395,7 @@ fn a_sliders_rate_looping_and_ping_pong() {
             w.variable("raw", "ValueInfo", Some(FLOAT)),
             var(w, "ignores"),
         );
-        let restarts = var(w, "restarts");
+        let (restarts, restarts_off) = (var(w, "restarts"), var(w, "restarts off"));
         idle(
             w,
             |w| {
@@ -441,6 +441,16 @@ fn a_sliders_rate_looping_and_ping_pong() {
                     &[El::Local(r), El::Member("sequence", "allow restart")],
                 );
                 w.set(&[El::Local(restarts)], a);
+                let zero = w.int(0);
+                w.set(
+                    &[El::Local(r), El::Member("sequence", "allow restart")],
+                    zero,
+                );
+                let a = w.rhs(
+                    INT,
+                    &[El::Local(r), El::Member("sequence", "allow restart")],
+                );
+                w.set(&[El::Local(restarts_off)], a);
                 w.end_block(p);
             },
             |_| {},
@@ -453,6 +463,11 @@ fn a_sliders_rate_looping_and_ping_pong() {
     assert_eq!(float(&vm, id, "raw"), 1.0);
     assert_eq!(vm.local(id, "ignores"), Some(Value::Int(1)));
     assert_eq!(vm.local(id, "restarts"), Some(Value::Int(1)), "kept");
+    assert_eq!(
+        vm.local(id, "restarts off"),
+        Some(Value::Int(0)),
+        "kept off"
+    );
     vm.step(&mut host).unwrap();
     // Half rate: half a frame's share of the time, 30 a second.
     assert!((float(&vm, id, "v") - 0.5).abs() < 1e-3);

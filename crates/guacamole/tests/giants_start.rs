@@ -48,13 +48,7 @@ const UNDRAWN: [(&str, &str); 9] = [
 #[ignore = "disc: GUAC_GIANTS_DUMP (AG.60)"]
 fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
     let started = std::time::Instant::now();
-    let (mut run, _) = run_on_with(
-        Mode::Strict,
-        Setup {
-            props: true,
-            ..Default::default()
-        },
-    );
+    let (mut run, _) = run_on_with(Mode::Strict, Setup { props: true });
     for i in 0..600 {
         run.step().unwrap_or_else(|h| panic!("step {i}: {h}"));
     }

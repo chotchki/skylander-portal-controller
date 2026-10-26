@@ -66,13 +66,7 @@ const LEDGE: [&str; 3] = ["barrel_b_intact(1)", "barrel_b_intact(4)", "pottery_1
 /// seam, set down at anchor A's pose with his idle where AH.9's replays
 /// have it and the loot counts at its read.
 fn at_anchor_a() -> Run {
-    let (mut run, _) = joined_with(
-        Mode::Strict,
-        Setup {
-            props: true,
-            ..Default::default()
-        },
-    );
+    let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
     to_anchor_a(&mut run);
     for (rarity, index) in ANCHOR_A_LOOT {
         assert!(scripts::set_loot_index(
@@ -1056,13 +1050,7 @@ fn the_stone_wall_and_a_titan_boulder_stand_under_his_attacks() {
             1,
         ),
     ] {
-        let (mut run, _) = joined_with(
-            Mode::Strict,
-            Setup {
-                props: true,
-                ..Default::default()
-            },
-        );
+        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
         let (h, at) = run.placed(name);
         run.put(at + offset, facing);
         let w = drive(&mut run, 420, |k, _| {
@@ -1447,13 +1435,7 @@ fn a_hero_put_down_where_the_last_stood_stands_there() {
         ("anchor A", ANCHOR_A, ANCHOR_A_FACING),
         ("evening", EVENING, EVENING_FACING),
     ] {
-        let (mut run, _) = joined_with(
-            Mode::Strict,
-            Setup {
-                props: true,
-                ..Default::default()
-            },
-        );
+        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
         let at = Vec3::from_array(at);
         let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, facing);
         hero.stand(&run.bench.world, &[HERO_BODY]);

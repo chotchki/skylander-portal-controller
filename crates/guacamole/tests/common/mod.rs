@@ -716,9 +716,6 @@ pub fn discovery(config: &mut guac_script::Config) -> HashMap<MemberId, String> 
 pub struct Setup {
     /// The level's props in the seam by AG.25's rule (openspec AH.21).
     pub props: bool,
-    /// Scripts listed past the fight's (openspec AH.28's probes), every
-    /// tick, by script.
-    pub scripts: &'static [&'static str],
 }
 
 pub fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
@@ -756,9 +753,6 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
     let mut config = scripts::fight_config(mode);
-    if let guac_script::Whitelist::Only { scripts, .. } = &mut config.whitelist {
-        scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
-    }
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);

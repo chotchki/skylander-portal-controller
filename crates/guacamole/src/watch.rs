@@ -216,8 +216,8 @@ mod tests {
         );
         assert_eq!(body(r#"{"names":[]}"#), Some(Vec::new()));
         let n = |k: usize| format!(r#"{{"names":[{}]}}"#, vec!["\"x\""; k].join(","));
-        assert!(body(&n(WATCH_MAX)).is_some());
-        assert_eq!(body(&n(WATCH_MAX + 1)), None);
+        assert!(body(&n(64)).is_some());
+        assert_eq!(body(&n(65)), None);
         assert_eq!(body(r#"{"names":[""]}"#), None);
         let long = format!(r#"{{"names":["{}"]}}"#, "x".repeat(NAME_MAX + 1));
         assert_eq!(body(&long), None);

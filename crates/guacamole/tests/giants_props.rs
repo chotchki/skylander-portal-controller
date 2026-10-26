@@ -439,13 +439,8 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
         env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR to the oracle's captures"),
     );
     let started = std::time::Instant::now();
-    let (mut run, _) = common::run_on_with(
-        guac_script::Mode::Strict,
-        common::Setup {
-            props: true,
-            ..Default::default()
-        },
-    );
+    let (mut run, _) =
+        common::run_on_with(guac_script::Mode::Strict, common::Setup { props: true });
     run.put(Vec3::from_array(FRESH), 0.0);
     // Before any script runs, each prop's actor holds its file's draw and
     // solid to the bit: the one holder starts where the file does.

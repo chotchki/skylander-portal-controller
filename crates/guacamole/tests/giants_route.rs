@@ -408,13 +408,7 @@ fn step(run: &mut Run, mode: Mode) -> Vec<Halt> {
 /// spawn played out: the init chain's two steps, the join with a fresh
 /// figure, 120 steps; the stops in play on the way.
 fn joined(mode: Mode) -> (Run, Vec<(u32, Halt)>, HashMap<MemberId, String>) {
-    let (mut run, found) = run_on_with(
-        mode,
-        Setup {
-            props: true,
-            ..Setup::default()
-        },
-    );
+    let (mut run, found) = run_on_with(mode, Setup { props: true });
     let mut stops = Vec::new();
     let go = |run: &mut Run, stops: &mut Vec<(u32, Halt)>| {
         let k = run.steps;
@@ -532,6 +526,27 @@ struct Driven {
     stuck: Vec<Stuck>,
     /// What the scripts played on the skinned clones (openspec AG.150).
     played: Played,
+    /// The steps a scene held the game (`Cutscene State` past 0), and of
+    /// those the steps his minion read invulnerable: the cutscene system's
+    /// control wrapper's hold on the minions while one plays.
+    scene_steps: u32,
+    held_steps: u32,
+}
+
+/// Whether the joined hero's minion reads invulnerable
+/// (`description.creature info.invulnerable`).
+fn invulnerable(run: &Run) -> bool {
+    let Some(m) = run.minion else {
+        return false;
+    };
+    let vm = &run.vm;
+    vm.local(m, "description")
+        .map(|v| vm.value(v))
+        .and_then(|d| vm.field(d, "creature info"))
+        .map(|v| vm.value(v))
+        .and_then(|c| vm.field(c, "invulnerable"))
+        .and_then(|v| vm.value(v).as_f32())
+        .is_some_and(|f| f == 1.0)
 }
 
 /// The palette slots the scripts played on the clones of each template
@@ -589,6 +604,7 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
         .unwrap_or_default();
     let mut watched: BTreeMap<String, State> = BTreeMap::new();
     let mut played = Played::default();
+    let (mut scene_steps, mut held_steps) = (0, 0);
     while run.steps < limit {
         for n in &watch {
             let now = ours(&run, n).map(|s| (s.state, s.behaviour));
@@ -614,6 +630,10 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
                 let s = step(&mut run, mode);
                 stops.extend(s.into_iter().map(|h| (k, driver.index, h)));
                 played.record(&run);
+                if global_int(&mut run, "Cutscene State") != 0 {
+                    scene_steps += 1;
+                    held_steps += u32::from(invulnerable(&run));
+                }
             }
         }
     }
@@ -623,11 +643,14 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
         stops,
         stuck: driver.stuck,
         played,
+        scene_steps,
+        held_steps,
     }
 }
 
-/// The placements the route's steps touch, in route order (AH.8's note).
-const WATCHED: [&str; 38] = [
+/// The placements the route's steps touch, in route order (AH.8's note),
+/// with the cannon's pan, whose range the walk to the strip crosses.
+const WATCHED: [&str; 39] = [
     "barrel_b_intact(1)",
     "barrel_b_intact(3)",
     "barrel_b_intact(4)",
@@ -644,6 +667,7 @@ const WATCHED: [&str; 38] = [
     "Coin_spinning_0(1)",
     "Push_Block_Cannon",
     "Breakable_GateRubble_Wall(1)",
+    "Pan Hint_Show_Cannon",
     "Setup_001_Controller",
     "Push_Block_Template(1)",
     "Push_Block_Template(3)",
@@ -965,6 +989,11 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
         d.look("cannon_after").state("Breakable_GateRubble_Wall(1)"),
         3
     );
+    // The cannon's pan, asleep until the walk to the strip crosses its
+    // range, takes itself off on its first tick with the cannon fired, as
+    // AH.8's census has it at the strip (awake 0.015 s, no behaviour).
+    assert_eq!(d.look("cannon_after").state("Pan Hint_Show_Cannon"), 2);
+    assert_eq!(d.look("strip").state("Pan Hint_Show_Cannon"), 3);
     // The first turtle pushed east four times, 15 ft a push, to 20.46.
     let t1 = d.look("turtle1_pushed");
     let at = t1.at("Push_Block_Template(1)");
@@ -1016,6 +1045,15 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
         landed.behaviour("Setup_001_Controller"),
         Some("in which you triumph and the script ends")
     );
+    // While the intro plays the cutscene system holds the minions (its
+    // control wrapper: under designer control, invulnerable), then lets go.
+    println!(
+        "the scene's steps on the route {}, his minion held {}",
+        d.scene_steps, d.held_steps
+    );
+    assert!(d.scene_steps > 0, "the intro set Cutscene State");
+    assert!(d.held_steps + 1 >= d.scene_steps, "held through the intro");
+    assert!(!invulnerable(&d.run), "let go once it's over");
     // Anchor B, where AH.8's stood, its triggers fired as AH.8's were bar
     // the lush peak's (fired before AH.8's route began, out of this
     // route's reach); his gold the nine coins' and the breakables' loot.
@@ -1074,6 +1112,36 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     // pieces, the spike gate's spikes and holes: openspec AG.239) or
     // listing why it doesn't, as `giants_start` holds the start's.
     route_clones_drawn(&d.run);
+    // The gate's four holes run their own script (`Gate_Spikes_Hole.ai`,
+    // AH.28's listing), which sets each to 60 % of its template at its start.
+    let hole = d
+        .run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.obj.unit == LEVEL && p.name == "Gate_Spikes_Hole")
+        .expect("the holes' template");
+    let holes: Vec<[f32; 3]> = d
+        .run
+        .world
+        .clones()
+        .into_iter()
+        .filter_map(|c| d.run.world.actor(c))
+        .filter(|a| a.template == Some(hole.obj))
+        .map(|a| a.scale)
+        .collect();
+    println!(
+        "the holes' scales {holes:?}, their template's {:?}",
+        hole.scale
+    );
+    assert_eq!(holes.len(), 4);
+    for s in &holes {
+        assert!(
+            s.iter().all(|v| (v - 60.0).abs() < 1e-3),
+            "{holes:?} from {:?}",
+            hole.scale
+        );
+    }
     for (k, n, s) in &f.changes {
         println!("F0 + {k}: {n} {s:?}");
     }
@@ -1142,6 +1210,12 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
         .count();
     println!(
         "members reached {} ({own} the VM's own), {asked} asked a value",
+        reached.len()
+    );
+    // AH.34's ceiling as AG.28 raised it, which AG.165's count stands on.
+    assert!(
+        reached.len() <= 325,
+        "past AG.28's ceiling: {}",
         reached.len()
     );
     // A dev aid: `AH28_MEMBERS_OUT=<file outside the tree>` writes every

@@ -682,7 +682,6 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
         Mode::Strict,
         Setup {
             props: script.props,
-            ..Setup::default()
         },
     );
     let mut snaps = Vec::new();
