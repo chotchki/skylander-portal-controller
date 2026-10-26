@@ -384,13 +384,34 @@ impl<'b> Writer<'b> {
         (p, def)
     }
 
+    /// Opens the macro definition `def` (an op made beforehand, so other
+    /// ops can name it) at the next position, its INTERFACE declaring each
+    /// parameter's container class (`name`, `container`, default): a
+    /// `ScriptReference` one binds a structure, where [`Writer::define`]'s
+    /// `ValueInfo` ones keep only a number. Returns its position;
+    /// [`Writer::end_block`] ends it.
+    pub fn open_macro(&mut self, def: Location, params: &[(&str, &str, Location)]) -> usize {
+        let p = self.push(def);
+        self.interface_typed(def, params);
+        p
+    }
+
     /// An INTERFACE block binding `args` into `def`'s parameters.
     fn interface(&mut self, def: Location, args: &[(&str, Location)]) {
+        let typed: Vec<(&str, &str, Location)> = args
+            .iter()
+            .map(|(name, rhs)| (*name, "ValueInfo", *rhs))
+            .collect();
+        self.interface_typed(def, &typed);
+    }
+
+    /// [`Writer::interface`] with each parameter's container class given.
+    fn interface_typed(&mut self, def: Location, args: &[(&str, &str, Location)]) {
         let (p, _) = self.open(Class::MacroInterface, "INTERFACE");
-        for (name, rhs) in args {
+        for (name, container, rhs) in args {
             let o = self.op(Class::MacroParameter, "parameter");
             self.text(o, 0x1C, name);
-            self.class_word(o, 0x20, "ValueInfo");
+            self.class_word(o, 0x20, container);
             self.word(o, 0x28, u32::MAX);
             self.refer(o, 0x30, *rhs);
             self.refer(o, 0x38, def);

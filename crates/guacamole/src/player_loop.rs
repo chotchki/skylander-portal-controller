@@ -20,6 +20,10 @@
 //! - the head: its `script timer local` set from its clock (the state
 //!   system's immunity after a hurt reaction and a dropped coin's age read
 //!   it);
+//! - the HUD's banners, each player's, as the tick's own loop steps them
+//!   ahead of the level-init gate ([`crate::hud_messages`], openspec
+//!   AH.222): a level-up's end raising his health to the new level's full
+//!   health;
 //! - once a hero has joined: the death sequence for a defeated hero, the
 //!   hurt list's upkeep (every 0.25 s the hurts older than the last check
 //!   dropped), the combat manager (its shared alert every 0.25 s of game
@@ -48,7 +52,8 @@
 //! encounter's camera pans and the difficulty tracking, and the playtime)
 //! isn't run.
 //!
-//! Not run: the HUD's messages and its low-health warning (the HUD is
+//! Not run: the HUD's banners' drawing (stepped by [`crate::hud_messages`];
+//! stand-in ledger: `hud-messages`) and its low-health warning (the HUD is
 //! AH.26's; stand-in ledger: `hud`), the join prompt and a player's join,
 //! the champion details and the two-player camera, each player's update
 //! macros, and the level-init gate: `Game - Init Minions in Level` raises
@@ -510,6 +515,15 @@ impl PlayerLoop {
         // False only when no op of the program names the local: nothing
         // reads it then (a synthetic portal manager's).
         vm.set_local(pm, "script timer local", Value::Float(now));
+        // The HUD's banners, each player's, joined or not (openspec AH.222;
+        // stand-in ledger: `hud-messages`).
+        let since = now
+            - vm.local(pm, "script timer last frame")
+                .and_then(|v| vm.value(v).as_f32())
+                .unwrap_or(0.0);
+        for player in players_of(vm, pm) {
+            crate::hud_messages::step(vm, host, pm, player, since)?;
+        }
         if joined {
             for r in [&self.death, &self.hurts, &self.combat, &self.projectiles]
                 .into_iter()
@@ -519,13 +533,7 @@ impl PlayerLoop {
             }
             if self.player.is_some() || self.cam_target.is_some() {
                 let paused = global_number(vm, "Pause Layer") > 0.0;
-                let players = vm
-                    .local(pm, "player data")
-                    .map(|v| vm.value(v))
-                    .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
-                    .unwrap_or_default();
-                for player in players {
-                    let player = vm.value(player);
+                for player in players_of(vm, pm) {
                     vm.set_local(pm, "player data scratch", player);
                     vm.set_field(player, "script timer", Value::Float(now));
                     let playing = vm
@@ -630,6 +638,17 @@ pub fn update_macros(vm: &mut Vm) -> Vec<&'static str> {
         .collect()
 }
 
+/// The portal manager's `player data`, each player's structure.
+fn players_of(vm: &Vm, pm: PlacementId) -> Vec<Value> {
+    vm.local(pm, "player data")
+        .map(|v| vm.value(v))
+        .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| vm.value(p))
+        .collect()
+}
+
 /// A `global.bld` number, 0 when it reads none.
 fn global_number(vm: &mut Vm, name: &str) -> f32 {
     vm.program()
@@ -645,6 +664,7 @@ mod tests {
     use std::sync::Arc;
 
     use guac_formats::igz::Igz;
+    use guac_formats::igz::Location;
     use guac_formats::igz::builder::IgzBuilder;
     use guac_formats::script::builder::{El, Writer};
     use guac_formats::script::{Class, Graph};
@@ -683,8 +703,219 @@ mod tests {
         ("Camera - Update Player Cam Target", "cam target"),
     ];
 
+    /// The synthetic file's banner macros (openspec AH.222), each counting
+    /// its calls in a value cell of its own: the level-up's init, and
+    /// `Clear Message`, which here does the level-up's shutdown itself.
+    const BANNER: [(&str, &str); 2] = [
+        ("Replace Message - Level Up - Init", "banner init"),
+        (
+            "MainUI - Player HUD - Replace Message - Clear Message",
+            "banner clear",
+        ),
+    ];
+    /// Level 2's full health by combat's rule for a 290 base (`Round Number
+    /// Up(290 × 1.111)`), what the synthetic level-up's end writes.
+    const LEVEL_2_FULL: i32 = 323;
+
+    /// The HUD's banner queue in the synthetic file (openspec AH.222), in
+    /// the original's shape: a player's queue, its clock, the banner
+    /// showing, his full health and his flag; a banner's state, timer and
+    /// definition; a definition's init macro; `UI Animations`' slam and
+    /// its frames (the test puts them in); the level-up's definition, which
+    /// STARTUP points at the init. `Clear Message` does what the original's
+    /// does with a level-up's: his health and full health to
+    /// [`LEVEL_2_FULL`] and his flag cleared (the definition's shutdown),
+    /// then the banner off the queue and none showing.
+    struct Banners {
+        info_ty: Location,
+        def_ty: Location,
+        anims_ty: Location,
+        keyframer_ty: Location,
+        frame_ty: Location,
+        hp: Location,
+        clock: Location,
+        queue: Location,
+        showing: Location,
+        hp_max: Location,
+        invulnerable: Location,
+        state: Location,
+        timer: Location,
+        def: Location,
+        init: Location,
+        slam: Location,
+        frames: Location,
+        time: Location,
+        anims: Location,
+        level_up: Location,
+        params: [Location; 5],
+        defs: [Location; 2],
+    }
+
+    impl Banners {
+        fn new(w: &mut Writer<'_>, hp: Location) -> Self {
+            let info_ty = w.op(
+                Class::DefineStructure,
+                "UI - Player HUD Replace Message Info",
+            );
+            let def_ty = w.op(
+                Class::DefineStructure,
+                "UI - Player HUD Replace Message Def",
+            );
+            let anims_ty = w.op(Class::DefineStructure, "UI Animation Set");
+            let keyframer_ty = w.op(Class::DefineStructure, "Keyframer Definition");
+            let frame_ty = w.op(Class::DefineStructure, "Keyframer Frame");
+            let queue = w.variable("hud replace messages", "ScriptSet", None);
+            w.refer(queue, 0x24, info_ty);
+            let slam = w.variable("slam no fade in", "ScriptStructure", None);
+            w.refer(slam, 0x24, keyframer_ty);
+            let frames = w.variable("frames", "ScriptSet", None);
+            w.refer(frames, 0x24, frame_ty);
+            let anims = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(anims, 0x08, "UI Animations");
+            w.refer(anims, 0x1C, anims_ty);
+            let level_up = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(level_up, 0x08, "hud replace message def - level up");
+            w.refer(level_up, 0x1C, def_ty);
+            let params = [
+                ("cur player joined data", "ScriptReference"),
+                ("message info", "ScriptReference"),
+                ("clear message", "ScriptReference"),
+                ("clear for player joined data", "ScriptReference"),
+                ("fade time", "ValueInfo"),
+            ]
+            .map(|(n, c)| {
+                let contents = (c == "ValueInfo").then_some(FLOAT);
+                w.variable(n, c, contents)
+            });
+            let defs = BANNER.map(|(name, _)| w.op(Class::DefineMacro, name));
+            Banners {
+                info_ty,
+                def_ty,
+                anims_ty,
+                keyframer_ty,
+                frame_ty,
+                hp,
+                clock: w.variable("hud replace message timer", "ValueInfo", Some(FLOAT)),
+                queue,
+                showing: w.variable("cur hud replace message", "ScriptReference", None),
+                hp_max: w.variable("hp max", "ValueInfo", Some(INT)),
+                invulnerable: w.variable("invulnerable", "ValueInfo", Some(INT)),
+                state: w.variable("state", "ValueInfo", Some(INT)),
+                timer: w.variable("timer", "ValueInfo", Some(INT)),
+                def: w.variable("def", "ScriptReference", None),
+                init: w.variable("init macro", "ScriptReference", None),
+                slam,
+                frames,
+                time: w.variable("time", "ValueInfo", Some(FLOAT)),
+                anims,
+                level_up,
+                params,
+                defs,
+            }
+        }
+
+        /// A player's: his queue, its clock, the banner showing, his full
+        /// health and his flag.
+        fn player_fields(&self) -> [Location; 5] {
+            [
+                self.clock,
+                self.queue,
+                self.showing,
+                self.hp_max,
+                self.invulnerable,
+            ]
+        }
+
+        fn structures(&self, w: &mut Writer<'_>) {
+            for (ty, fields) in [
+                (self.info_ty, vec![self.state, self.timer, self.def]),
+                (self.def_ty, vec![self.init]),
+                (self.anims_ty, vec![self.slam]),
+                (self.keyframer_ty, vec![self.frames]),
+                (self.frame_ty, vec![self.time]),
+            ] {
+                let p = w.push(ty);
+                for f in fields {
+                    w.push(f);
+                }
+                w.end_block(p);
+            }
+        }
+
+        /// The slam's four frames (the test times them) and the level-up's
+        /// definition naming its init.
+        fn startup(&self, w: &mut Writer<'_>) {
+            for _ in 0..4 {
+                w.inc(&[
+                    El::Local(self.anims),
+                    El::Local(self.slam),
+                    El::Local(self.frames),
+                    El::Member("setvariant", "count"),
+                ]);
+            }
+            let l = w.value(&[El::Local(self.level_up), El::Local(self.init)]);
+            let r = w.reference(&[El::Local(self.defs[0])], None);
+            let o = w.op(Class::SetReference, "setref||=");
+            w.refer(o, 0x1C, l);
+            w.refer(o, 0x20, r);
+            w.push(o);
+        }
+
+        fn macros(&self, w: &mut Writer<'_>) {
+            let [cur, info, clear, clear_for, fade] = self.params;
+            let null = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+            let zero = w.float(0.0);
+            // The init: counted.
+            let p = w.open_macro(
+                self.defs[0],
+                &[
+                    ("cur player joined data", "ScriptReference", null),
+                    ("message info", "ScriptReference", null),
+                ],
+            );
+            let _ = (cur, info);
+            w.inc(&[El::Member("test", BANNER[0].1)]);
+            w.end_block(p);
+            // `Clear Message`: the level-up's end, then the banner off.
+            let p = w.open_macro(
+                self.defs[1],
+                &[
+                    ("clear message", "ScriptReference", null),
+                    ("clear for player joined data", "ScriptReference", null),
+                    ("fade time", "ValueInfo", zero),
+                ],
+            );
+            let _ = fade;
+            let full = w.int(LEVEL_2_FULL);
+            w.set(&[El::Local(clear_for), El::Local(self.hp_max)], full);
+            let full = w.rhs(INT, &[El::Local(clear_for), El::Local(self.hp_max)]);
+            w.set(&[El::Local(clear_for), El::Local(self.hp)], full);
+            let off = w.int(0);
+            w.set(&[El::Local(clear_for), El::Local(self.invulnerable)], off);
+            let l = w.value(&[El::Local(clear_for), El::Local(self.showing)]);
+            let r = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+            let o = w.op(Class::SetReference, "setref||=");
+            w.refer(o, 0x1C, l);
+            w.refer(o, 0x20, r);
+            w.push(o);
+            let lhs = w.stack(
+                guac_formats::script::StackClass::Set,
+                &[El::Local(clear_for), El::Local(self.queue)],
+            );
+            let rhs = w.reference(&[El::Local(clear)], None);
+            let o = w.op(Class::ChangeMembership, "set [set]||to");
+            w.refer(o, 0x1C, lhs);
+            w.word(o, 0x20, 1);
+            w.refer(o, 0x24, rhs);
+            w.push(o);
+            w.inc(&[El::Member("test", BANNER[1].1)]);
+            w.end_block(p);
+        }
+    }
+
     /// A portal manager in the original's shape, our ops: its STARTUP
-    /// makes two players, the first playing; its tick's body calls the
+    /// makes two players, the first playing, each with the HUD's banner
+    /// queue ([`Banners`]); its tick's body calls the
     /// camera's frame, sets its clock's local, ends at a gate that stays
     /// shut (the VM's own first tick stops there), then the death
     /// sequence's check (finalizing a dying player), the hurts' upkeep every
@@ -707,6 +938,7 @@ mod tests {
             let script_timer = w.variable("script timer", "ValueInfo", Some(FLOAT));
             let hp = w.variable("hp", "ValueInfo", Some(INT));
             let hp_kept = w.variable("hp remembered", "ValueInfo", Some(INT));
+            let banners = Banners::new(w, hp);
             let players = w.variable("player data", "ScriptSet", None);
             w.refer(players, 0x24, player_ty);
             let scratch = w.variable("player data scratch", "ScriptReference", None);
@@ -742,10 +974,12 @@ mod tests {
             w.set(&[El::Local(scratch), El::Local(playing)], one);
             let hundred = w.int(100);
             w.set(&[El::Local(scratch), El::Local(hp)], hundred);
+            banners.startup(w);
             w.end_block(start);
             let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
             w.end_block(shut);
             let (section, _) = w.open(Class::MacroSection, "MACROS");
+            banners.macros(w);
             for (def, (_, cell)) in defs
                 .iter()
                 .zip(CALLED)
@@ -765,7 +999,11 @@ mod tests {
             for f in [playing, timer, script_timer, hp, hp_kept] {
                 w.push(f);
             }
+            for f in banners.player_fields() {
+                w.push(f);
+            }
             w.end_block(p);
+            banners.structures(w);
             w.end_block(types);
             // The tick's body.
             w.call(camera[0], &[]);
@@ -868,6 +1106,14 @@ mod tests {
             config
                 .members
                 .value_cell("test", "hurts", MemberSpec::new(Kind::Int, 0.0, 0.0));
+            for (_, cell) in BANNER {
+                if unmodelled.contains(&cell) {
+                    continue;
+                }
+                config
+                    .members
+                    .value_cell("test", cell, MemberSpec::new(Kind::Int, 0.0, 0.0));
+            }
             config.whitelist = Whitelist::with_first_ticks(&[], &[], &["Spyro_PortalManager.ai"]);
             let sid = program.script_named("Spyro_PortalManager.ai").unwrap();
             let mut vm = Vm::new(program, config);
@@ -916,6 +1162,52 @@ mod tests {
                 .local(self.pm, name)
                 .and_then(|v| v.as_f32())
                 .unwrap_or(f32::NAN)
+        }
+
+        /// The award's part of a level-up for the first player (openspec
+        /// AH.222): the slam's four frames timed as the disc's `UI
+        /// Animations` holds them (0.166 s), him bitten to 278 of 290 and
+        /// kept from harm, the level-up's banner queued as `Add Message`
+        /// queues it. Returns the player.
+        fn queue_level_up(&mut self) -> Value {
+            let p0 = self.player(0);
+            let anims = {
+                let g = self.vm.program().global_named("UI Animations").unwrap();
+                self.vm.global(g).unwrap()
+            };
+            let frames = self
+                .vm
+                .field(anims, "slam no fade in")
+                .and_then(|s| self.vm.field(s, "frames"))
+                .unwrap();
+            let four = self.vm.set(frames).map(<[Value]>::to_vec).unwrap();
+            assert_eq!(four.len(), 4, "STARTUP's four frames");
+            for f in four {
+                assert!(self.vm.set_field(f, "time", Value::Float(0.166)));
+            }
+            assert!(self.vm.set_field(p0, "hp", Value::Int(278)));
+            assert!(self.vm.set_field(p0, "hp max", Value::Int(290)));
+            assert!(self.vm.set_field(p0, "invulnerable", Value::Int(1)));
+            let mut engine = NoEngine;
+            let mut spawn = headless_spawner(0x2000);
+            let mut host = WorldHost {
+                world: &mut self.world,
+                engine: &mut engine,
+                generator: &mut self.generator,
+                spawn: &mut spawn,
+            };
+            let queue = self.vm.field(p0, "hud replace messages").unwrap();
+            let banner = self.vm.grow(queue, &mut host).unwrap();
+            let def = {
+                let g = self
+                    .vm
+                    .program()
+                    .global_named("hud replace message def - level up")
+                    .unwrap();
+                self.vm.global(g).unwrap()
+            };
+            assert!(self.vm.set_reference(banner, "def", self.vm.value(def)));
+            p0
         }
 
         fn player(&self, i: usize) -> Value {
@@ -1458,5 +1750,108 @@ mod tests {
         let after = b.counts();
         let d: Vec<i32> = after.iter().zip(&before).map(|(a, b)| a - b).collect();
         assert_eq!(d, vec![0, 60, 60, 120, 8, 120, 4]);
+    }
+
+    /// AH.222: a level-up's banner, queued as the original's award queues
+    /// it, raises his health to the new level's full health once it ends,
+    /// on the original's timing: none showing until the next step, shown
+    /// the step after (its definition's init run once), held while its
+    /// icon slams in (the slam's first three 0.166 s frames) and 1.8 s
+    /// more, then `Clear Message`, which ends it as a level-up's ends (full
+    /// health 323, his health to it, his flag cleared) and takes it off.
+    /// Until then his health and flag stay as the award left them, bitten
+    /// to 278 of 290 and kept from harm. The queue's clock runs on by the
+    /// portal manager's time, joined or not.
+    #[test]
+    fn a_level_ups_banner_raises_his_health_to_full_when_it_ends() {
+        let mut b = Bench::new();
+        let p0 = b.queue_level_up();
+        let int = |b: &Bench, name: &str| b.vm.field(p0, name).and_then(|v| b.vm.value(v).as_i32());
+        let clock = |b: &Bench| {
+            b.vm.field(p0, "hud replace message timer")
+                .and_then(|v| b.vm.value(v).as_f32())
+                .unwrap_or(f32::NAN)
+        };
+        let showing = |b: &Bench| {
+            b.vm.field(p0, "cur hud replace message")
+                .map(|v| b.vm.value(v))
+                .unwrap_or(Value::Null)
+        };
+        let (mut shown, mut slammed, mut ended) = (None, None, None);
+        let start = clock(&b);
+        for k in 1..=200 {
+            b.step(k > 100);
+            if shown.is_none() && b.count("banner init") == 1 {
+                shown = Some(k);
+            }
+            let state = match showing(&b) {
+                Value::Null => None,
+                m => b.vm.field(m, "state").and_then(|v| b.vm.value(v).as_i32()),
+            };
+            if slammed.is_none() && state == Some(2) {
+                slammed = Some(k);
+            }
+            if ended.is_none() && b.count("banner clear") == 1 {
+                ended = Some(k);
+            } else if ended.is_none() {
+                assert_eq!(
+                    (int(&b, "hp"), int(&b, "hp max"), int(&b, "invulnerable")),
+                    (Some(278), Some(290), Some(1)),
+                    "step {k}: as the award left him"
+                );
+            }
+            if k == 1 {
+                assert!(showing(&b) != Value::Null, "showing from the next step");
+                assert_eq!(b.count("banner init"), 0, "shown the step after");
+            }
+        }
+        // The queue's clock: the portal manager's time, every step.
+        assert!(
+            (clock(&b) - start - 200.0 / 60.0).abs() < 1e-3,
+            "{} s on",
+            clock(&b) - start
+        );
+        // Shown 2 steps on, slammed in 30 later (0.498 s), ended 109 after
+        // that (1.8 s on the clock's single-precision sums of 1/60).
+        assert_eq!((shown, slammed, ended), (Some(2), Some(32), Some(141)));
+        assert_eq!(b.count("banner init"), 1);
+        assert_eq!(b.count("banner clear"), 1);
+        assert_eq!(
+            (int(&b, "hp"), int(&b, "hp max"), int(&b, "invulnerable")),
+            (Some(LEVEL_2_FULL), Some(LEVEL_2_FULL), Some(0))
+        );
+        assert_eq!(showing(&b), Value::Null, "none showing");
+        let queue = b.vm.field(p0, "hud replace messages").unwrap();
+        assert_eq!(b.vm.set(queue).map(<[Value]>::len), Some(0), "taken off");
+    }
+
+    /// AH.222: a banner whose own macro stops in play mode (here its init,
+    /// counting on a member nothing models) is parked there, logged, and
+    /// the portal manager runs on: its calls go on each step, the banner
+    /// never ends, and nothing it would have done is done.
+    #[test]
+    fn a_banner_whose_call_stops_in_play_is_parked_and_the_portal_manager_runs_on() {
+        let mut b = Bench::with(Mode::Play, &["banner init"]);
+        let p0 = b.queue_level_up();
+        let combat = b.count("combat");
+        for k in 1..=200 {
+            b.step(true);
+            if k == 2 {
+                let banner =
+                    b.vm.field(p0, "cur hud replace message")
+                        .map(|v| b.vm.value(v))
+                        .unwrap();
+                assert_eq!(
+                    b.vm.field(banner, "state").map(|v| b.vm.value(v)),
+                    Some(Value::Int(crate::hud_messages::PARKED)),
+                    "parked the step its init stopped"
+                );
+            }
+        }
+        assert_eq!(b.vm.stopped(b.pm), None, "the portal manager runs on");
+        assert_eq!(b.count("combat"), combat + 200, "its calls with it");
+        assert_eq!(b.count("banner clear"), 0, "never ended");
+        let int = |name: &str| b.vm.field(p0, name).and_then(|v| b.vm.value(v).as_i32());
+        assert_eq!((int("hp"), int("invulnerable")), (Some(278), Some(1)));
     }
 }
