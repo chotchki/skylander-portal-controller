@@ -24,3 +24,11 @@ In a level, the bottom face position SHALL fire the hero's first attack, the lef
 #### Scenario: A button held
 - **WHEN** the button for his first, second or third attack is held for 2 s
 - **THEN** Eruptor attacks once
+
+### Requirement: The top face button activates what's in reach
+In a level, the top face position SHALL be the button the game asks for when a prompt is in reach, the same position on every pad whatever its label: pressed within a prompt's reach it SHALL activate it, and it SHALL fire no attack.
+
+#### Scenario: The cannon on the walkway
+- **WHEN** Eruptor stands beside the cannon on chapter 1's walkway and the button in the top face position is pressed
+- **THEN** the cannon fires its ball at the rubble wall it faces, and the wall breaks
+

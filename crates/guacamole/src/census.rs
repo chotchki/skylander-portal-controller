@@ -11,10 +11,11 @@
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
-//! static parts they carry) and its chapter 1 another 55, its props 51
-//! more (AG.60's start scripts stand and spawn more of them: 32 before),
-//! what its scripts spawn 6 more beyond those (parts fading in among
-//! them, AH.67), their glowing parts' level glow masks 20 and the walking
+//! static parts they carry) and its chapter 1 another 55, its props 61
+//! more (AG.60's start scripts stand and spawn more of them: 32 before;
+//! AG.239's route clones 10 more), what its scripts spawn 3 more beyond
+//! those (parts fading in among them, AH.67; 6 before AG.239's clones drew
+//! three of them first), their glowing parts' level glow masks 22 and the walking
 //! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
 //! point lights on) and the first fight's creatures' 3 more (AH.25: the
 //! Chompies' model and Norticus', skinned in the hero's scene). So the
@@ -251,23 +252,28 @@ pub const LEVEL: &[Row] = &[
 /// Every key chapter 1's props draw (AG.25) that [`LEVEL`] doesn't hold:
 /// the models of the placements that can stand there (a template or a
 /// creature draws nothing; one without a range stands by its actor since
-/// AG.60) and of the templates whose clones draw (AG.60's
+/// AG.60) and of the placements whose clones draw (AG.60's and AG.239's
 /// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades), in
 /// the level's scene at AF's fresh state, each once.
 pub const LEVEL_PROPS: &[Row] = &[
     row(0x0434, 0x1434, O, true, false, false, 1, true, true),
+    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, false, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, false, true, false, 1, true, false),
+    row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c00, 0x3400, O, true, false, false, 1, true, true),
     row(0x3c00, 0x3400, A, true, false, false, 1, true, true),
     row(0x3c01, 0x3401, O, true, false, false, 2, true, true),
     row(0x3c01, 0x3401, ADD, false, true, false, 2, true, true),
+    row(0x3c04, 0x2404, O, true, true, false, 1, true, false),
+    row(0x3c04, 0x2404, A, true, true, false, 1, true, false),
     row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
     row(0x3c05, 0x3405, A, false, false, false, 2, true, true),
     row(0x3c06, 0x3406, O, true, false, false, 2, true, true),
     row(0x3c14, 0x3414, O, true, false, false, 1, true, true),
+    row(0x3c1c, 0x341c, A, true, false, false, 1, true, true),
     row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
     row(0x3c20, 0x3420, O, true, false, false, 1, true, true),
     row(0x3c20, 0x3420, O, true, true, false, 1, true, true),
@@ -280,6 +286,8 @@ pub const LEVEL_PROPS: &[Row] = &[
     row(0x3c22, 0x3422, O, true, false, false, 2, true, true),
     row(0x3c23, 0x2423, O, true, false, false, 3, true, false),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, O, true, true, false, 1, true, false),
+    row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
     row(0x3c24, 0x2424, A, true, true, false, 1, true, false),
     row(0x3c24, 0x3424, O, true, false, false, 1, true, true),
     row(0x3c24, 0x3424, O, true, true, false, 1, true, true),
@@ -302,6 +310,9 @@ pub const LEVEL_PROPS: &[Row] = &[
     row(0x3c38, 0x3438, A, true, false, false, 1, true, true),
     row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
+    row(0x3c3c, 0x243c, A, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, A, true, true, false, 1, true, false),
     row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
     row(0x3c3c, 0x343c, O, true, true, false, 1, true, true),
     row(0x3c3c, 0x343c, A, true, false, false, 1, true, true),
@@ -316,12 +327,9 @@ pub const LEVEL_PROPS: &[Row] = &[
 /// each opaque one blending as a clone fading in draws it (AH.67,
 /// `props::faded_keys`), each once.
 pub const SPAWNS: &[Row] = &[
-    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
-    row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, ADD, false, false, false, 1, true, false),
     row(0x3c00, 0x3400, A, false, false, false, 1, true, true),
     row(0x3c01, 0x3401, A, true, false, false, 2, true, true),
-    row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
 ];
 
 /// Every glowing part's level glow mask chapter 1, its props and what its
@@ -350,6 +358,8 @@ pub const LEVEL_GLOW: &[Row] = &[
     row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, true, true, false, 1, true, true),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x3424, O, true, false, false, 1, true, true),
+    row(0x3c24, 0x3424, A, true, true, false, 1, true, true),
     row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
@@ -373,12 +383,15 @@ pub const HEROES_GLOW_STATIC: &[Row] = &[];
 
 /// Every key the first fight's creatures draw in the level on a skinned
 /// mesh that [`HEROES`] doesn't hold (openspec AH.25: the four Chompies'
-/// and Norticus' models, `crate::creature_models`, in the walking hero's
-/// scene), each once.
+/// and Norticus' models; AG.150: the push blocks' tortoises' and the
+/// cannon top's, `crate::creature_models`, in the walking hero's scene),
+/// each once.
 pub const CREATURES: &[Row] = &[
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
+    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
 ];
 
 /// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s.
@@ -574,11 +587,11 @@ mod tests {
             (TURNTABLE, true, 33),
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 55),
-            (LEVEL_PROPS, false, 51),
-            (SPAWNS, false, 6),
+            (LEVEL_PROPS, false, 61),
+            (SPAWNS, false, 3),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
-            (CREATURES, true, 3),
+            (CREATURES, true, 5),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -596,7 +609,7 @@ mod tests {
         // The level glow masks' (AH.65): rows of the colour keys whose
         // parts glow, keyed in the level's glow pass.
         for (rows, skinned, n) in [
-            (LEVEL_GLOW, false, 20),
+            (LEVEL_GLOW, false, 22),
             (HEROES_GLOW, true, 1),
             (HEROES_GLOW_STATIC, false, 0),
             (CREATURES_GLOW, true, 0),
@@ -613,7 +626,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 51 + 6 + 1 + 20 + 1 + 3);
+        assert_eq!(every.len(), 33 + 24 + 55 + 61 + 3 + 1 + 22 + 1 + 5);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()

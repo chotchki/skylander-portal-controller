@@ -1726,6 +1726,25 @@ pub const CAMERA_SCRIPTS: [&str; 8] = [
 /// drawn and walk is AH's route line's.
 pub const GOAT_SCRIPTS: [&str; 1] = ["Goat_Jumping_Pit.ai"];
 
+/// AH.8's route from the walkway to the pit (openspec AH.28, design
+/// decision 2's whitelist, AH.42's way), every tick, by script: what the
+/// route's obstacles spawn or wake that the start's scripts don't run
+/// already. The cannon's ball, which breaks the rubble wall it lands on;
+/// the push blocks' water ends, which the blocks look for as they drop
+/// (one pushed into the channel goes inactive there, a stepping stone);
+/// the spike gate Norticus' trigger wakes, and its holes; the camera's pan
+/// to the cannon as he comes near it, and the pit's intro cutscene the
+/// controller wakes as the hero lands (both on the cutscene system,
+/// [`crate::player_loop::UPDATES`]).
+pub const ROUTE_SCRIPTS: [&str; 6] = [
+    "Canon_Ball.ai",
+    "Push_Block_End.ai",
+    "Gate_Spikes.ai",
+    "Gate_Spikes_Hole.ai",
+    "Pan_Show_Cannon.ai",
+    "Pan_Show_Norticu.ai",
+];
+
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
 pub fn is_camera_script(path: &str) -> bool {
@@ -1744,6 +1763,8 @@ pub fn smash_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::LOOP);
     // The camera's again, over the creatures' cells for the viewport.
     members::register(&mut c.members, members::CAMERA);
+    // What AH.8's route reaches past those (openspec AH.28).
+    members::register(&mut c.members, members::ROUTE);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -1755,6 +1776,7 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -2156,6 +2178,7 @@ pub fn join_activate(
         &[],
         host,
     )?;
+    adventure_mode(vm, host, pm)?;
     let scripted = std::mem::take(&mut host.world.scripted);
     let mut minion_placement = None;
     let program = vm.program_arc();
@@ -2565,6 +2588,89 @@ pub(crate) fn portal_manager(vm: &Vm, world: &ScriptWorld) -> Result<PlacementId
     let h = portal_manager_handle(world)?;
     vm.placement_of(h)
         .ok_or_else(|| outside(format!("{PORTAL_MANAGER} doesn't run")))
+}
+
+/// The portal mode the level plays in once a player is in (openspec AH.28),
+/// a specialization of `Portal - Set Portal Mode`.
+pub const ADVENTURE_MODE: &str = "Portal Mode - Adventure Mode";
+
+/// The portal's mode as `portal control data` holds it: the specialization
+/// its `current mode` names, by name (`Portal Mode - Bootup` until a level
+/// starts play).
+pub fn portal_mode(vm: &mut Vm) -> Option<String> {
+    let g = vm.program().global_named("portal control data")?;
+    let pcd = vm.global(g)?;
+    let mode = vm.field(pcd, "current mode").map(|v| vm.value(v))?;
+    let Value::Object(obj) = mode else {
+        return None;
+    };
+    vm.program()
+        .defs
+        .iter()
+        .find(|d| d.obj == obj)
+        .map(|d| d.display.clone())
+}
+
+/// The portal put in adventure mode as the level's first minion joins
+/// (openspec AH.28): the original's level load clones the level
+/// initializer, whose `Game - Init Minions in Level` sets it once a player
+/// plays outside an arena, which no box runs, so the join calls the mode's
+/// own macro (stand-in ledger: `join`). Until then the UI's tick leaves
+/// every dialogue hidden, and the cannon fires through one. Nothing when
+/// the program has no such macro or the portal is in it already.
+fn adventure_mode(vm: &mut Vm, host: &mut WorldHost<'_, '_>, pm: PlacementId) -> Result<(), Halt> {
+    let defined = vm
+        .program()
+        .defs
+        .iter()
+        .any(|d| d.display.eq_ignore_ascii_case(ADVENTURE_MODE));
+    if !defined || portal_mode(vm).as_deref() == Some(ADVENTURE_MODE) {
+        return Ok(());
+    }
+    // A call skips the macro's interface, so its one parameter is handed
+    // the default the interface gives it (`portal control data`), under the
+    // name the file spells it with (trailing spaces and all).
+    let program = vm.program_arc();
+    let (Some(param), Some(g)) = (
+        parameter_named(&program, ADVENTURE_MODE, "portal data in"),
+        program.global_named("portal control data"),
+    ) else {
+        return Ok(());
+    };
+    let Some(pcd) = vm.global(g) else {
+        return Ok(());
+    };
+    vm.call_for(pm, ADVENTURE_MODE, &[(param.as_str(), pcd)], &[], host)?;
+    Ok(())
+}
+
+/// The name a macro's interface spells a parameter with, found by that name
+/// trimmed (the file keeps trailing spaces in some), any case.
+pub(crate) fn parameter_named(
+    program: &Program,
+    macro_name: &str,
+    trimmed: &str,
+) -> Option<String> {
+    use guac_script::Ins;
+    let def = program
+        .defs
+        .iter()
+        .find(|d| d.placed.is_some() && d.display.eq_ignore_ascii_case(macro_name))?;
+    let (sid, pos) = def.placed?;
+    let ops = &program.scripts.get(sid as usize)?.ops;
+    let &iface = ops.get(pos as usize + 1)?;
+    if program.ops[iface as usize] != Ins::Interface {
+        return None;
+    }
+    let n = program.branch(iface) as usize;
+    ops.get(pos as usize + 2..=pos as usize + 1 + n)?
+        .iter()
+        .find_map(|&o| match &program.ops[o as usize] {
+            Ins::Parameter(p) if program.sym(p.name).trim().eq_ignore_ascii_case(trimmed) => {
+                Some(program.sym(p.name).to_owned())
+            }
+            _ => None,
+        })
 }
 
 /// The first player's slot's loaded data.
@@ -3292,10 +3398,19 @@ mod tests {
             c.whitelist
                 .lists("movementUpdate", "C:/x/movementUpdate.ai")
         );
+        // The pit's intro cutscene runs since AH.28; Eon's lines, the
+        // hints and the cutscene manager's placement stay off (decision 6).
         assert!(
-            !c.whitelist
+            c.whitelist
                 .lists("Eon_4_help_Norticus", "C:/x/Pan_Show_Norticu.ai")
         );
+        for (name, script) in [
+            ("Eon_2_Keep_Going", "C:/x/Eon_Line_Activator.ai"),
+            ("Hint_Combat", "C:/x/Hints_Passive.ai"),
+            ("CutsceneManager", "C:/x/Spyro_CutsceneManager.ai"),
+        ] {
+            assert!(!c.whitelist.lists(name, script), "{name}");
+        }
         for r in members::CREATURES {
             assert!(
                 c.members
@@ -3311,7 +3426,7 @@ mod tests {
     /// Setup_001, the chest and the castle wall's script off it, inert, and
     /// the Titan boulders' its first tick alone (their cylinders and pebbles,
     /// the feat held), so nothing takes them off; the fight's own listing
-    /// AH.27's with the four.
+    /// AH.27's with the four; AH.8's route's scripts and members (AH.28).
     #[test]
     fn the_tvs_listing_runs_the_breakables_and_no_creature_or_titan_feat() {
         let c = smash_config(Mode::Play);
@@ -3363,6 +3478,25 @@ mod tests {
         let fight = fight_config(Mode::Play);
         for name in FIRST_FIGHT.iter().chain(&BREAKABLES).chain(&PICKUPS) {
             assert!(fight.whitelist.lists(name, "C:/x/Anything.ai"), "{name}");
+        }
+        // AH.8's route (openspec AH.28): its scripts every tick, its
+        // members registered.
+        for script in ROUTE_SCRIPTS {
+            let path = format!("C:/tfb/Content/Levels/Includes/{script}");
+            assert_eq!(
+                c.whitelist.listing("a route placement", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
+        for r in members::ROUTE {
+            assert!(
+                c.members
+                    .get(MemberId::named(r.namespace, r.name))
+                    .is_some(),
+                "{}",
+                r.path()
+            );
         }
     }
 
@@ -3829,5 +3963,63 @@ mod tests {
         w.hero_template(GRUNT, grunt);
         assert_eq!(source(&w), (Source::HandedBack, false), "a join after it");
         assert!(!w.view.take());
+    }
+
+    /// A macro's parameter found by its name trimmed (openspec AH.28): the
+    /// file spells `Portal Mode - Adventure Mode`'s `portal data in` with
+    /// trailing spaces, and a call names it as the file does; a macro or a
+    /// parameter the program lacks is none.
+    #[test]
+    fn a_parameter_is_found_by_its_name_trimmed() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::Writer;
+        use guac_script::{Role, Unit};
+
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (macros, _) = w.open(Class::MacroSection, "MACROS");
+            let zero = w.int(0);
+            let (at, _) = w.define(ADVENTURE_MODE, &[("portal data in  ", zero)]);
+            w.end_block(at);
+            w.end_block(macros);
+            w.end_block(pre);
+            let idle = w.behaviour("idle");
+            w.end_block(idle);
+            w.end("C:/tfb/Synthetic/PortalControl.ai");
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Program::link(&[unit]).unwrap();
+        assert_eq!(
+            parameter_named(&program, ADVENTURE_MODE, "portal data in").as_deref(),
+            Some("portal data in  ")
+        );
+        assert_eq!(
+            parameter_named(&program, "portal mode - adventure mode", "PORTAL DATA IN").as_deref(),
+            Some("portal data in  "),
+            "any case"
+        );
+        assert_eq!(
+            parameter_named(&program, ADVENTURE_MODE, "portal data"),
+            None
+        );
+        assert_eq!(
+            parameter_named(&program, "Portal Mode - Bootup", "portal data in"),
+            None
+        );
     }
 }

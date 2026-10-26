@@ -2591,6 +2591,20 @@ pub async fn experience_tv(base: &str, xp: u32) -> Result<()> {
     Ok(())
 }
 
+/// Names the level placements guacamole's `/api/_test/tv` reads in its
+/// `watch` (`POST /api/_test/tv/watch`, openspec AH.28): `{"names": [..]}`.
+pub async fn watch_tv(base: &str, body: serde_json::Value) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/watch"))
+        .json(&body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/watch {body} returned {}", resp.status());
+    }
+    Ok(())
+}
+
 /// Asks guacamole's dev entry (`POST /api/_test/tv/entry`, openspec AH.25)
 /// for `body` (`{"anchor": "start"}` or `"b"`, optionally `"seed"`).
 pub async fn entry_tv(base: &str, body: serde_json::Value) -> Result<()> {

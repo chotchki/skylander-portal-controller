@@ -349,6 +349,10 @@ enum SliderPart {
     /// `slider.ignores time scales`: kept, and no time scale is modelled to
     /// ignore (a slider runs on the tick's seconds either way).
     IgnoresTimeScales,
+    /// `sequence.allow restart`: kept (openspec AH.28: the camera system
+    /// sets it on a layer's slider as a cutscene begins); a slide started
+    /// again is a new slider either way.
+    AllowRestart,
 }
 
 impl SliderPart {
@@ -360,6 +364,7 @@ impl SliderPart {
             ("playback mode", SliderPart::Mode),
             ("looping", SliderPart::Looping),
             ("raw duration", SliderPart::Duration),
+            ("allow restart", SliderPart::AllowRestart),
         ]
         .into_iter()
         .find(|(n, _)| MemberId::named("sequence", n) == m)
@@ -511,6 +516,23 @@ fn tag_global(program: &Program, o: OperandId) -> Option<GlobalId> {
     }
 }
 
+/// Whether a tag's value is the VM's `null` or `undefined` alone: a tag
+/// naming nothing (openspec AH.28: the spike gate's `close_set`).
+fn tag_names_nothing(program: &Program, o: OperandId) -> bool {
+    match program.operands.get(o as usize) {
+        Some(Operand::Path { elems, .. }) => matches!(
+            elems.as_slice(),
+            [Elem::Member(m)] if matches!(Builtin::of(*m), Some(Builtin::Null | Builtin::Undefined))
+        ),
+        Some(Operand::Expr {
+            a: Some(a),
+            op: None,
+            b: None,
+        }) => tag_names_nothing(program, *a),
+        _ => false,
+    }
+}
+
 /// What an embedder runs in a held placement's place during a step's walk
 /// ([`Vm::step_with`]): the VM, the placement and the host.
 pub type Native<'a> = dyn FnMut(&mut Vm, PlacementId, &mut dyn Host) -> Result<(), Halt> + 'a;
@@ -621,6 +643,7 @@ struct Slider {
     looping: bool,
     ping_pong: bool,
     ignores_time_scales: bool,
+    allow_restart: bool,
     /// Running from its target back to where it began (a ping pong's
     /// return).
     back: bool,
@@ -3008,10 +3031,30 @@ impl Vm {
                             let c = self.global_cell(g)?;
                             self.cells[c as usize].value
                         }
+                        // A tag naming `null` holds nothing: a set
+                        // reference to no set (the spike gate's `close_set`).
+                        None if tag_names_nothing(&self.program, o) => Value::Null,
                         None => return unsupported("a tag whose value isn't a literal"),
                     },
                 },
             },
+        };
+        // A set reference tag naming one object holds a set of it alone
+        // (openspec AH.28: the spike gate's `open_set`, the one placement
+        // whose removal opens it, counted and checked as a set).
+        let value = match (cell_kind(tag.decl.container), value) {
+            (
+                Some(CellKind::Set | CellKind::SetReference),
+                v @ (Value::Entity(_) | Value::Object(_)),
+            ) => {
+                self.sets.push(SetObj {
+                    elems: vec![v],
+                    elem: None,
+                    next: 0,
+                });
+                Value::Set((self.sets.len() - 1) as u32)
+            }
+            (_, v) => v,
         };
         let c = self.new_cell(decl, None, 0)?;
         self.write_cell(c, value, 0);
@@ -3169,6 +3212,7 @@ impl Vm {
             looping: false,
             ping_pong: false,
             ignores_time_scales: false,
+            allow_restart: false,
             back: false,
             // Begun ahead of this frame's slides (a native call before
             // them), it belongs to the frame they're about to begin.
@@ -3541,6 +3585,16 @@ impl Vm {
                         | Builtin::Random
                         | Builtin::Next),
                     ) => {
+                        // `undefined` holds no set (crate docs): its count
+                        // reads 0 and its elements none, as an empty set's
+                        // (openspec AH.28: the cannon's rubble plays
+                        // `undefined.setvariant.next` as it lands).
+                        if prev == Spot::Undefined {
+                            return Ok(Spot::Const(match b {
+                                Builtin::Count => Value::Int(0),
+                                _ => Value::Null,
+                            }));
+                        }
                         let v = self.read(prev, host)?;
                         let Value::Set(s) = self.materialize(v) else {
                             return if v == Value::Null {
@@ -3734,6 +3788,7 @@ impl Vm {
                     SliderPart::Looping => Value::Int(i32::from(s.looping)),
                     SliderPart::Duration => Value::Float(s.time),
                     SliderPart::IgnoresTimeScales => Value::Int(i32::from(s.ignores_time_scales)),
+                    SliderPart::AllowRestart => Value::Int(i32::from(s.allow_restart)),
                 }
             }
             Spot::Member {
@@ -3865,6 +3920,7 @@ impl Vm {
                     SliderPart::Looping => s.looping = n as i32 == 1,
                     SliderPart::Duration => return unsupported("a slider's raw duration written"),
                     SliderPart::IgnoresTimeScales => s.ignores_time_scales = n as i32 == 1,
+                    SliderPart::AllowRestart => s.allow_restart = n as i32 == 1,
                 }
                 Ok(())
             }

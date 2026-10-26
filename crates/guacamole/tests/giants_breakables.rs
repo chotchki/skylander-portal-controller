@@ -1596,6 +1596,10 @@ fn ag39s_falls_land_as_theirs_with_his_scripts_driving() {
             let records: serde_json::Value = serde_json::from_str(&text).unwrap();
             let records = records.as_array().unwrap();
             let label = dir.strip_prefix(&root).unwrap().display().to_string();
+            // A dev aid: `AG39_ONLY=<part of a label>` runs those falls alone.
+            if std::env::var("AG39_ONLY").is_ok_and(|o| !label.contains(&o)) {
+                continue;
+            }
             let mut k = 1;
             while k + 1 < records.len() {
                 let second = free_in_the_air(&records[k])

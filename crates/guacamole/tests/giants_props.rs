@@ -655,13 +655,17 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
     // The clones the TV draws against AG.7's live actors at F0: the fence's
     // cross beam where the fence holds it, its planks where it lays them
     // (their turns and heights rolled), the eggs in their nests (their
-    // wobble rolled), the cannon's base on the cannon.
+    // wobble rolled), the cannon's base on the cannon; and the skinned ones
+    // (AG.150): the push blocks' three tortoises on their blocks, the
+    // cannon's top on its base.
     let path = captures.join(AG7_RUN).join("actors-00002.json");
     let actors: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let mut live_clones: HashMap<&str, Vec<Placed>> = HashMap::new();
     for a in actors["actors"].as_array().unwrap() {
         let name = a["name"].as_str().unwrap();
-        if !guacamole::props::DRAWN_SPAWNS.contains(&name) {
+        if !guacamole::props::DRAWN_SPAWNS.contains(&name)
+            && !guacamole::props::SKINNED_SPAWNS.contains(&name)
+        {
             continue;
         }
         let v = |k: &str| {
@@ -713,8 +717,8 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
         checked += 1;
     }
     assert_eq!(
-        checked, 10,
-        "the beam, six planks, two eggs and the cannon's base"
+        checked, 14,
+        "the beam, six planks, two eggs, the cannon's base, three tortoises and the cannon's top"
     );
 
     // At the gate's door the walkway's first spinning coin wakes, as on

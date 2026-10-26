@@ -208,9 +208,10 @@ struct Built {
     /// props' are, past theirs; then the level's templates' the TV draws
     /// the clones of (AG.60), the props' own segments.
     spawn_models: Vec<(String, Vec<(usize, u16)>)>,
-    /// The first fight's creatures' models (openspec AH.25), by path, with
-    /// each one's palette off the level's palettes part: their textures
-    /// among `images`.
+    /// The first fight's creatures' models (openspec AH.25) and the skinned
+    /// templates' (AG.150, `props::SKINNED_SPAWNS`), by path, with each
+    /// one's palette off the level's palettes part: their textures among
+    /// `images`.
     creatures: Vec<CreatureModel>,
     read: Duration,
     took: Duration,
@@ -237,7 +238,8 @@ struct Walk {
     start: Vec3,
     props: LevelProps,
     prop_bodies: Vec<Option<PreparedBody>>,
-    /// The first fight's creatures' models (AH.25), by path.
+    /// The first fight's creatures' models (AH.25) and the skinned
+    /// templates' (AG.150), by path.
     creatures: Vec<(String, guac_ir::Model)>,
 }
 
@@ -265,7 +267,7 @@ fn read_walk(source: &LevelSource, part: impl Fn(&str) -> PathBuf) -> Result<Wal
         .map(|b| PreparedBody::new(b).map_err(|e| format!("the collision: {e}")))
         .collect::<Result<_, _>>()?;
     let creatures =
-        guacamole::creature_models::first_fight_models(&placements, &props, &source.identity);
+        guacamole::creature_models::skinned_models(&placements, &props, &source.identity);
     let props = LevelProps::new(&props, &placements).map_err(|e| format!("the props: {e}"))?;
     let prop_bodies = props
         .props
@@ -394,9 +396,10 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         .collect::<Result<Vec<_>, String>>()?;
     spawn_models.extend(level_spawns);
     drawn.materials.extend(spawned.materials.iter().cloned());
-    // The first fight's creatures (AH.25): their models with their
-    // palettes, their textures read with the level's. A palettes part that
-    // doesn't read leaves each holding its idle.
+    // The first fight's creatures (AH.25) and the skinned templates' clones
+    // (AG.150): their models with their palettes, their textures read with
+    // the level's. A palettes part that doesn't read leaves each holding its
+    // idle.
     let palettes: Option<guac_ir::palette::LevelPalettes> = match read_ir(
         source.ir,
         &part(guac_extract::levels::PALETTES),
@@ -981,8 +984,9 @@ pub(crate) struct Loaded {
     /// The spawn part's models by path, each segment's mesh and material:
     /// what the scripts' clones draw (AH.24).
     spawns: HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>,
-    /// The first fight's creatures' models (AH.25), and every texture the
-    /// level read, by its view, for their materials.
+    /// The first fight's creatures' models (AH.25) and the skinned
+    /// templates' (AG.150), and every texture the level read, by its view,
+    /// for their materials.
     creatures: Vec<CreatureModel>,
     images: Vec<(ImageKey, Handle<Image>)>,
     /// Where the hero starts, before he's settled.

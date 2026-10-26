@@ -418,6 +418,36 @@ impl Run {
         Ok(())
     }
 
+    /// [`Run::step`] on a run in play mode (openspec AH.28): the scripts
+    /// this step stopped, each logged by the VM and the run going on as the
+    /// TV's does, where a strict run would halt.
+    pub fn step_play(&mut self) -> Result<Vec<Halt>, Halt> {
+        let pads = self.bench.pads;
+        self.world.read_pads(pads);
+        for (h, active) in self.world.activity(&mut self.bench) {
+            self.vm.set_asleep(h, !active);
+        }
+        let joined = self.minion.is_some();
+        let player_loop = self.player_loop.clone();
+        let mut stopped = Vec::new();
+        let r = self.with_host(|vm, host| {
+            player_loop.frame_with(vm, host, joined, &mut stopped, &mut |_, _, _| Ok(()))
+        });
+        self.world.end_step();
+        scripts::add_scripted(&mut self.vm, &mut self.world);
+        self.bench.stand_props(&self.world);
+        stopped.extend(r?.stopped);
+        let dt = 1.0 / 60.0;
+        for hero in self.bench.heroes.values_mut() {
+            hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+        }
+        self.world.advance(dt, &mut self.bench);
+        self.steps += 1;
+        self.pose_hands();
+        self.bench.place_bodies(&self.world);
+        Ok(stopped)
+    }
+
     /// The join at this step with a fresh figure on the portal, as the TV
     /// joins him ([`Run::join_with`]).
     pub fn join(&mut self) -> Result<(), Halt> {
@@ -582,6 +612,37 @@ pub fn level_props(level: &Igz<'_>) -> LevelProps {
         .expect("the placements")
         .ir;
     LevelProps::new(&props, &placements).expect("the props")
+}
+
+/// The skinned models the TV draws chapter 1's first fight and the clones
+/// of its skinned templates with (openspec AG.150,
+/// `creature_models::skinned_models`), by path, through the extractor's own
+/// readers, as the TV's load builds them.
+pub fn skinned_models() -> Vec<(String, guac_ir::Model)> {
+    let bytes = level_bytes();
+    let level = Igz::parse(&bytes).unwrap();
+    let l = levels::LEVELS[0];
+    let props = levels::props(&level, l, identity()).expect("the props").ir;
+    let placements = levels::placements(&level, l, identity())
+        .expect("the placements")
+        .ir;
+    guacamole::creature_models::skinned_models(&placements, &props, &identity())
+}
+
+/// Chapter 1's palettes part through the extractor's own reader: what the
+/// TV poses its creatures and skinned clones by.
+pub fn level_palettes() -> guac_ir::palette::LevelPalettes {
+    let bytes = level_bytes();
+    let level = Igz::parse(&bytes).unwrap();
+    levels::palettes(&level, levels::LEVELS[0], identity())
+        .expect("the palettes")
+        .ir
+}
+
+/// Chapter 1's `level.bld` entry off the dump.
+fn level_bytes() -> Vec<u8> {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    guac_extract::scripts::entry(&usr, ARCHIVES[LEVEL as usize].0).unwrap()
 }
 
 /// Each slot's clip length at 100 %, 0 where a slot is empty or a network.

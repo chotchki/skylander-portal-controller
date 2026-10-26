@@ -50,6 +50,7 @@ mod tv;
 mod tv_state;
 mod video;
 mod warm;
+mod watch;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

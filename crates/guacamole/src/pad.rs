@@ -20,7 +20,8 @@
 //!   as the hero's input holds them, whatever is printed on them; with the
 //!   shoulders, the attacks his scripts read ([`actions`], AH.24: the bottom
 //!   position the first, the left and both right shoulders the second, the
-//!   right and both left shoulders the third, the top none), each press
+//!   right and both left shoulders the third, the top the fourth, AH.28's
+//!   dialogue button, the cannon's △), each press
 //!   kept until a game step has read it ([`crate::hero::HeroActions`]).
 //! - Prompts name the label printed on the pad in hand ([`labels`],
 //!   [`prompt`]): Xbox letters on a PC layout, Nintendo's on a Switch
@@ -125,17 +126,18 @@ pub(crate) const HERO_BUTTONS: [GamepadButton; 8] = [
     GamepadButton::RightTrigger2,
 ];
 
-/// The attacks the buttons fire, by position (pad-input's The face buttons
+/// The actions the buttons raise, by position (pad-input's The face buttons
 /// attack, AH.7's and AH.41's table): the bottom face the first; the left
 /// face and both right shoulders the second; the right face and both left
 /// shoulders the third (Eruptor's Magma Ball, upgrade 4's); the top face
-/// none. `faces` in [`Face::ALL`]'s order, `shoulders` in [`SHOULDERS`]'.
-/// The top position raises no action here: which, if any, the original's
-/// engine reads it as (AH.8's cannon fires on it) isn't read yet.
+/// the fourth (openspec AH.28), which no attack reads: the UI's tick
+/// activates a dialogue in reach on it going down (AH.8's cannon fires on
+/// it, △), and the cutscene system skips a skippable scene on it. `faces`
+/// in [`Face::ALL`]'s order, `shoulders` in [`SHOULDERS`]'.
 pub(crate) fn actions(faces: [bool; 4], shoulders: [bool; 4]) -> [bool; 4] {
-    let [south, east, west, _north] = faces;
+    let [south, east, west, north] = faces;
     let [l1, r1, l2, r2] = shoulders;
-    [south, west || r1 || r2, east || l1 || l2, false]
+    [south, west || r1 || r2, east || l1 || l2, north]
 }
 
 /// One pad's frame as the layer reads it.
@@ -1217,8 +1219,9 @@ mod tests {
     /// AH.24's attack buttons by position, through the seat: the bottom
     /// face the first attack; the left face and both right shoulders the
     /// second; the right face and both left shoulders the third; the top
-    /// face none. Another pad's reach no one; a press the layer took
-    /// (the resume) stays off them until let go, as the faces do.
+    /// face the fourth action (AH.28: △, the cannon's). Another pad's reach
+    /// no one; a press the layer took (the resume) stays off them until let
+    /// go, as the faces do.
     #[test]
     fn the_attack_buttons_by_position() {
         let mut seat = walking(&[pad(A), pad(B)]);
@@ -1240,7 +1243,7 @@ mod tests {
             (GamepadButton::East, [false, false, true, false]),
             (GamepadButton::LeftTrigger, [false, false, true, false]),
             (GamepadButton::LeftTrigger2, [false, false, true, false]),
-            (GamepadButton::North, [false; 4]),
+            (GamepadButton::North, [false, false, false, true]),
         ] {
             let out = seat.step(&[hold(button), pad(B)]);
             assert_eq!(out.actions(), want, "{button:?} held");
@@ -1324,7 +1327,7 @@ mod tests {
                 (GamepadButton::East, [false, false, true, false]),
                 (GamepadButton::LeftTrigger, [false, false, true, false]),
                 (GamepadButton::LeftTrigger2, [false, false, true, false]),
-                (GamepadButton::North, [false; 4]),
+                (GamepadButton::North, [false, false, false, true]),
             ] {
                 // Down for a frame no step reads, up the next: the step
                 // after still reads it once.
