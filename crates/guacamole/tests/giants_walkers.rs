@@ -353,6 +353,9 @@ struct W {
     layout: Layout,
     unit: u16,
     walk: Walk,
+    /// His `CollisionInfo` as the disc authors it, which `walk.shape` starts
+    /// as until his setup has run (AG.170).
+    authored: guac_motion::solid::SolidInfo,
     scale: f32,
     /// The seconds a step lasts (a replay sets the recording's own).
     dt: f32,
@@ -485,6 +488,7 @@ impl W {
             player_loop: PlayerLoop::read(&l.program),
             layout: l.layout.clone(),
             unit,
+            authored: walk.shape,
             walk,
             scale,
             dt: 1.0 / 60.0,
@@ -526,8 +530,8 @@ impl W {
 
     /// One step in the TV's order (`guacamole::frame`; the common run's,
     /// without the hands, which only an attack reads), then his scripted
-    /// scale ([`hero_scripts::apply_scripted_scale`]'s rule) before the
-    /// engine's frame.
+    /// solid and scale (`hero_scripts::apply_scripted_solid`'s rule,
+    /// [`walkers::rebuilt`]) before the engine's frame.
     fn step(&mut self) -> Result<(), Halt> {
         let dt = self.dt;
         self.vm.set_tick_seconds(dt);
@@ -658,28 +662,34 @@ impl W {
             .map_or_else(|| format!("{h:#x}"), |p| p.name.clone())
     }
 
-    /// A scripted walker's scale is his scripts' alone: his solid is built
-    /// at the one his actor holds (`hero_scripts::apply_scripted_scale`).
+    /// A scripted walker's solid and scale are his scripts' alone while they
+    /// run, as the TV's `hero_scripts::apply_scripted_solid` takes them: his
+    /// solid built from the `CollisionInfo` his actor holds once his setup
+    /// has run, at the scale it holds ([`walkers::rebuilt`]); nothing
+    /// rebuilds them once he's fallen back.
     fn apply_scale(&mut self) {
-        if self.walk.origin != walkers::Origin::Scripts || self.minion.is_none() {
+        if self.walk.origin != walkers::Origin::Scripts {
             return;
         }
+        let Some(m) = self.minion else {
+            return;
+        };
+        let held = match (self.off.is_some(), self.vm.set_up(m)) {
+            (true, _) => walkers::Held::Off,
+            (false, true) => walkers::Held::SetUp,
+            (false, false) => walkers::Held::BeforeSetup,
+        };
         let Some(a) = self.world.actor(self.hero) else {
             return;
         };
-        let Some(scale) = walkers::uniform_scale(a.scale) else {
-            return;
-        };
-        if (scale - self.scale).abs() < 1e-6 {
-            return;
-        }
-        if let Some(solid) = self.walk.shape.havok([scale * 100.0; 3]) {
+        if let Some(next) = walkers::rebuilt(&self.walk.shape, self.scale, a, held) {
             self.bench
                 .heroes
                 .get_mut(&self.hero)
                 .unwrap()
-                .set_solid(solid);
-            self.scale = scale;
+                .set_solid(next.solid);
+            self.walk.shape = next.shape;
+            self.scale = next.scale;
         }
     }
 
@@ -739,6 +749,7 @@ impl W {
         self.unit = unit;
         self.toy = l.toy(load).unwrap_or_else(|| panic!("{load}: no figure"));
         self.scale = walk.scale;
+        self.authored = walk.shape;
         self.walk = walk;
         self.join()
     }
@@ -2162,7 +2173,7 @@ impl Audit {
             self.scale = Some(act.scale);
             self.scripted_solid = Some([act.solid.width, act.solid.height, act.solid.length]);
         }
-        self.solid = Some([w.walk.shape.width, w.walk.shape.height, w.walk.shape.length]);
+        self.solid = Some([w.authored.width, w.authored.height, w.authored.length]);
         self.reached =
             w.vm.reached()
                 .iter()
@@ -2333,6 +2344,388 @@ fn every_other_modelled_character_walks_or_is_listed() {
             assert!(*script_ok, "{}: solid {:?}", a.load, a.scripted_solid);
         }
     }
+}
+
+/// AE.22's live read of the solid the original built for one of a load's
+/// figures: the shape, its centre from his pivot and its turn (the
+/// `Transformed` round the primitive), with the `CollisionInfo` and scale
+/// it was built from.
+#[derive(Debug, Clone)]
+struct LiveSolid {
+    figure: String,
+    shape: guac_motion::seam::Shape,
+    centre: Vec3,
+    rotation: [f32; 4],
+    kind: u32,
+    size: [f32; 3],
+    position: [f32; 3],
+    angles: [f32; 3],
+    scale: [f32; 3],
+}
+
+/// AE.22's built solids for `load`'s figures, one per figure the sweep read.
+fn live_solids(load: &str) -> Vec<LiveSolid> {
+    use guac_motion::seam::Shape;
+    let root = capture_dir().join("BLUS30968/ae22-full-1792487613");
+    let mut out = Vec::new();
+    let v3 = |v: &serde_json::Value| [0, 1, 2].map(|i| json_f32(&v[i]));
+    for e in std::fs::read_dir(&root).unwrap().flatten() {
+        let Ok(text) = std::fs::read_to_string(e.path().join("figure.json")) else {
+            continue;
+        };
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        if v["figure"]["load_file"].as_str() != Some(load) || v["tuning"].is_null() {
+            continue;
+        }
+        let t = &v["tuning"];
+        let c = &t["collision"];
+        let tr = &t["solid"]["shape"]["Transformed"];
+        let child = &tr["child"];
+        let shape = if let Some(s) = child.get("Sphere") {
+            Shape::Sphere {
+                radius: json_f32(&s["radius"]),
+            }
+        } else {
+            let cap = &child["Capsule"];
+            let (a, b) = (Vec3::from(v3(&cap["a"])), Vec3::from(v3(&cap["b"])));
+            assert!(
+                a.x == 0.0 && a.z == 0.0 && a == -b,
+                "{load}: a capsule along its own y: {a} {b}"
+            );
+            Shape::Capsule {
+                radius: json_f32(&cap["radius"]),
+                half_segment: a.y,
+            }
+        };
+        assert_eq!(v3(&tr["scale"]), [1.0; 3], "{load}: an unscaled transform");
+        out.push(LiveSolid {
+            figure: v["figure"]["id"].as_str().unwrap_or("").to_owned(),
+            shape,
+            centre: Vec3::from(v3(&tr["translation"])),
+            rotation: [0, 1, 2, 3].map(|i| json_f32(&tr["rotation"][i])),
+            kind: c["properties"].as_u64().unwrap_or(0) as u32 & 7,
+            size: [
+                json_f32(&c["width"]),
+                json_f32(&c["height"]),
+                json_f32(&c["length"]),
+            ],
+            position: v3(&c["position"]),
+            angles: v3(&c["angles"]),
+            scale: v3(&t["scale"]),
+        });
+    }
+    out.sort_by(|a, b| a.figure.cmp(&b.figure));
+    out
+}
+
+/// The numbers a built solid is made of, in a fixed order: the shape's
+/// sizes, its centre and its turn (the turn's sign chosen to meet `like`'s,
+/// as `q` and `-q` turn alike).
+fn solid_numbers(
+    shape: &guac_motion::seam::Shape,
+    centre: Vec3,
+    rotation: [f32; 4],
+    like: [f32; 4],
+) -> Option<Vec<f32>> {
+    use guac_motion::seam::Shape;
+    let mut n = match *shape {
+        Shape::Sphere { radius } => vec![0.0, radius, 0.0],
+        Shape::Capsule {
+            radius,
+            half_segment,
+        } => vec![1.0, radius, half_segment],
+        _ => return None,
+    };
+    n.extend(centre.to_array());
+    let dot: f32 = rotation.iter().zip(like).map(|(a, b)| a * b).sum();
+    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
+    n.extend(rotation.map(|q| q * sign));
+    Some(n)
+}
+
+/// How far two built solids' numbers part, metres (the turn's in its own
+/// units): the largest difference, and the largest in units in the last
+/// place of the larger of each pair, over pairs past 1e-3 (a zero against
+/// 1e-8 is no ulp count). `None` for two shapes of different kinds.
+fn parting(ours: &[f32], theirs: &[f32]) -> Option<(f32, u32)> {
+    if ours[0] != theirs[0] {
+        return None;
+    }
+    let mut most = (0.0f32, 0u32);
+    for (a, b) in ours.iter().zip(theirs).skip(1) {
+        most.0 = most.0.max((a - b).abs());
+        if a.abs().max(b.abs()) > 1e-3 && a.signum() == b.signum() {
+            most.1 = most.1.max(a.to_bits().abs_diff(b.to_bits()));
+        }
+    }
+    Some(most)
+}
+
+/// Where the controller poses `solid` on `hero`: on his pivot, turned by
+/// his lean alone (`guac_motion::proxy`; his facing doesn't turn it, which
+/// only a solid tipped off upright shows, AG.243).
+fn proxy_pose(solid: &guac_motion::solid::HavokSolid, hero: &Hero) -> guac_motion::seam::Pose {
+    let lean = guac_motion::seam::Quat::from_rotation_arc(Vec3::Y, hero.up);
+    guac_motion::seam::Pose::new(hero.pivot + lean * solid.centre, lean * solid.rotation)
+}
+
+/// How far `solid`, grown by the level mesh's 0.05 m as the hero's query
+/// shape is and posed as the controller poses it on `hero`, reaches from
+/// his pivot along `along`, a unit vector across the ground.
+fn reach(solid: &guac_motion::solid::HavokSolid, hero: &Hero, along: Vec3) -> f32 {
+    use guac_motion::seam::Shape;
+    let pose = proxy_pose(solid, hero);
+    let axis = pose.rotation * Vec3::Y;
+    let from_pivot = (pose.position - hero.pivot).dot(along);
+    from_pivot
+        + match solid.grown(0.0) {
+            Shape::Sphere { radius } => radius,
+            Shape::Capsule {
+                radius,
+                half_segment,
+            } => radius + axis.dot(along).abs() * half_segment,
+            other => panic!("a hero of another shape: {other:?}"),
+        }
+}
+
+/// AG.170 Verify, headless: every walker's built solid against AE.22's live
+/// read of each of his figures. Each joined as the TV joins him (strict
+/// mode, his setup on the VM), standing 120 steps, his controller's solid
+/// then the one `walkers::rebuilt` built from the `CollisionInfo` and scale
+/// his scripts hold: its shape, sizes, centre from his pivot and turn
+/// within 4 units in the last place (1e-7 m at zero) of the live one. Beside
+/// it, the base's rule (the disc's `CollisionInfo` at his scripts' scale,
+/// its half height straight up before AG.170) and the disc's `CollisionInfo`
+/// on today's formula, counted, and how many setups rewrite the disc's;
+/// and the `CollisionInfo` his actor holds before his setup runs, which is
+/// what he stands on until then, against the disc's. Then the stick held
+/// straight back into the wall behind the start for 150 steps: his pivot's
+/// gap to its face against his built solid's reach (the next step's Mac
+/// check reads the same off `/api/_test/tv`), and the base's solid's reach
+/// beside it.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, AE.22's reads under GUAC_CAPTURE_DIR, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_walkers_built_solid_is_the_one_ae22_read_live() {
+    use guac_motion::seam::PhysicsSeam as _;
+    use guac_motion::solid::{SolidInfo, euler};
+    let started = Instant::now();
+    let l = Level::open();
+    println!("the part: {} walkers; load {:.2}", l.walkers.len(), load1());
+    let mut misses = Vec::new();
+    let (mut ours_ok, mut base_ok, mut disc_ok, mut rewrites, mut file_is_disc) = (0, 0, 0, 0, 0);
+    let (mut worst, mut worst_ulps) = (0.0f32, 0u32);
+    let mut figures = 0;
+    let mut walls: Vec<(String, f32)> = Vec::new();
+    for entry in &l.walkers {
+        let load = entry.load_file.as_str();
+        let live = live_solids(load);
+        assert!(!live.is_empty(), "{load}: no AE.22 read");
+        figures += live.len();
+        let mut w = W::new(&l, load, STRICT);
+        w.step()
+            .unwrap_or_else(|h| panic!("{load}: init step 1: {h}"));
+        w.step()
+            .unwrap_or_else(|h| panic!("{load}: init step 2: {h}"));
+        w.join().unwrap_or_else(|h| panic!("{load}: join: {h}"));
+        // His actor before his setup's first tick: the template's file's.
+        let before = w.world.actor(w.hero).map(|a| a.solid.info());
+        for k in 0..120 {
+            w.step().unwrap_or_else(|h| panic!("{load}: step {k}: {h}"));
+        }
+        let set_up = w.vm.set_up(w.minion.unwrap());
+        let shape = w.walk.shape;
+        let built = *w.hero().solid();
+        let disc = w.authored;
+        if before == Some(disc) {
+            file_is_disc += 1;
+        }
+        if shape != disc {
+            rewrites += 1;
+        }
+        // The base's rule: the disc's at his scripts' scale, its half
+        // height straight up.
+        let scale = [w.scale * 100.0; 3];
+        let base = SolidInfo {
+            rotation: [0.0; 3],
+            ..disc
+        }
+        .havok(scale)
+        .map(|s| (s.shape, s.centre, euler(disc.rotation).to_array()));
+        let disc_built = disc
+            .havok(scale)
+            .map(|s| (s.shape, s.centre, s.rotation.to_array()));
+        let mut line = Vec::new();
+        let (mut ok, mut b_ok, mut d_ok) = (true, true, true);
+        for f in &live {
+            let theirs = solid_numbers(&f.shape, f.centre, f.rotation, f.rotation).unwrap();
+            let ours = solid_numbers(
+                &built.shape,
+                built.centre,
+                built.rotation.to_array(),
+                f.rotation,
+            );
+            let within = |o: Option<Vec<f32>>| {
+                o.and_then(|o| parting(&o, &theirs))
+                    .map(|(d, u)| (d, u, u <= 4 && d < 1e-5 || d <= 1e-7))
+            };
+            match within(ours) {
+                Some((d, u, good)) => {
+                    worst = worst.max(d);
+                    worst_ulps = worst_ulps.max(u);
+                    ok &= good;
+                    line.push(format!("{} parts {d:.2e} m, {u} ulps", f.figure));
+                }
+                None => {
+                    ok = false;
+                    line.push(format!("{} another kind", f.figure));
+                }
+            }
+            let rule = |r: Option<(guac_motion::seam::Shape, Vec3, [f32; 4])>| {
+                r.and_then(|(s, c, q)| solid_numbers(&s, c, q, f.rotation))
+            };
+            b_ok &= within(rule(base)).is_some_and(|x| x.2);
+            d_ok &= within(rule(disc_built)).is_some_and(|x| x.2);
+            // Where a miss of the solid comes from: the CollisionInfo his
+            // scripts hold, his scale or the kind, each named apart.
+            let ci = [shape.width, shape.height, shape.length];
+            if ci != f.size || shape.offset != f.position || shape.rotation != f.angles {
+                line.push(format!(
+                    "{}'s CollisionInfo {:?} {:?} {:?}, ours {ci:?} {:?} {:?}",
+                    f.figure, f.size, f.position, f.angles, shape.offset, shape.rotation
+                ));
+            }
+            if scale != f.scale {
+                line.push(format!(
+                    "{}'s scale {:?}, ours {scale:?}",
+                    f.figure, f.scale
+                ));
+            }
+            let kind = guacamole::script_engine::Solid {
+                shape: f.kind as i32,
+                ..Default::default()
+            }
+            .kind();
+            if kind != shape.kind {
+                line.push(format!(
+                    "{}'s kind {kind:?}, ours {:?}",
+                    f.figure, shape.kind
+                ));
+            }
+        }
+        // Into the wall behind the start, the stick straight back: along
+        // the view's 15° + 180°, near enough head-on to the face behind the
+        // spawn.
+        w.bench.pads[0] = Pad {
+            stick: guac_motion::scenarios::stick(1.0, 180.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        let mut stopped = None;
+        for k in 0..150 {
+            if let Err(h) = w.step() {
+                stopped = Some(format!("step {k}: {h}"));
+                break;
+            }
+        }
+        let h = w.hero().clone();
+        // The wall's face as his solid meets it: the nearest contact plane
+        // of the shape he queries the world with that faces him across the
+        // ground.
+        let posed = proxy_pose(h.solid(), &h);
+        let face = w
+            .bench
+            .world
+            .contacts(&h.solid().grown(0.0), posed, 0.1, &[HERO_BODY])
+            .into_iter()
+            .filter(|c| c.normal.y.abs() < 0.3)
+            .min_by(|a, b| a.distance.total_cmp(&b.distance));
+        let base_solid = SolidInfo {
+            rotation: [0.0; 3],
+            ..disc
+        }
+        .havok(scale)
+        .map(|s| guac_motion::solid::HavokSolid {
+            rotation: euler(disc.rotation),
+            ..s
+        });
+        match face {
+            Some(f) => {
+                let out = Vec3::new(f.normal.x, 0.0, f.normal.z).normalize();
+                // His pivot's distance off the face's plane, across the
+                // ground, and his solid's reach toward it.
+                let off = (h.pivot - f.point).dot(out);
+                let ours = reach(h.solid(), &h, -out);
+                let base_reach = base_solid.map(|b| reach(&b, &h, -out));
+                walls.push((load.to_owned(), f.distance));
+                line.push(format!(
+                    "the wall behind the start {:.4} m off his solid, his pivot {off:.4} m off its face (through {:?}, out {:?}) at {:?} facing {:.2}, his solid's reach {ours:.4} m toward it; the base's solid would reach {:?} m{}",
+                    f.distance,
+                    f.point,
+                    out,
+                    h.pivot,
+                    h.facing,
+                    base_reach,
+                    stopped.map(|s| format!(", stopped at {s}")).unwrap_or_default()
+                ));
+            }
+            None => line.push(format!(
+                "the wall behind the start not met from {:?}{}",
+                h.pivot,
+                stopped
+                    .map(|s| format!(", stopped at {s}"))
+                    .unwrap_or_default()
+            )),
+        }
+        ours_ok += usize::from(ok);
+        base_ok += usize::from(b_ok);
+        disc_ok += usize::from(d_ok);
+        if !ok {
+            misses.push(load.to_owned());
+        }
+        println!(
+            "{load}: {} (set up {set_up}); disc {:?} {:?} {:?} {:?} at {}; his scripts' {:?} {:?} {:?} {:?}; before his setup {}; the base's rule {}, the disc's today {}; {}",
+            if ok { "matches" } else { "MISSES" },
+            disc.kind,
+            [disc.width, disc.height, disc.length],
+            disc.offset,
+            disc.rotation,
+            w.scale,
+            shape.kind,
+            [shape.width, shape.height, shape.length],
+            shape.offset,
+            shape.rotation,
+            if before == Some(disc) {
+                "the disc's".to_owned()
+            } else {
+                format!("{before:?}")
+            },
+            if b_ok { "matches" } else { "misses" },
+            if d_ok { "matches" } else { "misses" },
+            line.join("; ")
+        );
+    }
+    println!(
+        "== {} walkers over {figures} figures: the built solid matches AE.22's live read on {ours_ok} (worst {worst:.2e} m, {worst_ulps} ulps), the base's rule on {base_ok}, the disc's CollisionInfo today on {disc_ok}; {rewrites} setups rewrite the disc's CollisionInfo; the actor holds the disc's before his setup on {file_is_disc}; {:.1?}, load {:.2}",
+        l.walkers.len(),
+        started.elapsed(),
+        load1()
+    );
+    let held: Vec<&(String, f32)> = walls
+        .iter()
+        .filter(|(_, g)| (g - 0.005).abs() < 1e-3)
+        .collect();
+    println!(
+        "== against the wall behind the start: {} of {} met it, {} held 4-6 mm off it on their built solids; the rest {:?}",
+        walls.len(),
+        l.walkers.len(),
+        held.len(),
+        walls
+            .iter()
+            .filter(|(_, g)| (g - 0.005).abs() >= 1e-3)
+            .collect::<Vec<_>>()
+    );
+    assert!(misses.is_empty(), "missing AE.22's live solid: {misses:?}");
+    assert_eq!(ours_ok, l.walkers.len());
 }
 
 #[test]
@@ -3340,15 +3733,19 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
     // the fall-back's step and how far the stick at 90° took him, m (the
     // fallback merge's integration `7f64e622` read them on its natural
     // stop, 2026-10-25), on AG.16's controller at their number to f32's
-    // steps (AH.151) and the view handed back as the TV's (AG.190).
+    // steps (AH.151) and the view handed back as the TV's (AG.190). Swarm
+    // and Eye-Brawl since AG.170 on the 14 x 17 and 14 x 19 ft capsules
+    // their setups write (19.72424 and 20.23483 m on the disc's 10 x 18 ft
+    // capsule and 4 x 6 ft sphere); the five whose setups keep the disc's
+    // solid walk as they did.
     let fallen: [(&str, u32, f32); 7] = [
-        ("101_BugmanGiant", 124, 19.72424),
+        ("101_BugmanGiant", 124, 19.46147),
         ("102_Titan_Earth", 124, 13.7622175),
         ("102_Titan_Earth_Alt", 124, 13.7622175),
         ("107_Whale", 124, 19.288462),
         ("110_RobotGiant", 125, 23.729307),
         ("110_RobotGiant_Legendary", 125, 23.729307),
-        ("114_Mummy", 124, 20.23483),
+        ("114_Mummy", 124, 19.36495),
     ];
     assert_eq!(fallen.map(|f| f.0), GIANTS);
     for (load, step, walked) in fallen {
@@ -3674,7 +4071,10 @@ fn ulps(a: f32, b: f32) -> u32 {
 /// natural stop; [`PLAY_842`]'s since AG.160): his stop's step, his walk's
 /// top (ft/s), how far he walked after the stop and how far the TV's eye
 /// moved with him (m), and the writes to his walk dropped. Each number as
-/// f32 prints it.
+/// f32 prints it. Swarm's and Eye-Brawl's walks since AG.170 on the
+/// capsules their setups write (on the disc's solids: Swarm 20.000008,
+/// 13.043735 and 13.218856; Eye-Brawl 20.000008, 13.736573 and
+/// 14.038888).
 struct GiantOff {
     load: &'static str,
     stop: u32,
@@ -3688,9 +4088,9 @@ const GIANTS_OFF: [GiantOff; 7] = [
     GiantOff {
         load: "101_BugmanGiant",
         stop: 124,
-        top: 20.000008,
-        walked: 13.043735,
-        eye_moved: 13.218856,
+        top: 20.000013,
+        walked: 12.9689665,
+        eye_moved: 12.999274,
         writes: 714,
     },
     GiantOff {
@@ -3736,9 +4136,9 @@ const GIANTS_OFF: [GiantOff; 7] = [
     GiantOff {
         load: "114_Mummy",
         stop: 124,
-        top: 20.000008,
-        walked: 13.736573,
-        eye_moved: 14.038888,
+        top: 20.000013,
+        walked: 12.947982,
+        eye_moved: 12.974128,
         writes: 714,
     },
 ];
@@ -4445,7 +4845,8 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     // His own numbers, not Ninjini's 24 ft/s and 540°/s (AH.191), member for
     // member; his top on them within 0.01 ft/s (steering by the scripts'
     // camera as it swings round behind him, his walk back on the stick
-    // turns all the way: 22.997707 on this tree, Ninjini's run 23.998549).
+    // turns all the way: 22.999651 on AG.170's tree, 22.997707 on the
+    // fallback merge's, Ninjini's run 23.998549).
     assert_eq!(w.parameters(), own, "{next}'s own numbers");
     let own_top = own.expect("his numbers alone")[0];
     assert!(
@@ -4466,17 +4867,20 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     );
     let eye_walked = track[60..180].iter().map(|t| t.1).sum::<f32>();
     assert!(eye_walked > 10.0, "the eye moved {eye_walked} m with him");
-    // From where (the fallback merge's tree, 2026-10-25, on his natural stop
-    // there): their eye at the first write 0.263 m from where the chain's
-    // stood, 16.750 m from his feet (the chain's 16.564 from Ninjini's).
+    // From where (AG.170's tree, 2026-10-25): their eye at the first write
+    // 0.195 m from where the chain's stood, 16.764 m from his feet (the
+    // chain's 16.738 from Ninjini's). Ninjini stands on the 14 x 20 ft
+    // capsule his setup writes, which ends his fall-back walk 12.68 m on;
+    // on the disc's 4 x 6 ft sphere (the fallback merge's tree) it ended
+    // 13.74 m on, and these were 0.263 and 16.750 m (16.564).
     let (_, why) = walk.stop.as_ref().expect("his script stops in play");
     assert!(why.contains("Minion.ai #842"), "{why}");
     assert_eq!(walk.stop.as_ref().map(|s| s.0), Some(124));
     assert_eq!(
-        first.1, 0.26322174,
+        first.1, 0.19464792,
         "the first step's move from the chain's eye"
     );
-    assert_eq!(first.2, 16.750097, "the eye from his feet");
+    assert_eq!(first.2, 16.763998, "the eye from his feet");
 }
 
 /// Tree Rex's live clips (each one his scripts play on him, in the order

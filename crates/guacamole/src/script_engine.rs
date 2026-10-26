@@ -106,6 +106,39 @@ pub struct Solid {
     pub interacts_with_level_mesh: i32,
     pub acts_as_actor_surface: i32,
     pub shape: i32,
+    /// Its own turn, degrees `[tilt, heading, roll]`: its file's
+    /// `_transform` angles until a script turns it through its collision
+    /// volume's `orientation` (openspec AG.170: four characters' setups tip
+    /// theirs 90° onto its side; `Set Actor Collision Settings`).
+    pub angles: [f32; 3],
+}
+
+impl Solid {
+    /// The solid its shape's enum names; none for a number past the enum.
+    pub fn kind(&self) -> guac_motion::solid::SolidKind {
+        use guac_motion::solid::SolidKind;
+        match self.shape {
+            1 => SolidKind::Box,
+            2 => SolidKind::Capsule,
+            3 => SolidKind::Sphere,
+            4 => SolidKind::Cylinder,
+            5 => SolidKind::Mesh,
+            _ => SolidKind::None,
+        }
+    }
+
+    /// What the original builds its shape from, before a scale: its kind,
+    /// sizes, offset and own turn.
+    pub fn info(&self) -> guac_motion::solid::SolidInfo {
+        guac_motion::solid::SolidInfo {
+            kind: self.kind(),
+            offset: self.offset,
+            rotation: self.angles,
+            width: self.width,
+            height: self.height,
+            length: self.length,
+        }
+    }
 }
 
 /// A placed light (`tfbLightInfo`, openspec AH.65): what the scripts read
@@ -254,23 +287,13 @@ impl Actor {
 
     /// Its solid as the original builds it at its scale, if it has one
     /// that stops anything.
+    ///
+    /// Its own turn is left out, as it was before AG.170 read it (openspec
+    /// AG.244: whether the scripts' tests between two actors turn it).
     pub fn havok(&self) -> Option<guac_motion::solid::HavokSolid> {
-        use guac_motion::solid::{SolidInfo, SolidKind};
-        let kind = match self.solid.shape {
-            1 => SolidKind::Box,
-            2 => SolidKind::Capsule,
-            3 => SolidKind::Sphere,
-            4 => SolidKind::Cylinder,
-            5 => SolidKind::Mesh,
-            _ => SolidKind::None,
-        };
-        SolidInfo {
-            kind,
-            offset: self.solid.offset,
+        guac_motion::solid::SolidInfo {
             rotation: [0.0; 3],
-            width: self.solid.width,
-            height: self.solid.height,
-            length: self.solid.length,
+            ..self.solid.info()
         }
         .havok(self.scale)
     }
@@ -385,6 +408,9 @@ pub enum Facet {
     Scale,
     Movement,
     Collision,
+    /// Its solid's own turn, its collision volume's `orientation` (openspec
+    /// AG.170).
+    SolidTurn,
     Velocity,
     /// The ground under it: a contact with a type and a normal, and a
     /// point a measurement can be taken from.

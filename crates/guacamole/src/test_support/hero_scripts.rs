@@ -133,6 +133,30 @@ pub(crate) fn write_walker(dir: &Path, fault: attack_builder::WalkerFault) {
     );
 }
 
+/// [`write_walker`] with his setup writing a solid over his file's
+/// ([`attack_builder::WALKER_SOLID_SPEC`], openspec AG.170).
+pub(crate) fn write_walker_solid(dir: &Path, fault: attack_builder::WalkerFault) {
+    let (creature, _) = attack_builder::creature();
+    let spec = attack_builder::WALKER_SOLID_SPEC;
+    write_parts_with(
+        dir,
+        &creature,
+        &[(spec.load, attack_builder::walker_as(&spec, fault))],
+    );
+}
+
+/// [`write_walker_solid`] with his scripts setting his scale again once his
+/// setup is done ([`attack_builder::WALKER_REGROW_SPEC`], openspec AG.170).
+pub(crate) fn write_walker_regrow(dir: &Path, fault: attack_builder::WalkerFault) {
+    let (creature, _) = attack_builder::creature();
+    let spec = attack_builder::WALKER_REGROW_SPEC;
+    write_parts_with(
+        dir,
+        &creature,
+        &[(spec.load, attack_builder::walker_as(&spec, fault))],
+    );
+}
+
 /// [`write_walker`] over AH.151's synthetic mover update
 /// ([`attack_builder::attack_with_mover`]): the first player's velocity
 /// handed what his mover's tick kept, each tick.

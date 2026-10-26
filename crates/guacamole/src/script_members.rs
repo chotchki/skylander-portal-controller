@@ -985,6 +985,14 @@ impl ScriptWorld {
                     }
                     self.objs.value(Object::PointTurn(o))
                 }
+                // A solid's own turn (openspec AG.170): its collision
+                // volume's orientation, apart from its actor's.
+                Some(_) if matches!(object, Some(Object::Facet(_, Facet::Collision))) => {
+                    let Some(Object::Facet(h, _)) = object else {
+                        unreachable!("matched as a collision volume")
+                    };
+                    self.objs.value(Object::Facet(h, Facet::SolidTurn))
+                }
                 Some(v) => {
                     let h = self.handle(v).ok_or(HostFault::Nothing)?;
                     self.objs.value(Object::Facet(h, Facet::Orientation))
@@ -1014,6 +1022,14 @@ impl ScriptWorld {
                     }
                     Some(Object::Facet(h, Facet::Orientation)) => {
                         self.angles(h, engine).ok_or(HostFault::Nothing)?
+                    }
+                    // A solid's own turn (AG.170): its absolute angles alone.
+                    Some(Object::Facet(h, Facet::SolidTurn))
+                        if matches!(m, Member::Facing | Member::Tilt | Member::Roll) =>
+                    {
+                        let [tilt, facing, roll] =
+                            self.actors.get(&h).ok_or(HostFault::Nothing)?.solid.angles;
+                        Angles { tilt, facing, roll }
                     }
                     // One the scripts never turned reads nothing, as before:
                     // its file's turn isn't read.
@@ -1508,6 +1524,21 @@ impl ScriptWorld {
                         Member::Facing | Member::RelativeFacing => a.facing = x,
                         Member::Tilt | Member::RelativeTilt => a.tilt = x,
                         _ => a.roll = x,
+                    }
+                    return Ok(());
+                }
+                // A solid's own turn (openspec AG.170): `Set Actor Collision
+                // Settings` tips a character's onto its side; his solid is
+                // built turned so (`walkers::rebuilt`).
+                if let Some(Object::Facet(h, Facet::SolidTurn)) = object
+                    && matches!(m, Member::Facing | Member::Tilt | Member::Roll)
+                {
+                    let x = float(v)?;
+                    let a = &mut self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.solid;
+                    match m {
+                        Member::Tilt => a.angles[0] = x,
+                        Member::Facing => a.angles[1] = x,
+                        _ => a.angles[2] = x,
                     }
                     return Ok(());
                 }
@@ -3105,6 +3136,53 @@ mod tests {
         assert!(
             (centre - (0.762 + METRES_PER_FOOT)).abs() < 1e-5,
             "{centre}"
+        );
+    }
+
+    /// AG.170: a solid's own turn reads and writes through its collision
+    /// volume's orientation, as `Set Actor Collision Settings` tips a
+    /// character's capsule onto its side, apart from its actor's turn: its
+    /// file's angles read back, a tilt written tips the solid alone, and
+    /// the relative angles stay unmodelled there.
+    #[test]
+    fn a_solids_own_turn_is_its_collision_volumes_orientation() {
+        let mut e = bench();
+        let mut w = world();
+        let mut ball = ball(Vec3::ZERO, 0.0);
+        ball.solid.angles = [0.0, 90.0, 0.0];
+        w.actors.insert(BALL, ball);
+        let facet = w.objs.value(Object::Facet(BALL, Facet::Collision));
+        let turn = w
+            .get_member(
+                &at("matrixmeasurement", "orientation", Some(facet), None),
+                Member::Orientation,
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(
+            w.object(Some(turn)),
+            Some(Object::Facet(BALL, Facet::SolidTurn))
+        );
+        let tilt = at("orientationmeasurement", "tilt", Some(turn), None);
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        assert_eq!(
+            w.get_member(&facing, Member::Facing, &mut e),
+            Ok(Value::Float(90.0)),
+            "its file's"
+        );
+        w.set_member(&tilt, Member::Tilt, Value::Float(-90.0), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap();
+        assert_eq!(a.solid.angles, [-90.0, 90.0, 0.0]);
+        assert_eq!(a.angles, Angles::default(), "its actor unturned");
+        assert_eq!(
+            w.get_member(&tilt, Member::Tilt, &mut e),
+            Ok(Value::Float(-90.0))
+        );
+        let relative = at("orientationmeasurement", "relative tilt", Some(turn), None);
+        assert_eq!(
+            w.get_member(&relative, Member::RelativeTilt, &mut e),
+            Err(HostFault::Nothing)
         );
     }
 

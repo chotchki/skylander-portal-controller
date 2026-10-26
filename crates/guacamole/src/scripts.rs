@@ -252,6 +252,7 @@ impl Files {
                     interacts_with_level_mesh: ((c.properties >> 4) & 1) as i32,
                     acts_as_actor_surface: ((c.properties >> 5) & 1) as i32,
                     shape: (c.properties & 7) as i32,
+                    angles: c.transform.rotation,
                 });
                 out.placed.push(Placed {
                     obj: Obj {

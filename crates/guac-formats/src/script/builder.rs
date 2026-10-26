@@ -1630,10 +1630,22 @@ fn place(
 
 /// A `CollisionInfo` at `a`'s `_collision`: `properties` (its shape in bits
 /// 0-2, solid 3, the level mesh 4) and its size in feet.
-fn collision(b: &mut IgzBuilder, a: Location, properties: u32, [w, h, l]: [f32; 3]) {
+fn collision(b: &mut IgzBuilder, a: Location, properties: u32, size: [f32; 3]) {
+    collision_turned(b, a, properties, size, [0.0; 3]);
+}
+
+/// [`collision`] turned by `angles` of its own (degrees, `[tilt, heading,
+/// roll]`, its `_transform`'s).
+fn collision_turned(
+    b: &mut IgzBuilder,
+    a: Location,
+    properties: u32,
+    [w, h, l]: [f32; 3],
+    [tilt, heading, roll]: [f32; 3],
+) {
     let solid = b.object(0, "CollisionInfo", 0x58);
     b.put_u32(at(solid, 0x18), properties);
-    let sizes: Vec<u8> = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, w, h, l, 1.0, 0.0]
+    let sizes: Vec<u8> = [0.0f32, 0.0, 0.0, tilt, heading, roll, w, h, l, 1.0, 0.0]
         .iter()
         .flat_map(|v| v.to_be_bytes())
         .collect();
@@ -2816,7 +2828,54 @@ pub struct WalkerSpec {
     pub folder: &'static str,
     pub speed: f32,
     pub turn: f32,
+    /// The solid his setup writes over his file's (openspec AG.170); with
+    /// one, his minion's template holds [`WALKER_FILE_SOLID`] in his file.
+    /// Without, the template holds no `CollisionInfo` and his setup writes
+    /// none.
+    pub solid: Option<WalkerSolid>,
+    /// A scale (percent) his scripts set [`WALKER_REGROW_TICK`] ticks of
+    /// his behaviour after his setup set [`WALKER_SCALE`] (AG.170).
+    pub regrow: Option<f32>,
 }
+
+/// A solid a synthetic walker's setup writes onto his actor through
+/// `collisioninfo`'s members (openspec AG.170): its shape's enum (none, box,
+/// capsule, sphere, cylinder, mesh), its full extents and its local y
+/// offset, feet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WalkerSolid {
+    pub shape: i32,
+    pub width: f32,
+    pub height: f32,
+    pub length: f32,
+    pub y_offset: f32,
+}
+
+/// The `CollisionInfo` a walker with a [`WalkerSpec::solid`] holds on his
+/// minion's template in his file, its properties (a sphere, solid, meeting
+/// the level's mesh), its full extents in feet and its own angles: the TV's
+/// made-up hero side's 4 x 6 x 3 ft sphere, as a character's file and hero
+/// side agree, a quarter turn about its up axis of its own (which neither a
+/// sphere nor an upright capsule shows, and the hero side doesn't hold).
+pub const WALKER_FILE_SOLID: (u32, [f32; 3], [f32; 3]) =
+    (3 | 1 << 3 | 1 << 4, [4.0, 6.0, 3.0], [0.0, 90.0, 0.0]);
+
+/// What [`WALKER_SOLID_SPEC`]'s setup writes over that: a 7 x 10.5 x 3 ft
+/// capsule, half a foot down, unlike the file's sphere in each of the
+/// shape, its sizes and its offset.
+pub const WALKER_SOLID: WalkerSolid = WalkerSolid {
+    shape: 2,
+    width: 7.0,
+    height: 10.5,
+    length: 3.0,
+    y_offset: -0.5,
+};
+
+/// The tick of his behaviour, from its first, a [`WalkerSpec::regrow`]
+/// walker's scale is set at.
+pub const WALKER_REGROW_TICK: i32 = 8;
+/// [`WALKER_REGROW_SPEC`]'s scale then, percent.
+pub const WALKER_REGROW: f32 = 150.0;
 
 impl WalkerSpec {
     /// His movement parameters: [`WALKER_MOVEMENT`] with his speed and turn.
@@ -2839,6 +2898,22 @@ pub const WALKER: WalkerSpec = WalkerSpec {
     folder: "Synthetic",
     speed: WALKER_SPEED,
     turn: WALKER_TURN,
+    solid: None,
+    regrow: None,
+};
+
+/// [`WALKER`] with [`WALKER_FILE_SOLID`] in his file and his setup writing
+/// [`WALKER_SOLID`] over it (openspec AG.170).
+pub const WALKER_SOLID_SPEC: WalkerSpec = WalkerSpec {
+    solid: Some(WALKER_SOLID),
+    ..WALKER
+};
+
+/// [`WALKER_SOLID_SPEC`] whose scripts set his scale again after his setup,
+/// [`WALKER_REGROW`] at [`WALKER_REGROW_TICK`] (openspec AG.170).
+pub const WALKER_REGROW_SPEC: WalkerSpec = WalkerSpec {
+    regrow: Some(WALKER_REGROW),
+    ..WALKER_SOLID_SPEC
 };
 
 /// A second walker with numbers of his own, what [`WALKER`] is put in after
@@ -2852,6 +2927,8 @@ pub const WALKER_OTHER: WalkerSpec = WalkerSpec {
     folder: "Synthetic2",
     speed: 12.5,
     turn: 360.0,
+    solid: None,
+    regrow: None,
 };
 
 /// The macro [`attack_with_creatures`]' `global.bld` defines, in the shape
@@ -2961,6 +3038,13 @@ pub fn walker_described(spec: &WalkerSpec) -> Vec<u8> {
     walker_with(spec, WalkerFault::None, true)
 }
 
+/// [`walker`] as `spec` names, numbers and sizes him (openspec AG.170: his
+/// setup writing [`WalkerSpec::solid`] over his file's, his scripts setting
+/// [`WalkerSpec::regrow`] after it), stopping where `fault` says.
+pub fn walker_as(spec: &WalkerSpec, fault: WalkerFault) -> Vec<u8> {
+    walker_with(spec, fault, false)
+}
+
 fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8> {
     let movement_numbers = spec.movement();
     let mut b = IgzBuilder::new();
@@ -2989,6 +3073,10 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
         };
         let mine = structure_var(&mut w, "my Minion Description", mine_ty);
         let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+        // His behaviour's ticks, which a regrow counts (AG.170).
+        let grown = spec
+            .regrow
+            .map(|_| w.variable("grown", "ValueInfo", Some("IntMeasurement")));
         // The lookup's trap (openspec AG.171): a set of candidates, one a
         // `find subset` leaves `its` on, and a reference to nothing its
         // right side reads through.
@@ -3072,6 +3160,22 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                     ],
                     scale,
                 );
+                // His solid over his file's (AG.170), through his actor's
+                // collision volume, as the disc's setups write theirs.
+                if let Some(solid) = spec.solid {
+                    let shape = w.int(solid.shape);
+                    let volume = El::Member("actorinfo", "collision volume");
+                    w.set(&[me, volume, El::Member("collisioninfo", "shape")], shape);
+                    for (name, v) in [
+                        ("width", solid.width),
+                        ("height", solid.height),
+                        ("length", solid.length),
+                        ("local y offset", solid.y_offset),
+                    ] {
+                        let v = w.float(v);
+                        w.set(&[me, volume, El::Member("collisioninfo", name)], v);
+                    }
+                }
                 // His locomotion's states, where the part defines them
                 // (AG.219, [`attack_with_locomotion`]; skipped elsewhere).
                 let define = w.op(Class::DefineMacro, LOCOMOTION_DEFINE);
@@ -3258,6 +3362,24 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                     w.set(&[El::Member(namespace, name)], one);
                     w.end_block(reached);
                 }
+                // His scale set again in play (AG.170), his setup's long
+                // done.
+                if let (Some(regrow), Some(grown)) = (spec.regrow, grown) {
+                    w.inc(&[El::Local(grown)]);
+                    let at = w.int(WALKER_REGROW_TICK);
+                    let reached = w.check(&[El::Local(grown)], 1, at);
+                    let me = El::Member("optoplevelbehavior", "my");
+                    let scale = w.float(regrow);
+                    w.set(
+                        &[
+                            me,
+                            El::Member("placement", "scale"),
+                            El::Member("scalemeasurement", "uniform"),
+                        ],
+                        scale,
+                    );
+                    w.end_block(reached);
+                }
                 w.end_block(p);
             },
         );
@@ -3273,10 +3395,15 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
             turn,
         ];
         locals.extend(made);
+        locals.extend(grown);
         w.declare(script, &locals);
         script
     };
     let minion = actor_with(&mut b, spec.template, Some(minion_script), 5);
+    if spec.solid.is_some() {
+        let (properties, size, angles) = WALKER_FILE_SOLID;
+        collision_turned(&mut b, minion, properties, size, angles);
+    }
     let def_script = {
         let mut w = Writer::new(&mut b);
         let stub = w.op(Class::DefineMacro, "Portal - Define Minion");

@@ -403,9 +403,10 @@ pub(crate) struct HeroRun {
     /// write the numbers he already carries, a scripted walker's are all he
     /// has.
     pub(crate) origin: Origin,
-    /// His solid as the disc authors it, before his scale: his scale is his
-    /// scripts' alone (AH design decision 5), so his solid and his drawn
-    /// model take it from the VM ([`apply_scripted_scale`]).
+    /// The `CollisionInfo` his solid is built from, before his scale: the
+    /// disc's until his setup has run, then his scripts' (AG.170); his solid,
+    /// his scale and his drawn model's are his scripts' alone (AH design
+    /// decision 5), taken from the VM ([`apply_scripted_solid`]).
     pub(crate) shape: SolidInfo,
     /// The scale his solid and his drawn model stand at now.
     pub(crate) scale: f32,
@@ -692,7 +693,7 @@ impl Plugin for HeroScriptsPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    (step_scripts, apply_scripted_scale)
+                    (step_scripts, apply_scripted_solid)
                         .chain()
                         .in_set(Frame::Scripts),
                     (advance_scripts, draw_clones).chain().in_set(Frame::Actors),
@@ -714,43 +715,62 @@ impl Plugin for HeroScriptsPlugin {
     }
 }
 
-/// A scripted walker's scale is his scripts' alone (AH design decision 5,
-/// AG.27): once they run, his actor's scale on the VM is the one his solid
-/// is built at, his drawn model stands at and his hands are posed at
+/// A scripted walker's solid and scale are his scripts' alone (AH design
+/// decision 5; AG.27, AG.170): while they run, his solid is built from the
+/// `CollisionInfo` his actor holds once his setup has run, at his actor's
+/// scale, again the step either changes ([`walkers::rebuilt`]), and that
+/// scale is the one his drawn model stands at and his hands are posed at
 /// ([`pose_hands`], AG.181: they stood at 1.0 while he was drawn at his
 /// scripts' 1.2). A scale that isn't a uniform one (a script setting one
-/// axis) is left as it was; a measured walker's stays the measured one.
-pub(crate) fn apply_scripted_scale(
+/// axis) is left as it was; a measured walker's solid and scale stay the
+/// measured ones. Off his scripts (his join failing, or AH.151's fall-back)
+/// nothing rebuilds them: he stands on what they last set.
+pub(crate) fn apply_scripted_solid(
     world: Res<ScriptWorld>,
+    runtime: Res<ScriptRuntime>,
     mut heroes: Query<(Entity, &mut HeroRun, &mut HeroBody)>,
     mut transforms: Query<&mut Transform>,
 ) {
     for (e, mut run, mut body) in &mut heroes {
-        if run.origin != Origin::Scripts || !matches!(run.join, Join::Joined(_)) {
+        let held = match run.join {
+            Join::Joined(m) if runtime.vm.set_up(m) => walkers::Held::SetUp,
+            Join::Joined(_) => walkers::Held::BeforeSetup,
+            Join::Off(_) => walkers::Held::Off,
+            Join::Asked | Join::Requested => continue,
+        };
+        if run.origin != Origin::Scripts {
             continue;
         }
         let Some(a) = world.actor(e.to_bits()) else {
             continue;
         };
-        let Some(scale) = walkers::uniform_scale(a.scale) else {
+        let Some(next) = walkers::rebuilt(&run.shape, run.scale, a, held) else {
             continue;
         };
-        if (scale - run.scale).abs() < 1e-6 {
+        if next.shape != run.shape {
+            info!(
+                load_file = %run.load_file,
+                width = next.shape.width,
+                height = next.shape.height,
+                length = next.shape.length,
+                kind = ?next.shape.kind,
+                "his scripts set his solid"
+            );
+        }
+        body.hero.set_solid(next.solid);
+        run.shape = next.shape;
+        if (next.scale - run.scale).abs() < 1e-6 {
             continue;
         }
-        let Some(solid) = run.shape.havok([scale * 100.0; 3]) else {
-            continue;
-        };
-        info!(load_file = %run.load_file, from = run.scale, to = scale, "his scripts set his scale");
-        body.hero.set_solid(solid);
-        run.scale = scale;
+        info!(load_file = %run.load_file, from = run.scale, to = next.scale, "his scripts set his scale");
+        run.scale = next.scale;
         if let Some(rig) = run.rig.as_mut() {
-            rig.scale = scale;
+            rig.scale = next.scale;
         }
         if let Some(root) = run.root
             && let Ok(mut t) = transforms.get_mut(root)
         {
-            t.scale = Vec3::splat(scale);
+            t.scale = Vec3::splat(next.scale);
         }
     }
 }

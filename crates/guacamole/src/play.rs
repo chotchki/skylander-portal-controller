@@ -126,6 +126,7 @@ use guac_ir::{Category, Model};
 use guac_motion::camera::{CameraDef, GameCamera};
 use guac_motion::hero::Hero;
 use guac_motion::locomotion::{self, Locomotion, Loops};
+use guac_motion::solid::{HavokSolid, SolidInfo};
 use guacamole::character::attach::{self, SpawnedAttachments};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
@@ -651,6 +652,9 @@ pub(crate) struct HeroReport {
     pub heading: Option<f32>,
     /// In the level: the camera it shows through, as drawn.
     pub camera: Option<CameraReport>,
+    /// In the level: the solid his controller collides with, and what it
+    /// was built from (openspec AG.170).
+    pub solid: Option<SolidReport>,
     /// In the level: his locomotion as its last step left it (AG.30).
     pub gait: Option<GaitReport>,
     /// In the level (AH.24): his scripts' join (`asked`, `requested`,
@@ -672,6 +676,99 @@ pub(crate) struct HeroReport {
     /// fresh for a figure no profile placed.
     pub experience: Option<u32>,
     pub gold: Option<u32>,
+}
+
+/// The solid a hero stands on as `/api/_test/tv` reports it (openspec
+/// AG.170): the shape his controller collides with, in metres, and the
+/// `CollisionInfo` and scale it was built from.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct SolidReport {
+    /// `sphere`, `capsule`, `box` or `cylinder`.
+    pub shape: String,
+    /// A sphere's, capsule's or cylinder's radius (0.05 m inside the
+    /// authored half width, as the original builds them), a capsule's half
+    /// segment, a box's half extents, a cylinder's half height, and a box's
+    /// or cylinder's convex radius, each where the shape has one.
+    pub radius: Option<f32>,
+    pub half_segment: Option<f32>,
+    pub half_extents: Option<[f32; 3]>,
+    pub half_height: Option<f32>,
+    pub margin: Option<f32>,
+    /// Its centre from his pivot in his own frame (his heading and lean
+    /// turn it), and its own turn, a quaternion `[x, y, z, w]`.
+    pub centre: [f32; 3],
+    pub rotation: [f32; 4],
+    /// What it was built from, for a hero with a run: the `CollisionInfo`
+    /// (its kind, full extents in feet, offset in metres and own angles in
+    /// degrees) and the scale (a fraction).
+    pub built_from: Option<CollisionReport>,
+}
+
+/// The `CollisionInfo` a hero's solid was built from ([`SolidReport`]).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct CollisionReport {
+    pub kind: String,
+    pub width: f32,
+    pub height: f32,
+    pub length: f32,
+    pub offset: [f32; 3],
+    pub angles: [f32; 3],
+    pub scale: f32,
+}
+
+impl SolidReport {
+    /// `solid` and, for a hero with a run, the `CollisionInfo` and scale it
+    /// was built from.
+    pub(crate) fn of(solid: &HavokSolid, from: Option<(&SolidInfo, f32)>) -> Self {
+        use guac_motion::seam::Shape;
+        let mut r = Self {
+            centre: solid.centre.to_array(),
+            rotation: solid.rotation.to_array(),
+            built_from: from.map(|(info, scale)| CollisionReport {
+                kind: format!("{:?}", info.kind).to_lowercase(),
+                width: info.width,
+                height: info.height,
+                length: info.length,
+                offset: info.offset,
+                angles: info.rotation,
+                scale,
+            }),
+            ..Self::default()
+        };
+        match solid.shape {
+            Shape::Sphere { radius } => {
+                r.shape = "sphere".into();
+                r.radius = Some(radius);
+            }
+            Shape::Capsule {
+                radius,
+                half_segment,
+            } => {
+                r.shape = "capsule".into();
+                r.radius = Some(radius);
+                r.half_segment = Some(half_segment);
+            }
+            Shape::Box {
+                half_extents,
+                margin,
+            } => {
+                r.shape = "box".into();
+                r.half_extents = Some(half_extents.to_array());
+                r.margin = Some(margin);
+            }
+            Shape::Cylinder {
+                radius,
+                half_height,
+                margin,
+            } => {
+                r.shape = "cylinder".into();
+                r.radius = Some(radius);
+                r.half_height = Some(half_height);
+                r.margin = Some(margin);
+            }
+        }
+        r
+    }
 }
 
 /// His locomotion as `/api/_test/tv` reports it (AG.30): no clip is
@@ -922,6 +1019,7 @@ impl Play {
             position: hero.map(|h| h.pivot.to_array()),
             heading: hero.map(crate::hero::heading),
             camera,
+            solid: hero.map(|h| SolidReport::of(h.solid(), run.map(|r| (&r.shape, r.scale)))),
             gait,
             // In the level with no run: off, as any other fall-back is.
             scripts: match run {
@@ -2903,6 +3001,204 @@ mod tests {
             (moved - want).abs() < 0.05 * want,
             "moved {moved} m in {frames} steps, the mover wrote {want}"
         );
+    }
+
+    /// The `CollisionInfo` [`WALKER_SOLID`]'s writes leave on his actor, as
+    /// the host keeps them (the offset in metres), turned as his file's
+    /// is (his setup writes no turn).
+    fn written_solid() -> SolidInfo {
+        use guac_formats::script::builder::{WALKER_FILE_SOLID, WALKER_SOLID};
+        guacamole::script_engine::Solid {
+            shape: WALKER_SOLID.shape,
+            width: WALKER_SOLID.width,
+            height: WALKER_SOLID.height,
+            length: WALKER_SOLID.length,
+            offset: [0.0, WALKER_SOLID.y_offset * guac_motion::tuning::FOOT, 0.0],
+            angles: WALKER_FILE_SOLID.2,
+            ..Default::default()
+        }
+        .info()
+    }
+
+    /// His solid as the disc's hero side authors it, his file's too.
+    fn file_solid() -> SolidInfo {
+        Walk::scripted(WALKER, &hero_side(WALKER).solid).shape
+    }
+
+    /// The synthetic walker `write` writes, placed, in the level and
+    /// joined, a few steps on: the app and his entity.
+    fn joined_walker(
+        dir: &std::path::Path,
+        fault: guac_formats::script::builder::WalkerFault,
+        write: fn(&std::path::Path, guac_formats::script::builder::WalkerFault),
+    ) -> (App, Entity) {
+        let (mut app, pad) = walker_app_writing(dir, fault, write);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let e = app.world().resource::<Play>().hero().unwrap();
+        (app, e)
+    }
+
+    /// AG.170: a walker whose setup writes a solid unlike his file's (a 7 x
+    /// 10.5 x 3 ft capsule half a foot down, over the 4 x 6 x 3 ft sphere his
+    /// file and the disc's hero side hold) stands and collides on the
+    /// written one: his controller's solid is it at his scripts' 120 %, his
+    /// pivot rides the offset's 0.18 m over the floor (the sphere's rides
+    /// it), and the wall 6 m ahead holds him the capsule's 1.28 m off, not
+    /// the sphere's 0.73 m. `/api/_test/tv`'s hero reports it.
+    #[test]
+    fn a_walker_stands_and_collides_on_the_solid_his_setup_wrote() {
+        use guac_formats::script::builder::{WALKER_SCALE, WalkerFault};
+        use guac_motion::seam::Shape;
+        use guac_motion::tuning::FOOT;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, e) = joined_walker(
+            tmp.path(),
+            WalkerFault::None,
+            crate::test_support::hero_scripts::write_walker_solid,
+        );
+        let written = written_solid();
+        assert_ne!(written, file_solid(), "unlike his file's");
+        let built = written.havok([WALKER_SCALE; 3]).unwrap();
+        let Shape::Capsule { radius, .. } = built.shape else {
+            panic!("{built:?}")
+        };
+        assert!((radius + 0.05 - 7.0 * FOOT * 1.2 / 2.0).abs() < 1e-5);
+        // Standing: his lowest point on the floor where the offset puts it,
+        // his pivot 0.5 ft x 120 % over it, as the sphere's rides 5 mm over.
+        // Built where he stood on the sphere, the capsule reaches 0.18 m into
+        // the floor, and the engine lifts him out at 1 m/s (none of the 66
+        // characters' rebuilt solids reach under his pivot on the dump).
+        for _ in 0..12 {
+            app.update();
+        }
+        let lift = hero(&app).pivot.y - FLOOR;
+        let offset = 0.5 * FOOT * 1.2;
+        assert!(
+            (lift - offset - 0.005).abs() < 2e-3,
+            "{lift} m over the floor"
+        );
+        // Into the wall along his facing: held off it by the capsule's
+        // radius and the triangles' 0.05 m, 5 mm short.
+        for _ in 0..120 {
+            app.update();
+        }
+        let at = hero(&app);
+        let gap = START[2] + WALL - (at.pivot.z + radius + 0.05);
+        assert!(
+            (gap - 0.005).abs() < 1e-3,
+            "{gap} m off the wall at {:?}",
+            at.pivot
+        );
+        // What he stood and collided on: the written CollisionInfo at his
+        // scripts' 120 %.
+        let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+        assert_eq!(run.shape, written, "the CollisionInfo his setup wrote");
+        assert_eq!(hero(&app).solid(), &built, "at his scripts' 120 %");
+        // The hook's hero: that solid, and what it was built from.
+        let report = {
+            let mut state: bevy::ecs::system::SystemState<(
+                Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
+                Query<(&Transform, &Projection, &FollowCamera)>,
+                Res<Play>,
+            )> = bevy::ecs::system::SystemState::new(app.world_mut());
+            let (bodies, cameras, play) = state.get(app.world()).unwrap();
+            play.report(&bodies, &cameras, None, None)
+                .expect("the hero")
+        };
+        // As the hook serves it.
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["solid"]["shape"], "capsule");
+        assert_eq!(json["solid"]["built_from"]["width"], 7.0);
+        let solid = report.solid.expect("his solid reported");
+        assert_eq!(solid.shape, "capsule");
+        assert_eq!(solid.radius, Some(radius));
+        assert_eq!(solid.centre, built.centre.to_array());
+        let from = solid.built_from.expect("what it was built from");
+        assert_eq!(
+            (
+                from.kind.as_str(),
+                from.width,
+                from.height,
+                from.length,
+                from.scale
+            ),
+            ("capsule", 7.0, 10.5, 3.0, 1.2)
+        );
+        assert_eq!(from.offset, written.offset);
+    }
+
+    /// AG.170: a walker whose scripts set his scale again once his setup is
+    /// done (150 %, eight ticks of his behaviour after his setup's 120 %)
+    /// has his solid built again at it from what his setup wrote (the 7 x
+    /// 10.5 ft capsule), not from his file's sphere, his drawn model and
+    /// his hands at it too.
+    #[test]
+    fn a_walker_whose_scale_changes_after_his_setup_has_his_solid_rebuilt_at_it() {
+        use guac_formats::script::builder::{WALKER_REGROW, WALKER_SCALE, WalkerFault};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, e) = joined_walker(
+            tmp.path(),
+            WalkerFault::None,
+            crate::test_support::hero_scripts::write_walker_regrow,
+        );
+        let written = written_solid();
+        assert_eq!(
+            hero(&app).solid(),
+            &written.havok([WALKER_SCALE; 3]).unwrap()
+        );
+        until(&mut app, "his scale set again", |a| {
+            a.world()
+                .entity(e)
+                .get::<HeroRun>()
+                .is_some_and(|r| r.scale != WALKER_SCALE / 100.0)
+        });
+        let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
+        let scale = WALKER_REGROW / 100.0;
+        assert_eq!(run.scale, scale);
+        let rebuilt = written.havok([WALKER_REGROW; 3]).unwrap();
+        assert_ne!(rebuilt, file_solid().havok([WALKER_REGROW; 3]).unwrap());
+        assert_eq!(hero(&app).solid(), &rebuilt, "the written one at 150 %");
+        let root = run.root.expect("his drawn model's root");
+        assert_eq!(
+            app.world().entity(root).get::<Transform>().unwrap().scale,
+            Vec3::splat(scale)
+        );
+        assert_eq!(run.rig.as_ref().map(|r| r.scale), Some(scale));
+    }
+
+    /// AG.170: once his script stops in play (AH.151's fall-back) he stands
+    /// on the solid his scripts last set, the written capsule at their
+    /// 120 %, nothing building it again, and the controller's edge probe
+    /// reads its 7 ft width, not his file's 4 ft.
+    #[test]
+    fn a_walker_fallen_back_stands_on_the_solid_his_scripts_set() {
+        use guac_formats::script::builder::{WALKER_SCALE, WalkerFault};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, e) = joined_walker(
+            tmp.path(),
+            WalkerFault::InPlay,
+            crate::test_support::hero_scripts::write_walker_solid,
+        );
+        until(&mut app, "his script stopping", |a| {
+            join(a).as_deref() == Some("off")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let written = written_solid();
+        let h = hero(&app);
+        assert_eq!(h.solid(), &written.havok([WALKER_SCALE; 3]).unwrap());
+        assert_eq!(h.tuning().width, 7.0, "the width his scripts set");
+        let run = app.world().entity(e).get::<HeroRun>().unwrap();
+        assert_eq!((run.shape, run.scale), (written, 1.2));
     }
 
     /// AG.27: a walker whose setup stops on a member nothing models keeps

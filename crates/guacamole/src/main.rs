@@ -881,9 +881,9 @@ mod tests {
                 "his scripts' step",
             ),
             (
-                hero_scripts::apply_scripted_scale.system_type_id(),
+                hero_scripts::apply_scripted_solid.system_type_id(),
                 Frame::Scripts,
-                "his scripts' scale",
+                "his scripts' solid and scale",
             ),
             (
                 guacamole::scripts::step_scripts.system_type_id(),
