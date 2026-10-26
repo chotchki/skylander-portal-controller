@@ -86,6 +86,10 @@ pub(crate) struct TvTheme {
     /// An empty frame's edge and the progress bar's track: muted gold at 22%.
     /// A surface, never text.
     pub(crate) faint: Color,
+    /// The HUD's health while it's high, and low or hurt (AH.26): the bar's
+    /// fill, the warning's words and a bite's damage number.
+    pub(crate) health: Color,
+    pub(crate) hurt: Color,
     /// Text by [`Role`].
     primary: Color,
     accent: Color,
@@ -145,6 +149,8 @@ impl Default for TvTheme {
             light: Color::WHITE,
             shadow: Color::BLACK,
             faint: Color::srgba_u8(0xd9, 0xc8, 0x8a, 56),
+            health: hex(0x5a, 0xc9, 0x6b),
+            hurt: hex(0xe6, 0x39, 0x46),
             primary: hex(0xff, 0xf4, 0xe0),
             accent: hex(0xff, 0xe5, 0x8a),
             muted: hex(0xd9, 0xc8, 0x8a),

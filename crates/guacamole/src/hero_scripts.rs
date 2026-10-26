@@ -706,7 +706,10 @@ impl Plugin for HeroScriptsPlugin {
             )
             .add_systems(
                 Update,
-                set_asked_health.run_if(resource_exists::<AskedHealth>),
+                (
+                    set_asked_health.run_if(resource_exists::<AskedHealth>),
+                    set_asked_experience.run_if(resource_exists::<AskedExperience>),
+                ),
             );
     }
 }
@@ -755,7 +758,9 @@ pub(crate) fn apply_scripted_scale(
 /// AH.62's test hook (`test-hooks` builds): a health asked for over `POST
 /// /api/_test/tv/health`, set where the joined hero's scripts hold it in the
 /// frame's `Update` (after its fixed steps, so the next frame's read it),
-/// doing a bite's work as AH.11's `swap1` poked the original's hero to 200.
+/// doing a bite's work as AH.11's `swap1` poked the original's hero to 200;
+/// 0 a killing bite's (AH.26), with no death sequence: the TV's backstop
+/// takes him out ([`crate::play::DEFEAT_BACKSTOP`]).
 #[derive(Resource, Clone, Default)]
 pub(crate) struct AskedHealth(pub(crate) Arc<Mutex<Option<i32>>>);
 
@@ -770,7 +775,7 @@ struct HealthBody {
 }
 
 /// `POST /api/_test/tv/health` (`{"health": 200}`): 202 with it kept for
-/// the next frame; 400, keeping nothing, for a health outside 1 to 99,999
+/// the next frame; 400, keeping nothing, for a health outside 0 to 99,999
 /// or any other body. Generic so a test needs no `AppState`.
 pub(crate) fn health_routes<S: Clone + Send + Sync + 'static>(
     asked: &AskedHealth,
@@ -781,7 +786,7 @@ pub(crate) fn health_routes<S: Clone + Send + Sync + 'static>(
         "/api/_test/tv/health",
         axum::routing::post(move |body: Result<axum::Json<HealthBody>, JsonRejection>| {
             let kept = match body {
-                Ok(axum::Json(b)) if (1..=HEALTH_ASKED_MAX).contains(&b.health) => {
+                Ok(axum::Json(b)) if (0..=HEALTH_ASKED_MAX).contains(&b.health) => {
                     *asked.lock().unwrap_or_else(|e| e.into_inner()) = Some(b.health);
                     true
                 }
@@ -822,6 +827,83 @@ fn set_asked_health(
         warn!(
             health,
             "no hero whose scripts run to take the health asked for"
+        );
+    }
+}
+
+/// AH.26's experience hook (`test-hooks` builds): an experience asked for
+/// over `POST /api/_test/tv/experience`, written into the joined hero's
+/// figure's words in the frame's `Update` (the next step reads it back onto
+/// his slot and his row, AH.23), as AH.11's oracle runs wrote a figure's at
+/// a pause: what takes him to a level-up or the cap with orbs on the TV.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct AskedExperience(pub(crate) Arc<Mutex<Option<u32>>>);
+
+/// The most experience asked for: past the cap and the figure's two areas.
+const EXPERIENCE_ASKED_MAX: u32 = 99_999;
+
+#[derive(serde::Deserialize)]
+struct ExperienceBody {
+    xp: u32,
+}
+
+/// `POST /api/_test/tv/experience` (`{"xp": 999}`): 202 with it kept for
+/// the next frame; 400, keeping nothing, for one past 99,999 or any other
+/// body. Generic so a test needs no `AppState`.
+pub(crate) fn experience_routes<S: Clone + Send + Sync + 'static>(
+    asked: &AskedExperience,
+) -> axum::Router<S> {
+    use axum::extract::rejection::JsonRejection;
+    let asked = asked.0.clone();
+    axum::Router::new().route(
+        "/api/_test/tv/experience",
+        axum::routing::post(
+            move |body: Result<axum::Json<ExperienceBody>, JsonRejection>| {
+                let kept = match body {
+                    Ok(axum::Json(b)) if b.xp <= EXPERIENCE_ASKED_MAX => {
+                        *asked.lock().unwrap_or_else(|e| e.into_inner()) = Some(b.xp);
+                        true
+                    }
+                    _ => false,
+                };
+                async move {
+                    if kept {
+                        axum::http::StatusCode::ACCEPTED
+                    } else {
+                        axum::http::StatusCode::BAD_REQUEST
+                    }
+                }
+            },
+        ),
+    )
+}
+
+fn set_asked_experience(
+    asked: Res<AskedExperience>,
+    runtime: Option<ResMut<ScriptRuntime>>,
+    source: Option<Res<ScriptSource>>,
+    runs: Query<&HeroRun>,
+) {
+    let Some(xp) = asked.0.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        return;
+    };
+    let data = runs.iter().find_map(|r| match (&r.join, r.figure) {
+        (Join::Joined(_), Some((data, _))) => Some(data),
+        _ => None,
+    });
+    let layout = source.as_deref().and_then(|s| s.layout.as_ref());
+    let set = match (data, layout, runtime) {
+        (Some(data), Some(layout), Some(mut rt)) => {
+            figure::write_experience(&mut rt.vm, layout, data, xp)
+        }
+        _ => false,
+    };
+    if set {
+        info!(xp, "his figure's experience set over the test hook");
+    } else {
+        warn!(
+            xp,
+            "no joined hero with his figure's words to take the experience asked for"
         );
     }
 }
@@ -1829,8 +1911,9 @@ mod tests {
         );
     }
 
-    /// AH.62's hook: a health from 1 to 99,999 is kept for the next frame;
-    /// anything else is a 400 and keeps nothing.
+    /// AH.62's hook: a health from 0 (AH.26: a killing bite's work) to
+    /// 99,999 is kept for the next frame; anything else is a 400 and keeps
+    /// nothing.
     #[tokio::test]
     async fn the_health_hook_keeps_a_health_in_range_and_refuses_the_rest() {
         use tower::ServiceExt;
@@ -1839,7 +1922,8 @@ mod tests {
         for (body, status, kept) in [
             (r#"{"health":200}"#, 202, Some(200)),
             (r#"{"health":1}"#, 202, Some(1)),
-            (r#"{"health":0}"#, 400, None),
+            (r#"{"health":0}"#, 202, Some(0)),
+            (r#"{"health":-1}"#, 400, None),
             (r#"{"health":100000}"#, 400, None),
             (r#"{"hp":200}"#, 400, None),
             ("200", 400, None),
@@ -1849,6 +1933,37 @@ mod tests {
                 .clone()
                 .oneshot(
                     axum::http::Request::post("/api/_test/tv/health")
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{body}");
+            assert_eq!(*asked.0.lock().unwrap(), kept, "{body}");
+        }
+    }
+
+    /// AH.26's experience hook: 0 to 99,999 kept for the next frame;
+    /// anything else a 400 keeping nothing.
+    #[tokio::test]
+    async fn the_experience_hook_keeps_one_in_range_and_refuses_the_rest() {
+        use tower::ServiceExt;
+        let asked = AskedExperience::default();
+        let routes = experience_routes::<()>(&asked);
+        for (body, status, kept) in [
+            (r#"{"xp":999}"#, 202, Some(999)),
+            (r#"{"xp":0}"#, 202, Some(0)),
+            (r#"{"xp":99999}"#, 202, Some(99_999)),
+            (r#"{"xp":100000}"#, 400, None),
+            (r#"{"xp":-1}"#, 400, None),
+            (r#"{"health":200}"#, 400, None),
+        ] {
+            *asked.0.lock().unwrap() = None;
+            let response = routes
+                .clone()
+                .oneshot(
+                    axum::http::Request::post("/api/_test/tv/experience")
                         .header("content-type", "application/json")
                         .body(axum::body::Body::from(body))
                         .unwrap(),

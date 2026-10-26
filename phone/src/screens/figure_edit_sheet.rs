@@ -121,7 +121,9 @@ pub(crate) fn FigureEditSheet(
                             >
                                 "\u{2212}"
                             </button>
-                            <div class="edit-stepper-value">{move || level.get().to_string()}</div>
+                            <div class="edit-stepper-value">
+                                {move || server_app.level_label(level.get(), max_level)}
+                            </div>
                             <button
                                 class="edit-stepper-btn"
                                 on:click=inc_level

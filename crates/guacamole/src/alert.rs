@@ -65,6 +65,10 @@ pub(crate) fn lines(alert: Alert) -> [&'static str; 2] {
             "Take one off to play on",
         ],
         Alert::PlaceSkylander => ["Player 1, put a Skylander on the portal", "to play on"],
+        Alert::NeedsRest => [
+            "This Skylander needs to rest",
+            "Take it off the portal and put on another",
+        ],
     }
 }
 
@@ -230,8 +234,8 @@ fn spawn_corner(commands: &mut Commands, pen: &Pen, qr: Option<Handle<Image>>) -
 /// The portal's alert as drawn.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AlertShot {
-    /// `wrong_toy`, `too_many_skylanders`, `too_many_items` or
-    /// `place_a_skylander`.
+    /// `wrong_toy`, `too_many_skylanders`, `too_many_items`,
+    /// `place_a_skylander` or `needs_rest`.
     pub kind: String,
     /// Its lines, top to bottom.
     pub texts: Vec<String>,

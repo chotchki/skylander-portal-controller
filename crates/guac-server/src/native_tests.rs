@@ -1444,7 +1444,7 @@ async fn the_stats_read_the_row_with_the_games_caps() {
     assert_eq!(
         body,
         serde_json::json!({
-            "level": 1, "xp": 0, "gold": 0, "playtime_secs": 0,
+            "level": 1, "xp": 0, "next_xp": 1000, "gold": 0, "playtime_secs": 0,
             "max_level": 15, "max_gold": 65000,
         })
     );
@@ -1466,8 +1466,41 @@ async fn the_stats_read_the_row_with_the_games_caps() {
     let (_, body) = n.stats(&alice, ERUPTOR).await;
     assert_eq!(body["level"], 2);
     assert_eq!(body["xp"], 1000);
+    assert_eq!(body["next_xp"], 2200);
     assert_eq!(body["gold"], 3);
     assert_eq!(body["playtime_secs"], 61);
+}
+
+/// AH.57's stats at the cap: one short of it, level 14 and the experience
+/// toward 96,500; at it, level 15 (the phone's MAX) with nothing next; an
+/// orb past it from the TV stores 96,500, the level still 15.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_stats_read_the_experience_toward_the_cap_and_none_past_it() {
+    let n = Native::with_giants().await;
+    let (sid, alice) = n.unlocked_session().await;
+    n.place(sid, 1, ERUPTOR).await;
+    let row = n.row(&alice, ERUPTOR).await.unwrap();
+    for (xp, level, next, stored) in [
+        (96_499, 14, Some(96_500), 96_499),
+        (96_500, 15, None, 96_500),
+        (96_518, 15, None, 96_500),
+    ] {
+        let earned = FigureProgress { xp, ..row };
+        let wrote =
+            n.state
+                .profiles
+                .instances()
+                .write(&alice, ERUPTOR, earned, true, giants().caps());
+        assert!(wrote.await.unwrap().is_some());
+        let (_, body) = n.stats(&alice, ERUPTOR).await;
+        assert_eq!(body["level"], level, "{xp}");
+        assert_eq!(body["xp"], stored, "{xp}");
+        assert_eq!(body["max_level"], 15);
+        match next {
+            Some(next) => assert_eq!(body["next_xp"], next, "{xp}"),
+            None => assert!(body.get("next_xp").is_none(), "{xp}: {body}"),
+        }
+    }
 }
 
 /// The phone's edit: experience to the level's threshold, gold as asked,

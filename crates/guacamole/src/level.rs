@@ -658,7 +658,8 @@ pub(crate) struct PropsReport {
     /// Where the rule measured from last.
     pub at: Option<[f32; 3]>,
     /// Props the level's scripts took off (openspec AH.21: breakables
-    /// broken), by name: they stand nowhere again.
+    /// broken), by name: they stand nowhere again in this run; a run
+    /// installed afresh (the level entered again) has them back.
     pub taken_off: Vec<String>,
     /// Standing props the scripts have moved, turned, scaled or reshaped
     /// off their file's (openspec AG.60), by name, and how many solids were
@@ -787,8 +788,13 @@ impl StandingProps {
         for (i, p) in self.props.iter().enumerate() {
             let actor = by.as_ref().and_then(|b| (b.actor_of)(p.object));
             let off = actor.is_some_and(|a| a.removed);
-            if off && !self.report.taken_off.contains(&p.name) {
+            let listed = self.report.taken_off.contains(&p.name);
+            if off && !listed {
                 self.report.taken_off.push(p.name.clone());
+            } else if listed && actor.is_some_and(|a| !a.removed) {
+                // Back in a run installed afresh (the level ended and
+                // entered again, AH.26's Restart chapter).
+                self.report.taken_off.retain(|n| *n != p.name);
             }
             let stands = match actor {
                 Some(a) => a.active && !a.removed,

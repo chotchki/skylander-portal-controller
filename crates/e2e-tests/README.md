@@ -139,7 +139,7 @@ lists them from the start (openspec AE.4). No
 pinned the same way, so the phone bundle from step 3 serves both apps.
 `spawn_live` and `spawn_ipc_*` bail under it: they drive RPCS3.
 
-[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (25 tests) is
+[`tests/guacamole_tv.rs`](tests/guacamole_tv.rs) (34 tests) is
 guacamole-only and skips with a message otherwise. It reads what the TV
 shows through `/api/_test/tv`, a JSON mirror of the laid-out Bevy UI
 tree (screen, join line, player count, each card's lines, portrait,
@@ -238,6 +238,29 @@ nothing once it ends until let go and pressed again; Eruptor off and
 placed again comes in where he stood, his scripts joined again (the log's
 `step` counts on across the run installed again at his take-off) and
 throwing.
+Three run AH.26's HUD and defeat over the fighting fixture, reading the
+mirror's `hud` (the hero's `health` and `health_max`, `low`, `level` (`1`,
+`MAX` at the table's last), `xp` and `xp_next`, `gold`, `flash`, its drawn
+`texts` and the bites' `damage`) and `defeat` (`dying`, the instances
+`beaten` as `<profile>/<figure>`, `restart` with its `stage` and `texts`),
+and driving `POST /api/_test/tv/health` (`health_tv`: 0 is a killing
+bite's work, the TV's 3 s backstop taking him out with no death sequence
+on the fixture) and `POST /api/_test/tv/experience` (`experience_tv`: his
+figure's experience written into his words).
+`a_defeat_brings_in_the_waiting_character_and_the_beaten_one_stays_out`
+bites Alice's Eruptor, takes him off and back (his health kept), places
+Bob's while Alice's dies (no too-many hold, Bob's in where she fell) and
+puts the beaten one back (`needs_rest`, never in);
+`a_defeat_with_no_character_left_offers_restart_chapter` levels him up,
+beats him alone and presses Restart chapter through the router
+(`press_tv` South, then right to Yes and South), the level again from its
+start with his progress kept; `the_phone_reads_max_at_the_cap` edits
+Spyro to the table's level 14 and 15 on a phone 390 px wide and reads the
+details' LEVEL cell and experience line (`.detail-stat-xp`, a row of its
+own under the strip's three cells, their labels at least 8 px apart) and
+the sheet's stepper, MAX at 15.
+The smashing and creature tests read the HUD's gold and level too
+(AH.71, AH.26).
 The mirror's `warm` is the turntables' pre-warm (openspec AE.14:
 `state` `idle`, `reading`, `compiling` or `done`, and its key counts),
 and `GET /api/_test/tv/frames?since_ms=<ms>` hands out the TV's frame

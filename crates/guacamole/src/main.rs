@@ -13,11 +13,13 @@ mod card_view;
 mod cards;
 mod cli;
 mod creatures;
+mod defeat;
 mod dev_entry;
 mod driver;
 mod extraction;
 mod hero;
 mod hero_scripts;
+mod hud;
 mod input;
 mod intro;
 mod intro_player;
@@ -117,7 +119,11 @@ fn main() -> Result<()> {
     let (shelf_tx, shelf) = turntable::shelf_channel();
     let (level_tx, level_feed) = level::level_channel();
     let mirror = TvMirror::default();
-    let asked_health = hero_scripts::AskedHealth::default();
+    // AH.62's health and AH.26's experience, asked over the test hooks.
+    let asked = (
+        hero_scripts::AskedHealth::default(),
+        hero_scripts::AskedExperience::default(),
+    );
     let entry_asks = dev_entry::EntryAsks::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
@@ -138,7 +144,7 @@ fn main() -> Result<()> {
                 root,
                 None,
                 OutputLatency::default(),
-                (mirror, asked_health, entry_asks),
+                (mirror, asked, entry_asks),
                 None,
                 log_guard,
             );
@@ -189,7 +195,7 @@ fn main() -> Result<()> {
         migrator: &setup::MIGRATOR,
         driver_factory: Box::new(move |kind| build_driver(kind, portal_tx)),
         hooks: Hooks::default(),
-        extra_routes: test_routes(&mirror, &asked_health, &entry_asks),
+        extra_routes: test_routes(&mirror, &asked, &entry_asks),
         catalogue: Catalogue::Native {
             games: scan.games(),
             roster,
@@ -224,7 +230,7 @@ fn main() -> Result<()> {
         root,
         Some(job),
         latency,
-        (mirror, asked_health, entry_asks),
+        (mirror, asked, entry_asks),
         level_hero,
         log_guard,
     )
@@ -362,16 +368,17 @@ impl Plugin for TvPacing {
     }
 }
 
-/// `/api/_test/tv` for the e2e harness, and AH.62's health and AH.25's
-/// dev entry beside it; nothing outside `test-hooks`.
+/// `/api/_test/tv` for the e2e harness, and AH.62's health, AH.26's
+/// experience and AH.25's dev entry beside it; nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
-    asked_health: &hero_scripts::AskedHealth,
+    (health, xp): &(hero_scripts::AskedHealth, hero_scripts::AskedExperience),
     entry_asks: &dev_entry::EntryAsks,
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
     cfg!(feature = "test-hooks").then(|| {
         mirror::routes(mirror)
-            .merge(hero_scripts::health_routes(asked_health))
+            .merge(hero_scripts::health_routes(health))
+            .merge(hero_scripts::experience_routes(xp))
             .merge(dev_entry::routes(entry_asks))
     })
 }
@@ -408,7 +415,11 @@ fn run_tv(
     root: PathBuf,
     job: Option<ExtractJob>,
     latency: OutputLatency,
-    (mirror, asked_health, entry_asks): (TvMirror, hero_scripts::AskedHealth, dev_entry::EntryAsks),
+    (mirror, (asked_health, asked_xp), entry_asks): (
+        TvMirror,
+        (hero_scripts::AskedHealth, hero_scripts::AskedExperience),
+        dev_entry::EntryAsks,
+    ),
     level_hero: Option<guac_server::progress::LevelHero>,
     log_guard: WorkerGuard,
 ) -> Result<()> {
@@ -456,6 +467,8 @@ fn run_tv(
         physics::SeamPlugin,
         play::PlayPlugin,
         alert::AlertPlugin,
+        // AH.26: the HUD and Restart chapter over the level.
+        (hud::HudPlugin, defeat::DefeatPlugin),
         progress::ProgressPlugin,
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,
@@ -483,6 +496,7 @@ fn run_tv(
     if cfg!(feature = "test-hooks") {
         app.insert_resource(mirror)
             .insert_resource(asked_health)
+            .insert_resource(asked_xp)
             .add_plugins(mirror::Mirror);
     }
     let exit = app.run();

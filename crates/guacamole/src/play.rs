@@ -78,6 +78,31 @@
 //!   (AH.151, AG.190), `/api/_test/tv`'s `hero.scripts` and
 //!   `hero.camera.scripts` both `off` with his reason, until the next hero
 //!   in joins the run and the camera's scripts take the view back (AG.211).
+//!
+//! Defeat (openspec AH.26, AH design decision 14; combat's A defeated hero,
+//! tv-hud's No character left):
+//! - His health out ([`follow_defeat`]): from the frame his scripts read
+//!   none, the hero is dying; the death sequence his scripts run (the
+//!   portal manager's, AH.20: the knock, then his minion off 2.2 s on)
+//!   ends it, or [`DEFEAT_BACKSTOP`] of game time where none runs (a part
+//!   without one, a portal manager stopped, the test hook's health of 0
+//!   with no bite). Then he leaves as a hero taken off does, his figure
+//!   beaten for the rest of the level ([`Play::beaten`]: by its instance,
+//!   the placing profile and the figure), its experience and gold its own.
+//! - A beaten figure counts for nothing on the portal: alone it holds the
+//!   level under the needs-rest alert, asking for it to come off, then the
+//!   call for a Skylander; placed again, the needs-rest alert again; any
+//!   other character comes in where he fell. While he's dying, a character
+//!   placed beside him waits without the too-many hold and comes in once
+//!   he's out (ours: no oracle run placed one then).
+//! - With no character left, Restart chapter is offered from
+//!   [`RESTART_AFTER`] after his health ran out ([`Play::restart_offered`],
+//!   drawn by [`crate::defeat`]); confirmed, [`restart`] ends the level
+//!   ([`LevelEnded`]: every figure's progress written first, AH.33) and
+//!   enters it again from its start as a new entry does, the run installed
+//!   afresh (every figure's health full, the breakables and creatures back),
+//!   the first character on the portal coming in.
+//!   Ours (stand-in ledger: `no-character`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -127,6 +152,7 @@ use crate::motion::ReducedMotion;
 use crate::pad::LevelPads;
 use crate::physics::AvianSeam;
 use crate::prepare::Prepare;
+use crate::progress::LevelEnded;
 use crate::screen::TvScreen;
 use crate::turntable::{Loaded, Shelf, Turntables, load_model, read_hero, read_ir};
 use crate::tv_state::{Current, Redrawn, TvCamera};
@@ -182,25 +208,48 @@ pub(crate) fn kind(shelf: &Shelf, figure_id: &str) -> Kind {
     }
 }
 
+/// A figure on the portal as one profile's own (AH.1): the placing
+/// profile, none for a figure placed with no profile unlocked, and the
+/// figure. What a defeat marks for the rest of the level (combat's A
+/// defeated hero), as the original's portal manager marks a toy's tag.
+pub(crate) type Instance = (Option<String>, String);
+
+/// The profile-and-figure pair `placement` stands for: what a defeat keys.
+pub(crate) fn instance(placement: &Placement) -> Instance {
+    (
+        placement.owner.as_ref().map(|o| o.profile_id.clone()),
+        placement.figure_id.as_str().to_owned(),
+    )
+}
+
 /// The portal as the flow reads it: its characters in the order they were
 /// placed, each with whether it can come in as the hero (a figure that walks,
 /// AG.27's until every character does), and how many magic items and toys
-/// Giants can't use stand beside them.
+/// Giants can't use stand beside them. A character beaten in the level
+/// (AH.26) is no character here, only counted; and whether the hero's
+/// health has run out, so a character placed beside him waits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Lineup {
     pub(crate) characters: Vec<(SlotIndex, bool)>,
     pub(crate) magic: usize,
     pub(crate) unusable: usize,
+    /// Characters on the portal whose instance a defeat in this level
+    /// took out: what keeps the needs-rest alert up.
+    pub(crate) beaten: usize,
+    /// The hero is dying: his health ran out and he isn't out yet.
+    pub(crate) dying: bool,
 }
 
 impl Lineup {
-    /// `order`'s slots read off `cards` by `shelf`'s roster.
+    /// `order`'s slots read off `cards` by `shelf`'s roster, `beaten`'s
+    /// instances counted apart.
     fn of(
         order: &[SlotIndex],
         cards: &PortalCards,
         shelf: &Shelf,
         source: Option<&ScriptSource>,
         kept: &[KeptCard],
+        beaten: &[Instance],
     ) -> Self {
         let mut lineup = Self::default();
         for slot in order {
@@ -209,6 +258,7 @@ impl Lineup {
             };
             let id = placement.figure_id.as_str();
             match kind(shelf, id) {
+                Kind::Character if beaten.contains(&instance(placement)) => lineup.beaten += 1,
                 Kind::Character => {
                     let walks = shelf.loads.get(id).is_some_and(|load| {
                         walking(load, source).is_some() && !kept.iter().any(|k| k.slot == *slot)
@@ -237,6 +287,9 @@ pub(crate) enum Alert {
     TooManyItems,
     /// The hero came off and no character can take his place.
     PlaceSkylander,
+    /// A figure beaten in the level is on the portal and no character can
+    /// take the hero's place (AH.26: the original's "needs to rest").
+    NeedsRest,
 }
 
 impl Alert {
@@ -246,6 +299,7 @@ impl Alert {
             Alert::TooManySkylanders => "too_many_skylanders",
             Alert::TooManyItems => "too_many_items",
             Alert::PlaceSkylander => "place_a_skylander",
+            Alert::NeedsRest => "needs_rest",
         }
     }
 }
@@ -253,8 +307,10 @@ impl Alert {
 /// The alert `lineup` asks for. `inside`: the level has started (shown,
 /// paused or held); `hero`: his slot while he's in it; `would_start`: before
 /// the start, the level would show now but for the portal. A toy Giants
-/// can't use comes first, then too many characters, then too many magic
-/// items, then the call for a Skylander.
+/// can't use comes first, then too many characters (one beside a dying hero
+/// waits), then too many magic items, then, with no hero and none to come
+/// in, the needs-rest alert while a beaten figure stands on the portal, else
+/// the call for a Skylander.
 pub(crate) fn judge(
     lineup: &Lineup,
     inside: bool,
@@ -274,6 +330,8 @@ pub(crate) fn judge(
         .map(|(_, walks)| *walks)
         .collect();
     let too_many = match hero {
+        // He's on his way out: one beside him is the next in.
+        Some(_) if lineup.dying => others.len() >= 2,
         Some(_) => !others.is_empty(),
         None => others.len() >= 2,
     };
@@ -285,7 +343,13 @@ pub(crate) fn judge(
     }
     // A lone character that walks comes in without a screen (its arrival is
     // AG.72's); one that doesn't walk yet can't, so the call stays up.
-    (hero.is_none() && !others.first().is_some_and(|walks| *walks)).then_some(Alert::PlaceSkylander)
+    if hero.is_some() || others.first().is_some_and(|walks| *walks) {
+        return None;
+    }
+    Some(match lineup.beaten {
+        0 => Alert::PlaceSkylander,
+        _ => Alert::NeedsRest,
+    })
 }
 
 /// The clips his locomotion plays beside his model's idle: his hero side's
@@ -534,7 +598,33 @@ pub(crate) struct Play {
     /// they keep their cards, listed with why, until their figures leave
     /// the portal.
     kept: Vec<KeptCard>,
+    /// The instances beaten in this level (AH.26): out until it ends.
+    beaten: Vec<Instance>,
+    /// The hero's health ran out: since when, on the level's clock (game
+    /// time).
+    dying: Option<Duration>,
+    /// When the last hero's health ran out, on the TV's real clock, while no
+    /// hero has come in since: Restart chapter's offer counts from it.
+    beaten_at: Option<Duration>,
 }
+
+/// How long a beaten hero's death sequence may run before the TV takes him
+/// out itself: past the original's 2.2 s (AH.11's 133-134 records from his
+/// reaction to his minion off, which his scripts hold on the VM, AH.20's
+/// `a_defeated_hero_knocks_them_back_and_leaves`), for a run where none
+/// ends it (a part without the portal manager's, one stopped in play, the
+/// test hook's health of 0 with no bite to kill him).
+pub(crate) const DEFEAT_BACKSTOP: Duration = Duration::from_secs(3);
+
+/// Restart chapter comes up this long after the hero's health ran out
+/// (tv-hud's No character left: AH.11's `defeat2`, at 0 health by flip
+/// 1,112 and fading in by 1,412).
+pub(crate) const RESTART_AFTER: Duration = Duration::from_secs(5);
+
+/// Asks for the level again from its start (AH.26's Restart chapter,
+/// confirmed): [`restart`] does it.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RestartLevel;
 
 /// Why a hero in the level with no run reads `off` ([`HeroReport::scripts`]):
 /// [`hero_scripts::ask_join`] gave him none, the level's part holding no
@@ -741,6 +831,38 @@ impl Play {
         self.inside.as_ref()?.hero.as_ref()
     }
 
+    /// The instances beaten in this level (AH.26).
+    pub(crate) fn beaten(&self) -> &[Instance] {
+        &self.beaten
+    }
+
+    /// The hero's health has run out and he isn't out yet.
+    pub(crate) fn dying(&self) -> bool {
+        self.dying.is_some()
+    }
+
+    /// Restart chapter is on offer at `now` (the TV's real clock): the
+    /// portal calling for a character with none to come in (so no hero in
+    /// the level: [`judge`] calls only then), [`RESTART_AFTER`] since the
+    /// last hero's health ran out with none in since.
+    pub(crate) fn restart_offered(&self, now: Duration) -> bool {
+        matches!(self.alert, Some(Alert::NeedsRest | Alert::PlaceSkylander))
+            && self.beaten_at.is_some_and(|at| now >= at + RESTART_AFTER)
+    }
+
+    /// The slot the hero's figure stands in and its placement, while he's
+    /// in the level: what the HUD reads his figure's numbers by.
+    pub(crate) fn hero_placement(&self) -> Option<(Entity, SlotIndex, &Placement)> {
+        let h = self.on_stage()?;
+        let c = self.candidate.as_ref()?;
+        Some((h.hero, c.slot, &c.placement))
+    }
+
+    /// The level's camera, while the level shows.
+    pub(crate) fn level_camera(&self) -> Option<Entity> {
+        self.inside.as_ref().map(|i| i.camera)
+    }
+
     /// The hero's entity, while he's in the level: the walk's shots'.
     #[cfg(any(test, feature = "dev-tools"))]
     pub(crate) fn hero(&self) -> Option<Entity> {
@@ -916,6 +1038,16 @@ impl Play {
         play.alert = Some(alert);
         play
     }
+
+    /// A hero beaten at `at` (the real clock) with no character left, the
+    /// level started through `camera` and held under `alert`: for the tests
+    /// of Restart chapter's choice (AH.26).
+    pub(crate) fn beaten_for_tests(camera: Entity, alert: Alert, at: Duration) -> Self {
+        let mut play = Self::alerting_for_tests(alert, Some(camera));
+        play.beaten.push((None, "000009-0000".into()));
+        play.beaten_at = Some(at);
+        play
+    }
 }
 
 /// The server's word on which slot's figure is the hero in a level
@@ -956,15 +1088,19 @@ impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HeroPlugin)
             .init_resource::<Play>()
+            .add_message::<RestartLevel>()
+            .add_message::<LevelEnded>()
             .add_systems(
                 Update,
                 (
+                    restart,
                     follow_portal,
                     keep_unlinked,
                     choose_hero,
                     load_hero,
                     leave,
                     keep_cards,
+                    follow_defeat,
                     judge_portal,
                     enter,
                     pose_hero,
@@ -1001,11 +1137,80 @@ fn follow_portal(
         if !play.candidate.as_ref().is_some_and(|c| c.slot == slot) {
             continue;
         }
-        play.candidate = None;
+        let gone = play.candidate.take().expect("checked above");
+        let play = &mut *play;
         match play.inside.as_mut() {
             None => info!(slot = slot.display(), "the waiting hero left the portal"),
-            Some(inside) => take_off(inside, &mut level, &mut commands, &bodies, slot),
+            Some(inside) => {
+                // Lifted while dying, he's beaten all the same: his health
+                // ran out, and he'd come back with none.
+                if play.dying.take().is_some() && inside.hero.is_some() {
+                    info!(
+                        slot = slot.display(),
+                        "the dying hero left the portal: beaten"
+                    );
+                    play.beaten.push(instance(&gone.placement));
+                }
+                take_off(inside, &mut level, &mut commands, &bodies, slot);
+            }
         }
+    }
+}
+
+/// A beaten hero out of the level (AH.26, the module docs): from the frame
+/// his scripts' health reads none he's dying, and once his minion is off
+/// the run (the death sequence's end) or [`DEFEAT_BACKSTOP`] of game time
+/// on, he leaves as a hero taken off does, his figure beaten for the rest
+/// of the level, the portal still holding it.
+fn follow_defeat(
+    mut play: ResMut<Play>,
+    mut level: ResMut<Level>,
+    mut commands: Commands,
+    bodies: Query<(&HeroBody, Option<&HeroRun>)>,
+    runtime: Option<Res<ScriptRuntime>>,
+    (game, real): (Res<Time<Virtual>>, Res<Time<Real>>),
+) {
+    let Some(hero) = play.on_stage().map(|h| h.hero) else {
+        play.dying = None;
+        return;
+    };
+    let run = bodies.get(hero).ok().and_then(|(_, run)| run);
+    let minion = match run.map(|r| &r.join) {
+        Some(Join::Joined(minion)) => Some(*minion),
+        _ => None,
+    };
+    let vm = runtime.as_deref().map(|rt| &rt.vm);
+    let (health, off) = match (vm, minion) {
+        (Some(vm), Some(m)) => (guacamole::scripts::health(vm, m), vm.removed(m)),
+        _ => (None, false),
+    };
+    if play.dying.is_none() && health.is_some_and(|h| h <= 0) {
+        info!(?health, "the hero's health ran out: dying");
+        play.dying = Some(game.elapsed());
+        play.beaten_at = Some(real.elapsed());
+    }
+    let Some(since) = play.dying else {
+        return;
+    };
+    let backstop = game.elapsed() >= since + DEFEAT_BACKSTOP;
+    if !off && !backstop {
+        return;
+    }
+    let play = &mut *play;
+    let Some(c) = play.candidate.take() else {
+        return;
+    };
+    play.dying = None;
+    play.beaten.push(instance(&c.placement));
+    info!(
+        slot = c.slot.display(),
+        figure = %c.placement.name,
+        by = if off { "his death sequence" } else { "the backstop" },
+        "beaten: his figure is out for the rest of the level"
+    );
+    if let Some(inside) = play.inside.as_mut() {
+        debug_assert_eq!(inside.hero.as_ref().map(|h| h.hero), Some(hero));
+        take_off(inside, &mut level, &mut commands, &bodies, c.slot);
     }
 }
 
@@ -1069,7 +1274,7 @@ fn candidate(
 /// Who walks next, once the shelf says which character each figure is:
 /// before the level shows, the first figure placed that walks; in it with no
 /// hero, the one character on the portal if it walks (two hold it under the
-/// too-many alert, [`judge`]).
+/// too-many alert, [`judge`]; a figure beaten in the level is none, AH.26).
 fn choose_hero(
     cards: Res<PortalCards>,
     turntables: Res<Turntables>,
@@ -1089,7 +1294,7 @@ fn choose_hero(
             .iter()
             .find_map(|slot| candidate(*slot, &cards, shelf, source, &play.kept)),
         Some(inside) if inside.hero.is_none() => {
-            match Lineup::of(&play.order, &cards, shelf, source, &play.kept)
+            match Lineup::of(&play.order, &cards, shelf, source, &play.kept, &play.beaten)
                 .characters
                 .as_slice()
             {
@@ -1196,14 +1401,14 @@ fn load_hero(
 }
 
 /// The level gone from under the hero, or the TV off the portal view: the
-/// hero, his camera and the pads' level layer go, the level hidden again,
-/// the alert with them.
+/// level ends ([`end_level`]).
 fn leave(
     mut commands: Commands,
     mut play: ResMut<Play>,
     mut level: ResMut<Level>,
     mut pads: ResMut<LevelPads>,
     current: Option<Res<Current>>,
+    mut ended: MessageWriter<LevelEnded>,
 ) {
     let Some(inside) = play.inside.as_ref() else {
         return;
@@ -1214,8 +1419,48 @@ fn leave(
         return;
     }
     info!(on_portal, shown, "the TV leaves the level");
-    let inside = play.inside.take().expect("checked above");
-    level.hide(&mut commands, inside.camera);
+    end_level(&mut commands, &mut play, &mut level, &mut pads, &mut ended);
+}
+
+/// Restart chapter confirmed (AH.26; tv-hud's No character left): the level
+/// ends ([`end_level`]) and the TV enters it again from its start as any
+/// entry does, the first character on the portal that walks the hero, no
+/// intro (none is asked: nothing was placed). The run installed afresh puts
+/// every breakable and creature back and every figure's health full; the
+/// figures' progress is theirs, written first. The portal view shows while
+/// his model is read again (stand-in ledger: `no-character`).
+fn restart(
+    mut asked: MessageReader<RestartLevel>,
+    mut commands: Commands,
+    mut play: ResMut<Play>,
+    mut level: ResMut<Level>,
+    mut pads: ResMut<LevelPads>,
+    mut ended: MessageWriter<LevelEnded>,
+) {
+    if asked.read().count() == 0 || play.inside.is_none() {
+        return;
+    }
+    info!("Restart chapter: the level again from its start");
+    end_level(&mut commands, &mut play, &mut level, &mut pads, &mut ended);
+}
+
+/// The level's end, whatever ends it: every figure's progress written whole
+/// first ([`LevelEnded`], openspec AH.33), then the hero, his camera and the
+/// pads' level layer go, the level hidden again, the alert and the level's
+/// lists with them, and the run installed again from the part for the next
+/// entry (AH.24).
+fn end_level(
+    commands: &mut Commands,
+    play: &mut Play,
+    level: &mut Level,
+    pads: &mut LevelPads,
+    ended: &mut MessageWriter<LevelEnded>,
+) {
+    let Some(inside) = play.inside.take() else {
+        return;
+    };
+    ended.write(LevelEnded);
+    level.hide(commands, inside.camera);
     if let Some(hero) = inside.hero {
         commands.entity(hero.hero).despawn();
     }
@@ -1223,9 +1468,14 @@ fn leave(
     pads.hide();
     play.candidate = None;
     play.alert = None;
-    // The level's own list goes with it (AG.183): the next entry's run is a
-    // fresh one, which a walker whose join failed in this one tries again.
+    // The level's own lists go with it (AG.183): the next entry's run is a
+    // fresh one, which a walker whose join failed in this one tries again,
+    // and a figure beaten in it is no longer (AH.26), as a level change
+    // clears the original's.
     play.kept.clear();
+    play.beaten.clear();
+    play.dying = None;
+    play.beaten_at = None;
     // The scripts start over with the level's next entry (AH.24).
     commands.queue(hero_scripts::reinstall);
 }
@@ -1346,7 +1596,15 @@ fn judge_portal(
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
     let alert = match turntables.shelf().filter(|_| on_portal) {
         Some(shelf) => {
-            let mut lineup = Lineup::of(&play.order, &cards, shelf, source.as_deref(), &play.kept);
+            let mut lineup = Lineup::of(
+                &play.order,
+                &cards,
+                shelf,
+                source.as_deref(),
+                &play.kept,
+                &play.beaten,
+            );
+            lineup.dying = play.dying.is_some();
             if let Some(c) = play.candidate.as_ref()
                 && matches!(c.model, Model3d::Failed(_))
             {
@@ -1538,6 +1796,8 @@ fn enter(
         palette,
     };
     s.redrawn.write(Redrawn::Level);
+    // A hero in: no Restart chapter on offer until the next defeat (AH.26).
+    play.beaten_at = None;
     let Some(target) = target else {
         info!(
             load_file = walker.load_file,
@@ -1900,6 +2160,8 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
     use guac_extract::intros::IrFormat;
     use guac_motion::camera::View;
+
+    use skylander_rpcs3_control::FigureProgress;
 
     use super::*;
     use crate::test_support::level::{FLOOR, START, WALL, lights, write_level};
@@ -3338,7 +3600,8 @@ mod tests {
     /// words, read back onto his slot and sent under his generation: 8.
     /// Taken off and placed again, he comes back to the level as he left
     /// it (openspec AH.105: the run went on): the barrel still off, the same
-    /// placement, nothing to break, the gold his figure's.
+    /// placement, nothing to break, the gold his figure's. The HUD's gold
+    /// reads the row's 5, then 8 once the coin's in (AH.71).
     #[test]
     fn eruptor_smashes_the_synthetic_barrel_and_its_coin_reaches_the_row() {
         use guac_formats::script::builder::{
@@ -3471,6 +3734,11 @@ mod tests {
             assert_eq!(engine.actor_of(prop_body), Some(barrel));
         }
         let _ = sink.waiting();
+        let hud_gold = |app: &App| {
+            let hud = app.world().resource::<crate::hud::Hud>();
+            hud.shown.as_ref().map(|v| v.gold)
+        };
+        assert_eq!(hud_gold(&app), Some(5), "the HUD's gold: the row's");
         test_pad::press(&mut app, pad, GamepadButton::South);
         until(&mut app, "the barrel broken", |a| {
             a.world().resource::<ScriptWorld>().taken_off(barrel_obj)
@@ -3515,6 +3783,12 @@ mod tests {
                 .map(|w| (w.2.progress.gold, w.2.progress.generation)),
             Some((5 + SMASH_GOLD as u32, generation)),
             "{waiting:?}"
+        );
+        app.update();
+        assert_eq!(
+            hud_gold(&app),
+            Some(5 + SMASH_GOLD as u32),
+            "the HUD's gold: the row's"
         );
         // Off and on again: the level as he left it.
         clear(&mut app, 0);
@@ -3934,6 +4208,687 @@ mod tests {
             (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX)),
             "in full"
         );
+    }
+
+    // ---- AH.26, AH.33, AH.57, AH.71: defeat, the HUD, the level's end ----
+
+    /// `profile`'s Eruptor in `slot`, placed with `progress`.
+    fn owned_eruptor(slot: u8, profile: &str, progress: FigureProgress) -> PortalChange {
+        let mut change = placed(slot, ERUPTOR, "Eruptor");
+        if let PortalChange::Placed { placement, .. } = &mut change {
+            placement.owner = Some(skylander_rpcs3_control::PlacementOwner {
+                profile_id: profile.into(),
+                initial: profile[..1].to_uppercase(),
+                color: "#e63946".into(),
+                progress,
+            });
+        }
+        change
+    }
+
+    /// `change` onto the portal, as the driver tells the TV.
+    fn put(app: &mut App, change: PortalChange) {
+        crate::test_support::turntable::set(app, [change.clone()]);
+        app.world_mut().write_message(PortalChanged(change));
+    }
+
+    /// The joined hero's health set where his scripts hold it, as a bite
+    /// leaves it (AH.62's hook's work).
+    fn set_health(app: &mut App, health: i32) {
+        let e = app.world().resource::<Play>().hero().expect("in the level");
+        let Join::Joined(minion) = app.world().entity(e).get::<HeroRun>().unwrap().join else {
+            panic!("not joined");
+        };
+        let mut rt = app.world_mut().resource_mut::<ScriptRuntime>();
+        assert!(guacamole::scripts::set_health(&mut rt.vm, minion, health));
+    }
+
+    /// Frames until `done`, at most `frames` of them: a loop the tests can
+    /// run past `until`'s 5 s of the wall clock (game seconds at 60 frames
+    /// each).
+    fn frames_until(app: &mut App, frames: usize, what: &str, done: impl Fn(&App) -> bool) {
+        for _ in 0..frames {
+            if done(app) {
+                return;
+            }
+            app.update();
+        }
+        assert!(done(app), "{what}: not after {frames} frames");
+    }
+
+    fn game_secs(app: &App) -> f32 {
+        app.world()
+            .resource::<Time<Virtual>>()
+            .elapsed()
+            .as_secs_f32()
+    }
+
+    fn real_secs(app: &App) -> f32 {
+        app.world().resource::<Time<Real>>().elapsed().as_secs_f32()
+    }
+
+    /// Start's pause held `frames` frames, then the bottom button resumes:
+    /// the game clock that far behind the real one, as on a TV that has sat
+    /// paused, so a test can tell which clock a wait counts on.
+    fn sit_paused(app: &mut App, pad: Entity, frames: usize) {
+        let lag = real_secs(app) - game_secs(app);
+        test_pad::press(app, pad, GamepadButton::Start);
+        app.update();
+        assert_eq!(mode(app), Mode::Paused);
+        for _ in 0..frames {
+            app.update();
+        }
+        test_pad::press(app, pad, GamepadButton::South);
+        until(app, "resumed", |a| mode(a) == Mode::Level);
+        let behind = real_secs(app) - game_secs(app) - lag;
+        assert!(
+            behind >= frames as f32 / 60.0,
+            "the game clock {behind} s further behind"
+        );
+    }
+
+    fn hud(app: &App) -> crate::hud::HudValues {
+        app.world()
+            .resource::<crate::hud::Hud>()
+            .shown
+            .clone()
+            .expect("the HUD shows")
+    }
+
+    /// AH.26's beaten figure ruled: alone on the portal it asks for rest,
+    /// counting for nothing; another character that walks comes in beside
+    /// it; one beside a dying hero waits, and two beside him hold the
+    /// level as two beside any hero do.
+    #[test]
+    fn a_beaten_figure_counts_for_nothing_and_one_beside_a_dying_hero_waits() {
+        let beaten = |characters: &[(u8, bool)], n: usize| Lineup {
+            beaten: n,
+            ..lineup(characters, 0, 0)
+        };
+        assert_eq!(
+            judge(&beaten(&[], 1), true, None, false),
+            Some(Alert::NeedsRest)
+        );
+        assert_eq!(judge(&beaten(&[(4, true)], 1), true, None, false), None);
+        assert_eq!(
+            judge(&beaten(&[(4, false)], 1), true, None, false),
+            Some(Alert::NeedsRest),
+            "one that can't walk can't take over"
+        );
+        assert_eq!(
+            judge(&beaten(&[], 0), true, None, false),
+            Some(Alert::PlaceSkylander)
+        );
+        let dying = |characters: &[(u8, bool)]| Lineup {
+            dying: true,
+            ..lineup(characters, 0, 0)
+        };
+        let hero = Some(slot(0));
+        assert_eq!(
+            judge(&dying(&[(0, true), (3, true)]), true, hero, false),
+            None
+        );
+        assert_eq!(
+            judge(
+                &dying(&[(0, true), (3, true), (5, true)]),
+                true,
+                hero,
+                false
+            ),
+            Some(Alert::TooManySkylanders)
+        );
+        assert_eq!(judge(&dying(&[(0, true)]), true, hero, false), None);
+    }
+
+    /// AH.26 on the synthetic part, which runs no death sequence: his health
+    /// out, he's dying, the level running on; the backstop takes him out 3 s
+    /// of game time on, where he stood kept, his figure beaten for the
+    /// level and the portal asking for it to come off (the level held, the
+    /// HUD gone). Off, the call for a Skylander; put back, the needs-rest
+    /// alert again and he stays out; another profile's Eruptor comes in
+    /// where he fell, his scripts joining at full health.
+    #[test]
+    fn a_beaten_hero_leaves_and_his_figure_is_out_for_the_level() {
+        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = joined_eruptor(tmp.path());
+        app.update();
+        assert!(app.world().resource::<crate::hud::Hud>().shown.is_some());
+        // 6 s paused first: the backstop counts game time, not the real
+        // clock that ran on under the pause.
+        sit_paused(&mut app, pad, 360);
+        set_health(&mut app, 0);
+        app.update();
+        let play = app.world().resource::<Play>();
+        assert!(play.dying(), "his health ran out");
+        assert_eq!(mode(&app), Mode::Level, "the level runs on while he dies");
+        let since = game_secs(&app);
+        let at = hero(&app).pivot;
+        frames_until(&mut app, 400, "he's out", |a| {
+            a.world().resource::<Play>().hero().is_none()
+        });
+        let took = game_secs(&app) - since;
+        assert!(
+            (3.0..3.0 + 3.0 / 60.0).contains(&took),
+            "the backstop's 3 s of game time: {took}"
+        );
+        app.update();
+        let play = app.world().resource::<Play>();
+        assert_eq!(play.beaten(), [(None, format!("{ERUPTOR:06x}-0000"))]);
+        assert!(!play.dying());
+        assert_eq!(alert(&app), Some(Alert::NeedsRest));
+        assert_eq!(mode(&app), Mode::Held);
+        assert!(app.world().resource::<crate::hud::Hud>().shown.is_none());
+        // Off: the call for a Skylander. Back on: rest, and he stays out.
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        for _ in 0..10 {
+            app.update();
+        }
+        assert_eq!(alert(&app), Some(Alert::NeedsRest));
+        assert!(app.world().resource::<Play>().hero().is_none());
+        assert_eq!(app.world().resource::<Play>().candidate_model(), None);
+        // Bob's Eruptor: another instance, in where Alice's fell.
+        put(&mut app, owned_eruptor(4, "bob", FigureProgress::default()));
+        until(&mut app, "Bob's scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        assert_eq!(alert(&app), None);
+        let pivot = hero(&app).pivot;
+        assert!(
+            (pivot - at).xz().length() < 0.15,
+            "in where he fell: {pivot} against {at}"
+        );
+        assert_eq!(health(&app), (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX)));
+        assert_eq!(
+            app.world().resource::<Play>().beaten().len(),
+            1,
+            "Alice's still out"
+        );
+        // Bob's off (no defeat): Alice's asks for rest again, and no
+        // Restart chapter comes up, however long it holds.
+        clear(&mut app, 4);
+        until(&mut app, "rest", |a| alert(a) == Some(Alert::NeedsRest));
+        for _ in 0..420 {
+            app.update();
+        }
+        let now = app.world().resource::<Time<Real>>().elapsed();
+        assert!(!app.world().resource::<Play>().restart_offered(now));
+        assert!(!app.world().resource::<crate::input::ModalOpen>().0);
+    }
+
+    /// AH.26: where his scripts' death sequence takes his minion off (the
+    /// original's 2.2 s on, AH.20's `a_defeated_hero_knocks_them_back_and_leaves`
+    /// on the disc), he's out the frame it does, ahead of the backstop.
+    #[test]
+    fn a_beaten_hero_leaves_the_frame_his_minion_goes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        set_health(&mut app, 0);
+        app.update();
+        let since = game_secs(&app);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(app.world().resource::<Play>().hero().is_some(), "dying");
+        let e = app.world().resource::<Play>().hero().unwrap();
+        assert!(
+            app.world_mut()
+                .resource_mut::<ScriptRuntime>()
+                .vm
+                .remove(e.to_bits()),
+            "his minion off the run"
+        );
+        app.update();
+        assert!(app.world().resource::<Play>().hero().is_none(), "out");
+        assert!(game_secs(&app) - since < 1.0);
+        assert_eq!(app.world().resource::<Play>().beaten().len(), 1);
+    }
+
+    /// AH.26: a dying hero lifted off the portal before he's out is beaten
+    /// all the same (his health ran out); put back alone, he asks for rest.
+    #[test]
+    fn a_dying_hero_lifted_is_beaten_all_the_same() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        set_health(&mut app, 0);
+        app.update();
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        assert_eq!(
+            app.world().resource::<Play>().beaten(),
+            [(None, format!("{ERUPTOR:06x}-0000"))]
+        );
+        assert!(!app.world().resource::<Play>().dying());
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "rest", |a| alert(a) == Some(Alert::NeedsRest));
+    }
+
+    /// AH.26: a character placed beside the dying hero waits (no too-many
+    /// hold, the level running so his death runs out) and comes in where he
+    /// fell once he's out, the needs-rest alert never showing.
+    #[test]
+    fn a_character_placed_beside_a_dying_hero_waits_and_comes_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        set_health(&mut app, 0);
+        app.update();
+        let at = hero(&app).pivot;
+        put(&mut app, owned_eruptor(3, "bob", FigureProgress::default()));
+        let mut alerts = Vec::new();
+        frames_until(&mut app, 600, "Bob's scripts", |a| {
+            join(a).as_deref() == Some("joined")
+                && a.world()
+                    .resource::<Play>()
+                    .hero_placement()
+                    .is_some_and(|(_, s, _)| s == slot(3))
+        });
+        for _ in 0..3 {
+            alerts.push(alert(&app));
+            app.update();
+        }
+        assert_eq!(alerts, [None; 3]);
+        assert!((hero(&app).pivot - at).xz().length() < 0.15);
+        assert_eq!(app.world().resource::<Play>().beaten().len(), 1);
+    }
+
+    /// The figures' progress written whole before the level goes (AH.33):
+    /// the TV leaving the level asks the drainer for the flush, and on the
+    /// store the row then holds the playtime short of its minute, which no
+    /// drain before the flush wrote.
+    #[test]
+    fn the_level_ending_writes_every_figures_progress_first() {
+        use guac_server::progress::{Drainer, ProgressSink, ProgressionSlot};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let figure = format!("{ERUPTOR:06x}-0000");
+        let (store, alice, fresh) = rt.block_on(async {
+            let store =
+                guac_server::profiles::ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
+                    .await
+                    .unwrap();
+            let alice = store.create("Alice", "1234", "#e63946").await.unwrap();
+            let fresh = store.instances().fresh(&alice, &figure).await.unwrap();
+            (store, alice, fresh.progress)
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts(tmp.path());
+        write_figure_rows(tmp.path());
+        let sink = ProgressSink::new();
+        app.insert_resource(crate::progress::ProgressOut(sink.clone()));
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        put(&mut app, owned_eruptor(0, &alice, fresh));
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..120 {
+            app.update();
+        }
+        let (events, _) = tokio::sync::broadcast::channel(16);
+        let slot = ProgressionSlot::default();
+        let mut drainer = Drainer::new(sink.clone(), store.clone(), events, slot);
+        let row = |rt: &tokio::runtime::Runtime| {
+            rt.block_on(async {
+                store
+                    .instances()
+                    .read(&alice, &figure)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .progress
+            })
+        };
+        rt.block_on(drainer.drain());
+        assert_eq!(row(&rt).playtime_secs, 0, "short of a minute: not written");
+        assert!(!sink.flush_asked());
+        // The level ends: the TV off the portal view.
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal);
+        assert!(sink.flush_asked(), "the level's end asks for the flush");
+        let played = app.world().resource::<crate::progress::Earning>().slots[0]
+            .as_ref()
+            .unwrap()
+            .progress
+            .playtime_secs;
+        assert!(played >= 2, "{played}");
+        rt.block_on(drainer.drain());
+        assert_eq!(row(&rt).playtime_secs, played, "the flush wrote it");
+    }
+
+    /// AH.26's Restart chapter, keeping the rows: Alice's Eruptor earns a
+    /// point, is beaten, and once Restart chapter is on offer (5 s on, by
+    /// the real clock) and confirmed, the level ends (its flush asked,
+    /// AH.33) and is entered again from its start: him at the start in a
+    /// fresh run at full health, no one beaten, his figure's experience and
+    /// gold as they were and the row the drainer writes the same.
+    #[test]
+    fn restart_chapter_starts_the_level_again_keeping_every_figures_progress() {
+        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX};
+        use guac_server::progress::{Drainer, ProgressSink, ProgressionSlot};
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let figure = format!("{ERUPTOR:06x}-0000");
+        let (store, alice, fresh) = rt.block_on(async {
+            let store =
+                guac_server::profiles::ProfileStore::open_in_memory(&guac_server::setup::MIGRATOR)
+                    .await
+                    .unwrap();
+            let alice = store.create("Alice", "1234", "#e63946").await.unwrap();
+            let fresh = store.instances().fresh(&alice, &figure).await.unwrap();
+            (store, alice, fresh.progress)
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts(tmp.path());
+        write_figure_rows(tmp.path());
+        let sink = ProgressSink::new();
+        app.insert_resource(crate::progress::ProgressOut(sink.clone()));
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        let start = FigureProgress {
+            xp: 41,
+            gold: 7,
+            ..fresh
+        };
+        put(&mut app, owned_eruptor(0, &alice, start));
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let at_start = hero(&app).pivot;
+        test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+        let earned = |app: &App| {
+            app.world().resource::<crate::progress::Earning>().slots[0]
+                .as_ref()
+                .unwrap()
+                .progress
+        };
+        until(&mut app, "his point", |a| earned(a).xp == 42);
+        // 6 s paused, so the offer's 5 s are told apart from game time.
+        sit_paused(&mut app, pad, 360);
+        set_health(&mut app, 0);
+        let zero = real_secs(&app);
+        let offered = |app: &App| {
+            let now = app.world().resource::<Time<Real>>().elapsed();
+            app.world().resource::<Play>().restart_offered(now)
+        };
+        frames_until(&mut app, 400, "beaten", |a| {
+            alert(a) == Some(Alert::NeedsRest)
+        });
+        assert!(!offered(&app), "not yet: 5 s from his health's end");
+        frames_until(&mut app, 400, "the offer", offered);
+        let waited = real_secs(&app) - zero;
+        assert!(
+            (5.0..5.1).contains(&waited),
+            "5 s of the real clock from his health's end: {waited}"
+        );
+        assert!(app.world().resource::<crate::input::ModalOpen>().0);
+        let before = earned(&app);
+        assert_eq!((before.xp, before.gold), (42, 7));
+        assert!(!sink.flush_asked());
+        app.world_mut().write_message(RestartLevel);
+        app.update();
+        // The flush is read the frame it's written or the next, whichever
+        // side of the walk's systems the progress' run.
+        app.update();
+        assert!(sink.flush_asked(), "every figure's progress written first");
+        assert_eq!(mode(&app), Mode::Portal, "the level ended");
+        until(&mut app, "the level again", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts in the new run", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        app.update();
+        let play = app.world().resource::<Play>();
+        assert!(play.beaten().is_empty(), "no one beaten in the new run");
+        assert!(!play.restart_offered(Duration::MAX));
+        assert!(!app.world().resource::<crate::input::ModalOpen>().0);
+        assert_eq!(alert(&app), None);
+        assert_eq!(
+            health(&app),
+            (Some(ATTACK_HEALTH), Some(ATTACK_HEALTH_MAX)),
+            "full"
+        );
+        assert!(
+            (hero(&app).pivot - at_start).length() < 0.01,
+            "at the start"
+        );
+        let after = earned(&app);
+        assert_eq!((after.xp, after.gold), (42, 7), "his progress kept");
+        let row = rt.block_on(async {
+            let (events, _) = tokio::sync::broadcast::channel(16);
+            Drainer::new(
+                sink.clone(),
+                store.clone(),
+                events,
+                ProgressionSlot::default(),
+            )
+            .drain()
+            .await;
+            store
+                .instances()
+                .read(&alice, &figure)
+                .await
+                .unwrap()
+                .unwrap()
+                .progress
+        });
+        assert_eq!((row.xp, row.gold), (42, 7), "the row kept");
+    }
+
+    /// AH.26's Restart chapter puts the level's breakables back, the props'
+    /// report with them: AH.27's synthetic barrel broken, the level started
+    /// again, it stands and nothing reads as taken off (the Mac's run,
+    /// 2026-10-26, read the two coins the dev entry had taken off still
+    /// listed after a restart).
+    #[test]
+    fn a_restart_puts_the_broken_barrel_back() {
+        use guac_formats::script::builder::SMASH_BARREL;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        let source = write_level(tmp.path(), &lights());
+        write_smash_parts(tmp.path());
+        tx.send(source).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        put(
+            &mut app,
+            owned_eruptor(0, "alice", FigureProgress::default()),
+        );
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "the barrel down", |a| {
+            props_report(a).taken_off == [SMASH_BARREL]
+        });
+        assert!(!props_report(&app).names.contains(&SMASH_BARREL.to_owned()));
+        app.world_mut().write_message(RestartLevel);
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal, "the level ended");
+        until(&mut app, "the level again", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts in the new run", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = props_report(&app);
+        assert!(r.taken_off.is_empty(), "{r:?}");
+        assert!(
+            r.names.contains(&SMASH_BARREL.to_owned()),
+            "it stands: {r:?}"
+        );
+    }
+
+    /// The HUD on the TV app (AH.26, AH.57, AH.71) over AH.27's synthetic
+    /// barrel, Alice's Eruptor off the first slot (the HUD reads the hero's
+    /// own slot's values) at 999 experience and 5 gold on a three-level
+    /// table: his scripts' 120 of 150, level 1 and 999 toward 1,000; a bite
+    /// to 100 shows 100 of 150 and its 20 by him, red, then white, gone a
+    /// second on, the bar's edge flashing white; 30 (20 %) no warning, 29
+    /// the warning; the barrel's coin 5 to 8; the second attack's point
+    /// level 2, 1,000 toward 2,200; the table cut to two levels, MAX for
+    /// both, and a point past it held at the cap.
+    #[test]
+    fn the_hud_follows_a_bite_a_coin_and_a_level_up() {
+        use crate::hud::LevelShown;
+        use guac_formats::script::builder::SMASH_GOLD;
+        use guac_server::progress::{Progression, ProgressionSlot};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        let source = write_level(tmp.path(), &lights());
+        write_smash_parts(tmp.path());
+        let table = ProgressionSlot::default();
+        table.publish(Progression {
+            level_xp: vec![0, 1_000, 2_200],
+            gold_cap: 65_000,
+        });
+        app.insert_resource(crate::progress::ProgressionIn(table.clone()));
+        let asked = crate::hero_scripts::AskedHealth::default();
+        app.insert_resource(asked.clone());
+        tx.send(source).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        let row = FigureProgress {
+            xp: 999,
+            gold: 5,
+            playtime_secs: 0,
+            generation: 4,
+        };
+        put(&mut app, owned_eruptor(2, "alice", row));
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        app.update();
+        let v = hud(&app);
+        assert_eq!(v.health, Some((120, 150)));
+        assert_eq!(
+            (v.level, v.xp, v.xp_next, v.gold),
+            (LevelShown::Level(1), 999, Some(1_000), 5)
+        );
+        assert_eq!(v.xp_text(), "999 / 1,000 XP");
+        assert!(!v.low());
+        // A bite.
+        let bite = |app: &mut App, health: i32| {
+            *asked.0.lock().unwrap() = Some(health);
+            app.update();
+            app.update();
+        };
+        bite(&mut app, 100);
+        let shown = app.world().resource::<crate::hud::Hud>();
+        assert_eq!(hud(&app).health, Some((100, 150)));
+        assert_eq!(
+            shown.damage.iter().map(|d| d.amount).collect::<Vec<_>>(),
+            [20]
+        );
+        let now = app.world().resource::<Time<Real>>().elapsed();
+        assert!(shown.damage[0].red(now) && shown.flashing(now));
+        for _ in 0..20 {
+            app.update();
+        }
+        let shown = app.world().resource::<crate::hud::Hud>();
+        let now = app.world().resource::<Time<Real>>().elapsed();
+        assert!(!shown.damage[0].red(now), "white by now");
+        assert!(!shown.flashing(now));
+        for _ in 0..45 {
+            app.update();
+        }
+        assert!(app.world().resource::<crate::hud::Hud>().damage.is_empty());
+        // The warning under 20 %.
+        bite(&mut app, 30);
+        assert!(!hud(&app).low(), "30 of 150 is 20 %");
+        bite(&mut app, 29);
+        assert!(hud(&app).low());
+        // A coin.
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "the coin's gold on the HUD", |a| {
+            hud(a).gold == 5 + SMASH_GOLD as u32
+        });
+        // A level-up.
+        test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+        until(&mut app, "level 2", |a| {
+            hud(a).level == LevelShown::Level(2)
+        });
+        let v = hud(&app);
+        assert_eq!((v.xp, v.xp_next), (1_000, Some(2_200)));
+        assert_eq!(v.xp_text(), "1,000 / 2,200 XP");
+        // At the cap: MAX, and a point past it held there.
+        table.publish(Progression {
+            level_xp: vec![0, 1_000],
+            gold_cap: 65_000,
+        });
+        app.update();
+        let v = hud(&app);
+        assert_eq!(
+            (v.level, v.xp_text(), v.level_text()),
+            (LevelShown::Max, "MAX".into(), "LEVEL MAX".into())
+        );
+        test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(hud(&app).xp, 1_000, "held at the cap");
+        let e = app.world().resource::<crate::progress::Earning>();
+        assert_eq!(e.slots[2].as_ref().unwrap().progress.xp, 1_000);
+        // The experience hook (AH.26's, for the Mac's level-up): 2,199 in
+        // his figure's words on the three-level table reads back as level 2
+        // one short of 2,200, and the next point is the level-up to MAX.
+        table.publish(Progression {
+            level_xp: vec![0, 1_000, 2_200],
+            gold_cap: 65_000,
+        });
+        let xp = crate::hero_scripts::AskedExperience::default();
+        app.insert_resource(xp.clone());
+        *xp.0.lock().unwrap() = Some(2_199);
+        until(&mut app, "the hook's experience read back", |a| {
+            hud(a).xp == 2_199
+        });
+        let v = hud(&app);
+        assert_eq!(
+            (v.level, v.xp_text()),
+            (LevelShown::Level(2), "2,199 / 2,200 XP".into())
+        );
+        test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+        until(&mut app, "the level-up to the cap", |a| {
+            hud(a).level == LevelShown::Max
+        });
+        assert_eq!(hud(&app).xp, 2_200);
     }
 
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
@@ -4545,6 +5500,7 @@ mod tests {
             characters: characters.iter().map(|(s, w)| (slot(*s), *w)).collect(),
             magic,
             unusable,
+            ..Lineup::default()
         }
     }
 

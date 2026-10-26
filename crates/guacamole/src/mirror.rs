@@ -33,10 +33,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::alert::{AlertShot, AlertShots};
 use crate::creatures::{CreatureShots, CreaturesReport};
+use crate::defeat::{DefeatShot, DefeatShots};
 use crate::dev_entry::{DevEntry, EntryShot};
 use crate::extraction::{ExtractionShot, ExtractionShots};
 use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroInput};
 use crate::hero_scripts::{LootShot, LootShots, ScriptLog, ScriptStep};
+use crate::hud::{HudShot, HudShots};
 use crate::input::{InputShot, InputShots, PostedPresses, TestPress};
 use crate::intro::{IntroEvent, IntroQueue, QueuedShot};
 use crate::intro_player::{self, IntroShot, IntroShots};
@@ -120,6 +122,13 @@ pub struct TvSnapshot {
     /// The dev entry (AH.25): where it's got to, F0's step and the
     /// equivalence list read there; none unless one was asked.
     pub entry: Option<EntryShot>,
+    /// The HUD (AH.26): the hero's health, level, experience and gold as
+    /// shown and drawn, and a bite's numbers; none while no hero is in the
+    /// level.
+    pub hud: Option<HudShot>,
+    /// A defeat (AH.26): the hero dying, the figures beaten in the level
+    /// and Restart chapter as drawn; none with nothing to report.
+    pub defeat: Option<DefeatShot>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1212,6 +1221,7 @@ fn mirror_tv(
     alert: AlertShots,
     loot: LootShots,
     (creatures, entry): (CreatureShots, Option<Res<DevEntry>>),
+    (hud, defeat): (HudShots, DefeatShots),
     (warm, level, prepare): (Option<Res<Warm>>, Option<Res<Level>>, Option<Res<Prepare>>),
 ) {
     let Some(screen) = screen.shot() else {
@@ -1251,6 +1261,8 @@ fn mirror_tv(
         loot: loot.shot(),
         creatures: creatures.shot(),
         entry: entry.as_deref().filter(|e| e.shown()).map(DevEntry::shot),
+        hud: hud.shot(),
+        defeat: defeat.shot(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

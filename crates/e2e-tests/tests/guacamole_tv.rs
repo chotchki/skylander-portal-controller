@@ -17,8 +17,9 @@ use serde_json::{Value, json};
 use skylander_e2e_tests::{
     E2E_CREATURE, E2E_DAMAGED, E2E_FIGHT_SCRIPTS, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP,
     E2E_MODELLED, E2E_SCRIPTS, E2E_SMASH_SCRIPTS, E2E_START, E2E_WALL, GIANTS_SERIAL, Phone,
-    TestServer, entry_tv, fire_kaos_swap, gaits_tv, guacamole_only, inject_load_outcomes,
-    inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv, wait_for_tv,
+    TestServer, entry_tv, experience_tv, fire_kaos_swap, gaits_tv, guacamole_only, health_tv,
+    inject_load_outcomes, inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv,
+    wait_for_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -1209,8 +1210,8 @@ async fn a_press_throws_from_his_scripts() {
 /// his scripts joined, the barrel standing; the bottom button throws, the
 /// ball takes the barrel off (its prop down, `/api/_test/tv`'s props
 /// listing it taken off) and goes with it, the coin it drops comes out and
-/// is taken, his figure's gold on the TV (3), in Alice's row and on her
-/// phone's details strip, which had read 0.
+/// is taken, his figure's gold on the TV (3), on its HUD (AH.71), in
+/// Alice's row and on her phone's details strip, which had read 0.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn a_press_breaks_the_barrel_and_its_coins_gold_reaches_the_phone() {
@@ -1261,6 +1262,7 @@ async fn a_press_breaks_the_barrel_and_its_coins_gold_reaches_the_phone() {
     );
     assert_eq!(props["taken_off"], json!([]));
     assert_eq!(snap["hero"]["gold"], json!(0));
+    assert_eq!(snap["hud"]["gold"], json!(0), "{}", snap["hud"]);
     let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();
     open_details(&phone, "Eruptor").await;
     wait_strip_gold(&phone, "0").await;
@@ -1278,6 +1280,11 @@ async fn a_press_breaks_the_barrel_and_its_coins_gold_reaches_the_phone() {
     })
     .await
     .expect("the barrel broken and its coin's gold on the TV");
+    wait_for_tv(&server.url, Duration::from_secs(1), |s| {
+        s["hud"]["gold"] == gold
+    })
+    .await
+    .expect("the HUD's gold");
     let props = &snap["level"]["props"];
     assert!(
         !props["names"]
@@ -1422,6 +1429,13 @@ async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
     assert_eq!(list["triggers_fired"], json!([]), "{list}");
     let c = creature(&snap, FIGHT_CREATURE);
     assert_eq!(c["body"], json!(true), "a body in the world: {c}");
+    // The HUD before the kill (AH.26): level 1, toward the table's 2.
+    let hud = &snap["hud"];
+    assert_eq!(
+        (&hud["level"], &hud["xp"], &hud["xp_next"]),
+        (&json!("1"), &json!(0), &json!(E2E_LEVEL_XP[1])),
+        "{hud}"
+    );
     let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();
     open_details(&watching, "Eruptor").await;
     wait_strip(&watching, &["1", "0", "0m"], Duration::from_secs(5)).await;
@@ -1440,6 +1454,14 @@ async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
     .await
     .expect("the creature beaten and its experience on the TV");
     assert_eq!(creature(&snap, FIGHT_CREATURE)["body"], json!(false));
+    // The level-up on the HUD (AH.26): level 2 at the table's 500.
+    wait_for_tv(&server.url, Duration::from_secs(1), |s| {
+        s["hud"]["level"] == "2"
+            && s["hud"]["xp"] == xp
+            && s["hud"]["xp_next"] == json!(E2E_LEVEL_XP[2])
+    })
+    .await
+    .expect("level 2 on the HUD");
     let steps = scripts_tv(&server.url, since).await.unwrap()["steps"]
         .as_array()
         .cloned()
@@ -1992,6 +2014,409 @@ async fn an_alert_holds_his_attacks_and_the_next_hero_joins_his_scripts() {
     phone.close().await.unwrap();
 }
 
+/// The fighting fixture's level, Alice's Eruptor in slot `slot` taken over
+/// by a posted pad, his scripts joined: the snapshot then.
+async fn eruptor_joined(server: &TestServer, sid: u64, slot: u8, eruptor: &str) -> Value {
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["level"]["state"] == "ready" && !s["level"]["scripts"].is_null()
+    })
+    .await
+    .expect("the level and its scripts");
+    load(server, sid, slot, eruptor).await;
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["mode"] == "paused"
+    })
+    .await
+    .expect("the level waits for a pad");
+    pad_tv(
+        &server.url,
+        json!({"pad": 0, "connect": {"name": "e2e pad"}}),
+    )
+    .await
+    .unwrap();
+    pad_tv(&server.url, json!({"pad": 0, "press": "east"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["mode"] == "level" && s["hero"]["scripts"] == "joined" && !s["hud"].is_null()
+    })
+    .await
+    .expect("his scripts join and the HUD shows")
+    .0
+}
+
+/// AH.26 on the fighting fixture, Alice and Bob on a phone each. The HUD
+/// reads his scripts' 120 of 150, level 1, his experience toward the
+/// table's level 2 and his gold; a bite (the health hook's 100) shows 100
+/// of 150 and its 20 by him. Taken off and put back, he keeps his 100. His
+/// health out (the hook's 0: no death sequence on the fixture, the TV's
+/// backstop 3 s on), Bob's Eruptor placed while he dies waits, no too-many
+/// hold and no needs-rest alert, and comes in where Alice's fell, his
+/// scripts joined; Alice's, beaten, alone again asks to be taken off, and
+/// put back asks again and never comes in.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_defeat_brings_in_the_waiting_character_and_the_beaten_one_stays_out() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_fighting().expect("spawn guacamole");
+    let (alice, alice_id, alice_sid) = phone_as(&server, "Alice", ALICE).await;
+    let (bob, _, bob_sid) = phone_as(&server, "Bob", BOB).await;
+    pick_giants(&server, &alice).await;
+    let eruptor = id_named(&figures(&server, alice_sid).await, "Eruptor");
+    let snap = eruptor_joined(&server, alice_sid, 1, &eruptor).await;
+    let hud = &snap["hud"];
+    assert_eq!(
+        [
+            &hud["health"],
+            &hud["health_max"],
+            &hud["level"],
+            &hud["xp"],
+            &hud["xp_next"],
+            &hud["gold"],
+            &hud["low"],
+        ],
+        [
+            &json!(120),
+            &json!(150),
+            &json!("1"),
+            &json!(0),
+            &json!(E2E_LEVEL_XP[1]),
+            &json!(0),
+            &json!(false),
+        ],
+        "{hud}"
+    );
+    let want = [
+        "LEVEL 1".to_owned(),
+        "120 / 150".to_owned(),
+        format!("0 / {} XP", E2E_LEVEL_XP[1]),
+        "GOLD".to_owned(),
+        "0".to_owned(),
+    ];
+    assert_eq!(hud["texts"], json!(want), "{hud}");
+
+    // A bite: his health on the HUD, its number by him.
+    health_tv(&server.url, 100).await.unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["hud"]["health"] == 100
+    })
+    .await
+    .expect("the bite on the HUD");
+    let damage = &snap["hud"]["damage"];
+    assert_eq!(damage[0]["amount"], 20, "{damage}");
+    assert!(
+        snap["hud"]["texts"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("100 / 150")),
+        "{}",
+        snap["hud"]
+    );
+
+    // Off and back in the same level: his health kept.
+    clear(&server, alice_sid, 1).await;
+    wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        alert_kind(s) == "place_a_skylander"
+    })
+    .await
+    .expect("the call for a Skylander");
+    load(&server, alice_sid, 2, &eruptor).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["hero"]["slot"] == 2 && s["hero"]["scripts"] == "joined" && s["hud"]["health"] == 100
+    })
+    .await
+    .expect("back with the health he left with");
+    assert_eq!(snap["hero"]["health"], 100, "{}", snap["hero"]);
+    let fell = hero_at(&snap);
+
+    // His health out; Bob's Eruptor placed while he dies waits.
+    health_tv(&server.url, 0).await.unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["defeat"]["dying"] == true
+    })
+    .await
+    .expect("dying");
+    load(&server, bob_sid, 4, &eruptor).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut alerts = Vec::new();
+    let snap = loop {
+        let snap = tv(&server.url).await.unwrap();
+        if !snap["alert"].is_null() {
+            alerts.push(snap["alert"]["kind"].clone());
+        }
+        if snap["hero"]["slot"] == 4 && snap["hero"]["scripts"] == "joined" {
+            break snap;
+        }
+        assert!(Instant::now() < deadline, "Bob's never in: {snap}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(alerts.is_empty(), "Bob's waited: {alerts:?}");
+    assert!(
+        ground_apart(hero_at(&snap), fell) < 2e-2,
+        "{:?} against {fell:?}",
+        hero_at(&snap)
+    );
+    assert_eq!(
+        snap["defeat"]["beaten"],
+        json!([format!("{alice_id}/{eruptor}")]),
+        "{}",
+        snap["defeat"]
+    );
+    assert_eq!(snap["hero"]["health_max"], 150);
+
+    // Bob's off: Alice's, beaten, asks to be taken off; off, the call; put
+    // back, asked again, and never in.
+    clear(&server, bob_sid, 4).await;
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        alert_kind(s) == "needs_rest"
+    })
+    .await
+    .expect("needs rest");
+    assert_eq!(snap["mode"], "held");
+    assert!(snap["hud"].is_null(), "{}", snap["hud"]);
+    assert!(
+        snap["alert"]["texts"][0]
+            .as_str()
+            .unwrap()
+            .contains("needs to rest"),
+        "{}",
+        snap["alert"]
+    );
+    clear(&server, alice_sid, 2).await;
+    wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        alert_kind(s) == "place_a_skylander"
+    })
+    .await
+    .expect("the call for a Skylander");
+    load(&server, alice_sid, 3, &eruptor).await;
+    wait_for_tv(&server.url, Duration::from_secs(3), |s| {
+        alert_kind(s) == "needs_rest"
+    })
+    .await
+    .expect("needs rest again");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let snap = tv(&server.url).await.unwrap();
+    assert!(snap["hero"].is_null(), "he stays out: {}", snap["hero"]);
+    assert_eq!(alert_kind(&snap), "needs_rest");
+    alice.close().await.unwrap();
+    bob.close().await.unwrap();
+}
+
+/// AH.26 and AH.33 on the fighting fixture: Alice's Eruptor, one short of
+/// the table's level 2 (the experience hook), earns a point (his second
+/// attack's award), level 2 on the HUD, and is beaten with no character
+/// left: the level holds under the needs-rest alert, the HUD gone, and from
+/// 5 s on
+/// Restart chapter is the one button, focused, the router's layer the
+/// modal's; South opens the check on No, a move right takes Yes, South
+/// restarts: the level again from its start, his scripts joined in a fresh
+/// run at 120 of 150, no one beaten, his level and experience kept on the
+/// HUD and in Alice's row.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_defeat_with_no_character_left_offers_restart_chapter() {
+    if guacamole_only() {
+        return;
+    }
+    let server = TestServer::spawn_guacamole_fighting().expect("spawn guacamole");
+    let (phone, alice_id, sid) = phone_as(&server, "Alice", ALICE).await;
+    pick_giants(&server, &phone).await;
+    let eruptor = id_named(&figures(&server, sid).await, "Eruptor");
+    eruptor_joined(&server, sid, 1, &eruptor).await;
+    let xp = E2E_LEVEL_XP[1];
+    experience_tv(&server.url, xp - 1).await.unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["hud"]["xp"] == xp - 1 && s["hud"]["level"] == "1"
+    })
+    .await
+    .expect("one short of level 2 on the HUD");
+    pad_tv(&server.url, json!({"pad": 0, "press": "r1"}))
+        .await
+        .unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        s["hud"]["xp"] == xp && s["hud"]["level"] == "2"
+    })
+    .await
+    .expect("his point, level 2 on the HUD");
+
+    health_tv(&server.url, 0).await.unwrap();
+    let (snap, beaten_at) = wait_for_tv(&server.url, Duration::from_secs(6), |s| {
+        s["mode"] == "held" && alert_kind(s) == "needs_rest"
+    })
+    .await
+    .expect("beaten, none left");
+    assert!(snap["hud"].is_null(), "{}", snap["hud"]);
+    assert!(snap["defeat"]["restart"].is_null(), "{}", snap["defeat"]);
+    let (snap, offered_at) = wait_for_tv(&server.url, Duration::from_secs(8), |s| {
+        s["defeat"]["restart"]["stage"] == "offer" && s["focus"] == "restart-chapter"
+    })
+    .await
+    .expect("Restart chapter on offer");
+    // 5 s from his health's end, which came the backstop's 3 s before he
+    // was out.
+    let waited = offered_at - beaten_at;
+    assert!(
+        waited > Duration::from_millis(1500) && waited < Duration::from_millis(3500),
+        "{waited:?}"
+    );
+    assert_eq!(
+        snap["defeat"]["restart"]["texts"],
+        json!(["Restart chapter"])
+    );
+    assert_eq!(snap["input"]["layer"], "modal");
+    press_tv(&server.url, "south").await.unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["defeat"]["restart"]["stage"] == "confirm" && s["focus"] == "restart-no"
+    })
+    .await
+    .expect("the check, on No");
+    assert_eq!(
+        snap["defeat"]["restart"]["texts"],
+        json!(["Restart the chapter?", "Yes", "No"])
+    );
+    press_tv(&server.url, "right").await.unwrap();
+    wait_for_tv(&server.url, Duration::from_secs(2), |s| {
+        s["focus"] == "restart-yes"
+    })
+    .await
+    .expect("Yes");
+    press_tv(&server.url, "south").await.unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["defeat"].is_null()
+            && s["hero"]["scripts"] == "joined"
+            && s["mode"] == "level"
+            && s["hud"]["health"] == 120
+    })
+    .await
+    .expect("the level again, his scripts in a fresh run");
+    let start = hero_at(&snap);
+    assert!(
+        (start[0] - f64::from(E2E_START[0])).abs() < 1e-3
+            && (start[2] - f64::from(E2E_START[2])).abs() < 1e-3,
+        "at the start: {start:?}"
+    );
+    assert!(snap["alert"].is_null(), "{}", snap["alert"]);
+    assert_eq!(
+        (
+            &snap["hud"]["health_max"],
+            &snap["hud"]["xp"],
+            &snap["hud"]["level"]
+        ),
+        (&json!(150), &json!(xp), &json!("2"))
+    );
+    assert_eq!(snap["input"]["layer"], "level");
+    let (status, row) = stats(&server, &alice_id, &eruptor).await;
+    assert_eq!(
+        (status, &row["xp"], &row["level"]),
+        (200, &json!(xp), &json!(2)),
+        "{row}"
+    );
+    phone.close().await.unwrap();
+}
+
+/// AH.57 on the phone: Spyro set to the table's level 14, his details read
+/// level 14 and the experience toward the last level; set to 15, the cap,
+/// they read MAX for both.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn the_phone_reads_max_at_the_cap() {
+    if guacamole_only() {
+        return;
+    }
+    let server = spawn();
+    // An iPhone's width: the Mac's run (2026-10-26) had GOLD run into
+    // PLAYTIME there while the experience line sat in the LEVEL cell.
+    let pid = inject_profile(&server.url, "Alice", "1234", ALICE)
+        .await
+        .unwrap();
+    let phone = Phone::new_sized(
+        &server.phone_url().await.unwrap(),
+        &server.chromedriver_url,
+        390,
+        844,
+    )
+    .await
+    .unwrap();
+    let sid = session_id(&phone).await;
+    set_session_profile(&server.url, sid, &pid).await.unwrap();
+    pick_giants(&server, &phone).await;
+    open_details(&phone, "Spyro").await;
+    wait_strip(&phone, &["NEVER PLACED"], Duration::from_secs(5)).await;
+    let last = E2E_LEVEL_XP.len();
+    for (taps, level, line) in [
+        (
+            last - 2,
+            (last - 1).to_string(),
+            format!(
+                "{} / {} XP",
+                grouped(E2E_LEVEL_XP[last - 2]),
+                grouped(E2E_LEVEL_XP[last - 1])
+            ),
+        ),
+        (1, "MAX".to_owned(), "MAX".to_owned()),
+    ] {
+        click_then(
+            &phone,
+            ".detail-action-btn[aria-label='Edit stats']",
+            ".edit-scrim",
+        )
+        .await;
+        tap_sheet(&phone, "Increase level", taps).await;
+        let shown = phone.inner_text(".edit-stepper-value").await.unwrap();
+        assert_eq!(shown.as_deref().map(str::trim), Some(level.as_str()));
+        save_sheet(&phone).await;
+        wait_strip(&phone, &[level.as_str(), "0", "0m"], Duration::from_secs(5)).await;
+        let shown = phone.inner_text(".detail-stat-xp").await.unwrap();
+        assert_eq!(shown.as_deref().map(str::trim), Some(line.as_str()));
+        strip_keeps_its_labels_apart(&phone, &line).await;
+    }
+    phone.close().await.unwrap();
+}
+
+/// The details' strip as the phone lays it out: its three labels with room
+/// between them, the experience line under the values.
+async fn strip_keeps_its_labels_apart(phone: &Phone, line: &str) {
+    let read = phone
+        .client
+        .execute(
+            "const r = s => Array.from(document.querySelectorAll(s))
+               .map(e => e.getBoundingClientRect());
+             const ls = r('.detail-stats-strip .detail-stat-l');
+             const vs = r('.detail-stats-strip .detail-stat-v');
+             const xp = r('.detail-stat-xp')[0];
+             return { gaps: [ls[1].left - ls[0].right, ls[2].left - ls[1].right],
+                      xp_top: xp.top, values_bottom: Math.max(...vs.map(v => v.bottom)) };",
+            vec![],
+        )
+        .await
+        .unwrap();
+    let gaps: Vec<f64> = serde_json::from_value(read["gaps"].clone()).unwrap();
+    assert!(
+        gaps.iter().all(|g| *g >= 8.0),
+        "at {line}: the strip's labels {gaps:?} px apart"
+    );
+    assert!(
+        read["xp_top"].as_f64().unwrap() >= read["values_bottom"].as_f64().unwrap(),
+        "at {line}: the experience line under the values: {read}"
+    );
+}
+
+/// `n` with its thousands grouped by commas, as the phone and the TV show
+/// numbers.
+fn grouped(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
+}
+
 /// A damaged model leaves its card on the portrait, says why on the TV's
 /// mirror and in the log, and the modelled figure beside it still turns.
 #[tokio::test(flavor = "current_thread")]
@@ -2288,7 +2713,8 @@ async fn figure_details_show_the_rows_progress_and_the_games_caps() {
     assert_eq!(metas, [max_level.as_str(), max_gold.as_str()]);
     tap_sheet(&phone, "Increase level", 20).await;
     let level = phone.inner_text(".edit-stepper-value").await.unwrap();
-    assert_eq!(level.as_deref().map(str::trim), Some("15"));
+    // The table's last level reads MAX (AH.57).
+    assert_eq!(level.as_deref().map(str::trim), Some("MAX"));
     tap_sheet(&phone, "Set gold to max", 1).await;
     let gold = phone
         .inner_text(".edit-stepper-gold .edit-stepper-value")
@@ -2363,7 +2789,8 @@ async fn a_never_placed_figure_edited_is_kept_across_a_restart() {
     save_sheet(&phone).await;
     wait_strip(&phone, &["10", "300", "0m"], Duration::from_secs(5)).await;
     let want = json!({
-        "level": 10, "xp": E2E_LEVEL_XP[9], "gold": 300, "playtime_secs": 0,
+        "level": 10, "xp": E2E_LEVEL_XP[9], "next_xp": E2E_LEVEL_XP[10],
+        "gold": 300, "playtime_secs": 0,
         "max_level": E2E_LEVEL_XP.len(), "max_gold": E2E_GOLD_CAP,
     });
     assert_eq!(stats(&server, &pid, &spyro).await, (200, want.clone()));

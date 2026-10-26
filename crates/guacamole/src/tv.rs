@@ -879,11 +879,16 @@ fn spawn_line(column: &mut ChildSpawnerCommands, pen: &Pen, line: &Line) {
 /// a click clears it) and named for the router and the mirror (`FocusId`).
 /// Its look, §3.2's blue card, sits on a face inside it, which the focus
 /// look and the press scale (`look`) without moving a rect the tests read.
-fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
+pub(crate) fn choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
+    (AutoFocus, other_choice_bundle(pen, text, id))
+}
+
+/// [`choice_bundle`]'s choice that isn't focused when it appears: one of
+/// several, beside the one that is (AH.26's check, on No).
+pub(crate) fn other_choice_bundle(pen: &Pen, text: &str, id: &'static str) -> impl Bundle + use<> {
     (
         Button,
         TabIndex(0),
-        AutoFocus,
         FocusId(id),
         Node {
             flex_shrink: 0.0,

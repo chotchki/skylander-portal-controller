@@ -2561,6 +2561,36 @@ pub async fn pad_tv(base: &str, body: serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Sets the joined hero's health where his scripts hold it (`POST
+/// /api/_test/tv/health`, openspec AH.62): a bite's work, 0 a killing
+/// bite's with no death sequence (AH.26: the TV's backstop takes him out).
+pub async fn health_tv(base: &str, health: i32) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/health"))
+        .json(&serde_json::json!({ "health": health }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/health {health} returned {}", resp.status());
+    }
+    Ok(())
+}
+
+/// Writes the joined hero's figure's experience into his words (`POST
+/// /api/_test/tv/experience`, openspec AH.26), as AH.11's oracle runs did
+/// at a pause.
+pub async fn experience_tv(base: &str, xp: u32) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/api/_test/tv/experience"))
+        .json(&serde_json::json!({ "xp": xp }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("/api/_test/tv/experience {xp} returned {}", resp.status());
+    }
+    Ok(())
+}
+
 /// Asks guacamole's dev entry (`POST /api/_test/tv/entry`, openspec AH.25)
 /// for `body` (`{"anchor": "start"}` or `"b"`, optionally `"seed"`).
 pub async fn entry_tv(base: &str, body: serde_json::Value) -> Result<()> {
