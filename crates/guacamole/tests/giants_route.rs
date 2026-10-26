@@ -827,6 +827,83 @@ fn fight(run: &mut Run, mode: Mode, steps: u32) -> Fight {
     out
 }
 
+/// The level's templates the route's scripts clone that the TV doesn't
+/// draw (openspec AG.239), with why; every other template cloned on the
+/// way draws ([`route_clones_drawn`]).
+const ROUTE_UNDRAWN: [(&str, &str); 9] = [
+    (
+        "Boulder_Titan_Pebble_01(1)",
+        "on the boulder's attach nodes",
+    ),
+    (
+        "Boulder_Titan_Pebble_02(1)",
+        "on the boulder's attach nodes",
+    ),
+    (
+        "Boulder_Titan_Pebble_03(1)",
+        "on the boulder's attach nodes",
+    ),
+    (
+        "Boulder_Titan_Pebble_04(1)",
+        "on the boulder's attach nodes",
+    ),
+    (
+        "Boulder_Titan_Pebble_05(1)",
+        "on the boulder's attach nodes",
+    ),
+    ("Chest_Lock", "the chest's, a creature's"),
+    ("Canon_Barrel_Marker", "invisible"),
+    ("Dummy_Inviso", "invisible"),
+    ("Turban_hat", "Norticus' hat: the fight's, a creature's"),
+];
+
+/// Every level template `run`'s scripts have cloned that has a model is
+/// drawn on the TV (its model among the props part's spawn models, or a
+/// skinned one [`SKINNED_SPAWNS`] names) unless [`ROUTE_UNDRAWN`] lists it.
+fn route_clones_drawn(run: &Run) {
+    let mut clones: BTreeMap<String, usize> = BTreeMap::new();
+    for c in run.world.clones() {
+        let a = run.world.actor(c).unwrap();
+        let Some(t) = a.template.and_then(|t| run.world.template(t)) else {
+            continue;
+        };
+        if t.obj.unit == LEVEL {
+            *clones.entry(t.name.clone()).or_default() += 1;
+        }
+    }
+    println!("the level's templates cloned on the route: {clones:?}");
+    let props = run.bench.props.as_ref().unwrap();
+    let skinned: Vec<String> = skinned_models().into_iter().map(|(p, _)| p).collect();
+    for name in clones.keys() {
+        let placed = run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == *name);
+        // A template with no model (a hint's marker) has nothing to draw.
+        if placed.is_some_and(|p| p.model.is_none()) {
+            continue;
+        }
+        let drawn = run.files.placed.iter().any(|p| {
+            p.obj.unit == LEVEL
+                && p.name == *name
+                && p.model.as_ref().is_some_and(|m| {
+                    props
+                        .level
+                        .spawn_models
+                        .iter()
+                        .any(|&i| &props.level.models[i].path == m)
+                        || (SKINNED_SPAWNS.contains(&name.as_str()) && skinned.contains(m))
+                })
+        });
+        let undrawn = ROUTE_UNDRAWN.iter().find(|(n, _)| n == name);
+        assert!(
+            drawn != undrawn.is_some(),
+            "{name}: drawn {drawn}, listed undrawn {undrawn:?}"
+        );
+    }
+}
+
 /// The route from the level's start, AH.8's plan driven on the TV's
 /// listing in strict mode (any member the scripts reach unmodelled halts
 /// it, AG.165's check past the push blocks), every step from the level's
@@ -992,6 +1069,11 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     }
     // The fight from there, to the open gate.
     let f = fight(&mut d.run, Mode::Strict, 900);
+    // What the route's scripts cloned of the level's templates, the TV
+    // drawing each that draws (the cannon's ball, the rubble wall's
+    // pieces, the spike gate's spikes and holes: openspec AG.239) or
+    // listing why it doesn't, as `giants_start` holds the start's.
+    route_clones_drawn(&d.run);
     for (k, n, s) in &f.changes {
         println!("F0 + {k}: {n} {s:?}");
     }

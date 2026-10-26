@@ -45,6 +45,7 @@ use crate::play::{HeroReport, Play, PlayShots};
 use crate::prepare::{Prepare, PrepareReport};
 use crate::tv::{CardShot, ScreenShots};
 use crate::warm::{PipelineWatch, Warm, WarmReport};
+use crate::watch::{WatchAsks, WatchBody, WatchShot, WatchShots};
 use guacamole::frame::{self, Frame};
 
 /// What the TV shows this frame.
@@ -120,12 +121,16 @@ pub struct TvSnapshot {
     /// The dev entry (AH.25): where it's got to, F0's step and the
     /// equivalence list read there; none unless one was asked.
     pub entry: Option<EntryShot>,
+    /// The placements `POST /api/_test/tv/watch` named (openspec AH.28):
+    /// each one's state, behaviour and place, decision 17's list and
+    /// `Cutscene State`; none unless asked.
+    pub watch: Option<WatchShot>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
 /// presses posted for the input router, the frame log, the posted pads,
-/// the gait log, the drawn log, the scripts' log, the camera pin and the
-/// shots asked for.
+/// the gait log, the drawn log, the scripts' log, the camera pin, the
+/// shots asked for and the placements watched.
 #[derive(Resource, Clone, Default)]
 pub struct TvMirror(
     pub Arc<Mutex<TvSnapshot>>,
@@ -138,6 +143,7 @@ pub struct TvMirror(
     pub(crate) ScriptLog,
     pub(crate) Arc<Mutex<Option<CameraPin>>>,
     pub(crate) AskedShots,
+    pub(crate) WatchAsks,
 );
 
 /// Shots asked for by label (`/api/_test/tv/shot`), oldest first, taken
@@ -980,6 +986,9 @@ impl Plugin for Mirror {
         if let Some(asked) = app.world().get_resource::<TvMirror>().map(|m| m.9.clone()) {
             app.insert_resource(asked);
         }
+        if let Some(watch) = app.world().get_resource::<TvMirror>().map(|m| m.10.clone()) {
+            app.insert_resource(watch);
+        }
         let log = app.world().get_resource::<TvMirror>().map(|m| m.6.clone());
         if let (Some(log), Some(render)) = (log, app.get_sub_app_mut(bevy::render::RenderApp)) {
             render
@@ -1066,6 +1075,9 @@ struct PressBody {
 /// `POST /api/_test/tv/shot` (`{"label": "walkway"}`) asks the shots plugin
 /// for a shot now, named for the label (letters, digits, `-` and `_`, 40 at
 /// most; anything else is a 400), taken only when `GUAC_SHOT_DIR` is set.
+/// AH.28: `POST /api/_test/tv/watch` (`{"names": [..]}`, up to 64; none
+/// stops it; anything else is a 400) names the level's placements
+/// `/api/_test/tv`'s `watch` reads every frame ([`crate::watch`]).
 /// Generic so a test needs no `AppState`.
 pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Router<S> {
     let shared = mirror.0.clone();
@@ -1078,7 +1090,21 @@ pub fn routes<S: Clone + Send + Sync + 'static>(mirror: &TvMirror) -> axum::Rout
     let scripts = mirror.7.clone();
     let pin = mirror.8.clone();
     let asked = mirror.9.clone();
+    let watch = mirror.10.clone();
     axum::Router::new()
+        .route(
+            "/api/_test/tv/watch",
+            axum::routing::post(move |body: Result<axum::Json<WatchBody>, JsonRejection>| {
+                let ok = body.is_ok_and(|axum::Json(b)| b.ask(&watch));
+                async move {
+                    if ok {
+                        axum::http::StatusCode::ACCEPTED
+                    } else {
+                        axum::http::StatusCode::BAD_REQUEST
+                    }
+                }
+            }),
+        )
         .route(
             "/api/_test/tv/shot",
             axum::routing::post(move |body: Result<axum::Json<ShotBody>, JsonRejection>| {
@@ -1211,7 +1237,7 @@ fn mirror_tv(
     play: PlayShots,
     alert: AlertShots,
     loot: LootShots,
-    (creatures, entry): (CreatureShots, Option<Res<DevEntry>>),
+    (creatures, entry, watch): (CreatureShots, Option<Res<DevEntry>>, WatchShots),
     (warm, level, prepare): (Option<Res<Warm>>, Option<Res<Level>>, Option<Res<Prepare>>),
 ) {
     let Some(screen) = screen.shot() else {
@@ -1251,6 +1277,7 @@ fn mirror_tv(
         loot: loot.shot(),
         creatures: creatures.shot(),
         entry: entry.as_deref().filter(|e| e.shown()).map(DevEntry::shot),
+        watch: watch.shot(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
@@ -1325,6 +1352,47 @@ mod tests {
         );
         assert_eq!(body.presents, [[19.0, 24.0], [27.0, 32.0]]);
         assert!(log.since(3).frames.is_empty() && log.since(3).presents.is_empty());
+    }
+
+    /// AH.28: `/api/_test/tv/watch` takes up to 64 names into the mirror's
+    /// watch (none stops it) and refuses anything else, leaving the last.
+    #[tokio::test]
+    async fn the_watch_route_takes_names_and_refuses_the_rest() {
+        use tower::ServiceExt;
+        let mirror = TvMirror::default();
+        let routes = routes::<()>(&mirror);
+        let post = |body: String| {
+            let routes = routes.clone();
+            async move {
+                routes
+                    .oneshot(
+                        axum::http::Request::post("/api/_test/tv/watch")
+                            .header("content-type", "application/json")
+                            .body(axum::body::Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+        assert_eq!(
+            post(r#"{"names":["Sheep_2","Coin_spinning"]}"#.into()).await,
+            202
+        );
+        assert_eq!(mirror.10.names(), ["Sheep_2", "Coin_spinning"]);
+        let many = format!(r#"{{"names":[{}]}}"#, vec!["\"x\""; 65].join(","));
+        for body in [
+            many.as_str(),
+            r#"{"names":[""]}"#,
+            r#"{"names":"Sheep_2"}"#,
+            "watch",
+        ] {
+            assert_eq!(post(body.into()).await, 400, "{body}");
+        }
+        assert_eq!(mirror.10.names(), ["Sheep_2", "Coin_spinning"]);
+        assert_eq!(post(r#"{"names":[]}"#.into()).await, 202);
+        assert!(mirror.10.names().is_empty());
     }
 
     #[test]

@@ -439,12 +439,12 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (prop_models, props.len(), props_beyond.len()),
-        (67, 61, 51),
-        "chapter 1's props: the models that can stand and that their clones draw (AG.60), their keys, those past the level's"
+        (90, 72, 61),
+        "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239), their keys, those past the level's"
     );
     assert_eq!(
         (spawn_models, spawns.len(), spawns_beyond.len()),
-        (13, 13, 6),
+        (13, 13, 3),
         "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
     );
     assert_eq!(
@@ -455,7 +455,7 @@ fn the_census_is_the_discs() {
             hero_glow_skinned.len(),
             hero_glow_static.len()
         ),
-        (20, 1, 0, 1, 0),
+        (22, 1, 0, 1, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(

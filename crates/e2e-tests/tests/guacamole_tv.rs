@@ -18,7 +18,7 @@ use skylander_e2e_tests::{
     E2E_CREATURE, E2E_DAMAGED, E2E_FIGHT_SCRIPTS, E2E_FLOOR, E2E_GOLD_CAP, E2E_LEVEL_XP,
     E2E_MODELLED, E2E_SCRIPTS, E2E_SMASH_SCRIPTS, E2E_START, E2E_WALL, GIANTS_SERIAL, Phone,
     TestServer, entry_tv, fire_kaos_swap, gaits_tv, guacamole_only, inject_load_outcomes,
-    inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv, wait_for_tv,
+    inject_profile, pad_tv, press_tv, scripts_tv, set_session_profile, tv, wait_for_tv, watch_tv,
 };
 
 /// The spec's bound from the phone showing a change to the TV showing it.
@@ -1337,7 +1337,9 @@ fn creature<'a>(snap: &'a Value, name: &str) -> &'a Value {
 /// Alice on two phones: the TV's listing runs the first fight's placements
 /// from the level's start (AH.28), so before any entry the creature runs
 /// from its script, `/api/_test/tv` reporting its health (1) and
-/// behaviour; the entry asked for the level's start then. Alice's Eruptor
+/// behaviour, and AH.28's watch reading it by name (awake, idle; a name the
+/// level doesn't place `none`; gone once beaten); the entry asked for the
+/// level's start then. Alice's Eruptor
 /// placed and taken over, the entry at its anchor; the bottom button
 /// throws, the ball comes down on the creature and its script awards its
 /// experience: the creature gone, his figure at 500 (level 2 on the
@@ -1377,6 +1379,28 @@ async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
     })
     .await
     .expect("the creature runs from the level's start");
+    // AH.28's watch: a named placement read off the run as `creatures`
+    // has it, a name the level doesn't place `none`.
+    watch_tv(
+        &server.url,
+        json!({"names": [FIGHT_CREATURE, "No_Such_Placement"]}),
+    )
+    .await
+    .unwrap();
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        !s["watch"].is_null()
+    })
+    .await
+    .expect("the watch read");
+    // Read the same frame as `creatures`: whatever behaviour it's in now.
+    let w = &snap["watch"]["placements"];
+    let c = creature(&snap, FIGHT_CREATURE);
+    assert_eq!(w[0]["name"], json!(FIGHT_CREATURE), "{w}");
+    assert_eq!(w[0]["state"], json!("awake"), "{w}");
+    assert_eq!(c["awake"], json!(true), "{c}");
+    assert!(w[0]["behaviour"].is_string(), "{w}");
+    assert_eq!(w[0]["behaviour"], c["behaviour"], "{w} {c}");
+    assert_eq!(w[1]["state"], json!("none"), "{w}");
     entry_tv(&server.url, json!({"anchor": "start"}))
         .await
         .unwrap();
@@ -1439,6 +1463,12 @@ async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
     .await
     .expect("the creature beaten and its experience on the TV");
     assert_eq!(creature(&snap, FIGHT_CREATURE)["body"], json!(false));
+    assert_eq!(
+        snap["watch"]["placements"][0]["state"],
+        json!("gone"),
+        "the watch: {}",
+        snap["watch"]
+    );
     let steps = scripts_tv(&server.url, since).await.unwrap()["steps"]
         .as_array()
         .cloned()

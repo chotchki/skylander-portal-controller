@@ -32,6 +32,10 @@ The level SHALL hold the props the original's level file places, where it puts t
 - **WHEN** the level has started
 - **THEN** each of the three push blocks carries its tortoise and the cannon its top, where and as turned as the original has them at the start, each moving as the clips its script plays on it move it
 
+#### Scenario: What the route's obstacles throw and raise
+- **WHEN** his eruptions break the ledge's barrels, pots and gourds, the cannon fires at the rubble wall, and the pit's spike gate stands and then lowers
+- **THEN** each breakable bursts into its pieces with the treasure it drops, the ball is seen flying to the wall and the wall breaks into its pieces, and the gate's wooden spikes stand in their holes until they sink into them
+
 #### Scenario: A spinning coin
 - **WHEN** a spinning coin is there
 - **THEN** it turns about its upright each frame by its own speed, as the original's walkway coins do (2.8, 4.2 and 5.3 degrees a frame on the three)
