@@ -373,12 +373,15 @@ pub const HEROES_GLOW_STATIC: &[Row] = &[];
 
 /// Every key the first fight's creatures draw in the level on a skinned
 /// mesh that [`HEROES`] doesn't hold (openspec AH.25: the four Chompies'
-/// and Norticus' models, `crate::creature_models`, in the walking hero's
-/// scene), each once.
+/// and Norticus' models; AG.150: the push blocks' tortoises' and the
+/// cannon top's, `crate::creature_models`, in the walking hero's scene),
+/// each once.
 pub const CREATURES: &[Row] = &[
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
+    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
 ];
 
 /// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s.
@@ -578,7 +581,7 @@ mod tests {
             (SPAWNS, false, 6),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
-            (CREATURES, true, 3),
+            (CREATURES, true, 5),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -613,7 +616,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 51 + 6 + 1 + 20 + 1 + 3);
+        assert_eq!(every.len(), 33 + 24 + 55 + 51 + 6 + 1 + 20 + 1 + 5);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()

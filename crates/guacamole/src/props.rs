@@ -25,7 +25,8 @@
 //!   ([`level_scene::drawn`]), the other effects' left out (AG.24), placed by
 //!   its position, its Euler angles (AF.9's convention) and its scale. A
 //!   skinned model with no script, or one the stage refused, draws nothing.
-//!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60).
+//!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60), those
+//!   [`SKINNED_SPAWNS`] names as creatures (AG.150).
 //! - What it stops ([`solid`]): its `CollisionInfo` as the original builds it
 //!   ([`guac_motion::solid`], AG.7's table), a solid one a kinematic seam
 //!   body, a shaped non-solid one a sensor that stops nothing, a shapeless or
@@ -140,8 +141,8 @@ pub struct LevelProps {
 /// boulder's attach nodes, which no prop model's extract carries (they'd sit
 /// under the boulder); the chest's locks (the chest is a creature, drawn
 /// nowhere); the push blocks' tortoises and the cannon's top (skinned, as
-/// a prop draws none); the invisible markers. `giants_start` holds it to
-/// what a headless start clones.
+/// a prop draws none: [`SKINNED_SPAWNS`] draws them); the invisible markers.
+/// `giants_start` holds it to what a headless start clones.
 pub const DRAWN_SPAWNS: [&str; 8] = [
     "Fence Cross Beam",
     "Wooden Plank_one",
@@ -152,6 +153,12 @@ pub const DRAWN_SPAWNS: [&str; 8] = [
     "Bird_nest_egg",
     "Push_Canon_Art_Bottom",
 ];
+
+/// The level's templates whose clones the TV draws skinned, as it draws a
+/// creature (openspec AG.150, `crate::creature_models`): the push blocks'
+/// tortoises and the cannon's top, each posed by the clips its script plays
+/// on it. `giants_start` holds them to what a headless start clones.
+pub const SKINNED_SPAWNS: [&str; 2] = ["2_Push_Block_Art_Sheep", "Push_Canon_Art_Top"];
 
 impl LevelProps {
     /// `placements`' props, drawn from `props`' models.

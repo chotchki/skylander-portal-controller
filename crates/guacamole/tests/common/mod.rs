@@ -616,6 +616,37 @@ pub fn level_props(level: &Igz<'_>) -> LevelProps {
     LevelProps::new(&props, &placements).expect("the props")
 }
 
+/// The skinned models the TV draws chapter 1's first fight and the clones
+/// of its skinned templates with (openspec AG.150,
+/// `creature_models::skinned_models`), by path, through the extractor's own
+/// readers, as the TV's load builds them.
+pub fn skinned_models() -> Vec<(String, guac_ir::Model)> {
+    let bytes = level_bytes();
+    let level = Igz::parse(&bytes).unwrap();
+    let l = levels::LEVELS[0];
+    let props = levels::props(&level, l, identity()).expect("the props").ir;
+    let placements = levels::placements(&level, l, identity())
+        .expect("the placements")
+        .ir;
+    guacamole::creature_models::skinned_models(&placements, &props, &identity())
+}
+
+/// Chapter 1's palettes part through the extractor's own reader: what the
+/// TV poses its creatures and skinned clones by.
+pub fn level_palettes() -> guac_ir::palette::LevelPalettes {
+    let bytes = level_bytes();
+    let level = Igz::parse(&bytes).unwrap();
+    levels::palettes(&level, levels::LEVELS[0], identity())
+        .expect("the palettes")
+        .ir
+}
+
+/// Chapter 1's `level.bld` entry off the dump.
+fn level_bytes() -> Vec<u8> {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    guac_extract::scripts::entry(&usr, ARCHIVES[LEVEL as usize].0).unwrap()
+}
+
 /// Each slot's clip length at 100 %, 0 where a slot is empty or a network.
 pub fn lengths(p: &guac_ir::palette::Palette) -> Vec<f32> {
     let mut out = vec![0.0; usize::from(p.slots)];

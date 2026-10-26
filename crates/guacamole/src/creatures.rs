@@ -21,7 +21,11 @@
 //!   place, facing and scale after each step, eased between steps; posed
 //!   by its idle with the clips its scripts play on it laid over, by the
 //!   level's palettes part's slots (stand-in ledger: `creature-pose`).
-//!   Taken off or asleep, it goes.
+//!   Taken off or asleep, it goes. The clones of the level's skinned
+//!   templates (openspec AG.150, [`guacamole::props::SKINNED_SPAWNS`]: the
+//!   push blocks' tortoises, the cannon's top) are drawn and posed the same
+//!   way while their scripts run, turned by all three of their angles as
+//!   the static clones are.
 //! - The report (`/api/_test/tv`'s `creatures`): each creature's behaviour,
 //!   health and place, what the fight woke past its own (design decision
 //!   6, listed once each), what the scripts have spawned that's still on,
@@ -216,8 +220,12 @@ pub(crate) struct DrawnCreature {
 pub(crate) struct DrawnCreatures(pub(crate) HashMap<Handle, Entity>);
 
 /// Where a creature's actor stands, as its drawn root takes it: its pivot,
-/// its facing turned about the vertical, its scale.
+/// its facing turned about the vertical, its scale. A clone (AG.150) turns
+/// by all three of its angles, as the static clones do.
 fn placed(a: &guacamole::script_engine::Actor) -> Transform {
+    if a.obj.is_none() {
+        return crate::hero_scripts::clone_transform(a);
+    }
     Transform {
         translation: a.position,
         rotation: Quat::from_rotation_y(a.angles.facing.to_radians()),
@@ -254,9 +262,25 @@ pub(crate) struct CreatureSpawner<'w, 's> {
     time: Res<'w, Time>,
 }
 
-/// Each awake creature whose script runs drawn on its model, once its
-/// keys are compiled (asked for if they aren't); each taken off, asleep or
-/// gone from the run let go (the module docs).
+/// The clones of the templates [`guacamole::props::SKINNED_SPAWNS`] names
+/// (openspec AG.150): drawn as a creature is.
+pub(crate) fn skinned_clones(world: &ScriptWorld) -> Vec<Handle> {
+    world
+        .clones()
+        .into_iter()
+        .filter(|&h| {
+            world
+                .actor(h)
+                .and_then(|a| a.template)
+                .and_then(|t| world.template(t))
+                .is_some_and(|p| guacamole::props::SKINNED_SPAWNS.contains(&p.name.as_str()))
+        })
+        .collect()
+}
+
+/// Each awake creature and skinned clone whose script runs drawn on its
+/// model, once its keys are compiled (asked for if they aren't); each taken
+/// off, asleep or gone from the run let go (the module docs).
 fn draw_creatures(
     world: Res<ScriptWorld>,
     runtime: Option<Res<ScriptRuntime>>,
@@ -274,13 +298,19 @@ fn draw_creatures(
     let wanted: Vec<(Handle, String)> = world
         .creatures()
         .into_iter()
+        .chain(skinned_clones(&world))
         .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
         .filter_map(|h| {
             let a = world.actor(h)?;
             if a.removed || !a.active {
                 return None;
             }
-            let path = a.obj.and_then(|o| world.template(o))?.model.clone()?;
+            let path = a
+                .obj
+                .or(a.template)
+                .and_then(|o| world.template(o))?
+                .model
+                .clone()?;
             Some((h, path))
         })
         .collect();
@@ -785,6 +815,91 @@ mod tests {
             !a.world().resource::<DrawnCreatures>().0.contains_key(&c)
         });
         assert!(app.world().get_entity(root).is_err(), "its root despawned");
+    }
+
+    /// AG.150: the clone of a skinned template `SKINNED_SPAWNS` names (a
+    /// push block's tortoise), made once by its spawner's script where the
+    /// template stands, is drawn on the template's model in the level's
+    /// layer, at its actor's place, turned as the spawner faced it and
+    /// tilted as the template is (a clone turns by all three angles), posed
+    /// by its reference pose until its own script starts its slot, then by
+    /// that clip out of the level's palettes part.
+    #[test]
+    fn a_skinned_clone_is_drawn_and_posed_by_a_clip_its_script_starts() {
+        use guac_formats::script::builder::{FIGHT_ART_FACING, FIGHT_ART_PLAY, FIGHT_ART_TILT};
+
+        use crate::test_support::play::{ART_AT, ART_TOP, fight_app_with_art};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app_with_art(tmp.path(), None);
+        let art = |app: &App| skinned_clones(app.world().resource::<ScriptWorld>());
+        until(&mut app, "the art drawn", |a| {
+            art(a)
+                .first()
+                .is_some_and(|h| a.world().resource::<DrawnCreatures>().0.contains_key(h))
+        });
+        let clones = art(&app);
+        assert_eq!(clones.len(), 1, "cloned once");
+        let h = clones[0];
+        let ticks = |app: &App| {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            match vm.placement_of(h).and_then(|id| vm.local(id, "ticks")) {
+                Some(Value::Int(n)) => n,
+                _ => 0,
+            }
+        };
+        assert!(
+            ticks(&app) < FIGHT_ART_PLAY,
+            "its slot started before it was looked at"
+        );
+        let root = app.world().resource::<DrawnCreatures>().0[&h];
+        let joints = app
+            .world()
+            .get::<DrawnCreature>(root)
+            .unwrap()
+            .joints
+            .clone();
+        assert_eq!(joints.len(), 2);
+        let top = |app: &App| *app.world().get::<Transform>(joints[1]).unwrap();
+        app.update();
+        let t = *app.world().get::<Transform>(root).unwrap();
+        assert!(
+            t.translation.distance(Vec3::from_array(ART_AT)) < 0.05,
+            "{t:?}"
+        );
+        let facing = Quat::from_rotation_y((FIGHT_ART_FACING as f32).to_radians());
+        let forward = t.rotation * Vec3::Z;
+        assert!(
+            forward.with_y(0.0).angle_between(facing * Vec3::Z) < 1e-3,
+            "faced as spawned: {t:?}"
+        );
+        assert!(
+            (t.rotation.angle_between(facing) - FIGHT_ART_TILT.to_radians()).abs() < 1e-3,
+            "tilted as its template: {t:?}"
+        );
+        let segments = app
+            .world_mut()
+            .query_filtered::<Entity, With<Mesh3d>>()
+            .iter(app.world())
+            .filter(|e| {
+                app.world()
+                    .get::<ChildOf>(*e)
+                    .and_then(|p| app.world().get::<ChildOf>(p.parent()))
+                    .is_some_and(|p| p.parent() == root)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(segments.len(), 1, "its one segment");
+        assert_eq!(
+            app.world().get::<RenderLayers>(segments[0]),
+            Some(&RenderLayers::layer(LEVEL_LAYER))
+        );
+        if ticks(&app) < FIGHT_ART_PLAY {
+            let before = top(&app);
+            assert!(before.translation.distance(Vec3::Y) < 1e-4, "{before:?}");
+        }
+        until(&mut app, "its clip", |a| {
+            top(a).translation.distance(Vec3::from_array(ART_TOP)) < 1e-4
+        });
+        assert!(ticks(&app) >= FIGHT_ART_PLAY, "posed by its script's clip");
     }
 
     fn ticked_to_battle(app: &App) -> bool {

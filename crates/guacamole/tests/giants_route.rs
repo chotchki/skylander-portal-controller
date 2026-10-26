@@ -27,7 +27,7 @@
 //! (`AH28_TAGS=<placements>`) print ops and tags as the linked program holds
 //! them.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -35,6 +35,7 @@ use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Halt, MemberId, Mode};
 use guacamole::anchors::{ANCHOR_B_FIRED, ANCHOR_B_POSE, NORTICUS};
+use guacamole::props::SKINNED_SPAWNS;
 use guacamole::script_engine::Pad;
 use guacamole::scripts;
 
@@ -529,6 +530,42 @@ struct Driven {
     looks: Vec<Look>,
     stops: Vec<(u32, usize, Halt)>,
     stuck: Vec<Stuck>,
+    /// What the scripts played on the skinned clones (openspec AG.150).
+    played: Played,
+}
+
+/// The palette slots the scripts played on the clones of each template
+/// `SKINNED_SPAWNS` names, by the template's name; and each clip one of
+/// them played out of another placement's palette (none on the route).
+#[derive(Debug, Default)]
+struct Played {
+    slots: BTreeMap<String, BTreeSet<u32>>,
+    foreign: BTreeSet<(String, u32)>,
+}
+
+impl Played {
+    /// What plays on the skinned clones this step.
+    fn record(&mut self, run: &Run) {
+        let w = &run.world;
+        for s in w.sequences().iter().filter(|s| s.plays()) {
+            let Some(a) = w.actor(s.actor).filter(|a| a.obj.is_none()) else {
+                continue;
+            };
+            let Some(t) = a.template.and_then(|t| w.template(t)) else {
+                continue;
+            };
+            if !SKINNED_SPAWNS.contains(&t.name.as_str()) {
+                continue;
+            }
+            if let Some((owner, slot)) = w.clip_of(s) {
+                if Some(owner) == a.template {
+                    self.slots.entry(t.name.clone()).or_default().insert(slot);
+                } else {
+                    self.foreign.insert((t.name.clone(), slot));
+                }
+            }
+        }
+    }
 }
 
 impl Driven {
@@ -551,6 +588,7 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
         .map(|w| w.split(',').map(str::to_owned).collect())
         .unwrap_or_default();
     let mut watched: BTreeMap<String, State> = BTreeMap::new();
+    let mut played = Played::default();
     while run.steps < limit {
         for n in &watch {
             let now = ours(&run, n).map(|s| (s.state, s.behaviour));
@@ -575,6 +613,7 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
                 let k = run.steps;
                 let s = step(&mut run, mode);
                 stops.extend(s.into_iter().map(|h| (k, driver.index, h)));
+                played.record(&run);
             }
         }
     }
@@ -583,6 +622,7 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
         looks,
         stops,
         stuck: driver.stuck,
+        played,
     }
 }
 
@@ -916,6 +956,39 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
         .filter(|t| **t != "trg_lvl_213_lush_peak")
     {
         assert!(fired.iter().any(|f| f == t), "{t} fired: {fired:?}");
+    }
+    // AG.150: each clip the scripts played on the tortoises and the
+    // cannon's top along the route is in its model's palette, the one the
+    // TV poses it by; the tortoises' pushes played some.
+    let models = skinned_models();
+    let palettes = level_palettes();
+    println!(
+        "played on the skinned clones: {:?}; out of another's palette: {:?}",
+        d.played.slots, d.played.foreign
+    );
+    assert!(d.played.foreign.is_empty());
+    assert!(d.played.slots.contains_key("2_Push_Block_Art_Sheep"));
+    for (name, slots) in &d.played.slots {
+        let model = d
+            .run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == *name)
+            .and_then(|p| p.model.clone())
+            .unwrap_or_else(|| panic!("{name}'s model"));
+        assert!(models.iter().any(|(p, _)| *p == model), "{name}: drawn");
+        let palette = palettes
+            .palettes
+            .iter()
+            .find(|p| p.owner == model)
+            .unwrap_or_else(|| panic!("{name}: {model}'s palette"));
+        for &slot in slots {
+            assert!(
+                palette.clip(slot as u16).is_some(),
+                "{name}: slot {slot} isn't a clip of {model}'s palette"
+            );
+        }
     }
     // The fight from there, to the open gate.
     let f = fight(&mut d.run, Mode::Strict, 900);

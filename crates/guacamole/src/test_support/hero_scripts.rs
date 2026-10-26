@@ -39,6 +39,20 @@ pub(crate) fn write_fight(dir: &Path, creature_at: [f32; 3], triggers: [[f32; 3]
     write_parts(dir, &attack_builder::fight(creature_at, triggers));
 }
 
+/// AH.25's fight with AG.150's skinned art piece and its spawner, the art's
+/// template at `art_at`.
+pub(crate) fn write_fight_with_art(
+    dir: &Path,
+    creature_at: [f32; 3],
+    triggers: [[f32; 3]; 2],
+    art_at: [f32; 3],
+) {
+    write_parts(
+        dir,
+        &attack_builder::fight_with_art(creature_at, triggers, art_at),
+    );
+}
+
 /// AH.25's fight beside AG.27's synthetic walker: the dev entry's level with
 /// a character who walks and doesn't fight (openspec AH.167).
 pub(crate) fn write_fight_with_walker(dir: &Path, creature_at: [f32; 3], triggers: [[f32; 3]; 2]) {
