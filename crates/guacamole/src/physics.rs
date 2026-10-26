@@ -1143,4 +1143,119 @@ mod tests {
         }
         assert_eq!(seen, 3);
     }
+
+    /// Where AG.25's door walk sets out from: `213_Init_Location`'s first
+    /// waypoint, off the dump.
+    fn the_start(dump: &std::path::Path) -> Vec3 {
+        use guac_extract::levels;
+        use guac_formats::igz::Igz;
+        use guac_ir::{DumpIdentity, Sha256};
+        let identity = DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: Sha256([0; 32]),
+        };
+        let level = levels::LEVELS[0];
+        let usrdir = dump.join("PS3_GAME/USRDIR");
+        let archive = std::fs::read(levels::archive_path(&usrdir, level)).expect("the archive");
+        let bld = levels::level_bld(&archive).expect("its level.bld");
+        let igz = Igz::parse(&bld).expect("the level parses");
+        let placements = levels::placements(&igz, level, identity)
+            .expect("the placements")
+            .ir;
+        guacamole::level_scene::start_point(&placements).expect("the start")
+    }
+
+    /// AG.61 on Avian's side (`#[ignore]`d: level 213 and the gate's door
+    /// off `GUAC_GIANTS_DUMP`, from the process env, else the repo's
+    /// `.env.dev`): AG.25's walk into the gate's door (at rest 60 game
+    /// frames, the stick at the view's +75 for each leg from 34 to 51 game
+    /// frames, then at its −15 for 180) at the view's 15° and at 15.5°,
+    /// where the crease past the clearing pinned him (leg 41), through
+    /// `AvianSeam` and `ParryWorld` alike over the level and the door: the
+    /// two within 1 mm at every frame, never held on the spot short of the
+    /// door with the stick held, and stopped at the door 1.478 m from its
+    /// middle as the oracle's walk is.
+    #[test]
+    #[ignore]
+    fn ag61_the_door_walk_reaches_the_door_at_every_leg_through_avian() {
+        use guac_motion::hero::{Hero, Input};
+        use guac_motion::stick::Stick;
+        use guac_motion::tuning::Tuning;
+        let dump = env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP");
+        let dump = std::path::Path::new(&dump);
+        let bodies = level_and_door(dump);
+        let start = the_start(dump);
+        let parry = ParryWorld::new(&bodies).unwrap();
+        let mut app = headless();
+        let mut commands = app.world_mut().commands();
+        for body in &bodies {
+            spawn_body(&mut commands, body).unwrap();
+        }
+        app.world_mut().flush();
+        app.update();
+        let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+        let avian = state.get(app.world()).unwrap();
+        let byte = |b: f32, up: bool| {
+            if up {
+                (128.0 - b) / 128.0
+            } else {
+                (b - 128.0) / 127.0
+            }
+        };
+        // The door's middle plane, z off its box (AG.7's -82.2242).
+        let middle = -82.2242;
+        let mut walks = 0;
+        for view in [15.0f32, 15.5] {
+            for leg in 34..=51usize {
+                let script = |frame: usize| {
+                    if frame < 60 {
+                        Stick::CENTRED
+                    } else if frame < 60 + leg {
+                        Stick::new(byte(0.0, false).max(-1.0), byte(70.0, true))
+                    } else if frame < 60 + leg + 180 {
+                        Stick::new(byte(186.0, false), byte(0.0, true).min(1.0))
+                    } else {
+                        Stick::CENTRED
+                    }
+                };
+                let solid = guac_motion::scenarios::eruptor_solid();
+                let mut ours = Hero::new(solid, Tuning::ERUPTOR, start, 0.0);
+                ours.settle(&avian, &[]);
+                let mut twin = ours.clone();
+                let (mut apart, mut held, mut most) = (0.0f32, 0usize, 0usize);
+                for frame in 0..360 {
+                    let input = Input::stick(script(frame), view);
+                    ours.step(&avian, &input, 1.0 / 60.0, &[]);
+                    twin.step(&parry, &input, 1.0 / 60.0, &[]);
+                    apart = apart.max((ours.pivot - twin.pivot).length());
+                    let pinned = script(frame) != Stick::CENTRED
+                        && ours.velocity.length() < 0.05
+                        && ours.gait_speed > 20.0
+                        && ours.pivot.z < -85.0;
+                    held = if pinned { held + 1 } else { 0 };
+                    most = most.max(held);
+                }
+                let from_middle = middle - ours.pivot.z;
+                eprintln!(
+                    "view {view} leg {leg}: stopped at {} ({from_middle:.4} m from the door's middle), Avian and parry {apart:.2e} m apart at worst, held short of the door {most} frames at most",
+                    ours.pivot
+                );
+                assert!(
+                    apart < 1e-3,
+                    "{view} {leg}: Avian and parry {apart} m apart"
+                );
+                assert!(
+                    most < 3,
+                    "{view} {leg}: held {most} frames short of the door"
+                );
+                assert!(
+                    (from_middle - 1.4781).abs() < 0.01,
+                    "{view} {leg}: {from_middle} m from the door's middle"
+                );
+                walks += 1;
+            }
+        }
+        assert_eq!(walks, 36);
+    }
 }

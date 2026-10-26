@@ -50,7 +50,14 @@
 //! ledge route's edge 1.2 cm off its recording at record 109 where it had
 //! stalled 11.2 cm short, then parts from it in the air as W-01 always did
 //! (up to 57 cm, where the stall had kept it within 25 cm), resting 21.7 cm
-//! off theirs against 7.6 before. No other replay moves.
+//! off theirs against 7.6 before. No other replay moves. On the ground, a
+//! plane met so whose triangle the contact query doesn't hold (its twin
+//! across the edge the cast met, alike in normal and gap, kept in its place
+//! by the dedupe) limits the rest of the step as the cast met it (AG.61:
+//! by triangle alone it limited nothing and pinned him on the clearing's
+//! crease); off the ground it still stops the step there, as AG.16's
+//! replays have it (one of AG.39's landings comes a record early without
+//! that).
 
 use std::collections::BTreeMap;
 
@@ -219,8 +226,11 @@ impl Proxy<'_> {
         let mut v = velocity;
         let mut remaining = step;
         let mut seen = Vec::new();
-        // Planes a cast stopped him on without moving him.
+        // Planes a cast stopped him on without moving him: by triangle where
+        // the contact query holds it, else as the cast met it, its gap kept
+        // up as he moves (AG.61).
         let mut met: Vec<(BodyId, Option<u32>)> = Vec::new();
+        let mut met_away: Vec<ContactPlane> = Vec::new();
         for cast in 0..MAX_CASTS {
             if remaining <= MIN_TIME {
                 break;
@@ -247,6 +257,7 @@ impl Proxy<'_> {
             let limits: Vec<Limit> = planes
                 .iter()
                 .filter(|p| p.distance <= TOUCHING || met.contains(&(p.body, p.triangle)))
+                .chain(&met_away)
                 .map(|p| Limit {
                     normal: p.normal,
                     // A moving surface carries him with it along its normal.
@@ -285,7 +296,7 @@ impl Proxy<'_> {
             let (facing, short, squarest) = hit
                 .planes
                 .iter()
-                .map(|p| (-dir.dot(p.normal), p.distance, Some((p.body, p.triangle))))
+                .map(|p| (-dir.dot(p.normal), p.distance, Some(p)))
                 .fold(
                     (0.0f32, 0.0f32, None),
                     |best, p| if p.0 > best.0 { p } else { best },
@@ -297,14 +308,41 @@ impl Proxy<'_> {
             };
             let travel = (hit.distance - back).clamp(0.0, len);
             if travel <= 0.0
-                && let Some(plane) = squarest
-                && !met.contains(&plane)
+                && let Some(p) = squarest
+                && !met.contains(&(p.body, p.triangle))
+                && !met_away
+                    .iter()
+                    .any(|m| (m.body, m.triangle) == (p.body, p.triangle))
             {
-                met.push(plane);
+                if !grounded
+                    || seen
+                        .iter()
+                        .any(|s| (s.body, s.triangle) == (p.body, p.triangle))
+                {
+                    met.push((p.body, p.triangle));
+                } else {
+                    // On the ground, the contact query here holding no plane
+                    // of that triangle: its twin across the edge the cast
+                    // met, alike in normal and gap, took its place in the
+                    // dedupe (AG.61: triangles 2680 and 2808 on the
+                    // clearing, where taking the met plane by triangle alone
+                    // left it out of every solve and pinned him). The plane
+                    // as the cast met it, its gap past the skin from where
+                    // he is. Off the ground the step still stops there, as
+                    // AG.16's replays have it (a hypothesis: AG.39's
+                    // `g39_e_n60` W-00 lands a record early without it).
+                    met_away.push(ContactPlane {
+                        distance: short + facing * hit.distance - KEEP,
+                        ..*p
+                    });
+                }
                 v = solved;
                 continue;
             }
             pos += dir * travel;
+            for m in &mut met_away {
+                m.distance += m.normal.dot(dir * travel);
+            }
             remaining *= 1.0 - travel / len;
             v = solved;
         }
@@ -418,6 +456,133 @@ mod tests {
         // Not touching, or pushed away from: no law.
         assert_eq!(wall_law(Vec3::Z, &[plane(Vec3::NEG_Z, 0.01)]), None);
         assert_eq!(wall_law(Vec3::NEG_Z, &[wall]), None);
+    }
+
+    /// AG.61's crease on the clearing as the seam answered it there (the
+    /// pin at (14.28, 43.39, −92.60), his walk north at 21.5 ft/s), built in
+    /// code: the floor under him, and an 8° rise ahead whose two triangles
+    /// (2680 and 2808) share the edge his cast meets. The cast stops 5 cm on
+    /// against both, the second a hair squarer, where his 5 mm keep off a
+    /// plane met at 5.5° lies 5.1 cm back, so it can't bring him nearer; the
+    /// contact query near him holds the first alone, at its own normal, 1.4
+    /// mm past his skin (its twin, alike, left out). The squarer twin
+    /// limits the rest of the step as the cast met it, and he walks on up
+    /// the rise; taken by its triangle alone it limited nothing, every cast
+    /// met it again and he ran on the spot, as off the ground he still
+    /// does.
+    struct Crease {
+        /// His shape's centre where the step starts.
+        start: Vec3,
+    }
+
+    const CREASE_RISE: Vec3 = Vec3::new(-0.0271835, 0.9948081, -0.09807168);
+    const CREASE_TWIN: Vec3 = Vec3::new(-0.027185699, 0.994808, -0.09807209);
+    const CREASE_NEAR: Vec3 = Vec3::new(-0.027288852, 0.9879172, -0.15256153);
+    const CREASE_RADIUS: f32 = 0.9144;
+    /// The cast's stop short of the rise, and the rise's gap from his start
+    /// along its normal (both raw, skin included).
+    const CREASE_SHORT: f32 = 0.0000656;
+    const CREASE_GAP: f32 = 0.004969;
+
+    impl Crease {
+        fn plane(body: u32, triangle: u32, normal: Vec3, distance: f32) -> ContactPlane {
+            ContactPlane {
+                body: BodyId(body),
+                triangle: Some(triangle),
+                material: Some(1),
+                normal: normal.normalize(),
+                point: Vec3::ZERO,
+                distance,
+            }
+        }
+
+        fn rise_gap(&self, centre: Vec3) -> f32 {
+            CREASE_RISE.normalize().dot(centre - self.start) + CREASE_GAP
+        }
+    }
+
+    impl PhysicsSeam for Crease {
+        fn cast(
+            &self,
+            _shape: &Shape,
+            from: Pose,
+            motion: Vec3,
+            _contact_distance: f32,
+            _exclude: &[BodyId],
+        ) -> Option<crate::seam::Cast> {
+            let len = motion.length();
+            let into = -(motion / len).dot(CREASE_RISE.normalize());
+            if into <= 1.0e-4 {
+                return None;
+            }
+            let distance = (self.rise_gap(from.position) - CREASE_SHORT) / into;
+            (distance <= len).then(|| crate::seam::Cast {
+                fraction: distance / len,
+                distance,
+                planes: vec![
+                    Self::plane(1, 2680, CREASE_RISE, CREASE_SHORT),
+                    Self::plane(1, 2808, CREASE_TWIN, CREASE_SHORT),
+                ],
+            })
+        }
+
+        fn contacts(
+            &self,
+            _shape: &Shape,
+            at: Pose,
+            distance: f32,
+            _exclude: &[BodyId],
+        ) -> Vec<ContactPlane> {
+            let floor = at.position.y - CREASE_RADIUS;
+            let near = CREASE_NEAR.normalize().dot(at.position - self.start) + 0.00636;
+            [
+                Self::plane(1, 2679, Vec3::Y, floor),
+                Self::plane(1, 2680, CREASE_NEAR, near),
+            ]
+            .into_iter()
+            .filter(|p| p.distance <= distance)
+            .collect()
+        }
+
+        fn ray(&self, _: Vec3, _: Vec3, _: f32, _: &[BodyId]) -> Option<crate::seam::RayHit> {
+            None
+        }
+
+        fn overlaps(&self, _: &Shape, _: Pose, _: &[BodyId]) -> Vec<BodyId> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_planes_twin_across_the_edge_his_cast_meets_still_limits_the_solve() {
+        let pivot = Vec3::new(0.0, 0.00518, 0.0);
+        let centre = Vec3::new(0.0, CREASE_RADIUS, 0.0);
+        let seam = Crease {
+            start: pivot + centre,
+        };
+        let proxy = Proxy {
+            seam: &seam,
+            shape: Shape::Sphere {
+                radius: CREASE_RADIUS,
+            },
+            centre,
+            rotation: Quat::IDENTITY,
+            exclude: &[],
+            surfaces: Surfaces::NONE,
+        };
+        let walk = Vec3::new(0.010556398, 0.0104194805, 6.5531826);
+        let step = 1.0 / 60.0;
+        let moved = proxy.integrate(pivot, Vec3::Y, walk, step, true);
+        let gone = moved.pivot - pivot;
+        // On along the rise at nearly the whole walk: 10.8 cm north, 1 cm up
+        // its 5.6°, none of it into the rise.
+        assert!(gone.z > 0.105, "{gone}");
+        assert!((gone.y - gone.z * 0.0986).abs() < 2e-3, "{gone}");
+        assert!(seam.rise_gap(moved.pivot + centre) > CREASE_SHORT, "{gone}");
+        // Off the ground the step still stops there, as AG.16's replays
+        // have it (the twin taken by its triangle alone).
+        let aloft = proxy.integrate(pivot, Vec3::Y, walk, step, false);
+        assert_eq!(aloft.pivot, pivot);
     }
 
     #[test]

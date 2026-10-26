@@ -754,3 +754,97 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
         .object;
     assert!(!props.holds.contains_key(&object), "a coin stops nothing");
 }
+
+/// AG.61 on parry's side, the props standing by where he is each step (the
+/// pin held with or without them): AG.25's walk into the gate's door at
+/// every +75 leg from 34 to 51 game frames, at the view's 15° and at 15.5°
+/// (where, on 2.0 at 767a1cb9, leg 41 held him on the spot 172 frames at
+/// (14.2845, 43.3896, −92.6016), the crease past the clearing that AG.25's
+/// walk met at 15°): never held on the spot short of the door with the
+/// stick held, and stopped at the door 1.478 m from its middle as the
+/// oracle's walk is.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn ag61_the_door_walk_reaches_the_door_at_every_leg() {
+    let dump = PathBuf::from(
+        env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP to the Giants dump"),
+    );
+    let Chapter1 { props, mesh, start } = chapter_1(&dump);
+    let solid = guac_motion::solid::SolidInfo {
+        kind: guac_motion::solid::SolidKind::Sphere,
+        offset: [0.0; 3],
+        rotation: [0.0; 3],
+        width: 4.0,
+        height: 6.0,
+        length: 3.0,
+    }
+    .havok([150.0; 3])
+    .unwrap();
+    let world_at = |at: Vec3| {
+        let mut bodies = vec![mesh.clone()];
+        bodies.extend(props.bodies(at));
+        ParryWorld::new(&bodies).unwrap()
+    };
+    let byte = |b: f32, up: bool| {
+        if up {
+            (128.0 - b) / 128.0
+        } else {
+            (b - 128.0) / 127.0
+        }
+    };
+    let door = props
+        .props
+        .iter()
+        .find(|p| p.name == "Breakable_Stone_Wall_Castle_206(1)")
+        .unwrap();
+    let mut walks = 0;
+    for view in [15.0f32, 15.5] {
+        for leg in 34..=51usize {
+            let script = |frame: usize| {
+                if frame < 60 {
+                    Stick::CENTRED
+                } else if frame < 60 + leg {
+                    Stick::new(byte(0.0, false).max(-1.0), byte(70.0, true))
+                } else if frame < 60 + leg + 180 {
+                    Stick::new(byte(186.0, false), byte(0.0, true).min(1.0))
+                } else {
+                    Stick::CENTRED
+                }
+            };
+            let mut hero = Hero::new(solid, Tuning::ERUPTOR, start, 0.0);
+            let mut world = world_at(start);
+            hero.settle(&world, &[]);
+            let mut stood: Vec<usize> = props.standing(hero.pivot).collect();
+            let (mut held, mut most) = (0usize, 0usize);
+            for frame in 0..360 {
+                let now: Vec<usize> = props.standing(hero.pivot).collect();
+                if now != stood {
+                    world = world_at(hero.pivot);
+                    stood = now;
+                }
+                hero.step(&world, &Input::stick(script(frame), view), 1.0 / 60.0, &[]);
+                let pinned = script(frame) != Stick::CENTRED
+                    && hero.velocity.length() < 0.05
+                    && hero.gait_speed > 20.0
+                    && hero.pivot.z < -85.0;
+                held = if pinned { held + 1 } else { 0 };
+                most = most.max(held);
+            }
+            let from_middle = door.position[2] - hero.pivot.z;
+            eprintln!(
+                "view {view} leg {leg}: stopped at {} ({from_middle:.4} m from the door's middle), held short of the door {most} frames at most",
+                hero.pivot
+            );
+            assert!(
+                most < 3,
+                "{view} {leg}: held {most} frames short of the door"
+            );
+            assert!(
+                (from_middle - 1.4781).abs() < 0.01,
+                "{view} {leg}: {from_middle} m from the door's middle"
+            );
+            walks += 1;
+        }
+    }
+    assert_eq!(walks, 36);
+}

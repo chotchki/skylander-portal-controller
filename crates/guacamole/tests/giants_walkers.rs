@@ -3737,11 +3737,13 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
     // and Eye-Brawl since AG.170 on the 14 x 17 and 14 x 19 ft capsules
     // their setups write (19.72424 and 20.23483 m on the disc's 10 x 18 ft
     // capsule and 4 x 6 ft sphere); the five whose setups keep the disc's
-    // solid walk as they did.
+    // solid walk as they did. Crusher's two since AG.61 slide on along the
+    // steep face (triangle 2803, at (23.88, 43.71, -92.01)) that held them
+    // on the spot from there before (13.7622175 m), as the others walk.
     let fallen: [(&str, u32, f32); 7] = [
         ("101_BugmanGiant", 124, 19.46147),
-        ("102_Titan_Earth", 124, 13.7622175),
-        ("102_Titan_Earth_Alt", 124, 13.7622175),
+        ("102_Titan_Earth", 124, 19.180948),
+        ("102_Titan_Earth_Alt", 124, 19.180948),
         ("107_Whale", 124, 19.288462),
         ("110_RobotGiant", 125, 23.729307),
         ("110_RobotGiant_Legendary", 125, 23.729307),
