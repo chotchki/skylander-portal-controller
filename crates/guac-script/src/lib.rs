@@ -96,17 +96,28 @@
 //! player loop runs the portal manager's and the game systems' ticks so.
 //!
 //! `remove` takes a placement off: the rest of the tick it's in runs (a
-//! script taking itself off finishes its tick), then it's never ticked again
-//! and its started flag is cleared (AH.4's census shows level 213's
-//! definition so: removed, not started, one tick's seconds); a tell of it
-//! skips its block. Its SHUTDOWN doesn't run: that's the level's teardown,
-//! which no box models yet (a reading: no oracle read has seen a removed
-//! placement's SHUTDOWN run). A whitelist listing a script for its first
-//! tick alone ticks its placements until their STARTUP has run, then holds
-//! them, listed ([`Vm::held`]). A placement the embedder adds under the
-//! handle of one taken off (a character's file loaded again after his swap,
-//! openspec AH.105) runs under that handle from its own first tick; the one
-//! taken off stays off.
+//! script taking itself off finishes its tick), then it's never ticked again;
+//! a tell of it skips its block. One that has started runs its SHUTDOWN once
+//! on the way out (openspec AH.200, on the oracle: Eruptor's figure taken off
+//! runs his minion's, his `Minion - Shutdown` taking him out of
+//! `Minions_Loaded` and his description out of `combat control data`'s
+//! `creature descriptions` between 5 and 20 frames after the figure left, and
+//! the next Eruptor's join putting one back, so the set holds at most one
+//! minion's entry at every read). Taking itself off, it runs it at its own
+//! tick's end (a shutdown pending, below); taken off by another placement or
+//! the embedder, in a tick of its own once the step's walk is done
+//! ([`Vm::shut_down`]: the original's queue of shutdowns after its groups,
+//! aj-vm's reading): PRESCRIPT from its start, STARTUP skipped, to its
+//! SHUTDOWN, whose end ends the tick before PRESCRIPT's own ops past its
+//! sections, its `system.script timer` not growing. Either way its started
+//! flag is cleared after (AH.4's census shows level 213's definition so:
+//! removed, not started, one tick's seconds). One never started, held, inert
+//! or stopped runs none, nor one whose script has no SHUTDOWN. A whitelist
+//! listing a script for its first tick alone ticks its placements until
+//! their STARTUP has run, then holds them, listed ([`Vm::held`]). A
+//! placement the embedder adds under the handle of one taken off (a
+//! character's file loaded again after his swap, openspec AH.105) runs under
+//! that handle from its own first tick; the one taken off stays off.
 //!
 //! An op's *block* is the `_branchPC` ops after it. An op either skips its
 //! block (counter += block length), runs into it (and may *push* an entry on

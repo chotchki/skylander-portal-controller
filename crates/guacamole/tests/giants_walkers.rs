@@ -4584,3 +4584,190 @@ fn tree_rexs_clips_on_his_scripts_against_ag12s_recordings() {
     assert_eq!(within, records_n, "{missed:?}");
     assert_eq!(rates_within, rates);
 }
+
+/// Wrecking Ball's load file.
+const WRECKING_BALL: &str = "023_ForceFieldGrub";
+
+/// AG.226's recording (`ag226-run-1792972653`, AH.200's lane): Wrecking Ball
+/// at the spawn from AF.8's fresh state with his figure swapped in, 60
+/// flips at rest, the stick full toward the ledge route's corridor for 300
+/// with no pause, 90 at rest; O5 on him, his clips by his name through O6.
+fn ag226_records() -> Vec<serde_json::Value> {
+    let file = capture_dir().join("BLUS30968/ag226-run-1792972653/wb_run/recording.json");
+    let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+    let records: serde_json::Value = serde_json::from_str(&text).unwrap();
+    records.as_array().unwrap().clone()
+}
+
+/// A clip's time as a record holds it (period less remaining) or ours.
+fn record_time(c: &serde_json::Value) -> f32 {
+    json_f32(&c["period"]) - json_f32(&c["remaining"])
+}
+
+/// AG.226 Verify: Wrecking Ball's clips on his own scripts against the
+/// oracle's on the same stick, record by record (as
+/// [`tree_rexs_clips_on_his_scripts_against_ag12s_recordings`] holds Tree
+/// Rex's): joined at his settled spawn in play mode, as the TV runs the
+/// level (his walk up the corridor wakes the goats, whose
+/// `Goat_Jumping_Pit.ai` reaches a move nothing models and stops there, as
+/// it would on the TV), his own scripts never stopping, his clips' times
+/// and rates set to the first record's, each step the record's pad against
+/// its camera's heading at its own frame time; then at every record each of
+/// the two controls it holds (his idle and his run) against ours of its
+/// length: its weight within 0.1 %, one copy of each clip on him, and on
+/// the records at his top speed (22.25 ft/s) the idle's time going back to
+/// its start on the same records as the oracle's (his locomotion's every
+/// pass of the run); and while the stick is held, each weighted clip's rate
+/// within 0.1 % and both clips' times within 1e-4 s. The stop after the
+/// stick's release is printed, not held: the run's rate parts there (AG.233).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AG.226's recording under GUAC_CAPTURE_DIR; run on the Mac"]
+fn wrecking_balls_clips_on_his_scripts_against_ag226s_recording() {
+    println!("load before: {:.2}", load1());
+    let started = Instant::now();
+    let l = Level::open();
+    let records = ag226_records();
+    let mut w = W::joined(&l, WRECKING_BALL, PLAY, 120)
+        .map_err(|b| {
+            let (_, when, h) = *b;
+            format!("{when}: {}", named(&h.to_string()))
+        })
+        .unwrap();
+    let start = w.hero().pivot;
+    let theirs0 = json_vec3(&records[0]["hero"]["position"]);
+    println!(
+        "start: ours {start:?}, theirs {theirs0:?}, facing ours {:.3} theirs {:.3}",
+        w.hero().facing,
+        json_f32(&records[0]["hero"]["rotation"][1])
+    );
+    for (i, ours) in matched_clips(&w, &records[0]) {
+        let c = &records[0]["clips"][i];
+        if let Some(s) = ours {
+            let q = &mut w.world.sequences_mut()[s];
+            q.time = record_time(c).clamp(0.0, q.length);
+            q.rate = json_f32(&c["rate"]);
+        }
+    }
+    // Each side's measure, the held stick's and the rest's apart.
+    #[derive(Default, Debug)]
+    struct Part {
+        records: usize,
+        rates: usize,
+        rates_within: usize,
+        worst_rate: (f32, usize),
+        worst_time: (f32, usize),
+    }
+    let (mut held, mut free) = (Part::default(), Part::default());
+    let (mut records_n, mut within, mut copies_one, mut top) = (0, 0, 0, 0);
+    let mut worst = (0.0f32, String::new());
+    let (mut back_theirs, mut back_ours) = (Vec::new(), Vec::new());
+    let mut last: Vec<Option<(f32, f32)>> = vec![None; 2];
+    let mut trace = Vec::new();
+    for k in 0..records.len() - 1 {
+        let r = &records[k];
+        let pr = json_f32(&r["clock"]["presentation_rate"]);
+        w.dt = json_f32(&r["clock"]["frame_delta"]).clamp(0.5 * pr, 3.0 * pr);
+        w.bench.view = json_f32(&r["camera"]["rotation"][1]);
+        w.bench.pads[0] = record_pad(r);
+        let holding = r["pad"]["left"]["x"] != 128 || r["pad"]["left"]["y"] != 128;
+        w.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let next = &records[k + 1];
+        let v = json_vec3(&next["hero"]["velocity"]);
+        let speed = v.x.hypot(v.z) / FOOT;
+        let at_top = (speed - 22.25).abs() < 1e-3;
+        top += usize::from(at_top);
+        // One copy of each clip playing on him.
+        let mut per_clip: HashMap<String, usize> = HashMap::new();
+        for s in w.world.sequences() {
+            if s.actor == w.hero && s.plays() {
+                *per_clip.entry(format!("{:?}", s.template)).or_default() += 1;
+            }
+        }
+        copies_one += usize::from(per_clip.values().all(|&n| n == 1));
+        let part = if holding { &mut held } else { &mut free };
+        part.records += 1;
+        let mut miss: f32 = 0.0;
+        let mut row = format!("{} {speed:.4} held {holding}", k + 1);
+        for (i, ours) in matched_clips(&w, next) {
+            let c = &next["clips"][i];
+            let (weight, rate, time) =
+                (json_f32(&c["weight"]), json_f32(&c["rate"]), record_time(c));
+            let mine = ours.map(|s| {
+                let q = &w.world.sequences()[s];
+                (q.blend, q.rate, q.time)
+            });
+            let off = mine.map_or(f32::NAN, |m| (m.0 - weight).abs());
+            miss = if miss.is_nan() || off.is_nan() {
+                f32::NAN
+            } else {
+                miss.max(off)
+            };
+            if weight > 0.0 {
+                part.rates += 1;
+                let d = mine.map_or(f32::NAN, |m| (m.1 - rate).abs());
+                if d <= 0.1 {
+                    part.rates_within += 1;
+                }
+                if d.is_nan() || d > part.worst_rate.0 {
+                    part.worst_rate = (d, k + 1);
+                }
+            }
+            if let Some(m) = mine {
+                // Round a pass's end: the nearer way.
+                let period = json_f32(&c["period"]);
+                let d = (m.2 - time).abs();
+                let d = d.min((d - period).abs());
+                if d > part.worst_time.0 {
+                    part.worst_time = (d, k + 1);
+                }
+                // The idle's time going back: a new pass, each side's.
+                if i == 0
+                    && at_top
+                    && let Some((t0, o0)) = last[i]
+                {
+                    if time < t0 - 1e-6 {
+                        back_theirs.push(k + 1);
+                    }
+                    if m.2 < o0 - 1e-6 {
+                        back_ours.push(k + 1);
+                    }
+                }
+                last[i] = Some((time, m.2));
+            }
+            row += &format!(
+                " | w {weight:.4}/{:.4} r {rate:.4}/{:.4} t {time:.5}/{:.5}",
+                mine.map_or(f32::NAN, |m| m.0),
+                mine.map_or(f32::NAN, |m| m.1),
+                mine.map_or(f32::NAN, |m| m.2)
+            );
+        }
+        trace.push(row);
+        records_n += 1;
+        if miss <= 0.1 {
+            within += 1;
+        }
+        if miss.is_nan() || miss > worst.0 {
+            worst = (miss, format!("record {}", k + 1));
+        }
+    }
+    if let Ok(out) = std::env::var("AG226_TRACE") {
+        std::fs::write(&out, trace.join("\n") + "\n").unwrap();
+    }
+    println!("stopped in play: {:?}; his fall-back: {:?}", w.stops, w.off);
+    println!(
+        "Wrecking Ball's clips: weights {within} of {records_n} records within 0.1 % on both controls (worst {:.4} %: {}); one copy of each clip on {copies_one} of {records_n}; {top} records at 22.25 ft/s, the idle back to its start on theirs at {back_theirs:?}, ours at {back_ours:?}; the stick held: {held:?}; at rest and stopping: {free:?}; {:.1?}, load {:.2}",
+        worst.0,
+        worst.1,
+        started.elapsed(),
+        load1()
+    );
+    assert!(records_n > 400, "{records_n}");
+    assert_eq!(w.off, None, "his own scripts ran throughout");
+    assert!(top > 250, "{top} records at his top");
+    assert!(held.records >= 300, "{held:?}");
+    assert_eq!(within, records_n, "worst {worst:?}");
+    assert_eq!(copies_one, records_n);
+    assert_eq!(back_ours, back_theirs);
+    assert_eq!(held.rates_within, held.rates, "{held:?}");
+    assert!(held.worst_time.0 <= 1e-4, "{held:?}");
+}

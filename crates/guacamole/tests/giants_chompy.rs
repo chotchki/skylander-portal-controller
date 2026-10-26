@@ -489,6 +489,17 @@ struct Snap {
     chompies: Vec<ChompySnap>,
     norticus: (Option<String>, Vec3, bool),
     controller: Option<String>,
+    /// Whom `combat control data`'s `creature descriptions` names, and
+    /// `Minions_Loaded`'s members, by name (openspec AH.200).
+    sets: CreatureSets,
+}
+
+/// [`Snap::sets`]: each description's `creature` and each member of
+/// `Minions_Loaded`, by placement name, in set order.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct CreatureSets {
+    descriptions: Vec<String>,
+    minions_loaded: Vec<String>,
 }
 
 const CHOMPIES: [&str; 4] = [
@@ -675,6 +686,42 @@ impl Run {
                 self.vm.removed(nid),
             ),
             controller: self.vm.behaviour(ctl).map(str::to_owned),
+            sets: self.creature_sets(),
+        }
+    }
+
+    /// [`CreatureSets`] as the run holds them now.
+    fn creature_sets(&self) -> CreatureSets {
+        let named = |v: Value| match self.vm.value(v) {
+            Value::Entity(h) => self.world.name(h),
+            other => format!("{other:?}"),
+        };
+        let members = |v: Option<Value>| -> Vec<Value> {
+            v.map(|v| self.vm.value(v))
+                .and_then(|s| self.vm.set(s).map(<[Value]>::to_vec))
+                .unwrap_or_default()
+        };
+        let global = |name: &str| {
+            let g = self.vm.program().global_named(name)?;
+            self.vm.global_peek(g).map(|v| self.vm.value(v))
+        };
+        let descriptions = members(
+            global("combat control data").and_then(|c| self.vm.field(c, "creature descriptions")),
+        )
+        .into_iter()
+        .map(|d| {
+            self.vm
+                .field(self.vm.value(d), "creature")
+                .map_or_else(|| "none".to_owned(), named)
+        })
+        .collect();
+        let minions_loaded = members(global("Minions_Loaded"))
+            .into_iter()
+            .map(named)
+            .collect();
+        CreatureSets {
+            descriptions,
+            minions_loaded,
         }
     }
 }
@@ -687,8 +734,9 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
     (run, snaps)
 }
 
-/// [`fight`], with what each of [`Script::swaps`]' deactivations took off.
-fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>) {
+/// [`fight`], with what each of [`Script::swaps`]' deactivations took off
+/// and the creature sets right after it, before the next figure's join.
+fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated, CreatureSets)>) {
     let mut swapped = Vec::new();
     let pin = script.pinned.map(ah10_drive);
     let (mut run, _) = joined(Mode::Strict);
@@ -829,10 +877,10 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
             // Off and on again: the deactivate path, then the join, whose
             // request step is this one.
             let values = run.figure_values().expect("his figure's words");
-            swapped.push(
-                run.deactivate()
-                    .unwrap_or_else(|h| panic!("the deactivation at {k}: {h}")),
-            );
+            let gone = run
+                .deactivate()
+                .unwrap_or_else(|h| panic!("the deactivation at {k}: {h}"));
+            swapped.push((gone, run.creature_sets()));
             let tag = guacamole::figure::Tag {
                 serial,
                 ..eruptor_tag(values)
@@ -863,6 +911,53 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
         }
         if f >= -1 {
             snaps.push(run.snap(f));
+        }
+        // A dev aid: `AH200_SETS=<from>-<to>` (steps from F0) prints each
+        // Chompy's behaviour, alert and whom it's alerted on, and whose
+        // creature infos `combat control data`'s `players` holds (openspec
+        // AH.200: what a removed minion's SHUTDOWN takes out of them).
+        let window = std::env::var("AH200_SETS").ok().and_then(|r| {
+            let (a, b) = r.split_once('-')?;
+            Some(a.parse::<i64>().ok()?..=b.parse::<i64>().ok()?)
+        });
+        if window.is_some_and(|w| w.contains(&f)) {
+            let named = |v: Option<Value>| match v {
+                Some(Value::Entity(h)) => format!("{}@{h:#x}", run.world.name(h)),
+                other => format!("{other:?}"),
+            };
+            let chompies: Vec<String> = CHOMPIES
+                .iter()
+                .map(|n| {
+                    let id = run.placement(n);
+                    let at = |fields: &[&str]| path(&run, id, "description", fields);
+                    format!(
+                        "{n} {:?} alerted {:?} on {}",
+                        run.vm.behaviour(id),
+                        at(&["attention parameters", "alerted"]),
+                        named(at(&["attention parameters", "alerted target"]))
+                    )
+                })
+                .collect();
+            let players: Vec<String> = run
+                .vm
+                .program()
+                .global_named("combat control data")
+                .and_then(|g| run.vm.global_peek(g))
+                .map(|c| run.vm.value(c))
+                .and_then(|c| run.vm.field(c, "players"))
+                .map(|s| run.vm.value(s))
+                .and_then(|s| run.vm.set(s).map(<[Value]>::to_vec))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|i| {
+                    named(
+                        run.vm
+                            .field(run.vm.value(i), "creature")
+                            .map(|v| run.vm.value(v)),
+                    )
+                })
+                .collect();
+            println!("F0 + {f}: {chompies:?}; players {players:?}");
         }
     }
     (run, snaps, swapped)
@@ -1274,7 +1369,7 @@ fn a_swap_mid_fight_leaves_the_four_running() {
     println!("{} snaps in {:.2?}", snaps.len(), started.elapsed());
     let at = |k: i64| snaps.iter().find(|s| s.k == k).unwrap();
     let names = |hs: &[u64]| hs.iter().map(|&h| run.world.name(h)).collect::<Vec<_>>();
-    let first = &gone[0];
+    let (first, off) = &gone[0];
     println!(
         "taken off at F0 + 100: his minion {}, {} of his file's placements {:?}, clones {:?}",
         first.minion,
@@ -1284,7 +1379,66 @@ fn a_swap_mid_fight_leaves_the_four_running() {
     );
     assert!(first.minion, "his minion ran");
     assert!(first.clones.contains(&HERO), "his minion went");
-    assert!(names(&first.clones).contains(&"009_LavaCollider".to_owned()));
+    // AH.200: his minion's SHUTDOWN ran at the take-off, as the original's
+    // runs (AH.200's read across AH.11's `swap2`: Eruptor's description and
+    // `Minions_Loaded`'s entry gone once he's off, one back at the next
+    // join): the sets hold his before, none of his at the take-off, the
+    // next Eruptor's after his join, the four Chompies' throughout.
+    let minions = |s: &CreatureSets| {
+        let d = s
+            .descriptions
+            .iter()
+            .filter(|n| *n == "009_Eruptor")
+            .count();
+        (d, s.minions_loaded.clone())
+    };
+    let chompies = |s: &CreatureSets| {
+        s.descriptions
+            .iter()
+            .filter(|n| n.starts_with("Enemy_Chompy"))
+            .count()
+    };
+    for (label, s) in [
+        ("F0 + 99", &at(99).sets),
+        ("the take-off", off),
+        ("F0 + 101", &at(101).sets),
+        ("F0 + 399", &at(399).sets),
+        ("the second take-off", &gone[1].1),
+        ("F0 + 401", &at(401).sets),
+    ] {
+        println!(
+            "{label}: creature descriptions {:?}; Minions_Loaded {:?}",
+            s.descriptions, s.minions_loaded
+        );
+    }
+    let him = vec!["009_Eruptor".to_owned()];
+    assert_eq!(minions(&at(99).sets), (1, him.clone()), "his, in");
+    assert_eq!(minions(off), (0, vec![]), "none of his at the take-off");
+    assert_eq!(minions(&at(101).sets), (1, him.clone()), "the next one's");
+    assert_eq!(minions(&gone[1].1), (0, vec![]), "nor at the second");
+    assert_eq!(minions(&at(401).sets), (1, him), "the third one's");
+    for s in [&at(99).sets, off, &at(101).sets] {
+        assert_eq!(chompies(s), 4, "{s:?}");
+    }
+    // His attack collider goes by his own SHUTDOWN (AH.200: `009_Eruptor.ai`'s
+    // `remove $primary attack collider`, after `Minion - Shutdown`), before
+    // the stream's unloading lists what's left of his.
+    let colliders: Vec<u64> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|&h| run.world.name(h) == "009_LavaCollider")
+        .collect();
+    let on = colliders.iter().filter(|&&h| !run.world.removed(h)).count();
+    assert_eq!(
+        (colliders.len(), on),
+        (3, 1),
+        "one a minion, the two taken off with theirs"
+    );
+    assert!(
+        !names(&first.clones).contains(&"009_LavaCollider".to_owned()),
+        "his SHUTDOWN's, not the unloading's"
+    );
     assert!(names(&first.placements).contains(&"009_Eruptor_Tuning Actor".to_owned()));
     // The ball in flight at the swap: gone with him, taken off by the
     // original's macro (the projectile manager's removal), not left to the

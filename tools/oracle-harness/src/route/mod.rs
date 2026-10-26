@@ -137,8 +137,17 @@ pub enum Step {
     Vars { placement: String, label: String },
     /// `global.bld`'s exports by name read whole at the pause, as [`Step::Vars`]
     /// reads a placement's, into `globals-<label>.json` (AH.11: the portal
-    /// save control playtime is counted on).
-    Globals { names: Vec<String>, label: String },
+    /// save control playtime is counted on); `depth` levels down when it's
+    /// given (1 to [`crate::script::TREE_DEPTH`]), so a set's count shows
+    /// where the whole read would spend the dump's node budget first (AH.200:
+    /// `combat control data`'s `creature descriptions`, behind sets of every
+    /// creature's info).
+    Globals {
+        names: Vec<String>,
+        label: String,
+        #[serde(default)]
+        depth: Option<usize>,
+    },
 }
 
 /// The values AH.2's rows read off a figure's save area: the three the caps
@@ -155,6 +164,15 @@ pub enum FigureField {
 }
 
 impl Step {
+    /// How many levels down a dump reads: a [`Step::Globals`]'s own depth,
+    /// else [`crate::script::TREE_DEPTH`], the whole read.
+    pub fn dump_depth(&self) -> usize {
+        match self {
+            Step::Globals { depth: Some(d), .. } => *d,
+            _ => crate::script::TREE_DEPTH,
+        }
+    }
+
     /// Whether the step acts on the paused run (AH.11's steps) rather than
     /// driving, shooting or reading.
     pub fn acts(&self) -> bool {
@@ -278,6 +296,14 @@ impl RoutePlan {
                         && (names.is_empty() || names.iter().any(String::is_empty))
                     {
                         bail!("step {i}: a dump of globals names them");
+                    }
+                    if let Step::Globals { depth: Some(d), .. } = step
+                        && !(1..=crate::script::TREE_DEPTH).contains(d)
+                    {
+                        bail!(
+                            "step {i}: a dump's depth is 1 to {}, not {d}",
+                            crate::script::TREE_DEPTH
+                        );
                     }
                 }
                 Step::Poke {

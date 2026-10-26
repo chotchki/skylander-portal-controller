@@ -815,9 +815,9 @@ pub fn attack_with_locomotion() -> Attack {
 /// [`CREATURE_DEFINITION`], which a [`walker_described`] minion's setup
 /// calls. The call finds the description whose `creature` is the caller
 /// and makes one there only when none is (`made` 1, found 2), setting the
-/// caller's own `description` to it; nothing takes one out, as nothing of
-/// the TV's runs a removed minion's SHUTDOWN, where Giants' `Minion -
-/// Shutdown` does.
+/// caller's own `description` to it; [`CREATURE_SHUTDOWN`], which his
+/// SHUTDOWN calls once he's taken off (openspec AH.200), takes it out again,
+/// as Giants' `Minion - Shutdown` does.
 pub fn attack_with_creatures() -> Attack {
     Attack {
         global: attack_global_with(None, false, false, true),
@@ -920,6 +920,25 @@ impl Creatures {
         w.end_block(none);
         w.end_block(fm);
         w.end_block(fd);
+        w.flow_end();
+        w.end_block(p);
+    }
+
+    /// [`CREATURE_SHUTDOWN`]: the description whose `creature` is the caller
+    /// taken out of the set.
+    fn shutdown(&self, w: &mut Writer<'_>) {
+        let (p, _) = define_with(w, CREATURE_SHUTDOWN, &[]);
+        let me = El::Member("optoplevelbehavior", "my");
+        let all = [El::Local(self.control), El::Local(self.descriptions)];
+        let set = w.stack(StackClass::Set, &all);
+        let zero = w.int(0);
+        let (at, each) = w.open(Class::ForEach, "for each");
+        w.refer(each, 0x20, set);
+        w.refer(each, 0x28, zero);
+        let his = w.check_ref(&[El::Local(each), El::Local(self.creature)], 1, &[me]);
+        change_membership(w, &all, 1, &[El::Local(each)]);
+        w.end_block(his);
+        w.end_loop(at);
         w.flow_end();
         w.end_block(p);
     }
@@ -1930,11 +1949,37 @@ fn frame_ticking(
     tick: impl FnOnce(&mut Writer<'_>),
     behaviours: impl FnOnce(&mut Writer<'_>),
 ) -> Location {
+    frame_whole(
+        w,
+        name,
+        structures,
+        startup,
+        |_| {},
+        macros,
+        tick,
+        behaviours,
+    )
+}
+
+/// [`frame_ticking`] with SHUTDOWN's ops, `shutdown`'s: what the placement
+/// runs once taken off (openspec AH.200).
+#[allow(clippy::too_many_arguments)]
+fn frame_whole(
+    w: &mut Writer<'_>,
+    name: &str,
+    structures: impl FnOnce(&mut Writer<'_>),
+    startup: impl FnOnce(&mut Writer<'_>),
+    shutdown: impl FnOnce(&mut Writer<'_>),
+    macros: impl FnOnce(&mut Writer<'_>),
+    tick: impl FnOnce(&mut Writer<'_>),
+    behaviours: impl FnOnce(&mut Writer<'_>),
+) -> Location {
     let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
     let (start, _) = w.open(Class::StartUp, "STARTUP");
     startup(w);
     w.end_block(start);
     let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+    shutdown(w);
     w.end_block(shut);
     let (section, _) = w.open(Class::MacroSection, "MACROS");
     macros(w);
@@ -2343,6 +2388,7 @@ fn attack_global_with(
                 }
                 if let Some(c) = &described {
                     c.definition(w);
+                    c.shutdown(w);
                 }
             },
             |w| {
@@ -2814,6 +2860,14 @@ pub const WALKER_OTHER: WalkerSpec = WalkerSpec {
 /// being him, or made there when none is.
 pub const CREATURE_DEFINITION: &str = "Combat - Creature Definition";
 
+/// The macro [`attack_with_creatures`]' `global.bld` defines in the shape
+/// of Giants' `Combat.ai` one of the name (openspec AH.200): the caller's
+/// description, the one in `combat control data`'s `creature descriptions`
+/// whose `creature` is him, taken out of the set, as Giants' `Minion -
+/// Shutdown` has it done for a minion taken off. A [`walker_described`]
+/// minion's SHUTDOWN calls it.
+pub const CREATURE_SHUTDOWN: &str = "Combat - Creature Shutdown";
+
 /// Where [`walker`]'s minion stops, if it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkerFault {
@@ -2894,7 +2948,9 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
 /// to the one in `combat control data`'s `creature descriptions` whose
 /// `creature` is him, his movement parameters written into it only when
 /// the call made it (its `made` 1), as the original's hook-up runs only in
-/// the making. The part's `global.bld` is [`attack_with_creatures`]'.
+/// the making; his SHUTDOWN calls [`CREATURE_SHUTDOWN`], taking it out of
+/// the set once he's taken off (openspec AH.200). The part's `global.bld`
+/// is [`attack_with_creatures`]'.
 pub fn walker_described(spec: &WalkerSpec) -> Vec<u8> {
     walker_with(spec, WalkerFault::None, true)
 }
@@ -2941,7 +2997,7 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
         // Whether his description's call made it (1) or found it (2).
         let made = described.then(|| w.variable("made", "ValueInfo", Some("IntMeasurement")));
         let lookup = std::cell::Cell::new(None);
-        let script = frame_with(
+        let script = frame_whole(
             &mut w,
             &format!(
                 "C:/tfb/Content/Levels/Includes/Minions/{}/scripts/{}",
@@ -3034,6 +3090,15 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                     }
                 }
             },
+            // Described, his SHUTDOWN takes his description out of the set
+            // (openspec AH.200), as Giants' `Minion - Shutdown` does through
+            // `Combat - Creature Shutdown`.
+            |w| {
+                if described {
+                    let stub = w.op(Class::DefineMacro, CREATURE_SHUTDOWN);
+                    call_stub(w, stub, &[]);
+                }
+            },
             |w| {
                 let stops = match fault {
                     WalkerFault::InDeactivation => Some(WALKER_SHUTDOWN),
@@ -3058,6 +3123,7 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                 w.end_block(p);
                 lookup.set(Some(def));
             },
+            |_| {},
             |w| {
                 let p = w.behaviour("default");
                 if fault == WalkerFault::GatedAsk {

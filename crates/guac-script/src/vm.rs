@@ -533,6 +533,10 @@ pub struct Vm {
     /// off their group's list until the walk has passed every group, then
     /// back on its end and ticked there.
     rejoin: Vec<PlacementId>,
+    /// Placements taken off with their SHUTDOWN still to run (crate docs,
+    /// The tick), in the order taken off: run once the step's walk is done,
+    /// or by the embedder after its own removals ([`Vm::shut_down`]).
+    shutting: Vec<PlacementId>,
     /// The walk's place during a step: the group (true the activators') and
     /// the index of the next placement in it, stepped back when a placement
     /// at or before it leaves the list, so the walk skips nothing.
@@ -642,6 +646,7 @@ impl Vm {
             order: Vec::new(),
             sleeping: Vec::new(),
             rejoin: Vec::new(),
+            shutting: Vec::new(),
             cursor: None,
             cells: Vec::new(),
             sets: Vec::new(),
@@ -1020,11 +1025,74 @@ impl Vm {
     }
 
     /// Takes the placement running under `handle` off as a script's `remove`
-    /// of it does: its script stopped for good, never told again. An
-    /// embedder's, for a placement a run carries over as taken off (openspec
-    /// AH.27). False when none runs under it or it's already off.
+    /// of it does: its script stopped for good, never told again, its
+    /// SHUTDOWN left to run ([`Vm::shut_down`]: at the next step's end, or
+    /// when the embedder calls it). An embedder's, for a placement a run
+    /// carries over as taken off (openspec AH.27) or a stream unloaded
+    /// (AH.105). False when none runs under it or it's already off.
     pub fn remove(&mut self, handle: Handle) -> bool {
         self.handles.contains_key(&handle) && self.take_off(Value::Entity(handle))
+    }
+
+    /// Runs the SHUTDOWN of every placement taken off since the last run
+    /// that still has one to run, in the order taken off (crate docs, The
+    /// tick): each in a tick of its own that runs PRESCRIPT to its
+    /// SHUTDOWN and ends there, its `system.script timer` not growing; one a
+    /// SHUTDOWN takes off runs its own after. [`Vm::step`] runs this once
+    /// its walk is done; an embedder
+    /// that takes placements off between steps runs it before it adds a
+    /// placement under one of their handles (a character's file again,
+    /// openspec AH.105), so the old SHUTDOWN can't act through the handle on
+    /// the new one. Strict mode returns the first stop; play mode records it.
+    pub fn shut_down(&mut self, host: &mut dyn Host) -> Result<StepReport, Halt> {
+        let mut report = StepReport::default();
+        self.shut_down_into(&mut report, host)?;
+        Ok(report)
+    }
+
+    fn shut_down_into(&mut self, report: &mut StepReport, host: &mut dyn Host) -> Result<(), Halt> {
+        let program = self.program.clone();
+        while !self.shutting.is_empty() {
+            let id = self.shutting.remove(0);
+            let pending = self
+                .placements
+                .get(id as usize)
+                .is_some_and(|p| p.shutdown && p.started && p.stopped.is_none());
+            if !pending {
+                continue;
+            }
+            let before = self.executed;
+            let result = self.shutdown_tick(id, host);
+            report.ticked += 1;
+            report.ops += self.executed - before;
+            self.adopt(&program, host);
+            match result {
+                Ok(None) => {}
+                Ok(Some(halt)) => report.stopped.push(halt),
+                Err(halt) => return Err(halt),
+            }
+        }
+        Ok(())
+    }
+
+    /// A taken-off placement's last tick: PRESCRIPT to its SHUTDOWN, whose
+    /// end ends it (crate docs, A script's frame), no seconds counted. Off
+    /// for good after, however it went.
+    fn shutdown_tick(
+        &mut self,
+        id: PlacementId,
+        host: &mut dyn Host,
+    ) -> Result<Option<Halt>, Halt> {
+        let p = &self.placements[id as usize];
+        let (handle, script) = (p.handle, p.script);
+        self.begin(Some(id), script, Value::Entity(handle));
+        let result = self.execute(host);
+        let out = self.finish(result);
+        let p = &mut self.placements[id as usize];
+        p.shutdown = false;
+        p.started = false;
+        p.behaviour = None;
+        out
     }
 
     /// Whether the placement is asleep (inactive).
@@ -1330,8 +1398,9 @@ impl Vm {
     }
 
     /// One logic tick: every placement that isn't inert, asleep or stopped,
-    /// in the tick order (crate docs, The tick). Strict mode returns the
-    /// first stop; play mode records it and runs the rest.
+    /// in the tick order (crate docs, The tick), then the SHUTDOWN of each
+    /// taken off with one to run. Strict mode returns the first stop; play
+    /// mode records it and runs the rest.
     pub fn step(&mut self, host: &mut dyn Host) -> Result<StepReport, Halt> {
         self.step_with(host, &mut |_, _, _| Ok(()))
     }
@@ -1370,7 +1439,8 @@ impl Vm {
     /// this tick too ([`Host::adopt`]). Then those sent round their states
     /// ([`Vm::requeue`]), each back on its group's end and ticked there, in
     /// the order they were sent; one sent again after its turn waits for
-    /// the next step.
+    /// the next step. Last, the SHUTDOWN of each placement taken off with
+    /// one still to run ([`Vm::shut_down`]).
     fn tick_all(
         &mut self,
         report: &mut StepReport,
@@ -1404,7 +1474,9 @@ impl Vm {
             self.list_mut(group).push(id);
             self.tick_in_place(id, &program, report, host, native)?;
         }
-        Ok(())
+        // Then what was taken off this step, or since the last, runs its
+        // SHUTDOWN (crate docs, The tick).
+        self.shut_down_into(report, host)
     }
 
     /// Placement `id`'s turn in the walk: nothing if it's inert, taken off,
@@ -3180,20 +3252,35 @@ impl Vm {
     }
 
     /// `remove` on one object: a placement the VM runs is taken off, its
-    /// script stopped for good. False for one already off, which stays as
-    /// it is.
+    /// script stopped for good. One that has started, whose script has a
+    /// SHUTDOWN and that runs (not inert, held or stopped), has its SHUTDOWN
+    /// left to run (crate docs, The tick): pending, so one taking itself off
+    /// runs it at its own tick's end, and queued for [`Vm::shut_down`]
+    /// otherwise. False for one already off, which stays as it is.
     fn take_off(&mut self, t: Value) -> bool {
         if let Value::Entity(h) = t
             && let Some(&id) = self.handles.get(&h)
         {
-            let p = &mut self.placements[id as usize];
+            let p = &self.placements[id as usize];
             if p.removed {
                 return false;
             }
+            let has_shutdown = self
+                .program
+                .scripts
+                .get(p.script as usize)
+                .is_some_and(|s| s.shutdown.is_some());
+            let runs = p.started && has_shutdown && !p.inert && !p.held && p.stopped.is_none();
+            let p = &mut self.placements[id as usize];
             p.removed = true;
-            p.started = false;
             p.behaviour = None;
-            p.shutdown = false;
+            if runs {
+                p.shutdown = true;
+                self.shutting.push(id);
+            } else {
+                p.started = false;
+                p.shutdown = false;
+            }
         }
         true
     }

@@ -2183,8 +2183,9 @@ pub struct Deactivated {
     pub clones: Vec<Handle>,
     /// Where the deactivation stopped short of the original's (openspec
     /// AH.165): its macro stopping (a shutdown macro of his on a member
-    /// nothing models) or the exit's links finding no place in the program.
-    /// The rest ran: the portal manager runs on and his stream is unloaded.
+    /// nothing models), the exit's links finding no place in the program, or
+    /// a SHUTDOWN of what it took off stopping (AH.200). The rest ran: the
+    /// portal manager runs on and his stream is unloaded.
     pub halted: Option<Halt>,
 }
 
@@ -2199,16 +2200,22 @@ pub struct Deactivated {
 /// removed, the enemies where he stood alerted (`Vanish Alert`). That macro
 /// runs here as `Portal - Exit Object` calls it (unless his minion never
 /// activated); then, natively, the exit's links undone
-/// ([`crate::figure::exit`]) and the stream's unloading: every placement of
-/// unit `unit` and every clone of its templates, `hero` among them, taken
-/// off the world and the VM, his minion no longer the activator, his
-/// sequences stopped. Not waited for: the fade (it ignores the pause the TV
-/// holds the level in). Not run: the stream's bookkeeping, the exit beam
-/// and its pause (AG.29 holds the level), and the marker actor it leaves
-/// where he stood (AG.81 stands the next one there).
+/// ([`crate::figure::exit`]); his minion taken off the VM, no longer the
+/// activator, and its SHUTDOWN run (openspec AH.200: the original runs it
+/// as the fade takes him off, his `Minion - Shutdown` taking his
+/// description out of `combat control data`'s set); then the stream's
+/// unloading: every placement of unit `unit` and every clone of its
+/// templates, `hero` among them, taken off the world and the VM, his
+/// sequences stopped, and the SHUTDOWN of each run. Not waited for: the
+/// fade (it ignores the pause the TV holds the level in), so his SHUTDOWN
+/// runs at the take-off, where the original's ran 5 to 20 frames after the
+/// figure left. Not run: the stream's bookkeeping, the exit beam and its
+/// pause (AG.29 holds the level), and the marker actor it leaves where he
+/// stood (AG.81 stands the next one there).
 ///
-/// A stop in the macro or the links is kept in [`Deactivated::halted`] and
-/// the rest still runs (openspec AH.165): the macro is the embedder's call
+/// A stop in the macro, the links or a SHUTDOWN is kept in
+/// [`Deactivated::halted`] (the first) and the rest still runs (openspec
+/// AH.165): the macro is the embedder's call
 /// in the portal manager's name ([`Vm::call_for`]), so the portal manager
 /// ticks on, and his stream is unloaded whatever stopped, so nothing of his
 /// file ticks on in the run or runs twice when his figure comes back. What
@@ -2232,50 +2239,81 @@ pub fn join_deactivate(
             Some(_) => warn!(%h, "his figure's exit links didn't undo either"),
         }
     }
-    let world = &mut *host.world;
-    let mut placements = Vec::new();
-    for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
-        let Some(&h) = world.objects.get(&p.obj) else {
-            continue;
-        };
-        if let Some(a) = world.actors.get_mut(&h)
-            && !a.removed
-        {
-            a.removed = true;
-            placements.push(h);
-        }
-        vm.remove(h);
-    }
-    let mut clones: Vec<Handle> = world
-        .actors
-        .iter()
-        .filter(|(_, a)| a.obj.is_none() && !a.removed)
-        .filter(|(_, a)| a.template.is_some_and(|t| t.unit == unit))
-        .map(|(h, _)| *h)
-        .collect();
-    clones.sort_unstable();
-    // His minion no longer the activator: the next one's is.
+    // His minion off first, no longer the activator (the next one's is),
+    // and his SHUTDOWN run while his actor stands (openspec AH.200): the
+    // original's keyframer takes the minion off ahead of the stream, and his
+    // `Minion - Shutdown` takes him out of `Minions_Loaded` and his
+    // description out of `combat control data`'s set.
     vm.set_activator(hero, false);
-    for &h in &clones {
-        if let Some(a) = world.actors.get_mut(&h) {
-            a.removed = true;
-        }
-        vm.remove(h);
-    }
     vm.remove(hero);
-    let gone: std::collections::HashSet<Handle> =
-        clones.iter().chain(&placements).copied().collect();
-    for s in &mut world.sequences {
-        if gone.contains(&s.actor) || s.actor == hero {
-            s.stopped = true;
+    shut_down(vm, host, &mut halted);
+    let (mut placements, clones) = {
+        let world = &mut *host.world;
+        let mut placements = Vec::new();
+        for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+            let Some(&h) = world.objects.get(&p.obj) else {
+                continue;
+            };
+            if let Some(a) = world.actors.get_mut(&h)
+                && !a.removed
+            {
+                a.removed = true;
+                placements.push(h);
+            }
+            vm.remove(h);
         }
-    }
+        let mut clones: Vec<Handle> = world
+            .actors
+            .iter()
+            .filter(|(_, a)| a.obj.is_none() && !a.removed)
+            .filter(|(_, a)| a.template.is_some_and(|t| t.unit == unit))
+            .map(|(h, _)| *h)
+            .collect();
+        clones.sort_unstable();
+        for &h in &clones {
+            if let Some(a) = world.actors.get_mut(&h) {
+                a.removed = true;
+            }
+            vm.remove(h);
+        }
+        let gone: std::collections::HashSet<Handle> =
+            clones.iter().chain(&placements).copied().collect();
+        for s in &mut world.sequences {
+            if gone.contains(&s.actor) || s.actor == hero {
+                s.stopped = true;
+            }
+        }
+        (placements, clones)
+    };
+    // Then the SHUTDOWN of what the stream's unloading took off.
+    shut_down(vm, host, &mut halted);
     placements.sort_unstable();
     Deactivated {
         minion,
         placements,
         clones,
         halted,
+    }
+}
+
+/// The SHUTDOWN of each placement taken off with one to run ([`Vm::shut_down`]),
+/// each stop kept in `halted` when it holds none yet, logged otherwise: the
+/// deactivation's own work, which stops nothing else (openspec AH.165).
+fn shut_down(vm: &mut Vm, host: &mut WorldHost<'_, '_>, halted: &mut Option<Halt>) {
+    let mut keep = |h: Halt| match halted {
+        None => *halted = Some(h),
+        Some(_) => warn!(%h, "a SHUTDOWN of his stopped too"),
+    };
+    loop {
+        match vm.shut_down(host) {
+            Ok(report) => {
+                report.stopped.into_iter().for_each(&mut keep);
+                break;
+            }
+            // Strict mode's stop: the one it ran is off the queue, so the
+            // rest run on.
+            Err(h) => keep(h),
+        }
     }
 }
 

@@ -1061,14 +1061,15 @@ fn the_synthetic_walker_reads_back() {
 
 /// AH.191's two walkers read back: each his own scripts and placements by
 /// his names, his minion's setup calling one macro more than the plain
-/// walker's (`Combat - Creature Definition`) and checking `made` once, and
-/// the part's `global.bld` defining the call once, with a `for each` over
-/// the creature descriptions, beside every macro the plain one defines.
+/// walker's (`Combat - Creature Definition`) and checking `made` once, his
+/// SHUTDOWN calling `Combat - Creature Shutdown` (AH.200), and the part's
+/// `global.bld` defining each once, each with a `for each` over the
+/// creature descriptions, beside every macro the plain one defines.
 #[test]
 fn the_described_walkers_read_back() {
     use super::builder::{
-        CREATURE_DEFINITION, WALKER, WALKER_OTHER, WalkerFault, attack, attack_with_creatures,
-        walker, walker_described,
+        CREATURE_DEFINITION, CREATURE_SHUTDOWN, WALKER, WALKER_OTHER, WalkerFault, attack,
+        attack_with_creatures, walker, walker_described,
     };
     use crate::level::Placements;
     let ops_of = |bytes: &[u8], minion: &str| -> String {
@@ -1106,13 +1107,33 @@ fn the_described_walkers_read_back() {
         let ops = ops_of(&bytes, spec.minion);
         assert_eq!(
             count(&ops, "UseMacro"),
-            count(&plain, "UseMacro") + 1,
+            count(&plain, "UseMacro") + 2,
             "{ops}"
         );
         assert_eq!(
             count(&ops, "CheckValue"),
             count(&plain, "CheckValue") + 1,
             "{ops}"
+        );
+        // AH.200: his SHUTDOWN holds the second, the shutdown's call; the
+        // plain walker's holds only its block's closing `flow continue`.
+        let shutdown = |ops: &str| -> Vec<String> {
+            let lines: Vec<&str> = ops.lines().collect();
+            let at = lines
+                .iter()
+                .position(|l| l.starts_with("ShutDown "))
+                .expect("a SHUTDOWN");
+            let len: usize = lines[at].rsplit('+').next().unwrap().parse().unwrap();
+            lines[at + 1..at + len]
+                .iter()
+                .map(|l| l.to_string())
+                .collect()
+        };
+        assert!(shutdown(&plain).is_empty(), "{plain}");
+        let his = shutdown(&ops);
+        assert!(
+            his.first().is_some_and(|l| l.starts_with("UseMacro ")),
+            "{his:?}"
         );
     }
     let global = |bytes: &[u8]| -> String {
@@ -1124,12 +1145,15 @@ fn the_described_walkers_read_back() {
         global(&attack().global),
         global(&attack_with_creatures().global),
     );
-    let defined = format!("DefineMacro {CREATURE_DEFINITION} ");
-    assert_eq!(
-        (count(&plain, &defined), count(&described, &defined)),
-        (0, 1)
-    );
-    assert_eq!(count(&described, "ForEach"), count(&plain, "ForEach") + 1);
+    for name in [CREATURE_DEFINITION, CREATURE_SHUTDOWN] {
+        let defined = format!("DefineMacro {name} ");
+        assert_eq!(
+            (count(&plain, &defined), count(&described, &defined)),
+            (0, 1),
+            "{name}"
+        );
+    }
+    assert_eq!(count(&described, "ForEach"), count(&plain, "ForEach") + 2);
     for l in plain.lines().filter(|l| l.contains("DefineMacro")) {
         assert!(described.contains(l), "{l}");
     }
