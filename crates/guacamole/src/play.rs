@@ -4263,6 +4263,30 @@ mod tests {
             .as_secs_f32()
     }
 
+    fn real_secs(app: &App) -> f32 {
+        app.world().resource::<Time<Real>>().elapsed().as_secs_f32()
+    }
+
+    /// Start's pause held `frames` frames, then the bottom button resumes:
+    /// the game clock that far behind the real one, as on a TV that has sat
+    /// paused, so a test can tell which clock a wait counts on.
+    fn sit_paused(app: &mut App, pad: Entity, frames: usize) {
+        let lag = real_secs(app) - game_secs(app);
+        test_pad::press(app, pad, GamepadButton::Start);
+        app.update();
+        assert_eq!(mode(app), Mode::Paused);
+        for _ in 0..frames {
+            app.update();
+        }
+        test_pad::press(app, pad, GamepadButton::South);
+        until(app, "resumed", |a| mode(a) == Mode::Level);
+        let behind = real_secs(app) - game_secs(app) - lag;
+        assert!(
+            behind >= frames as f32 / 60.0,
+            "the game clock {behind} s further behind"
+        );
+    }
+
     fn hud(app: &App) -> crate::hud::HudValues {
         app.world()
             .resource::<crate::hud::Hud>()
@@ -4327,9 +4351,12 @@ mod tests {
     fn a_beaten_hero_leaves_and_his_figure_is_out_for_the_level() {
         use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX};
         let tmp = tempfile::tempdir().unwrap();
-        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let (mut app, pad) = joined_eruptor(tmp.path());
         app.update();
         assert!(app.world().resource::<crate::hud::Hud>().shown.is_some());
+        // 6 s paused first: the backstop counts game time, not the real
+        // clock that ran on under the pause.
+        sit_paused(&mut app, pad, 360);
         set_health(&mut app, 0);
         app.update();
         let play = app.world().resource::<Play>();
@@ -4601,7 +4628,10 @@ mod tests {
                 .progress
         };
         until(&mut app, "his point", |a| earned(a).xp == 42);
+        // 6 s paused, so the offer's 5 s are told apart from game time.
+        sit_paused(&mut app, pad, 360);
         set_health(&mut app, 0);
+        let zero = real_secs(&app);
         let offered = |app: &App| {
             let now = app.world().resource::<Time<Real>>().elapsed();
             app.world().resource::<Play>().restart_offered(now)
@@ -4611,6 +4641,11 @@ mod tests {
         });
         assert!(!offered(&app), "not yet: 5 s from his health's end");
         frames_until(&mut app, 400, "the offer", offered);
+        let waited = real_secs(&app) - zero;
+        assert!(
+            (5.0..5.1).contains(&waited),
+            "5 s of the real clock from his health's end: {waited}"
+        );
         assert!(app.world().resource::<crate::input::ModalOpen>().0);
         let before = earned(&app);
         assert_eq!((before.xp, before.gold), (42, 7));
@@ -4717,7 +4752,8 @@ mod tests {
     }
 
     /// The HUD on the TV app (AH.26, AH.57, AH.71) over AH.27's synthetic
-    /// barrel, Alice's Eruptor at 999 experience and 5 gold on a three-level
+    /// barrel, Alice's Eruptor off the first slot (the HUD reads the hero's
+    /// own slot's values) at 999 experience and 5 gold on a three-level
     /// table: his scripts' 120 of 150, level 1 and 999 toward 1,000; a bite
     /// to 100 shows 100 of 150 and its 20 by him, red, then white, gone a
     /// second on, the bar's edge flashing white; 30 (20 %) no warning, 29
@@ -4753,7 +4789,7 @@ mod tests {
             playtime_secs: 0,
             generation: 4,
         };
-        put(&mut app, owned_eruptor(0, "alice", row));
+        put(&mut app, owned_eruptor(2, "alice", row));
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
         test_pad::press(&mut app, pad, GamepadButton::East);
         until(&mut app, "his scripts", |a| {
@@ -4829,7 +4865,7 @@ mod tests {
         }
         assert_eq!(hud(&app).xp, 1_000, "held at the cap");
         let e = app.world().resource::<crate::progress::Earning>();
-        assert_eq!(e.slots[0].as_ref().unwrap().progress.xp, 1_000);
+        assert_eq!(e.slots[2].as_ref().unwrap().progress.xp, 1_000);
         // The experience hook (AH.26's, for the Mac's level-up): 2,199 in
         // his figure's words on the three-level table reads back as level 2
         // one short of 2,200, and the next point is the level-up to MAX.
