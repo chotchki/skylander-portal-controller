@@ -434,7 +434,12 @@ pub(crate) fn FigureDetail(
                         <div class="detail-stats-strip">
                             <div class="detail-stat-cell">
                                 <div class="detail-stat-l">"LEVEL"</div>
-                                <div class="detail-stat-v">{s.level.to_string()}</div>
+                                <div class="detail-stat-v">{s.level_label()}</div>
+                                // AH.57: guacamole's experience toward the
+                                // next level, MAX at the cap.
+                                {s.xp_line().map(|line| view! {
+                                    <div class="detail-stat-xp mt-0.5 text-xs text-gold-bright">{line}</div>
+                                })}
                             </div>
                             <div class="detail-stat-cell">
                                 <div class="detail-stat-l">"GOLD"</div>
@@ -743,6 +748,8 @@ mod tests {
             nickname: String::new(),
             max_level: None,
             max_gold: None,
+            xp: None,
+            next_xp: None,
         })
     }
 
@@ -755,10 +762,48 @@ mod tests {
             nickname: String::new(),
             max_level: Some(15),
             max_gold: Some(65_000),
+            xp: Some(2_500),
+            next_xp: Some(3_800),
         })
     }
 
     const PRODUCT: ServerApp = ServerApp::Product;
+
+    /// AH.57's strip and sheet: under guacamole one short of the cap reads
+    /// level 14 and the experience toward 96,500; at the cap MAX for the
+    /// level and the experience, the sheet's level 15 MAX too; the product
+    /// shows its number and no experience line, its sheet's top level too.
+    #[test]
+    fn the_level_reads_max_at_guacamoles_cap() {
+        let guac = |level: u8, xp: u32, next_xp: Option<u32>| FigureStats {
+            level,
+            gold: 0,
+            playtime_secs: 0,
+            nickname: String::new(),
+            max_level: Some(15),
+            max_gold: Some(65_000),
+            xp: Some(xp),
+            next_xp,
+        };
+        let short = guac(14, 96_499, Some(96_500));
+        assert_eq!(short.level_label(), "14");
+        assert_eq!(short.xp_line().as_deref(), Some("96,499 / 96,500 XP"));
+        let cap = guac(15, 96_500, None);
+        assert_eq!(cap.level_label(), "MAX");
+        assert_eq!(cap.xp_line().as_deref(), Some("MAX"));
+        let StatsFetch::Read(product) = read() else {
+            unreachable!()
+        };
+        let product = FigureStats {
+            level: 10,
+            ..product
+        };
+        assert_eq!(product.level_label(), "10", "the product's cap is no MAX");
+        assert_eq!(product.xp_line(), None);
+        assert_eq!(ServerApp::Guacamole.level_label(15, 15), "MAX");
+        assert_eq!(ServerApp::Guacamole.level_label(14, 15), "14");
+        assert_eq!(PRODUCT.level_label(10, 10), "10");
+    }
 
     #[test]
     fn stats_present_follows_category_and_portal() {

@@ -77,6 +77,16 @@ impl ServerApp {
         self == Self::Product
     }
 
+    /// The edit sheet's level: MAX at guacamole's cap (AH.57), as the strip
+    /// and the TV's HUD read it; the product's number always.
+    pub fn level_label(self, level: u8, max_level: u8) -> String {
+        if self == Self::Guacamole && level >= max_level {
+            "MAX".to_string()
+        } else {
+            level.to_string()
+        }
+    }
+
     /// What guacamole's refusal of a figure action says to a kid (AH.3), from
     /// the `HTTP <status>` error the request came back with; `None` keeps the
     /// error as the phone showed it before, and always in the product.

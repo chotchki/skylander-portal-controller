@@ -194,6 +194,10 @@ fn play_app_shelf(
             PlayPlugin,
             crate::hero_scripts::HeroScriptsPlugin,
             crate::progress::ProgressPlugin,
+            // AH.26: the HUD's numbers (nothing drawn without the TV's
+            // font) and Restart chapter's offer.
+            crate::hud::HudPlugin,
+            crate::defeat::DefeatPlugin,
         ))
         .init_resource::<IntroQueue>()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(

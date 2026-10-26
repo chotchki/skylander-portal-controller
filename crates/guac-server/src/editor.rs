@@ -75,6 +75,10 @@ pub struct FigureStats {
     pub level: u8,
     /// The total.
     pub xp: u32,
+    /// Where the next level starts, what the phone counts the experience
+    /// toward (AH.57); none at the game's cap, where it reads MAX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_xp: Option<u32>,
     pub gold: u32,
     pub playtime_secs: u32,
     #[serde(flatten)]
@@ -103,9 +107,13 @@ async fn stats(
     {
         Ok(Some(row)) => {
             let p = row.progress;
+            let level = progression.level_for(p.xp);
             axum::Json(FigureStats {
-                level: progression.level_for(p.xp),
+                level,
                 xp: p.xp,
+                next_xp: level
+                    .checked_add(1)
+                    .and_then(|next| progression.threshold(next)),
                 gold: p.gold,
                 playtime_secs: p.playtime_secs,
                 caps,
@@ -468,6 +476,7 @@ mod tests {
         let stats = FigureStats {
             level: 10,
             xp: 33_000,
+            next_xp: Some(42_700),
             gold: 1_234,
             playtime_secs: 61,
             caps: GameCaps {
@@ -479,9 +488,19 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "level": 10, "xp": 33000, "gold": 1234, "playtime_secs": 61,
-                "max_level": 15, "max_gold": 65000,
+                "level": 10, "xp": 33000, "next_xp": 42700, "gold": 1234,
+                "playtime_secs": 61, "max_level": 15, "max_gold": 65000,
             })
+        );
+        let cap = FigureStats {
+            level: 15,
+            xp: 96_500,
+            next_xp: None,
+            ..stats
+        };
+        assert!(
+            serde_json::to_value(&cap).unwrap().get("next_xp").is_none(),
+            "none at the cap"
         );
         assert_eq!(gold_u16(65_000), 65_000);
         assert_eq!(gold_u16(70_000), u16::MAX);

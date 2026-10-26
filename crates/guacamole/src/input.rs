@@ -3,11 +3,13 @@
 //! NumpadEnter) and the presses posted to `/api/_test/tv/press`, then hands
 //! the frame to the top layer only: an intro playing over the portal or the
 //! level takes any button or key as its skip and nothing under it sees the
-//! press; while the level shows, its layer takes the pads ([`crate::pad`],
-//! AG.20) and the screen hears nothing; otherwise the screen gets it as
-//! [`TvInput`]s. Mapping is positional (the design doc's Controllers): South
-//! activates, East goes back, Mode is Home (nothing yet), the D-pad, the
-//! arrows and the left stick move, held ones repeating per [`NavRepeat`].
+//! press; a modal open under it (AH.26's Restart chapter, [`ModalOpen`])
+//! hears it as [`TvInput`]s, the level's pads still; while the level shows,
+//! its layer takes the pads ([`crate::pad`], AG.20) and the screen hears
+//! nothing; otherwise the screen gets it as [`TvInput`]s. Mapping is
+//! positional (the design doc's Controllers): South activates, East goes
+//! back, Mode is Home (nothing yet), the D-pad, the arrows and the left
+//! stick move, held ones repeating per [`NavRepeat`].
 //!
 //! Enter and Space are never mapped: `bevy_ui_widgets`' button takes them
 //! from the focused entity, so nothing activates twice.
@@ -145,12 +147,20 @@ pub(crate) struct Frame {
     pub(crate) inputs: Vec<TvInput>,
 }
 
+/// A modal's choices are open over the level or the screen (AH.26's
+/// Restart chapter): the router hands it the frame as [`TvInput`]s, under
+/// an intro. Whatever draws the modal keeps this.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ModalOpen(pub(crate) bool);
+
 /// Who takes a frame's input: the top layer, and only it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Layer {
     /// An intro over the portal or the level: any button or key skips it.
     Intro,
-    // A modal goes here, under the intro, once one exists.
+    /// A modal's choices ([`ModalOpen`]): the screen's moves and presses,
+    /// over the level, whose pads move no one meanwhile.
+    Modal,
     /// The level (AG.20): its own read of the pads.
     Level,
     /// The screen's own choices.
@@ -178,9 +188,20 @@ impl Layer {
         }
     }
 
+    /// The top layer with a modal open or not: a modal over anything but
+    /// an intro.
+    pub(crate) fn over(self, modal: bool) -> Self {
+        match self {
+            Self::Intro => self,
+            _ if modal => Self::Modal,
+            _ => self,
+        }
+    }
+
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Intro => "intro",
+            Self::Modal => "modal",
             Self::Level => "level",
             Self::Screen => "screen",
         }
@@ -193,8 +214,8 @@ impl Layer {
             Self::Intro if frame.pressed => Taken::Skip,
             Self::Intro => Taken::Nothing,
             Self::Level => Taken::Level,
-            Self::Screen if frame.inputs.is_empty() => Taken::Nothing,
-            Self::Screen => Taken::Screen(frame.inputs),
+            Self::Screen | Self::Modal if frame.inputs.is_empty() => Taken::Nothing,
+            Self::Screen | Self::Modal => Taken::Screen(frame.inputs),
         }
     }
 }
@@ -359,6 +380,7 @@ fn route_input(
     mut level: ResMut<LevelPads>,
     hero: Option<ResMut<HeroInput>>,
     actions: Option<ResMut<HeroActions>>,
+    modal: Option<Res<ModalOpen>>,
     mut out: MessageWriter<TvInput>,
 ) {
     let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
@@ -378,8 +400,8 @@ fn route_input(
     }
 
     let playing = queue.as_ref().is_some_and(|q| q.playing().is_some());
-    let layer = Layer::top(playing, level.shows());
-    if layer != Layer::Screen {
+    let layer = Layer::top(playing, level.shows()).over(modal.is_some_and(|m| m.0));
+    if matches!(layer, Layer::Intro | Layer::Level) {
         repeat.swallow();
     }
     // The hero reads the walking pad only while the level's layer is on top
@@ -532,7 +554,7 @@ fn act_on_input(
 /// The pads as the router reads them, and the level's layer (AG.20).
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct InputShot {
-    /// Who takes the pads: `intro`, `level` or `screen`.
+    /// Who takes the pads: `intro`, `modal`, `level` or `screen`.
     pub layer: String,
     /// Connected, in the order they connected.
     pub pads: Vec<PadShot>,
@@ -582,6 +604,7 @@ pub(crate) struct InputShots<'w, 's> {
     actions: Option<Res<'w, HeroActions>>,
     focus: Option<Res<'w, InputFocus>>,
     choices: Query<'w, 's, &'static FocusId>,
+    modal: Option<Res<'w, ModalOpen>>,
 }
 
 impl InputShots<'_, '_> {
@@ -607,7 +630,10 @@ impl InputShots<'_, '_> {
             })
             .collect();
         InputShot {
-            layer: Layer::top(intro_playing, level.shows()).name().to_owned(),
+            layer: Layer::top(intro_playing, level.shows())
+                .over(self.modal.as_ref().is_some_and(|m| m.0))
+                .name()
+                .to_owned(),
             pads,
             pause: seat.and_then(|s| s.pause()).map(|p| {
                 match p {
@@ -796,6 +822,27 @@ mod tests {
             pressed: true,
             inputs: vec![TvInput::Activate],
         }
+    }
+
+    /// AH.26: a modal open over the level (Restart chapter) takes the
+    /// frame as the screen would, the level's pads hearing nothing; an
+    /// intro over it still takes the press as its skip.
+    #[test]
+    fn a_modal_over_the_level_hears_the_press_under_an_intro() {
+        assert_eq!(Layer::top(false, true).over(true), Layer::Modal);
+        assert_eq!(Layer::top(false, false).over(true), Layer::Modal);
+        assert_eq!(Layer::top(true, true).over(true), Layer::Intro);
+        assert_eq!(Layer::top(false, true).over(false), Layer::Level);
+        assert_eq!(
+            Layer::Modal.take(south()),
+            Taken::Screen(vec![TvInput::Activate])
+        );
+        let stick = Frame {
+            pressed: false,
+            inputs: Vec::new(),
+        };
+        assert_eq!(Layer::Modal.take(stick), Taken::Nothing);
+        assert_eq!(Layer::Modal.name(), "modal");
     }
 
     #[test]

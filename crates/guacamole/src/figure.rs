@@ -364,6 +364,36 @@ pub fn read(vm: &Vm, layout: &Layout, data: Value) -> Option<Values> {
     Some(layout.unpack(&words))
 }
 
+/// `xp` written into the tag data [`put_on_portal`] made, every other bit
+/// of its save area kept, as AH.11's oracle runs wrote a figure's
+/// experience at a pause (the TV's test hook, AH.26); false when its save
+/// area no longer holds the layout's words or one isn't a number.
+pub fn write_experience(vm: &mut Vm, layout: &Layout, data: Value, xp: u32) -> bool {
+    let Some(cells) = vm
+        .field(data, "save data area")
+        .and_then(|a| vm.set(a))
+        .map(<[Value]>::to_vec)
+    else {
+        return false;
+    };
+    if cells.len() < layout.words() {
+        return false;
+    }
+    let mut words: Vec<u32> = cells
+        .iter()
+        .map(|&c| vm.value(c).as_i32().unwrap_or(0) as u32)
+        .collect();
+    let values = Values {
+        xp,
+        ..layout.unpack(&words)
+    };
+    layout.pack(values, &mut words);
+    cells
+        .iter()
+        .zip(&words)
+        .all(|(&c, &w)| vm.put(c, Value::Int(w as i32)))
+}
+
 #[cfg(test)]
 mod tests {
     use guac_ir::progression::{SaveField, SaveParam};

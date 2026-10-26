@@ -331,6 +331,58 @@ pub struct FigureStats {
     /// guacamole's (AH.3): the game's gold clamp, off its disc.
     #[serde(default)]
     pub max_gold: Option<u32>,
+    /// guacamole's (AH.57): the figure's experience, a total, and where the
+    /// next level starts (none at the game's cap).
+    #[serde(default)]
+    pub xp: Option<u32>,
+    #[serde(default)]
+    pub next_xp: Option<u32>,
+}
+
+impl FigureStats {
+    /// At the game's level cap, as guacamole's answer tells it: the product
+    /// sends no cap and is never at it here.
+    pub fn at_cap(&self) -> bool {
+        self.max_level.is_some_and(|max| self.level >= max)
+    }
+
+    /// The level as the strip shows it: MAX at guacamole's cap (AH.57,
+    /// figure-progress' Levels follow the original's experience table), the
+    /// number otherwise.
+    pub fn level_label(&self) -> String {
+        if self.at_cap() {
+            "MAX".to_string()
+        } else {
+            self.level.to_string()
+        }
+    }
+
+    /// guacamole's experience line under the level: toward the next
+    /// level's start, `96,499 / 96,500 XP`, or MAX at the cap; none in the
+    /// product, which sends no experience.
+    pub fn xp_line(&self) -> Option<String> {
+        let xp = self.xp?;
+        if self.at_cap() {
+            return Some("MAX".to_string());
+        }
+        Some(match self.next_xp {
+            Some(next) => format!("{} / {} XP", grouped(xp), grouped(next)),
+            None => format!("{} XP", grouped(xp)),
+        })
+    }
+}
+
+/// `n` with its thousands grouped by commas.
+fn grouped(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
 }
 
 /// The game's caps guacamole's stats answer carries, a never-placed figure's
