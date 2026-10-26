@@ -2983,7 +2983,15 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
                     "{} against {want} (or {seen} a step's fall on)",
                     p.knock
                 );
-                if a.hurt.resist == 0.0 && p.speeds.iter().all(|v| *v > 1.0) {
+                // Its whole run only where its own timer ends it: a lob
+                // landing mid-push sets the knockback again (the hurt
+                // chain's own), cutting this one short. On AH.195's draws
+                // Enemy_Chompy(4)'s from F0 + 184 ran 7 steps, unobstructed
+                // at 0.4 m a step, to the next lob at F0 + 191.
+                let ran_out = snaps
+                    .get(i + 1 + p.speeds.len())
+                    .is_none_or(|s| s.chompies[c].hurt.knock_timer == 0.0);
+                if a.hurt.resist == 0.0 && ran_out && p.speeds.iter().all(|v| *v > 1.0) {
                     assert!((p.speeds[0] - 24.384).abs() < 1e-3);
                     assert_eq!(p.speeds.len(), 10, "{:?}", p.speeds);
                     assert!((16.4..=17.2).contains(&p.speeds[8]), "{:?}", p.speeds);
@@ -2999,9 +3007,64 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
     // the destructibles' inits drew); a hit on a Chompy already stunned is
     // the schedule's test's to hold whatever lands.
     assert!(hits >= 3 && stuns >= 2);
-    let stalled = stalls(&snaps, &limits);
+    // A Chompy closing in behind another runs in place against its body
+    // (AH.232), so its 'battle' can outlast AH.10's longest: held instead to
+    // spending what it runs past it blocked (on AH.195's draws
+    // Enemy_Chompy(3) 264 steps from F0 + 323, 103 of them behind (4)).
+    let stalled: Vec<Stall> = stalls(&snaps, &limits)
+        .into_iter()
+        .filter(|s| !blocked_past(&snaps, s))
+        .collect();
     assert!(stalled.is_empty(), "{stalled:?}");
     println!("load after: {}", load());
+}
+
+/// Whether `stall`'s 'battle' stays past its limit each spent what they ran
+/// past it blocked: steps its walk read over 4 m/s while over the 8 steps
+/// to them it got under a tenth of that further (pushing and pushed back, a
+/// step's move can be half its walk), another Chompy's body within 1.8 m
+/// (bodies touch at 1.73 m, AH.10's drives and ours alike).
+fn blocked_past(snaps: &[Snap], stall: &Stall) -> bool {
+    const SPAN: usize = 8;
+    let Some(c) = CHOMPIES.iter().position(|n| *n == stall.placement) else {
+        return false;
+    };
+    if stall.behaviour != "battle" {
+        return false;
+    }
+    let mut stays: Vec<(usize, usize)> = Vec::new();
+    for (i, s) in snaps.iter().enumerate() {
+        let here = s.chompies[c].beh.as_deref() == Some("battle") && !s.chompies[c].gone;
+        match (here, stays.last_mut()) {
+            (true, Some((_, end))) if *end + 1 == i => *end = i,
+            (true, _) => stays.push((i, i)),
+            (false, _) => {}
+        }
+    }
+    let limit = (stall.longest_stay * 60.0).ceil() as usize;
+    let over: Vec<&(usize, usize)> = stays.iter().filter(|s| s.1 + 1 - s.0 > limit).collect();
+    !over.is_empty()
+        && over.into_iter().all(|&(from, to)| {
+            let blocked = (from.max(SPAN)..=to)
+                .filter(|&i| {
+                    let (was, now) = (&snaps[i - SPAN].chompies[c], &snaps[i].chompies[c]);
+                    let got = Vec3::new(now.pos.x - was.pos.x, 0.0, now.pos.z - was.pos.z).length();
+                    let near = snaps[i].chompies.iter().enumerate().any(|(o, x)| {
+                        o != c
+                            && !x.gone
+                            && Vec3::new(x.pos.x - now.pos.x, 0.0, x.pos.z - now.pos.z).length()
+                                < 1.8
+                    });
+                    now.speed > 4.0 && got < 0.1 * now.speed * SPAN as f32 / 60.0 && near
+                })
+                .count();
+            let stay = to + 1 - from;
+            println!(
+                "{}'s 'battle' from F0 + {} for {stay} steps, {blocked} blocked, its limit {limit}",
+                stall.placement, snaps[from].k
+            );
+            blocked >= stay - limit
+        })
 }
 
 /// In his eruption (combat: Armour can turn a hit away): a bite in its

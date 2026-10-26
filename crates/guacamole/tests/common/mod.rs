@@ -424,9 +424,7 @@ impl Run {
     pub fn step_play(&mut self) -> Result<Vec<Halt>, Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
-        for (h, active) in self.world.activity(&mut self.bench) {
-            self.vm.set_asleep(h, !active);
-        }
+        self.vm.set_activity(&self.world.activity(&mut self.bench));
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();

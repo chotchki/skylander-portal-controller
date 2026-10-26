@@ -701,7 +701,20 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
             t.name, a.position, a.scale
         );
         match t.name.as_str() {
-            "Bird_nest_egg" => assert!(d < 0.05, "{d}"),
+            // An egg stands 1 ft over its nest, lifted `$tilt` x 0.01 ft (0
+            // to 16) while the nest wobbles it, which the nest first rolls
+            // 0-4 s after its first tick (`BirdNest.ai`'s `random(4)`): on
+            // AH.195's draws both after the 2 s run (2.34 and 3.46 s), so
+            // ours stand unlifted where the live ones are mid-wobble. Across,
+            // the live ones sit 2.1-2.5 cm off ours, which the wobble's
+            // vertical displacements don't move: a note, nothing a player
+            // sees.
+            "Bird_nest_egg" => {
+                let lift = 16.0 * 0.01 / guacamole::script_engine::FEET_PER_METRE;
+                assert!((a.position.y - at.y).abs() <= lift + 1e-3, "{d}");
+                let across = Vec3::new(a.position.x - at.x, 0.0, a.position.z - at.z).length();
+                assert!(across < 0.03, "{across}");
+            }
             "Wooden Plank_one" | "Wooden Plank_Two" => {
                 assert!(d < 1e-3, "{d}");
                 assert!([114.0, 294.0].contains(&a.angles.facing.rem_euclid(360.0)));
