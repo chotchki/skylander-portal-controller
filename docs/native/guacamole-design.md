@@ -1235,7 +1235,7 @@ code), 4 of them hazardous (`on-screen` none since AH.107, `start-set` struck at
 | `portal-alerts` | portal alerts (AG's): full screen in the TV's look in our words (AG.63, AG.73), in place of the too-many and wrong-figure alerts | level-scene: One hero at a time; Other figures leave the level as it is; A figure Giants can't use holds the level | AM's line | none | [`alert.rs`](../../crates/guacamole/src/alert.rs) |
 | `pause` | pause and a lost pad (AG's): one-button overlays (AG.20), in place of the pause menu and the controller-loss screen | pad-input: Start pauses the level; One pad walks the hero | AM's line | none | [`pause.rs`](../../crates/guacamole/src/pause.rs) |
 | `player-loop` | the player loop (AH's): the portal manager's own stretches, which run, for whom and when ours (AH.20; AG.28's the camera's frame and each player's camera target, each run apart so a stop leaves the rest running), in place of its tick | pickups: A hero collects orbs, Coins; combat: A defeated hero | AJ's line | none: its slices run where the original's order puts them (AH.59), and what it leaves out is listed in `player_loop` | [`player_loop.rs`](../../crates/guacamole/src/player_loop.rs), [`vm.rs`](../../crates/guac-script/src/vm.rs) |
-| `join` | the join (AH's): the original's macros when a figure goes on (`scripts::join_request`, `join_activate`; the tag by `figure::put_on_portal`, AH.23) and when it comes off mid-level (AH.105's deactivate path, `scripts::join_deactivate`: `Game - Activate/Deactivate Minion` with no minion as `Portal - Exit Object` calls it, then `Portal - Exit Object`'s links undone and his character stream's placements and clones taken off natively), their scheduling ours, in place of the portal's tag handling and the portal manager's tick; the activation's clone answers as the hero (`ScriptWorld::hero_template`), under a handle no actor of the run held, as the original's clones the template afresh (AH.191) | none: the figure on the portal plays him either way | AJ's line | none since AH.165 (the AG.27 merge check found it hazardous: a stop in a join's macro was the portal manager's own, stopping its tick, and with it combat, the hurts and the health write, for the rest of the level, and a stop in the deactivation left his file running, to run twice when he came back). The join's macros are the embedder's calls in the portal manager's name (`Vm::call_for`), which stop nothing, and the deactivation unloads his stream whatever stopped (`Deactivated::halted`); none of the 66 walkers' deactivations the TV runs (52 until AH.150 took the fourteen's asks off the hold), nor Eruptor's at 12 points through his three attacks, stops on the dump (`giants_walkers`' `a_walker_taken_off_and_put_back_runs_his_file_once`), nor the fourteen the TV kept for their asks until AH.150 nor Tree Rex's with his setup through (AH.169's `the_asking_walkers_come_off_whatever_their_deactivation_does`); a synthetic walker stopping in each of the three calls holds each (AH.165's deactivation, AH.169's request and activation). Nor from the minion's handle since AH.191: joined under the last minion's (the headless harnesses' way, never the TV's, whose next hero is an entity of his own), his setup's `Combat - Creature Definition` found the last one's description by its `creature` and made none, so the next walker walked at the last one's numbers; `join_activate` refuses such a handle now, and two synthetic walkers keying their descriptions the same way hold it | [`crates/guacamole/src/scripts.rs`](../../crates/guacamole/src/scripts.rs), [`hero_scripts.rs`](../../crates/guacamole/src/hero_scripts.rs), [`crates/guacamole/src/figure.rs`](../../crates/guacamole/src/figure.rs), [`builder.rs`](../../crates/guac-formats/src/script/builder.rs), [`vm.rs`](../../crates/guac-script/src/vm.rs), [`giants_eruptor.rs`](../../crates/guacamole/tests/giants_eruptor.rs), [`swap.rs`](../../crates/guacamole/src/swap.rs) |
+| `join` | the join (AH's): the original's macros when a figure goes on (`scripts::join_request`, `join_activate`; the tag by `figure::put_on_portal`, AH.23) and when it comes off mid-level (AH.105's deactivate path, `scripts::join_deactivate`: `Game - Activate/Deactivate Minion` with no minion as `Portal - Exit Object` calls it, then `Portal - Exit Object`'s links undone, his minion taken off and his SHUTDOWN run, and his character stream's placements and clones taken off natively, each one's SHUTDOWN run, AH.200), their scheduling ours, in place of the portal's tag handling and the portal manager's tick; the activation's clone answers as the hero (`ScriptWorld::hero_template`), under a handle no actor of the run held, as the original's clones the template afresh (AH.191) | none: the figure on the portal plays him either way | AJ's line | none since AH.165 (the AG.27 merge check found it hazardous: a stop in a join's macro was the portal manager's own, stopping its tick, and with it combat, the hurts and the health write, for the rest of the level, and a stop in the deactivation left his file running, to run twice when he came back). The join's macros are the embedder's calls in the portal manager's name (`Vm::call_for`), which stop nothing, and the deactivation unloads his stream whatever stopped (`Deactivated::halted`); none of the 66 walkers' deactivations the TV runs (52 until AH.150 took the fourteen's asks off the hold), nor Eruptor's at 12 points through his three attacks, stops on the dump (`giants_walkers`' `a_walker_taken_off_and_put_back_runs_his_file_once`), nor the fourteen the TV kept for their asks until AH.150 nor Tree Rex's with his setup through (AH.169's `the_asking_walkers_come_off_whatever_their_deactivation_does`); a synthetic walker stopping in each of the three calls holds each (AH.165's deactivation, AH.169's request and activation). Nor from the minion's handle since AH.191: joined under the last minion's (the headless harnesses' way, never the TV's, whose next hero is an entity of his own), his setup's `Combat - Creature Definition` found the last one's description by its `creature` and made none, so the next walker walked at the last one's numbers; `join_activate` refuses such a handle now, and two synthetic walkers keying their descriptions the same way hold it | [`crates/guacamole/src/scripts.rs`](../../crates/guacamole/src/scripts.rs), [`hero_scripts.rs`](../../crates/guacamole/src/hero_scripts.rs), [`crates/guacamole/src/figure.rs`](../../crates/guacamole/src/figure.rs), [`builder.rs`](../../crates/guac-formats/src/script/builder.rs), [`vm.rs`](../../crates/guac-script/src/vm.rs), [`giants_eruptor.rs`](../../crates/guacamole/tests/giants_eruptor.rs), [`swap.rs`](../../crates/guacamole/src/swap.rs) |
 | `playtime` | playtime (AH's): the TV counts each figure's time on the portal on the real clock (AH.23), in place of the save control's timer and its tag writes | figure-progress: Playtime counts the time in play | AM's line | none | [`crates/guacamole/src/progress.rs`](../../crates/guacamole/src/progress.rs) |
 | `swap-message` | the swap message (AH's), in place of the "Need Remove" interface | combat: A defeated hero | AM's line | none | none |
 | `cosmetic` | cosmetic members (AH's): sprites, particle generators, sounds, lights and strings as value cells nothing draws or plays, in place of the engine drawing and playing them | none | AH.87 (his attacks' particles), the backlog's Particles and Combat sound lines, AM's line (the interface); AH.65 drew the attacks' lights and AH.88 matches them | none: nothing reads them back into play | none |
@@ -1515,12 +1515,52 @@ in a frame: the hero's own script, the game systems (the destructibles, the acto
 UI (the game timer), the portal manager (the death sequence, the combat and projectile managers, the
 pickups), the level's placements as they woke, the mover update, then the actors move.
 
+A level's load takes its placements in the order the file's root list holds them (its first object), not
+the order its objects lie in (AH.195: one
+`--sched` read at AF.8's fresh state, AH.59's way, beside the file's own root list); every actor of the
+five files the scripts load with is on its file's list once. Those awake from the load (no range,
+no buffer) join the awake list then in that order (29 at the state, none out of it); the rest wait on the
+asleep list in that order (468 at the state, none out of it), and the activity check walks that list, so
+those waking in one frame join the awake list's end in its order (54 of the 56 that woke 13.18 s before
+the state, the other two at their end). One going back to sleep joins the asleep list's end. A placement woken ticks
+in its wake frame, and what that tick spawns stands right behind it and first ticks a frame later
+(`Bird_nest_egg` behind `Bird_nest(1)` a frame younger; a boulder waking mid-walk with its five pebbles
+behind it at 0.0 s): AH.210. Three of the state's placements stand where an earlier frame put them:
+`Propellar_Prop`, whose range the intro's STARTUP takes to 0 and its SHUTDOWN puts back, so it slept and
+woke from the list's end; `Sliding_Rock(5)`, which the goats' STARTUP resets (`Goat_Jumping_Pit.ai` and
+`Goat_Running.ai`, op 2), sending it round to the end behind them, so it reads the `open` `Sheep_1` sets the
+frame it's set; and `Norticus_First_Encounter(1)`, woken 0.68 s before the state. The globals ahead of the
+level's keep the recorded head order ([`frame::AWAKE_HEAD`](../../crates/guacamole/src/frame.rs)):
+`global.bld`'s root list orders them too, but for `Spyro_PortalManager`.
+
+A placement taken off that has started runs its SHUTDOWN on the way out (AH.200: one session from anchor B
+replaying AH.11's `swap2` with `combat control data` and the minion sets read at every pause). Eruptor's
+figure taken off left his description in `combat control data`'s `creature descriptions` and him in
+`Minions_Loaded` 5 frames on, the deactivation's sets (`Minions`, `EnemyTargets`) already without him; 20
+frames on both had lost him, and only his SHUTDOWN's `Minion - Shutdown` takes him out of `Minions_Loaded`
+(`Minion.ai` #783) and his description out of the set (`Combat - Creature Shutdown`, `Combat.ai` #3004). The
+next Eruptor's join put one back, a new actor's: at most one minion's entry at every read, 5 with him in
+(his and the four Chompies'), 4 while no figure was on. The VM runs it so (`guac-script`'s crate docs, The tick): a placement taking itself
+off runs its SHUTDOWN at its own tick's end, one taken off by another placement or the embedder in a tick of
+its own once the step's walk is done (the original's queue of shutdowns after its groups, aj-vm's reading),
+the tick ending at SHUTDOWN, no seconds counted; one never started, held, inert or stopped runs none. The
+deactivate path takes his minion off first and runs his SHUTDOWN while his actor stands, then his stream's
+(`scripts::join_deactivate`), at the take-off where the original's ran 5 to 20 frames after the figure left
+(its fade of 0.06 s first).
+
 guacamole's fixed step runs that order in one schedule, [`frame.rs`](../../crates/guacamole/src/frame.rs)'s
 sets (pads, scripts, solids, hero, actors, locomotion, hands, camera, record), every fixed-step system in
 one: the VM walks the activators first and the rest in the order they woke, the player loop's slices in
 their placements' places, and the mover update, reset at the music controller's, last (`guac-script`'s
-crate docs, The tick). A script's own `reset` of a placement doesn't send it round yet (AH.80). Avian's
-step in `FixedPostUpdate` stands for the next frame's physics.
+crate docs, The tick). A level's running placements join it as the load adds them (`scripts::load_order`:
+awake from the load first, then those that wait asleep, each in the root list's order), a character file's at
+his join the same way (`scripts::join_request`; of the 67 the part links Cynder's alone lies otherwise, its
+`Minion_Include_Ghost` first among its objects and last on its list), and those waking in
+one activity pass wake in the order they went to sleep (`Vm::set_activity`): at the fresh state 52 of the 55
+level placements the read and a run joined at the spawn both hold awake stand in the same order (the three
+above the rest, `giants_camera`). A script's own `reset` of a placement doesn't send it round yet (AH.80), so
+`Sliding_Rock(5)` still ticks ahead of the goats (AH.209). Avian's step in `FixedPostUpdate` stands for the
+next frame's physics.
 
 ### How far it drifts from itself (AF.11)
 

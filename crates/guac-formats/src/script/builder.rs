@@ -815,9 +815,9 @@ pub fn attack_with_locomotion() -> Attack {
 /// [`CREATURE_DEFINITION`], which a [`walker_described`] minion's setup
 /// calls. The call finds the description whose `creature` is the caller
 /// and makes one there only when none is (`made` 1, found 2), setting the
-/// caller's own `description` to it; nothing takes one out, as nothing of
-/// the TV's runs a removed minion's SHUTDOWN, where Giants' `Minion -
-/// Shutdown` does.
+/// caller's own `description` to it; [`CREATURE_SHUTDOWN`], which his
+/// SHUTDOWN calls once he's taken off (openspec AH.200), takes it out again,
+/// as Giants' `Minion - Shutdown` does.
 pub fn attack_with_creatures() -> Attack {
     Attack {
         global: attack_global_with(None, false, false, true),
@@ -920,6 +920,25 @@ impl Creatures {
         w.end_block(none);
         w.end_block(fm);
         w.end_block(fd);
+        w.flow_end();
+        w.end_block(p);
+    }
+
+    /// [`CREATURE_SHUTDOWN`]: the description whose `creature` is the caller
+    /// taken out of the set.
+    fn shutdown(&self, w: &mut Writer<'_>) {
+        let (p, _) = define_with(w, CREATURE_SHUTDOWN, &[]);
+        let me = El::Member("optoplevelbehavior", "my");
+        let all = [El::Local(self.control), El::Local(self.descriptions)];
+        let set = w.stack(StackClass::Set, &all);
+        let zero = w.int(0);
+        let (at, each) = w.open(Class::ForEach, "for each");
+        w.refer(each, 0x20, set);
+        w.refer(each, 0x28, zero);
+        let his = w.check_ref(&[El::Local(each), El::Local(self.creature)], 1, &[me]);
+        change_membership(w, &all, 1, &[El::Local(each)]);
+        w.end_block(his);
+        w.end_loop(at);
         w.flow_end();
         w.end_block(p);
     }
@@ -1239,6 +1258,143 @@ pub fn swap(creature_at: [f32; 3]) -> Vec<u8> {
     falling(&mut b, rock, SWAP_ROCK_FALL);
     let blocks = b.section(0x10);
     crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(creature), Some(rock)]);
+    b.build()
+}
+
+/// [`load_order`]'s placements: two awake from the load (no range, no
+/// buffer), the opener and the reader, and two that wait asleep for the
+/// activity rule, each [`LOAD_SLEEPER_RANGE`] ft around it at
+/// [`LOAD_SLEEPER_AT`] (metres).
+pub const LOAD_OPENER: &str = "Synthetic_Opener";
+pub const LOAD_READER: &str = "Synthetic_Reader";
+pub const LOAD_SLEEPER_A: &str = "Synthetic_Sleeper_A";
+pub const LOAD_SLEEPER_B: &str = "Synthetic_Sleeper_B";
+pub const LOAD_SLEEPER_RANGE: f32 = 10.0;
+pub const LOAD_SLEEPER_AT: [[f32; 3]; 2] = [[20.0, 0.0, 0.0], [21.0, 0.0, 0.0]];
+/// The objects' order in the file and its root list's (openspec AH.195):
+/// the load takes the list's.
+pub const LOAD_OBJECTS: [&str; 4] = [LOAD_READER, LOAD_SLEEPER_B, LOAD_OPENER, LOAD_SLEEPER_A];
+pub const LOAD_ROOT: [&str; 4] = [LOAD_SLEEPER_A, LOAD_OPENER, LOAD_SLEEPER_B, LOAD_READER];
+
+/// AH.195's synthetic level (openspec AH.195; design decision 19), its
+/// placements' objects in [`LOAD_OBJECTS`]'s order and its root list in
+/// [`LOAD_ROOT`]'s, our numbers throughout. Every script first reads the
+/// file's `Counter` into its `seen` and counts it on, so `seen` is its
+/// place in the step's walk; then
+///
+/// - [`LOAD_OPENER`], its first tick, sets the reader's `Open` to 1 by
+///   `find variable` (as `Sheep_1` sets `Sliding_Rock(5)`'s);
+/// - [`LOAD_READER`] counts its `Ticks` and, the tick it finds itself open,
+///   keeps that count in `Saw`: 1 when the opener ticked ahead of it in the
+///   first step, 2 a step later;
+/// - [`LOAD_SLEEPER_A`] and [`LOAD_SLEEPER_B`] only count.
+pub fn load_order() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let counter = b.object(0, "ValueInfo", 0x24);
+    b.string(at(counter, 0x08), "Counter");
+    let placed: Vec<Location> = LOAD_OBJECTS
+        .iter()
+        .map(|_| b.object(0, "tfbActorInfo", 0xF8))
+        .collect();
+    let obj = |name: &str| placed[LOAD_OBJECTS.iter().position(|n| *n == name).unwrap()];
+    let reader = obj(LOAD_READER);
+    {
+        let mut w = Writer::new(&mut b);
+        w.meta_word(counter, 0x1C, "IntMeasurement");
+        w.word(counter, 0x20, 0);
+    }
+    // Its place in the walk, then what `then` writes.
+    let counting = |b: &mut IgzBuilder,
+                    path: &str,
+                    extra: &[&str],
+                    then: &dyn Fn(&mut Writer<'_>, &[Location])| {
+        let mut w = Writer::new(b);
+        let seen = w.variable("seen", "ValueInfo", Some("IntMeasurement"));
+        let vars: Vec<Location> = extra
+            .iter()
+            .map(|n| w.variable(n, "ValueInfo", Some("IntMeasurement")))
+            .collect();
+        let script = w.script(
+            path,
+            |_| {},
+            |_| {},
+            |w| {
+                let p = w.behaviour("idle");
+                let v = w.rhs("IntMeasurement", &[El::Local(counter)]);
+                w.set(&[El::Local(seen)], v);
+                w.inc(&[El::Local(counter)]);
+                then(w, &vars);
+                w.end_block(p);
+            },
+        );
+        let mut all = vec![seen];
+        all.extend(&vars);
+        w.declare(script, &all);
+        script
+    };
+    let opener_script = counting(
+        &mut b,
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Opener.ai",
+        &["Done"],
+        &|w, vars| {
+            let zero = w.int(0);
+            let first = w.check(&[El::Local(vars[0])], 1, zero);
+            let owner = w.group(&[El::Local(reader)], None);
+            let (found, f) = w.open(Class::FindVariable, "find variable|||owned by");
+            w.class_word(f, 0x1C, "ValueInfo");
+            w.meta_word(f, 0x20, "IntMeasurement");
+            w.text(f, 0x24, "open");
+            w.word(f, 0x28, 0);
+            w.refer(f, 0x30, owner);
+            let one = w.int(1);
+            w.set(&[El::Local(f)], one);
+            w.end_block(found);
+            let one = w.int(1);
+            w.set(&[El::Local(vars[0])], one);
+            w.end_block(first);
+        },
+    );
+    let reader_script = counting(
+        &mut b,
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Reader.ai",
+        &["Open", "Ticks", "Saw"],
+        &|w, vars| {
+            let [open, ticks, saw] = [vars[0], vars[1], vars[2]];
+            w.inc(&[El::Local(ticks)]);
+            let one = w.int(1);
+            let opened = w.check(&[El::Local(open)], 1, one);
+            let t = w.rhs("IntMeasurement", &[El::Local(ticks)]);
+            w.set(&[El::Local(saw)], t);
+            let two = w.int(2);
+            w.set(&[El::Local(open)], two);
+            w.end_block(opened);
+        },
+    );
+    let sleeper_script = counting(
+        &mut b,
+        "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Sleeper.ai",
+        &[],
+        &|_, _| {},
+    );
+    for (name, &a) in LOAD_OBJECTS.iter().zip(&placed) {
+        let (script, at_m, range) = match *name {
+            LOAD_OPENER => (opener_script, [0.0; 3], 0.0),
+            LOAD_READER => (reader_script, [0.0; 3], 0.0),
+            LOAD_SLEEPER_A => (sleeper_script, LOAD_SLEEPER_AT[0], LOAD_SLEEPER_RANGE),
+            _ => (sleeper_script, LOAD_SLEEPER_AT[1], LOAD_SLEEPER_RANGE),
+        };
+        let [x, y, z] = at_m;
+        place(&mut b, a, name, Some(script), 4, &[x, y, z, 0.0, 0.0, 0.0]);
+        let ranges: Vec<u8> = [range, 0.0f32]
+            .iter()
+            .flat_map(|v| v.to_be_bytes())
+            .collect();
+        b.put_bytes(at(a, 0xD0), &ranges);
+    }
+    let blocks = b.section(0x10);
+    let listed: Vec<Option<Location>> = LOAD_ROOT.iter().map(|n| Some(obj(n))).collect();
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &listed);
     b.build()
 }
 
@@ -1793,11 +1949,37 @@ fn frame_ticking(
     tick: impl FnOnce(&mut Writer<'_>),
     behaviours: impl FnOnce(&mut Writer<'_>),
 ) -> Location {
+    frame_whole(
+        w,
+        name,
+        structures,
+        startup,
+        |_| {},
+        macros,
+        tick,
+        behaviours,
+    )
+}
+
+/// [`frame_ticking`] with SHUTDOWN's ops, `shutdown`'s: what the placement
+/// runs once taken off (openspec AH.200).
+#[allow(clippy::too_many_arguments)]
+fn frame_whole(
+    w: &mut Writer<'_>,
+    name: &str,
+    structures: impl FnOnce(&mut Writer<'_>),
+    startup: impl FnOnce(&mut Writer<'_>),
+    shutdown: impl FnOnce(&mut Writer<'_>),
+    macros: impl FnOnce(&mut Writer<'_>),
+    tick: impl FnOnce(&mut Writer<'_>),
+    behaviours: impl FnOnce(&mut Writer<'_>),
+) -> Location {
     let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
     let (start, _) = w.open(Class::StartUp, "STARTUP");
     startup(w);
     w.end_block(start);
     let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+    shutdown(w);
     w.end_block(shut);
     let (section, _) = w.open(Class::MacroSection, "MACROS");
     macros(w);
@@ -2206,6 +2388,7 @@ fn attack_global_with(
                 }
                 if let Some(c) = &described {
                     c.definition(w);
+                    c.shutdown(w);
                 }
             },
             |w| {
@@ -2677,6 +2860,14 @@ pub const WALKER_OTHER: WalkerSpec = WalkerSpec {
 /// being him, or made there when none is.
 pub const CREATURE_DEFINITION: &str = "Combat - Creature Definition";
 
+/// The macro [`attack_with_creatures`]' `global.bld` defines in the shape
+/// of Giants' `Combat.ai` one of the name (openspec AH.200): the caller's
+/// description, the one in `combat control data`'s `creature descriptions`
+/// whose `creature` is him, taken out of the set, as Giants' `Minion -
+/// Shutdown` has it done for a minion taken off. A [`walker_described`]
+/// minion's SHUTDOWN calls it.
+pub const CREATURE_SHUTDOWN: &str = "Combat - Creature Shutdown";
+
 /// Where [`walker`]'s minion stops, if it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkerFault {
@@ -2763,7 +2954,9 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
 /// to the one in `combat control data`'s `creature descriptions` whose
 /// `creature` is him, his movement parameters written into it only when
 /// the call made it (its `made` 1), as the original's hook-up runs only in
-/// the making. The part's `global.bld` is [`attack_with_creatures`]'.
+/// the making; his SHUTDOWN calls [`CREATURE_SHUTDOWN`], taking it out of
+/// the set once he's taken off (openspec AH.200). The part's `global.bld`
+/// is [`attack_with_creatures`]'.
 pub fn walker_described(spec: &WalkerSpec) -> Vec<u8> {
     walker_with(spec, WalkerFault::None, true)
 }
@@ -2810,7 +3003,7 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
         // Whether his description's call made it (1) or found it (2).
         let made = described.then(|| w.variable("made", "ValueInfo", Some("IntMeasurement")));
         let lookup = std::cell::Cell::new(None);
-        let script = frame_with(
+        let script = frame_whole(
             &mut w,
             &format!(
                 "C:/tfb/Content/Levels/Includes/Minions/{}/scripts/{}",
@@ -2903,6 +3096,15 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                     }
                 }
             },
+            // Described, his SHUTDOWN takes his description out of the set
+            // (openspec AH.200), as Giants' `Minion - Shutdown` does through
+            // `Combat - Creature Shutdown`.
+            |w| {
+                if described {
+                    let stub = w.op(Class::DefineMacro, CREATURE_SHUTDOWN);
+                    call_stub(w, stub, &[]);
+                }
+            },
             |w| {
                 let stops = match fault {
                     WalkerFault::InDeactivation => Some(WALKER_SHUTDOWN),
@@ -2927,6 +3129,7 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                 w.end_block(p);
                 lookup.set(Some(def));
             },
+            |_| {},
             |w| {
                 let p = w.behaviour("default");
                 if fault == WalkerFault::GatedAsk {

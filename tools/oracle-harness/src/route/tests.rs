@@ -1252,6 +1252,43 @@ fn a_route_reads_from_ron_and_what_no_run_can_do_is_refused() {
     }
 }
 
+/// AH.200: a dump of globals reads as many levels down as it asks, the
+/// whole read without a depth, and asks 1 to the whole read's.
+#[test]
+fn a_globals_dump_reads_as_deep_as_it_asks() {
+    let plan = RoutePlan::from_ron(
+        "(steps: [Globals(names: [\"combat control data\"], label: \"a\", depth: Some(3)), \
+         Globals(names: [\"Minions_Loaded\"], label: \"b\"), Vars(placement: \"x\", label: \"c\")])",
+    )
+    .unwrap();
+    assert_eq!(
+        plan.steps[0],
+        Step::Globals {
+            names: vec!["combat control data".into()],
+            label: "a".into(),
+            depth: Some(3),
+        }
+    );
+    assert_eq!(plan.steps[0].dump_depth(), 3);
+    assert_eq!(plan.steps[1].dump_depth(), crate::script::TREE_DEPTH);
+    assert_eq!(plan.steps[2].dump_depth(), crate::script::TREE_DEPTH);
+    assert_eq!(RoutePlan::from_ron(&plan.to_ron()).unwrap(), plan);
+    let deepest = format!(
+        "(steps: [Globals(names: [\"a\"], label: \"g\", depth: Some({}))])",
+        crate::script::TREE_DEPTH
+    );
+    assert!(RoutePlan::from_ron(&deepest).is_ok());
+    for bad in [
+        "(steps: [Globals(names: [\"a\"], label: \"g\", depth: Some(0))])".to_owned(),
+        format!(
+            "(steps: [Globals(names: [\"a\"], label: \"g\", depth: Some({}))])",
+            crate::script::TREE_DEPTH + 1
+        ),
+    ] {
+        assert!(RoutePlan::from_ron(&bad).is_err(), "{bad}");
+    }
+}
+
 /// A look made by hand: his pivot at (`x`, `z`), still unless `speed` says
 /// otherwise (along -x), the view and eye fixed unless `eye` moves it.
 fn look(flip: u64, x: f64, z: f64, speed: f64, eye: f64) -> Seen {

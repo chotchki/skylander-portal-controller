@@ -51,7 +51,9 @@ use std::sync::Arc;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use guac_formats::igz::Igz;
-use guac_formats::igz::layouts::{ActorWaypoint, ActorWaypointList, Layout, LightInfo, is_a};
+use guac_formats::igz::layouts::{
+    ActorWaypoint, ActorWaypointList, Layout, LightInfo, ObjectRef, RootList, is_a,
+};
 use guac_formats::level::Placements;
 use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
@@ -113,6 +115,10 @@ pub struct Placed {
     /// Its model's path as its file names it, if it has one: what a clone of
     /// it draws (openspec AH.24).
     pub model: Option<String>,
+    /// Its place in its file's root list (the file's first object), the
+    /// order the original's load takes the file's placements in (openspec
+    /// AH.195); one off the list after the listed ones, by its object.
+    pub load: u32,
 }
 
 impl Placed {
@@ -135,6 +141,7 @@ impl Placed {
             physics: None,
             solid: None,
             model: None,
+            load: 0,
         }
     }
 }
@@ -142,7 +149,8 @@ impl Placed {
 /// What the host reads off the files the scripts load with.
 #[derive(Debug, Clone, Default)]
 pub struct Files {
-    /// Every actor placement, file by file, each file's in object order.
+    /// Every actor placement, file by file, each file's in object order
+    /// (its load order is [`Placed::load`]'s).
     pub placed: Vec<Placed>,
     /// Every placement's `_ID`, sprites and lights included.
     pub ids: HashMap<Obj, i32>,
@@ -187,6 +195,7 @@ impl Files {
                 }
             }
             let placements = Placements::read(igz).map_err(|e| e.to_string())?;
+            let roots = root_places(igz);
             for (index, l) in &placements.lights {
                 out.lights.insert(
                     Obj {
@@ -263,11 +272,32 @@ impl Files {
                     physics,
                     solid,
                     model: placements.model_path(actor).map(str::to_owned),
+                    load: match roots.get(&actor.index) {
+                        Some(&k) => k,
+                        None => roots.len() as u32 + actor.index as u32,
+                    },
                 });
             }
         }
         Ok(out)
     }
+}
+
+/// Each object the file's root list (its first object, an `igObjectList`)
+/// holds, by index, with its place on the list; none for a file without
+/// one. Every actor placement of the five files level 213's scripts load
+/// with is on its file's list once (AH.195's read of the disc).
+fn root_places(igz: &Igz<'_>) -> HashMap<usize, u32> {
+    let Ok(root) = RootList::read(igz, 0) else {
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for (k, e) in root.elements.iter().enumerate() {
+        if let ObjectRef::Object(i) = e {
+            out.entry(*i).or_insert(k as u32);
+        }
+    }
+    out
 }
 
 /// A name a trigger goes by (AH.4's live read, as the oracle harness's
@@ -1932,12 +1962,10 @@ pub fn fight_config(mode: Mode) -> Config {
 
 /// The VM over `program` with every running placement of `files` added
 /// unit by unit (`global.bld`'s, then `init_setup.bld`'s, then the level's,
-/// by `order`'s units), each under the handle `handles` gives its object;
-/// every placement's object is named, scripted or not. Within a unit, those
-/// [`crate::frame::AWAKE_HEAD`] names go first in its order, the order the
-/// original's scheduler holds `global.bld`'s in (openspec AH.59), the rest
-/// after them in file order. A running placement whose script the program
-/// lacks is left out, logged.
+/// by `order`'s units), each under the handle `handles` gives its object,
+/// in the order the original's load adds them ([`load_order`]); every
+/// placement's object is named, scripted or not. A running placement whose
+/// script the program lacks is left out, logged.
 pub fn init_chain(
     program: Arc<Program>,
     files: &Files,
@@ -1957,16 +1985,8 @@ pub fn init_chain(
         .enumerate()
         .map(|(i, s)| ((s.unit, s.name.as_str()), i as u32))
         .collect();
-    let head = |p: &&Placed| {
-        crate::frame::AWAKE_HEAD
-            .iter()
-            .position(|n| *n == p.name)
-            .unwrap_or(usize::MAX)
-    };
     for &unit in order {
-        let mut placed: Vec<&Placed> = files.placed.iter().filter(|p| p.obj.unit == unit).collect();
-        placed.sort_by_key(head);
-        for p in placed {
+        for p in load_order(files, unit) {
             let (Some(script), RUNNING) = (&p.script, p.activity_state) else {
                 continue;
             };
@@ -1984,6 +2004,35 @@ pub fn init_chain(
     vm
 }
 
+/// The placements of the file linked as `unit` in the order the original's
+/// load adds them to its scheduler (openspec AH.195; the design doc's The
+/// frame's order): `global.bld`'s [`crate::frame::AWAKE_HEAD`] names first,
+/// in that order (AH.59: the globals as its scheduler held them); then
+/// those awake from the load ([`awake`] with no hero: no activation range
+/// and no buffer), then those that wait asleep for the activity rule, each
+/// in the file's root-list order ([`Placed::load`]), not the order its
+/// objects lie in. AF.8's fresh state (AH.195's read) holds level 213 so:
+/// the 29 awake from its load in root-list order, behind them 54 of the
+/// 56 that woke in one frame 13.18 s before it, in root-list order too
+/// (`Propellar_Prop` and `Sliding_Rock(5)` at their end, an earlier
+/// frame's doing), and the 468 still asleep in it. One woken later joins
+/// the awake list's end ([`Vm::set_activity`]), as a character file's
+/// running placements do at his join ([`join_request`], in this order too:
+/// of the 67 character files the part links, Cynder's alone lies otherwise,
+/// his `Minion_Include_Ghost` first among its objects and last on its root
+/// list, behind his definition and tuning actor; AH.195's review).
+pub fn load_order(files: &Files, unit: u16) -> Vec<&Placed> {
+    let head = |p: &Placed| {
+        crate::frame::AWAKE_HEAD
+            .iter()
+            .position(|n| *n == p.name)
+            .unwrap_or(usize::MAX)
+    };
+    let mut placed: Vec<&Placed> = files.placed.iter().filter(|p| p.obj.unit == unit).collect();
+    placed.sort_by_key(|p| (head(p), !awake(p.range, p.buffer, false, None), p.load));
+    placed
+}
+
 /// The portal manager, whose macros the join calls as its own tick would
 /// ([`join_request`], [`join_activate`]; stand-in ledger: `join`).
 pub const PORTAL_MANAGER: &str = "Spyro_PortalManager";
@@ -1996,9 +2045,10 @@ pub const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 /// loaded data (slot 0 of `portal control data.$loaded objects`), as the
 /// portal control's tag handling does; then the character file's running
 /// placements (its definition, its tuning actor) join the VM, listed for
-/// every tick, under `handles`: the definition's first tick registers the
-/// minion into that loaded data (`Portal - Define Minion`). The portal's tag,
-/// the level streaming and the entry beam aren't run (AJ's, AM's).
+/// every tick, under `handles`, in the order its load adds them
+/// ([`load_order`], openspec AH.195): the definition's first tick registers
+/// the minion into that loaded data (`Portal - Define Minion`). The portal's
+/// tag, the level streaming and the entry beam aren't run (AJ's, AM's).
 pub fn join_request(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
@@ -2023,7 +2073,7 @@ pub fn join_request(
         .map(|(i, s)| ((s.unit, s.name.as_str()), i as u32))
         .collect();
     let mut added = Vec::new();
-    for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+    for p in load_order(files, unit) {
         // His file loaded again after a swap took it off (openspec AH.105,
         // [`join_deactivate`]): each placement as the file has it, as a
         // stream loaded anew makes it.
@@ -2136,8 +2186,9 @@ pub struct Deactivated {
     pub clones: Vec<Handle>,
     /// Where the deactivation stopped short of the original's (openspec
     /// AH.165): its macro stopping (a shutdown macro of his on a member
-    /// nothing models) or the exit's links finding no place in the program.
-    /// The rest ran: the portal manager runs on and his stream is unloaded.
+    /// nothing models), the exit's links finding no place in the program, or
+    /// a SHUTDOWN of what it took off stopping (AH.200). The rest ran: the
+    /// portal manager runs on and his stream is unloaded.
     pub halted: Option<Halt>,
 }
 
@@ -2152,16 +2203,22 @@ pub struct Deactivated {
 /// removed, the enemies where he stood alerted (`Vanish Alert`). That macro
 /// runs here as `Portal - Exit Object` calls it (unless his minion never
 /// activated); then, natively, the exit's links undone
-/// ([`crate::figure::exit`]) and the stream's unloading: every placement of
-/// unit `unit` and every clone of its templates, `hero` among them, taken
-/// off the world and the VM, his minion no longer the activator, his
-/// sequences stopped. Not waited for: the fade (it ignores the pause the TV
-/// holds the level in). Not run: the stream's bookkeeping, the exit beam
-/// and its pause (AG.29 holds the level), and the marker actor it leaves
-/// where he stood (AG.81 stands the next one there).
+/// ([`crate::figure::exit`]); his minion taken off the VM, no longer the
+/// activator, and its SHUTDOWN run (openspec AH.200: the original runs it
+/// as the fade takes him off, his `Minion - Shutdown` taking his
+/// description out of `combat control data`'s set); then the stream's
+/// unloading: every placement of unit `unit` and every clone of its
+/// templates, `hero` among them, taken off the world and the VM, his
+/// sequences stopped, and the SHUTDOWN of each run. Not waited for: the
+/// fade (it ignores the pause the TV holds the level in), so his SHUTDOWN
+/// runs at the take-off, where the original's ran 5 to 20 frames after the
+/// figure left. Not run: the stream's bookkeeping, the exit beam and its
+/// pause (AG.29 holds the level), and the marker actor it leaves where he
+/// stood (AG.81 stands the next one there).
 ///
-/// A stop in the macro or the links is kept in [`Deactivated::halted`] and
-/// the rest still runs (openspec AH.165): the macro is the embedder's call
+/// A stop in the macro, the links or a SHUTDOWN is kept in
+/// [`Deactivated::halted`] (the first) and the rest still runs (openspec
+/// AH.165): the macro is the embedder's call
 /// in the portal manager's name ([`Vm::call_for`]), so the portal manager
 /// ticks on, and his stream is unloaded whatever stopped, so nothing of his
 /// file ticks on in the run or runs twice when his figure comes back. What
@@ -2185,50 +2242,81 @@ pub fn join_deactivate(
             Some(_) => warn!(%h, "his figure's exit links didn't undo either"),
         }
     }
-    let world = &mut *host.world;
-    let mut placements = Vec::new();
-    for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
-        let Some(&h) = world.objects.get(&p.obj) else {
-            continue;
-        };
-        if let Some(a) = world.actors.get_mut(&h)
-            && !a.removed
-        {
-            a.removed = true;
-            placements.push(h);
-        }
-        vm.remove(h);
-    }
-    let mut clones: Vec<Handle> = world
-        .actors
-        .iter()
-        .filter(|(_, a)| a.obj.is_none() && !a.removed)
-        .filter(|(_, a)| a.template.is_some_and(|t| t.unit == unit))
-        .map(|(h, _)| *h)
-        .collect();
-    clones.sort_unstable();
-    // His minion no longer the activator: the next one's is.
+    // His minion off first, no longer the activator (the next one's is),
+    // and his SHUTDOWN run while his actor stands (openspec AH.200): the
+    // original's keyframer takes the minion off ahead of the stream, and his
+    // `Minion - Shutdown` takes him out of `Minions_Loaded` and his
+    // description out of `combat control data`'s set.
     vm.set_activator(hero, false);
-    for &h in &clones {
-        if let Some(a) = world.actors.get_mut(&h) {
-            a.removed = true;
-        }
-        vm.remove(h);
-    }
     vm.remove(hero);
-    let gone: std::collections::HashSet<Handle> =
-        clones.iter().chain(&placements).copied().collect();
-    for s in &mut world.sequences {
-        if gone.contains(&s.actor) || s.actor == hero {
-            s.stopped = true;
+    shut_down(vm, host, &mut halted);
+    let (mut placements, clones) = {
+        let world = &mut *host.world;
+        let mut placements = Vec::new();
+        for p in files.placed.iter().filter(|p| p.obj.unit == unit) {
+            let Some(&h) = world.objects.get(&p.obj) else {
+                continue;
+            };
+            if let Some(a) = world.actors.get_mut(&h)
+                && !a.removed
+            {
+                a.removed = true;
+                placements.push(h);
+            }
+            vm.remove(h);
         }
-    }
+        let mut clones: Vec<Handle> = world
+            .actors
+            .iter()
+            .filter(|(_, a)| a.obj.is_none() && !a.removed)
+            .filter(|(_, a)| a.template.is_some_and(|t| t.unit == unit))
+            .map(|(h, _)| *h)
+            .collect();
+        clones.sort_unstable();
+        for &h in &clones {
+            if let Some(a) = world.actors.get_mut(&h) {
+                a.removed = true;
+            }
+            vm.remove(h);
+        }
+        let gone: std::collections::HashSet<Handle> =
+            clones.iter().chain(&placements).copied().collect();
+        for s in &mut world.sequences {
+            if gone.contains(&s.actor) || s.actor == hero {
+                s.stopped = true;
+            }
+        }
+        (placements, clones)
+    };
+    // Then the SHUTDOWN of what the stream's unloading took off.
+    shut_down(vm, host, &mut halted);
     placements.sort_unstable();
     Deactivated {
         minion,
         placements,
         clones,
         halted,
+    }
+}
+
+/// The SHUTDOWN of each placement taken off with one to run ([`Vm::shut_down`]),
+/// each stop kept in `halted` when it holds none yet, logged otherwise: the
+/// deactivation's own work, which stops nothing else (openspec AH.165).
+fn shut_down(vm: &mut Vm, host: &mut WorldHost<'_, '_>, halted: &mut Option<Halt>) {
+    let mut keep = |h: Halt| match halted {
+        None => *halted = Some(h),
+        Some(_) => warn!(%h, "a SHUTDOWN of his stopped too"),
+    };
+    loop {
+        match vm.shut_down(host) {
+            Ok(report) => {
+                report.stopped.into_iter().for_each(&mut keep);
+                break;
+            }
+            // Strict mode's stop: the one it ran is off the queue, so the
+            // rest run on.
+            Err(h) => keep(h),
+        }
     }
 }
 
@@ -3461,6 +3549,161 @@ mod tests {
         step(&mut vm, &mut world, &mut him);
         step(&mut vm, &mut world, &mut him);
         assert_eq!(vm.behaviour(id), Some("chompy - intro"));
+    }
+
+    /// AH.195's synthetic level ([`guac_formats::script::builder::load_order`])
+    /// linked alone, read as the TV reads a part, and its VM over every
+    /// script, strict: the files, the handles, the VM and the world.
+    fn load_order_run() -> (Files, HashMap<Obj, Handle>, Vm, ScriptWorld) {
+        use guac_formats::script::Graph;
+        let bytes = guac_formats::script::builder::load_order();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = guac_script::Unit {
+            name: "level",
+            role: guac_script::Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let files = Files::read(&[(0, &igz)]).unwrap();
+        let handles = headless_handles(&files);
+        let mut c = Config::new(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let vm = init_chain(program, &files, &handles, &[0], c);
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        (files, handles, vm, world)
+    }
+
+    /// One step from where the activity rule is measured (metres).
+    fn load_order_step(vm: &mut Vm, world: &mut ScriptWorld, from: Vec3) {
+        vm.set_activity(&world.activity_at(&[from]));
+        let mut spawn = headless_spawner(1 << 40);
+        let mut host = WorldHost {
+            world,
+            engine: &mut NoEngine,
+            generator: &mut Generator::seeded(1),
+            spawn: &mut spawn,
+        };
+        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+    }
+
+    /// Each placement's `seen` (its place in the last step's walk), in
+    /// `names`' order.
+    fn load_order_seen(
+        vm: &Vm,
+        files: &Files,
+        handles: &HashMap<Obj, Handle>,
+        names: &[&str],
+    ) -> Vec<Option<Value>> {
+        names
+            .iter()
+            .map(|n| {
+                let p = files.placed.iter().find(|p| p.name == *n).unwrap();
+                vm.local(vm.placement_of(handles[&p.obj]).unwrap(), "seen")
+            })
+            .collect()
+    }
+
+    fn ints(v: &[i32]) -> Vec<Option<Value>> {
+        v.iter().map(|&n| Some(Value::Int(n))).collect()
+    }
+
+    /// openspec AH.195: a level's placements join the VM in the order its
+    /// load adds them, its file's root list's, not the order its objects lie
+    /// in, those awake from the load ahead of those that wait asleep: the
+    /// opener (second on the list, third in the file) ahead of the reader
+    /// (last on the list, first in the file), so the reader finds itself open
+    /// the step the opener opens it, as the original's `Sliding_Rock(5)`
+    /// reads the `open` `Sheep_1` sets the frame it's set.
+    #[test]
+    fn a_levels_placements_tick_in_its_root_lists_order_not_its_objects() {
+        use guac_formats::script::builder::{
+            LOAD_OBJECTS, LOAD_OPENER, LOAD_READER, LOAD_ROOT, LOAD_SLEEPER_A, LOAD_SLEEPER_B,
+        };
+        let (files, handles, mut vm, mut world) = load_order_run();
+        let names: Vec<&str> = files.placed.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, LOAD_OBJECTS, "the files' placements in object order");
+        for p in &files.placed {
+            let k = LOAD_ROOT.iter().position(|n| *n == p.name).unwrap();
+            assert_eq!(p.load, k as u32, "{}", p.name);
+        }
+        let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+        assert_eq!(
+            order,
+            [LOAD_OPENER, LOAD_READER, LOAD_SLEEPER_A, LOAD_SLEEPER_B],
+            "awake from the load first, each part in the root list's order"
+        );
+        load_order_step(&mut vm, &mut world, Vec3::new(-100.0, 0.0, 0.0));
+        let all = [LOAD_OPENER, LOAD_READER, LOAD_SLEEPER_A, LOAD_SLEEPER_B];
+        let seen = load_order_seen(&vm, &files, &handles, &all);
+        assert_eq!(seen[..2], ints(&[0, 1]), "the opener, then the reader");
+        assert_eq!(seen[2..], [None, None], "the sleepers asleep, out of range");
+        let reader = files.placed.iter().find(|p| p.name == LOAD_READER).unwrap();
+        let reader = vm.placement_of(handles[&reader.obj]).unwrap();
+        assert_eq!(
+            vm.local(reader, "Saw"),
+            Some(Value::Int(1)),
+            "open its first tick"
+        );
+    }
+
+    /// openspec AH.195: a placement woken later joins the awake placements'
+    /// end, and those waking in one pass wake in the order they went to
+    /// sleep, not the pass's (its handles') or the file's: the sleepers,
+    /// asleep from the load in the root list's order, wake A then B though
+    /// the pass names B first; then B, out of range first, and A after it
+    /// wake B then A.
+    #[test]
+    fn a_placement_woken_later_takes_its_place_behind_the_awake() {
+        use guac_formats::script::builder::{
+            LOAD_OPENER, LOAD_READER, LOAD_SLEEPER_A, LOAD_SLEEPER_AT, LOAD_SLEEPER_B,
+        };
+        let (files, handles, mut vm, mut world) = load_order_run();
+        let all = [LOAD_OPENER, LOAD_READER, LOAD_SLEEPER_A, LOAD_SLEEPER_B];
+        let far = Vec3::new(-100.0, 0.0, 0.0);
+        load_order_step(&mut vm, &mut world, far);
+        let [a, b] = LOAD_SLEEPER_AT.map(Vec3::from_array);
+        let both = (a + b) / 2.0;
+        let pass = world.activity_at(&[both]);
+        let named: Vec<&str> = pass
+            .iter()
+            .map(|(h, _)| {
+                files
+                    .placed
+                    .iter()
+                    .find(|p| handles[&p.obj] == *h)
+                    .unwrap()
+                    .name
+                    .as_str()
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [LOAD_READER, LOAD_SLEEPER_B, LOAD_OPENER, LOAD_SLEEPER_A],
+            "the pass names them by handle"
+        );
+        load_order_step(&mut vm, &mut world, both);
+        assert_eq!(
+            load_order_seen(&vm, &files, &handles, &all),
+            ints(&[2, 3, 4, 5]),
+            "woken behind the awake, A then B as they slept"
+        );
+        // B out of range alone (A 2.5 m off, B 3.5 m, the range 3.048 m),
+        // then A too; then both back.
+        let toward_a = a - Vec3::new(2.5, 0.0, 0.0);
+        load_order_step(&mut vm, &mut world, toward_a);
+        assert_eq!(
+            load_order_seen(&vm, &files, &handles, &all),
+            ints(&[6, 7, 8, 5])
+        );
+        load_order_step(&mut vm, &mut world, far);
+        load_order_step(&mut vm, &mut world, both);
+        assert_eq!(
+            load_order_seen(&vm, &files, &handles, &all),
+            ints(&[11, 12, 14, 13]),
+            "B, then A, as they went to sleep"
+        );
     }
 
     /// openspec AH.59: `init_chain` adds the placements of a unit that

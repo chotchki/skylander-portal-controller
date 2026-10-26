@@ -350,9 +350,7 @@ mod tests {
         /// One step as the TV's: the activity rule, the pads, every tick,
         /// the clones added, his engine step, the engine's frame.
         fn step(&mut self, actions: [bool; 4]) {
-            for (h, active) in self.world.activity(&mut self.bench) {
-                self.vm.set_asleep(h, !active);
-            }
+            self.vm.set_activity(&self.world.activity(&mut self.bench));
             self.world.read_pads([
                 Pad {
                     stick: self.stick,
@@ -1104,8 +1102,9 @@ mod tests {
     /// `Combat.ai`'s `Combat - Creature Definition`, which makes one (his
     /// movement parameters off his setup's numbers) only when none names
     /// him; the second joins as an actor of his own, as the TV's next hero
-    /// is an entity of his own, so the first's (left in the set: nothing
-    /// runs a removed minion's SHUTDOWN) answers for nobody.
+    /// is an entity of his own, so no description of the first's answers
+    /// for him (since AH.200 his SHUTDOWN takes the first's out of the set at
+    /// the take-off: `a_minion_taken_off_leaves_one_description_in_the_set`).
     #[test]
     fn a_walker_put_in_after_another_walks_at_his_own_numbers() {
         for (first, second) in [(WALKER, WALKER_OTHER), (WALKER_OTHER, WALKER)] {
@@ -1209,5 +1208,71 @@ mod tests {
         }
         assert_eq!(read(&run, b, "made"), Some(Value::Int(1)), "made for him");
         assert_ne!(read(&run, b, "description"), first, "his own");
+    }
+
+    /// Whose descriptions `combat control data`'s set holds, in its order:
+    /// a description left behind for a minion taken off shows as his handle.
+    fn descriptions(run: &mut Run) -> Vec<Value> {
+        let g = run
+            .vm
+            .program()
+            .global_named("combat control data")
+            .expect("the global");
+        let control = run.vm.global(g).expect("made");
+        let set = run
+            .vm
+            .field(control, "creature descriptions")
+            .map(|v| run.vm.value(v))
+            .and_then(|s| run.vm.set(s).map(<[Value]>::to_vec))
+            .unwrap_or_default();
+        set.into_iter()
+            .map(|d| {
+                run.vm
+                    .field(d, "creature")
+                    .map_or(Value::Null, |v| run.vm.value(v))
+            })
+            .collect()
+    }
+
+    /// AH.200 (found at AH.191: a swap left the last minion's description in
+    /// the set): a minion taken off runs his SHUTDOWN, as the original's do
+    /// (AH.200's oracle read across AH.11's `swap2`: Eruptor's description
+    /// out of `combat control data`'s set and him out of `Minions_Loaded`
+    /// between 5 and 20 frames after his figure left, one back at the next
+    /// join), so across swaps either way round and back the set holds his
+    /// alone while he's in and none from the take-off on.
+    #[test]
+    fn a_minion_taken_off_leaves_one_description_in_the_set() {
+        let (mut run, units) = Run::walkers_described();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        for (k, spec) in [WALKER, WALKER_OTHER, WALKER].iter().enumerate() {
+            run.fighter = units[spec.load];
+            let m = run.join();
+            for _ in 0..5 {
+                run.step([false; 4]);
+            }
+            let him = run.bench.handle;
+            assert_eq!(
+                descriptions(&mut run),
+                [Value::Entity(him)],
+                "{k}: {} in, his alone",
+                spec.load
+            );
+            let desc = run.vm.local(m, "description").map(|v| run.vm.value(v));
+            assert!(desc.is_some_and(|d| d != Value::Null), "{k}: his own");
+            let gone = run.deactivate();
+            assert!(gone.minion, "{k}");
+            assert_eq!(descriptions(&mut run), [], "{k}: none at the take-off");
+            // Every SHUTDOWN of his, his stream's too, ran in the
+            // deactivation, none left for the next step's end, where the
+            // join's placements under the same handles could meet it.
+            let left = run.host(|vm, host| vm.shut_down(host).unwrap().ticked);
+            assert_eq!(left, 0, "{k}: none of his SHUTDOWNs left");
+            for _ in 0..3 {
+                run.step([false; 4]);
+            }
+            assert_eq!(descriptions(&mut run), [], "{k}: nor after");
+        }
     }
 }

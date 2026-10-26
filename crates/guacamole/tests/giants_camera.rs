@@ -202,9 +202,7 @@ fn tick(run: &mut Run, step: f32, next: Vec3, facing: f32) -> Result<(), Halt> {
     run.vm.set_tick_seconds(step);
     let pads = run.bench.pads;
     run.world.read_pads(pads);
-    for (h, active) in run.world.activity(&mut run.bench) {
-        run.vm.set_asleep(h, !active);
-    }
+    run.vm.set_activity(&run.world.activity(&mut run.bench));
     let joined = run.minion.is_some();
     let player_loop = run.player_loop.clone();
     let mut stopped = Vec::new();
@@ -1691,11 +1689,19 @@ fn the_rock_slides_three_waves_on_the_corridor_walks() {
         }
         // Each VM rock's fall starts an `x` wave two records on, or its
         // call (the step after the fall shows) comes inside one at the new
-        // wave's peak and leaves it running.
+        // wave's peak and leaves it running, or the next rock falls a record
+        // later and its call restarts the axis before this one's wave has
+        // first moved (`Game - Shake Cam` restarts an axis below 2.5 times
+        // the magnitude), so the wave is the later fall's. The last came
+        // with AH.195's order, which changed every draw of the VM's own from
+        // the first step on: on AG.13's `W-01` the activator's two rocks now
+        // fall at records 411 and 412, the wave from 414.
         for &f in vm_falls {
             let k = f + WAVE_AFTER_FALL;
             assert!(
-                vm_starts.contains(&k) || shake_x[f + 1].abs() + 1e-4 >= x_keys[0],
+                vm_starts.contains(&k)
+                    || shake_x[f + 1].abs() + 1e-4 >= x_keys[0]
+                    || vm_falls.contains(&(f + 1)) && vm_starts.contains(&(k + 1)),
                 "{}: the fall at {f}: x starts {vm_starts:?}",
                 r.name
             );
@@ -1738,4 +1744,167 @@ fn the_rock_slides_three_waves_on_the_corridor_walks() {
     );
     assert!(worst_law < 1e-4, "{worst_law}");
     assert!(worst_eye < 5e-5, "{worst_eye}");
+}
+
+// ---- (6) the level's placements in the scheduler's order (AH.195) ----
+
+/// AH.195's one oracle read: `oracle goto --sched` from AF.8's fresh state
+/// (AH.59's way), its scheduler's lists at F0.
+const AH195: &str = "ah195-sched-1792963062/corridor";
+
+/// Group `g`'s actors' names at F0 of AH.195's read, in its order (1 the
+/// scheduler's awake placements, 3 those taken off: AH.59).
+fn read_group(g: usize) -> Vec<String> {
+    let root = env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR");
+    let file = PathBuf::from(root)
+        .join("BLUS30968")
+        .join(AH195)
+        .join("sched-f0.json");
+    let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    v["groups"][g][0]
+        .as_array()
+        .expect("the group's actors")
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The longest run of `a` that is also in `b`'s order (both hold each name
+/// once): what keeps its place; the rest moved.
+fn kept_in_order(a: &[String], b: &[String]) -> Vec<String> {
+    let (n, m) = (a.len(), b.len());
+    let mut t = vec![vec![0u16; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            t[i][j] = if a[i] == b[j] {
+                t[i + 1][j + 1] + 1
+            } else {
+                t[i + 1][j].max(t[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < n && j < m {
+        if a[i] == b[j] {
+            out.push(a[i].clone());
+            (i, j) = (i + 1, j + 1);
+        } else if t[i + 1][j] >= t[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// AH.195: the VM's awake placements of level 213 against the original
+/// scheduler's at AF.8's fresh state (AH.195's read), placement by
+/// placement, the run joined at the spawn (`fresh`); placements of the level
+/// only (a name the file's running placements hold once). The read holds
+/// 86 of the level's among its 165 awake, the VM 69: 55 in both, 52 of them
+/// in the same order. The three that moved got their places in the
+/// original before the state, which a run from the level's start doesn't
+/// have: `Propellar_Prop`, whose range the intro's script takes to 0 at its
+/// STARTUP and puts back at its SHUTDOWN, `Sliding_Rock(5)`, which the
+/// goats' STARTUP resets (`Goat_Jumping_Pit.ai` and `Goat_Running.ai`, op 2),
+/// sending it round behind them (AH.80's reset, AH.209), and
+/// `Norticus_First_Encounter(1)` (260 ft), woken 0.68 s before the state,
+/// where the run measures the hero's 255 ft from it from its first step.
+/// Only the read's: placements with no script, which the activity rule
+/// wakes in the world and the VM doesn't hold. Only the VM's: placements off
+/// the whitelist, inert here, whose own STARTUP took them off there (the
+/// read's group 3).
+#[test]
+#[ignore = "reads the Giants dump and AH.195's read"]
+fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
+    let load = load();
+    let run = fresh();
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for p in run.files.placed.iter().filter(|p| p.obj.unit == LEVEL) {
+        if p.activity_state == 4 {
+            *counts.entry(p.name.as_str()).or_default() += 1;
+        }
+    }
+    let level = |n: &str| counts.get(n) == Some(&1);
+    let placed = |n: &str| {
+        run.files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == n)
+            .unwrap()
+    };
+    let awake = read_group(1);
+    let read: Vec<String> = awake.iter().filter(|n| level(n)).cloned().collect();
+    let vm: Vec<String> = run
+        .vm
+        .tick_order()
+        .into_iter()
+        .map(|(_, n)| n)
+        .filter(|n| level(n))
+        .filter(|n| {
+            let id = run.vm.placement_of(run.handles[&placed(n).obj]).unwrap();
+            !run.vm.asleep(id) && !run.vm.removed(id)
+        })
+        .collect();
+    let shared: Vec<String> = vm.iter().filter(|n| read.contains(n)).cloned().collect();
+    let read_shared: Vec<String> = read.iter().filter(|n| vm.contains(n)).cloned().collect();
+    let kept = kept_in_order(&read_shared, &shared);
+    let moved: Vec<&str> = read_shared
+        .iter()
+        .filter(|n| !kept.contains(n))
+        .map(String::as_str)
+        .collect();
+    let only_read: Vec<&String> = read.iter().filter(|n| !vm.contains(n)).collect();
+    let only_vm: Vec<&String> = vm.iter().filter(|n| !read.contains(n)).collect();
+    let at = |list: &[String], n: &str| list.iter().position(|x| x == n);
+    println!(
+        "[{load}] the level's awake placements at the fresh state: the read's {} (of its {} awake), the VM's {}; {} in both, {} of them in the same order; moved {moved:?}",
+        read.len(),
+        awake.len(),
+        vm.len(),
+        shared.len(),
+        kept.len(),
+    );
+    println!("only the read's ({}): {only_read:?}", only_read.len());
+    println!("only the VM's ({}): {only_vm:?}", only_vm.len());
+    for n in [
+        "Sheep_1",
+        "Sheep_3",
+        "Sliding_Rock",
+        "Sliding_Rock(1)",
+        "Sliding_Rock(5)",
+        "Propellar_Prop",
+        "Norticus_First_Encounter(1)",
+    ] {
+        println!(
+            "{n}: the read's {:?}th, the VM's {:?}th of the shared",
+            at(&read_shared, n),
+            at(&shared, n)
+        );
+    }
+    println!("the read's shared order: {read_shared:?}");
+    println!("the VM's shared order: {shared:?}");
+    assert_eq!((awake.len(), read.len(), vm.len()), (165, 86, 69));
+    assert_eq!((shared.len(), kept.len()), (55, 52));
+    assert_eq!(
+        moved,
+        [
+            "Propellar_Prop",
+            "Sliding_Rock(5)",
+            "Norticus_First_Encounter(1)"
+        ]
+    );
+    for n in &only_read {
+        assert!(placed(n).script.is_none(), "{n} has a script");
+    }
+    let taken_off = read_group(3);
+    for n in &only_vm {
+        let h = run.handles[&placed(n).obj];
+        assert!(run.vm.inert().contains(&h), "{n} isn't inert");
+        assert!(taken_off.contains(n), "{n} isn't taken off in the read");
+    }
+    // The goats' rock still ticks ahead of them here: AH.209's.
+    assert!(at(&read_shared, "Sheep_1") < at(&read_shared, "Sliding_Rock(5)"));
+    assert!(at(&shared, "Sliding_Rock(5)") < at(&shared, "Sheep_1"));
 }

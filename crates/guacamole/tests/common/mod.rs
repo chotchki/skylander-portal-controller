@@ -389,9 +389,7 @@ impl Run {
     pub fn step_with(&mut self, then: &mut guac_script::Native<'_>) -> Result<(), Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
-        for (h, active) in self.world.activity(&mut self.bench) {
-            self.vm.set_asleep(h, !active);
-        }
+        self.vm.set_activity(&self.world.activity(&mut self.bench));
         // The frame's slides and the walk in the original's order, the
         // player loop's slices in their places (openspec AH.59).
         let joined = self.minion.is_some();

@@ -865,9 +865,7 @@ pub(crate) fn step_scripts(
         true => level.start().into_iter().collect(),
         false => pivots,
     };
-    for (h, active) in world.activity_at(&from) {
-        runtime.vm.set_asleep(h, !active);
-    }
+    runtime.vm.set_activity(&world.activity_at(&from));
     let props = standing_props(&level, &world, source.as_deref());
     let held = actions.take();
     let settled = runs
@@ -1743,9 +1741,7 @@ mod tests {
         /// One step as the TV's: the activity rule, the pads, every tick,
         /// the clones added, the hero's engine step, the engine's frame.
         fn step(&mut self, actions: [bool; 4]) {
-            for (h, active) in self.world.activity(&mut self.bench) {
-                self.vm.set_asleep(h, !active);
-            }
+            self.vm.set_activity(&self.world.activity(&mut self.bench));
             self.world.read_pads([
                 Pad {
                     actions,

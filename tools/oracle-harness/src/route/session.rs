@@ -639,7 +639,7 @@ impl Session for Live<'_> {
                 fs::write(&path, serde_json::to_string_pretty(&nodes)?)?;
                 serde_json::json!({ "placement": placement, "file": file_name(&path), "cells": cells.len() })
             }
-            Step::Globals { names, label } => {
+            Step::Globals { names, label, .. } => {
                 crate::rng::check_title(&mut self.pine)?;
                 let wanted: Vec<&str> = names.iter().map(String::as_str).collect();
                 let found = crate::script::exports(&mut self.pine, crate::script::GLOBAL, &wanted)?;
@@ -652,18 +652,19 @@ impl Session for Live<'_> {
                     })
                     .collect();
                 let mut types = crate::script::Types::default();
-                let nodes = crate::script::tree(
-                    &mut self.pine,
-                    &mut types,
-                    &cells,
-                    crate::script::TREE_DEPTH,
-                );
+                let depth = step.dump_depth();
+                let nodes = crate::script::tree(&mut self.pine, &mut types, &cells, depth);
                 crate::level::still_paused(&mut self.pine, "the globals' dump")?;
                 let path = rrc_dump::output::refuse_repo_output(
                     &self.dir.join(format!("globals-{label}.json")),
                 )?;
                 fs::write(&path, serde_json::to_string_pretty(&nodes)?)?;
-                serde_json::json!({ "names": names, "file": file_name(&path), "found": cells.len() })
+                serde_json::json!({
+                    "names": names,
+                    "file": file_name(&path),
+                    "found": cells.len(),
+                    "depth": depth,
+                })
             }
             other => bail!("{other:?} isn't one of AH.11's steps"),
         };

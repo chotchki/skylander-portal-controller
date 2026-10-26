@@ -19,6 +19,7 @@ mod hero;
 mod init;
 mod loot;
 mod order;
+mod shutdown;
 mod slides;
 mod span;
 
