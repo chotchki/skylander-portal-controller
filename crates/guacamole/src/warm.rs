@@ -733,6 +733,7 @@ fn spawn_stage(s: &mut WarmSpawner) -> Option<Stage> {
         radius: 0.5,
         bottom: -0.5,
         top: 0.5,
+        axis: Vec3::ZERO,
     });
     let (camera, _) = spawn_camera(
         &mut s.commands,

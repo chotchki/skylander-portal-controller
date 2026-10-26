@@ -2395,9 +2395,12 @@ design decision 14) draw a placed character's own model in its bezel's plate, wh
   there's no model to show: a figure with no character model on the disc, one the model stage reported,
   one that won't read. Each is logged by figure and why; `/api/_test/tv` mirrors every card's `state`
   (`model`, `portrait`, `loading`), its `reason` and its plate's rect.
-- Framing: the cylinder the idle loop sweeps about the model's vertical axis (24 poses, skinned on the
-  CPU) fitted inside the plate's circle with 6% clear, at a 12° downward pitch and a 30° field of view, so
-  nothing leaves the card in a turn. One turn every 12 s; under `ReducedMotion` the idle's first pose at
+- Framing: the model turns about a vertical axis through the middle of what its idle loop reaches across
+  the ground, and the cylinder that loop sweeps about it (24 poses, skinned on the CPU) is fitted inside the
+  plate's circle with 6% clear, at a 12° downward pitch and a 30° field of view, so nothing leaves the card
+  in a turn. About its own origin a long tail or a weapon held to one side swept a cylinder far wider than
+  the body (AE.35: Spyro's three at 0.29 of the circle, ten of the 67 models under two fifths); about its
+  middle none is, the least Bash's 0.40, Dark Spyro's 0.46. One turn every 12 s; under `ReducedMotion` the idle's first pose at
   `GUAC_SHOT_YAW`.
 - The image is the largest plate's size in pixels (128 at 1080p, 256 at 4K, 86 at 720p, where the
   plates lay out 85 or 86 by where they sit), so no card draws it scaled up, and clears to the darker
