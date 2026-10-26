@@ -267,3 +267,44 @@ fn the_discs_awards_reach_his_figure_and_the_row() {
     );
     println!("load after: {}", load());
 }
+
+/// AH.220: the orb that takes Bob's Eruptor to the cap (96,499 and 1 more:
+/// level 15) runs the level-15 accolade, which unlocks its achievement
+/// through `System - Achievements - Complete Achievement by ID`. The host
+/// keeps the id, nothing is awarded, and the portal manager runs on, its
+/// camera's stretch with it: strict, so any stop halts the test.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_caps_achievement_is_kept_and_the_portal_manager_runs_on() {
+    println!("load before: {}", load());
+    let (mut run, _) = run_on(Mode::Strict);
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.join_with(Values {
+        xp: 96_499,
+        ..Values::default()
+    })
+    .unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..60 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert!(run.world.achievements.is_empty(), "none before the cap");
+    award_experience(&mut run, 1);
+    for k in 0..300 {
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+    }
+    let v = run.figure_values().unwrap();
+    println!(
+        "at the cap: {v:?}; the achievements unlocked {:?}",
+        run.world.achievements
+    );
+    assert_eq!(v.xp, 96_500);
+    assert_eq!(run.world.achievements.len(), 1, "level 15's, once");
+    let pm = scripts::portal_manager_placement(&run.vm, &run.world).unwrap();
+    assert_eq!(run.vm.stopped(pm), None, "the portal manager runs on");
+    assert!(
+        run.player_loop.camera_stopped(&run.vm, pm).is_none(),
+        "the camera's stretch with it"
+    );
+    println!("load after: {}", load());
+}

@@ -2014,8 +2014,8 @@ pub const COMBAT: &[Registered] = &[
 ];
 
 /// What AH.20's player loop, orbs and coins reach past AH.16-AH.19's
-/// tables, and a defeated hero's kill (openspec AH.20): each as the
-/// original registers it.
+/// tables, a defeated hero's kill (openspec AH.20) and the achievement an
+/// award unlocks (AH.220): each as the original registers it.
 pub const LOOP: &[Registered] = &[
     // A coin's fade by distance as it's placed: cosmetic.
     m(
@@ -2068,6 +2068,18 @@ pub const LOOP: &[Registered] = &[
         0.0,
         0.0,
         Cell,
+    ),
+    // An achievement unlocked (openspec AH.220): each unlock an award
+    // reaches (level 15, 65,000 gold, fully upgraded) writes its id here.
+    // The host's, which keeps and logs it; nothing on the disc reads it.
+    m(
+        "system",
+        "game achievement",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
     ),
 ];
 
@@ -2686,7 +2698,7 @@ mod tests {
     /// coin's fade by its labels; the world's origin the host's, a point
     /// nothing writes; the portal's battery a percent clamped to 0-100; the
     /// online object and the save data references reading nothing until
-    /// written.
+    /// written; AH.220's achievement id a whole number, the host's.
     #[test]
     fn the_loops_members_convert_by_their_units_and_range() {
         let fade = find(LOOP, "placement", "near/far alpha fade").unwrap();
@@ -2723,12 +2735,27 @@ mod tests {
                 r.path()
             );
         }
+        // AH.220: an unlocked achievement's id, a whole number kept as
+        // written (no range), the host's.
+        let achievement = find(LOOP, "system", "game achievement").unwrap();
+        assert_eq!(
+            (achievement.class, achievement.kind(), achievement.keeper),
+            ("IntMeasurement", Kind::Int, Keeper::Host)
+        );
+        assert_eq!(
+            convert(&achievement.spec(), Value::Float(23.7)),
+            Some(Value::Int(23))
+        );
+        assert_eq!(
+            convert(&achievement.spec(), Value::Int(4_000)),
+            Some(Value::Int(4_000))
+        );
         let mut members = Members::new();
         register(&mut members, LOOP);
-        let (_, place) = members
-            .get(MemberId::named("system", "absolute zero"))
-            .unwrap();
-        assert_eq!(place, Place::Host);
+        for name in ["absolute zero", "game achievement"] {
+            let (_, place) = members.get(MemberId::named("system", name)).unwrap();
+            assert_eq!(place, Place::Host, "{name}");
+        }
     }
 
     /// AH.23's rows by the registry's own entries (aj-vm's live table): the

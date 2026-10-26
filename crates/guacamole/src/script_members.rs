@@ -73,6 +73,9 @@ pub(crate) enum Member {
     ConsoleLanguage,
     TimeScale,
     LoadLevel,
+    /// `system.game achievement`: an unlock's id, kept and logged (openspec
+    /// AH.220; stand-in ledger: `achievements`).
+    Achievement,
     Buffer,
     Id,
     Waypoints,
@@ -260,6 +263,7 @@ impl Member {
         add("system", "console language", Member::ConsoleLanguage);
         add("system", "game time scale", Member::TimeScale);
         add("system", "load level", Member::LoadLevel);
+        add("system", "game achievement", Member::Achievement);
         add("placement", "deactivation buffer", Member::Buffer);
         add("abstractplacement", "id", Member::Id);
         add("spritematrixmeasurement", "id", Member::Id);
