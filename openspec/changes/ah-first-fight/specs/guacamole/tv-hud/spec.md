@@ -7,7 +7,7 @@ What the TV shows over a level about the hero (health, level, experience and gol
 ## ADDED Requirements
 
 ### Requirement: The hero's numbers on the TV
-While a level shows, the TV SHALL show the hero's health against his full health, his level, his experience toward the next level and his figure's gold in the TV's own look, each matching the hero within one frame of changing, and SHALL warn while his health is under 20 % of full.
+While a level shows, the TV SHALL show the hero's health against his full health, his level, his experience toward the next level and his figure's gold in the TV's own look, each matching the hero within one frame of changing, and SHALL warn while his health is under 20 % of full. It SHALL show none of them while a scene plays that the original plays without its own (the pit's intro and Norticus' scene in chapter 1).
 
 #### Scenario: A coin
 - **WHEN** Eruptor collects a coin worth 1
@@ -20,6 +20,10 @@ While a level shows, the TV SHALL show the hero's health against his full health
 #### Scenario: Low health
 - **WHEN** Eruptor's health falls to 50 of 290
 - **THEN** the TV warns that his health is low
+
+#### Scenario: A scene
+- **WHEN** the intro in chapter 1's pit plays
+- **THEN** the TV shows none of the hero's numbers until it ends, and shows them again within a frame of its end
 
 ### Requirement: No character left
 When the hero is beaten and no other character is on the portal, the level SHALL pause under a screen asking for the beaten figure to be taken off, then for another character, offering Restart chapter from about 5 s on, behind a yes-or-no check starting on no. Restart SHALL start the level again from its start, its breakables and creatures back, the beaten figure in at full health and every figure's experience and gold kept. Placing a character not beaten in the level SHALL carry on instead.

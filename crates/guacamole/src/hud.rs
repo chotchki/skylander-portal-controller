@@ -19,7 +19,10 @@
 //!   drawn.
 //! - Drawn ([`draw_hud`]) in the bottom left over the level, where the
 //!   original's sits (AH.10's shots), under the pause overlay, the portal's
-//!   alerts and an intro; gone with the hero.
+//!   alerts and an intro; gone with the hero. Hidden, the bites' numbers
+//!   with it, while the level's scripts hide the original's
+//!   ([`guacamole::scripts::player_hud_hidden`]: the pit's intro and
+//!   Norticus' scene), its numbers read on.
 
 use std::time::Duration;
 
@@ -230,6 +233,8 @@ pub(crate) struct Hud {
     pub(crate) damage: Vec<Damage>,
     /// Until when the health bar's edge flashes, on the real clock.
     flash_until: Option<Duration>,
+    /// The scripts hide the player's HUD (a scene): nothing drawn.
+    pub(crate) hidden: bool,
 }
 
 impl Hud {
@@ -266,6 +271,12 @@ fn read_hud(
     let hud = &mut *hud;
     hud.damage
         .retain(|d| now.saturating_sub(d.born) < DAMAGE_LIFE);
+    let hidden = runtime
+        .as_deref()
+        .is_some_and(|rt| guacamole::scripts::player_hud_hidden(&rt.vm));
+    if hud.hidden != hidden {
+        hud.hidden = hidden;
+    }
     let Some((hero, slot, placement)) = play.as_deref().and_then(Play::hero_placement) else {
         if hud.shown.is_some() {
             hud.shown = None;
@@ -368,6 +379,7 @@ fn draw_hud(
             &mut Node,
             &mut BackgroundColor,
             &Children,
+            &mut Visibility,
         ),
         Without<HudPart>,
     >,
@@ -379,6 +391,11 @@ fn draw_hud(
     };
     let now = time.elapsed();
     let pen = Pen::new(&assets, &theme);
+    let shows = if hud.hidden {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
     match (&hud.shown, *root) {
         (None, Some(e)) => {
             if let Ok(mut c) = commands.get_entity(e) {
@@ -386,19 +403,22 @@ fn draw_hud(
             }
             *root = None;
         }
-        (Some(v), None) => *root = Some(spawn_hud(&mut commands, &pen, v)),
-        (Some(v), Some(_)) => patch(&mut parts, &theme, v, hud.flashing(now)),
+        (Some(v), None) => *root = Some(spawn_hud(&mut commands, &pen, v, shows)),
+        (Some(v), Some(_)) => patch(&mut parts, &theme, v, hud.flashing(now), shows),
         (None, None) => {}
     }
     // The bites' numbers: one bubble each, red then white, rising.
     let rise = !reduced.is_some_and(|r| r.0);
     let mut drawn = Vec::new();
-    for (e, bubble, mut node, mut fill, children) in &mut bubbles {
+    for (e, bubble, mut node, mut fill, children, mut seen) in &mut bubbles {
         let Some(d) = hud.damage.iter().find(|d| d.born == bubble.0) else {
             commands.entity(e).despawn();
             continue;
         };
         drawn.push(d.born);
+        if *seen != shows {
+            *seen = shows;
+        }
         let (start, lift) = (bubble_at(d), if rise { d.risen(now) } else { 0.0 });
         node.left = px(start.x);
         node.top = px(start.y - lift);
@@ -428,6 +448,7 @@ fn draw_hud(
                 },
                 BackgroundColor(theme.hurt),
                 GlobalZIndex(DAMAGE_Z),
+                shows,
             ))
             .with_child(pen.inked(
                 &d.amount.to_string(),
@@ -461,6 +482,7 @@ fn patch(
     theme: &TvTheme,
     v: &HudValues,
     flashing: bool,
+    shows: Visibility,
 ) {
     for (part, text, node, fill, edge, visibility) in parts.iter_mut() {
         let set_text = |text: Option<Mut<Text>>, s: String| {
@@ -513,7 +535,13 @@ fn patch(
                     *vis = want;
                 }
             }
-            HudPart::Root => {}
+            HudPart::Root => {
+                if let Some(mut vis) = visibility
+                    && *vis != shows
+                {
+                    *vis = shows;
+                }
+            }
         }
     }
 }
@@ -525,8 +553,9 @@ fn low_text(v: &HudValues) -> &'static str {
 }
 
 /// The HUD: his level beside his health bar, the experience bar under it,
-/// then his gold, on a dimmed plate in the bottom left.
-fn spawn_hud(commands: &mut Commands, pen: &Pen, v: &HudValues) -> Entity {
+/// then his gold, on a dimmed plate in the bottom left; `shows` hidden while
+/// the scripts hide the player's.
+fn spawn_hud(commands: &mut Commands, pen: &Pen, v: &HudValues, shows: Visibility) -> Entity {
     let theme = &pen.theme;
     let bar = |height: f32, edge: f32| Node {
         width: px(BAR_WIDTH),
@@ -556,6 +585,7 @@ fn spawn_hud(commands: &mut Commands, pen: &Pen, v: &HudValues) -> Entity {
             },
             BackgroundColor(theme.shadow.with_alpha(0.5)),
             GlobalZIndex(HUD_Z),
+            shows,
         ))
         .with_children(|hud| {
             hud.spawn(Node {
@@ -675,8 +705,11 @@ pub struct HudShot {
     pub gold: u32,
     /// The health bar's edge flashing white after a bite.
     pub flash: bool,
+    /// The scripts hide the player's HUD (a scene): nothing drawn, the
+    /// numbers read on.
+    pub hidden: bool,
     /// Every line drawn, top to bottom; empty when nothing's drawn (a
-    /// headless app).
+    /// headless app, or hidden).
     pub texts: Vec<String>,
     /// The bites' numbers on screen, oldest first.
     pub damage: Vec<DamageShot>,
@@ -699,7 +732,7 @@ impl HudShots<'_, '_> {
         let texts = self
             .roots
             .iter()
-            .find(|(_, p)| **p == HudPart::Root)
+            .find(|(_, p)| **p == HudPart::Root && !hud.hidden)
             .map(|(e, _)| self.tree.walk(e).0)
             .unwrap_or_default()
             .into_iter()
@@ -718,6 +751,7 @@ impl HudShots<'_, '_> {
             xp_next: v.xp_next,
             gold: v.gold,
             flash: hud.flashing(now),
+            hidden: hud.hidden,
             texts,
             damage: hud
                 .damage
@@ -832,6 +866,145 @@ mod tests {
         assert!(d.risen(born + DAMAGE_LIFE / 2) > DAMAGE_RISE / 2.0);
         assert_eq!(d.risen(born + DAMAGE_LIFE), DAMAGE_RISE);
         assert_eq!(d.risen(born + DAMAGE_LIFE * 2), DAMAGE_RISE);
+    }
+
+    /// A VM over the builder's `UI Containers` (the UI's scripts' shape)
+    /// and the player HUD's container in it.
+    fn ui_runtime() -> (guacamole::scripts::ScriptRuntime, guac_script::Value) {
+        use std::sync::Arc;
+
+        use guac_formats::igz::Igz;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::{self, UI_CONTAINERS, UI_PLAYER_HUD};
+        use guac_script::{Config, Generator, Mode, Program, Role, Unit, Vm};
+
+        let bytes = builder::ui_containers();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let mut vm = Vm::new(program, Config::new(Mode::Strict));
+        let g = vm.program().global_named(UI_CONTAINERS).unwrap();
+        let containers = vm.global(g).map(|v| vm.value(v)).unwrap();
+        let hud = vm
+            .field(containers, UI_PLAYER_HUD)
+            .map(|v| vm.value(v))
+            .unwrap();
+        let runtime = guacamole::scripts::ScriptRuntime {
+            vm,
+            generator: Generator::seeded(1),
+            player_loop: Default::default(),
+            steps: 0,
+            stopped: Vec::new(),
+        };
+        (runtime, hud)
+    }
+
+    fn set_hide(app: &mut App, hud: guac_script::Value, state: i32) {
+        use guac_formats::script::builder::UI_HIDE_STATE;
+        let mut rt = app
+            .world_mut()
+            .resource_mut::<guacamole::scripts::ScriptRuntime>();
+        assert!(
+            rt.vm
+                .set_field(hud, UI_HIDE_STATE, guac_script::Value::Int(state))
+        );
+    }
+
+    /// The HUD hides while the scripts hide the player's (a scene: the
+    /// pit's intro and Norticus' scene hold the player HUD container's hide
+    /// state at 1 or 2, mergefix4's read on AH.8's route), and shows again
+    /// at 0, the read running whether or not a hero is in.
+    #[test]
+    fn the_hud_hides_while_the_scripts_hide_the_players() {
+        let (runtime, hud) = ui_runtime();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Hud>()
+            .insert_resource(runtime)
+            .add_systems(Update, read_hud);
+        app.update();
+        assert!(!app.world().resource::<Hud>().hidden);
+        for (state, hidden) in [(1, true), (2, true), (0, false), (-1, false)] {
+            set_hide(&mut app, hud, state);
+            app.update();
+            assert_eq!(app.world().resource::<Hud>().hidden, hidden, "{state}");
+        }
+    }
+
+    /// Hidden, the drawn HUD and a bite's number go unseen, the numbers
+    /// patched on underneath; shown again, both are seen.
+    #[test]
+    fn a_hidden_hud_draws_nothing_seen() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            bevy::image::ImagePlugin::default(),
+        ));
+        let stars =
+            crate::starfield::Sprites::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
+        app.insert_resource(TvAssets {
+            font: Handle::default(),
+            qr: None,
+            stars,
+        })
+        .insert_resource(TvTheme::default())
+        .init_resource::<Hud>()
+        .add_systems(Update, draw_hud);
+        let shown = at(1_000);
+        {
+            let mut hud = app.world_mut().resource_mut::<Hud>();
+            hud.shown = Some(shown.clone());
+            hud.hidden = true;
+            hud.damage.push(Damage {
+                amount: 14,
+                born: Duration::ZERO,
+                at: None,
+            });
+        }
+        app.update();
+        let seen = |app: &mut App| {
+            let world = app.world_mut();
+            let mut root = world.query::<(&HudPart, &Visibility)>();
+            let root = root
+                .iter(world)
+                .find(|(p, _)| **p == HudPart::Root)
+                .map(|(_, v)| *v)
+                .expect("the HUD drawn");
+            let mut bubbles = world.query::<(&DamageBubble, &Visibility)>();
+            let bubbles: Vec<Visibility> = bubbles.iter(world).map(|(_, v)| *v).collect();
+            (root, bubbles)
+        };
+        assert_eq!(
+            seen(&mut app),
+            (Visibility::Hidden, vec![Visibility::Hidden]),
+            "hidden as drawn"
+        );
+        app.update();
+        assert_eq!(
+            seen(&mut app),
+            (Visibility::Hidden, vec![Visibility::Hidden]),
+            "and patched"
+        );
+        app.world_mut().resource_mut::<Hud>().hidden = false;
+        app.update();
+        assert_eq!(
+            seen(&mut app),
+            (Visibility::Inherited, vec![Visibility::Inherited])
+        );
+        app.world_mut().resource_mut::<Hud>().hidden = true;
+        app.update();
+        assert_eq!(
+            seen(&mut app),
+            (Visibility::Hidden, vec![Visibility::Hidden]),
+            "hidden once drawn"
+        );
     }
 
     #[test]

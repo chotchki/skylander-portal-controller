@@ -1398,6 +1398,59 @@ pub fn load_order() -> Vec<u8> {
     b.build()
 }
 
+/// [`ui_containers`]' names: the UI's file structure of containers, the
+/// player's HUD's and the announcements' containers in it, and the state
+/// each holds.
+pub const UI_CONTAINERS: &str = "UI Containers";
+pub const UI_PLAYER_HUD: &str = "player hud container";
+pub const UI_ANNOUNCE: &str = "announce container";
+pub const UI_HIDE_STATE: &str = "hide state";
+
+/// The UI's containers in the original's shape, our ops (the HUD's hiding,
+/// openspec AH.26): [`UI_CONTAINERS`], a file structure of containers
+/// ([`UI_PLAYER_HUD`], [`UI_ANNOUNCE`]), each a structure holding its
+/// [`UI_HIDE_STATE`], and a UI script whose STARTUP sets the player HUD's to
+/// 0, which links the structure as a global.
+pub fn ui_containers() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    {
+        let mut w = Writer::new(&mut b);
+        let w = &mut w;
+        let container_ty = w.op(Class::DefineStructure, "UI Container");
+        let containers_ty = w.op(Class::DefineStructure, "UI Container List");
+        let hide = w.variable(UI_HIDE_STATE, "ValueInfo", Some("IntMeasurement"));
+        let hud = w.variable(UI_PLAYER_HUD, "ScriptStructure", None);
+        w.refer(hud, 0x24, container_ty);
+        let announce = w.variable(UI_ANNOUNCE, "ScriptStructure", None);
+        w.refer(announce, 0x24, container_ty);
+        let containers = w.b.object(0, "ScriptStructure", 0x20);
+        w.text(containers, 0x08, UI_CONTAINERS);
+        w.refer(containers, 0x1C, containers_ty);
+        let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+        let (start, _) = w.open(Class::StartUp, "STARTUP");
+        let zero = w.int(0);
+        w.set(
+            &[El::Local(containers), El::Local(hud), El::Local(hide)],
+            zero,
+        );
+        w.end_block(start);
+        let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+        w.end_block(shut);
+        let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+        let p = w.push(container_ty);
+        w.push(hide);
+        w.end_block(p);
+        let p = w.push(containers_ty);
+        w.push(hud);
+        w.push(announce);
+        w.end_block(p);
+        w.end_block(types);
+        w.end_block(pre);
+        w.end("C:/tfb/Synthetic/UI.ai");
+    }
+    b.build()
+}
+
 /// The creature [`fight`] writes, named as one of the first fight's, so the
 /// TV's fight listing runs it (openspec AH.25).
 pub const FIGHT_CREATURE: &str = "Enemy_Chompy(1)";

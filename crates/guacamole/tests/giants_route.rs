@@ -531,6 +531,10 @@ struct Driven {
     /// control wrapper's hold on the minions while one plays.
     scene_steps: u32,
     held_steps: u32,
+    /// The steps the scripts hid the player's HUD (the TV hides its own then:
+    /// `scripts::player_hud_hidden`) in a scene, and outside one.
+    hidden_steps: u32,
+    hidden_outside: u32,
 }
 
 /// Whether the joined hero's minion reads invulnerable
@@ -605,6 +609,7 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
     let mut watched: BTreeMap<String, State> = BTreeMap::new();
     let mut played = Played::default();
     let (mut scene_steps, mut held_steps) = (0, 0);
+    let (mut hidden_steps, mut hidden_outside) = (0, 0);
     while run.steps < limit {
         for n in &watch {
             let now = ours(&run, n).map(|s| (s.state, s.behaviour));
@@ -630,9 +635,13 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
                 let s = step(&mut run, mode);
                 stops.extend(s.into_iter().map(|h| (k, driver.index, h)));
                 played.record(&run);
+                let hidden = scripts::player_hud_hidden(&run.vm);
                 if global_int(&mut run, "Cutscene State") != 0 {
                     scene_steps += 1;
                     held_steps += u32::from(invulnerable(&run));
+                    hidden_steps += u32::from(hidden);
+                } else {
+                    hidden_outside += u32::from(hidden);
                 }
             }
         }
@@ -645,6 +654,8 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
         played,
         scene_steps,
         held_steps,
+        hidden_steps,
+        hidden_outside,
     }
 }
 
@@ -750,6 +761,10 @@ type State = Option<(u8, Option<String>)>;
 struct Fight {
     changes: Vec<(u32, &'static str, State)>,
     scene: Vec<(u32, i32)>,
+    /// The steps the scripts hid the player's HUD, and those where that
+    /// disagreed with a scene holding (`Cutscene State` past 0).
+    hidden: u32,
+    hidden_off_scene: u32,
     /// Where he stood once Norticus was gone after his scene, and 60 steps
     /// of the stick on after it.
     freed: Option<(Vec3, Vec3)>,
@@ -820,6 +835,9 @@ fn fight(run: &mut Run, mode: Mode, steps: u32) -> Fight {
         let s = step(run, mode);
         assert!(s.is_empty() || mode == Mode::Play);
         let cs = global_int(run, "Cutscene State");
+        let hidden = scripts::player_hud_hidden(&run.vm);
+        out.hidden += u32::from(hidden);
+        out.hidden_off_scene += u32::from(hidden != (cs != 0));
         if scene != Some(cs) {
             out.scene.push((k, cs));
             if scene == Some(1) && cs == 0 && ended.is_none() && !alive {
@@ -1048,11 +1066,16 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     // While the intro plays the cutscene system holds the minions (its
     // control wrapper: under designer control, invulnerable), then lets go.
     println!(
-        "the scene's steps on the route {}, his minion held {}",
-        d.scene_steps, d.held_steps
+        "the scene's steps on the route {}, his minion held {}, the player's HUD hidden {} \
+         (outside it {})",
+        d.scene_steps, d.held_steps, d.hidden_steps, d.hidden_outside
     );
     assert!(d.scene_steps > 0, "the intro set Cutscene State");
     assert!(d.held_steps + 1 >= d.scene_steps, "held through the intro");
+    // The scripts hide the player's HUD for the intro (`Game - Cutscene`'s
+    // hide UI), so the TV hides its own: through it and nowhere else.
+    assert_eq!(d.hidden_steps, d.scene_steps, "hidden through the intro");
+    assert_eq!(d.hidden_outside, 0);
     assert!(!invulnerable(&d.run), "let go once it's over");
     // Anchor B, where AH.8's stood, its triggers fired as AH.8's were bar
     // the lush peak's (fired before AH.8's route began, out of this
@@ -1145,7 +1168,14 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     for (k, n, s) in &f.changes {
         println!("F0 + {k}: {n} {s:?}");
     }
-    println!("Cutscene State: {:?}", f.scene);
+    println!(
+        "Cutscene State: {:?}; the player's HUD hidden {} steps, {} off the scene",
+        f.scene, f.hidden, f.hidden_off_scene
+    );
+    // Norticus' scene hides the player's HUD (the dialogue's UI and `Game -
+    // Cutscene`), so the TV hides its own while it holds, and only then.
+    assert!(f.hidden > 0, "hidden for his scene");
+    assert_eq!(f.hidden_off_scene, 0);
     let last_gone = CHOMPIES
         .iter()
         .map(|n| f.gone(n).unwrap_or_else(|| panic!("{n} beaten")))
