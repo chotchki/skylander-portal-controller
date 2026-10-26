@@ -420,6 +420,36 @@ impl Run {
         Ok(())
     }
 
+    /// [`Run::step`] on a run in play mode (openspec AH.28): the scripts
+    /// this step stopped, each logged by the VM and the run going on as the
+    /// TV's does, where a strict run would halt.
+    pub fn step_play(&mut self) -> Result<Vec<Halt>, Halt> {
+        let pads = self.bench.pads;
+        self.world.read_pads(pads);
+        for (h, active) in self.world.activity(&mut self.bench) {
+            self.vm.set_asleep(h, !active);
+        }
+        let joined = self.minion.is_some();
+        let player_loop = self.player_loop.clone();
+        let mut stopped = Vec::new();
+        let r = self.with_host(|vm, host| {
+            player_loop.frame_with(vm, host, joined, &mut stopped, &mut |_, _, _| Ok(()))
+        });
+        self.world.end_step();
+        scripts::add_scripted(&mut self.vm, &mut self.world);
+        self.bench.stand_props(&self.world);
+        stopped.extend(r?.stopped);
+        let dt = 1.0 / 60.0;
+        for hero in self.bench.heroes.values_mut() {
+            hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+        }
+        self.world.advance(dt, &mut self.bench);
+        self.steps += 1;
+        self.pose_hands();
+        self.bench.place_bodies(&self.world);
+        Ok(stopped)
+    }
+
     /// The join at this step with a fresh figure on the portal, as the TV
     /// joins him ([`Run::join_with`]).
     pub fn join(&mut self) -> Result<(), Halt> {
@@ -655,6 +685,9 @@ pub fn discovery(config: &mut guac_script::Config) -> HashMap<MemberId, String> 
 pub struct Setup {
     /// The level's props in the seam by AG.25's rule (openspec AH.21).
     pub props: bool,
+    /// Scripts listed past the fight's (openspec AH.28's probes), every
+    /// tick, by script.
+    pub scripts: &'static [&'static str],
 }
 
 pub fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
@@ -692,6 +725,9 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
     let mut config = scripts::fight_config(mode);
+    if let guac_script::Whitelist::Only { scripts, .. } = &mut config.whitelist {
+        scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
+    }
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);

@@ -66,7 +66,13 @@ const LEDGE: [&str; 3] = ["barrel_b_intact(1)", "barrel_b_intact(4)", "pottery_1
 /// seam, set down at anchor A's pose with his idle where AH.9's replays
 /// have it and the loot counts at its read.
 fn at_anchor_a() -> Run {
-    let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+    let (mut run, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            ..Default::default()
+        },
+    );
     to_anchor_a(&mut run);
     for (rarity, index) in ANCHOR_A_LOOT {
         assert!(scripts::set_loot_index(
@@ -1050,7 +1056,13 @@ fn the_stone_wall_and_a_titan_boulder_stand_under_his_attacks() {
             1,
         ),
     ] {
-        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+        let (mut run, _) = joined_with(
+            Mode::Strict,
+            Setup {
+                props: true,
+                ..Default::default()
+            },
+        );
         let (h, at) = run.placed(name);
         run.put(at + offset, facing);
         let w = drive(&mut run, 420, |k, _| {
@@ -1435,7 +1447,13 @@ fn a_hero_put_down_where_the_last_stood_stands_there() {
         ("anchor A", ANCHOR_A, ANCHOR_A_FACING),
         ("evening", EVENING, EVENING_FACING),
     ] {
-        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+        let (mut run, _) = joined_with(
+            Mode::Strict,
+            Setup {
+                props: true,
+                ..Default::default()
+            },
+        );
         let at = Vec3::from_array(at);
         let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, facing);
         hero.stand(&run.bench.world, &[HERO_BODY]);
@@ -1596,6 +1614,10 @@ fn ag39s_falls_land_as_theirs_with_his_scripts_driving() {
             let records: serde_json::Value = serde_json::from_str(&text).unwrap();
             let records = records.as_array().unwrap();
             let label = dir.strip_prefix(&root).unwrap().display().to_string();
+            // A dev aid: `AG39_ONLY=<part of a label>` runs those falls alone.
+            if std::env::var("AG39_ONLY").is_ok_and(|o| !label.contains(&o)) {
+                continue;
+            }
             let mut k = 1;
             while k + 1 < records.len() {
                 let second = free_in_the_air(&records[k])

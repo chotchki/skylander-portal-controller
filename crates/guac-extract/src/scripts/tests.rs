@@ -115,10 +115,27 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
     // AH.12's roots: 17 running in global.bld and 5 it spawns, Eruptor's
     // eight, the level's 18 and the 15 they spawn there; AG.60's 8 start
     // scripts on the props and the 5 they spawn; AG.28's 7 camera volumes
-    // and the sliding rocks' activator.
+    // and the sliding rocks' activator; AG.177's goats; AH.42's two from
+    // AH.8's route, the cannon's pan and the pit's intro.
     let counts: Vec<usize> = WHITELIST.iter().map(|w| w.scripts.len()).collect();
     assert_eq!(counts[..4], [1, 22, 3, 8]);
-    assert_eq!(counts[70], 55);
+    assert_eq!(counts[70], 57);
+    for s in ["Pan_Show_Cannon.ai", "Pan_Show_Norticu.ai"] {
+        assert!(WHITELIST[70].scripts.contains(&s), "{s}");
+    }
+    // Off it, by decision 6: the hints, Eon's lines and the zone names
+    // (text the TV draws nothing of), the cutscene manager's placement
+    // (the cutscene system's macros run without it), the ambience.
+    for s in [
+        "Hints_Passive.ai",
+        "Eon_Line_Activator.ai",
+        "Name_Changer.ai",
+        "Spyro_CutsceneManager.ai",
+        "Goat_Running.ai",
+        "Bird_Ambient_new.ai",
+    ] {
+        assert!(!WHITELIST[70].scripts.contains(&s), "{s}");
+    }
     // Each walker's: his definition, his tuning actor, his minion's script
     // and what his file's other running placements run (3 to 5), 244 in all.
     assert_eq!(counts[4..70], WALKER_COUNTS);

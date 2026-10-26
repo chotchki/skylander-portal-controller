@@ -228,7 +228,13 @@ fn tick(run: &mut Run, step: f32, next: Vec3, facing: f32) -> Result<(), Halt> {
 }
 
 fn fresh() -> Run {
-    let (mut run, _found) = joined_with(Mode::Strict, Setup { props: true });
+    let (mut run, _found) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            ..Default::default()
+        },
+    );
     run.bench.hold_view = false;
     run
 }

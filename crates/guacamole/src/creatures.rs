@@ -699,11 +699,13 @@ mod tests {
         );
     }
 
-    /// Without an entry the TV's listing leaves the first fight's
-    /// placements inert (AH.27's): the creature never ticks, no engine
-    /// walks it and it has no body; the hero's is still there.
+    /// Without an entry the TV's listing runs the first fight's placements
+    /// all the same (openspec AH.28: AH.8's route from the level's start
+    /// reaches them): the synthetic creature, awake in its 160 ft range,
+    /// ticks, an engine walks it and it stands as a body, as with AH.25's
+    /// entry; the hero's body is there too.
     #[test]
-    fn without_the_entry_the_creature_stays_inert() {
+    fn without_the_entry_the_first_fights_creature_runs() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, _) = fight_app(tmp.path(), None);
         for _ in 0..40 {
@@ -712,11 +714,13 @@ mod tests {
         let c = creature(&app);
         let w = app.world();
         let vm = &w.resource::<ScriptRuntime>().vm;
-        assert!(vm.inert().contains(&c));
-        assert_eq!(vm.placement_of(c).and_then(|id| vm.behaviour(id)), None);
-        assert!(w.resource::<ScriptWorld>().creatures().is_empty());
-        assert!(shot(&app).creatures.is_empty());
-        assert_eq!(body(&mut app, c), None);
+        assert!(!vm.inert().contains(&c), "listed");
+        assert!(
+            vm.placement_of(c).and_then(|id| vm.behaviour(id)).is_some(),
+            "it ticks"
+        );
+        assert!(!w.resource::<ScriptWorld>().creatures().is_empty());
+        assert!(body(&mut app, c).is_some());
         let hero = hero_entity(&app).to_bits();
         assert!(body(&mut app, hero).is_some());
     }

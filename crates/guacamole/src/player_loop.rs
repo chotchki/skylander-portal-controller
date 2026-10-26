@@ -110,11 +110,14 @@ impl Places {
 /// one broken shut down, the bounce and a delayed effect) and the actor
 /// remover's (debris gone 1.5 s on). The set's other update macros (the
 /// encounter's camera pans, the HUD's) stay off.
-pub const UPDATES: [&str; 4] = [
+pub const UPDATES: [&str; 7] = [
     "Destructibles - System Update",
     "Destructibles - Bounce",
     "Destructibles - Delayed Particle",
     "Actor Remover Sytem Update Macro",
+    "Cutscene - Cutscene Control Wrapper",
+    "CS Internal - Update",
+    "Dialogue Internal - Update Dialogue Wrapper",
 ];
 
 /// The portal manager's tick as the loop runs it: each stretch's positions

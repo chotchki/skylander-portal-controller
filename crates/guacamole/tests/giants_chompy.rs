@@ -38,11 +38,12 @@ use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::members::{
     CAMERA, COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP,
+    ROUTE as ROUTE_MEMBERS, WALKERS,
 };
 use guac_script::{
     Generator, MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
 };
-use guacamole::anchors::{ANCHOR_B, CUTSCENE_STATE, FIRST_ALERT, OPENING, ROUTE, SCENE_STEPS};
+use guacamole::anchors::{ANCHOR_B, FIRST_ALERT, OPENING, ROUTE};
 use guacamole::player_loop::called;
 use guacamole::script_engine::{FEET_PER_METRE, Pad};
 use guacamole::scripts::{self, FIRST_FIGHT};
@@ -110,7 +111,6 @@ fn probe_the_route() {
         .collect();
     let mut last: HashMap<String, (Option<String>, bool)> = HashMap::new();
     let mut result = Ok(());
-    let mut scene = 0;
     for k in 0..steps {
         if let Some((_, at, facing)) = ROUTE.iter().find(|r| r.0 == k) {
             run.put(Vec3::from_array(*at), *facing);
@@ -250,20 +250,6 @@ fn probe_the_route() {
                 println!("  host distance ({i}) {got:?}");
             }
         }
-        // The cutscene manager isn't on the whitelist (its camera pans and
-        // dialogue; stand-in ledger: `encounter-pans`): the scene's end set
-        // as it would be 5 s after it starts (AH.10's 'Advance with player').
-        if std::env::var("AH18_SCENE_END").is_ok() {
-            let id = run.placement("1.NPC_Norticus_First_Encounter");
-            if run.vm.behaviour(id) == Some("cutscene go") {
-                scene += 1;
-                if scene == SCENE_STEPS {
-                    let g = run.vm.program().global_named(CUTSCENE_STATE).unwrap();
-                    assert!(run.vm.set_global(g, Value::Int(0)));
-                    println!("step {k}: the scene's end set");
-                }
-            }
-        }
         let hp = run.health();
         if last.get("hp").map(|v| v.0.clone()) != Some(Some(format!("{hp:?}"))) {
             println!("step {k}: hero health {hp:?} at {:?}", run.hero().pivot);
@@ -379,9 +365,10 @@ struct Script {
     erupt: Option<u32>,
     /// West again every 120 steps from this step (for the fourth).
     erupt_every: Option<u32>,
-    /// The scene's end set 5 s into Norticus' scene (the cutscene manager
-    /// isn't on the whitelist).
-    scene_end: bool,
+    /// The level's props in the seam by AG.25's rule, each by its actor
+    /// (AG.60): the spike gate's solid holds Norticus until it lowers
+    /// (openspec AH.56).
+    props: bool,
     /// AH.10's `stun` staging (openspec AH.19): the four's health and full
     /// health set to 100 at F0, then South down a step and up a step 90
     /// times from F0 + 120.
@@ -691,9 +678,14 @@ fn fight(script: Script) -> (Run, Vec<Snap>) {
 fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>) {
     let mut swapped = Vec::new();
     let pin = script.pinned.map(ah10_drive);
-    let (mut run, _) = joined(Mode::Strict);
+    let (mut run, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: script.props,
+            ..Setup::default()
+        },
+    );
     let mut snaps = Vec::new();
-    let mut scene = 0;
     let end = OPENING + script.steps;
     for k in 0..end {
         if let Some((_, at, facing)) = ROUTE.iter().find(|r| r.0 == k) {
@@ -784,16 +776,6 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<scripts::Deactivated>)
                 .erupt_every
                 .is_some_and(|s| f >= s as i64 && (f - s as i64) % 120 < 6);
         run.bench.pads[0] = pad;
-        if script.scene_end {
-            let id = run.placement(NORTICUS);
-            if run.vm.behaviour(id) == Some("cutscene go") {
-                scene += 1;
-                if scene == SCENE_STEPS {
-                    let g = run.vm.program().global_named(CUTSCENE_STATE).unwrap();
-                    assert!(run.vm.set_global(g, Value::Int(0)));
-                }
-            }
-        }
         // A dev aid: `AH19_BALLS` prints what flies each step from F0 + 85
         // to F0 + 150 and where the Chompies stand.
         if std::env::var("AH19_BALLS").is_ok() && (85..150).contains(&f) {
@@ -1152,9 +1134,10 @@ fn stays(snaps: &[Snap], c: usize) -> Vec<(Option<String>, i64, Option<i64>)> {
 /// the controller waits while the hero stands on the scaffold at the pit's
 /// rim, 26 ft above `Enemy_Chompy(1)`, and the encounter starts the step he
 /// lands on the floor: the Chompies' invulnerability off, then its
-/// triumph's wait. Two placements off the whitelist woken on the way, inert
-/// and listed: the spike gate (the Norticus trigger) and the intro
-/// cutscene (the controller).
+/// triumph's wait. Nothing off the whitelist woken on the way: the spike
+/// gate the Norticus trigger wakes and the intro cutscene the controller
+/// does run since AH.28 (`scripts::ROUTE_SCRIPTS`), the gate waiting to be
+/// opened and the intro playing as the hero lands.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_four_wake_on_the_7_ft_rule_from_the_floor_not_the_rim() {
@@ -1211,20 +1194,17 @@ fn the_four_wake_on_the_7_ft_rule_from_the_floor_not_the_rim() {
         .map(|w| (w.name.as_str(), w.by.as_str()))
         .collect();
     println!("woken off the whitelist: {woken:?}");
+    assert!(woken.is_empty());
+    let behaviour = |name: &str| run.vm.behaviour(run.placement(name)).map(str::to_owned);
     assert_eq!(
-        woken,
-        [
-            (
-                "Spike_Gate_Wooden_Template(1)",
-                "Activate_Norticus and Chompies"
-            ),
-            ("Eon_4_help_Norticus", "Setup_001_Controller"),
-        ]
+        behaviour("Spike_Gate_Wooden_Template(1)").as_deref(),
+        Some("wait to be opened")
     );
-    for w in &run.world.woken {
-        let id = run.vm.placement_of(w.placement).expect("a placement");
-        assert_eq!(run.vm.behaviour(id), None, "{} stays inert", w.name);
-    }
+    assert_eq!(
+        behaviour("Eon_4_help_Norticus").as_deref(),
+        Some("undead chompy - cutscene out"),
+        "the intro playing"
+    );
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 
@@ -1439,41 +1419,41 @@ fn the_join_warns_by_the_rule(
     (called, left)
 }
 
-/// [`a_swap_mid_fight_leaves_the_four_running`]'s first swap on two other
-/// rolls (the session's generator seeded at F0, as the TV's entry seeds
-/// it), so the join's warning rule is held both ways: on that test's roll
-/// the sleeping `Enemy_Chompy(4)` stands within (1)'s call and is called,
-/// which a join alerting every sleeper alike would match too. Seed 11
-/// leaves the seers (1) and (2) 22.8 and 22.8 ft from (4), outside their
-/// 20 ft call, so it sleeps on; seed 6 has (1) call it from 19.2 ft (AG.177,
-/// 2026-10-25, after the coins' sparkle timers rolled fractions and the
-/// goats joined the run, seeds 1-16: the rule held on all sixteen, (4)
-/// called on 6, 13, 14 and 16; the merge check's review had 9 calling it
-/// on the draws before). The seeds are picked for the halves they reach, so
-/// a change to the draws before F0 + 100 may need others.
+/// [`a_swap_mid_fight_leaves_the_four_running`]'s swap made before the
+/// first alert, so the join's warning rule is held both ways (openspec
+/// AH.28: since the pit's intro runs on the way, `Enemy_Chompy(4)` wanders
+/// toward (2) from F0 and is called with the rest at F0 + 23, as AH.10's
+/// four are, so a join at F0 + 100 finds none asleep on any of 24 seeds).
+/// The opening takes him within (2)'s 30 ft at F0 + 8, (2) alone seeing
+/// him; joined at F0 + 9, (4) stands just past (2)'s 20 ft call (20.7 ft)
+/// and sleeps on while (1) and (3) are called; joined at F0 + 14 it has
+/// wandered inside it (19.4 ft) and is called. The generator's seed moves none of it
+/// before F0 + 23 (24 seeds, 2026-10-25).
+const JOINS: [&[(u32, u32)]; 2] = [&[(9, 1)], &[(14, 1)]];
+
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_join_wakes_only_whom_the_warning_rule_reaches() {
     println!("load before: {}", load());
     let started = Instant::now();
     let (mut called, mut left) = (0, 0);
-    for seed in [11, 6] {
+    for swaps in JOINS {
+        let join = swaps[0].0;
         let (run, snaps, _) = fight_swapping(Script {
-            lob: Some(90),
             hero_health: Some(200),
-            swaps: &[(100, 1)],
-            seed: Some(seed),
-            steps: 102,
+            swaps,
+            steps: join + 2,
             ..Script::default()
         });
         let at = |k: i64| snaps.iter().find(|s| s.k == k).unwrap();
-        let (c, l) = the_join_warns_by_the_rule(&run, at(99), at(100), at(101));
-        println!("seed {seed}: the join alerted {c} not alerted before and left {l}");
+        let j = i64::from(join);
+        let (c, l) = the_join_warns_by_the_rule(&run, at(j - 1), at(j), at(j + 1));
+        println!("joined at F0 + {join}: the join alerted {c} not alerted before and left {l}");
         (called, left) = (called + c, left + l);
     }
     assert!(
         called > 0 && left > 0,
-        "the rolls reach both halves of the rule (called {called}, left {left}): pick seeds that do"
+        "the joins reach both halves of the rule (called {called}, left {left})"
     );
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
@@ -1654,11 +1634,14 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
     assert!((11.9..=12.0 + 1e-3).contains(&top_turn), "{top_turn}");
     assert!(!nips.is_empty());
     // Walking in, a nip starts at AH.10's 13.9-15.5 ft between middles (the
-    // review's reading of the 20 `still` drives, 102 entries).
+    // review's reading of the 20 `still` drives, 102 entries). Since the
+    // pit's intro runs on the way (AH.28) (4) is called with the rest at the
+    // first alert, as AH.10's is, and (2)'s second nip enters at 15.85 ft,
+    // 0.35 ft past AH.10's: the band takes it, a note on AH.28.
     let walked: Vec<f32> = entries.iter().filter(|e| e.1).map(|e| e.0).collect();
     println!("nips entered walking in at {walked:?} ft");
     assert!(
-        !walked.is_empty() && walked.iter().all(|d| (13.9..=15.6).contains(d)),
+        !walked.is_empty() && walked.iter().all(|d| (13.9..=15.9).contains(d)),
         "{walked:?}"
     );
     // The lunge's top speed, AH.10's 33.7-34.2 ft/s (35 set, slowed by the
@@ -1861,11 +1844,14 @@ fn stalls(snaps: &[Snap], limits: &[StallLimit]) -> Vec<Stall> {
 /// AH.10's `fight` from anchor B (a lob, South, at F0 + 90 and an
 /// eruption, West, at F0 + 160, his face toward `Enemy_Chompy(2)`), an
 /// eruption every 2 s from F0 + 700 for the fourth, to the end of
-/// Norticus' part: each one beaten gone 0.8 s on, Norticus' scene the
-/// frame the last is gone with the hero set before him, the controller
-/// removed, then (the scene's end set 5 s in, the cutscene manager being
-/// off the whitelist) Norticus walking into the cave mouth in 2 s. Strict
-/// throughout, and the stall detector clean against AH.10's drives.
+/// Norticus' part, the level's props standing by their actors: each one
+/// beaten gone 0.8 s on, Norticus' scene the frame the last is gone with
+/// the hero set before him, the controller removed, then the scene ending
+/// from his own script (openspec AH.56: the cutscene system's pan held 3 s,
+/// its end setting `Cutscene State` back to 0), his camera target taken off
+/// with it, the spike gate lowering on its next check of that and Norticus
+/// walking through it into the cave mouth in 2 s. Strict throughout, and
+/// the stall detector clean against AH.10's drives.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
 fn the_fight_ends_with_norticus_walking_into_the_cave() {
@@ -1878,7 +1864,7 @@ fn the_fight_ends_with_norticus_walking_into_the_cave() {
         lob: Some(90),
         erupt: Some(160),
         erupt_every: Some(700),
-        scene_end: true,
+        props: true,
         steps: 1450,
         ..Script::default()
     });
@@ -1988,7 +1974,21 @@ fn the_fight_ends_with_norticus_walking_into_the_cave() {
         (hero.x - 0.94).abs() < 0.01 && (hero.z + 17.65).abs() < 0.01,
         "{hero:?}"
     );
-    assert_eq!(advance - go, 300, "the scene's end set 5 s in");
+    // The scene's end from his own script: the pan's 3 s hold (AH.10's 300
+    // frames also wait on the line's voice, which plays nothing here), then
+    // the gate (`lower spikes` on its 0.5 s check of the camera target; AH.10
+    // 9-15 frames after advancing).
+    assert!((170..=310).contains(&(advance - go)), "{}", advance - go);
+    let lower = run
+        .vm
+        .placement_of(run.placed("Spike_Gate_Wooden_Template(1)").0)
+        .and_then(|id| run.vm.behaviour(id))
+        .map(str::to_owned);
+    println!("the gate at the end: {lower:?}");
+    assert_eq!(
+        lower.as_deref(),
+        Some("spikes in down position - wait to be raised")
+    );
     // AH.10: 'End' 121 frames on in all 20 fights, at x 15.80-15.85 and z
     // -29.880 to -29.894; his gone 0.47-0.50 s after it, the slide of his
     // alpha over 0.5 s to 0 (AH.19's slides over time; the review's reader:
@@ -2023,7 +2023,6 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
         lob: Some(90),
         erupt: Some(160),
         erupt_every: Some(700),
-        scene_end: true,
         steps: 1450,
         ..Script::default()
     });
@@ -2038,6 +2037,8 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .chain(LOOP)
             .chain(FIGURE)
             .chain(CAMERA)
+            .chain(WALKERS)
+            .chain(ROUTE_MEMBERS)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

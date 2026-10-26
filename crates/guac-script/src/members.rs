@@ -2246,6 +2246,22 @@ pub const WALKERS: &[Registered] = &[
     ),
 ];
 
+/// What AH.8's route reaches past every table above (openspec AH.28): the
+/// members a play-mode run of the route from the level's start stopped on,
+/// as aj-vm's live table registers them. A sound's mix category, cosmetic
+/// here (nothing plays sounds yet): the UI's tick sets it on the chime it
+/// plays as a dialogue activates (the cannon's, `UI.ai` #2322); its labels
+/// as the live table cuts them.
+pub const ROUTE: &[Registered] = &[m(
+    "soundinfo",
+    "category",
+    "EnumMeasurement",
+    "Effects/|Effects/Champion/|Effects/Champ",
+    0.0,
+    31.0,
+    Cell,
+)];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2873,5 +2889,39 @@ mod tests {
             let (_, place) = members.get(MemberId::named(ns, name)).unwrap();
             assert_eq!(place, Place::Host, "{ns}.{name}");
         }
+    }
+
+    /// AH.8's route's members (openspec AH.28), each from its registered
+    /// type: a sound's category an enum cell over 0-31, clamped there, no
+    /// other table holding it.
+    #[test]
+    fn the_routes_members_are_registered_as_the_live_table_has_them() {
+        assert_eq!(ROUTE.len(), 1);
+        let category = find(ROUTE, "soundinfo", "category").unwrap();
+        assert_eq!(
+            (category.class, category.kind(), category.keeper),
+            ("EnumMeasurement", Kind::Int, Keeper::Cell)
+        );
+        assert_eq!((category.min, category.max), (0.0, 31.0));
+        assert_eq!(
+            convert(&category.spec(), Value::Int(27)),
+            Some(Value::Int(27)),
+            "the dialogue's chime"
+        );
+        assert_eq!(
+            convert(&category.spec(), Value::Int(40)),
+            Some(Value::Int(31))
+        );
+        for table in [
+            INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS,
+        ] {
+            assert!(find(table, "soundinfo", "category").is_none());
+        }
+        let mut members = Members::new();
+        register(&mut members, ROUTE);
+        let (_, place) = members
+            .get(MemberId::named("soundinfo", "category"))
+            .unwrap();
+        assert_eq!(place, Place::ValueCell);
     }
 }

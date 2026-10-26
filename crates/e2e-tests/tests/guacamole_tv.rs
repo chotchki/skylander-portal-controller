@@ -1334,10 +1334,10 @@ fn creature<'a>(snap: &'a Value, name: &str) -> &'a Value {
 /// AH.25: the first fight's synthetic creature (written with AH.13's
 /// writer, our numbers: a creature 3.2 m ahead of the start worth 500
 /// experience) on the TV through the dev entry. Over the creature fixture,
-/// Alice on two phones: before the entry the creature is inert (the TV's
-/// listing leaves the first fight's placements out); asked for the level's
-/// start, the run lists the fight and the creature runs from its script,
-/// `/api/_test/tv` reporting its health (1) and behaviour. Alice's Eruptor
+/// Alice on two phones: the TV's listing runs the first fight's placements
+/// from the level's start (AH.28), so before any entry the creature runs
+/// from its script, `/api/_test/tv` reporting its health (1) and
+/// behaviour; the entry asked for the level's start then. Alice's Eruptor
 /// placed and taken over, the entry at its anchor; the bottom button
 /// throws, the ball comes down on the creature and its script awards its
 /// experience: the creature gone, his figure at 500 (level 2 on the
@@ -1370,22 +1370,21 @@ async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
     .await
     .expect("the level and its scripts");
     assert_eq!(snap["level"]["scripts"]["scripts"], E2E_FIGHT_SCRIPTS);
-    assert!(
-        creature(&snap, FIGHT_CREATURE).is_null(),
-        "no entry: the creature inert, walked by nothing: {}",
-        snap["creatures"]
-    );
     assert!(snap["entry"].is_null(), "no entry asked");
-
-    // The entry: the fight listed, the creature running from its script.
+    // The fight listed with no entry: the creature running from its script.
+    wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+        creature(s, FIGHT_CREATURE)["behaviour"] == "idle"
+    })
+    .await
+    .expect("the creature runs from the level's start");
     entry_tv(&server.url, json!({"anchor": "start"}))
         .await
         .unwrap();
     let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
-        creature(s, FIGHT_CREATURE)["behaviour"] == "idle"
+        s["entry"]["anchor"] == "start"
     })
     .await
-    .expect("the creature runs once the fight is listed");
+    .expect("the entry asked");
     let c = creature(&snap, FIGHT_CREATURE);
     assert_eq!(c["health"], json!(FIGHT_HEALTH as f64), "{c}");
     assert_eq!(

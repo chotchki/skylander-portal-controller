@@ -383,7 +383,9 @@ fn a_stub_and_its_definition_are_one_object() {
 /// A slider's own members: at half rate it goes half as far a frame;
 /// looping and ping pong (the HUD's sprite shakes) it comes back the way
 /// it went and never ends; `raw duration` reads its time; `ignores time
-/// scales` keeps what's written; any other member of it is unmodelled.
+/// scales` and `allow restart` keep what's written (openspec AH.28: the
+/// camera system sets the latter on a layer's slider as a cutscene
+/// begins); any other member of it is unmodelled.
 #[test]
 fn a_sliders_rate_looping_and_ping_pong() {
     let p = program(|w| {
@@ -393,6 +395,7 @@ fn a_sliders_rate_looping_and_ping_pong() {
             w.variable("raw", "ValueInfo", Some(FLOAT)),
             var(w, "ignores"),
         );
+        let restarts = var(w, "restarts");
         idle(
             w,
             |w| {
@@ -428,6 +431,16 @@ fn a_sliders_rate_looping_and_ping_pong() {
                     &[El::Local(r), El::Member("slider", "ignores time scales")],
                 );
                 w.set(&[El::Local(ignores)], i);
+                let one = w.int(1);
+                w.set(
+                    &[El::Local(r), El::Member("sequence", "allow restart")],
+                    one,
+                );
+                let a = w.rhs(
+                    INT,
+                    &[El::Local(r), El::Member("sequence", "allow restart")],
+                );
+                w.set(&[El::Local(restarts)], a);
                 w.end_block(p);
             },
             |_| {},
@@ -439,6 +452,7 @@ fn a_sliders_rate_looping_and_ping_pong() {
     vm.step(&mut host).unwrap();
     assert_eq!(float(&vm, id, "raw"), 1.0);
     assert_eq!(vm.local(id, "ignores"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "restarts"), Some(Value::Int(1)), "kept");
     vm.step(&mut host).unwrap();
     // Half rate: half a frame's share of the time, 30 a second.
     assert!((float(&vm, id, "v") - 0.5).abs() < 1e-3);
@@ -462,15 +476,13 @@ fn a_sliders_rate_looping_and_ping_pong() {
     assert_eq!(vm.sliders_running(), 1, "a loop never ends on its own");
 }
 
-/// Any member of a slider but its own is unmodelled: strict mode names it.
+/// Any member of a slider but its own is unmodelled: strict mode names it
+/// (`condition`, the one `sequence` member a slider doesn't keep).
 #[test]
 fn another_member_of_a_slider_is_unmodelled() {
     let p = knock_slide(1.0, |w, _, r| {
         let one = w.int(1);
-        w.set(
-            &[El::Local(r), El::Member("sequence", "allow restart")],
-            one,
-        );
+        w.set(&[El::Local(r), El::Member("sequence", "condition")], one);
     });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     vm.add(HANDLE, "Slider", 0);
@@ -478,7 +490,7 @@ fn another_member_of_a_slider_is_unmodelled() {
     let want = vm
         .config()
         .members
-        .name(MemberId::named("sequence", "allow restart"));
+        .name(MemberId::named("sequence", "condition"));
     assert_eq!(halt.reason, Reason::UnmodelledMember(want), "{halt}");
 }
 
