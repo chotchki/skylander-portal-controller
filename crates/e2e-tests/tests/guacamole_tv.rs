@@ -2326,7 +2326,21 @@ async fn the_phone_reads_max_at_the_cap() {
         return;
     }
     let server = spawn();
-    let (phone, _, _) = phone_as(&server, "Alice", ALICE).await;
+    // An iPhone's width: the Mac's run (2026-10-26) had GOLD run into
+    // PLAYTIME there while the experience line sat in the LEVEL cell.
+    let pid = inject_profile(&server.url, "Alice", "1234", ALICE)
+        .await
+        .unwrap();
+    let phone = Phone::new_sized(
+        &server.phone_url().await.unwrap(),
+        &server.chromedriver_url,
+        390,
+        844,
+    )
+    .await
+    .unwrap();
+    let sid = session_id(&phone).await;
+    set_session_profile(&server.url, sid, &pid).await.unwrap();
     pick_giants(&server, &phone).await;
     open_details(&phone, "Spyro").await;
     wait_strip(&phone, &["NEVER PLACED"], Duration::from_secs(5)).await;
@@ -2356,8 +2370,37 @@ async fn the_phone_reads_max_at_the_cap() {
         wait_strip(&phone, &[level.as_str(), "0", "0m"], Duration::from_secs(5)).await;
         let shown = phone.inner_text(".detail-stat-xp").await.unwrap();
         assert_eq!(shown.as_deref().map(str::trim), Some(line.as_str()));
+        strip_keeps_its_labels_apart(&phone, &line).await;
     }
     phone.close().await.unwrap();
+}
+
+/// The details' strip as the phone lays it out: its three labels with room
+/// between them, the experience line under the values.
+async fn strip_keeps_its_labels_apart(phone: &Phone, line: &str) {
+    let read = phone
+        .client
+        .execute(
+            "const r = s => Array.from(document.querySelectorAll(s))
+               .map(e => e.getBoundingClientRect());
+             const ls = r('.detail-stats-strip .detail-stat-l');
+             const vs = r('.detail-stats-strip .detail-stat-v');
+             const xp = r('.detail-stat-xp')[0];
+             return { gaps: [ls[1].left - ls[0].right, ls[2].left - ls[1].right],
+                      xp_top: xp.top, values_bottom: Math.max(...vs.map(v => v.bottom)) };",
+            vec![],
+        )
+        .await
+        .unwrap();
+    let gaps: Vec<f64> = serde_json::from_value(read["gaps"].clone()).unwrap();
+    assert!(
+        gaps.iter().all(|g| *g >= 8.0),
+        "at {line}: the strip's labels {gaps:?} px apart"
+    );
+    assert!(
+        read["xp_top"].as_f64().unwrap() >= read["values_bottom"].as_f64().unwrap(),
+        "at {line}: the experience line under the values: {read}"
+    );
 }
 
 /// `n` with its thousands grouped by commas, as the phone and the TV show

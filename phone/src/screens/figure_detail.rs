@@ -431,15 +431,10 @@ pub(crate) fn FigureDetail(
                 // the visible note for the disabled STATS + RESET above.
                 {move || match stats.get().as_deref().cloned() {
                     Some(StatsFetch::Read(s)) => view! {
-                        <div class="detail-stats-strip">
+                        <div class="detail-stats-strip flex-wrap">
                             <div class="detail-stat-cell">
                                 <div class="detail-stat-l">"LEVEL"</div>
                                 <div class="detail-stat-v">{s.level_label()}</div>
-                                // AH.57: guacamole's experience toward the
-                                // next level, MAX at the cap.
-                                {s.xp_line().map(|line| view! {
-                                    <div class="detail-stat-xp mt-0.5 text-xs text-gold-bright">{line}</div>
-                                })}
                             </div>
                             <div class="detail-stat-cell">
                                 <div class="detail-stat-l">"GOLD"</div>
@@ -449,6 +444,13 @@ pub(crate) fn FigureDetail(
                                 <div class="detail-stat-l">"PLAYTIME"</div>
                                 <div class="detail-stat-v">{format_playtime(s.playtime_secs)}</div>
                             </div>
+                            // AH.57: guacamole's experience toward the next
+                            // level, MAX at the cap, on a row of its own:
+                            // inside the LEVEL cell it widened that cell and
+                            // ran GOLD into PLAYTIME on a phone.
+                            {s.xp_line().map(|line| view! {
+                                <div class="detail-stat-xp basis-full mt-1 text-center text-xs text-gold-bright">{line}</div>
+                            })}
                         </div>
                     }.into_any(),
                     Some(StatsFetch::Unavailable) => view! {

@@ -255,8 +255,10 @@ puts the beaten one back (`needs_rest`, never in);
 beats him alone and presses Restart chapter through the router
 (`press_tv` South, then right to Yes and South), the level again from its
 start with his progress kept; `the_phone_reads_max_at_the_cap` edits
-Spyro to the table's level 14 and 15 and reads the details' LEVEL cell and
-experience line (`.detail-stat-xp`) and the sheet's stepper, MAX at 15.
+Spyro to the table's level 14 and 15 on a phone 390 px wide and reads the
+details' LEVEL cell and experience line (`.detail-stat-xp`, a row of its
+own under the strip's three cells, their labels at least 8 px apart) and
+the sheet's stepper, MAX at 15.
 The smashing and creature tests read the HUD's gold and level too
 (AH.71, AH.26).
 The mirror's `warm` is the turntables' pre-warm (openspec AE.14:

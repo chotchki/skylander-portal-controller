@@ -4665,6 +4665,57 @@ mod tests {
         assert_eq!((row.xp, row.gold), (42, 7), "the row kept");
     }
 
+    /// AH.26's Restart chapter puts the level's breakables back, the props'
+    /// report with them: AH.27's synthetic barrel broken, the level started
+    /// again, it stands and nothing reads as taken off (the Mac's run,
+    /// 2026-10-26, read the two coins the dev entry had taken off still
+    /// listed after a restart).
+    #[test]
+    fn a_restart_puts_the_broken_barrel_back() {
+        use guac_formats::script::builder::SMASH_BARREL;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        let source = write_level(tmp.path(), &lights());
+        write_smash_parts(tmp.path());
+        tx.send(source).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        put(
+            &mut app,
+            owned_eruptor(0, "alice", FigureProgress::default()),
+        );
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "the barrel down", |a| {
+            props_report(a).taken_off == [SMASH_BARREL]
+        });
+        assert!(!props_report(&app).names.contains(&SMASH_BARREL.to_owned()));
+        app.world_mut().write_message(RestartLevel);
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal, "the level ended");
+        until(&mut app, "the level again", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts in the new run", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = props_report(&app);
+        assert!(r.taken_off.is_empty(), "{r:?}");
+        assert!(
+            r.names.contains(&SMASH_BARREL.to_owned()),
+            "it stands: {r:?}"
+        );
+    }
+
     /// The HUD on the TV app (AH.26, AH.57, AH.71) over AH.27's synthetic
     /// barrel, Alice's Eruptor at 999 experience and 5 gold on a three-level
     /// table: his scripts' 120 of 150, level 1 and 999 toward 1,000; a bite
