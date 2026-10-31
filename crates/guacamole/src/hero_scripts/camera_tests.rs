@@ -1105,6 +1105,135 @@ fn a_swap_mid_level_leaves_the_scripts_the_view() {
     );
 }
 
+/// Where [`wander`] puts the scripts' eye each step, while set.
+#[derive(Resource, Default)]
+struct Wander(Option<Vec3>);
+
+/// The camera's scripts' view sent off each step after their own write,
+/// before the TV's camera reads it, as theirs wanders with no one to follow.
+fn wander(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
+    if let (Some(eye), Some(mut world)) = (to.0, world) {
+        world.viewport_mut().eye = eye;
+    }
+}
+
+/// Each step's camera as the step left it, with the hero's join then (none
+/// with no hero), while [`Wander`] is set.
+#[derive(Resource, Default)]
+struct Steps(Vec<(Option<&'static str>, Transform)>);
+
+fn steps_seen(
+    to: Res<Wander>,
+    runs: Query<&super::HeroRun>,
+    cameras: Query<&Transform, With<FollowCamera>>,
+    mut out: ResMut<Steps>,
+) {
+    if to.0.is_none() {
+        return;
+    }
+    if let Ok(t) = cameras.single() {
+        out.0.push((runs.single().ok().map(|r| r.join.name()), *t));
+    }
+}
+
+/// AH.227: from his figure leaving the portal until the next hero's scripts
+/// join the run, the camera's scripts follow no one and their view wanders
+/// (after a defeat, into the rock behind the pit): the TV's view holds where
+/// it stood through every step of it, the next hero walking in under it
+/// before he joins, and from his join it's theirs again.
+#[test]
+fn the_view_holds_where_it_stood_until_the_next_hero_joins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, pad) = camera_app(tmp.path(), CameraFault::None);
+    app.init_resource::<Wander>()
+        .init_resource::<Steps>()
+        .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, steps_seen.in_set(Frame::Record));
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let held = last(&app);
+    clear(&mut app, 0);
+    frames(&mut app, 30);
+    let off = held.eye + Vec3::new(0.0, -20.0, 30.0);
+    app.world_mut().resource_mut::<Wander>().0 = Some(off);
+    place(&mut app, 1, ERUPTOR, "Eruptor");
+    until(&mut app, "him in", |a| {
+        a.world().resource::<crate::play::Play>().hero().is_some()
+    });
+    test_pad::press(&mut app, pad, GamepadButton::East);
+    until(&mut app, "his scripts", |a| {
+        join(a).as_deref() == Some("joined")
+    });
+    frames(&mut app, 5);
+    let seen = app.world().resource::<Steps>().0.clone();
+    let before: Vec<&Transform> = seen
+        .iter()
+        .take_while(|(j, _)| *j != Some("joined"))
+        .map(|(_, t)| t)
+        .collect();
+    assert!(!before.is_empty(), "no step ran with no one in their run");
+    for (k, t) in before.iter().enumerate() {
+        assert!(
+            t.translation.distance(held.eye) < 1e-4 && t.forward().dot(held.look) > 1.0 - 1e-6,
+            "step {k} of {} before his join: {t:?}, held at {:?}",
+            before.len(),
+            held.eye
+        );
+    }
+    // Joined: theirs again, wandered or not.
+    let (_, t) = seen.last().unwrap();
+    assert!(t.translation.distance(off) < 1e-3, "{t:?} against {off}");
+}
+
+/// AH.227, from the other end: a defeat's death sequence takes his minion
+/// off the run while he's still on the portal and in the level (the TV takes
+/// him off once his minion is gone); from that step the camera's scripts'
+/// view wanders with no one to follow and the TV's view holds where it
+/// stood, steps running all the while.
+#[test]
+fn the_view_holds_from_his_minion_going_while_hes_still_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _) = camera_app(tmp.path(), CameraFault::None);
+    app.init_resource::<Wander>()
+        .init_resource::<Steps>()
+        .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, steps_seen.in_set(Frame::Record));
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let held = last(&app);
+    let minion = {
+        let e = hero_entity(&app);
+        match &app.world().get::<super::HeroRun>(e).unwrap().join {
+            super::Join::Joined(m) => *m,
+            other => panic!("joined: {other:?}"),
+        }
+    };
+    let off = held.eye + Vec3::new(0.0, -20.0, 30.0);
+    {
+        let w = app.world_mut();
+        let mut rt = w.resource_mut::<ScriptRuntime>();
+        let h = rt.vm.handle_of(minion).expect("his minion's handle");
+        assert!(rt.vm.remove(h), "his minion taken off");
+        w.resource_mut::<Wander>().0 = Some(off);
+    }
+    frames(&mut app, 20);
+    let seen = app.world().resource::<Steps>().0.clone();
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    for (k, (join, t)) in seen.iter().enumerate() {
+        assert_eq!(*join, Some("joined"), "still in: step {k}");
+        assert!(
+            t.translation.distance(held.eye) < 1e-4 && t.forward().dot(held.look) > 1.0 - 1e-6,
+            "step {k} of {} after his minion went: {t:?}, held at {:?}",
+            seen.len(),
+            held.eye
+        );
+    }
+}
+
 /// Eruptor in place of the hero on the portal (slot 0 cleared, Eruptor
 /// placed in slot 1), taken in and his scripts joined; the index of the
 /// first step recorded after the clear.

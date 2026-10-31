@@ -17,7 +17,7 @@ use guacamole::props::{DRAWN_SPAWNS, SKINNED_SPAWNS};
 /// The start's clones' templates that draw nothing on the TV, each with
 /// why (`DRAWN_SPAWNS`' doc): every other template the start clones with a
 /// model is drawn, static or skinned.
-const UNDRAWN: [(&str, &str); 9] = [
+const UNDRAWN: [(&str, &str); 8] = [
     (
         "Boulder_Titan_Pebble_01(1)",
         "on the boulder's attach nodes",
@@ -41,7 +41,6 @@ const UNDRAWN: [(&str, &str); 9] = [
     ("Chest_Lock", "the chest's, a creature's"),
     ("Canon_Barrel_Marker", "invisible"),
     ("Dummy_Inviso", "invisible"),
-    ("Turban_hat", "Norticus' hat: the fight's, a creature's"),
 ];
 
 #[test]

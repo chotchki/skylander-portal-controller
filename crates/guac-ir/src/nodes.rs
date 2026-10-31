@@ -7,7 +7,9 @@
 //! bone: [`AttachNodes::place`].
 //!
 //! One file per character load file, `nodes/<load file>.<ron|postcard>`:
-//! a new file beside unchanged ones, so [`crate::IR_VERSION`] holds.
+//! a new file beside unchanged ones, so [`crate::IR_VERSION`] holds. A
+//! level's models' lists are its nodes part ([`LevelNodes`], openspec
+//! AH.138: Norticus' turban hangs on his node 2), a part beside the others.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +19,8 @@ use crate::model::Transform;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttachNodes {
     pub identity: DumpIdentity,
-    /// The roster's load file (`009_Eruptor`).
+    /// The roster's load file (`009_Eruptor`); for a level's model
+    /// ([`LevelNodes`]), its path as the level names it.
     pub load_file: String,
     /// In the attach list's order: a script's index names one.
     pub nodes: Vec<AttachNode>,
@@ -35,6 +38,26 @@ pub struct AttachNode {
     /// The offset from the bone: the attach point's position and its Euler
     /// angles as a rotation, scale 1.
     pub offset: Transform,
+}
+
+/// A level's nodes part (`levels/<archive>/nodes`, openspec AH.138): the
+/// attach list of each model a placement names that holds any, by its path
+/// (each [`AttachNodes::load_file`]), each node on its joint of the model's
+/// skeleton when the model is skinned (the props part's joints) and on none
+/// when it's static; and each model whose list didn't read, with why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LevelNodes {
+    pub identity: DumpIdentity,
+    pub level: String,
+    pub models: Vec<AttachNodes>,
+    pub refused: Vec<crate::level::RefusedProp>,
+}
+
+impl LevelNodes {
+    /// The attach list of the model at `path`, if it holds one.
+    pub fn get(&self, path: &str) -> Option<&AttachNodes> {
+        self.models.iter().find(|m| m.load_file == path)
+    }
 }
 
 impl AttachNodes {

@@ -454,6 +454,10 @@ pub struct StageSpec {
     /// The script the skinned prop's placement runs (AH.22's palettes
     /// follow a whitelisted one to its creature), an empty frame.
     pub skinned_script: Option<&'static str>,
+    /// The skinned prop's attach list, and the first static prop's
+    /// (openspec AH.138's nodes part); empty, none is written.
+    pub skinned_points: Vec<crate::attachments::builder::PointSpec>,
+    pub prop_points: Vec<crate::attachments::builder::PointSpec>,
     /// A prop whose technique sits under an animated transform.
     pub transformed: Option<(&'static str, crate::model::builder::MaterialSpec)>,
     /// The PS3's zones its definition script adds (AG.41); `None` writes no
@@ -573,6 +577,8 @@ pub fn stage_sample() -> StageSpec {
         )],
         skinned: Some(("C:/tfb/Content/Models/Objects/Treasure_Chest.mdl", chest)),
         skinned_script: Some("C:/tfb/Content/Levels/Synthetic/Scripts/S2_Enemy_Chompy.ai"),
+        skinned_points: Vec::new(),
+        prop_points: Vec::new(),
         transformed: Some((
             "C:/tfb/Content/Models/Objects/fairy_upgrade_gem.mdl",
             colour_only("m_butterfly_wings", 7),
@@ -667,12 +673,17 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
             static_model(&mut b, path, t)
         })
         .collect();
+    if let (Some(&first), false) = (models.first(), spec.prop_points.is_empty()) {
+        crate::attachments::builder::attach_list(&mut b, blocks, first, &spec.prop_points);
+    }
     if let Some((path, character)) = &spec.skinned {
         let mut character = character.clone();
         character.model = path;
-        models.push(crate::model::builder::character_in(
-            &mut b, blocks, &character,
-        ));
+        let model = crate::model::builder::character_in(&mut b, blocks, &character);
+        if !spec.skinned_points.is_empty() {
+            crate::attachments::builder::attach_list(&mut b, blocks, model, &spec.skinned_points);
+        }
+        models.push(model);
     }
     if let Some((path, m)) = &spec.transformed {
         let t = material_technique(&mut b, blocks, m, &images, fixture(m));

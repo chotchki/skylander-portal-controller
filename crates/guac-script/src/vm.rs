@@ -641,9 +641,10 @@ struct Slider {
     /// `sequence.playback rate`, percent: a frame moves it a tick's seconds
     /// times this over 100.
     rate: f32,
-    /// `sequence.looping` and `.playback mode` (ping pong): a looping slide
-    /// starts again at its time's end, a ping pong one back the way it
-    /// came, and never ends on its own.
+    /// `sequence.looping` and `.playback mode` (ping pong): one way, a slide
+    /// ends at its target, or looping starts again; ping pong, it comes back
+    /// from its target and ends where it began, or looping goes out again
+    /// (crate docs, Slides). A looping slide never ends on its own.
     looping: bool,
     ping_pong: bool,
     ignores_time_scales: bool,
@@ -1570,7 +1571,9 @@ impl Vm {
             }
             s.elapsed += dt * s.rate / 100.0;
             let mut done = s.elapsed + 1e-6 >= s.time;
-            if done && s.looping {
+            // At a pass's end: a ping pong one out turns back, looping or
+            // not; any other pass ends the slide unless it loops.
+            if done && (s.looping || (s.ping_pong && !s.back)) {
                 s.elapsed = (s.elapsed - s.time).max(0.0);
                 if s.ping_pong {
                     s.back = !s.back;
@@ -1579,10 +1582,12 @@ impl Vm {
             }
             let x = s.elapsed / s.time;
             let k = eased(if s.back { 1.0 - x } else { x }, s.out, s.in_);
-            let v = if done {
-                s.to
-            } else {
-                between(s.from, s.to, k).unwrap_or(s.to)
+            // Ended, it lands where its last pass was going: its target, or
+            // back where it began from a ping pong's return.
+            let v = match (done, s.back) {
+                (true, false) => s.to,
+                (true, true) => s.from,
+                (false, _) => between(s.from, s.to, k).unwrap_or(s.to),
             };
             let (spot, placement, ctx, receiver) = (s.spot, s.placement, s.ctx, s.receiver);
             if done {
@@ -3905,7 +3910,16 @@ impl Vm {
         }
         match spot {
             Spot::Cell(c) => {
+                // A reference set to name something tells the host, which
+                // remembers where an actor it names stands, the one it
+                // named already again (crate docs, Variables, structures
+                // and sets).
+                let named = self.cells[c as usize].kind == CellKind::Reference
+                    && matches!(v, Value::Entity(_) | Value::Object(_));
                 self.write_cell(c, v, 0);
+                if named {
+                    host.referenced(c, v);
+                }
                 Ok(())
             }
             Spot::Count(s) => {

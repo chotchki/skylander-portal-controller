@@ -655,9 +655,9 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
     // The clones the TV draws against AG.7's live actors at F0: the fence's
     // cross beam where the fence holds it, its planks where it lays them
     // (their turns and heights rolled), the eggs in their nests (their
-    // wobble rolled), the cannon's base on the cannon; and the skinned ones
-    // (AG.150): the push blocks' three tortoises on their blocks, the
-    // cannon's top on its base.
+    // wobble rolled), the cannon's base on the cannon, Norticus' turban on
+    // the far-off Norticus; and the skinned ones (AG.150): the push blocks'
+    // three tortoises on their blocks, the cannon's top on its base.
     let path = captures.join(AG7_RUN).join("actors-00002.json");
     let actors: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let mut live_clones: HashMap<&str, Vec<Placed>> = HashMap::new();
@@ -715,6 +715,28 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
                 let across = Vec3::new(a.position.x - at.x, 0.0, a.position.z - at.z).length();
                 assert!(across < 0.03, "{across}");
             }
+            // Norticus' turban (AH.138) rides the far-off Norticus' node 2,
+            // 0.5 ft down from it. The start's listing runs his script for
+            // its first tick alone, so he stands where he's placed, and no
+            // headless run poses his nodes (the TV does), so his node 2 is
+            // his pivot: the hat 0.5 ft under it. The live one is his walk's,
+            // 2.14 m over him where AG.7's read has him, 11 m on, which the
+            // read can't date: checked against him, not against it.
+            "Turban_hat" => {
+                let him = run
+                    .world
+                    .placed_in(common::LEVEL, "Norticus_First_Encounter(1)")
+                    .and_then(|h| run.world.actor(h))
+                    .expect("the far-off Norticus")
+                    .position;
+                let down = him - Vec3::Y * 0.5 / guacamole::script_engine::FEET_PER_METRE;
+                assert!(
+                    a.position.distance(down) < 1e-3,
+                    "{} against {down}",
+                    a.position
+                );
+                assert_eq!(a.scale, scale);
+            }
             "Wooden Plank_one" | "Wooden Plank_Two" => {
                 assert!(d < 1e-3, "{d}");
                 assert!([114.0, 294.0].contains(&a.angles.facing.rem_euclid(360.0)));
@@ -730,8 +752,8 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
         checked += 1;
     }
     assert_eq!(
-        checked, 14,
-        "the beam, six planks, two eggs, the cannon's base, three tortoises and the cannon's top"
+        checked, 15,
+        "the beam, six planks, two eggs, the cannon's base, three tortoises, the cannon's top and Norticus' turban"
     );
 
     // At the gate's door the walkway's first spinning coin wakes, as on

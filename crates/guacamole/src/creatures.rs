@@ -45,6 +45,7 @@ use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::TransformInterpolation;
 use guac_ir::Model;
+use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider as SeamCollider, Pose};
 use guac_motion::solid::HavokSolid;
@@ -188,7 +189,7 @@ impl Plugin for CreaturesPlugin {
             .init_resource::<DrawnCreatures>()
             .add_systems(
                 FixedUpdate,
-                (place_bodies, place_creatures)
+                (pose_creature_nodes, place_bodies, place_creatures)
                     .chain()
                     .in_set(Frame::Hands)
                     .after(crate::hero_scripts::pose_hands),
@@ -209,13 +210,14 @@ impl Plugin for CreaturesPlugin {
     }
 }
 
-/// A creature drawn: its actor, its model and palette, its joints and the
-/// materials the level lights for it.
+/// A creature drawn: its actor, its model, palette and attach list, its
+/// joints and the materials the level lights for it.
 #[derive(Component, Debug)]
 pub(crate) struct DrawnCreature {
     pub(crate) actor: Handle,
     model: Arc<Model>,
     palette: Option<Arc<Palette>>,
+    nodes: Option<Arc<AttachNodes>>,
     joints: Vec<Entity>,
     /// Its drawn parts, each on one of `lit` or a tinted copy of it.
     segments: Vec<Entity>,
@@ -240,6 +242,86 @@ fn placed(a: &guacamole::script_engine::Actor) -> Transform {
         rotation: Quat::from_rotation_y(a.angles.facing.to_radians()),
         scale: Vec3::from_array(a.scale) / 100.0,
     }
+}
+
+/// A drawn creature's or skinned clone's attach nodes as [`pose_creatures`]
+/// poses its model (openspec AH.138): its idle at `seconds` with the clips
+/// its scripts play laid over it, each node on its joint, in the frame
+/// [`ScriptWorld::set_nodes`] takes (its own, +Z its facing) at its scale,
+/// its tilt and roll taken (a clone turns by all three, AG.150). None
+/// without an attach list.
+pub(crate) fn creature_nodes(
+    c: &DrawnCreature,
+    actor: &guacamole::script_engine::Actor,
+    world: &ScriptWorld,
+    seconds: f64,
+) -> Option<Vec<guacamole::script_engine::NodePose>> {
+    let nodes = c.nodes.as_deref()?;
+    let over: Vec<(&guac_ir::clip::Clip, f64)> = match &c.palette {
+        Some(p) => crate::hero_scripts::playing_on(world, c.actor)
+            .into_iter()
+            .filter_map(|(slot, at, _)| Some((p.clip(u16::try_from(slot).ok()?)?, f64::from(at))))
+            .collect(),
+        None => Vec::new(),
+    };
+    let base = [(&c.model.idle, seconds, 1.0)];
+    let posed = guacamole::hands::posed(&c.model.skeleton, nodes, &base, &over, 1.0);
+    // Drawn turned by `placed`'s rotation; read turned by its facing alone.
+    let drawn = placed(actor).rotation;
+    let facing = Quat::from_rotation_y(actor.angles.facing.to_radians());
+    let own = facing.inverse() * drawn;
+    let scale = Vec3::from_array(actor.scale) / 100.0;
+    Some(
+        posed
+            .into_iter()
+            .map(|n| guacamole::script_engine::NodePose {
+                at: own * (n.at * scale),
+                turn: own * n.turn,
+            })
+            .collect(),
+    )
+}
+
+/// What hangs on a drawn creature's or skinned clone's node rides it
+/// (openspec AH.138: Norticus' turban on his node 2): each one something
+/// hangs on posed by [`creature_nodes`], its idle on the TV's clock since it
+/// was drawn, then what hangs from them set there. Only those something
+/// hangs on are posed, so the rest cost nothing.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pose_creature_nodes(
+    world: Option<ResMut<ScriptWorld>>,
+    time: Res<Time>,
+    drawn: Res<DrawnCreatures>,
+    creatures: Query<&DrawnCreature>,
+    seam: crate::physics::AvianSeam,
+    cameras: Query<&crate::hero::FollowCamera>,
+    mut heroes: Query<(Entity, &'static mut HeroBody)>,
+    (level, source): (Res<Level>, Option<Res<crate::hero_scripts::ScriptSource>>),
+) {
+    let Some(mut world) = world else {
+        return;
+    };
+    let mut posed = false;
+    for h in world.hung_on() {
+        let Some(c) = drawn.0.get(&h).and_then(|&e| creatures.get(e).ok()) else {
+            continue;
+        };
+        let Some(actor) = world.actor(h) else {
+            continue;
+        };
+        let seconds = time.elapsed().saturating_sub(c.since).as_secs_f64();
+        if let Some(nodes) = creature_nodes(c, actor, &world, seconds) {
+            world.set_nodes(h, nodes);
+            posed = true;
+        }
+    }
+    if !posed {
+        return;
+    }
+    let view = crate::hero_scripts::view_heading(&cameras);
+    let props = crate::hero_scripts::standing_props(&level, &world, source.as_deref());
+    let mut engine = crate::hero_scripts::TvEngine::new(&mut heroes, &seam, view, &props);
+    world.place_hung(&mut engine);
 }
 
 /// Each drawn creature at its actor's place as the step left it, eased
@@ -349,7 +431,11 @@ fn draw_creatures(
         let Some((creature, images)) = level.creature(&path) else {
             continue;
         };
-        let (model, palette) = (creature.model.clone(), creature.palette.clone());
+        let (model, palette, nodes) = (
+            creature.model.clone(),
+            creature.palette.clone(),
+            creature.nodes.clone(),
+        );
         let keys = match guacamole::character::warm::level_keys(&model, &crate::play::key_scene()) {
             Ok(k) => k,
             Err(why) => {
@@ -437,6 +523,7 @@ fn draw_creatures(
                     actor: h,
                     model,
                     palette,
+                    nodes,
                     joints: body.joints,
                     segments: body.segments.clone(),
                     lit: handles,
@@ -1024,6 +1111,100 @@ mod tests {
             top(a).translation.distance(Vec3::from_array(ART_TOP)) < 1e-4
         });
         assert!(ticks(&app) >= FIGHT_ART_PLAY, "posed by its script's clip");
+    }
+
+    /// AH.138: what hangs on a drawn creature's node rides its joint: hung
+    /// on the creature's node 0 (its top joint, a quarter metre along it),
+    /// it stands where the creature's reference pose holds that, then where
+    /// its battle clip does, as the creature walks. AH.226's: hung on the
+    /// skinned clone's node 0, it stands where the clone's clip holds its
+    /// top, turned as the clone is drawn (its tilt taken), as its own
+    /// clip plays.
+    #[test]
+    fn what_hangs_on_a_creatures_or_skinned_clones_node_rides_its_joint() {
+        use guac_formats::script::builder::{FIGHT_ART_PLAY, FIGHT_ART_SPAWNER};
+
+        use crate::test_support::play::{ART_TOP, BATTLE_TOP, NODE_UP, fight_app_with_art};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app_with_art(tmp.path(), Some(start()));
+        let c = creature(&app);
+        let hung = {
+            let w = app.world();
+            let level = w.resource::<ScriptSource>().level_unit().unwrap();
+            w.resource::<ScriptWorld>()
+                .placed_in(level, FIGHT_ART_SPAWNER)
+                .expect("the spawner")
+        };
+        until(&mut app, "the creature drawn", |a| {
+            a.world().resource::<DrawnCreatures>().0.contains_key(&c)
+        });
+        assert!(
+            app.world_mut()
+                .resource_mut::<ScriptWorld>()
+                .hang(hung, c, 0)
+        );
+        // Where node 0 is on the drawn model with its top at `top`: over the
+        // pivot at the actor's scale, turned as drawn.
+        let node = |app: &App, owner: Handle, top: [f32; 3]| {
+            let a = app
+                .world()
+                .resource::<ScriptWorld>()
+                .actor(owner)
+                .unwrap()
+                .clone();
+            placed(&a).transform_point(Vec3::from_array(top) + Vec3::Y * NODE_UP)
+        };
+        let at = |app: &App| {
+            app.world()
+                .resource::<ScriptWorld>()
+                .actor(hung)
+                .unwrap()
+                .position
+        };
+        app.update();
+        if !ticked_to_battle(&app) {
+            let want = node(&app, c, [0.0, 1.0, 0.0]);
+            assert!(at(&app).distance(want) < 1e-4, "{} want {want}", at(&app));
+        }
+        until(&mut app, "on the battle clip's top", |a| {
+            at(a).distance(node(a, c, BATTLE_TOP)) < 1e-4
+        });
+        assert!(ticked_to_battle(&app), "posed by its battle clip");
+        // On the art clone's node, turned and tilted as it's drawn.
+        let art = until_art(&mut app);
+        assert!(
+            app.world_mut()
+                .resource_mut::<ScriptWorld>()
+                .hang(hung, art, 0)
+        );
+        until(&mut app, "on the art's clip's top", |a| {
+            at(a).distance(node(a, art, ART_TOP)) < 1e-4
+        });
+        let ticks = {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            match vm.placement_of(art).and_then(|id| vm.local(id, "ticks")) {
+                Some(Value::Int(n)) => n,
+                _ => 0,
+            }
+        };
+        assert!(ticks >= FIGHT_ART_PLAY, "posed by its script's clip");
+        let a = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(art)
+            .unwrap()
+            .clone();
+        assert!(a.angles.tilt.abs() > 1.0, "a tilted clone: {:?}", a.angles);
+    }
+
+    /// The art clone, once it's drawn.
+    fn until_art(app: &mut App) -> Handle {
+        until(app, "the art drawn", |a| {
+            skinned_clones(a.world().resource::<ScriptWorld>())
+                .first()
+                .is_some_and(|h| a.world().resource::<DrawnCreatures>().0.contains_key(h))
+        });
+        skinned_clones(app.world().resource::<ScriptWorld>())[0]
     }
 
     fn ticked_to_battle(app: &App) -> bool {

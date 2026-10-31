@@ -1992,6 +1992,27 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
     let rel = ir.level_path(&level, guac_extract::levels::PALETTES);
     dir.write_output(&rel, &ir.encode(&palettes, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::PALETTES, vec![rel])?;
+    // AH.138's nodes: no attach lists, so nothing hangs on a creature's node.
+    let nodes = guac_ir::nodes::LevelNodes {
+        identity: palettes.identity,
+        level: level.clone(),
+        models: Vec::new(),
+        refused: Vec::new(),
+    };
+    let rel = ir.level_path(&level, guac_extract::levels::NODES);
+    dir.write_output(&rel, &ir.encode(&nodes, dir, &rel)?)?;
+    dir.record_level_part(&level, guac_extract::levels::NODES, vec![rel])?;
+    // A part the level stage reads that this left out would make the TV's
+    // first pick extract it again over the fixture (AH.138's nodes did, 43
+    // tests failing on it): name it here instead.
+    let recorded = dir.manifest().levels.get(&level).map(|l| &l.parts);
+    let missing: Vec<&str> = guac_extract::levels::PARTS
+        .into_iter()
+        .filter(|p| !recorded.is_some_and(|r| r.contains_key(*p)))
+        .collect();
+    if !missing.is_empty() {
+        bail!("the e2e fixture writes no level part {missing:?}: write it in write_level");
+    }
     Ok(())
 }
 
@@ -3539,5 +3560,23 @@ mod chrome_version_tests {
         );
         assert_eq!(chrome_major_version(""), None);
         assert_eq!(chrome_major_version("Google Chrome"), None);
+    }
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::IntroFixture;
+
+    /// The synthetic extract records every level part the level stage
+    /// reads, or the TV's first pick extracts the missing one again over it
+    /// and the guacamole suite fails at its first level (AH.138's nodes
+    /// part: 43 tests). A part added to `guac_extract::levels::PARTS` fails
+    /// this, naming it, until `write_level` writes it.
+    #[test]
+    fn the_fixture_writes_every_level_part() {
+        let tmp = tempfile::tempdir().unwrap();
+        if let Err(e) = IntroFixture::build_fighting_in(tmp.path()) {
+            panic!("{e:#}");
+        }
     }
 }

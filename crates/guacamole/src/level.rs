@@ -230,6 +230,10 @@ pub(crate) struct CreatureModel {
     /// None when the level's palettes part doesn't read or holds none for
     /// it: it holds its idle.
     pub(crate) palette: Option<Arc<guac_ir::palette::Palette>>,
+    /// Its attach list off the level's nodes part (openspec AH.138), its
+    /// nodes on its joints; none when the part doesn't read or holds none
+    /// for it: what hangs on its nodes stands at its pivot.
+    pub(crate) nodes: Option<Arc<guac_ir::nodes::AttachNodes>>,
 }
 
 /// What walking the level takes: its solids, built off the frame, where
@@ -446,6 +450,18 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             None
         }
     };
+    // Their attach lists (AH.138): a nodes part that doesn't read leaves
+    // what hangs on their nodes at their pivots.
+    let nodes: Option<guac_ir::nodes::LevelNodes> = match read_ir(
+        source.ir,
+        &part(guac_extract::levels::NODES),
+    ) {
+        Ok(n) => Some(n),
+        Err(why) => {
+            warn!(reason = %why, "the level's nodes didn't read: what hangs on a creature's node stands at its pivot");
+            None
+        }
+    };
     let creatures: Vec<CreatureModel> = std::mem::take(&mut walk.creatures)
         .into_iter()
         .map(|(path, model)| CreatureModel {
@@ -453,6 +469,10 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
                 .as_ref()
                 .and_then(|p| p.palettes.iter().find(|x| x.owner == path))
                 .map(|p| Arc::new(p.clone())),
+            nodes: nodes
+                .as_ref()
+                .and_then(|n| n.get(&path))
+                .map(|n| Arc::new(n.clone())),
             path,
             model: Arc::new(model),
         })
@@ -3076,10 +3096,10 @@ mod tests {
         };
         write_props(
             tmp.path(),
-            vec![model("egg.mdl"), model("hat.mdl")],
+            vec![model("egg.mdl"), model("lock.mdl")],
             vec![
                 template(20, "Bird_nest_egg", "egg.mdl"),
-                template(21, "Turban_hat", "hat.mdl"),
+                template(21, "Chest_Lock", "lock.mdl"),
             ],
         );
         let mut app = level_app(tmp.path(), source, false);
@@ -3087,7 +3107,7 @@ mod tests {
         let level = app.world().resource::<Level>();
         let models = level.spawn_models().expect("loaded");
         assert_eq!(models.get("egg.mdl").map(Vec::len), Some(1));
-        assert!(!models.contains_key("hat.mdl"));
+        assert!(!models.contains_key("lock.mdl"));
     }
 
     /// AH.87: the particle part's emitters load with the level, each

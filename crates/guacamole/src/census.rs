@@ -11,9 +11,10 @@
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
-//! static parts they carry) and its chapter 1 another 67, its props 66
+//! static parts they carry) and its chapter 1 another 67, its props 68
 //! more (AG.60's start scripts stand and spawn more of them: 32 before;
-//! AG.239's route clones 10 more), what its scripts spawn 13 more beyond
+//! AG.239's route clones 10 more; Norticus' turban 2, AH.138), what its
+//! scripts spawn 13 more beyond
 //! those (parts fading in among them, AH.67; 3 before AH.39 read
 //! `global.bld`'s own models), since AG.23 the level's, its props' and its
 //! spawns' parts that leave the shadow to the scene receiving the level's
@@ -271,9 +272,9 @@ pub const LEVEL: &[Row] = &[
 /// the models of the placements that can stand there (a template or a
 /// creature draws nothing; one without a range stands by its actor since
 /// AG.60) and of the placements whose clones draw (AG.60's and AG.239's
-/// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades), in
-/// the level's scene at AF's fresh state (the level's shadow on since
-/// AG.23), each once.
+/// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades;
+/// Norticus' turban's two since AH.138), in the level's scene at AF's fresh
+/// state (the level's shadow on since AG.23), each once.
 pub const LEVEL_PROPS: &[Row] = &[
     row(0x0534, 0x1534, O, true, false, false, 1, true, true),
     row(0x3d00, 0x2500, O, true, false, false, 1, true, false),
@@ -328,7 +329,9 @@ pub const LEVEL_PROPS: &[Row] = &[
     row(0x3d34, 0x3534, O, true, false, false, 1, true, true),
     row(0x3d34, 0x3534, O, true, true, false, 1, true, true),
     row(0x3d38, 0x2538, O, true, false, false, 1, true, false),
+    row(0x3d38, 0x2538, O, true, true, true, 1, true, false),
     row(0x3d38, 0x2538, A, true, false, false, 1, true, false),
+    row(0x3d38, 0x2538, A, true, true, true, 1, true, false),
     row(0x3d38, 0x3538, O, true, false, false, 1, true, true),
     row(0x3d38, 0x3538, A, false, false, false, 1, true, true),
     row(0x3d38, 0x3538, A, true, false, false, 1, true, true),
@@ -681,7 +684,7 @@ mod tests {
             (TURNTABLE, true, 33),
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 67),
-            (LEVEL_PROPS, false, 66),
+            (LEVEL_PROPS, false, 68),
             (SPAWNS, false, 13),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
@@ -737,7 +740,7 @@ mod tests {
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 67 + 66 + 13 + 1 + 29 + 1 + 10 + 1 + 1 + 1 + 4
+            33 + 24 + 67 + 68 + 13 + 1 + 29 + 1 + 10 + 1 + 1 + 1 + 4
         );
         assert_eq!(
             turntable_keys().len(),

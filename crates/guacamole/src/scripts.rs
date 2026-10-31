@@ -723,6 +723,12 @@ impl ScriptWorld {
         &self.view
     }
 
+    /// The viewport, to write as a camera script's write would: how the
+    /// TV's tests send it wandering (openspec AH.227).
+    pub fn viewport_mut(&mut self) -> &mut crate::viewport::Viewport {
+        &mut self.view
+    }
+
     /// The view handed back to the TV for good: the camera's scripts
     /// stopped in play, and from here on the TV's own camera stands for the
     /// viewport (openspec AG.28). A hand-back until a join
@@ -1036,6 +1042,22 @@ impl ScriptWorld {
     /// `actor`'s attach nodes as last set, in its own frame.
     pub fn nodes(&self, actor: Handle) -> Option<&[NodePose]> {
         self.nodes.get(&actor).map(Vec::as_slice)
+    }
+
+    /// `actor` hung on node `node` of `owner` with no offset, as a script's
+    /// `abstractplacement.attach node` hangs it: placed there once the hung
+    /// are next placed ([`ScriptWorld::place_hung`]). False for no such
+    /// actor.
+    pub fn hang(&mut self, actor: Handle, owner: Handle, node: u32) -> bool {
+        let on = self.objs.value(Object::Node(owner, node));
+        match self.actors.get_mut(&actor) {
+            Some(a) => {
+                a.attach = on;
+                a.hung = Vec3::ZERO;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Each actor hung from a node set at it, as the end of
@@ -1546,6 +1568,9 @@ impl Host for WorldHost<'_, '_> {
     }
     fn make(&mut self, class: &str) -> Option<Value> {
         self.world.make(class)
+    }
+    fn referenced(&mut self, cell: u32, target: Value) {
+        self.world.referenced(cell, target, self.engine);
     }
     fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
         self.world.adopt(program)

@@ -437,7 +437,8 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             "lights",
             "atmosphere",
             "script",
-            "palettes"
+            "palettes",
+            "nodes"
         ]
     );
     let mut m: crate::extract::Manifest = serde_json::from_value(serde_json::json!({
@@ -478,6 +479,13 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             .parts
             .insert(part.to_owned(), Vec::new());
     }
+    // AH.138's nodes: an extract written before them resumes for those alone.
+    assert!(!complete(&m), "the nodes missing");
+    m.levels
+        .get_mut(LEVELS[0])
+        .unwrap()
+        .parts
+        .insert(NODES.to_owned(), Vec::new());
     assert!(complete(&m));
     // The script is the entry as the disc holds it, in either format.
     for ir in [
@@ -688,4 +696,56 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
     let walker = creature_level(Some("Levels/Synthetic/Scripts/PortalEntry_Air.ai"));
     let r = palettes(parsed(&walker), "level_999_elsewhere", identity()).unwrap();
     assert!(r.ir.palettes.is_empty());
+}
+
+/// The nodes part (openspec AH.138): the skinned chest's attach list on its
+/// Havok joints by name (`J_head` joint 2, `J_spine` 1, `*root*` and a bone
+/// it lacks on none), its offsets as stored; the gourd's on no joint, a
+/// static model having none; the models without a list left out.
+#[test]
+fn the_nodes_part_puts_a_skinned_models_nodes_on_its_joints() {
+    use guac_formats::attachments::builder::PointSpec;
+    const CHEST: &str = "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl";
+    const GOURD: &str = "C:/tfb/Content/Models/Objects/gourd_01.mdl";
+    let mut spec = stage_sample();
+    spec.skinned_points = vec![
+        PointSpec::bone("J_spine", 1),
+        PointSpec::root(0.5),
+        PointSpec {
+            bone: "J_head",
+            index: 2,
+            transform: [0.0, 0.25, 0.0, 0.0, 0.0, 0.0],
+        },
+        PointSpec::bone("J_tail", 7),
+    ];
+    spec.prop_points = vec![PointSpec::bone("J_spine", 1)];
+    let r = nodes(parsed(&spec), LEVEL, identity()).unwrap();
+    assert_eq!(
+        (r.ir.level.as_str(), r.ir.identity.clone()),
+        (LEVEL, identity())
+    );
+    assert!(r.textures.is_empty() && r.ir.refused.is_empty());
+    let paths: Vec<&str> = r.ir.models.iter().map(|m| m.load_file.as_str()).collect();
+    assert_eq!(paths, [GOURD, CHEST]);
+    let chest = r.ir.get(CHEST).unwrap();
+    let joints: Vec<Option<u16>> = chest.nodes.iter().map(|n| n.joint).collect();
+    assert_eq!(joints, [Some(1), None, Some(2), None]);
+    let bones: Vec<Option<&str>> = chest.nodes.iter().map(|n| n.bone.as_deref()).collect();
+    assert_eq!(
+        bones,
+        [
+            Some("J_spine"),
+            Some("*root*"),
+            Some("J_head"),
+            Some("J_tail")
+        ]
+    );
+    assert_eq!(chest.nodes[1].offset.translation, [0.0, 0.0, 0.5]);
+    assert_eq!(chest.nodes[2].offset.translation, [0.0, 0.25, 0.0]);
+    let gourd = r.ir.get(GOURD).unwrap();
+    assert_eq!(gourd.nodes.len(), 1);
+    assert_eq!(gourd.nodes[0].joint, None, "a static model has no joints");
+    // With no lists, none.
+    let r = nodes(parsed(&stage_sample()), LEVEL, identity()).unwrap();
+    assert!(r.ir.models.is_empty());
 }

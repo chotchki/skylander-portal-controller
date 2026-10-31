@@ -536,6 +536,21 @@ impl ScriptWorld {
         Some(self.objs.value(Object::Waypoint(i)))
     }
 
+    /// A script set the reference in cell `cell` to name `target` (crate
+    /// docs of guac-script, Variables, structures and sets; openspec
+    /// AH.250): an actor it names keeps where that actor stands now as the
+    /// reference's point, so the hero's death actor lifts him over where he
+    /// fell and the stat-buff icon's measurement actor rises over where it
+    /// was put.
+    pub(crate) fn referenced(&mut self, cell: u32, target: Value, engine: &mut dyn Engine) {
+        let Some(h) = self.actor_of(Some(target)) else {
+            return;
+        };
+        if let Some(at) = self.position(h, engine) {
+            self.kept_via.insert((h, cell), at);
+        }
+    }
+
     /// The actor (or hero) a receiver names: `None` for a host object.
     fn actor_of(&self, v: Option<Value>) -> Option<Handle> {
         let h = self.handle(v?)?;
@@ -566,11 +581,55 @@ impl ScriptWorld {
             && !a.removed
             && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
             && owner != h
-            && let Some(p) = self.node_within(owner, i, engine, depth - 1)
+            && let Some((p, turn)) = self.node_frame(owner, i, engine, depth - 1)
         {
-            return Some(p);
+            return Some(p + turn * a.hung);
         }
         Some(a.position)
+    }
+
+    /// Node `i` of actor `owner` and the frame what hangs from it is offset
+    /// in: its place, and its turn as last posed, else its owner's facing.
+    fn node_frame(
+        &self,
+        owner: Handle,
+        i: u32,
+        engine: &mut dyn Engine,
+        depth: u8,
+    ) -> Option<(Vec3, Quat)> {
+        let p = self.node_within(owner, i, engine, depth)?;
+        let turn = self.node_turn(owner, i, engine, depth).unwrap_or_else(|| {
+            let facing = self
+                .angles_within(owner, engine, depth)
+                .map_or(0.0, |g| g.facing);
+            Quat::from_rotation_y(facing.to_radians())
+        });
+        Some((p, turn))
+    }
+
+    /// What actor `h` hangs from, as the frame its offset is kept in
+    /// ([`crate::script_engine::Actor::hung`]): a node's place and turn, or
+    /// another actor's pivot and facing. None while it hangs from nothing,
+    /// from itself or from a ground.
+    fn hang_frame(&self, h: Handle, engine: &mut dyn Engine) -> Option<(Vec3, Quat)> {
+        let a = self.actors.get(&h)?;
+        if a.removed {
+            return None;
+        }
+        match self.object(Some(a.attach)) {
+            Some(Object::Node(owner, i)) if owner != h => {
+                self.node_frame(owner, i, engine, HUNG_DEPTH - 1)
+            }
+            None => {
+                let owner = self.actor_of(Some(a.attach)).filter(|&o| o != h)?;
+                let p = self.position_within(owner, engine, HUNG_DEPTH - 1)?;
+                let facing = self
+                    .angles_within(owner, engine, HUNG_DEPTH - 1)
+                    .map_or(0.0, |g| g.facing);
+                Some((p, Quat::from_rotation_y(facing.to_radians())))
+            }
+            _ => None,
+        }
     }
 
     /// Actor `h` put at `p` by placement `by`.
@@ -587,9 +646,17 @@ impl ScriptWorld {
             self.writes_place(by, h);
             return Ok(());
         }
+        // Hung, it hangs where it's put: its offset from what it hangs from
+        // (openspec AH.226).
+        let hung = self
+            .hang_frame(h, engine)
+            .map(|(at, turn)| turn.inverse() * (p - at));
         match self.actors.get_mut(&h) {
             Some(a) => {
                 a.position = p;
+                if let Some(off) = hung {
+                    a.hung = off;
+                }
                 Ok(())
             }
             None => Err(HostFault::Nothing),
@@ -1766,8 +1833,10 @@ impl ScriptWorld {
                 {
                     self.set_position(at.placement, h, at_node, engine)?;
                 }
+                // Hung where it hangs from, no offset yet.
                 if let Some(a) = self.actors.get_mut(&h) {
                     a.attach = v;
+                    a.hung = Vec3::ZERO;
                 }
             }
             // On a clip (openspec AH.49): what a sequence started from it
@@ -1844,27 +1913,6 @@ impl ScriptWorld {
             | Member::Pitch => {
                 let r = recv.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
-                // An actor put from its own remembered point while none is
-                // kept isn't moved, since that point reads where he stands
-                // and each vertical-offset write would lift him again (the
-                // hero's death actor flew him off the map so); the original
-                // lifts him 3.44 m and back as his burst comes (AH.11's
-                // `restart1`, `restart2`), its point kept and its ping-pong
-                // slider returning (stand-in ledger: `death-hop`).
-                let unkept = match self.object(Some(o)) {
-                    Some(Object::Remembered(a)) => self
-                        .actors
-                        .get(&a)
-                        .is_some_and(|k| k.remembered.is_none())
-                        .then_some(a),
-                    Some(Object::RememberedVia(a, c)) => {
-                        (!self.kept_via.contains_key(&(a, c))).then_some(a)
-                    }
-                    _ => None,
-                };
-                if unkept.is_some() && unkept == self.handle(r) {
-                    return Ok(());
-                }
                 let b = self.point(o, engine).ok_or(HostFault::Nothing)?;
                 let a = match self.point(r, engine) {
                     Some(a) => a,
@@ -2697,6 +2745,24 @@ impl ScriptWorld {
         self.place_hung_actors(engine);
     }
 
+    /// The actors something not taken off hangs on a node of, each once in
+    /// handle order: whose nodes an embedder poses (openspec AH.138), the
+    /// rest left at their pivots for nothing.
+    pub fn hung_on(&self) -> Vec<Handle> {
+        let mut owners: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| !a.removed)
+            .filter_map(|(&h, a)| match self.object(Some(a.attach)) {
+                Some(Object::Node(owner, _)) if owner != h => Some(owner),
+                _ => None,
+            })
+            .collect();
+        owners.sort_unstable();
+        owners.dedup();
+        owners
+    }
+
     /// Each actor hung from a node set at it, as the engine's frame leaves
     /// it: [`ScriptWorld::move_actors`]' last part, and what an embedder
     /// posing the nodes after that frame (openspec AH.50) runs again.
@@ -2721,7 +2787,13 @@ impl ScriptWorld {
                 }
                 _ => None,
             };
-            if let Some(p) = self.point(node, engine)
+            // Its offset from what it hangs from, in that frame (openspec
+            // AH.226); what it hangs from at once otherwise.
+            let at = match self.hang_frame(h, engine) {
+                Some((p, frame)) => self.actors.get(&h).map(|a| p + frame * a.hung),
+                None => self.point(node, engine),
+            };
+            if let Some(p) = at
                 && let Some(a) = self.actors.get_mut(&h)
             {
                 a.position = p;
@@ -3405,34 +3477,36 @@ mod tests {
         assert_eq!(w.make("spriteinfo"), None);
     }
 
-    /// The hero's death actor lifts the dying minion 12 ft over his own
-    /// remembered point a tick at a time (AH.39's Mac step): with none kept
-    /// that point reads where he stands, so each write would lift him the
-    /// whole way again, and he isn't moved (stand-in ledger: `death-hop`).
-    /// Another actor's unkept point
-    /// still puts him from where that actor stands; once his own is kept the
-    /// write puts him over it, the same each time. By the actor's own point
-    /// and through a reference to it alike.
+    /// The hero's death actor lifts the dying minion over its `dying actor`'s
+    /// point a tick at a time (openspec AH.250): set to him as it spawns,
+    /// the reference keeps where he stood then, so each write puts him that
+    /// far over where he fell, wherever the last one left him, and back down
+    /// with the slide. Set to him again once he's moved, it keeps where he
+    /// stands then (the VM tells the host each set: guac-script's own
+    /// test), as the chest and the Titan boulder use it. One set to another
+    /// actor keeps where that one stands; one no script set reads where he
+    /// stands now.
     #[test]
-    fn an_actor_put_from_its_own_unkept_remembered_point_stays_put() {
+    fn a_reference_keeps_where_its_actor_stood_when_it_was_set() {
         const OTHER: Handle = 0x7777;
+        const CELL: u32 = 9;
         let mut e = bench();
         let mut w = world();
         let here = Vec3::new(3.0, 1.0, 4.0);
         let there = Vec3::new(-2.0, 5.0, 0.0);
         w.actors.insert(BALL, ball(here, 0.0));
         w.actors.insert(OTHER, ball(there, 0.0));
-        let remembered = |w: &mut ScriptWorld, e: &mut Bench, of: Handle, via: Option<u32>| {
+        let remembered = |w: &mut ScriptWorld, e: &mut Bench, of: Handle| {
             let mut a = at(
                 "placementreference",
                 "remembered",
                 Some(Value::Entity(of)),
                 None,
             );
-            a.via = via;
+            a.via = Some(CELL);
             w.get_member(&a, Member::Remembered, e).unwrap()
         };
-        let lift = |w: &mut ScriptWorld, e: &mut Bench, from: Value| {
+        let lift = |w: &mut ScriptWorld, e: &mut Bench, from: Value, feet: f32| {
             w.set_member(
                 &at(
                     "positionmeasurement",
@@ -3441,43 +3515,44 @@ mod tests {
                     Some(from),
                 ),
                 Member::VerticalOffset,
-                Value::Float(12.0),
+                Value::Float(feet),
                 e,
             )
             .unwrap();
             w.actor(BALL).unwrap().position
         };
-        let over = |p: Vec3| Vec3::new(here.x, p.y + 12.0 * METRES_PER_FOOT, here.z);
-        for via in [None, Some(9)] {
-            let own = remembered(&mut w, &mut e, BALL, via);
-            for _ in 0..3 {
-                assert_eq!(lift(&mut w, &mut e, own), here, "{via:?}: not moved");
-            }
-            let theirs = remembered(&mut w, &mut e, OTHER, via);
-            assert!((lift(&mut w, &mut e, theirs) - over(there)).length() < 1e-5);
-            w.actors.get_mut(&BALL).unwrap().position = here;
-            // His own kept where he stands: over it, the same each time.
-            w.set_member(
-                &at(
-                    "positionmeasurement",
-                    "distance",
-                    Some(own),
-                    Some(Value::Entity(BALL)),
-                ),
-                Member::Distance,
-                Value::Float(0.0),
-                &mut e,
-            )
-            .unwrap();
-            for _ in 0..2 {
-                assert!(
-                    (lift(&mut w, &mut e, own) - over(here)).length() < 1e-5,
-                    "{via:?}"
-                );
-            }
-            w.actors.get_mut(&BALL).unwrap().position = here;
-            w.actors.get_mut(&BALL).unwrap().remembered = None;
+        let over = |p: Vec3, feet: f32| Vec3::new(here.x, p.y + feet * METRES_PER_FOOT, here.z);
+        // No script set it: it reads where he stands, each write lifting
+        // him from there.
+        let own = remembered(&mut w, &mut e, BALL);
+        let once = lift(&mut w, &mut e, own, 12.0);
+        assert!((once - over(here, 12.0)).length() < 1e-5, "{once:?}");
+        assert!((lift(&mut w, &mut e, own, 12.0) - over(once, 12.0)).length() < 1e-5);
+        w.actors.get_mut(&BALL).unwrap().position = here;
+        // Set to him: where he stood then, through the slide's rise and
+        // fall, however far the last write lifted him.
+        w.referenced(CELL, Value::Entity(BALL), &mut e);
+        for feet in [0.0, 6.0, 12.0, 12.0, 6.0, 0.0] {
+            let p = lift(&mut w, &mut e, own, feet);
+            assert!((p - over(here, feet)).length() < 1e-5, "{feet} ft: {p:?}");
         }
+        // Moved, then set to him again: where he stands now.
+        let risen = here + Vec3::new(0.0, 3.6, 0.0);
+        w.actors.get_mut(&BALL).unwrap().position = risen;
+        w.referenced(CELL, Value::Entity(BALL), &mut e);
+        assert_eq!(w.point(own, &mut e), Some(risen), "taken afresh");
+        w.actors.get_mut(&BALL).unwrap().position = here;
+        assert_eq!(w.point(own, &mut e), Some(risen), "kept, not followed");
+        // Set to another actor: where that one stands, apart from his.
+        w.referenced(CELL, Value::Entity(OTHER), &mut e);
+        let theirs = remembered(&mut w, &mut e, OTHER);
+        assert_eq!(w.point(theirs, &mut e), Some(there));
+        w.actors.get_mut(&OTHER).unwrap().position = here;
+        assert_eq!(w.point(theirs, &mut e), Some(there), "kept, not followed");
+        // A host object names no actor: nothing kept.
+        let n = w.kept_via.len();
+        w.referenced(CELL + 1, Value::Int(3), &mut e);
+        assert_eq!(w.kept_via.len(), n);
     }
 
     /// `system.absolute zero` is the world's origin as a point: what a
@@ -3675,6 +3750,205 @@ mod tests {
         // Taken off, where it was left.
         w.actors.get_mut(&BALL).unwrap().removed = true;
         assert_eq!(w.position(BALL, &mut e), Some(pivot + raised));
+    }
+
+    /// AH.226's prompt and AH.138's turban: a hung actor hangs where a
+    /// script puts it from what it hangs from. The cannon's prompt, hung on
+    /// the cannon, set 15 ft over itself, stays 15 ft over the cannon as the
+    /// cannon is pushed and bobs as its bob writes it over the cannon; the
+    /// turban, hung on a posed node and displaced 0.5 ft down (pitch 270),
+    /// keeps that offset in the node's frame as the node turns; hung again,
+    /// it hangs at its new node; let go, a write puts it anywhere.
+    #[test]
+    fn a_hung_actor_keeps_where_a_script_put_it_from_what_it_hangs_from() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().pivot = pivot;
+        let mut w = world();
+        const CANNON: Handle = 0x6000_0010;
+        const PROMPT: Handle = 0x6000_0011;
+        const HAT: Handle = 0x6000_0012;
+        let base = Vec3::new(-3.0, 2.0, 5.0);
+        let mut cannon = ball(base, 0.0);
+        cannon.angles.facing = 30.0;
+        w.actors.insert(CANNON, cannon);
+        w.actors
+            .insert(PROMPT, ball(base + Vec3::new(1.2, 4.57, 0.0), 0.0));
+        w.actors.insert(HAT, ball(pivot, 0.0));
+        let hang = |w: &mut ScriptWorld, e: &mut Bench, who: Handle, on: Value| {
+            w.set_member(
+                &at(
+                    "abstractplacement",
+                    "attach node",
+                    Some(Value::Entity(who)),
+                    None,
+                ),
+                Member::AttachNode,
+                on,
+                e,
+            )
+            .unwrap();
+        };
+        let lift = |w: &mut ScriptWorld, e: &mut Bench, who: Handle, over: Handle, feet: f32| {
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "vertical offset",
+                    Some(Value::Entity(who)),
+                    Some(Value::Entity(over)),
+                ),
+                Member::VerticalOffset,
+                Value::Float(feet),
+                e,
+            )
+            .unwrap();
+        };
+        let ft = |f: f32| Vec3::Y * f * METRES_PER_FOOT;
+        // The prompt on the cannon: at its pivot, then 15 ft over it.
+        hang(&mut w, &mut e, PROMPT, Value::Entity(CANNON));
+        assert_eq!(w.actor(PROMPT).unwrap().position, base);
+        lift(&mut w, &mut e, PROMPT, PROMPT, 15.0);
+        w.place_hung(&mut e);
+        let p = w.actor(PROMPT).unwrap().position;
+        assert!(p.distance(base + ft(15.0)) < 1e-5, "{p:?}");
+        // The cannon pushed and turned: still 15 ft over it.
+        let pushed = base + Vec3::new(3.0, 0.0, -1.0);
+        w.actors.get_mut(&CANNON).unwrap().position = pushed;
+        w.actors.get_mut(&CANNON).unwrap().angles.facing = 120.0;
+        w.place_hung(&mut e);
+        let p = w.actor(PROMPT).unwrap().position;
+        assert!(p.distance(pushed + ft(15.0)) < 1e-5, "{p:?}");
+        // Its bob writes it over the cannon: there it stays.
+        lift(&mut w, &mut e, PROMPT, CANNON, 14.5);
+        w.place_hung(&mut e);
+        let p = w.actor(PROMPT).unwrap().position;
+        assert!(p.distance(pushed + ft(14.5)) < 1e-5, "{p:?}");
+        // The turban on his node 2, displaced 0.5 ft down.
+        let head = Vec3::new(0.0, 2.0, 0.3);
+        let mut nodes = vec![NodePose::at(Vec3::ZERO); 3];
+        nodes[2] = NodePose::at(head);
+        w.set_nodes(HERO, nodes.clone());
+        let node = w.objs.value(Object::Node(HERO, 2));
+        hang(&mut w, &mut e, HAT, node);
+        w.displace(HERO, Value::Entity(HAT), 0, 0.5, 0.0, 270.0, &mut e)
+            .unwrap();
+        let down = pivot + head - ft(0.5);
+        assert!(w.position(HAT, &mut e).unwrap().distance(down) < 1e-5);
+        w.place_hung(&mut e);
+        assert!(w.actor(HAT).unwrap().position.distance(down) < 1e-5);
+        // His head tips a quarter forward: the offset tips with it.
+        let tip = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        nodes[2] = NodePose {
+            at: head,
+            turn: tip,
+        };
+        w.set_nodes(HERO, nodes.clone());
+        w.place_hung(&mut e);
+        let tipped = pivot + head + tip * -ft(0.5);
+        let p = w.actor(HAT).unwrap().position;
+        assert!(p.distance(tipped) < 1e-5, "{p:?} want {tipped:?}");
+        assert!(w.position(HAT, &mut e).unwrap().distance(tipped) < 1e-5);
+        // Hung again on node 1: at it, no offset.
+        nodes[1] = NodePose::at(Vec3::new(0.4, 1.0, 0.0));
+        w.set_nodes(HERO, nodes);
+        let node = w.objs.value(Object::Node(HERO, 1));
+        hang(&mut w, &mut e, HAT, node);
+        w.place_hung(&mut e);
+        let p = w.actor(HAT).unwrap().position;
+        assert!(p.distance(pivot + Vec3::new(0.4, 1.0, 0.0)) < 1e-5, "{p:?}");
+        // Let go: a write puts it where it says, and nothing moves it after.
+        hang(&mut w, &mut e, PROMPT, Value::Null);
+        lift(&mut w, &mut e, PROMPT, CANNON, 20.0);
+        w.actors.get_mut(&CANNON).unwrap().position = base;
+        w.place_hung(&mut e);
+        let p = w.actor(PROMPT).unwrap().position;
+        assert!(p.distance(pushed + ft(20.0)) < 1e-5, "{p:?}");
+    }
+
+    /// AH.226's offset off to the side (the slave's hammer 0.5 ft off his
+    /// hand at heading 230, the spinner's halves 4 ft either side of it):
+    /// put 4 ft to one side of an actor facing a quarter round, it turns
+    /// with him as he turns and walks; put 1 ft to one side of a posed node
+    /// turned a quarter, it turns with the node. Kept in the frame of what
+    /// it hangs from as it was put, not in the level's.
+    #[test]
+    fn a_hung_actors_offset_turns_with_what_it_hangs_from() {
+        let mut e = bench();
+        let mut w = world();
+        const OWNER: Handle = 0x6000_0020;
+        const SIDE: Handle = 0x6000_0021;
+        let base = Vec3::new(2.0, 1.0, -3.0);
+        let mut owner = ball(base, 0.0);
+        owner.angles.facing = 90.0;
+        w.actors.insert(OWNER, owner);
+        w.actors.insert(SIDE, ball(base, 0.0));
+        let hang = |w: &mut ScriptWorld, e: &mut Bench, on: Value| {
+            w.set_member(
+                &at(
+                    "abstractplacement",
+                    "attach node",
+                    Some(Value::Entity(SIDE)),
+                    None,
+                ),
+                Member::AttachNode,
+                on,
+                e,
+            )
+            .unwrap();
+        };
+        // On the actor, 4 ft along heading 30.
+        hang(&mut w, &mut e, Value::Entity(OWNER));
+        w.displace(OWNER, Value::Entity(SIDE), 0, 4.0, 30.0, 0.0, &mut e)
+            .unwrap();
+        let off = w.actor(SIDE).unwrap().position - base;
+        assert!(
+            off.y.abs() < 1e-5 && off.length() > 1.0,
+            "to the side: {off}"
+        );
+        w.place_hung(&mut e);
+        let p = w.actor(SIDE).unwrap().position;
+        assert!(p.distance(base + off) < 1e-5, "where it was put: {p}");
+        // He turns a quarter more and walks: it turns and walks with him.
+        let walked = base + Vec3::new(-1.5, 0.0, 2.0);
+        w.actors.get_mut(&OWNER).unwrap().position = walked;
+        w.actors.get_mut(&OWNER).unwrap().angles.facing = 180.0;
+        w.place_hung(&mut e);
+        let want = walked + Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * off;
+        let p = w.actor(SIDE).unwrap().position;
+        assert!(p.distance(want) < 1e-4, "{p} want {want}");
+        // On his node 0, posed a quarter turned about the vertical, 1 ft
+        // along heading 0: turned with the node as the node turns back.
+        let quarter = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let head = Vec3::new(0.0, 1.5, 0.0);
+        w.set_nodes(
+            OWNER,
+            vec![NodePose {
+                at: head,
+                turn: quarter,
+            }],
+        );
+        let node = w.objs.value(Object::Node(OWNER, 0));
+        hang(&mut w, &mut e, node);
+        let on = w.position(SIDE, &mut e).unwrap();
+        w.displace(OWNER, Value::Entity(SIDE), 0, 1.0, 0.0, 0.0, &mut e)
+            .unwrap();
+        let off = w.position(SIDE, &mut e).unwrap() - on;
+        assert!(
+            off.y.abs() < 1e-5 && off.length() > 0.2,
+            "to the side: {off}"
+        );
+        w.set_nodes(
+            OWNER,
+            vec![NodePose {
+                at: head,
+                turn: Quat::IDENTITY,
+            }],
+        );
+        w.place_hung(&mut e);
+        let want = on + quarter.inverse() * off;
+        let p = w.actor(SIDE).unwrap().position;
+        assert!(p.distance(want) < 1e-4, "{p} want {want}");
     }
 
     /// AH.60's aim: an actor hung on a posed node takes the node's turn,

@@ -492,6 +492,9 @@ pub fn level_stage(
                             palettes = Some(count);
                             encoded(ir, dir, &rel, r)
                         }),
+                        levels::NODES => {
+                            levels::nodes(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                        }
                         other => Err(format!("no reader for a part named {other}")),
                     }
                 });

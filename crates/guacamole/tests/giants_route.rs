@@ -872,7 +872,7 @@ fn fight(run: &mut Run, mode: Mode, steps: u32) -> Fight {
 /// The level's templates the route's scripts clone that the TV doesn't
 /// draw (openspec AG.239), with why; every other template cloned on the
 /// way draws ([`route_clones_drawn`]).
-const ROUTE_UNDRAWN: [(&str, &str); 9] = [
+const ROUTE_UNDRAWN: [(&str, &str); 8] = [
     (
         "Boulder_Titan_Pebble_01(1)",
         "on the boulder's attach nodes",
@@ -896,7 +896,6 @@ const ROUTE_UNDRAWN: [(&str, &str); 9] = [
     ("Chest_Lock", "the chest's, a creature's"),
     ("Canon_Barrel_Marker", "invisible"),
     ("Dummy_Inviso", "invisible"),
-    ("Turban_hat", "Norticus' hat: the fight's, a creature's"),
 ];
 
 /// Every level template `run`'s scripts have cloned that has a model is

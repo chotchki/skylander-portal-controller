@@ -491,6 +491,146 @@ fn a_sliders_rate_looping_and_ping_pong() {
     assert_eq!(vm.sliders_running(), 1, "a loop never ends on its own");
 }
 
+/// A slide's playback mode and looping (openspec AH.250, crate docs,
+/// Slides), each set in its block as the disc's scripts set them: one way,
+/// it ends on its target, or looping starts again from where it began;
+/// ping pong without looping it comes back once retracing its way out and
+/// ends where it began (the hero's death hop, Eruptor's splash), its time
+/// remaining what's left of the pass it's on; ping pong looping goes on.
+#[test]
+fn a_ping_pong_slide_comes_back_once_and_ends_unless_it_loops() {
+    // (mode, looping): v after 30 frames (a pass's end), after 45, after 60
+    // and after 90, and whether it runs at 90. One way looping is back at
+    // its start at each pass's end.
+    let cases: [((i32, i32), [f32; 4], bool); 4] = [
+        ((0, 0), [60.0, 60.0, 60.0, 60.0], false),
+        ((0, 1), [0.0, 30.0, 0.0, 0.0], true),
+        ((1, 0), [60.0, 30.0, 0.0, 0.0], false),
+        ((1, 1), [60.0, 30.0, 0.0, 60.0], true),
+    ];
+    for ((mode, looping), want, runs) in cases {
+        let p = program(|w| {
+            let v = fvar(w, "v");
+            let r = w.variable("r", "ScriptReference", None);
+            let left = fvar(w, "left");
+            idle(
+                w,
+                |w| {
+                    let zero = w.int(0);
+                    w.set(&[El::Local(v)], zero);
+                    let to = w.int(60);
+                    let secs = w.float(0.5);
+                    let (p, o) = slide(w, &[El::Local(v)], to, secs, zero, zero);
+                    setref(w, &[El::Local(r)], &[El::Local(o)]);
+                    let m = w.int(mode);
+                    w.set(&[El::Local(r), El::Member("sequence", "playback mode")], m);
+                    let l = w.int(looping);
+                    w.set(&[El::Local(r), El::Member("sequence", "looping")], l);
+                    w.end_block(p);
+                },
+                |w| {
+                    let t = w.rhs(
+                        FLOAT,
+                        &[El::Local(r), El::Member("sequence", "time remaining")],
+                    );
+                    w.set(&[El::Local(left)], t);
+                },
+            );
+        });
+        let mut vm = Vm::new(p, Config::new(Mode::Strict));
+        let id = vm.add(HANDLE, "Hop", 0);
+        let mut host = Bare;
+        vm.step(&mut host).unwrap();
+        let mut at = Vec::new();
+        for frame in 1..=90 {
+            vm.step(&mut host).unwrap();
+            if [30, 45, 60, 90].contains(&frame) {
+                at.push(float(&vm, id, "v"));
+            }
+            if frame == 40 {
+                // A third of the way through the pass it's on, whichever.
+                let left = float(&vm, id, "left");
+                if (mode, looping) != (0, 0) {
+                    assert!((left - 0.333).abs() < 0.02, "{mode} {looping}: {left}");
+                }
+            }
+        }
+        for (got, want) in at.iter().zip(want) {
+            assert!(
+                (got - want).abs() < 0.6,
+                "mode {mode} looping {looping}: {at:?}, want {want:?}"
+            );
+        }
+        assert_eq!(
+            vm.sliders_running() == 1,
+            runs,
+            "mode {mode} looping {looping}: running at 90"
+        );
+    }
+}
+
+/// A placement reference set to an actor tells the host, each set (crate
+/// docs, Variables, structures and sets: the reference keeps where that
+/// actor stands then, openspec AH.250): set to `my`, to `my` again (told
+/// again: the scripts set one to the actor it names to take his place
+/// afresh, the Titan boulder's carrier and the chest), to nothing (not
+/// told), to `my` once more; a second reference set to `my` is told apart
+/// by its cell; a number variable never.
+#[test]
+fn a_reference_set_to_an_actor_tells_the_host() {
+    #[derive(Default)]
+    struct Told(Vec<(u32, Value)>);
+    impl Host for Told {
+        fn get(&mut self, _: &Access) -> Result<Value, HostFault> {
+            Err(HostFault::Unmodelled)
+        }
+        fn set(&mut self, _: &Access, _: Value) -> Result<(), HostFault> {
+            Err(HostFault::Unmodelled)
+        }
+        fn reset(&mut self, _: &Access) -> Result<(), HostFault> {
+            Err(HostFault::Unmodelled)
+        }
+        fn draw(&mut self) -> u32 {
+            0
+        }
+        fn referenced(&mut self, cell: u32, target: Value) {
+            self.0.push((cell, target));
+        }
+    }
+    let p = program(|w| {
+        let a = w.variable("a", "PlacementReference", Some("tfbActorInfo"));
+        let b = w.variable("b", "PlacementReference", Some("tfbActorInfo"));
+        let n = fvar(w, "n");
+        idle(
+            w,
+            |w| {
+                setref(w, &[El::Local(a)], &[my()]);
+                setref(w, &[El::Local(a)], &[my()]);
+                setref(
+                    w,
+                    &[El::Local(a)],
+                    &[El::Member("abstractscriptgroup", "null")],
+                );
+                setref(w, &[El::Local(a)], &[my()]);
+                setref(w, &[El::Local(b)], &[my()]);
+                let m = w.rhs(FLOAT, &[my()]);
+                w.set(&[El::Local(n)], m);
+            },
+            |_| {},
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    vm.add(HANDLE, "Death actor", 0);
+    let mut host = Told::default();
+    vm.step(&mut host).unwrap();
+    let me = Value::Entity(HANDLE);
+    assert_eq!(host.0.len(), 4, "{:?}", host.0);
+    assert!(host.0.iter().all(|(_, v)| *v == me), "{:?}", host.0);
+    assert_eq!(host.0[0].0, host.0[1].0, "a, set to him again");
+    assert_eq!(host.0[1].0, host.0[2].0, "a, after nothing");
+    assert_ne!(host.0[2].0, host.0[3].0, "b's own cell");
+}
+
 /// Any member of a slider but its own is unmodelled: strict mode names it
 /// (`condition`, the one `sequence` member a slider doesn't keep).
 #[test]
