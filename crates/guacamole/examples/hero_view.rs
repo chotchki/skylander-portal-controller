@@ -73,8 +73,8 @@ use guac_ir::shading;
 use guac_ir::{DumpIdentity, Model, Sha256};
 use guacamole::character::mesh::pose;
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, GlowView, ShadowLookup,
-    SpawnedCharacter, remaster, spawn_character, spawn_glow_camera, spawn_glow_masks,
+    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, GlowView, SpawnedCharacter, remaster,
+    spawn_character, spawn_glow_camera, spawn_glow_masks,
 };
 
 use frame::{Fog, FrameCamera, Rig, view_proj, work_tree};
@@ -607,7 +607,7 @@ fn setup(
             .materials
             .iter()
             .map(|m| {
-                let material = CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, |slot| {
+                let material = CharacterMaterial::from_ir(m, &scene, |slot| {
                     textures.get(&mut images, &slot.texture, slot.role, &slot.sampler)
                 })
                 .unwrap_or_else(|e| panic!("{}: {e}", m.name));

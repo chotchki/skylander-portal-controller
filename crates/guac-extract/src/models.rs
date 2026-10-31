@@ -714,7 +714,12 @@ impl Textures {
         if let Some(p) = self.by_image.get(&image) {
             return Ok(p.clone());
         }
-        let ktx2 = Texture::read(igz, image)?.to_ktx2();
+        let t = Texture::read(igz, image)?;
+        // A block-compressed image of no whole blocks no GPU takes (the
+        // level-up's arrow, 109 x 128): stored decoded, every level RGBA8, so
+        // it draws at its own size (openspec AH.244).
+        let t = if t.whole_blocks() { t } else { t.decoded()? };
+        let ktx2 = t.to_ktx2();
         let path = texture_path(&ktx2);
         if !self.files.iter().any(|(p, _)| *p == path) {
             self.files.push((path.clone(), ktx2));

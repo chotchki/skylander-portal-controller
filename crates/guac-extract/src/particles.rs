@@ -89,16 +89,15 @@ pub fn emitter(
 ) -> std::result::Result<Emitter, String> {
     let mut generators = Vec::with_capacity(e.generators.len());
     for g in &e.generators {
+        // An image of no whole blocks (the level-up's arrow, 109 x 128) is
+        // stored decoded ([`Textures::path`], openspec AH.244).
         let texture = match g.texture() {
-            Some(t) if whole_blocks(igz, t.image)? => Some(Texture {
+            Some(t) => Some(Texture {
                 texture: textures.path(igz, t.image).map_err(|e| e.to_string())?,
                 image: t.path.unwrap_or_default().to_owned(),
                 sampler: models::sampler(&t.attr)?,
             }),
-            // A block-compressed image a size of no whole blocks (the
-            // level-up's arrow, 109 x 128) no GPU takes: drawn untextured,
-            // which draws nothing.
-            _ => None,
+            None => None,
         };
         let vfx = match g {
             Generator::Sprite(s) => &s.info.vfx,
@@ -136,14 +135,6 @@ pub fn emitter(
         generators,
         unread: e.unread.iter().map(|(_, t)| (*t).to_owned()).collect(),
     })
-}
-
-/// Whether the image at `image` is a whole number of its format's blocks
-/// along both sides, as a GPU takes a block-compressed texture.
-fn whole_blocks(igz: &Igz<'_>, image: usize) -> std::result::Result<bool, String> {
-    let t = guac_formats::texture::Texture::read(igz, image).map_err(|e| e.to_string())?;
-    let edge = t.format.block_edge();
-    Ok(t.width % edge == 0 && t.height % edge == 0)
 }
 
 fn sprite(s: &particle::Sprite<'_>) -> Sprite {

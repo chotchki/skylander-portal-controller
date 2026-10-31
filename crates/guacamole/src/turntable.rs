@@ -53,8 +53,8 @@ use guacamole::character::attach::{self, SpawnedAttachments};
 use guacamole::character::turntable::{Framing, SAMPLES, Sweep, TURN_SECONDS, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
-    CharacterMaterial, CharacterUniform, GlowView, ShadowLookup, remaster, spawn_character,
-    spawn_glow_camera, spawn_glow_masks,
+    CharacterMaterial, CharacterUniform, GlowView, remaster, spawn_character, spawn_glow_camera,
+    spawn_glow_masks,
 };
 use serde::de::DeserializeOwned;
 use skylander_core::SLOT_COUNT;
@@ -682,7 +682,7 @@ fn spawn_stage(
     let mut glow = Vec::with_capacity(drawn.materials.len());
     let mut scrolling = Vec::new();
     for m in &drawn.materials {
-        let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
+        let material = CharacterMaterial::from_ir(m, scene, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
         let mask = material.glow_mask().map(|g| s.materials.add(g));
         let part = s.materials.add(material);

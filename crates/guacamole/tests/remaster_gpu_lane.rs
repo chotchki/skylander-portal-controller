@@ -87,8 +87,8 @@ use guacamole::character::material::{
     CharacterUniform, SHADER, reference_material, specialize_for,
 };
 use guacamole::character::{
-    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, GlowView, MaterialKey, ShadowLookup,
-    remaster, spawn_character, spawn_glow_camera, spawn_glow_masks,
+    CharacterMaterial, CharacterShadingPlugin, GlowPlugin, GlowView, MaterialKey, remaster,
+    spawn_character, spawn_glow_camera, spawn_glow_masks,
 };
 
 use frame::{FrameCamera, FrameFile, Rig, view_proj};
@@ -417,9 +417,6 @@ struct ProbeMaterial {
     #[texture(15, visibility(fragment))]
     #[sampler(16, visibility(fragment))]
     rim: Option<Handle<Image>>,
-    #[texture(17, visibility(fragment))]
-    #[sampler(18, visibility(fragment))]
-    shadow: Option<Handle<Image>>,
     key: ProbeKey,
 }
 
@@ -446,7 +443,6 @@ impl ProbeMaterial {
             second_spec_map: m.second_spec_map.clone(),
             third: m.third.clone(),
             rim: m.rim.clone(),
-            shadow: m.shadow.clone(),
             key: ProbeKey {
                 material: m.key,
                 probe,
@@ -622,7 +618,7 @@ fn setup(
             .materials
             .iter()
             .map(|m| {
-                CharacterMaterial::from_ir(m, &plan.scene, ShadowLookup::NONE, |slot| {
+                CharacterMaterial::from_ir(m, &plan.scene, |slot| {
                     let srgb = remaster::is_srgb(slot.role);
                     let wrap = (slot.sampler.wrap_u, slot.sampler.wrap_v);
                     lane.entry(format!("{} {srgb} {wrap:?}", slot.texture))
@@ -703,24 +699,23 @@ fn setup(
                 .materials
                 .iter()
                 .map(|m| {
-                    let material =
-                        CharacterMaterial::from_ir(m, &plan.scene, ShadowLookup::NONE, |slot| {
-                            let srgb = remaster::is_srgb(slot.role);
-                            real.entry(format!("{} {srgb} {:?}", slot.texture, slot.sampler))
-                                .or_insert_with(|| {
-                                    let (_, ktx2) = character
-                                        .ktx2
-                                        .iter()
-                                        .find(|(p, _)| *p == slot.texture)
-                                        .expect("the model's texture");
-                                    images.add(
-                                        remaster::texture(ktx2, slot.role, &slot.sampler, formats)
-                                            .expect("a KTX2"),
-                                    )
-                                })
-                                .clone()
-                        })
-                        .unwrap_or_else(|e| panic!("{}: {e}", m.name));
+                    let material = CharacterMaterial::from_ir(m, &plan.scene, |slot| {
+                        let srgb = remaster::is_srgb(slot.role);
+                        real.entry(format!("{} {srgb} {:?}", slot.texture, slot.sampler))
+                            .or_insert_with(|| {
+                                let (_, ktx2) = character
+                                    .ktx2
+                                    .iter()
+                                    .find(|(p, _)| *p == slot.texture)
+                                    .expect("the model's texture");
+                                images.add(
+                                    remaster::texture(ktx2, slot.role, &slot.sampler, formats)
+                                        .expect("a KTX2"),
+                                )
+                            })
+                            .clone()
+                    })
+                    .unwrap_or_else(|e| panic!("{}: {e}", m.name));
                     let glow = material.glow_mask().map(|g| characters.add(g));
                     (characters.add(material), glow)
                 })

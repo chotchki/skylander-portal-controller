@@ -326,7 +326,7 @@ mod tests {
     /// write, neutral tints.
     fn star() -> CharacterMaterial {
         use guacamole::character::key::{MaterialKey, Pass, ShaderKey, StateKey};
-        use guacamole::character::material::{CharacterTextures, ShadowLookup};
+        use guacamole::character::material::CharacterTextures;
         let key = MaterialKey {
             shader: ShaderKey::new(0, 0).unwrap(),
             states: StateKey {
@@ -340,7 +340,6 @@ mod tests {
             key,
             &guac_ir::shading::Material::new(),
             &guac_ir::shading::Scene::new(),
-            ShadowLookup::NONE,
             0.0,
             CharacterTextures {
                 colour: Some(Handle::default()),

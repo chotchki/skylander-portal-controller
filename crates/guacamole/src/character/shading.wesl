@@ -17,8 +17,11 @@
 // WESL flattens a block an `@if` holds into the block around it, so each
 // such block's names are its own.
 
-import bevy_pbr::render::mesh_view_bindings::view;
+import bevy_pbr::render::mesh_view_bindings::{view, lights};
+import bevy_pbr::render::mesh_view_bindings as view_bindings;
+import bevy_pbr::render::mesh_view_types;
 import bevy_pbr::render::mesh_functions;
+import bevy_pbr::render::shadows;
 import bevy_pbr::render::skinning;
 
 struct Character {
@@ -36,8 +39,9 @@ struct Character {
     placement_tint: vec4<f32>,
     // RGB and its amount.
     replace: vec4<f32>,
-    shadow_u: vec4<f32>,
-    shadow_v: vec4<f32>,
+    // x the original's full shadow on stored values, y the power that takes
+    // it into linear light (AG.23).
+    shadow: vec4<f32>,
     // x the shadow mode, y the alpha test's reference.
     misc: vec4<f32>,
     // x layer 1's fixed alpha, y layer 2's, z layer 3's strength, w the rim's.
@@ -54,6 +58,10 @@ struct Character {
     material_tint: vec4<f32>,
     uv_u: array<vec4<f32>, 3>,
     uv_v: array<vec4<f32>, 3>,
+    // An effect's own (AG.24): a grass shell's height up its stack, its
+    // height map's and blade map's tilings and its blades' floor; a warp's
+    // bend.
+    effect: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> character: Character;
@@ -73,8 +81,6 @@ struct Character {
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var third_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(15) var rim_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(16) var rim_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(17) var shadow_map: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(18) var shadow_sampler: sampler;
 
 // A scene's three point lights, as the uniform's three arrays.
 struct SceneLights {
@@ -285,6 +291,32 @@ fn lit_layer(
     return lit;
 }
 
+// How much of the level's shadow light reaches a view-space position
+// (AG.23): Bevy's filtered sample of the first directional light's
+// cascades, the one the level draws them with
+// (`character::shadow::shadow_light`), 1 lit and 0 wholly shadowed; 1 in a
+// view no such light reaches.
+fn shadow_visibility(position: vec3<f32>, normal: vec3<f32>, frag_coord: vec2<f32>) -> f32 {
+    if lights.n_directional_lights == 0u {
+        return 1.0;
+    }
+    let flags = lights.directional_lights[0].flags;
+    if (flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u {
+        return 1.0;
+    }
+    let world = view.world_from_view * vec4<f32>(position, 1.0);
+    let world_normal = normalize((view.world_from_view * vec4<f32>(normal, 0.0)).xyz);
+    return shadows::fetch_directional_shadow(0u, world, world_normal, position.z, frag_coord);
+}
+
+// The shadow-receive term's sample for a visibility (`remaster::shadow_sample`):
+// the original's term on stored values, from its full shadow to 1, into
+// linear light, halved, grey on every channel.
+fn shadow_sample(visibility: f32) -> vec4<f32> {
+    let stored = character.shadow.x + (1.0 - character.shadow.x) * clamp(visibility, 0.0, 1.0);
+    return vec4<f32>(0.5 * pow(stored, character.shadow.y));
+}
+
 // Point light `j`: its colour by the normal's facing to it and its falloff,
 // unscaled by the colour map.
 fn point_light(j: u32, n: vec3<f32>, position: vec3<f32>) -> vec3<f32> {
@@ -302,8 +334,8 @@ fn point_light(j: u32, n: vec3<f32>, position: vec3<f32>) -> vec3<f32> {
     return colour * (f * falloff);
 }
 
-@fragment
-fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
+// The spec's colour and alpha for a pixel, every term but the alpha test.
+fn shade(in: Interpolants) -> vec4<f32> {
     let g = in.normal;
     var vertex_colour = HALF_GREY;
 @if(CHAR_VERTEX_COLOUR)
@@ -360,8 +392,7 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
 }
 
 @if(CHAR_SHADOWS) {
-    let at = vec4<f32>(in.position, 1.0);
-    let shadow = textureSample(shadow_map, shadow_sampler, vec2<f32>(dot(at, character.shadow_u), dot(at, character.shadow_v)));
+    let shadow = shadow_sample(shadow_visibility(in.position, g, in.clip_position.xy));
     let mode = character.misc.x;
     colour = colour * 2.0 * (vec3<f32>(shadow.a) + (2.0 - mode) * (shadow.rgb - vec3<f32>(shadow.a)));
 }
@@ -419,13 +450,63 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
     colour = lerp3(colour, character.fog_colour.rgb, fog);
 }
 
+    return vec4<f32>(colour, alpha);
+}
+
+@fragment
+fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
+    let shaded = shade(in);
     // An alpha test passes only above its reference.
 @if(CHAR_ALPHA_TEST) {
-    if alpha <= character.misc.y {
+    if shaded.a <= character.misc.y {
         discard;
     }
 }
-    return vec4<f32>(colour, alpha);
+    return shaded;
+}
+
+// A grass shell (AG.24, tfbgrass's stand-in): the colour pass's colour
+// (tfbgrass's own has no term for the height up the stack, so none here),
+// cut to the blades that reach its height up the stack (`effect.x`, 0 the
+// ground's shell to 1 the top), above a floor (`effect.w`) even on the
+// ground's shell, so the level's own ground shows between the blades and a
+// patch thins out over its edges rather than ending on a line. A blade's
+// reach is its blade map's value (the normal map's slot, read as stored,
+// tiled by `effect.z`) times the square of the height map's (the second
+// normal map's slot, tiled by `effect.y`: most blades short, the tall ones
+// in clumps) times where the grass grows, the vertex colour's alpha eased
+// in. No wind. Look choices, `character::effect`'s.
+@fragment
+fn grass(in: Interpolants) -> @location(0) vec4<f32> {
+    let shaded = shade(in);
+    let uv = in.uv01.xy;
+    let height = textureSample(second_normal_map, second_normal_sampler, uv * character.effect.y).r;
+    let blade = textureSample(normal_map, normal_sampler, uv * character.effect.z).r;
+    var density = 1.0;
+@if(CHAR_VERTEX_COLOUR)
+    density = smoothstep(0.0, 1.0, in.colour.a);
+    let reach = blade * height * height * density;
+    if reach <= mix(character.effect.w, 1.0, character.effect.x) {
+        discard;
+    }
+    return vec4<f32>(shaded.rgb, 1.0);
+}
+
+// A warp (AG.24, tfbwarp's stand-in): the frame Bevy copied before its
+// transmissive phase, read where this pixel is, bent by the ripple map (the
+// normal map's slot, read as stored, through set 0's transform, which its
+// scroll moves) by `effect.x` of the frame either way, across by its green
+// and down by its red, as tfbwarp reads it. A view without the copy (a
+// camera without screen-space transmission) draws it black.
+@fragment
+fn warp(in: Interpolants) -> @location(0) vec4<f32> {
+    var behind = vec4<f32>(0.0);
+@if(VIEW_TRANSMISSION_TEXTURE) {
+    let ripple = textureSample(normal_map, normal_sampler, in.uv01.xy).gr * 2.0 - 1.0;
+    let at = (in.clip_position.xy - view.viewport.xy) / view.viewport.zw + ripple * character.effect.x;
+    behind = textureSample(view_bindings::view_transmission_texture, view_bindings::view_transmission_sampler, at);
+}
+    return vec4<f32>(behind.rgb, 1.0);
 }
 
 // The glow pass (AE.11): the part's glow alpha, layer 1's alpha switched

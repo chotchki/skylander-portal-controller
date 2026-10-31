@@ -53,8 +53,8 @@ use guac_ir::model::{self, Joint, Model, Segment, Skeleton};
 use guac_ir::shading::{self, Fixed, Glow, Scene};
 use guacamole::character::{
     CharacterMaterial, CharacterShadingPlugin, CharacterTextures, FrameGlow, GlowPlugin, GlowView,
-    MaterialKey, Pass, ShaderKey, ShadowLookup, StateKey, spawn_alpha_clear, spawn_character,
-    spawn_glow_camera, spawn_glow_masks,
+    MaterialKey, Pass, ShaderKey, StateKey, spawn_alpha_clear, spawn_character, spawn_glow_camera,
+    spawn_glow_masks,
 };
 
 /// The clear colour, exact in half precision; the quad covers every pixel.
@@ -444,7 +444,6 @@ fn material(glow: Glow, colour: Handle<Image>) -> CharacterMaterial {
         key,
         &m,
         &scene,
-        ShadowLookup::NONE,
         0.0,
         CharacterTextures {
             colour: Some(colour),

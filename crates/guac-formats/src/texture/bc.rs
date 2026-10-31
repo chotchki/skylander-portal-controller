@@ -9,7 +9,7 @@
 use super::Format;
 
 /// `data`, one `width` x `height` level as [`super::Texture`] holds it (rows
-/// of blocks, or rows of L8 texels), as RGBA8 rows in `data`'s order, its
+/// of blocks, or rows of L8 or RGBA8 texels), as RGBA8 rows in `data`'s order, its
 /// first row first. L8 reads as grey with alpha 255, KTX2's `rrr1`. `None`
 /// when `data` is shorter than the level; bytes past it are ignored.
 pub fn decode(format: Format, width: u32, height: u32, data: &[u8]) -> Option<Vec<u8>> {
@@ -26,6 +26,10 @@ pub fn decode(format: Format, width: u32, height: u32, data: &[u8]) -> Option<Ve
         for (texel, &v) in out.as_chunks_mut::<4>().0.iter_mut().zip(data) {
             *texel = [v, v, v, 255];
         }
+        return Some(out);
+    }
+    if format == Format::Rgba8Unorm {
+        out.copy_from_slice(&data[..w * h * 4]);
         return Some(out);
     }
     let size = format.block_bytes() as usize;

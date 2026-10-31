@@ -290,6 +290,15 @@ fn glows(keys: &[WarmKey]) -> Vec<WarmKey> {
         .collect()
 }
 
+/// The keys of `keys` drawn in `pass`: a grass shell's or a warp's
+/// (openspec AG.24).
+fn in_pass(keys: &[WarmKey], pass: Pass) -> Vec<WarmKey> {
+    keys.iter()
+        .filter(|k| k.material.pass == pass)
+        .copied()
+        .collect()
+}
+
 /// `keys` with none twice, in the order first met.
 fn once(keys: impl IntoIterator<Item = WarmKey>) -> Vec<WarmKey> {
     let mut out: Vec<WarmKey> = Vec::new();
@@ -340,6 +349,25 @@ fn the_census_is_the_discs() {
             .into_iter()
             .chain(glows(&props_all))
             .chain(glows(&spawns_all)),
+    );
+    // The grass's shells and the warps (AG.24): the level's, its props'
+    // and its clones' (the level-up's ring).
+    let effect = |pass| {
+        once(
+            in_pass(&level_all, pass)
+                .into_iter()
+                .chain(in_pass(&props_all, pass))
+                .chain(in_pass(&spawns_all, pass)),
+        )
+    };
+    let (grass, warp) = (effect(Pass::Grass), effect(Pass::Warp));
+    eprintln!(
+        "the grass: {} keys; the warps: {} keys ({} of the level's, {} of its props', {} of the clones')",
+        grass.len(),
+        warp.len(),
+        in_pass(&level_all, Pass::Warp).len(),
+        in_pass(&props_all, Pass::Warp).len(),
+        in_pass(&spawns_all, Pass::Warp).len()
     );
     eprintln!(
         "what the scripts spawn: {} keys off {spawn_models} models, {} past the level's and its props'; {} level glow masks",
@@ -455,6 +483,8 @@ fn the_census_is_the_discs() {
             false,
         ),
         check("the level's glow masks", &glow, census::LEVEL_GLOW, false),
+        check("the grass", &grass, census::GRASS, false),
+        check("the warps", &warp, census::WARP, false),
         check("the heroes, skinned", &hero_skinned, census::HEROES, true),
         check(
             "the heroes, static",
@@ -495,12 +525,12 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (skinned.len(), unskinned.len(), level.len()),
-        (33, 24, 55),
-        "the census's counts"
+        (33, 24, 67),
+        "the census's counts (chapter 1's 55 before AG.23's shadow split shadowed parts from unshadowed)"
     );
     assert_eq!(
         (prop_models, props.len(), props_beyond.len()),
-        (91, 74, 63),
+        (91, 74, 68),
         "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239, AH.138's turban), their keys, those past the level's"
     );
     // AH.39: 13 models, 13 keys and 3 past before `global.bld`'s 23 read
@@ -520,8 +550,10 @@ fn the_census_is_the_discs() {
             hero_glow_static.len()
         ),
         // AH.39: 22 glow masks before `global.bld`'s models; the heroes'
-        // 1, 0, 1, 0 while only Eruptor's were (before the arrival lane).
-        (29, 33, 7, 17, 8),
+        // 1, 0, 1, 0 while only Eruptor's were (before the arrival lane),
+        // their static keys 7 before AG.23's receiving level keys left 16
+        // of them to the heroes' table.
+        (29, 33, 23, 17, 8),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(

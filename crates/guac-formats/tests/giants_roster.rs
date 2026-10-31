@@ -393,7 +393,14 @@ fn the_effects_ae_names_resolve_and_the_sprite_rig_reads() {
         ))
     };
     // Named by their source path, c:/tfb/bin/shaders/<file>.
-    for (id, file) in [(0xAA7, "tfbmulti2.fx"), (0xAA9, "tfbwarp.fx")] {
+    // AG.24 named the two other effects a level draws with the same way:
+    // the grass's and the shadow pass's.
+    for (id, file) in [
+        (0xAA7, "tfbmulti2.fx"),
+        (0xAA9, "tfbwarp.fx"),
+        (0xAA6, "tfbgrass.fx"),
+        (0xAA8, "tfbshadow.fx"),
+    ] {
         let (ty, name) = effect(id).unwrap();
         println!("{id:#x}: {ty} {name}");
         assert_eq!(ty, "igEffect");

@@ -60,11 +60,16 @@ pub(crate) fn states_at(shared: StateKey, packed: u32) -> StateKey {
 }
 
 /// A copy of `shared` carrying `packed` as its placement tint, on the states
-/// its alpha gives ([`states_at`]).
+/// its alpha gives ([`states_at`]). Only a colour pass's part fades: a warp
+/// (openspec AG.24, the level-up's ring as its clone comes and goes) draws
+/// the frame behind it whatever its tint, opaque as Bevy's transmissive
+/// phase wants, so its states (its pipeline) stay its own.
 pub(crate) fn tinted(shared: &CharacterMaterial, packed: u32) -> CharacterMaterial {
     let mut m = shared.clone();
     m.uniform.placement_tint = tint_of(packed);
-    m.key.states = states_at(shared.key.states, packed);
+    if shared.key.pass == guacamole::character::key::Pass::Colour {
+        m.key.states = states_at(shared.key.states, packed);
+    }
     m
 }
 
@@ -168,7 +173,7 @@ mod tests {
     use super::*;
     use guac_ir::model::Blend;
     use guacamole::character::key::{MaterialKey, Pass, ShaderKey};
-    use guacamole::character::material::{CharacterTextures, ShadowLookup};
+    use guacamole::character::material::CharacterTextures;
 
     /// The lava's part as the disc has it: opaque, depth written, its own
     /// colour map, neutral tints.
@@ -183,15 +188,21 @@ mod tests {
             colour: Some(Handle::default()),
             ..CharacterTextures::default()
         };
-        CharacterMaterial::new(
-            key,
-            &ir,
-            &guac_ir::shading::Scene::new(),
-            ShadowLookup::NONE,
-            0.0,
-            textures,
-        )
-        .unwrap()
+        CharacterMaterial::new(key, &ir, &guac_ir::shading::Scene::new(), 0.0, textures).unwrap()
+    }
+
+    /// AG.24: the level-up's ring, a warp, keeps its states (its
+    /// pipeline, the census's) under a fading tint; its tint still lands.
+    #[test]
+    fn a_warps_copy_keeps_its_states_under_a_fade() {
+        let mut ring = lava();
+        ring.key.pass = Pass::Warp;
+        let fading = tinted(&ring, 0x8080_8053);
+        assert_eq!(fading.key, ring.key, "unfaded");
+        assert_eq!(fading.uniform.placement_tint.w, 83.0 / 255.0);
+        let mut grass = lava();
+        grass.key.pass = Pass::Grass;
+        assert_eq!(tinted(&grass, 0x8080_8053).key, grass.key);
     }
 
     #[test]

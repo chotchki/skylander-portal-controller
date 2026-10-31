@@ -22,7 +22,7 @@
 //!    code, against the exact decode, inside the envelope AE.8 measured;
 //! 3. the same inputs on 8-bit textures through the remaster's own views
 //!    (`Rgba8UnormSrgb` for colour, spec, rim and layer maps, `Rgba8Unorm`
-//!    for normal and shadow maps), against the model on exact decodes:
+//!    for normal maps), against the model on exact decodes:
 //!    recorded, since the hardware hands some samples back at its reduced
 //!    precision and some at full, as the shader compiles them.
 //!
@@ -53,7 +53,6 @@ use bevy::color::{LinearRgba, Srgba};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::log::LogPlugin;
-use bevy::math::Vec4;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::{
     App, AppExit, Assets, Camera, Camera3d, Color, Commands, DefaultPlugins, Handle, Image, Local,
@@ -73,7 +72,7 @@ use guac_ir::shading::{
 };
 use guacamole::character::{
     CharacterMaterial, CharacterShadingPlugin, CharacterTextures, MaterialKey, Pass, SceneBits,
-    ShaderKey, ShadowLookup, StateKey, spawn_character,
+    ShaderKey, StateKey, remaster, spawn_character,
 };
 
 /// The decode probes ahead of the keys' cases.
@@ -81,8 +80,8 @@ const PROBES: usize = 2;
 /// The target, in pixels: four materials of 16x16 quads each.
 const SIZE: u32 = 32;
 const REGION: u32 = 16;
-/// Texels a side of every test texture but the probe's and the shadow's,
-/// in 4x4 blocks of equal texels.
+/// Texels a side of every test texture but the probe's, in 4x4 blocks of
+/// equal texels.
 const TEXELS: u32 = 16;
 const BLOCK: u32 = 4;
 /// The clear colour, exact in half precision.
@@ -614,8 +613,6 @@ struct Maps {
     second_spec_map: Blocks,
     third: Blocks,
     rim: Blocks,
-    /// One block per pixel of the target ([`shadow_lookup`]).
-    shadow: Blocks,
 }
 
 impl Maps {
@@ -630,7 +627,6 @@ impl Maps {
             &mut m.second_spec_map,
             &mut m.third,
             &mut m.rim,
-            &mut m.shadow,
         ] {
             b.half = true;
         }
@@ -647,26 +643,15 @@ impl Maps {
             second_spec_map: Blocks::random(rng, TEXELS, true),
             third: Blocks::random(rng, TEXELS, true),
             rim: Blocks::random(rng, TEXELS, true),
-            shadow: Blocks::random(rng, SIZE * BLOCK, false),
         }
     }
 }
 
-/// Where the shader looks a view-space position up in the shadow map.
-fn shadow_uv(position: [f32; 3]) -> [f32; 2] {
-    let p = Vec4::new(position[0], position[1], position[2], 1.0);
-    let l = shadow_lookup();
-    [p.dot(l.u), p.dot(l.v)]
-}
-
-/// The shadow map's lookup: each pixel's centre lands on the centre of a
-/// block of its own (`SIZE` pixels across `SIZE` blocks).
-fn shadow_lookup() -> ShadowLookup {
-    let s = 1.0 / SIZE as f32;
-    ShadowLookup {
-        u: Vec4::new(s, 0.0, 0.0, 0.5),
-        v: Vec4::new(0.0, -s, 0.0, 0.5),
-    }
+/// The shadow term's sample every pixel takes: the lane draws under no key
+/// light, so the shader's visibility is 1 (openspec AG.23; the term on a
+/// shadowed pixel is `shadow_gpu_lane`'s).
+fn lit() -> [f32; 4] {
+    remaster::shadow_sample(1.0)
 }
 
 // ---- one material's quads and what the model makes of them ----
@@ -914,12 +899,8 @@ fn want(
     fragment: &Fragment,
     decode: &Decode,
 ) -> (Want, shading::Shaded) {
-    // The shadow map's sample at this pixel, as this pass's texels hold it.
     let fragment = &Fragment {
-        shadow: maps
-            .shadow
-            .sample(shadow_uv(fragment.position), decode)
-            .unwrap_or([f32::NAN; 4]),
+        shadow: lit(),
         ..*fragment
     };
     let [c, nm, sm, c2, n2, s2, t3, r] = model_textures(maps, decode);
@@ -1022,10 +1003,7 @@ fn random_quad(
         maps.colour
             .block(m.uv_transforms[set].apply(quad.uv[set]))?;
     }
-    let shadow = maps
-        .shadow
-        .sample(shadow_uv(quad.fragment([0.0; 4]).position), &exact)?;
-    let fragment = quad.fragment(shadow);
+    let fragment = quad.fragment(lit());
     if dot(fragment.normal, fragment.normal) < 0.3 * 0.3 {
         return None;
     }
@@ -1385,7 +1363,6 @@ fn setup(
                     second_spec_map: add(&v.maps.second_spec_map),
                     third: add(&v.maps.third),
                     rim: add(&v.maps.rim),
-                    shadow: add(&v.maps.shadow),
                 };
                 let scene = match &plan.frame {
                     Some(frame) => in_world(&v.scene, frame),
@@ -1395,7 +1372,6 @@ fn setup(
                     case.key,
                     &v.material,
                     &scene,
-                    shadow_lookup(),
                     v.alpha_reference,
                     textures,
                 )

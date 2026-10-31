@@ -255,6 +255,17 @@ impl ShaderKey {
         )
     }
 
+    /// The same masks with the received shadow off on both sides: what a
+    /// pass that reads no shadow keys on (a level part's glow mask, openspec
+    /// AG.23), so it shares the pipeline its unshadowed twin compiles.
+    pub fn without_shadows(self) -> Self {
+        let off = !(1u16 << bit::SHADOWS);
+        Self {
+            pixel: self.pixel & off,
+            vertex: self.vertex & off,
+        }
+    }
+
     pub fn pixel(&self) -> u32 {
         u32::from(self.pixel)
     }
@@ -476,6 +487,14 @@ pub enum Pass {
     /// the level's depth and writing none, as the original's mask pass is
     /// tested against the colour pass's depth copy (AE.11).
     LevelGlow,
+    /// A shell of a level's grass (tfbgrass's, openspec AG.24): the colour
+    /// pass's colour, its blades cut out of the shell by the material's
+    /// height and blade maps against its height up the stack.
+    Grass,
+    /// A level's warp (tfbwarp's, openspec AG.24): the frame drawn behind
+    /// it, bent by its ripple map, in Bevy's transmissive phase (the copy
+    /// of the frame the original's warp samples too).
+    Warp,
 }
 
 /// What a pipeline is specialized on: the masks, the states and the pass.
@@ -495,13 +514,40 @@ impl MaterialKey {
         defs
     }
 
+    /// The same part's key in a level's glow pass (openspec AH.65): the
+    /// mask reads no shadow, so it drops the received one (AG.23) and a
+    /// shadowed part's mask shares its unshadowed twin's pipeline.
+    pub fn level_glow(self) -> Self {
+        Self {
+            shader: self.shader.without_shadows(),
+            pass: Pass::LevelGlow,
+            ..self
+        }
+    }
+
+    /// Whether a part drawn with this key casts a shadow on the level when
+    /// it's a character's (openspec AG.23,
+    /// [`super::shadow`]): its colour pass, opaque, writing depth, with no
+    /// alpha test. A blended or alpha-tested part would cast its whole
+    /// triangles (Bevy's depth-only draw reads no texture), and a glow mask
+    /// is a copy of a part that casts already.
+    pub fn casts_shadow(&self) -> bool {
+        self.pass == Pass::Colour
+            && self.states.blend == Blend::Opaque
+            && self.states.depth_write
+            && !self.states.alpha_test
+    }
+
     /// The fragment entry point: the shader's `fragment`, `glow_mask` in
-    /// the glow pass, `level_glow` in a level's.
+    /// the glow pass, `level_glow` in a level's, `grass` and `warp` for a
+    /// level's grass and warp.
     pub fn entry_point(&self) -> &'static str {
         match self.pass {
             Pass::Colour => "fragment",
             Pass::GlowMask => "glow_mask",
             Pass::LevelGlow => "level_glow",
+            Pass::Grass => "grass",
+            Pass::Warp => "warp",
         }
     }
 
@@ -956,6 +1002,93 @@ mod tests {
                 two_sided: true,
                 alpha_test: true
             }
+        );
+    }
+
+    #[test]
+    fn a_key_without_shadows_drops_the_received_shadow_alone() {
+        // The flagstones' kind: fog, three point lights and the shadow on.
+        let shadowed = ShaderKey::new(0x3D18, 0x3518).unwrap();
+        let plain = shadowed.without_shadows();
+        assert_eq!((plain.pixel(), plain.vertex()), (0x3C18, 0x3418));
+        assert!(shadowed.switches().shadows && !plain.switches().shadows);
+        assert_eq!(plain.without_shadows(), plain);
+        assert!(names(&key(0x0500, 0x0500)).contains(&def::SHADOWS.to_owned()));
+        assert!(!names(&key(0x0400, 0x0400)).contains(&def::SHADOWS.to_owned()));
+    }
+
+    #[test]
+    fn only_an_opaque_depth_writing_untested_colour_pass_casts() {
+        let opaque = key(0x041C, 0x041C);
+        assert!(opaque.casts_shadow());
+        for (k, what) in [
+            (
+                MaterialKey {
+                    states: StateKey {
+                        blend: Blend::Alpha,
+                        ..StateKey::OPAQUE
+                    },
+                    ..opaque
+                },
+                "blended",
+            ),
+            (
+                MaterialKey {
+                    states: StateKey {
+                        blend: Blend::Additive,
+                        ..StateKey::OPAQUE
+                    },
+                    ..opaque
+                },
+                "added",
+            ),
+            (
+                MaterialKey {
+                    states: StateKey {
+                        alpha_test: true,
+                        ..StateKey::OPAQUE
+                    },
+                    ..opaque
+                },
+                "alpha-tested",
+            ),
+            (
+                MaterialKey {
+                    states: StateKey {
+                        depth_write: false,
+                        ..StateKey::OPAQUE
+                    },
+                    ..opaque
+                },
+                "writing no depth",
+            ),
+            (
+                MaterialKey {
+                    pass: Pass::GlowMask,
+                    ..opaque
+                },
+                "a glow mask",
+            ),
+            (
+                MaterialKey {
+                    pass: Pass::LevelGlow,
+                    ..opaque
+                },
+                "a level glow mask",
+            ),
+        ] {
+            assert!(!k.casts_shadow(), "{what} casts none");
+        }
+        // Two-sided still casts.
+        assert!(
+            MaterialKey {
+                states: StateKey {
+                    two_sided: true,
+                    ..StateKey::OPAQUE
+                },
+                ..opaque
+            }
+            .casts_shadow()
         );
     }
 }

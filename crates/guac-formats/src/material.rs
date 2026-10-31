@@ -56,9 +56,10 @@ pub const EFFECTS: &str = "global.bld";
 /// draws every hero, and `tfbwarp.fx`, which draws none (AE.5).
 pub const TFBMULTI2: u32 = 0xAA7;
 pub const TFBWARP: u32 = 0xAA9;
-/// The two other effects level 213 draws with (AG.15's census): `0xAA6` on
-/// its 45 grass segments and `0xAA8` on 6, each unnamed until AG.24 names
-/// it through `global.bld`'s exports.
+/// The two other effects level 213 draws with (AG.15's census), named
+/// through `global.bld`'s exports at AG.24: `tfbgrass.fx` on its 45 grass
+/// segments and `tfbshadow.fx` on 6 (`player_shadow`), which the original
+/// draws into its shadow map's alpha alone, never into the frame.
 pub const GRASS_EFFECT: u32 = 0xAA6;
 pub const EFFECT_AA8: u32 = 0xAA8;
 /// The effects [`EffectMaterial`] reads.

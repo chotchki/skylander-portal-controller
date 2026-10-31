@@ -5,17 +5,20 @@
 //!
 //! - What's drawn ([`drawn`]): every tfbmulti2 segment, the scene's sky
 //!   among them, on its own material, the one with a gloss map (AG.22)
-//!   included. The other effects' (the grass's `0xAA6`, `0xAA8`, the warp)
-//!   draw nothing yet; AG.24 is to draw the grass and the warp without
-//!   their wind and distortion (stand-in ledger: `grass-warp`).
+//!   included, and since AG.24 the grass's (`0xAA6`, tfbgrass) and the
+//!   warp's (tfbwarp) on tfbmulti2-shaped materials drawn through passes of
+//!   their own ([`effect_material`], `character::effect`), stand-in ledger: `grass-warp`;
+//!   `0xAA8`, tfbshadow's `player_shadow`, is the original's
+//!   shadow map's and draws nothing.
 //! - The light ([`level_lights`], [`view_scene`]): the atmospheric zone the
 //!   level's definition sets up at its start (AG.41: AG.13 found the game
 //!   lights and fogs the opening area by it, not by the level file's
 //!   `_worldLight1`-`3`), each light travelling the way it faces, as AE.13
 //!   reads the sprite rig, and the placed point lights; fog from a
 //!   [`LevelFog`] the TV holds, set from the same zone ([`LevelFog::from_zone`]),
-//!   which the sky dome takes its zone's share of ([`sky_fogged`]); no shadows
-//!   (AG.23). The shader lights in view space, so the scene is the lights
+//!   which the sky dome takes its zone's share of ([`sky_fogged`]); shadows
+//!   received from the shadow light's cascades (AG.23). The shader lights in
+//!   view space, so the scene is the lights
 //!   seen from a camera ([`view_scene`]); the TV hands it the world's
 //!   ([`world_scene`]) and the shader turns them by its view (AG.21).
 //! - The camera AF's fresh state shows ([`fresh_state_transform`],
@@ -36,6 +39,7 @@ use guac_ir::model::{self, Segment};
 use guac_ir::shading::{DirectionalLight, PointLight, Scene};
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, MeshError, Pose};
 
+use crate::character::effect::Effect;
 use crate::character::key::bit;
 use crate::character::remaster;
 use crate::character::warm::{self, WarmError, WarmKey};
@@ -309,7 +313,9 @@ pub const DARK: PointLight = PointLight {
 /// The scene the level's materials draw in, seen from a camera whose view
 /// is `view_from_world`: the directional lights' travel and the point
 /// lights' positions in its view space (the space the shader lights in),
-/// fog from `fog`, no shadows until AG.23, neutral tints and no replace
+/// fog from `fog`, shadows received from the shadow light's cascades (AG.23:
+/// a material that leaves bit 8 to the scene darkens where a character's
+/// shadow falls, [`crate::character::shadow`]), neutral tints and no replace
 /// colour. Its point lights fill all three of tfbmulti2's slots, the placed
 /// ones first and the rest [`DARK`] (openspec AH.65): the scripts light
 /// more as attacks go off, each frame's three are the level's buffer's
@@ -337,6 +343,7 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
         .take(MAX_POINT_LIGHTS)
         .collect();
     scene.fog = true;
+    scene.shadows = true;
     scene.fog_colour = remaster::linear(fog.colour);
     (scene.fog_near, scene.fog_far) = (fog.near, fog.far);
     scene
@@ -348,9 +355,16 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
 /// ball and eruption lighting him, and of his materials only those that
 /// own their point lights off leave them to the card; AG.21 drew him
 /// without, on his card's keys), so his keys in the level are the census's
-/// [`crate::census::HEROES`], not a card's. No shadows until AG.23.
+/// [`crate::census::HEROES`], not a card's. He receives no shadow (AG.23):
+/// he casts one, and a received shadow would key every walker's parts
+/// again, which the start's pass would compile for a self-shadow the
+/// original's projected map gives him only in part. The creatures draw in
+/// it too.
 pub fn hero_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
-    view_scene(lights, fog, view_from_world)
+    Scene {
+        shadows: false,
+        ..view_scene(lights, fog, view_from_world)
+    }
 }
 
 /// A light the scripts lit, as the level draws it (openspec AH.65): at
@@ -432,6 +446,198 @@ pub fn drawn_material(m: &LevelMaterial) -> Option<model::Material> {
     Some(m)
 }
 
+/// What an effect other than tfbmulti2 draws as (AG.24), stand-in ledger: `grass-warp`:
+/// a tfbmulti2-shaped material and the pass it draws in
+/// (its [`Effect`], a grass shell's height set once its stack is known,
+/// [`grass_shells`]); `None` for `0xAA8`, tfbshadow (`player_shadow`), which
+/// the original draws into its shadow map's alpha alone (AC.13's captures:
+/// one 111-vertex draw a frame through its 16 x 16 `shadow_grey3`, never a
+/// main-pass draw), and for an effect missing what its own material reads.
+///
+/// - The grass, tfbgrass's shells: the colour map (unit 0) lit as the
+///   ground it grows on is (the vertex colour, no directional light: every
+///   chapter 1 ground material binding the grass's colour map owns it off,
+///   and tfbgrass's program has no Lambert term; fog, the level's shadow and
+///   point lights the scene's), the height map (unit 1) and the blade map
+///   (unit 2) in the normal maps' slots, read as stored; one-sided shells
+///   drawn two-sided, opaque, writing depth, cut to their blades
+///   ([`Pass::Grass`](crate::character::key::Pass::Grass)). No wind.
+/// - The warp, tfbwarp: its ripple map (unit 0) in the normal map's slot and
+///   the colour map's, owning every scene switch off, opaque, writing no
+///   depth (what blends behind it draws over it), its sides and scroll its
+///   own ([`Pass::Warp`](crate::character::key::Pass::Warp)).
+pub fn effect_material(m: &LevelMaterial) -> Option<(model::Material, Effect)> {
+    let LevelMaterial::Effect(e) = m else {
+        return None;
+    };
+    let unit = |u: i16| e.textures.iter().find(|t| t.unit == u);
+    let slot = |t: &guac_ir::level::UnitTexture, role| model::TextureSlot {
+        role,
+        texture: t.texture.clone(),
+        image: t.image.clone(),
+        sampler: t.sampler,
+    };
+    let own_everything = 0x3FFF;
+    let (pixel, vertex, textures, states, effect) = match e.effect {
+        guac_formats_ids::GRASS => {
+            let (colour, height, blade) = (unit(0)?, unit(1)?, unit(2)?);
+            (
+                // The ground's masks under it (`cliff_wall_ground`'s, its
+                // layers aside): the directional light owned off.
+                model::Mask {
+                    base: 0,
+                    ignore: 0x2FF,
+                },
+                model::Mask {
+                    base: 1 << bit::VERTEX_COLOUR,
+                    ignore: 0x1AFF,
+                },
+                vec![
+                    slot(colour, model::TextureRole::Layer1ColorMap),
+                    slot(height, model::TextureRole::Layer2BaseNormalMap),
+                    slot(blade, model::TextureRole::Layer1BaseNormalMap),
+                ],
+                model::RenderStates {
+                    blend: model::Blend::Opaque,
+                    depth_write: true,
+                    two_sided: true,
+                    alpha_test: Some(0.5),
+                },
+                Effect::Grass { shell: 0.0 },
+            )
+        }
+        guac_formats_ids::WARP => {
+            let ripple = unit(0)?;
+            (
+                model::Mask {
+                    base: 0,
+                    ignore: own_everything,
+                },
+                model::Mask {
+                    base: 0,
+                    ignore: own_everything,
+                },
+                vec![
+                    slot(ripple, model::TextureRole::Layer1ColorMap),
+                    slot(ripple, model::TextureRole::Layer1BaseNormalMap),
+                ],
+                // No depth: Bevy copies the frame for its transmissive phase
+                // before anything blended draws (the sky, the stream in the
+                // chute, particles), so a warp writing depth kept them off
+                // every pixel behind it (the chute's stream gone under
+                // chapter 1's warp, the sky behind it dark red at anchor B:
+                // the second review of AG.24); unwritten, they draw over it,
+                // unbent. tfbwarp writes depth, its copy taken after them.
+                model::RenderStates {
+                    blend: model::Blend::Opaque,
+                    depth_write: false,
+                    two_sided: e.states.two_sided,
+                    alpha_test: None,
+                },
+                Effect::Warp,
+            )
+        }
+        _ => return None,
+    };
+    Some((
+        model::Material {
+            name: e.name.clone(),
+            pixel,
+            vertex,
+            textures,
+            params: model::Params {
+                fixed_alpha: [-1.0; 4],
+                layer1_extra: [1.0, 1.0, 1.0, 0.25],
+                layer2_extra: None,
+                layer2_blend: None,
+                layer3_blend: None,
+                layer4_blend: [0.0, 1.0, 0.0, 0.0],
+                layer4_values: [0.0, 1.0, 0.0, 0.0],
+                material_tint: [128, 128, 128, 255],
+                glow: model::Glow::None,
+            },
+            states,
+            scrolls: e.scrolls.clone(),
+            tracks: e.tracks.clone(),
+        },
+        effect,
+    ))
+}
+
+/// `s`'s normals from its triangles: each vertex the unit sum of the faces
+/// on it (their areas weighing them), straight up where it's on none.
+pub fn fill_normals(s: &mut Segment) {
+    let mut sums = vec![Vec3::ZERO; s.positions.len()];
+    for t in s.indices.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(usize::from);
+        let (Some(pa), Some(pb), Some(pc)) =
+            (s.positions.get(a), s.positions.get(b), s.positions.get(c))
+        else {
+            continue;
+        };
+        let [pa, pb, pc] = [pa, pb, pc].map(|p| Vec3::from_array(*p));
+        let face = (pb - pa).cross(pc - pa);
+        for v in [a, b, c] {
+            sums[v] += face;
+        }
+    }
+    s.normals = sums
+        .into_iter()
+        .map(|n| n.try_normalize().unwrap_or(Vec3::Y).to_array())
+        .collect();
+}
+
+/// The effect ids [`effect_material`] draws, as guac-formats names them.
+mod guac_formats_ids {
+    pub const GRASS: u32 = guac_formats::material::GRASS_EFFECT;
+    pub const WARP: u32 = guac_formats::material::TFBWARP;
+}
+
+/// Each grass shell's height up its stack (AG.24): the shells of one patch
+/// share their texture coordinates' extent, so each stack is the segments
+/// drawn with grass of one extent, ranked by their mean height, 0 the
+/// lowest to 1 the highest (chapter 1's three stacks of 15, each shell its
+/// own material about 6 cm over the last). A material's shell is its
+/// segments' mean rank; one alone in its stack is 0.
+pub fn grass_shells(segments: &[Segment], effects: &[Option<Effect>]) -> Vec<(u16, f32)> {
+    use std::collections::BTreeMap;
+    let is_grass = |m: u16| {
+        matches!(
+            effects.get(usize::from(m)),
+            Some(Some(Effect::Grass { .. }))
+        )
+    };
+    // The extent, to the centimetre of texture space, and the mean height.
+    let mut stacks: BTreeMap<[i64; 4], Vec<(f32, u16)>> = BTreeMap::new();
+    for s in segments.iter().filter(|s| is_grass(s.material)) {
+        let Some(uvs) = s.uvs.first() else { continue };
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for uv in uvs {
+            for k in 0..2 {
+                lo[k] = lo[k].min(uv[k]);
+                hi[k] = hi[k].max(uv[k]);
+            }
+        }
+        let key = [lo[0], lo[1], hi[0], hi[1]].map(|v| (v * 100.0).round() as i64);
+        let mean = s.positions.iter().map(|p| p[1]).sum::<f32>() / s.positions.len().max(1) as f32;
+        stacks.entry(key).or_default().push((mean, s.material));
+    }
+    let mut by_material: BTreeMap<u16, (f32, u32)> = BTreeMap::new();
+    for shells in stacks.values_mut() {
+        shells.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let top = (shells.len().max(2) - 1) as f32;
+        for (rank, (_, m)) in shells.iter().enumerate() {
+            let e = by_material.entry(*m).or_insert((0.0, 0));
+            e.0 += rank as f32 / top;
+            e.1 += 1;
+        }
+    }
+    by_material
+        .into_iter()
+        .map(|(m, (sum, n))| (m, sum / n as f32))
+        .collect()
+}
+
 /// A scene's drawn part: each material it draws once, and the segments
 /// drawing with them, their materials renumbered into that list.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -446,6 +652,9 @@ pub struct Drawn {
     /// The sky's segments among the drawn, by drawn index, in the order the
     /// scene lists them (the order the original draws its sky in, AG.79).
     pub sky: Vec<usize>,
+    /// Each drawn material's effect, by index, when it's another effect's
+    /// than tfbmulti2's (AG.24); a material past its end is tfbmulti2's.
+    pub effects: Vec<Option<Effect>>,
 }
 
 impl Drawn {
@@ -453,6 +662,8 @@ impl Drawn {
     /// on from this one's.
     pub fn append(&mut self, other: Drawn) {
         let (materials, segments) = (self.materials.len() as u16, self.segments.len());
+        self.effects.resize(self.materials.len(), None);
+        self.effects.extend(other.effects_padded());
         self.materials.extend(other.materials);
         self.segments
             .extend(other.segments.into_iter().map(|mut s| {
@@ -463,6 +674,27 @@ impl Drawn {
         self.sky.extend(other.sky.into_iter().map(|s| s + segments));
         self.left_out_materials += other.left_out_materials;
         self.left_out_segments += other.left_out_segments;
+    }
+}
+
+impl Drawn {
+    /// Material `m`'s effect, if it's another effect's (AG.24).
+    pub fn effect(&self, m: usize) -> Option<Effect> {
+        self.effects.get(m).copied().flatten()
+    }
+
+    /// The effects, one a material.
+    fn effects_padded(&self) -> Vec<Option<Effect>> {
+        (0..self.materials.len()).map(|m| self.effect(m)).collect()
+    }
+
+    /// `other`'s materials after this one's, with their effects (what a
+    /// level's loader puts after its own: the props', the spawn models',
+    /// the particles'); its segments are the caller's to place.
+    pub fn extend_materials(&mut self, other: &Drawn) {
+        self.effects.resize(self.materials.len(), None);
+        self.effects.extend(other.effects_padded());
+        self.materials.extend(other.materials.iter().cloned());
     }
 }
 
@@ -555,10 +787,18 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
         }
     }
     let mut materials = Vec::new();
+    let mut effects = Vec::new();
     let (mut rest, mut sky_copy) = (vec![None; n], vec![None; n]);
     let mut multi2 = 0;
     for (k, m) in graph.materials.iter().enumerate() {
         let Some(d) = drawn_material(m) else {
+            if let Some((d, effect)) = effect_material(m) {
+                multi2 += 1;
+                materials.push(d);
+                effects.resize(materials.len() - 1, None);
+                effects.push(Some(effect));
+                rest[k] = Some((materials.len() - 1) as u16);
+            }
             continue;
         };
         multi2 += 1;
@@ -571,9 +811,11 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
             sky_copy[k] = Some((materials.len() - 1) as u16);
         }
     }
+    effects.resize(materials.len(), None);
     let mut out = Drawn {
         left_out_materials: n - multi2,
         materials,
+        effects,
         ..Drawn::default()
     };
     for (i, mut s) in graph.segments.into_iter().enumerate() {
@@ -588,6 +830,11 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
             continue;
         };
         s.material = index;
+        // An effect's mesh may come with no normals (a warp's has none,
+        // AG.24); the material's vertex layout wants them all the same.
+        if out.effects[usize::from(index)].is_some() && s.normals.is_empty() {
+            fill_normals(&mut s);
+        }
         out.segments.push(s);
         out.sources.push(i);
     }
@@ -595,6 +842,9 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
         .iter()
         .filter_map(|&i| out.sources.iter().position(|&s| s == i))
         .collect();
+    for (m, shell) in grass_shells(&out.segments, &out.effects) {
+        out.effects[usize::from(m)] = Some(Effect::Grass { shell });
+    }
     Ok(out)
 }
 
@@ -603,8 +853,9 @@ pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
 /// (openspec AH.65, [`warm::level_segment_keys`]): what the warm compiles
 /// before the level shows.
 pub fn keys(drawn: &Drawn, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, LevelError> {
-    Ok(warm::level_segment_keys(
+    Ok(warm::level_effect_keys(
         &drawn.materials,
+        &drawn.effects,
         &drawn.segments,
         scene,
     )?)
@@ -696,7 +947,7 @@ pub fn fresh_state_projection() -> PerspectiveProjection {
 mod tests {
     use super::*;
     use crate::character::key::{MaterialKey, Pass, StateKey, def};
-    use crate::character::material::{CharacterMaterial, ShadowLookup};
+    use crate::character::material::CharacterMaterial;
     use crate::character::warm::MeshShape;
     use bevy::asset::Handle;
     use bevy::shader::ShaderDefVal;
@@ -900,7 +1151,8 @@ mod tests {
             1e-5
         ));
         assert_eq!(scene.point_lights[0].linear, 0.5);
-        assert!(scene.fog && !scene.shadows);
+        // Fog on, and the level's shadow received (AG.23).
+        assert!(scene.fog && scene.shadows);
         assert_eq!(scene.fog_colour, remaster::linear([115, 83, 49]));
         assert_eq!((scene.fog_near, scene.fog_far), (30.0, 300.0));
         // No fog starts past the far clip, so it fogs nothing drawn.
@@ -910,8 +1162,9 @@ mod tests {
     /// AH.65 (AG.21 drew him without its point lights): the hero draws in
     /// the level's lights, fog and three point lights' slots as the camera
     /// sees them, the placed one first and two dark, so a material leaving
-    /// point lights and fog to the scene keys as the level's does, not as a
-    /// card draws it (fog on, nothing else).
+    /// point lights and fog to the scene keys as the level's does but for the
+    /// received shadow (AG.23), not as a card draws it (fog on, nothing
+    /// else).
     #[test]
     fn the_hero_draws_in_the_levels_light_fog_and_point_lights() {
         let l = level_lights(&lights(), &zone()).unwrap();
@@ -937,7 +1190,7 @@ mod tests {
             (level.fog_colour, 30.48, 335.28)
         );
         let key = |m: &model::Material, scene: &Scene| {
-            CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, |_| Handle::default())
+            CharacterMaterial::from_ir(m, scene, |_| Handle::default())
                 .unwrap()
                 .key
         };
@@ -946,8 +1199,13 @@ mod tests {
             ..Scene::new()
         };
         let open = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
-        assert_eq!(key(&open, &hero), key(&open, &level));
-        assert_ne!(key(&open, &hero), key(&open, &card));
+        // The level's but its received shadow (AG.23): the level's part
+        // takes the level's shadow, the hero's casts it.
+        let (hero_key, level_key) = (key(&open, &hero), key(&open, &level));
+        assert!(level_key.shader.switches().shadows && !hero_key.shader.switches().shadows);
+        assert_eq!(hero_key.shader, level_key.shader.without_shadows());
+        assert_eq!(hero_key.states, level_key.states);
+        assert_ne!(hero_key, key(&open, &card));
     }
 
     fn slot(role: TextureRole) -> TextureSlot {
@@ -1031,8 +1289,8 @@ mod tests {
     }
 
     /// AG.19: a level material's key in the level's scene (fog on, its
-    /// three point lights' slots (AH.65), no shadows) and the shader defs it
-    /// becomes. The masks
+    /// three point lights' slots (AH.65), the level's shadow (AG.23))
+    /// and the shader defs it becomes. The masks
     /// are level 213's kinds: one leaving shadows, fog and point lights to
     /// the scene (ignore 0x2FF), one owning shadows off (0x3FF), one owning
     /// point lights off too (0x3BFF), and the gloss-mapped one, drawn with
@@ -1042,20 +1300,20 @@ mod tests {
         let l = level_lights(&lights(), &zone()).unwrap();
         let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
         let key = |m: &model::Material| {
-            CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, |_| Handle::default())
+            CharacterMaterial::from_ir(m, &scene, |_| Handle::default())
                 .unwrap()
                 .key
         };
         let names = |n: &[&str]| -> Vec<String> { n.iter().map(|s| s.to_string()).collect() };
 
         // Layers 2 and 3, normal and spec maps and vertex colours, leaving
-        // fog and point lights to the scene: the eye direction comes with
-        // fog, the geometric normal with the point light.
+        // shadows, fog and point lights to the scene: the eye direction
+        // comes with fog, the geometric normal with the point light.
         let both = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
         let k = key(&both);
         assert_eq!(
             k.shader.pixel(),
-            0x1B | 1 << bit::FOG | 0b111 << bit::POINT_LIGHTS
+            0x1B | 1 << bit::SHADOWS | 1 << bit::FOG | 0b111 << bit::POINT_LIGHTS
         );
         assert_eq!(
             defs(&k),
@@ -1064,6 +1322,7 @@ mod tests {
                 def::LAYER3,
                 def::NORMAL_MAP,
                 def::SPEC_MAP,
+                def::SHADOWS,
                 def::FOG,
                 def::VERTEX_COLOUR,
                 def::EYE,
@@ -1075,9 +1334,9 @@ mod tests {
                 def::POINT_LIGHTS[2],
             ])
         );
-        // Owning shadows off changes nothing here: the level has none yet.
+        // Owning shadows off keeps the shadow off.
         let owned = multi2(mask(0x1B, 0x3FF), mask(0x101B, 0x1BFF));
-        assert_eq!(key(&owned).shader, k.shader);
+        assert_eq!(key(&owned).shader, k.shader.without_shadows());
         // Owning point lights off: fog alone, so no geometric normal.
         let unlit = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
         let k = key(&unlit);
@@ -1108,18 +1367,11 @@ mod tests {
         );
         // Its gloss strength is the third layer's fixed alpha; a gloss map
         // beside a third layer is refused.
-        let built =
-            CharacterMaterial::from_ir(&gloss, &scene, ShadowLookup::NONE, |_| Handle::default())
-                .unwrap();
+        let built = CharacterMaterial::from_ir(&gloss, &scene, |_| Handle::default()).unwrap();
         assert_eq!(built.uniform.fixed_alpha.z, 1.0);
         let both = multi2(mask(0x9E, 0x3FF), mask(0x109E, 0x1BFF));
         let both = drawn_material(&LevelMaterial::Multi2(both)).unwrap();
-        assert!(
-            CharacterMaterial::from_ir(&both, &scene, ShadowLookup::NONE, |_| {
-                Handle::default()
-            })
-            .is_err()
-        );
+        assert!(CharacterMaterial::from_ir(&both, &scene, |_| { Handle::default() }).is_err());
         // The render states key the pipeline as a character's do.
         assert_eq!(
             k.states,
@@ -1228,6 +1480,259 @@ mod tests {
             tracks: Vec::new(),
             unread: Vec::new(),
         })
+    }
+
+    fn unit(unit: i16, image: &str) -> guac_ir::level::UnitTexture {
+        guac_ir::level::UnitTexture {
+            unit,
+            texture: format!("textures/{image}.ktx2"),
+            image: image.into(),
+            sampler: Sampler {
+                wrap_u: Wrap::Repeat,
+                wrap_v: Wrap::Repeat,
+                mag: Filter::Linear,
+                min: Filter::Linear,
+                mip: Some(Filter::Linear),
+            },
+        }
+    }
+
+    /// An effect material as the extract keeps chapter 1's: the grass's
+    /// three maps, the warp's ripple map, the shadow pass's grey.
+    fn effect_of(effect: u32, name: &str) -> LevelMaterial {
+        let textures = match effect {
+            0xAA6 => vec![
+                unit(1, "grass_hieght.png"),
+                unit(2, "grass_random.dds"),
+                unit(0, "rocks_top_grass.png"),
+            ],
+            0xAA9 => vec![unit(0, "ripple_warp.png")],
+            _ => vec![unit(0, "shadow_grey3.png")],
+        };
+        LevelMaterial::Effect(EffectMaterial {
+            name: name.into(),
+            effect,
+            pixel: None,
+            vertex: None,
+            textures,
+            states: RenderStates {
+                blend: Blend::Alpha,
+                depth_write: effect != 0xAA6,
+                two_sided: effect == 0xAA9,
+                alpha_test: (effect == 0xAA6).then_some(0.023529),
+            },
+            scrolls: Vec::new(),
+            tracks: Vec::new(),
+            unread: Vec::new(),
+        })
+    }
+
+    /// AG.24: the grass and the warp draw on tfbmulti2-shaped materials in
+    /// passes of their own; tfbshadow's `player_shadow` draws nothing.
+    #[test]
+    fn the_grass_and_the_warp_stand_in_and_the_shadow_pass_draws_nothing() {
+        let (grass, effect) = effect_material(&effect_of(0xAA6, "grass_HIRES")).unwrap();
+        assert_eq!(effect, Effect::Grass { shell: 0.0 });
+        let roles: Vec<(TextureRole, &str)> = grass
+            .textures
+            .iter()
+            .map(|t| (t.role, t.image.as_str()))
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                (TextureRole::Layer1ColorMap, "rocks_top_grass.png"),
+                (TextureRole::Layer2BaseNormalMap, "grass_hieght.png"),
+                (TextureRole::Layer1BaseNormalMap, "grass_random.dds"),
+            ],
+            "the colour map decoded, the height and blade maps as stored"
+        );
+        assert!(!remaster::samples_srgb(
+            &grass,
+            TextureRole::Layer2BaseNormalMap
+        ));
+        assert_eq!(
+            grass.states,
+            RenderStates {
+                blend: Blend::Opaque,
+                depth_write: true,
+                two_sided: true,
+                alpha_test: Some(0.5),
+            }
+        );
+        // In the level's scene: fogged, shadowed, its point lights, its
+        // vertex colour, and no directional light, as the ground it grows on.
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
+        let mut built = CharacterMaterial::from_ir(&grass, &scene, |_| Handle::default()).unwrap();
+        effect.apply(&mut built);
+        let sw = built.key.shader.switches();
+        assert!(!sw.directional, "owned off, as the ground's");
+        assert!(sw.fog && sw.shadows && sw.vertex_colour);
+        assert_eq!(sw.point_lights, 3);
+        assert_eq!(built.key.pass, Pass::Grass);
+        assert_eq!(built.key.entry_point(), "grass");
+
+        let (warp, effect) = effect_material(&effect_of(0xAA9, "Water_Warp")).unwrap();
+        assert_eq!(effect, Effect::Warp);
+        let mut built = CharacterMaterial::from_ir(&warp, &scene, |_| Handle::default()).unwrap();
+        effect.apply(&mut built);
+        assert_eq!(
+            (built.key.shader.pixel(), built.key.shader.vertex()),
+            (0, 0),
+            "owning every scene switch off"
+        );
+        assert_eq!(built.key.states.blend, Blend::Opaque);
+        assert!(built.key.states.two_sided, "its own sides");
+        assert!(
+            !built.key.states.depth_write,
+            "no depth, though its IR writes it: what blends behind it draws over it"
+        );
+        assert!(bevy::pbr::Material::reads_view_transmission_texture(&built));
+        assert_eq!(
+            bevy::pbr::Material::alpha_mode(&built),
+            bevy::material::AlphaMode::Opaque
+        );
+        assert!(
+            warp.textures
+                .iter()
+                .any(|t| t.role == TextureRole::Layer1BaseNormalMap)
+        );
+
+        assert!(effect_material(&effect_of(0xAA8, "player_shadow")).is_none());
+        // A grass missing its blade map stands in for nothing.
+        let LevelMaterial::Effect(mut short) = effect_of(0xAA6, "grass_HIRES") else {
+            unreachable!()
+        };
+        short.textures.retain(|t| t.unit != 2);
+        assert!(effect_material(&LevelMaterial::Effect(short)).is_none());
+    }
+
+    /// AG.24: a warp's mesh comes without normals; they're filled from its
+    /// triangles (counter-clockwise faces up, a vertex on two faces their
+    /// mean), straight up for a vertex on none, and a scene keeps them.
+    #[test]
+    fn an_effects_mesh_without_normals_gets_them_from_its_faces() {
+        let mut s = segment(0, false);
+        s.positions = vec![
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [9.0, 9.0, 9.0],
+        ];
+        // One face up (y), one facing +x... both on vertices 0 and 1.
+        s.indices = vec![0, 1, 2, 0, 3, 1];
+        s.normals = Vec::new();
+        fill_normals(&mut s);
+        let n = |i: usize| Vec3::from_array(s.normals[i]);
+        assert!(n(2).abs_diff_eq(Vec3::Y, 1e-6), "{:?}", n(2));
+        assert!(n(3).abs_diff_eq(Vec3::X, 1e-6), "{:?}", n(3));
+        assert!(n(0).abs_diff_eq(Vec3::new(1.0, 1.0, 0.0).normalize(), 1e-6));
+        assert_eq!(n(4), Vec3::Y, "on no face");
+        // Through a scene: a warp's segment without normals draws with them,
+        // a tfbmulti2 one is left as it came.
+        let mut bare = segment(0, false);
+        bare.normals.clear();
+        let mut plain = segment(1, false);
+        plain.normals.clear();
+        let graph = SceneGraph {
+            world: "Levels/Test/Test.ma".into(),
+            materials: vec![
+                effect_of(0xAA9, "Water_Warp"),
+                LevelMaterial::Multi2(multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF))),
+            ],
+            segments: vec![bare, plain],
+            sky: Vec::new(),
+        };
+        let d = drawn(graph, true).unwrap();
+        assert_eq!(d.segments[0].normals.len(), 3);
+        assert!(d.segments[1].normals.is_empty());
+    }
+
+    /// A grass shell `rise` m over the ground, its texture coordinates over
+    /// `extent`.
+    fn shell(material: u16, rise: f32, extent: f32) -> Segment {
+        let mut s = segment(material, true);
+        s.positions = vec![[0.0, rise, 0.0], [1.0, rise, 0.0], [0.0, rise + 0.02, 1.0]];
+        s.uvs = vec![vec![[0.0, 0.0], [extent, 0.0], [0.0, extent]]];
+        s
+    }
+
+    /// AG.24: each stack of shells (the segments drawn with grass whose
+    /// texture coordinates span one extent) ranked by height, 0 the lowest
+    /// to 1 the highest; another effect's or tfbmulti2's segments aren't.
+    #[test]
+    fn each_grass_stack_ranks_its_shells_by_height() {
+        let g = Some(Effect::Grass { shell: 0.0 });
+        let effects = vec![g, g, g, g, g, None, Some(Effect::Warp)];
+        let segments = vec![
+            shell(2, 0.12, 3.0),
+            shell(0, 0.0, 3.0),
+            shell(1, 0.06, 3.0),
+            shell(4, 5.06, 2.0),
+            shell(3, 5.0, 2.0),
+            shell(5, 0.03, 3.0),
+            shell(6, 0.09, 3.0),
+        ];
+        let shells = grass_shells(&segments, &effects);
+        assert_eq!(shells, [(0, 0.0), (1, 0.5), (2, 1.0), (3, 0.0), (4, 1.0)]);
+        // Through a scene: its effects, the shells' heights set, the warp's
+        // pass, the shadow pass's material left out.
+        let graph = SceneGraph {
+            world: "Levels/Test/Test_GRASS.ma".into(),
+            materials: vec![
+                effect_of(0xAA6, "grass_HIRES"),
+                effect_of(0xAA6, "grass_HIRES_1"),
+                effect_of(0xAA9, "Water_Warp"),
+                effect_of(0xAA8, "player_shadow"),
+                LevelMaterial::Multi2(multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF))),
+            ],
+            segments: vec![
+                shell(1, 0.06, 3.0),
+                shell(0, 0.0, 3.0),
+                shell(2, 0.5, 1.0),
+                shell(3, 0.0, 1.0),
+                segment(4, false),
+            ],
+            sky: Vec::new(),
+        };
+        let d = drawn(graph, true).unwrap();
+        assert_eq!(d.materials.len(), 4);
+        assert_eq!((d.left_out_materials, d.left_out_segments), (1, 1));
+        assert_eq!(
+            d.effects,
+            [
+                Some(Effect::Grass { shell: 0.0 }),
+                Some(Effect::Grass { shell: 1.0 }),
+                Some(Effect::Warp),
+                None
+            ]
+        );
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
+        let passes: Vec<Pass> = keys(&d, &scene)
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.material.pass)
+            .collect();
+        assert_eq!(
+            passes,
+            [Pass::Grass, Pass::Warp, Pass::Colour],
+            "the two shells share a key"
+        );
+        // Carried with its materials into another part, and past its end
+        // a material is tfbmulti2's.
+        let mut all = Drawn::default();
+        all.materials
+            .push(multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF)));
+        all.extend_materials(&d);
+        assert_eq!(all.effect(0), None);
+        assert_eq!(all.effect(3), Some(Effect::Warp));
+        assert_eq!(all.effect(9), None);
+        let mut appended = Drawn::default();
+        appended.append(d.clone());
+        assert_eq!(appended.effects, d.effects);
     }
 
     /// A scene's drawn part: tfbmulti2's segments with their materials
