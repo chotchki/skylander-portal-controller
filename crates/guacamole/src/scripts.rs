@@ -17,7 +17,10 @@
 //! - [`join_request`], [`join_activate`] and [`join_deactivate`]: a
 //!   figure's character joining the run when it goes on the portal and
 //!   leaving it when it comes off mid-level, the original's macros with
-//!   their scheduling ours (openspec AH.17, AH.105; stand-in ledger: `join`).
+//!   their scheduling ours (openspec AH.17, AH.105; stand-in ledger: `join`);
+//!   on the TV [`join_enter`] and [`entry_beams`] in [`join_activate`]'s
+//!   place, his minion activated by the original's entry beam as its column
+//!   lands (openspec AH.224).
 //! - [`init_chain`]: the VM AH.16 runs: `global.bld`'s 17 running placements
 //!   for their first tick, `init_setup.bld`'s running placements and level
 //!   213's definition and enemy system every tick, every other running
@@ -2360,9 +2363,9 @@ pub enum Entry {
 /// element's entry macros (`PortalEntry_<element>.ai`) after. A part without
 /// those macros, or whose `portal control data` keeps no `entry beams`,
 /// activates him at once ([`Entry::Activated`]), and so does `beam` false
-/// (a run whose beam stopped before). The scheduling is ours: the
-/// beam made at the join's second half, run from that step on (stand-in
-/// ledger: `join`).
+/// (a run whose beam stopped before). The scheduling is ours: the beam
+/// made at the join's second half, run from that step on
+/// (stand-in ledger: `join`).
 pub fn join_enter(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,

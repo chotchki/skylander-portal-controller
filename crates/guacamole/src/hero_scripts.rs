@@ -26,8 +26,12 @@
 //!   fighter ([`guac_extract::scripts::FIGHTERS`], Eruptor) to attack and
 //!   walk or a walker (AG.27, every other modelled character) to walk
 //!   alone, joins by AH.17's join ([`guacamole::scripts::join_request`],
-//!   then on the next step [`guacamole::scripts::join_activate`];
-//!   stand-in ledger: `join`), the step the TV enters the level; from then
+//!   then on the next step [`guacamole::scripts::join_enter`], the
+//!   original's entry beam run each step after by
+//!   [`guacamole::scripts::entry_beams`] until it activates his minion as its
+//!   column lands, openspec AH.224; stand-in ledger: `join`), the step the
+//!   TV enters the level, drawn nowhere and held where he was put until
+//!   then; from then
 //!   on his walk, facing and clips are his scripts' and his step the engine's
 //!   alone ([`ScriptedHero`]), a walker's attack buttons reaching no script
 //!   (hero-attacks' Which characters attack). Eruptor with no run (the part
@@ -614,8 +618,8 @@ pub(crate) struct ScriptStep {
     /// (the level left and entered again).
     pub step: u64,
     pub actions: [bool; 4],
-    /// The hero's join: `asked`, `requested`, `joined` or `off`; none
-    /// without a hero.
+    /// The hero's join: `asked`, `requested`, `entering` (his entry beam
+    /// running, openspec AH.224), `joined` or `off`; none without a hero.
     pub join: Option<&'static str>,
     /// Clips started on the hero this step: palette slot, length (s at
     /// 100 %) and rate (percent).

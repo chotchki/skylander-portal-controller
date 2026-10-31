@@ -108,14 +108,14 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
                 cards.keys.push(k);
             }
         }
-        if walkers::walker(load).is_some() {
-            // His glowing parts' masks in the level too (AH.65).
-            let keys =
-                warm::level_keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
-            cards
-                .heroes
-                .push((load.to_string(), keys.into_iter().map(|(k, _)| k).collect()));
-        }
+        // Every character as the hero in the level (AG.27: every modelled
+        // one walks; a replacement's keys compiled in play under his
+        // arrival until the arrival lane's run, 2026-10-31), his glowing
+        // parts' masks too (AH.65).
+        let keys = warm::level_keys(&model, hero_scene).unwrap_or_else(|e| panic!("{load}: {e}"));
+        cards
+            .heroes
+            .push((load.to_string(), keys.into_iter().map(|(k, _)| k).collect()));
     }
     cards
 }
@@ -366,26 +366,33 @@ fn the_census_is_the_discs() {
         props_beyond.len(),
         level_took.as_secs_f64()
     );
-    // Every walker drawn in the level as the hero (AH.65: his keys there
+    // Every character drawn in the level as the hero (AH.65: his keys there
     // carry its point lights, and his glowing parts draw their masks).
     assert_eq!(
-        cards
-            .heroes
-            .iter()
-            .map(|(l, _)| l.as_str())
-            .collect::<Vec<_>>(),
+        cards.heroes.len(),
+        cards.models,
+        "every character's model read"
+    );
+    assert!(
         walkers::WALKERS
             .iter()
-            .map(|w| w.load_file)
-            .collect::<Vec<_>>(),
-        "every walker's model read"
+            .all(|w| cards.heroes.iter().any(|(l, _)| l == w.load_file)),
+        "the measured walkers among them"
     );
     let heroes = once(cards.heroes.iter().flat_map(|(_, k)| k.iter().copied()));
     let (hero_skinned, hero_static): (Vec<WarmKey>, Vec<WarmKey>) =
         colour(&heroes).into_iter().partition(|k| k.mesh.skinned);
+    // A part no light or fog reaches keys as it does on a card: the
+    // cards' table holds those.
+    let hero_skinned = beyond(&hero_skinned, &[census::TURNTABLE]);
     let hero_static = beyond(
         &hero_static,
-        &[census::LEVEL, census::LEVEL_PROPS, census::SPAWNS],
+        &[
+            census::LEVEL,
+            census::LEVEL_PROPS,
+            census::SPAWNS,
+            census::TURNTABLE_STATIC,
+        ],
     );
     let (hero_glow_skinned, hero_glow_static): (Vec<WarmKey>, Vec<WarmKey>) =
         glows(&heroes).into_iter().partition(|k| k.mesh.skinned);
@@ -512,14 +519,16 @@ fn the_census_is_the_discs() {
             hero_glow_skinned.len(),
             hero_glow_static.len()
         ),
-        // AH.39: 22 glow masks before `global.bld`'s models.
-        (29, 1, 0, 1, 0),
+        // AH.39: 22 glow masks before `global.bld`'s models; the heroes'
+        // 1, 0, 1, 0 while only Eruptor's were (before the arrival lane).
+        (29, 33, 7, 17, 8),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(
         (creature_models, creatures.len(), creature_glow.len()),
-        // AH.139: 5 keys before each opaque one's faded twin.
-        (4, 10, 0),
+        // AH.139: 5 keys before each opaque one's faded twin; 10 before
+        // every character's keys as the hero took 8 of them.
+        (4, 2, 0),
         "the first fight's creatures' and the skinned clones' models (the Chompies', Norticus', the tortoises', the cannon top's), their keys past the heroes', their glow masks"
     );
 }

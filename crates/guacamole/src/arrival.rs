@@ -417,16 +417,11 @@ fn spawn_card(
 }
 
 /// The figure's element's two stops on the diagonal, as its ring wears
-/// them; the plain plate's for a figure with none.
+/// them (the card's own gradient, so its pipeline is the one the start's
+/// pass compiled for a card); the plain plate's for a figure with none.
 fn element_backdrop(theme: &TvTheme, element: Option<Element>) -> BackgroundGradient {
-    let [light, dark] = theme.element(element).unwrap_or(theme.plate);
-    BackgroundGradient(vec![
-        LinearGradient::new(
-            LinearGradient::TO_BOTTOM_RIGHT,
-            vec![ColorStop::percent(light, 0), ColorStop::percent(dark, 100)],
-        )
-        .into(),
-    ])
+    let stops = theme.element(element).unwrap_or(theme.plate);
+    BackgroundGradient(vec![crate::surfaces::diagonal(stops)])
 }
 
 /// The card's plate shows its figure's turntable once that's up, its
@@ -666,6 +661,25 @@ mod tests {
         let theirs = |_: SlotIndex, i: &Instance| *i == other;
         b.tick(s(2.0), false, theirs);
         assert!(b.showing().is_none());
+    }
+
+    /// AG.72: the card's backdrop is its element's diagonal as a card's
+    /// bezel wears it, in the colour space the card's gradients interpolate
+    /// in (the TV's first run compiled a gradient pipeline as the card came
+    /// up, its backdrop in Bevy's default space), the plain plate's for an
+    /// item with no element.
+    #[test]
+    fn the_cards_backdrop_is_a_cards_own_gradient() {
+        let theme = TvTheme::default();
+        for element in [Some(Element::Life), Some(Element::Fire), None] {
+            let stops = theme.element(element).unwrap_or(theme.plate);
+            let backdrop = element_backdrop(&theme, element);
+            assert_eq!(backdrop.0, vec![crate::surfaces::diagonal(stops)]);
+            let bevy::ui::Gradient::Linear(linear) = &backdrop.0[0] else {
+                panic!("{:?}", backdrop.0)
+            };
+            assert_eq!(linear.color_space, bevy::ui::InterpolationColorSpace::Srgba);
+        }
     }
 
     /// AG.72: a too-many alert hides the card and holds its clock; the
