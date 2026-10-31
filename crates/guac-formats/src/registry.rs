@@ -7,7 +7,7 @@
 use crate::FormatError;
 use crate::{
     atmosphere, attachments, edge, exports, fsb, havok, iga, igz, language, material, model, mpeg,
-    particle, progression, roster, script, sfo, texture, toys,
+    particle, progression, roster, script, sfo, sound, texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -218,7 +218,36 @@ pub const PARSERS: &[RegisteredParser] = &[
         // a time, never longer than the sample.
         heap_budget: |len| 64 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "sounds",
+        parse: walk_sounds,
+        seeds: sound::builder::seeds,
+        // The IGZ parse, then every data info (about 150 bytes each with a
+        // stream's path, from 0x28 input bytes) and every sound info (about
+        // 220, from 0x80) held at once, and one embedded bank's parse at a
+        // time (fsb5's).
+        heap_budget: |len| 64 * len + 8 * len + 64 * len + (64 << 10),
+    },
 ];
+
+/// Parses an IGZ, then reads its sounds and data infos as AR.3's reader
+/// does, and each embedded bank. The property test and the fuzz targets run
+/// it.
+pub fn walk_sounds(bytes: &[u8]) -> Result<(), FormatError> {
+    let file = igz::Igz::parse(bytes)?;
+    let data = sound::data_infos(&file);
+    for (_, d) in &data {
+        if let Ok(sound::Data {
+            bank: Some(sound::Bank::Embedded(b)),
+            ..
+        }) = d
+        {
+            let _ = walk_fsb5(b);
+        }
+    }
+    drop(sound::sounds(&file));
+    Ok(())
+}
 
 /// Parses an FSB5 bank, then remuxes each MPEG sample's frames (AR.1,
 /// AR.2), dropping each result. The property test and the fuzz targets run

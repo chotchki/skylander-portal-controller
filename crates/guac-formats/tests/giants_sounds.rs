@@ -1,4 +1,5 @@
-//! Every sound bank on the Giants dump (openspec AR.1, AR.2). Ignored by
+//! Every sound bank on the Giants dump (openspec AR.1, AR.2), and every
+//! sound resolving to one (AR.3). Ignored by
 //! default: it reads the BLUS30968 dump at `GUAC_GIANTS_DUMP` (the folder
 //! that holds `PS3_GAME`), from the environment or the workspace's
 //! `.env.dev`. A bank lives in one of two places: an `.arc` entry, or a
@@ -20,11 +21,17 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use common::{env_or_dotenv, usrdir};
+use guac_formats::exports::Exports;
 use guac_formats::fsb::{Bank, Codec};
 use guac_formats::iga::Archive;
 use guac_formats::igz::layouts::BuildDataInfo;
+use guac_formats::igz::layouts::{Layout, SoundDataInfo};
 use guac_formats::igz::{self, Igz, Location};
 use guac_formats::mpeg;
+use guac_formats::sound::{
+    Bank as SoundBank, Data as SoundData, DataRef, Streams, data_infos, language_of, localized,
+    resolve_global, resolve_pack, sounds,
+};
 
 /// Which of a bank's two homes it was found in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -484,4 +491,303 @@ fn remuxed_banks_decode() {
     std::fs::remove_dir_all(&dir).unwrap();
     println!("{} banks remuxed and probed: {per_family:?}", picked.len());
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Each data info of a file, by object index: whether its bank opened.
+type Banks = BTreeMap<usize, Result<(), String>>;
+
+/// What a sound or a data info came to, for the AR.3 tally.
+fn bump(counts: &Mutex<BTreeMap<String, u64>>, key: impl Into<String>) {
+    *counts.lock().unwrap().entry(key.into()).or_default() += 1;
+}
+
+/// A streamed data info's bank: the entry its path names in `own` (its
+/// archive's `.arc`), parsed; `Err` says what it found instead.
+fn stream_bank(own: Option<&(Vec<u8>, Streams)>, path: &str) -> Result<(), String> {
+    let Some((bytes, streams)) = own else {
+        return Err("no .arc beside the archive".into());
+    };
+    let i = streams.find(path).map_err(|m| format!("{m:?}"))?;
+    let arc = Archive::parse(bytes).map_err(|e| e.to_string())?;
+    let entry = &arc.entries()[i];
+    let data = arc.read(entry).map_err(|e| e.to_string())?;
+    let bank = Bank::parse(&data).map_err(|e| e.to_string())?;
+    if bank.samples.len() != 1 {
+        return Err(format!("{} samples", bank.samples.len()));
+    }
+    Ok(())
+}
+
+/// An archive's `.arc` and its streams by path, if it has one.
+fn arc_beside(bld: &Path) -> Option<(Vec<u8>, Streams)> {
+    let bytes = std::fs::read(bld.with_extension("arc")).ok()?;
+    let streams = {
+        let arc = Archive::parse(&bytes).ok()?;
+        Streams::new(arc.entries().iter().map(|e| (e.index(), e.name())))
+    };
+    Some((bytes, streams))
+}
+
+#[test]
+#[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]
+fn every_sound_resolves_to_a_bank() {
+    let started = Instant::now();
+    let usrdir = usrdir();
+    // global.bld's exports and data infos, for the sounds that import theirs.
+    let read_level = |rel: &str| {
+        let bytes = std::fs::read(usrdir.join(rel)).unwrap();
+        let arc = Archive::parse(&bytes).unwrap();
+        let e = arc.find("level.bld").unwrap();
+        arc.read(e).unwrap().into_owned()
+    };
+    let (boot, global) = (
+        read_level("permanent/bootstrap.bld"),
+        read_level("permanent/global.bld"),
+    );
+    let (boot_igz, global_igz) = (Igz::parse(&boot).unwrap(), Igz::parse(&global).unwrap());
+    let exports = Exports::new(&boot_igz, &global_igz).unwrap();
+    let global_arc = arc_beside(&usrdir.join("permanent/global.bld"));
+    let global_data: BTreeMap<usize, Result<(), String>> = data_infos(&global_igz)
+        .into_iter()
+        .map(|(i, d)| {
+            let r = match d {
+                Ok(SoundData {
+                    bank: Some(SoundBank::Embedded(b)),
+                    ..
+                }) => Bank::parse(b).map(drop).map_err(|e| e.to_string()),
+                Ok(SoundData {
+                    bank: Some(SoundBank::Streamed { path, .. }),
+                    ..
+                }) => stream_bank(global_arc.as_ref(), &path),
+                Ok(_) => Err("no bank".into()),
+                Err(e) => Err(e.to_string()),
+            };
+            (i, r)
+        })
+        .collect();
+
+    let mut paths = Vec::new();
+    archives_under(&usrdir, &mut paths);
+    paths.retain(|p| p.extension().is_some_and(|e| e == "bld"));
+    paths.sort();
+    let counts: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+    let misses: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let localized_missing: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let next = Mutex::new(0usize);
+    std::thread::scope(|s| {
+        for _ in 0..4 {
+            s.spawn(|| {
+                loop {
+                    let i = {
+                        let mut n = next.lock().unwrap();
+                        *n += 1;
+                        *n - 1
+                    };
+                    let Some(path) = paths.get(i) else { break };
+                    let rel = path.strip_prefix(&usrdir).unwrap().display().to_string();
+                    let miss = |what: String| misses.lock().unwrap().push(format!("{rel} {what}"));
+                    let own = arc_beside(path);
+                    let bytes = std::fs::read(path).unwrap();
+                    let archive = Archive::parse(&bytes).unwrap();
+                    // Every IGZ entry, the packs first, so a sound reaching
+                    // into ENGLISH.pak finds its data infos read.
+                    let mut entries: Vec<(String, Vec<u8>)> = archive
+                        .entries()
+                        .iter()
+                        .map(|e| (e.name().to_owned(), archive.read(e).unwrap().into_owned()))
+                        .filter(|(_, d)| d.starts_with(igz::MAGIC))
+                        .collect();
+                    entries.sort_by_key(|(n, _)| !n.ends_with(".pak"));
+                    let mut english: Option<(Vec<u8>, Banks)> = None;
+                    let mut pack_names: BTreeMap<u32, String> = BTreeMap::new();
+                    for (name, data) in &entries {
+                        let file = Igz::parse(data).unwrap();
+                        let language = name.strip_suffix(".pak").map(|l| l.to_ascii_lowercase());
+                        let kind = match &language {
+                            Some(l) if l == "english" => "english pack",
+                            Some(_) => "other packs",
+                            None if name == "level.bld" => "level.bld",
+                            None => "other IGZ",
+                        };
+                        let mut local: BTreeMap<usize, Result<(), String>> = BTreeMap::new();
+                        for (di, d) in data_infos(&file) {
+                            let r = match d {
+                                Ok(SoundData {
+                                    bank: Some(SoundBank::Embedded(b)),
+                                    ..
+                                }) => {
+                                    bump(&counts, format!("data embedded in {kind}"));
+                                    Bank::parse(b).map(drop).map_err(|e| e.to_string())
+                                }
+                                Ok(SoundData {
+                                    bank: Some(SoundBank::Streamed { path, .. }),
+                                    ..
+                                }) => {
+                                    bump(&counts, format!("data streamed in {kind}"));
+                                    let wanted = match language.as_deref() {
+                                        Some(l) if l != "english" => localized(&path, l),
+                                        _ => path.clone(),
+                                    };
+                                    if language.is_some() && language_of(&path).is_some() {
+                                        bump(&counts, "data in a pack naming a language folder");
+                                    }
+                                    let r = stream_bank(own.as_ref(), &wanted);
+                                    if r.is_err()
+                                        && stream_bank(global_arc.as_ref(), &wanted).is_ok()
+                                    {
+                                        bump(&counts, "data streamed found only in global.arc");
+                                    }
+                                    r
+                                }
+                                Ok(_) => Err("no bank".into()),
+                                Err(e) => Err(e.to_string()),
+                            };
+                            match &r {
+                                // Another language's line the disc lacks:
+                                // counted, not a miss of ours.
+                                Err(why) if kind == "other packs" && why == "None" => {
+                                    bump(&counts, "data in other packs with no entry");
+                                    localized_missing
+                                        .lock()
+                                        .unwrap()
+                                        .push(format!("{rel} {name}: data info #{di}"));
+                                }
+                                Err(why) => {
+                                    miss(format!("{name}: data info #{di}: {why}"));
+                                    bump(&counts, "data MISSED");
+                                }
+                                Ok(()) => {}
+                            }
+                            local.insert(di, r);
+                        }
+                        // Every pack's ids land on data infos, the same
+                        // name at the same id in each.
+                        if language.is_some() {
+                            for id in 2.. {
+                                let Some(o) = resolve_pack(&file, id) else {
+                                    break;
+                                };
+                                let n = SoundDataInfo::read(&file, o)
+                                    .ok()
+                                    .and_then(|d| d.data_info.info.name)
+                                    .unwrap_or("")
+                                    .to_owned();
+                                match pack_names.get(&id) {
+                                    Some(seen) if *seen != n => {
+                                        miss(format!(
+                                            "{name}: pack id {id} names {n}, another pack {seen}"
+                                        ));
+                                    }
+                                    Some(_) => {}
+                                    None => {
+                                        pack_names.insert(id, n);
+                                    }
+                                }
+                            }
+                        }
+                        if kind == "english pack" {
+                            english = Some((data.clone(), local.clone()));
+                            continue;
+                        }
+                        if language.is_some() {
+                            continue;
+                        }
+                        for (si, sound) in sounds(&file) {
+                            let sound = match sound {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    miss(format!("{name}: sound #{si}: {e}"));
+                                    bump(&counts, "sounds unread");
+                                    continue;
+                                }
+                            };
+                            bump(&counts, format!("sounds in {kind}"));
+                            let r = match sound.data {
+                                DataRef::Local(d) => {
+                                    bump(&counts, "sounds data local");
+                                    local
+                                        .get(&d)
+                                        .cloned()
+                                        .unwrap_or(Err("not a data info".into()))
+                                }
+                                DataRef::Global(id) => {
+                                    bump(&counts, "sounds data from global.bld");
+                                    match resolve_global(&exports, id) {
+                                        Some(o) => global_data.get(&o).cloned().unwrap_or(Err(
+                                            format!("global #{o} isn't a data info"),
+                                        )),
+                                        None => Err(format!("export id {id:#x} lands on none")),
+                                    }
+                                }
+                                DataRef::Pack(id) => {
+                                    bump(&counts, "sounds data from the language pack");
+                                    match &english {
+                                        Some((bytes, data)) => {
+                                            let pack = Igz::parse(bytes).unwrap();
+                                            match resolve_pack(&pack, id) {
+                                                Some(o) => {
+                                                    // Does the data's file name the sound's?
+                                                    let n = SoundDataInfo::read(&pack, o)
+                                                        .ok()
+                                                        .and_then(|d| d.data_info.info.name)
+                                                        .unwrap_or("");
+                                                    let stem = n.rsplit('/').next().unwrap_or("");
+                                                    let same = sound.info.name.is_some_and(|s| {
+                                                        stem.eq_ignore_ascii_case(&format!(
+                                                            "{s}.wav"
+                                                        ))
+                                                    });
+                                                    bump(
+                                                        &counts,
+                                                        if same {
+                                                            "sounds pack data named as the sound"
+                                                        } else {
+                                                            "sounds pack data named otherwise"
+                                                        },
+                                                    );
+                                                    data.get(&o)
+                                                        .cloned()
+                                                        .unwrap_or(Err("not read".into()))
+                                                }
+                                                None => Err(format!("pack id {id} lands on none")),
+                                            }
+                                        }
+                                        None => Err("no ENGLISH.pak".into()),
+                                    }
+                                }
+                                DataRef::None => {
+                                    bump(&counts, "sounds data null");
+                                    Ok(())
+                                }
+                                DataRef::Other => Err("data ref of another kind".into()),
+                            };
+                            if let Err(why) = r {
+                                miss(format!("{name}: sound #{si} {:?}: {why}", sound.info.name));
+                                bump(&counts, "sounds MISSED");
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    println!("{} .bld in {:.1?}:", paths.len(), started.elapsed());
+    for (k, v) in counts.lock().unwrap().iter() {
+        println!("  {k}: {v}");
+    }
+    let mut localized_missing = localized_missing.into_inner().unwrap();
+    localized_missing.sort();
+    println!(
+        "  other languages' lines with no entry: {:#?}",
+        localized_missing
+    );
+    let misses = misses.into_inner().unwrap();
+    println!("  misses: {}", misses.len());
+    for m in misses.iter().take(40) {
+        println!("    {m}");
+    }
+    assert!(misses.is_empty(), "{} misses", misses.len());
+    // Dutch lacks 2 lines, Swedish 2, Portuguese 4 and Hispanic 7: the
+    // entry counts AR.3 read (6,318, 6,318, 6,316 and 6,313 of 6,320).
+    assert_eq!(localized_missing.len(), 15);
 }

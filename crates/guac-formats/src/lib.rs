@@ -32,6 +32,7 @@ mod reader;
 pub mod roster;
 pub mod script;
 pub mod sfo;
+pub mod sound;
 pub mod texture;
 pub mod toys;
 
