@@ -118,9 +118,11 @@ pub struct CharacterUniform {
     pub placement_tint: Vec4,
     /// RGB and its amount.
     pub replace: Vec4,
-    /// A view-space position's shadow-map coordinates: u = (P, 1)·shadow_u.
-    pub shadow_u: Vec4,
-    pub shadow_v: Vec4,
+    /// What the shader turns the level's shadow-light visibility into the
+    /// shadow-receive term's sample with ([`super::remaster::shadow_uniform`],
+    /// openspec AG.23): x the original's full shadow on stored values, y the
+    /// power that takes it into linear light.
+    pub shadow: Vec4,
     /// x the shadow mode, y the alpha test's reference, z the glow: its
     /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
     /// shader takes it), w the lights' frame ([`LIGHTS_IN_VIEW`] or
@@ -148,29 +150,8 @@ pub struct CharacterUniform {
     pub uv_v: [Vec4; 3],
 }
 
-/// Where the shader looks a view-space position up in the shadow map. The
-/// reference model takes the sample as given, so this is the GPU's alone.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ShadowLookup {
-    pub u: Vec4,
-    pub v: Vec4,
-}
-
-impl ShadowLookup {
-    /// Nothing renders a shadow map in AE: the turntable has shadows off.
-    pub const NONE: Self = Self {
-        u: Vec4::ZERO,
-        v: Vec4::ZERO,
-    };
-}
-
 impl CharacterUniform {
-    pub fn new(
-        material: &guac_ir::shading::Material,
-        scene: &Scene,
-        shadow: ShadowLookup,
-        alpha_reference: f32,
-    ) -> Self {
+    pub fn new(material: &guac_ir::shading::Material, scene: &Scene, alpha_reference: f32) -> Self {
         fn v3(c: [f32; 3]) -> Vec4 {
             Vec4::new(c[0], c[1], c[2], 0.0)
         }
@@ -199,8 +180,7 @@ impl CharacterUniform {
             fog_range: Vec4::new(scene.fog_near, scene.fog_far, 0.0, 0.0),
             placement_tint: v4(scene.placement_tint),
             replace: v4(scene.replace),
-            shadow_u: shadow.u,
-            shadow_v: shadow.v,
+            shadow: super::remaster::shadow_uniform(),
             misc: Vec4::new(
                 scene.shadow_mode,
                 alpha_reference,
@@ -267,7 +247,9 @@ impl CharacterUniform {
 
 /// A material's textures by role, each loaded with the view its role
 /// samples through: colour, spec, rim and the layers' colour maps as sRGB
-/// (the remaster decodes them), normal maps and the shadow map as stored.
+/// (the remaster decodes them), normal maps as stored. A received shadow
+/// reads Bevy's cascades of the level's shadow light, not a texture of its own
+/// (openspec AG.23).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CharacterTextures {
     pub colour: Option<Handle<Image>>,
@@ -278,7 +260,6 @@ pub struct CharacterTextures {
     pub second_spec_map: Option<Handle<Image>>,
     pub third: Option<Handle<Image>>,
     pub rim: Option<Handle<Image>>,
-    pub shadow: Option<Handle<Image>>,
 }
 
 impl CharacterTextures {
@@ -317,7 +298,6 @@ impl CharacterTextures {
             (s.third, self.third.is_some(), "third layer's map"),
             (s.gloss, self.third.is_some(), "gloss map"),
             (s.rim, self.rim.is_some(), "rim map"),
-            (s.shadows, self.shadow.is_some(), "shadow map"),
         ]
         .into_iter()
         .find_map(|(needed, there, name)| (needed && !there).then_some(name))
@@ -367,9 +347,6 @@ pub struct CharacterMaterial {
     #[texture(15, visibility(fragment))]
     #[sampler(16, visibility(fragment))]
     pub rim: Option<Handle<Image>>,
-    #[texture(17, visibility(fragment))]
-    #[sampler(18, visibility(fragment))]
-    pub shadow: Option<Handle<Image>>,
     /// The scene's point lights when the uniform says to read them here
     /// ([`LIGHTS_FROM_SCENE`]); [`NO_SCENE_LIGHTS`] otherwise.
     #[storage(19, read_only, visibility(fragment))]
@@ -398,7 +375,6 @@ impl CharacterMaterial {
         key: MaterialKey,
         material: &guac_ir::shading::Material,
         scene: &Scene,
-        shadow: ShadowLookup,
         alpha_reference: f32,
         textures: CharacterTextures,
     ) -> Result<Self, MaterialError> {
@@ -406,7 +382,7 @@ impl CharacterMaterial {
             return Err(MaterialError::MissingTexture(name));
         }
         Ok(Self {
-            uniform: CharacterUniform::new(material, scene, shadow, alpha_reference),
+            uniform: CharacterUniform::new(material, scene, alpha_reference),
             colour: textures.colour,
             normal_map: textures.normal_map,
             spec_map: textures.spec_map,
@@ -415,7 +391,6 @@ impl CharacterMaterial {
             second_spec_map: textures.second_spec_map,
             third: textures.third,
             rim: textures.rim,
-            shadow: textures.shadow,
             scene_lights: NO_SCENE_LIGHTS,
             key,
             glows: material.glow != Glow::None,
@@ -440,13 +415,15 @@ impl CharacterMaterial {
     /// The same part's glow mask in a level ([`Pass::LevelGlow`], openspec
     /// AH.65), into the frame's alpha after everything else draws; `None`
     /// for a part without a glow attribute, which writes none (the level's
-    /// depth hides what's behind it, and its alpha was cleared to none).
+    /// depth hides what's behind it, and its alpha was cleared to none). The
+    /// mask reads no shadow, so its key drops the received one (AG.23): a
+    /// shadowed part's mask is its unshadowed twin's pipeline.
     pub fn level_glow(&self) -> Option<Self> {
         if !self.glows {
             return None;
         }
         let mut m = self.clone();
-        m.key.pass = Pass::LevelGlow;
+        m.key = m.key.level_glow();
         m.depth_bias = super::glow::LEVEL_GLOW_BIAS;
         Some(m)
     }
@@ -456,7 +433,6 @@ impl CharacterMaterial {
     pub fn from_ir(
         ir: &model::Material,
         scene: &Scene,
-        shadow: ShadowLookup,
         mut texture: impl FnMut(&model::TextureSlot) -> Handle<Image>,
     ) -> Result<Self, MaterialError> {
         let bits = SceneBits {
@@ -477,7 +453,6 @@ impl CharacterMaterial {
             key,
             &reference_material(ir)?,
             scene,
-            shadow,
             ir.states.alpha_test.unwrap_or(0.0),
             textures,
         )
@@ -617,13 +592,32 @@ pub fn vertex_attributes(
     attributes
 }
 
+/// The shader def Bevy's prepass pipeline (a shadow map's draws among its
+/// uses) sets on its own shader.
+const PREPASS_PIPELINE: &str = "PREPASS_PIPELINE";
+
+/// Whether `descriptor` is Bevy's prepass pipeline, which a shadow caster
+/// draws into a cascade with (openspec AG.23): Bevy hands a material's
+/// specialize its own prepass descriptor too, on its own shader and vertex
+/// layout, which this material leaves as Bevy builds it.
+pub fn is_prepass(descriptor: &RenderPipelineDescriptor) -> bool {
+    descriptor.vertex.shader_defs.iter().any(
+        |d| matches!(d, bevy::shader::ShaderDefVal::Bool(name, true) if name == PREPASS_PIPELINE),
+    )
+}
+
 /// Sets `descriptor` up for `key`: the shader defs on both stages, the
-/// vertex buffer and the render states.
+/// vertex buffer and the render states. A prepass descriptor ([`is_prepass`])
+/// is left as Bevy built it: its depth-only draw reads positions (and joints)
+/// alone, through Bevy's prepass shader.
 pub fn specialize_for(
     key: &MaterialKey,
     descriptor: &mut RenderPipelineDescriptor,
     layout: &MeshVertexBufferLayoutRef,
 ) -> Result<(), MissingVertexAttributeError> {
+    if is_prepass(descriptor) {
+        return Ok(());
+    }
     let defs = key.shader_defs();
     descriptor.vertex.shader_defs.extend(defs.iter().cloned());
     if let Some(fragment) = descriptor.fragment.as_mut() {
@@ -660,14 +654,17 @@ impl Material for CharacterMaterial {
         self.depth_bias
     }
 
-    // Bevy's prepass and shadow shaders read its own vertex layout and
-    // material, not this one; nothing in AE needs either.
+    // Off: Bevy's depth prepass would draw every part again for a depth no
+    // pass of ours reads.
     fn enable_prepass() -> bool {
         false
     }
 
+    // A caster's draw into the level's shadow-light cascades (openspec AG.23)
+    // is Bevy's own depth-only prepass ([`specialize_for`] leaves it be);
+    // which meshes cast is `super::shadow`'s.
     fn enable_shadows() -> bool {
-        false
+        true
     }
 
     fn specialize(
@@ -876,11 +873,11 @@ mod tests {
             linear: 0.0,
             quadratic: 0.0,
         });
-        let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.964706);
+        let u = CharacterUniform::new(&m, &scene, 0.964706);
         assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 1.0, 0.125));
         let mut images = bevy::asset::Assets::<Image>::default();
         let mut seen = Vec::new();
-        let material = CharacterMaterial::from_ir(&leaves(), &scene, ShadowLookup::NONE, |s| {
+        let material = CharacterMaterial::from_ir(&leaves(), &scene, |s| {
             seen.push(s.role);
             images.add(Image::default())
         })
@@ -896,9 +893,7 @@ mod tests {
         let mut bare = leaves();
         bare.textures
             .retain(|t| t.role != TextureRole::Layer3ColorMap);
-        let got = CharacterMaterial::from_ir(&bare, &scene, ShadowLookup::NONE, |_| {
-            images.add(Image::default())
-        });
+        let got = CharacterMaterial::from_ir(&bare, &scene, |_| images.add(Image::default()));
         assert_eq!(got.unwrap_err(), MaterialError::MissingTexture("gloss map"));
     }
 
@@ -950,7 +945,7 @@ mod tests {
             linear: 1.5,
             quadratic: 0.75,
         });
-        let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.3);
+        let u = CharacterUniform::new(&m, &scene, 0.3);
         assert_eq!(u.light_travel[1], Vec4::new(0.0, -1.0, 0.0, 0.0));
         assert_eq!(u.light_specular[1], Vec4::new(0.7, 0.8, 0.9, 0.0));
         assert_eq!(u.point_falloff[0], Vec4::new(1.5, 0.75, 0.0, 0.0));
@@ -960,7 +955,7 @@ mod tests {
         // The glow as the original's glow shader takes it.
         for (glow, z) in [(Glow::None, 0.0), (Glow::LayerAlpha, -1.0)] {
             m.glow = glow;
-            let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.3);
+            let u = CharacterUniform::new(&m, &scene, 0.3);
             assert_eq!(u.misc.z, z, "{glow:?}");
         }
         assert_eq!(u.fixed_alpha, Vec4::new(-1.0, -1.0, 0.0, 1.0));
@@ -996,7 +991,7 @@ mod tests {
         ir.params.layer4_blend = [0.0, 0.0, 1.0, 0.0];
         ir.params.fixed_alpha = [-1.0, -1.0, -1.0, 2.0];
         let m = reference_material(&ir).unwrap();
-        let u = CharacterUniform::new(&m, &Scene::new(), ShadowLookup::NONE, 0.0);
+        let u = CharacterUniform::new(&m, &Scene::new(), 0.0);
         assert_eq!((u.rim.z, u.fixed_alpha.w), (2.0, 2.0), "a character's");
         let level = u.lit_in_world().multiplies_in_light();
         assert!(
@@ -1014,7 +1009,7 @@ mod tests {
         let mut plain = eruptor_body();
         plain.pixel.base = 0x20;
         let p = reference_material(&plain).unwrap();
-        let none = CharacterUniform::new(&p, &Scene::new(), ShadowLookup::NONE, 0.0);
+        let none = CharacterUniform::new(&p, &Scene::new(), 0.0);
         assert_eq!(none.multiplies_in_light().rim, Vec4::ZERO);
     }
 
@@ -1054,7 +1049,7 @@ mod tests {
         let ir = eruptor_body();
         let mut images = bevy::asset::Assets::<Image>::default();
         let mut seen = Vec::new();
-        let m = CharacterMaterial::from_ir(&ir, &fogged(), ShadowLookup::NONE, |slot| {
+        let m = CharacterMaterial::from_ir(&ir, &fogged(), |slot| {
             seen.push(slot.role);
             images.add(Image::default())
         })
@@ -1066,7 +1061,7 @@ mod tests {
         );
         assert_eq!(m.key.states, StateKey::OPAQUE);
         assert!(m.colour.is_some() && m.normal_map.is_some() && m.spec_map.is_some());
-        assert!(m.rim.is_some() && m.second_colour.is_none() && m.shadow.is_none());
+        assert!(m.rim.is_some() && m.second_colour.is_none());
         assert_eq!(m.alpha_mode(), AlphaMode::Opaque);
     }
 
@@ -1076,20 +1071,71 @@ mod tests {
         ir.textures
             .retain(|t| t.role != TextureRole::Layer4ColorMap);
         let mut images = bevy::asset::Assets::<Image>::default();
-        let got = CharacterMaterial::from_ir(&ir, &fogged(), ShadowLookup::NONE, |_| {
-            images.add(Image::default())
-        });
+        let got = CharacterMaterial::from_ir(&ir, &fogged(), |_| images.add(Image::default()));
         assert_eq!(got.unwrap_err(), MaterialError::MissingTexture("rim map"));
-        // Shadows need a shadow map the IR never names.
+        // A received shadow needs no texture of the material's: it reads
+        // the level's shadow-light cascades (AG.23).
         let mut shadowed = fogged();
         shadowed.shadows = true;
-        let got =
-            CharacterMaterial::from_ir(&eruptor_body(), &shadowed, ShadowLookup::NONE, |_| {
-                images.add(Image::default())
-            });
+        let got = CharacterMaterial::from_ir(&eruptor_body(), &shadowed, |_| {
+            images.add(Image::default())
+        })
+        .unwrap();
+        assert_eq!(got.key.shader.pixel(), 0x51C);
+        assert_eq!(got.uniform.shadow, super::super::remaster::shadow_uniform());
+    }
+
+    #[test]
+    fn a_prepass_descriptor_is_left_as_bevy_builds_it() {
+        use bevy::render::render_resource::{PrimitiveState, VertexState};
+        let layout = layout(&segment(1, false));
+        let key = MaterialKey {
+            shader: ShaderKey::new(0x0400, 0x0400).unwrap(),
+            states: StateKey {
+                two_sided: true,
+                depth_write: false,
+                ..StateKey::OPAQUE
+            },
+            pass: Pass::Colour,
+        };
+        let prepass = || RenderPipelineDescriptor {
+            vertex: VertexState {
+                shader_defs: vec!["PREPASS_PIPELINE".into(), "VERTEX_POSITIONS".into()],
+                ..Default::default()
+            },
+            primitive: PrimitiveState::default(),
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            label: Some("prepass_pipeline".into()),
+            ..Default::default()
+        };
+        let mut d = prepass();
+        assert!(is_prepass(&d));
+        specialize_for(&key, &mut d, &layout).unwrap();
+        // No defs, buffers or states of the material's: its own culling and
+        // depth write would turn a two-sided caster's back faces off its
+        // map, and its vertex layout isn't the prepass shader's.
+        assert_eq!(d.vertex.shader_defs, prepass().vertex.shader_defs);
+        assert!(d.vertex.buffers.is_empty());
+        assert_eq!(d.primitive.cull_mode, None);
         assert_eq!(
-            got.unwrap_err(),
-            MaterialError::MissingTexture("shadow map")
+            d.depth_stencil.as_ref().unwrap().depth_write_enabled,
+            Some(true)
+        );
+        // The colour pass's descriptor takes them.
+        let mut main = prepass();
+        main.vertex.shader_defs.clear();
+        assert!(!is_prepass(&main));
+        specialize_for(&key, &mut main, &layout).unwrap();
+        assert!(!main.vertex.buffers.is_empty());
+        assert_eq!(
+            main.depth_stencil.as_ref().unwrap().depth_write_enabled,
+            Some(false)
         );
     }
 
@@ -1182,7 +1228,6 @@ mod tests {
             colour,
             &reference_material(&eruptor_body()).unwrap(),
             &fogged(),
-            ShadowLookup::NONE,
             0.5,
             textures(),
         )
@@ -1242,12 +1287,28 @@ mod tests {
                 ..reference_material(&eruptor_body()).unwrap()
             },
             &fogged(),
-            ShadowLookup::NONE,
             0.5,
             textures(),
         )
         .unwrap();
         assert!(plain.level_glow().is_none());
+
+        // A shadowed part's mask reads no shadow: its key is the
+        // unshadowed part's mask's (AG.23), so the census's glow rows hold.
+        let shadowed = MaterialKey {
+            shader: ShaderKey::new(0x51C, 0x51C).unwrap(),
+            ..colour
+        };
+        let lit = CharacterMaterial::new(
+            shadowed,
+            &reference_material(&eruptor_body()).unwrap(),
+            &fogged(),
+            0.5,
+            textures(),
+        )
+        .unwrap();
+        assert_eq!(lit.level_glow().unwrap().key, twin.key);
+        assert!(lit.key.shader.switches().shadows);
     }
 
     /// AH.65: the scene's buffer packs three point lights as the uniform
@@ -1267,12 +1328,7 @@ mod tests {
             point_lights: vec![p],
             ..fogged()
         };
-        let u = CharacterUniform::new(
-            &reference_material(&eruptor_body()).unwrap(),
-            &scene,
-            ShadowLookup::NONE,
-            0.5,
-        );
+        let u = CharacterUniform::new(&reference_material(&eruptor_body()).unwrap(), &scene, 0.5);
         assert_eq!(packed.position, u.point_position);
         assert_eq!(packed.colour, u.point_colour);
         assert_eq!(packed.falloff, u.point_falloff);
@@ -1359,7 +1415,6 @@ mod tests {
             colour,
             &reference_material(&eruptor_body()).unwrap(),
             &fogged(),
-            ShadowLookup::NONE,
             0.5,
             textures,
         )
@@ -1386,7 +1441,6 @@ mod tests {
                 key,
                 &material,
                 &fogged(),
-                ShadowLookup::NONE,
                 0.5,
                 CharacterTextures {
                     colour: Some(Handle::default()),

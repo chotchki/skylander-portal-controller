@@ -482,12 +482,12 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (skinned.len(), unskinned.len(), level.len()),
-        (33, 24, 55),
-        "the census's counts"
+        (33, 24, 67),
+        "the census's counts (chapter 1's 55 before AG.23's shadow split shadowed parts from unshadowed)"
     );
     assert_eq!(
         (prop_models, props.len(), props_beyond.len()),
-        (90, 72, 61),
+        (90, 72, 66),
         "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239), their keys, those past the level's"
     );
     assert_eq!(

@@ -46,9 +46,7 @@ use guac_ir::palette::Palette;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider as SeamCollider, Pose};
 use guac_motion::solid::HavokSolid;
 use guac_script::{Handle, Value};
-use guacamole::character::{
-    CharacterMaterial, ShadowLookup, reference_material, remaster, spawn_character,
-};
+use guacamole::character::{CharacterMaterial, reference_material, remaster, spawn_character};
 use guacamole::frame::Frame;
 use guacamole::level_scene::hero_scene;
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
@@ -368,7 +366,7 @@ fn draw_creatures(
         let mut lit = Vec::with_capacity(model.materials.len());
         let mut failed = None;
         for m in &model.materials {
-            let made = CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, |t| texture(t, m))
+            let made = CharacterMaterial::from_ir(m, &scene, |t| texture(t, m))
                 .map_err(|e| e.to_string())
                 .and_then(|c| {
                     reference_material(m)

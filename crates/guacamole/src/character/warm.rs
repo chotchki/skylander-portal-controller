@@ -13,8 +13,8 @@ use bevy::asset::Handle;
 use guac_ir::model::{self, Model, Segment};
 use guac_ir::shading::Scene;
 
-use super::key::{MaterialKey, Pass};
-use super::material::{CharacterMaterial, MaterialError, ShadowLookup};
+use super::key::MaterialKey;
+use super::material::{CharacterMaterial, MaterialError};
 
 /// What a segment's mesh gives the vertex layout: [`super::segment_mesh`]
 /// always writes positions and normals, and these vary. A skinned one (a
@@ -139,8 +139,8 @@ pub fn level_keys(model: &Model, scene: &Scene) -> Result<Vec<(WarmKey, usize)>,
 }
 
 /// [`segment_keys`]' keys and, after them, every glowing segment's key
-/// again in a level's glow pass ([`Pass::LevelGlow`], openspec AH.65), each
-/// once, with its material's index: what a level's parts, its props, its
+/// again in a level's glow pass ([`MaterialKey::level_glow`], openspec
+/// AH.65), each once, with its material's index: what a level's parts, its props, its
 /// clones and its hero draw, their glowing parts' masks laid into the
 /// frame's alpha. Each segment counts, not only the first on its key: two
 /// materials can share a key where only the later one glows (chapter 1's
@@ -158,8 +158,10 @@ pub fn level_segment_keys(
         let (key, index) = segment_key(&by_material, i, s)?;
         push_once(&mut keys, key, index);
         if materials[index].params.glow != model::Glow::None {
-            let mut glow = key;
-            glow.material.pass = Pass::LevelGlow;
+            let glow = WarmKey {
+                material: key.material.level_glow(),
+                ..key
+            };
             push_once(&mut glows, glow, index);
         }
     }
@@ -175,7 +177,7 @@ fn material_keys(
     materials
         .iter()
         .map(|m| {
-            CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, |_| Handle::default())
+            CharacterMaterial::from_ir(m, scene, |_| Handle::default())
                 .map(|c| c.key)
                 .map_err(|error| WarmError::Material {
                     name: m.name.clone(),
@@ -387,11 +389,9 @@ mod tests {
         let key = |m: usize, shape: MeshShape, pass: Pass| WarmKey {
             material: MaterialKey {
                 pass,
-                ..CharacterMaterial::from_ir(&materials[m], &scene, ShadowLookup::NONE, |_| {
-                    Handle::default()
-                })
-                .unwrap()
-                .key
+                ..CharacterMaterial::from_ir(&materials[m], &scene, |_| Handle::default())
+                    .unwrap()
+                    .key
             },
             mesh: shape,
         };
@@ -418,6 +418,28 @@ mod tests {
         // A model's in a level: its segments' (no attachments here).
         let m = model(materials.clone(), segments.clone());
         assert_eq!(level_keys(&m, &scene).unwrap(), out);
+
+        // In a scene with the level's shadow (AG.23) the colour pass's
+        // keys take it and the masks don't: they key as in the scene
+        // without it, so the census's glow rows stand.
+        let shadowed = Scene {
+            shadows: true,
+            ..fogged()
+        };
+        let lit = level_segment_keys(&materials, &segments, &shadowed).unwrap();
+        assert_eq!(lit.len(), out.len());
+        for ((with, _), (without, _)) in lit.iter().zip(&out) {
+            match with.material.pass {
+                Pass::LevelGlow => assert_eq!(with, without),
+                _ => {
+                    assert!(with.material.shader.switches().shadows, "{with:?}");
+                    assert_eq!(
+                        with.material.shader.without_shadows(),
+                        without.material.shader
+                    );
+                }
+            }
+        }
     }
 
     /// A built mesh reads back as the shape it was built from: what the TV

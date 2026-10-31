@@ -56,7 +56,7 @@ The hero SHALL stand on, slide along and be stopped by the level's own collision
 - **THEN** the grass doesn't stop him
 
 ### Requirement: The level is drawn in the remaster look
-The level's surfaces SHALL be drawn with the original's shading model in the remaster look (the character-shading and remaster-look capabilities), lit and fogged as the original's opening area is (by its atmosphere's three lights, not the rig the level file stores) and shadowed from its main light. Grass and the water's warp SHALL show, drawn simply until a later change specs their own shading.
+The level's surfaces SHALL be drawn with the original's shading model in the remaster look (the character-shading and remaster-look capabilities), lit and fogged as the original's opening area is (by its atmosphere's three lights, not the rig the level file stores) and shadowed as the original's shadows fall, nearly straight down under what casts them. Grass and the water's warp SHALL show, drawn simply until a later change specs their own shading.
 
 #### Scenario: The start under its own lights
 - **WHEN** the level shows at the start

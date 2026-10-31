@@ -6,7 +6,8 @@
 //! camera draws; [`glow`] (AE.11) is the game's glow on that frame;
 //! [`turntable`] (AE.13) frames and lights a model on a card; [`warm`]
 //! (AE.14) names the pipelines a model's draws compile; [`attach`] (AE.23)
-//! hangs what a fresh figure carries on its model.
+//! hangs what a fresh figure carries on its model; [`shadow`] (AG.23) casts
+//! a character's shadow on a level.
 //!
 //! The shader is checked against [`guac_ir::shading`], the spec's CPU
 //! model, by an `#[ignore]`d GPU lane ([`tests/character_gpu_lane.rs`]),
@@ -20,10 +21,11 @@ pub mod key;
 pub mod material;
 pub mod mesh;
 pub mod remaster;
+pub mod shadow;
 pub mod turntable;
 pub mod warm;
 
-use bevy::app::{App, Plugin};
+use bevy::app::{App, Last, Plugin};
 use bevy::asset::{Assets, embedded_asset};
 use bevy::pbr::MaterialPlugin;
 use bevy::render::storage::ShaderBuffer;
@@ -36,7 +38,7 @@ pub use key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey};
 pub use material::{
     CharacterMaterial, CharacterTextures, CharacterUniform, LEVEL_LIGHTS, LIGHTS_FROM_SCENE,
     LIGHTS_IN_VIEW, LIGHTS_IN_WORLD, MaterialError, NO_SCENE_LIGHTS, ScenePointLights,
-    ShadowLookup, reference_material,
+    reference_material,
 };
 pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character, static_mesh};
 pub use warm::{MeshShape, WarmError, WarmKey};
@@ -44,13 +46,15 @@ pub use warm::{MeshShape, WarmError, WarmKey};
 /// Embeds the shader, registers [`CharacterMaterial`] and puts its two scene
 /// buffers in place, every point light dark: [`NO_SCENE_LIGHTS`], which
 /// every material binds unless it reads a scene's, and [`LEVEL_LIGHTS`],
-/// which the level rewrites as its lights move (openspec AH.65).
+/// which the level rewrites as its lights move (openspec AH.65). Marks
+/// which parts cast a shadow ([`shadow::mark_casters`], AG.23).
 pub struct CharacterShadingPlugin;
 
 impl Plugin for CharacterShadingPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "character/shading.wesl");
-        app.add_plugins(MaterialPlugin::<CharacterMaterial>::default());
+        app.add_plugins(MaterialPlugin::<CharacterMaterial>::default())
+            .add_systems(Last, shadow::mark_casters);
     }
 
     // After every plugin's build, so the render plugin's buffer assets are

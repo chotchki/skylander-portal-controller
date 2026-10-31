@@ -129,8 +129,7 @@ use guac_motion::locomotion::{self, Locomotion, Loops};
 use guacamole::character::attach::{self, SpawnedAttachments};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
-    CharacterMaterial, CharacterUniform, ShadowLookup, reference_material, remaster,
-    spawn_character,
+    CharacterMaterial, CharacterUniform, reference_material, remaster, spawn_character,
 };
 use guacamole::level_scene::{START_FACING, hero_scene};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
@@ -1907,7 +1906,7 @@ fn draw_hero(
     for m in &drawn.materials {
         // Lit in the world's frame once the level takes them
         // (`Level::light_also`).
-        let material = CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, texture)
+        let material = CharacterMaterial::from_ir(m, scene, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
         let reference = reference_material(m).map_err(|e| format!("material {}: {e}", m.name))?;
         let handle = s.materials.add(material);

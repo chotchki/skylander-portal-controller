@@ -145,7 +145,7 @@ mod tests {
     use super::*;
     use guac_ir::model::Blend;
     use guacamole::character::key::{MaterialKey, Pass, ShaderKey};
-    use guacamole::character::material::{CharacterTextures, ShadowLookup};
+    use guacamole::character::material::CharacterTextures;
 
     /// The lava's part as the disc has it: opaque, depth written, its own
     /// colour map, neutral tints.
@@ -160,15 +160,7 @@ mod tests {
             colour: Some(Handle::default()),
             ..CharacterTextures::default()
         };
-        CharacterMaterial::new(
-            key,
-            &ir,
-            &guac_ir::shading::Scene::new(),
-            ShadowLookup::NONE,
-            0.0,
-            textures,
-        )
-        .unwrap()
+        CharacterMaterial::new(key, &ir, &guac_ir::shading::Scene::new(), 0.0, textures).unwrap()
     }
 
     #[test]

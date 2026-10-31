@@ -19,6 +19,10 @@
 //!   model never comes up on a pipeline that isn't compiled, whether it's
 //!   placed before the warm is through or a key escaped the list.
 //!
+//! - A skinned key that casts a shadow (openspec AG.23,
+//!   `character::shadow`) is drawn into the stage's own shadow light too, and
+//!   isn't through until that draw's depth pipeline is compiled as well:
+//!   the hero's and the creatures' shadows draw on it in the level.
 //! - What a figure carries (openspec AE.23) is on the list with its body:
 //!   a carried part's skinned keys are drawn as a body's, its unskinned ones
 //!   as static triangles in the cards' scene, each with its glow mask.
@@ -45,11 +49,11 @@ use std::time::{Duration, Instant};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
-use bevy::pbr::SpecializedMaterialPipelineCache;
+use bevy::pbr::{SpecializedMaterialPipelineCache, SpecializedShadowMaterialPipelineCache};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, TextureDimension,
-    TextureFormat,
+    CachedPipelineState, CachedRenderPipelineId, Extent3d, PipelineCache, PipelineDescriptor,
+    TextureDimension, TextureFormat,
 };
 use bevy::render::sync_world::MainEntity;
 use bevy::render::{Render, RenderApp, RenderSystems};
@@ -61,10 +65,11 @@ use guac_ir::model::{self, Model};
 use guac_ir::shading::Scene;
 use guacamole::census::Row;
 use guacamole::character::attach;
+use guacamole::character::shadow;
 use guacamole::character::turntable::{Framing, Sweep, rig_scene};
 use guacamole::character::warm::{self, WarmKey};
 use guacamole::character::{
-    CharacterMaterial, Pass, ShadowLookup, spawn_character, spawn_glow_masks, static_mesh,
+    CharacterMaterial, Pass, spawn_character, spawn_glow_masks, static_mesh,
 };
 use serde::Serialize;
 use tracing::{debug, info, warn};
@@ -168,6 +173,9 @@ enum Compiled {
 pub(crate) struct Watched {
     /// Mesh entities whose pipeline the render world looks up.
     checks: HashMap<Entity, Compiled>,
+    /// Mesh entities whose shadow pipeline (their draw into a shadow light's
+    /// cascades, AG.23) the render world looks up.
+    shadow_checks: HashMap<Entity, Compiled>,
     /// Render pipelines compiled, as of the render world's last frame.
     ready: usize,
     /// Pipelines queued or compiling, or waiting on their shader, as of the
@@ -200,7 +208,13 @@ impl PipelineWatch {
     /// Plays the render world: every pipeline the warm watches compiles.
     #[cfg(test)]
     pub(crate) fn compile_all(&self) {
-        for state in self.lock().checks.values_mut() {
+        let mut watched = self.lock();
+        let Watched {
+            checks,
+            shadow_checks,
+            ..
+        } = &mut *watched;
+        for state in checks.values_mut().chain(shadow_checks.values_mut()) {
             *state = Compiled::Ready;
         }
     }
@@ -214,6 +228,7 @@ fn watch_pipelines(
     watch: Res<PipelineWatch>,
     cache: Res<PipelineCache>,
     specialized: Option<Res<SpecializedMaterialPipelineCache>>,
+    shadows: Option<Res<SpecializedShadowMaterialPipelineCache>>,
     mut compiled: Local<Vec<bool>>,
 ) {
     let (mut ready, mut pending) = (0, 0);
@@ -253,18 +268,38 @@ fn watch_pipelines(
     let mut watched = watch.lock();
     watched.ready = ready;
     watched.pending = pending;
-    let Some(specialized) = specialized else {
-        return;
-    };
-    for (mesh, state) in watched.checks.iter_mut() {
+    let Watched {
+        checks,
+        shadow_checks,
+        ..
+    } = &mut *watched;
+    if let Some(specialized) = specialized {
+        settle(checks, &cache, |main| {
+            specialized
+                .values()
+                .find_map(|view| view.get(&main).copied())
+        });
+    }
+    if let Some(shadows) = shadows {
+        settle(shadow_checks, &cache, |main| {
+            shadows
+                .values()
+                .find_map(|view| view.get(&main).map(|(id, ..)| *id))
+        });
+    }
+}
+
+/// Each waiting check's pipeline, found by `lookup`, as the cache has it.
+fn settle(
+    checks: &mut HashMap<Entity, Compiled>,
+    cache: &PipelineCache,
+    lookup: impl Fn(MainEntity) -> Option<CachedRenderPipelineId>,
+) {
+    for (mesh, state) in checks.iter_mut() {
         if *state != Compiled::Waiting {
             continue;
         }
-        let main = MainEntity::from(*mesh);
-        let Some(id) = specialized
-            .values()
-            .find_map(|view| view.get(&main).copied())
-        else {
+        let Some(id) = lookup(MainEntity::from(*mesh)) else {
             continue;
         };
         *state = match cache.get_render_pipeline_state(id) {
@@ -286,6 +321,9 @@ struct Drawing {
     /// Its colour segment and, unless the glow pass leaves it out, its
     /// glow mask.
     checks: Vec<Entity>,
+    /// Its colour segment again when it casts a shadow (openspec AG.23):
+    /// its draw into the stage's shadow-light cascades, a pipeline of its own.
+    shadow_checks: Vec<Entity>,
     since: Instant,
 }
 
@@ -691,6 +729,11 @@ fn confirm(warm: &mut Warm, watch: &PipelineWatch) {
             .checks
             .iter()
             .map(|e| watched.checks.get(e).cloned())
+            .chain(
+                d.shadow_checks
+                    .iter()
+                    .map(|e| watched.shadow_checks.get(e).cloned()),
+            )
             .collect();
         let failed = found.iter().flatten().find_map(|c| match c {
             Compiled::Failed(why) => Some(why.clone()),
@@ -703,6 +746,9 @@ fn confirm(warm: &mut Warm, watch: &PipelineWatch) {
         }
         for e in &d.checks {
             watched.checks.remove(e);
+        }
+        for e in &d.shadow_checks {
+            watched.shadow_checks.remove(e);
         }
         finished.push((d.key, failed, late && !ready));
         false
@@ -742,6 +788,15 @@ fn spawn_stage(s: &mut WarmSpawner) -> Option<Stage> {
         &framing,
         Color::BLACK,
     );
+    // A shadow light on the stage's layer (openspec AG.23): a skinned key
+    // that casts draws into its cascades as a character's part does into the
+    // level's, so their depth pipelines compile here, not in play.
+    s.commands.spawn((
+        shadow::shadow_light(Vec3::from_array(shadow::SHADOW_TRAVEL)),
+        RenderLayers::layer(model_layer(WARM_SLOT)),
+        Name::new("warm: the shadow light"),
+        ChildOf(camera),
+    ));
     let texture = s.images.add(Image::new_fill(
         Extent3d {
             width: 1,
@@ -785,7 +840,7 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
     };
     let model = warm::triangle_model(&identity, &entry.material, entry.key.mesh);
     let texture = stage.texture.clone();
-    let built = CharacterMaterial::from_ir(&model.materials[0], &scene, ShadowLookup::NONE, |_| {
+    let built = CharacterMaterial::from_ir(&model.materials[0], &scene, |_| {
         texture.clone()
     })
     .map_err(|e| e.to_string())
@@ -794,6 +849,7 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         if material.key != entry.key.material {
             warn!(drawn = ?material.key, listed = ?entry.key.material, "the warm drew another key");
         }
+        let casts = shadow::casts(true, Some(&material));
         let glow = entry
             .glow
             .then(|| material.glow_mask())
@@ -809,10 +865,10 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
             &mut s.bindposes,
             &[colour],
         )
-        .map(|spawned| (spawned, glow))
+        .map(|spawned| (spawned, glow, casts))
         .map_err(|e| e.to_string())
     });
-    let (spawned, glow) = match built {
+    let (spawned, glow, casts) = match built {
         Ok(built) => built,
         Err(why) => {
             warn!(key = ?entry.key, %why, "the warm couldn't draw a key");
@@ -842,14 +898,25 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
         .chain(&masks)
         .copied()
         .collect();
+    // A skinned key that casts draws into the stage's shadow light too, as a
+    // character's part does into the level's (AG.23, `shadow::casts`).
+    let shadow_checks: Vec<Entity> = if casts {
+        spawned.segments[..1].to_vec()
+    } else {
+        Vec::new()
+    };
     let mut watched = watch.lock();
     for e in &checks {
         watched.checks.insert(*e, Compiled::Waiting);
+    }
+    for e in &shadow_checks {
+        watched.shadow_checks.insert(*e, Compiled::Waiting);
     }
     stage.roots.push(spawned.root);
     stage.drawing.push(Drawing {
         key: entry.key,
         checks,
+        shadow_checks,
         since: Instant::now(),
     });
 }
@@ -892,7 +959,7 @@ fn draw_static(
         return;
     };
     let texture = stage.texture.clone();
-    let built = CharacterMaterial::from_ir(&entry.material, scene, ShadowLookup::NONE, |_| {
+    let built = CharacterMaterial::from_ir(&entry.material, scene, |_| {
         texture.clone()
     })
     .map_err(|e| e.to_string())
@@ -959,6 +1026,7 @@ fn draw_static(
     stage.drawing.push(Drawing {
         key: entry.key,
         checks,
+        shadow_checks: Vec::new(),
         since: Instant::now(),
     });
 }
@@ -1248,6 +1316,100 @@ mod tests {
         assert_eq!(masks(body), 1, "a body's glow mask");
         assert_eq!(masks(carried), 1, "a carried part's glow mask");
         assert_eq!(masks(level), 0, "a level draws no glow pass");
+    }
+
+    /// AG.23: the stage has a shadow light on its layer, a skinned key that
+    /// casts (a character's opaque part) is watched in its cascades too and
+    /// isn't through until that pipeline is, and a static key or a blended
+    /// skinned one isn't watched there.
+    #[test]
+    fn a_casting_key_waits_for_its_shadow_pipeline_too() {
+        use bevy::light::DirectionalLight;
+        use guacamole::census;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app(extract(tmp.path()));
+        app.insert_resource(Warm::new(true));
+        let scene = Arc::new(Scene {
+            fog: true,
+            ..Scene::new()
+        });
+        let skinned = |blend| {
+            census::TURNTABLE
+                .iter()
+                .map(|r| r.key(true).unwrap())
+                .find(|k| {
+                    k.material.states.blend == blend
+                        && k.material.states.depth_write
+                        && !k.material.states.alpha_test
+                })
+                .unwrap()
+        };
+        let body = skinned(guac_ir::model::Blend::Opaque);
+        let veil = skinned(guac_ir::model::Blend::Alpha);
+        let carried = census::TURNTABLE_STATIC[0].key(false).unwrap();
+        assert!(body.material.casts_shadow() && carried.material.casts_shadow());
+        let card = |key: WarmKey| CensusKey {
+            key,
+            material: census::material_for(&key),
+            scene: scene.clone(),
+            card: true,
+        };
+        app.world_mut()
+            .resource_mut::<Warm>()
+            .ask_census([card(body), card(veil), card(carried)]);
+        let until = Instant::now() + Duration::from_secs(5);
+        while roots(&app) < 3 {
+            assert!(Instant::now() < until, "the census never drawn");
+            app.update();
+        }
+        let lights: Vec<(bool, RenderLayers)> = app
+            .world_mut()
+            .query::<(&DirectionalLight, &RenderLayers)>()
+            .iter(app.world())
+            .map(|(d, l)| (d.shadow_maps_enabled, l.clone()))
+            .collect();
+        assert_eq!(
+            lights,
+            [(true, RenderLayers::layer(model_layer(WARM_SLOT)))],
+            "the stage's shadow light"
+        );
+        // A key's shadow checks while it's drawing; none once it's through
+        // (or the stage has gone, which it does the frame its last key is).
+        let shadow_checks = |app: &App, key: WarmKey| {
+            let warm = app.world().resource::<Warm>();
+            warm.stage
+                .as_ref()?
+                .drawing
+                .iter()
+                .find(|d| d.key == key)
+                .map(|d| d.shadow_checks.len())
+        };
+        assert_eq!(shadow_checks(&app, body), Some(1), "the body casts");
+        assert_eq!(
+            shadow_checks(&app, veil),
+            Some(0),
+            "a blended part casts none"
+        );
+        assert_eq!(
+            shadow_checks(&app, carried),
+            Some(0),
+            "a static part casts none"
+        );
+        // Its colour and glow pipelines compiled, its shadow one not: the
+        // body waits, the others are through.
+        let watch = app.world().resource::<PipelineWatch>().clone();
+        for state in watch.lock().checks.values_mut() {
+            *state = Compiled::Ready;
+        }
+        app.update();
+        assert_eq!(shadow_checks(&app, body), Some(1), "still drawing");
+        assert_eq!(shadow_checks(&app, veil), None);
+        assert_eq!(shadow_checks(&app, carried), None);
+        compile_all(&app);
+        app.update();
+        assert_eq!(shadow_checks(&app, body), None, "through");
+        let warm = app.world().resource::<Warm>();
+        assert!([body, veil, carried].iter().all(|k| warm.done.contains(k)));
     }
 
     /// What a figure carries is a card's key however it's asked for (AE.23

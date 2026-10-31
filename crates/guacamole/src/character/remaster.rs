@@ -129,7 +129,42 @@ pub fn samples_srgb(material: &Material, role: TextureRole) -> bool {
 /// decoded ones by: its 2.2nd power, since (s · c)^2.2 = s^2.2 · c^2.2. A
 /// level's multiplying rim takes it (AG.79, [`super::CharacterUniform::multiplies_in_light`]).
 pub fn in_light(strength: f32) -> f32 {
-    strength.max(0.0).powf(2.2)
+    strength.max(0.0).powf(LIGHT_POWER)
+}
+
+/// The power [`in_light`] raises a multiplier on stored colours to.
+pub const LIGHT_POWER: f32 = 2.2;
+
+/// The grey the original's shadow pass draws its casters in (its
+/// `g_tintColor`, read off AC.13's captures at AE.11: every caster drawn
+/// into the 960x540 shadow map in (0.27, 0.27, 0.27), colour alone, onto a
+/// map whose unshadowed sample is a half). A receiver in shadow mode 1
+/// takes twice the sample's colour, so the original's full shadow scales a
+/// part's stored colour by 0.54.
+pub const SHADOW_CASTER_GREY: f32 = 0.27;
+
+/// What the original's full shadow scales a stored colour by: its mode-1
+/// term on a caster's grey, 2 · [`SHADOW_CASTER_GREY`].
+pub const SHADOW_DARKEST: f32 = 2.0 * SHADOW_CASTER_GREY;
+
+/// The shadow-receive term's sample for a visibility of the level's key
+/// light (openspec AG.23): `visibility` is Bevy's filtered cascade sample,
+/// 1 lit and 0 wholly shadowed. The original's term on stored values runs
+/// from [`SHADOW_DARKEST`] in full shadow to 1 lit; as a multiplier on
+/// stored colours it goes into linear light at its 2.2nd power
+/// ([`in_light`]), so the sample is half that, grey on all four channels,
+/// and the spec's 2·(a + (2 − k)·(rgb − a)) gives the term itself in either
+/// shadow mode: 1 lit, 0.258 wholly shadowed, 0.563 half way. The shader
+/// works the same numbers off the uniform's `shadow` ([`shadow_uniform`]).
+pub fn shadow_sample(visibility: f32) -> [f32; 4] {
+    let stored = SHADOW_DARKEST + (1.0 - SHADOW_DARKEST) * visibility.clamp(0.0, 1.0);
+    [0.5 * in_light(stored); 4]
+}
+
+/// The uniform's `shadow`: x [`SHADOW_DARKEST`], y [`LIGHT_POWER`], what
+/// the shader turns a visibility into [`shadow_sample`]'s sample with.
+pub fn shadow_uniform() -> bevy::math::Vec4 {
+    bevy::math::Vec4::new(SHADOW_DARKEST, LIGHT_POWER, 0.0, 0.0)
 }
 
 /// An IR sampler as Bevy's; one without a mipmap filter samples level 0
@@ -207,7 +242,7 @@ pub fn target(size: UVec2) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::character::material::{CharacterUniform, ShadowLookup, reference_material};
+    use crate::character::material::{CharacterUniform, reference_material};
     use bevy::camera::Exposure;
     use bevy::ecs::world::World;
     use bevy::render::render_resource::TextureUsages;
@@ -241,7 +276,7 @@ mod tests {
         scene.fog_colour = linear([115, 83, 49]);
         scene.replace = replace([255, 128, 0], 0.25);
         let material = reference_material(&material([128, 128, 128, 255])).unwrap();
-        let u = CharacterUniform::new(&material, &scene, ShadowLookup::NONE, 0.0);
+        let u = CharacterUniform::new(&material, &scene, 0.0);
         let rgb = |v: bevy::math::Vec4| [v.x, v.y, v.z];
         assert!(close(
             rgb(u.light_diffuse[0]),
@@ -298,7 +333,7 @@ mod tests {
         let mut scene = Scene::new();
         scene.placement_tint = tint(neutral);
         let m = reference_material(&material(neutral)).unwrap();
-        let u = CharacterUniform::new(&m, &scene, ShadowLookup::NONE, 0.0);
+        let u = CharacterUniform::new(&m, &scene, 0.0);
         // Each tint centred on 128 of 255, so four times their product is
         // about 1 for two neutral ones.
         let scale = 4.0 * u.placement_tint.x * u.material_tint.x;
@@ -329,6 +364,76 @@ mod tests {
         let shaded = shading::shade(&m, &scene, &fragment, &textures).unwrap();
         for (got, map) in shaded.colour.iter().zip(colour.0) {
             assert!((got - map * scale).abs() < 1e-6, "{got} for {map}");
+        }
+    }
+
+    /// AG.23: a visibility of the shadow light (Bevy's cascade sample, 1 lit)
+    /// becomes the shadow term's sample: the original's term on stored
+    /// values, 0.54 in full shadow to 1 lit, at its 2.2nd power in light,
+    /// halved and grey, so the spec's term is that power in either mode.
+    #[test]
+    fn a_visibility_maps_onto_the_shadow_terms_sample() {
+        // Fully lit: the half the spec leaves a colour unchanged at.
+        assert_eq!(shadow_sample(1.0), [0.5; 4]);
+        // Wholly shadowed: 0.54 on stored values, 0.258 in light.
+        let dark = shadow_sample(0.0);
+        assert!((2.0 * dark[0] - 0.54f32.powf(2.2)).abs() < 1e-6, "{dark:?}");
+        assert!((2.0 * dark[0] - 0.2578).abs() < 1e-4, "{dark:?}");
+        // Half way: half way on stored values (0.77), 0.563 in light.
+        let half = shadow_sample(0.5);
+        assert!((2.0 * half[0] - 0.77f32.powf(2.2)).abs() < 1e-6, "{half:?}");
+        assert!((2.0 * half[0] - 0.5627).abs() < 1e-4, "{half:?}");
+        // Grey on all four channels, and held to [0, 1].
+        for v in [0.0, 0.3, 0.5, 1.0] {
+            let s = shadow_sample(v);
+            assert!(s.iter().all(|c| *c == s[0]), "{s:?}");
+        }
+        assert_eq!(shadow_sample(1.5), shadow_sample(1.0));
+        assert_eq!(shadow_sample(-0.5), shadow_sample(0.0));
+        // The uniform carries what the shader works the same numbers with.
+        let u = shadow_uniform();
+        assert_eq!((u.x, u.y), (2.0 * SHADOW_CASTER_GREY, 2.2));
+
+        // Through the spec's model, an unlit part with shadows on, in both
+        // shadow modes: its colour scaled by twice the sample.
+        let neutral = [128, 128, 128, 255];
+        let m = reference_material(&material(neutral)).unwrap();
+        let colour = Flat([0.25, 0.5, 0.125, 1.0]);
+        let textures = Textures {
+            colour: Some(&colour),
+            ..Textures::default()
+        };
+        let shade = |v: f32, mode: f32| {
+            let mut scene = Scene::new();
+            scene.placement_tint = tint(neutral);
+            scene.shadows = true;
+            scene.shadow_mode = mode;
+            let fragment = Fragment {
+                normal: [0.0, 0.0, 1.0],
+                tangent: [1.0, 0.0, 0.0],
+                bitangent: [0.0, 1.0, 0.0],
+                position: [0.0, 0.0, -5.0],
+                depth: 5.0,
+                eye: [0.0, 0.0, 1.0],
+                vertex_colour: shading::HALF_GREY,
+                uv: [[0.5; 2]; 3],
+                shadow: shadow_sample(v),
+            };
+            shading::shade(&m, &scene, &fragment, &textures)
+                .unwrap()
+                .colour
+        };
+        for mode in [1.0, 2.0] {
+            let lit = shade(1.0, mode);
+            for (v, term) in [(0.0, 0.54f32.powf(2.2)), (0.5, 0.77f32.powf(2.2))] {
+                let got = shade(v, mode);
+                for ch in 0..3 {
+                    assert!(
+                        (got[ch] - lit[ch] * term).abs() < 1e-6,
+                        "mode {mode}, visibility {v}: {got:?} against {lit:?}"
+                    );
+                }
+            }
         }
     }
 

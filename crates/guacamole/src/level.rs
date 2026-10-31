@@ -87,7 +87,7 @@ use guac_motion::seam::{Body, BodyId, BodyKind};
 use guac_script::Obj;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
-    CharacterMaterial, CharacterUniform, FrameGlow, LEVEL_LIGHTS, ScenePointLights, ShadowLookup,
+    CharacterMaterial, CharacterUniform, FrameGlow, LEVEL_LIGHTS, ScenePointLights,
     reference_material, remaster, spawn_alpha_clear, static_mesh,
 };
 use guacamole::frame::{self, Frame};
@@ -1307,8 +1307,7 @@ fn relight(materials: &[LitAlso], scene: &Scene, assets: &mut Assets<CharacterMa
     for lit in materials {
         if let Some(mut m) = assets.get_mut(&lit.material) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
-            m.uniform = CharacterUniform::new(&lit.reference, scene, ShadowLookup::NONE, lit.alpha)
-                .lit_by_scene();
+            m.uniform = CharacterUniform::new(&lit.reference, scene, lit.alpha).lit_by_scene();
             m.scene_lights = LEVEL_LIGHTS;
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
@@ -1322,6 +1321,11 @@ pub(crate) struct LevelView(pub(crate) bool);
 /// Marks the camera the level is drawn from.
 #[derive(Component, Debug)]
 pub(crate) struct LevelCamera;
+
+/// Marks the level's shadow light, whose cascades a character's shadow is
+/// drawn into (openspec AG.23).
+#[derive(Component, Debug)]
+pub(crate) struct ShadowLight;
 
 /// The level's systems, after the turntables', whose warm compiles the
 /// level's keys.
@@ -1693,7 +1697,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         // The keys were made from these materials in the same scene on the
         // task, so this can't refuse one; a material that does draws as
         // Bevy's default rather than fail the level.
-        let material = match CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, texture) {
+        let material = match CharacterMaterial::from_ir(m, &scene, texture) {
             Ok(mut material) => {
                 material.uniform = level_uniform(material.uniform);
                 material.scene_lights = LEVEL_LIGHTS;
@@ -1753,6 +1757,18 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
             Visibility::Hidden,
         ))
         .id();
+    // The shadow light's cascades on the level's layer (openspec AG.23):
+    // what a character's shadow is drawn into and the level's materials
+    // read, shown and hidden with the level.
+    s.commands.spawn((
+        guacamole::character::shadow::shadow_light(Vec3::from_array(
+            guacamole::character::shadow::SHADOW_TRAVEL,
+        )),
+        RenderLayers::layer(LEVEL_LAYER),
+        ShadowLight,
+        Name::new("the level's shadow light"),
+        ChildOf(root),
+    ));
     for (seg, mesh) in built
         .drawn
         .segments
@@ -2102,12 +2118,7 @@ fn light_level(
         };
         if let Some(mut m) = materials.get_mut(h) {
             let rows = (m.uniform.uv_u, m.uniform.uv_v);
-            m.uniform = level_uniform(CharacterUniform::new(
-                reference,
-                &scene,
-                ShadowLookup::NONE,
-                *alpha,
-            ));
+            m.uniform = level_uniform(CharacterUniform::new(reference, &scene, *alpha));
             (m.uniform.uv_u, m.uniform.uv_v) = rows;
         }
     }
@@ -3212,12 +3223,7 @@ mod tests {
     /// rim's (the relight used to put it back to the bare strength).
     #[test]
     fn a_level_uniform_reads_the_scenes_lights_and_keeps_the_rims_strength() {
-        let mut u = CharacterUniform::new(
-            &guac_ir::shading::Material::new(),
-            &Scene::new(),
-            ShadowLookup::NONE,
-            0.0,
-        );
+        let mut u = CharacterUniform::new(&guac_ir::shading::Material::new(), &Scene::new(), 0.0);
         u.fixed_alpha.w = 2.0;
         let level = level_uniform(u);
         assert_eq!(level.misc.w, guacamole::character::LIGHTS_FROM_SCENE);
@@ -3241,8 +3247,7 @@ mod tests {
             ..Scene::new()
         };
         let made = |ir: &model::Material| {
-            CharacterMaterial::from_ir(ir, &scene, ShadowLookup::NONE, |_| Handle::default())
-                .unwrap()
+            CharacterMaterial::from_ir(ir, &scene, |_| Handle::default()).unwrap()
         };
         let mut dull = ir.clone();
         dull.params.glow = model::Glow::None;
@@ -3291,6 +3296,53 @@ mod tests {
         let mask = assets.get(&twins[0].1).unwrap();
         assert_eq!(mask.key.pass, guacamole::character::Pass::LevelGlow);
         assert_eq!(mask.key.shader, key.material.shader);
+    }
+
+    /// AG.23: the level comes with its shadow light, under its root (shown and
+    /// hidden with it) on its layer, drawing cascades along the original's
+    /// shadow projection (`character::shadow::SHADOW_TRAVEL`).
+    #[test]
+    fn the_level_comes_with_its_shadow_light() {
+        let tmp = tempfile::tempdir().unwrap();
+        let l = lights();
+        let source = write_level(tmp.path(), &l);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let (root, materials) = {
+            let loaded = app.world().resource::<Level>().loaded().unwrap();
+            (loaded.root, loaded.materials.clone())
+        };
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(
+            &DirectionalLight,
+            &Transform,
+            &RenderLayers,
+            &ChildOf,
+        ), With<ShadowLight>>();
+        let found: Vec<(bool, Vec3, RenderLayers, Entity)> = q
+            .iter(world)
+            .map(|(d, t, r, c)| (d.shadow_maps_enabled, *t.forward(), r.clone(), c.parent()))
+            .collect();
+        assert_eq!(found.len(), 1, "one shadow light");
+        let (shadows, forward, layers, parent) = &found[0];
+        assert!(*shadows);
+        assert_eq!(*layers, RenderLayers::layer(LEVEL_LAYER));
+        assert_eq!(*parent, root);
+        // Along the original's shadow projection, not the key light's travel.
+        let along = Vec3::from_array(guacamole::character::shadow::SHADOW_TRAVEL).normalize();
+        assert!(forward.dot(along) > 1.0 - 1e-5, "{forward:?}");
+        let key =
+            world_scene(&level_lights(&l, &zone()).unwrap(), &LevelFog::NONE).lights[0].travel;
+        assert!(
+            forward.dot(Vec3::from_array(key).normalize()) < 0.99,
+            "not the key's"
+        );
+        // The scene the level's materials are made in receives it (the
+        // fixture's ground owns it off, as its masks say).
+        assert!(world_scene(&level_lights(&l, &zone()).unwrap(), &LevelFog::NONE).shadows);
+        let assets = world.resource::<Assets<CharacterMaterial>>();
+        let ground = assets.get(&materials[0]).unwrap();
+        assert!(!ground.key.shader.switches().shadows);
     }
 
     /// AH.65: the frame's point lights reach the level's report (and its

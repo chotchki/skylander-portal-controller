@@ -14,8 +14,9 @@
 //!   `_worldLight1`-`3`), each light travelling the way it faces, as AE.13
 //!   reads the sprite rig, and the placed point lights; fog from a
 //!   [`LevelFog`] the TV holds, set from the same zone ([`LevelFog::from_zone`]),
-//!   which the sky dome takes its zone's share of ([`sky_fogged`]); no shadows
-//!   (AG.23). The shader lights in view space, so the scene is the lights
+//!   which the sky dome takes its zone's share of ([`sky_fogged`]); shadows
+//!   received from the shadow light's cascades (AG.23). The shader lights in
+//!   view space, so the scene is the lights
 //!   seen from a camera ([`view_scene`]); the TV hands it the world's
 //!   ([`world_scene`]) and the shader turns them by its view (AG.21).
 //! - The camera AF's fresh state shows ([`fresh_state_transform`],
@@ -309,7 +310,9 @@ pub const DARK: PointLight = PointLight {
 /// The scene the level's materials draw in, seen from a camera whose view
 /// is `view_from_world`: the directional lights' travel and the point
 /// lights' positions in its view space (the space the shader lights in),
-/// fog from `fog`, no shadows until AG.23, neutral tints and no replace
+/// fog from `fog`, shadows received from the shadow light's cascades (AG.23:
+/// a material that leaves bit 8 to the scene darkens where a character's
+/// shadow falls, [`crate::character::shadow`]), neutral tints and no replace
 /// colour. Its point lights fill all three of tfbmulti2's slots, the placed
 /// ones first and the rest [`DARK`] (openspec AH.65): the scripts light
 /// more as attacks go off, each frame's three are the level's buffer's
@@ -337,6 +340,7 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
         .take(MAX_POINT_LIGHTS)
         .collect();
     scene.fog = true;
+    scene.shadows = true;
     scene.fog_colour = remaster::linear(fog.colour);
     (scene.fog_near, scene.fog_far) = (fog.near, fog.far);
     scene
@@ -348,9 +352,16 @@ pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -
 /// ball and eruption lighting him, and of his materials only those that
 /// own their point lights off leave them to the card; AG.21 drew him
 /// without, on his card's keys), so his keys in the level are the census's
-/// [`crate::census::HEROES`], not a card's. No shadows until AG.23.
+/// [`crate::census::HEROES`], not a card's. He receives no shadow (AG.23):
+/// he casts one, and a received shadow would key every walker's parts
+/// again, which the start's pass would compile for a self-shadow the
+/// original's projected map gives him only in part. The creatures draw in
+/// it too.
 pub fn hero_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
-    view_scene(lights, fog, view_from_world)
+    Scene {
+        shadows: false,
+        ..view_scene(lights, fog, view_from_world)
+    }
 }
 
 /// A light the scripts lit, as the level draws it (openspec AH.65): at
@@ -696,7 +707,7 @@ pub fn fresh_state_projection() -> PerspectiveProjection {
 mod tests {
     use super::*;
     use crate::character::key::{MaterialKey, Pass, StateKey, def};
-    use crate::character::material::{CharacterMaterial, ShadowLookup};
+    use crate::character::material::CharacterMaterial;
     use crate::character::warm::MeshShape;
     use bevy::asset::Handle;
     use bevy::shader::ShaderDefVal;
@@ -900,7 +911,8 @@ mod tests {
             1e-5
         ));
         assert_eq!(scene.point_lights[0].linear, 0.5);
-        assert!(scene.fog && !scene.shadows);
+        // Fog on, and the level's shadow received (AG.23).
+        assert!(scene.fog && scene.shadows);
         assert_eq!(scene.fog_colour, remaster::linear([115, 83, 49]));
         assert_eq!((scene.fog_near, scene.fog_far), (30.0, 300.0));
         // No fog starts past the far clip, so it fogs nothing drawn.
@@ -910,8 +922,9 @@ mod tests {
     /// AH.65 (AG.21 drew him without its point lights): the hero draws in
     /// the level's lights, fog and three point lights' slots as the camera
     /// sees them, the placed one first and two dark, so a material leaving
-    /// point lights and fog to the scene keys as the level's does, not as a
-    /// card draws it (fog on, nothing else).
+    /// point lights and fog to the scene keys as the level's does but for the
+    /// received shadow (AG.23), not as a card draws it (fog on, nothing
+    /// else).
     #[test]
     fn the_hero_draws_in_the_levels_light_fog_and_point_lights() {
         let l = level_lights(&lights(), &zone()).unwrap();
@@ -937,7 +950,7 @@ mod tests {
             (level.fog_colour, 30.48, 335.28)
         );
         let key = |m: &model::Material, scene: &Scene| {
-            CharacterMaterial::from_ir(m, scene, ShadowLookup::NONE, |_| Handle::default())
+            CharacterMaterial::from_ir(m, scene, |_| Handle::default())
                 .unwrap()
                 .key
         };
@@ -946,8 +959,13 @@ mod tests {
             ..Scene::new()
         };
         let open = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
-        assert_eq!(key(&open, &hero), key(&open, &level));
-        assert_ne!(key(&open, &hero), key(&open, &card));
+        // The level's but its received shadow (AG.23): the level's part
+        // takes the level's shadow, the hero's casts it.
+        let (hero_key, level_key) = (key(&open, &hero), key(&open, &level));
+        assert!(level_key.shader.switches().shadows && !hero_key.shader.switches().shadows);
+        assert_eq!(hero_key.shader, level_key.shader.without_shadows());
+        assert_eq!(hero_key.states, level_key.states);
+        assert_ne!(hero_key, key(&open, &card));
     }
 
     fn slot(role: TextureRole) -> TextureSlot {
@@ -1031,8 +1049,8 @@ mod tests {
     }
 
     /// AG.19: a level material's key in the level's scene (fog on, its
-    /// three point lights' slots (AH.65), no shadows) and the shader defs it
-    /// becomes. The masks
+    /// three point lights' slots (AH.65), the level's shadow (AG.23))
+    /// and the shader defs it becomes. The masks
     /// are level 213's kinds: one leaving shadows, fog and point lights to
     /// the scene (ignore 0x2FF), one owning shadows off (0x3FF), one owning
     /// point lights off too (0x3BFF), and the gloss-mapped one, drawn with
@@ -1042,20 +1060,20 @@ mod tests {
         let l = level_lights(&lights(), &zone()).unwrap();
         let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
         let key = |m: &model::Material| {
-            CharacterMaterial::from_ir(m, &scene, ShadowLookup::NONE, |_| Handle::default())
+            CharacterMaterial::from_ir(m, &scene, |_| Handle::default())
                 .unwrap()
                 .key
         };
         let names = |n: &[&str]| -> Vec<String> { n.iter().map(|s| s.to_string()).collect() };
 
         // Layers 2 and 3, normal and spec maps and vertex colours, leaving
-        // fog and point lights to the scene: the eye direction comes with
-        // fog, the geometric normal with the point light.
+        // shadows, fog and point lights to the scene: the eye direction
+        // comes with fog, the geometric normal with the point light.
         let both = multi2(mask(0x1B, 0x2FF), mask(0x101B, 0x1AFF));
         let k = key(&both);
         assert_eq!(
             k.shader.pixel(),
-            0x1B | 1 << bit::FOG | 0b111 << bit::POINT_LIGHTS
+            0x1B | 1 << bit::SHADOWS | 1 << bit::FOG | 0b111 << bit::POINT_LIGHTS
         );
         assert_eq!(
             defs(&k),
@@ -1064,6 +1082,7 @@ mod tests {
                 def::LAYER3,
                 def::NORMAL_MAP,
                 def::SPEC_MAP,
+                def::SHADOWS,
                 def::FOG,
                 def::VERTEX_COLOUR,
                 def::EYE,
@@ -1075,9 +1094,9 @@ mod tests {
                 def::POINT_LIGHTS[2],
             ])
         );
-        // Owning shadows off changes nothing here: the level has none yet.
+        // Owning shadows off keeps the shadow off.
         let owned = multi2(mask(0x1B, 0x3FF), mask(0x101B, 0x1BFF));
-        assert_eq!(key(&owned).shader, k.shader);
+        assert_eq!(key(&owned).shader, k.shader.without_shadows());
         // Owning point lights off: fog alone, so no geometric normal.
         let unlit = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
         let k = key(&unlit);
@@ -1108,18 +1127,11 @@ mod tests {
         );
         // Its gloss strength is the third layer's fixed alpha; a gloss map
         // beside a third layer is refused.
-        let built =
-            CharacterMaterial::from_ir(&gloss, &scene, ShadowLookup::NONE, |_| Handle::default())
-                .unwrap();
+        let built = CharacterMaterial::from_ir(&gloss, &scene, |_| Handle::default()).unwrap();
         assert_eq!(built.uniform.fixed_alpha.z, 1.0);
         let both = multi2(mask(0x9E, 0x3FF), mask(0x109E, 0x1BFF));
         let both = drawn_material(&LevelMaterial::Multi2(both)).unwrap();
-        assert!(
-            CharacterMaterial::from_ir(&both, &scene, ShadowLookup::NONE, |_| {
-                Handle::default()
-            })
-            .is_err()
-        );
+        assert!(CharacterMaterial::from_ir(&both, &scene, |_| { Handle::default() }).is_err());
         // The render states key the pipeline as a character's do.
         assert_eq!(
             k.states,

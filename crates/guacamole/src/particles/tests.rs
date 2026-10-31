@@ -8,7 +8,6 @@ use guac_ir::shading::DirectionalLight;
 
 use super::*;
 use crate::character::CharacterMaterial;
-use crate::character::ShadowLookup;
 use crate::level_scene::{LevelFog, LevelLights, view_scene};
 
 const IDENTITY: Transform = Transform {
@@ -437,8 +436,7 @@ fn a_generator_draws_unlit_by_its_blend_and_glows_by_its_alpha_with_a_bloom() {
     assert_eq!(m.states.blend, model::Blend::Additive);
     assert!(!m.states.depth_write && !m.states.two_sided);
     assert_eq!(m.params.glow, Glow::None);
-    let c =
-        CharacterMaterial::from_ir(&m, &scene, ShadowLookup::NONE, |_| Default::default()).unwrap();
+    let c = CharacterMaterial::from_ir(&m, &scene, |_| Default::default()).unwrap();
     // The level's fog and point lights owned off: texture times colour.
     assert_eq!(
         (c.key.shader.pixel(), c.key.shader.vertex()),

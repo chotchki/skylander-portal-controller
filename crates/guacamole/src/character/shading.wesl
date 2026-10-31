@@ -17,8 +17,10 @@
 // WESL flattens a block an `@if` holds into the block around it, so each
 // such block's names are its own.
 
-import bevy_pbr::render::mesh_view_bindings::view;
+import bevy_pbr::render::mesh_view_bindings::{view, lights};
+import bevy_pbr::render::mesh_view_types;
 import bevy_pbr::render::mesh_functions;
+import bevy_pbr::render::shadows;
 import bevy_pbr::render::skinning;
 
 struct Character {
@@ -36,8 +38,9 @@ struct Character {
     placement_tint: vec4<f32>,
     // RGB and its amount.
     replace: vec4<f32>,
-    shadow_u: vec4<f32>,
-    shadow_v: vec4<f32>,
+    // x the original's full shadow on stored values, y the power that takes
+    // it into linear light (AG.23).
+    shadow: vec4<f32>,
     // x the shadow mode, y the alpha test's reference.
     misc: vec4<f32>,
     // x layer 1's fixed alpha, y layer 2's, z layer 3's strength, w the rim's.
@@ -73,8 +76,6 @@ struct Character {
 @group(constants::MATERIAL_BIND_GROUP) @binding(14) var third_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(15) var rim_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(16) var rim_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(17) var shadow_map: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(18) var shadow_sampler: sampler;
 
 // A scene's three point lights, as the uniform's three arrays.
 struct SceneLights {
@@ -285,6 +286,32 @@ fn lit_layer(
     return lit;
 }
 
+// How much of the level's shadow light reaches a view-space position
+// (AG.23): Bevy's filtered sample of the first directional light's
+// cascades, the one the level draws them with
+// (`character::shadow::shadow_light`), 1 lit and 0 wholly shadowed; 1 in a
+// view no such light reaches.
+fn shadow_visibility(position: vec3<f32>, normal: vec3<f32>, frag_coord: vec2<f32>) -> f32 {
+    if lights.n_directional_lights == 0u {
+        return 1.0;
+    }
+    let flags = lights.directional_lights[0].flags;
+    if (flags & mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) == 0u {
+        return 1.0;
+    }
+    let world = view.world_from_view * vec4<f32>(position, 1.0);
+    let world_normal = normalize((view.world_from_view * vec4<f32>(normal, 0.0)).xyz);
+    return shadows::fetch_directional_shadow(0u, world, world_normal, position.z, frag_coord);
+}
+
+// The shadow-receive term's sample for a visibility (`remaster::shadow_sample`):
+// the original's term on stored values, from its full shadow to 1, into
+// linear light, halved, grey on every channel.
+fn shadow_sample(visibility: f32) -> vec4<f32> {
+    let stored = character.shadow.x + (1.0 - character.shadow.x) * clamp(visibility, 0.0, 1.0);
+    return vec4<f32>(0.5 * pow(stored, character.shadow.y));
+}
+
 // Point light `j`: its colour by the normal's facing to it and its falloff,
 // unscaled by the colour map.
 fn point_light(j: u32, n: vec3<f32>, position: vec3<f32>) -> vec3<f32> {
@@ -360,8 +387,7 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
 }
 
 @if(CHAR_SHADOWS) {
-    let at = vec4<f32>(in.position, 1.0);
-    let shadow = textureSample(shadow_map, shadow_sampler, vec2<f32>(dot(at, character.shadow_u), dot(at, character.shadow_v)));
+    let shadow = shadow_sample(shadow_visibility(in.position, g, in.clip_position.xy));
     let mode = character.misc.x;
     colour = colour * 2.0 * (vec3<f32>(shadow.a) + (2.0 - mode) * (shadow.rgb - vec3<f32>(shadow.a)));
 }

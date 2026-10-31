@@ -11,11 +11,14 @@
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
-//! static parts they carry) and its chapter 1 another 55, its props 61
+//! static parts they carry) and its chapter 1 another 67, its props 66
 //! more (AG.60's start scripts stand and spawn more of them: 32 before;
 //! AG.239's route clones 10 more), what its scripts spawn 3 more beyond
 //! those (parts fading in among them, AH.67; 6 before AG.239's clones drew
-//! three of them first), their glowing parts' level glow masks 22 and the walking
+//! three of them first), since AG.23 the level's, its props' and its
+//! spawns' parts that leave the shadow to the scene receiving the key
+//! light's (chapter 1 55 before, its props 61), their glowing parts' level
+//! glow masks 22 (a mask reads no shadow) and the walking
 //! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
 //! point lights on) and the first fight's creatures' 3 more (AH.25: the
 //! Chompies' model and Norticus', skinned in the hero's scene) and the
@@ -189,8 +192,9 @@ pub const TURNTABLE: &[Row] = &[
 /// Every key chapter 1 (`level_213_tutotial`) draws at AF's fresh state in
 /// the level's scene (fog on but on the sky, which takes none of its
 /// start's fog (AG.41); its three point lights' slots (AH.65) unless a
-/// material owns its point lights off; no shadows until AG.23), each once:
-/// AG.19's 55, the sky's 7 unfogged since AG.41 and writing no depth since
+/// material owns its point lights off; the level's shadow (AG.23)
+/// unless a material owns it off, as the sky's do), each once: AG.19's 55
+/// before AG.23, the sky's 7 unfogged since AG.41 and writing no depth since
 /// AG.79.
 pub const LEVEL: &[Row] = &[
     row(0x0000, 0x0000, O, false, false, false, 1, true, false),
@@ -209,13 +213,9 @@ pub const LEVEL: &[Row] = &[
     row(0x3c02, 0x3402, O, true, true, false, 2, true, true),
     row(0x3c02, 0x3402, O, true, true, true, 2, true, true),
     row(0x3c02, 0x3402, A, false, false, false, 2, true, true),
-    row(0x3c02, 0x3402, A, false, true, false, 2, true, true),
     row(0x3c02, 0x3402, A, true, true, false, 2, true, true),
     row(0x3c04, 0x3404, O, true, true, false, 1, true, true),
     row(0x3c04, 0x3404, A, true, true, false, 1, true, true),
-    row(0x3c08, 0x3408, O, true, true, false, 1, true, true),
-    row(0x3c0a, 0x340a, O, true, true, false, 2, true, true),
-    row(0x3c18, 0x2418, O, true, true, false, 1, true, false),
     row(0x3c18, 0x3418, O, true, false, false, 1, true, true),
     row(0x3c18, 0x3418, O, true, false, true, 1, true, true),
     row(0x3c18, 0x3418, O, true, true, false, 1, true, true),
@@ -238,7 +238,6 @@ pub const LEVEL: &[Row] = &[
     row(0x3c1c, 0x341c, O, true, false, false, 1, true, true),
     row(0x3c1c, 0x341c, O, true, true, false, 1, true, true),
     row(0x3c1d, 0x341d, O, true, true, false, 2, true, true),
-    row(0x3c1e, 0x341e, O, true, false, false, 2, true, true),
     row(0x3c1e, 0x341e, O, true, true, false, 2, true, true),
     row(0x3c1f, 0x341f, O, true, true, false, 3, true, true),
     row(0x3c38, 0x3438, O, true, true, false, 1, true, true),
@@ -248,6 +247,23 @@ pub const LEVEL: &[Row] = &[
     row(0x3c3e, 0x343e, O, true, true, false, 2, true, true),
     row(0x3c3e, 0x343e, A, true, true, false, 2, true, true),
     row(0x3c9c, 0x349c, O, true, false, true, 2, true, true),
+    row(0x3d00, 0x3500, O, true, true, false, 1, true, true),
+    row(0x3d00, 0x3500, A, true, true, false, 1, true, true),
+    row(0x3d01, 0x3501, ADD, false, false, false, 2, true, true),
+    row(0x3d02, 0x3502, O, true, true, false, 2, true, true),
+    row(0x3d02, 0x3502, A, false, true, false, 2, true, true),
+    row(0x3d08, 0x3508, O, true, true, false, 1, true, true),
+    row(0x3d0a, 0x350a, O, true, true, false, 2, true, true),
+    row(0x3d18, 0x2518, O, true, true, false, 1, true, false),
+    row(0x3d18, 0x3518, O, true, true, false, 1, true, true),
+    row(0x3d18, 0x3518, A, true, true, false, 1, true, true),
+    row(0x3d19, 0x3519, O, true, true, false, 2, true, true),
+    row(0x3d1a, 0x351a, O, true, true, false, 2, true, true),
+    row(0x3d1a, 0x351a, A, true, false, false, 2, true, true),
+    row(0x3d1b, 0x351b, O, true, true, false, 3, true, true),
+    row(0x3d1c, 0x351c, O, true, true, false, 1, true, true),
+    row(0x3d1e, 0x351e, O, true, false, false, 2, true, true),
+    row(0x3d1e, 0x351e, O, true, true, false, 2, true, true),
 ];
 
 /// Every key chapter 1's props draw (AG.25) that [`LEVEL`] doesn't hold:
@@ -255,82 +271,88 @@ pub const LEVEL: &[Row] = &[
 /// creature draws nothing; one without a range stands by its actor since
 /// AG.60) and of the placements whose clones draw (AG.60's and AG.239's
 /// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades), in
-/// the level's scene at AF's fresh state, each once.
+/// the level's scene at AF's fresh state (the level's shadow on since
+/// AG.23), each once.
 pub const LEVEL_PROPS: &[Row] = &[
-    row(0x0434, 0x1434, O, true, false, false, 1, true, true),
-    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
-    row(0x3c00, 0x2400, A, false, false, false, 1, true, false),
-    row(0x3c00, 0x2400, A, false, true, false, 1, true, false),
-    row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
-    row(0x3c00, 0x3400, O, true, false, false, 1, true, true),
-    row(0x3c00, 0x3400, A, true, false, false, 1, true, true),
-    row(0x3c01, 0x3401, O, true, false, false, 2, true, true),
-    row(0x3c01, 0x3401, ADD, false, true, false, 2, true, true),
-    row(0x3c04, 0x2404, O, true, true, false, 1, true, false),
-    row(0x3c04, 0x2404, A, true, true, false, 1, true, false),
-    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
-    row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
-    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
-    row(0x3c05, 0x3405, A, false, false, false, 2, true, true),
-    row(0x3c06, 0x3406, O, true, false, false, 2, true, true),
-    row(0x3c14, 0x3414, O, true, false, false, 1, true, true),
-    row(0x3c1c, 0x341c, A, true, false, false, 1, true, true),
-    row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
-    row(0x3c20, 0x3420, O, true, false, false, 1, true, true),
-    row(0x3c20, 0x3420, O, true, true, false, 1, true, true),
-    row(0x3c20, 0x3420, A, true, false, false, 1, true, true),
-    row(0x3c20, 0x3420, A, true, true, false, 1, true, true),
-    row(0x3c21, 0x3421, O, true, false, false, 2, true, true),
-    row(0x3c21, 0x3421, O, true, true, false, 2, true, true),
-    row(0x3c21, 0x3421, A, true, false, false, 2, true, true),
-    row(0x3c21, 0x3421, A, true, true, false, 2, true, true),
-    row(0x3c22, 0x3422, O, true, false, false, 2, true, true),
-    row(0x3c23, 0x2423, O, true, false, false, 3, true, false),
-    row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
-    row(0x3c24, 0x2424, O, true, true, false, 1, true, false),
-    row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
-    row(0x3c24, 0x2424, A, true, true, false, 1, true, false),
-    row(0x3c24, 0x3424, O, true, false, false, 1, true, true),
-    row(0x3c24, 0x3424, O, true, true, false, 1, true, true),
-    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
-    row(0x3c24, 0x3424, A, true, true, false, 1, true, true),
-    row(0x3c24, 0x3424, A, true, true, true, 1, true, true),
-    row(0x3c25, 0x3425, O, true, false, false, 2, true, true),
-    row(0x3c25, 0x3425, A, true, false, false, 2, true, true),
-    row(0x3c26, 0x3426, O, true, false, false, 2, true, true),
-    row(0x3c28, 0x3428, O, true, false, false, 1, true, true),
-    row(0x3c28, 0x3428, O, true, true, false, 1, true, true),
-    row(0x3c28, 0x3428, A, false, true, false, 1, true, true),
-    row(0x3c28, 0x3428, A, true, false, false, 1, true, true),
-    row(0x3c34, 0x3434, O, true, false, false, 1, true, true),
-    row(0x3c34, 0x3434, O, true, true, false, 1, true, true),
-    row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
-    row(0x3c38, 0x2438, A, true, false, false, 1, true, false),
-    row(0x3c38, 0x3438, O, true, false, false, 1, true, true),
-    row(0x3c38, 0x3438, A, false, false, false, 1, true, true),
-    row(0x3c38, 0x3438, A, true, false, false, 1, true, true),
-    row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
-    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
-    row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
-    row(0x3c3c, 0x243c, A, true, false, false, 1, true, false),
-    row(0x3c3c, 0x243c, A, true, true, false, 1, true, false),
-    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
-    row(0x3c3c, 0x343c, O, true, true, false, 1, true, true),
-    row(0x3c3c, 0x343c, A, true, false, false, 1, true, true),
-    row(0x3c3d, 0x343d, O, true, false, false, 2, true, true),
+    row(0x0534, 0x1534, O, true, false, false, 1, true, true),
+    row(0x3d00, 0x2500, O, true, false, false, 1, true, false),
+    row(0x3d00, 0x2500, A, false, false, false, 1, true, false),
+    row(0x3d00, 0x2500, A, false, true, false, 1, true, false),
+    row(0x3d00, 0x2500, A, true, false, false, 1, true, false),
+    row(0x3d00, 0x3500, O, true, false, false, 1, true, true),
+    row(0x3d00, 0x3500, A, false, true, false, 1, true, true),
+    row(0x3d00, 0x3500, A, true, false, false, 1, true, true),
+    row(0x3d01, 0x3501, O, true, false, false, 2, true, true),
+    row(0x3d01, 0x3501, ADD, false, true, false, 2, true, true),
+    row(0x3d04, 0x2504, O, true, true, false, 1, true, false),
+    row(0x3d04, 0x2504, A, true, true, false, 1, true, false),
+    row(0x3d04, 0x3504, O, true, false, false, 1, true, true),
+    row(0x3d04, 0x3504, O, true, true, false, 1, true, true),
+    row(0x3d04, 0x3504, A, false, false, false, 1, true, true),
+    row(0x3d04, 0x3504, A, true, false, false, 1, true, true),
+    row(0x3d05, 0x3505, A, false, false, false, 2, true, true),
+    row(0x3d06, 0x3506, O, true, false, false, 2, true, true),
+    row(0x3d14, 0x3514, O, true, false, false, 1, true, true),
+    row(0x3d18, 0x3518, O, true, false, false, 1, true, true),
+    row(0x3d1c, 0x351c, O, true, false, false, 1, true, true),
+    row(0x3d1c, 0x351c, A, true, false, false, 1, true, true),
+    row(0x3d1f, 0x351f, O, true, true, false, 3, true, true),
+    row(0x3d20, 0x2520, O, true, false, false, 1, true, false),
+    row(0x3d20, 0x3520, O, true, false, false, 1, true, true),
+    row(0x3d20, 0x3520, O, true, true, false, 1, true, true),
+    row(0x3d20, 0x3520, A, true, false, false, 1, true, true),
+    row(0x3d20, 0x3520, A, true, true, false, 1, true, true),
+    row(0x3d21, 0x3521, O, true, false, false, 2, true, true),
+    row(0x3d21, 0x3521, O, true, true, false, 2, true, true),
+    row(0x3d21, 0x3521, A, true, false, false, 2, true, true),
+    row(0x3d21, 0x3521, A, true, true, false, 2, true, true),
+    row(0x3d22, 0x3522, O, true, false, false, 2, true, true),
+    row(0x3d23, 0x2523, O, true, false, false, 3, true, false),
+    row(0x3d24, 0x2524, O, true, false, false, 1, true, false),
+    row(0x3d24, 0x2524, O, true, true, false, 1, true, false),
+    row(0x3d24, 0x2524, A, true, false, false, 1, true, false),
+    row(0x3d24, 0x2524, A, true, true, false, 1, true, false),
+    row(0x3d24, 0x3524, O, true, false, false, 1, true, true),
+    row(0x3d24, 0x3524, O, true, true, false, 1, true, true),
+    row(0x3d24, 0x3524, A, true, false, false, 1, true, true),
+    row(0x3d24, 0x3524, A, true, true, false, 1, true, true),
+    row(0x3d24, 0x3524, A, true, true, true, 1, true, true),
+    row(0x3d25, 0x3525, O, true, false, false, 2, true, true),
+    row(0x3d25, 0x3525, A, true, false, false, 2, true, true),
+    row(0x3d26, 0x3526, O, true, false, false, 2, true, true),
+    row(0x3d28, 0x3528, O, true, false, false, 1, true, true),
+    row(0x3d28, 0x3528, O, true, true, false, 1, true, true),
+    row(0x3d28, 0x3528, A, false, true, false, 1, true, true),
+    row(0x3d28, 0x3528, A, true, false, false, 1, true, true),
+    row(0x3d34, 0x3534, O, true, false, false, 1, true, true),
+    row(0x3d34, 0x3534, O, true, true, false, 1, true, true),
+    row(0x3d38, 0x2538, O, true, false, false, 1, true, false),
+    row(0x3d38, 0x2538, A, true, false, false, 1, true, false),
+    row(0x3d38, 0x3538, O, true, false, false, 1, true, true),
+    row(0x3d38, 0x3538, A, false, false, false, 1, true, true),
+    row(0x3d38, 0x3538, A, true, false, false, 1, true, true),
+    row(0x3d39, 0x3539, O, true, false, false, 2, true, true),
+    row(0x3d3c, 0x253c, O, true, false, false, 1, true, false),
+    row(0x3d3c, 0x253c, O, true, true, false, 1, true, false),
+    row(0x3d3c, 0x253c, A, true, false, false, 1, true, false),
+    row(0x3d3c, 0x253c, A, true, true, false, 1, true, false),
+    row(0x3d3c, 0x353c, O, true, false, false, 1, true, true),
+    row(0x3d3c, 0x353c, O, true, true, false, 1, true, true),
+    row(0x3d3c, 0x353c, A, true, false, false, 1, true, true),
+    row(0x3d3d, 0x353d, O, true, false, false, 2, true, true),
 ];
 
 /// Every key what the fight's scripts spawn draws (AH.24) that [`LEVEL`]
 /// and [`LEVEL_PROPS`] don't hold: the models the extract's spawn part
 /// holds for `global.bld` and each fighter's archive (AH.22; Eruptor's ball,
 /// its splash and his eruption's blobs among them, `global.bld`'s all
-/// refused until AH.39), in the level's scene at AF's fresh state, and
-/// each opaque one blending as a clone fading in draws it (AH.67,
-/// `props::faded_keys`), each once.
+/// refused until AH.39), in the level's scene at AF's fresh state (the
+/// level's shadow on since AG.23), and each opaque one blending as a
+/// clone fading in draws it (AH.67, `props::faded_keys`), each once.
 pub const SPAWNS: &[Row] = &[
-    row(0x3c00, 0x2400, ADD, false, false, false, 1, true, false),
-    row(0x3c00, 0x3400, A, false, false, false, 1, true, true),
-    row(0x3c01, 0x3401, A, true, false, false, 2, true, true),
+    row(0x3d00, 0x2500, ADD, false, false, false, 1, true, false),
+    row(0x3d00, 0x3500, A, false, false, false, 1, true, true),
+    row(0x3d01, 0x3501, A, true, false, false, 2, true, true),
 ];
 
 /// Every glowing part's level glow mask chapter 1, its props and what its
@@ -564,8 +586,8 @@ pub fn material_for(key: &WarmKey) -> model::Material {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::character::CharacterMaterial;
     use crate::character::mesh::{segment_mesh, static_mesh};
-    use crate::character::{CharacterMaterial, ShadowLookup};
     use bevy::asset::Handle;
     use guac_ir::shading::{PointLight, Scene};
     use std::collections::HashSet;
@@ -603,8 +625,8 @@ mod tests {
         for (rows, skinned, n) in [
             (TURNTABLE, true, 33),
             (TURNTABLE_STATIC, false, 24),
-            (LEVEL, false, 55),
-            (LEVEL_PROPS, false, 61),
+            (LEVEL, false, 67),
+            (LEVEL_PROPS, false, 66),
             (SPAWNS, false, 3),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
@@ -645,7 +667,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 61 + 3 + 1 + 22 + 1 + 5 + 1 + 1);
+        assert_eq!(every.len(), 33 + 24 + 67 + 66 + 3 + 1 + 22 + 1 + 5 + 1 + 1);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()
@@ -671,7 +693,9 @@ mod tests {
     /// keys (a body's and what it carries) carry the turntable's fog and
     /// nothing else, the level's its fog (but the sky's, which own it off
     /// and their point lights with it) and its three point lights' slots
-    /// (AH.65), the hero's in the level too.
+    /// (AH.65), the hero's in the level too; the level's shadow (AG.23)
+    /// only on the colour keys of the level, its props and its spawns, never
+    /// on a mask, a hero's, a creature's or a particle's.
     #[test]
     fn each_table_is_its_scenes() {
         let cards = turntable_keys();
@@ -690,9 +714,19 @@ mod tests {
         // particles own both off (AH.87).
         let mut sky = 0;
         let particles = keys(PARTICLES, false);
+        let receiving: HashSet<WarmKey> = keys(LEVEL, false)
+            .into_iter()
+            .chain(keys(LEVEL_PROPS, false))
+            .chain(keys(SPAWNS, false))
+            .collect();
+        let mut shadowed = 0;
         for k in level_keys() {
             let s = k.material.shader.switches();
-            assert!(!s.shadows && matches!(s.point_lights, 0 | 3), "{k:?}");
+            assert!(matches!(s.point_lights, 0 | 3), "{k:?}");
+            if s.shadows {
+                assert!(receiving.contains(&k), "only a level part receives: {k:?}");
+                shadowed += 1;
+            }
             if !s.fog {
                 assert_eq!(
                     s.point_lights, 0,
@@ -704,6 +738,7 @@ mod tests {
             }
         }
         assert_eq!(sky, 7);
+        assert!(shadowed > 0, "the level's ground receives the shadow");
         for k in particles {
             let s = k.material.shader.switches();
             assert!(!s.fog && s.point_lights == 0 && s.vertex_colour, "{k:?}");
@@ -720,10 +755,8 @@ mod tests {
         for key in turntable_keys().into_iter().chain(level_keys()) {
             let ir = material_for(&key);
             for scene in &scenes {
-                let m = CharacterMaterial::from_ir(&ir, scene, ShadowLookup::NONE, |_| {
-                    Handle::default()
-                })
-                .unwrap_or_else(|e| panic!("{key:?}: {e}"));
+                let m = CharacterMaterial::from_ir(&ir, scene, |_| Handle::default())
+                    .unwrap_or_else(|e| panic!("{key:?}: {e}"));
                 let m = match key.material.pass {
                     Pass::LevelGlow => m.level_glow().expect("its level glow draws"),
                     _ => m,
