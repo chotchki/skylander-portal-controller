@@ -1585,9 +1585,10 @@ fn alert_kind(snap: &Value) -> &Value {
 /// start; while the level shows the TV reports no cards and the small join
 /// code stands in its corner. Mid-level: Bob's Eruptor beside Alice's holds
 /// the level under the too-many alert, Alice's unmoved with the stick
-/// pushed; Alice's off, Bob's comes in where she stood and walks on;
-/// Bob's off, the TV asks for a Skylander, the level held; Alice's placed
-/// again, she comes in where he stood and the level carries on.
+/// pushed; Alice's off, Bob's arrival (AG.72: its card within 1.5 s, the
+/// level held), then he comes in where she stood and walks on; Bob's off,
+/// the TV asks for a Skylander, the level held; Alice's placed again, her
+/// arrival, then she comes in where he stood and the level carries on.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn the_portal_holds_the_level_and_a_hero_comes_back_in() {
@@ -1710,7 +1711,16 @@ async fn the_portal_holds_the_level_and_a_hero_comes_back_in() {
         .await
         .unwrap();
     clear(&server, alice_sid, 2).await;
-    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+    // His arrival first (AG.72): its card within 1.5 s, the level held.
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_millis(1500), |s| {
+        s["arrival"]["showing"]["slot"] == 5
+    })
+    .await
+    .expect("Bob's Eruptor's arrival");
+    assert_eq!(snap["mode"], "held");
+    assert_eq!(snap["arrival"]["showing"]["kind"], "hero");
+    assert_eq!(snap["arrival"]["showing"]["full_screen"], true);
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(8), |s| {
         s["mode"] == "level" && s["hero"]["slot"] == 5 && s["hero"]["position"].is_array()
     })
     .await
@@ -1751,7 +1761,13 @@ async fn the_portal_holds_the_level_and_a_hero_comes_back_in() {
 
     // Alice's again: in where he stood, the level carrying on.
     load(&server, alice_sid, 2, &eruptor).await;
-    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(5), |s| {
+    // Her arrival first (AG.72), then her in.
+    wait_for_tv(&server.url, Duration::from_millis(1500), |s| {
+        s["arrival"]["showing"]["slot"] == 2
+    })
+    .await
+    .expect("her arrival");
+    let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(8), |s| {
         s["mode"] == "level" && s["hero"]["position"].is_array()
     })
     .await
