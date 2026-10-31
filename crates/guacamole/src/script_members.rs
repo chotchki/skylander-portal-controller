@@ -3494,6 +3494,26 @@ mod tests {
             (a.tilt - 30.0).abs() < 1e-3 && a.facing.abs() < 1e-3 && (a.roll - 90.0).abs() < 1e-3,
             "{a:?}"
         );
+        // Tilted 30° nose up and not rolled, a relative facing of 90 turns
+        // it about its own up, which leans back: its nose comes level along
+        // x and its up keeps leaning back, toward -z, where adding to the
+        // facing would have left it pointing 30° up.
+        let mut tilted = ball(Vec3::ZERO, 100.0);
+        tilted.angles = Angles {
+            tilt: 30.0,
+            ..Angles::default()
+        };
+        w.actors.insert(BALL, tilted);
+        w.set_member(&facing, Member::RelativeFacing, Value::Float(90.0), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap().angles;
+        let q = guac_motion::solid::euler([a.tilt, a.facing, a.roll]);
+        let (nose, up) = (q * Vec3::Z, q * Vec3::Y);
+        assert!((nose - Vec3::X).length() < 1e-4, "{a:?}: nose {nose}");
+        assert!(
+            (up - Vec3::new(0.0, 0.866_025_4, -0.5)).length() < 1e-4,
+            "{a:?}: up {up}"
+        );
     }
 
     #[test]
@@ -4955,6 +4975,21 @@ mod fight_tests {
         }
         // Straight down the fall line, the slope's whole 17°.
         assert!((w.actor(C1).unwrap().angles.tilt + 17.1).abs() < 0.1);
+        // A relative tilt or roll on it is set outright and reads back as
+        // set: AH.145's turn about its own axes is for an actor hung from
+        // nothing, and one on a ground stays as it was.
+        for (name, m, x) in [
+            ("relative tilt", Member::RelativeTilt, 12.5f32),
+            ("relative roll", Member::RelativeRoll, -7.0),
+        ] {
+            let at = Access {
+                member: MemberId::named("orientationmeasurement", name),
+                ..at
+            };
+            w.set_member(&at, m, Value::Float(x), &mut e).unwrap();
+            w.set_member(&at, m, Value::Float(x), &mut e).unwrap();
+            assert_eq!(w.get_member(&at, m, &mut e), Ok(Value::Float(x)), "{name}");
+        }
     }
 
     #[test]

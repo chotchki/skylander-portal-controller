@@ -7,7 +7,7 @@ What a hero's attacks break in a level, what a broken thing leaves and drops, th
 ## ADDED Requirements
 
 ### Requirement: Attacks break barrels, pots and gourds
-A barrel, pot or gourd SHALL break at the first hit of either of Eruptor's attacks, its solid going with it, and stay broken for the rest of the level, a character taken off the portal and put back included; its three pieces of debris SHALL fly off tumbling, each about an axis of its own a little faster every frame, and be gone 1.5 s later. No damage number SHALL show on it.
+A barrel, pot or gourd SHALL break at the first hit of either of Eruptor's attacks, its solid going with it, and stay broken for the rest of the level, a character taken off the portal and put back included; its three pieces of debris SHALL fly off tumbling, each about an axis fixed in it, 0.18-0.45° the first frame and that much more each frame after, and be gone 1.5 s later. No damage number SHALL show on it.
 
 #### Scenario: Debris tumbling
 - **WHEN** a barrel breaks

@@ -25,7 +25,7 @@ At the original's medium difficulty a chapter 1 Chompy SHALL have 1 health, and 
 - **THEN** it's beaten and leaves 4 experience and no coin
 
 ### Requirement: A Chompy closes in
-An alerted Chompy SHALL wait a time drawn evenly from 0 up to 0.5 s, play its notice (0.75 s) turning to the hero, then close in at up to 20 ft/s (6.1 m/s), turning at up to 720° a second (12° a frame), until about 15 ft (4.5 m) separates their middles, its body within 10 ft (3 m) of his. One whose way runs into another creature's body SHALL stand against it rather than walk on the spot, and one whose way only grazes it SHALL slide round it.
+An alerted Chompy SHALL wait a time drawn evenly from 0 up to 0.5 s, play its notice (0.75 s) turning to the hero, then close in at up to 20 ft/s (6.1 m/s), turning at up to 720° a second (12° a frame), until about 15 ft (4.5 m) separates their middles, its body within 10 ft (3 m) of his. One running square into another creature's body SHALL stop against it (6 m/s to still as they meet, 1.73 m between middles), not walk on the spot; one only grazing it SHALL slide round at its speed.
 
 #### Scenario: Alerted across the pit
 - **WHEN** a Chompy 30 ft from Eruptor is alerted

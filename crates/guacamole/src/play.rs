@@ -5153,6 +5153,19 @@ mod tests {
             Some(now),
             "the level-up's arrows from the frame it shows"
         );
+        // Held until the last arrow's faded out (1.95 s on), then over.
+        let rose = now;
+        loop {
+            app.update();
+            let now = app.world().resource::<Time<Real>>().elapsed();
+            let level_up = app.world().resource::<crate::hud::Hud>().level_up;
+            if now - rose < crate::hud::arrows_over() {
+                assert_eq!(level_up, Some(rose), "{:?} on", now - rose);
+            } else {
+                assert_eq!(level_up, None, "over {:?} on", now - rose);
+                break;
+            }
+        }
         // At the cap: MAX, and a point past it held there.
         table.publish(Progression {
             level_xp: vec![0, 1_000],

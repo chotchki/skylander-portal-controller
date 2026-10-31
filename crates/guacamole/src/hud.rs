@@ -620,8 +620,11 @@ fn find_arrow_image(
 /// each drawn from [`ArrowImage`] in the arrows' area over the plate,
 /// rising and fading as [`level_up_arrows`] has it; none with no image (no
 /// level loaded, or a part without the emitter) or no HUD drawn. They rise
-/// with reduced motion too: the game's own flourish, as its particles are,
-/// not the TV's ambient motion.
+/// under [`ReducedMotion`] too: that's the dev shots' switch
+/// (`GUAC_SHOT_DIR`, not a user setting), which holds the TV's ambient
+/// motion and entrances so a screen's shot repeats; these are the game's
+/// level-up, as its particles are, and their rise is what a level-up's
+/// shots look at. The bites' numbers (AH.26) do hold under it.
 fn draw_arrows(
     mut commands: Commands,
     hud: Res<Hud>,

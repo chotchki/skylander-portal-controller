@@ -3141,7 +3141,11 @@ fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
 /// a Chompy critical exactly when its roll is under his chance of 6
 /// (37-83 of 1,000), every one at a chance of 100 (12 each); a Chompy's
 /// bite on him turned away exactly when its roll is under his armour's
-/// half, 3 (14-46), and at armour 200 landing only on a roll of 100 (1-20).
+/// half, 3 (14-46), and at armour 200 landing only on a roll of 100 (1-20);
+/// with his invulnerable flag on (an eruption's out, AH.10's `erupt_bit`)
+/// none of 100 takes anything, and off each takes its 11, at armour 0 (the
+/// eruption test's out window, which a fight's draws needn't land a bite
+/// in: AH.232's don't).
 /// The calls run back to back, no step between, so nothing the fight does
 /// meanwhile (a Chompy walking off the pit's edge to its death) moves the
 /// numbers.
@@ -3262,6 +3266,15 @@ fn the_hurt_chains_rolls_come_out_as_the_originals() {
         } else {
             assert!((980..=999).contains(&away), "{away}");
         }
+    }
+    assert!(run.vm.set_field(his_info, "armor", Value::Int(0)));
+    for (flag, want) in [(1, 0.0), (0, 11.0)] {
+        assert!(run.vm.set_field(his_info, "invulnerable", Value::Int(flag)));
+        for _ in 0..100 {
+            let (lost, _) = hurt(&mut run, &bite, his_info);
+            assert_eq!(lost, want, "invulnerable {flag}");
+        }
+        println!("invulnerable {flag}: each bite took {want}");
     }
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
