@@ -39,6 +39,7 @@ mod report;
 pub mod root;
 pub mod roster;
 pub mod scripts;
+pub mod sounds;
 pub mod stages;
 pub mod transcode;
 
@@ -67,9 +68,9 @@ pub const LAYOUT_VERSION: u32 = 4;
 /// The extract-wide parts this build reads (the manifest's `parts`), each
 /// recorded once its files are in: AE.31's upright portraits, AH.2's
 /// progression, AH.22's palettes, script entries and spawn models, AH.50's
-/// attach nodes, AH.87's emitters. A start is current only once every one
+/// attach nodes, AH.87's emitters, AR.5's sounds. A start is current only once every one
 /// is, so an extract made before one resumes for it alone.
-pub const PARTS: [&str; 7] = [
+pub const PARTS: [&str; 8] = [
     roster::PORTRAITS,
     progression::PART,
     models::PALETTES,
@@ -77,4 +78,5 @@ pub const PARTS: [&str; 7] = [
     scripts::SPAWNS,
     models::NODES,
     particles::PART,
+    sounds::PART,
 ];

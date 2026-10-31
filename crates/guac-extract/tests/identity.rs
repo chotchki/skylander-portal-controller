@@ -270,6 +270,57 @@ fn a_manifest_from_another_ir_version_or_layout_is_stale() {
     assert_eq!(again.state, DirState::Rebuilt(Stale::Unusable));
 }
 
+/// AR.5: a batch of outputs lands as single writes do, recorded on disk by
+/// the batch's one save, a path written again replacing its record.
+#[test]
+fn a_batch_of_outputs_is_written_and_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path(), "01.00");
+    let table = table_for(&dump, "01.00");
+    let root = root_in(tmp.path());
+    let mut opened = open(&dump, &root, &table, &no_progress).unwrap();
+    opened.dir.write_outputs(&[]).unwrap();
+    opened
+        .dir
+        .write_outputs(&[
+            ("audio/sounds/a.mp3".to_owned(), &b"aaaa"[..]),
+            ("audio/sounds/b.mp3".to_owned(), &b"bb"[..]),
+        ])
+        .unwrap();
+    opened
+        .dir
+        .write_outputs(&[("audio/sounds/b.mp3".to_owned(), &b"bbbbbbb"[..])])
+        .unwrap();
+    drop(opened);
+    let again = open(&dump, &root, &table, &no_progress).unwrap();
+    let outputs: Vec<_> = again
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .map(|o| (o.path.as_str(), o.size))
+        .collect();
+    assert_eq!(
+        outputs,
+        [("audio/sounds/a.mp3", 4), ("audio/sounds/b.mp3", 7)]
+    );
+    for f in ["audio/sounds/a.mp3", "audio/sounds/b.mp3"] {
+        assert!(again.dir.output_done(f).unwrap(), "{f}");
+    }
+    assert!(
+        !again.dir.path().join("audio/sounds/a.mp3.partial").exists(),
+        "no partial left"
+    );
+    // A path outside the extract is refused, as a single write's is.
+    let mut again = again;
+    assert!(
+        again
+            .dir
+            .write_outputs(&[("../x.mp3".to_owned(), &b"x"[..])])
+            .is_err()
+    );
+}
+
 #[test]
 fn outputs_go_through_partial_and_an_interrupted_run_resumes() {
     let tmp = tempfile::tempdir().unwrap();

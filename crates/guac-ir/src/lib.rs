@@ -25,6 +25,7 @@ pub mod rig;
 pub mod roster;
 pub mod scroll;
 pub mod shading;
+pub mod sound;
 pub mod spawn;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
@@ -62,7 +63,7 @@ use serde::{Deserialize, Serialize};
 /// ([`level::Placement::activation_range`]), which a v5 placements file
 /// can't say, so a v5 extract redoes itself. AH.50's attach nodes
 /// ([`nodes`]) are a new record in files of their own, so v6 holds, and so
-/// are AH.87's emitters ([`particle`]).
+/// are AH.87's emitters ([`particle`]) and AR.5's sounds ([`sound`]).
 pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]
