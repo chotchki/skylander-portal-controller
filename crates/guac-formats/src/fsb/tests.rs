@@ -160,6 +160,33 @@ fn a_data_offset_past_the_next_or_the_block_is_refused() {
 }
 
 #[test]
+fn offsets_out_of_order_are_refused() {
+    // Three samples, the second's offset moved before the first's, all
+    // inside the block.
+    let spec = BankSpec::new(vec![
+        SampleSpec::new(vec![1; 64], 8),
+        SampleSpec::new(vec![2; 64], 8),
+        SampleSpec::new(vec![3; 64], 8),
+    ]);
+    let w = write(&spec);
+    let mut b = w.bytes.clone();
+    let at = w.sample_headers[0];
+    let packed = u64::from_le_bytes(b[at..at + 8].try_into().unwrap());
+    // The first now starts at 96, past the second's 64.
+    let moved = (packed & !(0x07FF_FFFF << 7)) | (3u64 << 7);
+    b[at..at + 8].copy_from_slice(&moved.to_le_bytes());
+    let (field, offset, kind) = refusal(&b);
+    assert_eq!((field, offset), ("data_offset", at));
+    assert_eq!(
+        kind,
+        ErrorKind::OutOfRange {
+            value: 96,
+            limit: 64
+        }
+    );
+}
+
+#[test]
 fn a_chunk_longer_than_its_block_or_shorter_than_its_kind_is_refused() {
     let spec = BankSpec::new(vec![SampleSpec::new(vec![1; 8], 4).looped(1, 3)]);
     let w = write(&spec);
