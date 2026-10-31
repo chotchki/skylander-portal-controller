@@ -1415,52 +1415,44 @@ fn a_walk_turned_round_every_frame_holds_the_slope() {
 const EVENING: [f32; 3] = [-12.598_333, 54.720_524, -54.114_693];
 const EVENING_FACING: f32 = 52.166_492;
 
-/// AG.81: a hero put down where the last one stood (the TV's replacement,
-/// `Hero::stand` at the last pivot) stands there. On anchor A's slope and
-/// at chotchki's evening spot, his first 30 steps with his scripts driving
-/// and the stick centred are each on the ground, his pivot within 1 cm of
-/// where he was put (on anchor A's slope the first step lifts his upright
-/// shape 5.4 mm out of the ground the last one stood on leaned), riding
-/// 1.5 cm or less over the ground finder's point, his locomotion on the
-/// ground with no weight on his fall. A hero dropped there fails it (the
-/// original drops its replacement from 0.41 m up: AG.100's).
+/// AG.100 (rewritten from AG.81's `a_hero_put_down_where_the_last_stood_stands_there`):
+/// a replacement put up 0.40 m over where the last one stood (the TV's,
+/// `play::DROP`) drops onto it with his scripts driving and the stick
+/// centred, the mover update's fall his alone. On anchor A's slope and at
+/// chotchki's evening spot up the ledge route, he's off the ground until he
+/// lands 6-10 steps on (the original's 7-8 frames from 0.38-0.41 m, AG.81's
+/// recordings), then on it for the rest of his first 40 steps, riding 1.5
+/// cm or less over the ground finder's point, within 7 cm of his place on
+/// the gentle slope and 0.35 m on the ledge route's steeper one (the
+/// original's 4.9-6.8 cm and 0.29-0.30 m).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
-fn a_hero_put_down_where_the_last_stood_stands_there() {
+fn a_replacement_put_up_over_where_the_last_stood_drops_onto_it() {
     use guac_motion::hero::Hero;
-    use guac_motion::locomotion::{Frame, Gaits, Locomotion, Loops};
     use guac_motion::tuning::{Tuning, eruptor_solid};
+    /// `play::DROP`, the TV's.
+    const DROP: f32 = 0.40;
     let started = Instant::now();
-    for (label, at, facing) in [
-        ("anchor A", ANCHOR_A, ANCHOR_A_FACING),
-        ("evening", EVENING, EVENING_FACING),
+    for (label, at, facing, near) in [
+        ("anchor A", ANCHOR_A, ANCHOR_A_FACING, 0.07),
+        ("evening", EVENING, EVENING_FACING, 0.35),
     ] {
         let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
         let at = Vec3::from_array(at);
-        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, facing);
+        let up = at + Vec3::Y * DROP;
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, up, facing);
         hero.stand(&run.bench.world, &[HERO_BODY]);
-        assert_eq!(hero.pivot, at, "{label}: stood, not moved");
-        assert!(hero.footing.supported, "{label}: stood on the ground");
+        assert!(!hero.footing.supported, "{label}: up in the air");
         run.bench.heroes.insert(run.hero, hero);
         run.bench.pads = [pad([false; 4], Stick::CENTRED), Pad::default()];
-        // His locomotion as the TV builds it from his palette's loops.
-        let mut locomotion = Locomotion::new(
-            Gaits::ERUPTOR,
-            Loops {
-                idle: 4.0 / 3.0,
-                walk: Some(1.066_666_7),
-                run: Some(0.666_666_7),
-                fall: Some(0.8),
-            },
-        );
-        let (mut highest, mut farthest) = (0.0f32, 0.0f32);
-        for k in 0..30 {
+        let mut landed = None;
+        let mut highest = 0.0f32;
+        for k in 0..40 {
             run.step().unwrap_or_else(|h| panic!("{label}: {h}"));
             let h = run.hero();
-            locomotion.step(1.0 / 60.0, Frame::of(h));
             let height = h.footing.height.unwrap_or(f32::NAN);
             let moved = h.pivot.distance(at);
-            if k < 6 || std::env::var_os("AG81_STEPS").is_some() {
+            if landed.is_none() || k < 14 || std::env::var_os("AG100_STEPS").is_some() {
                 println!(
                     "{label} {k}: {} by {}, {height:.4} m up, supported {}, walk {}",
                     h.pivot,
@@ -1469,24 +1461,29 @@ fn a_hero_put_down_where_the_last_stood_stands_there() {
                     h.walk.velocity
                 );
             }
-            assert!(
-                h.footing.supported,
-                "{label}: step {k} off the ground at {}",
-                h.pivot
-            );
-            assert!(
-                height > 0.0 && height <= 0.015,
-                "{label}: step {k} {height} m over the ground"
-            );
-            assert!(moved < 0.01, "{label}: step {k} {moved} m from {at}");
-            assert_eq!(locomotion.air().name(), "ground", "{label}: step {k}");
-            assert_eq!(locomotion.weights()[3], 0.0, "{label}: step {k}: his fall");
-            highest = highest.max(height);
-            farthest = farthest.max(moved);
+            if landed.is_none() && h.footing.supported {
+                landed = Some(k + 1);
+            }
+            if landed.is_some() {
+                assert!(
+                    h.footing.supported,
+                    "{label}: step {k} off the ground again at {}",
+                    h.pivot
+                );
+                assert!(
+                    height > 0.0 && height <= 0.015,
+                    "{label}: step {k} {height} m over the ground"
+                );
+                assert!(moved < near, "{label}: step {k} {moved} m from {at}");
+                highest = highest.max(height);
+            }
         }
+        let landed = landed.unwrap_or_else(|| panic!("{label}: never landed"));
         println!(
-            "{label}: at most {highest:.4} m over the ground, {farthest:.4} m from where he was put"
+            "{label}: landed {landed} steps after he was put up, then at most {highest:.4} m over the ground, {:.4} m from his place at the end",
+            run.hero().pivot.distance(at)
         );
+        assert!((6..=10).contains(&landed), "{label}: {landed} steps");
     }
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
