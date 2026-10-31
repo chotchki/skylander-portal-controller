@@ -72,7 +72,8 @@ fn book() -> SoundBook {
             3,
             "snd_coin",
             DataRef::Here(DataHome::Level, 9),
-            0x4000_0008,
+            // Attenuates, its filter too.
+            0x4000_0048,
             0,
         )],
         data: vec![data(
@@ -126,8 +127,7 @@ fn book() -> SoundBook {
 #[test]
 fn a_sound_is_found_by_its_archives_stem_and_object() {
     let b = book();
-    let mut stems: Vec<&str> = b.stems().collect();
-    stems.sort();
+    let stems: Vec<&str> = b.stems().collect();
     assert_eq!(stems, ["global", "level_213_tutotial"]);
     assert_eq!(stem("character/009_Eruptor.bld"), "009_eruptor");
     assert_eq!(stem("global"), "global");
@@ -287,6 +287,10 @@ fn the_settings_read_as_the_disc_stores_them() {
     assert_eq!(vo.falloff, None);
     assert_eq!(vo.category_name(), "Effects/Enemy/Combat");
     assert_eq!(vo.actor_limit.behavior, LimitBehavior::Fail);
+    assert!(!vo.filter_attenuates);
+    let coin = b.lookup("global", 3).playable().unwrap().params;
+    assert!(coin.filter_attenuates && coin.falloff.is_some());
+    assert!(!coin.looping && !coin.three_d && !coin.allow_restart);
     assert_eq!(LIMIT_BEHAVIORS[3], "steal oldest");
 }
 

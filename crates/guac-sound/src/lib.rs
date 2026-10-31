@@ -72,7 +72,7 @@
 //!   (AR's non-goals).
 //! - **From controller**: carried; what it does isn't read.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use guac_ir::sound::{Audio, DataHome, DataRef, Sound, SoundData, Sounds};
 
@@ -354,7 +354,7 @@ impl<'a> Lookup<'a> {
 /// Every archive's sounds the caller loaded, by stem.
 #[derive(Debug, Clone, Default)]
 pub struct SoundBook {
-    files: HashMap<String, Sounds>,
+    files: BTreeMap<String, Sounds>,
     names: HashMap<String, Vec<SoundId>>,
 }
 
@@ -379,13 +379,12 @@ impl SoundBook {
                 }
             }
         }
-        for ids in book.names.values_mut() {
-            ids.sort();
-        }
+        // Each name's ids come out in stem and object order: the files in
+        // stem order, each one's sounds in object order.
         book
     }
 
-    /// The stems the book holds, in no set order.
+    /// The stems the book holds, in order.
     pub fn stems(&self) -> impl Iterator<Item = &str> {
         self.files.keys().map(String::as_str)
     }
