@@ -67,6 +67,11 @@ pub enum ExtractError {
     #[error("GUAC-E-TRANSCODE-FAILED: intro `{movie}`: {reason}")]
     TranscodeFailed { movie: String, reason: String },
 
+    /// A cinematic asked for by name that the dump holds no movie of, or a
+    /// movie that isn't a cinematic (openspec AS.9): nothing is converted.
+    #[error("GUAC-E-NO-SUCH-MOVIE: `{movie}` isn't a cinematic on this disc")]
+    NoSuchMovie { movie: String },
+
     #[error("GUAC-E-BAD-OUTPUT-PATH: `{path}` isn't a plain relative path inside the extract")]
     BadOutputPath { path: String },
 
@@ -135,6 +140,7 @@ impl ExtractError {
             Self::NoFfmpeg { .. } => "GUAC-E-NO-FFMPEG",
             Self::FfmpegUnusable { .. } => "GUAC-E-FFMPEG-UNUSABLE",
             Self::TranscodeFailed { .. } => "GUAC-E-TRANSCODE-FAILED",
+            Self::NoSuchMovie { .. } => "GUAC-E-NO-SUCH-MOVIE",
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
             Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
             Self::ProgressionUnreadable { .. } => "GUAC-E-PROGRESSION-UNREADABLE",
@@ -203,6 +209,9 @@ mod tests {
             ExtractError::TranscodeFailed {
                 movie: "m".into(),
                 reason: "x".into(),
+            },
+            ExtractError::NoSuchMovie {
+                movie: "eruptor".into(),
             },
             ExtractError::BadOutputPath { path: "..".into() },
             ExtractError::RosterUnreadable {

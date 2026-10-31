@@ -2037,6 +2037,49 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
   left two-player resume open): no intro for a figure already on the portal whoever placed it, RESUME
   sending only the resumer's own slots, or today's behavior written into the spec.
 
+### Levels and cinematics on demand (AS)
+
+AS ([`as-every-level`](../../openspec/changes/as-every-level/design.md)) took the extractor from one level to
+every level on the disc without a first run writing them:
+
+- A first run extracts `levels::FIRST_RUN` (chapter 1) alone, byte for byte as before, and only that list
+  decides whether an extract is current. Any other level is extracted when asked for by name
+  (`stages::extract_level`) through the same per-part reading and recording into `levels/<archive>/`, its
+  textures into the shared store, a name off the disc's list refused before anything is read
+  (`GUAC-E-NO-SUCH-LEVEL`). The list is the dump's own `level/*.bld` files as the dump scan records them
+  (`levels::on_disc`, each with its kind: 20 story levels, 4 hub stages, 18 PvP arenas, 45 challenge levels,
+  21 arena challenges, 9 mesh bundles, a voice pack, 19 ship parts, the title, the credits and 4 packs).
+  Measured with every part's bytes checked against an in-memory read: chapter 1 422 MB in 7.7 s, level 200
+  426 MB in 10.5 s, PvP arena 1 260 MB in 5.7 s, hub stage 1 343 MB in 6.4 s, each resumed in under 0.25 s
+  (load about 4).
+- Outputs aren't flushed one by one any more; the manifest's saves still are. A start re-hashes every kept
+  output against its record, so one a crash left short is written again, and only a torn manifest costs
+  the extract. Chapter 1's level stage went from 10.5 s to 7.7 s; the manifest's save per output is the
+  rest (AS.26).
+- 141 of the 143 levels read whole (3 did before): a draw under a transform is baked into its segment
+  (positions through the matrix, normals through its inverse transpose, tangents through its 3 x 3 part,
+  each at its own length, winding and handedness flipped under a mirror; a scene bakes whatever moves it,
+  a prop only a still transform, so a keyframed prop stays listed until AS.20 plays it); a level's
+  material may carry the water's bit 6 and a normal map without its hint; the atmosphere's definition is
+  the one script whose STARTUP adds zones, whatever it's called, a level with none (55 of them) setting
+  none up; two literals under an operator compute as the VM computes them. 203 (a switch in its
+  definition's STARTUP) and PvP arena 4 (one zone copying another's lights) wait on AS.23 and AS.22.
+- A cinematic (`fmv` and a number, 11 on Giants) converts the first time it's asked for
+  (`transcode::transcode_movie`) on the intros' target into `video/fmv/` and `audio/fmv/`, recorded beside
+  the intros. Its voice comes off its Bink header (`guac_formats::bink`): the ten with 13 tracks carry 12
+  mono voices whose ids are the 12 language packs' ids plus one, so English (6) is the track with id 7,
+  mixed over the stereo track with id 0 (presumably music and effects until chotchki listens, AS.10).
+  fmv11 converts in 2.6 s to 18.5 MB, its 35.47 s kept to within 0.02 s.
+
+What every other level's scripts need from the VM is measured by guac-script's `giants_levels`: each level
+linked with `bootstrap.bld`, `global.bld` and `init_setup.bld` and run strict on a host that keeps every
+registered member as a value cell and finds no target for any world op, each absent member filled in and
+the level run again until its ticks run clean. All 143 link; 19 gaps rank by the levels reaching them,
+`clonedsequence.clones` on 47 levels first (the level audio controllers), then the music controller's
+reverb members (29), `for each` over `undefined` (13) and `placement.script suspended` (11); the levels'
+own scripts name 121 members no table registers, the reach a host answering more would go to. Each is a
+box in AS for the VM lane (AS.27-AS.36).
+
 ## Renderer
 
 One renderer, a remaster, and the Enhanced line grows out of it. chotchki, 2026-10-18 (Decisions,
@@ -2572,6 +2615,12 @@ sits beside the ladder too: the TV's own screens on Bevy's UI stack (retained sc
 has merged, and later TV surfaces (the Home menu, AK's upgrade screen) build on it. It took the first
 letter past the ladder's ids instead of the next free one, so the rungs kept theirs (its proposal says
 why).
+
+AS ([`openspec/changes/as-every-level/`](../../openspec/changes/as-every-level/proposal.md)) sits beside
+it too: every level on the disc through the extractor on demand, chapter 1 alone on a first run, the
+cinematics converted when asked for, and the measured list of what every level's scripts need from the
+VM (The extractor, Levels and cinematics on demand). It delivers no milestone itself; AI, AJ, AM and AN
+start from it, and its wiring boxes put a chosen level on the TV.
 
 ## Risks
 
