@@ -72,6 +72,8 @@
 //!   (AR's non-goals).
 //! - **From controller**: carried; what it does isn't read.
 
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeMap, HashMap};
 
 use guac_ir::sound::{Audio, DataHome, DataRef, Sound, SoundData, Sounds};
