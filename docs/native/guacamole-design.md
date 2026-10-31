@@ -859,6 +859,12 @@ images his captured frames bind is exactly what RSX was given, level for level (
   unchanged, his portrait among them), so KTX2 keeps the stored order and the disc's UVs read what the
   original does. Only an image file reverses the rows: the portraits' PNGs, whose stored order put every
   figure on the phone upside down until AE.31.
+- An image of no whole 4x4 blocks is stored decoded (AH.244): RSX takes a DXT image at any size and a
+  GPU doesn't (wgpu refused the level-up's arrow, 109 x 128, on AH.87's first TV run), so the extract
+  writes such an image as an RGBA8 KTX2 (R8G8B8A8_UNORM, every level through `Texture::rgba8`) at its own
+  size, not padded to whole blocks and squashed. 2,306 of the disc's 58,485 `igImage2` are such, nearly all
+  UI (pause sprites, portraits on the HUD's sheets, upgrade art at 512 x 118); of the 1,048 textures an
+  extract holds, the arrow is the only one.
 - Confirmed in the June savestate's RSX state: 1,092 resident `igImage2` are byte-identical to their file
   blocks and equal level for level after our untile, and 22 texture-unit states over 18 `_tile` DXT images
   (seen across the ring's draws, on units 0 and 1 only) show the linear bit CLEAR (swizzled) with kind,

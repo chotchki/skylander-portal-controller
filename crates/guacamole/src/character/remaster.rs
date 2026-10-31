@@ -447,6 +447,7 @@ mod tests {
                 b
             }
             Format::R8Unorm => vec![200; 16],
+            Format::Rgba8Unorm => vec![200; 64],
         };
         Texture {
             format,
@@ -486,6 +487,12 @@ mod tests {
                 (
                     Format::Bc3Unorm,
                     [TextureFormat::Bc3RgbaUnorm, TextureFormat::Bc3RgbaUnormSrgb],
+                ),
+                // An image the extract stores decoded (AH.244: the level-up's
+                // arrow), through the same views.
+                (
+                    Format::Rgba8Unorm,
+                    [TextureFormat::Rgba8Unorm, TextureFormat::Rgba8UnormSrgb],
                 ),
             ] {
                 let image = texture(

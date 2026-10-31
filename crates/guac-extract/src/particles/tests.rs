@@ -144,18 +144,53 @@ fn an_emitter_that_does_not_read_is_listed_by_name_and_the_rest_land() {
     );
 }
 
-/// A block-compressed image a size of no whole blocks no GPU takes: its
-/// generator lands untextured, so it draws nothing, and nothing is stored.
+/// AH.244: a block-compressed image a size of no whole blocks, which no
+/// GPU takes, is stored decoded: its generator textured, its one KTX2 RGBA8
+/// at the image's own size, every level the texels its blocks decode to.
 #[test]
-fn a_texture_of_no_whole_blocks_leaves_its_generator_untextured() {
+fn a_texture_of_no_whole_blocks_is_stored_decoded() {
     let bytes = odd_image();
     let igz = Igz::parse(&bytes).unwrap();
     let r = emitters(&igz, "permanent/global.bld", identity());
     assert!(r.ir.refused.is_empty(), "{:?}", r.ir.refused);
     let g = &r.ir.emitters[0].generators;
     assert_eq!(g.len(), 1);
-    assert!(g[0].texture.is_none());
-    assert!(r.textures.is_empty());
+    let t = g[0].texture.as_ref().expect("textured");
+    assert_eq!(t.image, "levelup_arrow.png");
+    assert_eq!(r.textures.len(), 1);
+    let (path, ktx2) = &r.textures[0];
+    assert_eq!(*path, t.texture);
+    // The image as the disc holds it: BC blocks of no whole 4 x 4.
+    let (_, read) = guac_formats::particle::emitters(&igz).next().unwrap();
+    let image = read.unwrap().generators[0].texture().unwrap().image;
+    let blocks = guac_formats::texture::Texture::read(&igz, image).unwrap();
+    assert!(
+        !blocks.whole_blocks(),
+        "{} x {}",
+        blocks.width,
+        blocks.height
+    );
+    // KTX2's header: VK_FORMAT_R8G8B8A8_UNORM at the image's size and levels.
+    let word = |at: usize| u32::from_le_bytes(ktx2[at..at + 4].try_into().unwrap());
+    assert_eq!(
+        &ktx2[..12],
+        &[
+            0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
+        ]
+    );
+    assert_eq!(word(12), 37);
+    assert_eq!((word(20), word(24)), (blocks.width, blocks.height));
+    assert_eq!(word(40) as usize, blocks.levels.len());
+    for l in 0..blocks.levels.len() {
+        let entry = 80 + 24 * l;
+        let at = u64::from_le_bytes(ktx2[entry..entry + 8].try_into().unwrap()) as usize;
+        let len = u64::from_le_bytes(ktx2[entry + 8..entry + 16].try_into().unwrap()) as usize;
+        assert_eq!(
+            &ktx2[at..at + len],
+            &blocks.rgba8(l).unwrap()[..],
+            "level {l}"
+        );
+    }
 }
 
 #[test]

@@ -22,6 +22,16 @@ fn dfd_model(format: Format) -> (u8, &'static [Sample]) {
         Format::Bc3Unorm => (130, &[(0, 64, 15, 0, u32::MAX), (64, 64, 0, 0, u32::MAX)]),
         // RGBSDA, red only.
         Format::R8Unorm => (1, &[(0, 8, 0, 0, 255)]),
+        // RGBSDA, red, green, blue and alpha (channel 15) a byte each.
+        Format::Rgba8Unorm => (
+            1,
+            &[
+                (0, 8, 0, 0, 255),
+                (8, 8, 1, 0, 255),
+                (16, 8, 2, 0, 255),
+                (24, 8, 15, 0, 255),
+            ],
+        ),
     }
 }
 

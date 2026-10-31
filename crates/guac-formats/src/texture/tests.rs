@@ -321,6 +321,7 @@ fn ktx2_format(f: Format) -> ktx2::Format {
         Format::Bc1RgbaUnorm => ktx2::Format::BC1_RGBA_UNORM_BLOCK,
         Format::Bc3Unorm => ktx2::Format::BC3_UNORM_BLOCK,
         Format::R8Unorm => ktx2::Format::R8_UNORM,
+        Format::Rgba8Unorm => ktx2::Format::R8G8B8A8_UNORM,
     }
 }
 
@@ -395,7 +396,12 @@ fn ktx2_header_and_level_index_validate() {
 
 #[test]
 fn ktx2_dfd_bytes_match_the_spec_generator() {
-    for f in [Format::Bc1RgbaUnorm, Format::Bc3Unorm, Format::R8Unorm] {
+    for f in [
+        Format::Bc1RgbaUnorm,
+        Format::Bc3Unorm,
+        Format::R8Unorm,
+        Format::Rgba8Unorm,
+    ] {
         let ours = ktx::dfd(f);
         let (want, _) = ktx2::dfd::Basic::from_format(ktx2_format(f)).unwrap();
         let want = want.to_vec();
@@ -631,4 +637,92 @@ fn builder_images_decode_level_zero() {
             spec.format
         );
     }
+}
+
+/// AH.244: a block-compressed image of no whole blocks (9 x 6 in BC1, and
+/// in BC3) decodes to RGBA8 at its own size, every level, each the texels
+/// [`Texture::rgba8`] reads off the blocks, and its KTX2 is the RGBA8 one
+/// the format's spec gives, its levels those texels; one of whole blocks is
+/// whole, an RGBA8 one decodes as itself.
+#[test]
+fn an_image_of_no_whole_blocks_decodes_to_the_same_texels() {
+    let level = |format: Format, w: u32, h: u32, seed: u8| -> Vec<u8> {
+        let n = format.level_size(w, h) as usize;
+        (0..n)
+            .map(|i| (i as u8).wrapping_mul(37).wrapping_add(seed))
+            .collect()
+    };
+    for format in [Format::Bc1RgbaUnorm, Format::Bc3Unorm] {
+        let odd = Texture {
+            format,
+            width: 9,
+            height: 6,
+            levels: vec![
+                level(format, 9, 6, 3),
+                level(format, 4, 3, 11),
+                level(format, 2, 1, 19),
+            ],
+        };
+        assert!(!odd.whole_blocks());
+        let d = odd.decoded().unwrap();
+        assert_eq!(
+            (d.format, d.width, d.height, d.levels.len()),
+            (Format::Rgba8Unorm, 9, 6, 3)
+        );
+        for (l, (w, h)) in [(9, 6), (4, 3), (2, 1)].into_iter().enumerate() {
+            assert_eq!(d.levels[l], odd.rgba8(l).unwrap(), "{format:?} level {l}");
+            assert_eq!(d.levels[l].len(), w * h * 4);
+            // Decoded again, the same texels.
+            assert_eq!(d.rgba8(l).unwrap(), d.levels[l]);
+        }
+        // Not every texel the same: the blocks reached the decode.
+        assert!(d.levels[0].chunks(4).any(|t| t != &d.levels[0][..4]));
+        let file = d.to_ktx2();
+        let r = ktx2::Reader::new(&file[..]).unwrap();
+        let h = r.header();
+        assert_eq!(h.format, Some(ktx2::Format::R8G8B8A8_UNORM));
+        assert_eq!(h.format.unwrap().value(), 37);
+        assert_eq!((h.type_size, h.pixel_width, h.pixel_height), (1, 9, 6));
+        assert_eq!(h.level_count, 3);
+        let levels: Vec<&[u8]> = r.levels().map(|l| l.data).collect();
+        assert_eq!(
+            levels,
+            d.levels.iter().map(Vec::as_slice).collect::<Vec<_>>()
+        );
+        let (want, _) = ktx2::dfd::Basic::from_format(ktx2::Format::R8G8B8A8_UNORM).unwrap();
+        assert_eq!(r.basic_dfd(), Some(&want));
+    }
+    let whole = Texture {
+        format: Format::Bc1RgbaUnorm,
+        width: 8,
+        height: 4,
+        levels: vec![level(Format::Bc1RgbaUnorm, 8, 4, 0)],
+    };
+    assert!(whole.whole_blocks());
+    for (w, h) in [(9, 8), (8, 6)] {
+        let t = Texture {
+            width: w,
+            height: h,
+            ..whole.clone()
+        };
+        assert!(!t.whole_blocks(), "{w} x {h}");
+    }
+    // An RGBA8 level decodes as itself, bytes past it ignored as past a
+    // block level.
+    let long = texture(
+        Format::Rgba8Unorm,
+        2,
+        1,
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9],
+    );
+    assert_eq!(long.rgba8(0).unwrap(), [1, 2, 3, 4, 5, 6, 7, 8]);
+    // L8 and RGBA8 are whole at any size.
+    assert!(texture(Format::R8Unorm, 9, 6, vec![0; 54]).whole_blocks());
+    assert!(texture(Format::Rgba8Unorm, 9, 6, vec![0; 216]).whole_blocks());
+    // A level short of its texels is refused, as rgba8 refuses one.
+    let short = Texture {
+        levels: vec![level(Format::Bc1RgbaUnorm, 9, 6, 0)[..10].to_vec()],
+        ..texture(Format::Bc1RgbaUnorm, 9, 6, Vec::new())
+    };
+    assert!(short.decoded().is_err());
 }

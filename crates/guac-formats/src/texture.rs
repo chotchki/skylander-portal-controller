@@ -40,6 +40,9 @@ pub enum Format {
     Bc3Unorm,
     /// L8, written with a `rrr1` swizzle.
     R8Unorm,
+    /// Straight RGBA, 8 bits a channel: an image the extract stores decoded
+    /// ([`Texture::decoded`]), never one the disc holds.
+    Rgba8Unorm,
 }
 
 impl Format {
@@ -49,6 +52,7 @@ impl Format {
             Self::Bc1RgbaUnorm => 133,
             Self::Bc3Unorm => 137,
             Self::R8Unorm => 9,
+            Self::Rgba8Unorm => 37,
         }
     }
 
@@ -56,7 +60,7 @@ impl Format {
     pub const fn block_edge(self) -> u32 {
         match self {
             Self::Bc1RgbaUnorm | Self::Bc3Unorm => 4,
-            Self::R8Unorm => 1,
+            Self::R8Unorm | Self::Rgba8Unorm => 1,
         }
     }
 
@@ -65,6 +69,7 @@ impl Format {
             Self::Bc1RgbaUnorm => 8,
             Self::Bc3Unorm => 16,
             Self::R8Unorm => 1,
+            Self::Rgba8Unorm => 4,
         }
     }
 
@@ -350,6 +355,31 @@ impl Texture {
                 available: data.len(),
             };
             FormatError::new(FORMAT, "_data", 0, kind)
+        })
+    }
+
+    /// Whether level 0 is a whole number of the format's blocks along both
+    /// sides: what a GPU asks of a block-compressed texture (wgpu refuses
+    /// one that isn't, AH.87's first TV run on the level-up's arrow).
+    pub fn whole_blocks(&self) -> bool {
+        let edge = self.format.block_edge();
+        self.width.is_multiple_of(edge) && self.height.is_multiple_of(edge)
+    }
+
+    /// The image with every level decoded to straight RGBA8 ([`Self::rgba8`],
+    /// rows in the stored order), the same size and levels: what a GPU takes
+    /// where it won't take the image's blocks (openspec AH.244: the
+    /// level-up's arrow, 109 x 128 in DXT blocks, drawn at its own size
+    /// rather than padded to 112 and squashed).
+    pub fn decoded(&self) -> Result<Texture, FormatError> {
+        let levels = (0..self.levels.len())
+            .map(|l| self.rgba8(l))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Texture {
+            format: Format::Rgba8Unorm,
+            width: self.width,
+            height: self.height,
+            levels,
         })
     }
 

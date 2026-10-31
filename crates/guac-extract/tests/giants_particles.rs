@@ -2,9 +2,10 @@
 //! alone into a throwaway identity dir, then kept on a second run, then in
 //! postcard agreeing with the RON byte for byte. Checked: every emitter of
 //! `global.bld` (71) and Eruptor's archive (26) reads, every generator
-//! textured with its texture in the store but the level-up arrow's (no
-//! whole blocks across, so none a GPU takes), and the emitters his attacks
-//! spawn hold the generators the disc gives them. Printed: the stage's time
+//! textured with its texture in the store, the level-up arrow's (109 x 128,
+//! no whole blocks across, which no GPU takes in DXT) stored decoded to
+//! RGBA8 at its own size (AH.244), and the emitters his attacks spawn hold
+//! the generators the disc gives them. Printed: the stage's time
 //! and size with the load average. Ignored by default: it reads
 //! `GUAC_GIANTS_DUMP` and writes under `GUAC_EXTRACT_DIR`, from the
 //! environment or the workspace's `.env.dev`:
@@ -128,9 +129,27 @@ fn every_emitter_the_spawn_archives_place_extracts_and_resumes() {
     );
     assert_eq!(generators, 168 + 84);
     assert_eq!(unread.len(), 2);
-    // The level-up's arrow (109 x 128, no whole 4 x 4 blocks across) is
-    // the one no GPU takes: drawn untextured, which draws nothing.
-    assert_eq!(untextured, ["UI_LevelUp_ArrowParticle"]);
+    // Every generator textured (AH.244): the level-up's arrow, 109 x 128 in
+    // DXT blocks (no whole 4 x 4 across), which no GPU takes, is stored
+    // decoded, an RGBA8 KTX2 at its own size.
+    assert!(untextured.is_empty(), "{untextured:?}");
+    let arrow = global
+        .emitters
+        .iter()
+        .find(|e| e.name == "UI_LevelUp_ArrowParticle")
+        .expect("the level-up's arrow");
+    let t = arrow.generators[0].texture.as_ref().expect("textured");
+    let ktx2 = std::fs::read(dir.join(&t.texture)).unwrap();
+    let word = |at: usize| u32::from_le_bytes(ktx2[at..at + 4].try_into().unwrap());
+    let (format, width, height, levels) = (word(12), word(20), word(24), word(40));
+    println!(
+        "  the arrow: {} ({width} x {height}, {levels} levels, VkFormat {format})",
+        t.texture
+    );
+    // One level: a linear image, as every linear one on the disc is.
+    assert_eq!((format, width, height, levels), (37, 109, 128, 1));
+    let level0 = u64::from_le_bytes(ktx2[88..96].try_into().unwrap());
+    assert_eq!(level0, 109 * 128 * 4, "RGBA8, 4 bytes a texel");
 
     // What his attacks spawn: the ball's trail and burst, the throw's flash,
     // the eruption's.
