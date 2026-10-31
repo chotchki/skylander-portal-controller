@@ -129,7 +129,8 @@ pub fn sample() -> Sample {
     b.import_raw(
         at(sounds[5], 0x4C),
         PACK_ID,
-        crate::fnv1a32(super::PACK_NAMESPACE.as_bytes()),
+        // The namespace as the disc writes it, not the reader's constant.
+        crate::fnv1a32(b"level.bld"),
     );
     Sample {
         bytes: b.build(),
