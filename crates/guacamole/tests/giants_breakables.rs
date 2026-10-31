@@ -412,12 +412,12 @@ fn check_debris(w: &Watch, ah9: &[Replay]) {
 
 /// A piece of debris turns as AH.9's 150 pieces do (openspec AH.145; their
 /// own turns off `debris_stats.py`): from 45° tilt and roll, each step about
-/// one axis fixed in its own frame (AH.9's strays at most 0.49°), that axis
-/// its roll's with a share of its facing's (AH.9's 0.94-1.00 and 0-0.34)
-/// and none of its tilt's, the first step's turn 0.185-0.449° and each step
-/// turning that much more than the last (AH.9's steps 0.187-0.471°, at most
-/// 0.107° apart on one piece), its slide of a relative roll and facing read
-/// from 0 each frame. Within 0.05° of AH.9's ranges, 1° on the axis.
+/// one axis fixed in its own frame (AH.9's strays at most 0.49°), its slides
+/// of a relative facing and roll read from 0 each frame: the first step's
+/// turn about its own up 0-0.088° and about its own forward 0.184-0.444°
+/// (none about its side), and each step turning about as much more than the
+/// last (AH.9's at most 0.107° apart on one piece, their frames' lengths
+/// varying). Within 0.02° of AH.9's ranges, 1° on the axis.
 fn check_turns(d: &Debris) {
     let q = |a: &[f32; 3]| guac_motion::solid::euler(*a);
     let turns: Vec<(f32, Vec3)> = d
@@ -431,34 +431,34 @@ fn check_turns(d: &Debris) {
         .collect();
     assert_eq!(turns.len(), 13, "{d:?}");
     let (first, axis) = turns[0];
+    let axis = if axis.z < 0.0 { -axis } else { axis };
     let steps: Vec<f32> = turns.windows(2).map(|w| w[1].0 - w[0].0).collect();
     let stray = turns
         .iter()
-        .map(|t| t.1.dot(axis).clamp(-1.0, 1.0).acos().to_degrees())
+        .map(|t| t.1.dot(axis).abs().min(1.0).acos().to_degrees())
         .fold(0.0f32, f32::max);
     let (lo, hi) = steps
         .iter()
         .fold((f32::MAX, f32::MIN), |(l, h), s| (l.min(*s), h.max(*s)));
+    let (up, side, forward) = (first * axis.y, first * axis.x, first * axis.z);
     println!(
-        "    turns: first {first:.3}°, steps {lo:.3}-{hi:.3}°, axis ({:.3}, {:.3}, {:.3}), stray {stray:.3}°",
-        axis.x, axis.y, axis.z
+        "    turns: first {first:.3}° (up {up:.4}, forward {forward:.4}, side {side:.4}), steps {lo:.3}-{hi:.3}°, stray {stray:.3}°"
     );
-    let tol = 0.05;
+    let tol = 0.02;
     assert!(
-        (0.185 - tol..=0.449 + tol).contains(&first),
-        "first {first}"
+        (-tol..=0.088 + tol).contains(&up.abs()),
+        "about its up {up}"
     );
     assert!(
-        lo >= 0.187 - tol && hi <= 0.471 + tol && hi - lo <= 0.107 + tol,
-        "steps {steps:?}"
+        (0.184 - tol..=0.444 + tol).contains(&forward),
+        "about its forward {forward}"
+    );
+    assert!(side.abs() <= tol, "about its side {side}");
+    assert!(
+        steps.iter().all(|s| (s - first).abs() <= 0.107 + tol),
+        "a step more each frame: {steps:?} from {first}"
     );
     assert!(stray <= 1.0, "stray {stray}");
-    let axis = if axis.z < 0.0 { -axis } else { axis };
-    assert!(axis.x.abs() <= 0.02, "no tilt: {axis}");
-    assert!(
-        axis.z >= 0.94 - 0.02 && (-0.02..=0.342 + 0.02).contains(&axis.y.abs()),
-        "the roll's with a share of the facing's: {axis}"
-    );
     assert_eq!(d.turns[0], [45.0, 0.0, 45.0], "from 45° tilt and roll");
 }
 
