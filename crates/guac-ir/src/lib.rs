@@ -19,6 +19,7 @@ pub mod level;
 pub mod model;
 pub mod nodes;
 pub mod palette;
+pub mod particle;
 pub mod progression;
 pub mod rig;
 pub mod roster;
@@ -60,7 +61,8 @@ use serde::{Deserialize, Serialize};
 /// (AG.25) gives a level's placement its activation range
 /// ([`level::Placement::activation_range`]), which a v5 placements file
 /// can't say, so a v5 extract redoes itself. AH.50's attach nodes
-/// ([`nodes`]) are a new record in files of their own, so v6 holds.
+/// ([`nodes`]) are a new record in files of their own, so v6 holds, and so
+/// are AH.87's emitters ([`particle`]).
 pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]

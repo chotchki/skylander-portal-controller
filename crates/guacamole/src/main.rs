@@ -16,6 +16,7 @@ mod creatures;
 mod defeat;
 mod dev_entry;
 mod driver;
+mod emitters;
 mod extraction;
 mod hero;
 mod hero_scripts;
@@ -474,6 +475,8 @@ fn run_tv(
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,
         creatures::CreaturesPlugin,
+        // AH.87: the particles of what the scripts spawn.
+        emitters::EmittersPlugin,
     ));
     // AH.25's dev entry, in a dev build only.
     if let Some(entry) = dev_entry::plugin(cfg!(feature = "dev-tools"), entry_asks) {

@@ -130,6 +130,10 @@ pub struct TvSnapshot {
     /// A defeat (AH.26): the hero dying, the figures beaten in the level
     /// and Restart chapter as drawn; none with nothing to report.
     pub defeat: Option<DefeatShot>,
+    /// The particles of what the scripts spawn (openspec AH.87): systems
+    /// and particles alive, quads drawn, the emitters drawing; none without
+    /// them.
+    pub particles: Option<crate::emitters::ParticleReport>,
     /// The placements `POST /api/_test/tv/watch` named (openspec AH.28):
     /// each one's state, behaviour and place, decision 17's list and
     /// `Cutscene State`; none unless asked.
@@ -1247,7 +1251,11 @@ fn mirror_tv(
     alert: AlertShots,
     loot: LootShots,
     (creatures, entry, watch): (CreatureShots, Option<Res<DevEntry>>, WatchShots),
-    (hud, defeat): (HudShots, DefeatShots),
+    (hud, defeat, particles): (
+        HudShots,
+        DefeatShots,
+        Option<Res<crate::emitters::ParticleReport>>,
+    ),
     (warm, level, prepare): (Option<Res<Warm>>, Option<Res<Level>>, Option<Res<Prepare>>),
 ) {
     let Some(screen) = screen.shot() else {
@@ -1289,6 +1297,7 @@ fn mirror_tv(
         entry: entry.as_deref().filter(|e| e.shown()).map(DevEntry::shot),
         hud: hud.shot(),
         defeat: defeat.shot(),
+        particles: particles.map(|p| p.clone()),
         watch: watch.shot(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());

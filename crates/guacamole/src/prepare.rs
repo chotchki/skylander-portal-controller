@@ -431,7 +431,8 @@ mod tests {
         // the figures carry on static meshes; the level's without a card's
         // glow pass, static but for the heroes' (AH.65: his keys in the
         // level and his glow masks there) and the first fight's creatures'
-        // (AH.25), its glow masks in the level's glow pass.
+        // (AH.25), its glow masks in the level's glow pass, the particles'
+        // (AH.87) among them.
         let (on_cards, in_level) = entries.split_at(cards.len());
         assert!(on_cards.iter().all(|e| e.card) && in_level.iter().all(|e| !e.card));
         let shapes: Vec<MeshShape> = on_cards.iter().map(|e| e.key.mesh).collect();
@@ -450,7 +451,8 @@ mod tests {
         let glows = census::LEVEL_GLOW.len()
             + census::HEROES_GLOW.len()
             + census::HEROES_GLOW_STATIC.len()
-            + census::CREATURES_GLOW.len();
+            + census::CREATURES_GLOW.len()
+            + census::PARTICLES_GLOW.len();
         assert_eq!(
             in_level
                 .iter()

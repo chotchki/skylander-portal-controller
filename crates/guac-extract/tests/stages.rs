@@ -339,6 +339,10 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "scripts/"), ENTRIES);
     assert_eq!(recorded(&m, "spawns/"), 2);
     assert!(scripts::complete(&m));
+    // AH.87's: an archive's emitters each (the builders' place none).
+    assert_eq!(recorded(&m, "particles/"), 2);
+    assert_eq!(m.parts["particles"].len(), 2);
+    assert!(done.particles.read && done.particles.failed.is_none());
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
     assert!(!m.complete);
@@ -581,7 +585,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     }
     // So are AH.22's palettes, script entries and spawn models.
     assert!(m.parts.contains_key("palettes") && scripts::complete(&m));
-    for part in ["palettes", "scripts", "spawns", "nodes"] {
+    for part in ["palettes", "scripts", "spawns", "nodes", "particles"] {
         for f in &m.parts[part] {
             assert!(dir.join(f).is_file(), "{f}");
         }
@@ -625,6 +629,9 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     let sc = &done.scripts;
     assert_eq!((sc.parts_read, sc.parts_kept, sc.entries), (0, 2, 0));
     assert_eq!((sc.files.written, sc.files.kept), (0, ENTRIES + 3));
+    let pa = &done.particles;
+    assert!(pa.kept && !pa.read);
+    assert_eq!((pa.files.written, pa.files.kept), (0, 2));
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
 }

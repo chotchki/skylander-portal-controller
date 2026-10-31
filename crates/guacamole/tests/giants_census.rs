@@ -127,6 +127,8 @@ struct Chapter1 {
     keys: Vec<WarmKey>,
     props: Vec<WarmKey>,
     spawns: Vec<WarmKey>,
+    /// The particle part's generators' keys (AH.87).
+    particles: Vec<WarmKey>,
     /// The first fight's creatures' keys in the hero's scene (AH.25).
     creatures: Vec<WarmKey>,
     creature_models: usize,
@@ -154,6 +156,27 @@ fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
         );
     }
     out
+}
+
+/// The particle part's emitters (AH.87) off the dump through the
+/// extractor's own reader, every spawn archive's, keyed in `view` as the
+/// TV keys them (their materials, `guacamole::particles::drawn`).
+fn particle_keys(dump: &Path, view: &Scene) -> (Vec<WarmKey>, usize) {
+    let usrdir = dump.join("PS3_GAME/USRDIR");
+    let mut emitters = Vec::new();
+    for archive in guac_extract::particles::archives() {
+        let entry = guac_extract::scripts::entry(&usrdir, &archive)
+            .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let igz = Igz::parse(&entry).unwrap_or_else(|e| panic!("{archive}: {e}"));
+        emitters.push(guac_extract::particles::emitters(&igz, &archive, identity()).ir);
+    }
+    let (drawn, _) = guacamole::particles::drawn(&emitters);
+    let keys = level_scene::keys(&drawn, view)
+        .expect("the particles' keys")
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    (keys, drawn.materials.len())
 }
 
 /// Every key chapter 1 draws, as the level loader keys it (through its own
@@ -188,10 +211,12 @@ fn level_keys(dump: &Path) -> Chapter1 {
     let props = LevelProps::new(&props, &placements).expect("chapter 1's props");
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let spawned = spawn_models(dump);
+    let (particles, _) = particle_keys(dump, &view);
     Chapter1 {
         keys: start.keys.into_iter().map(|(k, _)| k).collect(),
         props: props.keys(&view).expect("the props' keys"),
         spawns: spawn_keys(&spawned, &view),
+        particles,
         creatures: guacamole::creature_models::keys(&creatures, &hero)
             .expect("the creatures' keys"),
         creature_models: creatures.len(),
@@ -289,6 +314,7 @@ fn the_census_is_the_discs() {
         keys: level_all,
         props: props_all,
         spawns: spawns_all,
+        particles: particles_all,
         creatures: creatures_all,
         creature_models,
         materials,
@@ -377,7 +403,29 @@ fn the_census_is_the_discs() {
             glows(keys).len()
         );
     }
+    // The particles' (AH.87): past everything else's colour keys, and
+    // their glowing generators' masks past the level's.
+    let particles = colour(&particles_all);
+    let particles_beyond = beyond(
+        &particles,
+        &[census::LEVEL, census::LEVEL_PROPS, census::SPAWNS],
+    );
+    let particle_glow = beyond(&glows(&particles_all), &[census::LEVEL_GLOW]);
+    eprintln!(
+        "the particles: {} keys, {} past the level's, its props' and its spawns'; {} level glow masks, {} past the level's",
+        particles.len(),
+        particles_beyond.len(),
+        glows(&particles_all).len(),
+        particle_glow.len()
+    );
     let checks = [
+        check("the particles", &particles_beyond, census::PARTICLES, false),
+        check(
+            "the particles' glow masks",
+            &particle_glow,
+            census::PARTICLES_GLOW,
+            false,
+        ),
         check("cards, skinned", &skinned, census::TURNTABLE, true),
         check("cards, static", &unskinned, census::TURNTABLE_STATIC, false),
         check("chapter 1", &level, census::LEVEL, false),

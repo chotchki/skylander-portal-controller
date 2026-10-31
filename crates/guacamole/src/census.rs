@@ -18,8 +18,9 @@
 //! three of them first), their glowing parts' level glow masks 22 and the walking
 //! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
 //! point lights on) and the first fight's creatures' 3 more (AH.25: the
-//! Chompies' model and Norticus', skinned in the hero's scene). So the
-//! tables
+//! Chompies' model and Norticus', skinned in the hero's scene) and the
+//! particles of what its scripts spawn 1 more and its glow mask (AH.87).
+//! So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on
 //! `GUAC_GIANTS_DUMP`) holds them equal to what the extractor's readers and
@@ -397,6 +398,19 @@ pub const CREATURES: &[Row] = &[
 /// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s.
 pub const CREATURES_GLOW: &[Row] = &[];
 
+/// Every key the particles of what the fight's scripts spawn draw (openspec
+/// AH.87) that [`LEVEL`], [`LEVEL_PROPS`] and [`SPAWNS`] don't hold: the
+/// extract's particle part's generators (`global.bld`'s and each fighter's
+/// emitters), each on its material (unlit, its fog and point lights owned
+/// off, writing no depth, one-sided quads wound to the camera) in the
+/// level's scene, each once. A blending generator's key is the sky's
+/// (`LEVEL`'s), an adding one's this.
+pub const PARTICLES: &[Row] = &[row(0x0000, 0x1000, ADD, false, false, false, 1, true, true)];
+
+/// Their glowing generators' level glow masks (a bloom on the disc) past
+/// [`LEVEL_GLOW`]'s.
+pub const PARTICLES_GLOW: &[Row] = &[row(0x0000, 0x1000, ADD, false, false, false, 1, true, true)];
+
 /// Every key the 01.00 roster's figures draw on a card on a static mesh
 /// (the turntable's scene), each once: the unskinned parts they carry
 /// fresh (AE.23), each drawn under its bone or its parent part.
@@ -440,7 +454,8 @@ pub fn turntable_keys() -> Vec<WarmKey> {
 /// glowing parts' level glow masks ([`LEVEL_GLOW`]), the heroes' keys in
 /// the level ([`HEROES`], [`HEROES_STATIC`]) and theirs ([`HEROES_GLOW`],
 /// [`HEROES_GLOW_STATIC`]), openspec AH.65; then the first fight's
-/// creatures' ([`CREATURES`], [`CREATURES_GLOW`]), AH.25.
+/// creatures' ([`CREATURES`], [`CREATURES_GLOW`]), AH.25; then the
+/// particles' ([`PARTICLES`], [`PARTICLES_GLOW`]), AH.87.
 pub fn level_keys() -> Vec<WarmKey> {
     let mut out = keys(LEVEL, false);
     out.extend(keys(LEVEL_PROPS, false));
@@ -452,6 +467,8 @@ pub fn level_keys() -> Vec<WarmKey> {
     out.extend(glow_keys(HEROES_GLOW_STATIC, false));
     out.extend(keys(CREATURES, true));
     out.extend(glow_keys(CREATURES_GLOW, true));
+    out.extend(keys(PARTICLES, false));
+    out.extend(glow_keys(PARTICLES_GLOW, false));
     out
 }
 
@@ -592,6 +609,7 @@ mod tests {
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
             (CREATURES, true, 5),
+            (PARTICLES, false, 1),
         ] {
             assert_eq!(rows.len(), n);
             let keys: Vec<WarmKey> = rows
@@ -613,6 +631,7 @@ mod tests {
             (HEROES_GLOW, true, 1),
             (HEROES_GLOW_STATIC, false, 0),
             (CREATURES_GLOW, true, 0),
+            (PARTICLES_GLOW, false, 1),
         ] {
             assert_eq!(rows.len(), n);
             let keys = glow_keys(rows, skinned);
@@ -626,7 +645,7 @@ mod tests {
         }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
-        assert_eq!(every.len(), 33 + 24 + 55 + 61 + 3 + 1 + 22 + 1 + 5);
+        assert_eq!(every.len(), 33 + 24 + 55 + 61 + 3 + 1 + 22 + 1 + 5 + 1 + 1);
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()
@@ -643,6 +662,8 @@ mod tests {
                 + HEROES_GLOW_STATIC.len()
                 + CREATURES.len()
                 + CREATURES_GLOW.len()
+                + PARTICLES.len()
+                + PARTICLES_GLOW.len()
         );
     }
 
@@ -665,19 +686,29 @@ mod tests {
         }
         let static_parts = cards.iter().filter(|k| !k.mesh.skinned).count();
         assert_eq!(static_parts, TURNTABLE_STATIC.len());
-        // A level material that owns its point lights draws none.
+        // A level material that owns its point lights draws none; the
+        // particles own both off (AH.87).
         let mut sky = 0;
+        let particles = keys(PARTICLES, false);
         for k in level_keys() {
             let s = k.material.shader.switches();
             assert!(!s.shadows && matches!(s.point_lights, 0 | 3), "{k:?}");
             if !s.fog {
-                assert_eq!(s.point_lights, 0, "an unfogged key is the sky's: {k:?}");
-                if k.material.pass == Pass::Colour {
+                assert_eq!(
+                    s.point_lights, 0,
+                    "an unfogged key is the sky's or a particle's: {k:?}"
+                );
+                if k.material.pass == Pass::Colour && !particles.contains(&k) {
                     sky += 1;
                 }
             }
         }
         assert_eq!(sky, 7);
+        for k in particles {
+            let s = k.material.shader.switches();
+            assert!(!s.fog && s.point_lights == 0 && s.vertex_colour, "{k:?}");
+            assert!(!s.directional, "unlit: {k:?}");
+        }
     }
 
     /// The warm draws a census key through the constructor the turntable and

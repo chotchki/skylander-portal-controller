@@ -20,7 +20,8 @@
 //!
 //! The sequence is never compared with the original's: the original's
 //! particles draw from the same stream on host time and guacamole's draw
-//! nothing, so the two sides' rolls land at other places in it. What's
+//! from a generator of their own (openspec AH.87), so the two sides' rolls
+//! land at other places in it. What's
 //! specified is the generator, each roll's range and that two sessions roll
 //! differently.
 

@@ -409,3 +409,100 @@ pub(crate) fn write_props(
     placements.actors.extend(actors);
     std::fs::write(path, guac_ir::to_ron(&placements).unwrap()).unwrap();
 }
+
+/// A made-up emitter (AH.87): a stream of quads adding up a texture the
+/// level's sky already draws, glowing, 50 a second for 0.4 s each, and a
+/// generator with no texture, which draws nothing.
+pub(crate) fn trail() -> guac_ir::particle::Emitter {
+    use guac_ir::particle::{Blend as P, Direction, Generator, Keyed, Kind, Sprite, Volume};
+    fn keyed<T: Copy>(start: T, end: T, zero: T) -> Keyed<T> {
+        Keyed {
+            start,
+            start_random: zero,
+            mid: start,
+            mid_random: zero,
+            end,
+            end_random: zero,
+        }
+    }
+    let sprite = Sprite {
+        spawn_rate: 50.0,
+        max_alive: 24,
+        lifespan: 0.4,
+        lifespan_random: 0.0,
+        max_distance: 30.0,
+        midpoint_percent: -50.0,
+        next_gen_scale: 1.0,
+        volume: Some(Volume::Box),
+        volume_size: [0.2; 3],
+        uniform: false,
+        inherits_translation: false,
+        direction: Some(Direction::Orientation),
+        speed: 1.0,
+        speed_random: 0.0,
+        spread: 0.5,
+        drag: [0.0; 3],
+        gravity: [0.0, 0.0, -2.0],
+        colour: keyed([127, 64, 0, 255], [127, 32, 0, 0], [0; 4]),
+        size: keyed([0.5; 3], [0.1; 3], [0.0; 3]),
+        rotation: 0.0,
+        rotation_random: 6.0,
+        spin: keyed(1.0, 2.0, 0.0),
+        random_spin_direction: true,
+        view_alignment: 0,
+    };
+    let generator = |texture: Option<guac_ir::particle::Texture>| Generator {
+        blend: P::Add,
+        overlay_layer: 5,
+        bloom: 5.0,
+        offset: guac_ir::model::Transform {
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        },
+        start_delay: 0.0,
+        texture,
+        kind: Kind::Sprite(sprite.clone()),
+    };
+    let sky = slot(
+        TextureRole::Layer1ColorMap,
+        &format!("sky{:?}", TextureRole::Layer1ColorMap),
+    );
+    guac_ir::particle::Emitter {
+        name: "Trail".into(),
+        object: 1,
+        generators: vec![
+            generator(Some(guac_ir::particle::Texture {
+                texture: sky.texture,
+                image: sky.image,
+                sampler: sky.sampler,
+            })),
+            generator(None),
+        ],
+        unread: Vec::new(),
+    }
+}
+
+/// The particle part (AH.87): [`trail`] in the fighter's archive, nothing
+/// in `global.bld`'s.
+pub(crate) fn write_particles(dir: &Path) {
+    let ir = IrFormat::Ron;
+    std::fs::create_dir_all(dir.join(guac_extract::particles::DIR)).unwrap();
+    for archive in guac_extract::particles::archives() {
+        let emitters = guac_ir::particle::Emitters {
+            identity: identity(),
+            archive: archive.clone(),
+            emitters: if archive.contains("eruptor") {
+                vec![trail()]
+            } else {
+                Vec::new()
+            },
+            refused: Vec::new(),
+        };
+        std::fs::write(
+            dir.join(guac_extract::particles::path(ir, &archive)),
+            guac_ir::to_ron(&emitters).unwrap(),
+        )
+        .unwrap();
+    }
+}

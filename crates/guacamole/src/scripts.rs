@@ -161,6 +161,9 @@ pub struct Files {
     /// the point-light manager's template and the lights the scripts name
     /// for it to copy.
     pub lights: HashMap<Obj, Light>,
+    /// Every emitter's name (openspec AH.87): what a clone of one draws,
+    /// the particle part's emitter of that name.
+    pub emitters: HashMap<Obj, String>,
 }
 
 impl Files {
@@ -203,6 +206,15 @@ impl Files {
                         index: *index as u32,
                     },
                     light_of(l),
+                );
+            }
+            for (index, e) in &placements.emitters {
+                out.emitters.insert(
+                    Obj {
+                        unit,
+                        index: *index as u32,
+                    },
+                    e.placement.placement.name.unwrap_or("").to_owned(),
                 );
             }
             for actor in &placements.actors {
@@ -397,6 +409,8 @@ pub struct ScriptWorld {
     /// Every placed light's values (openspec AH.65): a light placement's
     /// members read and write these; a clone of one copies them.
     pub(crate) light_templates: HashMap<Obj, Light>,
+    /// Every emitter's name (openspec AH.87).
+    pub(crate) emitters: HashMap<Obj, String>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
     /// The file waypoints' turns the scripts wrote (openspec AG.60); one
@@ -587,6 +601,7 @@ impl ScriptWorld {
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
             light_templates: files.lights.clone(),
+            emitters: files.emitters.clone(),
             points: files.points.clone(),
             point_turns: HashMap::new(),
             controllers: [objects[0], objects[1]],
@@ -2744,9 +2759,21 @@ impl ScriptWorld {
             .map(|i| i as u32)
     }
 
-    /// A template's placement name.
+    /// A template's placement name, an actor's or an emitter's.
     pub fn name_of(&self, t: Obj) -> Option<String> {
-        self.templates.get(&t).map(|p| p.name.clone())
+        self.templates
+            .get(&t)
+            .map(|p| p.name.clone())
+            .or_else(|| self.emitters.get(&t).cloned())
+    }
+
+    /// The emitter an actor is, by its name (openspec AH.87): a clone's
+    /// template's, or a placement's own; what its particles draw. None for
+    /// anything else.
+    pub fn emitter_of(&self, h: Handle) -> Option<&str> {
+        let a = self.actors.get(&h)?;
+        let t = a.template.or(a.obj)?;
+        self.emitters.get(&t).map(String::as_str)
     }
 }
 
@@ -2958,6 +2985,7 @@ mod tests {
     fn world() -> (ScriptWorld, Handle, [Handle; 7]) {
         let files = Files {
             lights: HashMap::new(),
+            emitters: HashMap::new(),
             placed: vec![Placed {
                 id: 41,
                 buffer: 12.5,
@@ -2971,6 +2999,63 @@ mod tests {
         let objects = headless_objects(&handles);
         let grunt = handles[&GRUNT];
         (ScriptWorld::new(&files, &handles, objects), grunt, objects)
+    }
+
+    /// AH.87: a clone of an emitter answers with the emitter's name, as
+    /// a placement that's one does; a clone of anything else with none.
+    /// The files list every emitter by name, and a template's name reads
+    /// an emitter's too.
+    #[test]
+    fn a_clone_of_an_emitter_names_it_and_nothing_else_does() {
+        const TRAIL: Obj = Obj { unit: 4, index: 12 };
+        let files = Files {
+            placed: vec![Placed::named(GRUNT, "Grunt", None, RUNNING)],
+            emitters: HashMap::from([(TRAIL, "009_LavaBall_Trail".to_owned())]),
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let clone_of = |world: &mut ScriptWorld, h: Handle, t: Obj| {
+            world.actors.insert(
+                h,
+                Actor {
+                    template: Some(t),
+                    ..Actor::blank()
+                },
+            );
+        };
+        clone_of(&mut world, 900, TRAIL);
+        clone_of(&mut world, 901, GRUNT);
+        assert_eq!(world.emitter_of(900), Some("009_LavaBall_Trail"));
+        assert_eq!(world.emitter_of(901), None);
+        assert_eq!(world.emitter_of(handles[&GRUNT]), None);
+        assert_eq!(world.emitter_of(902), None, "no actor");
+        world.actors.insert(
+            903,
+            Actor {
+                obj: Some(TRAIL),
+                ..Actor::blank()
+            },
+        );
+        assert_eq!(world.emitter_of(903), Some("009_LavaBall_Trail"));
+        assert_eq!(world.name_of(TRAIL).as_deref(), Some("009_LavaBall_Trail"));
+        assert_eq!(world.name_of(GRUNT).as_deref(), Some("Grunt"));
+    }
+
+    /// The emitters a file places are read by name beside its actors.
+    #[test]
+    fn the_files_list_each_emitter_by_name() {
+        let s = guac_formats::level::builder::sample();
+        let igz = Igz::parse(&s.bytes).unwrap();
+        let files = Files::read(&[(3, &igz)]).unwrap();
+        let names: Vec<&str> = files.emitters.values().map(String::as_str).collect();
+        assert_eq!(names, ["fire_house(1)"]);
+        let (obj, _) = files.emitters.iter().next().unwrap();
+        assert_eq!(obj.unit, 3);
+        assert_eq!(
+            Some(obj.index as usize),
+            igz.object_at(s.emitter).map(|(i, _)| i)
+        );
     }
 
     fn at(namespace: &str, name: &str, receiver: Option<Value>) -> Access {
@@ -3254,6 +3339,7 @@ mod tests {
         assert!(app.world().get_resource::<ScriptRuntime>().is_none());
         let files = Files {
             lights: HashMap::new(),
+            emitters: HashMap::new(),
             placed: vec![Placed {
                 id: 41,
                 buffer: 12.5,
@@ -3657,6 +3743,7 @@ mod tests {
         // Where AH.8's anchor B has `Enemy_Chompy(1)`.
         let files = Files {
             lights: HashMap::new(),
+            emitters: HashMap::new(),
             placed: vec![
                 Placed {
                     position: [4.5213137, 22.374975, -23.117332],

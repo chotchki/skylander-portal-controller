@@ -1548,6 +1548,52 @@ fn probe_spawns() {
     }
 }
 
+/// A development probe (AH.87): every emitter clone a throw and an
+/// eruption make, when each comes and goes, what it hangs from and where it
+/// stands then.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_emitters() {
+    let mut run = joined();
+    let before = run.world.clones();
+    let mut seen: Vec<(Handle, String, u32, Option<u32>)> = Vec::new();
+    for k in 0..420u32 {
+        run.bench.pads[0] = scripted("a1@10,a2@200", k);
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        for c in run.world.clones() {
+            if before.contains(&c) {
+                continue;
+            }
+            let a = run.world.actor(c).unwrap();
+            let Some(name) = run.world.emitter_of(c).map(str::to_owned) else {
+                continue;
+            };
+            match seen.iter_mut().find(|s| s.0 == c) {
+                None => {
+                    println!(
+                        "step {k} + {name} {c:#x} at {:?} attach {:?} angles {:?} scale {:?}",
+                        a.position, a.attach, a.angles, a.scale
+                    );
+                    seen.push((c, name, k, None));
+                }
+                Some(s) if s.3.is_none() && a.removed => {
+                    s.3 = Some(k);
+                    println!(
+                        "step {k} - {} {c:#x} at {:?} after {} steps",
+                        s.1,
+                        a.position,
+                        k - s.2
+                    );
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    for (c, name, from, to) in &seen {
+        println!("{name} {c:#x}: steps {from}..{to:?}");
+    }
+}
+
 /// A development probe (AH.24): the eruption's clones step by step after
 /// they spawn: where each is, its scale, what it hangs from, its velocity.
 #[test]

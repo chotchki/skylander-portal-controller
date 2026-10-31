@@ -191,6 +191,8 @@ fn the_fights_parts_extract_whole_and_resume() {
         println!("  REFUSED SPAWN MODEL {p}: {r}");
     }
     assert!(md.failed.is_empty() && lv.failed.is_empty() && sc.failed.is_empty());
+    // AH.87's emitters, after the scripts (`giants_particles` checks them).
+    assert!(done.particles.read && done.particles.failed.is_none());
     assert!(done.intros.is_ok(), "ffmpeg is needed for the whole run");
     assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 8, 2));
     // The fighter's archive and the three base ones, then AG.27's 66 walkers.
@@ -390,6 +392,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         scripts::SCRIPTS,
         scripts::SPAWNS,
         guac_extract::models::PALETTES,
+        guac_extract::particles::PART,
     ] {
         json["parts"].as_object_mut().unwrap().remove(part);
     }
@@ -425,6 +428,7 @@ fn the_fights_parts_extract_whole_and_resume() {
     );
     assert_eq!(written, 0, "every file was there as recorded");
     assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 2));
+    assert!(done.particles.read && done.particles.files.written == 0);
     drop(again);
     assert_eq!(
         open(&dump, &root, KNOWN_DUMPS, &|_| {}).unwrap().state,
