@@ -4548,6 +4548,84 @@ fn a_defeated_hero_knocks_them_back_and_leaves() {
     println!("load after: {}", load());
 }
 
+/// A beaten hero's stars burst where he fell (AH.39's Mac step): the
+/// portal manager spawns his death actor and, the op after, finds its
+/// `dying actor` and sets it to his minion, which found nothing until the
+/// clone joined at the turn's end, so the death actor's 60 `DeathStar`s
+/// spawned at their template's file place, 135 m off, below the map; and
+/// with it set, its lift of him 12 ft over his own remembered point, which
+/// no script keeps, flew him off it. Now `dying actor` holds him, he stays
+/// where he fell (AH.11's `restart1` and `restart2` hold the original's so)
+/// and every star comes out within 1.5 m of him across the ground and under
+/// 2.5 m over his feet, in his element's colour.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_beaten_heros_stars_burst_where_he_fell() {
+    println!("load before: {}", load());
+    let (mut run, _) = fight(Script {
+        hero_health: Some(20),
+        steps: 40,
+        ..Script::default()
+    });
+    let mut seen: std::collections::BTreeSet<guac_script::Handle> =
+        run.world.clones().into_iter().collect();
+    let mut fell: Option<(i64, Vec3)> = None;
+    let mut death: Option<(i64, guac_script::Handle)> = None;
+    let mut stars: Vec<(i64, Vec3, u32)> = Vec::new();
+    for f in 40..900i64 {
+        run.step().unwrap_or_else(|h| panic!("F0 + {f}: {h}"));
+        if fell.is_none() && run.health().is_some_and(|h| h <= 0.0) {
+            fell = Some((f, run.hero().pivot));
+        }
+        for h in run.world.clones() {
+            if !seen.insert(h) {
+                continue;
+            }
+            let a = run.world.actor(h).unwrap();
+            match run.world.name(h).as_str() {
+                "MinionDeath_Actor" => death = Some((f, h)),
+                "DeathStar" => stars.push((f, a.position, a.tint)),
+                _ => {}
+            }
+        }
+        if let Some((_, at)) = fell
+            && death.is_some()
+        {
+            let off = (run.hero().pivot - at).length();
+            assert!(off < 0.05, "F0 + {f}: he's {off} m from where he fell");
+        }
+        if !stars.is_empty() {
+            break;
+        }
+    }
+    let (beaten, at) = fell.expect("beaten");
+    let (born, actor) = death.expect("his death actor");
+    let id = run.vm.placement_of(actor).expect("it runs");
+    assert_eq!(
+        run.vm.local(id, "dying actor").map(|v| run.vm.value(v)),
+        Some(Value::Entity(run.hero)),
+        "its dying actor is him"
+    );
+    assert_eq!(stars.len(), 60, "its number of spheres");
+    let burst = stars[0].0;
+    println!(
+        "beaten at F0 + {beaten} at {at:?}; his death actor F0 + {born}; 60 stars F0 + {burst}"
+    );
+    let (mut far, mut low, mut high) = (0.0f32, f32::MAX, f32::MIN);
+    for (f, p, tint) in &stars {
+        assert_eq!(*f, burst, "all in one step");
+        let across = (p.x - at.x).hypot(p.z - at.z);
+        let up = p.y - at.y;
+        assert!(across < 1.5, "{p:?}: {across} m across from {at:?}");
+        assert!((0.0..2.5).contains(&up), "{p:?}: {up} m over his feet");
+        assert_ne!(tint & 0xFFFF_FF00, 0, "tinted: {tint:08x}");
+        far = far.max(across);
+        (low, high) = (low.min(up), high.max(up));
+    }
+    println!("stars to {far:.3} m across, {low:.3}-{high:.3} m over his feet");
+    println!("load after: {}", load());
+}
+
 /// Anchor A (AH.7): Eruptor still at the foot of the ledge route facing
 /// `barrel_b_intact(1)`, metres and degrees.
 const ANCHOR_A: ([f32; 3], f32) = ([31.0884, 51.4631, -72.9834], 253.706);

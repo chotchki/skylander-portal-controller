@@ -1292,7 +1292,10 @@ impl Plugin for LevelPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (tv_over_level, twin_level_glow)
+                (
+                    tv_over_level,
+                    twin_level_glow.before(crate::tints::TintSystems),
+                )
                     .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             )
             .init_resource::<GlowTwins>();
@@ -2098,9 +2101,12 @@ struct GlowTwins(HashMap<AssetId<CharacterMaterial>, Option<Handle<CharacterMate
 /// ([`GlowTwin`]): the level's own, its props', what its scripts spawn and
 /// the hero's, as each is spawned. The mask goes with the part (a child,
 /// its visibility and its skin), so a clone hidden or taken off takes it
-/// along. What the mask draws is its material's when the part came up: a
-/// tint the scripts lay on a clone later (AH.67) moves its colour, not its
-/// glow amount.
+/// along. What the mask draws is its shared material's: a tint the scripts
+/// lay on a clone (AH.67) moves its colour, not its glow amount, even one
+/// faded in the frame it comes up ([`crate::tints::TintSystems`] run after
+/// this) or already on it. A mask off a fading copy blended too, a pipeline
+/// the census doesn't hold, compiled mid-route the first time the cannon's
+/// prompt came up (the fixes lane's Mac step, 2026-10-31).
 fn twin_level_glow(
     mut commands: Commands,
     mut twins: ResMut<GlowTwins>,
@@ -2113,6 +2119,7 @@ fn twin_level_glow(
             &RenderLayers,
             Option<&SkinnedMesh>,
             Has<NoFrustumCulling>,
+            Option<&crate::tints::TintedPart>,
         ),
         (Without<Twinned>, Without<GlowTwin>),
     >,
@@ -2123,17 +2130,18 @@ fn twin_level_glow(
     // A material gone (a level or a hero left) takes its mask's with it.
     twins.0.retain(|id, _| materials.contains(*id));
     let level = RenderLayers::layer(LEVEL_LAYER);
-    for (part, mesh, material, layers, skin, unculled) in &parts {
+    for (part, mesh, material, layers, skin, unculled, tinted) in &parts {
         commands.entity(part).insert(Twinned);
         if *layers != level {
             continue;
         }
-        let id = material.0.id();
+        let source = tinted.map_or(&material.0, |t| &t.shared);
+        let id = source.id();
         let twin = match twins.0.get(&id) {
             Some(t) => t.clone(),
             None => {
                 let made = materials
-                    .get(&material.0)
+                    .get(source)
                     .and_then(CharacterMaterial::level_glow)
                     .map(|m| materials.add(m));
                 twins.0.insert(id, made.clone());
@@ -3152,6 +3160,136 @@ mod tests {
         let mask = assets.get(&twins[0].1).unwrap();
         assert_eq!(mask.key.pass, guacamole::character::Pass::LevelGlow);
         assert_eq!(mask.key.shader, key.material.shader);
+    }
+
+    /// The fixes lane's Mac step: a part already on a tinted copy blending
+    /// when its mask comes up (a clone fading in, AH.67) gets the mask of its
+    /// shared material, on the census's key (its own states, unblended), not
+    /// one off the blending copy.
+    #[test]
+    fn a_part_on_a_fading_copy_gets_its_shared_materials_glow_mask() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        let key = guacamole::census::LEVEL[1].key(false).unwrap();
+        let ir = guacamole::census::material_for(&key);
+        let scene = Scene {
+            fog: true,
+            ..Scene::new()
+        };
+        let lit =
+            CharacterMaterial::from_ir(&ir, &scene, ShadowLookup::NONE, |_| Handle::default())
+                .unwrap();
+        assert_eq!(lit.key.states.blend, guac_ir::model::Blend::Opaque);
+        let fading = crate::tints::tinted(&lit, 0x8080_8040);
+        assert_ne!(fading.key.states, lit.key.states, "the copy blends");
+        let (shared, copy) = {
+            let mut assets = app.world_mut().resource_mut::<Assets<CharacterMaterial>>();
+            (assets.add(lit.clone()), assets.add(fading))
+        };
+        let part = app
+            .world_mut()
+            .spawn((
+                Mesh3d(Handle::<Mesh>::default()),
+                MeshMaterial3d(copy),
+                RenderLayers::layer(LEVEL_LAYER),
+                crate::tints::TintedPart {
+                    shared: shared.clone(),
+                },
+            ))
+            .id();
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let mut q = world
+            .query_filtered::<(&ChildOf, &MeshMaterial3d<CharacterMaterial>), With<GlowTwin>>();
+        let twins: Vec<(Entity, Handle<CharacterMaterial>)> = q
+            .iter(world)
+            .map(|(c, m)| (c.parent(), m.0.clone()))
+            .collect();
+        assert_eq!(twins.len(), 1, "{twins:?}");
+        assert_eq!(twins[0].0, part);
+        let assets = world.resource::<Assets<CharacterMaterial>>();
+        let mask = assets.get(&twins[0].1).unwrap();
+        assert_eq!(mask.key.pass, guacamole::character::Pass::LevelGlow);
+        assert_eq!(mask.key.states, lit.key.states, "the shared one's states");
+        assert_eq!(mask.key, lit.level_glow().unwrap().key, "the census's key");
+    }
+
+    /// Fades the parts [`FadeNow`] names the frame they come up, as the
+    /// clones' tint does (a copy blending, its shared one kept by command).
+    #[derive(Resource, Default)]
+    struct FadeNow(Vec<Entity>);
+
+    fn fade_now(
+        mut commands: Commands,
+        fade: Res<FadeNow>,
+        mut parts: Query<(
+            &mut MeshMaterial3d<CharacterMaterial>,
+            Option<&crate::tints::TintedPart>,
+        )>,
+        mut materials: ResMut<Assets<CharacterMaterial>>,
+    ) {
+        for &e in &fade.0 {
+            crate::tints::tint_part(e, 0x8080_8040, &mut commands, &mut parts, &mut materials);
+        }
+    }
+
+    /// The fixes lane's Mac step: a part a tint fades the very frame it
+    /// comes up (a clone fading in, AH.67) gets its shared material's mask,
+    /// on the census's key: the masks are made before the tints are laid.
+    #[test]
+    fn a_part_faded_the_frame_it_comes_up_gets_its_shared_materials_glow_mask() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        app.init_resource::<FadeNow>()
+            .add_systems(PostUpdate, fade_now.in_set(crate::tints::TintSystems));
+        let key = guacamole::census::LEVEL[1].key(false).unwrap();
+        let ir = guacamole::census::material_for(&key);
+        let scene = Scene {
+            fog: true,
+            ..Scene::new()
+        };
+        let lit =
+            CharacterMaterial::from_ir(&ir, &scene, ShadowLookup::NONE, |_| Handle::default())
+                .unwrap();
+        let shared = app
+            .world_mut()
+            .resource_mut::<Assets<CharacterMaterial>>()
+            .add(lit.clone());
+        let part = app
+            .world_mut()
+            .spawn((
+                Mesh3d(Handle::<Mesh>::default()),
+                MeshMaterial3d(shared.clone()),
+                RenderLayers::layer(LEVEL_LAYER),
+            ))
+            .id();
+        app.world_mut().resource_mut::<FadeNow>().0.push(part);
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let faded = world
+            .get::<MeshMaterial3d<CharacterMaterial>>(part)
+            .unwrap()
+            .0
+            .clone();
+        assert_ne!(faded, shared, "faded on a copy");
+        let mut q = world
+            .query_filtered::<(&ChildOf, &MeshMaterial3d<CharacterMaterial>), With<GlowTwin>>();
+        let twins: Vec<Handle<CharacterMaterial>> = q
+            .iter(world)
+            .filter(|(c, _)| c.parent() == part)
+            .map(|(_, m)| m.0.clone())
+            .collect();
+        assert_eq!(twins.len(), 1);
+        let assets = world.resource::<Assets<CharacterMaterial>>();
+        assert_eq!(
+            assets.get(&twins[0]).unwrap().key,
+            lit.level_glow().unwrap().key,
+            "the census's key"
+        );
     }
 
     /// AH.65: the frame's point lights reach the level's report (and its

@@ -6,9 +6,13 @@
 //! An orb is an actor with no model: the original draws it with a particle
 //! emitter, which nothing here plays (the backlog's Particles line). So each
 //! is drawn on a stand-in (stand-in ledger: `effects`): `global.bld`'s death
-//! star ([`ORB_LOOK`], read since AH.39), a glowing star card, small and
-//! turned to face the level's camera. Its keys are the spawn models', which
-//! the census holds, so drawing one compiles nothing.
+//! star ([`ORB_LOOK`], read since AH.39), a glowing star card turned to face
+//! the level's camera, tinted the original's yellow ([`ORB_TINT`]) and sized
+//! ([`ORB_SCALE`]) by eye against AH.10's frames of the orbs after the first
+//! fight (`fight-00`'s `shot-f700`: bright yellow balls with white cores,
+//! 6-18 px across at 720p). Its keys are the spawn models' (a tint at full
+//! alpha keeps a part's states), which the census holds, so drawing one
+//! compiles nothing.
 
 use std::collections::HashMap;
 
@@ -24,12 +28,61 @@ use crate::level::{LEVEL_LAYER, Level, LevelCamera, LevelSystems};
 /// card 1.56 m across.
 pub(crate) const ORB_LOOK: &str = "C:/tfb/Content/Models/Objects/fx_objects/death_starz.mdl";
 
-/// Its scale on an orb: about 0.4 m across.
-pub(crate) const ORB_SCALE: f32 = 0.25;
+/// Its scale on an orb.
+pub(crate) const ORB_SCALE: f32 = 0.5;
+
+/// Its tint on an orb, as the scripts pack one (RGBA): yellow at full alpha.
+/// The untinted card is a faint white star, a pixel or two at the TV's
+/// distance where the original's orb is a yellow ball.
+pub(crate) const ORB_TINT: u32 = 0xFFFF_40FF;
 
 /// Each orb drawn, by its actor: its root, at the orb's place.
 #[derive(Resource, Debug, Default)]
 pub(crate) struct DrawnOrbs(pub(crate) HashMap<ActorHandle, Entity>);
+
+/// The look's parts an orb draws with: each mesh on a copy of its shared
+/// material carrying [`ORB_TINT`], the shared ones they're copied from.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct OrbLook {
+    shared: Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>,
+    tinted: Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>,
+}
+
+impl OrbLook {
+    /// The tinted parts for `shared`: copies made when the look changes,
+    /// rewritten when a shared material's numbers move (a relight), the
+    /// shared ones never touched.
+    pub(crate) fn of(&mut self, shared: &Look, materials: &mut Assets<CharacterMaterial>) -> &Look {
+        if self.shared.as_slice() != shared {
+            self.tinted = shared
+                .iter()
+                .map(|(mesh, m)| {
+                    let copy = materials
+                        .get(m)
+                        .map(|m| crate::tints::tinted(m, ORB_TINT))
+                        .map_or_else(|| m.clone(), |c| materials.add(c));
+                    (mesh.clone(), copy)
+                })
+                .collect();
+            self.shared = shared.to_vec();
+        } else {
+            for ((_, from), (_, copy)) in self.shared.iter().zip(&self.tinted) {
+                let Some(want) = materials
+                    .get(from)
+                    .map(|m| crate::tints::tinted(m, ORB_TINT))
+                else {
+                    continue;
+                };
+                if let Some(mut c) = materials.get_mut(copy)
+                    && (c.uniform != want.uniform || c.key != want.key)
+                {
+                    *c = want;
+                }
+            }
+        }
+        &self.tinted
+    }
+}
 
 /// An orb's card under its root, turned to face the level's camera.
 #[derive(Component, Debug)]
@@ -43,6 +96,7 @@ pub(crate) struct OrbsPlugin;
 impl Plugin for OrbsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DrawnOrbs>()
+            .init_resource::<OrbLook>()
             .add_systems(Update, (draw_orbs, face_orbs).chain().after(LevelSystems));
     }
 }
@@ -55,6 +109,7 @@ fn draw_orbs(
     level: Res<Level>,
     mut drawn: ResMut<DrawnOrbs>,
     mut roots: Query<&mut Transform, Without<OrbFace>>,
+    (mut tinted, mut materials): (ResMut<OrbLook>, ResMut<Assets<CharacterMaterial>>),
 ) {
     let out: Vec<(ActorHandle, Vec3)> = match (runtime.as_deref(), world.as_deref()) {
         (Some(rt), Some(w)) => guacamole::scripts::orbs(&rt.vm, w)
@@ -63,14 +118,11 @@ fn draw_orbs(
             .collect(),
         _ => Vec::new(),
     };
-    let look = level.spawn_models().and_then(|m| m.get(ORB_LOOK));
-    place_orbs(
-        &out,
-        look.map(Vec::as_slice),
-        &mut commands,
-        &mut drawn,
-        &mut roots,
-    );
+    let look = level
+        .spawn_models()
+        .and_then(|m| m.get(ORB_LOOK))
+        .map(|shared| tinted.of(shared, &mut materials));
+    place_orbs(&out, look, &mut commands, &mut drawn, &mut roots);
 }
 
 /// `out`'s orbs drawn on `look` at their places: each new one spawned, each
@@ -265,6 +317,84 @@ mod tests {
         app.update();
         assert!(app.world().resource::<DrawnOrbs>().0.is_empty());
         assert!(app.world().get_entity(drawn[&a]).is_err());
+    }
+
+    /// A star card as the death star's is on the disc: additive, no depth
+    /// write, neutral tints.
+    fn star() -> CharacterMaterial {
+        use guacamole::character::key::{MaterialKey, Pass, ShaderKey, StateKey};
+        use guacamole::character::material::{CharacterTextures, ShadowLookup};
+        let key = MaterialKey {
+            shader: ShaderKey::new(0, 0).unwrap(),
+            states: StateKey {
+                blend: guac_ir::model::Blend::Additive,
+                depth_write: false,
+                ..StateKey::OPAQUE
+            },
+            pass: Pass::Colour,
+        };
+        CharacterMaterial::new(
+            key,
+            &guac_ir::shading::Material::new(),
+            &guac_ir::shading::Scene::new(),
+            ShadowLookup::NONE,
+            0.0,
+            CharacterTextures {
+                colour: Some(Handle::default()),
+                ..CharacterTextures::default()
+            },
+        )
+        .unwrap()
+    }
+
+    /// The fixes lane's Mac step (AH.61): an orb draws on copies of the
+    /// look's materials carrying the original's yellow at full alpha, so on
+    /// the shared ones' states (the census's keys), the shared ones
+    /// untouched; a relight of a shared one reaches its copy, the same look
+    /// again makes none, and another look copies anew.
+    #[test]
+    fn an_orb_draws_on_yellow_copies_of_the_looks_materials() {
+        let mut materials = Assets::<CharacterMaterial>::default();
+        let shared = materials.add(star());
+        let mesh = Handle::<Mesh>::default();
+        let mut look = OrbLook::default();
+        let parts = look
+            .of(&[(mesh.clone(), shared.clone())], &mut materials)
+            .to_vec();
+        assert_eq!(parts.len(), 1);
+        let (m, copy) = &parts[0];
+        assert_eq!(m, &mesh);
+        assert_ne!(copy, &shared, "a copy");
+        let (c, s) = (
+            materials.get(copy).unwrap(),
+            materials.get(&shared).unwrap(),
+        );
+        assert_eq!(c.uniform.placement_tint, crate::tints::tint_of(ORB_TINT));
+        assert!(c.uniform.placement_tint.x > 1.0 && c.uniform.placement_tint.z < 0.6);
+        assert_eq!(c.key, s.key, "the shared one's states");
+        assert_eq!(
+            s.uniform.placement_tint,
+            crate::tints::tint_of(crate::tints::NEUTRAL)
+        );
+        // A relight of the shared one.
+        materials.get_mut(&shared).unwrap().uniform.misc.x += 0.5;
+        let again = look
+            .of(&[(mesh.clone(), shared.clone())], &mut materials)
+            .to_vec();
+        assert_eq!(again, parts, "the same copy");
+        let (c, s) = (
+            materials.get(copy).unwrap(),
+            materials.get(&shared).unwrap(),
+        );
+        assert_eq!(c.uniform.misc, s.uniform.misc, "the relight followed");
+        assert_eq!(c.uniform.placement_tint, crate::tints::tint_of(ORB_TINT));
+        // Another look.
+        let other = materials.add(star());
+        let anew = look
+            .of(&[(mesh.clone(), other.clone())], &mut materials)
+            .to_vec();
+        assert_ne!(anew[0].1, parts[0].1);
+        assert_ne!(anew[0].1, other);
     }
 
     /// The card's face looks at the camera from any side, and it doesn't

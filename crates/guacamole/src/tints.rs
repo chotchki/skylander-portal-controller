@@ -75,11 +75,19 @@ fn same(copy: &CharacterMaterial, want: &CharacterMaterial) -> bool {
 
 pub(crate) struct CloneTintsPlugin;
 
+/// The systems that lay a tint on drawn parts (the clones' and the
+/// creatures'): after the level's glow masks are made, so a part a tint
+/// fades the frame it comes up still gets its shared material's mask.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct TintSystems;
+
 impl Plugin for CloneTintsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            tint_clones.run_if(resource_exists::<ScriptWorld>),
+            tint_clones
+                .run_if(resource_exists::<ScriptWorld>)
+                .in_set(TintSystems),
         );
     }
 }

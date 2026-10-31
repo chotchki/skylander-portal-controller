@@ -1844,6 +1844,26 @@ impl ScriptWorld {
             | Member::Pitch => {
                 let r = recv.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
+                // An actor put from its own remembered point while none is
+                // kept isn't moved: that point reads where the actor stands,
+                // so each write would move it the whole way again. The hero's
+                // death actor writes him 12 ft over his own a tick at a time,
+                // which flew him off the map; AH.11's records (`restart1`,
+                // `restart2`) hold the original's where he fell.
+                let unkept = match self.object(Some(o)) {
+                    Some(Object::Remembered(a)) => self
+                        .actors
+                        .get(&a)
+                        .is_some_and(|k| k.remembered.is_none())
+                        .then_some(a),
+                    Some(Object::RememberedVia(a, c)) => {
+                        (!self.kept_via.contains_key(&(a, c))).then_some(a)
+                    }
+                    _ => None,
+                };
+                if unkept.is_some() && unkept == self.handle(r) {
+                    return Ok(());
+                }
                 let b = self.point(o, engine).ok_or(HostFault::Nothing)?;
                 let a = match self.point(r, engine) {
                     Some(a) => a,
@@ -3381,6 +3401,80 @@ mod tests {
         assert!((p - (target + Vec3::Y * 2.5 * METRES_PER_FOOT)).length() < 1e-5);
         assert_eq!(w.point(b, &mut e), None, "the other made one untouched");
         assert_eq!(w.make("spriteinfo"), None);
+    }
+
+    /// The hero's death actor lifts the dying minion 12 ft over his own
+    /// remembered point a tick at a time (AH.39's Mac step): with none kept
+    /// that point reads where he stands, so each write would lift him the
+    /// whole way again, and he isn't moved. Another actor's unkept point
+    /// still puts him from where that actor stands; once his own is kept the
+    /// write puts him over it, the same each time. By the actor's own point
+    /// and through a reference to it alike.
+    #[test]
+    fn an_actor_put_from_its_own_unkept_remembered_point_stays_put() {
+        const OTHER: Handle = 0x7777;
+        let mut e = bench();
+        let mut w = world();
+        let here = Vec3::new(3.0, 1.0, 4.0);
+        let there = Vec3::new(-2.0, 5.0, 0.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        w.actors.insert(OTHER, ball(there, 0.0));
+        let remembered = |w: &mut ScriptWorld, e: &mut Bench, of: Handle, via: Option<u32>| {
+            let mut a = at(
+                "placementreference",
+                "remembered",
+                Some(Value::Entity(of)),
+                None,
+            );
+            a.via = via;
+            w.get_member(&a, Member::Remembered, e).unwrap()
+        };
+        let lift = |w: &mut ScriptWorld, e: &mut Bench, from: Value| {
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "vertical offset",
+                    Some(Value::Entity(BALL)),
+                    Some(from),
+                ),
+                Member::VerticalOffset,
+                Value::Float(12.0),
+                e,
+            )
+            .unwrap();
+            w.actor(BALL).unwrap().position
+        };
+        let over = |p: Vec3| Vec3::new(here.x, p.y + 12.0 * METRES_PER_FOOT, here.z);
+        for via in [None, Some(9)] {
+            let own = remembered(&mut w, &mut e, BALL, via);
+            for _ in 0..3 {
+                assert_eq!(lift(&mut w, &mut e, own), here, "{via:?}: not moved");
+            }
+            let theirs = remembered(&mut w, &mut e, OTHER, via);
+            assert!((lift(&mut w, &mut e, theirs) - over(there)).length() < 1e-5);
+            w.actors.get_mut(&BALL).unwrap().position = here;
+            // His own kept where he stands: over it, the same each time.
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "distance",
+                    Some(own),
+                    Some(Value::Entity(BALL)),
+                ),
+                Member::Distance,
+                Value::Float(0.0),
+                &mut e,
+            )
+            .unwrap();
+            for _ in 0..2 {
+                assert!(
+                    (lift(&mut w, &mut e, own) - over(here)).length() < 1e-5,
+                    "{via:?}"
+                );
+            }
+            w.actors.get_mut(&BALL).unwrap().position = here;
+            w.actors.get_mut(&BALL).unwrap().remembered = None;
+        }
     }
 
     /// `system.absolute zero` is the world's origin as a point: what a

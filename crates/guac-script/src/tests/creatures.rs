@@ -326,6 +326,99 @@ fn a_placement_spawned_with_a_script_ticks_the_tick_it_was_spawned() {
     assert_eq!(vm.placement_of(0x1001), None, "not added");
 }
 
+/// A `find variable` on a clone its spawner made earlier the same turn
+/// (AH.39's Mac step: the portal manager spawns the hero's death actor and,
+/// the op after, finds its `dying actor` with filter 0 and sets it): the
+/// clone is adopted there, as the turn's end would adopt it, so the find
+/// reaches its declared local and its first tick, later that tick, reads
+/// what the spawner set. Outside a step's walk (a tick the embedder runs
+/// itself) nothing is adopted early: the host keeps the clone for the
+/// embedder and the find finds nothing.
+#[test]
+fn a_find_on_a_clone_spawned_this_turn_reaches_its_declared_local() {
+    let p = program(|w| {
+        let given = w.variable("given", "ValueInfo", Some(INT));
+        let template = actor(w);
+        let (spawned, found) = (var(w, "spawned"), var(w, "found"));
+        script(
+            w,
+            "C:/tfb/Synthetic/Spawner.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    let zero = w.int(0);
+                    let (c, _) = check(w, spawned, 1, zero);
+                    let lhs = w.stack(StackClass::PlacementList, &[El::Local(template)]);
+                    let at = w.stack(StackClass::Position, &[]);
+                    let (s, so) = w.open(Class::Spawn, "clone||at|facing||cloned");
+                    w.refer(so, 0x20, lhs);
+                    w.refer(so, 0x28, at);
+                    w.refer(so, 0x2C, zero);
+                    let (f, fo) = find(w, "given", "ValueInfo", INT, 0, &[El::Local(so)]);
+                    let seven = w.int(7);
+                    w.set(&[El::Local(fo)], seven);
+                    w.inc(&[El::Local(found)]);
+                    w.end_block(f);
+                    w.end_block(s);
+                    w.inc(&[El::Local(spawned)]);
+                    w.end_block(c);
+                });
+            },
+        );
+        let seen = var(w, "seen");
+        let info = script(
+            w,
+            "C:/tfb/Synthetic/Child.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    let r = w.rhs(INT, &[El::Local(given)]);
+                    w.set(&[El::Local(seen)], r);
+                });
+            },
+        );
+        w.declare(info, &[given]);
+    });
+    assert_eq!(p.scripts[1].declared.len(), 1, "the child declares `given`");
+    let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+    let spawner = vm.add(0x10, "Spawner", 0);
+    let mut host = Spawning::default();
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(spawner, "found"), Some(Value::Int(1)), "found");
+    let child = vm.placement_of(0x901).expect("adopted");
+    assert_eq!(vm.local(child, "given"), Some(Value::Int(7)));
+    assert_eq!(
+        vm.local(child, "seen"),
+        Some(Value::Int(7)),
+        "its first tick, that tick, reads it"
+    );
+    assert_eq!(
+        vm.tick_order(),
+        [(false, "Spawner".to_owned()), (false, "Child1".to_owned())],
+        "at the order's end"
+    );
+    // A tick outside a step's walk, on a VM fresh and on one past a step:
+    // the clone stays the host's to hand over.
+    let second = vm.add(0x11, "Spawner", 0);
+    vm.tick(second, &mut host).unwrap();
+    assert_eq!(
+        vm.local(second, "found"),
+        None,
+        "nothing found after a step"
+    );
+    assert_eq!(vm.placement_of(0x902), None, "not adopted after a step");
+    assert_eq!(host.pending.len(), 1, "kept for the embedder");
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let spawner = vm.add(0x10, "Spawner", 0);
+    let mut host = Spawning::default();
+    vm.tick(spawner, &mut host).unwrap();
+    assert_eq!(vm.local(spawner, "found"), None, "nothing found");
+    assert_eq!(vm.placement_of(0x901), None, "not adopted");
+    assert_eq!(host.pending.len(), 1, "kept for the embedder");
+}
+
 /// Three things at 10, 20 and 30 the host keeps as `test.items`; each one's
 /// `test.distance` from the path's other point is how far apart their
 /// numbers are, `test.size` its number and `test.limit` 15, 25 and 5.

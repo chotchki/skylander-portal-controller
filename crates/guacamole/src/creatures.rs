@@ -204,7 +204,9 @@ impl Plugin for CreaturesPlugin {
             )
             .add_systems(
                 PostUpdate,
-                tint_creatures.run_if(resource_exists::<ScriptWorld>),
+                tint_creatures
+                    .run_if(resource_exists::<ScriptWorld>)
+                    .in_set(crate::tints::TintSystems),
             );
     }
 }

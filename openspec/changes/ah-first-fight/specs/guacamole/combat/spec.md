@@ -95,3 +95,7 @@ At no health a hero SHALL play his defeat, 0.13 s on knocking back at strength 2
 #### Scenario: Placed again
 - **WHEN** Eruptor, defeated, is removed and placed again
 - **THEN** the TV asks for him to be taken off again and Eruptor doesn't come back in
+
+#### Scenario: Where he fell
+- **WHEN** Eruptor's health runs out on open ground
+- **THEN** he stays where he fell, and 0.7 s on his defeat's stars burst there, around him and up to his height, in his element's colour
