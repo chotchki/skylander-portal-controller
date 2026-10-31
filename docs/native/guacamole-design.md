@@ -207,6 +207,20 @@ Fifth batch (2026-10-18, AE's open questions and the ids):
   [`openspec/config.yaml`](../../openspec/config.yaml)), replacing the third batch's floating ids, a
   working assumption that was never his either.
 
+Sixth batch (2026-10-31, at the stock-take after AH's fight and arrival lanes landed):
+
+- The original's interface runs: "ui, run the originals." The HUD, the menus, dialogue and hints and
+  AK's upgrade screen come from the original's interface scripts on the VM, their sprite and text members
+  drawn through Bevy's UI with the disc's own sprites and fonts, not rebuilt screen by screen. The sprite
+  members are the disc's biggest member namespace (17.8 % of its references) and the scripts already say
+  what each screen shows. The TV's own screens (setup, the portal's alerts, the cards) stay AP's.
+- Foundations before the couch battle: "couch battle seems extremely far away, getting more of those
+  foundations working is a far better use of our time." AI moves after AM on the ladder and keeps its id:
+  it stands on AL's second player, AM's level loading and AK's movesets. Beside the ladder come the
+  foundations the stock-take found missing, each mostly in the pure crates: level audio (AR), every level
+  through the extractor with the VM's gaps past chapter 1 measured (AS), then the VM's whole placements
+  and the interface runtime.
+
 ## Deliberate departures from the original
 
 Parity means matching the original EXCEPT this list. Each item is chotchki's call (Decisions); the oracle
@@ -2558,11 +2572,11 @@ names (M0-M9, G1, G2) are the stable handles. Every rung is built and checked on
 | AF | `af-oracle-foundation` (archived 2026-10-19) | nothing | the oracle foundation: an unattended oracle on the product's pin (pause at a flip, capture, screenshot, save, two frame-locked pads, guest memory through PINE), its drift measured (exact only for what doesn't integrate host time; a walk agrees for 60 flips) and tolerance metrics calibrated on it. Lands before any gameplay comparison |
 | AG, M2 | `ag-walk-one-level` | walk the opening of chapter 1 (no scripts run yet, so the breakable door and rubble wall close it off) | level scene, collision, character controller, camera; the input spec, with prompts that match the physical pad (feel against the oracle, AG.31, parked 2026-10-25 with the oracle-exact refinements: `openspec/backlog.md`) |
 | AH, M3 | [`ah-first-fight`](../../openspec/changes/ah-first-fight/proposal.md) | first fight: chapter 1's four Chompies in the pit below the walkway, reached the original's way after smashing the clearing for its gold; XP and gold earned and kept on the kid's profile | combat from the original scripts on the tfbScript VM's core, pulled forward from AJ by chotchki's rule for stand-ins (`f772507`: a stand-in that would rewrite a script body sends it to the VM); the per-profile figure-progression store, with the phone's figure editor on it; the oracle's event, totals and distribution floors calibrated (the fight judged against them, AH.30, parked 2026-10-25 with the oracle-exact refinements: `openspec/backlog.md`) |
-| AI, M4 | backlog | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
 | AJ, M5 | backlog | the level comes alive | the rest of the level's scripts on AH's VM core, and the built-ins and members they reach |
 | AK, M6 | backlog | upgrades and the upgrade screen | upgrades and path kept in the store, movesets from script data |
 | AL, M7 | backlog | co-op, two pads and two figures in the adventure | the second player on the host's story, the shared camera, each kid's figure progress on their own profile |
 | AM, M8 | backlog | chapter one | a run of levels with story and cutscenes; profile-owned story saves (the host's, no slot picker); achievements, by the co-op rules |
+| AI, M4 | backlog, after AM since 2026-10-31 (Decisions, sixth batch) | first couch battle: one Giants PvP arena, two pads, two phones | a second pad and a second profile's figure in play; the PvP rules as the oracle shows them |
 | AN, M9 = G1 | backlog | the whole game | `guacamole` becomes the only thing this repo builds and ships; the launcher surface lives in Bevy; the installed controller keeps the other five games |
 | AO, G2 | backlog | parity | the oracle retires |
 
