@@ -19,6 +19,15 @@ pub(crate) fn write_attack(dir: &Path) {
     write_parts(dir, &creature);
 }
 
+/// [`write_attack`] with the UI's containers in its `init_setup.bld`
+/// ([`attack_builder::attack_with_ui`]): the player HUD's hide state for
+/// the TV's HUD to read (openspec AH.26).
+pub(crate) fn write_attack_with_ui(dir: &Path) {
+    let (creature, _) = attack_builder::creature();
+    let a = attack_builder::attack_with_ui();
+    write_files(dir, [&a.global, &a.init_setup, &a.fighter], &creature, &[]);
+}
+
 /// AH.27's beside it: AH.24's attack with AH.27's breakable as the
 /// level's entry, the barrel at `at`; the barrel's object index.
 pub(crate) fn write_smash(dir: &Path, at: [f32; 3]) -> u32 {

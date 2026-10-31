@@ -7,7 +7,7 @@ What the TV shows over a level about the hero (health, level, experience and gol
 ## ADDED Requirements
 
 ### Requirement: The hero's numbers on the TV
-While a level shows, the TV SHALL show the hero's health against his full health, his level, his experience toward the next level and his figure's gold in the TV's own look, each matching the hero within one frame of changing, and SHALL warn while his health is under 20 % of full. It SHALL show none of them while a scene plays that the original plays without its own (the pit's intro and Norticus' scene in chapter 1).
+While a level shows, the TV SHALL show the hero's health against his full health, his level, his experience toward the next level and his figure's gold in the TV's own look, each matching the hero within one frame of changing, and SHALL warn while his health is under 20 % of full. It SHALL show none of them while a scene plays during which the original hides its own (the pit's intro and Norticus' scene in chapter 1).
 
 #### Scenario: A coin
 - **WHEN** Eruptor collects a coin worth 1

@@ -708,10 +708,11 @@ pub struct HudShot {
     /// The scripts hide the player's HUD (a scene): nothing drawn, the
     /// numbers read on.
     pub hidden: bool,
-    /// Every line drawn, top to bottom; empty when nothing's drawn (a
-    /// headless app, or hidden).
+    /// Every line drawn and seen, top to bottom; empty when nothing's drawn
+    /// (a headless app) or the drawn HUD is hidden.
     pub texts: Vec<String>,
-    /// The bites' numbers on screen, oldest first.
+    /// The bites' numbers on screen, oldest first, hidden with the HUD
+    /// while `hidden`.
     pub damage: Vec<DamageShot>,
 }
 
@@ -720,7 +721,7 @@ pub struct HudShot {
 pub(crate) struct HudShots<'w, 's> {
     hud: Option<Res<'w, Hud>>,
     time: Res<'w, Time<Real>>,
-    roots: Query<'w, 's, (Entity, &'static HudPart)>,
+    roots: Query<'w, 's, (Entity, &'static HudPart, Option<&'static Visibility>)>,
     tree: UiTree<'w, 's>,
 }
 
@@ -732,8 +733,10 @@ impl HudShots<'_, '_> {
         let texts = self
             .roots
             .iter()
-            .find(|(_, p)| **p == HudPart::Root && !hud.hidden)
-            .map(|(e, _)| self.tree.walk(e).0)
+            .find(|(_, p, seen)| {
+                **p == HudPart::Root && seen.is_none_or(|v| *v != Visibility::Hidden)
+            })
+            .map(|(e, ..)| self.tree.walk(e).0)
             .unwrap_or_default()
             .into_iter()
             .filter(|t| !t.is_empty())

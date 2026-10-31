@@ -4891,6 +4891,112 @@ mod tests {
         assert_eq!(hud(&app).xp, 2_200);
     }
 
+    /// The HUD hides the frame the level's scripts hide the player's (a
+    /// scene: `UI Containers`' `player hud container` holding a `hide state`
+    /// over 0, as the pit's intro and Norticus' scene hold it on AH.8's
+    /// route) and is seen again the frame they show it, through the TV's own
+    /// systems: his scripts joined on AH.24's part with the UI's containers
+    /// in it, the HUD drawn on the TV's font and theme. A bite while it's
+    /// hidden reads on underneath, its number hidden with the rest.
+    #[test]
+    fn the_hud_hides_the_frame_the_scripts_hide_the_players_and_shows_the_frame_they_stop() {
+        use crate::hud::{DamageBubble, Hud, HudPart};
+        use guac_formats::script::builder::{UI_CONTAINERS, UI_HIDE_STATE, UI_PLAYER_HUD};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        let stars =
+            crate::starfield::Sprites::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
+        app.insert_resource(crate::tv_state::TvAssets {
+            font: Handle::default(),
+            qr: None,
+            stars,
+        })
+        .insert_resource(crate::theme::TvTheme::default());
+        write_attack_parts(tmp.path());
+        crate::test_support::hero_scripts::write_attack_with_ui(tmp.path());
+        let asked = crate::hero_scripts::AskedHealth::default();
+        app.insert_resource(asked.clone());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        app.update();
+        // The scripts' hide state, where the UI's scripts leave it.
+        let hide = |app: &mut App, state: i32| {
+            let vm = &mut app
+                .world_mut()
+                .resource_mut::<ScriptRuntime>()
+                .into_inner()
+                .vm;
+            let g = vm.program().global_named(UI_CONTAINERS).expect("linked");
+            let containers = vm.global(g).map(|v| vm.value(v)).unwrap();
+            let hud = vm.field(containers, UI_PLAYER_HUD).map(|v| vm.value(v));
+            assert!(vm.set_field(hud.unwrap(), UI_HIDE_STATE, guac_script::Value::Int(state)));
+        };
+        // What's drawn: the HUD's plate and the bites' numbers, as seen.
+        let seen = |app: &mut App| {
+            let world = app.world_mut();
+            let mut plates = world.query::<(&HudPart, &Visibility)>();
+            let plate = plates
+                .iter(world)
+                .find(|(p, _)| **p == HudPart::Root)
+                .map(|(_, v)| *v);
+            let mut bubbles = world.query_filtered::<&Visibility, With<DamageBubble>>();
+            let bubbles: Vec<Visibility> = bubbles.iter(world).copied().collect();
+            (plate, bubbles)
+        };
+        // `/api/_test/tv`'s `hud`: hidden or not, and whether it lists lines
+        // seen.
+        fn mirror(s: crate::hud::HudShots) -> Option<crate::hud::HudShot> {
+            s.shot()
+        }
+        let shot = |app: &mut App| {
+            use bevy::ecs::system::RunSystemOnce;
+            let s = app.world_mut().run_system_once(mirror).unwrap();
+            let s = s.expect("the HUD shows");
+            (s.hidden, !s.texts.is_empty())
+        };
+        assert_eq!(seen(&mut app), (Some(Visibility::Inherited), vec![]));
+        assert_eq!(shot(&mut app), (false, true), "no scene");
+        hide(&mut app, 1);
+        app.update();
+        assert_eq!(
+            seen(&mut app),
+            (Some(Visibility::Hidden), vec![]),
+            "hidden the frame the scripts hide it"
+        );
+        assert_eq!(shot(&mut app), (true, false));
+        // A bite under it.
+        *asked.0.lock().unwrap() = Some(100);
+        until(&mut app, "the bite", |a| {
+            !a.world().resource::<Hud>().damage.is_empty()
+        });
+        app.update();
+        assert_eq!(hud(&app).health, Some((100, 150)), "read on");
+        assert_eq!(
+            seen(&mut app),
+            (Some(Visibility::Hidden), vec![Visibility::Hidden]),
+            "its number hidden too"
+        );
+        assert_eq!(shot(&mut app), (true, false));
+        hide(&mut app, 0);
+        app.update();
+        assert_eq!(
+            seen(&mut app),
+            (Some(Visibility::Inherited), vec![Visibility::Inherited]),
+            "seen again the frame the scripts show it"
+        );
+        assert_eq!(shot(&mut app), (false, true));
+    }
+
     /// AG.21: the start pose. Eruptor at `213_Init_Location`'s first
     /// waypoint facing 0°, settled 5 mm above the floor, drawn there at his
     /// 150 %; the camera at camera 0's rest pose off his feet (55 ft at 32°
