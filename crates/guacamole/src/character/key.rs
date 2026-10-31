@@ -487,6 +487,14 @@ pub enum Pass {
     /// the level's depth and writing none, as the original's mask pass is
     /// tested against the colour pass's depth copy (AE.11).
     LevelGlow,
+    /// A shell of a level's grass (tfbgrass's, openspec AG.24): the colour
+    /// pass's colour, its blades cut out of the shell by the material's
+    /// height and blade maps against its height up the stack.
+    Grass,
+    /// A level's warp (tfbwarp's, openspec AG.24): the frame drawn behind
+    /// it, bent by its ripple map, in Bevy's transmissive phase (the copy
+    /// of the frame the original's warp samples too).
+    Warp,
 }
 
 /// What a pipeline is specialized on: the masks, the states and the pass.
@@ -531,12 +539,15 @@ impl MaterialKey {
     }
 
     /// The fragment entry point: the shader's `fragment`, `glow_mask` in
-    /// the glow pass, `level_glow` in a level's.
+    /// the glow pass, `level_glow` in a level's, `grass` and `warp` for a
+    /// level's grass and warp.
     pub fn entry_point(&self) -> &'static str {
         match self.pass {
             Pass::Colour => "fragment",
             Pass::GlowMask => "glow_mask",
             Pass::LevelGlow => "level_glow",
+            Pass::Grass => "grass",
+            Pass::Warp => "warp",
         }
     }
 

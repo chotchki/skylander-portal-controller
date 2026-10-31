@@ -13,6 +13,7 @@ use bevy::asset::Handle;
 use guac_ir::model::{self, Model, Segment};
 use guac_ir::shading::Scene;
 
+use super::effect::Effect;
 use super::key::MaterialKey;
 use super::material::{CharacterMaterial, MaterialError};
 
@@ -151,7 +152,24 @@ pub fn level_segment_keys(
     segments: &[Segment],
     scene: &Scene,
 ) -> Result<Vec<(WarmKey, usize)>, WarmError> {
-    let by_material = material_keys(materials, scene)?;
+    level_effect_keys(materials, &[], segments, scene)
+}
+
+/// [`level_segment_keys`] with each material drawn as `effects` says
+/// (openspec AG.24: a grass shell's or a warp's pass), a material past its
+/// end as tfbmulti2's.
+pub fn level_effect_keys(
+    materials: &[model::Material],
+    effects: &[Option<Effect>],
+    segments: &[Segment],
+    scene: &Scene,
+) -> Result<Vec<(WarmKey, usize)>, WarmError> {
+    let mut by_material = material_keys(materials, scene)?;
+    for (key, effect) in by_material.iter_mut().zip(effects) {
+        if let Some(e) = effect {
+            key.pass = e.pass();
+        }
+    }
     let mut keys: Vec<(WarmKey, usize)> = Vec::new();
     let mut glows: Vec<(WarmKey, usize)> = Vec::new();
     for (i, s) in segments.iter().enumerate() {

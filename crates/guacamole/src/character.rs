@@ -16,6 +16,7 @@
 //! [`tests/character_gpu_lane.rs`]: ../../tests/character_gpu_lane.rs
 
 pub mod attach;
+pub mod effect;
 pub mod glow;
 pub mod key;
 pub mod material;

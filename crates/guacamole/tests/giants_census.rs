@@ -290,6 +290,15 @@ fn glows(keys: &[WarmKey]) -> Vec<WarmKey> {
         .collect()
 }
 
+/// The keys of `keys` drawn in `pass`: a grass shell's or a warp's
+/// (openspec AG.24).
+fn in_pass(keys: &[WarmKey], pass: Pass) -> Vec<WarmKey> {
+    keys.iter()
+        .filter(|k| k.material.pass == pass)
+        .copied()
+        .collect()
+}
+
 /// `keys` with none twice, in the order first met.
 fn once(keys: impl IntoIterator<Item = WarmKey>) -> Vec<WarmKey> {
     let mut out: Vec<WarmKey> = Vec::new();
@@ -340,6 +349,25 @@ fn the_census_is_the_discs() {
             .into_iter()
             .chain(glows(&props_all))
             .chain(glows(&spawns_all)),
+    );
+    // The grass's shells and the warps (AG.24): the level's, its props'
+    // and its clones' (the level-up's ring).
+    let effect = |pass| {
+        once(
+            in_pass(&level_all, pass)
+                .into_iter()
+                .chain(in_pass(&props_all, pass))
+                .chain(in_pass(&spawns_all, pass)),
+        )
+    };
+    let (grass, warp) = (effect(Pass::Grass), effect(Pass::Warp));
+    eprintln!(
+        "the grass: {} keys; the warps: {} keys ({} of the level's, {} of its props', {} of the clones')",
+        grass.len(),
+        warp.len(),
+        in_pass(&level_all, Pass::Warp).len(),
+        in_pass(&props_all, Pass::Warp).len(),
+        in_pass(&spawns_all, Pass::Warp).len()
     );
     eprintln!(
         "what the scripts spawn: {} keys off {spawn_models} models, {} past the level's and its props'; {} level glow masks",
@@ -448,6 +476,8 @@ fn the_census_is_the_discs() {
             false,
         ),
         check("the level's glow masks", &glow, census::LEVEL_GLOW, false),
+        check("the grass", &grass, census::GRASS, false),
+        check("the warps", &warp, census::WARP, false),
         check("the heroes, skinned", &hero_skinned, census::HEROES, true),
         check(
             "the heroes, static",

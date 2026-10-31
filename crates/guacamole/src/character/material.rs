@@ -148,6 +148,11 @@ pub struct CharacterUniform {
     /// u' = (u, v, 1)·uv_u, v' = (u, v, 1)·uv_v.
     pub uv_u: [Vec4; 3],
     pub uv_v: [Vec4; 3],
+    /// An effect's own numbers (openspec AG.24, `character::effect`): a
+    /// grass shell's height up its stack, its two maps' tilings and the
+    /// floor its blades draw above, a warp's bend; zero on a tfbmulti2
+    /// part.
+    pub effect: Vec4,
 }
 
 impl CharacterUniform {
@@ -209,6 +214,7 @@ impl CharacterUniform {
             material_tint: v4(material.tint),
             uv_u,
             uv_v,
+            effect: Vec4::ZERO,
         }
     }
 
@@ -647,7 +653,17 @@ impl Material for CharacterMaterial {
         if self.key.pass == Pass::LevelGlow {
             return AlphaMode::Blend;
         }
+        // A warp replaces what's behind it with the frame bent: Bevy draws
+        // a part that reads the frame's copy in its transmissive phase only
+        // when it's opaque (openspec AG.24).
+        if self.key.pass == Pass::Warp {
+            return AlphaMode::Opaque;
+        }
         self.key.states.alpha_mode(self.uniform.misc.y)
+    }
+
+    fn reads_view_transmission_texture(&self) -> bool {
+        self.key.pass == Pass::Warp
     }
 
     fn depth_bias(&self) -> f32 {

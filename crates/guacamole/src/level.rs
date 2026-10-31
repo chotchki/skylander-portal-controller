@@ -345,7 +345,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
                 .collect::<Result<Vec<_>, String>>()
         })
         .collect::<Result<Vec<_>, String>>()?;
-    drawn.materials.extend(props.materials.iter().cloned());
+    drawn.extend_materials(&props);
     // The level's templates whose clones the TV draws (AG.60,
     // `props::DRAWN_SPAWNS`): their models are among the props', drawn by
     // path as the spawn part's are.
@@ -398,7 +398,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         })
         .collect::<Result<Vec<_>, String>>()?;
     spawn_models.extend(level_spawns);
-    drawn.materials.extend(spawned.materials.iter().cloned());
+    drawn.extend_materials(&spawned);
     // What the scripts' emitters draw (AH.87): the particle part's
     // generators' materials after the spawn models', keyed in the same
     // scene (the census's particle tables hold them). A part that doesn't
@@ -417,7 +417,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             keys.push((k, particle_materials + m));
         }
     }
-    drawn.materials.extend(sparks.materials);
+    drawn.extend_materials(&sparks);
     let particles = index
         .into_iter()
         .filter_map(|(name, generators)| {
@@ -653,9 +653,14 @@ pub(crate) struct LevelReport {
     pub materials: usize,
     pub textures: usize,
     pub keys: usize,
-    /// The scene's materials and segments not drawn (AG.24's effects).
+    /// The scene's materials and segments not drawn (tfbshadow's, and an
+    /// effect missing what its stand-in reads, AG.24; stand-in ledger: `grass-warp`).
     pub left_out: usize,
     pub segments_left_out: usize,
+    /// Drawn materials that are grass shells and warps (AG.24): the
+    /// level's, its props' and the clones'.
+    pub grass_shells: usize,
+    pub warps: usize,
     pub sky_segments: usize,
     /// The collision's triangles, and where the hero starts (AG.21).
     pub triangles: usize,
@@ -1306,10 +1311,10 @@ impl Level {
 fn relight(materials: &[LitAlso], scene: &Scene, assets: &mut Assets<CharacterMaterial>) {
     for lit in materials {
         if let Some(mut m) = assets.get_mut(&lit.material) {
-            let rows = (m.uniform.uv_u, m.uniform.uv_v);
+            let kept = (m.uniform.uv_u, m.uniform.uv_v, m.uniform.effect);
             m.uniform = CharacterUniform::new(&lit.reference, scene, lit.alpha).lit_by_scene();
             m.scene_lights = LEVEL_LIGHTS;
-            (m.uniform.uv_u, m.uniform.uv_v) = rows;
+            (m.uniform.uv_u, m.uniform.uv_v, m.uniform.effect) = kept;
         }
     }
 }
@@ -1489,6 +1494,12 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                 r.keys = built.keys.len();
                 r.left_out = built.drawn.left_out_materials;
                 r.segments_left_out = built.drawn.left_out_segments;
+                let effects =
+                    (0..built.drawn.materials.len()).filter_map(|m| built.drawn.effect(m));
+                (r.grass_shells, r.warps) = effects.fold((0, 0), |(g, w), e| match e {
+                    guacamole::character::effect::Effect::Grass { .. } => (g + 1, w),
+                    guacamole::character::effect::Effect::Warp => (g, w + 1),
+                });
                 r.sky_segments = built.drawn.sky.len();
                 r.triangles = built.walk.triangles;
                 r.start = Some(built.walk.start.to_array());
@@ -1703,6 +1714,10 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         let material = match CharacterMaterial::from_ir(m, &scene, texture) {
             Ok(mut material) => {
                 material.uniform = level_uniform(material.uniform);
+                // A grass shell's or a warp's pass and numbers (AG.24).
+                if let Some(effect) = up.built.drawn.effect(start + k) {
+                    effect.apply(&mut material);
+                }
                 material.scene_lights = LEVEL_LIGHTS;
                 material.depth_bias = up.built.depth_bias[start + k];
                 s.materials.add(material)
@@ -2120,9 +2135,10 @@ fn light_level(
             continue;
         };
         if let Some(mut m) = materials.get_mut(h) {
-            let rows = (m.uniform.uv_u, m.uniform.uv_v);
+            // Its scroll's rows and an effect's numbers (AG.24) kept.
+            let kept = (m.uniform.uv_u, m.uniform.uv_v, m.uniform.effect);
             m.uniform = level_uniform(CharacterUniform::new(reference, &scene, *alpha));
-            (m.uniform.uv_u, m.uniform.uv_v) = rows;
+            (m.uniform.uv_u, m.uniform.uv_v, m.uniform.effect) = kept;
         }
     }
     relight(
@@ -4129,5 +4145,204 @@ mod tests {
             .filter(|(k, _)| k.material.shader.switches().gloss)
             .count();
         assert_eq!((built.keys.len(), gloss), (4, 1));
+    }
+
+    /// AG.24: a grass shell and a warp in the scene load drawn (their
+    /// passes among the keys, the warp's ripple map through both views),
+    /// tfbshadow's `player_shadow` left out, and none of them adds a solid:
+    /// the level's bodies are its collision part's alone.
+    #[test]
+    fn the_grass_and_the_warp_load_drawn_and_add_no_solid() {
+        use guac_ir::level::{EffectMaterial, UnitTexture};
+        use guacamole::character::effect::Effect;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let plain = read_level(&source, CompressedImageFormats::BC).unwrap();
+        let path = tmp.path().join(source.ir.level_path(LEVEL, SCENE));
+        let mut scene: guac_ir::level::Scene =
+            guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let graph = &mut scene.scenes[0];
+        let LevelMaterial::Multi2(ground) = &graph.materials[0] else {
+            panic!("the ground");
+        };
+        let file = ground.textures[0].clone();
+        let unit = |unit: i16, image: &str| UnitTexture {
+            unit,
+            texture: file.texture.clone(),
+            image: image.into(),
+            sampler: file.sampler,
+        };
+        let effect = |effect: u32, name: &str, textures: Vec<UnitTexture>| {
+            LevelMaterial::Effect(EffectMaterial {
+                name: name.into(),
+                effect,
+                pixel: None,
+                vertex: None,
+                textures,
+                states: guac_ir::model::RenderStates {
+                    blend: guac_ir::model::Blend::Alpha,
+                    depth_write: true,
+                    two_sided: true,
+                    alpha_test: None,
+                },
+                scrolls: Vec::new(),
+                tracks: Vec::new(),
+                unread: Vec::new(),
+            })
+        };
+        let first = graph.materials.len() as u16;
+        graph.materials.push(effect(
+            0xAA6,
+            "grass_HIRES",
+            vec![
+                unit(1, "grass_hieght.png"),
+                unit(2, "grass_random.dds"),
+                unit(0, "rocks_top_grass.png"),
+            ],
+        ));
+        graph.materials.push(effect(
+            0xAA9,
+            "Water_Warp",
+            vec![unit(0, "ripple_warp.png")],
+        ));
+        graph.materials.push(effect(
+            0xAA8,
+            "player_shadow",
+            vec![unit(0, "shadow_grey3.png")],
+        ));
+        let shape = MeshShape {
+            uv_sets: 1,
+            tangents: false,
+            colours: true,
+            skinned: false,
+        };
+        for k in 0..3 {
+            graph
+                .segments
+                .push(segment(first + k, shape, 20.0 + f32::from(k)));
+        }
+        std::fs::write(&path, guac_ir::to_ron(&scene).unwrap()).unwrap();
+
+        let built = read_level(&source, CompressedImageFormats::BC).unwrap();
+        let n = built.drawn.materials.len();
+        assert_eq!(
+            n,
+            plain.drawn.materials.len() + 2,
+            "the grass and the warp drawn"
+        );
+        let effects: Vec<Effect> = (0..n).filter_map(|i| built.drawn.effect(i)).collect();
+        assert_eq!(effects, [Effect::Grass { shell: 0.0 }, Effect::Warp]);
+        assert_eq!(
+            built.drawn.left_out_materials,
+            plain.drawn.left_out_materials + 1,
+            "tfbshadow's left out"
+        );
+        let passes: Vec<guacamole::character::Pass> =
+            built.keys.iter().map(|(k, _)| k.material.pass).collect();
+        assert!(passes.contains(&guacamole::character::Pass::Grass));
+        assert!(passes.contains(&guacamole::character::Pass::Warp));
+        // The warp's one file through the colour map's view and the ripple's.
+        let views: Vec<bool> = built
+            .images
+            .iter()
+            .filter(|(k, _)| k.0 == file.texture)
+            .map(|(k, _)| k.1)
+            .collect();
+        assert!(views.contains(&true) && views.contains(&false), "{views:?}");
+        // No solid of theirs: the bodies are the collision part's.
+        assert_eq!(built.walk.bodies.len(), plain.walk.bodies.len());
+        assert_eq!(built.walk.triangles, plain.walk.triangles);
+
+        // Uploaded: each drawn in its pass with its numbers, the keys the
+        // warm was asked for, and a fog's relight keeping the numbers.
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        app.update();
+        let uploaded = |app: &mut App| -> Vec<(guacamole::character::Pass, Vec4)> {
+            let world = app.world_mut();
+            let mut q = world.query::<(&MeshMaterial3d<CharacterMaterial>, &RenderLayers)>();
+            let materials = world.resource::<Assets<CharacterMaterial>>();
+            let mut out: Vec<_> = q
+                .iter(world)
+                .filter(|(_, l)| **l == RenderLayers::layer(LEVEL_LAYER))
+                .map(|(m, _)| materials.get(&m.0).unwrap())
+                .filter(|m| m.key.pass != guacamole::character::Pass::Colour)
+                .map(|m| (m.key.pass, m.uniform.effect))
+                .collect();
+            out.sort_by_key(|(p, _)| *p as u8);
+            out
+        };
+        let want = [
+            (
+                guacamole::character::Pass::Grass,
+                Effect::Grass { shell: 0.0 }.uniform(),
+            ),
+            (guacamole::character::Pass::Warp, Effect::Warp.uniform()),
+        ];
+        let mut want = want.to_vec();
+        want.sort_by_key(|(p, _)| *p as u8);
+        assert_eq!(uploaded(&mut app), want);
+        let asked: HashSet<WarmKey> = app
+            .world()
+            .resource::<Warm>()
+            .level_listed()
+            .iter()
+            .copied()
+            .collect();
+        assert!(
+            asked
+                .iter()
+                .any(|k| k.material.pass == guacamole::character::Pass::Grass)
+                && asked
+                    .iter()
+                    .any(|k| k.material.pass == guacamole::character::Pass::Warp),
+            "{asked:?}"
+        );
+        app.insert_resource(LevelFog {
+            colour: [90, 60, 30],
+            near: 30.0,
+            far: 300.0,
+        });
+        app.update();
+        assert_eq!(app.world().resource::<Level>().report().relit, 1);
+        assert_eq!(uploaded(&mut app), want, "kept through the relight");
+    }
+
+    /// AG.24: a prop's or a clone's warp (the level-up's ring) keeps its
+    /// numbers through a fog's relight too.
+    #[test]
+    fn a_relit_clone_keeps_its_effects_numbers() {
+        use guacamole::character::effect::Effect;
+        let mut assets = Assets::<CharacterMaterial>::default();
+        let reference = guac_ir::shading::Material::new();
+        let mut ring = CharacterMaterial::new(
+            guacamole::character::MaterialKey {
+                shader: guacamole::character::ShaderKey::new(0, 0).unwrap(),
+                states: guacamole::character::StateKey::OPAQUE,
+                pass: guacamole::character::Pass::Colour,
+            },
+            &reference,
+            &Scene::new(),
+            0.0,
+            guacamole::character::CharacterTextures {
+                colour: Some(Handle::default()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        Effect::Warp.apply(&mut ring);
+        let material = assets.add(ring);
+        relight(
+            &[LitAlso {
+                material: material.clone(),
+                reference,
+                alpha: 0.0,
+            }],
+            &Scene::new(),
+            &mut assets,
+        );
+        let m = assets.get(&material).unwrap();
+        assert_eq!(m.uniform.effect, Effect::Warp.uniform());
+        assert_eq!(m.key.pass, guacamole::character::Pass::Warp);
     }
 }

@@ -922,13 +922,20 @@ fn draw(warm: &mut Warm, entry: Entry, s: &mut WarmSpawner, watch: &PipelineWatc
     });
 }
 
-/// A key's material as the entry lists it: the colour pass's as built, or
-/// its level glow mask for a level's glow key (openspec AH.65).
-fn as_listed(material: CharacterMaterial, entry: &Entry) -> Result<CharacterMaterial, String> {
+/// A key's material as the entry lists it: the colour pass's as built, its
+/// level glow mask for a level's glow key (openspec AH.65), or a grass
+/// shell's or a warp's pass (AG.24).
+fn as_listed(mut material: CharacterMaterial, entry: &Entry) -> Result<CharacterMaterial, String> {
     match entry.key.material.pass {
         Pass::LevelGlow => material
             .level_glow()
             .ok_or_else(|| "a level glow key on a part that doesn't glow".to_owned()),
+        // A grass shell's or a warp's (openspec AG.24): its pass is its
+        // pipeline; its numbers aren't.
+        pass @ (Pass::Grass | Pass::Warp) => {
+            material.key.pass = pass;
+            Ok(material)
+        }
         _ => Ok(material),
     }
 }
@@ -1082,7 +1089,7 @@ mod tests {
             let mut key = materials.get(&material.0).unwrap().key;
             let pass = std::mem::take(&mut key.pass);
             let into = match pass {
-                Pass::Colour => &mut colour,
+                Pass::Colour | Pass::Grass | Pass::Warp => &mut colour,
                 Pass::GlowMask | Pass::LevelGlow => &mut glow,
             };
             into.insert(WarmKey {
@@ -1317,6 +1324,61 @@ mod tests {
         assert_eq!(masks(body), 1, "a body's glow mask");
         assert_eq!(masks(carried), 1, "a carried part's glow mask");
         assert_eq!(masks(level), 0, "a level draws no glow pass");
+    }
+
+    /// AG.24: a grass shell's and a warp's census keys draw on the stage in
+    /// their own passes, the pipelines the level draws them with.
+    #[test]
+    fn a_grass_and_a_warp_key_draw_on_the_stage_in_their_passes() {
+        use guacamole::census;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app(extract(tmp.path()));
+        app.insert_resource(Warm::new(true));
+        let scene = Arc::new(Scene {
+            shadows: true,
+            ..Scene::new()
+        });
+        let in_pass = |row: &census::Row, pass| {
+            let mut k = row.key(false).unwrap();
+            k.material.pass = pass;
+            k
+        };
+        let grass = in_pass(&census::GRASS[0], Pass::Grass);
+        let warp = in_pass(&census::WARP[0], Pass::Warp);
+        let card = |key: WarmKey| CensusKey {
+            key,
+            material: census::material_for(&key),
+            scene: scene.clone(),
+            card: false,
+        };
+        app.world_mut()
+            .resource_mut::<Warm>()
+            .ask_census([card(grass), card(warp)]);
+        let until = Instant::now() + Duration::from_secs(5);
+        while roots(&app) < 2 {
+            assert!(Instant::now() < until, "the census never drawn");
+            app.update();
+        }
+        let drawing: Vec<(WarmKey, Vec<Entity>)> = {
+            let warm = app.world().resource::<Warm>();
+            let stage = warm.stage.as_ref().unwrap();
+            stage
+                .drawing
+                .iter()
+                .map(|d| (d.key, d.checks.clone()))
+                .collect()
+        };
+        let drawn_as = |key: WarmKey| -> Vec<guacamole::character::MaterialKey> {
+            let (_, checks) = drawing.iter().find(|(k, _)| *k == key).unwrap();
+            let materials = app.world().resource::<Assets<CharacterMaterial>>();
+            checks
+                .iter()
+                .filter_map(|e| app.world().get::<MeshMaterial3d<CharacterMaterial>>(*e))
+                .map(|m| materials.get(&m.0).unwrap().key)
+                .collect()
+        };
+        assert_eq!(drawn_as(grass), [grass.material], "the grass's pass");
+        assert_eq!(drawn_as(warp), [warp.material], "the warp's pass");
     }
 
     /// AG.23: the stage has a shadow light on its layer, a skinned key that

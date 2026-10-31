@@ -46,6 +46,7 @@ use bevy::image::{
     ImageSamplerDescriptor, ImageType, TextureError,
 };
 use bevy::math::UVec2;
+use bevy::pbr::ScreenSpaceTransmission;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::Msaa;
 use guac_ir::model::{Filter, Material, Sampler, TextureRole, Wrap};
@@ -221,14 +222,26 @@ pub fn texture_view(
 }
 
 /// The remaster's camera, before its place, projection and target: HDR,
-/// 4x MSAA, TonyMcMapface, no dither.
-pub fn camera() -> (Camera3d, Hdr, Tonemapping, Msaa, DebandDither) {
+/// 4x MSAA, TonyMcMapface, no dither, and Bevy's screen-space transmission,
+/// whose copy of the frame a level's warp reads (openspec AG.24): every
+/// remaster camera has it, so a pipeline the warm compiles on its stage is
+/// the one a card or the level draws with, and it copies nothing in a frame
+/// with no warp in it.
+pub fn camera() -> (
+    Camera3d,
+    Hdr,
+    Tonemapping,
+    Msaa,
+    DebandDither,
+    ScreenSpaceTransmission,
+) {
     (
         Camera3d::default(),
         Hdr,
         TONEMAPPING,
         MSAA,
         DebandDither::Disabled,
+        ScreenSpaceTransmission::default(),
     )
 }
 
@@ -678,6 +691,10 @@ mod tests {
         assert_eq!(e.get::<Tonemapping>(), Some(&Tonemapping::TonyMcMapface));
         assert_eq!(e.get::<Msaa>(), Some(&Msaa::Sample4));
         assert_eq!(e.get::<DebandDither>(), Some(&DebandDither::Disabled));
+        assert!(
+            e.contains::<ScreenSpaceTransmission>(),
+            "the copy of the frame a warp reads (AG.24)"
+        );
         // No exposure lift: nothing scales the material's result, which
         // doesn't read Bevy's exposure anyway.
         assert!(

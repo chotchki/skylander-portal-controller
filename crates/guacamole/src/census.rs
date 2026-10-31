@@ -454,6 +454,22 @@ pub const CREATURES_GLOW: &[Row] = &[];
 /// (`LEVEL`'s), an adding one's this.
 pub const PARTICLES: &[Row] = &[row(0x0000, 0x1000, ADD, false, false, false, 1, true, true)];
 
+/// Every key chapter 1's grass draws (openspec AG.24): tfbgrass's shells on
+/// their stand-in (stand-in ledger: `grass-warp`), in the level's scene,
+/// in the grass's pass
+/// ([`Pass::Grass`]), each once.
+pub const GRASS: &[Row] = &[row(0x3d20, 0x3520, O, true, true, true, 1, false, true)];
+
+/// Every key a warp draws (openspec AG.24): chapter 1's water's and the
+/// level-up's ring's (`global.bld`'s), tfbwarp's in the warp's pass
+/// ([`Pass::Warp`]), each once; stand-in ledger: `grass-warp`.
+pub const WARP: &[Row] = &[
+    row(0x0000, 0x0000, O, true, false, false, 1, false, false),
+    row(0x0000, 0x0000, O, true, false, false, 1, false, true),
+    row(0x0000, 0x0000, O, true, true, false, 1, false, false),
+    row(0x0000, 0x0000, O, true, true, false, 1, false, true),
+];
+
 /// Their glowing generators' level glow masks (a bloom on the disc) past
 /// [`LEVEL_GLOW`]'s.
 pub const PARTICLES_GLOW: &[Row] = &[row(0x0000, 0x1000, ADD, false, false, false, 1, true, true)];
@@ -502,7 +518,8 @@ pub fn turntable_keys() -> Vec<WarmKey> {
 /// the level ([`HEROES`], [`HEROES_STATIC`]) and theirs ([`HEROES_GLOW`],
 /// [`HEROES_GLOW_STATIC`]), openspec AH.65; then the first fight's
 /// creatures' ([`CREATURES`], [`CREATURES_GLOW`]), AH.25; then the
-/// particles' ([`PARTICLES`], [`PARTICLES_GLOW`]), AH.87.
+/// particles' ([`PARTICLES`], [`PARTICLES_GLOW`]), AH.87; then the grass's
+/// and the warps' ([`GRASS`], [`WARP`]), AG.24.
 pub fn level_keys() -> Vec<WarmKey> {
     let mut out = keys(LEVEL, false);
     out.extend(keys(LEVEL_PROPS, false));
@@ -516,7 +533,20 @@ pub fn level_keys() -> Vec<WarmKey> {
     out.extend(glow_keys(CREATURES_GLOW, true));
     out.extend(keys(PARTICLES, false));
     out.extend(glow_keys(PARTICLES_GLOW, false));
+    out.extend(pass_keys(GRASS, Pass::Grass));
+    out.extend(pass_keys(WARP, Pass::Warp));
     out
+}
+
+/// `rows`' keys on static meshes in `pass` (AG.24's grass and warps).
+fn pass_keys(rows: &[Row], pass: Pass) -> Vec<WarmKey> {
+    keys(rows, false)
+        .into_iter()
+        .map(|mut k| {
+            k.material.pass = pass;
+            k
+        })
+        .collect()
 }
 
 fn keys(rows: &[Row], skinned: bool) -> Vec<WarmKey> {
@@ -690,11 +720,24 @@ mod tests {
             }
             every.extend(unique);
         }
+        // The grass's and the warps' (AG.24), in their passes.
+        for (rows, pass, n) in [(GRASS, Pass::Grass, 1), (WARP, Pass::Warp, 4)] {
+            assert_eq!(rows.len(), n);
+            let keys = pass_keys(rows, pass);
+            let unique: HashSet<WarmKey> = keys.iter().copied().collect();
+            assert_eq!(unique.len(), n, "a row twice");
+            for (r, k) in rows.iter().zip(&keys) {
+                assert_eq!(Row::of(k), *r);
+                assert_eq!(k.material.pass, pass);
+                assert!(!k.mesh.skinned);
+            }
+            every.extend(unique);
+        }
         // No key in two tables: the warm draws a key once, a card's with
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 67 + 66 + 13 + 1 + 29 + 1 + 10 + 1 + 1
+            33 + 24 + 67 + 66 + 13 + 1 + 29 + 1 + 10 + 1 + 1 + 1 + 4
         );
         assert_eq!(
             turntable_keys().len(),
@@ -714,6 +757,8 @@ mod tests {
                 + CREATURES_GLOW.len()
                 + PARTICLES.len()
                 + PARTICLES_GLOW.len()
+                + GRASS.len()
+                + WARP.len()
         );
     }
 
@@ -746,6 +791,7 @@ mod tests {
             .into_iter()
             .chain(keys(LEVEL_PROPS, false))
             .chain(keys(SPAWNS, false))
+            .chain(pass_keys(GRASS, Pass::Grass))
             .collect();
         let mut shadowed = 0;
         for k in level_keys() {
@@ -787,6 +833,11 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{key:?}: {e}"));
                 let m = match key.material.pass {
                     Pass::LevelGlow => m.level_glow().expect("its level glow draws"),
+                    // AG.24: the warm draws them in their pass.
+                    pass @ (Pass::Grass | Pass::Warp) => CharacterMaterial {
+                        key: MaterialKey { pass, ..m.key },
+                        ..m
+                    },
                     _ => m,
                 };
                 assert_eq!(m.key, key.material, "{scene:?}");
