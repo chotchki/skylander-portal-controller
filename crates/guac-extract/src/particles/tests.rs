@@ -120,10 +120,11 @@ fn an_emitter_that_does_not_read_is_listed_by_name_and_the_rest_land() {
         r.ir.refused[0].1
     );
 
-    // A good one beside it still lands.
+    // A good one after it in the file still lands: the refusal stops
+    // nothing past it.
     let mut b = IgzBuilder::new();
-    let good = b.object(0, "tfbParticleInfo", 0xE0);
     let bad = b.object(0, "tfbParticleInfo", 0xE0);
+    let good = b.object(0, "tfbParticleInfo", 0xE0);
     let record = b.object(0, "GeneratorGenerationFields", 0x34);
     let at = |l: guac_formats::igz::Location, o| l.offset_by(o).unwrap();
     guac_formats::level::builder::placement(&mut b, good, "Good", 1, &[0.0; 6], 5);
