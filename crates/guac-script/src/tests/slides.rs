@@ -569,13 +569,15 @@ fn a_ping_pong_slide_comes_back_once_and_ends_unless_it_loops() {
     }
 }
 
-/// A placement reference coming to name an actor it didn't tells the host
-/// (crate docs, Variables, structures and sets: the reference keeps where
-/// that actor stands then, openspec AH.250): set to `my`, set to `my` again
-/// (nothing), to nothing (nothing), to `my` once more; a second reference
-/// set to `my` is told apart by its cell; a number variable never.
+/// A placement reference set to an actor tells the host, each set (crate
+/// docs, Variables, structures and sets: the reference keeps where that
+/// actor stands then, openspec AH.250): set to `my`, to `my` again (told
+/// again: the scripts set one to the actor it names to take his place
+/// afresh, the Titan boulder's carrier and the chest), to nothing (not
+/// told), to `my` once more; a second reference set to `my` is told apart
+/// by its cell; a number variable never.
 #[test]
-fn a_reference_coming_to_name_an_actor_tells_the_host() {
+fn a_reference_set_to_an_actor_tells_the_host() {
     #[derive(Default)]
     struct Told(Vec<(u32, Value)>);
     impl Host for Told {
@@ -622,10 +624,11 @@ fn a_reference_coming_to_name_an_actor_tells_the_host() {
     let mut host = Told::default();
     vm.step(&mut host).unwrap();
     let me = Value::Entity(HANDLE);
-    assert_eq!(host.0.len(), 3, "{:?}", host.0);
+    assert_eq!(host.0.len(), 4, "{:?}", host.0);
     assert!(host.0.iter().all(|(_, v)| *v == me), "{:?}", host.0);
-    assert_eq!(host.0[0].0, host.0[1].0, "a, twice");
-    assert_ne!(host.0[1].0, host.0[2].0, "b's own cell");
+    assert_eq!(host.0[0].0, host.0[1].0, "a, set to him again");
+    assert_eq!(host.0[1].0, host.0[2].0, "a, after nothing");
+    assert_ne!(host.0[2].0, host.0[3].0, "b's own cell");
 }
 
 /// Any member of a slider but its own is unmodelled: strict mode names it

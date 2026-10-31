@@ -3481,9 +3481,11 @@ mod tests {
     /// point a tick at a time (openspec AH.250): set to him as it spawns,
     /// the reference keeps where he stood then, so each write puts him that
     /// far over where he fell, wherever the last one left him, and back down
-    /// with the slide. One set to another actor keeps where that one stands;
-    /// one no script set reads where he stands now. (A set to the actor it
-    /// names already tells the host nothing: guac-script's own test.)
+    /// with the slide. Set to him again once he's moved, it keeps where he
+    /// stands then (the VM tells the host each set: guac-script's own
+    /// test), as the chest and the Titan boulder use it. One set to another
+    /// actor keeps where that one stands; one no script set reads where he
+    /// stands now.
     #[test]
     fn a_reference_keeps_where_its_actor_stood_when_it_was_set() {
         const OTHER: Handle = 0x7777;
@@ -3534,6 +3536,13 @@ mod tests {
             let p = lift(&mut w, &mut e, own, feet);
             assert!((p - over(here, feet)).length() < 1e-5, "{feet} ft: {p:?}");
         }
+        // Moved, then set to him again: where he stands now.
+        let risen = here + Vec3::new(0.0, 3.6, 0.0);
+        w.actors.get_mut(&BALL).unwrap().position = risen;
+        w.referenced(CELL, Value::Entity(BALL), &mut e);
+        assert_eq!(w.point(own, &mut e), Some(risen), "taken afresh");
+        w.actors.get_mut(&BALL).unwrap().position = here;
+        assert_eq!(w.point(own, &mut e), Some(risen), "kept, not followed");
         // Set to another actor: where that one stands, apart from his.
         w.referenced(CELL, Value::Entity(OTHER), &mut e);
         let theirs = remembered(&mut w, &mut e, OTHER);
@@ -3855,6 +3864,91 @@ mod tests {
         w.place_hung(&mut e);
         let p = w.actor(PROMPT).unwrap().position;
         assert!(p.distance(pushed + ft(20.0)) < 1e-5, "{p:?}");
+    }
+
+    /// AH.226's offset off to the side (the slave's hammer 0.5 ft off his
+    /// hand at heading 230, the spinner's halves 4 ft either side of it):
+    /// put 4 ft to one side of an actor facing a quarter round, it turns
+    /// with him as he turns and walks; put 1 ft to one side of a posed node
+    /// turned a quarter, it turns with the node. Kept in the frame of what
+    /// it hangs from as it was put, not in the level's.
+    #[test]
+    fn a_hung_actors_offset_turns_with_what_it_hangs_from() {
+        let mut e = bench();
+        let mut w = world();
+        const OWNER: Handle = 0x6000_0020;
+        const SIDE: Handle = 0x6000_0021;
+        let base = Vec3::new(2.0, 1.0, -3.0);
+        let mut owner = ball(base, 0.0);
+        owner.angles.facing = 90.0;
+        w.actors.insert(OWNER, owner);
+        w.actors.insert(SIDE, ball(base, 0.0));
+        let hang = |w: &mut ScriptWorld, e: &mut Bench, on: Value| {
+            w.set_member(
+                &at(
+                    "abstractplacement",
+                    "attach node",
+                    Some(Value::Entity(SIDE)),
+                    None,
+                ),
+                Member::AttachNode,
+                on,
+                e,
+            )
+            .unwrap();
+        };
+        // On the actor, 4 ft along heading 30.
+        hang(&mut w, &mut e, Value::Entity(OWNER));
+        w.displace(OWNER, Value::Entity(SIDE), 0, 4.0, 30.0, 0.0, &mut e)
+            .unwrap();
+        let off = w.actor(SIDE).unwrap().position - base;
+        assert!(
+            off.y.abs() < 1e-5 && off.length() > 1.0,
+            "to the side: {off}"
+        );
+        w.place_hung(&mut e);
+        let p = w.actor(SIDE).unwrap().position;
+        assert!(p.distance(base + off) < 1e-5, "where it was put: {p}");
+        // He turns a quarter more and walks: it turns and walks with him.
+        let walked = base + Vec3::new(-1.5, 0.0, 2.0);
+        w.actors.get_mut(&OWNER).unwrap().position = walked;
+        w.actors.get_mut(&OWNER).unwrap().angles.facing = 180.0;
+        w.place_hung(&mut e);
+        let want = walked + Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * off;
+        let p = w.actor(SIDE).unwrap().position;
+        assert!(p.distance(want) < 1e-4, "{p} want {want}");
+        // On his node 0, posed a quarter turned about the vertical, 1 ft
+        // along heading 0: turned with the node as the node turns back.
+        let quarter = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let head = Vec3::new(0.0, 1.5, 0.0);
+        w.set_nodes(
+            OWNER,
+            vec![NodePose {
+                at: head,
+                turn: quarter,
+            }],
+        );
+        let node = w.objs.value(Object::Node(OWNER, 0));
+        hang(&mut w, &mut e, node);
+        let on = w.position(SIDE, &mut e).unwrap();
+        w.displace(OWNER, Value::Entity(SIDE), 0, 1.0, 0.0, 0.0, &mut e)
+            .unwrap();
+        let off = w.position(SIDE, &mut e).unwrap() - on;
+        assert!(
+            off.y.abs() < 1e-5 && off.length() > 0.2,
+            "to the side: {off}"
+        );
+        w.set_nodes(
+            OWNER,
+            vec![NodePose {
+                at: head,
+                turn: Quat::IDENTITY,
+            }],
+        );
+        w.place_hung(&mut e);
+        let want = on + quarter.inverse() * off;
+        let p = w.actor(SIDE).unwrap().position;
+        assert!(p.distance(want) < 1e-4, "{p} want {want}");
     }
 
     /// AH.60's aim: an actor hung on a posed node takes the node's turn,

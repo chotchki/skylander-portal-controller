@@ -350,14 +350,19 @@
 //!   reading: the orbs' delayed spawn remembers where an orb comes out
 //!   through its `orb` reference before the orb exists, then moves the
 //!   spawn point there (AH.20). A script setting a placement reference to
-//!   an actor it didn't name already tells the host ([`Host::referenced`]):
-//!   the reference's point is where that actor stands then, until a script
-//!   writes it (a reading, openspec AH.250: the hero's death actor lifts him
-//!   that many feet over its `dying actor`'s point, set as it spawns, and
-//!   the stat-buff icon's measurement actor rises over its `pos actor`'s;
-//!   other discs' scripts name such references `$MyStartPosition` and
-//!   `$StartPos`). A set to the actor it already names keeps its point; a
-//!   copied structure's references carry none.
+//!   an actor tells the host ([`Host::referenced`]), the actor it names
+//!   already too: the reference's point is where that actor stands then,
+//!   until a script writes it (a reading, openspec AH.250: the hero's death
+//!   actor lifts him that many feet over its `dying actor`'s point, set as
+//!   it spawns, and the stat-buff icon's measurement actor rises over its
+//!   `pos actor`'s; other discs' scripts name such references
+//!   `$MyStartPosition` and `$StartPos`). A set to the same actor takes his
+//!   place again, as the scripts use it: the Titan boulder sets `actor
+//!   carrying me` to itself before lifting its point to the carry height,
+//!   the chest sets `chest reference` to itself again once it has risen and
+//!   then shakes about that point, `Calc - Get Center Point` sets one to
+//!   the same actor twice running. A copied structure's references carry
+//!   none.
 //! - Every member the host answers comes with the op that reads or writes
 //!   it ([`Access::op`]), so the host can answer one asker apart from
 //!   another (openspec AH.150: a point against the gameplay camera, on

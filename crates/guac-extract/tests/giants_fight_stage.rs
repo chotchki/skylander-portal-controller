@@ -27,6 +27,7 @@ use guac_extract::stages::{self, Event};
 use guac_extract::{DirState, ExtractRoot, open};
 use guac_formats::igz::Igz;
 use guac_formats::script::Graph;
+use guac_ir::nodes::LevelNodes;
 use guac_ir::palette::{LevelPalettes, Palette, SlotEntry};
 use guac_ir::spawn::SpawnModels;
 
@@ -309,6 +310,29 @@ fn the_fights_parts_extract_whole_and_resume() {
         owners.iter().any(|o| o.ends_with("/MountainGoat.mdl")),
         "the jumping goats"
     );
+
+    // AH.138's nodes part: every placed model's attach list, a skinned
+    // one's nodes on its joints by name, none refused; Norticus' node 2,
+    // what his turban hangs on, on his head's joint.
+    let nodes: LevelNodes = read(&dir, &IrFormat::Ron.level_path(LEVELS[0], levels::NODES));
+    let all = || nodes.models.iter().flat_map(|m| &m.nodes);
+    let jointed = all().filter(|n| n.joint.is_some()).count();
+    let loose = all().filter(|n| n.joint.is_none()).count();
+    println!(
+        "  nodes: {} models with lists, {jointed} nodes on a joint, {loose} on none, {} refused",
+        nodes.models.len(),
+        nodes.refused.len()
+    );
+    assert!(nodes.refused.is_empty(), "{:?}", nodes.refused);
+    assert_eq!((nodes.models.len(), jointed, loose), (44, 114, 103));
+    let norticus = nodes
+        .models
+        .iter()
+        .find(|m| m.load_file.ends_with("/MabuAncient.mdl"))
+        .expect("Norticus' list");
+    let head = &norticus.nodes[2];
+    assert_eq!(head.bone.as_deref(), Some("J_head"), "{head:?}");
+    assert!(head.joint.is_some(), "{head:?}");
 
     // Every whitelisted script is in the script part and reads: the base's,
     // Eruptor's, the level's and (AG.162) each of the 66 walkers' own.

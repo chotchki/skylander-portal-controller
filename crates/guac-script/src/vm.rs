@@ -3910,13 +3910,12 @@ impl Vm {
         }
         match spot {
             Spot::Cell(c) => {
-                let cell = &self.cells[c as usize];
-                // A reference coming to name what it didn't tells the host,
-                // which remembers where an actor it names stands (crate
-                // docs, Variables, structures and sets).
-                let named = cell.kind == CellKind::Reference
-                    && matches!(v, Value::Entity(_) | Value::Object(_))
-                    && cell.value != v;
+                // A reference set to name something tells the host, which
+                // remembers where an actor it names stands, the one it
+                // named already again (crate docs, Variables, structures
+                // and sets).
+                let named = self.cells[c as usize].kind == CellKind::Reference
+                    && matches!(v, Value::Entity(_) | Value::Object(_));
                 self.write_cell(c, v, 0);
                 if named {
                     host.referenced(c, v);
