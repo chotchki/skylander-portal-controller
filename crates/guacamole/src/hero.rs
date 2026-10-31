@@ -40,6 +40,7 @@
 
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
+use bevy_transform_interpolation::TranslationEasingState;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
 use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
@@ -136,6 +137,12 @@ impl HeroActions {
 /// walk and facing his scripts' (AH design decision 5, one writer).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ScriptedHero;
+
+/// A replacement put up over his place to drop onto it (openspec AG.100):
+/// metres, applied the step his minion is in (his join no longer pending),
+/// or at once for a hero with no scripts to join; 0 once applied.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DropIn(pub(crate) f32);
 
 /// How fast each kinematic solid went over its last move, kept by whoever
 /// moves it ([`Surfaces`]).
@@ -372,14 +379,37 @@ pub(crate) fn step_heroes(
     moving: Res<MovingSolids>,
     time: Res<Time>,
     cameras: Query<&FollowCamera>,
-    mut heroes: Query<(&mut HeroBody, &mut Transform, Has<ScriptedHero>), Without<FollowCamera>>,
+    mut heroes: Query<
+        (
+            &mut HeroBody,
+            &mut Transform,
+            Has<ScriptedHero>,
+            Option<&crate::hero_scripts::HeroRun>,
+            Option<(&mut DropIn, &mut TranslationEasingState)>,
+        ),
+        Without<FollowCamera>,
+    >,
 ) {
     let step = time.delta_secs();
     let mut input = input.0;
     if let Some(follow) = cameras.iter().next() {
         input.view_heading = follow.drawn.heading();
     }
-    for (mut body, mut transform, scripted) in &mut heroes {
+    for (mut body, mut transform, scripted, run, drop) in &mut heroes {
+        // In now (openspec AH.224: his join no longer pending): a
+        // replacement goes up to drop onto his place (AG.100), drawn from
+        // there (no easing up from where he stood unseen).
+        let pending = run.is_some_and(|r| r.join.pending());
+        if let Some((mut drop, mut easing)) = drop.filter(|_| !pending)
+            && drop.0 > 0.0
+        {
+            let HeroBody { hero, exclude, .. } = &mut *body;
+            hero.pivot.y += drop.0;
+            hero.stand(&seam, exclude);
+            drop.0 = 0.0;
+            *transform = placed(&body.hero);
+            easing.start = Some(transform.translation);
+        }
         let HeroBody {
             hero,
             exclude,

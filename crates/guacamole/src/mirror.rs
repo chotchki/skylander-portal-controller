@@ -110,6 +110,9 @@ pub struct TvSnapshot {
     pub kept: Vec<guacamole::walkers::Kept>,
     /// The portal's alert as drawn (AG.29, AG.63, AG.73).
     pub alert: Option<AlertShot>,
+    /// The arrival (AG.72): the card on screen as drawn, how many wait and
+    /// the last few done with their times; none before the walk's state.
+    pub arrival: Option<crate::arrival::ArrivalShot>,
     /// The small join code drawn in the corner over the level or an alert
     /// (AG.29); `join_qr` counts its QR too.
     pub join_corner: bool,
@@ -789,6 +792,13 @@ pub(crate) struct DrawnFrame {
     /// Character materials changed since the frame before (each one is
     /// prepared again for the GPU).
     pub materials_changed: usize,
+    /// He's drawn this frame (openspec AH.224: nowhere while his join is
+    /// pending).
+    pub shown: bool,
+    /// The clips his scripts lay over his locomotion as the frame draws
+    /// them (AH.24): each one's palette slot, time in seconds and rate in
+    /// percent, the step's.
+    pub scripted: Vec<[f64; 3]>,
 }
 
 /// The walk's drawn frames, oldest first, and when the render world began
@@ -901,10 +911,12 @@ fn log_drawn(
     play: Option<Res<Play>>,
     reduced: Option<Res<crate::motion::ReducedMotion>>,
     mirror: Res<TvMirror>,
-    (bodies, transforms, cameras): (
+    (bodies, transforms, cameras, shown, scripts): (
         Query<(&HeroBody, &HeroGaits)>,
         Query<&Transform>,
         Query<&Camera>,
+        Query<&Visibility>,
+        Option<Res<guacamole::scripts::ScriptWorld>>,
     ),
     mut before: Local<Vec<Transform>>,
     changed: Option<MessageReader<AssetEvent<guacamole::character::material::CharacterMaterial>>>,
@@ -968,6 +980,13 @@ fn log_drawn(
         pose_moved,
         cameras: cameras.iter().filter(|c| c.is_active).count(),
         materials_changed,
+        shown: shown.get(hero).is_ok_and(|v| *v != Visibility::Hidden),
+        scripted: scripts.as_deref().map_or_else(Vec::new, |w| {
+            crate::hero_scripts::playing_on(w, hero.to_bits())
+                .into_iter()
+                .map(|(slot, t, rate)| [f64::from(slot), f64::from(t), f64::from(rate)])
+                .collect()
+        }),
     });
 }
 
@@ -1256,7 +1275,12 @@ fn mirror_tv(
         DefeatShots,
         Option<Res<crate::emitters::ParticleReport>>,
     ),
-    (warm, level, prepare): (Option<Res<Warm>>, Option<Res<Level>>, Option<Res<Prepare>>),
+    (warm, level, prepare, arrival): (
+        Option<Res<Warm>>,
+        Option<Res<Level>>,
+        Option<Res<Prepare>>,
+        crate::arrival::ArrivalShots,
+    ),
 ) {
     let Some(screen) = screen.shot() else {
         return;
@@ -1291,6 +1315,7 @@ fn mirror_tv(
         hero: play.hero(),
         kept: play.kept(),
         alert: alert.shot(window),
+        arrival: arrival.shot(window),
         join_corner: alert.corner(),
         loot: loot.shot(),
         creatures: creatures.shot(),
@@ -1359,6 +1384,8 @@ mod tests {
             pose_moved: 0.0,
             cameras: 2,
             materials_changed: 0,
+            shown: true,
+            scripted: Vec::new(),
         };
         let base = log.base;
         let at = |ms: u64| base + std::time::Duration::from_millis(ms);

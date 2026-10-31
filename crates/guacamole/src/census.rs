@@ -19,11 +19,13 @@
 //! `global.bld`'s own models), since AG.23 the level's, its props' and its
 //! spawns' parts that leave the shadow to the scene receiving the level's
 //! (chapter 1 55 before, its props 61), their glowing parts' level glow
-//! masks 29 (22 before AH.39; a mask reads no shadow) and the walking hero's
-//! keys in the level 2 (his body's and its mask, AH.65: the level's point
-//! lights on), the first fight's creatures' 10 more (AH.25: the Chompies'
-//! model and Norticus', skinned in the hero's scene; AG.150's tortoises and
-//! cannon top; AH.139's fading Chompy blending its opaque parts) and the
+//! masks 29 (22 before AH.39; a mask reads no shadow) and the heroes' keys
+//! in the level 81 (every character's as the hero past the cards': 56
+//! colour keys and 25 glow masks, AH.65's point lights on; Eruptor's 2
+//! alone until the arrival lane, 2026-10-31), the first fight's creatures'
+//! 2 more past the heroes' (AH.25: the Chompies' model and Norticus',
+//! skinned in the hero's scene; AG.150's tortoises and cannon top; AH.139's
+//! fading Chompy blending its opaque parts: 10 past Eruptor's) and the
 //! particles of what its scripts spawn 1 more and its glow mask (AH.87).
 //! So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
@@ -410,21 +412,108 @@ pub const LEVEL_GLOW: &[Row] = &[
     row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
 ];
 
-/// Every key a walking character draws as the hero in the level on a
-/// skinned mesh (openspec AH.65: the level's scene, its three point lights
-/// on), each once.
-pub const HEROES: &[Row] = &[row(0x3c1c, 0x241c, O, true, false, false, 1, true, false)];
+/// Every key a character draws as the hero in the level on a skinned mesh
+/// (openspec AH.65: the level's scene, its three point lights on) that the
+/// cards' table doesn't hold, each once: every one of the roster's, since
+/// any comes in as a replacement (AG.27; the arrival lane's Mac run of
+/// 2026-10-31 compiled Tree Rex's three in play, under his arrival).
+pub const HEROES: &[Row] = &[
+    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, ADD, false, false, false, 1, true, false),
+    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, true, false, 1, true, true),
+    row(0x3c18, 0x2418, O, true, false, false, 1, true, false),
+    row(0x3c1c, 0x241c, O, true, false, false, 1, true, false),
+    row(0x3c1c, 0x241c, O, true, false, true, 1, true, false),
+    row(0x3c1c, 0x341c, O, true, false, false, 1, true, true),
+    row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, O, true, false, true, 1, true, false),
+    row(0x3c24, 0x2424, O, true, true, true, 1, true, false),
+    row(0x3c24, 0x2424, A, true, true, true, 1, true, false),
+    row(0x3c28, 0x2428, O, true, false, false, 1, true, false),
+    row(0x3c2c, 0x242c, O, true, false, false, 1, true, false),
+    row(0x3c2c, 0x342c, O, true, false, false, 1, true, true),
+    row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, O, true, true, false, 1, true, false),
+    row(0x3c38, 0x2438, O, true, true, true, 1, true, false),
+    row(0x3c38, 0x3438, O, true, false, false, 1, true, true),
+    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, false, true, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, true, true, 1, true, false),
+    row(0x3c3c, 0x243c, A, false, true, false, 1, true, false),
+    row(0x3c3c, 0x243c, A, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, A, true, false, true, 1, true, false),
+    row(0x3c3c, 0x243c, A, true, true, false, 1, true, false),
+    row(0x3c3c, 0x243c, A, true, true, true, 1, true, false),
+    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
+    row(0x3c3c, 0x343c, A, true, false, false, 1, true, true),
+];
 
-/// Every key a walking character draws as the hero in the level on a
-/// static mesh (what he carries) that the level's tables don't hold.
-pub const HEROES_STATIC: &[Row] = &[];
+/// Every key a character draws as the hero in the level on a static mesh
+/// (what he carries) that the level's and the cards' tables don't hold.
+pub const HEROES_STATIC: &[Row] = &[
+    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
+    row(0x3c00, 0x2400, A, false, true, false, 1, true, false),
+    row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, A, false, false, false, 1, true, false),
+    row(0x3c04, 0x2404, A, true, false, false, 1, true, false),
+    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
+    row(0x3c08, 0x2408, O, true, false, false, 1, true, false),
+    row(0x3c0c, 0x240c, O, true, false, false, 1, true, false),
+    row(0x3c0c, 0x240c, O, true, true, false, 1, true, false),
+    row(0x3c1c, 0x241c, O, true, false, false, 1, true, false),
+    row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, A, true, true, false, 1, true, false),
+    row(0x3c24, 0x2424, ADD, true, false, false, 1, true, false),
+    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
+    row(0x3c2c, 0x242c, O, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
+    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
+    row(0x3c3c, 0x343c, A, true, false, false, 1, true, true),
+];
 
 /// His glowing parts' level glow masks on skinned meshes, as [`LEVEL_GLOW`]'s.
-pub const HEROES_GLOW: &[Row] = &[row(0x3c1c, 0x241c, O, true, false, false, 1, true, false)];
+pub const HEROES_GLOW: &[Row] = &[
+    row(0x0404, 0x0404, O, true, false, false, 1, true, false),
+    row(0x041c, 0x041c, O, true, false, false, 1, true, false),
+    row(0x043c, 0x043c, O, true, false, false, 1, true, false),
+    row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, true, false, 1, true, true),
+    row(0x3c1c, 0x241c, O, true, false, false, 1, true, false),
+    row(0x3c1c, 0x241c, O, true, false, true, 1, true, false),
+    row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c2c, 0x242c, O, true, false, false, 1, true, false),
+    row(0x3c2c, 0x342c, O, true, false, false, 1, true, true),
+    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
+    row(0x3c3c, 0x243c, A, false, true, false, 1, true, false),
+    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
+    row(0x3c3c, 0x343c, A, true, false, false, 1, true, true),
+];
 
 /// His glowing parts' level glow masks on static meshes past
 /// [`LEVEL_GLOW`]'s.
-pub const HEROES_GLOW_STATIC: &[Row] = &[];
+pub const HEROES_GLOW_STATIC: &[Row] = &[
+    row(0x041c, 0x041c, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, A, false, false, false, 1, true, false),
+    row(0x3c04, 0x2404, A, true, false, false, 1, true, false),
+    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
+    row(0x3c08, 0x2408, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
+];
 
 /// Every key the first fight's creatures draw in the level on a skinned
 /// mesh that [`HEROES`] doesn't hold (openspec AH.25: the four Chompies'
@@ -433,16 +522,8 @@ pub const HEROES_GLOW_STATIC: &[Row] = &[];
 /// and each opaque one blending as a fading creature draws it (AH.139),
 /// each once.
 pub const CREATURES: &[Row] = &[
-    row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
     row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
-    row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
     row(0x3c38, 0x2438, A, true, false, false, 1, true, false),
-    row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
-    row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
-    row(0x3c3c, 0x243c, A, true, false, false, 1, true, false),
-    row(0x3c3c, 0x243c, A, true, true, false, 1, true, false),
-    row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
-    row(0x3c3c, 0x343c, A, true, false, false, 1, true, true),
 ];
 
 /// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s.
@@ -686,9 +767,9 @@ mod tests {
             (LEVEL, false, 67),
             (LEVEL_PROPS, false, 68),
             (SPAWNS, false, 13),
-            (HEROES, true, 1),
-            (HEROES_STATIC, false, 0),
-            (CREATURES, true, 10),
+            (HEROES, true, 33),
+            (HEROES_STATIC, false, 23),
+            (CREATURES, true, 2),
             (PARTICLES, false, 1),
         ] {
             assert_eq!(rows.len(), n);
@@ -708,8 +789,8 @@ mod tests {
         // parts glow, keyed in the level's glow pass.
         for (rows, skinned, n) in [
             (LEVEL_GLOW, false, 29),
-            (HEROES_GLOW, true, 1),
-            (HEROES_GLOW_STATIC, false, 0),
+            (HEROES_GLOW, true, 17),
+            (HEROES_GLOW_STATIC, false, 8),
             (CREATURES_GLOW, true, 0),
             (PARTICLES_GLOW, false, 1),
         ] {
@@ -740,7 +821,7 @@ mod tests {
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 67 + 68 + 13 + 1 + 29 + 1 + 10 + 1 + 1 + 1 + 4
+            33 + 24 + 67 + 68 + 13 + 33 + 23 + 29 + 17 + 8 + 2 + 1 + 1 + 1 + 4
         );
         assert_eq!(
             turntable_keys().len(),

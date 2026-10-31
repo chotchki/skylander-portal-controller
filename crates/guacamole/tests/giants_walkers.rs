@@ -5405,3 +5405,125 @@ fn a_character_files_placements_join_in_its_root_lists_order() {
         "in his root list's order"
     );
 }
+
+/// The TV's join of `w`'s character at this step (openspec AH.224): his tag
+/// and file's placements in, a step, then his entry beam made and run
+/// ahead of each step until it activates him. The steps it took.
+fn enter_by_the_beam(w: &mut W) -> u32 {
+    let (files, handles, layout, unit) =
+        (w.files.clone(), w.handles.clone(), w.layout.clone(), w.unit);
+    let tag = Tag {
+        toy_id: w.toy.0,
+        subtype: u32::from(w.toy.1),
+        serial: 1,
+        values: Values::default(),
+    };
+    w.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))
+        .unwrap();
+    w.with_host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))
+        .unwrap();
+    w.step().unwrap();
+    let hero = w.hero;
+    let entry = w
+        .with_host(|vm, host| scripts::join_enter(vm, host, hero, true))
+        .unwrap();
+    assert_eq!(entry, scripts::Entry::Beam, "the dump's part runs the beam");
+    for k in 0..120 {
+        if let Some(m) = w
+            .with_host(|vm, host| scripts::entry_beams(vm, host, Some(hero)))
+            .unwrap()
+        {
+            w.minion = Some(m);
+            return k;
+        }
+        w.step().unwrap();
+    }
+    panic!("his entry beam never activated him");
+}
+
+/// AG.271 (the arrival review, 2026-10-31): the view jumping in close as
+/// Tree Rex comes in is the original's giant entry, which the TV's join
+/// reaches since AH.224 and a join with no beam never did: among a giant's
+/// entry macros his beam runs `Portal Entry - Giant` (`Macros_Giganticus.ai`),
+/// whose camera call 0.05 s after his activation sets the scripts' camera
+/// to an absolute zoom of 32.5 over 0.05 s with a shake, then a second on
+/// back to its own over 0.65 s (ease 90 in, 5 out). Headless over the dump
+/// on the TV's view, each step's eye against his pivot: joined with no beam
+/// it stays camera 0's 55 ft (16.764 m); by the beam it comes within 12 m
+/// of him by his fifth step in, stays within 12 m to his 55th and is back at
+/// camera 0's by his 150th; Eruptor's beam, no giant entry in it, only
+/// shakes it (within 0.15 m of camera 0's). Whether the punch-in's first
+/// step (4.3 m) is the original's is AG.271's, on an oracle recording.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_giants_entry_beam_punches_the_view_in_and_out() {
+    println!("load before: {:.2}", load1());
+    let started = Instant::now();
+    let l = Level::open();
+    // Camera 0's 55 ft.
+    const CAMERA_0: f32 = 16.764;
+    let distances = |w: &mut W, beam: bool| -> Vec<f32> {
+        (0..150)
+            .map(|_| {
+                if beam {
+                    w.with_host(|vm, host| scripts::entry_beams(vm, host, None))
+                        .unwrap();
+                }
+                w.step().unwrap();
+                w.world.viewport().eye.distance(w.hero().pivot)
+            })
+            .collect()
+    };
+    let mut plain = W::new(&l, TREE_REX, STRICT).on_the_tvs_view();
+    plain.step().unwrap();
+    plain.step().unwrap();
+    plain.join().unwrap();
+    let no_beam = distances(&mut plain, false);
+    let mut beamed = W::new(&l, TREE_REX, STRICT).on_the_tvs_view();
+    beamed.step().unwrap();
+    beamed.step().unwrap();
+    let took = enter_by_the_beam(&mut beamed);
+    let giant = distances(&mut beamed, true);
+    let mut eruptor = W::new(&l, "009_Eruptor", STRICT).on_the_tvs_view();
+    eruptor.step().unwrap();
+    eruptor.step().unwrap();
+    enter_by_the_beam(&mut eruptor);
+    let fire = distances(&mut eruptor, true);
+    let range = |d: &[f32]| {
+        d.iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(*x), hi.max(*x)))
+    };
+    println!(
+        "Tree Rex, no beam: eye {:?} m off his pivot over 150 steps",
+        range(&no_beam)
+    );
+    println!(
+        "Tree Rex by the beam ({took} steps to his activation): steps 0-9 {:?}, steps 5-55 {:?}, steps 140-149 {:?}",
+        &giant[..10],
+        range(&giant[5..56]),
+        range(&giant[140..])
+    );
+    println!("Eruptor by the beam: {:?}", range(&fire));
+    assert!(
+        no_beam.iter().all(|d| (d - CAMERA_0).abs() < 0.01),
+        "no beam, no giant entry: {:?}",
+        range(&no_beam)
+    );
+    assert!(giant[..5].iter().any(|d| *d < 12.0), "{:?}", &giant[..5]);
+    assert!(
+        giant[5..56].iter().all(|d| *d < 12.0),
+        "{:?}",
+        range(&giant[5..56])
+    );
+    assert!(
+        giant[140..].iter().all(|d| (d - CAMERA_0).abs() < 0.05),
+        "{:?}",
+        range(&giant[140..])
+    );
+    assert!(
+        fire.iter().all(|d| (d - CAMERA_0).abs() < 0.15),
+        "{:?}",
+        range(&fire)
+    );
+    println!("{:.2?}; load after: {:.2}", started.elapsed(), load1());
+}

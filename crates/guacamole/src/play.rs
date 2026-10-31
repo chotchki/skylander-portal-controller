@@ -140,9 +140,10 @@ use skylander_core::SlotIndex;
 use skylander_rpcs3_control::Placement;
 use tracing::{info, warn};
 
+use crate::arrival::{self, Arrivals};
 use crate::cards::{PortalCards, PortalChanged};
 use crate::driver::PortalChange;
-use crate::hero::{FollowCamera, HeroBody, HeroGaits, HeroPlugin, following, spawn_hero};
+use crate::hero::{DropIn, FollowCamera, HeroBody, HeroGaits, HeroPlugin, following, spawn_hero};
 use crate::hero_scripts::{self, HeroRun, Join, ScriptSource};
 use crate::intro::IntroQueue;
 use crate::level::{
@@ -606,7 +607,15 @@ pub(crate) struct Play {
     /// When the last hero's health ran out, on the TV's real clock, while no
     /// hero has come in since: Restart chapter's offer counts from it.
     beaten_at: Option<Duration>,
+    /// The arrivals waiting and on screen (openspec AG.72).
+    arrivals: Arrivals,
 }
+
+/// How far above the last hero's place a replacement comes in, metres
+/// (openspec AG.100; AG.81's recordings: 0.376-0.406 m), to fall onto it
+/// once his minion is in (stand-in ledger: `replacement`): the lib's, which
+/// the disc tests drop him by too.
+pub(crate) const DROP: f32 = guacamole::walkers::REPLACEMENT_DROP;
 
 /// How long a beaten hero's death sequence may run before the TV takes him
 /// out itself: past the original's 2.2 s (AH.11's 133-134 records from his
@@ -927,6 +936,21 @@ impl Play {
         self.inside.as_ref()?.hero.as_ref()
     }
 
+    /// The arrivals waiting and on screen (AG.72).
+    pub(crate) fn arrivals(&self) -> &Arrivals {
+        &self.arrivals
+    }
+
+    /// A too-many or wrong-toy alert is up, which hides an arrival's card
+    /// and holds its clock (the call for a Skylander and the needs-rest
+    /// alert don't: AH.52's `cap_off`).
+    pub(crate) fn arrival_hidden(&self) -> bool {
+        matches!(
+            self.alert,
+            Some(Alert::TooManySkylanders | Alert::TooManyItems | Alert::WrongToy)
+        )
+    }
+
     /// The instances beaten in this level (AH.26).
     pub(crate) fn beaten(&self) -> &[Instance] {
         &self.beaten
@@ -940,10 +964,14 @@ impl Play {
     /// Restart chapter is on offer at `now` (the TV's real clock): the
     /// portal calling for a character with none to come in (so no hero in
     /// the level: [`judge`] calls only then), [`RESTART_AFTER`] since the
-    /// last hero's health ran out with none in since.
+    /// last hero's health ran out with none in since, and no arrival
+    /// holding the level (AG.72: a magic item placed under the offer plays
+    /// its card, the offer back after it, rather than the modal taking the
+    /// pads under the card at its height).
     pub(crate) fn restart_offered(&self, now: Duration) -> bool {
         matches!(self.alert, Some(Alert::NeedsRest | Alert::PlaceSkylander))
             && self.beaten_at.is_some_and(|at| now >= at + RESTART_AFTER)
+            && !self.arrivals.holding()
     }
 
     /// The slot the hero's figure stands in and its placement, while he's
@@ -1192,14 +1220,17 @@ impl Plugin for PlayPlugin {
                 (
                     restart,
                     follow_portal,
+                    ask_items,
                     keep_unlinked,
                     choose_hero,
                     load_hero,
                     leave,
                     keep_cards,
                     follow_defeat,
+                    tick_arrivals,
                     judge_portal,
                     enter,
+                    show_hero,
                     pose_hero,
                     rest_the_cards,
                     tell_level_hero,
@@ -1377,6 +1408,7 @@ fn choose_hero(
     turntables: Res<Turntables>,
     mut play: ResMut<Play>,
     source: Option<Res<ScriptSource>>,
+    real: Res<Time<Real>>,
 ) {
     if play.candidate.is_some() {
         return;
@@ -1409,8 +1441,63 @@ fn choose_hero(
             in_level = play.inside.is_some(),
             "the hero, once his model is ready"
         );
+        // A character becoming the hero after the level has started arrives
+        // first (AG.72); the first one in has his intro instead.
+        if play.inside.is_some() {
+            let asked = arrival::asked(c.slot, &c.placement, arrival::Kind::Hero, real.elapsed());
+            play.arrivals.ask(asked);
+        }
         play.candidate = Some(c);
     }
+}
+
+/// A magic item or a sidekick placed while the level has started arrives
+/// (AG.72), alone of its kind: a second holds under the too-many-items
+/// alert instead ([`judge`]).
+fn ask_items(
+    mut heard: MessageReader<PortalChanged>,
+    mut play: ResMut<Play>,
+    cards: Res<PortalCards>,
+    turntables: Res<Turntables>,
+    source: Option<Res<ScriptSource>>,
+    real: Res<Time<Real>>,
+) {
+    for PortalChanged(change) in heard.read() {
+        let PortalChange::Placed { slot, placement } = change else {
+            continue;
+        };
+        let Some(shelf) = turntables.shelf() else {
+            continue;
+        };
+        if play.inside.is_none() || kind(shelf, placement.figure_id.as_str()) != Kind::MagicItem {
+            continue;
+        }
+        let lineup = Lineup::of(
+            &play.order,
+            &cards,
+            shelf,
+            source.as_deref(),
+            &play.kept,
+            &play.beaten,
+        );
+        if lineup.magic != 1 {
+            continue;
+        }
+        let asked = arrival::asked(*slot, placement, arrival::Kind::Item, real.elapsed());
+        play.arrivals.ask(asked);
+    }
+}
+
+/// The arrivals a frame on (AG.72, [`Arrivals::tick`]): each figure still on
+/// its slot as asked, a too-many or wrong-toy alert holding the card.
+fn tick_arrivals(mut play: ResMut<Play>, cards: Res<PortalCards>, real: Res<Time<Real>>) {
+    let blocked = play.arrival_hidden();
+    let on = |slot: SlotIndex, figure: &Instance| {
+        cards.slots[slot.as_usize()]
+            .as_ref()
+            .is_some_and(|p| instance(p) == *figure)
+    };
+    play.arrivals.tick(real.elapsed(), blocked, on);
 }
 
 /// The scene the hero's keys are made in: the hero scene's switches (fog
@@ -1573,6 +1660,7 @@ fn end_level(
     play.beaten.clear();
     play.dying = None;
     play.beaten_at = None;
+    play.arrivals.clear();
     // The scripts start over with the level's next entry (AH.24).
     commands.queue(hero_scripts::reinstall);
 }
@@ -1727,7 +1815,7 @@ fn judge_portal(
     let held = play
         .inside
         .as_ref()
-        .is_some_and(|i| alert.is_some() || i.hero.is_none());
+        .is_some_and(|i| alert.is_some() || i.hero.is_none() || play.arrivals.holding());
     if pads.held() != held {
         pads.hold(held);
     }
@@ -1765,6 +1853,8 @@ fn enter(
 ) {
     let replacing = match &play.inside {
         None => false,
+        // His arrival first (AG.72): the level shows again with him.
+        Some(_) if play.arrivals.holding() => return,
         Some(inside) if inside.hero.is_none() => true,
         Some(_) => return,
     };
@@ -1821,7 +1911,8 @@ fn enter(
     if replacing {
         // Where the last one stood is a spot a hero fits: a settle's cast
         // from a metre up could meet an overhang beside it first (the Mac
-        // run's second replacement came in 0.97 m up).
+        // run's second replacement came in 0.97 m up). He drops onto it
+        // from [`DROP`] up once his minion is in (AG.100).
         hero.stand(&seam, &[]);
     } else {
         hero.settle(&seam, &[]);
@@ -1877,6 +1968,10 @@ fn enter(
         c.slot,
         Some(drawn.root),
     );
+    if replacing {
+        // He drops onto the last one's place as he comes in (AG.100).
+        s.commands.entity(hero_entity).insert(DropIn(DROP));
+    }
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
     let lit = drawn.lit.iter().map(|l| l.material.clone()).collect();
@@ -1939,6 +2034,27 @@ fn enter(
     });
 }
 
+/// The hero drawn from the step his minion comes in (openspec AH.224):
+/// while his join is pending (asked, requested, his entry beam running) he's
+/// drawn nowhere, as the original's minion is in the world from his
+/// activation on; a hero with no run, or one whose join fell back, is drawn
+/// from his entry.
+fn show_hero(play: Res<Play>, mut heroes: Query<(&mut Visibility, Option<&HeroRun>)>) {
+    let Some(h) = play.on_stage() else {
+        return;
+    };
+    let Ok((mut shown, run)) = heroes.get_mut(h.hero) else {
+        return;
+    };
+    let want = match run.is_some_and(|r| r.join.pending()) {
+        true => Visibility::Hidden,
+        false => Visibility::Inherited,
+    };
+    if *shown != want {
+        *shown = want;
+    }
+}
+
 /// The cards' turntables draw nothing while the level covers the portal
 /// view, and draw again once it's left (AG.55: Eruptor's card and its glow,
 /// drawn behind the level, took 1.6 ms of every 7.8 ms frame of the render
@@ -1950,8 +2066,15 @@ fn rest_the_cards(
     children: Query<&Children>,
     mut cameras: Query<&mut Camera>,
 ) {
-    let draw = play.inside.is_none();
+    // The arrival's figure turns on its card camera while its card shows
+    // (AG.72).
+    let arriving = play
+        .arrivals
+        .showing()
+        .filter(|_| !play.arrival_hidden())
+        .and_then(|a| turntables.card_camera(a.slot.as_u8()));
     for card in turntables.card_cameras() {
+        let draw = play.inside.is_none() || Some(card) == arriving;
         let glows = children.get(card).into_iter().flat_map(|c| c.iter());
         for e in std::iter::once(card).chain(glows) {
             if let Ok(mut camera) = cameras.get_mut(e)
@@ -4344,7 +4467,14 @@ mod tests {
         });
         let next = app.world().resource::<Play>().hero().unwrap();
         assert_ne!(next, first);
-        assert!(hero(&app).pivot.distance(stood) < 1e-3, "where he stood");
+        // Put up over where he stood to drop onto it (AG.100): the
+        // synthetic part has no mover update to drop him, so he stays up.
+        app.update();
+        let at = hero(&app).pivot;
+        assert!(
+            (at - (stood + Vec3::Y * DROP)).length() < 1e-3,
+            "{at} over {stood}"
+        );
         let mut runs = app.world_mut().query::<(Entity, &HeroRun)>();
         let runs: Vec<Entity> = runs.iter(app.world()).map(|(e, _)| e).collect();
         assert_eq!(runs, [next], "one run, on the TV's hero");
@@ -6119,8 +6249,13 @@ mod tests {
             alert(a) == Some(Alert::TooManySkylanders)
         });
         stands_still(&mut app, 5);
+        assert!(arrived(&app).is_empty(), "none for the one the alert holds");
         let left = hero(&app);
         clear(&mut app, 0);
+        // The one held comes in by his arrival (AG.72).
+        until(&mut app, "his arrival", |a| {
+            arriving(a) == Some((arrival::Kind::Hero, 4))
+        });
         until(&mut app, "the other in", |a| {
             a.world().resource::<Play>().hero().is_some()
                 && a.world()
@@ -6139,6 +6274,7 @@ mod tests {
         assert_ne!(left.facing, START_FACING);
         let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
         assert_eq!(inside.camera, camera, "the same camera");
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Hero, 4, "shown")]);
         until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
         assert_eq!(alert(&app), None);
         let mut heroes = app.world_mut().query::<&HeroBody>();
@@ -6266,19 +6402,97 @@ mod tests {
         );
     }
 
-    /// AG.81: a replacement stands where the last one stood from his first
-    /// step, put down at that pivot rather than dropped onto it (the
-    /// original drops its replacement from 0.41 m up, AG.100's): every one
-    /// of his first 30 steps on the ground at that place, his locomotion on
-    /// the ground with no weight on his fall.
+    /// Whether the hero is drawn this frame, his join's name, the clips his
+    /// scripts lay over him (slot and time) and his pivot.
+    fn drawn_state(app: &App) -> (bool, Option<String>, Vec<(u32, f32)>, Vec3) {
+        let e = app.world().resource::<Play>().hero().expect("in the level");
+        let shown = app
+            .world()
+            .entity(e)
+            .get::<Visibility>()
+            .is_some_and(|v| *v != Visibility::Hidden);
+        let clips = app
+            .world()
+            .get_resource::<ScriptWorld>()
+            .map(|w| {
+                hero_scripts::playing_on(w, e.to_bits())
+                    .into_iter()
+                    .map(|(slot, t, _)| (slot, t))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (shown, join(app), clips, hero(app).pivot)
+    }
+
+    /// AH.224 on the TV: on a part with the entry beam, the hero who comes
+    /// in is drawn nowhere while his beam runs (`entering`), standing where
+    /// the TV put him, the beam's column on his spot, and no HUD (no health
+    /// of his to read yet: the arrival review saw its bars empty under the
+    /// falling column on the Mac); he's drawn from the frame his minion is
+    /// in (`joined`), the HUD with him, at his scripts' health.
     #[test]
-    fn a_replacement_stands_his_first_steps_where_the_last_stood() {
+    fn a_hero_is_drawn_nowhere_until_his_entry_beam_lands() {
+        use guac_formats::script::builder::ENTRY_COLUMN;
+        use guac_formats::script::builder::{ATTACK_HEALTH, ATTACK_HEALTH_MAX};
         let tmp = tempfile::tempdir().unwrap();
-        let (mut app, pad) = walking(tmp.path());
-        test_pad::stick(&mut app, pad, 0.0, 0.0);
-        for _ in 0..30 {
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts_with(tmp.path(), true);
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        let put = hero(&app).pivot;
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        let columns = |app: &App| -> usize {
+            let w = app.world().resource::<ScriptWorld>();
+            let program = app.world().resource::<ScriptRuntime>().vm.program_arc();
+            w.clones()
+                .into_iter()
+                .filter_map(|h| w.actor(h))
+                .filter(|a| !a.removed)
+                .filter(|a| a.template.and_then(|t| program.name_of(t)) == Some(ENTRY_COLUMN))
+                .count()
+        };
+        let mut entering = 0;
+        for frame in 0..120 {
             app.update();
+            let (shown, join, _, pivot) = drawn_state(&app);
+            let hud = app.world().resource::<crate::hud::Hud>().shown.clone();
+            match join.as_deref() {
+                Some("joined") => {
+                    assert!(shown, "frame {frame}: in, drawn");
+                    let hud = hud.unwrap_or_else(|| panic!("frame {frame}: in, no HUD"));
+                    assert_eq!(hud.health, Some((ATTACK_HEALTH, ATTACK_HEALTH_MAX)));
+                    break;
+                }
+                Some("entering") => {
+                    entering += 1;
+                    assert_eq!(columns(&app), 1, "frame {frame}: the column on his spot");
+                }
+                _ => {}
+            }
+            assert!(!shown, "frame {frame}: {join:?} and drawn");
+            assert_eq!(hud, None, "frame {frame}: {join:?} and a HUD");
+            assert!(pivot.distance(put) < 1e-5, "frame {frame}: where put");
         }
+        assert!(entering >= 1, "his beam ran");
+        assert_eq!(join(&app).as_deref(), Some("joined"));
+    }
+
+    /// AG.100 and AH.224 on the TV: on the part with the entry beam, the
+    /// replacement's beam drops its column onto the ground where the last
+    /// stood, and he's drawn from the frame his minion is in, his scripts'
+    /// first clip (the synthetic part's arrival, its STARTUP's) on him then
+    /// at its start, put up 0.38-0.41 m over that place only then (the
+    /// synthetic part has no mover update to drop him).
+    #[test]
+    fn a_replacement_is_drawn_from_the_step_his_minion_is_in_with_his_clip_on() {
+        use guac_formats::script::builder::{ATTACK_ARRIVAL_SLOT, ENTRY_COLUMN};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor_with(tmp.path(), true);
         clear(&mut app, 0);
         until(&mut app, "the call", |a| {
             alert(a) == Some(Alert::PlaceSkylander)
@@ -6290,28 +6504,70 @@ mod tests {
             .as_ref()
             .unwrap()
             .left
-            .unwrap();
+            .unwrap()
+            .0;
         place(&mut app, 2, ERUPTOR, "Eruptor");
-        until(&mut app, "the next one in", |a| mode(a) == Mode::Level);
-        let next = app.world().resource::<Play>().hero().unwrap();
-        for step in 0..30 {
-            let h = hero(&app);
-            assert!(
-                h.footing.supported,
-                "step {step}: off the ground at {}",
-                h.pivot
+        until(&mut app, "the next one in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        let column_at = |app: &App| -> Option<Vec3> {
+            let w = app.world().resource::<ScriptWorld>();
+            let program = app.world().resource::<ScriptRuntime>().vm.program_arc();
+            w.clones()
+                .into_iter()
+                .filter_map(|h| w.actor(h))
+                .filter(|a| !a.removed)
+                .find(|a| a.template.and_then(|t| program.name_of(t)) == Some(ENTRY_COLUMN))
+                .map(|a| a.position)
+        };
+        let mut first = None;
+        let mut column = None;
+        for frame in 0..60 {
+            let (shown, join, clips, pivot) = drawn_state(&app);
+            if join.as_deref() == Some("entering") {
+                column = column.or(column_at(&app));
+            }
+            if shown {
+                first = Some((frame, join, clips, pivot));
+                break;
+            }
+            assert_ne!(
+                join.as_deref(),
+                Some("joined"),
+                "frame {frame}: in and not drawn"
             );
-            assert!(
-                h.pivot.distance(left.0) < 1e-3,
-                "step {step}: {} against {}",
-                h.pivot,
-                left.0
-            );
-            let gaits = app.world().entity(next).get::<HeroGaits>().unwrap();
-            assert_eq!(gaits.locomotion.air().name(), "ground", "step {step}");
-            assert_eq!(gaits.locomotion.weights()[3], 0.0, "step {step}: his fall");
             app.update();
         }
+        let column = column.expect("his beam's column");
+        assert!(
+            column.distance(left) < 1e-3,
+            "the column at {column}, his place {left}"
+        );
+        let (frame, join, clips, pivot) = first.expect("drawn");
+        assert_eq!(join.as_deref(), Some("joined"), "frame {frame}");
+        let arrival = clips
+            .iter()
+            .find(|(slot, _)| *slot == ATTACK_ARRIVAL_SLOT as u32)
+            .unwrap_or_else(|| panic!("frame {frame}: his arrival's clip on him: {clips:?}"));
+        assert!(arrival.1 <= 2.0 / 60.0 + 1e-4, "at its start: {arrival:?}");
+        // AG.81's recordings: 0.38-0.41 m up as the level shows again.
+        let up = pivot.y - left.y;
+        let across = Vec3::new(pivot.x - left.x, 0.0, pivot.z - left.z).length();
+        assert!((0.38..=0.41).contains(&up), "{up} m over {left}");
+        assert!(across < 1e-3, "{across} m across");
+        // Drawn there too, not eased up from where he stood unseen (the
+        // arrival review: the drop's easing reset taken out passed this test).
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let drawn = app
+            .world()
+            .entity(e)
+            .get::<Transform>()
+            .unwrap()
+            .translation;
+        assert!(
+            (drawn - pivot).length() < 1e-3,
+            "drawn at {drawn}, his pivot {pivot}"
+        );
     }
 
     /// AG.29: a replacement whose model can't be drawn (his hero side gone
@@ -6409,15 +6665,61 @@ mod tests {
         assert_eq!(c.slot.as_u8(), 2);
     }
 
-    /// AG.29: an item placed mid-level changes nothing: no alert, he walks
-    /// on; a sidekick beside it is a second magic item and holds the level
-    /// under the too-many-items alert until one comes off.
+    /// The arrival on screen (AG.72): its kind and slot (0-based).
+    fn arriving(app: &App) -> Option<(arrival::Kind, u8)> {
+        app.world()
+            .resource::<Play>()
+            .arrivals
+            .showing()
+            .map(|a| (a.kind, a.slot.as_u8()))
+    }
+
+    /// The arrivals done (AG.72): each one's kind, slot and how it ended.
+    fn arrived(app: &App) -> Vec<(arrival::Kind, u8, &'static str)> {
+        app.world()
+            .resource::<Play>()
+            .arrivals
+            .done()
+            .map(|d| (d.kind, d.slot - 1, d.how))
+            .collect()
+    }
+
+    /// AG.29 and AG.72: an item placed mid-level plays its arrival (the
+    /// level held from the placement, its card from its lead-in for its
+    /// time, no alert), then leaves him as he was, walking on; a sidekick
+    /// beside it is a second magic item and holds the level under the
+    /// too-many-items alert with no arrival until one comes off.
     #[test]
-    fn an_item_mid_level_changes_nothing_and_a_second_holds_it() {
+    fn an_item_mid_level_arrives_then_changes_nothing_and_a_second_holds_it() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, _pad) = walking(tmp.path());
         place(&mut app, 5, ITEM, "Five");
+        app.update();
+        assert_eq!(mode(&app), Mode::Held, "held from the placement");
+        // The frame the hold begins runs the steps already due (AG.20).
+        app.update();
         let from = hero(&app).pivot;
+        let mut lead = 1;
+        while arriving(&app).is_none() {
+            app.update();
+            lead += 1;
+            assert_eq!(alert(&app), None);
+            assert!(lead < 90, "its card within 1.5 s");
+        }
+        assert_eq!(arriving(&app), Some((arrival::Kind::Item, 5)));
+        let mut shown = 0;
+        while arriving(&app).is_some() {
+            assert_eq!(mode(&app), Mode::Held);
+            assert!(hero(&app).pivot.distance(from) < 1e-4, "he holds");
+            app.update();
+            shown += 1;
+            assert!(shown < 400);
+        }
+        eprintln!("lead-in {lead} frames, card {shown} frames");
+        assert!((70..=74).contains(&lead), "{lead}");
+        assert!((238..=242).contains(&shown), "{shown}");
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Item, 5, "shown")]);
+        assert_eq!(mode(&app), Mode::Level, "the level again");
         for _ in 0..20 {
             app.update();
             assert_eq!(mode(&app), Mode::Level);
@@ -6430,8 +6732,339 @@ mod tests {
         });
         assert_eq!(mode(&app), Mode::Held);
         stands_still(&mut app, 20);
+        assert_eq!(arriving(&app), None, "no arrival for the second");
         clear(&mut app, 5);
         until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        assert_eq!(arrived(&app).len(), 1);
+    }
+
+    /// AG.72: an item taken off before its turn has no arrival: the hold
+    /// goes with it.
+    #[test]
+    fn an_item_gone_by_its_turn_has_no_arrival() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        place(&mut app, 5, ITEM, "Five");
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(mode(&app), Mode::Held);
+        clear(&mut app, 5);
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        for _ in 0..120 {
+            app.update();
+            assert_eq!(arriving(&app), None);
+        }
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Item, 5, "dropped")]);
+    }
+
+    /// AG.72: the first character in has no arrival (his intro stands in
+    /// for it).
+    #[test]
+    fn the_first_entry_has_no_arrival() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, _pad) = walking(tmp.path());
+        assert_eq!(mode(&app), Mode::Level);
+        assert!(!app.world().resource::<Play>().arrivals.holding());
+        assert!(arrived(&app).is_empty());
+    }
+
+    /// AG.72 and AG.100: Eruptor taken off and his figure put back: within
+    /// 1.5 s his arrival (the level held, no hero in), then the level again
+    /// 5.2 s after the placement with him in, put up [`DROP`] over where he
+    /// stood; he drops onto it in 6-9 steps and stands there.
+    #[test]
+    fn a_replacement_arrives_then_drops_onto_where_the_last_stood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        for _ in 0..30 {
+            app.update();
+        }
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        let left = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .left
+            .unwrap();
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        let mut frames = 0u32;
+        while arriving(&app).is_none() {
+            app.update();
+            frames += 1;
+            assert!(frames < 90, "his arrival within 1.5 s");
+            assert!(app.world().resource::<Play>().hero().is_none());
+        }
+        assert_eq!(arriving(&app), Some((arrival::Kind::Hero, 2)));
+        assert_eq!(alert(&app), None);
+        while app.world().resource::<Play>().hero().is_none() {
+            assert_eq!(mode(&app), Mode::Held);
+            app.update();
+            frames += 1;
+            assert!(frames < 400, "in within the arrival's time");
+        }
+        eprintln!("in {frames} frames after the placement");
+        assert!((310..=316).contains(&frames), "{frames}");
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Hero, 2, "shown")]);
+        // Up over the place until he's stepped, then down onto it.
+        let next = app.world().resource::<Play>().hero().unwrap();
+        let mut up = None;
+        let mut landed = None;
+        for step in 0..60 {
+            app.update();
+            let h = hero(&app);
+            let across = Vec3::new(h.pivot.x - left.0.x, 0.0, h.pivot.z - left.0.z).length();
+            assert!(across < 1e-3, "step {step}: {across} m across");
+            let over = h.pivot.y - left.0.y;
+            up = up.or((over > 0.0).then_some(over));
+            if landed.is_none() && h.footing.supported && up.is_some() {
+                landed = Some(step);
+            }
+            if landed.is_some() {
+                assert!(h.footing.supported, "step {step}: off the ground again");
+                assert!(over.abs() < 0.01, "step {step}: {over} m over his place");
+            }
+        }
+        let up = up.expect("put up over the place");
+        let landed = landed.expect("landed");
+        eprintln!("{up} m up, landed in {landed} steps");
+        assert!(up <= DROP + 1e-4 && up > DROP - 0.05, "{up}");
+        let gaits = app.world().entity(next).get::<HeroGaits>().unwrap();
+        assert_eq!(gaits.locomotion.air().name(), "ground");
+        assert!((6..=10).contains(&landed), "{landed}");
+    }
+
+    /// AG.72 with AG.29's too-many alert mid-card (the arrival review): a
+    /// second character placed while the replacement's card shows hides the
+    /// card under the alert and holds its clock, the level held all along
+    /// (no game time passes from the card to the frame it ends); taken off
+    /// again, the card shows out the rest of its 4 s and he comes in.
+    #[test]
+    fn a_too_many_alert_mid_card_hides_it_and_holds_its_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "his card", |a| {
+            arriving(a) == Some((arrival::Kind::Hero, 2))
+        });
+        // His card's camera draws while his card shows, its turntable the
+        // card's figure (none of the others' behind the level).
+        let drawing = |app: &App, slot: u8| -> Option<bool> {
+            let camera = app.world().resource::<Turntables>().card_camera(slot)?;
+            Some(app.world().entity(camera).get::<Camera>()?.is_active)
+        };
+        until(&mut app, "his card's model", |a| drawing(a, 2).is_some());
+        app.update();
+        assert_eq!(drawing(&app, 2), Some(true), "his card's turntable");
+        let game = |app: &App| app.world().resource::<Time<Virtual>>().elapsed();
+        let held_at = game(&app);
+        let mut before = 0;
+        for _ in 0..60 {
+            app.update();
+            before += 1;
+        }
+        place(&mut app, 4, ERUPTOR, "Eruptor");
+        until(&mut app, "the too-many alert", |a| {
+            alert(a) == Some(Alert::TooManySkylanders)
+        });
+        let progress = |app: &App| {
+            app.world()
+                .resource::<Play>()
+                .arrivals
+                .progress()
+                .expect("his card")
+        };
+        let at = progress(&app);
+        for frame in 0..120 {
+            app.update();
+            assert!(
+                app.world().resource::<Play>().arrival_hidden(),
+                "frame {frame}: the card over the alert"
+            );
+            assert_eq!(progress(&app), at, "frame {frame}: its clock on");
+            assert_eq!(mode(&app), Mode::Held, "frame {frame}");
+            assert_ne!(
+                drawing(&app, 2),
+                Some(true),
+                "frame {frame}: hidden, drawing"
+            );
+        }
+        clear(&mut app, 4);
+        let mut rest = 0;
+        while arriving(&app).is_some() {
+            assert_eq!(mode(&app), Mode::Held);
+            app.update();
+            rest += 1;
+            assert!(rest < 400);
+        }
+        // Its 240 frames in all: those before the alert and the rest after.
+        let shown = (at * 240.0).round() as i32 + rest;
+        eprintln!("{before} frames, then at {at}, then {rest} frames");
+        assert!((238..=243).contains(&shown), "{shown} frames shown");
+        assert_eq!(game(&app), held_at, "game time under the card or the alert");
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Hero, 2, "shown")]);
+        until(&mut app, "him in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        app.update();
+        assert_eq!(drawing(&app, 2), Some(false), "behind the level again");
+    }
+
+    /// AH.224 with AG.29 and AG.72 (the arrival review): a hero taken off
+    /// while his entry beam falls takes the beam with him; put back, he
+    /// arrives and comes in by a beam of his own, its one column on the spot
+    /// he left, drawn from the step it activates him and put up [`DROP`]
+    /// over that spot then.
+    #[test]
+    fn a_hero_taken_off_mid_beam_comes_back_by_a_beam_of_his_own() {
+        use guac_formats::script::builder::ENTRY_COLUMN;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts_with(tmp.path(), true);
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his beam", |a| {
+            join(a).as_deref() == Some("entering")
+        });
+        let spot = hero(&app).pivot;
+        let gone = app.world().resource::<Play>().hero().unwrap().to_bits();
+        let beams = |app: &mut App| {
+            guacamole::scripts::entry_beam_count(
+                &mut app.world_mut().resource_mut::<ScriptRuntime>().vm,
+            )
+        };
+        assert_eq!(beams(&mut app), Some(1), "his beam falling");
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        // His deactivation runs as the take-off's commands apply, the frame
+        // after the call goes up; the level holds meanwhile.
+        app.update();
+        assert_eq!(beams(&mut app), Some(0), "his beam went with him");
+        // The columns standing, by handle (the synthetic clean-up empties the
+        // set and leaves its column standing, where the original's takes it
+        // off: only a new one is the next beam's).
+        let columns = |app: &App| -> Vec<(guac_script::Handle, Vec3)> {
+            let w = app.world().resource::<ScriptWorld>();
+            let program = app.world().resource::<ScriptRuntime>().vm.program_arc();
+            w.clones()
+                .into_iter()
+                .filter_map(|h| Some((h, w.actor(h)?)))
+                .filter(|(_, a)| !a.removed)
+                .filter(|(_, a)| a.template.and_then(|t| program.name_of(t)) == Some(ENTRY_COLUMN))
+                .map(|(h, a)| (h, a.position))
+                .collect()
+        };
+        let old: Vec<guac_script::Handle> = columns(&app).iter().map(|(h, _)| *h).collect();
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "his card", |a| {
+            arriving(a) == Some((arrival::Kind::Hero, 2))
+        });
+        until(&mut app, "his beam again", |a| {
+            join(a).as_deref() == Some("entering")
+        });
+        assert_eq!(beams(&mut app), Some(1), "one beam");
+        let now: Vec<Vec3> = columns(&app)
+            .into_iter()
+            .filter(|(h, _)| !old.contains(h))
+            .map(|(_, at)| at)
+            .collect();
+        assert_eq!(now.len(), 1, "one new column: {now:?}");
+        assert!(now[0].distance(spot) < 1e-3, "{} off his spot", now[0]);
+        until(&mut app, "him in", |a| join(a).as_deref() == Some("joined"));
+        let (shown, _, _, pivot) = drawn_state(&app);
+        assert!(shown, "drawn once he's in");
+        let up = pivot.y - spot.y;
+        assert!((up - DROP).abs() < 0.02, "{up} m over his spot");
+        // Nothing of the first one's stands live after he left (a beam left
+        // on is the scripts' test's to catch: the synthetic beam ends by
+        // itself in the steps due as the hold begins).
+        let left_behind = app.world().resource::<ScriptWorld>().actor(gone);
+        assert!(
+            left_behind.is_none_or(|a| a.removed),
+            "the one taken off activated after he left: {left_behind:?}"
+        );
+    }
+
+    /// AG.72 (the arrival review): the TV leaving the level mid-card ends
+    /// the card and forgets those waiting, nothing holding; entering again,
+    /// he comes in as the first one in does, no arrival.
+    #[test]
+    fn leaving_the_level_mid_card_ends_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "his card", |a| {
+            arriving(a) == Some((arrival::Kind::Hero, 2))
+        });
+        place(&mut app, 5, ITEM, "Five");
+        app.update();
+        assert_eq!(app.world().resource::<Play>().arrivals.waiting(), 1);
+        app.world_mut().resource_mut::<Current>().screen = TvScreen::Join;
+        app.update();
+        app.update();
+        assert_eq!(mode(&app), Mode::Portal);
+        let play = app.world().resource::<Play>();
+        assert!(!play.arrivals.holding(), "an arrival kept past the level");
+        assert_eq!(arriving(&app), None);
+        assert!(!app.world().resource::<LevelPads>().held());
+    }
+
+    /// AG.72 under AH.26's offer (the arrival review): a magic item placed
+    /// while Restart chapter is on offer plays its card with the offer
+    /// closed, so its modal doesn't take the pads under the card at its
+    /// height, and the offer is back once the card is done.
+    #[test]
+    fn an_item_under_the_restart_offer_closes_it_for_its_card() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let offered = |app: &App| {
+            let now = app.world().resource::<Time<Real>>().elapsed();
+            app.world().resource::<Play>().restart_offered(now)
+        };
+        let modal = |app: &App| app.world().resource::<crate::input::ModalOpen>().0;
+        set_health(&mut app, 0);
+        frames_until(&mut app, 600, "the offer", offered);
+        assert!(modal(&app));
+        place(&mut app, 5, ITEM, "Five");
+        app.update();
+        let mut frames = 0;
+        while arriving(&app).is_none() {
+            assert!(!offered(&app) && !modal(&app), "lead-in frame {frames}");
+            app.update();
+            frames += 1;
+            assert!(frames < 90);
+        }
+        while arriving(&app).is_some() {
+            assert!(!offered(&app) && !modal(&app), "card frame {frames}");
+            app.update();
+            frames += 1;
+            assert!(frames < 400);
+        }
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Item, 5, "shown")]);
+        frames_until(&mut app, 5, "the offer again", offered);
+        assert!(modal(&app));
     }
 
     /// AG.73: a toy Giants can't use, placed mid-level, holds it under the

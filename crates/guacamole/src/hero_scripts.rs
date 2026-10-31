@@ -26,8 +26,11 @@
 //!   fighter ([`guac_extract::scripts::FIGHTERS`], Eruptor) to attack and
 //!   walk or a walker (AG.27, every other modelled character) to walk
 //!   alone, joins by AH.17's join ([`guacamole::scripts::join_request`],
-//!   then on the next step [`guacamole::scripts::join_activate`];
-//!   stand-in ledger: `join`), the step the TV enters the level; from then
+//!   then on the next step [`guacamole::scripts::join_enter`], the
+//!   original's entry beam run each step after by
+//!   [`guacamole::scripts::entry_beams`] until it activates his minion as its
+//!   column lands, openspec AH.224; stand-in ledger: `join`), the step the
+//!   TV enters the level, drawn nowhere until then; from then
 //!   on his walk, facing and clips are his scripts' and his step the engine's
 //!   alone ([`ScriptedHero`]), a walker's attack buttons reaching no script
 //!   (hero-attacks' Which characters attack). Eruptor with no run (the part
@@ -358,8 +361,11 @@ pub(crate) enum Join {
     /// Placed and in: his file's placements join at the next step once the
     /// run has made [`INIT_STEPS`].
     Asked,
-    /// His file's placements in; his minion activates at the next step.
+    /// His file's placements in; his minion's entry begins at the next step.
     Requested,
+    /// His entry beam runs (openspec AH.224, [`scripts::join_enter`]): his
+    /// minion activates as its column lands. Until then he's drawn nowhere.
+    Entering,
     /// His scripts run as this placement.
     Joined(PlacementId),
     /// His scripts don't run: why. He walks on AG.16's controller
@@ -368,10 +374,19 @@ pub(crate) enum Join {
 }
 
 impl Join {
+    /// His minion hasn't come in yet: asked, requested or his entry beam
+    /// running. He's drawn nowhere (openspec AH.224: the original's minion
+    /// is in the world from his activation on), and a replacement goes up
+    /// to drop onto his place only once he's in (AG.100).
+    pub(crate) fn pending(&self) -> bool {
+        matches!(self, Join::Asked | Join::Requested | Join::Entering)
+    }
+
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Join::Asked => "asked",
             Join::Requested => "requested",
+            Join::Entering => "entering",
             Join::Joined(_) => "joined",
             Join::Off(_) => "off",
         }
@@ -602,8 +617,8 @@ pub(crate) struct ScriptStep {
     /// (the level left and entered again).
     pub step: u64,
     pub actions: [bool; 4],
-    /// The hero's join: `asked`, `requested`, `joined` or `off`; none
-    /// without a hero.
+    /// The hero's join: `asked`, `requested`, `entering` (his entry beam
+    /// running, openspec AH.224), `joined` or `off`; none without a hero.
     pub join: Option<&'static str>,
     /// Clips started on the hero this step: palette slot, length (s at
     /// 100 %) and rate (percent).
@@ -734,7 +749,7 @@ pub(crate) fn apply_scripted_solid(
             Join::Joined(m) if runtime.vm.set_up(m) => walkers::Held::SetUp,
             Join::Joined(_) => walkers::Held::BeforeSetup,
             Join::Off(_) => walkers::Held::Off,
-            Join::Asked | Join::Requested => continue,
+            Join::Asked | Join::Requested | Join::Entering => continue,
         };
         if run.origin != Origin::Scripts {
             continue;
@@ -984,6 +999,7 @@ pub(crate) fn step_scripts(
         vm,
         generator,
         player_loop,
+        entry_stopped,
         ..
     } = &mut *runtime;
     let mut spawn =
@@ -1005,8 +1021,10 @@ pub(crate) fn step_scripts(
             Err(h) => stopped.push(h),
         }
     }
-    // The minion activates at the step after his file's placements joined,
-    // before anything of this step: AH.17's order.
+    // His minion's entry begins at the step after his file's placements
+    // joined, before anything of this step: AH.17's order. On a part with
+    // the original's entry beam (openspec AH.224) the beam activates him as
+    // its column lands, from this step on; on one without, he activates now.
     if let (Some(h), Some(r)) = (hero, run.as_deref_mut())
         && r.join == Join::Requested
     {
@@ -1017,12 +1035,58 @@ pub(crate) fn step_scripts(
             generator,
             spawn: &mut spawn,
         };
-        match scripts::join_activate(vm, &mut host, handle) {
-            Ok(minion) => {
+        match scripts::join_enter(vm, &mut host, handle, entry_stopped.is_none()) {
+            Ok(scripts::Entry::Activated(minion)) => {
                 info!(load_file = %r.load_file, ?minion, "his scripts run");
                 r.join = Join::Joined(minion);
             }
+            Ok(scripts::Entry::Beam) => {
+                info!(load_file = %r.load_file, "his entry beam drops onto his spot");
+                r.join = Join::Entering;
+            }
             Err(h) => off = Some(format!("his minion didn't activate: {h}")),
+        }
+    }
+    // The entry beams each step, as the portal manager's state machine runs
+    // them (openspec AH.224): his activates him as its column lands, and runs
+    // on after (his element's entry, the clean-up) until it's done.
+    if entry_stopped.is_none() && scripts::entry_beam_count(vm).unwrap_or(0) > 0 {
+        let waiting = match (hero, run.as_deref()) {
+            (Some(h), Some(r)) if r.join == Join::Entering => Some(h.to_bits()),
+            _ => None,
+        };
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator,
+            spawn: &mut spawn,
+        };
+        let beams = scripts::entry_beams(vm, &mut host, waiting);
+        let r = run.as_deref_mut();
+        match (beams, waiting, r) {
+            (Ok(Some(minion)), _, Some(r)) => {
+                info!(load_file = %r.load_file, ?minion, "his entry beam landed: his scripts run");
+                r.join = Join::Joined(minion);
+            }
+            (Ok(_), ..) => {}
+            // His beam stopping before it activated him (a member of his
+            // element's entry nothing models): he comes in at once, as a part
+            // without the beam has him, with no column.
+            (Err(h), Some(waiting), Some(r)) => {
+                warn!(%h, load_file = %r.load_file, "his entry beam stopped: he comes in without it");
+                *entry_stopped = Some(h);
+                match scripts::activate_without_beam(vm, &mut host, waiting) {
+                    Ok(minion) => r.join = Join::Joined(minion),
+                    Err(h) => off = Some(format!("his minion didn't activate: {h}")),
+                }
+            }
+            (Err(h), ..) => {
+                warn!(%h, "an entry beam stopped: the beams run no more in this run");
+                *entry_stopped = Some(h);
+                if let Err(h) = scripts::clear_entry_beams(vm, &mut host) {
+                    warn!(%h, "and its clean-up stopped too");
+                }
+            }
         }
     }
     let files = source.as_ref().map(|s| &s.files);
@@ -1757,23 +1821,36 @@ mod tests {
             Self::build(None)
         }
 
+        /// AH.224's: the attack with the entry beam in its `global.bld`.
+        fn with_entry() -> Self {
+            Self::build_from(|dir| {
+                crate::test_support::hero_scripts::write_attack_with_entry(dir);
+                scripts::hero_config(Mode::Strict)
+            })
+        }
+
         /// AH.27's: the barrel at `at`, on the TV's listing.
         fn smash(at: [f32; 3]) -> Self {
             Self::build(Some(at))
         }
 
         fn build(barrel: Option<[f32; 3]>) -> Self {
-            let tmp = tempfile::tempdir().unwrap();
-            let config = match barrel {
+            Self::build_from(|dir| match barrel {
                 None => {
-                    write_attack(tmp.path());
+                    write_attack(dir);
                     scripts::hero_config(Mode::Strict)
                 }
                 Some(at) => {
-                    write_smash(tmp.path(), at);
+                    write_smash(dir, at);
                     scripts::smash_config(Mode::Strict)
                 }
-            };
+            })
+        }
+
+        /// The run over the part `write` makes, on the config it returns.
+        fn build_from(write: impl FnOnce(&std::path::Path) -> guac_script::Config) -> Self {
+            let tmp = tempfile::tempdir().unwrap();
+            let config = write(tmp.path());
             let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
             let files = linked.placements;
             let handles = headless_handles(&files);
@@ -1862,15 +1939,131 @@ mod tests {
         }
 
         fn join(&mut self) -> PlacementId {
+            self.request();
+            self.host(|vm, host| scripts::join_activate(vm, host, HERO))
+                .unwrap_or_else(|h| panic!("{h}"))
+        }
+
+        /// The join's first half: his file's placements in, then a step for
+        /// his definition's first tick.
+        fn request(&mut self) {
             let files = self.files.clone();
             let unit = self.fighter;
             let handles = self.world.handles().clone();
             self.host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))
                 .unwrap_or_else(|h| panic!("{h}"));
             self.step([false; 4]);
-            self.host(|vm, host| scripts::join_activate(vm, host, HERO))
-                .unwrap_or_else(|h| panic!("{h}"))
         }
+    }
+
+    /// AH.224 on a synthetic part: the TV's join makes his entry beam (the
+    /// part's `Portal - Init Minion Enter Effect`, no element forced), whose
+    /// first tick drops the column onto his spot with his minion not in yet,
+    /// whose second activates him there, the activator, and whose third
+    /// leaves no beam. On the part without the beam, or with the beam asked
+    /// off (a run whose beam stopped before), he activates at once.
+    #[test]
+    fn his_join_runs_the_entry_beam_and_activates_him_as_it_lands() {
+        use guac_formats::script::builder::{ENTRY_COLUMN, ENTRY_ELEMENT};
+        use guacamole::scripts::Entry;
+        let mut run = Headless::with_entry();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        run.request();
+        let entry = run
+            .host(|vm, host| scripts::join_enter(vm, host, HERO, true))
+            .unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(entry, Entry::Beam);
+        assert_eq!(scripts::entry_beam_count(&mut run.vm), Some(1));
+        let g = run.vm.program().global_named(ENTRY_ELEMENT).unwrap();
+        assert_eq!(run.vm.global(g), Some(Value::Int(-1)), "no element forced");
+        let columns = |run: &Headless| -> Vec<Vec3> {
+            let program = run.vm.program_arc();
+            run.world
+                .clones()
+                .into_iter()
+                .filter_map(|h| run.world.actor(h))
+                .filter(|a| a.template.and_then(|t| program.name_of(t)) == Some(ENTRY_COLUMN))
+                .map(|a| a.position)
+                .collect()
+        };
+        assert!(columns(&run).is_empty());
+        // The beam's first tick: the column on his spot, his minion not in.
+        let first = run
+            .host(|vm, host| scripts::entry_beams(vm, host, Some(HERO)))
+            .unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(first, None);
+        let pivot = run.bench.heroes[&HERO].pivot;
+        assert_eq!(columns(&run), vec![pivot], "the column on his spot");
+        assert!(run.world.actor(HERO).is_none(), "his minion not in yet");
+        run.step([false; 4]);
+        // Its second: his minion activated there.
+        let minion = run
+            .host(|vm, host| scripts::entry_beams(vm, host, Some(HERO)))
+            .unwrap_or_else(|h| panic!("{h}"))
+            .expect("the beam activated him");
+        assert!(run.vm.is_activator(minion));
+        assert_eq!(run.world.actor(HERO).map(|a| a.position), Some(pivot));
+        run.step([false; 4]);
+        let third = run
+            .host(|vm, host| scripts::entry_beams(vm, host, None))
+            .unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(third, None);
+        assert_eq!(
+            scripts::entry_beam_count(&mut run.vm),
+            Some(0),
+            "the beam done"
+        );
+        // No beam in the part: at once.
+        let mut plain = Headless::new();
+        plain.step([false; 4]);
+        plain.step([false; 4]);
+        plain.request();
+        let entry = plain
+            .host(|vm, host| scripts::join_enter(vm, host, HERO, true))
+            .unwrap_or_else(|h| panic!("{h}"));
+        assert!(matches!(entry, Entry::Activated(_)), "{entry:?}");
+        assert_eq!(scripts::entry_beam_count(&mut plain.vm), None);
+        // The beam asked off: at once, and none made.
+        let mut off = Headless::with_entry();
+        off.step([false; 4]);
+        off.step([false; 4]);
+        off.request();
+        let entry = off
+            .host(|vm, host| scripts::join_enter(vm, host, HERO, false))
+            .unwrap_or_else(|h| panic!("{h}"));
+        assert!(matches!(entry, Entry::Activated(_)), "{entry:?}");
+        assert_eq!(scripts::entry_beam_count(&mut off.vm), Some(0));
+        assert!(columns(&off).is_empty());
+    }
+
+    /// AH.224: a hero taken off while his entry beam runs takes the beam
+    /// with him (`Portal - Entry Effect Clean Up`), so nothing activates his
+    /// minion after he's gone.
+    #[test]
+    fn a_hero_taken_off_before_his_beam_lands_leaves_none_to_activate_him() {
+        let mut run = Headless::with_entry();
+        run.step([false; 4]);
+        run.step([false; 4]);
+        run.request();
+        run.host(|vm, host| scripts::join_enter(vm, host, HERO, true))
+            .unwrap_or_else(|h| panic!("{h}"));
+        run.host(|vm, host| scripts::entry_beams(vm, host, Some(HERO)))
+            .unwrap_or_else(|h| panic!("{h}"));
+        let files = run.files.clone();
+        let unit = run.fighter;
+        let gone = run.host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, HERO));
+        assert!(!gone.minion);
+        assert_eq!(gone.halted, None);
+        assert_eq!(scripts::entry_beam_count(&mut run.vm), Some(0));
+        for _ in 0..5 {
+            run.step([false; 4]);
+            let m = run
+                .host(|vm, host| scripts::entry_beams(vm, host, Some(HERO)))
+                .unwrap_or_else(|h| panic!("{h}"));
+            assert_eq!(m, None);
+        }
+        assert!(run.world.actor(HERO).is_none(), "never activated");
     }
 
     /// AH.23 headless on the synthetic fight: his figure's tag on the

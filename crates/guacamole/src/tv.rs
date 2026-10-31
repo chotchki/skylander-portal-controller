@@ -86,11 +86,11 @@ pub(crate) static TITAN_ONE: &[u8] =
 
 /// Portraits decoded so far, by path; `None` for one that wouldn't load.
 #[derive(Resource, Default)]
-struct Portraits(HashMap<PathBuf, Option<Handle<Image>>>);
+pub(crate) struct Portraits(HashMap<PathBuf, Option<Handle<Image>>>);
 
 impl Portraits {
     /// Reads and decodes on first use; a 128 px thumb costs well under a frame.
-    fn get(&mut self, path: &Path, images: &mut Assets<Image>) -> Option<Handle<Image>> {
+    pub(crate) fn get(&mut self, path: &Path, images: &mut Assets<Image>) -> Option<Handle<Image>> {
         self.0
             .entry(path.to_path_buf())
             .or_insert_with(|| {

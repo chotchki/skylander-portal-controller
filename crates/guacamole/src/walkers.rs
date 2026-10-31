@@ -69,6 +69,12 @@ pub const WALKERS: &[Walker] = &[Walker {
     gaits: Gaits::ERUPTOR,
 }];
 
+/// How far above the last hero's place a replacement comes in, metres, to
+/// fall onto it by his own walk once his minion is in (openspec AG.100;
+/// AG.81's recordings: 0.376-0.406 m; stand-in ledger: `replacement`). The
+/// TV's (`play::DROP`) and the disc tests' one number.
+pub const REPLACEMENT_DROP: f32 = 0.40;
+
 /// `None` for a character that keeps the portal view.
 pub fn walker(load_file: &str) -> Option<&'static Walker> {
     WALKERS.iter().find(|w| w.load_file == load_file)

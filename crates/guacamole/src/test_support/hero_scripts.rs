@@ -28,6 +28,15 @@ pub(crate) fn write_attack_with_ui(dir: &Path) {
     write_files(dir, [&a.global, &a.init_setup, &a.fighter], &creature, &[]);
 }
 
+/// [`write_attack`] with AH.224's entry beam in its `global.bld`
+/// ([`attack_builder::attack_with_entry`]): the join's beam drops
+/// [`attack_builder::ENTRY_COLUMN`] onto the hero's spot, then activates him.
+pub(crate) fn write_attack_with_entry(dir: &Path) {
+    let (creature, _) = attack_builder::creature();
+    let a = attack_builder::attack_with_entry();
+    write_files(dir, [&a.global, &a.init_setup, &a.fighter], &creature, &[]);
+}
+
 /// AH.27's beside it: AH.24's attack with AH.27's breakable as the
 /// level's entry, the barrel at `at`; the barrel's object index.
 pub(crate) fn write_smash(dir: &Path, at: [f32; 3]) -> u32 {

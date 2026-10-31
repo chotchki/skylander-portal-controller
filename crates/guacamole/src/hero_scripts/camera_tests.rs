@@ -1299,14 +1299,17 @@ fn a_hero_put_in_after_a_fall_back_takes_the_scripts_view_back() {
         "{} steps on it",
         after.len() - back
     );
-    for s in &after[back..] {
+    // The camera's scripts step before his body does, so each step's view
+    // stands on his feet as the step before left them: the same while he
+    // stands, a step behind while he drops onto his place (AG.100).
+    for (i, s) in after.iter().enumerate().skip(back.max(1)) {
         assert_eq!(s.hold, ViewHold::Scripts, "step {}", s.step);
         assert_eq!(s.report.scripts.as_deref(), Some("on"));
         assert_eq!(s.report.scripts_reason, None);
         assert_eq!(s.view.source, Source::Scripts);
         assert_view(
             s,
-            view_of(between(CAMERA_START, CAMERA_START, 0.0), s.feet),
+            view_of(between(CAMERA_START, CAMERA_START, 0.0), after[i - 1].feet),
             "camera 0 on Eruptor",
         );
     }

@@ -17,7 +17,10 @@
 //! - [`join_request`], [`join_activate`] and [`join_deactivate`]: a
 //!   figure's character joining the run when it goes on the portal and
 //!   leaving it when it comes off mid-level, the original's macros with
-//!   their scheduling ours (openspec AH.17, AH.105; stand-in ledger: `join`).
+//!   their scheduling ours (openspec AH.17, AH.105; stand-in ledger: `join`);
+//!   on the TV [`join_enter`] and [`entry_beams`] in [`join_activate`]'s
+//!   place, his minion activated by the original's entry beam as its column
+//!   lands (openspec AH.224).
 //! - [`init_chain`]: the VM AH.16 runs: `global.bld`'s 17 running placements
 //!   for their first tick, `init_setup.bld`'s running placements and level
 //!   213's definition and enemy system every tick, every other running
@@ -2223,18 +2226,43 @@ pub fn join_request(
 /// data`'s `creature descriptions` has him as its `creature`. Under the
 /// last minion's handle he found the last one's and walked at its numbers,
 /// so a held handle is refused before anything runs.
+///
+/// The activation at once, with no entry beam: the headless runs' join. The
+/// TV's is [`join_enter`], the beam first (openspec AH.224).
 pub fn join_activate(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     hero: Handle,
 ) -> Result<PlacementId, Halt> {
+    let ready = join_ready(vm, host, hero)?;
+    activate(vm, host, &ready, Value::Entity(hero))?;
+    joined(vm, host, ready.pm, hero)
+}
+
+/// What a join has once its minion may activate ([`join_ready`]).
+struct Ready {
+    pm: PlacementId,
+    minion: Value,
+    desc: Value,
+}
+
+/// The join up to its activation: a held handle refused, the figure's
+/// links made ([`crate::figure::enter`]) and the minion's template
+/// answering as `hero`.
+fn join_ready(vm: &mut Vm, host: &mut WorldHost<'_, '_>, hero: Handle) -> Result<Ready, Halt> {
     if host.world.actors.contains_key(&hero) {
         return Err(outside(format!(
             "{hero:#x} names an actor of the run's already: a minion joins as a new one"
         )));
     }
-    let pm = portal_manager(vm, host.world)?;
     crate::figure::enter(vm, host.world)?;
+    ready_of(vm, host, hero)
+}
+
+/// The portal manager and the minion and description the definition
+/// registered in the first player's slot, its template answering as `hero`.
+fn ready_of(vm: &mut Vm, host: &mut WorldHost<'_, '_>, hero: Handle) -> Result<Ready, Halt> {
+    let pm = portal_manager(vm, host.world)?;
     let loaded = slot_zero(vm)?;
     let info = vm.field(loaded, "object info").unwrap_or(Value::Null);
     let minion = vm.field(info, "spawned object").unwrap_or(Value::Null);
@@ -2247,22 +2275,45 @@ pub fn join_activate(
         )));
     };
     host.world.hero_template(template, hero);
+    Ok(Ready { pm, minion, desc })
+}
+
+/// `Game - Activate/Deactivate Minion` for `ready`'s minion at `at`, as
+/// `Portal - Entry Activate Minion` calls it.
+fn activate(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    ready: &Ready,
+    at: Value,
+) -> Result<(), Halt> {
     let player = Value::Entity(host.world.controllers[0]);
     vm.call_for(
-        pm,
+        ready.pm,
         "Game - Activate/Deactivate Minion",
         &[
-            ("minion", minion),
-            ("spawn location", Value::Entity(hero)),
+            ("minion", ready.minion),
+            ("spawn location", at),
             ("player", player),
             ("keep minion ref in player set", Value::Int(0)),
-            ("input minion data", desc),
+            ("input minion data", ready.desc),
             ("restore hp", Value::Int(0)),
             ("in level transition", Value::Int(1)),
         ],
         &[],
         host,
     )?;
+    Ok(())
+}
+
+/// After the activation: the portal in adventure mode, the minion's script
+/// and every scripted clone the activation made on the VM, the minion's the
+/// activator. Returns his placement.
+fn joined(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    pm: PlacementId,
+    hero: Handle,
+) -> Result<PlacementId, Halt> {
     adventure_mode(vm, host, pm)?;
     let scripted = std::mem::take(&mut host.world.scripted);
     let mut minion_placement = None;
@@ -2279,6 +2330,163 @@ pub fn join_activate(
         }
     }
     minion_placement.ok_or_else(|| outside("the activation spawned no minion".to_owned()))
+}
+
+/// The macros the original's entry beam runs (openspec AH.224), all in
+/// `global.bld`'s `Spyro_PortalEntry_Macros.ai`.
+pub const ENTRY_INIT: &str = "Portal - Init Minion Enter Effect";
+pub const ENTRY_MANAGE: &str = "Portal - Manage Portal Entry Beams";
+pub const ENTRY_CLEAN_UP: &str = "Portal - Entry Effect Clean Up";
+
+/// Where a TV join stands after [`join_enter`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Entry {
+    /// His minion activated at once (a part without the entry beam's
+    /// macros): his placement.
+    Activated(PlacementId),
+    /// His entry beam runs ([`entry_beams`]); his minion activates as its
+    /// column lands.
+    Beam,
+}
+
+/// The join's second half on the TV (openspec AH.224): as [`join_activate`]
+/// up to the activation, then the original's entry rather than the
+/// activation at once. `Portal - Enter Object` makes his entry beam through
+/// [`ENTRY_INIT`] (his minion, the first player's controller, his
+/// description, no element forced, spawned where `hero` stands: a follow
+/// actor there, the beam's `spawn loc`), and the portal manager's state
+/// machine runs every beam each tick ([`entry_beams`]): the column dropping
+/// onto his spot over 0.25 s (`PortalEntry_Column`), then at its landing
+/// the crater, the glow plane, the shock ring and the landing flash, his
+/// minion activated there (`Portal - Entry Activate Minion`, which calls
+/// `Game - Activate/Deactivate Minion` as [`join_activate`] does) and his
+/// element's entry macros (`PortalEntry_<element>.ai`) after. A part without
+/// those macros, or whose `portal control data` keeps no `entry beams`,
+/// activates him at once ([`Entry::Activated`]), and so does `beam` false
+/// (a run whose beam stopped before). The scheduling is ours: the beam
+/// made at the join's second half, run from that step on
+/// (stand-in ledger: `join`).
+pub fn join_enter(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    hero: Handle,
+    beam: bool,
+) -> Result<Entry, Halt> {
+    let ready = join_ready(vm, host, hero)?;
+    let program = vm.program_arc();
+    let beams = entry_beam_count(vm).is_some();
+    let init = program.macro_named(ENTRY_INIT).is_some();
+    let manage = program.macro_named(ENTRY_MANAGE).is_some();
+    if !(beam && beams && init && manage) {
+        activate(vm, host, &ready, Value::Entity(hero))?;
+        return joined(vm, host, ready.pm, hero).map(Entry::Activated);
+    }
+    let player = Value::Entity(host.world.controllers[0]);
+    let mut args = vec![
+        ("spawn minion", ready.minion),
+        ("spawn location", Value::Entity(hero)),
+        ("minion controller", player),
+        ("minion desc", ready.desc),
+    ];
+    // `Portal - Enter Object` asks for no element (-1); left out, it reads
+    // 0, the first element's icon.
+    let force = parameter_named(&program, ENTRY_INIT, "force element");
+    if let Some(force) = force.as_deref() {
+        args.push((force, Value::Int(-1)));
+    }
+    vm.call_for(ready.pm, ENTRY_INIT, &args, &[], host)?;
+    Ok(Entry::Beam)
+}
+
+/// How many entry beams `portal control data` holds; `None` when the
+/// program keeps no such set.
+pub fn entry_beam_count(vm: &mut Vm) -> Option<usize> {
+    let g = vm.program().global_named("portal control data")?;
+    let pcd = vm.global(g)?;
+    let beams = vm.field(pcd, "entry beams")?;
+    vm.set(beams).map(<[Value]>::len)
+}
+
+/// One tick of the entry beams (openspec AH.224), as the portal manager's
+/// `Portal Control - Global - Update Entry Beams` runs them: nothing while
+/// `portal control data` holds none, else [`ENTRY_MANAGE`] in the portal
+/// manager's name. `waiting`, the hero whose beam hasn't activated him yet:
+/// once this tick's beam has (his actor in the run), the rest of his join
+/// ([`join_activate`]'s, the portal in adventure mode and his minion on the
+/// VM, the activator) and his placement returned.
+pub fn entry_beams(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    waiting: Option<Handle>,
+) -> Result<Option<PlacementId>, Halt> {
+    if entry_beam_count(vm).unwrap_or(0) == 0 {
+        return Ok(None);
+    }
+    let pm = portal_manager(vm, host.world)?;
+    let program = vm.program_arc();
+    let (Some(param), Some(g)) = (
+        parameter_named(&program, ENTRY_MANAGE, "manage portal data"),
+        program.global_named("portal control data"),
+    ) else {
+        return Ok(None);
+    };
+    let Some(pcd) = vm.global(g) else {
+        return Ok(None);
+    };
+    vm.call_for(pm, ENTRY_MANAGE, &[(param.as_str(), pcd)], &[], host)?;
+    match waiting {
+        Some(hero) if host.world.actors.contains_key(&hero) => joined(vm, host, pm, hero).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// His minion activated at once where his entry beam stopped short of
+/// activating him (a stop in it, which [`entry_beams`] returned): every
+/// beam cleaned up ([`clear_entry_beams`], a stop there logged), then the
+/// activation and the rest of the join as [`join_activate`]'s, where `hero`
+/// stands.
+pub fn activate_without_beam(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    hero: Handle,
+) -> Result<PlacementId, Halt> {
+    if let Err(h) = clear_entry_beams(vm, host) {
+        warn!(%h, "the entry beam's clean-up stopped");
+    }
+    let ready = ready_of(vm, host, hero)?;
+    activate(vm, host, &ready, Value::Entity(hero))?;
+    joined(vm, host, ready.pm, hero)
+}
+
+/// Every entry beam cleaned up as the original's [`ENTRY_CLEAN_UP`] does
+/// (its column, its follow actor and what it tracks off, the beam out of
+/// the set): a hero taken off before his beam activated him leaves none to
+/// activate his minion after he's gone.
+pub fn clear_entry_beams(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
+    let Some(n) = entry_beam_count(vm).filter(|n| *n > 0) else {
+        return Ok(());
+    };
+    let pm = portal_manager(vm, host.world)?;
+    let program = vm.program_arc();
+    let (Some(param), Some(g)) = (
+        parameter_named(&program, ENTRY_CLEAN_UP, "entry beam"),
+        program.global_named("portal control data"),
+    ) else {
+        return Ok(());
+    };
+    for _ in 0..n {
+        let Some(pcd) = vm.global(g) else {
+            return Ok(());
+        };
+        let Some(beam) = vm
+            .field(pcd, "entry beams")
+            .and_then(|s| vm.set(s).and_then(|e| e.first().copied()))
+        else {
+            return Ok(());
+        };
+        vm.call_for(pm, ENTRY_CLEAN_UP, &[(param.as_str(), beam)], &[], host)?;
+    }
+    Ok(())
 }
 
 /// What a hero's deactivation took off ([`join_deactivate`]), by handle,
@@ -2342,7 +2550,9 @@ pub fn join_deactivate(
     let minion = vm.placement_of(hero).is_some_and(|m| !vm.removed(m));
     let mut halted = match minion {
         true => deactivate_minion(vm, host).err(),
-        false => None,
+        // Taken off while his entry beam ran (openspec AH.224): the beam
+        // goes with him, so nothing activates his minion after he's gone.
+        false => clear_entry_beams(vm, host).err(),
     };
     if let Err(h) = crate::figure::exit(vm, host.world) {
         match &halted {
@@ -2858,6 +3068,9 @@ pub struct ScriptRuntime {
     /// Every step so far and the scripts play mode stopped.
     pub steps: u64,
     pub stopped: Vec<Halt>,
+    /// The entry beam that stopped (openspec AH.224): the beams run no more
+    /// in this run, so a stop isn't met again every step.
+    pub entry_stopped: Option<Halt>,
 }
 
 /// A placement the scripts load, as an entity: its object in its file.
@@ -2988,6 +3201,7 @@ pub fn install_with(
         player_loop,
         steps: 0,
         stopped: Vec::new(),
+        entry_stopped: None,
     });
 }
 

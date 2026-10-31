@@ -30,8 +30,9 @@
 //!   burst, the "Level Up!" panel) isn't drawn.
 //! - Drawn ([`draw_hud`]) in the bottom left over the level, where the
 //!   original's sits (AH.10's shots), under the pause overlay, the portal's
-//!   alerts and an intro; gone with the hero. Hidden, the bites' numbers
-//!   with it, while the level's scripts hide the original's
+//!   alerts and an intro; gone with the hero, and not there before he's in
+//!   (his join pending, his entry beam falling: AH.224). Hidden, the bites'
+//!   numbers with it, while the level's scripts hide the original's
 //!   ([`guacamole::scripts::player_hud_hidden`]: the pit's intro and
 //!   Norticus' scene), its numbers read on.
 
@@ -393,7 +394,17 @@ fn read_hud(
     {
         hud.level_up = None;
     }
-    let Some((hero, slot, placement)) = play.as_deref().and_then(Play::hero_placement) else {
+    // A hero whose join is pending (his entry beam still falling, openspec
+    // AH.224) is drawn nowhere and has no health yet: no HUD until he's in.
+    let in_now = play
+        .as_deref()
+        .and_then(Play::hero_placement)
+        .filter(|(hero, ..)| {
+            !bodies
+                .get(*hero)
+                .is_ok_and(|(_, run)| run.is_some_and(|r| r.join.pending()))
+        });
+    let Some((hero, slot, placement)) = in_now else {
         if hud.shown.is_some() {
             hud.shown = None;
         }
@@ -1170,6 +1181,7 @@ mod tests {
             player_loop: Default::default(),
             steps: 0,
             stopped: Vec::new(),
+            entry_stopped: None,
         };
         (runtime, hud)
     }

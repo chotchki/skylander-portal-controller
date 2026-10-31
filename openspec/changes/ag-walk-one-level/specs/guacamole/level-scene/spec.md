@@ -160,6 +160,13 @@ A character coming in after the level has started SHALL appear, as the level sho
 - **WHEN** Eruptor is taken off running up the ledge route and his figure is put back
 - **THEN** he appears 0.38 m above where he was taken off and 8.5 cm across, slides down the slope as he falls, and lands 8 frames later 0.29-0.30 m from that place
 
+### Requirement: A character comes in through a column of light
+Each time a character comes in as the hero, the TV SHALL first drop a column of light onto his spot over a quarter of a second; as it lands he SHALL appear there amid a crater, a glow and a shock ring on the ground, his element's own entry effect after, the column shrinking and fading over the next fifth of a second.
+
+#### Scenario: Eruptor comes in
+- **WHEN** Eruptor comes in at the level's start or in a replacement's place
+- **THEN** a column of light lands on his spot 0.25-0.3 s before he appears, and a crater, a glow plane and a shock ring spread there as he does
+
 ### Requirement: A figure Giants can't use holds the level
 A figure Giants has no use for (a character from a later game, or a kind it doesn't know, such as a trap or a vehicle) placed at any time SHALL hold the TV within 1.5 s and, within 2.5 s, cover it with a full-screen alert that a toy on the portal can't be used with this game, asking for it to be removed, the level and the figure untouched and the pad's stick and bottom button doing nothing; within 1 s of it coming off the TV SHALL show what it showed before.
 

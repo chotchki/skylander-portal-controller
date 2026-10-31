@@ -200,6 +200,15 @@ impl Turntables {
         })
     }
 
+    /// `slot`'s card camera, once its model is up: the arrival keeps it
+    /// drawing while its card shows (AG.72).
+    pub(crate) fn card_camera(&self, slot: u8) -> Option<Entity> {
+        match &self.slots.get(usize::from(slot))?.as_ref()?.state {
+            State::Model(stage) => Some(stage.camera),
+            _ => None,
+        }
+    }
+
     /// What `slot`'s card shows; `None` for an empty slot.
     pub(crate) fn card_state(&self, slot: u8) -> Option<CardState> {
         let t = self.slots.get(usize::from(slot))?.as_ref()?;

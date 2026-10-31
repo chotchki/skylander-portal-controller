@@ -114,7 +114,7 @@ pub(crate) fn gold_ring(theme: &TvTheme) -> Gradient {
 }
 
 /// A 135° two-stop fill, light first: an element, or the plain plate.
-fn diagonal([light, dark]: [Color; 2]) -> Gradient {
+pub(crate) fn diagonal([light, dark]: [Color; 2]) -> Gradient {
     linear(
         LinearGradient::TO_BOTTOM_RIGHT,
         vec![ColorStop::percent(light, 0), ColorStop::percent(dark, 100)],
