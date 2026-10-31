@@ -1,0 +1,77 @@
+# Design
+
+## Context
+
+AS stands on `2.0` at `735d9d3c` (this branch's base), which carries AG.15's level stage, AH.22's script parts and AH.87's particles:
+
+- **The level stage** ([`stages.rs`](../../../crates/guac-extract/src/stages.rs) `level_stage`, [`levels.rs`](../../../crates/guac-extract/src/levels.rs)) reads each level in `levels::LEVELS` part by part (scene, props, collision, placements, lights, atmosphere, script, palettes, nodes) into `levels/<archive>/<part>.<ron|postcard>`, its textures into the characters' shared store (`textures/<sha256>.ktx2`), each part recorded in the manifest's `levels` map once its files are in ([`extract.rs`](../../../crates/guac-extract/src/extract.rs) `record_level_part`), so a part that won't read is reported and the others land. A start is current only once every level in `LEVELS` holds every part (`levels::complete`), so the list is also what makes an extract stale.
+- **guacamole reads the constant** in seven places (`LEVELS[0]` for chapter 1's archive, `LEVELS.len()` for "every level read"), all for chapter 1; this lane changes no guacamole file, so the constant keeps its shape until the wiring boxes retire those reads.
+- **The scene reader** ([`level.rs`](../../../crates/guac-formats/src/level.rs) `Graph`) already composes each draw's matrix through its groups (row vectors, `v · local · parent`), and the extractor refuses any draw whose matrix isn't the identity. The IR's segments hold `f32` positions, normals and tangents ([`model.rs`](../../../crates/guac-ir/src/model.rs) `Segment`), so a draw's matrix can go into its vertices at extract time.
+- **The transcode** ([`transcode.rs`](../../../crates/guac-extract/src/transcode.rs)) runs one ffmpeg per movie with a voice choice (`VoiceTrack::Only`, or `Stream { index, bed }`, which mixes a voice stream over a bed with `amix`), keyed for resume and dedupe by a recipe over the source's hash, the voice and the argv. Only the intro table's movies are jobs today; the FMVs are `IntroIndex::unclaimed_movies` ([`intros.rs`](../../../crates/guac-extract/src/intros.rs)).
+- **The writes sync per file**: `write_file` ends in `sync_all` for every output and every manifest save. AQ.4 counted 5,475 full flushes in chapter 1's level stage, and AG.15's review measured 7.57 s against 0.10 s for its 696 textures with the flush on and off (backlog). Every kept file's resume already re-hashes it against its record (`IdentityDir::output_done`).
+- **The VM** ([`lib.rs`](../../../crates/guac-script/src/lib.rs)) runs strict (a stop halts the run, naming placement, script, position and member or op) or in play mode (a stop ends that placement alone). Its member registry is the tables in [`members.rs`](../../../crates/guac-script/src/members.rs), which guacamole registers whole (the stock-take found no member guacamole's host keeps outside them). `giants_toys` already links `bootstrap.bld`, `global.bld` and `init_setup.bld` straight from the dump in memory and runs a host that answers nothing.
+- **The disc** (ag-levels, the stock-take): 143 `level/*.bld`, one IGZ (`level.bld`) and 12 language packs each; 75 scenes over the disc, every graph a shallow tree in the level's frame bar 54 transforms in 10 levels (28 not identity, 40 animated, keyframes in `igTransformSource3`); 66 challenge and arena levels carry no scene of their own and draw from 9 shared mesh bundles; the 4 hub stages share one geometry. fmv01-fmv04 and fmv06-fmv11 carry 13 Bink audio tracks, 12 mono and one stereo; fmv12 one stereo.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Every level on the disc readable by the extractor and writable on demand, chapter 1's extract unchanged byte for byte.
+- A pass table over all 143 levels per part, every failure fixed or a box naming the level, the part and the shape.
+- A measured, ranked list of what every level's scripts stop on in the VM, filed as boxes the VM lane takes.
+- The wiring lane's boxes written, so the TV half starts from a plan.
+
+**Non-Goals:**
+- Any guacamole, Bevy or phone change (the wiring boxes).
+- Modelling the members or ops the gap list names (the VM lane), or running any level's scripts on the TV.
+- Playing animated transforms, the cinematic cameras or the FMVs on the TV; level audio (the audio lane).
+- A whole-disc extract on disk: the tests read in memory or extract one level at a time into a throwaway root.
+
+## Decisions
+
+**1. Levels extract on demand; a first run writes chapter 1 alone.**
+A first run extracts the levels in a short first-run list (chapter 1, as today) and nothing else; any other level is extracted when asked for by name, through the same per-part reading and recording, into the same `levels/<archive>/` folder and shared texture store, its parts keyed under its archive in the manifest's `levels` map. Staleness keys on the first-run list alone, so a level extracted on demand never makes a later start redo anything and one never extracted doesn't either; a level past chapter 1 is "in" exactly when its own parts are (`level_part_done` per part, as now). The on-demand entry refuses a name that isn't on the disc's list (decision 2) rather than reading a path built from it. The constant guacamole reads stays as an alias of the first-run list (Context).
+
+Rejected: every level on a first run (at chapter 1's 331 MiB, the 23 other story and hub levels alone run to gigabytes a kid may never enter, and the first run's wait grows by every one of them); a background extract of the rest after the first run (the same disk for the same unentered levels; a setting for it can come at AN when the whole game plays); levels as an extract-wide part like the scripts (one level's failure would hold every level's record).
+
+**2. The disc's level list is the dump's `level/*.bld` files.**
+The game's loader opens a level by its archive's name, and the dump scan already records every file's path, size and hash in the manifest's sources, so the list is read from there: each `level/<name>.bld`, with a kind by its name (story and hub, PvP, challenge, arena challenge, mesh bundle, ship part, the title, the credits, the minion and misc packs) for the reports and the wiring boxes (a challenge level draws its geometry from a bundle). Rejected: a table in `global.bld`'s scripts (the scripts name level loads through objects nothing reads yet, and the menus' list of chapters is AM's); a committed list (a constant is what this replaces).
+
+**3. Data files stop syncing one by one; the manifest keeps its sync.**
+Every kept file is re-hashed against its manifest record at resume, so a file a crash left short or empty already reads as not done and is written again: the per-file flush buys nothing the hash doesn't. The manifest is the one file whose loss costs more (a torn manifest reads as unusable and the extract starts over), so its saves keep theirs. The backlog's decision ("one sync at the end of each stage") is superseded by this, for a reason it didn't have in view: on macOS a full flush pushes the drive's cache but only the one file's dirty pages, so a single flush at a stage's end wouldn't make the stage's other files durable either; the hash check is what does. Measured before and after on chapter 1's level stage (AS.4). Rejected: keeping the per-file flush (an on-demand level pays it while a kid waits for the level to appear); one flush per stage (above).
+
+**4. The whole-disc read runs every part's reader in memory.**
+A new `#[ignore]`d guac-extract disc test reads each of the 143 archives, runs each part's reader as the level stage does (scene, props, collision, placements, lights, atmosphere, script, palettes, nodes), encodes each part's IR in memory for its size, writes nothing and prints a table per level and part: pass, or the reason. One level at a time, so the largest level's textures are the most it holds. Its numbers (each level's would-be size and read time) size decision 1's waits.
+
+**5. A static transform is baked into its draws; an animated one at its stored matrix.**
+A draw's composed matrix goes into its segment's vertices at extract time: positions through it, normals through its inverse transpose and renormalized, tangents through its 3 × 3 part renormalized with the handedness negated under a mirror, and each triangle's winding swapped under a mirror so its front stays its front. The IR keeps its shape (no version bump) and every draw stays in the level's frame, which is what the renderer and the collision already assume. Chapter 1's scenes hold no transform, so its parts don't move. An animated transform is baked at the matrix its file stores, which the level's animation drives at run time; whether that matrix is the animation's first frame is unread (a hypothesis), and playing it is a box of its own (it ties to `igTransformSource3` and the cinematics), which has to take the IR route below. Rejected: the matrix carried per draw in the IR (an IR bump re-extracts every user's chapter 1 for ten levels nobody plays yet, and the renderer grows a per-draw transform; the right shape once something animates, so the animation box revisits it).
+
+**6. Materials and atmosphere are fixed where the whole-disc read finds them.**
+Each refusal the read lists is fixed in the reader that names it, with a unit test on a built fixture of the shape, or split into a box naming the level, the part and the shape. A level whose scripts carry no level definition sets no zone, so its atmosphere part is an empty one (no zone, none set up at the start), not a refusal; a definition the static reader can't replay stays a refusal, since the VM running the definition is the general answer (AJ).
+
+**7. The FMVs convert on demand, the English voice off the movie's own header.**
+An FMV is converted the first time it's asked for, on the intros' transcode path and its recipe-keyed resume, into a folder of its own (`video/fmv/`, `audio/fmv/`) recorded in the manifest's transcode record beside the intros, forgotten with them when the target changes. The voice choice comes off the Bink header, read by a new pure reader in guac-formats (with its property test and fuzz target): on fmv01 the 12 mono tracks' ids are 1, 5-10, 15, 18, 20, 22 and 23, each the id of one of the disc's 12 language packs (0, 4-9, 14, 17, 19, 21, 22) plus one, so English (6) is the track with id 7, mixed over the stereo track with id 0, presumably the music and effects (a hypothesis until chotchki listens, AS.10); a movie with one track uses it. Rejected: ffprobe at conversion time (a second tool a first run would have to find; the census keeps it dev-side); a fixed stream index (a movie laid out otherwise would pick another language without a sound).
+
+**8. The VM gap list is measured strict on a null host, one gap at a time.**
+A new `#[ignore]`d guac-script disc test links `bootstrap.bld`, `global.bld`, `init_setup.bld` and one level straight from the dump, in memory, the units in guacamole's order and roles. Its host keeps every registered member as a value cell (so a stop is never a member guacamole models), answers every world op as finding no target, and draws a fixed sequence. `global.bld`'s running placements run their first tick and are held, as guacamole holds them; `init_setup.bld`'s and the level's run every tick, those awake from the load for a fixed number of ticks, then every managed placement woken for as many more (as if a hero stood by each). On a stop at a member no table registers, that member becomes a value cell taking any value and the level runs again from its start; on any other stop (a shape the VM doesn't model, the budget), that placement is left out and the level runs again; until the ticks run clean or a cap. So each level yields its link result, its first stop and the chain behind it, and the ranking is each gap by the levels reaching it, then how early. The world ops asked are counted per class beside it, for the VM lane to set against guacamole's host. Members are hashes in the files; the test prints names from a table outside the tree when one is given, so no name list comes off the EBOOT into the repo.
+
+Rejected: play mode (a stop ends that placement for good, so every gap behind its first in a script stays hidden); guacamole's own host (Bevy and the TV's world in a pure-crate lane, and its answers would only move where these stops fall); one strict run per level (one stop a level, which ranks nothing).
+
+**9. The wiring lane's boxes live in AS, unticked.**
+A chosen level on the TV, the pre-warm census per level, the scripts' own level loads, transitions and unloading, and a level's placed emitters stand on the extractor boxes and on AG.19's level load; they're written now so the TV half starts from a plan, and decision 1's on-demand entry is what their first box calls.
+
+## Risks / Trade-offs
+
+- [A null host takes branches the live game wouldn't, so the gap list is what the scripts reach under it, not under play] → Two phases (the load's wake, then everything awake) reach the creatures' and pickups' scripts; each VM box re-measures its gap on guacamole's host before it's built; the ranking orders the work, it doesn't prove completeness.
+- [A level's first entry waits on its extraction] → Decision 3 takes the flush off; the end-to-end box records each level's time with the load, and the wiring box shows progress while it runs.
+- [Baking a transform into the vertices loses the rest pose an animation needs] → Animated transforms are listed apart, and their box takes the IR route.
+- [Disk] → No whole-disc extract on disk: the read is in memory, the end-to-end extracts go one level at a time into a throwaway root removed after, and each run starts only with 40 GiB free.
+- [The manifest's level map grows with every level a kid enters] → Each record is a part list; at 143 levels it stays well under the source list the manifest already carries.
+
+## Migration Plan
+
+None: the extract is a cache, its layout (4) and IR version stay, chapter 1's parts come through byte for byte (checked before and after), and an extract made before AS stays current.
+
+## Open Questions
+
+- Is Bink track 0 the FMVs' music and effects, and does the original play it under the voice? AS.10 (chotchki's ear) answers it; a wrong guess changes the voice choice alone, not the approach.
+- Which mesh bundle each challenge level draws from, and how the original picks it (the scripts' level loads): the wiring box for a challenge level reads it, and the bundles extract on their own meanwhile.
