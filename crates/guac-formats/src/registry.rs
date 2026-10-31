@@ -146,10 +146,12 @@ pub const PARSERS: &[RegisteredParser] = &[
             Ok(())
         },
         seeds: particle::builder::seeds,
-        // The IGZ parse, then one emitter at a time: its generators (at
-        // most MAX_GENERATORS, each about 600 bytes with its records) and
-        // the list of every emitter's result, one per placement of 0xE0
-        // input bytes or more.
+        // The IGZ parse, then one emitter at a time, dropped before the
+        // next: its generator list's references (16 bytes a 4-byte input
+        // word) and at most MAX_GENERATORS generators of about 500 bytes
+        // each. Held all at once they'd be 64 x 500 bytes a 0xE0-byte
+        // emitter, all off one shared list
+        // (`the_particles_parser_holds_its_budget_on_...`).
         heap_budget: |len| 64 * len + 8 * len + (64 << 10),
     },
     RegisteredParser {

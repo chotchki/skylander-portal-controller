@@ -1320,11 +1320,12 @@ fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
     files
 }
 
-/// Each of AH.22's parts and AH.50's attach nodes, missing alone from a
-/// finished extract, resumes alone: the extract isn't current, the next run
-/// writes that part's files and no other (the model stage, which reads every
-/// archive on a resume, keeps every file but the missing part's), and then
-/// it's current.
+/// Each of AH.22's parts, AH.50's attach nodes and AH.87's emitters, missing
+/// alone from a finished extract (one made before the build that adds it),
+/// resumes alone: the extract isn't current, the next run writes that part's
+/// files and no other (the model stage, which reads every archive on a
+/// resume, keeps every file but the missing part's), and then it's
+/// current.
 #[test]
 fn each_of_the_fights_parts_resumes_alone() {
     let s = setup();
@@ -1339,6 +1340,7 @@ fn each_of_the_fights_parts_resumes_alone() {
         (true, levels::PALETTES),
         (false, scripts::SCRIPTS),
         (false, scripts::SPAWNS),
+        (false, guac_extract::particles::PART),
     ] {
         let gone = without_part(&dir, level, part);
         assert!(!gone.is_empty(), "{part}");
@@ -1350,12 +1352,18 @@ fn each_of_the_fights_parts_resumes_alone() {
             + done.models.files.written
             + done.models.palettes.files.written
             + done.levels.files.written
-            + done.scripts.files.written;
+            + done.scripts.files.written
+            + done.particles.files.written;
         assert_eq!(written, gone.len(), "{part}: only its files");
+        assert_eq!(
+            done.particles.read,
+            part == guac_extract::particles::PART,
+            "{part}"
+        );
         let (lv, sc) = (&done.levels, &done.scripts);
         let (level_read, script_read) = match (level, part) {
             (true, _) => (1, 0),
-            (false, "palettes" | "nodes") => (0, 0),
+            (false, "palettes" | "nodes" | "particles") => (0, 0),
             _ => (0, 1),
         };
         assert_eq!(lv.parts_read, level_read, "{part}");

@@ -193,12 +193,16 @@ pub fn emitter<'a>(igz: &Igz<'a>, index: usize) -> Result<Emitter<'a>, FormatErr
 }
 
 /// Every `tfbParticleInfo` in `igz`, in object order, each read or with
-/// why it isn't.
-pub fn emitters<'a>(igz: &Igz<'a>) -> Vec<(usize, Result<Emitter<'a>, FormatError>)> {
+/// why it isn't, one at a time: an emitter reads as up to
+/// [`MAX_GENERATORS`] generators of a few hundred bytes each off a list any
+/// number of emitters can share, so holding every one at once grows past
+/// any bound on the input's size; a caller keeps what it needs of each.
+pub fn emitters<'s, 'a>(
+    igz: &'s Igz<'a>,
+) -> impl Iterator<Item = (usize, Result<Emitter<'a>, FormatError>)> + 's {
     igz.objects()
         .iter()
         .enumerate()
         .filter(|(_, o)| is_a(igz.type_name(o), ParticleInfo::TYPE))
         .map(|(i, _)| (i, emitter(igz, i)))
-        .collect()
 }

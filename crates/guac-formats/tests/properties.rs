@@ -288,6 +288,31 @@ fn every_parser_survives_mutated_seeds() {
     }
 }
 
+/// AH.87's `particles` parser on emitters that each read as the most
+/// generators an emitter takes, all off one shared list: its peak stays
+/// one emitter's, not every emitter's at once, so its budget holds however
+/// many a file places. Random and mutated bytes never build this file.
+#[test]
+fn the_particles_parser_holds_its_budget_on_emitters_sharing_one_full_list() {
+    let parser = PARSERS
+        .iter()
+        .find(|p| p.name == "particles")
+        .expect("registered");
+    for n in [1, 64, 512] {
+        let bytes = guac_formats::particle::builder::crowd(n);
+        let igz = guac_formats::igz::Igz::parse(&bytes).unwrap();
+        let read: Vec<_> = guac_formats::particle::emitters(&igz).collect();
+        assert_eq!(read.len(), n);
+        assert!(read.iter().all(|(_, e)| {
+            e.as_ref()
+                .is_ok_and(|e| e.generators.len() == guac_formats::particle::MAX_GENERATORS)
+        }));
+        if let Err(e) = check(parser, &bytes) {
+            panic!("{n} emitters: {e}");
+        }
+    }
+}
+
 // The harness checks itself against parsers that misbehave on purpose, so a
 // green run above means something.
 

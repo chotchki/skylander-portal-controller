@@ -52,6 +52,11 @@ fn a_sprite_generator_reads_every_field_of_its_three_records() {
     assert_eq!(a.info.vfx.overlay_layer(), 5);
     assert_eq!(b.info.vfx.blend_mode(), Some(BlendMode::Blend));
     assert_eq!(b.info.vfx.overlay_layer(), 0);
+    // The one code the EBOOT doesn't name names nothing (the extractor
+    // refuses the emitter rather than guess a blend).
+    let mut three = b.info.vfx;
+    three.properties = (three.properties & !3) | 3;
+    assert_eq!((three.blend_code(), three.blend_mode()), (3, None));
     assert_eq!(b.info.vfx.bloom_intensity, 5.0);
     assert_eq!(a.info.vfx.init_matrix.position, [0.25, 0.5, 0.75]);
     assert_eq!(a.info.vfx.init_matrix.rotation, [10.0, 180.0, 30.0]);
@@ -197,7 +202,7 @@ fn each_generator_names_the_texture_it_draws_through_its_bind() {
 fn every_emitter_in_a_file_is_listed_in_object_order() {
     let s = sample();
     let igz = Igz::parse(&s.bytes).unwrap();
-    let all = emitters(&igz);
+    let all: Vec<_> = emitters(&igz).collect();
     let names: Vec<(usize, &str)> = all
         .iter()
         .map(|(i, e)| (*i, e.as_ref().unwrap().name))
@@ -273,6 +278,16 @@ fn a_sprite_generator_missing_a_record_is_refused_by_name() {
     assert!(e.generators[0].texture().is_none());
 }
 
+/// A generator whose texture data binds nothing refuses its emitter by
+/// the field, rather than landing untextured.
+#[test]
+fn a_texture_chain_that_does_not_read_refuses_its_emitter() {
+    let bytes = builder::unbound();
+    let igz = Igz::parse(&bytes).unwrap();
+    let e = emitter(&igz, 0).unwrap_err();
+    assert_eq!((e.field, &e.kind), ("_texAttr", &ErrorKind::Missing), "{e}");
+}
+
 #[test]
 fn a_list_past_the_most_generators_is_refused() {
     let bytes = one_sprite([true; 3], MAX_GENERATORS - 1);
@@ -289,6 +304,8 @@ fn a_list_past_the_most_generators_is_refused() {
 fn every_seed_reads_or_refuses_without_panicking() {
     for seed in builder::seeds() {
         let igz = Igz::parse(&seed).unwrap();
-        let _ = emitters(&igz);
+        for (_, e) in emitters(&igz) {
+            let _ = e;
+        }
     }
 }

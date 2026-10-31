@@ -257,6 +257,66 @@ pub fn odd_image() -> Vec<u8> {
     b.build()
 }
 
+/// One emitter, "Unbound", whose one sprite generator's
+/// `AnimatableTextureDataInfo` binds no texture attribute: a texture chain
+/// that doesn't read.
+pub fn unbound() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let emitter = b.object(0, "tfbParticleInfo", 0xE0);
+    let gil = b.object(0, "GeneratorInfoList", 0x18);
+    let sprite = b.object(0, "GeneratorInfo", 0x54);
+    let records = [
+        b.object(0, "GeneratorGenerationFields", 0x34),
+        b.object(0, "GeneratorMovementFields", 0x4C),
+        b.object(0, "GeneratorAppearanceFields", 0x9C),
+    ];
+    let data = b.object(0, "AnimatableTextureDataInfo", 0x34);
+    let blocks = b.section(0x10);
+    b.string(at(data, 0x08), "unbound.png");
+    b.put_bytes(at(data, 0x10), &[1]);
+    b.null_memory_ref(at(data, 0x14), 0);
+    b.put_u32(at(data, 0x24), 128);
+    b.put_u32(at(data, 0x28), 64);
+    crate::level::builder::placement(&mut b, emitter, "Unbound", 1, &[0.0; 6], 5);
+    b.pointer(at(emitter, 0xD8), gil);
+    list(&mut b, gil, blocks, &[Some(sprite)]);
+    vfx(&mut b, sprite, "", 0x16, 0.0, data);
+    for (r, offset) in records.iter().zip([0x44, 0x48, 0x50]) {
+        b.pointer(at(sprite, offset), *r);
+    }
+    b.build()
+}
+
+/// `n` emitters sharing one list of [`super::MAX_GENERATORS`] references to
+/// one textured sprite generator: each emitter costs its 0xE0 bytes and
+/// reads as the most generators an emitter takes, so a reader holding every
+/// emitter's generators at once outgrows a budget linear in the input.
+pub fn crowd(n: usize) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let emitters: Vec<Location> = (0..n)
+        .map(|_| b.object(0, "tfbParticleInfo", 0xE0))
+        .collect();
+    let gil = b.object(0, "GeneratorInfoList", 0x18);
+    let sprite = b.object(0, "GeneratorInfo", 0x54);
+    let records = [
+        b.object(0, "GeneratorGenerationFields", 0x34),
+        b.object(0, "GeneratorMovementFields", 0x4C),
+        b.object(0, "GeneratorAppearanceFields", 0x9C),
+    ];
+    let blocks = b.section(0x10);
+    let (data, _) = texture(&mut b, blocks, "crowd.png", 0x44);
+    for (k, e) in emitters.iter().enumerate() {
+        crate::level::builder::placement(&mut b, *e, "C", k as u32, &[0.0; 6], 5);
+        b.pointer(at(*e, 0xD8), gil);
+    }
+    list(&mut b, gil, blocks, &[Some(sprite); super::MAX_GENERATORS]);
+    vfx(&mut b, sprite, "", 0x16, 0.0, data);
+    for (r, offset) in records.iter().zip([0x44, 0x48, 0x50]) {
+        b.pointer(at(sprite, offset), *r);
+    }
+    b.build()
+}
+
 /// The fuzz seeds: the sample, and the sample's emitter alone with its list
 /// pointing at a record instead of a list.
 pub fn seeds() -> Vec<Vec<u8>> {

@@ -486,6 +486,11 @@ pub(crate) fn trail() -> guac_ir::particle::Emitter {
 /// The particle part (AH.87): [`trail`] in the fighter's archive, nothing
 /// in `global.bld`'s.
 pub(crate) fn write_particles(dir: &Path) {
+    write_particles_of(dir, trail());
+}
+
+/// [`write_particles`] with `emitter` as the fighter's one.
+pub(crate) fn write_particles_of(dir: &Path, emitter: guac_ir::particle::Emitter) {
     let ir = IrFormat::Ron;
     std::fs::create_dir_all(dir.join(guac_extract::particles::DIR)).unwrap();
     for archive in guac_extract::particles::archives() {
@@ -493,7 +498,7 @@ pub(crate) fn write_particles(dir: &Path) {
             identity: identity(),
             archive: archive.clone(),
             emitters: if archive.contains("eruptor") {
-                vec![trail()]
+                vec![emitter.clone()]
             } else {
                 Vec::new()
             },

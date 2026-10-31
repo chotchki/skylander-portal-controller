@@ -207,6 +207,12 @@ fn view_of<'a>(
 /// share, at its clone's place while it's in play; each generator's mesh
 /// takes what it draws now (shown, or hidden with nothing); a system whose
 /// clone has gone and that has nothing left goes.
+///
+/// It runs after the transforms propagate, so a mesh stands this frame
+/// where the last frame's system put it (and on a system's first frame at
+/// the world's origin): its quads are laid from where it stands, not from
+/// the emitter's place now, or a moving emitter's would draw a frame's move
+/// behind its particles.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn step_systems(
     mut commands: Commands,
@@ -215,13 +221,8 @@ pub(crate) fn step_systems(
     mut rng: ResMut<ParticleRng>,
     mut report: ResMut<ParticleReport>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut systems: Query<(
-        Entity,
-        &mut ParticleSystem,
-        &mut Transform,
-        &mut GlobalTransform,
-    )>,
-    mut visibility: Query<&mut Visibility, Without<ParticleSystem>>,
+    mut systems: Query<(Entity, &mut ParticleSystem, &mut Transform)>,
+    mut drawn: Query<(&mut Visibility, &GlobalTransform), Without<ParticleSystem>>,
     transforms: Query<&GlobalTransform, (With<ScriptClone>, Without<ParticleSystem>)>,
     cameras: Query<(&Camera, &GlobalTransform), (With<LevelOutput>, Without<ParticleSystem>)>,
 ) {
@@ -232,7 +233,7 @@ pub(crate) fn step_systems(
         seen: std::mem::take(&mut report.seen),
         ..default()
     };
-    for (entity, mut system, mut transform, mut global) in &mut systems {
+    for (entity, mut system, mut transform) in &mut systems {
         let system = &mut *system;
         let in_play = world
             .actor(system.clone.to_bits())
@@ -250,11 +251,9 @@ pub(crate) fn step_systems(
             commands.entity(entity).despawn();
             continue;
         }
-        // The system stands where its emitter does, so the blended draws
-        // sort by it; its quads are laid from there.
-        let origin = system.place.at;
-        transform.translation = origin;
-        *global = GlobalTransform::from_translation(origin);
+        // The system stands where its emitter does, so from the next
+        // frame's propagation its blended draws sort by it.
+        transform.translation = system.place.at;
         now.systems += 1;
         if !now.emitters.contains(&system.name) {
             now.emitters.push(system.name.clone());
@@ -269,8 +268,13 @@ pub(crate) fn step_systems(
             let Some((mesh_entity, handle)) = mesh else {
                 continue;
             };
-            let drawn = view.and_then(|v| particles::segment(state, g, system.place, v, origin, 0));
-            let shown = match drawn.as_ref().map(static_mesh) {
+            let Ok((mut v, placed)) = drawn.get_mut(*mesh_entity) else {
+                continue;
+            };
+            // The level's root and the system carry no turn or scale.
+            let from = placed.translation();
+            let quads = view.and_then(|v| particles::segment(state, g, system.place, v, from, 0));
+            let shown = match quads.as_ref().map(static_mesh) {
                 Some(Ok(m)) => {
                     now.quads += m.count_vertices() / 4;
                     let _ = meshes.insert(handle.id(), m);
@@ -278,15 +282,13 @@ pub(crate) fn step_systems(
                 }
                 _ => false,
             };
-            if let Ok(mut v) = visibility.get_mut(*mesh_entity) {
-                let want = if shown {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                };
-                if *v != want {
-                    *v = want;
-                }
+            let want = if shown {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if *v != want {
+                *v = want;
             }
         }
     }
@@ -305,7 +307,9 @@ mod tests {
     use super::*;
     use crate::level::level_channel;
     use crate::test_support::hero_scripts::write_attack;
-    use crate::test_support::level::{LEVEL, START, lights, write_level, write_particles};
+    use crate::test_support::level::{
+        LEVEL, START, lights, trail, write_level, write_particles_of,
+    };
     use crate::test_support::turntable::{app, extract};
 
     /// The emitter the run takes as a placement (and the test, as a clone).
@@ -316,9 +320,14 @@ mod tests {
     /// entity marked a clone at the level's start, a level camera looking
     /// at it, the clock a 60th of a second a frame.
     fn loaded() -> (App, Entity, Vec<Placed>, tempfile::TempDir) {
+        loaded_with(trail())
+    }
+
+    /// [`loaded`] with `emitter` (named `Trail`) in the particle part.
+    fn loaded_with(emitter: Emitter) -> (App, Entity, Vec<Placed>, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let source = write_level(tmp.path(), &lights());
-        write_particles(tmp.path());
+        write_particles_of(tmp.path(), emitter);
         write_attack(tmp.path());
         let mut app = app(extract(tmp.path()));
         app.add_message::<crate::tv_state::Redrawn>()
@@ -452,5 +461,91 @@ mod tests {
         let mut q = app.world_mut().query::<&ParticleSystem>();
         assert_eq!(q.iter(app.world()).count(), 0);
         assert!(app.world().get_entity(system).is_err());
+    }
+
+    /// The virtual clock stopped (a pause, a hold behind an alert) holds
+    /// every particle where it is: none ages, moves or is born until it
+    /// runs again.
+    #[test]
+    fn a_stopped_clock_holds_every_particle() {
+        let (mut app, _, _, _tmp) = loaded();
+        for _ in 0..20 {
+            app.update();
+        }
+        let state = |app: &mut App| {
+            let mut q = app.world_mut().query::<&ParticleSystem>();
+            q.single(app.world()).unwrap().generators.clone()
+        };
+        let before = state(&mut app);
+        assert!(!before[0].particles.is_empty());
+        app.world_mut().resource_mut::<Time<Virtual>>().pause();
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(state(&mut app) == before, "nothing moved while stopped");
+        app.world_mut().resource_mut::<Time<Virtual>>().unpause();
+        app.update();
+        app.update();
+        assert!(state(&mut app) != before);
+    }
+
+    /// A moving emitter's quads draw where its particles are, every frame
+    /// from its first: the step runs after the transforms propagate, so its
+    /// mesh's place this frame is the one it was given, not where its
+    /// emitter stands now (a first frame's none at all), and its quads are
+    /// laid from that.
+    #[test]
+    fn a_moving_emitters_quads_draw_where_its_particles_are() {
+        // A stream, and a burst, whose particles all come on its first
+        // frame.
+        let mut burst = trail();
+        if let guac_ir::particle::Kind::Sprite(s) = &mut burst.generators[0].kind {
+            s.spawn_rate = 9999.0;
+        }
+        for (emitter, first) in [(trail(), false), (burst, true)] {
+            moving_quads_draw_where_their_particles_are(emitter, first);
+        }
+    }
+
+    fn moving_quads_draw_where_their_particles_are(emitter: Emitter, first: bool) {
+        let (mut app, clone, _, _tmp) = loaded_with(emitter);
+        let at = Vec3::from_array(START);
+        let mut checked = 0;
+        for k in 1..=20 {
+            // A quarter metre a frame, as a thrown ball goes.
+            let to = at + Vec3::new(0.25 * k as f32, 0.0, 0.0);
+            app.world_mut()
+                .entity_mut(clone)
+                .insert(Transform::from_translation(to));
+            app.update();
+            let (meshes, particles) = {
+                let mut q = app.world_mut().query::<&ParticleSystem>();
+                let s = q.single(app.world()).unwrap();
+                (s.meshes.clone(), s.generators[0].particles.clone())
+            };
+            let (shown, mesh) = meshes[0].clone().unwrap();
+            if app.world().get::<Visibility>(shown) != Some(&Visibility::Inherited) {
+                assert!(!(first && k == 1), "a burst draws on its first frame");
+                continue;
+            }
+            let placed = *app.world().get::<GlobalTransform>(shown).unwrap();
+            let m = app.world().resource::<Assets<Mesh>>().get(&mesh).unwrap();
+            let positions = m
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .and_then(|a| a.as_float3())
+                .unwrap();
+            assert_eq!(positions.len(), 4 * particles.len(), "frame {k}");
+            for (quad, p) in positions.chunks(4).zip(&particles) {
+                let centre = quad.iter().map(|v| Vec3::from_array(*v)).sum::<Vec3>() / 4.0;
+                let drawn = placed.transform_point(centre);
+                assert!(
+                    drawn.distance(p.at) < 1e-3,
+                    "frame {k}: drawn at {drawn}, the particle at {}",
+                    p.at
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "{checked}");
     }
 }

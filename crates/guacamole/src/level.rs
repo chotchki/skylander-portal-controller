@@ -3057,8 +3057,8 @@ mod tests {
 
     /// AH.87: the particle part's emitters load with the level, each
     /// textured generator on a material of its own keyed among the level's,
-    /// an untextured one on none; without the part the level loads all
-    /// the same and no emitter draws.
+    /// an untextured one on none; without the part, or with another dump's,
+    /// the level loads all the same and no emitter draws.
     #[test]
     fn the_particle_parts_emitters_load_with_their_materials() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3069,7 +3069,7 @@ mod tests {
         assert!(level.emitters().expect("loaded").0.is_empty());
 
         crate::test_support::level::write_particles(tmp.path());
-        let mut app = level_app(tmp.path(), source, false);
+        let mut app = level_app(tmp.path(), source.clone(), false);
         until(&mut app, &["ready"], |_| {});
         let level = app.world().resource::<Level>();
         let (emitters, _) = level.emitters().expect("loaded");
@@ -3087,6 +3087,22 @@ mod tests {
         let keys = &level.loaded().unwrap().keys;
         let particle = guacamole::census::PARTICLES[0].key(false).unwrap();
         assert!(keys.contains(&particle), "its key among the level's");
+
+        // Another dump's part: read, refused, nothing drawn.
+        for archive in guac_extract::particles::archives() {
+            let path = tmp.path().join(guac_extract::particles::path(
+                guac_extract::intros::IrFormat::Ron,
+                &archive,
+            ));
+            let mut e: guac_ir::particle::Emitters =
+                guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            e.identity.title_id = "BLUS00000".into();
+            std::fs::write(&path, guac_ir::to_ron(&e).unwrap()).unwrap();
+        }
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        assert!(level.emitters().expect("loaded").0.is_empty());
     }
 
     /// AG.21: the level's solids come and go with it. A new source's load
