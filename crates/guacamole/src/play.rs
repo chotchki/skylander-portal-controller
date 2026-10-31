@@ -5135,6 +5135,9 @@ mod tests {
         until(&mut app, "the coin's gold on the HUD", |a| {
             hud(a).gold == 5 + SMASH_GOLD as u32
         });
+        // No level-up's arrows before one (openspec AH.248): his first
+        // frame at level 1 sends none.
+        assert_eq!(app.world().resource::<crate::hud::Hud>().level_up, None);
         // A level-up.
         test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
         until(&mut app, "level 2", |a| {
@@ -5143,6 +5146,13 @@ mod tests {
         let v = hud(&app);
         assert_eq!((v.xp, v.xp_next), (1_000, Some(2_200)));
         assert_eq!(v.xp_text(), "1,000 / 2,200 XP");
+        // Its arrows from the frame the HUD shows level 2.
+        let now = app.world().resource::<Time<Real>>().elapsed();
+        assert_eq!(
+            app.world().resource::<crate::hud::Hud>().level_up,
+            Some(now),
+            "the level-up's arrows from the frame it shows"
+        );
         // At the cap: MAX, and a point past it held there.
         table.publish(Progression {
             level_xp: vec![0, 1_000],

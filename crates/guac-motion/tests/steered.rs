@@ -128,3 +128,140 @@ fn a_turn_to_turns_it_in_place() {
     assert!((c.facing - 90.0).abs() < 1e-3, "{}", c.facing);
     assert!((c.pivot - at).length() < 1e-4, "it doesn't walk");
 }
+
+/// Another Chompy's body standing at `at` (a kinematic sphere, as the
+/// creatures' bodies are in the seam), on the open ground.
+fn with_another(at: Vec3) -> ParryWorld {
+    let solid = chompy_solid();
+    let mut probe = Hero::actor(solid, at, 0.0);
+    probe.settle(&open(), &[]);
+    let pose = guac_motion::seam::Pose::new(probe.pivot, guac_motion::seam::Quat::IDENTITY);
+    ParryWorld::new(&scenarios::bodies(
+        &scenarios::open_ground(),
+        &[(guac_motion::seam::BodyId(7), solid, pose)],
+    ))
+    .unwrap()
+}
+
+/// Steps it toward `aim` for `frames`, each frame's pivot, the walk it
+/// keeps across the ground (ft/s) and the move it made across the ground
+/// (ft/s).
+fn walk_kept(world: &ParryWorld, c: &mut Hero, aim: Aim, frames: usize) -> Vec<(Vec3, f32, f32)> {
+    (0..frames)
+        .map(|_| {
+            let before = c.pivot;
+            c.step_steered(world, &Physics::CHOMPY, aim, DT, &[], Surfaces::NONE);
+            let across = Vec3::new(c.pivot.x - before.x, 0.0, c.pivot.z - before.z).length();
+            let kept = Vec3::new(c.walk.velocity.x, 0.0, c.walk.velocity.z).length();
+            (c.pivot, kept, across / DT / FOOT)
+        })
+        .collect()
+}
+
+/// A Chompy whose destination lies through another's middle walks into its
+/// body and stands there (openspec AH.232): pressed head-on it keeps none of
+/// its walk, so what its scripts and its locomotion read is still, where it
+/// had walked on the spot at 20 ft/s (AH.10's `still_p1`: a Chompy behind
+/// another at 0.00 m/s for 120 frames in 'battle').
+#[test]
+fn aimed_through_anothers_middle_it_stands_against_its_body() {
+    let other = Vec3::new(0.0, 1.0, 3.0);
+    let world = with_another(other);
+    let mut c = settled(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let path = walk_kept(&world, &mut c, Aim::To(Vec3::new(0.0, 0.0, 12.0)), 120);
+    let touched = path
+        .iter()
+        .position(|p| p.2 < 0.5)
+        .expect("it meets the other's body");
+    assert!(touched > 5, "it walks there first: {touched}");
+    let gap = Vec3::new(other.x - c.pivot.x, 0.0, other.z - c.pivot.z).length();
+    assert!((1.6..1.9).contains(&gap), "against it: {gap} m");
+    for (k, p) in path.iter().enumerate().skip(touched + 1) {
+        assert!(p.2 < 0.05, "frame {k} moved {} ft/s", p.2);
+        assert!(p.1 < 0.05, "frame {k} keeps a walk of {} ft/s", p.1);
+    }
+}
+
+/// A Chompy whose destination lies through another's body off its middle
+/// slides round it to its destination (openspec AH.232; AH.10's `stun-01`:
+/// one walking round another at its full 20 ft/s, touching), every frame
+/// keeping the walk it made: never walking faster than it moves.
+#[test]
+fn aimed_through_anothers_body_off_its_middle_it_gets_round() {
+    let other = Vec3::new(0.7, 1.0, 3.0);
+    let world = with_another(other);
+    let mut c = settled(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let goal = Vec3::new(0.0, 0.0, 9.0);
+    let path = walk_kept(&world, &mut c, Aim::To(goal), 150);
+    // Up to speed, then slowed: its body met.
+    let met = path
+        .windows(2)
+        .position(|w| w[0].2 > 19.99 && w[1].2 < 19.9)
+        .expect("it meets the other's body")
+        + 1;
+    let past = path
+        .iter()
+        .position(|p| p.0.z > other.z + 1.0)
+        .expect("it gets round");
+    assert!(
+        past - met < 60,
+        "round it in a second: {} frames",
+        past - met
+    );
+    for (k, p) in path.iter().enumerate() {
+        assert!(
+            p.1 <= p.2 + 0.05,
+            "frame {k} keeps {} ft/s, moved {} ft/s",
+            p.1,
+            p.2
+        );
+    }
+    assert!(reached(c.pivot, goal, 5.0), "{:?}", c.pivot);
+}
+
+/// A walk a Chompy's scripts set with no destination (a lunge) is theirs
+/// against another's body as anywhere (openspec AH.232; AH.10's `still_p1`:
+/// a lunging Chompy pressed against another held at 9.27 m/s for 12
+/// frames): the engine only slows it by its deceleration, keeping none of
+/// the move's solve.
+#[test]
+fn a_lunge_its_scripts_set_stays_theirs_against_a_body() {
+    let other = Vec3::new(0.0, 1.0, 1.75);
+    let world = with_another(other);
+    let mut c = settled(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    c.walk.velocity = Vec3::new(0.0, 0.0, 35.0);
+    let before = c.pivot;
+    c.step_steered(
+        &world,
+        &Physics::CHOMPY,
+        Aim::Still,
+        DT,
+        &[],
+        Surfaces::NONE,
+    );
+    let moved = (c.pivot - before).length() / DT / FOOT;
+    assert!(moved < 5.0, "pressed against it: {moved} ft/s");
+    let kept = c.walk.velocity.length();
+    assert!(
+        (kept - (35.0 - 80.0 / 60.0)).abs() < 1e-3,
+        "kept {kept} ft/s"
+    );
+}
+
+/// Moving from a point, a Chompy backed into another's body stands against
+/// it as one walking to a point does (openspec AH.232: any destination's
+/// walk is the move's, solved).
+#[test]
+fn moving_from_a_point_into_anothers_body_it_stands_against_it() {
+    let other = Vec3::new(0.0, 1.0, 3.0);
+    let world = with_another(other);
+    let mut c = settled(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let path = walk_kept(&world, &mut c, Aim::From(Vec3::new(0.0, 0.0, -9.0)), 120);
+    let touched = path
+        .iter()
+        .position(|p| p.2 < 0.5)
+        .expect("it meets the other's body");
+    for (k, p) in path.iter().enumerate().skip(touched + 1) {
+        assert!(p.1 < 0.05, "frame {k} keeps a walk of {} ft/s", p.1);
+    }
+}

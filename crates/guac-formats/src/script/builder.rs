@@ -1442,6 +1442,78 @@ pub fn load_order() -> Vec<u8> {
     b.build()
 }
 
+/// [`placed_loot`]'s placements (openspec AH.146): a placed gem first in
+/// the file and on its root list, waiting asleep for the activity rule
+/// ([`LOOT_GEM_RANGE`] ft around it at the origin), and the loot system's
+/// first tick after it, awake from the load; the worth the system hands
+/// out.
+pub const LOOT_GEM: &str = "Synthetic_Emerald";
+pub const LOOT_SYSTEM: &str = "Synthetic_LootSystem_Init";
+pub const LOOT_GEM_RANGE: f32 = 160.0;
+pub const LOOT_GEM_WORTH: i32 = 10;
+
+/// AH.146's synthetic level, our numbers: [`LOOT_SYSTEM`]'s STARTUP sets the
+/// file's `Placed Worth` to [`LOOT_GEM_WORTH`] (the loot system's first tick
+/// setting the placed loot's references), and [`LOOT_GEM`]'s STARTUP takes
+/// its id from it (a placed gem's `Loot - Get Loot` giving it its worth),
+/// 0 while the system hasn't ticked.
+pub fn placed_loot() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let root = b.object(0, "igObjectList", 0x18);
+    let worth = b.object(0, "ValueInfo", 0x24);
+    b.string(at(worth, 0x08), "Placed Worth");
+    let gem = b.object(0, "tfbActorInfo", 0xF8);
+    let system = b.object(0, "tfbActorInfo", 0xF8);
+    let (gem_script, system_script) = {
+        let mut w = Writer::new(&mut b);
+        w.meta_word(worth, 0x1C, "IntMeasurement");
+        w.word(worth, 0x20, 0);
+        let idle = |w: &mut Writer<'_>| {
+            let p = w.behaviour("idle");
+            w.end_block(p);
+        };
+        let gem_script = w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_Placed_Loot.ai",
+            |w| {
+                let v = w.rhs("IntMeasurement", &[El::Local(worth)]);
+                w.set(
+                    &[
+                        El::Member("optoplevelbehavior", "my"),
+                        El::Member("abstractplacement", "id"),
+                    ],
+                    v,
+                );
+            },
+            |_| {},
+            idle,
+        );
+        let system_script = w.script(
+            "C:/tfb/Content/Levels/Level_E2E/Scripts/Synthetic_LootSystem_Init.ai",
+            |w| {
+                let v = w.int(LOOT_GEM_WORTH);
+                w.set(&[El::Local(worth)], v);
+            },
+            |_| {},
+            idle,
+        );
+        (gem_script, system_script)
+    };
+    for (a, name, script, range) in [
+        (gem, LOOT_GEM, gem_script, LOOT_GEM_RANGE),
+        (system, LOOT_SYSTEM, system_script, 0.0),
+    ] {
+        place(&mut b, a, name, Some(script), 4, &[0.0; 6]);
+        let ranges: Vec<u8> = [range, 0.0f32]
+            .iter()
+            .flat_map(|v| v.to_be_bytes())
+            .collect();
+        b.put_bytes(at(a, 0xD0), &ranges);
+    }
+    let blocks = b.section(0x10);
+    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(gem), Some(system)]);
+    b.build()
+}
+
 /// [`ui_containers`]' names: the UI's file structure of containers, the
 /// player's HUD's and the announcements' containers in it, and the state
 /// each holds.

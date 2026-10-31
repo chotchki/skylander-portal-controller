@@ -167,6 +167,11 @@ pub struct Proxy<'a> {
 pub struct Moved {
     pub pivot: Vec3,
     pub planes: Vec<ContactPlane>,
+    /// The velocity the move solved against what it met, m/s: the asked
+    /// one where nothing stopped it, the slide along what did (none into a
+    /// solid it pressed on head-on). Havok's proxy hands this back as the
+    /// actor's velocity; what an actor's steering keeps (openspec AH.232).
+    pub velocity: Vec3,
 }
 
 impl Proxy<'_> {
@@ -224,6 +229,7 @@ impl Proxy<'_> {
         let asked = velocity;
         let mut pos = pivot;
         let mut v = velocity;
+        let mut out = velocity;
         let mut remaining = step;
         let mut seen = Vec::new();
         // Planes a cast stopped him on without moving him: by triangle where
@@ -277,6 +283,7 @@ impl Proxy<'_> {
             if solved.y > v.y.max(0.0) + 1e-6 {
                 solved = solve(v, &upright(&limits));
             }
+            out = solved;
             seen = planes;
             let motion = solved * remaining;
             let len = motion.length();
@@ -349,6 +356,7 @@ impl Proxy<'_> {
         Moved {
             pivot: pos,
             planes: seen,
+            velocity: out,
         }
     }
 }

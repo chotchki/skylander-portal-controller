@@ -25,6 +25,13 @@ While a level shows, the TV SHALL show the hero's health against his full health
 - **WHEN** the intro in chapter 1's pit plays
 - **THEN** the TV shows none of the hero's numbers until it ends, and shows them again within a frame of its end
 
+### Requirement: A level-up on the TV
+When the hero's level rises, the TV SHALL send small green arrows up off the top of the hero's numbers, where the original's portrait sits, from about 0.45 s after the rise to about 1.9 s, three to six at a time, each rising as it fades. A hero coming in at his level SHALL send none.
+
+#### Scenario: Level 2 by an orb
+- **WHEN** Eruptor at 999 experience collects an orb
+- **THEN** arrows rise off the hero's numbers from about 0.45 s on and are gone about 2 s after
+
 ### Requirement: No character left
 When the hero is beaten and no other character is on the portal, the level SHALL pause under a screen asking for the beaten figure to be taken off, then for another character, offering Restart chapter from about 5 s on, behind a yes-or-no check starting on no. Restart SHALL start the level again from its start, its breakables and creatures back, the beaten figure in at full health and every figure's experience and gold kept. Placing a character not beaten in the level SHALL carry on instead.
 

@@ -3007,71 +3007,46 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
     // the destructibles' inits drew); a hit on a Chompy already stunned is
     // the schedule's test's to hold whatever lands.
     assert!(hits >= 3 && stuns >= 2);
-    // A Chompy closing in behind another runs in place against its body
-    // (AH.232), so its 'battle' can outlast AH.10's longest: held instead to
-    // spending what it runs past it blocked (on AH.195's draws
-    // Enemy_Chompy(3) 264 steps from F0 + 323, 103 of them behind (4)).
-    let stalled: Vec<Stall> = stalls(&snaps, &limits)
-        .into_iter()
-        .filter(|s| !blocked_past(&snaps, s))
-        .collect();
+    // A Chompy closing in behind another stands against its body rather
+    // than walking on the spot (AH.232: its walk the move's, solved), and no
+    // 'battle' outlasts AH.10's longest (on AH.195's draws, before it,
+    // Enemy_Chompy(3)'s ran 264 steps from F0 + 323, 103 of them walking at
+    // 6.1 m/s behind (4)).
+    for (c, name) in CHOMPIES.iter().enumerate() {
+        let limit = limits
+            .iter()
+            .find(|l| l.placement == *name && l.behaviour == "battle")
+            .map_or(0.0, |l| l.longest_stay);
+        println!(
+            "{name}'s longest 'battle' {} steps, AH.10's {:.0}",
+            longest_stay(&snaps, c, "battle"),
+            limit * 60.0
+        );
+    }
+    let stalled: Vec<Stall> = stalls(&snaps, &limits);
     assert!(stalled.is_empty(), "{stalled:?}");
     println!("load after: {}", load());
 }
 
-/// Whether `stall`'s 'battle' stays past its limit each spent what they ran
-/// past it blocked: steps its walk read over 4 m/s while over the 8 steps
-/// to them it got under a tenth of that further (pushing and pushed back, a
-/// step's move can be half its walk), another Chompy's body within 1.8 m
-/// (bodies touch at 1.73 m, AH.10's drives and ours alike).
-fn blocked_past(snaps: &[Snap], stall: &Stall) -> bool {
-    const SPAN: usize = 8;
-    let Some(c) = CHOMPIES.iter().position(|n| *n == stall.placement) else {
-        return false;
-    };
-    if stall.behaviour != "battle" {
-        return false;
+/// The most steps in a row `snaps` hold Chompy `c` in `behaviour`.
+fn longest_stay(snaps: &[Snap], c: usize, behaviour: &str) -> usize {
+    let (mut run, mut most) = (0, 0);
+    for s in snaps {
+        let here = !s.chompies[c].gone && s.chompies[c].beh.as_deref() == Some(behaviour);
+        run = if here { run + 1 } else { 0 };
+        most = most.max(run);
     }
-    let mut stays: Vec<(usize, usize)> = Vec::new();
-    for (i, s) in snaps.iter().enumerate() {
-        let here = s.chompies[c].beh.as_deref() == Some("battle") && !s.chompies[c].gone;
-        match (here, stays.last_mut()) {
-            (true, Some((_, end))) if *end + 1 == i => *end = i,
-            (true, _) => stays.push((i, i)),
-            (false, _) => {}
-        }
-    }
-    let limit = (stall.longest_stay * 60.0).ceil() as usize;
-    let over: Vec<&(usize, usize)> = stays.iter().filter(|s| s.1 + 1 - s.0 > limit).collect();
-    !over.is_empty()
-        && over.into_iter().all(|&(from, to)| {
-            let blocked = (from.max(SPAN)..=to)
-                .filter(|&i| {
-                    let (was, now) = (&snaps[i - SPAN].chompies[c], &snaps[i].chompies[c]);
-                    let got = Vec3::new(now.pos.x - was.pos.x, 0.0, now.pos.z - was.pos.z).length();
-                    let near = snaps[i].chompies.iter().enumerate().any(|(o, x)| {
-                        o != c
-                            && !x.gone
-                            && Vec3::new(x.pos.x - now.pos.x, 0.0, x.pos.z - now.pos.z).length()
-                                < 1.8
-                    });
-                    now.speed > 4.0 && got < 0.1 * now.speed * SPAN as f32 / 60.0 && near
-                })
-                .count();
-            let stay = to + 1 - from;
-            println!(
-                "{}'s 'battle' from F0 + {} for {stay} steps, {blocked} blocked, its limit {limit}",
-                stall.placement, snaps[from].k
-            );
-            blocked >= stay - limit
-        })
+    most
 }
 
 /// In his eruption (combat: Armour can turn a hit away): a bite in its
 /// wind-up hurts him without a push or his reaction; one once it's out
 /// takes nothing (AH.10's `erupt_bit`: his invulnerable flag on from the
 /// eruption's spawn, 43 steps into its clip, to the clip's end). The four
-/// poked to 100 so they live through it, West every 2 s from F0 + 150.
+/// poked to 100 so they live through it, West every 2 s from F0 + 150; his
+/// armour 0, so no bite is turned away by its roll (3 in 100 at his own 6:
+/// once the Chompies stood behind one another, AH.232, the one wind-up bite
+/// on the session's draws rolled under it and took nothing).
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
@@ -3079,6 +3054,7 @@ fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
     let (_, snaps) = fight(Script {
         stun_health: true,
         erupt_every: Some(150),
+        armour: Some(0),
         steps: 900,
         ..Script::default()
     });
@@ -3142,9 +3118,9 @@ fn in_his_eruption_a_bite_hurts_without_a_push_then_takes_nothing() {
             assert!(!pushed && !reaction);
         } else if before {
             wind_up += 1;
-            // Hurt, or turned away whole by his armour's roll (3 in 100: a
-            // turned-away bite's own test), never by the eruption.
-            assert!(lost >= 11.0 || lost == 0.0, "it hurts");
+            // Hurt, never turned away by the eruption (nor his armour's
+            // roll at 0: a turned-away bite's own test).
+            assert!(lost >= 11.0, "it hurts");
             hurt += usize::from(lost >= 11.0);
             assert!(
                 !pushed && !reaction,

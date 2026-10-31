@@ -113,6 +113,10 @@ pub struct Hero {
     pub footing: Footing,
     /// His last step's move over its step, m/s.
     pub velocity: Vec3,
+    /// His last step's walk as the move solved it against what it met, m/s
+    /// ([`crate::proxy::Moved::velocity`]): what a steered actor's walk
+    /// becomes ([`Hero::step_steered`]).
+    pub solved: Vec3,
     /// The edge probe holds his controller off.
     pub held_off: bool,
     /// This frame's edge probe found no ground and zeroed his walk across
@@ -145,6 +149,7 @@ impl Hero {
                 ground: None,
             },
             velocity: Vec3::ZERO,
+            solved: Vec3::ZERO,
             held_off: false,
             probe_held: false,
             gait_speed: 0.0,
@@ -313,6 +318,16 @@ impl Hero {
     /// ([`crate::steer::step`]) with its movement numbers `physics` fed
     /// `aim`, then the engine as [`Hero::step_engine`] has it. The hero's own
     /// frame ([`Hero::step`]) never comes here.
+    ///
+    /// With a destination (`move to`, `move from`) the walk it keeps is the
+    /// move's as solved against what it met ([`Hero::solved`]), as Havok's
+    /// proxy hands it back (openspec AH.232): pressed head-on into another
+    /// actor's body it keeps only the slide along it, which, more than 45°
+    /// off its facing, the next frame doesn't push, so it stands rather than
+    /// walking on the spot (AH.10's `still_p1`: a Chompy 0.1° off the line
+    /// through another's middle at 0.00 m/s, its velocity 90° off that line,
+    /// for 120 frames). A walk its scripts set with no destination (a
+    /// lunge) is theirs and stays as set.
     pub fn step_steered(
         &mut self,
         seam: &dyn PhysicsSeam,
@@ -338,6 +353,9 @@ impl Hero {
         self.walk.velocity = frame.velocity / FOOT;
         self.facing = frame.facing;
         self.step_engine(seam, step, exclude, surfaces);
+        if matches!(aim, steer::Aim::To(_) | steer::Aim::From(_)) {
+            self.walk.velocity = self.solved / FOOT;
+        }
     }
 
     /// The engine's part of a frame: the walk moved and looked after.
@@ -363,6 +381,7 @@ impl Hero {
         );
         self.pivot = moved.pivot;
         self.velocity = (self.pivot - start) / step;
+        self.solved = moved.velocity;
         self.look(seam, exclude, surfaces, walking, airborne, step);
     }
 

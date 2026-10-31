@@ -1077,16 +1077,21 @@ impl ScriptWorld {
             | Member::Roll
             | Member::RelativeRoll => {
                 let a = match object {
-                    // A relative facing on an actor hung from no ground turns
-                    // it by what's written (the setter, AG.60), so it reads
+                    // A relative angle on an actor hung from no ground turns
+                    // it by what's written, about its own axis (the setter:
+                    // AG.60's facing, AH.145's tilt and roll), so it reads
                     // 0: a script's own `relative facing + k` turns it by k
                     // (`Boulder_Pebbles.ai`, `Chest_Lock.ai`), where reading
-                    // its facing doubled it each tick. AH.145's recordings
-                    // read a relative roll's slide from 0 the same way.
+                    // its facing doubled it each tick, and a debris piece's
+                    // slide of its relative roll starts from 0 each frame
+                    // (AH.9's `lob-00`: each frame's turn a step larger).
                     Some(Object::Facet(h, Facet::Orientation))
-                        if matches!(m, Member::RelativeFacing)
-                            && self.actors.contains_key(&h)
+                        if matches!(
+                            m,
+                            Member::RelativeFacing | Member::RelativeTilt | Member::RelativeRoll
+                        ) && self.actors.contains_key(&h)
                             && engine.hero(h).is_none()
+                            && h != self.viewport
                             && self.ground_hung(h).is_none() =>
                     {
                         return Ok(Value::Float(0.0));
@@ -1643,7 +1648,9 @@ impl ScriptWorld {
                     return Ok(());
                 }
                 let ground = match m {
-                    Member::RelativeFacing => self.ground_hung(h),
+                    Member::RelativeFacing | Member::RelativeTilt | Member::RelativeRoll => {
+                        self.ground_hung(h)
+                    }
                     _ => None,
                 };
                 // The ground's frame faces its owner's way, so a relative
@@ -1657,7 +1664,7 @@ impl ScriptWorld {
                 // 7° up on the ledge route's 17° slope whichever way he
                 // walked, where the slope along his climb is 13°).
                 let slope = match ground {
-                    Some(g) => {
+                    Some(g) if matches!(m, Member::RelativeFacing) => {
                         let facing = self.angles(g, engine).map_or(0.0, |a| a.facing);
                         let normal = match engine.hero(g) {
                             Some(hero) => hero.footing.height.map(|_| hero.footing.slope),
@@ -1665,18 +1672,23 @@ impl ScriptWorld {
                         };
                         normal.map(|n| (n, facing))
                     }
-                    None => None,
+                    _ => None,
                 };
                 let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
                 match m {
                     Member::Facing => a.angles.facing = x,
-                    // One hung from nothing turns by it (openspec AG.60: a
-                    // spinning coin's loot update writes its spin speed each
-                    // tick, and AH.11's recordings have each coin's facing
-                    // step by that speed every frame, 2.82, -5.31 and 4.23
-                    // degrees on the walkway's three).
-                    Member::RelativeFacing if ground.is_none() => {
-                        a.angles.facing = (a.angles.facing + x).rem_euclid(360.0);
+                    // One hung from nothing turns by it about its own axis
+                    // (openspec AG.60: a spinning coin's loot update writes
+                    // its spin speed each tick, and AH.11's recordings have
+                    // each coin's facing step by that speed every frame,
+                    // 2.82, -5.31 and 4.23 degrees on the walkway's three;
+                    // AH.145: a debris piece's relative facing and roll turn
+                    // it about one axis fixed in its own frame, its tilt and
+                    // facing moving with its roll, AH.9's `lob-00`).
+                    Member::RelativeFacing | Member::RelativeTilt | Member::RelativeRoll
+                        if ground.is_none() =>
+                    {
+                        a.angles = turned_by(a.angles, m, x);
                     }
                     Member::RelativeFacing => {
                         a.angles.facing = x;
@@ -2901,6 +2913,44 @@ impl ScriptWorld {
     }
 }
 
+/// `angles` turned by `by` degrees about the actor's own axis a relative
+/// angle names (openspec AH.145): its facing about its own up, its tilt
+/// about its own side (tilting it nose up, as the tilt's sign has it), its
+/// roll about its own forward, then read back as the original keeps them
+/// (`Ry(facing) Rx(-tilt) Rz(roll)`). The roll is the innermost turn, so a
+/// relative roll adds to it; so does a relative tilt with no roll, and a
+/// relative facing with neither (a spinning coin's, exactly as AG.60 kept
+/// it). Any other is composed and read back.
+fn turned_by(angles: Angles, m: Member, by: f32) -> Angles {
+    match m {
+        Member::RelativeRoll => {
+            return Angles {
+                roll: angles.roll + by,
+                ..angles
+            };
+        }
+        Member::RelativeTilt if angles.roll == 0.0 => {
+            return Angles {
+                tilt: angles.tilt + by,
+                ..angles
+            };
+        }
+        Member::RelativeFacing if angles.tilt == 0.0 && angles.roll == 0.0 => {
+            return Angles {
+                facing: (angles.facing + by).rem_euclid(360.0),
+                ..angles
+            };
+        }
+        _ => {}
+    }
+    let q = guac_motion::solid::euler([angles.tilt, angles.facing, angles.roll]);
+    let turn = match m {
+        Member::RelativeFacing => Quat::from_rotation_y(by.to_radians()),
+        _ => Quat::from_rotation_x(-by.to_radians()),
+    };
+    angles_of(q * turn)
+}
+
 /// An actor's movement numbers as the engine's steering reads them.
 fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
     SteerPhysics {
@@ -3285,9 +3335,9 @@ mod tests {
     }
 
     /// The two members a breakable's debris reach that no earlier root's
-    /// run did (openspec AH.21): a piece's relative roll reads its roll and
-    /// a write turns it, in degrees and unclamped as registered (the debris'
-    /// roll eased 20-40° on from its 45°); its solid's rebound reads its
+    /// run did (openspec AH.21): a piece's relative roll reads 0 and a write
+    /// turns it by that much about its own forward (openspec AH.145), in
+    /// degrees and unclamped as registered; its solid's rebound reads its
     /// file's percent and keeps a write.
     #[test]
     fn a_pieces_relative_roll_and_its_solids_rebound() {
@@ -3303,14 +3353,14 @@ mod tests {
         let roll = at("orientationmeasurement", "relative roll", Some(turn), None);
         assert_eq!(
             w.get_member(&roll, Member::RelativeRoll, &mut e),
-            Ok(Value::Float(45.0))
+            Ok(Value::Float(0.0))
         );
         w.set_member(&roll, Member::RelativeRoll, Value::Float(83.5), &mut e)
             .unwrap();
         let a = w.actor(BALL).unwrap();
         assert_eq!(
             (a.angles.roll, a.angles.tilt, a.angles.facing),
-            (83.5, 0.0, 0.0)
+            (128.5, 0.0, 0.0)
         );
         let facet = w.objs.value(Object::Facet(BALL, Facet::Collision));
         let rebound = at("collisioninfo", "rebound", Some(facet), None);
@@ -3334,6 +3384,115 @@ mod tests {
         assert_eq!(
             guac_script::convert(&r.spec(), Value::Float(-5.0)),
             Some(Value::Float(-5.0))
+        );
+    }
+
+    /// A relative facing and roll turn a tilted actor about its own up and
+    /// forward (openspec AH.145): AH.9's `lob-00` first piece of debris,
+    /// from 45° tilt and roll, writes each frame a relative facing and roll
+    /// (its slide read from 0, a step larger each frame; here the frame's
+    /// own turn off the record times its axis' parts, 0.2941 and 0.9558),
+    /// and its angles, tilt and facing moving with its roll, come out as the
+    /// record's within 0.002° over 13 frames. Each relative angle reads 0.
+    #[test]
+    fn a_relative_facing_and_roll_turn_a_tilted_piece_about_its_own_axes() {
+        // (relative facing, relative roll) written, then the record's
+        // [tilt, facing, roll] that frame.
+        const FRAMES: [((f32, f32), [f32; 3]); 13] = [
+            ((0.0842, 0.2735), [45.059, 0.084, 45.214]),
+            ((0.1693, 0.5502), [45.180, 0.253, 45.644]),
+            ((0.2518, 0.8183), [45.359, 0.504, 46.285]),
+            ((0.3337, 1.0846), [45.600, 0.834, 47.134]),
+            ((0.4167, 1.3543), [45.905, 1.241, 48.197]),
+            ((0.5003, 1.6261), [46.277, 1.723, 49.475]),
+            ((0.5837, 1.8969), [46.719, 2.277, 50.971]),
+            ((0.6674, 2.1689), [47.236, 2.896, 52.687]),
+            ((0.7507, 2.4399), [47.831, 3.573, 54.627]),
+            ((0.8340, 2.7104), [48.509, 4.302, 56.794]),
+            ((0.9173, 2.9811), [49.274, 5.072, 59.195]),
+            ((1.0006, 3.2519), [50.130, 5.871, 61.838]),
+            ((1.0844, 3.5241), [51.084, 6.686, 64.732]),
+        ];
+        let mut e = bench();
+        let mut w = world();
+        let mut piece = ball(Vec3::ZERO, 100.0);
+        piece.angles = Angles {
+            tilt: 45.0,
+            facing: 0.0,
+            roll: 45.0,
+        };
+        w.actors.insert(BALL, piece);
+        let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
+        let facing = at(
+            "orientationmeasurement",
+            "relative facing",
+            Some(turn),
+            None,
+        );
+        let roll = at("orientationmeasurement", "relative roll", Some(turn), None);
+        let tilt = at("orientationmeasurement", "relative tilt", Some(turn), None);
+        for (k, ((f, r), want)) in FRAMES.iter().enumerate() {
+            for (m, at) in [
+                (Member::RelativeFacing, &facing),
+                (Member::RelativeRoll, &roll),
+                (Member::RelativeTilt, &tilt),
+            ] {
+                assert_eq!(w.get_member(at, m, &mut e), Ok(Value::Float(0.0)), "{m:?}");
+            }
+            w.set_member(&facing, Member::RelativeFacing, Value::Float(*f), &mut e)
+                .unwrap();
+            w.set_member(&roll, Member::RelativeRoll, Value::Float(*r), &mut e)
+                .unwrap();
+            let a = w.actor(BALL).unwrap().angles;
+            let got = [a.tilt, a.facing, a.roll];
+            for i in 0..3 {
+                assert!(
+                    (got[i] - want[i]).abs() < 2e-3,
+                    "frame {}: {got:?} against {want:?}",
+                    k + 1
+                );
+            }
+        }
+        // A relative tilt tips it about its own side: on an unturned actor,
+        // its tilt.
+        let mut flat = ball(Vec3::ZERO, 100.0);
+        flat.angles = Angles::default();
+        w.actors.insert(BALL, flat);
+        w.set_member(&tilt, Member::RelativeTilt, Value::Float(30.0), &mut e)
+            .unwrap();
+        w.set_member(&tilt, Member::RelativeTilt, Value::Float(15.0), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap().angles;
+        assert_eq!((a.tilt, a.facing, a.roll), (45.0, 0.0, 0.0));
+        // Rolled onto its side, its own side is up: a relative tilt of 30
+        // turns its facing back 30.
+        let mut rolled = ball(Vec3::ZERO, 100.0);
+        rolled.angles = Angles {
+            roll: 90.0,
+            ..Angles::default()
+        };
+        w.actors.insert(BALL, rolled);
+        w.set_member(&tilt, Member::RelativeTilt, Value::Float(30.0), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap().angles;
+        assert!(
+            a.tilt.abs() < 1e-3 && (a.facing - 330.0).abs() < 1e-3 && (a.roll - 90.0).abs() < 1e-3,
+            "{a:?}"
+        );
+        // And a relative facing of 30 turns it about its own up, now its
+        // side: its tilt.
+        let mut rolled = ball(Vec3::ZERO, 100.0);
+        rolled.angles = Angles {
+            roll: 90.0,
+            ..Angles::default()
+        };
+        w.actors.insert(BALL, rolled);
+        w.set_member(&facing, Member::RelativeFacing, Value::Float(30.0), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap().angles;
+        assert!(
+            (a.tilt - 30.0).abs() < 1e-3 && a.facing.abs() < 1e-3 && (a.roll - 90.0).abs() < 1e-3,
+            "{a:?}"
         );
     }
 

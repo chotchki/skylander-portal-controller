@@ -61,3 +61,10 @@ A coin SHALL fly to a hero once a check, every 0.25 s, finds it within 12 ft (3.
 #### Scenario: Under him as it drops
 - **WHEN** a barrel breaks a metre from Eruptor and its coin starts within 12 ft of him
 - **THEN** a check in its first frames leaves it, and it flies to him once it has come back down
+
+### Requirement: Placed gems
+Chapter 1's placed gems SHALL be worth the original's, an emerald 10 and a pile of copper coins 5, their worth joining the gold of the figure that takes them as a coin's does.
+
+#### Scenario: Copper, then an emerald
+- **WHEN** Eruptor takes the pile of copper coins on its own, then the emerald beside it
+- **THEN** his figure's gold rises by 5, then by 10

@@ -146,8 +146,9 @@ fn destructibles(run: &Run) -> Vec<(String, bool)> {
 }
 
 /// A piece of debris: its template's name, the step it was made, where and
-/// its speed after that step's frame (ft/s), and the step a remove took it
-/// off.
+/// its speed after that step's frame (ft/s), the step a remove took it off,
+/// and its angles (tilt, facing, roll) after each step from its first until
+/// then (openspec AH.145).
 #[derive(Debug, Clone)]
 struct Debris {
     name: String,
@@ -155,6 +156,7 @@ struct Debris {
     at: Vec3,
     speed: f32,
     gone: Option<u32>,
+    turns: Vec<[f32; 3]>,
 }
 
 /// What a run's steps left, step by step: each breakable broken (its name,
@@ -212,6 +214,7 @@ impl Watch {
                         at: a.position,
                         speed,
                         gone: None,
+                        turns: Vec::new(),
                     },
                 ));
             } else if name.contains("Coin") {
@@ -221,6 +224,12 @@ impl Watch {
         for (h, d) in &mut self.debris {
             if d.gone.is_none() && run.world.removed(*h) {
                 d.gone = Some(k);
+            }
+            if d.gone.is_none()
+                && let Some(a) = run.world.actor(*h)
+            {
+                d.turns
+                    .push([a.angles.tilt, a.angles.facing, a.angles.roll]);
             }
         }
         for (i, (label, rarity)) in KINDS.into_iter().enumerate() {
@@ -396,8 +405,61 @@ fn check_debris(w: &Watch, ah9: &[Replay]) {
             );
             assert!((91..=92).contains(&life), "{d:?}");
             assert!(lives.contains(&(life as usize)), "{life} not AH.9's");
+            check_turns(d);
         }
     }
+}
+
+/// A piece of debris turns as AH.9's 150 pieces do (openspec AH.145; their
+/// own turns off `debris_stats.py`): from 45° tilt and roll, each step about
+/// one axis fixed in its own frame (AH.9's strays at most 0.49°), that axis
+/// its roll's with a share of its facing's (AH.9's 0.94-1.00 and 0-0.34)
+/// and none of its tilt's, the first step's turn 0.185-0.449° and each step
+/// turning that much more than the last (AH.9's steps 0.187-0.471°, at most
+/// 0.107° apart on one piece), its slide of a relative roll and facing read
+/// from 0 each frame. Within 0.05° of AH.9's ranges, 1° on the axis.
+fn check_turns(d: &Debris) {
+    let q = |a: &[f32; 3]| guac_motion::solid::euler(*a);
+    let turns: Vec<(f32, Vec3)> = d
+        .turns
+        .windows(2)
+        .take(13)
+        .map(|w| {
+            let (axis, angle) = (q(&w[0]).inverse() * q(&w[1])).to_axis_angle();
+            (angle.to_degrees(), axis)
+        })
+        .collect();
+    assert_eq!(turns.len(), 13, "{d:?}");
+    let (first, axis) = turns[0];
+    let steps: Vec<f32> = turns.windows(2).map(|w| w[1].0 - w[0].0).collect();
+    let stray = turns
+        .iter()
+        .map(|t| t.1.dot(axis).clamp(-1.0, 1.0).acos().to_degrees())
+        .fold(0.0f32, f32::max);
+    let (lo, hi) = steps
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), s| (l.min(*s), h.max(*s)));
+    println!(
+        "    turns: first {first:.3}°, steps {lo:.3}-{hi:.3}°, axis ({:.3}, {:.3}, {:.3}), stray {stray:.3}°",
+        axis.x, axis.y, axis.z
+    );
+    let tol = 0.05;
+    assert!(
+        (0.185 - tol..=0.449 + tol).contains(&first),
+        "first {first}"
+    );
+    assert!(
+        lo >= 0.187 - tol && hi <= 0.471 + tol && hi - lo <= 0.107 + tol,
+        "steps {steps:?}"
+    );
+    assert!(stray <= 1.0, "stray {stray}");
+    let axis = if axis.z < 0.0 { -axis } else { axis };
+    assert!(axis.x.abs() <= 0.02, "no tilt: {axis}");
+    assert!(
+        axis.z >= 0.94 - 0.02 && (-0.02..=0.342 + 0.02).contains(&axis.y.abs()),
+        "the roll's with a share of the facing's: {axis}"
+    );
+    assert_eq!(d.turns[0], [45.0, 0.0, 45.0], "from 45° tilt and roll");
 }
 
 /// Debris of the kind a breakable leaves: a barrel's, a pot's, a gourd's.
@@ -1024,6 +1086,52 @@ fn three_hundred_common_coins_are_two_in_three_worth_1() {
     assert!(worths.iter().all(|w| (1..=2).contains(w)));
     assert!((176..=224).contains(&ones), "{ones}");
     assert!((498..=502).contains(&calls), "three in five: {calls}");
+    println!("load after: {}", load());
+}
+
+/// The placed gems pay what the original's do (openspec AH.146; AH.11's
+/// `ah11-coinsw` recordings hold them worth 5 and 10): `Copper_Coins`, the
+/// hero set 2.5 m past it from `Emerald` (4.9 m off that), taken alone and
+/// paying 5; then `Emerald`, paying 10. Each takes its worth at its STARTUP
+/// from the loot system's references, which its first tick sets on the
+/// level's first step ahead of the gems' wake (AH.195's order: awake from
+/// the load first, those the activity rule wakes behind them).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_placed_gems_pay_5_and_10() {
+    println!("load before: {}", load());
+    let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+    let (copper, copper_at) = run.placed("Copper_Coins");
+    let (emerald, emerald_at) = run.placed("Emerald");
+    assert_eq!(
+        run.world.actor(copper).unwrap().id,
+        5,
+        "Copper_Coins' worth"
+    );
+    assert_eq!(run.world.actor(emerald).unwrap().id, 10, "Emerald's worth");
+    let away = Vec3::new(copper_at.x - emerald_at.x, 0.0, copper_at.z - emerald_at.z).normalize();
+    let take = |run: &mut Run, h: Handle, at: Vec3, name: &str| -> i64 {
+        let before = i64::from(run.figure_values().unwrap().gold);
+        let mut taken = None;
+        for k in 0..150 {
+            let hero = run.hero_mut();
+            hero.pivot = at;
+            hero.walk.velocity = Vec3::ZERO;
+            run.step().unwrap_or_else(|e| panic!("{name} {k}: {e}"));
+            if taken.is_none() && run.world.removed(h) {
+                taken = Some(k);
+            }
+        }
+        let after = i64::from(run.figure_values().unwrap().gold);
+        println!("{name}: taken at step {taken:?}, gold {before} -> {after}");
+        assert!(taken.is_some(), "{name} taken");
+        after - before
+    };
+    let past = copper_at + away * 2.5;
+    assert!((past - emerald_at).length() > 4.5);
+    assert_eq!(take(&mut run, copper, past, "Copper_Coins"), 5);
+    assert!(!run.world.removed(emerald), "Emerald left where it lay");
+    assert_eq!(take(&mut run, emerald, emerald_at, "Emerald"), 10);
     println!("load after: {}", load());
 }
 

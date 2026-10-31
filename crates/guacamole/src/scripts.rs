@@ -4211,6 +4211,48 @@ mod tests {
         );
     }
 
+    /// openspec AH.146: a placed gem waiting asleep for the activity rule
+    /// takes its worth at its STARTUP from what the loot system's first tick
+    /// set, though both are on the level's first step and the gem lies ahead
+    /// of the system in the file and on its root list: the system, awake
+    /// from the load, ticks first, and the gem, woken by the hero standing
+    /// on it that step, joins behind it (the original's scheduler holds
+    /// `LootSystem_Init` awake from the load and `Emerald`, `Copper_Coins`
+    /// and `Emerald(2)` woken 42.5 s later by their 160 ft range, AH.195's
+    /// read at AF.8's fresh state). The gem holds the worth as its id.
+    #[test]
+    fn a_placed_gem_takes_its_worth_after_the_loot_systems_first_tick() {
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::{LOOT_GEM, LOOT_GEM_WORTH, LOOT_SYSTEM, placed_loot};
+        let bytes = placed_loot();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = guac_script::Unit {
+            name: "level",
+            role: guac_script::Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let files = Files::read(&[(0, &igz)]).unwrap();
+        let names: Vec<&str> = files.placed.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, [LOOT_GEM, LOOT_SYSTEM], "the gem first in the file");
+        let handles = headless_handles(&files);
+        let mut c = fight_config(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let gem = files.placed.iter().find(|p| p.name == LOOT_GEM).unwrap();
+        let gem = handles[&gem.obj];
+        let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+        assert_eq!(order, [LOOT_SYSTEM, LOOT_GEM], "awake from the load first");
+        // The level's first step with the hero on the gem.
+        load_order_step(&mut vm, &mut world, Vec3::ZERO);
+        let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+        assert_eq!(order, [LOOT_SYSTEM, LOOT_GEM], "woken behind the awake");
+        assert_eq!(world.actor(gem).unwrap().id, LOOT_GEM_WORTH, "its worth");
+    }
+
     /// openspec AH.59: `init_chain` adds the placements of a unit that
     /// [`crate::frame::AWAKE_HEAD`] names in its order, the rest after them
     /// in file order: `global.bld`'s as the original's scheduler holds them,

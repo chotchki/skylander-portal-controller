@@ -1285,6 +1285,27 @@ impl Level {
         self.stage.loaded().map(|l| (&l.emitters, l.root))
     }
 
+    /// The image the particle part's emitter `name` draws with (its first
+    /// textured generator's, its sRGB view where the level read both), once
+    /// the level's loaded: what the HUD's level-up arrow is drawn from
+    /// (openspec AH.248), the image AH.244 stores decoded at its own size.
+    pub(crate) fn emitter_image(&self, name: &str) -> Option<Handle<Image>> {
+        let l = self.stage.loaded()?;
+        let draw = l.emitters.get(name)?;
+        let path = draw
+            .emitter
+            .generators
+            .iter()
+            .find_map(|g| g.texture.as_ref())
+            .map(|t| t.texture.as_str())?;
+        let mut views = l.images.iter().filter(|((p, ..), _)| p == path);
+        let first = views.clone().next().map(|(_, h)| h.clone());
+        views
+            .find(|((_, srgb, _), _)| *srgb)
+            .map(|(_, h)| h.clone())
+            .or(first)
+    }
+
     /// The creature model at `path` (AH.25) and a lookup of the level's
     /// textures by view for its materials, once the level's loaded.
     pub(crate) fn creature(
