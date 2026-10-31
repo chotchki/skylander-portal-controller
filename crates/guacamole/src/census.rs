@@ -13,13 +13,15 @@
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
 //! static parts they carry) and its chapter 1 another 55, its props 61
 //! more (AG.60's start scripts stand and spawn more of them: 32 before;
-//! AG.239's route clones 10 more), what its scripts spawn 3 more beyond
-//! those (parts fading in among them, AH.67; 6 before AG.239's clones drew
-//! three of them first), their glowing parts' level glow masks 22 and the walking
-//! hero's keys in the level 2 (his body's and its mask, AH.65: the level's
-//! point lights on) and the first fight's creatures' 3 more (AH.25: the
-//! Chompies' model and Norticus', skinned in the hero's scene) and the
-//! particles of what its scripts spawn 1 more and its glow mask (AH.87).
+//! AG.239's route clones 10 more), what its scripts spawn 13 more beyond
+//! those (parts fading in among them, AH.67; 3 before AH.39 read
+//! `global.bld`'s own models), their glowing parts' level glow masks 29 (22
+//! before AH.39) and the walking hero's keys in the level 2 (his body's and
+//! its mask, AH.65: the level's point lights on), the first fight's
+//! creatures' 10 more (AH.25: the Chompies' model and Norticus', skinned in
+//! the hero's scene; AG.150's tortoises and cannon top; AH.139's fading
+//! Chompy blending its opaque parts) and the particles of what its scripts
+//! spawn 1 more and its glow mask (AH.87).
 //! So the tables
 //! hold the census as numbers (no game bytes: a mask, a blend, a count of
 //! texture-coordinate sets), and `tests/giants_census.rs` (`#[ignore]`d, on

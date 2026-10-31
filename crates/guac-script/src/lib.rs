@@ -91,8 +91,9 @@
 //! of its own ([`Host::adopt`]) joins the end and ticks that same tick:
 //! AH.54's recordings list the eruption's first wave of lava at the
 //! eruption's own first record, which its first tick spawns. It joins at
-//! its spawner's turn's end, or sooner, as a `find variable` names it, the
-//! order the same: the portal manager finds its new death actor's
+//! its spawner's turn's end, or sooner: a `find variable` on anything not
+//! yet in the VM adopts what's been spawned so far, a native's included,
+//! the order the same: the portal manager finds its new death actor's
 //! `dying actor` the op after the spawn and sets it, which reads as the
 //! original's spawn making the placement, variables and all, at once
 //! (AH.39's Mac step). Outside a step's walk the embedder adds what's

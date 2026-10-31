@@ -4555,9 +4555,10 @@ fn a_defeated_hero_knocks_them_back_and_leaves() {
 /// spawned at their template's file place, 135 m off, below the map; and
 /// with it set, its lift of him 12 ft over his own remembered point, which
 /// no script keeps, flew him off it. Now `dying actor` holds him, he stays
-/// where he fell (AH.11's `restart1` and `restart2` hold the original's so)
-/// and every star comes out within 1.5 m of him across the ground and under
-/// 2.5 m over his feet, in his element's colour.
+/// where he fell (stand-in ledger: `death-hop`: AH.11's records have the
+/// original lift him 3.44 m and drop him back by the burst) and
+/// every star comes out within 1.5 m of him across the ground and under
+/// 2.5 m over his feet, in his element's colour, where the original's land.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_beaten_heros_stars_burst_where_he_fell() {

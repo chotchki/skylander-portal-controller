@@ -1845,11 +1845,12 @@ impl ScriptWorld {
                 let r = recv.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
                 // An actor put from its own remembered point while none is
-                // kept isn't moved: that point reads where the actor stands,
-                // so each write would move it the whole way again. The hero's
-                // death actor writes him 12 ft over his own a tick at a time,
-                // which flew him off the map; AH.11's records (`restart1`,
-                // `restart2`) hold the original's where he fell.
+                // kept isn't moved, since that point reads where he stands
+                // and each vertical-offset write would lift him again (the
+                // hero's death actor flew him off the map so); the original
+                // lifts him 3.44 m and back as his burst comes (AH.11's
+                // `restart1`, `restart2`), its point kept and its ping-pong
+                // slider returning (stand-in ledger: `death-hop`).
                 let unkept = match self.object(Some(o)) {
                     Some(Object::Remembered(a)) => self
                         .actors
@@ -3407,7 +3408,8 @@ mod tests {
     /// The hero's death actor lifts the dying minion 12 ft over his own
     /// remembered point a tick at a time (AH.39's Mac step): with none kept
     /// that point reads where he stands, so each write would lift him the
-    /// whole way again, and he isn't moved. Another actor's unkept point
+    /// whole way again, and he isn't moved (stand-in ledger: `death-hop`).
+    /// Another actor's unkept point
     /// still puts him from where that actor stands; once his own is kept the
     /// write puts him over it, the same each time. By the actor's own point
     /// and through a reference to it alike.

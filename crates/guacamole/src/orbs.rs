@@ -3,10 +3,13 @@
 //! is, from its pop out of a beaten creature, down, and flying in to the
 //! hero, until the control lets it go as its worth reaches his figure.
 //!
-//! An orb is an actor with no model: the original draws it with a particle
-//! emitter, which nothing here plays (the backlog's Particles line). So each
-//! is drawn on a stand-in (stand-in ledger: `effects`): `global.bld`'s death
-//! star ([`ORB_LOOK`], read since AH.39), a glowing star card turned to face
+//! An orb is a clone of an emitter with no model (`global.bld`'s
+//! `DeathXP_NewOrbOfficial_EvenSmaller` or `_Double`): the original's stays
+//! lit the orb's whole life, where AH.87's particles burst its two
+//! 9999-a-second generators once as it comes (0.3 s lives) and draw nothing
+//! after (the backlog's Particles line). So each is also drawn on a
+//! stand-in (stand-in ledger: `effects`): `global.bld`'s death star
+//! ([`ORB_LOOK`], read since AH.39), a glowing star card turned to face
 //! the level's camera, tinted the original's yellow ([`ORB_TINT`]) and sized
 //! ([`ORB_SCALE`]) by eye against AH.10's frames of the orbs after the first
 //! fight (`fight-00`'s `shot-f700`: bright yellow balls with white cores,

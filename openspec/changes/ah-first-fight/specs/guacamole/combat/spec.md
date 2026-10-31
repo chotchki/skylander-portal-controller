@@ -98,4 +98,4 @@ At no health a hero SHALL play his defeat, 0.13 s on knocking back at strength 2
 
 #### Scenario: Where he fell
 - **WHEN** Eruptor's health runs out on open ground
-- **THEN** he stays where he fell, and 0.7 s on his defeat's stars burst there, around him and up to his height, in his element's colour
+- **THEN** 0.7 s on his defeat's stars burst where he fell, around him and up to his height, in his element's colour
