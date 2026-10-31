@@ -1430,8 +1430,8 @@ const EVENING_FACING: f32 = 52.166_492;
 fn a_replacement_put_up_over_where_the_last_stood_drops_onto_it() {
     use guac_motion::hero::Hero;
     use guac_motion::tuning::{Tuning, eruptor_solid};
-    /// `play::DROP`, the TV's.
-    const DROP: f32 = 0.40;
+    /// The TV's (`play::DROP`).
+    const DROP: f32 = guacamole::walkers::REPLACEMENT_DROP;
     let started = Instant::now();
     for (label, at, facing, near) in [
         ("anchor A", ANCHOR_A, ANCHOR_A_FACING, 0.07),
