@@ -424,8 +424,8 @@ fn drawn_spawn_paths() -> Vec<String> {
 /// own `LevelUp.ai` on the TV's listing, strict: its warp ring at once, its
 /// tube and star as the lightning strikes, each a clone of a `global.bld`
 /// template whose model the spawn part reads and the TV draws (the warp
-/// ring's tfbwarp left out, as a level's other effects are), and all three
-/// taken off within 2 s.
+/// ring's tfbwarp since AG.24 read the warps), and all three taken off
+/// within 2 s.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_level_up_spawns_its_flourish_from_global_bld_s_models() {
@@ -482,13 +482,12 @@ fn a_level_up_spawns_its_flourish_from_global_bld_s_models() {
     assert!(ring.2 <= 1, "the ring at once: {}", ring.2);
     assert!((10..=30).contains(&tube.2), "the tube: {}", tube.2);
     assert_eq!(star.2, tube.2, "the star with the tube");
-    for m in [tube, star] {
+    // The ring's tfbwarp draws too since AG.24 read the warps (it drew
+    // nothing before, as the level's other effects).
+    for m in [ring, tube, star] {
         let path = m.1.as_deref().expect("a model");
         assert!(drawn.iter().any(|d| d == path), "{path} drawn");
     }
-    // The ring's tfbwarp draws nothing here, as the level's other effects.
-    let ring_model = ring.1.as_deref().expect("a model");
-    assert!(!drawn.iter().any(|d| d == ring_model), "{ring_model}");
     for m in [ring, tube, star] {
         assert!(
             run.world.actor(m.3).is_none_or(|a| a.removed),
