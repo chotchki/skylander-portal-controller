@@ -7,9 +7,12 @@
 //! of that as Havok's convex radius (so its outer size is the authored one), a
 //! sphere or capsule doesn't (so it's 0.05 m smaller than authored). No size
 //! goes under 0.001 m. The pivot is at the bottom centre: the shape sits half
-//! its height up (half its width for a sphere), plus the `CollisionInfo`'s own
-//! offset times the scale, turned first by its own angles, then placed by the
-//! placement's.
+//! its height up (half its width for a sphere) along its own up, which its own
+//! angles turn, plus the `CollisionInfo`'s own offset times the scale; the
+//! placement's turn and place then pose the lot (AG.170: a capsule tipped 90°
+//! onto its side, as four characters' are, lies with its middle at the
+//! offset's height, AE.22's live read of every figure to 2e-7 m, where the
+//! half height straight up stood it 1.5-1.8 m too high).
 //!
 //! The level's triangle mesh carries a 0.05 m radius of its own (AG.7: the
 //! live `tfbSimpleMeshShape`'s), which parry's meshes can't. So a hero's world
@@ -126,10 +129,11 @@ impl SolidInfo {
             ),
         };
         let offset = Vec3::from(self.offset) * Vec3::from(s);
+        let rotation = euler(self.rotation);
         Some(HavokSolid {
             shape,
-            centre: Vec3::new(0.0, up, 0.0) + offset,
-            rotation: euler(self.rotation),
+            centre: rotation * Vec3::new(0.0, up, 0.0) + offset,
+            rotation,
         })
     }
 }
@@ -280,6 +284,63 @@ mod tests {
         assert!(near(eruptor.centre.y, 0.9144), "{eruptor:?}");
         // His query shape: the authored sphere, plus the skin.
         assert!(near(radius(eruptor.grown(0.0)), 0.9144));
+    }
+
+    /// AG.170: a capsule tipped onto its side by its own angles lies along
+    /// the ground with its middle at its offset's height, as AE.22 read the
+    /// built shapes of two characters live: 7 x 10.5 ft tipped back at 100 %
+    /// (offset 1.0668 m up and 1.6002 m back), and 6 x 10 ft tipped forward
+    /// at 120 % (0.9144 m up and 1.524 m ahead). Its half height up along its
+    /// own up, not straight up: that stood it 1.6-1.8 m too high.
+    #[test]
+    fn a_capsule_tipped_on_its_side_lies_at_its_offsets_height() {
+        let tipped = |rotation: [f32; 3], offset: [f32; 3], w: f32, h: f32, scale: f32| {
+            SolidInfo {
+                rotation,
+                offset,
+                ..info(SolidKind::Capsule, w, h, 3.0)
+            }
+            .havok([scale; 3])
+            .unwrap()
+        };
+        let back = tipped([-90.0, 0.0, 0.0], [0.0, 1.0668, -1.6002], 7.0, 10.5, 100.0);
+        let forward = tipped([90.0, 0.0, 0.0], [0.0, 0.9144, 1.524], 6.0, 10.0, 120.0);
+        for (solid, centre, quat, radius, segment) in [
+            (
+                back,
+                [0.0, 1.0668, 0.0],
+                [0.707_106_77, 0.0, 0.0, 0.707_106_77],
+                1.0168,
+                0.5334,
+            ),
+            (
+                forward,
+                [0.0, 1.097_28, 0.0],
+                [-0.707_106_77, 0.0, 0.0, 0.707_106_77],
+                1.047_28,
+                0.731_52,
+            ),
+        ] {
+            assert!(
+                (solid.centre - Vec3::from(centre)).abs().max_element() < 1e-6,
+                "{solid:?}"
+            );
+            let q = solid.rotation.to_array();
+            assert!(q.iter().zip(quat).all(|(a, b)| near(*a, b)), "{q:?}");
+            let Shape::Capsule {
+                radius: r,
+                half_segment,
+            } = solid.shape
+            else {
+                panic!("{solid:?}")
+            };
+            assert!(near(r, radius) && near(half_segment, segment), "{solid:?}");
+            // His pivot at the bottom: the capsule's lowest point 0.05 m
+            // over it, as an upright one's is.
+            let axis = solid.rotation * Vec3::Y;
+            let lowest = solid.centre.y - axis.y.abs() * half_segment - r;
+            assert!(near(lowest, 0.05), "{lowest}");
+        }
     }
 
     /// AG.7: the gate's door, 4 x 21 x 34 ft with a quarter turn of its own,

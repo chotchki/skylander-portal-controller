@@ -2014,8 +2014,8 @@ pub const COMBAT: &[Registered] = &[
 ];
 
 /// What AH.20's player loop, orbs and coins reach past AH.16-AH.19's
-/// tables, and a defeated hero's kill (openspec AH.20): each as the
-/// original registers it.
+/// tables, a defeated hero's kill (openspec AH.20) and the achievement an
+/// award unlocks (AH.220): each as the original registers it.
 pub const LOOP: &[Registered] = &[
     // A coin's fade by distance as it's placed: cosmetic.
     m(
@@ -2068,6 +2068,18 @@ pub const LOOP: &[Registered] = &[
         0.0,
         0.0,
         Cell,
+    ),
+    // An achievement unlocked (openspec AH.220): each unlock an award
+    // reaches (level 15, 65,000 gold, fully upgraded) writes its id here.
+    // The host's, which keeps and logs it; nothing on the disc reads it.
+    m(
+        "system",
+        "game achievement",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Host,
     ),
 ];
 
@@ -2259,6 +2271,20 @@ pub const ROUTE: &[Registered] = &[m(
     "Effects/|Effects/Champion/|Effects/Champ",
     0.0,
     31.0,
+    Cell,
+)];
+
+/// What the level-up's flourish (`LevelUp.ai`, openspec AH.39) reaches past
+/// every table above, as aj-vm's live table registers it: the pad's rumble
+/// as the lightning strikes, cosmetic here (nothing rumbles a pad yet). The
+/// sequences' playback modes its scale-downs read are [`COMBAT`]'s.
+pub const LEVEL_UP: &[Registered] = &[m(
+    "soundinfo",
+    "rumble duration",
+    "FloatMeasurement",
+    "seconds",
+    0.0,
+    OPEN,
     Cell,
 )];
 
@@ -2702,7 +2728,7 @@ mod tests {
     /// coin's fade by its labels; the world's origin the host's, a point
     /// nothing writes; the portal's battery a percent clamped to 0-100; the
     /// online object and the save data references reading nothing until
-    /// written.
+    /// written; AH.220's achievement id a whole number, the host's.
     #[test]
     fn the_loops_members_convert_by_their_units_and_range() {
         let fade = find(LOOP, "placement", "near/far alpha fade").unwrap();
@@ -2739,12 +2765,27 @@ mod tests {
                 r.path()
             );
         }
+        // AH.220: an unlocked achievement's id, a whole number kept as
+        // written (no range), the host's.
+        let achievement = find(LOOP, "system", "game achievement").unwrap();
+        assert_eq!(
+            (achievement.class, achievement.kind(), achievement.keeper),
+            ("IntMeasurement", Kind::Int, Keeper::Host)
+        );
+        assert_eq!(
+            convert(&achievement.spec(), Value::Float(23.7)),
+            Some(Value::Int(23))
+        );
+        assert_eq!(
+            convert(&achievement.spec(), Value::Int(4_000)),
+            Some(Value::Int(4_000))
+        );
         let mut members = Members::new();
         register(&mut members, LOOP);
-        let (_, place) = members
-            .get(MemberId::named("system", "absolute zero"))
-            .unwrap();
-        assert_eq!(place, Place::Host);
+        for name in ["absolute zero", "game achievement"] {
+            let (_, place) = members.get(MemberId::named("system", name)).unwrap();
+            assert_eq!(place, Place::Host, "{name}");
+        }
     }
 
     /// AH.23's rows by the registry's own entries (aj-vm's live table): the
@@ -2921,6 +2962,38 @@ mod tests {
         register(&mut members, ROUTE);
         let (_, place) = members
             .get(MemberId::named("soundinfo", "category"))
+            .unwrap();
+        assert_eq!(place, Place::ValueCell);
+    }
+
+    /// The level-up's flourish's member (openspec AH.39), from its
+    /// registered type: the rumble's seconds a float cell from 0, no other
+    /// table holding it.
+    #[test]
+    fn the_level_ups_member_is_registered_as_the_live_table_has_it() {
+        assert_eq!(LEVEL_UP.len(), 1);
+        let rumble = find(LEVEL_UP, "soundinfo", "rumble duration").unwrap();
+        assert_eq!(
+            (rumble.class, rumble.kind(), rumble.keeper),
+            ("FloatMeasurement", Kind::Float, Keeper::Cell)
+        );
+        assert_eq!(
+            convert(&rumble.spec(), Value::Float(0.5)),
+            Some(Value::Float(0.5))
+        );
+        assert_eq!(
+            convert(&rumble.spec(), Value::Float(-1.0)),
+            Some(Value::Float(0.0))
+        );
+        for table in [
+            INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+        ] {
+            assert!(find(table, "soundinfo", "rumble duration").is_none());
+        }
+        let mut members = Members::new();
+        register(&mut members, LEVEL_UP);
+        let (_, place) = members
+            .get(MemberId::named("soundinfo", "rumble duration"))
             .unwrap();
         assert_eq!(place, Place::ValueCell);
     }

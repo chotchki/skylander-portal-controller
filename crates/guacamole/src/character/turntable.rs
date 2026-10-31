@@ -2,12 +2,16 @@
 //! what the TV's per-slot cameras need that's pure arithmetic, apart from
 //! the systems that spawn them.
 //!
-//! Framing: the model turns about its own vertical axis, so everything it
-//! shows over a turn lies in the cylinder about that axis holding every
-//! skinned vertex of its idle loop ([`Sweep`], sampled over the clip, so an
-//! arm that swings out still counts). [`Framing::fit`] backs a camera off at
-//! a fixed downward pitch until that cylinder sits inside the circle a card's
-//! bezel shows, giants and small characters alike.
+//! Framing: the model turns about a vertical axis through the middle of
+//! what its idle loop reaches across the ground (AE.35: about its own
+//! origin, Spyro's tail and Wham-Shell's mace swept a cylinder twice as
+//! wide as they are, and the card drew them at a quarter of its circle), so
+//! everything it shows over a turn lies in the cylinder about that axis
+//! holding every skinned vertex of its idle loop ([`Sweep`], sampled over
+//! the clip, so an arm that swings out still counts). [`Framing::fit`]
+//! backs a camera off at a fixed downward pitch until that cylinder sits
+//! inside the circle a card's bezel shows, giants and small characters
+//! alike.
 //!
 //! Light: the 3D-UI sprite rig off the disc (`global.bld`'s three
 //! `_spriteLight`s, Open question 4), fixed to the camera. Its angles are
@@ -72,35 +76,42 @@ pub fn skinned(model: &Model, seconds: f64) -> Vec<Vec3> {
     out
 }
 
-/// The cylinder a turn sweeps: about the model's vertical axis through its
-/// origin, `radius` out, from `bottom` to `top`.
+/// The cylinder a turn sweeps: about the vertical axis through `axis`,
+/// `radius` out, from `bottom` to `top`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sweep {
     pub radius: f32,
     pub bottom: f32,
     pub top: f32,
+    /// Where the turn's axis passes, in the model's space (`y` 0): the
+    /// middle of the box holding every point across the ground, so a model
+    /// reaching far to one side turns about its own middle (openspec AE.35).
+    pub axis: Vec3,
 }
 
 impl Sweep {
-    /// What `points` sweep in a turn; `None` for no points or any that isn't
-    /// finite.
+    /// What `points` sweep in a turn about their middle across the ground;
+    /// `None` for no points or any that isn't finite.
     pub fn of(points: impl IntoIterator<Item = Vec3>) -> Option<Self> {
-        let mut sweep: Option<Self> = None;
-        for p in points {
-            if !p.is_finite() {
-                return None;
-            }
-            let r = p.x.hypot(p.z);
-            let s = sweep.get_or_insert(Self {
-                radius: r,
-                bottom: p.y,
-                top: p.y,
-            });
-            s.radius = s.radius.max(r);
-            s.bottom = s.bottom.min(p.y);
-            s.top = s.top.max(p.y);
+        let points: Vec<Vec3> = points.into_iter().collect();
+        let first = *points.first()?;
+        if points.iter().any(|p| !p.is_finite()) {
+            return None;
         }
-        sweep
+        let (lo, hi) = points
+            .iter()
+            .fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let axis = Vec3::new(0.5 * (lo.x + hi.x), 0.0, 0.5 * (lo.z + hi.z));
+        let radius = points
+            .iter()
+            .map(|p| (p.x - axis.x).hypot(p.z - axis.z))
+            .fold(0.0, f32::max);
+        Some(Self {
+            radius,
+            bottom: lo.y,
+            top: hi.y,
+            axis,
+        })
     }
 
     /// The idle loop's sweep: `samples` poses spread over the clip, its
@@ -135,11 +146,14 @@ impl Sweep {
     }
 }
 
-/// A turntable camera: where it stands, what it looks at and its frustum.
+/// A turntable camera: where it stands, what it looks at and its frustum,
+/// and the axis in the model's space the stage turns the model about
+/// ([`Framing::model_at`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Framing {
     pub eye: Vec3,
     pub target: Vec3,
+    pub axis: Vec3,
     /// Vertical (and horizontal) field of view, radians.
     pub fov: f32,
     pub near: f32,
@@ -172,6 +186,7 @@ impl Framing {
         Self {
             eye: target + back * distance,
             target,
+            axis: sweep.axis,
             fov,
             near: (distance - 1.05 * reach).max(distance * 1e-3),
             far: distance + 1.05 * reach,
@@ -180,6 +195,17 @@ impl Framing {
 
     pub fn transform(&self) -> Transform {
         Transform::from_translation(self.eye).looking_at(self.target, Vec3::Y)
+    }
+
+    /// The model's root turned `yaw` (radians) about [`Framing::axis`],
+    /// which sits on the turntable's own axis, where the camera looks.
+    pub fn model_at(&self, yaw: f32) -> Transform {
+        let rotation = bevy::math::Quat::from_rotation_y(yaw);
+        Transform {
+            translation: rotation * -self.axis,
+            rotation,
+            ..Transform::IDENTITY
+        }
     }
 
     pub fn projection(&self) -> PerspectiveProjection {
@@ -254,7 +280,6 @@ pub fn rig_scene(rig: &Rig) -> Result<Scene, RigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::math::Quat;
     use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
     use guac_ir::model::{self, Joint, Segment, Skeleton};
 
@@ -408,12 +433,19 @@ mod tests {
     #[test]
     fn the_sweep_takes_the_whole_loop() {
         let m = column(10.0, 2.0, 3.0);
-        // At rest the column reaches √2 out; swung, its head's far corner
-        // (4, 10, ±1).
+        // At rest the column reaches √2 out about its middle, the origin;
+        // swung, its head's far corner (4, 10, ±1) moves the middle across
+        // the ground to (1.5, 0), the head and the foot's far corners each
+        // 2.5 and 1 off it (AE.35: √17 about the origin).
         let still = Sweep::of(skinned(&m, 0.0)).unwrap();
         assert!((still.radius - 2f32.sqrt()).abs() < 1e-5);
+        assert_eq!(still.axis, Vec3::ZERO);
         let loop_ = Sweep::of_idle(&m, SAMPLES).unwrap();
-        assert!((loop_.radius - 17f32.sqrt()).abs() < 1e-3, "{loop_:?}");
+        assert!((loop_.radius - 7.25f32.sqrt()).abs() < 1e-3, "{loop_:?}");
+        assert!(
+            loop_.axis.abs_diff_eq(Vec3::new(1.5, 0.0, 0.0), 1e-3),
+            "{loop_:?}"
+        );
         assert_eq!((loop_.bottom, loop_.top), (0.0, 10.0));
         assert_eq!(Sweep::of([]), None);
         assert_eq!(Sweep::of([Vec3::new(f32::NAN, 0.0, 0.0)]), None);
@@ -431,7 +463,7 @@ mod tests {
             for p in skinned(m, t) {
                 for step in 0..2880 {
                     let yaw = (step as f32 / 8.0).to_radians();
-                    let reach = f.reach(Quat::from_rotation_y(yaw) * p);
+                    let reach = f.reach(f.model_at(yaw).transform_point(p));
                     assert!(reach <= 1.0 - MARGIN + 1e-4, "{reach} at {t} s, {yaw} rad");
                     most = most.max(reach);
                 }
@@ -454,12 +486,57 @@ mod tests {
         assert_framed(&column(1.0, 1.6, 0.05));
     }
 
+    /// AE.35: a model reaching far to one side (Spyro's tail, Wham-Shell's
+    /// mace) turns about the middle of what it reaches across the ground,
+    /// the stage's axis, so its card frames it on that middle's cylinder:
+    /// a dragon 1 m wide reaching 1 m ahead and 3 m behind its feet sweeps
+    /// √4.25 m about its middle where about its feet it swept √9.25 m, and
+    /// it stands over 1.35 times as large on the card.
+    #[test]
+    fn a_model_reaching_to_one_side_turns_about_its_middle() {
+        let dragon = [
+            Vec3::new(-0.5, 0.0, 1.0),
+            Vec3::new(0.5, 1.5, 1.0),
+            Vec3::new(-0.5, 0.0, -3.0),
+            Vec3::new(0.5, 0.5, -3.0),
+        ];
+        let sweep = Sweep::of(dragon).unwrap();
+        assert!(
+            sweep.axis.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), 1e-6),
+            "{sweep:?}"
+        );
+        assert!((sweep.radius - 4.25f32.sqrt()).abs() < 1e-5, "{sweep:?}");
+        let f = Framing::fit(&sweep);
+        // The stage sets the axis on its own, where the camera looks: the
+        // middle at the origin whatever the turn, the tail's end swung by
+        // the turn about it.
+        for yaw in [0.0f32, 1.0, 2.5] {
+            let at = f.model_at(yaw);
+            assert!(at.transform_point(sweep.axis).abs_diff_eq(Vec3::ZERO, 1e-6));
+            let tail = at.transform_point(dragon[2]);
+            assert!(((tail.x * tail.x + tail.z * tail.z).sqrt() - 4.25f32.sqrt()).abs() < 1e-5);
+        }
+        // The same dragon turned about its feet, as the stage turned every
+        // model before.
+        let about_feet = Framing::fit(&Sweep {
+            radius: (0.25f32 + 9.0).sqrt(),
+            axis: Vec3::ZERO,
+            ..sweep
+        });
+        let head = |f: &Framing, p: Vec3| f.reach(f.model_at(0.0).transform_point(p));
+        let (top, bottom) = (dragon[1], dragon[0]);
+        let ours = head(&f, top) + head(&f, bottom);
+        let feet = head(&about_feet, top) + head(&about_feet, bottom);
+        assert!(ours > 1.35 * feet, "{ours} against {feet}");
+    }
+
     #[test]
     fn the_camera_looks_down_at_the_middle_of_the_sweep() {
         let f = Framing::fit(&Sweep {
             radius: 1.0,
             bottom: 0.0,
             top: 4.0,
+            axis: Vec3::ZERO,
         });
         assert_eq!(f.target, Vec3::new(0.0, 2.0, 0.0));
         let forward = f.transform().forward();

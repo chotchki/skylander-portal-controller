@@ -563,6 +563,10 @@ pub struct Vm {
     /// the index of the next placement in it, stepped back when a placement
     /// at or before it leaves the list, so the walk skips nothing.
     cursor: Option<(bool, usize)>,
+    /// Whether a step's walk is under way ([`Vm::step_with`]): what a turn
+    /// spawns is adopted at its end ([`Host::adopt`]), or sooner by a
+    /// `find variable` on it.
+    walking: bool,
     cells: Vec<Cell>,
     sets: Vec<SetObj>,
     structs: Vec<StructObj>,
@@ -671,6 +675,7 @@ impl Vm {
             rejoin: Vec::new(),
             shutting: Vec::new(),
             cursor: None,
+            walking: false,
             cells: Vec::new(),
             sets: Vec::new(),
             structs: Vec::new(),
@@ -1448,7 +1453,9 @@ impl Vm {
                 }
             }
         }
+        self.walking = true;
         let result = self.tick_all(&mut report, host, native);
+        self.walking = false;
         // The frame's over: the next slides begin the next.
         self.slid = false;
         self.cursor = None;
@@ -2442,6 +2449,17 @@ impl Vm {
         let owner = self.canon(owner);
         if owner == Value::Null {
             return Ok(false);
+        }
+        // A clone this turn spawned joins the VM at the turn's end; a find on
+        // it before then adopts what the host has spawned now, in the order
+        // the turn's end would, so it finds the clone's declared locals (the
+        // portal manager sets its death actor's `dying actor` so, the op
+        // after the spawn). Outside a step's walk the embedder adopts.
+        if self.walking
+            && let Value::Entity(h) = owner
+            && !self.handles.contains_key(&h)
+        {
+            self.adopt(&program, host);
         }
         if let Value::Entity(h) = owner
             && let Some(&pid) = self.handles.get(&h)

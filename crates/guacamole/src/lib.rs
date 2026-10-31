@@ -15,6 +15,7 @@ pub mod figure;
 pub mod frame;
 pub mod game_controller;
 pub mod hands;
+pub mod hud_messages;
 pub mod level_scene;
 pub mod level_scripts;
 pub mod on_screen;

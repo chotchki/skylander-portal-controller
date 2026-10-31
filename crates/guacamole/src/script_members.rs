@@ -73,6 +73,9 @@ pub(crate) enum Member {
     ConsoleLanguage,
     TimeScale,
     LoadLevel,
+    /// `system.game achievement`: an unlock's id, kept and logged (openspec
+    /// AH.220; stand-in ledger: `achievements`).
+    Achievement,
     Buffer,
     Id,
     Waypoints,
@@ -260,6 +263,7 @@ impl Member {
         add("system", "console language", Member::ConsoleLanguage);
         add("system", "game time scale", Member::TimeScale);
         add("system", "load level", Member::LoadLevel);
+        add("system", "game achievement", Member::Achievement);
         add("placement", "deactivation buffer", Member::Buffer);
         add("abstractplacement", "id", Member::Id);
         add("spritematrixmeasurement", "id", Member::Id);
@@ -985,6 +989,14 @@ impl ScriptWorld {
                     }
                     self.objs.value(Object::PointTurn(o))
                 }
+                // A solid's own turn (openspec AG.170): its collision
+                // volume's orientation, apart from its actor's.
+                Some(_) if matches!(object, Some(Object::Facet(_, Facet::Collision))) => {
+                    let Some(Object::Facet(h, _)) = object else {
+                        unreachable!("matched as a collision volume")
+                    };
+                    self.objs.value(Object::Facet(h, Facet::SolidTurn))
+                }
                 Some(v) => {
                     let h = self.handle(v).ok_or(HostFault::Nothing)?;
                     self.objs.value(Object::Facet(h, Facet::Orientation))
@@ -1014,6 +1026,14 @@ impl ScriptWorld {
                     }
                     Some(Object::Facet(h, Facet::Orientation)) => {
                         self.angles(h, engine).ok_or(HostFault::Nothing)?
+                    }
+                    // A solid's own turn (AG.170): its absolute angles alone.
+                    Some(Object::Facet(h, Facet::SolidTurn))
+                        if matches!(m, Member::Facing | Member::Tilt | Member::Roll) =>
+                    {
+                        let [tilt, facing, roll] =
+                            self.actors.get(&h).ok_or(HostFault::Nothing)?.solid.angles;
+                        Angles { tilt, facing, roll }
                     }
                     // One the scripts never turned reads nothing, as before:
                     // its file's turn isn't read.
@@ -1511,6 +1531,21 @@ impl ScriptWorld {
                     }
                     return Ok(());
                 }
+                // A solid's own turn (openspec AG.170): `Set Actor Collision
+                // Settings` tips a character's onto its side; his solid is
+                // built turned so (`walkers::rebuilt`).
+                if let Some(Object::Facet(h, Facet::SolidTurn)) = object
+                    && matches!(m, Member::Facing | Member::Tilt | Member::Roll)
+                {
+                    let x = float(v)?;
+                    let a = &mut self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.solid;
+                    match m {
+                        Member::Tilt => a.angles[0] = x,
+                        Member::Facing => a.angles[1] = x,
+                        _ => a.angles[2] = x,
+                    }
+                    return Ok(());
+                }
                 let Some(Object::Facet(h, Facet::Orientation)) = object else {
                     return Err(HostFault::Nothing);
                 };
@@ -1809,6 +1844,27 @@ impl ScriptWorld {
             | Member::Pitch => {
                 let r = recv.ok_or(HostFault::Nothing)?;
                 let o = at.other_point.ok_or(HostFault::Nothing)?;
+                // An actor put from its own remembered point while none is
+                // kept isn't moved, since that point reads where he stands
+                // and each vertical-offset write would lift him again (the
+                // hero's death actor flew him off the map so); the original
+                // lifts him 3.44 m and back as his burst comes (AH.11's
+                // `restart1`, `restart2`), its point kept and its ping-pong
+                // slider returning (stand-in ledger: `death-hop`).
+                let unkept = match self.object(Some(o)) {
+                    Some(Object::Remembered(a)) => self
+                        .actors
+                        .get(&a)
+                        .is_some_and(|k| k.remembered.is_none())
+                        .then_some(a),
+                    Some(Object::RememberedVia(a, c)) => {
+                        (!self.kept_via.contains_key(&(a, c))).then_some(a)
+                    }
+                    _ => None,
+                };
+                if unkept.is_some() && unkept == self.handle(r) {
+                    return Ok(());
+                }
                 let b = self.point(o, engine).ok_or(HostFault::Nothing)?;
                 let a = match self.point(r, engine) {
                     Some(a) => a,
@@ -3109,6 +3165,53 @@ mod tests {
         );
     }
 
+    /// AG.170: a solid's own turn reads and writes through its collision
+    /// volume's orientation, as `Set Actor Collision Settings` tips a
+    /// character's capsule onto its side, apart from its actor's turn: its
+    /// file's angles read back, a tilt written tips the solid alone, and
+    /// the relative angles stay unmodelled there.
+    #[test]
+    fn a_solids_own_turn_is_its_collision_volumes_orientation() {
+        let mut e = bench();
+        let mut w = world();
+        let mut ball = ball(Vec3::ZERO, 0.0);
+        ball.solid.angles = [0.0, 90.0, 0.0];
+        w.actors.insert(BALL, ball);
+        let facet = w.objs.value(Object::Facet(BALL, Facet::Collision));
+        let turn = w
+            .get_member(
+                &at("matrixmeasurement", "orientation", Some(facet), None),
+                Member::Orientation,
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(
+            w.object(Some(turn)),
+            Some(Object::Facet(BALL, Facet::SolidTurn))
+        );
+        let tilt = at("orientationmeasurement", "tilt", Some(turn), None);
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        assert_eq!(
+            w.get_member(&facing, Member::Facing, &mut e),
+            Ok(Value::Float(90.0)),
+            "its file's"
+        );
+        w.set_member(&tilt, Member::Tilt, Value::Float(-90.0), &mut e)
+            .unwrap();
+        let a = w.actor(BALL).unwrap();
+        assert_eq!(a.solid.angles, [-90.0, 90.0, 0.0]);
+        assert_eq!(a.angles, Angles::default(), "its actor unturned");
+        assert_eq!(
+            w.get_member(&tilt, Member::Tilt, &mut e),
+            Ok(Value::Float(-90.0))
+        );
+        let relative = at("orientationmeasurement", "relative tilt", Some(turn), None);
+        assert_eq!(
+            w.get_member(&relative, Member::RelativeTilt, &mut e),
+            Err(HostFault::Nothing)
+        );
+    }
+
     /// The two members a breakable's debris reach that no earlier root's
     /// run did (openspec AH.21): a piece's relative roll reads its roll and
     /// a write turns it, in degrees and unclamped as registered (the debris'
@@ -3300,6 +3403,81 @@ mod tests {
         assert!((p - (target + Vec3::Y * 2.5 * METRES_PER_FOOT)).length() < 1e-5);
         assert_eq!(w.point(b, &mut e), None, "the other made one untouched");
         assert_eq!(w.make("spriteinfo"), None);
+    }
+
+    /// The hero's death actor lifts the dying minion 12 ft over his own
+    /// remembered point a tick at a time (AH.39's Mac step): with none kept
+    /// that point reads where he stands, so each write would lift him the
+    /// whole way again, and he isn't moved (stand-in ledger: `death-hop`).
+    /// Another actor's unkept point
+    /// still puts him from where that actor stands; once his own is kept the
+    /// write puts him over it, the same each time. By the actor's own point
+    /// and through a reference to it alike.
+    #[test]
+    fn an_actor_put_from_its_own_unkept_remembered_point_stays_put() {
+        const OTHER: Handle = 0x7777;
+        let mut e = bench();
+        let mut w = world();
+        let here = Vec3::new(3.0, 1.0, 4.0);
+        let there = Vec3::new(-2.0, 5.0, 0.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        w.actors.insert(OTHER, ball(there, 0.0));
+        let remembered = |w: &mut ScriptWorld, e: &mut Bench, of: Handle, via: Option<u32>| {
+            let mut a = at(
+                "placementreference",
+                "remembered",
+                Some(Value::Entity(of)),
+                None,
+            );
+            a.via = via;
+            w.get_member(&a, Member::Remembered, e).unwrap()
+        };
+        let lift = |w: &mut ScriptWorld, e: &mut Bench, from: Value| {
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "vertical offset",
+                    Some(Value::Entity(BALL)),
+                    Some(from),
+                ),
+                Member::VerticalOffset,
+                Value::Float(12.0),
+                e,
+            )
+            .unwrap();
+            w.actor(BALL).unwrap().position
+        };
+        let over = |p: Vec3| Vec3::new(here.x, p.y + 12.0 * METRES_PER_FOOT, here.z);
+        for via in [None, Some(9)] {
+            let own = remembered(&mut w, &mut e, BALL, via);
+            for _ in 0..3 {
+                assert_eq!(lift(&mut w, &mut e, own), here, "{via:?}: not moved");
+            }
+            let theirs = remembered(&mut w, &mut e, OTHER, via);
+            assert!((lift(&mut w, &mut e, theirs) - over(there)).length() < 1e-5);
+            w.actors.get_mut(&BALL).unwrap().position = here;
+            // His own kept where he stands: over it, the same each time.
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "distance",
+                    Some(own),
+                    Some(Value::Entity(BALL)),
+                ),
+                Member::Distance,
+                Value::Float(0.0),
+                &mut e,
+            )
+            .unwrap();
+            for _ in 0..2 {
+                assert!(
+                    (lift(&mut w, &mut e, own) - over(here)).length() < 1e-5,
+                    "{via:?}"
+                );
+            }
+            w.actors.get_mut(&BALL).unwrap().position = here;
+            w.actors.get_mut(&BALL).unwrap().remembered = None;
+        }
     }
 
     /// `system.absolute zero` is the world's origin as a point: what a

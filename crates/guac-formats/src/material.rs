@@ -25,7 +25,16 @@
 //! A level also draws with three other effects ([`EffectMaterial`]): the
 //! grass's `0xAA6`, `0xAA8` and tfbwarp. Their textures are kept by unit and
 //! their render states read; what their shaders do with them is AG.24's.
+//!
+//! `global.bld`'s own models (the level-up's, the death stars', the portal
+//! entry's) name their effect as an object of the file itself, not as an
+//! import: [`effect_in`] reads that object by the export id `global.bld`'s
+//! root list gives it ([`OwnEffects`], openspec AH.39), so they read as a
+//! level's props do.
 
+use std::collections::BTreeMap;
+
+use crate::exports::Exports;
 use crate::fnv1a32;
 use crate::igz::Igz;
 use crate::igz::layouts::{
@@ -691,18 +700,74 @@ fn undrawn(mask: u32, bits: &[u8], names: &[&'static str; 14]) -> Result<(), Err
     }
 }
 
+/// The type `global.bld` keeps an effect as.
+pub const EFFECT_TYPE: &str = "igEffect";
+
+/// The effects a file of `global.bld`'s own names (openspec AH.39): its own
+/// objects, each by the export id `global.bld`'s root list gives it, where a
+/// character's or a level's technique imports the effect by that id.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OwnEffects(BTreeMap<usize, u32>);
+
+impl OwnEffects {
+    /// `global.bld`'s: each of its local roots by its export id.
+    pub fn of_global(exports: &Exports) -> Self {
+        exports.global_objects().collect()
+    }
+
+    /// The export id the file's object `object` goes by, if it exports it.
+    pub fn id(&self, object: usize) -> Option<u32> {
+        self.0.get(&object).copied()
+    }
+}
+
+impl FromIterator<(usize, u32)> for OwnEffects {
+    fn from_iter<I: IntoIterator<Item = (usize, u32)>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 /// The export id `technique`'s `_effect` imports from [`EFFECTS`]; any other
-/// import, or none, is refused.
+/// import, or none, is refused. A file of `global.bld`'s own names its
+/// effects as its own objects: [`effect_in`] reads those.
 pub fn effect(
     igz: &Igz<'_>,
     t: usize,
     technique: &RuntimeTechniqueInstance<'_>,
 ) -> Result<u32, FormatError> {
-    match technique.effect {
-        ObjectRef::Import(imp) if imp.id.namespace == fnv1a32(EFFECTS.as_bytes()) => {
+    effect_in(igz, t, technique, None)
+}
+
+/// [`effect`], and with `own` (openspec AH.39) a technique naming one of its
+/// file's own objects read as the import of its export id would be: the
+/// object an `igEffect` the file exports. One naming any other object, an
+/// `igEffect` the file doesn't export, or an object at all without `own`,
+/// is refused by name.
+pub fn effect_in(
+    igz: &Igz<'_>,
+    t: usize,
+    technique: &RuntimeTechniqueInstance<'_>,
+    own: Option<&OwnEffects>,
+) -> Result<u32, FormatError> {
+    match (technique.effect, own) {
+        (ObjectRef::Import(imp), _) if imp.id.namespace == fnv1a32(EFFECTS.as_bytes()) => {
             Ok(imp.id.object)
         }
-        ObjectRef::Import(imp) => Err(unsupported(igz, t, "_effect", u64::from(imp.id.object))),
+        (ObjectRef::Import(imp), _) => {
+            Err(unsupported(igz, t, "_effect", u64::from(imp.id.object)))
+        }
+        (ObjectRef::Object(o), Some(own)) => {
+            let found = igz.type_name(&igz.objects()[o]);
+            if found != EFFECT_TYPE {
+                let kind = ErrorKind::WrongType {
+                    expected: EFFECT_TYPE,
+                    found: found.to_owned(),
+                };
+                return Err(err(igz, t, "_effect", kind));
+            }
+            own.id(o)
+                .ok_or_else(|| unsupported(igz, t, "_effect", o as u64))
+        }
         _ => Err(err(igz, t, "_effect", ErrorKind::Missing)),
     }
 }
@@ -734,7 +799,21 @@ impl<'a> Material<'a> {
         list: Option<usize>,
         drawn: Drawn,
     ) -> Result<Self, FormatError> {
-        let id = effect(igz, t, technique)?;
+        Self::read_technique_in(igz, passes, t, technique, list, drawn, None)
+    }
+
+    /// [`Material::read_technique`] in a file whose techniques name its own
+    /// effects (`own`, [`effect_in`]: `global.bld`'s, openspec AH.39).
+    pub fn read_technique_in(
+        igz: &Igz<'a>,
+        passes: Passes<'_, 'a>,
+        t: usize,
+        technique: &RuntimeTechniqueInstance<'a>,
+        list: Option<usize>,
+        drawn: Drawn,
+        own: Option<&OwnEffects>,
+    ) -> Result<Self, FormatError> {
+        let id = effect_in(igz, t, technique, own)?;
         if id != TFBMULTI2 {
             return Err(unsupported(igz, t, "_effect", u64::from(id)));
         }
@@ -857,7 +936,20 @@ impl<'a> EffectMaterial<'a> {
         technique: &RuntimeTechniqueInstance<'a>,
         list: Option<usize>,
     ) -> Result<Self, FormatError> {
-        let id = effect(igz, t, technique)?;
+        Self::read_in(igz, passes, t, technique, list, None)
+    }
+
+    /// [`EffectMaterial::read`] in a file whose techniques name its own
+    /// effects (`own`, [`effect_in`]: `global.bld`'s, openspec AH.39).
+    pub fn read_in(
+        igz: &Igz<'a>,
+        passes: Passes<'_, 'a>,
+        t: usize,
+        technique: &RuntimeTechniqueInstance<'a>,
+        list: Option<usize>,
+        own: Option<&OwnEffects>,
+    ) -> Result<Self, FormatError> {
+        let id = effect_in(igz, t, technique, own)?;
         if !OTHER_EFFECTS.contains(&id) {
             return Err(unsupported(igz, t, "_effect", u64::from(id)));
         }

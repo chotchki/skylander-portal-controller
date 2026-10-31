@@ -14,6 +14,15 @@
 //!   them, his fall the mover update's own (openspec AG.173). One whose
 //!   setup doesn't run through keeps his card ([`Fallback::Card`], listed
 //!   with why).
+//! - His solid is his scripts' too (openspec AG.170, [`rebuilt`]): once his
+//!   setup has run, the `CollisionInfo` they hold on his actor (shape,
+//!   sizes, offset and its own turn) at the scale they hold, rebuilt the
+//!   step either changes; 38 of the 66 setups on the dump rewrite the
+//!   disc's, and built so all 66 are the solids AE.22 read live. Before it
+//!   has run he stands on the disc's, at his file's 100 %, which is what
+//!   his actor holds until his setup writes it; once his script stops in
+//!   play (AH.151's fall-back) nothing rebuilds it, so he stands on what
+//!   they last set, as he walks on the numbers they last wrote.
 //!
 //! The hero's drawn model and its keys are the card's model (AE's), drawn
 //! in [`crate::level_scene::hero_scene`]: the keys the census's card tables
@@ -103,9 +112,10 @@ impl Walk {
 
     /// A character on his own scripts (AG.27), before they've run: his
     /// solid as the disc authors it at the file's 100 % (his scripts set
-    /// his scale), no walk of his own (the controller's tuning is read off
-    /// his scripts if they stop, [`Movement`]) and no gaits (his
-    /// locomotion is the VM's, AH.49).
+    /// his scale and, once his setup has run, his solid: [`rebuilt`]), no
+    /// walk of his own (the controller's tuning is read off his scripts if
+    /// they stop, [`Movement`]) and no gaits (his locomotion is the VM's,
+    /// AH.49).
     pub fn scripted(load_file: &str, solid: &guac_ir::actor::Solid) -> Walk {
         let shape = SolidInfo {
             kind: crate::props::solid_kind(solid.shape),
@@ -142,6 +152,73 @@ impl Walk {
 /// solid is built at.
 pub fn uniform_scale(scale: [f32; 3]) -> Option<f32> {
     (scale[0] > 0.0 && scale[0] == scale[1] && scale[1] == scale[2]).then(|| scale[0] / 100.0)
+}
+
+/// A walker's solid built again ([`rebuilt`]): the `CollisionInfo` and the
+/// scale it's built from, and the solid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rebuilt {
+    pub shape: SolidInfo,
+    pub scale: f32,
+    pub solid: HavokSolid,
+}
+
+/// Where a walker's scripts stand, for his solid ([`rebuilt`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    /// Joined, his setup not through yet (his minion's first tick,
+    /// `Vm::set_up`).
+    BeforeSetup,
+    /// Joined, his setup through.
+    SetUp,
+    /// Off them: his join failed, or his script stopped in play (AH.151's
+    /// fall-back).
+    Off,
+}
+
+/// What a walker on his own scripts stands on after a step of them (openspec
+/// AG.170), given the `CollisionInfo` and the scale he stands on now
+/// (`shape`, `scale`), his actor as his scripts hold it and where they
+/// stand (`held`): his solid built again where either changed, `None` where
+/// nothing did.
+///
+/// - The `CollisionInfo` is his actor's once his setup has run: the shape,
+///   sizes and offset his setup writes through `collisioninfo`'s members
+///   and its own turn, through its collision volume's `orientation` (38 of
+///   the 66 characters' setups rewrite the disc's, two of them tipping a
+///   capsule onto its side). Before that it's the one he stands on, the
+///   disc's ([`Walk::scripted`]), which is what his actor holds until his
+///   setup writes it.
+/// - The scale is his actor's, where it's uniform; one that isn't (a script
+///   setting one axis) leaves the one he stands at.
+/// - One that builds nothing (no shape, or a mesh) leaves the one he stands
+///   on: the controller has nothing to walk without one, and none of the 66
+///   holds one.
+/// - Off his scripts nothing is built again: he stands on what they last
+///   set, as the fall-back walks him on the numbers they last wrote.
+pub fn rebuilt(
+    shape: &SolidInfo,
+    scale: f32,
+    actor: &crate::script_engine::Actor,
+    held: Held,
+) -> Option<Rebuilt> {
+    if held == Held::Off {
+        return None;
+    }
+    let ours = actor.solid.info();
+    let next = match held == Held::SetUp && ours.havok([100.0; 3]).is_some() {
+        true => ours,
+        false => *shape,
+    };
+    let to = uniform_scale(actor.scale).unwrap_or(scale);
+    if next == *shape && (to - scale).abs() < 1e-6 {
+        return None;
+    }
+    Some(Rebuilt {
+        shape: next,
+        scale: to,
+        solid: next.havok([to * 100.0; 3])?,
+    })
 }
 
 /// What a scripted walker's setup wrote into his description's `movement
@@ -191,8 +268,10 @@ impl Movement {
         })
     }
 
-    /// AG.16's controller's numbers off these, under his solid's authored
-    /// `width` (feet), falling as every mover falls (AG.173).
+    /// AG.16's controller's numbers off these, under the `width` (feet,
+    /// before his scale) of the `CollisionInfo` he stands on, his scripts'
+    /// once his setup has run (AG.170), falling as every mover falls
+    /// (AG.173).
     pub fn tuning(&self, width: f32) -> Tuning {
         Tuning {
             max_speed: self.ground_max_speed,
@@ -533,6 +612,93 @@ mod tests {
             fallback(Scripts, Stage::Joining, "unmodelled member x"),
             Fallback::Card("unmodelled member x".into())
         );
+    }
+
+    /// AG.170: his solid follows the `CollisionInfo` his actor holds once his
+    /// setup has run (its shape, sizes, offset and own turn),
+    /// at his actor's scale: before, the one he stands on; a scale that
+    /// isn't uniform leaves his; one that builds nothing leaves him on his;
+    /// nothing changed, nothing built; off his scripts, nothing built
+    /// whatever his actor holds.
+    #[test]
+    fn his_solid_follows_what_his_scripts_hold_once_his_setup_has_run() {
+        use crate::script_engine::{Actor, Solid};
+        use guac_motion::solid::SolidKind;
+        let disc = SolidInfo {
+            kind: SolidKind::Sphere,
+            offset: [0.0; 3],
+            rotation: [0.0; 3],
+            width: 6.0,
+            height: 6.0,
+            length: 3.0,
+        };
+        let mut actor = Actor::blank();
+        actor.solid = Solid {
+            shape: 2,
+            width: 7.0,
+            height: 10.5,
+            length: 3.0,
+            offset: [0.0, 1.0668, -1.6002],
+            angles: [-90.0, 0.0, 0.0],
+            ..Solid::default()
+        };
+        // Before his setup has run: the disc's, at his actor's scale.
+        actor.scale = [120.0; 3];
+        let r = rebuilt(&disc, 1.0, &actor, Held::BeforeSetup).expect("his scale changed");
+        assert_eq!((r.shape, r.scale), (disc, 1.2));
+        assert_eq!(Some(r.solid), disc.havok([120.0; 3]));
+        // Once it has: his scripts' at theirs, tipped as they turned it.
+        let held = SolidInfo {
+            kind: SolidKind::Capsule,
+            offset: [0.0, 1.0668, -1.6002],
+            rotation: [-90.0, 0.0, 0.0],
+            width: 7.0,
+            height: 10.5,
+            length: 3.0,
+        };
+        let r = rebuilt(&disc, 1.2, &actor, Held::SetUp).expect("his solid changed");
+        assert_eq!((r.shape, r.scale), (held, 1.2));
+        assert_eq!(Some(r.solid), held.havok([120.0; 3]));
+        assert_eq!(
+            rebuilt(&held, 1.2, &actor, Held::SetUp),
+            None,
+            "nothing changed"
+        );
+        // A scale set again after it: the held one rebuilt at it.
+        actor.scale = [150.0; 3];
+        let r = rebuilt(&held, 1.2, &actor, Held::SetUp).expect("his scale changed");
+        assert_eq!(
+            (r.shape, r.scale, Some(r.solid)),
+            (held, 1.5, held.havok([150.0; 3]))
+        );
+        // One axis set alone: the scale stays his, whichever axis it is.
+        for scale in [
+            [200.0, 150.0, 150.0],
+            [150.0, 200.0, 150.0],
+            [150.0, 150.0, 200.0],
+        ] {
+            actor.scale = scale;
+            assert_eq!(rebuilt(&held, 1.5, &actor, Held::SetUp), None, "{scale:?}");
+        }
+        // A CollisionInfo that builds nothing leaves him on his, at a scale
+        // his scripts set with it.
+        actor.scale = [150.0; 3];
+        actor.solid.shape = 0;
+        assert_eq!(rebuilt(&held, 1.5, &actor, Held::SetUp), None);
+        actor.solid.shape = 5;
+        assert_eq!(rebuilt(&held, 1.5, &actor, Held::SetUp), None);
+        actor.scale = [180.0; 3];
+        let r = rebuilt(&held, 1.5, &actor, Held::SetUp).expect("his scale changed");
+        assert_eq!(
+            (r.shape, r.scale, Some(r.solid)),
+            (held, 1.8, held.havok([180.0; 3]))
+        );
+        // Off his scripts: what they last set, whatever his actor holds.
+        actor.solid.shape = 2;
+        actor.scale = [200.0; 3];
+        assert!(rebuilt(&held, 1.5, &actor, Held::SetUp).is_some());
+        assert_eq!(rebuilt(&held, 1.5, &actor, Held::Off), None);
+        assert_eq!(rebuilt(&disc, 1.0, &actor, Held::Off), None);
     }
 
     /// AG.27: a scripted walker before his scripts run is his authored solid

@@ -42,7 +42,7 @@ use guac_formats::igz::layouts::{
     RuntimeTechniqueInstance, is_a, read_all,
 };
 use guac_formats::level::{GroupKind, IDENTITY, Placements as FormatPlacements, StaticModel};
-use guac_formats::material::{self, Drawn, TFBMULTI2};
+use guac_formats::material::{self, Drawn, OwnEffects, TFBMULTI2};
 use guac_formats::model::{self as fmodel, IDLE_SLOT, JointMap};
 use guac_ir::level::{
     Atmosphere, AtmosphericZone, Collision, CollisionMesh, EffectMaterial, LevelMaterial, Lights,
@@ -135,21 +135,31 @@ fn pass(igz: &Igz<'_>, t: &RuntimeTechniqueInstance<'_>) -> Option<usize> {
 }
 
 /// The technique at `t`'s material as the IR keeps it: tfbmulti2's on AE's
-/// record, read as a level's, or another effect's.
+/// record, read as a level's, or another effect's; in a file naming its own
+/// effects, `own` says what each goes by (`global.bld`'s, openspec AH.39).
 fn level_material(
     igz: &Igz<'_>,
     passes: Passes<'_, '_>,
     t: usize,
     technique: &RuntimeTechniqueInstance<'_>,
     textures: &mut Textures,
+    own: Option<&OwnEffects>,
 ) -> Result<LevelMaterial, String> {
     let list = pass(igz, technique);
-    if material::effect(igz, t, technique).map_err(s)? == TFBMULTI2 {
-        let m = material::Material::read_technique(igz, passes, t, technique, list, Drawn::Level)
-            .map_err(s)?;
+    if material::effect_in(igz, t, technique, own).map_err(s)? == TFBMULTI2 {
+        let m = material::Material::read_technique_in(
+            igz,
+            passes,
+            t,
+            technique,
+            list,
+            Drawn::Level,
+            own,
+        )
+        .map_err(s)?;
         return models::multi2(igz, &m, textures).map(LevelMaterial::Multi2);
     }
-    let m = material::EffectMaterial::read(igz, passes, t, technique, list).map_err(s)?;
+    let m = material::EffectMaterial::read_in(igz, passes, t, technique, list, own).map_err(s)?;
     let mut out = Vec::with_capacity(m.textures.len());
     for b in &m.textures {
         out.push(UnitTexture {
@@ -179,13 +189,14 @@ fn level_material(
 }
 
 /// A static graph's draws as materials and segments, where the graph has
-/// them: a draw under a transform is refused.
+/// them: a draw under a transform is refused. `own`: [`level_material`]'s.
 fn static_draws(
     igz: &Igz<'_>,
     graph: &guac_formats::level::Graph<'_>,
     textures: &mut Textures,
     materials: &mut Vec<LevelMaterial>,
     segments: &mut Vec<Segment>,
+    own: Option<&OwnEffects>,
     mut each: impl FnMut(&guac_formats::level::Draw<'_>, u32),
 ) -> Result<(), String> {
     let lists = graph.material_lists(igz).map_err(s)?;
@@ -203,6 +214,7 @@ fn static_draws(
             draw.technique_index,
             &draw.technique,
             textures,
+            own,
         )
         .map_err(|e| format!("{name} (technique #{}): {e}", draw.technique_index))?;
         let normals = matches!(m, LevelMaterial::Multi2(_));
@@ -248,6 +260,7 @@ pub fn scene(igz: &Igz<'_>, level: &str, identity: DumpIdentity) -> Result<Read<
             &mut textures,
             &mut materials,
             &mut segments,
+            None,
             |draw, segment| {
                 if let Some(u) = draw.user_info {
                     sky.entry(u).or_default().push(segment);
@@ -290,6 +303,7 @@ fn skinned_prop(
     model: usize,
     path: &str,
     textures: &mut Textures,
+    own: Option<&OwnEffects>,
 ) -> Result<Prop, String> {
     let hero = Hero::read(igz, model).map_err(s)?;
     let havok = fmodel::skeleton(igz, &hero).map_err(s)?;
@@ -311,6 +325,7 @@ fn skinned_prop(
             mesh.technique_index,
             &mesh.technique,
             textures,
+            own,
         )
         .map_err(|e| format!("{name}: {e}"))?;
         let index = u16::try_from(materials.len()).map_err(|_| "65,536 materials")?;
@@ -344,6 +359,7 @@ fn static_prop(
     model: usize,
     path: &str,
     textures: &mut Textures,
+    own: Option<&OwnEffects>,
 ) -> Result<Prop, String> {
     let sm = StaticModel::read(igz, model).map_err(s)?;
     let (mut materials, mut segments) = (Vec::new(), Vec::new());
@@ -353,6 +369,7 @@ fn static_prop(
         textures,
         &mut materials,
         &mut segments,
+        own,
         |_, _| {},
     )?;
     Ok(Prop {
@@ -366,12 +383,15 @@ fn static_prop(
 
 /// The model at `model` as a prop, its textures into `textures`: skinned
 /// when its body's node is an `igActor2`, static otherwise. A character's
-/// attachments read this way too (AE.23).
+/// attachments read this way too (AE.23). `own`: the effects a file of
+/// `global.bld`'s own names by object (openspec AH.39), `None` for any other
+/// file, whose techniques import theirs.
 pub fn prop(
     igz: &Igz<'_>,
     model: usize,
     path: &str,
     textures: &mut Textures,
+    own: Option<&OwnEffects>,
 ) -> Result<Prop, String> {
     let skinned = PhysicsModel::read(igz, model)
         .ok()
@@ -380,9 +400,9 @@ pub fn prop(
         .and_then(|b| b.body.node)
         .is_some_and(|n| is_a(igz.type_name(&igz.objects()[n]), Actor2::TYPE));
     if skinned {
-        skinned_prop(igz, model, path, textures)
+        skinned_prop(igz, model, path, textures, own)
     } else {
-        static_prop(igz, model, path, textures)
+        static_prop(igz, model, path, textures, own)
     }
 }
 
@@ -405,7 +425,7 @@ pub fn props(igz: &Igz<'_>, level: &str, identity: DumpIdentity) -> Result<Read<
         }
         // A prop's textures land only if all of it reads.
         let mut own = textures.clone();
-        match prop(igz, model, path, &mut own) {
+        match prop(igz, model, path, &mut own, None) {
             Ok(p) => {
                 textures = own;
                 props.push(p);

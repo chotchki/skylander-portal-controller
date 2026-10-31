@@ -685,3 +685,142 @@ fn another_effects_material_keeps_its_textures_by_unit() {
         "{e}"
     );
 }
+
+/// The file's own `igEffect`s in `igz`, by object.
+fn own_effect_objects(igz: &Igz<'_>) -> Vec<usize> {
+    (0..igz.objects().len())
+        .filter(|&o| igz.type_name(&igz.objects()[o]) == EFFECT_TYPE)
+        .collect()
+}
+
+/// A material's parts that don't name objects: what one read through an
+/// import and one read through the file's own effect must agree on.
+fn drawn_parts(m: &Material<'_>) -> String {
+    let textures: Vec<_> = m
+        .textures
+        .iter()
+        .map(|t| (t.role, t.sampler, t.image_name))
+        .collect();
+    format!(
+        "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {textures:?}",
+        m.name, m.pixel, m.vertex, m.params, m.states, m.scrolls, m.tracks, m.attrs
+    )
+}
+
+/// AH.39: a `global.bld`-style technique naming one of its file's own
+/// exported `igEffect`s reads as the import of that effect's export id
+/// would, as tfbmulti2's material or another effect's; an `igEffect` the
+/// file doesn't export, an object that isn't an `igEffect`, and the file's
+/// own effect read without its exports (a character's or a level's way)
+/// are each refused on `_effect` by name.
+#[test]
+fn a_technique_naming_its_files_own_exported_effect_reads_as_its_import() {
+    let imported = level(&sample()).unwrap();
+    let (igz, hero) = first_mesh(&with_body(|b| b.own_effect = true));
+    let m = &hero.meshes[0];
+    let effects = own_effect_objects(igz);
+    assert_eq!(effects.len(), 1, "the builder's one own effect");
+    let read = |own: Option<&OwnEffects>| {
+        Material::read_technique_in(
+            igz,
+            hero.passes(),
+            m.technique_index,
+            &m.technique,
+            m.material,
+            Drawn::Level,
+            own,
+        )
+    };
+    let own: OwnEffects = [(effects[0], TFBMULTI2)].into_iter().collect();
+    assert_eq!(
+        effect_in(igz, m.technique_index, &m.technique, Some(&own)).unwrap(),
+        TFBMULTI2
+    );
+    assert_eq!(
+        drawn_parts(&read(Some(&own)).unwrap()),
+        drawn_parts(&imported)
+    );
+    // At the grass's id, it reads as the grass's own material would, which
+    // tfbmulti2's reader refuses.
+    let at_grass: OwnEffects = [(effects[0], GRASS_EFFECT)].into_iter().collect();
+    assert_eq!(
+        read(Some(&at_grass)).unwrap_err().kind,
+        ErrorKind::Unsupported {
+            value: u64::from(GRASS_EFFECT)
+        }
+    );
+    let imported = effect_material(&with_body(grass)).unwrap();
+    let (gigz, ghero) = first_mesh(&with_body(|b| {
+        grass(b);
+        b.own_effect = true;
+    }));
+    let gm = &ghero.meshes[0];
+    let theirs: OwnEffects = [(own_effect_objects(gigz)[0], GRASS_EFFECT)]
+        .into_iter()
+        .collect();
+    let e = EffectMaterial::read_in(
+        gigz,
+        ghero.passes(),
+        gm.technique_index,
+        &gm.technique,
+        gm.material,
+        Some(&theirs),
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            e.name,
+            e.effect,
+            e.pixel,
+            e.vertex,
+            e.states,
+            e.textures.len()
+        ),
+        (
+            imported.name,
+            GRASS_EFFECT,
+            imported.pixel,
+            imported.vertex,
+            imported.states,
+            imported.textures.len()
+        )
+    );
+    // Not exported: refused by its object.
+    let none = OwnEffects::default();
+    let e = read(Some(&none)).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "_effect",
+            ErrorKind::Unsupported {
+                value: effects[0] as u64
+            }
+        )
+    );
+    // Without the file's exports, as before: missing.
+    let e = read(None).unwrap_err();
+    assert_eq!((e.field, e.kind), ("_effect", ErrorKind::Missing));
+    assert_eq!(
+        effect(igz, m.technique_index, &m.technique)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Missing
+    );
+    // An object that isn't an effect, even one the file exports: refused by
+    // its type.
+    let list = m.material.unwrap();
+    let mut technique = m.technique;
+    technique.effect = ObjectRef::Object(list);
+    let not_one: OwnEffects = [(list, TFBMULTI2)].into_iter().collect();
+    let e = effect_in(igz, m.technique_index, &technique, Some(&not_one)).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (
+            "_effect",
+            ErrorKind::WrongType {
+                expected: EFFECT_TYPE,
+                found: "igAttrList".to_owned()
+            }
+        )
+    );
+}

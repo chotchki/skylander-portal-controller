@@ -15,7 +15,9 @@
 //!   each fighting character's archive (his own body aside, which the model
 //!   stage writes), read as a level's props are,
 //!   `spawns/<archive>.<ron|postcard>`: the lava ball, the level-up's rings,
-//!   the death stars. A level's own spawn templates draw from its props.
+//!   the death stars. `global.bld`'s models name its effects as objects of
+//!   their own file, read by the ids its exports give them ([`own_effects`],
+//!   openspec AH.39). A level's own spawn templates draw from its props.
 //!
 //! - The walkers' own entries (openspec AG.27): every modelled character's
 //!   archive beside [`FIGHTERS`]', so each runs on his own scripts. A
@@ -30,9 +32,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use guac_formats::exports::Exports;
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
 use guac_formats::level::Placements;
+use guac_formats::material::OwnEffects;
 use guac_formats::model as fmodel;
 use guac_formats::script::Graph;
 use guac_ir::DumpIdentity;
@@ -44,9 +48,13 @@ use crate::levels::Read;
 use crate::models::{self, Textures};
 use crate::roster::{BOOTSTRAP, GLOBAL, INIT_SETUP, LEVEL};
 
-/// The parts' names in the manifest, which [`complete`] asks for.
+/// The parts' names in the manifest, which [`complete`] asks for. The
+/// spawn models' was `spawns` until AH.39 read `global.bld`'s own models,
+/// all of which a part under the old name refused: an extract made before
+/// then resumes for the part alone (the old name stays in its manifest,
+/// read by nothing).
 pub const SCRIPTS: &str = "scripts";
-pub const SPAWNS: &str = "spawns";
+pub const SPAWNS: &str = "spawn models";
 /// Where each part's files go.
 pub const SCRIPT_DIR: &str = "scripts";
 pub const SPAWN_DIR: &str = "spawns";
@@ -928,14 +936,32 @@ pub fn check(entry: &[u8]) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// The effects `archive`'s own techniques name by object (openspec AH.39):
+/// `global.bld`'s (`igz`), each by the export id its and `bootstrap`'s root
+/// lists give it; none for any other archive, whose techniques import
+/// theirs.
+pub fn own_effects(
+    archive: &str,
+    igz: &Igz<'_>,
+    bootstrap: &[u8],
+) -> Result<Option<OwnEffects>, String> {
+    if archive != GLOBAL {
+        return Ok(None);
+    }
+    let boot = Igz::parse(bootstrap).map_err(|e| format!("{BOOTSTRAP}: {e}"))?;
+    let exports = Exports::new(&boot, igz).map_err(|e| e.to_string())?;
+    Ok(Some(OwnEffects::of_global(&exports)))
+}
+
 /// Every model a placement in `igz` names, as a level's props are read,
-/// but `skip` (a character's own body), its textures into the read. One
-/// that doesn't read is listed with why.
+/// but `skip` (a character's own body), its textures into the read;
+/// `effects`, [`own_effects`]'. One that doesn't read is listed with why.
 pub fn spawn_models(
     igz: &Igz<'_>,
     archive: &str,
     identity: DumpIdentity,
     skip: Option<usize>,
+    effects: Option<&OwnEffects>,
 ) -> Result<Read<SpawnModels>, String> {
     let placements = Placements::read(igz).map_err(|e| e.to_string())?;
     let mut textures = Textures::default();
@@ -953,7 +979,7 @@ pub fn spawn_models(
             return Err(format!("two models named {path}"));
         }
         let mut own = textures.clone();
-        match crate::levels::prop(igz, model, path, &mut own) {
+        match crate::levels::prop(igz, model, path, &mut own, effects) {
             Ok(p) => {
                 textures = own;
                 props.push(p);

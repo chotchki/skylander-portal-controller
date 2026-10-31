@@ -266,7 +266,7 @@ enum State {
         keys: Vec<WarmKey>,
         since: Instant,
     },
-    Model(Stage),
+    Model(Box<Stage>),
     /// Why there's no model on the card.
     Portrait(String),
 }
@@ -629,7 +629,7 @@ fn poll_loads(mut turntables: ResMut<Turntables>, mut warm: ResMut<Warm>, mut sp
                     size = %stage.size,
                     "turntable up"
                 );
-                State::Model(stage)
+                State::Model(Box::new(stage))
             }
             Err(why) => {
                 warn!(slot = i + 1, figure = %p.name, id = p.figure_id.as_str(), reason = %why,
@@ -872,9 +872,9 @@ fn turn(
             (run, turns * std::f32::consts::TAU)
         };
         if let Ok(mut root) = transforms.get_mut(stage.root) {
-            let rotation = Quat::from_rotation_y(yaw);
-            if root.rotation != rotation {
-                root.rotation = rotation;
+            let at = stage.framing.model_at(yaw);
+            if *root != at {
+                *root = at;
             }
         }
         let pose = guacamole::character::mesh::pose(&stage.model, seconds);
@@ -1275,7 +1275,8 @@ mod tests {
                 assert!(world.get::<Transform>(root).is_some());
                 let sweep = Sweep::of_idle(m, SAMPLES).unwrap();
                 for p in attach::points(m, 0.0) {
-                    assert!(p.x.hypot(p.z) <= sweep.radius + 1e-4, "{}", f.id());
+                    let off = p - sweep.axis;
+                    assert!(off.x.hypot(off.z) <= sweep.radius + 1e-4, "{}", f.id());
                 }
                 up += 1;
                 carried_parts += carried;
@@ -1320,6 +1321,16 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         app.update();
         assert!(yaw(&app) != before, "it turns");
+        // About the middle of what its idle reaches (AE.35): its head's
+        // swing along x puts that middle 0.24 m off its origin, which the
+        // turn keeps on the turntable's axis.
+        let axis = Sweep::of_idle(&model("One"), SAMPLES).unwrap().axis;
+        assert!(axis.x > 0.2 && axis.z.abs() < 1e-6, "{axis}");
+        let t = *app.world().get::<Transform>(root).unwrap();
+        assert!(
+            t.transform_point(axis).abs_diff_eq(Vec3::ZERO, 1e-5),
+            "{t:?}"
+        );
         app.insert_resource(ReducedMotion(true))
             .insert_resource(FrozenYaw(0.5));
         app.update();
@@ -1523,6 +1534,106 @@ mod tests {
                 UVec2::splat(86),
                 "{heights:?}"
             );
+        }
+    }
+
+    /// AE.35 on the real disc: every character model's card, framed as the
+    /// stage frames it (turned about the middle of what its idle reaches),
+    /// facing the camera at its idle's start, fills at least two fifths of
+    /// the circle top to bottom or side to side, where turned about its
+    /// own origin a long tail or a weapon to one side left ten of them
+    /// under (Spyro's three 0.29, Bash's 0.35); Dark Spyro, Wham-Shell and
+    /// Dino-Rang, AE.31's small three, each fill more than they did. Read
+    /// in memory, no extract written.
+    ///
+    /// `cargo test -p guacamole --bin guacamole every_cards_figure --
+    /// --ignored --nocapture`
+    #[test]
+    #[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]
+    fn every_cards_figure_fills_two_fifths_of_its_circle() {
+        use guac_extract::known::KNOWN_DUMPS;
+        use guac_extract::{models, roster};
+        use guacamole::character::turntable::skinned;
+        let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
+        let known = &KNOWN_DUMPS[0];
+        let identity = DumpIdentity {
+            title_id: known.title_id.into(),
+            app_ver: known.app_ver.into(),
+            manifest_hash: Sha256([0; 32]),
+        };
+        let roster = roster::read(&dump, identity.clone()).unwrap();
+        let usrdir = dump.join("PS3_GAME/USRDIR");
+        let level_of = |archive: &str| {
+            let bytes = std::fs::read(usrdir.join(archive)).unwrap();
+            models::level(&bytes, archive).unwrap()
+        };
+        let (global, bootstrap) = (level_of(roster::GLOBAL), level_of(roster::BOOTSTRAP));
+        let globals = models::Globals::new(&global, &bootstrap).unwrap();
+        // How much of the circle a model at its idle's start fills, facing
+        // a camera framed on `sweep`: its image's larger side, a share of
+        // the circle's diameter.
+        let fill = |m: &Model, sweep: &Sweep| {
+            let framing = Framing::fit(sweep);
+            let view = framing.transform().to_matrix().inverse();
+            let k = (0.5f32 * framing.fov).tan();
+            let at = framing.model_at(0.0);
+            let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+            for p in skinned(m, 0.0).into_iter().chain(attach::points(m, 0.0)) {
+                let v = view.transform_point3(at.transform_point(p));
+                let image = Vec2::new(v.x, v.y) / (-v.z * k);
+                lo = lo.min(image);
+                hi = hi.max(image);
+            }
+            let size = (hi - lo) / 2.0;
+            size.x.max(size.y)
+        };
+        let mut fills: Vec<(f32, f32, String)> = Vec::new();
+        for load in models::character_loads(&roster) {
+            let level = models::archive(&models::archive_path(&usrdir, load), load)
+                .and_then(|bytes| models::level(&bytes, load))
+                .unwrap();
+            let m = models::read(&level, load, identity.clone(), Some(&globals))
+                .unwrap()
+                .model;
+            let sweep = Sweep::of_idle(&m, SAMPLES).unwrap();
+            // The cylinder the same loop swept turned about its origin, as
+            // every card was framed before.
+            let reach = (0..SAMPLES)
+                .flat_map(|i| {
+                    let t = f64::from(m.idle.duration.max(0.0)) * i as f64 / SAMPLES as f64;
+                    let mut p = skinned(&m, t);
+                    p.extend(attach::points(&m, t));
+                    p
+                })
+                .map(|p| p.x.hypot(p.z))
+                .fold(0.0f32, f32::max);
+            let about_origin = Sweep {
+                radius: reach,
+                axis: Vec3::ZERO,
+                ..sweep
+            };
+            fills.push((fill(&m, &sweep), fill(&m, &about_origin), load.to_owned()));
+        }
+        fills.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (now, before, load) in &fills {
+            println!("{load}: fills {now:.3} of its circle ({before:.3} turned about its origin)");
+        }
+        let under = |share: f32, i: usize| fills.iter().filter(|f| [f.0, f.1][i] < share).count();
+        println!(
+            "{} models: under two fifths {} (turned about their origins {}), the least {:.3}",
+            fills.len(),
+            under(0.4, 0),
+            under(0.4, 1),
+            fills[0].0
+        );
+        assert_eq!(under(0.4, 0), 0, "{:?}", &fills[..3]);
+        for (load, more) in [
+            ("016_Spyro_Dark", 1.5),
+            ("013_Crab", 1.2),
+            ("006_DinoRang", 1.15),
+        ] {
+            let (now, before, _) = fills.iter().find(|f| f.2 == load).unwrap();
+            assert!(*now > more * before, "{load}: {now} against {before}");
         }
     }
 }

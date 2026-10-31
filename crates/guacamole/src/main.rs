@@ -28,6 +28,7 @@ mod level;
 mod look;
 mod mirror;
 mod motion;
+mod orbs;
 mod pad;
 mod pause;
 mod physics;
@@ -475,8 +476,8 @@ fn run_tv(
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,
         creatures::CreaturesPlugin,
-        // AH.87: the particles of what the scripts spawn.
-        emitters::EmittersPlugin,
+        // AH.61's orbs and AH.87's particles of what the scripts spawn.
+        (orbs::OrbsPlugin, emitters::EmittersPlugin),
     ));
     // AH.25's dev entry, in a dev build only.
     if let Some(entry) = dev_entry::plugin(cfg!(feature = "dev-tools"), entry_asks) {
@@ -885,9 +886,9 @@ mod tests {
                 "his scripts' step",
             ),
             (
-                hero_scripts::apply_scripted_scale.system_type_id(),
+                hero_scripts::apply_scripted_solid.system_type_id(),
                 Frame::Scripts,
-                "his scripts' scale",
+                "his scripts' solid and scale",
             ),
             (
                 guacamole::scripts::step_scripts.system_type_id(),

@@ -292,7 +292,7 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
     let archive = "character/009_eruptor.bld";
     let hero = body(&igz, archive);
     assert!(hero.is_some());
-    let r = spawn_models(&igz, archive, identity(), hero).unwrap();
+    let r = spawn_models(&igz, archive, identity(), hero, None).unwrap();
     assert_eq!(
         (r.ir.archive.as_str(), r.ir.identity.clone()),
         (archive, identity())
@@ -314,7 +314,7 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
     // Each binds the attachment colour: one texture file.
     assert_eq!(r.textures.len(), 1);
     // Without the body left out, the body is a skinned prop among them.
-    let all = spawn_models(&igz, archive, identity(), None).unwrap();
+    let all = spawn_models(&igz, archive, identity(), None, None).unwrap();
     assert_eq!(all.ir.props.len(), 8);
     let eruptor = &all.ir.props[0];
     assert_eq!(eruptor.path, "Models/Characters/Eruptor/Eruptor.mdl");
@@ -324,8 +324,81 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
     let global = disc(&sample()).global;
     let g = Igz::parse(&global).unwrap();
     assert!(body(&g, GLOBAL).is_none());
-    let r = spawn_models(&g, GLOBAL, identity(), None).unwrap();
+    let r = spawn_models(&g, GLOBAL, identity(), None, None).unwrap();
     assert!(r.ir.props.is_empty() && r.textures.is_empty());
+}
+
+/// AH.39: models whose techniques name an effect of their own file (as
+/// `global.bld`'s do) read with that file's own effects exported as
+/// tfbmulti2, each as it reads importing it; without them each is refused
+/// on `_effect`, the others' reading unchanged. `own_effects` reads
+/// `global.bld`'s own through its exports, and none for any other archive.
+#[test]
+fn spawn_models_naming_their_files_own_effects_read_through_its_exports() {
+    let imported_bytes: &'static [u8] = Vec::leak(model::character(&model::attached()));
+    let imported = Igz::parse(imported_bytes).unwrap();
+    let archive = "character/009_eruptor.bld";
+    let want = spawn_models(
+        &imported,
+        archive,
+        identity(),
+        body(&imported, archive),
+        None,
+    )
+    .unwrap();
+    let own_bytes: &'static [u8] = Vec::leak(model::character(&model::CharacterSpec {
+        own_effects: true,
+        ..model::attached()
+    }));
+    let igz = Igz::parse(own_bytes).unwrap();
+    let hero = body(&igz, archive);
+    let effects: Vec<usize> = (0..igz.objects().len())
+        .filter(|&o| igz.type_name(&igz.objects()[o]) == guac_formats::material::EFFECT_TYPE)
+        .collect();
+    assert_eq!(effects.len(), 7, "one a hung prop");
+    // Without the file's own effects: every hung prop refused by name.
+    let refused = spawn_models(&igz, archive, identity(), hero, None).unwrap();
+    assert!(refused.ir.props.is_empty());
+    assert_eq!(refused.ir.refused.len(), 7);
+    assert!(
+        refused
+            .ir
+            .refused
+            .iter()
+            .all(|r| r.reason.contains("_effect")),
+        "{:?}",
+        refused.ir.refused
+    );
+    // With them exported as tfbmulti2: as the imports read.
+    let own: OwnEffects = effects
+        .iter()
+        .map(|&o| (o, guac_formats::material::TFBMULTI2))
+        .collect();
+    let read = spawn_models(&igz, archive, identity(), hero, Some(&own)).unwrap();
+    assert!(read.ir.refused.is_empty(), "{:?}", read.ir.refused);
+    // Each segment's source object sits one on for every own effect before
+    // it; all else is the imports'.
+    let unsourced = |props: &[Prop]| -> Vec<Prop> {
+        let mut props = props.to_vec();
+        for s in props.iter_mut().flat_map(|p| p.segments.iter_mut()) {
+            s.source = 0;
+        }
+        props
+    };
+    assert!(unsourced(&read.ir.props) == unsourced(&want.ir.props));
+    assert_eq!(read.ir.props.len(), 7);
+    assert_eq!(read.textures, want.textures);
+    // The archives' own effects: global.bld's through its exports alone.
+    let global = disc(&sample());
+    let g = Igz::parse(&global.global).unwrap();
+    let boot = global.bootstrap.clone();
+    let exported = guac_formats::exports::Exports::new(&Igz::parse(&boot).unwrap(), &g).unwrap();
+    assert_eq!(
+        own_effects(GLOBAL, &g, &boot).unwrap(),
+        Some(OwnEffects::of_global(&exported))
+    );
+    assert_eq!(own_effects(archive, &igz, &boot).unwrap(), None);
+    assert!(own_effects(GLOBAL, &g, b"not an igz").is_err());
 }
 
 #[test]

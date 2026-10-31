@@ -267,3 +267,234 @@ fn the_discs_awards_reach_his_figure_and_the_row() {
     );
     println!("load after: {}", load());
 }
+
+/// AH.220: the orb that takes Bob's Eruptor to the cap (96,499 and 1 more:
+/// level 15) runs the level-15 accolade, which unlocks its achievement
+/// through `System - Achievements - Complete Achievement by ID`. The host
+/// keeps the id, nothing is awarded, and the portal manager runs on, its
+/// camera's stretch with it: strict, so any stop halts the test.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_caps_achievement_is_kept_and_the_portal_manager_runs_on() {
+    println!("load before: {}", load());
+    let (mut run, _) = run_on(Mode::Strict);
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.join_with(Values {
+        xp: 96_499,
+        ..Values::default()
+    })
+    .unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..60 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert!(run.world.achievements.is_empty(), "none before the cap");
+    award_experience(&mut run, 1);
+    for k in 0..300 {
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+    }
+    let v = run.figure_values().unwrap();
+    println!(
+        "at the cap: {v:?}; the achievements unlocked {:?}",
+        run.world.achievements
+    );
+    assert_eq!(v.xp, 96_500);
+    assert_eq!(run.world.achievements.len(), 1, "level 15's, once");
+    let pm = scripts::portal_manager_placement(&run.vm, &run.world).unwrap();
+    assert_eq!(run.vm.stopped(pm), None, "the portal manager runs on");
+    assert!(
+        run.player_loop.camera_stopped(&run.vm, pm).is_none(),
+        "the camera's stretch with it"
+    );
+    println!("load after: {}", load());
+}
+
+/// AH.222: the thousandth point takes Bob's Eruptor, bitten to 278 of 290,
+/// to level 2; the level-up's banner (queued by the disc's own award) runs
+/// its course on the TV's step and its end raises his full health to level
+/// 2's, 323 by combat's rule, and his health to it, clearing the flag the
+/// award set (AH.11: 2.37-2.44 s on the oracle, his health held until
+/// then). Strict, so a stop in any of the banner's own macros halts the
+/// test.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_level_up_raises_his_health_to_full_when_its_banner_ends() {
+    println!("load before: {}", load());
+    let (mut run, _) = run_on(Mode::Strict);
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.join_with(Values {
+        xp: 999,
+        ..Values::default()
+    })
+    .unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..60 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    let minion = run.minion.unwrap();
+    assert!(scripts::set_health(&mut run.vm, minion, 278));
+    let pm = scripts::portal_manager_placement(&run.vm, &run.world).unwrap();
+    let joined = |run: &Run| {
+        let players = run.vm.local(pm, "player data").unwrap();
+        run.vm.value(run.vm.set(players).unwrap()[0])
+    };
+    let int = |run: &Run, v: Value, name: &str| {
+        run.vm.field(v, name).and_then(|f| run.vm.value(f).as_i32())
+    };
+    let flag = |run: &Run| {
+        let p = joined(run);
+        let c = run
+            .vm
+            .field(p, "creature info")
+            .map(|v| run.vm.value(v))
+            .unwrap();
+        int(run, c, "invulnerable")
+    };
+    let full = |run: &Run| int(run, joined(run), "hp max");
+    assert_eq!(
+        (run.health(), full(&run), flag(&run)),
+        (Some(278.0), Some(290), Some(0))
+    );
+    award_experience(&mut run, 1);
+    assert_eq!(flag(&run), Some(1), "the award's flag");
+    let mut raised = None;
+    for k in 1..=300 {
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        let now = (run.health(), full(&run), flag(&run));
+        if raised.is_none() && now.1 == Some(323) {
+            raised = Some(k);
+            println!(
+                "step {k} ({:.3} s): health, full health and flag {now:?}",
+                k as f32 / 60.0
+            );
+        }
+        if raised.is_none() {
+            assert_eq!(
+                now,
+                (Some(278.0), Some(290), Some(1)),
+                "step {k}: as the award left him"
+            );
+        }
+    }
+    let k = raised.expect("his full health raised");
+    assert!(
+        (120..=150).contains(&k),
+        "{k} steps after the award (AH.11's 142 records)"
+    );
+    assert_eq!(
+        (run.health(), full(&run), flag(&run)),
+        (Some(323.0), Some(323), Some(0))
+    );
+    let queue = run.vm.field(joined(&run), "hud replace messages").unwrap();
+    assert_eq!(
+        run.vm.set(queue).map(<[Value]>::len),
+        Some(0),
+        "the banner taken off"
+    );
+    println!("load after: {}", load());
+}
+
+/// The spawn part's model paths the TV draws a clone with, off the dump
+/// through the extractor's own readers, `global.bld`'s through its own
+/// effects (openspec AH.39).
+fn drawn_spawn_paths() -> Vec<String> {
+    let usrdir = dump().join("PS3_GAME/USRDIR");
+    let boot = guac_extract::scripts::entry(&usrdir, guac_extract::roster::BOOTSTRAP).unwrap();
+    let mut out = Vec::new();
+    for archive in guac_extract::scripts::spawn_archives() {
+        let entry = guac_extract::scripts::entry(&usrdir, &archive).unwrap();
+        let igz = guac_formats::igz::Igz::parse(&entry).unwrap();
+        let effects = guac_extract::scripts::own_effects(&archive, &igz, &boot).unwrap();
+        let body = guac_extract::scripts::body(&igz, &archive);
+        let read =
+            guac_extract::scripts::spawn_models(&igz, &archive, identity(), body, effects.as_ref())
+                .unwrap();
+        out.extend(
+            guacamole::props::spawn_models(&read.ir)
+                .unwrap()
+                .into_iter()
+                .filter(|m| !m.drawn.segments.is_empty())
+                .map(|m| m.path),
+        );
+    }
+    out
+}
+
+/// AH.39: the thousandth point's level-up runs its flourish from the disc's
+/// own `LevelUp.ai` on the TV's listing, strict: its warp ring at once, its
+/// tube and star as the lightning strikes, each a clone of a `global.bld`
+/// template whose model the spawn part reads and the TV draws (the warp
+/// ring's tfbwarp left out, as a level's other effects are), and all three
+/// taken off within 2 s.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_level_up_spawns_its_flourish_from_global_bld_s_models() {
+    println!("load before: {}", load());
+    let drawn = drawn_spawn_paths();
+    let (mut run, _) = run_on(Mode::Strict);
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.join_with(Values {
+        xp: 999,
+        ..Values::default()
+    })
+    .unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..60 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    let before: Vec<u64> = run.world.clones();
+    award_experience(&mut run, 1);
+    let mut made: Vec<(String, Option<String>, u32, u64)> = Vec::new();
+    for k in 0..=150u32 {
+        if k > 0 {
+            run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+        }
+        for h in run.world.clones() {
+            if before.contains(&h) || made.iter().any(|m| m.3 == h) {
+                continue;
+            }
+            let template = run
+                .world
+                .actor(h)
+                .and_then(|a| a.template)
+                .and_then(|t| run.world.template(t));
+            made.push((
+                template.map(|p| p.name.clone()).unwrap_or_default(),
+                template.and_then(|p| p.model.clone()),
+                k,
+                h,
+            ));
+        }
+    }
+    for (name, model, k, _) in &made {
+        println!("step {k}: {name} {model:?}");
+    }
+    let find = |name: &str| {
+        made.iter()
+            .find(|m| m.0 == name)
+            .unwrap_or_else(|| panic!("{name} made: {made:?}"))
+    };
+    let (ring, tube, star) = (
+        find("LevelUp_WarpRing"),
+        find("LevelUp_Tube"),
+        find("LevelUp_Star"),
+    );
+    assert!(ring.2 <= 1, "the ring at once: {}", ring.2);
+    assert!((10..=30).contains(&tube.2), "the tube: {}", tube.2);
+    assert_eq!(star.2, tube.2, "the star with the tube");
+    for m in [tube, star] {
+        let path = m.1.as_deref().expect("a model");
+        assert!(drawn.iter().any(|d| d == path), "{path} drawn");
+    }
+    // The ring's tfbwarp draws nothing here, as the level's other effects.
+    let ring_model = ring.1.as_deref().expect("a model");
+    assert!(!drawn.iter().any(|d| d == ring_model), "{ring_model}");
+    for m in [ring, tube, star] {
+        assert!(
+            run.world.actor(m.3).is_none_or(|a| a.removed),
+            "{} taken off by step 150",
+            m.0
+        );
+    }
+    println!("load after: {}", load());
+}

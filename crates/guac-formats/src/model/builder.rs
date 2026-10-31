@@ -86,6 +86,12 @@ pub struct MaterialSpec {
     pub name: &'static str,
     /// `_effect`'s export id in `global.bld`.
     pub effect: u32,
+    /// `_effect` as an `igEffect` of the file's own instead of an import
+    /// (`global.bld`'s own models, openspec AH.39): what [`effect`]'s id
+    /// goes by is then the reader's to say.
+    ///
+    /// [`effect`]: MaterialSpec::effect
+    pub own_effect: bool,
     /// (base, ignore); `None` leaves the attr out.
     pub pixel: Option<(u32, u32)>,
     pub vertex: Option<(u32, u32)>,
@@ -135,6 +141,7 @@ impl MaterialSpec {
         Self {
             name,
             effect: TFBMULTI2,
+            own_effect: false,
             pixel: Some((0x1C, 0x2FF)),
             vertex: Some((0x1C, 0x1AFF)),
             binds: vec![
@@ -180,6 +187,9 @@ pub struct CharacterSpec {
     /// at [`ATTACHMENT_COLOUR`]; the hero is the actor drawing the portal
     /// model with a solid that blocks and meets the level.
     pub scripts: Option<crate::attachments::builder::ScriptSpec>,
+    /// Whether those props' techniques name an effect of the file's own, as
+    /// `global.bld`'s models do (openspec AH.39), rather than import one.
+    pub own_effects: bool,
 }
 
 /// The image an attachment prop's material binds as its colour map.
@@ -329,6 +339,7 @@ pub fn sample() -> CharacterSpec {
             },
         ],
         scripts: None,
+        own_effects: false,
     }
 }
 
@@ -464,7 +475,12 @@ pub(crate) fn technique(
     node(b, t, m.name);
     let g = geometry(b, blocks, fixture);
     b.pointer(at(t, 0x28), g);
-    b.import_raw(at(t, 0x34), m.effect, fnv1a32(EFFECTS.as_bytes()));
+    if m.own_effect {
+        let effect = b.object(0, crate::material::EFFECT_TYPE, 0x10);
+        b.pointer(at(t, 0x34), effect);
+    } else {
+        b.import_raw(at(t, 0x34), m.effect, fnv1a32(EFFECTS.as_bytes()));
+    }
 
     let material = b.object(0, "igAttrList", 0x18);
     b.pointer(at(t, 0x30), material);
@@ -776,7 +792,10 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
         let prop = crate::edge::builder::unskinned();
         crate::attachments::builder::scripts_in(b, blocks, scripts, hero, model, &mut |b, t| {
             let name = t.name;
-            let m = crate::level::builder::colour_only(name, ATTACHMENT_COLOUR);
+            let m = MaterialSpec {
+                own_effect: spec.own_effects,
+                ..crate::level::builder::colour_only(name, ATTACHMENT_COLOUR)
+            };
             let technique = technique(b, blocks, &m, &images, &prop);
             crate::level::builder::static_model(b, t.model.unwrap_or_default(), technique)
         });

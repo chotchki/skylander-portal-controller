@@ -435,7 +435,7 @@ fn attachments(
             &mut *local_textures
         };
         let model = if draws_anything(file, d.model) {
-            crate::levels::prop(file, d.model, &path, texture_store)
+            crate::levels::prop(file, d.model, &path, texture_store, None)
                 .map_err(|e| format!("{path}: {e}"))?
         } else {
             // `inviso.mdl`: hung, drawing nothing here.

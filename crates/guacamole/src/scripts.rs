@@ -264,6 +264,7 @@ impl Files {
                     interacts_with_level_mesh: ((c.properties >> 4) & 1) as i32,
                     acts_as_actor_surface: ((c.properties >> 5) & 1) as i32,
                     shape: (c.properties & 7) as i32,
+                    angles: c.transform.rotation,
                 });
                 out.placed.push(Placed {
                     obj: Obj {
@@ -472,6 +473,11 @@ pub struct ScriptWorld {
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
+    /// The achievements the scripts unlocked, by id, in the order written
+    /// (`system.game achievement`, openspec AH.220): kept and logged, none
+    /// awarded until AM's per-profile achievements read them
+    /// (stand-in ledger: `achievements`).
+    pub achievements: Vec<i32>,
     /// The placements the VM leaves inert, off the whitelist (design
     /// decision 6): a script waking one is logged and listed in `woken`.
     pub(crate) inert: std::collections::HashSet<Handle>,
@@ -630,6 +636,7 @@ impl ScriptWorld {
             time_scale: FULL_SPEED,
             load_level: Value::Null,
             requests: Vec::new(),
+            achievements: Vec::new(),
             inert: Default::default(),
             woken: Vec::new(),
             fired: Vec::new(),
@@ -1070,6 +1077,19 @@ impl ScriptWorld {
         self.actors.get(&h)
     }
 
+    /// `h`'s tint set as a script's write of `placement.tint` leaves it (RGBA,
+    /// red in the high byte): a test's, where no script fades one. False when
+    /// the scripts reach no actor there.
+    pub fn set_tint(&mut self, h: Handle, packed: u32) -> bool {
+        match self.actors.get_mut(&h) {
+            Some(a) => {
+                a.tint = packed;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Each file placement's handle, by its object.
     pub fn handles(&self) -> &HashMap<Obj, Handle> {
         &self.objects
@@ -1206,6 +1226,8 @@ impl ScriptWorld {
             Member::GameLanguage | Member::ConsoleLanguage => Value::Int(ENGLISH),
             Member::TimeScale => Value::Float(self.time_scale),
             Member::LoadLevel => self.load_level,
+            // The last unlocked, 0 before any (nothing on the disc reads it).
+            Member::Achievement => Value::Int(self.achievements.last().copied().unwrap_or(0)),
             Member::Controller(n) => Value::Entity(self.controllers[n]),
             Member::Physical(n) => Value::Entity(self.physical[n]),
             Member::Portal => Value::Entity(self.portal),
@@ -1254,6 +1276,19 @@ impl ScriptWorld {
         match (m, v) {
             (Member::TimeScale, Value::Float(f)) => self.time_scale = f,
             (Member::LoadLevel, v) => self.load_level = v,
+            // An unlock (openspec AH.220): kept and logged, nothing awarded
+            // (stand-in ledger: `achievements`).
+            (Member::Achievement, v) => {
+                let id = match v {
+                    Value::Int(i) => i,
+                    other => other.as_f32().ok_or(HostFault::Nothing)? as i32,
+                };
+                self.achievements.push(id);
+                info!(
+                    id,
+                    "a script unlocked an achievement: kept, nothing awarded until per-profile achievements"
+                );
+            }
             (Member::Buffer, Value::Float(f)) => match on.and_then(|h| self.actors.get_mut(&h)) {
                 Some(k) => {
                     k.buffer = f;
@@ -1760,6 +1795,12 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
     "Pan_Show_Norticu.ai",
 ];
 
+/// What the scripts spawn that draws from `global.bld`'s own models (openspec
+/// AH.39), by file name: the level-up's flourish (its warp ring, tube and
+/// star, and the shockwave its scripts strike) and the hero's death actor
+/// (the death stars).
+pub const EFFECT_SCRIPTS: [&str; 2] = ["LevelUp.ai", "MinionDeathActor.ai"];
+
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
 pub fn is_camera_script(path: &str) -> bool {
@@ -1770,8 +1811,9 @@ pub fn is_camera_script(path: &str) -> bool {
 /// pickups and AH.21's breakables and the members they reach (the
 /// creatures' and the loop's: the destructibles system makes a breakable a
 /// combat target), AG.60's start scripts on the props and AG.28's camera
-/// volumes and activator, the first fight's placements left inert until
-/// AH.25's entry brings them.
+/// volumes and activator, the level-up's and the death actor's
+/// ([`EFFECT_SCRIPTS`], AH.39), the first fight's placements left inert
+/// until AH.25's entry brings them.
 pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
@@ -1780,6 +1822,8 @@ pub fn smash_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::CAMERA);
     // What AH.8's route reaches past those (openspec AH.28).
     members::register(&mut c.members, members::ROUTE);
+    // And the level-up's flourish (openspec AH.39).
+    members::register(&mut c.members, members::LEVEL_UP);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -1792,6 +1836,7 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -3144,6 +3189,200 @@ mod tests {
         assert_eq!(w.get(&level, &mut NoEngine), Ok(Value::Null));
         w.end_step();
         assert_eq!(w.requests.len(), 1, "taken once");
+    }
+
+    /// AH.220: a script that unlocks an achievement (`set system.game
+    /// achievement = 23`, as `System - Achievements - Complete Achievement
+    /// by ID` does) runs on past the write, in strict mode and in play mode
+    /// alike, under the TV's members: the host keeps each id written in
+    /// order and reads the last back.
+    #[test]
+    fn an_achievements_unlock_is_kept_and_its_placement_runs_on() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_script::{Role, Unit};
+
+        const PATH: &str = "C:/tfb/Synthetic/Unlocker.ai";
+        let mut b = IgzBuilder::new();
+        let unlocker;
+        {
+            let mut w = Writer::new(&mut b);
+            unlocker = w.b.object(0, "tfbActorInfo", 0xF8);
+            let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (macros, _) = w.open(Class::MacroSection, "MACROS");
+            w.end_block(macros);
+            // The tick: the unlock, then a count past it.
+            let id = w.int(23);
+            w.set(&[El::Member("system", "game achievement")], id);
+            w.inc(&[El::Local(ticks)]);
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let obj = Obj {
+            unit: 0,
+            index: igz.object_at(unlocker).unwrap().0 as u32,
+        };
+        let files = Files {
+            lights: HashMap::new(),
+            placed: vec![Placed::named(obj, "Unlocker", Some(PATH), RUNNING)],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+            emitters: HashMap::new(),
+        };
+        let handles = headless_handles(&files);
+        for mode in [Mode::Strict, Mode::Play] {
+            let mut c = smash_config(mode);
+            c.whitelist = Whitelist::All;
+            let mut vm = init_chain(program.clone(), &files, &handles, &[0], c);
+            let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            let id = vm.placement_of(handles[&obj]).unwrap();
+            for _ in 0..3 {
+                let mut spawn = headless_spawner(1 << 40);
+                let mut host = WorldHost {
+                    world: &mut world,
+                    engine: &mut NoEngine,
+                    generator: &mut Generator::seeded(1),
+                    spawn: &mut spawn,
+                };
+                let report = vm
+                    .step(&mut host)
+                    .unwrap_or_else(|h| panic!("{mode:?}: {h}"));
+                assert!(report.stopped.is_empty(), "{mode:?}: {:?}", report.stopped);
+            }
+            assert_eq!(vm.stopped(id), None, "{mode:?}");
+            assert_eq!(vm.local(id, "ticks"), Some(Value::Int(3)), "{mode:?}");
+            assert_eq!(world.achievements, [23, 23, 23], "{mode:?}");
+            assert_eq!(
+                world.get(&at("system", "game achievement", None), &mut NoEngine),
+                Ok(Value::Int(23)),
+                "{mode:?}"
+            );
+        }
+        // None unlocked reads 0; the next written is the one read.
+        let (mut w, ..) = world();
+        let achievement = at("system", "game achievement", None);
+        assert_eq!(w.get(&achievement, &mut NoEngine), Ok(Value::Int(0)));
+        w.set(&achievement, Value::Int(4), &mut NoEngine).unwrap();
+        w.set(&achievement, Value::Int(9), &mut NoEngine).unwrap();
+        assert_eq!(w.achievements, [4, 9]);
+        assert_eq!(w.get(&achievement, &mut NoEngine), Ok(Value::Int(9)));
+    }
+
+    /// AH.39: the TV's run lists the level-up's flourish and the death
+    /// actor by file name, and the flourish's rumble as it strikes is a cell
+    /// of the TV's members: a synthetic `LevelUp.ai` placement writing it
+    /// each tick, and a `MinionDeathActor.ai` one counting, run on under the
+    /// TV's own listing, strict and play alike; one under another file name
+    /// stays inert.
+    #[test]
+    fn the_level_up_and_the_death_actor_run_on_the_tvs_listing() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_script::{Role, Unit};
+
+        const LEVEL_UP: &str = "C:/tfb/Synthetic/LevelUp.ai";
+        const DEATH: &str = "C:/tfb/Synthetic/MinionDeathActor.ai";
+        const OTHER: &str = "C:/tfb/Synthetic/Unlisted.ai";
+        let mut b = IgzBuilder::new();
+        let mut actors = Vec::new();
+        {
+            let mut w = Writer::new(&mut b);
+            for (path, rumbles) in [(LEVEL_UP, true), (DEATH, false), (OTHER, true)] {
+                let actor = w.b.object(0, "tfbActorInfo", 0xF8);
+                actors.push(actor);
+                let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+                let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+                let (start, _) = w.open(Class::StartUp, "STARTUP");
+                w.end_block(start);
+                let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+                w.end_block(shut);
+                let (macros, _) = w.open(Class::MacroSection, "MACROS");
+                w.end_block(macros);
+                if rumbles {
+                    let seconds = w.float(0.5);
+                    w.set(&[El::Member("soundinfo", "rumble duration")], seconds);
+                }
+                w.inc(&[El::Local(ticks)]);
+                w.end_block(pre);
+                w.end(path);
+            }
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let objs: Vec<Obj> = actors
+            .iter()
+            .map(|a| Obj {
+                unit: 0,
+                index: igz.object_at(*a).unwrap().0 as u32,
+            })
+            .collect();
+        let files = Files {
+            lights: HashMap::new(),
+            placed: vec![
+                Placed::named(objs[0], "LevelUp", Some(LEVEL_UP), RUNNING),
+                Placed::named(objs[1], "MinionDeath_Actor", Some(DEATH), RUNNING),
+                Placed::named(objs[2], "Unlisted", Some(OTHER), RUNNING),
+            ],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+            emitters: HashMap::new(),
+        };
+        let handles = headless_handles(&files);
+        for mode in [Mode::Strict, Mode::Play] {
+            let mut vm = init_chain(program.clone(), &files, &handles, &[0], smash_config(mode));
+            let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            let ids: Vec<PlacementId> = objs
+                .iter()
+                .map(|o| vm.placement_of(handles[o]).unwrap())
+                .collect();
+            for _ in 0..3 {
+                let mut spawn = headless_spawner(1 << 40);
+                let mut host = WorldHost {
+                    world: &mut world,
+                    engine: &mut NoEngine,
+                    generator: &mut Generator::seeded(1),
+                    spawn: &mut spawn,
+                };
+                let report = vm
+                    .step(&mut host)
+                    .unwrap_or_else(|h| panic!("{mode:?}: {h}"));
+                assert!(report.stopped.is_empty(), "{mode:?}: {:?}", report.stopped);
+            }
+            for (id, ticks) in ids.iter().zip([Some(3), Some(3), None]) {
+                assert_eq!(vm.stopped(*id), None, "{mode:?}");
+                assert_eq!(
+                    vm.local(*id, "ticks").and_then(|v| v.as_i32()),
+                    ticks,
+                    "{mode:?}"
+                );
+            }
+            assert!(vm.inert().contains(&handles[&objs[2]]), "{mode:?}");
+        }
     }
 
     #[test]
