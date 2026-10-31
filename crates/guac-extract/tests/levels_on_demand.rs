@@ -125,14 +125,20 @@ fn any_level_on_the_disc_extracts_on_demand_beside_the_first_runs() {
         "an on-demand level leaves the first run complete"
     );
 
-    // Resumed: one part lost, it alone is read again; the failing scene
+    // Resumed: one part lost and one cut short after its record, as a crash
+    // before an unflushed write reached the disc leaves it (openspec AS.4):
+    // those two alone are read again, each whole again; the failing scene
     // tried again and reported again; chapter 1 untouched.
     let lights = levels::part_path(IrFormat::Ron, ARENA, levels::LIGHTS);
+    let collision = levels::part_path(IrFormat::Ron, ARENA, levels::COLLISION);
+    let whole = fs::read(dir.path().join(&collision)).unwrap();
     fs::remove_file(dir.path().join(&lights)).unwrap();
+    fs::write(dir.path().join(&collision), &whole[..whole.len() / 2]).unwrap();
     let again = stages::extract_level(dir, ARENA, IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!((again.parts_read, again.parts_kept), (1, PARTS.len() - 2));
+    assert_eq!((again.parts_read, again.parts_kept), (2, PARTS.len() - 3));
     assert_eq!(again.failed.len(), 1);
     assert!(dir.path().join(&lights).is_file());
+    assert_eq!(fs::read(dir.path().join(&collision)).unwrap(), whole);
     let kept = stages::level_stage(dir, IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!((kept.parts_read, kept.parts_kept), (0, PARTS.len()));
 }

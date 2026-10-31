@@ -20,7 +20,13 @@
 //! section 4), so a material carrying one is refused with
 //! [`ErrorKind::Feature`] rather than drawn without it. A level's materials
 //! ([`Drawn::Level`], AG.15) carry the gloss map on one material of level
-//! 213's, so bit 7 is taken there; 6 and 9 are refused all the same.
+//! 213's, so bit 7 is taken there, and bit 6 on the water of six other
+//! levels (openspec AS.5: a level's scene is one part, and one material
+//! refusing it left the whole level out), kept in the mask for the renderer
+//! to draw; 9 is refused all the same. A level's normal map may lack its
+//! `TFN1` hint (AS.5: the hub's card-table felt, the one on the disc): it
+//! reads as the normal map its role makes it, the hint deciding nothing the
+//! extract keeps.
 //!
 //! A level also draws with three other effects ([`EffectMaterial`]): the
 //! grass's `0xAA6`, `0xAA8` and tfbwarp. Their textures are kept by unit and
@@ -108,17 +114,18 @@ pub const PIXEL_UNDRAWN: [u8; 3] = [6, 7, 9];
 /// Vertex bits no character sets, plus skinning, which no variant compiles.
 pub const VERTEX_UNDRAWN: [u8; 4] = [6, 7, 9, 11];
 /// What a level's materials may not set: as a character's, bar the gloss
-/// map (bit 7), which level 213 sets on one material (AG.15).
-pub const LEVEL_PIXEL_UNDRAWN: [u8; 2] = [6, 9];
-pub const LEVEL_VERTEX_UNDRAWN: [u8; 3] = [6, 9, 11];
+/// map (bit 7), which level 213 sets on one material (AG.15), and layer 4
+/// by positions (bit 6), which six levels' water sets (openspec AS.5).
+pub const LEVEL_PIXEL_UNDRAWN: [u8; 1] = [9];
+pub const LEVEL_VERTEX_UNDRAWN: [u8; 2] = [9, 11];
 
 /// Whose material is read, which decides the bits refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Drawn {
     /// A character's (AE.6): bits 6, 7 and 9 refused.
     Character,
-    /// A level's scene or prop (AG.15): bits 6 and 9 refused, the gloss map
-    /// taken.
+    /// A level's scene or prop (AG.15, AS.5): bit 9 refused, the gloss map
+    /// and layer 4 by positions taken, a normal map without its hint read.
     Level,
 }
 
@@ -858,7 +865,7 @@ impl<'a> Material<'a> {
         }
         let mut textures = Vec::with_capacity(roles.len());
         for (role, &bind) in roles.into_iter().zip(&attrs.binds) {
-            textures.push(bound(igz, passes, role, bind)?);
+            textures.push(bound(igz, passes, role, bind, drawn)?);
         }
         let (scrolls, tracks) = tracks(igz, t, technique.material_anim, drawn)?;
         Ok(Self {
@@ -1018,12 +1025,14 @@ fn with_fog(m: VariantMask) -> u32 {
 }
 
 /// `bind` in `role`, checked: its cached unit is the role's, it has an
-/// image, and it carries `TFN1` exactly when the role is a normal map.
+/// image, and it carries `TFN1` exactly when the role is a normal map (a
+/// level's normal map may lack it).
 fn bound<'a>(
     igz: &Igz<'a>,
     passes: Passes<'_, 'a>,
     role: Role,
     bind: usize,
+    drawn: Drawn,
 ) -> Result<Bound<'a>, FormatError> {
     let b = passes.binds[&bind];
     let unit = b.bind.unit();
@@ -1041,7 +1050,8 @@ fn bound<'a>(
         .ok_or_else(|| err(igz, bind, "_texture", ErrorKind::Missing))?;
     let sampler = passes.textures[&texture];
     let hinted = sampler.format_hint == TFN1;
-    if hinted != role.is_normal_map() {
+    let unhinted_level_normal = drawn == Drawn::Level && role.is_normal_map() && !hinted;
+    if hinted != role.is_normal_map() && !unhinted_level_normal {
         return Err(err(
             igz,
             texture,

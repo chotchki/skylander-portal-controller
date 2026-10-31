@@ -296,6 +296,44 @@ fn the_definition_is_the_script_that_adds_the_zones() {
     assert_eq!(got(a.start_zone().unwrap()), expected(&want));
 }
 
+/// An argument written as two literals under an operator reads as the VM
+/// computes it (openspec AS.6: level 206's fog start `122 + 0`); a division
+/// by zero or two classes is refused.
+#[test]
+fn an_argument_of_two_literals_is_computed() {
+    let zones = [ZoneCall::sample(0, 1)];
+    let start = |operator, b, float| {
+        let bytes = level(
+            &[],
+            &zones,
+            &[],
+            &Shape {
+                start_as: Some((operator, b, float)),
+                ..Shape::default()
+            },
+        );
+        read(&bytes).map(|a| a.zones[0].fog.start)
+    };
+    let s = zones[0].start;
+    assert_eq!(start(0, 0, false).unwrap(), s);
+    assert_eq!(start(0, 70, false).unwrap(), s + 70);
+    assert_eq!(start(1, 1, false).unwrap(), s - 1);
+    assert_eq!(start(2, 3, false).unwrap(), s * 3);
+    assert_eq!(start(3, 2, false).unwrap(), s / 2);
+    for (operator, b, float, why) in [
+        (3, 0, false, "a division by zero"),
+        (0, 1, true, "an integer and a float"),
+        (4, 1, false, "an operator past 3"),
+    ] {
+        let e = start(operator, b, float).unwrap_err();
+        assert_eq!(e.field, "_RHS", "{why}");
+        assert!(
+            matches!(e.kind, ErrorKind::Unsupported { .. }),
+            "{why}: {e}"
+        );
+    }
+}
+
 /// No script whose STARTUP adds a zone (a script named as a definition
 /// whose STARTUP adds nothing, one that only switches, or none at all)
 /// reads as no zones and no definition: an arena challenge sets none up.

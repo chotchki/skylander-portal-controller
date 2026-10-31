@@ -139,3 +139,10 @@ path = "fuzz_targets/script_graph.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "bink_header"
+path = "fuzz_targets/bink_header.rs"
+test = false
+doc = false
+bench = false

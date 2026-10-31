@@ -13,6 +13,7 @@
 
 pub mod atmosphere;
 pub mod attachments;
+pub mod bink;
 pub mod collision;
 pub mod edge;
 mod error;

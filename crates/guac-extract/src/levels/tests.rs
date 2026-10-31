@@ -197,14 +197,18 @@ fn a_level_material_carries_its_glow_beside_its_tracks() {
     assert_eq!(ground.params.glow, Glow::None);
 }
 
+/// A level material asking for bit 6 (layer 4 by positions, six levels'
+/// water) reads with the bit kept (openspec AS.5); one asking for bit 9 is
+/// refused by name.
 #[test]
-fn a_level_material_asking_for_bit_6_is_refused_by_name() {
+fn a_level_material_keeps_bit_6_and_bit_9_is_refused_by_name() {
     let mut spec = stage_sample();
     spec.scene[0].pixel = Some((0x5C, 0x3FF));
-    let e = scene(parsed(&spec), LEVEL, identity()).unwrap_err();
-    assert!(e.contains("Ground"), "{e}");
-    assert!(e.contains("layer4UsesPositions"), "{e}");
-    // Bit 9 too.
+    let r = scene(parsed(&spec), LEVEL, identity()).unwrap();
+    let LevelMaterial::Multi2(ground) = &r.ir.scenes[0].materials[0] else {
+        panic!("tfbmulti2");
+    };
+    assert_eq!(ground.pixel.base, 0x5C);
     let mut spec = stage_sample();
     spec.scene[4].pixel = Some((0x200, 0x3FF));
     let e = scene(parsed(&spec), LEVEL, identity()).unwrap_err();
