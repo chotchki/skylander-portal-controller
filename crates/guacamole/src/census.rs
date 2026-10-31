@@ -458,16 +458,16 @@ pub const PARTICLES: &[Row] = &[row(0x0000, 0x1000, ADD, false, false, false, 1,
 /// their stand-in (stand-in ledger: `grass-warp`), in the level's scene,
 /// in the grass's pass
 /// ([`Pass::Grass`]), each once.
-pub const GRASS: &[Row] = &[row(0x3d20, 0x3520, O, true, true, true, 1, false, true)];
+pub const GRASS: &[Row] = &[row(0x3d00, 0x3500, O, true, true, true, 1, false, true)];
 
 /// Every key a warp draws (openspec AG.24): chapter 1's water's and the
 /// level-up's ring's (`global.bld`'s), tfbwarp's in the warp's pass
 /// ([`Pass::Warp`]), each once; stand-in ledger: `grass-warp`.
 pub const WARP: &[Row] = &[
-    row(0x0000, 0x0000, O, true, false, false, 1, false, false),
-    row(0x0000, 0x0000, O, true, false, false, 1, false, true),
-    row(0x0000, 0x0000, O, true, true, false, 1, false, false),
-    row(0x0000, 0x0000, O, true, true, false, 1, false, true),
+    row(0x0000, 0x0000, O, false, false, false, 1, false, false),
+    row(0x0000, 0x0000, O, false, false, false, 1, false, true),
+    row(0x0000, 0x0000, O, false, true, false, 1, false, false),
+    row(0x0000, 0x0000, O, false, true, false, 1, false, true),
 ];
 
 /// Their glowing generators' level glow masks (a bloom on the disc) past

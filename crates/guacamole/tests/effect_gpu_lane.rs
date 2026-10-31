@@ -13,14 +13,16 @@
 //!
 //! - The grass: a shell over the whole frame, its blade and height maps one
 //!   value each (so every pixel's reach is the same), its height up the
-//!   stack the case's. It draws its colour map darkened toward the roots
-//!   where the reach clears the floor raised by its height, and leaves the
-//!   background where it doesn't.
+//!   stack the case's. It draws its colour map where the reach clears the
+//!   floor raised by its height (as is: tfbgrass has no term for the
+//!   height, the review of AG.24), and leaves the background where it
+//!   doesn't.
 //! - The warp: a surface over the whole frame in front of a background
 //!   whose left half is one colour and right half another. Its ripple map
 //!   at a half bends nothing, so it shows the background as it is; at 1 in
-//!   red it reads the frame `BEND` of its width to the right, moving the
-//!   halves' edge left by that much.
+//!   green it reads the frame `BEND` of its width to the right, moving the
+//!   halves' edge left by that much; at 1 in red it reads the frame lower
+//!   down, which leaves the edge where it is (tfbwarp's axes).
 //!
 //! `cargo test -p guacamole --release --test effect_gpu_lane -- --ignored --nocapture --test-threads 1`
 
@@ -92,7 +94,7 @@ struct Case {
     kind: Kind,
 }
 
-const CASES: [Case; 6] = [
+const CASES: [Case; 7] = [
     Case {
         name: "the ground's shell, past the floor",
         kind: Kind::Grass {
@@ -131,25 +133,30 @@ const CASES: [Case; 6] = [
     },
     Case {
         name: "a warp bending right",
+        kind: Kind::Warp { ripple: [0.5, 1.0] },
+    },
+    Case {
+        name: "a warp bending down",
         kind: Kind::Warp { ripple: [1.0, 0.5] },
     },
 ];
 
-/// The grass's rule: a shell draws where its reach (the blade map's value
-/// times the height map's squared) clears the floor raised by its height up
-/// the stack, darkened toward the roots; `None` where it leaves the
+/// The grass's rule: a shell draws its colour map as is where its reach
+/// (the blade map's value times the height map's squared) clears the floor
+/// raised by its height up the stack; `None` where it leaves the
 /// background.
 fn grass_drawn(shell: f32, blade: f32, height: f32) -> Option<f32> {
     let reach = blade * height * height;
     let floor = GRASS_FLOOR + (1.0 - GRASS_FLOOR) * shell;
-    (reach > floor).then_some(0.7 + 0.3 * shell)
+    (reach > floor).then_some(1.0)
 }
 
 /// The warp's rule: pixel column `x` shows the background's column `x`
-/// moved right by the ripple's red, mapped from 0..1 to -1..1, times `BEND`
-/// of the frame.
+/// moved right by the ripple's green, mapped from 0..1 to -1..1, times
+/// `BEND` of the frame (its red moves the row, which the background's
+/// halves don't show).
 fn warp_reads(x: u32, ripple: [f32; 2]) -> f32 {
-    x as f32 + 0.5 + (2.0 * ripple[0] - 1.0) * BEND * WIDTH as f32
+    x as f32 + 0.5 + (2.0 * ripple[1] - 1.0) * BEND * WIDTH as f32
 }
 
 fn f16_to_f32(h: u16) -> f32 {
@@ -561,8 +568,10 @@ fn the_fixtures_are_what_the_lane_says() {
     // Short with the height squared, reaching without.
     let floor = GRASS_FLOOR + (1.0 - GRASS_FLOOR) * 0.5;
     assert!((0.6875f32 * 0.6875..0.6875).contains(&floor));
-    // A half bends nothing; 1 moves the edge left by the bend.
+    // A half bends nothing; 1 in green moves the edge left by the bend, 1
+    // in red not at all.
     assert_eq!(warp_reads(10, [0.5, 0.5]), 10.5);
-    assert_eq!(warp_reads(10, [1.0, 0.5]), 26.5);
+    assert_eq!(warp_reads(10, [0.5, 1.0]), 26.5);
+    assert_eq!(warp_reads(10, [1.0, 0.5]), 10.5);
     const { assert!(EFFECT < BACKGROUND) };
 }

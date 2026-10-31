@@ -465,17 +465,17 @@ fn fragment(in: Interpolants) -> @location(0) vec4<f32> {
     return shaded;
 }
 
-// A grass shell (AG.24, tfbgrass's stand-in): the colour pass's colour,
-// darker toward the roots, cut to the blades that reach its height up the
-// stack (`effect.x`, 0 the ground's shell to 1 the top), above a floor
-// (`effect.w`) even on the ground's shell, so the level's own ground shows
-// between the blades and a patch thins out over its edges rather than
-// ending on a line. A blade's reach is its blade map's value (the normal
-// map's slot, read as stored, tiled by `effect.z`) times the square of the
-// height map's (the second normal map's slot, tiled by `effect.y`: most
-// blades short, the tall ones in clumps) times where the grass grows, the
-// vertex colour's alpha eased in. No wind. Look choices,
-// `character::effect`'s.
+// A grass shell (AG.24, tfbgrass's stand-in): the colour pass's colour
+// (tfbgrass's own has no term for the height up the stack, so none here),
+// cut to the blades that reach its height up the stack (`effect.x`, 0 the
+// ground's shell to 1 the top), above a floor (`effect.w`) even on the
+// ground's shell, so the level's own ground shows between the blades and a
+// patch thins out over its edges rather than ending on a line. A blade's
+// reach is its blade map's value (the normal map's slot, read as stored,
+// tiled by `effect.z`) times the square of the height map's (the second
+// normal map's slot, tiled by `effect.y`: most blades short, the tall ones
+// in clumps) times where the grass grows, the vertex colour's alpha eased
+// in. No wind. Look choices, `character::effect`'s.
 @fragment
 fn grass(in: Interpolants) -> @location(0) vec4<f32> {
     let shaded = shade(in);
@@ -489,19 +489,20 @@ fn grass(in: Interpolants) -> @location(0) vec4<f32> {
     if reach <= mix(character.effect.w, 1.0, character.effect.x) {
         discard;
     }
-    return vec4<f32>(shaded.rgb * (0.7 + 0.3 * character.effect.x), 1.0);
+    return vec4<f32>(shaded.rgb, 1.0);
 }
 
 // A warp (AG.24, tfbwarp's stand-in): the frame Bevy copied before its
 // transmissive phase, read where this pixel is, bent by the ripple map (the
 // normal map's slot, read as stored, through set 0's transform, which its
-// scroll moves) by `effect.x` of the frame either way. A view without the
-// copy (a camera without screen-space transmission) draws it black.
+// scroll moves) by `effect.x` of the frame either way, across by its green
+// and down by its red, as tfbwarp reads it. A view without the copy (a
+// camera without screen-space transmission) draws it black.
 @fragment
 fn warp(in: Interpolants) -> @location(0) vec4<f32> {
     var behind = vec4<f32>(0.0);
 @if(VIEW_TRANSMISSION_TEXTURE) {
-    let ripple = textureSample(normal_map, normal_sampler, in.uv01.xy).rg * 2.0 - 1.0;
+    let ripple = textureSample(normal_map, normal_sampler, in.uv01.xy).gr * 2.0 - 1.0;
     let at = (in.clip_position.xy - view.viewport.xy) / view.viewport.zw + ripple * character.effect.x;
     behind = textureSample(view_bindings::view_transmission_texture, view_bindings::view_transmission_sampler, at);
 }

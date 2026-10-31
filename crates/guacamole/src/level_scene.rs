@@ -454,16 +454,18 @@ pub fn drawn_material(m: &LevelMaterial) -> Option<model::Material> {
 /// one 111-vertex draw a frame through its 16 x 16 `shadow_grey3`, never a
 /// main-pass draw), and for an effect missing what its own material reads.
 ///
-/// - The grass, tfbgrass's shells: the colour map (unit 0) lit as a level's
-///   ground is (directional lights, the vertex colour; fog, the level's
-///   shadow and point lights the scene's), the height map (unit 1) and the
-///   blade map (unit 2) in the normal maps' slots, read as stored; one-sided
-///   shells drawn two-sided, opaque, writing depth, cut to their blades
+/// - The grass, tfbgrass's shells: the colour map (unit 0) lit as the
+///   ground it grows on is (the vertex colour, no directional light: every
+///   chapter 1 ground material binding the grass's colour map owns it off,
+///   and tfbgrass's program has no Lambert term; fog, the level's shadow and
+///   point lights the scene's), the height map (unit 1) and the blade map
+///   (unit 2) in the normal maps' slots, read as stored; one-sided shells
+///   drawn two-sided, opaque, writing depth, cut to their blades
 ///   ([`Pass::Grass`](crate::character::key::Pass::Grass)). No wind.
 /// - The warp, tfbwarp: its ripple map (unit 0) in the normal map's slot and
-///   the colour map's, owning every scene switch off, opaque as Bevy's
-///   transmissive phase wants, its sides and depth write and scroll its own
-///   ([`Pass::Warp`](crate::character::key::Pass::Warp)).
+///   the colour map's, owning every scene switch off, opaque, writing no
+///   depth (what blends behind it draws over it), its sides and scroll its
+///   own ([`Pass::Warp`](crate::character::key::Pass::Warp)).
 pub fn effect_material(m: &LevelMaterial) -> Option<(model::Material, Effect)> {
     let LevelMaterial::Effect(e) = m else {
         return None;
@@ -480,12 +482,14 @@ pub fn effect_material(m: &LevelMaterial) -> Option<(model::Material, Effect)> {
         guac_formats_ids::GRASS => {
             let (colour, height, blade) = (unit(0)?, unit(1)?, unit(2)?);
             (
+                // The ground's masks under it (`cliff_wall_ground`'s, its
+                // layers aside): the directional light owned off.
                 model::Mask {
-                    base: 1 << bit::DIRECTIONAL,
+                    base: 0,
                     ignore: 0x2FF,
                 },
                 model::Mask {
-                    base: 1 << bit::DIRECTIONAL | 1 << bit::VERTEX_COLOUR,
+                    base: 1 << bit::VERTEX_COLOUR,
                     ignore: 0x1AFF,
                 },
                 vec![
@@ -517,9 +521,16 @@ pub fn effect_material(m: &LevelMaterial) -> Option<(model::Material, Effect)> {
                     slot(ripple, model::TextureRole::Layer1ColorMap),
                     slot(ripple, model::TextureRole::Layer1BaseNormalMap),
                 ],
+                // No depth: Bevy copies the frame for its transmissive phase
+                // before anything blended draws (the sky, the stream in the
+                // chute, particles), so a warp writing depth kept them off
+                // every pixel behind it (the chute's stream gone under
+                // chapter 1's warp, the sky behind it dark red at anchor B:
+                // the second review of AG.24); unwritten, they draw over it,
+                // unbent. tfbwarp writes depth, its copy taken after them.
                 model::RenderStates {
                     blend: model::Blend::Opaque,
-                    depth_write: e.states.depth_write,
+                    depth_write: false,
                     two_sided: e.states.two_sided,
                     alpha_test: None,
                 },
@@ -1549,13 +1560,15 @@ mod tests {
                 alpha_test: Some(0.5),
             }
         );
-        // In the level's scene: lit, fogged, shadowed, its point lights.
+        // In the level's scene: fogged, shadowed, its point lights, its
+        // vertex colour, and no directional light, as the ground it grows on.
         let l = level_lights(&lights(), &zone()).unwrap();
         let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
         let mut built = CharacterMaterial::from_ir(&grass, &scene, |_| Handle::default()).unwrap();
         effect.apply(&mut built);
         let sw = built.key.shader.switches();
-        assert!(sw.directional && sw.fog && sw.shadows && sw.vertex_colour);
+        assert!(!sw.directional, "owned off, as the ground's");
+        assert!(sw.fog && sw.shadows && sw.vertex_colour);
         assert_eq!(sw.point_lights, 3);
         assert_eq!(built.key.pass, Pass::Grass);
         assert_eq!(built.key.entry_point(), "grass");
@@ -1570,9 +1583,10 @@ mod tests {
             "owning every scene switch off"
         );
         assert_eq!(built.key.states.blend, Blend::Opaque);
+        assert!(built.key.states.two_sided, "its own sides");
         assert!(
-            built.key.states.two_sided && built.key.states.depth_write,
-            "its own sides and depth write"
+            !built.key.states.depth_write,
+            "no depth, though its IR writes it: what blends behind it draws over it"
         );
         assert!(bevy::pbr::Material::reads_view_transmission_texture(&built));
         assert_eq!(

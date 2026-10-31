@@ -22,7 +22,8 @@
 //!   actors` goes off as it falls).
 //! - What it draws ([`PropModel`]): its model off the props part, each
 //!   tfbmulti2 segment on its material as the level's draw
-//!   ([`level_scene::drawn`]), the other effects' left out (AG.24), placed by
+//!   ([`level_scene::drawn`]), a grass's or a warp's on its stand-in and
+//!   tfbshadow's left out (AG.24), placed by
 //!   its position, its Euler angles (AF.9's convention) and its scale. A
 //!   skinned model with no script, or one the stage refused, draws nothing.
 //!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60), those
@@ -395,8 +396,8 @@ pub fn actor_body(prop: &Prop, a: &Actor) -> Option<Body> {
 /// The models the extract's spawn part holds for one archive (AH.22), as a
 /// prop draws its own (openspec AH.24: what a clone of a template naming
 /// one draws): each static model's tfbmulti2 segments on their materials,
-/// the other effects' left out as a level's are; a skinned one draws
-/// nothing here.
+/// its grass and warps on their stand-ins and tfbshadow's left out as a
+/// level's are (AG.24); a skinned one draws nothing here.
 pub fn spawn_models(spawns: &guac_ir::spawn::SpawnModels) -> Result<Vec<PropModel>, LevelError> {
     spawns
         .props
@@ -458,8 +459,8 @@ pub fn faded_keys(models: &[PropModel], scene: &Scene) -> Result<Vec<WarmKey>, L
 }
 
 /// A static prop's drawn part, as a scene's: its tfbmulti2 segments on
-/// their materials (a layer's unset values at the level's defaults), the
-/// other effects' left out.
+/// their materials (a layer's unset values at the level's defaults), its
+/// grass and warps on their stand-ins, tfbshadow's left out (AG.24).
 fn model_drawn(model: &guac_ir::level::Prop) -> Result<Drawn, LevelError> {
     level_scene::drawn(
         SceneGraph {

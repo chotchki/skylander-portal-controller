@@ -2,9 +2,9 @@
 //! decision 9), each on the character material through a pass of its own
 //! (stand-in ledger: `grass-warp`): tfbgrass's shells cut to their blades
 //! ([`Pass::Grass`]), no wind, and tfbwarp's surfaces bending the frame
-//! behind them ([`Pass::Warp`]). The third, tfbshadow's `player_shadow`,
-//! is the original's shadow map's and draws nothing here
-//! (`level_scene::effect_material`).
+//! behind them by tfbwarp's own reach ([`Pass::Warp`]). The third,
+//! tfbshadow's `player_shadow`, is the original's shadow map's and draws
+//! nothing here (`level_scene::effect_material`).
 
 use bevy::math::Vec4;
 
@@ -12,9 +12,10 @@ use super::key::Pass;
 use super::material::CharacterMaterial;
 
 /// How far a warp bends the frame, as a share of it either way at the
-/// ripple map's strongest: a look choice (tfbwarp's own strength is among
-/// its shader parameters, unread).
-pub const WARP_BEND: f32 = 0.012;
+/// ripple map's strongest: tfbwarp's own, a 64th of the frame for each unit
+/// a ripple channel sits off its middle (read off its program in AG.13's
+/// fresh-state capture, the water's draws; the review of AG.24).
+pub const WARP_BEND: f32 = 1.0 / 128.0;
 /// How many times a grass shell tiles its height map and its blade map over
 /// its texture coordinates (the colour map's once): look choices that read
 /// as tufts of blades a couple of centimetres across (tfbgrass's own are
@@ -106,6 +107,9 @@ mod tests {
         Effect::Warp.apply(&mut m);
         assert_eq!(m.key.pass, Pass::Warp);
         assert_eq!(m.uniform.effect.x, WARP_BEND);
+        // tfbwarp's own reach: its program moves the copy's read by
+        // (channel - 0.5) / 64 of the frame, (2 x channel - 1) / 128.
+        assert_eq!(WARP_BEND, 0.5 / 64.0);
         assert!(!m.key.casts_shadow());
     }
 }

@@ -4150,7 +4150,9 @@ mod tests {
     /// AG.24: a grass shell and a warp in the scene load drawn (their
     /// passes among the keys, the warp's ripple map through both views),
     /// tfbshadow's `player_shadow` left out, and none of them adds a solid:
-    /// the level's bodies are its collision part's alone.
+    /// the level's bodies are its collision part's alone. They come after a
+    /// frame's share of other materials, as chapter 1's do, so each is
+    /// uploaded with its own effect, not the one at its place in the share.
     #[test]
     fn the_grass_and_the_warp_load_drawn_and_add_no_solid() {
         use guac_ir::level::{EffectMaterial, UnitTexture};
@@ -4162,7 +4164,7 @@ mod tests {
         let mut scene: guac_ir::level::Scene =
             guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let graph = &mut scene.scenes[0];
-        let LevelMaterial::Multi2(ground) = &graph.materials[0] else {
+        let LevelMaterial::Multi2(ground) = graph.materials[0].clone() else {
             panic!("the ground");
         };
         let file = ground.textures[0].clone();
@@ -4190,6 +4192,12 @@ mod tests {
                 unread: Vec::new(),
             })
         };
+        // A frame's share of the ground's material first (the review of
+        // AG.24: an upload reading a share's effects off its own start drew
+        // chapter 1's, which sit past the first share, on the wrong parts).
+        for _ in 0..MATERIALS_PER_FRAME {
+            graph.materials.push(LevelMaterial::Multi2(ground.clone()));
+        }
         let first = graph.materials.len() as u16;
         graph.materials.push(effect(
             0xAA6,
@@ -4227,8 +4235,8 @@ mod tests {
         let n = built.drawn.materials.len();
         assert_eq!(
             n,
-            plain.drawn.materials.len() + 2,
-            "the grass and the warp drawn"
+            plain.drawn.materials.len() + MATERIALS_PER_FRAME + 2,
+            "the share, the grass and the warp drawn"
         );
         let effects: Vec<Effect> = (0..n).filter_map(|i| built.drawn.effect(i)).collect();
         assert_eq!(effects, [Effect::Grass { shell: 0.0 }, Effect::Warp]);
