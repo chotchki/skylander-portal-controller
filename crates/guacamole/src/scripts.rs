@@ -2416,6 +2416,26 @@ fn deactivate_minion(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Ha
     Ok(())
 }
 
+/// The scripts hide the player's HUD: `UI Containers`' `player hud
+/// container` holds a `hide state` over 0, as `UI - Adjust UI Visibility`
+/// leaves it for `Game - Cutscene`'s hide UI and the dialogue's UI (on
+/// AH.8's route 1 or 2 through the pit's intro and Norticus' scene, 0
+/// otherwise). False until the UI's scripts have made it.
+pub fn player_hud_hidden(vm: &Vm) -> bool {
+    let Some(containers) = vm
+        .program()
+        .global_named("UI Containers")
+        .and_then(|g| vm.global_peek(g))
+        .map(|v| vm.value(v))
+    else {
+        return false;
+    };
+    vm.field(containers, "player hud container")
+        .and_then(|hud| vm.field(vm.value(hud), "hide state"))
+        .and_then(|state| vm.value(state).as_f32())
+        .is_some_and(|state| state > 0.0)
+}
+
 /// The hero's health as his scripts hold it: his minion's
 /// `description.creature info.hp`.
 pub fn health(vm: &Vm, minion: PlacementId) -> Option<i32> {
@@ -4258,5 +4278,58 @@ mod tests {
             parameter_named(&program, "Portal Mode - Bootup", "portal data in"),
             None
         );
+    }
+
+    /// [`builder::ui_containers`]' program.
+    ///
+    /// [`builder::ui_containers`]: guac_formats::script::builder::ui_containers
+    fn ui_containers() -> Arc<Program> {
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder;
+        use guac_script::{Role, Unit};
+
+        let bytes = builder::ui_containers();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    /// A container of [`ui_containers`]' `UI Containers`, the global made
+    /// first if nothing has.
+    fn ui_container(vm: &mut Vm, name: &str) -> Value {
+        use guac_formats::script::builder::UI_CONTAINERS;
+        let g = vm.program().global_named(UI_CONTAINERS).unwrap();
+        let containers = vm.global(g).map(|v| vm.value(v)).unwrap();
+        vm.field(containers, name).map(|v| vm.value(v)).unwrap()
+    }
+
+    /// The HUD hides while the scripts hide the player's (mergefix4,
+    /// 2026-10-26: the pit's intro and Norticus' scene hold it at 1 or 2):
+    /// over 0 hides it, 0 or under shows it, as does the announcements'
+    /// container's state or no `UI Containers` made yet.
+    #[test]
+    fn the_player_hud_hides_while_its_containers_hide_state_is_over_0() {
+        use guac_formats::script::builder::{UI_ANNOUNCE, UI_HIDE_STATE, UI_PLAYER_HUD};
+
+        let mut vm = Vm::new(ui_containers(), Config::new(Mode::Strict));
+        assert!(!player_hud_hidden(&vm), "nothing's made it yet");
+        let (hud, announce) = (
+            ui_container(&mut vm, UI_PLAYER_HUD),
+            ui_container(&mut vm, UI_ANNOUNCE),
+        );
+        assert!(!player_hud_hidden(&vm), "made, at 0");
+        for (state, hidden) in [(1, true), (2, true), (1, true), (0, false), (-1, false)] {
+            assert!(vm.set_field(hud, UI_HIDE_STATE, Value::Int(state)));
+            assert_eq!(player_hud_hidden(&vm), hidden, "{state}");
+        }
+        assert!(vm.set_field(hud, UI_HIDE_STATE, Value::Int(0)));
+        assert!(vm.set_field(announce, UI_HIDE_STATE, Value::Int(1)));
+        assert!(!player_hud_hidden(&vm), "the announcements' alone");
     }
 }

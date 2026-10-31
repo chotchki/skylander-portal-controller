@@ -1452,11 +1452,17 @@ async fn the_dev_entrys_creature_beaten_reaches_her_row_and_second_phone() {
     assert_eq!(list["triggers_fired"], json!([]), "{list}");
     let c = creature(&snap, FIGHT_CREATURE);
     assert_eq!(c["body"], json!(true), "a body in the world: {c}");
-    // The HUD before the kill (AH.26): level 1, toward the table's 2.
+    // The HUD before the kill (AH.26): level 1, toward the table's 2, seen
+    // (no scene hides it: the synthetic part has no UI containers).
     let hud = &snap["hud"];
     assert_eq!(
-        (&hud["level"], &hud["xp"], &hud["xp_next"]),
-        (&json!("1"), &json!(0), &json!(E2E_LEVEL_XP[1])),
+        (&hud["level"], &hud["xp"], &hud["xp_next"], &hud["hidden"]),
+        (
+            &json!("1"),
+            &json!(0),
+            &json!(E2E_LEVEL_XP[1]),
+            &json!(false)
+        ),
         "{hud}"
     );
     let figure = snap["hero"]["figure_id"].as_str().unwrap().to_owned();

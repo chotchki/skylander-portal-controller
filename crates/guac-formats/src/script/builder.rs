@@ -782,22 +782,45 @@ pub const LOCOMOTION_STATES: [(i32, f32); 3] = [(0, 0.0), (1, 9.0), (3, 17.0)];
 /// manager's first tick; the definition's, the minion's and the ball's,
 /// which borrows the magma ball's name, every tick).
 pub fn attack() -> Attack {
+    Attack {
+        global: attack_global(),
+        init_setup: attack_init_setup(false),
+        fighter: attack_fighter(),
+    }
+}
+
+/// [`attack`] with the UI's containers ([`ui_containers`]' structures and
+/// script) in its `init_setup.bld`: what the TV reads the player HUD's hide
+/// from (openspec AH.26). Nothing places the UI's script, so the containers
+/// are made by the first read of [`UI_CONTAINERS`].
+pub fn attack_with_ui() -> Attack {
+    Attack {
+        init_setup: attack_init_setup(true),
+        ..attack()
+    }
+}
+
+/// [`attack`]'s `init_setup.bld`: an empty root list and an empty script,
+/// then [`ui_script`]'s with `ui`.
+fn attack_init_setup(ui: bool) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     // The root list first: `global.bld`'s exports read the first object.
     let root = b.object(0, "igObjectList", 0x18);
-    Writer::new(&mut b).script(
-        "C:/tfb/Content/Levels/Includes/Global/scripts/Init_Setup_Synthetic.ai",
-        |_| {},
-        |_| {},
-        |_| {},
-    );
+    {
+        let mut w = Writer::new(&mut b);
+        w.script(
+            "C:/tfb/Content/Levels/Includes/Global/scripts/Init_Setup_Synthetic.ai",
+            |_| {},
+            |_| {},
+            |_| {},
+        );
+        if ui {
+            ui_script(&mut w);
+        }
+    }
     let blocks = b.section(0x10);
     crate::igz::layouts::builder::list(&mut b, root, blocks, &[]);
-    Attack {
-        global: attack_global(),
-        init_setup: b.build(),
-        fighter: attack_fighter(),
-    }
+    b.build()
 }
 
 /// [`attack`] with AH.151's synthetic mover update in its `global.bld`
@@ -1417,6 +1440,61 @@ pub fn load_order() -> Vec<u8> {
     let listed: Vec<Option<Location>> = LOAD_ROOT.iter().map(|n| Some(obj(n))).collect();
     crate::igz::layouts::builder::list(&mut b, root, blocks, &listed);
     b.build()
+}
+
+/// [`ui_containers`]' names: the UI's file structure of containers, the
+/// player's HUD's and the announcements' containers in it, and the state
+/// each holds.
+pub const UI_CONTAINERS: &str = "UI Containers";
+pub const UI_PLAYER_HUD: &str = "player hud container";
+pub const UI_ANNOUNCE: &str = "announce container";
+pub const UI_HIDE_STATE: &str = "hide state";
+
+/// The UI's containers in the original's shape, our ops (the HUD's hiding,
+/// openspec AH.26): [`UI_CONTAINERS`], a file structure of containers
+/// ([`UI_PLAYER_HUD`], [`UI_ANNOUNCE`]), each a structure holding its
+/// [`UI_HIDE_STATE`], and a UI script whose STARTUP sets the player HUD's to
+/// 0, which links the structure as a global. A file of its own;
+/// [`attack_with_ui`] has it in a part.
+pub fn ui_containers() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    ui_script(&mut Writer::new(&mut b));
+    b.build()
+}
+
+/// [`ui_containers`]' structures and script, written by `w`.
+fn ui_script(w: &mut Writer<'_>) {
+    let container_ty = w.op(Class::DefineStructure, "UI Container");
+    let containers_ty = w.op(Class::DefineStructure, "UI Container List");
+    let hide = w.variable(UI_HIDE_STATE, "ValueInfo", Some("IntMeasurement"));
+    let hud = w.variable(UI_PLAYER_HUD, "ScriptStructure", None);
+    w.refer(hud, 0x24, container_ty);
+    let announce = w.variable(UI_ANNOUNCE, "ScriptStructure", None);
+    w.refer(announce, 0x24, container_ty);
+    let containers = w.b.object(0, "ScriptStructure", 0x20);
+    w.text(containers, 0x08, UI_CONTAINERS);
+    w.refer(containers, 0x1C, containers_ty);
+    let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+    let (start, _) = w.open(Class::StartUp, "STARTUP");
+    let zero = w.int(0);
+    w.set(
+        &[El::Local(containers), El::Local(hud), El::Local(hide)],
+        zero,
+    );
+    w.end_block(start);
+    let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+    w.end_block(shut);
+    let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+    let p = w.push(container_ty);
+    w.push(hide);
+    w.end_block(p);
+    let p = w.push(containers_ty);
+    w.push(hud);
+    w.push(announce);
+    w.end_block(p);
+    w.end_block(types);
+    w.end_block(pre);
+    w.end("C:/tfb/Synthetic/UI.ai");
 }
 
 /// The creature [`fight`] writes, named as one of the first fight's, so the
