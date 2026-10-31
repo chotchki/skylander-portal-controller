@@ -194,7 +194,7 @@ fn the_fights_parts_extract_whole_and_resume() {
     // AH.87's emitters, after the scripts (`giants_particles` checks them).
     assert!(done.particles.read && done.particles.failed.is_none());
     assert!(done.intros.is_ok(), "ffmpeg is needed for the whole run");
-    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 8, 2));
+    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 9, 2));
     // The fighter's archive and the three base ones, then AG.27's 66 walkers.
     assert_eq!((sc.entries, sc.walkers), (4 + 66, 66));
     let m = opened.dir.manifest().clone();
@@ -496,7 +496,7 @@ fn the_fights_parts_extract_whole_and_resume() {
     println!(
         "  RON and postcard agree byte for byte: {agreed} palettes, the creatures', the spawn models'"
     );
-    assert_eq!((lp.parts_read, lp.parts_kept), (7, 1));
+    assert_eq!((lp.parts_read, lp.parts_kept), (8, 1));
     assert_eq!((sp.parts_read, sp.parts_kept), (1, 1));
 
     println!(
