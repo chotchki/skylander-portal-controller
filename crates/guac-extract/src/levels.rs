@@ -1,6 +1,6 @@
 //! The levels guacamole plays off the dump (openspec AG.15, design decision
 //! 8): chapter 1, `level/level_213_tutotial.bld`, into IR v3's level
-//! records ([`guac_ir::level`]) in eight parts, each a file of its own under
+//! records ([`guac_ir::level`]) in nine parts, each a file of its own under
 //! `levels/<archive>/`, the textures into the characters' store. Writing
 //! them is the level stage's ([`crate::stages`]).
 //!
