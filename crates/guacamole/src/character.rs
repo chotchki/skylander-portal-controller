@@ -25,7 +25,7 @@ pub mod shadow;
 pub mod turntable;
 pub mod warm;
 
-use bevy::app::{App, Last, Plugin};
+use bevy::app::{App, Plugin};
 use bevy::asset::{Assets, embedded_asset};
 use bevy::pbr::MaterialPlugin;
 use bevy::render::storage::ShaderBuffer;
@@ -53,8 +53,10 @@ pub struct CharacterShadingPlugin;
 impl Plugin for CharacterShadingPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "character/shading.wesl");
-        app.add_plugins(MaterialPlugin::<CharacterMaterial>::default())
-            .add_systems(Last, shadow::mark_casters);
+        app.add_plugins((
+            MaterialPlugin::<CharacterMaterial>::default(),
+            shadow::CastersPlugin,
+        ));
     }
 
     // After every plugin's build, so the render plugin's buffer assets are

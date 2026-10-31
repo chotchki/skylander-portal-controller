@@ -17,7 +17,9 @@
 //! tonemapping and MSAA off. Two cases receive in shadow modes 1 and 2
 //! (the remaster's sample is grey, so the mode changes nothing); a third
 //! draws on a layer the light doesn't reach and stays lit behind the
-//! caster.
+//! caster; a fourth receives 40 units down the view, in the last cascade,
+//! so the shader picks a cascade by the view's depth (the shadows review:
+//! one picked the wrong way drew the first three cases as they should).
 //!
 //! `cargo test -p guacamole --release --test shadow_gpu_lane -- --ignored --nocapture --test-threads 1`
 
@@ -63,6 +65,9 @@ const COLOUR: [f32; 4] = [0.5, 0.25, 0.125, 1.0];
 /// key light's first cascade.
 const RECEIVER: f32 = 10.0;
 const CASTER: f32 = 5.0;
+/// The far case's receiver: past the second cascade's far bound, inside
+/// the last's.
+const FAR_RECEIVER: f32 = 40.0;
 /// The layer the caster is on: the light's, no camera's.
 const CASTER_LAYER: usize = 9;
 /// Pixels kept from the shadow's edge either side, past its filter.
@@ -72,29 +77,40 @@ const EVERY: u32 = 20;
 const MAX_WAIT: Duration = Duration::from_secs(180);
 const SETTLED: u32 = 3;
 
-/// A case: the receiver's shadow mode and whether the light reaches it.
+/// A case: the receiver's shadow mode, whether the light reaches it and
+/// how far down the view it stands.
 #[derive(Debug, Clone, Copy)]
 struct Case {
     name: &'static str,
     mode: f32,
     lit_by_key: bool,
+    depth: f32,
 }
 
-const CASES: [Case; 3] = [
+const CASES: [Case; 4] = [
     Case {
         name: "shadow mode 1",
         mode: 1.0,
         lit_by_key: true,
+        depth: RECEIVER,
     },
     Case {
         name: "shadow mode 2",
         mode: 2.0,
         lit_by_key: true,
+        depth: RECEIVER,
     },
     Case {
         name: "no key light",
         mode: 2.0,
         lit_by_key: false,
+        depth: RECEIVER,
+    },
+    Case {
+        name: "the last cascade",
+        mode: 1.0,
+        lit_by_key: true,
+        depth: FAR_RECEIVER,
     },
 ];
 
@@ -284,12 +300,12 @@ fn setup(
             .entity(*e)
             .insert(RenderLayers::layer(CASTER_LAYER));
     }
-    let ground =
-        meshes.add(static_mesh(&quad(0.0, WIDTH as f32, RECEIVER, false)).expect("a mesh"));
     for (n, c) in CASES.iter().enumerate() {
         let layer = n + 1;
+        let ground =
+            meshes.add(static_mesh(&quad(0.0, WIDTH as f32, c.depth, false)).expect("a mesh"));
         commands.spawn((
-            Mesh3d(ground.clone()),
+            Mesh3d(ground),
             MeshMaterial3d(materials.add(material(true, c.mode, colour.clone()))),
             Transform::IDENTITY,
             RenderLayers::layer(layer),
@@ -505,4 +521,13 @@ fn the_fixtures_are_what_the_lane_says() {
     assert_eq!((xs[0], xs[2]), (-8.0 - WIDTH as f32 / 2.0, 0.0));
     assert!(caster.positions.iter().all(|p| p[2] == -CASTER));
     const { assert!(CASTER < RECEIVER) };
+    // The near cases in the first cascade, the far one in the last, past
+    // the second's far bound.
+    let bounds = shadow::cascades().bounds;
+    assert_eq!(bounds.len(), 3);
+    assert!(RECEIVER < bounds[0], "{bounds:?}");
+    assert!(
+        bounds[1] < FAR_RECEIVER && FAR_RECEIVER < bounds[2],
+        "{bounds:?}"
+    );
 }

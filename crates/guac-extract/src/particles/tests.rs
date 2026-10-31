@@ -63,6 +63,24 @@ fn every_emitter_lands_with_its_generators_and_each_texture_once() {
         (Wrap::Clamp, Wrap::Repeat, Some(Filter::Linear))
     );
     assert!(r.ir.emitters[1].generators.is_empty());
+    // An image of whole blocks keeps them (AH.244 decodes only the rest):
+    // each file is its image's blocks as the disc holds them.
+    let mut kept = 0;
+    for (_, read) in guac_formats::particle::emitters(&igz) {
+        let Ok(e) = read else { continue };
+        for tex in e.generators.iter().filter_map(|g| g.texture()) {
+            let blocks = guac_formats::texture::Texture::read(&igz, tex.image).unwrap();
+            assert!(blocks.whole_blocks());
+            let as_held = blocks.to_ktx2();
+            assert!(
+                r.textures.iter().any(|(_, k)| *k == as_held),
+                "{:?} stored as its blocks",
+                tex.path
+            );
+            kept += 1;
+        }
+    }
+    assert_eq!(kept, 3, "the trail's three textured generators");
 }
 
 #[test]

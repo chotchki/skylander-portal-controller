@@ -136,9 +136,10 @@ pub fn in_light(strength: f32) -> f32 {
 pub const LIGHT_POWER: f32 = 2.2;
 
 /// The grey the original's shadow pass draws its casters in (its
-/// `g_tintColor`, read off AC.13's captures at AE.11: every caster drawn
-/// into the 960x540 shadow map in (0.27, 0.27, 0.27), colour alone, onto a
-/// map whose unshadowed sample is a half). A receiver in shadow mode 1
+/// `g_tintColor`, read off AC.13's captures at AE.11: 109 of the 113 caster
+/// draws into the 960x540 shadow map in (0.27, 0.27, 0.27), the other four
+/// in 0.5 and 0.46 at alpha 0, colour alone, onto a map cleared to a half,
+/// its unshadowed sample). A receiver in shadow mode 1
 /// takes twice the sample's colour, so the original's full shadow scales a
 /// part's stored colour by 0.54.
 pub const SHADOW_CASTER_GREY: f32 = 0.27;

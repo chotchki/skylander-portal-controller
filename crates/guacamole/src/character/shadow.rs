@@ -14,14 +14,19 @@
 //! pipelines before play. Everything else the character material draws
 //! (a level's scenery, its props and what its scripts spawn, glow masks,
 //! particles, what a figure carries on a static mesh) casts none
-//! ([`mark_casters`]). Which of its draws the original casts is unread
-//! (AC.13's frame drew 113 into its map): this is a reading for the look,
-//! chotchki's to judge. A light reaches only the views on its render
-//! layers, so a card's turntable gets no cascades.
+//! ([`mark_casters`]). The original casts more: AC.13's frame draws 113
+//! parts on 62 transforms into its map, all through one alpha-tested
+//! caster shader, the receiving props among them (openspec AG.261). A
+//! light reaches only the views on its render layers, so a card's
+//! turntable gets no cascades.
 //!
 //! [`MaterialKey::casts_shadow`]: super::key::MaterialKey::casts_shadow
 
-use bevy::asset::Assets;
+use std::collections::HashSet;
+
+use bevy::app::{App, Last, Plugin};
+use bevy::asset::{AssetEvent, AssetId, Assets};
+use bevy::ecs::message::MessageReader;
 use bevy::ecs::prelude::*;
 use bevy::light::{
     CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLight, NotShadowCaster,
@@ -55,15 +60,16 @@ pub fn cascades() -> CascadeShadowConfig {
 }
 
 /// The way the original projects its shadow map onto chapter 1, in the
-/// level's frame: 2.97 degrees off straight down, leaning toward heading
-/// -29.9 (the axis of `tfb_shadowMapTextureMatrix`'s two rows on the 33
-/// level draws that receive, identical in all three of AC.13's captures).
+/// level's frame: 3.00 degrees off straight down, leaning toward heading
+/// -30.0 (the null axis of `tfb_shadowMapTextureMatrix`'s two rows on the
+/// 33 level draws that receive, identical in all three of AC.13's captures,
+/// and every receiving prop's carried into the world by its own transform).
 /// Its key light travels 30 degrees down toward 73 and the level file's
 /// `_worldLight1` 45 down toward 0, neither of them this: the original's
 /// shadow is a drop shadow, under the character, as the oracle's frames
 /// show it. A constant off the captures until the engine's own setting is
 /// read (stand-in ledger: `shadow-travel`).
-pub const SHADOW_TRAVEL: [f32; 3] = [-0.0258, -0.9987, 0.0448];
+pub const SHADOW_TRAVEL: [f32; 3] = [-0.026168, -0.998630, 0.045324];
 
 /// A light travelling `travel` (any length; straight down if it has none)
 /// that draws shadow maps: what the level spawns on its layer, along
@@ -103,27 +109,64 @@ type Part = (
     Has<NotShadowCaster>,
 );
 
+/// [`mark_casters`] in `Last`, what [`super::CharacterShadingPlugin`] adds.
+pub struct CastersPlugin;
+
+impl Plugin for CastersPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Last, mark_casters);
+    }
+}
+
 /// Each character-material mesh whose material changed (or came) marked
 /// to cast or not ([`casts`]): Bevy's `NotShadowCaster` on every part but
 /// a character's opaque skinned ones. In `Last`, so a part spawned or given
 /// a new material (a fade's copy) anywhere in the frame has it before the
-/// render world extracts it. A material whose key changes in place keeps
-/// its mark until its handle does.
+/// render world extracts it. A skinned part whose material changed in place
+/// (a tint's copy rewritten as it fades, `tints::tint_part`) is marked again
+/// the frame its asset event comes, the frame the render world takes the new
+/// key too: kept casting on a faded key, it would draw the whole part dark
+/// into the cascades and compile a shadow pipeline the warm never did.
 pub fn mark_casters(
     mut commands: Commands,
     parts: Query<Part, Changed<MeshMaterial3d<CharacterMaterial>>>,
+    skinned: Query<Part, With<SkinnedMesh>>,
+    mut events: MessageReader<AssetEvent<CharacterMaterial>>,
     materials: Res<Assets<CharacterMaterial>>,
 ) {
-    for (entity, material, skinned, off) in &parts {
-        match (casts(skinned, materials.get(&material.0)), off) {
-            (true, true) => {
-                commands.entity(entity).remove::<NotShadowCaster>();
-            }
-            (false, false) => {
-                commands.entity(entity).insert(NotShadowCaster);
-            }
-            _ => {}
+    for part in &parts {
+        mark(&mut commands, &materials, part);
+    }
+    let modified: HashSet<AssetId<CharacterMaterial>> = events
+        .read()
+        .filter_map(|e| match e {
+            AssetEvent::Modified { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    if modified.is_empty() {
+        return;
+    }
+    for part in &skinned {
+        if modified.contains(&part.1.id()) {
+            mark(&mut commands, &materials, part);
         }
+    }
+}
+
+fn mark(
+    commands: &mut Commands,
+    materials: &Assets<CharacterMaterial>,
+    (entity, material, skinned, off): (Entity, &MeshMaterial3d<CharacterMaterial>, bool, bool),
+) {
+    match (casts(skinned, materials.get(&material.0)), off) {
+        (true, true) => {
+            commands.entity(entity).remove::<NotShadowCaster>();
+        }
+        (false, false) => {
+            commands.entity(entity).insert(NotShadowCaster);
+        }
+        _ => {}
     }
 }
 
@@ -132,7 +175,6 @@ mod tests {
     use super::*;
     use crate::character::key::{MaterialKey, Pass, ShaderKey, StateKey};
     use crate::character::material::CharacterTextures;
-    use bevy::app::{App, Last};
     use bevy::asset::{AssetApp, AssetPlugin, Handle};
     use bevy::mesh::Mesh3d;
     use bevy::prelude::MinimalPlugins;
@@ -161,7 +203,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<CharacterMaterial>()
-            .add_systems(Last, mark_casters);
+            .add_plugins(CastersPlugin);
         app
     }
 
@@ -256,6 +298,76 @@ mod tests {
         assert!(!cast(&app, lost));
     }
 
+    /// The tints' ways onto a casting part (the shadows review, 2026-10-31):
+    /// a copy put on it in `PostUpdate`, where the tints run, is marked the
+    /// same frame; a copy rewritten in place to a fade's key stops it casting
+    /// and back to solid starts it again, a static part's in-place change
+    /// leaving it casting none.
+    #[test]
+    fn a_tints_copy_marks_the_frame_it_lands_and_in_place() {
+        #[derive(bevy::prelude::Resource)]
+        struct Swap(Entity, Handle<CharacterMaterial>);
+        fn swap(swap: Option<Res<Swap>>, mut parts: Query<&mut MeshMaterial3d<CharacterMaterial>>) {
+            if let Some(s) = swap
+                && let Ok(mut m) = parts.get_mut(s.0)
+                && m.0 != s.1
+            {
+                m.0 = s.1.clone();
+            }
+        }
+        let mut app = app();
+        app.add_systems(bevy::app::PostUpdate, swap);
+        let opaque = StateKey::OPAQUE;
+        let blended = StateKey {
+            blend: Blend::Alpha,
+            ..opaque
+        };
+        let body = part(&mut app, material(opaque, Pass::Colour), true);
+        let scenery = part(&mut app, material(opaque, Pass::Colour), false);
+        app.update();
+        assert!(cast(&app, body) && !cast(&app, scenery));
+
+        // A tint's first copy, faded, put on in PostUpdate.
+        let copy = app
+            .world_mut()
+            .resource_mut::<Assets<CharacterMaterial>>()
+            .add(material(blended, Pass::Colour));
+        app.insert_resource(Swap(body, copy.clone()));
+        app.update();
+        assert!(
+            !cast(&app, body),
+            "its copy faded, marked the frame it lands"
+        );
+
+        // The copy rewritten in place: solid, it casts; faded again, none.
+        let rewrite = |app: &mut App, states: StateKey, h: &Handle<CharacterMaterial>| {
+            app.world_mut()
+                .resource_mut::<Assets<CharacterMaterial>>()
+                .get_mut(h)
+                .unwrap()
+                .key
+                .states = states;
+            app.update();
+        };
+        rewrite(&mut app, opaque, &copy);
+        assert!(cast(&app, body), "its copy solid again in place");
+        rewrite(&mut app, blended, &copy);
+        assert!(!cast(&app, body), "its copy faded in place");
+        let ground = app
+            .world()
+            .entity(scenery)
+            .get::<MeshMaterial3d<CharacterMaterial>>()
+            .unwrap()
+            .0
+            .clone();
+        rewrite(&mut app, blended, &ground);
+        rewrite(&mut app, opaque, &ground);
+        assert!(
+            !cast(&app, scenery),
+            "a static part casts none whatever its key"
+        );
+    }
+
     #[test]
     fn the_shadow_light_travels_its_way_and_draws_cascades() {
         let travel = Vec3::new(0.2, -0.5, 0.8);
@@ -273,14 +385,14 @@ mod tests {
         assert!(down.forward().dot(Vec3::NEG_Y) > 1.0 - 1e-6);
         let (_, none, _) = shadow_light(Vec3::ZERO);
         assert!(none.forward().dot(Vec3::NEG_Y) > 1.0 - 1e-6);
-        // Chapter 1's: under three degrees off straight down, leaning
-        // toward heading -30.
+        // Chapter 1's: three degrees off straight down, leaning toward
+        // heading -30, as the captures' matrix rows give it to 1e-5.
         let t = Vec3::from_array(SHADOW_TRAVEL);
         assert!((t.length() - 1.0).abs() < 1e-3);
         let tilt = (-t.y / t.length()).acos().to_degrees();
         let heading = t.x.atan2(t.z).to_degrees();
         assert!(
-            (tilt - 2.97).abs() < 0.02 && (heading + 29.9).abs() < 0.1,
+            (tilt - 3.0).abs() < 0.002 && (heading + 30.0).abs() < 0.02,
             "{tilt} {heading}"
         );
         let (_, level, _) = shadow_light(t);
