@@ -6397,9 +6397,9 @@ mod tests {
     }
 
     /// AH.224 on the TV: on a part with the entry beam, the hero who comes
-    /// in is drawn nowhere and holds where the TV put him while his beam
-    /// runs (`entering`), the beam's column standing on his spot; he's drawn
-    /// from the frame his minion is in (`joined`).
+    /// in is drawn nowhere while his beam runs (`entering`), standing where
+    /// the TV put him, the beam's column on his spot; he's drawn from the
+    /// frame his minion is in (`joined`).
     #[test]
     fn a_hero_is_drawn_nowhere_until_his_entry_beam_lands() {
         use guac_formats::script::builder::ENTRY_COLUMN;
@@ -6441,21 +6441,23 @@ mod tests {
                 _ => {}
             }
             assert!(!shown, "frame {frame}: {join:?} and drawn");
-            assert!(pivot.distance(put) < 1e-5, "frame {frame}: held where put");
+            assert!(pivot.distance(put) < 1e-5, "frame {frame}: where put");
         }
         assert!(entering >= 1, "his beam ran");
         assert_eq!(join(&app).as_deref(), Some("joined"));
     }
 
-    /// AG.100 on the TV: the replacement is drawn from the frame his minion
-    /// is in, his scripts' first clip (the synthetic part's arrival, its
-    /// STARTUP's) on him then at its start, put up [`DROP`] over where the
-    /// last stood (the synthetic part has no mover update to drop him).
+    /// AG.100 and AH.224 on the TV: on the part with the entry beam, the
+    /// replacement's beam drops its column onto the ground where the last
+    /// stood, and he's drawn from the frame his minion is in, his scripts'
+    /// first clip (the synthetic part's arrival, its STARTUP's) on him then
+    /// at its start, put up 0.38-0.41 m over that place only then (the
+    /// synthetic part has no mover update to drop him).
     #[test]
     fn a_replacement_is_drawn_from_the_step_his_minion_is_in_with_his_clip_on() {
-        use guac_formats::script::builder::ATTACK_ARRIVAL_SLOT;
+        use guac_formats::script::builder::{ATTACK_ARRIVAL_SLOT, ENTRY_COLUMN};
         let tmp = tempfile::tempdir().unwrap();
-        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let (mut app, _pad) = joined_eruptor_with(tmp.path(), true);
         clear(&mut app, 0);
         until(&mut app, "the call", |a| {
             alert(a) == Some(Alert::PlaceSkylander)
@@ -6473,9 +6475,23 @@ mod tests {
         until(&mut app, "the next one in", |a| {
             a.world().resource::<Play>().hero().is_some()
         });
+        let column_at = |app: &App| -> Option<Vec3> {
+            let w = app.world().resource::<ScriptWorld>();
+            let program = app.world().resource::<ScriptRuntime>().vm.program_arc();
+            w.clones()
+                .into_iter()
+                .filter_map(|h| w.actor(h))
+                .filter(|a| !a.removed)
+                .find(|a| a.template.and_then(|t| program.name_of(t)) == Some(ENTRY_COLUMN))
+                .map(|a| a.position)
+        };
         let mut first = None;
+        let mut column = None;
         for frame in 0..60 {
             let (shown, join, clips, pivot) = drawn_state(&app);
+            if join.as_deref() == Some("entering") {
+                column = column.or(column_at(&app));
+            }
             if shown {
                 first = Some((frame, join, clips, pivot));
                 break;
@@ -6487,6 +6503,11 @@ mod tests {
             );
             app.update();
         }
+        let column = column.expect("his beam's column");
+        assert!(
+            column.distance(left) < 1e-3,
+            "the column at {column}, his place {left}"
+        );
         let (frame, join, clips, pivot) = first.expect("drawn");
         assert_eq!(join.as_deref(), Some("joined"), "frame {frame}");
         let arrival = clips
@@ -6494,10 +6515,11 @@ mod tests {
             .find(|(slot, _)| *slot == ATTACK_ARRIVAL_SLOT as u32)
             .unwrap_or_else(|| panic!("frame {frame}: his arrival's clip on him: {clips:?}"));
         assert!(arrival.1 <= 2.0 / 60.0 + 1e-4, "at its start: {arrival:?}");
-        assert!(
-            (pivot - (left + Vec3::Y * DROP)).length() < 1e-3,
-            "{pivot} over {left}"
-        );
+        // AG.81's recordings: 0.38-0.41 m up as the level shows again.
+        let up = pivot.y - left.y;
+        let across = Vec3::new(pivot.x - left.x, 0.0, pivot.z - left.z).length();
+        assert!((0.38..=0.41).contains(&up), "{up} m over {left}");
+        assert!(across < 1e-3, "{across} m across");
     }
 
     /// AG.29: a replacement whose model can't be drawn (his hero side gone

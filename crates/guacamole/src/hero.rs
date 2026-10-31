@@ -396,14 +396,11 @@ pub(crate) fn step_heroes(
         input.view_heading = follow.drawn.heading();
     }
     for (mut body, mut transform, scripted, run, drop) in &mut heroes {
-        // His minion not in yet (openspec AH.224): his body holds where the
-        // TV put him until his entry activates him.
-        if run.is_some_and(|r| r.join.pending()) {
-            continue;
-        }
-        // In now: a replacement goes up to drop onto his place (AG.100),
-        // drawn from there (no easing up from where he was held).
-        if let Some((mut drop, mut easing)) = drop
+        // In now (openspec AH.224: his join no longer pending): a
+        // replacement goes up to drop onto his place (AG.100), drawn from
+        // there (no easing up from where he stood unseen).
+        let pending = run.is_some_and(|r| r.join.pending());
+        if let Some((mut drop, mut easing)) = drop.filter(|_| !pending)
             && drop.0 > 0.0
         {
             let HeroBody { hero, exclude, .. } = &mut *body;

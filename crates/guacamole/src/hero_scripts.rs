@@ -30,8 +30,7 @@
 //!   original's entry beam run each step after by
 //!   [`guacamole::scripts::entry_beams`] until it activates his minion as its
 //!   column lands, openspec AH.224; stand-in ledger: `join`), the step the
-//!   TV enters the level, drawn nowhere and held where he was put until
-//!   then; from then
+//!   TV enters the level, drawn nowhere until then; from then
 //!   on his walk, facing and clips are his scripts' and his step the engine's
 //!   alone ([`ScriptedHero`]), a walker's attack buttons reaching no script
 //!   (hero-attacks' Which characters attack). Eruptor with no run (the part
@@ -365,8 +364,7 @@ pub(crate) enum Join {
     /// His file's placements in; his minion's entry begins at the next step.
     Requested,
     /// His entry beam runs (openspec AH.224, [`scripts::join_enter`]): his
-    /// minion activates as its column lands. Until then he's drawn nowhere
-    /// and his body holds where the TV put him.
+    /// minion activates as its column lands. Until then he's drawn nowhere.
     Entering,
     /// His scripts run as this placement.
     Joined(PlacementId),
@@ -377,8 +375,9 @@ pub(crate) enum Join {
 
 impl Join {
     /// His minion hasn't come in yet: asked, requested or his entry beam
-    /// running. He's drawn nowhere and his body holds (openspec AH.224: the
-    /// original's minion is in the world from his activation on).
+    /// running. He's drawn nowhere (openspec AH.224: the original's minion
+    /// is in the world from his activation on), and a replacement goes up
+    /// to drop onto his place only once he's in (AG.100).
     pub(crate) fn pending(&self) -> bool {
         matches!(self, Join::Asked | Join::Requested | Join::Entering)
     }
