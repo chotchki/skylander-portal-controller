@@ -493,8 +493,8 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (prop_models, props.len(), props_beyond.len()),
-        (90, 72, 61),
-        "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239), their keys, those past the level's"
+        (91, 74, 63),
+        "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239, AH.138's turban), their keys, those past the level's"
     );
     // AH.39: 13 models, 13 keys and 3 past before `global.bld`'s 23 read
     // (22 of them static; its cinematic camera's rig is skinned and left out

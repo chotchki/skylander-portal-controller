@@ -11,9 +11,10 @@
 //! shape ([`MeshShape`]), and the masks, states and vertex layouts the
 //! character shader allows run to tens of thousands of pipelines, where the
 //! 01.00 disc's figures draw 57 on a card (33 on skinned meshes, 24 on the
-//! static parts they carry) and its chapter 1 another 55, its props 61
+//! static parts they carry) and its chapter 1 another 55, its props 63
 //! more (AG.60's start scripts stand and spawn more of them: 32 before;
-//! AG.239's route clones 10 more), what its scripts spawn 13 more beyond
+//! AG.239's route clones 10 more; Norticus' turban 2, AH.138), what its
+//! scripts spawn 13 more beyond
 //! those (parts fading in among them, AH.67; 3 before AH.39 read
 //! `global.bld`'s own models), their glowing parts' level glow masks 29 (22
 //! before AH.39) and the walking hero's keys in the level 2 (his body's and
@@ -633,7 +634,7 @@ mod tests {
             (TURNTABLE, true, 33),
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 55),
-            (LEVEL_PROPS, false, 61),
+            (LEVEL_PROPS, false, 63),
             (SPAWNS, false, 13),
             (HEROES, true, 1),
             (HEROES_STATIC, false, 0),
@@ -676,7 +677,7 @@ mod tests {
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 55 + 61 + 13 + 1 + 29 + 1 + 10 + 1 + 1
+            33 + 24 + 55 + 63 + 13 + 1 + 29 + 1 + 10 + 1 + 1
         );
         assert_eq!(
             turntable_keys().len(),
