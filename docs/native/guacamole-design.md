@@ -640,8 +640,9 @@ PARAM.SFO), not taken from the wiki.
   (214,944 chunks, no other codec), and every LZMA entry unpacks to its declared size (144 s release with
   `GUAC_IGA_SAMPLE=all`; the default run samples 200).
 - Inner content: 85,310 entries, 17.56 GiB decompressed, of which 9.8 GiB is duplicate by name (every
-  level and character bundle is self-contained). 79,509 FSB5 voice lines, 599 `level.bld` (one IGZ each),
-  1,542 texture IGZ, 3,660 language packs.
+  level and character bundle is self-contained). 79,509 FSB5 banks (the streamed sounds: every voice
+  line in twelve languages, the music, the ambience; AR.1), 599 `level.bld` (one IGZ each), 1,542
+  texture IGZ, 3,660 language packs.
 - tfbScript: character behavior (attacks, upgrades, projectiles) is serialized as op graphs inside IGZ
   (`ScriptSet`, `OpCodeList`, `OpUseMacro`, `OpMacroInterface`, `OpMacroParameter`, `OpCheckValue`,
   `OpDefineMacro`, `OpFlowMacro`, `OpFlowBuiltInBehavior`, `RHSValueStack`). The structure is documented
@@ -679,9 +680,26 @@ PARAM.SFO), not taken from the wiki.
   Control flow is a program counter over the op array with relative forward skips, and 21,774 else-if
   skips cross the end of their enclosing block, so the VM steps a PC rather than walking a tree. The phone
   portal plugs in at the `redoctane*` members.
-- Audio: FSB5 v1, one sample per bank, MPEG, 44.1 kHz for 97% of them. There are no FMOD event files on
-  disc, so triggering lives in engine objects (`tfbSoundDataInfo`) and script macros ("Sound - VO
-  Request").
+- Audio (AR, measured 2026-10-31 over the whole disc, [`ar-audio-core`](../../openspec/changes/ar-audio-core/tasks.md)):
+  108,959 FSB5 v1 banks, every one a single MPEG sample (MPEG-1 Layer III at 320 kbit/s, or MPEG-2 Layer
+  III at 160 kbit/s at 16 and 24 kHz), 87.9 h in all, 105,192 mono and 3,767 stereo, 44.1 kHz for
+  90,621, then 32 kHz 15,523, 48 kHz 1,641, 24 kHz 1,144; no PCM, ADPCM or ATRAC3 anywhere, so every
+  bank remuxes to an MP3 in our own code. FMOD pads frames with zeros, and 74,500 banks run a few bytes
+  into one more frame the bank's sample count stops before; with that frame left out every bank's frames
+  hold exactly its count. A bank lives in one of two places: a sound effect's inside the IGZ that names
+  it, as a `tfbSoundDataInfo`'s `_data` (29,450), a voice's, music's or ambience's in the archive's
+  `.arc`, found by its path (79,509; `_streamArchiveHash` names it too, by a function not found). There
+  are no FMOD event files on disc: a sound is a `tfbSoundInfo`, a sequence on `ClonedSequence` as a clip
+  is, which scripts start and stop as they do clips, its volume, randomness, falloff, category, priority
+  and limits fields and bits AC.4's registry and the members' getters name (AR.3). A sound reaches a
+  voice through the language pack loaded beside its file (an import in the `level.bld` namespace, a
+  1-based position in the pack's root list); each archive's twelve `<LANGUAGE>.pak` holds a data info
+  per line at the same position, a pack other than English's streaming from the line's language
+  folder. All 38,283 sounds on the disc resolve to a bank. The music is ordinary streamed sounds in the
+  `Music` category (AR.4): level 213's ten, 48 kHz stereo, its four 129 s beds looping their whole
+  recording (no loop chunk on any), played by the level's own `Music_Level_Controller.ai` and
+  `snd_*_watcher` scripts through `global.bld`'s `Music - Play Music`, which fades on `soundinfo.volume`
+  and syncs to the beat (145 BPM) off the sequence members.
 - Video: 61 Bink 1 `.mov` at 1280×720: 48 per-character intros named by character (`eruptor.mov`), one
   per playable character; 11 FMV (`fmv01`-`fmv12`, no `fmv05`); 2 logos. FFmpeg decodes Bink 1 (probed on
   a Giants file). Tracks, from AB.5's census: fmv01-fmv04 and fmv06-fmv11 carry 13 44.1 kHz
@@ -1244,7 +1262,7 @@ code), 4 of them hazardous (`on-screen` none since AH.107, `start-set` struck at
 | `join` | the join (AH's): the original's macros when a figure goes on (`scripts::join_request`, `join_activate`; the tag by `figure::put_on_portal`, AH.23) and when it comes off mid-level (AH.105's deactivate path, `scripts::join_deactivate`: `Game - Activate/Deactivate Minion` with no minion as `Portal - Exit Object` calls it, then `Portal - Exit Object`'s links undone, his minion taken off and his SHUTDOWN run, and his character stream's placements and clones taken off natively, each one's SHUTDOWN run, AH.200), their scheduling ours (on the TV since AH.224 the activation the original's entry beam's: `Portal - Init Minion Enter Effect` makes his beam at the join's second half, `scripts::join_enter`, and `Portal - Manage Portal Entry Beams` runs in the portal manager's name each step, `scripts::entry_beams`, dropping the column, then at its landing the crater, glow plane and shock ring and his activation through `Portal - Entry Activate Minion`; the headless harnesses activate at once, `join_activate`, so only one joining by the beam sees what the element entries do, a giant's `Portal Entry - Giant` punching the view in 0.05 s after his activation and out a second later, AG.271, `giants_walkers`' `enter_by_the_beam`; the level runs while the beam falls, 0.25 s, where the original's gameplay looks to wait for his activation, AG.272), and the portal put in adventure mode by its mode's own macro as the first one joins (AH.28: the original's level load clones the level initializer, whose `Game - Init Minions in Level` does it, and until then the UI's tick shows no dialogue: the cannon's), in place of the portal's tag handling, the portal manager's tick and the level initializer; the activation's clone answers as the hero (`ScriptWorld::hero_template`), under a handle no actor of the run held, as the original's clones the template afresh (AH.191) | none: the figure on the portal plays him either way | AJ's line | none since AH.165 (the AG.27 merge check found it hazardous: a stop in a join's macro was the portal manager's own, stopping its tick, and with it combat, the hurts and the health write, for the rest of the level, and a stop in the deactivation left his file running, to run twice when he came back). The join's macros are the embedder's calls in the portal manager's name (`Vm::call_for`), which stop nothing, and the deactivation unloads his stream whatever stopped (`Deactivated::halted`); none of the 66 walkers' deactivations the TV runs (52 until AH.150 took the fourteen's asks off the hold), nor Eruptor's at 12 points through his three attacks, stops on the dump (`giants_walkers`' `a_walker_taken_off_and_put_back_runs_his_file_once`), nor the fourteen the TV kept for their asks until AH.150 nor Tree Rex's with his setup through (AH.169's `the_asking_walkers_come_off_whatever_their_deactivation_does`); a synthetic walker stopping in each of the three calls holds each (AH.165's deactivation, AH.169's request and activation). Nor from the minion's handle since AH.191: joined under the last minion's (the headless harnesses' way, never the TV's, whose next hero is an entity of his own), his setup's `Combat - Creature Definition` found the last one's description by its `creature` and made none, so the next walker walked at the last one's numbers; `join_activate` refuses such a handle now, and two synthetic walkers keying their descriptions the same way hold it | [`crates/guacamole/src/scripts.rs`](../../crates/guacamole/src/scripts.rs), [`hero_scripts.rs`](../../crates/guacamole/src/hero_scripts.rs), [`crates/guacamole/src/figure.rs`](../../crates/guacamole/src/figure.rs), [`builder.rs`](../../crates/guac-formats/src/script/builder.rs), [`vm.rs`](../../crates/guac-script/src/vm.rs), [`giants_eruptor.rs`](../../crates/guacamole/tests/giants_eruptor.rs), [`swap.rs`](../../crates/guacamole/src/swap.rs) |
 | `playtime` | playtime (AH's): the TV counts each figure's time on the portal on the real clock (AH.23), in place of the save control's timer and its tag writes | figure-progress: Playtime counts the time in play | AM's line | none | [`crates/guacamole/src/progress.rs`](../../crates/guacamole/src/progress.rs) |
 | `swap-message` | the swap message (AH's): AH.26's needs-rest alert, full screen in our words, in place of the "Need Remove" interface | combat: A defeated hero | AM's line | none | [`alert.rs`](../../crates/guacamole/src/alert.rs) |
-| `cosmetic` | cosmetic members (AH's): sprites, particle generators, sounds, lights and strings as value cells nothing draws or plays, in place of the engine drawing and playing them (AH.87 draws what an emitter clone's generators make off the disc's records; a script's writes to `particleinfo` stay value cells) | none | the backlog's Particles and Combat sound lines, AM's line (the interface); AH.65 drew the attacks' lights and AH.88 matches them | none in play: a cutscene's scene that waits on its voices ends sooner (AH.28: Norticus' scene 183 steps, AH.10's 300), its hold on the hero with it | none |
+| `cosmetic` | cosmetic members (AH's): sprites, particle generators, sounds, lights and strings as value cells nothing draws or plays, in place of the engine drawing and playing them (AH.87 draws what an emitter clone's generators make off the disc's records; a script's writes to `particleinfo` stay value cells; AR.1-AR.6 read, extract and look up every sound chapter 1 can play, which nothing plays until AR.9) | none | the backlog's Particles line, AR's wiring boxes for the sounds (AR.9-AR.12), AM's line (the interface); AH.65 drew the attacks' lights and AH.88 matches them | none in play: a cutscene's scene that waits on its voices ends sooner (AH.28: Norticus' scene 183 steps, AH.10's 300), its hold on the hero with it | none |
 | `hud` | the HUD (AH's): AH.26's in AP's theme (his health against full with the warning under 20 %, level, experience toward the next with MAX at the cap, gold, a bite's number by him; none before he's in, his join pending, AH.224), in place of the interface scripts over sprite members; his own white-then-red flash not drawn; a level-up's green arrows rising off the plate's top where the original's portrait sits, timed off the oracle's frames (AH.248, 2026-10-31, the `fight` lane: from 0.45 s to 1.9 s after the rise, the particle part's `UI_LevelUp_ArrowParticle` image; the original's portrait zoom, burst and "Level Up!" panel not drawn); hidden, a bite's numbers with it, while the scripts hide the original's: `UI Containers`' `player hud container` holding a `hide state` over 0, as `UI - Adjust UI Visibility` leaves it for `Game - Cutscene`'s hide UI and the dialogue's UI (the pit's intro and Norticus' scene since AH.28 runs them; 2026-10-30, `mergefix4`) | tv-hud: The hero's numbers on the TV, A level-up on the TV | the backlog's The original's HUD line | none | [`hud.rs`](../../crates/guacamole/src/hud.rs), [`player_loop.rs`](../../crates/guacamole/src/player_loop.rs), [`scripts.rs`](../../crates/guacamole/src/scripts.rs) |
 | `hud-messages` | the HUD's banners (AH's; AH.222): each player's replace-message queue (a level-up's, a rank-up's, a toy accolade's, each queued by the original's own `Add Message`) stepped on the original's timing ahead of the level-init gate (shown the tick after the next, its definition's init macro run; held while its icon's slam is three frames in, `UI Animations`' 3 x 0.166 s, then 1.8 s; taken off by the original's own `Clear Message`, which runs its shutdown: a level-up's raises his full health to the new level's and his health to it and clears the flag the award set, 141 steps after the award headless, AH.11's 142 records), nothing drawn, a call that stops in play parking the banner with the portal manager running on, in place of `MainUI - Player HUD - Replace Message - Update Messages` over sprite members and keyframers | combat: A hero's health; pickups: Levelling up | the backlog's The original's HUD line | none: the banners' own macros run strict on the dump (`giants_figure`), and the timing is the original's but for its hide states (the TV's HUD always shows) and the keyframer's frames counted on the queue's clock | [`hud_messages.rs`](../../crates/guacamole/src/hud_messages.rs), [`player_loop.rs`](../../crates/guacamole/src/player_loop.rs) |
 | `no-character` | no character left (AH's): AH.26's one button, Restart chapter, under the needs-rest alert or the call for a Skylander 5 s from his health's end, a check on No, the restart a new entry from the level's start (the portal view between); and ours where no oracle run looked: a character placed beside a dying hero waits and comes in, a dying hero lifted is beaten; in place of the defeat screen's Restart Chapter | tv-hud: No character left | AM's line | none | [`defeat.rs`](../../crates/guacamole/src/defeat.rs), [`play.rs`](../../crates/guacamole/src/play.rs) |
@@ -1836,7 +1854,11 @@ The plan the crates serve:
   loader takes the game's material only as a vendor extension we'd write and a load hook would parse
   (by default it makes a `StandardMaterial`), can't take KTX2 through `KHR_texture_basisu` and wants
   Havok's splines converted, where the IR builds a `Mesh`, a skin and the game's own material directly
-  ([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decision 6). FSB5 MPEG → MP3 (a remux, not a byte copy). Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
+  ([`ae-animated-turntable`](../../openspec/changes/ae-animated-turntable/design.md), decision 6). FSB5 MPEG → MP3, a remux in our own code (the frames as the disc holds them, FMOD's padding and a cut
+  last frame dropped), no ffmpeg: the `sounds` part (AR.5) holds, for `global.bld`, the 67 modelled
+  characters and level 213, every sound and data info as IR (`sounds/<stem>.<ron|postcard>`) and each
+  bank as `audio/sounds/<sha256 prefix>.mp3`, English voices only, a bank two archives share one file:
+  5,875 files, 504.8 MiB (492.9 MiB audio), 46 s; `guac-sound` looks a script's sound up in it. Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
   plus an MP3 of the voice track (AB.7's pick, below). Logic data (scenes, collision, tfbScript graphs,
   tuning, localization) → IR. Content-hash dedupe (Giants is more than half duplicate bytes by name).
 - ffmpeg is a tool the user installs, found at extract time and never needed after; bundling it waits
@@ -2572,6 +2594,12 @@ sits beside the ladder too: the TV's own screens on Bevy's UI stack (retained sc
 has merged, and later TV surfaces (the Home menu, AK's upgrade screen) build on it. It took the first
 letter past the ladder's ids instead of the next free one, so the rungs kept theirs (its proposal says
 why).
+
+AR ([`openspec/changes/ar-audio-core/`](../../openspec/changes/ar-audio-core/proposal.md)) sits beside
+the ladder as well: the original's sounds read off the disc, extracted and looked up (FSB5, the sound
+layouts, the music, the `sounds` part, `guac-sound`), then played on the TV by its wiring boxes (Bevy
+audio, the `soundinfo` members, music by level, scenes timed on their voices). AJ's living level and AM's
+cutscenes stand on it; it promoted the backlog's "Combat sound" line.
 
 ## Risks
 
