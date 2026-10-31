@@ -110,6 +110,9 @@ pub struct TvSnapshot {
     pub kept: Vec<guacamole::walkers::Kept>,
     /// The portal's alert as drawn (AG.29, AG.63, AG.73).
     pub alert: Option<AlertShot>,
+    /// The arrival (AG.72): the card on screen as drawn, how many wait and
+    /// the last few done with their times; none before the walk's state.
+    pub arrival: Option<crate::arrival::ArrivalShot>,
     /// The small join code drawn in the corner over the level or an alert
     /// (AG.29); `join_qr` counts its QR too.
     pub join_corner: bool,
@@ -1256,7 +1259,12 @@ fn mirror_tv(
         DefeatShots,
         Option<Res<crate::emitters::ParticleReport>>,
     ),
-    (warm, level, prepare): (Option<Res<Warm>>, Option<Res<Level>>, Option<Res<Prepare>>),
+    (warm, level, prepare, arrival): (
+        Option<Res<Warm>>,
+        Option<Res<Level>>,
+        Option<Res<Prepare>>,
+        crate::arrival::ArrivalShots,
+    ),
 ) {
     let Some(screen) = screen.shot() else {
         return;
@@ -1291,6 +1299,7 @@ fn mirror_tv(
         hero: play.hero(),
         kept: play.kept(),
         alert: alert.shot(window),
+        arrival: arrival.shot(window),
         join_corner: alert.corner(),
         loot: loot.shot(),
         creatures: creatures.shot(),

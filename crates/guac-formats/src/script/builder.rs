@@ -833,7 +833,7 @@ fn attack_init_setup(ui: bool) -> Vec<u8> {
 /// scripts.
 pub fn attack_with_mover() -> Attack {
     Attack {
-        global: attack_global_with(None, true, false, false),
+        global: attack_global_with(None, true, false, false, false),
         ..attack()
     }
 }
@@ -848,7 +848,7 @@ pub fn attack_with_mover() -> Attack {
 /// there. It plays no clip and weights nothing.
 pub fn attack_with_locomotion() -> Attack {
     Attack {
-        global: attack_global_with(None, true, true, false),
+        global: attack_global_with(None, true, true, false, false),
         ..attack()
     }
 }
@@ -864,8 +864,196 @@ pub fn attack_with_locomotion() -> Attack {
 /// as Giants' `Minion - Shutdown` does.
 pub fn attack_with_creatures() -> Attack {
     Attack {
-        global: attack_global_with(None, false, false, true),
+        global: attack_global_with(None, false, false, true, false),
         ..attack()
+    }
+}
+
+/// AH.224's synthetic entry beam ([`attack_with_entry`]): the template its
+/// manager drops onto the hero's spot, with a model a spawn part draws.
+pub const ENTRY_COLUMN: &str = "PortalEntry_Column";
+/// The number [`attack_with_entry`]'s `global.bld` keeps the element the
+/// join forces in (`Portal - Enter Object` forces none, -1).
+pub const ENTRY_ELEMENT: &str = "Synthetic Entry Element";
+
+/// [`attack`] with AH.224's entry beam in its `global.bld`, in the shape of
+/// the original's `Spyro_PortalEntry_Macros.ai`, our ticks: `portal control
+/// data`'s `entry beams`, each a `Portal Entry Beam Struct` (its `enter`,
+/// `state`, `minion actor`, `controller`, `minion desc` and `spawn loc`);
+/// `Portal - Init Minion Enter Effect` adds one for the minion, controller,
+/// description and spawn location it's given (the element forced kept in
+/// [`ENTRY_ELEMENT`]); `Portal - Manage Portal Entry Beams` steps the
+/// first: its first tick spawns [`ENTRY_COLUMN`] at its `spawn loc`, its
+/// second activates the minion there through `Game - Activate/Deactivate
+/// Minion`, its third takes it out of the set; `Portal - Entry Effect
+/// Clean Up` empties the set.
+pub fn attack_with_entry() -> Attack {
+    Attack {
+        global: attack_global_with(None, false, false, false, true),
+        ..attack()
+    }
+}
+
+/// [`attack_with_entry`]'s structure, set, template and macros.
+struct Beam {
+    ty: Location,
+    enter: Location,
+    state: Location,
+    minion: Location,
+    controller: Location,
+    desc: Location,
+    loc: Location,
+    beams: Location,
+    element: Location,
+    column: Location,
+}
+
+impl Beam {
+    fn new(w: &mut Writer<'_>) -> Self {
+        let ty = w.op(Class::DefineStructure, "Portal Entry Beam Struct");
+        let enter = w.variable("enter", "ValueInfo", Some("IntMeasurement"));
+        let state = w.variable("state", "ValueInfo", Some("IntMeasurement"));
+        let minion = w.variable("minion actor", "ScriptReference", None);
+        let controller = w.variable("controller", "ScriptReference", None);
+        let desc = w.variable("minion desc", "ScriptReference", None);
+        let loc = w.variable("spawn loc", "ScriptReference", None);
+        let beams = w.variable("entry beams", "ScriptSet", None);
+        w.refer(beams, 0x24, ty);
+        let element = file_int(w, ENTRY_ELEMENT);
+        let column = actor_with(w.b, ENTRY_COLUMN, None, 5);
+        let model = w.b.object(0, "tfbPhysicsModel", 0x30);
+        crate::model::builder::info(w.b, model, ATTACK_BALL_MODEL);
+        w.b.pointer(at(column, 0xDC), model);
+        Self {
+            ty,
+            enter,
+            state,
+            minion,
+            controller,
+            desc,
+            loc,
+            beams,
+            element,
+            column,
+        }
+    }
+
+    fn structure(&self, w: &mut Writer<'_>) {
+        let fields = [
+            self.enter,
+            self.state,
+            self.minion,
+            self.controller,
+            self.desc,
+            self.loc,
+        ];
+        structure(w, self.ty, &fields);
+    }
+
+    /// The three macros, `control` the `portal control data` global and
+    /// `activate` `Game - Activate/Deactivate Minion`'s definition.
+    fn macros(&self, w: &mut Writer<'_>, control: Location, activate: Location) {
+        let count = [
+            El::Local(control),
+            El::Local(self.beams),
+            El::Member("setvariant", "count"),
+        ];
+        // Init: a beam for what it's given.
+        let (p, _, ops) = define_params(
+            w,
+            "Portal - Init Minion Enter Effect",
+            &[
+                ("spawn minion", "ScriptReference"),
+                ("spawn location", "ScriptReference"),
+                ("minion controller", "ScriptReference"),
+                ("minion desc", "ScriptReference"),
+                ("entry fx macro ", "ScriptReference"),
+                ("force element", "ValueInfo"),
+                ("return entry beam struct", "ScriptReference"),
+            ],
+        );
+        let made = ops[6];
+        w.inc(&count);
+        setref(
+            w,
+            &[El::Local(made)],
+            &[
+                El::Local(control),
+                El::Local(self.beams),
+                El::Member("setvariant", "last"),
+            ],
+        );
+        let one = w.int(1);
+        w.set(&[El::Local(made), El::Local(self.enter)], one);
+        for (field, from) in [
+            (self.minion, ops[0]),
+            (self.controller, ops[2]),
+            (self.desc, ops[3]),
+            (self.loc, ops[1]),
+        ] {
+            setref(w, &[El::Local(made), El::Local(field)], &[El::Local(from)]);
+        }
+        let forced = w.rhs("IntMeasurement", &[El::Local(ops[5])]);
+        w.set(&[El::Local(self.element)], forced);
+        w.flow_end();
+        w.end_block(p);
+        // Manage: the first beam a step further each call.
+        let (p, _) = define_with(
+            w,
+            "Portal - Manage Portal Entry Beams",
+            &[("manage portal data ", "ScriptReference")],
+        );
+        let first = |field: Location| {
+            [
+                El::Local(control),
+                El::Local(self.beams),
+                El::Member("setvariant", "first"),
+                El::Local(field),
+            ]
+        };
+        let zero = w.int(0);
+        let at_0 = w.check(&first(self.state), 1, zero);
+        w.inc(&first(self.state));
+        let facing = w.int(0);
+        let s = w.spawn(&[El::Local(self.column)], &first(self.loc), facing);
+        w.end_block(s);
+        let past_0 = w.otherwise(at_0);
+        let one = w.int(1);
+        let at_1 = w.check(&first(self.state), 1, one);
+        w.inc(&first(self.state));
+        let minion = w.reference(&first(self.minion), None);
+        let location = w.reference(&first(self.loc), None);
+        let player = w.reference(&first(self.controller), None);
+        let data = w.reference(&first(self.desc), None);
+        let transition = w.int(1);
+        call_stub(
+            w,
+            activate,
+            &[
+                ("minion", "ScriptReference", minion),
+                ("spawn location", "ScriptReference", location),
+                ("player", "ScriptReference", player),
+                ("input minion data", "ScriptReference", data),
+                ("in level transition", "ValueInfo", transition),
+            ],
+        );
+        let past_1 = w.otherwise(at_1);
+        let none = w.int(0);
+        w.set(&count, none);
+        w.close(past_1);
+        w.close(past_0);
+        w.flow_end();
+        w.end_block(p);
+        // Clean up: the set emptied.
+        let (p, _) = define_with(
+            w,
+            "Portal - Entry Effect Clean Up",
+            &[("entry beam", "ScriptReference")],
+        );
+        let none = w.int(0);
+        w.set(&count, none);
+        w.flow_end();
+        w.end_block(p);
     }
 }
 
@@ -2271,23 +2459,25 @@ fn walk_by_stick(w: &mut Writer<'_>) {
 
 /// [`attack`]'s `global.bld` entry: the portal manager and its globals.
 fn attack_global() -> Vec<u8> {
-    attack_global_with(None, false, false, false)
+    attack_global_with(None, false, false, false, false)
 }
 
 /// [`attack_global`], with AG.28's camera system beside the portal manager
 /// when `camera` says how it runs ([`camera::camera`]), AH.151's mover
 /// update ([`attack_with_mover`]) when `mover`, AG.219's locomotion
-/// definitions when `locomotion` and AH.191's creature descriptions
-/// ([`attack_with_creatures`]) when `creatures`.
+/// definitions when `locomotion`, AH.191's creature descriptions
+/// ([`attack_with_creatures`]) when `creatures` and AH.224's entry beam
+/// ([`attack_with_entry`]) when `entry`.
 fn attack_global_with(
     camera: Option<camera::CameraFault>,
     mover: bool,
     locomotion: bool,
     creatures: bool,
+    entry: bool,
 ) -> Vec<u8> {
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
-    let info = {
+    let (info, info_column) = {
         let mut w = Writer::new(&mut b);
         let cam = camera.map(|fault| camera::System::new(&mut w, fault));
         let update = std::cell::Cell::new(None);
@@ -2362,7 +2552,8 @@ fn attack_global_with(
         let shifted = w.variable("shifted", "ValueInfo", Some("IntMeasurement"));
         let tags_held = w.variable("tags held", "ValueInfo", Some("IntMeasurement"));
         let described = creatures.then(|| Creatures::new(&mut w));
-        frame_ticking(
+        let beam = entry.then(|| Beam::new(&mut w));
+        let info = frame_ticking(
             &mut w,
             "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/Spyro_PortalManager.ai",
             |w| {
@@ -2377,7 +2568,13 @@ fn attack_global_with(
                 structure(w, tag_ty, &fields);
                 structure(w, save_ty, &[save_tags]);
                 structure(w, player_ty, &[loaded_data]);
-                structure(w, control_ty, &[loaded, joined]);
+                match &beam {
+                    Some(beam) => {
+                        beam.structure(w);
+                        structure(w, control_ty, &[loaded, joined, beam.beams]);
+                    }
+                    None => structure(w, control_ty, &[loaded, joined]),
+                }
                 if let Some(c) = &described {
                     c.structures(w);
                 }
@@ -2454,7 +2651,7 @@ fn attack_global_with(
                 );
                 w.flow_end();
                 w.end_block(p);
-                let (p, _) = define_with(
+                let (p, activate_def) = define_with(
                     w,
                     "Game - Activate/Deactivate Minion",
                     &[
@@ -2485,6 +2682,9 @@ fn attack_global_with(
                 w.close(none);
                 w.flow_end();
                 w.end_block(p);
+                if let Some(beam) = &beam {
+                    beam.macros(w, control, activate_def);
+                }
                 // A tag's save area: a word per four bytes of the portal's
                 // two regions.
                 let (p, _) = define_with(
@@ -2610,10 +2810,14 @@ fn attack_global_with(
                 }
             },
             |_| {},
-        )
+        );
+        (info, beam.map(|b| b.column))
     };
     let manager = actor_with(&mut b, PORTAL_MANAGER, Some(info), 4);
     let mut placed = vec![Some(manager)];
+    if let Some(column) = info_column {
+        placed.push(Some(column));
+    }
     if mover {
         let script = mover_update(&mut b);
         placed.push(Some(actor_with(&mut b, MOVER_PLACEMENT, Some(script), 4)));

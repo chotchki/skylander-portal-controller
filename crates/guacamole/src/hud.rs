@@ -904,6 +904,7 @@ mod tests {
             player_loop: Default::default(),
             steps: 0,
             stopped: Vec::new(),
+            entry_stopped: None,
         };
         (runtime, hud)
     }

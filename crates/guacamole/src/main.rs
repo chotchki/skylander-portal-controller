@@ -8,6 +8,7 @@
 //! and driver worker on its own tokio thread.
 
 mod alert;
+mod arrival;
 mod card_motion;
 mod card_view;
 mod cards;
@@ -469,7 +470,8 @@ fn run_tv(
         intro_player::IntroPlugin,
         physics::SeamPlugin,
         play::PlayPlugin,
-        alert::AlertPlugin,
+        // The portal's alerts and the arrival (AG.29, AG.72) over the level.
+        (alert::AlertPlugin, arrival::ArrivalPlugin),
         // AH.26: the HUD and Restart chapter over the level.
         (hud::HudPlugin, defeat::DefeatPlugin),
         progress::ProgressPlugin,

@@ -410,6 +410,43 @@ impl Run {
     }
 }
 
+impl Run {
+    /// The TV's join at this step (openspec AH.224): the tag and the
+    /// request as [`Run::join`]'s, then his entry beam made after the
+    /// definition's first tick ([`scripts::join_enter`]) and run ahead of
+    /// each step ([`scripts::entry_beams`]) until it activates him. Returns
+    /// how many steps the beam ran before it did.
+    fn enter(&mut self) -> Result<u32, Halt> {
+        let files = self.files.clone();
+        let handles = self.handles.clone();
+        let usr = dump().join("PS3_GAME/USRDIR");
+        let progression =
+            guac_extract::progression::read(&usr, identity()).expect("the progression tables");
+        let layout = figure::Layout::of(&progression).expect("the figure's layout");
+        let tag = figure::Tag {
+            toy_id: 9,
+            subtype: 0,
+            serial: 1,
+            values: figure::Values::default(),
+        };
+        self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
+        self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
+        self.step()?;
+        let entry = self.with_host(|vm, host| scripts::join_enter(vm, host, HERO, true))?;
+        assert_eq!(entry, scripts::Entry::Beam, "the dump's part runs the beam");
+        for k in 0..120 {
+            if let Some(m) =
+                self.with_host(|vm, host| scripts::entry_beams(vm, host, Some(HERO)))?
+            {
+                self.minion = Some(m);
+                return Ok(k);
+            }
+            self.step()?;
+        }
+        panic!("his entry beam never activated him");
+    }
+}
+
 fn load() -> String {
     std::process::Command::new("uptime")
         .output()
@@ -448,6 +485,110 @@ fn joined_on(open: bool) -> Run {
         run.step().unwrap_or_else(|h| panic!("{h}"));
     }
     run
+}
+
+/// The portal entry's four models, `global.bld`'s templates the beam clones
+/// (openspec AH.224).
+const ENTRY_FOUR: [&str; 4] = [
+    "PortalEntry_Column",
+    "PortalEntry_Crater",
+    "PortalEntry_GlowPlane",
+    "PortalEntry_ShockRing",
+];
+
+/// AH.224 on the dump, strict: Eruptor's join on the TV's path runs the
+/// original's entry. His beam made at the join's second half drops
+/// `PortalEntry_Column` onto his spot that step, 300 % tall; as it lands the
+/// beam clones the crater, the glow plane and the shock ring there and
+/// activates his minion, the activator; the beam is done and its column
+/// gone within 2 s. Each of the four draws a model `global.bld`'s spawn
+/// part reads (AH.39's path).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn his_join_runs_the_portal_entry_onto_his_spot() {
+    println!("load before: {}", load());
+    let (mut run, _) = run_on(Mode::Strict, false);
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    let before: std::collections::HashSet<Handle> = run.world.clones().into_iter().collect();
+    let steps = run.enter().unwrap_or_else(|h| panic!("{h}"));
+    let minion = run.minion.expect("activated");
+    let program = run.vm.program_arc();
+    let template_of = |run: &Run, h: Handle| -> Option<String> {
+        let a = run.world.actor(h)?;
+        program.name_of(a.template?).map(str::to_owned)
+    };
+    // The beam ran its column's 0.25 s slide, then activated him.
+    println!("the beam activated him after {steps} steps");
+    assert!((14..=17).contains(&steps), "{steps} steps");
+    assert!(run.vm.is_activator(minion), "his minion leads the tick");
+    let pivot = run.bench.heroes[&HERO].pivot;
+    let mut models = HashMap::new();
+    for h in run.world.clones() {
+        if before.contains(&h) {
+            continue;
+        }
+        let Some(name) = template_of(&run, h) else {
+            continue;
+        };
+        let a = run.world.actor(h).unwrap();
+        if ENTRY_FOUR.contains(&name.as_str()) {
+            let across = Vec3::new(a.position.x - pivot.x, 0.0, a.position.z - pivot.z).length();
+            println!(
+                "  {name} {h:#x} at {:?} ({across:.3} m across) scale {:?} tint {:08x}",
+                a.position, a.scale, a.tint
+            );
+            assert!(across < 0.01, "{name} {across} m off his spot");
+            let model = run
+                .files
+                .placed
+                .iter()
+                .find(|p| Some(p.obj) == a.template)
+                .and_then(|p| p.model.clone());
+            models.insert(name, model);
+        }
+    }
+    for name in ENTRY_FOUR {
+        assert!(models.contains_key(name), "{name} cloned: {models:?}");
+    }
+    // Their models, as the spawn part reads `global.bld`'s.
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let global = guac_extract::scripts::entry(&usr, guac_extract::roster::GLOBAL).unwrap();
+    let boot = guac_extract::scripts::entry(&usr, guac_extract::roster::BOOTSTRAP).unwrap();
+    let igz = Igz::parse(&global).unwrap();
+    let effects =
+        guac_extract::scripts::own_effects(guac_extract::roster::GLOBAL, &igz, &boot).unwrap();
+    let spawns = guac_extract::scripts::spawn_models(
+        &igz,
+        guac_extract::roster::GLOBAL,
+        identity(),
+        None,
+        effects.as_ref(),
+    )
+    .unwrap()
+    .ir;
+    for (name, model) in &models {
+        let model = model
+            .as_deref()
+            .unwrap_or_else(|| panic!("{name} names no model"));
+        assert!(
+            spawns.props.iter().any(|p| p.path == model),
+            "{name}'s {model} read in the spawn part"
+        );
+    }
+    // The beam done and its column gone within 2 s.
+    for k in 0..120 {
+        run.with_host(|vm, host| scripts::entry_beams(vm, host, None))
+            .unwrap_or_else(|h| panic!("step {k}: {h}"));
+        run.step().unwrap_or_else(|h| panic!("step {k}: {h}"));
+    }
+    assert_eq!(scripts::entry_beam_count(&mut run.vm), Some(0));
+    let column_left = run.world.clones().into_iter().any(|h| {
+        template_of(&run, h).as_deref() == Some("PortalEntry_Column")
+            && !run.world.actor(h).unwrap().removed
+    });
+    assert!(!column_left, "the column taken off");
+    println!("load after: {}", load());
 }
 
 /// A clone the scripts made, by its template's name.
