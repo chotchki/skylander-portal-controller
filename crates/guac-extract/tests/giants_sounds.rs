@@ -1,9 +1,10 @@
-//! The sounds part on the real Giants dump (openspec AR.5): the roster's
+//! The sounds part on the real Giants dump (openspec AR.5, AR.6): the roster's
 //! stage and then the part alone into a throwaway identity dir, then kept
 //! on a second run. Checked: `global.bld`, the 67 modelled characters and
 //! level 213 read with none missing, every sound of the 69 resolving to an
 //! audio file the part holds (none unresolved, none whose bank didn't
-//! read), and each audio file an MPEG stream on disk. Printed: the part's
+//! read), each audio file an MPEG stream on disk, and every sound answered
+//! by `guac-sound`'s lookup over the part. Printed: the part's
 //! time, size and file count with the load average, the audio's share and
 //! the largest file. Ignored by default: it reads `GUAC_GIANTS_DUMP` and
 //! writes under `GUAC_EXTRACT_DIR` (removed after), from the environment
@@ -127,6 +128,46 @@ fn the_sounds_chapter_1_plays_extract_and_resolve() {
         music
             .iter()
             .any(|m| m.0.as_deref() == Some("mu_213_explore"))
+    );
+
+    // Every sound answered by the lookup over the part (AR.6).
+    let book = guac_sound::SoundBook::new(archives.iter().map(|a| read(a)));
+    let mut answers: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut rumble_is_length, mut rumble_differs) = (0, Vec::new());
+    for a in &archives {
+        let stem = guac_sound::stem(a);
+        let ir = book.file(&stem).expect("every archive in the book");
+        for snd in &ir.sounds {
+            let key = match book.lookup(&stem, snd.object) {
+                guac_sound::Lookup::Playable(p) => {
+                    assert!(part.contains(&p.file.to_owned()), "{}", p.file);
+                    if (p.params.rumble_duration - p.duration).abs() < 1e-4 {
+                        rumble_is_length += 1;
+                    } else if rumble_differs.len() < 5 {
+                        rumble_differs.push((
+                            snd.name.clone(),
+                            p.params.rumble_duration,
+                            p.duration,
+                        ));
+                    }
+                    "playable".to_owned()
+                }
+                guac_sound::Lookup::Silent { why, .. } => format!("silent {why:?}"),
+                guac_sound::Lookup::Unknown => "unknown".to_owned(),
+            };
+            *answers.entry(key).or_default() += 1;
+        }
+    }
+    println!("  lookups: {answers:?}");
+    println!(
+        "  rumble duration the recording's length on {rumble_is_length} playable sounds; others, first five: {rumble_differs:?}"
+    );
+    assert_eq!(answers.get("unknown"), None);
+    assert_eq!(
+        answers.get("playable").copied().unwrap_or(0)
+            + answers.get("silent NoData").copied().unwrap_or(0),
+        s.sounds,
+        "every sound plays but those with no data"
     );
 
     // Size, and every audio file an MPEG stream at its recorded size.

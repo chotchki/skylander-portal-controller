@@ -8,6 +8,7 @@ members = [
     "crates/guac-motion",
     "crates/guac-oracle",
     "crates/guac-script",
+    "crates/guac-sound",
     "crates/guac-server",
     "crates/guacamole",
     "crates/indexer",

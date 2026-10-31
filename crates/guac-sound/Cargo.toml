@@ -1,0 +1,17 @@
+[package]
+name = "guac-sound"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The sounds a script plays, looked up and their settings given meaning
+# (openspec AR.6), pure: no Bevy, no I/O. The TV's player asks it for a
+# sound's file and parameters; its tests run without an app.
+[lib]
+name = "guac_sound"
+path = "src/lib.rs"
+# No doctests here, so `cargo test` skips the empty doc-test run (openspec AQ.36).
+doctest = false
+
+[dependencies]
+guac-ir = { path = "../guac-ir" }
