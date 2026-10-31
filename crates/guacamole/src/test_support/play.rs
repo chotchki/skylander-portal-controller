@@ -638,15 +638,31 @@ pub(crate) const BATTLE_TOP: [f32; 3] = [1.5, 1.0, 0.0];
 /// AH.25's creature's drawing beside [`write_level`]'s parts: its placement
 /// in the level's placements part naming its model, a made-up skinned
 /// model at that path in the props part (a root and a top joint a metre up,
-/// a triangle on the census's first creature key over the root), and its
+/// a triangle on the census's opaque creature key over the root), and its
 /// palette in the level's palettes part, whose battle slot holds the top
 /// joint at [`BATTLE_TOP`].
+/// An opaque skinned key the census holds for the first fight's creatures:
+/// the first creature row drawn opaque (since every character's keys as the
+/// hero joined the census, the heroes' table holds the creatures' opaque
+/// ones, the creatures' table their faded twins).
+fn creature_key() -> guacamole::character::warm::WarmKey {
+    let row = guacamole::census::Row {
+        blend: 0,
+        ..guacamole::census::CREATURES[0]
+    };
+    assert!(
+        guacamole::census::HEROES.contains(&row),
+        "{row:?} in the census"
+    );
+    row.key(true).unwrap()
+}
+
 pub(crate) fn write_creature_model(dir: &std::path::Path) {
     use guac_formats::script::builder::{FIGHT_BATTLE_SLOT, FIGHT_CREATURE, FIGHT_CREATURE_MODEL};
     use guac_ir::clip::{RotationTrack, Track, VecTrack};
     use guac_ir::model::{Joint, Skeleton, Transform as IrTransform};
     use guac_ir::palette::{LevelPalettes, PaletteSlot, SlotEntry};
-    let key = guacamole::census::CREATURES[0].key(true).unwrap();
+    let key = creature_key();
     let material = guacamole::census::material_for(&key);
     let joint = |name: &str, parent: Option<u16>, y: f32| Joint {
         name: name.into(),
@@ -782,7 +798,7 @@ pub(crate) const ART_TOP: [f32; 3] = [0.0, 1.0, 2.0];
 /// AG.150's art piece's drawing beside [`write_creature_model`]'s: its
 /// template's placement in the level's placements part naming its model, a
 /// made-up skinned model at that path in the props part (a root and a top
-/// joint a metre up, a triangle on the census's first creature key), and
+/// joint a metre up, a triangle on the census's opaque creature key), and
 /// its palette added to the level's palettes part, whose slot holds the top
 /// joint at [`ART_TOP`]. Written after [`write_creature_model`].
 pub(crate) fn write_art_model(dir: &std::path::Path) {
@@ -790,7 +806,7 @@ pub(crate) fn write_art_model(dir: &std::path::Path) {
     use guac_ir::clip::{RotationTrack, Track, VecTrack};
     use guac_ir::model::{Joint, Skeleton, Transform as IrTransform};
     use guac_ir::palette::{LevelPalettes, PaletteSlot, SlotEntry};
-    let key = guacamole::census::CREATURES[0].key(true).unwrap();
+    let key = creature_key();
     let material = guacamole::census::material_for(&key);
     let joint = |name: &str, parent: Option<u16>, y: f32| Joint {
         name: name.into(),
