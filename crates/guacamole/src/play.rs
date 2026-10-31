@@ -6222,8 +6222,13 @@ mod tests {
             alert(a) == Some(Alert::TooManySkylanders)
         });
         stands_still(&mut app, 5);
+        assert!(arrived(&app).is_empty(), "none for the one the alert holds");
         let left = hero(&app);
         clear(&mut app, 0);
+        // The one held comes in by his arrival (AG.72).
+        until(&mut app, "his arrival", |a| {
+            arriving(a) == Some((arrival::Kind::Hero, 4))
+        });
         until(&mut app, "the other in", |a| {
             a.world().resource::<Play>().hero().is_some()
                 && a.world()
@@ -6242,6 +6247,7 @@ mod tests {
         assert_ne!(left.facing, START_FACING);
         let inside = app.world().resource::<Play>().inside.as_ref().unwrap();
         assert_eq!(inside.camera, camera, "the same camera");
+        assert_eq!(arrived(&app), vec![(arrival::Kind::Hero, 4, "shown")]);
         until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
         assert_eq!(alert(&app), None);
         let mut heroes = app.world_mut().query::<&HeroBody>();
@@ -6366,6 +6372,132 @@ mod tests {
                 .also_count(),
             level_lit,
             "his materials lit with the level"
+        );
+    }
+
+    /// Whether the hero is drawn this frame, his join's name, the clips his
+    /// scripts lay over him (slot and time) and his pivot.
+    fn drawn_state(app: &App) -> (bool, Option<String>, Vec<(u32, f32)>, Vec3) {
+        let e = app.world().resource::<Play>().hero().expect("in the level");
+        let shown = app
+            .world()
+            .entity(e)
+            .get::<Visibility>()
+            .is_some_and(|v| *v != Visibility::Hidden);
+        let clips = app
+            .world()
+            .get_resource::<ScriptWorld>()
+            .map(|w| {
+                hero_scripts::playing_on(w, e.to_bits())
+                    .into_iter()
+                    .map(|(slot, t, _)| (slot, t))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (shown, join(app), clips, hero(app).pivot)
+    }
+
+    /// AH.224 on the TV: on a part with the entry beam, the hero who comes
+    /// in is drawn nowhere and holds where the TV put him while his beam
+    /// runs (`entering`), the beam's column standing on his spot; he's drawn
+    /// from the frame his minion is in (`joined`).
+    #[test]
+    fn a_hero_is_drawn_nowhere_until_his_entry_beam_lands() {
+        use guac_formats::script::builder::ENTRY_COLUMN;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        write_attack_parts_with(tmp.path(), true);
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        let pad = test_pad::connect(&mut app, None, None);
+        until(&mut app, "the level and its scripts", |a| {
+            level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        let put = hero(&app).pivot;
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        let columns = |app: &App| -> usize {
+            let w = app.world().resource::<ScriptWorld>();
+            let program = app.world().resource::<ScriptRuntime>().vm.program_arc();
+            w.clones()
+                .into_iter()
+                .filter_map(|h| w.actor(h))
+                .filter(|a| !a.removed)
+                .filter(|a| a.template.and_then(|t| program.name_of(t)) == Some(ENTRY_COLUMN))
+                .count()
+        };
+        let mut entering = 0;
+        for frame in 0..120 {
+            app.update();
+            let (shown, join, _, pivot) = drawn_state(&app);
+            match join.as_deref() {
+                Some("joined") => {
+                    assert!(shown, "frame {frame}: in, drawn");
+                    break;
+                }
+                Some("entering") => {
+                    entering += 1;
+                    assert_eq!(columns(&app), 1, "frame {frame}: the column on his spot");
+                }
+                _ => {}
+            }
+            assert!(!shown, "frame {frame}: {join:?} and drawn");
+            assert!(pivot.distance(put) < 1e-5, "frame {frame}: held where put");
+        }
+        assert!(entering >= 1, "his beam ran");
+        assert_eq!(join(&app).as_deref(), Some("joined"));
+    }
+
+    /// AG.100 on the TV: the replacement is drawn from the frame his minion
+    /// is in, his scripts' first clip (the synthetic part's arrival, its
+    /// STARTUP's) on him then at its start, put up [`DROP`] over where the
+    /// last stood (the synthetic part has no mover update to drop him).
+    #[test]
+    fn a_replacement_is_drawn_from_the_step_his_minion_is_in_with_his_clip_on() {
+        use guac_formats::script::builder::ATTACK_ARRIVAL_SLOT;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        let left = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .left
+            .unwrap()
+            .0;
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the next one in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        let mut first = None;
+        for frame in 0..60 {
+            let (shown, join, clips, pivot) = drawn_state(&app);
+            if shown {
+                first = Some((frame, join, clips, pivot));
+                break;
+            }
+            assert_ne!(
+                join.as_deref(),
+                Some("joined"),
+                "frame {frame}: in and not drawn"
+            );
+            app.update();
+        }
+        let (frame, join, clips, pivot) = first.expect("drawn");
+        assert_eq!(join.as_deref(), Some("joined"), "frame {frame}");
+        let arrival = clips
+            .iter()
+            .find(|(slot, _)| *slot == ATTACK_ARRIVAL_SLOT as u32)
+            .unwrap_or_else(|| panic!("frame {frame}: his arrival's clip on him: {clips:?}"));
+        assert!(arrival.1 <= 2.0 / 60.0 + 1e-4, "at its start: {arrival:?}");
+        assert!(
+            (pivot - (left + Vec3::Y * DROP)).length() < 1e-3,
+            "{pivot} over {left}"
         );
     }
 

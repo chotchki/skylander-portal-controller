@@ -279,11 +279,20 @@ pub(crate) fn hero(app: &App) -> Hero {
 /// and the second attack's on the made-up skeleton, and the spawn part
 /// holding the ball's model.
 pub(crate) fn write_attack_parts(dir: &std::path::Path) {
+    write_attack_parts_with(dir, false);
+}
+
+/// [`write_attack_parts`] with AH.224's entry beam in the part's
+/// `global.bld` when `entry` ([`crate::test_support::hero_scripts::write_attack_with_entry`]).
+pub(crate) fn write_attack_parts_with(dir: &std::path::Path, entry: bool) {
     use guac_formats::script::builder::{
         ATTACK_ARRIVAL_SLOT, ATTACK_BALL_MODEL, ATTACK_SECOND_SLOT, ATTACK_THROW_SLOT,
     };
     use guac_ir::palette::{PaletteSlot, SlotEntry};
-    crate::test_support::hero_scripts::write_attack(dir);
+    match entry {
+        true => crate::test_support::hero_scripts::write_attack_with_entry(dir),
+        false => crate::test_support::hero_scripts::write_attack(dir),
+    }
     let side = hero_side("009_Eruptor");
     let walk = side.locomotion.walk.unwrap().clip;
     let clip = |name: &str, duration: f32| Clip {
@@ -422,8 +431,13 @@ pub(crate) fn write_figure_rows(dir: &std::path::Path) {
 /// Eruptor in the level on AH.24's synthetic part, his scripts joined:
 /// the app and the pad that took him over.
 pub(crate) fn joined_eruptor(tmp: &std::path::Path) -> (App, Entity) {
+    joined_eruptor_with(tmp, false)
+}
+
+/// [`joined_eruptor`] on the part with AH.224's entry beam when `entry`.
+pub(crate) fn joined_eruptor_with(tmp: &std::path::Path, entry: bool) -> (App, Entity) {
     let (mut app, tx) = play_app(tmp);
-    write_attack_parts(tmp);
+    write_attack_parts_with(tmp, entry);
     tx.send(write_level(tmp, &lights())).unwrap();
     let pad = test_pad::connect(&mut app, None, None);
     until(&mut app, "the level and its scripts", |a| {
