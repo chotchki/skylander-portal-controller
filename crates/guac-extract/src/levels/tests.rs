@@ -3,7 +3,9 @@
 
 use guac_formats::collision::builder::ramp;
 use guac_formats::igz::Igz;
-use guac_formats::level::builder::{STAGE_WORLD, StageSpec, stage_level, stage_sample};
+use guac_formats::level::builder::{
+    STAGE_WORLD, StageSpec, colour_only, stage_level, stage_sample,
+};
 use guac_formats::model::builder::AttrSpec;
 use guac_ir::Sha256;
 use guac_ir::model::{Blend, Glow, TextureRole};
@@ -367,8 +369,7 @@ fn collision_placements_and_lights_read_as_stored() {
 }
 
 /// The atmosphere part is the definition's zones as the format's reader
-/// gives them, its start the zone set up; a level without a definition
-/// script fails this part alone.
+/// gives them, its start the zone set up; a level without one has none.
 #[test]
 fn the_atmosphere_is_the_definitions_zones() {
     use guac_formats::atmosphere::builder::{SCRIPT, ZoneCall};
@@ -406,14 +407,13 @@ fn the_atmosphere_is_the_definitions_zones() {
         }
     );
 
+    // A level no script adds a zone to (an arena challenge, a ship part)
+    // sets none up: no zones, no definition (openspec AS.6).
     let mut bare = stage_sample();
     bare.atmosphere = None;
     let igz = parsed(&bare);
-    let e = atmosphere(igz, LEVEL, identity()).unwrap_err();
-    assert_eq!(
-        e,
-        "atmosphere: tfbScriptInfo at offset 0x0: required but missing"
-    );
+    let a = atmosphere(igz, LEVEL, identity()).unwrap().ir;
+    assert_eq!((a.script.as_str(), a.zones.len(), a.start), ("", 0, None));
 }
 
 #[test]
@@ -748,4 +748,218 @@ fn the_nodes_part_puts_a_skinned_models_nodes_on_its_joints() {
     // With no lists, none.
     let r = nodes(parsed(&stage_sample()), LEVEL, identity()).unwrap();
     assert!(r.ir.models.is_empty());
+}
+
+/// One triangle facing +z (counter-clockwise from the front), its normal
+/// and a tangent along +x, for [`bake`]'s closed forms.
+fn triangle() -> Segment {
+    Segment {
+        material: 0,
+        source: 0,
+        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        normals: vec![[0.0, 0.0, 1.0]; 3],
+        tangents: Some(vec![[1.0, 0.0, 0.0, 1.0]; 3]),
+        uvs: vec![vec![[0.0; 2]; 3]],
+        colors: None,
+        joints: Vec::new(),
+        weights: Vec::new(),
+        indices: vec![0, 1, 2],
+    }
+}
+
+fn row_affine(rows: [[f32; 3]; 3], at: [f32; 3]) -> Mat44 {
+    let r = |i: usize| [rows[i][0], rows[i][1], rows[i][2], 0.0];
+    [r(0), r(1), r(2), [at[0], at[1], at[2], 1.0]]
+}
+
+fn close(a: [f32; 3], b: [f32; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() < 1e-6)
+}
+
+/// The face a triangle's winding makes, from its positions: (b - a) × (c - a).
+fn face(s: &Segment) -> [f32; 3] {
+    let [a, b, c] = [0, 1, 2].map(|k| s.positions[usize::from(s.indices[k])]);
+    let (u, v) = (
+        [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+        [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+    );
+    [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ]
+}
+
+/// AS.3: a translation moves the positions alone; a quarter turn about y
+/// turns positions, normals and tangents alike; a stretch along x leans the
+/// normals by its inverse transpose, unit length; a mirror flips the
+/// tangents' handedness and swaps each triangle's winding so its front
+/// still faces along its normal; a flat matrix is refused.
+#[test]
+fn a_draw_under_a_transform_is_baked_into_the_levels_frame() {
+    let mut s = triangle();
+    bake(
+        &mut s,
+        &row_affine(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [10.0, 20.0, 30.0],
+        ),
+    )
+    .unwrap();
+    assert_eq!(s.positions[1], [11.0, 20.0, 30.0]);
+    assert_eq!(s.normals[0], [0.0, 0.0, 1.0]);
+    assert_eq!(s.indices, [0, 1, 2]);
+
+    // x to -z, z to x: the triangle's +z face turns to +x.
+    let mut s = triangle();
+    bake(&mut s, &guac_formats::level::builder::QUARTER_TURN).unwrap();
+    assert!(
+        close(s.positions[1], [0.0, 0.0, -1.0]),
+        "{:?}",
+        s.positions[1]
+    );
+    assert!(close(s.normals[0], [1.0, 0.0, 0.0]), "{:?}", s.normals[0]);
+    let t = s.tangents.as_ref().unwrap()[0];
+    assert!(
+        close([t[0], t[1], t[2]], [0.0, 0.0, -1.0]) && t[3] == 1.0,
+        "{t:?}"
+    );
+    assert_eq!(s.indices, [0, 1, 2]);
+
+    // A stretch by 2 along x: a normal (1, 0, 1)/√2 leans to (1, 0, 2)/√5.
+    let mut s = triangle();
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    s.normals = vec![[h, 0.0, h]; 3];
+    bake(
+        &mut s,
+        &row_affine(
+            [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        ),
+    )
+    .unwrap();
+    let r5 = 5.0f32.sqrt();
+    assert!(
+        close(s.normals[0], [1.0 / r5, 0.0, 2.0 / r5]),
+        "{:?}",
+        s.normals[0]
+    );
+    assert!(close(s.positions[1], [2.0, 0.0, 0.0]));
+
+    // A mirror through x = 0: the front still faces along the normal.
+    let mut s = triangle();
+    bake(
+        &mut s,
+        &row_affine(
+            [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0; 3],
+        ),
+    )
+    .unwrap();
+    assert_eq!(s.positions[1], [-1.0, 0.0, 0.0]);
+    assert_eq!(s.indices, [0, 2, 1]);
+    let (f, n) = (face(&s), s.normals[0]);
+    assert!(
+        f[0] * n[0] + f[1] * n[1] + f[2] * n[2] > 0.0,
+        "{f:?} against {n:?}"
+    );
+    let t = s.tangents.as_ref().unwrap()[0];
+    assert_eq!((t[0], t[3]), (-1.0, -1.0));
+
+    // Flat: nothing to invert.
+    let mut s = triangle();
+    let flat = row_affine(
+        [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        [0.0; 3],
+    );
+    assert!(bake(&mut s, &flat).is_err());
+    assert_eq!(
+        s.positions,
+        triangle().positions,
+        "a refused bake moves nothing"
+    );
+}
+
+/// AS.3 on a level: the scene's techniques under a still transform and
+/// under a keyframed one both read, moved into the level's frame and the
+/// keyframed listed; a prop under a still transform reads moved, the fairy
+/// gem's keyframed one stays listed; with no transform the scene reads as
+/// before, bit for bit.
+#[test]
+fn a_levels_transforms_are_baked_and_the_animated_listed() {
+    let plain = scene(parsed(&stage_sample()), LEVEL, identity()).unwrap();
+    let over = |matrix, animated| {
+        let spec = StageSpec {
+            scene_transform: Some((matrix, animated)),
+            ..stage_sample()
+        };
+        let igz = parsed(&spec);
+        (
+            scene(igz, LEVEL, identity()).unwrap(),
+            animated_draws(igz).unwrap(),
+        )
+    };
+    let shift = guac_formats::level::builder::TRANSLATION;
+    for animated in [false, true] {
+        let (moved, listed) = over(shift, animated);
+        let (a, b) = (&plain.ir.scenes[0], &moved.ir.scenes[0]);
+        assert_eq!(a.segments.len(), b.segments.len());
+        // The ground's four techniques moved by (10, 20, 30); the sky, off
+        // the transform, where it was.
+        for (k, (sa, sb)) in a.segments.iter().zip(&b.segments).enumerate() {
+            let d = if k < 4 { [10.0, 20.0, 30.0] } else { [0.0; 3] };
+            for (pa, pb) in sa.positions.iter().zip(&sb.positions) {
+                assert!(
+                    close([pa[0] + d[0], pa[1] + d[1], pa[2] + d[2]], *pb),
+                    "{k}: {pa:?} {pb:?}"
+                );
+            }
+            assert_eq!(sa.normals, sb.normals);
+        }
+        let names: Vec<&str> = listed.iter().map(|(_, n, _)| n.as_str()).collect();
+        if animated {
+            assert_eq!(
+                names,
+                ["Ground", "Lava_Gloss", "grass_HIRES", "cave_painting"]
+            );
+            assert!(listed.iter().all(|(_, _, identity)| !identity));
+        } else {
+            assert!(names.is_empty(), "{names:?}");
+        }
+    }
+    // An identity transform keyframed: read as before, bit for bit.
+    let (same, listed) = over(IDENTITY, true);
+    assert_eq!(same.ir, plain.ir);
+    assert_eq!(listed.len(), 4);
+
+    // A prop under a still transform reads, moved; the gem stays listed.
+    let spec = StageSpec {
+        moved: Some((
+            "C:/tfb/Content/Models/Objects/statue.mdl",
+            colour_only("statue", 2),
+            shift,
+        )),
+        ..stage_sample()
+    };
+    let p = props(parsed(&spec), LEVEL, identity()).unwrap();
+    let statue =
+        p.ir.props
+            .iter()
+            .find(|p| p.path.ends_with("statue.mdl"))
+            .expect("the statue reads");
+    let gourd = &p.ir.props[0];
+    for (a, b) in gourd.segments[0]
+        .positions
+        .iter()
+        .zip(&statue.segments[0].positions)
+    {
+        assert!(
+            close([a[0] + 10.0, a[1] + 20.0, a[2] + 30.0], *b),
+            "{a:?} {b:?}"
+        );
+    }
+    let [refused] = &p.ir.refused[..] else {
+        panic!("{:?}", p.ir.refused);
+    };
+    assert!(refused.path.ends_with("fairy_upgrade_gem.mdl"));
 }

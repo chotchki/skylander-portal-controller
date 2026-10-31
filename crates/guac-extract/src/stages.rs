@@ -349,7 +349,7 @@ pub fn progression_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<Progress
     })
 }
 
-/// Each level the build plays ([`levels::LEVELS`]), part by part, into
+/// Each level a first run extracts ([`levels::FIRST_RUN`]), part by part, into
 /// `levels/<archive>/<part>.<ron|postcard>` and its textures into the
 /// characters' store. A part already in ([`IdentityDir::level_part_done`])
 /// is kept without reading the level; one that won't read is reported in
@@ -358,6 +358,38 @@ pub fn progression_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<Progress
 pub fn level_stage(
     dir: &mut IdentityDir,
     ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<LevelStage> {
+    levels_stage(dir, ir, &levels::FIRST_RUN, send)
+}
+
+/// One level off the disc's list ([`levels::on_disc`]), by its archive's
+/// name, extracted as the first run's are (openspec AS.1, design decision
+/// 1): its parts under `levels/<archive>/`, recorded under its name, each
+/// kept when already in, its textures into the shared store. A name the
+/// dump holds no level file of is refused before anything is read.
+pub fn extract_level(
+    dir: &mut IdentityDir,
+    level: &str,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<LevelStage> {
+    if !levels::on_disc(dir.manifest())
+        .iter()
+        .any(|l| l.name == level)
+    {
+        return Err(ExtractError::NoSuchLevel {
+            level: level.to_owned(),
+        });
+    }
+    levels_stage(dir, ir, &[level], send)
+}
+
+/// [`level_stage`] over `names`.
+fn levels_stage(
+    dir: &mut IdentityDir,
+    ir: IrFormat,
+    names: &[&str],
     send: &(dyn Fn(Event) + Sync),
 ) -> Result<LevelStage> {
     let started = Instant::now();
@@ -385,14 +417,14 @@ pub fn level_stage(
         files: Files::default(),
         took: Duration::ZERO,
     };
-    let total = levels::LEVELS.len() * levels::PARTS.len();
+    let total = names.len() * levels::PARTS.len();
     let mut done = 0;
     send(Event::Level { done, total });
     // Every file counted, kept or written, and the textures the parts read
     // this run bind.
     let mut counted: HashSet<String> = HashSet::new();
     let mut read_textures: HashSet<String> = HashSet::new();
-    for level in levels::LEVELS {
+    for &level in names {
         let mut needed = Vec::new();
         for part in levels::PARTS {
             if dir.level_part_done(level, part, &levels::part_path(ir, level, part))? {

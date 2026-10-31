@@ -460,6 +460,16 @@ pub struct StageSpec {
     pub prop_points: Vec<crate::attachments::builder::PointSpec>,
     /// A prop whose technique sits under an animated transform.
     pub transformed: Option<(&'static str, crate::model::builder::MaterialSpec)>,
+    /// A prop whose technique sits under a still transform by this matrix
+    /// (openspec AS.3).
+    pub moved: Option<(
+        &'static str,
+        crate::model::builder::MaterialSpec,
+        [[f32; 4]; 4],
+    )>,
+    /// The scene's techniques but the sky under a transform by this matrix,
+    /// keyframed when the flag says (openspec AS.3); `None` writes none.
+    pub scene_transform: Option<([[f32; 4]; 4], bool)>,
     /// The PS3's zones its definition script adds (AG.41); `None` writes no
     /// definition script.
     pub atmosphere: Option<Vec<crate::atmosphere::builder::ZoneCall>>,
@@ -583,6 +593,8 @@ pub fn stage_sample() -> StageSpec {
             "C:/tfb/Content/Models/Objects/fairy_upgrade_gem.mdl",
             colour_only("m_butterfly_wings", 7),
         )),
+        moved: None,
+        scene_transform: None,
         atmosphere: Some(vec![
             crate::atmosphere::builder::ZoneCall::sample(0, 1),
             crate::atmosphere::builder::ZoneCall::sample(1, 2),
@@ -645,7 +657,19 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
         .map(|m| material_technique(&mut b, blocks, m, &images, fixture(m)))
         .collect();
     let (ground, sky) = techniques.split_at(techniques.len() - spec.sky);
-    let mut under_spatial = ground.to_vec();
+    let mut under_spatial = match spec.scene_transform {
+        None => ground.to_vec(),
+        Some((m, animated)) => {
+            let moved = group(&mut b, blocks, TRANSFORM, "moved", ground);
+            floats(&mut b, moved, 0x30, m.as_flattened());
+            b.put_u32(at(moved, 0x70), (-1i32) as u32);
+            if animated {
+                let keyframes = b.object(0, "igTransformSource3", 0x50);
+                b.pointer(at(moved, 0x78), keyframes);
+            }
+            vec![moved]
+        }
+    };
     if !sky.is_empty() {
         under_spatial.push(group(
             &mut b,
@@ -684,6 +708,13 @@ pub fn stage_level(spec: &StageSpec) -> Vec<u8> {
             crate::attachments::builder::attach_list(&mut b, blocks, model, &spec.skinned_points);
         }
         models.push(model);
+    }
+    if let Some((path, m, matrix)) = &spec.moved {
+        let t = material_technique(&mut b, blocks, m, &images, fixture(m));
+        let still = group(&mut b, blocks, TRANSFORM, "still", &[t]);
+        floats(&mut b, still, 0x30, matrix.as_flattened());
+        b.put_u32(at(still, 0x70), (-1i32) as u32);
+        models.push(static_model(&mut b, path, still));
     }
     if let Some((path, m)) = &spec.transformed {
         let t = material_technique(&mut b, blocks, m, &images, fixture(m));

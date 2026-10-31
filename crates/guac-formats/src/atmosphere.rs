@@ -2,7 +2,7 @@
 //! decision 2): the fog and the three directional lights a level's
 //! definition script sets up at its start.
 //!
-//! A level's `Level_Definition_<n>.ai` calls `global.bld`'s "_ART - Add
+//! A level's definition script calls `global.bld`'s "_ART - Add
 //! Atmospheric Zone" in its STARTUP once per zone: an id, an ambient and
 //! three lights (diffuse, specular, facing and tilt in degrees), the fog (on,
 //! where it starts and how far it runs, in feet, its colour, the sky dome's
@@ -14,6 +14,16 @@
 //! `if system.hardware platform == 3`, the Wii's branch, and the PS3's in its
 //! else; the PS3 is 1 (the member is the enum "XBox 360|PS 3|PC|Wii|WiiU",
 //! aj-vm).
+//!
+//! The definition is the one script whose STARTUP calls the add macro,
+//! whatever its file is called (openspec AS.6): level 213's is
+//! `Level_Definition_213.ai`, the hub's `Hub2_LevelDef.ai`, PvP arena 1's
+//! `_LevelDefinition_PVP_Level_001.ai`; of the disc's 143 level files, 88
+//! have one such script and none has two. A level with none (the arena
+//! challenges, the mesh bundles, the ship parts, the packs, the title and
+//! the credits) sets no zone up, and reads as no zones. Other scripts call
+//! the switch macro in their own STARTUPs (a hub's zone controller, an
+//! intro's camera); those run on the VM, not here.
 //!
 //! This reader steps STARTUP's ops as a PS3 runs them: a check on the
 //! hardware platform is evaluated (ah-progression's comparison codes), each
@@ -47,9 +57,6 @@ mod tests;
 
 const FORMAT: &str = "atmosphere";
 
-/// A level's definition script, by the start of its file name
-/// (`Level_Definition_213.ai`).
-pub const SCRIPT_PREFIX: &str = "Level_Definition_";
 pub const ADD_ZONE: &str = "_ART - Add Atmospheric Zone";
 /// The other macros that change the zones or which one is set up; a call
 /// to one in STARTUP is refused.
@@ -159,7 +166,8 @@ pub struct Zone {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atmosphere<'a> {
-    /// The definition script's source path.
+    /// The definition script's source path; empty when no script adds a
+    /// zone.
     pub script: &'a str,
     /// Every zone the PS3's start adds, in the order each id was first
     /// added.
@@ -169,9 +177,16 @@ pub struct Atmosphere<'a> {
 }
 
 impl<'a> Atmosphere<'a> {
-    /// Reads the zones out of a level's `level.bld`.
+    /// Reads the zones out of a level's `level.bld`: none, with an empty
+    /// script, when no script's STARTUP adds one.
     pub fn read(igz: &Igz<'a>) -> Result<Self, FormatError> {
-        let (script, ops) = definition(igz)?;
+        let Some((script, ops)) = definition(igz)? else {
+            return Ok(Atmosphere {
+                script: "",
+                zones: Vec::new(),
+                start: None,
+            });
+        };
         let mut out = Atmosphere {
             script,
             zones: Vec::new(),
@@ -200,27 +215,25 @@ fn unsupported(field: &'static str, position: usize) -> FormatError {
     )
 }
 
-/// The one script whose file name starts with [`SCRIPT_PREFIX`], and its
-/// op list.
-fn definition<'a>(igz: &Igz<'a>) -> Result<(&'a str, Vec<usize>), FormatError> {
+/// The one script whose STARTUP calls [`ADD_ZONE`], and its op list;
+/// `None` when no script's does. Two such scripts are refused.
+fn definition<'a>(igz: &Igz<'a>) -> Result<Option<(&'a str, Vec<usize>)>, FormatError> {
     let mut found = None;
     for (i, _) in read_all::<ScriptInfo>(igz) {
         let script = ScriptInfo::read(igz, i)?;
-        let Some(name) = script.info.name else {
+        let Some(list) = script.op_list else {
             continue;
         };
-        let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
-        if !(file.starts_with(SCRIPT_PREFIX) && file.ends_with(".ai")) {
+        let ops = OpCodeList::read(igz, list)?.ops;
+        if !(Reader { igz, ops: &ops }).adds_zones()? {
             continue;
         }
         if found.is_some() {
             return Err(refuse("tfbScriptInfo", ErrorKind::Duplicate));
         }
-        found = Some((name, script.op_list));
+        found = Some((script.info.name.unwrap_or(""), ops));
     }
-    let (name, list) = found.ok_or_else(|| refuse("tfbScriptInfo", ErrorKind::Missing))?;
-    let list = list.ok_or_else(|| refuse("_opList", ErrorKind::Missing))?;
-    Ok((name, OpCodeList::read(igz, list)?.ops))
+    Ok(found)
 }
 
 /// An argument followed to its literal: its class and bits.
@@ -295,6 +308,22 @@ impl<'a> Reader<'_, 'a> {
         }
         let name = self.macro_name(p)?;
         Ok(name.is_some_and(|n| n == ADD_ZONE || OTHER_MACROS.contains(&n)))
+    }
+
+    /// Whether a call to [`ADD_ZONE`] sits anywhere in STARTUP's block.
+    fn adds_zones(&self) -> Result<bool, FormatError> {
+        let Some(at) = (0..self.ops.len()).find(|&p| self.class(p) == Some(Class::StartUp)) else {
+            return Ok(false);
+        };
+        let Some(end) = OpCode::read(self.igz, self.ops[at])?.block_end(at) else {
+            return Ok(false);
+        };
+        for p in at + 1..=end.min(self.ops.len() - 1) {
+            if self.class(p) == Some(Class::UseMacro) && self.macro_name(p)? == Some(ADD_ZONE) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Refuses a zone call, or another atmosphere macro's, anywhere in

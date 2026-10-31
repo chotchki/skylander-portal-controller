@@ -101,6 +101,11 @@ pub enum ExtractError {
         reason: String,
     },
 
+    /// A level asked for by name that the dump holds no file of (openspec
+    /// AS.1): nothing is read or written.
+    #[error("GUAC-E-NO-SUCH-LEVEL: `{level}` isn't a level on this disc")]
+    NoSuchLevel { level: String },
+
     /// A part of the fight's script data outside a level (AH.22: the
     /// script entries or the spawn models) didn't read: the other parts
     /// land, and the next start tries this one again.
@@ -136,6 +141,7 @@ impl ExtractError {
             Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
             Self::HeroUnsettled { .. } => "GUAC-E-HERO-UNSETTLED",
             Self::LevelUnreadable { .. } => "GUAC-E-LEVEL-UNREADABLE",
+            Self::NoSuchLevel { .. } => "GUAC-E-NO-SUCH-LEVEL",
             Self::ScriptsUnreadable { .. } => "GUAC-E-SCRIPTS-UNREADABLE",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
@@ -219,6 +225,9 @@ mod tests {
                 level: "level_213_tutotial".into(),
                 part: "scene".into(),
                 reason: "x".into(),
+            },
+            ExtractError::NoSuchLevel {
+                level: "level_999".into(),
             },
             ExtractError::ScriptsUnreadable {
                 part: "scripts".into(),
