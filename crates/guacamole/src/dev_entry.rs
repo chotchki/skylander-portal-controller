@@ -6,10 +6,9 @@
 //! - Asked: `GUAC_DEV_ENTRY` in the process env at start (`b` or `start`),
 //!   or `POST /api/_test/tv/entry` (`{"anchor": "b"}`, optionally
 //!   `"seed": n`) in a `test-hooks` build, before the hero comes into the
-//!   level: once he's in it's refused. Asked, the TV's run lists the first
-//!   fight's placements (the four Chompies, Setup_001's controller,
-//!   Norticus: [`guacamole::scripts::fight_config`]) and walks its
-//!   creatures, installed again at once if the level's part has linked.
+//!   level: once he's in it's refused. The TV's run lists the first fight's
+//!   placements either way (the four Chompies, Setup_001's controller,
+//!   Norticus: [`guacamole::scripts::fight_config`], openspec AH.28).
 //! - Anchor B: once the hero's scripts have joined and his arrival has
 //!   played out (120 steps, as the headless runs settle him), he's set down
 //!   along AH.8's route ([`guacamole::anchors::ROUTE`]) a step at a time,
@@ -22,12 +21,12 @@
 //!   and the session's generator seeded when asked. The follow camera rests
 //!   on camera 0's definition at each set-down, looking along the oracle's
 //!   view at anchor B there.
-//! - Start: the fight listed and nothing else, the hero where the level
-//!   starts him: what the e2e's synthetic creature needs.
-//! - Norticus' scene, once the four are beaten, ended 5 s into it as the
-//!   headless runs end it (`anchors::SCENE_STEPS`), and the hero freed from
-//!   its hold: the cutscene manager ends it in the original, off the
-//!   whitelist (AH.56).
+//! - Start: nothing set, the hero where the level starts him: what the
+//!   e2e's synthetic creature needs.
+//! - Norticus' scene, once the four are beaten, ends from his own script as
+//!   the original's does (openspec AH.56: the cutscene system's update in
+//!   the game systems' tick), freeing the hero: the entry sets nothing
+//!   there.
 //! - At F0 the entry reads decision 17's equivalence list off the run
 //!   ([`guacamole::anchors::equivalence`]) and reports it with F0's step in
 //!   the scripts' log (`/api/_test/tv`'s `entry`), so a driver starts AH.8's
@@ -57,7 +56,7 @@ use crate::progress::Earning;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Anchor {
-    /// The level's start, as AG.21 enters it: the fight listed, nothing set.
+    /// The level's start, as AG.21 enters it: nothing set.
     Start,
     /// Anchor B (AH.8): the pit's floor after the Chompies' scene.
     B,
@@ -197,10 +196,6 @@ pub(crate) struct DevEntry {
     /// F0's step in the scripts' log, and the list read there.
     f0: Option<u64>,
     equivalence: Option<Equivalence>,
-    /// Steps Norticus has been in his scene, and the log's step the entry
-    /// ended it at ([`anchors::SCENE_STEPS`]; AH.56 runs what ends it).
-    scene: u32,
-    scene_ended: Option<u64>,
     /// Why the last ask was refused.
     refused: Option<String>,
 }
@@ -222,8 +217,6 @@ pub(crate) struct EntryShot {
     pub equivalence: Option<Equivalence>,
     /// What the entry set off AH.4's reads, past the set-downs.
     pub set: Vec<&'static str>,
-    /// The log's step it ended Norticus' scene at, 5 s into it.
-    pub scene_ended_step: Option<u64>,
     pub refused: Option<String>,
 }
 
@@ -248,18 +241,9 @@ impl DevEntry {
                 Some(Anchor::B) => ANCHOR_FIELDS.to_vec(),
                 _ => Vec::new(),
             },
-            scene_ended_step: self.scene_ended,
             refused: self.refused.clone(),
         }
     }
-}
-
-/// Whether the TV's run lists the first fight: an entry was asked. Read
-/// when the run is installed.
-pub(crate) fn fight_listed(world: &World) -> bool {
-    world
-        .get_resource::<DevEntry>()
-        .is_some_and(|e| e.asked.is_some())
 }
 
 /// `GUAC_DEV_ENTRY`'s ask, in a dev build only.
@@ -310,15 +294,9 @@ impl Plugin for DevEntryPlugin {
     }
 }
 
-/// An ask taken: refused once the hero's in the level, else the fight
-/// listed and the run installed again on it if it's made.
-fn take_asks(
-    mut commands: Commands,
-    asks: Res<EntryAsks>,
-    mut entry: ResMut<DevEntry>,
-    play: Option<Res<Play>>,
-    source: Option<Res<ScriptSource>>,
-) {
+/// An ask taken: refused once the hero's in the level, else kept for the
+/// entry to drive.
+fn take_asks(asks: Res<EntryAsks>, mut entry: ResMut<DevEntry>, play: Option<Res<Play>>) {
     let Some(asked) = asks.0.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return;
     };
@@ -329,15 +307,11 @@ fn take_asks(
         return;
     }
     info!(anchor = ?asked.plan.anchor, seed = ?asked.seed, "the dev entry asked");
-    let listed = entry.asked.is_some();
     *entry = DevEntry {
         asked: Some(asked),
         phase: Phase::Waiting,
         ..default()
     };
-    if source.is_some() && !listed {
-        commands.queue(crate::hero_scripts::reinstall);
-    }
 }
 
 /// One step of the entry, before the step's scripts (the module docs).
@@ -368,11 +342,6 @@ pub(crate) fn drive(
         return;
     };
     if entry.phase == Phase::Anchored {
-        let minion = heroes.iter().find_map(|(_, r, _)| match r.join {
-            Join::Joined(m) => Some(m),
-            _ => None,
-        });
-        end_the_scene(&mut entry, &mut runtime, &world, level, minion, &log);
         return;
     }
     let joined = heroes
@@ -466,55 +435,6 @@ pub(crate) fn drive(
     info!(f0 = ?entry.f0, "the dev entry is at its anchor");
 }
 
-/// Norticus' scene ended 5 s into it ([`anchors::SCENE_STEPS`]), as the
-/// headless runs end it until AH.56 runs what does in the original (the
-/// cutscene manager, off the whitelist): his `Cutscene State` back to 0,
-/// which sends Norticus on into the cave, and the hero's minion freed from
-/// the scene's hold (his `description.state` back to 0, which his
-/// `disabled` behaviour waits on to return him to play).
-fn end_the_scene(
-    entry: &mut DevEntry,
-    runtime: &mut ScriptRuntime,
-    world: &ScriptWorld,
-    level: u16,
-    minion: Option<guac_script::PlacementId>,
-    log: &ScriptLog,
-) {
-    if entry.scene_ended.is_some() || entry.asked.as_ref().map(|a| a.plan.anchor) != Some(Anchor::B)
-    {
-        return;
-    }
-    let vm = &mut runtime.vm;
-    let in_scene = world
-        .placed_in(level, anchors::NORTICUS)
-        .and_then(|h| vm.placement_of(h))
-        .and_then(|id| vm.behaviour(id))
-        == Some("cutscene go");
-    if !in_scene {
-        return;
-    }
-    entry.scene += 1;
-    if entry.scene < anchors::SCENE_STEPS {
-        return;
-    }
-    match vm.program().global_named(anchors::CUTSCENE_STATE) {
-        Some(g) if vm.set_global(g, guac_script::Value::Int(0)) => {
-            entry.scene_ended = Some(log.last() + 1);
-            info!("the dev entry ends Norticus' scene, 5 s into it");
-        }
-        _ => warn!("no cutscene state to end Norticus' scene with"),
-    }
-    let description = minion
-        .and_then(|m| vm.local(m, "description"))
-        .map(|d| vm.value(d));
-    match description {
-        Some(d) if vm.set_field(d, "state", guac_script::Value::Int(0)) => {
-            info!("the dev entry frees him from the scene");
-        }
-        _ => warn!("no hero's description to free from the scene"),
-    }
-}
-
 /// The hero set down at `at` (his pivot, dropped onto what's under it)
 /// facing `facing`, at rest, as a scripted hero's teleport.
 pub(crate) fn set_down(body: &mut HeroBody, seam: &AvianSeam, at: Vec3, facing: f32) {
@@ -605,9 +525,9 @@ mod tests {
     use crate::test_support::play::{CREATURE_AT, TRIGGERS, fight_app, fight_app_walker, until};
 
     /// A build without `dev-tools` (which `test-hooks` turns on) passes
-    /// `false`: no plugin, so no [`DevEntry`] and nothing lists the fight,
-    /// and `GUAC_DEV_ENTRY` asks for nothing; a dev build's takes `b` and
-    /// `start` and nothing else.
+    /// `false`: no plugin, so no [`DevEntry`], and `GUAC_DEV_ENTRY` asks for
+    /// nothing; a dev build's takes `b` and `start` and nothing else. The
+    /// first fight is the TV's listing either way (openspec AH.28).
     #[test]
     fn the_entry_is_absent_from_a_build_without_either_feature() {
         assert!(plugin(false, EntryAsks::default()).is_none());
@@ -619,12 +539,6 @@ mod tests {
         assert_eq!(anchor("start"), Some(Anchor::Start));
         assert_eq!(anchor("pit"), None);
         assert_eq!(asked_at_start(true, None), None);
-        let mut world = World::new();
-        assert!(!fight_listed(&world), "no entry resource");
-        world.insert_resource(DevEntry::default());
-        assert!(!fight_listed(&world), "nothing asked");
-        world.resource_mut::<DevEntry>().asked = asked_at_start(true, Some("b"));
-        assert!(fight_listed(&world));
         // Anchor B's plan is AH.8's route and AH.4's reads: the camera
         // volumes on the way to the strip, then the route from the strip,
         // each set-down after the last.
@@ -802,8 +716,8 @@ mod tests {
         }
     }
 
-    /// The level's start: the fight listed and nothing set, at its anchor
-    /// the step after his join, where the level starts him.
+    /// The level's start: nothing set, at its anchor the step after his
+    /// join, where the level starts him.
     #[test]
     fn the_levels_start_is_at_its_anchor_once_he_joins() {
         let tmp = tempfile::tempdir().unwrap();
@@ -822,7 +736,6 @@ mod tests {
         let (at, _) = shot.equivalence.unwrap().hero.unwrap();
         let start = Vec3::from_array(crate::test_support::level::START);
         assert!(Vec3::from_array(at).with_y(0.0).distance(start.with_y(0.0)) < 1e-3);
-        assert!(fight_listed(app.world()));
     }
 
     /// Each set-down lands at its own step, before that step's scripts: a
@@ -894,8 +807,7 @@ mod tests {
         );
     }
 
-    /// Once he's in the level an ask is refused, and the run keeps its
-    /// listing: nothing of the fight runs.
+    /// Once he's in the level an ask is refused: nothing is set.
     #[test]
     fn an_ask_with_the_hero_in_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
@@ -911,6 +823,5 @@ mod tests {
                 .refused
                 .is_some_and(|r| r.contains("in the level"))
         );
-        assert!(!fight_listed(app.world()));
     }
 }

@@ -298,6 +298,9 @@ fn the_fights_parts_extract_whole_and_resume() {
         owners.iter().any(|o| o.ends_with("/Treasure_Chest.mdl")),
         "the chest"
     );
+    // AH.42's two from AH.8's route (the cannon's pan, the pit's intro) name
+    // no model: the creatures' palettes stay these eight.
+    assert_eq!(owners.len(), 8, "{owners:?}");
     // AG.177's jumping goats add `Sheep_1` and `Sheep_3`'s, by
     // `Goat_Jumping_Pit.ai`: without it the TV's goats have no clip lengths.
     assert!(
@@ -337,8 +340,9 @@ fn the_fights_parts_extract_whole_and_resume() {
         "  {held} whitelisted scripts, all in the script part ({} walkers' of them)",
         scripts::whitelisted_walker_scripts().len()
     );
-    // The level's 55 with AG.177's jumping goats.
-    assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 55);
+    // The level's 57 with AG.177's jumping goats and AH.42's two from AH.8's
+    // route.
+    assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 57);
     println!(
         "  the script part read back and parsed in {:.2} s",
         parse_started.elapsed().as_secs_f64()

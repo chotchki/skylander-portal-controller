@@ -509,6 +509,27 @@ pub(crate) fn fight_app(
     tmp: &std::path::Path,
     asked: Option<crate::dev_entry::Asked>,
 ) -> (App, Entity) {
+    fight_app_on(tmp, asked, false)
+}
+
+/// Where [`fight_app_with_art`] stands the art's template: 3 m beside the
+/// start, on the floor.
+pub(crate) const ART_AT: [f32; 3] = [START[0] + 3.0, FLOOR, START[2]];
+
+/// [`fight_app`] with AG.150's skinned art piece and its spawner in the
+/// level ([`write_art_model`]).
+pub(crate) fn fight_app_with_art(
+    tmp: &std::path::Path,
+    asked: Option<crate::dev_entry::Asked>,
+) -> (App, Entity) {
+    fight_app_on(tmp, asked, true)
+}
+
+fn fight_app_on(
+    tmp: &std::path::Path,
+    asked: Option<crate::dev_entry::Asked>,
+    art: bool,
+) -> (App, Entity) {
     let asks = crate::dev_entry::EntryAsks::default();
     let entry = crate::dev_entry::plugin(true, asks.clone()).expect("a dev build's entry");
     let (mut app, tx) = play_app_with(tmp, |app| {
@@ -516,9 +537,16 @@ pub(crate) fn fight_app(
     });
     write_attack_parts(tmp);
     write_figure_rows(tmp);
-    crate::test_support::hero_scripts::write_fight(tmp, CREATURE_AT, TRIGGERS);
+    if art {
+        crate::test_support::hero_scripts::write_fight_with_art(tmp, CREATURE_AT, TRIGGERS, ART_AT);
+    } else {
+        crate::test_support::hero_scripts::write_fight(tmp, CREATURE_AT, TRIGGERS);
+    }
     let source = write_level(tmp, &lights());
     write_creature_model(tmp);
+    if art {
+        write_art_model(tmp);
+    }
     tx.send(source).unwrap();
     let pad = test_pad::connect(&mut app, None, None);
     until(&mut app, "the level and its scripts", |a| {
@@ -684,5 +712,108 @@ pub(crate) fn write_creature_model(dir: &std::path::Path) {
         crate::test_support::hero_scripts::LEVEL,
         guac_extract::levels::PALETTES,
     );
+    std::fs::write(dir.join(rel), guac_ir::to_ron(&palettes).unwrap()).unwrap();
+}
+
+/// Where the art piece's clip holds its top joint, in its model's space:
+/// its reference pose holds it at (0, 1, 0).
+pub(crate) const ART_TOP: [f32; 3] = [0.0, 1.0, 2.0];
+
+/// AG.150's art piece's drawing beside [`write_creature_model`]'s: its
+/// template's placement in the level's placements part naming its model, a
+/// made-up skinned model at that path in the props part (a root and a top
+/// joint a metre up, a triangle on the census's first creature key), and
+/// its palette added to the level's palettes part, whose slot holds the top
+/// joint at [`ART_TOP`]. Written after [`write_creature_model`].
+pub(crate) fn write_art_model(dir: &std::path::Path) {
+    use guac_formats::script::builder::{FIGHT_ART, FIGHT_ART_MODEL, FIGHT_ART_SLOT};
+    use guac_ir::clip::{RotationTrack, Track, VecTrack};
+    use guac_ir::model::{Joint, Skeleton, Transform as IrTransform};
+    use guac_ir::palette::{LevelPalettes, PaletteSlot, SlotEntry};
+    let key = guacamole::census::CREATURES[0].key(true).unwrap();
+    let material = guacamole::census::material_for(&key);
+    let joint = |name: &str, parent: Option<u16>, y: f32| Joint {
+        name: name.into(),
+        parent,
+        reference: IrTransform {
+            translation: [0.0, y, 0.0],
+            ..IrTransform::IDENTITY
+        },
+        inverse_bind: bevy::math::Mat4::from_translation(Vec3::new(0.0, -y, 0.0))
+            .to_cols_array_2d(),
+    };
+    let rel = IrFormat::Ron.level_path(
+        crate::test_support::hero_scripts::LEVEL,
+        guac_extract::levels::PROPS,
+    );
+    let mut props: guac_ir::level::Props =
+        guac_ir::from_ron(&std::fs::read_to_string(dir.join(&rel)).unwrap()).unwrap();
+    props.props.push(guac_ir::level::Prop {
+        path: FIGHT_ART_MODEL.into(),
+        skeleton: Some(Skeleton {
+            joints: vec![joint("root", None, 0.0), joint("top", Some(0), 1.0)],
+        }),
+        materials: vec![guac_ir::level::LevelMaterial::Multi2(material)],
+        segments: vec![key.mesh.triangle(0)],
+        idle: None,
+    });
+    let placement = guac_ir::level::Placement {
+        object: 41,
+        id: 0,
+        name: FIGHT_ART.into(),
+        script: Some("Box_Tortoise.ai".into()),
+        position: ART_AT,
+        rotation: [0.0; 3],
+        scale: [100.0; 3],
+        model: Some(FIGHT_ART_MODEL.into()),
+        solid: None,
+        movement: None,
+        waypoints: None,
+        activity_state: 5,
+        activation_range: 0.0,
+    };
+    crate::test_support::level::write_props(dir, props.props, vec![placement]);
+    let clip = Clip {
+        name: "MadeUp_Tortoise.ma".into(),
+        duration: 1.0,
+        frame_duration: 1.0 / 30.0,
+        frames: 31,
+        tracks: vec![Track {
+            joint: 1,
+            translation: VecTrack {
+                constant: ART_TOP,
+                spline: None,
+            },
+            rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+            scale: VecTrack {
+                constant: [1.0; 3],
+                spline: None,
+            },
+        }],
+    };
+    let rel = IrFormat::Ron.level_path(
+        crate::test_support::hero_scripts::LEVEL,
+        guac_extract::levels::PALETTES,
+    );
+    let mut palettes: LevelPalettes =
+        guac_ir::from_ron(&std::fs::read_to_string(dir.join(&rel)).unwrap()).unwrap();
+    palettes.palettes.push(Palette {
+        identity: crate::test_support::turntable::identity(),
+        owner: FIGHT_ART_MODEL.into(),
+        slots: 40,
+        entries: vec![PaletteSlot {
+            slot: FIGHT_ART_SLOT as u16,
+            name: None,
+            label: None,
+            entry: SlotEntry::Clip {
+                additive: false,
+                partial: false,
+                layered: false,
+                motion_extraction: 0,
+                clip,
+            },
+        }],
+        refused: Vec::new(),
+    });
     std::fs::write(dir.join(rel), guac_ir::to_ron(&palettes).unwrap()).unwrap();
 }

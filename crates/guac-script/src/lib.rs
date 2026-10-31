@@ -421,7 +421,9 @@
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
-//!   into it too, and a membership check or a `find subset` of it skips);
+//!   into it too, and a membership check or a `find subset` of it skips;
+//!   its `setvariant` members read as an empty set's: a count of 0, no
+//!   element);
 //!   `.its`, the
 //!   member under test inside `find subset`; `.valuedereferencer`, the
 //!   object a reference names, as the place to write;

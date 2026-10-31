@@ -25,7 +25,8 @@
 //!   ([`level_scene::drawn`]), the other effects' left out (AG.24), placed by
 //!   its position, its Euler angles (AF.9's convention) and its scale. A
 //!   skinned model with no script, or one the stage refused, draws nothing.
-//!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60).
+//!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60), those
+//!   [`SKINNED_SPAWNS`] names as creatures (AG.150).
 //! - What it stops ([`solid`]): its `CollisionInfo` as the original builds it
 //!   ([`guac_motion::solid`], AG.7's table), a solid one a kinematic seam
 //!   body, a shaped non-solid one a sensor that stops nothing, a shapeless or
@@ -127,22 +128,28 @@ pub struct LevelProps {
     /// Ranged placements naming a model that draws nothing, with why: a
     /// prop for its solid, or left out as [`LeftOut::Nothing`] without one.
     pub undrawn: Vec<(String, &'static str)>,
-    /// The models of the templates [`DRAWN_SPAWNS`] names, into `models`:
-    /// what their clones draw (openspec AG.60).
+    /// The models of the placements [`DRAWN_SPAWNS`] names, into `models`:
+    /// what their clones draw (openspec AG.60, AG.239).
     pub spawn_models: Vec<usize>,
 }
 
-/// The level's templates whose clones the TV draws (openspec AG.60), by
+/// The level's placements whose clones the TV draws (openspec AG.60), by
 /// name: what chapter 1's start scripts spawn that draws, the walkway
 /// fence's cross beam and planks (its spawner draws nothing, its tint
 /// see-through) and the pieces they break into, a bird nest's egg and the
-/// cannon's base. Left out: the Titan boulders' pebbles, laid on the
-/// boulder's attach nodes, which no prop model's extract carries (they'd sit
-/// under the boulder); the chest's locks (the chest is a creature, drawn
+/// cannon's base; and what AH.8's route spawns on the way to the pit
+/// (openspec AG.239, found on AH.28's TV run, where each broke or rose
+/// unseen): the breakables' pieces and the coins they drop, the fence's
+/// warp torus (a placement standing itself), the cannon's ball and its
+/// warp ring, the rubble wall's pieces and the spike gate's spikes and
+/// holes. Left out: the Titan boulders' pebbles, laid on the boulder's
+/// attach nodes, which no prop model's extract carries (they'd sit under
+/// the boulder); the chest's locks (the chest is a creature, drawn
 /// nowhere); the push blocks' tortoises and the cannon's top (skinned, as
-/// a prop draws none); the invisible markers. `giants_start` holds it to
-/// what a headless start clones.
-pub const DRAWN_SPAWNS: [&str; 8] = [
+/// a prop draws none: [`SKINNED_SPAWNS`] draws them); Norticus' hat (a
+/// creature's); the invisible markers. `giants_start` and `giants_route`
+/// hold it to what a headless start and the route clone.
+pub const DRAWN_SPAWNS: [&str; 32] = [
     "Fence Cross Beam",
     "Wooden Plank_one",
     "Wooden Plank_Two",
@@ -151,7 +158,60 @@ pub const DRAWN_SPAWNS: [&str; 8] = [
     "Bottom_A",
     "Bird_nest_egg",
     "Push_Canon_Art_Bottom",
+    // AH.8's route (AG.239): a broken barrel's, gourd's and pot's pieces,
+    // the coins and treasure they drop (the five the loot rolls among).
+    "barrel_b_debris_01",
+    "barrel_b_debris_02",
+    "barrel_b_debris_03",
+    "gourd_debris_(1)",
+    "gourd_debris_(2)",
+    "gourd_debris_(3)",
+    "pottery_debris_(1)",
+    "pottery_debris_(2)",
+    "pottery_debris_(3)",
+    "1_Coin",
+    "2_Coin(1)",
+    "3_Coin(2)",
+    "4_Coin(3)",
+    "5_Coin(1)",
+    // The walkway fence's warp torus as it breaks.
+    "Torus_Effect_Wood_Fence",
+    // The cannon's ball and its warp ring; the rubble wall's pieces.
+    "Canon_Ball",
+    "Cannon_Warp_Effect_Ring",
+    "Debris_BigRock",
+    "Debris_Gate",
+    "Debris_Pole",
+    "Debris_PoleTop",
+    "Debris_SmallRock",
+    // The spike gate's spikes and the holes they lower into.
+    "Gate_Spikes_Spike",
+    "Gate_Spikes_Hole",
 ];
+
+/// The level's templates whose clones the TV draws skinned, as it draws a
+/// creature (openspec AG.150, `crate::creature_models`): the push blocks'
+/// tortoises and the cannon's top, each posed by the clips its script plays
+/// on it. `giants_start` holds them to what a headless start clones.
+pub const SKINNED_SPAWNS: [&str; 2] = ["2_Push_Block_Art_Sheep", "Push_Canon_Art_Top"];
+
+/// `m`'s index into `models`, drawn into it the first time its path comes.
+fn model_at<'a>(
+    models: &mut Vec<PropModel>,
+    index: &mut HashMap<&'a str, usize>,
+    m: &'a guac_ir::level::Prop,
+) -> Result<usize, LevelError> {
+    if let Some(&i) = index.get(m.path.as_str()) {
+        return Ok(i);
+    }
+    let i = models.len();
+    models.push(PropModel {
+        path: m.path.clone(),
+        drawn: model_drawn(m)?,
+    });
+    index.insert(m.path.as_str(), i);
+    Ok(i)
+}
 
 impl LevelProps {
     /// `placements`' props, drawn from `props`' models.
@@ -163,6 +223,16 @@ impl LevelProps {
         for a in &placements.actors {
             let model = a.model.as_deref().and_then(|m| by_path.get(m).copied());
             let skinned = model.is_some_and(|m| m.skeleton.is_some());
+            // What its clones draw, a template's or a standing placement's
+            // the scripts copy (AG.60, AG.239): a static model, once.
+            if DRAWN_SPAWNS.contains(&a.name.as_str())
+                && let Some(m) = model.filter(|m| m.skeleton.is_none())
+            {
+                let i = model_at(&mut out.models, &mut model_index, m)?;
+                if !out.spawn_models.contains(&i) {
+                    out.spawn_models.push(i);
+                }
+            }
             let why = match ActivityState::from_raw(a.activity_state) {
                 Some(ActivityState::Template) => Some(LeftOut::Template),
                 Some(ActivityState::Unmanaged) if skinned && a.script.is_some() => {
@@ -173,28 +243,6 @@ impl LevelProps {
                 _ => Some(LeftOut::State),
             };
             if let Some(why) = why {
-                if why == LeftOut::Template
-                    && DRAWN_SPAWNS.contains(&a.name.as_str())
-                    && let Some(m) = model.filter(|m| m.skeleton.is_none())
-                    && !out
-                        .spawn_models
-                        .iter()
-                        .any(|&i| out.models[i].path == m.path)
-                {
-                    let i = match model_index.get(m.path.as_str()) {
-                        Some(&i) => i,
-                        None => {
-                            let i = out.models.len();
-                            out.models.push(PropModel {
-                                path: m.path.clone(),
-                                drawn: model_drawn(m)?,
-                            });
-                            model_index.insert(m.path.as_str(), i);
-                            i
-                        }
-                    };
-                    out.spawn_models.push(i);
-                }
                 out.left_out.push((a.name.clone(), why));
                 continue;
             }
@@ -213,18 +261,7 @@ impl LevelProps {
                 continue;
             }
             let model = match drawn {
-                Some(m) => Some(match model_index.get(m.path.as_str()) {
-                    Some(&i) => i,
-                    None => {
-                        let i = out.models.len();
-                        out.models.push(PropModel {
-                            path: m.path.clone(),
-                            drawn: model_drawn(m)?,
-                        });
-                        model_index.insert(m.path.as_str(), i);
-                        i
-                    }
-                }),
+                Some(m) => Some(model_at(&mut out.models, &mut model_index, m)?),
                 None => None,
             };
             out.props.push(Prop {
@@ -741,6 +778,69 @@ mod tests {
 
     fn names(props: &LevelProps, standing: impl Iterator<Item = usize>) -> Vec<&str> {
         standing.map(|i| props.props[i].name.as_str()).collect()
+    }
+
+    /// AG.239: what [`DRAWN_SPAWNS`] names draws its clones, a template's
+    /// model and a standing placement's alike (the walkway fence's warp
+    /// torus is both a prop and what its script copies), each model once;
+    /// a skinned model, or a name the list lacks, draws none.
+    #[test]
+    fn the_routes_templates_and_placements_draw_their_clones() {
+        let (mut props, mut placements) = level();
+        for m in ["ball.mdl", "torus.mdl", "rock.mdl"] {
+            props.props.push(model(m, false));
+        }
+        let template = |object, name: &str, model: &str, script| {
+            actor(
+                object,
+                name,
+                5,
+                0.0,
+                at_x(1.0),
+                0.0,
+                Some(model),
+                None,
+                script,
+            )
+        };
+        placements.actors.extend([
+            template(20, "Canon_Ball", "ball.mdl", Some("Canon_Ball.ai")),
+            actor(
+                21,
+                "Torus_Effect_Wood_Fence",
+                4,
+                0.0,
+                at_x(2.0),
+                0.0,
+                Some("torus.mdl"),
+                None,
+                Some("Torus_Effect.ai"),
+            ),
+            template(22, "Gate_Spikes_Spike", "chompy.mdl", None),
+            template(23, "Debris_Pole", "rock.mdl", None),
+            template(24, "Debris_PoleTop", "rock.mdl", None),
+            template(25, "Not_On_The_List", "coin.mdl", None),
+        ]);
+        let p = LevelProps::new(&props, &placements).unwrap();
+        let spawn: Vec<&str> = p
+            .spawn_models
+            .iter()
+            .map(|&i| p.models[i].path.as_str())
+            .collect();
+        assert_eq!(spawn, ["ball.mdl", "torus.mdl", "rock.mdl"]);
+        assert!(
+            names(&p, 0..p.props.len()).contains(&"Torus_Effect_Wood_Fence"),
+            "the torus still stands by its actor"
+        );
+        assert!(
+            p.left_out
+                .contains(&("Canon_Ball".to_owned(), LeftOut::Template))
+        );
+        let models: Vec<&str> = p.models.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(
+            models,
+            ["gourd.mdl", "coin.mdl", "ball.mdl", "torus.mdl", "rock.mdl"]
+        );
     }
 
     /// AG.7's rule as the props' set: templates and creatures stand

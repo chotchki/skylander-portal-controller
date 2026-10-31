@@ -655,13 +655,17 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
     // The clones the TV draws against AG.7's live actors at F0: the fence's
     // cross beam where the fence holds it, its planks where it lays them
     // (their turns and heights rolled), the eggs in their nests (their
-    // wobble rolled), the cannon's base on the cannon.
+    // wobble rolled), the cannon's base on the cannon; and the skinned ones
+    // (AG.150): the push blocks' three tortoises on their blocks, the
+    // cannon's top on its base.
     let path = captures.join(AG7_RUN).join("actors-00002.json");
     let actors: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let mut live_clones: HashMap<&str, Vec<Placed>> = HashMap::new();
     for a in actors["actors"].as_array().unwrap() {
         let name = a["name"].as_str().unwrap();
-        if !guacamole::props::DRAWN_SPAWNS.contains(&name) {
+        if !guacamole::props::DRAWN_SPAWNS.contains(&name)
+            && !guacamole::props::SKINNED_SPAWNS.contains(&name)
+        {
             continue;
         }
         let v = |k: &str| {
@@ -697,7 +701,20 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
             t.name, a.position, a.scale
         );
         match t.name.as_str() {
-            "Bird_nest_egg" => assert!(d < 0.05, "{d}"),
+            // An egg stands 1 ft over its nest, lifted `$tilt` x 0.01 ft (0
+            // to 16) while the nest wobbles it, which the nest first rolls
+            // 0-4 s after its first tick (`BirdNest.ai`'s `random(4)`): on
+            // AH.195's draws both after the 2 s run (2.34 and 3.46 s), so
+            // ours stand unlifted where the live ones are mid-wobble. Across,
+            // the live ones sit 2.1-2.5 cm off ours, which the wobble's
+            // vertical displacements don't move: a note, nothing a player
+            // sees.
+            "Bird_nest_egg" => {
+                let lift = 16.0 * 0.01 / guacamole::script_engine::FEET_PER_METRE;
+                assert!((a.position.y - at.y).abs() <= lift + 1e-3, "{d}");
+                let across = Vec3::new(a.position.x - at.x, 0.0, a.position.z - at.z).length();
+                assert!(across < 0.03, "{across}");
+            }
             "Wooden Plank_one" | "Wooden Plank_Two" => {
                 assert!(d < 1e-3, "{d}");
                 assert!([114.0, 294.0].contains(&a.angles.facing.rem_euclid(360.0)));
@@ -713,8 +730,8 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
         checked += 1;
     }
     assert_eq!(
-        checked, 10,
-        "the beam, six planks, two eggs and the cannon's base"
+        checked, 14,
+        "the beam, six planks, two eggs, the cannon's base, three tortoises and the cannon's top"
     );
 
     // At the gate's door the walkway's first spinning coin wakes, as on

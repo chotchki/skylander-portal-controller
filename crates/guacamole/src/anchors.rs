@@ -54,14 +54,9 @@ pub const ROUTE: [(u32, [f32; 3], f32); 5] = [
 /// off), which their AH.10 numbers were taken on.
 pub const ANCHOR_B_POSE: ([f32; 3], f32) = ([5.4454904, 22.392666, -12.022571], 202.27884);
 
-/// Norticus' scene (`cutscene go`) ends 5 s on in the original (AH.10's 300
-/// frames), set off the whitelist; until AH.56 runs what ends it, the
-/// headless runs and the dev entry set `Cutscene State` back to 0 that many
-/// steps into it, which frees the hero and walks Norticus into the cave.
-pub const SCENE_STEPS: u32 = 300;
-/// The global Norticus' scene waits on.
-pub const CUTSCENE_STATE: &str = "Cutscene State";
-/// Norticus, whose scene that is.
+/// Norticus, whose scene ends the first fight (`cutscene go`): it ends from
+/// his own script since AH.56, the cutscene system's end setting `Cutscene
+/// State` back to 0, which frees the hero and walks him into the cave.
 pub const NORTICUS: &str = "1.NPC_Norticus_First_Encounter";
 
 /// The triggers AH.8's route fired on its way to the strip, as set-downs a

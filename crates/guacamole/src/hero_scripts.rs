@@ -3,17 +3,21 @@
 //! attacks from his scripts on the VM, in the level from the spawn.
 //!
 //! - The run: once the level's script part links, the VM runs the TV's
-//!   listing ([`guacamole::scripts::smash_config`], openspec AH.27): the init
-//!   chain, the UI's and the movement update's ticks, a fighter's or a
-//!   walker's scripts once he joins ([`guacamole::scripts::with_walkers`],
-//!   AG.27), AH.20's pickups and AH.21's breakables (the loot system's init,
-//!   the spinning coins in reach, the archetype setups, the destructibles
-//!   system through the player loop), AG.60's start scripts on the props
-//!   and AG.28's camera volumes and activator
-//!   ([`guacamole::scripts::CAMERA_SCRIPTS`]). No creature runs but the
-//!   first fight's, which AH.25's dev entry lists: what the scripts wake
-//!   past that stays inert (decision 6). The level's placements take their
-//!   palettes off the level's palettes part, as the headless runs do.
+//!   listing ([`guacamole::scripts::fight_config`], openspec AH.27 and
+//!   AH.28): the init chain, the UI's and the movement update's ticks, a
+//!   fighter's or a walker's scripts once he joins
+//!   ([`guacamole::scripts::with_walkers`], AG.27), AH.20's pickups and
+//!   AH.21's breakables (the loot system's init, the spinning coins in
+//!   reach, the archetype setups, the destructibles system through the
+//!   player loop), AG.60's start scripts on the props, AG.28's camera
+//!   volumes and activator ([`guacamole::scripts::CAMERA_SCRIPTS`]) and
+//!   AH.8's route ([`guacamole::scripts::ROUTE_SCRIPTS`]: the cannon's ball,
+//!   the push blocks' water ends, the spike gate, the pit's intro
+//!   cutscene), with the first fight's placements, asleep until the route's
+//!   triggers wake them. No creature runs but the first fight's: what the
+//!   scripts wake past that stays inert (decision 6). The level's
+//!   placements take their palettes off the level's palettes part, as the
+//!   headless runs do.
 //! - The activity rule ([`step_scripts`], AG.7's rule): each step, each
 //!   managed placement woken or put to sleep by the hero's pivot, by the
 //!   level's start before he's in (as the props stand), so a breakable out
@@ -101,7 +105,7 @@ use guacamole::figure::{self, Layout};
 use guacamole::frame::Frame;
 use guacamole::script_engine::{Engine, Pad};
 use guacamole::scripts::{
-    self, Files, ScriptClone, ScriptRuntime, ScriptWorld, WalkerScripts, WorldHost, smash_config,
+    self, Files, ScriptClone, ScriptRuntime, ScriptWorld, WalkerScripts, WorldHost,
 };
 #[cfg(feature = "unmodel")]
 use guacamole::unmodel::{UNMODEL_KEY, Unmodel, take_out};
@@ -286,20 +290,16 @@ fn fresh_camera(world: &mut World, source: &ScriptSource) {
 pub(crate) struct CameraPlacements(Vec<Handle>);
 
 /// The run from `source`, its entities and an earlier run's gone first: the
-/// TV's listing ([`scripts::smash_config`], openspec AH.27: Eruptor's
-/// scripts, the pickups, the breakables, AG.60's start scripts and AG.28's
-/// camera volumes and activator; the first fight's with the dev entry's,
-/// [`guacamole::scripts::fight_config`]) with the walkers' (AG.27,
+/// TV's listing ([`guacamole::scripts::fight_config`]: AH.27's
+/// [`scripts::smash_config`], Eruptor's scripts, the pickups, the
+/// breakables, AG.60's start scripts, AG.28's camera volumes and activator
+/// and AH.28's route, with the first fight's placements, asleep until AH.8's
+/// route wakes them, openspec AH.28) with the walkers' (AG.27,
 /// [`scripts::with_walkers`]), each of the level's placements with a model
 /// the level's palettes part holds given its palette, the camera's scripts
 /// idle until a hero joins ([`fresh_camera`]).
 fn install_from(world: &mut World, source: &ScriptSource) {
-    // The dev entry's fight brings the first fight's placements (AH.25).
-    let fight = crate::dev_entry::fight_listed(world);
-    let config = match fight {
-        true => guacamole::scripts::fight_config(Mode::Play),
-        false => smash_config(Mode::Play),
-    };
+    let config = guacamole::scripts::fight_config(Mode::Play);
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
     #[cfg(feature = "unmodel")]
@@ -321,9 +321,7 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         return;
     };
     let mut script_world = world.resource_mut::<ScriptWorld>();
-    if fight {
-        script_world.walk_first_fight(level);
-    }
+    script_world.walk_first_fight(level);
     script_world.walk_goats(level);
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model

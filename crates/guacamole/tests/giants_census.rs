@@ -184,8 +184,7 @@ fn level_keys(dump: &Path) -> Chapter1 {
         .ir;
     let start = level_scene::at_start(scene, &lights, &atmosphere).expect("chapter 1 at its start");
     let view = level_scene::view_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
-    let creatures =
-        guacamole::creature_models::first_fight_models(&placements, &props, &identity());
+    let creatures = guacamole::creature_models::skinned_models(&placements, &props, &identity());
     let props = LevelProps::new(&props, &placements).expect("chapter 1's props");
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let spawned = spawn_models(dump);
@@ -359,12 +358,13 @@ fn the_census_is_the_discs() {
     let (hero_glow_skinned, hero_glow_static): (Vec<WarmKey>, Vec<WarmKey>) =
         glows(&heroes).into_iter().partition(|k| k.mesh.skinned);
     let hero_glow_static = beyond(&hero_glow_static, &[census::LEVEL_GLOW]);
-    // The first fight's creatures, skinned in the hero's scene (AH.25):
-    // what the heroes' tables don't hold.
+    // The first fight's creatures and the skinned templates' clones (AH.25,
+    // AG.150), skinned in the hero's scene: what the heroes' tables don't
+    // hold.
     let creatures = beyond(&colour(&creatures_all), &[census::HEROES]);
     let creature_glow = beyond(&glows(&creatures_all), &[census::HEROES_GLOW]);
     eprintln!(
-        "the first fight's creatures: {} keys off {creature_models} models ({} past the heroes'), {} level glow masks ({} past)",
+        "the first fight's creatures and the skinned clones: {} keys off {creature_models} models ({} past the heroes'), {} level glow masks ({} past)",
         colour(&creatures_all).len(),
         creatures.len(),
         glows(&creatures_all).len(),
@@ -439,12 +439,12 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (prop_models, props.len(), props_beyond.len()),
-        (67, 61, 51),
-        "chapter 1's props: the models that can stand and that their clones draw (AG.60), their keys, those past the level's"
+        (90, 72, 61),
+        "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239), their keys, those past the level's"
     );
     assert_eq!(
         (spawn_models, spawns.len(), spawns_beyond.len()),
-        (13, 13, 6),
+        (13, 13, 3),
         "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
     );
     assert_eq!(
@@ -455,12 +455,12 @@ fn the_census_is_the_discs() {
             hero_glow_skinned.len(),
             hero_glow_static.len()
         ),
-        (20, 1, 0, 1, 0),
+        (22, 1, 0, 1, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(
         (creature_models, creatures.len(), creature_glow.len()),
-        (2, 3, 0),
-        "the first fight's creatures: their models, their keys past the heroes', their glow masks"
+        (4, 5, 0),
+        "the first fight's creatures' and the skinned clones' models (the Chompies', Norticus', the tortoises', the cannon top's), their keys past the heroes', their glow masks"
     );
 }

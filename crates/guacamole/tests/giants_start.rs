@@ -1,7 +1,9 @@
 //! The start's scripts on chapter 1's props (openspec AG.60), headless over
 //! `GUAC_GIANTS_DUMP` in strict mode: what they wake, clone, rescale and
 //! reshape at the level's start, the members they reach, and the clones
-//! the TV draws ([`guacamole::props::DRAWN_SPAWNS`]) held to what they make.
+//! the TV draws ([`guacamole::props::DRAWN_SPAWNS`] static,
+//! [`guacamole::props::SKINNED_SPAWNS`] as creatures) held to what they
+//! make.
 //! Their places against AG.7's live reads are `giants_props`'.
 
 mod common;
@@ -10,12 +12,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use common::*;
 use guac_script::Mode;
-use guacamole::props::DRAWN_SPAWNS;
+use guacamole::props::{DRAWN_SPAWNS, SKINNED_SPAWNS};
 
 /// The start's clones' templates that draw nothing on the TV, each with
 /// why (`DRAWN_SPAWNS`' doc): every other template the start clones with a
-/// static model is drawn.
-const UNDRAWN: [(&str, &str); 11] = [
+/// model is drawn, static or skinned.
+const UNDRAWN: [(&str, &str); 9] = [
     (
         "Boulder_Titan_Pebble_01(1)",
         "on the boulder's attach nodes",
@@ -39,8 +41,6 @@ const UNDRAWN: [(&str, &str); 11] = [
     ("Chest_Lock", "the chest's, a creature's"),
     ("Canon_Barrel_Marker", "invisible"),
     ("Dummy_Inviso", "invisible"),
-    ("2_Push_Block_Art_Sheep", "skinned"),
-    ("Push_Canon_Art_Top", "skinned"),
     ("Turban_hat", "Norticus' hat: the fight's, a creature's"),
 ];
 
@@ -77,6 +77,9 @@ fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
     }
     println!("the level's templates cloned: {clones:?}");
     let props = run.bench.props.as_ref().unwrap();
+    // The skinned models the TV draws the clones of SKINNED_SPAWNS'
+    // templates with (AG.150), as the census's disc test reads them.
+    let skinned: Vec<String> = skinned_models().into_iter().map(|(p, _)| p).collect();
     let drawn: BTreeSet<&str> = clones
         .keys()
         .map(String::as_str)
@@ -90,6 +93,7 @@ fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
                             .spawn_models
                             .iter()
                             .any(|&i| &props.level.models[i].path == m)
+                            || (SKINNED_SPAWNS.contains(name) && skinned.contains(m))
                     })
             })
         })
@@ -103,12 +107,12 @@ fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
             drawn.contains(name.as_str())
         );
     }
-    for name in DRAWN_SPAWNS {
+    for name in DRAWN_SPAWNS.iter().chain(SKINNED_SPAWNS.iter()) {
         assert!(
             run.files
                 .placed
                 .iter()
-                .any(|p| p.obj.unit == LEVEL && p.name == name),
+                .any(|p| p.obj.unit == LEVEL && p.name == *name),
             "{name} isn't a template of the level"
         );
     }

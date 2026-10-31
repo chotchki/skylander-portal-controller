@@ -1,5 +1,7 @@
-//! What the first fight's creatures draw with (openspec AH.25): each
-//! skinned model the fight's placements name, off the level's props part,
+//! What the first fight's creatures draw with (openspec AH.25), and the
+//! clones of the level's skinned templates (AG.150: the push blocks'
+//! tortoises, the cannon's top): each skinned model they name, off the
+//! level's props part,
 //! as a model the character pipeline draws and poses (its skeleton, its
 //! tfbmulti2 parts, its idle), keyed in the hero's scene as the walking
 //! hero is (the census's creatures table holds them, `tests/giants_census.rs`).
@@ -15,6 +17,7 @@ use guac_ir::shading::Scene;
 
 use crate::character::warm::{self, WarmError, WarmKey};
 use crate::level_scene::drawn_material;
+use crate::props::SKINNED_SPAWNS;
 use crate::scripts::FIRST_FIGHT;
 
 /// `prop` as a model the character pipeline draws: its skeleton, the
@@ -72,21 +75,22 @@ pub fn creature_model(prop: &guac_ir::level::Prop, identity: DumpIdentity) -> Op
     })
 }
 
-/// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) name,
-/// once, by its path in the placements' order, as [`creature_model`] makes
-/// it: what the TV draws its creatures with. A model the props part
-/// doesn't hold, or holds static, is left out.
-pub fn first_fight_models(
+/// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) and
+/// the templates [`SKINNED_SPAWNS`] names name, once, by its path, the
+/// fight's first, each in its list's order, as [`creature_model`] makes it:
+/// what the TV draws its creatures and those templates' clones with. A
+/// model the props part doesn't hold, or holds static, is left out.
+pub fn skinned_models(
     placements: &Placements,
     props: &Props,
     identity: &DumpIdentity,
 ) -> Vec<(String, Model)> {
     let mut out: Vec<(String, Model)> = Vec::new();
-    for name in FIRST_FIGHT {
+    for name in FIRST_FIGHT.iter().chain(SKINNED_SPAWNS.iter()) {
         let Some(path) = placements
             .actors
             .iter()
-            .find(|a| a.name == name)
+            .find(|a| a.name == *name)
             .and_then(|a| a.model.clone())
         else {
             continue;
@@ -216,14 +220,20 @@ mod tests {
 
     /// The models the first fight's placements name, each once, in their
     /// order: two Chompies on one model, Norticus on another; one naming a
-    /// static model and placements off the fight left out. Their keys are
-    /// the hero's skinned key and its glow mask, once each.
+    /// static model and placements off the fight left out. Then the skinned
+    /// templates' (AG.150), each once, in `SKINNED_SPAWNS`' order wherever
+    /// the placements hold them: the tortoises', the cannon top's; Norticus'
+    /// hat, a skinned template off the list, left out. Their keys are the
+    /// hero's skinned key and its glow mask, once each.
     #[test]
     fn the_first_fights_models_each_once_and_their_keys() {
         let placements = Placements {
             identity: identity(),
             level: "level_213_tutotial".into(),
             actors: vec![
+                placed("Push_Canon_Art_Top", Some("cannon_top.mdl")),
+                placed("2_Push_Block_Art_Sheep", Some("tortoise.mdl")),
+                placed("Turban_hat", Some("hat.mdl")),
                 placed("Enemy_Chompy(1)", Some("chompy.mdl")),
                 placed("Enemy_Chompy(2)", Some("chompy.mdl")),
                 placed("1.NPC_Norticus_First_Encounter", Some("mabu.mdl")),
@@ -240,13 +250,16 @@ mod tests {
                 prop("mabu.mdl", true),
                 prop("barrel.mdl", false),
                 prop("other.mdl", true),
+                prop("cannon_top.mdl", true),
+                prop("tortoise.mdl", true),
+                prop("hat.mdl", true),
             ],
             refused: Vec::new(),
         };
-        let models = first_fight_models(&placements, &props, &identity());
+        let models = skinned_models(&placements, &props, &identity());
         assert_eq!(
             models.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
-            ["chompy.mdl", "mabu.mdl"]
+            ["chompy.mdl", "mabu.mdl", "tortoise.mdl", "cannon_top.mdl"]
         );
         let scene = Scene {
             fog: true,
