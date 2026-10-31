@@ -581,7 +581,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     }
     // So are AH.22's palettes, script entries and spawn models.
     assert!(m.parts.contains_key("palettes") && scripts::complete(&m));
-    for part in ["palettes", "scripts", "spawns", "nodes"] {
+    for part in ["palettes", "scripts", scripts::SPAWNS, "nodes"] {
         for f in &m.parts[part] {
             assert!(dir.join(f).is_file(), "{f}");
         }
@@ -1318,6 +1318,42 @@ fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
 /// writes that part's files and no other (the model stage, which reads every
 /// archive on a resume, keeps every file but the missing part's), and then
 /// it's current.
+/// AH.39: an extract made before `global.bld`'s own models read holds its
+/// spawn models under the part's old name, `spawns`, all of `global.bld`'s
+/// refused: it opens as a resume and reads the spawn part alone, recording
+/// it under the new name, then is current.
+#[test]
+fn an_extract_whose_spawn_part_predates_ah39_reads_it_again() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let parts = json["parts"].as_object_mut().unwrap();
+    let files = parts.remove(scripts::SPAWNS).expect("the spawn part");
+    parts.insert("spawns".to_owned(), files);
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let sc = &done.scripts;
+    assert_eq!(
+        (sc.parts_read, sc.parts_kept),
+        (1, 1),
+        "the spawn part alone"
+    );
+    assert_eq!(done.levels.parts_read, 0);
+    assert!(again.dir.manifest().parts.contains_key(scripts::SPAWNS));
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
 #[test]
 fn each_of_the_fights_parts_resumes_alone() {
     let s = setup();
@@ -1590,7 +1626,7 @@ fn script_parts_that_dont_read_leave_the_rest() {
         parts,
         [
             ("scripts", "character/009_eruptor.bld"),
-            ("spawns", "character/009_eruptor.bld")
+            (scripts::SPAWNS, "character/009_eruptor.bld")
         ]
     );
     for f in &sc.failed {

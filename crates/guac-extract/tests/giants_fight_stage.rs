@@ -362,16 +362,28 @@ fn the_fights_parts_extract_whole_and_resume() {
     for model in ["Fireblob.mdl", "FireBlobSplash.mdl", "LavaBlob.mdl"] {
         assert!(names(&fighter).iter().any(|n| n == model), "{model}");
     }
-    // global.bld's own models name its effects as objects of its own, which
-    // the material reader takes only as imports: each listed, none read.
-    assert!(global.props.is_empty());
-    for model in ["lexupblossomPT2starA.mdl", "death_starz.mdl"] {
-        let r = global
-            .refused
-            .iter()
-            .find(|r| r.path.ends_with(&format!("/{model}")))
-            .unwrap_or_else(|| panic!("{model}"));
-        assert!(r.reason.contains("_effect"), "{}", r.reason);
+    // global.bld's own models name its effects as objects of its own, read
+    // by the ids its exports give them (AH.39): the level-up's tube, star
+    // and warp ring, the death stars and the portal entry's column among
+    // them, any refused for another, named reason (before AH.39 all 23
+    // refused on `_effect`).
+    for model in [
+        "lexupblossomPT1b.mdl",
+        "lexupblossomPT2starA.mdl",
+        "Troll_Warp_Ring.mdl",
+        "death_starz.mdl",
+        "portal_entry_column.mdl",
+    ] {
+        assert!(names(&global).iter().any(|n| n == model), "{model}");
+    }
+    println!(
+        "  global.bld: {} read, {} refused",
+        global.props.len(),
+        global.refused.len()
+    );
+    for r in &global.refused {
+        println!("    refused {}: {}", r.path, r.reason);
+        assert!(!r.reason.contains("_effect"), "{}: {}", r.path, r.reason);
     }
     assert!(
         !names(&fighter).iter().any(|n| n == "Eruptor.mdl"),

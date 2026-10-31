@@ -2274,6 +2274,20 @@ pub const ROUTE: &[Registered] = &[m(
     Cell,
 )];
 
+/// What the level-up's flourish (`LevelUp.ai`, openspec AH.39) reaches past
+/// every table above, as aj-vm's live table registers it: the pad's rumble
+/// as the lightning strikes, cosmetic here (nothing rumbles a pad yet). The
+/// sequences' playback modes its scale-downs read are [`COMBAT`]'s.
+pub const LEVEL_UP: &[Registered] = &[m(
+    "soundinfo",
+    "rumble duration",
+    "FloatMeasurement",
+    "seconds",
+    0.0,
+    OPEN,
+    Cell,
+)];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2948,6 +2962,38 @@ mod tests {
         register(&mut members, ROUTE);
         let (_, place) = members
             .get(MemberId::named("soundinfo", "category"))
+            .unwrap();
+        assert_eq!(place, Place::ValueCell);
+    }
+
+    /// The level-up's flourish's member (openspec AH.39), from its
+    /// registered type: the rumble's seconds a float cell from 0, no other
+    /// table holding it.
+    #[test]
+    fn the_level_ups_member_is_registered_as_the_live_table_has_it() {
+        assert_eq!(LEVEL_UP.len(), 1);
+        let rumble = find(LEVEL_UP, "soundinfo", "rumble duration").unwrap();
+        assert_eq!(
+            (rumble.class, rumble.kind(), rumble.keeper),
+            ("FloatMeasurement", Kind::Float, Keeper::Cell)
+        );
+        assert_eq!(
+            convert(&rumble.spec(), Value::Float(0.5)),
+            Some(Value::Float(0.5))
+        );
+        assert_eq!(
+            convert(&rumble.spec(), Value::Float(-1.0)),
+            Some(Value::Float(0.0))
+        );
+        for table in [
+            INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+        ] {
+            assert!(find(table, "soundinfo", "rumble duration").is_none());
+        }
+        let mut members = Members::new();
+        register(&mut members, LEVEL_UP);
+        let (_, place) = members
+            .get(MemberId::named("soundinfo", "rumble duration"))
             .unwrap();
         assert_eq!(place, Place::ValueCell);
     }

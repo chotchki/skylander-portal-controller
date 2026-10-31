@@ -111,7 +111,10 @@ pub fn skinned_models(
 }
 
 /// Every key `models` draw in a level's `scene`, each once, the glow
-/// masks after the colour keys ([`warm::level_keys`], as the hero's).
+/// masks after the colour keys ([`warm::level_keys`], as the hero's), and
+/// each opaque colour key blending as a fading creature draws it (openspec
+/// AH.139: a beaten Chompy's death takes its tint's alpha to nothing,
+/// [`crate::character::key::StateKey::faded`]) after those.
 pub fn keys(models: &[(String, Model)], scene: &Scene) -> Result<Vec<WarmKey>, WarmError> {
     let mut colour: Vec<WarmKey> = Vec::new();
     let mut glow: Vec<WarmKey> = Vec::new();
@@ -126,6 +129,15 @@ pub fn keys(models: &[(String, Model)], scene: &Scene) -> Result<Vec<WarmKey>, W
             }
         }
     }
+    let mut faded: Vec<WarmKey> = Vec::new();
+    for k in &colour {
+        let mut f = *k;
+        f.material.states = k.material.states.faded();
+        if f != *k && !colour.contains(&f) && !faded.contains(&f) {
+            faded.push(f);
+        }
+    }
+    colour.extend(faded);
     colour.extend(glow);
     Ok(colour)
 }
@@ -224,7 +236,8 @@ mod tests {
     /// templates' (AG.150), each once, in `SKINNED_SPAWNS`' order wherever
     /// the placements hold them: the tortoises', the cannon top's; Norticus'
     /// hat, a skinned template off the list, left out. Their keys are the
-    /// hero's skinned key and its glow mask, once each.
+    /// hero's skinned key, it blending as a creature fades (AH.139) and its
+    /// glow mask, once each.
     #[test]
     fn the_first_fights_models_each_once_and_their_keys() {
         let placements = Placements {
@@ -267,7 +280,17 @@ mod tests {
             ..Scene::new()
         };
         let keys = keys(&models, &scene).unwrap();
-        assert_eq!(keys.len(), 2, "{keys:?}");
+        assert_eq!(keys.len(), 3, "{keys:?}");
         assert!(keys.iter().all(|k| k.mesh.skinned));
+        // AH.139: its opaque colour key again, blending as a creature fades,
+        // ahead of the glow mask.
+        let mut faded = keys[0];
+        faded.material.states = keys[0].material.states.faded();
+        assert_ne!(faded, keys[0]);
+        assert_eq!(keys[1], faded);
+        assert_eq!(
+            keys[2].material.pass,
+            crate::character::key::Pass::LevelGlow
+        );
     }
 }

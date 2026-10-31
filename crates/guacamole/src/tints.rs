@@ -19,7 +19,10 @@
 //! On the drawing side: [`tint_clones`] runs in `PostUpdate` on what the
 //! last step left, a copy kept while its clone lives (its parts go with the
 //! clone) and rewritten only when the tint or its shared material's numbers
-//! (a relight) moved. A clone left neutral draws on the shared material.
+//! (a relight) moved. A clone left neutral draws on the shared material. A
+//! creature's parts take its tint the same way ([`tint_part`], openspec
+//! AH.139): a beaten Chompy's death takes its alpha from 255 to nothing over
+//! the 0.18 s before its going, so it fades out where it fell.
 
 use bevy::math::Vec4;
 use bevy::prelude::*;
@@ -98,10 +101,7 @@ pub(crate) fn tint_clones(
     );
 }
 
-/// Each drawn clone's tint (`tint_of_clone`) onto its parts: a tinted
-/// clone's parts on copies of their shared materials carrying it, made the
-/// first time it isn't neutral and rewritten when it or the shared one's
-/// numbers move.
+/// Each drawn clone's tint (`tint_of_clone`) onto its parts ([`tint_part`]).
 fn tint_parts(
     tint_of_clone: impl Fn(Entity) -> Option<u32>,
     mut commands: Commands,
@@ -117,26 +117,41 @@ fn tint_parts(
             continue;
         };
         for &part in children {
-            let Ok((mut material, tinted_part)) = parts.get_mut(part) else {
-                continue;
-            };
-            let shared = match tinted_part {
-                Some(t) => t.shared.clone(),
-                None if tint == NEUTRAL => continue,
-                None => material.0.clone(),
-            };
-            let Some(want) = materials.get(&shared).map(|m| tinted(m, tint)) else {
-                continue;
-            };
-            if tinted_part.is_none() {
-                material.0 = materials.add(want);
-                commands.entity(part).insert(TintedPart { shared });
-            } else if materials.get(&material.0).is_none_or(|m| !same(m, &want))
-                && let Some(mut copy) = materials.get_mut(&material.0)
-            {
-                *copy = want;
-            }
+            tint_part(part, tint, &mut commands, &mut parts, &mut materials);
         }
+    }
+}
+
+/// `tint` onto a drawn part: a tinted part on a copy of its shared material
+/// carrying it, made the first time it isn't neutral and rewritten when it
+/// or the shared one's numbers move; a neutral part never tinted stays on
+/// the shared one. What a clone's parts take (AH.67) and a creature's
+/// (AH.139, `crate::creatures`).
+pub(crate) fn tint_part(
+    part: Entity,
+    tint: u32,
+    commands: &mut Commands,
+    parts: &mut Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
+    materials: &mut Assets<CharacterMaterial>,
+) {
+    let Ok((mut material, tinted_part)) = parts.get_mut(part) else {
+        return;
+    };
+    let shared = match tinted_part {
+        Some(t) => t.shared.clone(),
+        None if tint == NEUTRAL => return,
+        None => material.0.clone(),
+    };
+    let Some(want) = materials.get(&shared).map(|m| tinted(m, tint)) else {
+        return;
+    };
+    if tinted_part.is_none() {
+        material.0 = materials.add(want);
+        commands.entity(part).insert(TintedPart { shared });
+    } else if materials.get(&material.0).is_none_or(|m| !same(m, &want))
+        && let Some(mut copy) = materials.get_mut(&material.0)
+    {
+        *copy = want;
     }
 }
 

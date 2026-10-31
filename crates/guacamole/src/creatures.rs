@@ -20,9 +20,12 @@
 //!   compiled (the census's creatures table holds them); at its actor's
 //!   place, facing and scale after each step, eased between steps; posed
 //!   by its idle with the clips its scripts play on it laid over, by the
-//!   level's palettes part's slots (stand-in ledger: `creature-pose`).
-//!   Taken off or asleep, it goes. The clones of the level's skinned
-//!   templates (openspec AG.150, [`guacamole::props::SKINNED_SPAWNS`]: the
+//!   level's palettes part's slots (stand-in ledger: `creature-pose`);
+//!   in its tint as its scripts leave it ([`tint_creatures`], AH.67's rule
+//!   since AH.139: a beaten Chompy's death fades its alpha to nothing over
+//!   its last steps). Taken off or asleep, it goes. The clones of the
+//!   level's skinned templates (openspec AG.150,
+//!   [`guacamole::props::SKINNED_SPAWNS`]: the
 //!   push blocks' tortoises, the cannon's top) are drawn and posed the same
 //!   way while their scripts run, turned by all three of their angles as
 //!   the static clones are.
@@ -198,6 +201,10 @@ impl Plugin for CreaturesPlugin {
                     .chain()
                     .after(LevelSystems)
                     .run_if(resource_exists::<ScriptWorld>),
+            )
+            .add_systems(
+                PostUpdate,
+                tint_creatures.run_if(resource_exists::<ScriptWorld>),
             );
     }
 }
@@ -210,6 +217,8 @@ pub(crate) struct DrawnCreature {
     model: Arc<Model>,
     palette: Option<Arc<Palette>>,
     joints: Vec<Entity>,
+    /// Its drawn parts, each on one of `lit` or a tinted copy of it.
+    segments: Vec<Entity>,
     lit: Vec<bevy::asset::Handle<CharacterMaterial>>,
     /// The TV's clock when it was drawn, for its idle.
     since: Duration,
@@ -429,6 +438,7 @@ fn draw_creatures(
                     model,
                     palette,
                     joints: body.joints,
+                    segments: body.segments.clone(),
                     lit: handles,
                     since: s.time.elapsed(),
                 },
@@ -436,6 +446,30 @@ fn draw_creatures(
             .id();
         s.commands.entity(body.root).insert(ChildOf(root));
         drawn.0.insert(h, root);
+    }
+}
+
+/// Each drawn creature's tint onto its parts as the scripts' world holds it
+/// (openspec AH.139, AH.67's rule, `crate::tints`): a beaten Chompy's death
+/// takes its alpha from 255 to 0 over the last steps before its going, so it
+/// fades out, blending while under full.
+fn tint_creatures(
+    mut commands: Commands,
+    world: Res<ScriptWorld>,
+    creatures: Query<&DrawnCreature>,
+    mut parts: Query<(
+        &mut MeshMaterial3d<CharacterMaterial>,
+        Option<&crate::tints::TintedPart>,
+    )>,
+    mut materials: ResMut<Assets<CharacterMaterial>>,
+) {
+    for c in &creatures {
+        let Some(tint) = world.actor(c.actor).map(|a| a.tint) else {
+            continue;
+        };
+        for &part in &c.segments {
+            crate::tints::tint_part(part, tint, &mut commands, &mut parts, &mut materials);
+        }
     }
 }
 
@@ -525,6 +559,8 @@ pub(crate) struct CreaturesReport {
     pub spawned: Vec<SpawnShot>,
     /// The orbs out (openspec AH.20's control), for a driver to walk to.
     pub orbs: Vec<OrbShot>,
+    /// How many of them the TV draws (openspec AH.61, `crate::orbs`).
+    pub orbs_drawn: usize,
 }
 
 /// The creatures' part of `/api/_test/tv` (openspec AQ.8).
@@ -532,13 +568,17 @@ pub(crate) struct CreaturesReport {
 pub(crate) struct CreatureShots<'w> {
     runtime: Option<Res<'w, ScriptRuntime>>,
     world: Option<Res<'w, ScriptWorld>>,
+    orbs: Option<Res<'w, crate::orbs::DrawnOrbs>>,
 }
 
 impl CreatureShots<'_> {
     /// None until the run is made.
     pub(crate) fn shot(&self) -> Option<CreaturesReport> {
         let (rt, world) = (self.runtime.as_deref()?, self.world.as_deref()?);
-        Some(report(&rt.vm, world))
+        Some(CreaturesReport {
+            orbs_drawn: self.orbs.as_ref().map_or(0, |d| d.0.len()),
+            ..report(&rt.vm, world)
+        })
     }
 }
 
@@ -596,6 +636,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         woken,
         spawned,
         orbs,
+        orbs_drawn: 0,
     }
 }
 
@@ -815,6 +856,89 @@ mod tests {
             !a.world().resource::<DrawnCreatures>().0.contains_key(&c)
         });
         assert!(app.world().get_entity(root).is_err(), "its root despawned");
+    }
+
+    /// AH.139: a drawn creature's tint as its scripts leave it reaches its
+    /// parts: under full alpha each draws on a copy of its lit material
+    /// carrying the tint and blending by it (the Chompy's opaque parts fade),
+    /// back at full the copy draws opaque and neutral, and the lit material
+    /// itself is never touched.
+    #[test]
+    fn a_creatures_tint_and_alpha_reach_what_draws_it() {
+        use crate::tints::{TintedPart, tint_of};
+        use guac_ir::model::Blend;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), Some(start()));
+        let c = creature(&app);
+        until(&mut app, "the creature drawn", |a| {
+            a.world().resource::<DrawnCreatures>().0.contains_key(&c)
+        });
+        let root = app.world().resource::<DrawnCreatures>().0[&c];
+        let (segments, lit) = {
+            let d = app.world().get::<DrawnCreature>(root).unwrap();
+            (d.segments.clone(), d.lit.clone())
+        };
+        assert_eq!(segments.len(), 1, "its one segment");
+        let part = segments[0];
+        let drawn = |app: &App| {
+            let h = &app
+                .world()
+                .get::<MeshMaterial3d<CharacterMaterial>>(part)
+                .unwrap()
+                .0;
+            app.world()
+                .resource::<Assets<CharacterMaterial>>()
+                .get(h)
+                .unwrap()
+                .clone()
+        };
+        let lit_before = app
+            .world()
+            .resource::<Assets<CharacterMaterial>>()
+            .get(&lit[0])
+            .unwrap()
+            .clone();
+        assert_eq!(lit_before.key.states.blend, Blend::Opaque);
+        app.update();
+        assert!(
+            app.world().get::<TintedPart>(part).is_none(),
+            "neutral: on its lit material"
+        );
+        let set = |app: &mut App, packed: u32| {
+            assert!(
+                app.world_mut()
+                    .resource_mut::<ScriptWorld>()
+                    .set_tint(c, packed)
+            );
+            app.update();
+        };
+        // A beaten Chompy's fade, a quarter way out.
+        set(&mut app, 0x8080_80C0);
+        assert_eq!(
+            app.world().get::<TintedPart>(part).map(|t| &t.shared),
+            Some(&lit[0])
+        );
+        let fading = drawn(&app);
+        assert_eq!(fading.uniform.placement_tint, tint_of(0x8080_80C0));
+        assert_eq!(fading.key.states.blend, Blend::Alpha);
+        set(&mut app, 0x8080_8001);
+        assert_eq!(drawn(&app).uniform.placement_tint.w, 1.0 / 255.0);
+        // Full again: opaque and neutral on its copy.
+        set(&mut app, 0x8080_80FF);
+        let back = drawn(&app);
+        assert_eq!(back.key.states.blend, Blend::Opaque);
+        assert_eq!(back.uniform.placement_tint, tint_of(0x8080_80FF));
+        let lit_after = app
+            .world()
+            .resource::<Assets<CharacterMaterial>>()
+            .get(&lit[0])
+            .unwrap()
+            .clone();
+        assert_eq!(lit_after.key, lit_before.key);
+        assert_eq!(
+            lit_after.uniform.placement_tint,
+            lit_before.uniform.placement_tint
+        );
     }
 
     /// AG.150: the clone of a skinned template `SKINNED_SPAWNS` names (a

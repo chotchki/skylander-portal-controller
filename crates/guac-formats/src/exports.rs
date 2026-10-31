@@ -122,6 +122,20 @@ impl Exports {
         }
     }
 
+    /// Each local object `global.bld`'s root list exports, with its export
+    /// id: what a file of `global.bld`'s own names by object where any other
+    /// file imports it by id (openspec AH.39).
+    pub fn global_objects(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        let base = self.global_base();
+        self.global
+            .iter()
+            .enumerate()
+            .filter_map(move |(k, slot)| match slot {
+                Slot::Root(Root::Object(o)) => Some((*o, base + k as u32)),
+                _ => None,
+            })
+    }
+
     /// An import's export, or `None` when it imports from another namespace.
     pub fn resolve_import(&self, id: &ExternalId) -> Option<Result<Export, FormatError>> {
         (id.namespace == fnv1a32(NAMESPACE.as_bytes())).then(|| self.resolve(id.object))

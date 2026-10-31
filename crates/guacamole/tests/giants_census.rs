@@ -141,14 +141,20 @@ struct Chapter1 {
 /// draws them (AH.24).
 fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
     let usrdir = dump.join("PS3_GAME/USRDIR");
+    let boot = guac_extract::scripts::entry(&usrdir, guac_extract::roster::BOOTSTRAP)
+        .expect("bootstrap.bld's entry");
     let mut out = Vec::new();
     for archive in guac_extract::scripts::spawn_archives() {
         let entry = guac_extract::scripts::entry(&usrdir, &archive)
             .unwrap_or_else(|e| panic!("{archive}: {e}"));
         let igz = Igz::parse(&entry).unwrap_or_else(|e| panic!("{archive}: {e}"));
         let body = guac_extract::scripts::body(&igz, &archive);
-        let read = guac_extract::scripts::spawn_models(&igz, &archive, identity(), body)
+        // `global.bld`'s own models through its exports (AH.39).
+        let effects = guac_extract::scripts::own_effects(&archive, &igz, &boot)
             .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let read =
+            guac_extract::scripts::spawn_models(&igz, &archive, identity(), body, effects.as_ref())
+                .unwrap_or_else(|e| panic!("{archive}: {e}"));
         out.extend(
             guacamole::props::spawn_models(&read.ir).unwrap_or_else(|e| panic!("{archive}: {e}")),
         );
@@ -442,9 +448,12 @@ fn the_census_is_the_discs() {
         (90, 72, 61),
         "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239), their keys, those past the level's"
     );
+    // AH.39: 13 models, 13 keys and 3 past before `global.bld`'s 23 read
+    // (22 of them static; its cinematic camera's rig is skinned and left out
+    // of the spawn models).
     assert_eq!(
         (spawn_models, spawns.len(), spawns_beyond.len()),
-        (13, 13, 3),
+        (35, 26, 13),
         "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
     );
     assert_eq!(
@@ -455,12 +464,14 @@ fn the_census_is_the_discs() {
             hero_glow_skinned.len(),
             hero_glow_static.len()
         ),
-        (22, 1, 0, 1, 0),
+        // AH.39: 22 glow masks before `global.bld`'s models.
+        (29, 1, 0, 1, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(
         (creature_models, creatures.len(), creature_glow.len()),
-        (4, 5, 0),
+        // AH.139: 5 keys before each opaque one's faded twin.
+        (4, 10, 0),
         "the first fight's creatures' and the skinned clones' models (the Chompies', Norticus', the tortoises', the cannon top's), their keys past the heroes', their glow masks"
     );
 }

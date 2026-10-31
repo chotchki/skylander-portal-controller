@@ -27,6 +27,7 @@ mod level;
 mod look;
 mod mirror;
 mod motion;
+mod orbs;
 mod pad;
 mod pause;
 mod physics;
@@ -474,6 +475,7 @@ fn run_tv(
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,
         creatures::CreaturesPlugin,
+        orbs::OrbsPlugin,
     ));
     // AH.25's dev entry, in a dev build only.
     if let Some(entry) = dev_entry::plugin(cfg!(feature = "dev-tools"), entry_asks) {

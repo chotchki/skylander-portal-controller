@@ -141,3 +141,39 @@ fn an_import_root_comes_back_unresolved_and_a_null_root_is_refused() {
     assert_eq!(exports.resolve(0x15).unwrap().object(), None);
     assert_eq!(exports.resolve(0x16).unwrap_err().kind, ErrorKind::Missing);
 }
+
+/// AH.39: `global.bld`'s local roots by the ids its exports give them, an
+/// import root and a null slot left out; bootstrap's roots aren't its.
+#[test]
+fn globals_own_objects_go_by_their_export_ids() {
+    use crate::igz::builder::IgzBuilder;
+    // Roots: a key, an import from another namespace, a null slot, a key.
+    let bytes = {
+        let mut b = IgzBuilder::new();
+        let root = b.object(0, "igObjectList", 0x18);
+        let first = b.object(0, "StringInfo", 0x28);
+        let last = b.object(0, "StringInfo", 0x28);
+        let blocks = b.section(0x10);
+        b.put_u32(root.offset_by(0x08).unwrap(), 4);
+        b.put_u32(root.offset_by(0x0C).unwrap(), 4);
+        let data = b.memory_ref(root.offset_by(0x10).unwrap(), blocks, &[0; 16], 0);
+        b.pointer(data, first);
+        b.import_raw(data.offset_by(4).unwrap(), 1, 0xBA91_D879);
+        b.pointer(data.offset_by(12).unwrap(), last);
+        b.build()
+    };
+    let boot_bytes = bootstrap();
+    let boot = Igz::parse(&boot_bytes).unwrap();
+    let global = Igz::parse(&bytes).unwrap();
+    let exports = Exports::new(&boot, &global).unwrap();
+    let own: Vec<(usize, u32)> = exports.global_objects().collect();
+    let object = |k: usize| global.object_at(global.objects()[k].at).unwrap().0;
+    assert_eq!(own, [(object(1), 0x14), (object(2), 0x17)]);
+    // Each id resolves back to its object.
+    for (o, id) in own {
+        assert_eq!(
+            exports.resolve(id).unwrap(),
+            Export::Global(Root::Object(o))
+        );
+    }
+}

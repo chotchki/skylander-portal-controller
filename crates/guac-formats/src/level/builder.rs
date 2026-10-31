@@ -470,6 +470,7 @@ pub fn colour_only(name: &'static str, colour: usize) -> crate::model::builder::
     MaterialSpec {
         name,
         effect: crate::material::TFBMULTI2,
+        own_effect: false,
         pixel: Some((0, 0x3FF)),
         vertex: Some((0x1000, 0x1BFF)),
         binds: vec![BindSpec::new(0, colour)],
@@ -515,6 +516,7 @@ pub fn stage_sample() -> StageSpec {
     let grass = MaterialSpec {
         name: "grass_HIRES",
         effect: GRASS_EFFECT,
+        own_effect: false,
         pixel: Some((0x50, 0x50)),
         vertex: Some((0x50, 0x50)),
         binds: vec![

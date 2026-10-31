@@ -670,10 +670,19 @@ pub fn script_stage(
         let mut read = Vec::with_capacity(archives.len());
         let mut failed = None;
         for (archive, rel) in archives.iter().zip(&irs) {
+            // `global.bld`'s models name its effects by object, read through
+            // its and bootstrap's exports (AH.39).
+            let boot = (archive.as_str() == crate::roster::GLOBAL)
+                .then(|| entry(crate::roster::BOOTSTRAP));
             let one = entry(archive).and_then(|bytes| {
                 let igz = guac_formats::igz::Igz::parse(&bytes).map_err(|e| e.to_string())?;
                 let body = scripts::body(&igz, archive);
-                let r = scripts::spawn_models(&igz, archive, identity.clone(), body)?;
+                let effects = match boot {
+                    Some(b) => scripts::own_effects(archive, &igz, &b?)?,
+                    None => None,
+                };
+                let r =
+                    scripts::spawn_models(&igz, archive, identity.clone(), body, effects.as_ref())?;
                 let refused: Vec<(String, String)> =
                     r.ir.refused
                         .iter()
