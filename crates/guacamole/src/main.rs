@@ -869,7 +869,7 @@ mod tests {
                 }
             }
         }
-        let want: [(TypeId, Frame, &str); 16] = [
+        let want: [(TypeId, Frame, &str); 17] = [
             (
                 mirror::count_pad_steps.system_type_id(),
                 Frame::Pads,
@@ -925,6 +925,11 @@ mod tests {
                 hero_scripts::pose_hands.system_type_id(),
                 Frame::Hands,
                 "his hands",
+            ),
+            (
+                creatures::pose_creature_nodes.system_type_id(),
+                Frame::Hands,
+                "what hangs on a creature's nodes",
             ),
             (
                 creatures::place_bodies.system_type_id(),

@@ -371,6 +371,14 @@ pub trait Host {
         None
     }
 
+    /// A script set the reference in cell `cell` to `target`, which it
+    /// didn't name already: an actor it names keeps where that actor stands
+    /// now as the reference's point ([`Access::via`]; crate docs, Variables,
+    /// structures and sets). The default keeps nothing.
+    fn referenced(&mut self, cell: u32, target: Value) {
+        let _ = (cell, target);
+    }
+
     /// The scripted placements world ops have spawned since it was last
     /// asked, each with its name and its script in `program`: the VM adds
     /// them and ticks each this tick, after every placement in the order

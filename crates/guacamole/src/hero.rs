@@ -419,21 +419,35 @@ pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut Her
 /// where it stood; once they drive again (AG.211) it's theirs.
 pub(crate) fn step_cameras(
     time: Res<Time>,
-    heroes: Query<&HeroBody>,
+    heroes: Query<(&HeroBody, Option<&crate::hero_scripts::HeroRun>)>,
     scripts: Option<Res<CameraScripts>>,
     world: Option<Res<ScriptWorld>>,
+    runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
     mut cameras: Query<
         (&mut FollowCamera, &mut Transform, Option<&mut Projection>),
         Without<HeroBody>,
     >,
 ) {
-    let hero = heroes.single().ok();
+    let (hero, run) = match heroes.single() {
+        Ok((h, r)) => (Some(h), r),
+        Err(_) => (None, None),
+    };
     let feet = hero.map(|h| h.hero.pivot);
     let step = time.delta_secs();
     let state = scripts.as_deref().cloned().unwrap_or_default();
+    // A hero in the camera's scripts' run: his minion joined and not taken
+    // off. With none (his minion gone, the next not joined yet: a swap, a
+    // defeat's handover) their camera target follows no one and their view
+    // wanders, into the rock behind the pit after a defeat (openspec
+    // AH.227), so the view holds where it stood until the next one joins.
+    let in_run = match (run.map(|r| &r.join), runtime.as_deref()) {
+        (Some(crate::hero_scripts::Join::Joined(m)), Some(rt)) => !rt.vm.removed(*m),
+        _ => false,
+    };
     for (mut follow, mut transform, drawn) in &mut cameras {
         let follow = &mut *follow;
         let place = match (&state, world.as_deref()) {
+            (CameraScripts::On, Some(_)) if !in_run => continue,
             (CameraScripts::On, Some(world)) => {
                 if let ViewHold::HandedBack(why) = &follow.hold {
                     info!(was = %why, "the camera's scripts have the view again: a hero joined their run");

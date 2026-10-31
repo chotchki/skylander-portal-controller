@@ -146,10 +146,11 @@ pub struct LevelProps {
 /// attach nodes, which no prop model's extract carries (they'd sit under
 /// the boulder); the chest's locks (the chest is a creature, drawn
 /// nowhere); the push blocks' tortoises and the cannon's top (skinned, as
-/// a prop draws none: [`SKINNED_SPAWNS`] draws them); Norticus' hat (a
-/// creature's); the invisible markers. `giants_start` and `giants_route`
-/// hold it to what a headless start and the route clone.
-pub const DRAWN_SPAWNS: [&str; 32] = [
+/// a prop draws none: [`SKINNED_SPAWNS`] draws them); the invisible
+/// markers. Norticus' turban draws on his head's node (openspec AH.138,
+/// the level's nodes part). `giants_start` and `giants_route` hold it to
+/// what a headless start and the route clone.
+pub const DRAWN_SPAWNS: [&str; 33] = [
     "Fence Cross Beam",
     "Wooden Plank_one",
     "Wooden Plank_Two",
@@ -187,6 +188,8 @@ pub const DRAWN_SPAWNS: [&str; 32] = [
     // The spike gate's spikes and the holes they lower into.
     "Gate_Spikes_Spike",
     "Gate_Spikes_Hole",
+    // Norticus' turban, on his head's node (AH.138).
+    "Turban_hat",
 ];
 
 /// The level's templates whose clones the TV draws skinned, as it draws a

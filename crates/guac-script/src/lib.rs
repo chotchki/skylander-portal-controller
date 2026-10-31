@@ -349,7 +349,15 @@
 //!   naming nothing still has it, its receiver the reference's cell. A
 //!   reading: the orbs' delayed spawn remembers where an orb comes out
 //!   through its `orb` reference before the orb exists, then moves the
-//!   spawn point there (AH.20).
+//!   spawn point there (AH.20). A script setting a placement reference to
+//!   an actor it didn't name already tells the host ([`Host::referenced`]):
+//!   the reference's point is where that actor stands then, until a script
+//!   writes it (a reading, openspec AH.250: the hero's death actor lifts him
+//!   that many feet over its `dying actor`'s point, set as it spawns, and
+//!   the stat-buff icon's measurement actor rises over its `pos actor`'s;
+//!   other discs' scripts name such references `$MyStartPosition` and
+//!   `$StartPos`). A set to the actor it already names keeps its point; a
+//!   copied structure's references carry none.
 //! - Every member the host answers comes with the op that reads or writes
 //!   it ([`Access::op`]), so the host can answer one asker apart from
 //!   another (openspec AH.150: a point against the gameplay camera, on
@@ -493,12 +501,20 @@
 //!   puts back the script's own, the slide runs on).
 //! - A slider's `sequence.time remaining` and `.percent remaining` read
 //!   what's left of this pass, and written set it (0 lands it next frame);
-//!   `.playback rate` (percent) speeds it; `.looping` and `.playback mode`
-//!   (one way, ping pong) make it start again at its end, or come back the
-//!   way it went, and never end on its own; `.raw duration` reads its
-//!   time; `slider.ignores time scales` is kept, no time scale being
-//!   modelled for it to ignore. `stop` on a slider ends it where its place
-//!   stands. Any other member of a slider is unmodelled.
+//!   `.playback rate` (percent) speeds it; `.raw duration` reads its time;
+//!   `slider.ignores time scales` is kept, no time scale being modelled for
+//!   it to ignore. `stop` on a slider ends it where its place stands. Any
+//!   other member of a slider is unmodelled.
+//! - `.playback mode` (0 one way, 1 ping pong) and `.looping` (0 or 1): one
+//!   way, a slide ends on its target, or looping starts again from where it
+//!   began; ping pong, at its target it comes back retracing its way out,
+//!   and back where it began it ends there, or looping goes out again. A
+//!   looping slide never ends on its own. A reading (openspec AH.250): the
+//!   hero's death actor slides his lift 0 to 12 ft over 0.35 s ping pong
+//!   without looping, and AH.11's `restart1` and `restart2` lift him 3.44 m
+//!   and set him back down within 2 cm 0.67 s on, his burst 0.7 s in;
+//!   Eruptor's splash mesh widens 25 to 110 over 0.3 s while it rises 5 to
+//!   300 over 0.15 s ping pong, ending flat as it ends wide.
 //!
 //! # Modes, the budget and the whitelist
 //!

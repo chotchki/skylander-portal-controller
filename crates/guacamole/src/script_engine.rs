@@ -194,6 +194,12 @@ pub struct Actor {
     /// What it hangs from (`abstractplacement.attach node`): it follows that
     /// object's place while set.
     pub attach: Value,
+    /// Where it hangs from that: its offset from the node's place (or the
+    /// actor's pivot) in the node's frame (the actor's facing), metres;
+    /// none as it's hung, a script's write to its place setting it (openspec
+    /// AH.226: the cannon's prompt hung on the cannon 15 ft over it,
+    /// Norticus' turban 0.5 ft from his head's node).
+    pub hung: Vec3,
     /// `actorinfo.controller`.
     pub controller: Value,
     /// Its clones, made from it as a template, in the order made.
@@ -272,6 +278,7 @@ impl Actor {
             },
             solid: Solid::default(),
             attach: Value::Null,
+            hung: Vec3::ZERO,
             controller: Value::Null,
             clones: Vec::new(),
             parent: Value::Null,

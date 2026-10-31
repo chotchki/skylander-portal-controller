@@ -293,28 +293,33 @@ pub fn nodes(
         .ok()
         .and_then(|h| h.info.model)
         .unwrap_or(portal.model);
+    let joints: Vec<&str> = skeleton.joints.iter().map(|j| j.name.as_str()).collect();
     let nodes = fattach::attach_points(igz, model)?
         .iter()
-        .map(|p| {
-            let bone = p.bone_name.map(str::to_owned);
-            let joint = p
-                .bone_name
-                .filter(|b| *b != BoneAttachInfo::ROOT)
-                .and_then(|b| skeleton.joints.iter().position(|j| j.name == b))
-                .and_then(|j| u16::try_from(j).ok());
-            AttachNode {
-                name: p.name.map(str::to_owned),
-                bone,
-                joint,
-                offset: euler_transform(&p.transform),
-            }
-        })
+        .map(|p| attach_node(p, &joints))
         .collect();
     Ok(AttachNodes {
         identity,
         load_file: load_file.to_owned(),
         nodes,
     })
+}
+
+/// An attach list's point as a node on `joints` (a skeleton's joint names
+/// in its order) by its bone's name: on no joint for `*root*` or a bone the
+/// skeleton lacks (a static model's, whose `joints` are none).
+pub fn attach_node(p: &BoneAttachInfo<'_>, joints: &[&str]) -> AttachNode {
+    let joint = p
+        .bone_name
+        .filter(|b| *b != BoneAttachInfo::ROOT)
+        .and_then(|b| joints.iter().position(|j| *j == b))
+        .and_then(|j| u16::try_from(j).ok());
+    AttachNode {
+        name: p.name.map(str::to_owned),
+        bone: p.bone_name.map(str::to_owned),
+        joint,
+        offset: euler_transform(&p.transform),
+    }
 }
 
 /// Every filled slot of `hero`'s animation set as a palette (AH.22): each

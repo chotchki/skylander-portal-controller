@@ -25,6 +25,10 @@
 //! - The palettes (AH.22): every slot of each skinned model a placement
 //!   running a whitelisted script names ([`crate::scripts::WHITELIST`]: the
 //!   level's and the walkers' own, AG.162): chapter 1's Chompies and Norticus.
+//! - The nodes (openspec AH.138): each placed model's attach list, a skinned
+//!   one's nodes on its joints, so what a script hangs on a creature's node
+//!   rides it (Norticus' turban on his node 2). An extract written before it
+//!   gains this part alone on its next start.
 //!
 //! A part that doesn't read is the level stage's failure for that part
 //! alone: the other parts land, and the next start tries it again.
@@ -33,6 +37,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use guac_formats::FormatError;
+use guac_formats::attachments as fattach;
 use guac_formats::collision;
 use guac_formats::edge::{BoneMap, Segment as EdgeSegment};
 use guac_formats::iga::Archive;
@@ -50,6 +55,7 @@ use guac_ir::level::{
     UnitTexture, Waypoint, ZoneFog, ZoneLight,
 };
 use guac_ir::model::{Mask, Segment};
+use guac_ir::nodes::{AttachNode, AttachNodes, LevelNodes};
 use guac_ir::palette::LevelPalettes;
 use guac_ir::{DumpIdentity, RigLight};
 
@@ -74,8 +80,9 @@ pub const LIGHTS: &str = "lights";
 pub const ATMOSPHERE: &str = "atmosphere";
 pub const SCRIPT: &str = "script";
 pub const PALETTES: &str = "palettes";
-pub const PARTS: [&str; 8] = [
-    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES,
+pub const NODES: &str = "nodes";
+pub const PARTS: [&str; 9] = [
+    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES,
 ];
 
 /// The script part's file, `levels/<archive>/script.igz`: raw, so the same
@@ -393,17 +400,82 @@ pub fn prop(
     textures: &mut Textures,
     own: Option<&OwnEffects>,
 ) -> Result<Prop, String> {
-    let skinned = PhysicsModel::read(igz, model)
-        .ok()
-        .and_then(|m| m.model.tfb_body)
-        .and_then(|b| PhysicsBody::read(igz, b).ok())
-        .and_then(|b| b.body.node)
-        .is_some_and(|n| is_a(igz.type_name(&igz.objects()[n]), Actor2::TYPE));
-    if skinned {
+    if skinned(igz, model) {
         skinned_prop(igz, model, path, textures, own)
     } else {
         static_prop(igz, model, path, textures, own)
     }
+}
+
+/// Whether the model at `model` is skinned: its body's node an `igActor2`.
+fn skinned(igz: &Igz<'_>, model: usize) -> bool {
+    PhysicsModel::read(igz, model)
+        .ok()
+        .and_then(|m| m.model.tfb_body)
+        .and_then(|b| PhysicsBody::read(igz, b).ok())
+        .and_then(|b| b.body.node)
+        .is_some_and(|n| is_a(igz.type_name(&igz.objects()[n]), Actor2::TYPE))
+}
+
+/// The nodes part (openspec AH.138): each model a placement names whose
+/// attach list holds any, by its path, a skinned one's nodes on its Havok
+/// joints by name (the props part's joints, in its order), a static one's on
+/// none; one whose list or skeleton won't read listed with why.
+pub fn nodes(
+    igz: &Igz<'_>,
+    level: &str,
+    identity: DumpIdentity,
+) -> Result<Read<LevelNodes>, String> {
+    let placements = FormatPlacements::read(igz).map_err(s)?;
+    let (mut models, mut refused) = (Vec::new(), Vec::new());
+    for (&model, info) in &placements.models {
+        let path = info
+            .info
+            .name
+            .ok_or_else(|| format!("model #{model} has no name"))?;
+        let read = (|| -> Result<Vec<AttachNode>, String> {
+            let points = fattach::attach_points(igz, model).map_err(s)?;
+            if points.is_empty() {
+                return Ok(Vec::new());
+            }
+            let joints: Vec<&str> = if skinned(igz, model) {
+                let hero = Hero::read(igz, model).map_err(s)?;
+                fmodel::skeleton(igz, &hero)
+                    .map_err(s)?
+                    .bones
+                    .iter()
+                    .map(|b| b.name.unwrap_or_default())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Ok(points
+                .iter()
+                .map(|p| models::attach_node(p, &joints))
+                .collect())
+        })();
+        match read {
+            Ok(nodes) if nodes.is_empty() => {}
+            Ok(nodes) => models.push(AttachNodes {
+                identity: identity.clone(),
+                load_file: path.to_owned(),
+                nodes,
+            }),
+            Err(reason) => refused.push(RefusedProp {
+                path: path.to_owned(),
+                reason,
+            }),
+        }
+    }
+    Ok(Read {
+        ir: LevelNodes {
+            identity,
+            level: level.to_owned(),
+            models,
+            refused,
+        },
+        textures: Vec::new(),
+    })
 }
 
 /// The props part: each model a placement names, by its path, skinned when

@@ -547,6 +547,7 @@ fn fight_app_on(
     if art {
         write_art_model(tmp);
     }
+    write_nodes(tmp);
     tx.send(source).unwrap();
     let pad = test_pad::connect(&mut app, None, None);
     until(&mut app, "the level and its scripts", |a| {
@@ -713,6 +714,51 @@ pub(crate) fn write_creature_model(dir: &std::path::Path) {
         guac_extract::levels::PALETTES,
     );
     std::fs::write(dir.join(rel), guac_ir::to_ron(&palettes).unwrap()).unwrap();
+}
+
+/// How far along its top joint the made-up creature's and the art piece's
+/// node 0 sits (openspec AH.138's nodes part).
+pub(crate) const NODE_UP: f32 = 0.25;
+
+/// The level's nodes part (openspec AH.138): the made-up creature's and the
+/// art piece's models each with node 0 on their top joint, [`NODE_UP`]
+/// along it, and node 1 on `*root*`.
+pub(crate) fn write_nodes(dir: &std::path::Path) {
+    use guac_formats::script::builder::{FIGHT_ART_MODEL, FIGHT_CREATURE_MODEL};
+    use guac_ir::model::Transform as IrTransform;
+    use guac_ir::nodes::{AttachNode, AttachNodes, LevelNodes};
+    let list = |path: &str| AttachNodes {
+        identity: crate::test_support::turntable::identity(),
+        load_file: path.into(),
+        nodes: vec![
+            AttachNode {
+                name: Some("head".into()),
+                bone: Some("top".into()),
+                joint: Some(1),
+                offset: IrTransform {
+                    translation: [0.0, NODE_UP, 0.0],
+                    ..IrTransform::IDENTITY
+                },
+            },
+            AttachNode {
+                name: None,
+                bone: Some("*root*".into()),
+                joint: None,
+                offset: IrTransform::IDENTITY,
+            },
+        ],
+    };
+    let nodes = LevelNodes {
+        identity: crate::test_support::turntable::identity(),
+        level: crate::test_support::hero_scripts::LEVEL.into(),
+        models: vec![list(FIGHT_CREATURE_MODEL), list(FIGHT_ART_MODEL)],
+        refused: Vec::new(),
+    };
+    let rel = IrFormat::Ron.level_path(
+        crate::test_support::hero_scripts::LEVEL,
+        guac_extract::levels::NODES,
+    );
+    std::fs::write(dir.join(rel), guac_ir::to_ron(&nodes).unwrap()).unwrap();
 }
 
 /// Where the art piece's clip holds its top joint, in its model's space:
