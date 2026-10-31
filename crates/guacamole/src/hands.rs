@@ -258,6 +258,7 @@ mod tests {
         use std::collections::HashMap;
         let files = Files {
             lights: HashMap::new(),
+            emitters: HashMap::new(),
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::new(),

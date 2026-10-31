@@ -255,6 +255,8 @@ pub struct Extracted {
     pub models: ModelStage,
     pub levels: LevelStage,
     pub scripts: ScriptStage,
+    /// The attacks' emitters (AH.87).
+    pub particles: crate::particles::ParticleStage,
     /// The intros, or why there are none. The roster stays either way, and
     /// the manifest stays unmarked, so the next start tries the intros again.
     pub intros: Result<IntroStage>,
@@ -281,6 +283,7 @@ pub fn run(
     });
     let levels = level_stage(dir, ir, send)?;
     let scripts = script_stage(dir, ir, send)?;
+    let particles = crate::particles::particle_stage(dir, ir)?;
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;
@@ -291,6 +294,7 @@ pub fn run(
         models,
         levels,
         scripts,
+        particles,
         intros,
     })
 }
@@ -733,7 +737,7 @@ pub fn script_stage(
 }
 
 /// `files`, each already in, counted as kept with its recorded size.
-fn count_kept(dir: &IdentityDir, files: &[String], into: &mut Files) {
+pub(crate) fn count_kept(dir: &IdentityDir, files: &[String], into: &mut Files) {
     for f in files {
         into.kept += 1;
         into.bytes += dir
@@ -965,7 +969,7 @@ fn intro_stage(
 
 /// Writes `bytes` to `rel` unless the extract already holds exactly them: the
 /// manifest records these bytes and the file still hashes to the record.
-fn put(dir: &mut IdentityDir, rel: &str, bytes: &[u8], files: &mut Files) -> Result<()> {
+pub(crate) fn put(dir: &mut IdentityDir, rel: &str, bytes: &[u8], files: &mut Files) -> Result<()> {
     let sha = Sha256(sha2::Sha256::digest(bytes).into());
     let size = bytes.len() as u64;
     let recorded = dir

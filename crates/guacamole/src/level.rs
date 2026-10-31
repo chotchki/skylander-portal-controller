@@ -208,6 +208,9 @@ struct Built {
     /// props' are, past theirs; then the level's templates' the TV draws
     /// the clones of (AG.60), the props' own segments.
     spawn_models: Vec<(String, Vec<(usize, u16)>)>,
+    /// The particle part's emitters (AH.87), each generator's material in
+    /// `drawn.materials`, `None` for one that draws nothing.
+    particles: Vec<(Arc<guac_ir::particle::Emitter>, Vec<Option<usize>>)>,
     /// The first fight's creatures' models (openspec AH.25) and the skinned
     /// templates' (AG.150, `props::SKINNED_SPAWNS`), by path, with each
     /// one's palette off the level's palettes part: their textures among
@@ -396,6 +399,39 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         .collect::<Result<Vec<_>, String>>()?;
     spawn_models.extend(level_spawns);
     drawn.materials.extend(spawned.materials.iter().cloned());
+    // What the scripts' emitters draw (AH.87): the particle part's
+    // generators' materials after the spawn models', keyed in the same
+    // scene (the census's particle tables hold them). A part that doesn't
+    // read draws no particles; the level goes on.
+    let emitters = match read_particles(source) {
+        Ok(e) => e,
+        Err(why) => {
+            warn!(reason = %why, "the particle part didn't read: the scripts' emitters draw nothing");
+            Vec::new()
+        }
+    };
+    let (sparks, index) = guacamole::particles::drawn(&emitters);
+    let particle_materials = drawn.materials.len();
+    for (k, m) in arithmetic::keys(&sparks, &scene).map_err(|e| format!("the particles: {e}"))? {
+        if !keys.iter().any(|(kept, _)| *kept == k) {
+            keys.push((k, particle_materials + m));
+        }
+    }
+    drawn.materials.extend(sparks.materials);
+    let particles = index
+        .into_iter()
+        .filter_map(|(name, generators)| {
+            let emitter = emitters
+                .iter()
+                .flat_map(|a| &a.emitters)
+                .find(|e| e.name == name)?;
+            let materials = generators
+                .iter()
+                .map(|(_, m)| m.map(|m| particle_materials + usize::from(m)))
+                .collect();
+            Some((Arc::new(emitter.clone()), materials))
+        })
+        .collect();
     // The first fight's creatures (AH.25) and the skinned templates' clones
     // (AG.150): their models with their palettes, their textures read with
     // the level's. A palettes part that doesn't read leaves each holding its
@@ -494,6 +530,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         walk,
         prop_models,
         spawn_models,
+        particles,
         creatures,
         read,
         took: started.elapsed(),
@@ -511,6 +548,21 @@ fn read_spawns(source: &LevelSource) -> Result<Vec<guacamole::props::PropModel>,
             return Err(format!("{rel} is another dump's"));
         }
         out.extend(guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// The extract's particle part (AH.87): every emitter each spawn archive
+/// places, with its generators.
+fn read_particles(source: &LevelSource) -> Result<Vec<guac_ir::particle::Emitters>, String> {
+    let mut out = Vec::new();
+    for archive in guac_extract::particles::archives() {
+        let rel = guac_extract::particles::path(source.ir, &archive);
+        let e: guac_ir::particle::Emitters = read_ir(source.ir, &source.dir.join(&rel))?;
+        if e.identity != source.identity {
+            return Err(format!("{rel} is another dump's"));
+        }
+        out.push(e);
     }
     Ok(out)
 }
@@ -961,6 +1013,15 @@ struct Uploading {
     fog: LevelFog,
 }
 
+/// An emitter as the level draws it (AH.87): its generators off the
+/// particle part, each with its material, `None` for one that draws
+/// nothing.
+#[derive(Debug, Clone)]
+pub(crate) struct EmitterDraw {
+    pub(crate) emitter: Arc<guac_ir::particle::Emitter>,
+    pub(crate) materials: Vec<Option<Handle<CharacterMaterial>>>,
+}
+
 /// A level the renderer has: its entities (hidden until shown), the
 /// materials and what rebuilds their uniforms when the camera moves.
 pub(crate) struct Loaded {
@@ -984,6 +1045,9 @@ pub(crate) struct Loaded {
     /// The spawn part's models by path, each segment's mesh and material:
     /// what the scripts' clones draw (AH.24).
     spawns: HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>,
+    /// The particle part's emitters by name: what an emitter's clone draws
+    /// (AH.87).
+    emitters: HashMap<String, EmitterDraw>,
     /// The first fight's creatures' models (AH.25) and the skinned
     /// templates' (AG.150), and every texture the level read, by its view,
     /// for their materials.
@@ -1187,6 +1251,13 @@ impl Level {
         &self,
     ) -> Option<&HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>> {
         self.stage.loaded().map(|l| &l.spawns)
+    }
+
+    /// The particle part's emitters by name and the level's root, once the
+    /// level's loaded: what an emitter's clone draws and what its particles
+    /// hang under (AH.87).
+    pub(crate) fn emitters(&self) -> Option<(&HashMap<String, EmitterDraw>, Entity)> {
+        self.stage.loaded().map(|l| (&l.emitters, l.root))
     }
 
     /// The creature model at `path` (AH.25) and a lookup of the level's
@@ -1743,6 +1814,23 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
             (path.clone(), parts)
         })
         .collect();
+    let emitters = built
+        .particles
+        .iter()
+        .map(|(e, generators)| {
+            let materials = generators
+                .iter()
+                .map(|m| m.map(|m| materials[m].clone()))
+                .collect();
+            (
+                e.name.clone(),
+                EmitterDraw {
+                    emitter: e.clone(),
+                    materials,
+                },
+            )
+        })
+        .collect();
     Loaded {
         root,
         materials,
@@ -1756,6 +1844,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         bodies,
         props,
         spawns,
+        emitters,
         creatures: std::mem::take(&mut built.creatures),
         images: image_handles,
         start: built.walk.start,
@@ -2972,6 +3061,56 @@ mod tests {
         let models = level.spawn_models().expect("loaded");
         assert_eq!(models.get("egg.mdl").map(Vec::len), Some(1));
         assert!(!models.contains_key("hat.mdl"));
+    }
+
+    /// AH.87: the particle part's emitters load with the level, each
+    /// textured generator on a material of its own keyed among the level's,
+    /// an untextured one on none; without the part, or with another dump's,
+    /// the level loads all the same and no emitter draws.
+    #[test]
+    fn the_particle_parts_emitters_load_with_their_materials() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source.clone(), false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        assert!(level.emitters().expect("loaded").0.is_empty());
+
+        crate::test_support::level::write_particles(tmp.path());
+        let mut app = level_app(tmp.path(), source.clone(), false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        let (emitters, _) = level.emitters().expect("loaded");
+        let trail = emitters.get("Trail").expect("the fighter's emitter");
+        assert_eq!(trail.emitter.generators.len(), 2);
+        let materials = app.world().resource::<Assets<CharacterMaterial>>();
+        let m = materials
+            .get(trail.materials[0].as_ref().expect("textured"))
+            .expect("built");
+        assert_eq!(
+            (m.key.shader.pixel(), m.key.shader.vertex()),
+            (0x0000, 0x1000)
+        );
+        assert!(trail.materials[1].is_none(), "untextured draws nothing");
+        let keys = &level.loaded().unwrap().keys;
+        let particle = guacamole::census::PARTICLES[0].key(false).unwrap();
+        assert!(keys.contains(&particle), "its key among the level's");
+
+        // Another dump's part: read, refused, nothing drawn.
+        for archive in guac_extract::particles::archives() {
+            let path = tmp.path().join(guac_extract::particles::path(
+                guac_extract::intros::IrFormat::Ron,
+                &archive,
+            ));
+            let mut e: guac_ir::particle::Emitters =
+                guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            e.identity.title_id = "BLUS00000".into();
+            std::fs::write(&path, guac_ir::to_ron(&e).unwrap()).unwrap();
+        }
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        assert!(level.emitters().expect("loaded").0.is_empty());
     }
 
     /// AG.21: the level's solids come and go with it. A new source's load

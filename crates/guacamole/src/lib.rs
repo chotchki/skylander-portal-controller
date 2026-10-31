@@ -19,6 +19,7 @@ pub mod hud_messages;
 pub mod level_scene;
 pub mod level_scripts;
 pub mod on_screen;
+pub mod particles;
 pub mod picks;
 pub mod player_loop;
 pub mod props;

@@ -26,3 +26,12 @@ A level's parts and its hero SHALL be lit by up to three point lights a frame: t
 - **THEN** from the step after the ball appears until it's gone an orange-brown light rides on it
 - **WHEN** he erupts
 - **THEN** an orange light 22 ft over the eruption lights him and the ground, fading out over 1.5 s
+
+### Requirement: What the scripts spawn draws its particles
+An emitter the scripts spawn SHALL make particles from the disc's generators as they say (rate, most alive, life, spawn volume, speed and spread, drag and gravity, colour, size and spin over life, texture), drawn unlit as quads facing the camera and ribbons along its path, added or blended, glowing where a generator blooms; taken off, it SHALL stop and its particles live out their lives. Their random numbers SHALL never be the scripts'.
+
+#### Scenario: The throw's trail and the eruption's sparks
+- **WHEN** Eruptor throws
+- **THEN** a flash shows at his hand and flames trail the ball until it lands, then a burst and smoke where it lands
+- **WHEN** he erupts
+- **THEN** sparks, smoke and flames rise from the eruption, and the scripts' generator has drawn as many numbers as it would with no particle drawing

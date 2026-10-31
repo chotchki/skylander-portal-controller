@@ -2972,6 +2972,7 @@ mod tests {
     fn world() -> ScriptWorld {
         let files = Files {
             lights: HashMap::new(),
+            emitters: HashMap::new(),
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::new(),
@@ -4033,6 +4034,7 @@ mod fight_tests {
     pub(super) fn world() -> ScriptWorld {
         let files = Files {
             lights: HashMap::new(),
+            emitters: HashMap::new(),
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::from([

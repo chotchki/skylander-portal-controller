@@ -6,7 +6,7 @@
 
 use crate::FormatError;
 use crate::{
-    atmosphere, attachments, edge, exports, havok, iga, igz, language, material, model,
+    atmosphere, attachments, edge, exports, havok, iga, igz, language, material, model, particle,
     progression, roster, script, sfo, texture, toys,
 };
 
@@ -135,6 +135,24 @@ pub const PARSERS: &[RegisteredParser] = &[
         // 1,208 from its 0xF8, a draw's 392 from its 0x38, each doubled at
         // worst by vector growth.
         heap_budget: |len| 64 * len + 32 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "particles",
+        parse: |bytes| {
+            let file = igz::Igz::parse(bytes)?;
+            for (_, e) in particle::emitters(&file) {
+                let _ = e;
+            }
+            Ok(())
+        },
+        seeds: particle::builder::seeds,
+        // The IGZ parse, then one emitter at a time, dropped before the
+        // next: its generator list's references (16 bytes a 4-byte input
+        // word) and at most MAX_GENERATORS generators of about 500 bytes
+        // each. Held all at once they'd be 64 x 500 bytes a 0xE0-byte
+        // emitter, all off one shared list
+        // (`the_particles_parser_holds_its_budget_on_...`).
+        heap_budget: |len| 64 * len + 8 * len + (64 << 10),
     },
     RegisteredParser {
         name: "atmosphere",
@@ -501,6 +519,12 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = Placement::read(&file, i);
         let _ = ActorInfo::read(&file, i);
         let _ = ParticleInfo::read(&file, i);
+        let _ = GeneratorInfoList::read(&file, i);
+        let _ = GeneratorInfo::read(&file, i);
+        let _ = RibbonGenerator::read(&file, i);
+        let _ = GenerationFields::read(&file, i);
+        let _ = MovementFields::read(&file, i);
+        let _ = AppearanceFields::read(&file, i);
         let _ = LightInfo::read(&file, i);
         let _ = CollisionInfo::read(&file, i);
         let _ = ModelParameters::read(&file, i);

@@ -339,6 +339,10 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "scripts/"), ENTRIES);
     assert_eq!(recorded(&m, "spawns/"), 2);
     assert!(scripts::complete(&m));
+    // AH.87's: an archive's emitters each (the builders' place none).
+    assert_eq!(recorded(&m, "particles/"), 2);
+    assert_eq!(m.parts["particles"].len(), 2);
+    assert!(done.particles.read && done.particles.failed.is_none());
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
     assert!(!m.complete);
@@ -581,7 +585,13 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     }
     // So are AH.22's palettes, script entries and spawn models.
     assert!(m.parts.contains_key("palettes") && scripts::complete(&m));
-    for part in ["palettes", "scripts", scripts::SPAWNS, "nodes"] {
+    for part in [
+        "palettes",
+        "scripts",
+        scripts::SPAWNS,
+        "nodes",
+        guac_extract::particles::PART,
+    ] {
         for f in &m.parts[part] {
             assert!(dir.join(f).is_file(), "{f}");
         }
@@ -625,6 +635,9 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     let sc = &done.scripts;
     assert_eq!((sc.parts_read, sc.parts_kept, sc.entries), (0, 2, 0));
     assert_eq!((sc.files.written, sc.files.kept), (0, ENTRIES + 3));
+    let pa = &done.particles;
+    assert!(pa.kept && !pa.read);
+    assert_eq!((pa.files.written, pa.files.kept), (0, 2));
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
 }
@@ -1313,11 +1326,6 @@ fn without_part(dir: &Path, level: bool, part: &str) -> Vec<String> {
     files
 }
 
-/// Each of AH.22's parts and AH.50's attach nodes, missing alone from a
-/// finished extract, resumes alone: the extract isn't current, the next run
-/// writes that part's files and no other (the model stage, which reads every
-/// archive on a resume, keeps every file but the missing part's), and then
-/// it's current.
 /// AH.39: an extract made before `global.bld`'s own models read holds its
 /// spawn models under the part's old name, `spawns`, all of `global.bld`'s
 /// refused: it opens as a resume and reads the spawn part alone, recording
@@ -1354,6 +1362,12 @@ fn an_extract_whose_spawn_part_predates_ah39_reads_it_again() {
     );
 }
 
+/// Each of AH.22's parts, AH.50's attach nodes and AH.87's emitters, missing
+/// alone from a finished extract (one made before the build that adds it),
+/// resumes alone: the extract isn't current, the next run writes that part's
+/// files and no other (the model stage, which reads every archive on a
+/// resume, keeps every file but the missing part's), and then it's
+/// current.
 #[test]
 fn each_of_the_fights_parts_resumes_alone() {
     let s = setup();
@@ -1368,6 +1382,7 @@ fn each_of_the_fights_parts_resumes_alone() {
         (true, levels::PALETTES),
         (false, scripts::SCRIPTS),
         (false, scripts::SPAWNS),
+        (false, guac_extract::particles::PART),
     ] {
         let gone = without_part(&dir, level, part);
         assert!(!gone.is_empty(), "{part}");
@@ -1379,12 +1394,18 @@ fn each_of_the_fights_parts_resumes_alone() {
             + done.models.files.written
             + done.models.palettes.files.written
             + done.levels.files.written
-            + done.scripts.files.written;
+            + done.scripts.files.written
+            + done.particles.files.written;
         assert_eq!(written, gone.len(), "{part}: only its files");
+        assert_eq!(
+            done.particles.read,
+            part == guac_extract::particles::PART,
+            "{part}"
+        );
         let (lv, sc) = (&done.levels, &done.scripts);
         let (level_read, script_read) = match (level, part) {
             (true, _) => (1, 0),
-            (false, "palettes" | "nodes") => (0, 0),
+            (false, "palettes" | "nodes" | "particles") => (0, 0),
             _ => (0, 1),
         };
         assert_eq!(lv.parts_read, level_read, "{part}");

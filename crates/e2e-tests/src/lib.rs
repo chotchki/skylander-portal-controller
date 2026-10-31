@@ -2011,7 +2011,8 @@ pub const E2E_SMASH_SCRIPTS: usize = 7;
 /// parts recorded: the roster builder's bootstrap, global and init_setup
 /// entries and AH.13's creature as the fighter's, built here, or with
 /// `fighting` AH.24's synthetic attack's global, init_setup and fighter's
-/// entries beside the roster's bootstrap; and spawn models of none.
+/// entries beside the roster's bootstrap; and spawn models and emitters of
+/// none.
 fn write_scripts(dir: &mut guac_extract::IdentityDir, fighting: bool) -> Result<()> {
     use guac_extract::intros::IrFormat;
     use guac_extract::scripts;
@@ -2058,6 +2059,20 @@ fn write_scripts(dir: &mut guac_extract::IdentityDir, fighting: bool) -> Result<
         files.push(rel);
     }
     dir.record_part(scripts::SPAWNS, files)?;
+    // AH.87's emitters: none either.
+    let mut files = Vec::new();
+    for archive in guac_extract::particles::archives() {
+        let rel = guac_extract::particles::path(ir, &archive);
+        let none = guac_ir::particle::Emitters {
+            identity: identity.clone(),
+            archive: archive.clone(),
+            emitters: Vec::new(),
+            refused: Vec::new(),
+        };
+        dir.write_output(&rel, &ir.encode(&none, dir, &rel)?)?;
+        files.push(rel);
+    }
+    dir.record_part(guac_extract::particles::PART, files)?;
     Ok(())
 }
 

@@ -21,6 +21,7 @@ mod image;
 mod level;
 mod material;
 mod ops;
+mod particle;
 mod placement;
 mod scene;
 mod script;
@@ -48,6 +49,10 @@ pub use ops::{
     BRANCH_END, NO_OPERATOR, OpChangeMembership, OpCode, OpCodeList, OpDefineMacro, OpLoopValue,
     OpMacroInterface, OpMacroParameter, OpParameter, OpUseMacro, RhsReferenceStack, RhsValueStack,
     ScriptInfo, Stack, TagList, ValueRhsVariant, Variable,
+};
+pub use particle::{
+    AppearanceFields, BlendMode, GenerationFields, GeneratorInfo, GeneratorInfoList,
+    MovementFields, RibbonGenerator, SpawnVolume, Taper, VelocityDirection, VfxGenerator,
 };
 pub use placement::{
     ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, BoneAttachInfo,
@@ -176,6 +181,16 @@ pub const TYPES: &[TypeDef] = &[
     def("Placement", "AbstractPlacement", 0xD8),
     def("tfbActorInfo", "Placement", 0xF8),
     def("tfbParticleInfo", "Placement", 0xE0),
+    // An emitter's generators (AH.87).
+    def("GeneratorInfoList", "ScriptObjectList", 0x18),
+    def("AbstractVFXGenerator", "AbstractAttachNode", 0x44),
+    def("GeneratorInfo", "AbstractVFXGenerator", 0x54),
+    def("SegmentGenerator", "AbstractVFXGenerator", 0x58),
+    def("RibbonFields", "SegmentGenerator", 0x60),
+    def("RibbonGenerator", "RibbonFields", 0x60),
+    def("GeneratorGenerationFields", "tfbScriptObject", 0x34),
+    def("GeneratorMovementFields", "tfbScriptObject", 0x4C),
+    def("GeneratorAppearanceFields", "tfbScriptObject", 0x9C),
     def("tfbLightInfo", "Placement", 0x10C),
     def("CollisionInfo", "MatrixMeasurement", 0x58),
     def("ModelPhysics", "igObject", 0xC),
