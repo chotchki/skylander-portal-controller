@@ -1221,7 +1221,10 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     // and Chompies` wakes the gate and Norticus in one pass and AH.195's
     // order ticks him first (root list 1463 against 1539), where the
     // original holds the gate first (82nd and 91st in AH.59's `fight700`,
-    // AH.210's wake, parked); a step sooner is nothing a player sees.
+    // AH.210's wake, parked). His take-off landing on the check's step
+    // (AH.195's draws: F0 + 296) lowers the spikes that step, a check (30
+    // steps) before the gate ticking first would and 9-15 frames before the
+    // original's: a quarter second, nothing a player sees.
     assert_eq!(target, advance);
     assert!((0..=31).contains(&(lower - advance)), "{}", lower - advance);
     // Through the lowered gate into the cave: 'End' 121 steps on (AH.10's

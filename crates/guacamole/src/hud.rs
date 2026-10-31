@@ -940,8 +940,42 @@ mod tests {
         }
     }
 
+    /// Whether `e` is drawn by Bevy's visibility rule: its own `Hidden` or
+    /// the nearest ancestor's that isn't `Inherited` decides, a root
+    /// inheriting nothing seen.
+    fn is_drawn(world: &World, e: Entity) -> bool {
+        let mut at = e;
+        loop {
+            match world.get::<Visibility>(at).copied() {
+                Some(Visibility::Hidden) => return false,
+                Some(Visibility::Visible) => return true,
+                _ => match world.get::<ChildOf>(at) {
+                    Some(parent) => at = parent.parent(),
+                    None => return true,
+                },
+            }
+        }
+    }
+
+    /// `root` first, then what hangs under it, breadth first.
+    fn tree(world: &World, root: Entity) -> Vec<Entity> {
+        let mut out = vec![root];
+        let mut i = 0;
+        while i < out.len() {
+            if let Some(children) = world.get::<Children>(out[i]) {
+                out.extend(children.iter());
+            }
+            i += 1;
+        }
+        out
+    }
+
     /// Hidden, the drawn HUD and a bite's number go unseen, the numbers
-    /// patched on underneath; shown again, both are seen.
+    /// patched on underneath; shown again, both are seen. Every node under
+    /// the plate and the bubble is judged as drawn, so nothing in them (the
+    /// low warning showing at 50 of 290 among them) can show through the
+    /// hide (the review's bend: the warning `Visible` passed the root-only
+    /// check).
     #[test]
     fn a_hidden_hud_draws_nothing_seen() {
         let mut app = App::new();
@@ -960,7 +994,11 @@ mod tests {
         .insert_resource(TvTheme::default())
         .init_resource::<Hud>()
         .add_systems(Update, draw_hud);
-        let shown = at(1_000);
+        let shown = HudValues {
+            health: Some((50, 290)),
+            ..at(1_000)
+        };
+        assert!(shown.low());
         {
             let mut hud = app.world_mut().resource_mut::<Hud>();
             hud.shown = Some(shown.clone());
@@ -972,42 +1010,59 @@ mod tests {
             });
         }
         app.update();
+        // The plate's and the bubbles' roots as set, and how many of all
+        // their nodes are drawn of how many.
         let seen = |app: &mut App| {
             let world = app.world_mut();
-            let mut root = world.query::<(&HudPart, &Visibility)>();
-            let root = root
+            let mut root = world.query::<(Entity, &HudPart, &Visibility)>();
+            let (root, set) = root
                 .iter(world)
-                .find(|(p, _)| **p == HudPart::Root)
-                .map(|(_, v)| *v)
+                .find(|(_, p, _)| **p == HudPart::Root)
+                .map(|(e, _, v)| (e, *v))
                 .expect("the HUD drawn");
-            let mut bubbles = world.query::<(&DamageBubble, &Visibility)>();
-            let bubbles: Vec<Visibility> = bubbles.iter(world).map(|(_, v)| *v).collect();
-            (root, bubbles)
+            let mut bubbles = world.query::<(Entity, &DamageBubble, &Visibility)>();
+            let bubbles: Vec<(Entity, Visibility)> =
+                bubbles.iter(world).map(|(e, _, v)| (e, *v)).collect();
+            let nodes: Vec<Entity> = std::iter::once(root)
+                .chain(bubbles.iter().map(|b| b.0))
+                .flat_map(|e| tree(world, e))
+                .collect();
+            let drawn = nodes.iter().filter(|e| is_drawn(world, **e)).count();
+            let sets: Vec<Visibility> = bubbles.iter().map(|b| b.1).collect();
+            ((set, sets), (drawn, nodes.len()))
         };
+        let ((set, sets), (drawn, nodes)) = seen(&mut app);
         assert_eq!(
-            seen(&mut app),
+            (set, sets),
             (Visibility::Hidden, vec![Visibility::Hidden]),
             "hidden as drawn"
         );
+        assert_eq!(drawn, 0, "none of its {nodes} nodes drawn");
         app.update();
+        let ((set, sets), (drawn, nodes)) = seen(&mut app);
         assert_eq!(
-            seen(&mut app),
+            (set, sets),
             (Visibility::Hidden, vec![Visibility::Hidden]),
             "and patched"
         );
+        assert_eq!(drawn, 0, "none of its {nodes} nodes drawn");
         app.world_mut().resource_mut::<Hud>().hidden = false;
         app.update();
+        let ((set, sets), (drawn, nodes)) = seen(&mut app);
         assert_eq!(
-            seen(&mut app),
+            (set, sets),
             (Visibility::Inherited, vec![Visibility::Inherited])
         );
+        assert_eq!(drawn, nodes, "every node drawn, the low warning too");
         app.world_mut().resource_mut::<Hud>().hidden = true;
         app.update();
+        let ((set, sets), (drawn, nodes)) = seen(&mut app);
         assert_eq!(
-            seen(&mut app),
+            (set, sets),
             (Visibility::Hidden, vec![Visibility::Hidden]),
             "hidden once drawn"
         );
+        assert_eq!(drawn, 0, "none of its {nodes} nodes drawn");
     }
 
     #[test]
