@@ -139,3 +139,10 @@ path = "fuzz_targets/script_graph.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fsb5"
+path = "fuzz_targets/fsb5.rs"
+test = false
+doc = false
+bench = false

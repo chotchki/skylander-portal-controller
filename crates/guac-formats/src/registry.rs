@@ -6,8 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    atmosphere, attachments, edge, exports, havok, iga, igz, language, material, model, particle,
-    progression, roster, script, sfo, texture, toys,
+    atmosphere, attachments, edge, exports, fsb, havok, iga, igz, language, material, model, mpeg,
+    particle, progression, roster, script, sfo, texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -208,7 +208,30 @@ pub const PARSERS: &[RegisteredParser] = &[
         // bytes an element and 8 a position.
         heap_budget: |len| 64 * len + 64 * len + (64 << 10),
     },
+    RegisteredParser {
+        name: "fsb5",
+        parse: walk_fsb5,
+        seeds: fsb::builder::seeds,
+        // The samples (about 180 bytes each with their packed header's
+        // copy, one per 8 header bytes) and their chunks (32 bytes each,
+        // twice, one per 4 bytes or more), then one MPEG sample's remux at
+        // a time, never longer than the sample.
+        heap_budget: |len| 64 * len + (64 << 10),
+    },
 ];
+
+/// Parses an FSB5 bank, then remuxes each MPEG sample's frames (AR.1,
+/// AR.2), dropping each result. The property test and the fuzz targets run
+/// it.
+pub fn walk_fsb5(bytes: &[u8]) -> Result<(), FormatError> {
+    let bank = fsb::Bank::parse(bytes)?;
+    if bank.codec == fsb::Codec::Mpeg {
+        for s in &bank.samples {
+            let _ = mpeg::remux(s.data, s.samples);
+        }
+    }
+    Ok(())
+}
 
 /// Parses an IGZ, then reads every object as a tfbScript op and as an
 /// operand (AH.13), dropping each result. The property test and the fuzz
