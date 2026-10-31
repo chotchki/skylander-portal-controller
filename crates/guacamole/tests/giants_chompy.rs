@@ -4548,20 +4548,23 @@ fn a_defeated_hero_knocks_them_back_and_leaves() {
     println!("load after: {}", load());
 }
 
-/// A beaten hero's stars burst where he fell (AH.39's Mac step): the
-/// portal manager spawns his death actor and, the op after, finds its
-/// `dying actor` and sets it to his minion, which found nothing until the
-/// clone joined at the turn's end, so the death actor's 60 `DeathStar`s
-/// spawned at their template's file place, 135 m off, below the map; and
-/// with it set, its lift of him 12 ft over his own remembered point, which
-/// no script keeps, flew him off it. Now `dying actor` holds him, he stays
-/// where he fell (stand-in ledger: `death-hop`: AH.11's records have the
-/// original lift him 3.44 m and drop him back by the burst) and
-/// every star comes out within 1.5 m of him across the ground and under
-/// 2.5 m over his feet, in his element's colour, where the original's land.
+/// A beaten hero hops and his stars burst where he fell (AH.39's Mac step,
+/// openspec AH.250): the portal manager spawns his death actor and, the op
+/// after, finds its `dying actor` and sets it to his minion, the reference
+/// keeping where he stood then; the death actor's tick lifts him that many
+/// feet over it as its ping-pong slider goes out and back (12 ft over
+/// 0.35 s each way), spinning him a turn, and its 60 `DeathStar`s burst
+/// 0.7 s in, once he's down. AH.11's `restart1` per flip: up 0.645 m in the
+/// first, a peak of 3.440 m 19 flips in, back within 2 cm 40 flips in, 336°
+/// turned by then (`restart2` 3.436 m, 18 and 40). His height over where he
+/// fell and his facing each step beside those, a sanity band, not a match
+/// to the bit: up within 2 steps, a peak of 2.9-3.9 m 15-23 steps in, back
+/// within 0.1 m by 45, a turn of 300-370°; every star within 1.5 m of where
+/// he fell across the ground and under 2.5 m over it, in his element's
+/// colour, where the original's land.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
-fn a_beaten_heros_stars_burst_where_he_fell() {
+fn a_beaten_hero_hops_and_his_stars_burst_where_he_fell() {
     println!("load before: {}", load());
     let (mut run, _) = fight(Script {
         hero_health: Some(20),
@@ -4570,13 +4573,16 @@ fn a_beaten_heros_stars_burst_where_he_fell() {
     });
     let mut seen: std::collections::BTreeSet<guac_script::Handle> =
         run.world.clones().into_iter().collect();
-    let mut fell: Option<(i64, Vec3)> = None;
+    let mut fell: Option<(i64, Vec3, f32)> = None;
     let mut death: Option<(i64, guac_script::Handle)> = None;
     let mut stars: Vec<(i64, Vec3, u32)> = Vec::new();
+    // From his death actor's spawn: each step's height over where he fell
+    // and his facing.
+    let mut hop: Vec<(f32, f32)> = Vec::new();
     for f in 40..900i64 {
         run.step().unwrap_or_else(|h| panic!("F0 + {f}: {h}"));
         if fell.is_none() && run.health().is_some_and(|h| h <= 0.0) {
-            fell = Some((f, run.hero().pivot));
+            fell = Some((f, run.hero().pivot, run.hero().facing));
         }
         for h in run.world.clones() {
             if !seen.insert(h) {
@@ -4589,17 +4595,20 @@ fn a_beaten_heros_stars_burst_where_he_fell() {
                 _ => {}
             }
         }
-        if let Some((_, at)) = fell
-            && death.is_some()
-        {
-            let off = (run.hero().pivot - at).length();
-            assert!(off < 0.05, "F0 + {f}: he's {off} m from where he fell");
+        if let (Some((_, at, _)), Some(_)) = (fell, death) {
+            let p = run.hero().pivot;
+            let across = (p - at).with_y(0.0).length();
+            assert!(
+                across < 0.05,
+                "F0 + {f}: {across} m across from where he fell"
+            );
+            hop.push((p.y - at.y, run.hero().facing));
         }
         if !stars.is_empty() {
             break;
         }
     }
-    let (beaten, at) = fell.expect("beaten");
+    let (beaten, at, _) = fell.expect("beaten");
     let (born, actor) = death.expect("his death actor");
     let id = run.vm.placement_of(actor).expect("it runs");
     assert_eq!(
@@ -4612,6 +4621,34 @@ fn a_beaten_heros_stars_burst_where_he_fell() {
     println!(
         "beaten at F0 + {beaten} at {at:?}; his death actor F0 + {born}; 60 stars F0 + {burst}"
     );
+    println!(
+        "restart1: up 0.645 m in 1 flip, peak 3.440 m at +19, back within 2 cm at +40, 336.3 deg"
+    );
+    let up = hop.iter().position(|(y, _)| *y > 0.1).expect("lifted");
+    let (peak_at, peak) =
+        hop.iter().enumerate().fold(
+            (0, f32::MIN),
+            |m, (k, (y, _))| if *y > m.1 { (k, *y) } else { m },
+        );
+    let back = (peak_at..hop.len())
+        .find(|&k| hop[k].0.abs() < 0.1)
+        .expect("back down");
+    let mut turned = 0.0f32;
+    for w in hop[..=back].windows(2) {
+        turned += (w[1].1 - w[0].1 + 540.0).rem_euclid(360.0) - 180.0;
+    }
+    for (k, (y, facing)) in hop.iter().enumerate().take(back + 3) {
+        println!("hop +{k}: {y:.3} m, facing {facing:.1}");
+    }
+    println!(
+        "ours: up at +{up}, peak {peak:.3} m at +{peak_at}, back within 0.1 m at +{back}, {turned:.1} deg turned; the burst +{} from his death actor",
+        burst - born
+    );
+    assert!(up <= 2, "up at +{up}");
+    assert!((2.9..3.9).contains(&peak), "peak {peak}");
+    assert!((15..=23).contains(&peak_at), "peak at +{peak_at}");
+    assert!(back <= 45, "back at +{back}");
+    assert!((300.0..370.0).contains(&turned.abs()), "turned {turned}");
     let (mut far, mut low, mut high) = (0.0f32, f32::MAX, f32::MIN);
     for (f, p, tint) in &stars {
         assert_eq!(*f, burst, "all in one step");

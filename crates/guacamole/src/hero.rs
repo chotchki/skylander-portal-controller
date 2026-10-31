@@ -439,7 +439,8 @@ pub(crate) fn step_cameras(
     // off. With none (his minion gone, the next not joined yet: a swap, a
     // defeat's handover) their camera target follows no one and their view
     // wanders, into the rock behind the pit after a defeat (openspec
-    // AH.227), so the view holds where it stood until the next one joins.
+    // AH.227), so the view holds where it stood until the next one joins
+    // (a stand-in, stand-in ledger: `camera`).
     let in_run = match (run.map(|r| &r.join), runtime.as_deref()) {
         (Some(crate::hero_scripts::Join::Joined(m)), Some(rt)) => !rt.vm.removed(*m),
         _ => false,

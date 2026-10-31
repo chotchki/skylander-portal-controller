@@ -1187,6 +1187,53 @@ fn the_view_holds_where_it_stood_until_the_next_hero_joins() {
     assert!(t.translation.distance(off) < 1e-3, "{t:?} against {off}");
 }
 
+/// AH.227, from the other end: a defeat's death sequence takes his minion
+/// off the run while he's still on the portal and in the level (the TV takes
+/// him off once his minion is gone); from that step the camera's scripts'
+/// view wanders with no one to follow and the TV's view holds where it
+/// stood, steps running all the while.
+#[test]
+fn the_view_holds_from_his_minion_going_while_hes_still_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _) = camera_app(tmp.path(), CameraFault::None);
+    app.init_resource::<Wander>()
+        .init_resource::<Steps>()
+        .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, steps_seen.in_set(Frame::Record));
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let held = last(&app);
+    let minion = {
+        let e = hero_entity(&app);
+        match &app.world().get::<super::HeroRun>(e).unwrap().join {
+            super::Join::Joined(m) => *m,
+            other => panic!("joined: {other:?}"),
+        }
+    };
+    let off = held.eye + Vec3::new(0.0, -20.0, 30.0);
+    {
+        let w = app.world_mut();
+        let mut rt = w.resource_mut::<ScriptRuntime>();
+        let h = rt.vm.handle_of(minion).expect("his minion's handle");
+        assert!(rt.vm.remove(h), "his minion taken off");
+        w.resource_mut::<Wander>().0 = Some(off);
+    }
+    frames(&mut app, 20);
+    let seen = app.world().resource::<Steps>().0.clone();
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    for (k, (join, t)) in seen.iter().enumerate() {
+        assert_eq!(*join, Some("joined"), "still in: step {k}");
+        assert!(
+            t.translation.distance(held.eye) < 1e-4 && t.forward().dot(held.look) > 1.0 - 1e-6,
+            "step {k} of {} after his minion went: {t:?}, held at {:?}",
+            seen.len(),
+            held.eye
+        );
+    }
+}
+
 /// Eruptor in place of the hero on the portal (slot 0 cleared, Eruptor
 /// placed in slot 1), taken in and his scripts joined; the index of the
 /// first step recorded after the clear.

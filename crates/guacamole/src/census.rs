@@ -256,8 +256,9 @@ pub const LEVEL: &[Row] = &[
 /// the models of the placements that can stand there (a template or a
 /// creature draws nothing; one without a range stands by its actor since
 /// AG.60) and of the placements whose clones draw (AG.60's and AG.239's
-/// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades), in
-/// the level's scene at AF's fresh state, each once.
+/// `props::DRAWN_SPAWNS`, opaque ones also blending as a clone fades;
+/// Norticus' turban's two since AH.138), in the level's scene at AF's fresh
+/// state, each once.
 pub const LEVEL_PROPS: &[Row] = &[
     row(0x0434, 0x1434, O, true, false, false, 1, true, true),
     row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
@@ -307,7 +308,9 @@ pub const LEVEL_PROPS: &[Row] = &[
     row(0x3c34, 0x3434, O, true, false, false, 1, true, true),
     row(0x3c34, 0x3434, O, true, true, false, 1, true, true),
     row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, O, true, true, true, 1, true, false),
     row(0x3c38, 0x2438, A, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, A, true, true, true, 1, true, false),
     row(0x3c38, 0x3438, O, true, false, false, 1, true, true),
     row(0x3c38, 0x3438, A, false, false, false, 1, true, true),
     row(0x3c38, 0x3438, A, true, false, false, 1, true, true),
