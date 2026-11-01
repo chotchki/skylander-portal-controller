@@ -4,8 +4,8 @@
 //!
 //! What a start does, each a reading of the data and the scripts' use of it
 //! (`guac-sound`'s crate docs have the settings' meanings), none heard
-//! against the original (the oracle runs silent; stand-in ledger:
-//! `sound-play`):
+//! against the original, since the oracle runs silent
+//! (stand-in ledger: `sound-play`):
 //! - a copy of the sound plays on the actor the op names, a sequence like a
 //!   clip's, its length the recording's ([`crate::sounds::PLAY_END`]), looping
 //!   when the sound loops, what `time remaining`, `looping` and the rest
