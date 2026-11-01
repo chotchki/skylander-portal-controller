@@ -21,6 +21,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use guac_extract::dump::HashProgress;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::{KNOWN_DUMPS, KnownDump};
+use guac_extract::qos::Qos;
 use guac_extract::stages::{self, Event, ModelFailure};
 use guac_extract::transcode::{Done, Step, TranscodeEvent};
 use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
@@ -1007,13 +1008,39 @@ fn load_table(dir: &IdentityDir, ir: IrFormat) -> Result<CharacterTable, String>
     Ok(table)
 }
 
+/// The class the extraction's thread runs at on macOS (openspec AG.298):
+/// under the TV's frame and its level load, which run at the default and
+/// above, with every thread and ffmpeg it starts at the same
+/// ([`guac_extract::qos`]). Utility, not background: a first run's kid waits
+/// on it for chapter 1, and background throttles its disk reads too.
+pub const EXTRACT_QOS: Qos = Qos::Utility;
+
+/// `body` on the `extract` thread, put at [`EXTRACT_QOS`] before anything
+/// else runs on it.
+fn spawn_extract_thread(
+    body: impl FnOnce() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("extract".into())
+        .spawn(move || {
+            match guac_extract::qos::set_current(EXTRACT_QOS) {
+                Ok(()) => info!(qos = ?guac_extract::qos::current(), "the extraction's thread"),
+                Err(e) => warn!(
+                    error = e,
+                    "the extraction's thread couldn't go below the TV; it runs at the default"
+                ),
+            }
+            body();
+        })
+}
+
 /// Runs [`run`] on its own thread; events, then one `Finished`, come back.
 pub fn spawn(dump: PathBuf, job: ExtractJob) -> Receiver<ExtractEvent> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let known = job.known();
-    let thread = std::thread::Builder::new()
-        .name("extract".into())
-        .spawn(move || finish(&tx, run(&dump, &job, &known, &|e| send(&tx, e))));
+    let thread = spawn_extract_thread(move || {
+        finish(&tx, run(&dump, &job, &known, &|e| send(&tx, e)));
+    });
     if let Err(e) = thread {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let message = format!("couldn't start the extraction thread: {e}");
@@ -1703,6 +1730,30 @@ mod tests {
             let left = app.world().get_resource::<IntroLibrary>();
             assert_eq!(left, ok.then_some(&library));
         }
+    }
+
+    /// AG.298: the extraction's thread reads back the class it asked for
+    /// (utility on macOS; elsewhere no class at all) and keeps its name.
+    #[test]
+    fn the_extraction_thread_runs_below_the_tv() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        spawn_extract_thread(move || {
+            let me = std::thread::current();
+            tx.send((guac_extract::qos::current(), me.name().map(str::to_owned)))
+                .unwrap();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let (qos, name) = rx.recv().unwrap();
+        let want = if cfg!(target_os = "macos") {
+            Qos::Utility
+        } else {
+            Qos::Unspecified
+        };
+        assert_eq!(qos, want);
+        assert!(EXTRACT_QOS.is_below_default());
+        assert_eq!(name.as_deref(), Some("extract"));
     }
 
     #[test]

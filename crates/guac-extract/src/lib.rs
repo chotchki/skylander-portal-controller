@@ -20,6 +20,8 @@
 //! [`particles`] (AH.87) reads the emitters those archives place.
 //! [`interface`] (AT.8) reads the sprite templates, fonts and English text
 //! of the shared, character and menu archives, and each level's.
+//! [`qos`] (AG.298) keeps what the extractor starts at the class of the
+//! thread that runs it, so guacamole's extraction stays below the TV.
 //! [`stages`] (AE.3) runs everything after identity in guacamole's order:
 //! the roster and its portraits first, then the models with their hero side
 //! (AG.14) and palettes (AH.22), then the levels, then the scripts, then
@@ -38,6 +40,7 @@ pub mod magic;
 pub mod models;
 pub mod particles;
 pub mod progression;
+pub mod qos;
 mod report;
 pub mod root;
 pub mod roster;

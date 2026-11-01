@@ -285,9 +285,13 @@ pub fn scan(
         .map_or(1, usize::from)
         .clamp(1, 4)
         .min(todo.len().max(1));
+    // Each hashing thread at the class of the one that started the scan
+    // (AG.298): guacamole's extraction runs below the TV.
+    let qos = crate::qos::current();
     std::thread::scope(|s| {
         for _ in 0..threads {
             s.spawn(|| {
+                crate::qos::follow(qos);
                 let mut buf = vec![0u8; READ_BUF];
                 loop {
                     let k = next.fetch_add(1, Ordering::Relaxed);
@@ -363,6 +367,47 @@ mod tests {
             mtime_ns: Some(mtime),
             ino: Some(ino),
             ctime_ns: Some(ctime),
+        }
+    }
+
+    /// AG.298: each hashing thread runs at the class of the thread that
+    /// started the scan when that's below the default, as guacamole's
+    /// extraction thread is; the progress it sends comes from those threads.
+    #[test]
+    fn the_dump_is_hashed_at_the_scans_class() {
+        use crate::qos::{self, Qos};
+        use guac_formats::sfo::builder::SfoBuilder;
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = tmp.path().join("Giants");
+        let usr = dump.join("PS3_GAME/USRDIR");
+        std::fs::create_dir_all(&usr).unwrap();
+        let sfo = SfoBuilder::disc_game("BLUS30968", "01.00", "01.00").build();
+        std::fs::write(dump.join("PS3_GAME/PARAM.SFO"), sfo).unwrap();
+        for i in 0..8u8 {
+            std::fs::write(usr.join(format!("f{i}.bin")), vec![i; 4096]).unwrap();
+        }
+        for spawner in [Qos::Utility, Qos::Background, Qos::Default] {
+            let dump = dump.clone();
+            let seen = std::thread::spawn(move || {
+                qos::set_current(spawner).unwrap();
+                let seen = Mutex::new(Vec::new());
+                scan(&dump, &HashCache::default(), &|p| {
+                    if p.files_done > 0 {
+                        seen.lock().unwrap().push(qos::current());
+                    }
+                })
+                .unwrap();
+                seen.into_inner().unwrap()
+            })
+            .join()
+            .unwrap();
+            assert_eq!(seen.len(), 8, "{spawner:?}");
+            let want = if cfg!(target_os = "macos") {
+                spawner
+            } else {
+                Qos::Unspecified
+            };
+            assert!(seen.iter().all(|q| *q == want), "{spawner:?}: {seen:?}");
         }
     }
 

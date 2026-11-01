@@ -545,10 +545,17 @@ pub fn transcode_movie(
     })
 }
 
+/// ffmpeg at `exe`, every thread of it at the calling thread's class when
+/// that's below the default ([`crate::qos::command`], AG.298): guacamole's
+/// extraction transcodes below the TV, its encoder threads included.
+fn ffmpeg(exe: &Path) -> Command {
+    crate::qos::command(exe)
+}
+
 /// Runs ffmpeg, feeding each `-progress` block to `on`. `Err` carries the
 /// exit status and the tail of stderr.
 fn run(exe: &Path, args: &[OsString], mut on: impl FnMut(Progress)) -> Result<(), String> {
-    let mut child = Command::new(exe)
+    let mut child = ffmpeg(exe)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -585,6 +592,29 @@ fn run(exe: &Path, args: &[OsString], mut on: impl FnMut(Progress)) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AG.298: ffmpeg started by a utility thread (guacamole's extraction)
+    /// runs every thread at utility's priority or under; started by a
+    /// default thread (the CLI's) it runs as it always did. The child is
+    /// this test binary's probe, started the way `run` starts ffmpeg.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ffmpeg_runs_at_the_class_of_the_thread_that_starts_it() {
+        use crate::qos::tests::{UTILITY_PRIORITY, probe};
+        use crate::qos::{self, Qos};
+        let exe = std::env::current_exe().unwrap();
+        let (plain, clamped) = std::thread::spawn(move || {
+            let plain = probe(ffmpeg(&exe));
+            qos::set_current(Qos::Utility).unwrap();
+            (plain, probe(ffmpeg(&exe)))
+        })
+        .join()
+        .unwrap();
+        assert!(clamped <= UTILITY_PRIORITY, "ffmpeg at {clamped}");
+        if plain > UTILITY_PRIORITY {
+            assert!(clamped < plain, "{clamped} against {plain}");
+        }
+    }
 
     fn strs(a: &[OsString]) -> Vec<String> {
         a.iter().map(|s| s.to_string_lossy().into_owned()).collect()
