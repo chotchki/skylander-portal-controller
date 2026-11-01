@@ -84,7 +84,9 @@ pub trait World {
         let _ = (model, sprite);
         None
     }
-    /// Whether an art sprite's texture data is still loading.
+    /// Whether an art sprite's texture data is still loading: `visible`
+    /// reads 2, and the updater keeps it off the frame's sprite list, dirty,
+    /// until it's in (the crate docs, Layout).
     fn loading(&self, model: &Model, sprite: SpriteId) -> bool {
         let _ = (model, sprite);
         false

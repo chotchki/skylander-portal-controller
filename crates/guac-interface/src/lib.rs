@@ -574,9 +574,23 @@
 //!   this frame; a sprite not drawn has its dirty bit cleared and its kind's
 //!   geometry released;
 //! - is laid out (0xBA240) when drawn or dirty;
-//! - is drawn by its kind unless it is a container, which draws nothing; when
-//!   dirty its kind builds its geometry again first (a text's glyphs), and a
-//!   kind not ready (an image still loading) skips the sprite this frame.
+//! - then, read for AT.29: a sprite not drawn, and a drawn container without
+//!   flags bit 21, leaves the frame's sprite list (0xB9B1C), a container's
+//!   dirty bit cleared (two globals the June savestate holds 0, 0x8A1E54 and
+//!   0x8A200C, would keep every drawn container on it; the model takes them
+//!   as 0). Any other drawn sprite stays on it, and when dirty this frame its
+//!   kind builds its geometry first (slot 18): a build that answers 0 leaves
+//!   it as it was, on the list or off it, its dirty bit kept to try again
+//!   next frame; one that answers 1 clears the bit. Then it joins the list if
+//!   it isn't on it. Art's build (0xB66BC) answers 0 with no context, or
+//!   while its texture isn't bound and its data isn't in (an image still
+//!   loading, the [`model::World`]'s to say); text's (0xB79A8) with no font
+//!   (no context, the default font null); particles' (0xB9280) with no
+//!   emitter context; a container's and a model's always 1. So a drawn
+//!   container with bit 21 joins the list, its draw (a quad, 0x8A1E90, its
+//!   texture state unread) not modelled: no template on the disc holds the
+//!   bit (all 12,275 in 503 files, AT.29's census), and no member writes
+//!   it.
 //!
 //! **Laying out one sprite** (0xBA240, its anchors read in the disassembly
 //! for AT.7), in its parent's space ([`layout`] has the code):

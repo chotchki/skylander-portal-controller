@@ -69,6 +69,8 @@ pub mod flags {
     /// Bits 10-13, the text's string flags.
     pub const STRING: u32 = 0xF << 10;
     pub const POINT_SIZE_SET: u32 = 1 << 17;
+    /// Bit 21: a drawn container joins the frame's sprite list (AT.29).
+    pub const DRAWN_CONTAINER: u32 = 1 << 21;
     pub const FLIP: Bits = Bits::new(18, 2);
     pub const CLIPPING: u32 = 1 << 25;
     /// Bit 26: an art sprite draws its cut-out blends plain (the crate

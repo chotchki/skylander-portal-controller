@@ -2,7 +2,7 @@
 //! updater's walk over `active` and each sprite's place, scale, size,
 //! priority, depth and colour on screen.
 
-use guac_ir::interface::Matrix;
+use guac_ir::interface::{Content, Matrix};
 
 use crate::draw::blend;
 use crate::matrix;
@@ -178,14 +178,23 @@ impl Model {
                     ..placed
                 });
             }
-            let draws = shown && self.sprite(id).kind() != kind::CONTAINER;
-            if draws {
-                self.sprite_mut(id).properties &= !props::DIRTY;
+            let s = self.sprite(id);
+            let container = s.kind() == kind::CONTAINER;
+            let listed = shown && (!container || s.flags & flags::DRAWN_CONTAINER != 0);
+            if listed {
+                // Its kind builds when dirty this frame; a build that can't
+                // leaves it as it was, dirty (0xBBD04).
+                if changed {
+                    if !self.builds(id, world) {
+                        continue;
+                    }
+                    self.sprite_mut(id).properties &= !props::DIRTY;
+                }
                 if !self.drawing.contains(&id) {
                     self.drawing.push(id);
                 }
             } else {
-                if self.sprite(id).kind() == kind::CONTAINER {
+                if container {
                     self.sprite_mut(id).properties &= !props::DIRTY;
                 }
                 self.drawing.retain(|&d| d != id);
@@ -195,6 +204,19 @@ impl Model {
         let active = &self.active;
         self.drawing.retain(|d| active.contains(d));
         frame
+    }
+
+    /// Whether a sprite's kind builds its geometry (slot 18, the crate docs'
+    /// Layout): art with a context once its image is in, text with a font,
+    /// particles with an emitter, a container or a model always.
+    fn builds(&self, id: SpriteId, world: &dyn World) -> bool {
+        let s = self.sprite(id);
+        match (s.kind(), &s.content) {
+            (kind::ART | kind::PARTICLES, Content::Empty(_)) => false,
+            (kind::ART, _) => !world.loading(self, id),
+            (kind::TEXT, _) => self.metrics(id).is_some(),
+            _ => true,
+        }
     }
 
     /// The root a sprite with no parent sprite hangs on (the crate docs,

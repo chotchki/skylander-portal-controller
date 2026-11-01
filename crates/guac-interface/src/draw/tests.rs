@@ -846,3 +846,75 @@ fn a_turned_texts_glyphs_turn_round_its_top_left() {
         "{rect:?}"
     );
 }
+
+/// A drawn, dirty sprite whose kind can't build its geometry stays as it
+/// was, dirty, until it can: an image still loading kept off the frame's
+/// sprite list until it's in, one already on it kept there (AT.29, 0xBBD04).
+#[test]
+fn an_image_still_loading_waits_off_the_list_dirty() {
+    use std::cell::Cell;
+    struct Loading(Cell<bool>);
+    impl crate::World for Loading {
+        fn loading(&self, _: &Model, _: SpriteId) -> bool {
+            self.0.get()
+        }
+    }
+    let (mut m, _, art) = model();
+    let a = m.spawn(art);
+    // Dirty, as every template on the disc starts (its registered default).
+    m.sprite_mut(a).mark_dirty();
+    let w = Loading(Cell::new(true));
+    m.lay_out(&w);
+    assert!(m.drawing().is_empty(), "not on the list while it loads");
+    assert_ne!(m.sprite(a).properties & props::DIRTY, 0, "dirty kept");
+    w.0.set(false);
+    m.lay_out(&w);
+    assert_eq!(m.drawing(), &[a], "in, it joins");
+    assert_eq!(m.sprite(a).properties & props::DIRTY, 0);
+    // Dirty again and loading again: it stays where it was, on the list.
+    m.set(a, si("visible"), Value::Int(0)).unwrap();
+    m.set(a, si("visible"), Value::Int(1)).unwrap();
+    w.0.set(true);
+    m.lay_out(&w);
+    assert_eq!(m.drawing(), &[a]);
+    assert_ne!(m.sprite(a).properties & props::DIRTY, 0);
+    // Art with no context and text with no font never build; a model
+    // always does.
+    let mut t = template(kind::ART, 4.0, 4.0);
+    t.content = Content::Empty(guac_ir::interface::Kind::Art);
+    let empty = m.add_template(None, &t, Value::Null);
+    let empty = m.spawn(empty);
+    let mut t = template(kind::TEXT, 4.0, 4.0);
+    t.content = Content::Text(0);
+    let fontless = m.add_template(None, &t, Value::Null);
+    let fontless = m.spawn(fontless);
+    let mut t = template(kind::MODEL, 4.0, 4.0);
+    t.content = Content::Empty(guac_ir::interface::Kind::Model);
+    let model_ = m.add_template(None, &t, Value::Null);
+    let model_ = m.spawn(model_);
+    for x in [empty, fontless, model_] {
+        m.sprite_mut(x).mark_dirty();
+    }
+    w.0.set(false);
+    m.lay_out(&w);
+    assert!(!m.drawing().contains(&empty) && !m.drawing().contains(&fontless));
+    assert!(m.drawing().contains(&model_));
+}
+
+/// A drawn container joins the frame's sprite list only with flags bit 21
+/// (AT.29; no template on the disc holds it), and draws nothing.
+#[test]
+fn a_drawn_container_joins_the_list_with_flags_bit_21() {
+    let (mut m, ct, _) = model();
+    let c = m.spawn(ct);
+    m.lay_out(&NoWorld);
+    assert!(m.drawing().is_empty());
+    m.sprite_mut(c).flags |= sflags::DRAWN_CONTAINER;
+    let f = m.lay_out(&NoWorld);
+    assert_eq!(m.drawing(), &[c]);
+    assert!(m.draw_list(&f).is_empty(), "its quad isn't modelled");
+    assert_eq!(m.sprite(c).properties & props::DIRTY, 0);
+    m.set(c, si("visible"), Value::Int(0)).unwrap();
+    m.lay_out(&NoWorld);
+    assert!(m.drawing().is_empty(), "hidden, it leaves");
+}

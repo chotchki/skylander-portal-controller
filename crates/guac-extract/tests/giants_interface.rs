@@ -285,6 +285,38 @@ fn the_interface_extracts_and_resumes_alone() {
         println!("    @ strings with flags {flags:#06x}, {int} integer digits, {dec} decimal: {n}");
     }
     println!("  archives whose templates name strings and that hold none: {unpacked:?}");
+
+    // The templates holding flags bit 21 (AT.29): no member writes the bit,
+    // so a sprite holds it only as its template does; a drawn container
+    // with it joins the frame's sprite list.
+    let mut bit21: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut bit21_containers: BTreeMap<String, usize> = BTreeMap::new();
+    for (a, ir) in &irs {
+        for t in &ir.templates {
+            if t.flags & (1 << 21) == 0 {
+                continue;
+            }
+            let kind = match &t.content {
+                Content::Container => "container",
+                Content::Image(_) | Content::Movie(_) => "art",
+                Content::Text(_) => "text",
+                Content::Model(_) => "model",
+                Content::Emitter(_) => "particles",
+                Content::Empty(_) => "empty",
+                Content::Imported(..) => "imported",
+            };
+            *bit21.entry(kind).or_default() += 1;
+            if kind == "container" {
+                *bit21_containers
+                    .entry(format!("{a}: {}", t.name))
+                    .or_default() += 1;
+            }
+        }
+    }
+    println!("  flags bit 21 by kind: {bit21:?}");
+    for (n, c) in bit21_containers.iter().take(20) {
+        println!("    container with bit 21: {n} x{c}");
+    }
     assert_eq!(
         strings,
         s.strings + sprites.strings.len(),
