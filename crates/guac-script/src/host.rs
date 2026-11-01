@@ -362,6 +362,16 @@ pub trait Host {
         Err(HostFault::Unmodelled)
     }
 
+    /// A [`Kind::Set`] member written whole: the set a script hands it, its
+    /// elements in order, a null an empty set (openspec AT.9: the string
+    /// converter's `value set` and the text colour converter's `color
+    /// set`, which the interface keeps by what they hold). The default
+    /// drops it, as a write to an engine set always dropped before.
+    fn set_elements(&mut self, at: &Access, elements: &[Value]) -> Result<(), HostFault> {
+        let _ = (at, elements);
+        Err(HostFault::Nothing)
+    }
+
     /// A fresh engine object of `class` (lowercased, `actorwaypoint`): what
     /// a set of them grows by when a script raises its count (crate docs,
     /// Variables, structures and sets). The default makes none, and the

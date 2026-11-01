@@ -4199,6 +4199,27 @@ impl Vm {
                 };
                 let spec = *spec;
                 self.uses.entry(member).or_default().1 += 1;
+                // A set the host keeps, written whole (openspec AT.9): its
+                // elements handed over, a null an empty set; anything else
+                // drops, as every write to an engine set did before.
+                if spec.kind == Kind::Set && cell.is_none() {
+                    // Each element as it reads: a number a set holds in a
+                    // cell of its own handed over as the number.
+                    let elements = match self.materialize(v) {
+                        Value::Set(s) => self.sets[s as usize]
+                            .elems
+                            .iter()
+                            .map(|&e| self.peek(e))
+                            .collect(),
+                        Value::Null => Vec::new(),
+                        _ => return Ok(()),
+                    };
+                    let at = self.access(receiver, member, other, via);
+                    return match host.set_elements(&at, &elements) {
+                        Ok(()) | Err(HostFault::Nothing) => Ok(()),
+                        Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
+                    };
+                }
                 let v = if spec.kind == Kind::Reference {
                     v
                 } else {

@@ -141,6 +141,8 @@ pub(super) struct Engine {
     /// Each op's receiver, in order.
     receivers: Vec<Value>,
     items: Vec<Value>,
+    /// Each whole write of a set member, its elements.
+    written: Vec<Vec<Value>>,
 }
 
 impl Host for Engine {
@@ -189,6 +191,10 @@ impl Host for Engine {
     }
     fn elements(&mut self, _: &Access) -> Result<Vec<Value>, HostFault> {
         Ok(self.items.clone())
+    }
+    fn set_elements(&mut self, _: &Access, elements: &[Value]) -> Result<(), HostFault> {
+        self.written.push(elements.to_vec());
+        Ok(())
     }
 }
 
@@ -984,6 +990,66 @@ fn an_engine_set_member_is_read_whole_from_the_host() {
         vm.local(id, "n"),
         Some(Value::Int(2)),
         "read anew each time"
+    );
+}
+
+/// A set the host keeps, written whole (openspec AT.9: the string
+/// converter's `value set`): a script set's elements handed over as they
+/// read, numbers in cells of their own as the numbers, a null as no
+/// elements, a number dropped; a value cell standing for a set never asks.
+#[test]
+fn a_set_the_host_keeps_is_written_whole() {
+    let p = program(|w| {
+        let s = w.variable("s", "ScriptSet", Some("ValueInfo"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let two = w.int(2);
+                w.set(&[El::Local(s), El::Member("setvariant", "count")], two);
+                for (i, v) in [72, 105].into_iter().enumerate() {
+                    let set_ref = w.reference(&[El::Local(s)], None);
+                    let (lit, idx) = (w.int(v), w.int(i as i32));
+                    let elem = w.variable(&format!("e{i}"), "ScriptReference", None);
+                    let o = w.op(Class::SetReference, "set *reference||to");
+                    let lhs = w.stack(StackClass::Reference, &[El::Local(elem)]);
+                    w.refer(o, 0x1C, lhs);
+                    w.refer(o, 0x20, set_ref);
+                    w.refer(o, 0x24, idx);
+                    w.push(o);
+                    w.set(
+                        &[
+                            El::Local(elem),
+                            El::Member("abstractscriptgroup", "valuedereferencer"),
+                        ],
+                        lit,
+                    );
+                }
+                setref(w, &[El::Member("test", "items")], &[El::Local(s)]);
+                setref(
+                    w,
+                    &[El::Member("test", "items")],
+                    &[El::Member("abstractscriptgroup", "null")],
+                );
+                let seven = w.int(7);
+                w.set(&[El::Member("test", "items")], seven);
+                setref(w, &[El::Member("test", "kept")], &[El::Local(s)]);
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "items", MemberSpec::new(Kind::Set, 0.0, 0.0));
+    c.members
+        .value_cell("test", "kept", MemberSpec::new(Kind::Set, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Writer", 0);
+    let mut host = Engine::default();
+    vm.tick(id, &mut host).unwrap();
+    assert_eq!(
+        host.written,
+        vec![vec![Value::Int(72), Value::Int(105)], vec![]],
+        "the set's numbers, then none for the null, the number dropped"
     );
 }
 
