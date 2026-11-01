@@ -3258,6 +3258,33 @@ mod tests {
         }
     }
 
+    /// AR.11: the gameplay viewport's audio listener is the viewport, the
+    /// camera standing as the listener, so a point taken from it is the
+    /// eye; nothing on any other receiver.
+    #[test]
+    fn the_audio_listener_is_the_viewport() {
+        let mut w = world();
+        let mut e = bench();
+        w.view.eye = Vec3::new(1.0, 2.0, 3.0);
+        let viewport = w.objs.value(Object::Viewport);
+        let listener = w
+            .get(
+                &at("viewportinfo", "audio listener", Some(viewport), None),
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(listener, viewport);
+        assert_eq!(w.point(listener, &mut e), Some(Vec3::new(1.0, 2.0, 3.0)));
+        let ray = w.objs.value(Object::RayCast);
+        assert_eq!(
+            w.get(
+                &at("viewportinfo", "audio listener", Some(ray), None),
+                &mut e
+            ),
+            Err(HostFault::Nothing)
+        );
+    }
+
     #[test]
     fn a_thrown_ball_falls_by_its_gravity_at_its_time_scale() {
         let mut e = bench();
