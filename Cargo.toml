@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/guac-extract",
     "crates/guac-formats",
+    "crates/guac-interface",
     "crates/guac-ir",
     "crates/guac-motion",
     "crates/guac-oracle",

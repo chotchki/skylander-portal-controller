@@ -153,3 +153,10 @@ path = "fuzz_targets/fsb5.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "interface"
+path = "fuzz_targets/interface.rs"
+test = false
+doc = false
+bench = false

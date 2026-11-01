@@ -650,6 +650,8 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
     let skeleton = b.object(0, "igSkeleton2", 0x18);
     let bone_list = b.object(0, "igSkeletonBoneList", 0x18);
     b.string(at(sprite, 0x08), spec.portal_sprite);
+    // Visual type 2, a model, as the disc's portal sprites carry.
+    b.put_u32(at(sprite, 0xA8), 2);
     b.pointer(at(sprite, 0xD0), model);
 
     info(b, model, spec.model);
@@ -807,6 +809,7 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
         let s = b.object(0, "tfbSpriteInfo", 0xE4);
         let m = b.object(0, "tfbPhysicsModel", 0x30);
         b.string(at(s, 0x08), name);
+        b.put_u32(at(s, 0xA8), 2);
         b.pointer(at(s, 0xD0), m);
         info(b, m, &format!("{name}.mdl"));
         if *skinned {

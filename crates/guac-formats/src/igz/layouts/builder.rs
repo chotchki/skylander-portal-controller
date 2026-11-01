@@ -598,12 +598,132 @@ pub fn script_sample() -> ScriptSample {
     }
 }
 
+/// Where [`interface_sample`] put each interface object (AT.1).
+#[derive(Debug, Clone)]
+pub struct InterfaceSample {
+    pub bytes: Vec<u8>,
+    /// A text sprite, its context the font data below.
+    pub sprite: Location,
+    pub sprite_list: Location,
+    pub font_data: Location,
+    pub font: Location,
+    pub attrs: Location,
+    pub glyph_list: Location,
+    /// 'A' then '"', in list order.
+    pub glyphs: [Location; 2],
+    pub bind: Location,
+    pub texture: Location,
+    pub image: Location,
+}
+
+/// A text sprite and its bitmap font (AT.1), every field a distinct known
+/// value, the font at its files' MTSZ of 0x50 with its padding unmarked.
+pub fn interface_sample() -> InterfaceSample {
+    let mut b = IgzBuilder::new();
+    let sprite = b.object(0, "tfbSpriteInfo", 0xE4);
+    let sprite_list = b.object(0, "SpriteInfoList", 0x18);
+    let font_data = b.object(0, "FontDataInfo", 0x24);
+    let font = b.object(0, "igBitmapFont", 0x50);
+    let attrs = b.object(0, "igAttrList", 0x18);
+    let glyph_list = b.object(0, "igCharMetricsList", 0x18);
+    let glyphs = [
+        b.object(0, "igCharMetrics", 0x30),
+        b.object(0, "igCharMetrics", 0x30),
+    ];
+    let bind = b.object(0, "tfbAlphaTextureUnitIDAttr", 0x20);
+    let texture = b.object(0, "igTextureAttr2", 0x40);
+    let image = b.object(0, "igImage2", 0x60);
+    let blocks = b.section(0x10);
+
+    b.string(at(sprite, 0x08), "Generic_TextBox");
+    b.pointer(at(sprite, 0x74), sprite_list);
+    b.put_u32(at(sprite, 0xA0), 0x0002_0000);
+    u16_be(&mut b, sprite, 0xA4, &[0x0140, 0xFEC0]);
+    // Text, crossfade, centred, anchors 6 and 4, visible, 84 points, dirty.
+    b.put_u32(at(sprite, 0xA8), 0x20A9_4649);
+    floats(
+        &mut b,
+        sprite,
+        0xAC,
+        &[0.0, -2.0, 237.0, 96.0, 100.0, 100.0, 100.0],
+    );
+    b.put_bytes(
+        at(sprite, 0xC8),
+        &[0x80, 0x80, 0x80, 0xFF, 0x80, 0x80, 0x80, 0],
+    );
+    b.pointer(at(sprite, 0xD0), font_data);
+    floats(&mut b, sprite, 0xDC, &[100.0]);
+    list(&mut b, sprite_list, blocks, &[]);
+
+    info(&mut b, font_data, "fonts/simple.png");
+    b.null_memory_ref(at(font_data, 0x14), 0);
+    b.pointer(at(font_data, 0x20), font);
+
+    b.string(at(font, 0x08), "hdd:/tfb/content/fonts/simple");
+    floats(&mut b, font, 0x0C, &[42.0, 9.0]);
+    b.pointer(at(font, 0x14), attrs);
+    floats(&mut b, font, 0x20, &[0.25, 0.5, 0.75, 1.0, 1.5, 2.0]);
+    b.pointer(at(font, 0x38), bind);
+    b.pointer(at(font, 0x3C), glyph_list);
+    // The files' 16 bytes past the layout: plain words, never marked.
+    b.put_u32(at(font, 0x40), 0x40);
+    b.put_u32(at(font, 0x44), 0xE0B9_820C);
+    list(&mut b, attrs, blocks, &[]);
+    list(
+        &mut b,
+        glyph_list,
+        blocks,
+        &[Some(glyphs[0]), Some(glyphs[1])],
+    );
+
+    // 'A': kern corners 1, 2, 3, 4 (TL, TR, BL, BR).
+    u16_be(&mut b, glyphs[0], 0x08, &[0x41, 0x4321]);
+    floats(
+        &mut b,
+        glyphs[0],
+        0x0C,
+        &[24.0, 1.0, -2.0, 23.0, 42.0, 0.125, 0.25, 0.375, 0.5],
+    );
+    // '"': the disc's kern 0x1100.
+    u16_be(&mut b, glyphs[1], 0x08, &[0x22, 0x1100]);
+    floats(
+        &mut b,
+        glyphs[1],
+        0x0C,
+        &[16.0, 0.0, 0.0, 16.0, 42.0, 0.0, 0.5, 0.0625, 0.75],
+    );
+
+    b.pointer(at(bind, 0x10), texture);
+    b.put_u32(at(bind, 0x14), u32::MAX);
+    b.put_u32(at(bind, 0x1C), u32::MAX);
+    b.pointer(at(texture, 0x30), image);
+    b.string(at(image, 0x08), "simple.png");
+    u16_be(&mut b, image, 0x30, &[4, 4, 1, 1, 1]);
+    b.import(at(image, 0x3C), super::METAIMAGES, "dxt5_big_ps3");
+    b.handle(at(image, 0x48), blocks, &[0x5A; 0x80], 5);
+
+    InterfaceSample {
+        bytes: b.build(),
+        sprite,
+        sprite_list,
+        font_data,
+        font,
+        attrs,
+        glyph_list,
+        glyphs,
+        bind,
+        texture,
+        image,
+    }
+}
+
 /// Seeds for the property test and the fuzz corpus; the shared shapes
 /// overrun the heap budget on a walk that copies per reference.
 pub fn seeds() -> Vec<Vec<u8>> {
     vec![
         sample().bytes,
         script_sample().bytes,
+        interface_sample().bytes,
         shared_child_list(1000),
         shared_palette(400, 16_000),
         shared_material(400, 400, "tfbAlphaTextureUnitIDAttr"),

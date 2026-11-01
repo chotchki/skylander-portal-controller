@@ -56,6 +56,9 @@ const TEXTURES: usize = 5;
 /// holds five.
 const LEVEL_TEXTURES: usize = 12;
 const LEVEL_SHARED: usize = 5;
+/// The interface part's own (AT.8): the collection archive's portraits, the
+/// one menu archive the roster builder's dump holds.
+const INTERFACE_TEXTURES: usize = 6;
 /// A level's events: none of its parts done, then each.
 const LEVEL_EVENTS: usize = PARTS.len() + 1;
 /// The script stage's events: none of its two parts done, then each.
@@ -328,7 +331,7 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "models/"), MODELS);
     assert_eq!(
         recorded(&m, "textures/"),
-        TEXTURES + LEVEL_TEXTURES - LEVEL_SHARED
+        TEXTURES + LEVEL_TEXTURES - LEVEL_SHARED + INTERFACE_TEXTURES
     );
     assert_eq!(recorded(&m, "heroes/"), HEROES);
     assert_eq!(recorded(&m, "ir/rig.ron"), 1);

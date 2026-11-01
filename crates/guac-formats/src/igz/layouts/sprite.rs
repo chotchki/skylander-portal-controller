@@ -5,7 +5,7 @@
 //! -> `igTextureAttr2` -> `igImage2`.
 
 use super::script::{EulerTransform, Rgba8};
-use super::{BuildDataInfo, Layout, ObjectRef, View};
+use super::{BitField, BuildDataInfo, DataList, Layout, ObjectRef, View};
 use crate::FormatError;
 
 /// `AbstractPlacement`'s fields (size 0xA0, through `AbstractAttachNode`,
@@ -85,6 +85,121 @@ impl<'a> AbstractPlacement<'a> {
     }
 }
 
+/// What a sprite draws: `_visualType`'s values, in the order the engine's
+/// `spriteinfo.type` member names them.
+pub const VISUAL_TYPES: [&str; 5] = ["art", "text", "model", "container", "particles"];
+
+/// The nine anchors `_alignment` and `_alignToParent` name, top-left first,
+/// row by row.
+pub const ALIGNMENTS: [&str; 9] = [
+    "top-left",
+    "top-middle",
+    "top-right",
+    "center-left",
+    "center",
+    "center-right",
+    "bottom-left",
+    "bottom-middle",
+    "bottom-right",
+];
+
+/// `_visualType`'s value as [`VISUAL_TYPES`] names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualType {
+    Art,
+    Text,
+    Model,
+    Container,
+    Particles,
+    /// 5-7: none on the disc.
+    Other(u8),
+}
+
+impl VisualType {
+    pub fn from_raw(raw: u8) -> Self {
+        match raw {
+            0 => Self::Art,
+            1 => Self::Text,
+            2 => Self::Model,
+            3 => Self::Container,
+            4 => Self::Particles,
+            other => Self::Other(other),
+        }
+    }
+}
+
+/// `tfbSpriteInfo._properties`' nine bitfields (AT.1), read off the class's
+/// field registration function at 0xB0CD8: each field's shift and width,
+/// from the word's low end, and the registered defaults (blend mode 1,
+/// visible and dirty on, the rest 0). The engine's `spriteinfo` members read
+/// and write the same bits (`type` bits 0-2, `blend mode` 3-5, `justify`
+/// 6-7, `alignment` 8-11, `align to parent` 12-15, `visible` 16, `point
+/// size` 17-28).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteBits {
+    /// [`VisualType`]'s raw value.
+    pub visual_type: u8,
+    pub blend_mode: u8,
+    pub justification: u8,
+    /// An [`ALIGNMENTS`] index: the sprite's own anchor.
+    pub alignment: u8,
+    /// An [`ALIGNMENTS`] index: the parent's anchor it sits on.
+    pub align_to_parent: u8,
+    pub visible: bool,
+    pub point_size: u16,
+    pub dirty: bool,
+    pub string_width_valid: bool,
+}
+
+impl SpriteBits {
+    pub const VISUAL_TYPE: BitField = BitField::new(0, 3);
+    pub const BLEND_MODE: BitField = BitField::new(3, 3);
+    pub const JUSTIFICATION: BitField = BitField::new(6, 2);
+    pub const ALIGNMENT: BitField = BitField::new(8, 4);
+    pub const ALIGN_TO_PARENT: BitField = BitField::new(12, 4);
+    pub const VISIBLE: BitField = BitField::new(16, 1);
+    pub const POINT_SIZE: BitField = BitField::new(17, 12);
+    pub const DIRTY: BitField = BitField::new(29, 1);
+    pub const STRING_WIDTH_VALID: BitField = BitField::new(30, 1);
+
+    /// Every field's width fits its type, so the casts are lossless.
+    pub fn from_word(word: u32) -> Self {
+        Self {
+            visual_type: Self::VISUAL_TYPE.get(word) as u8,
+            blend_mode: Self::BLEND_MODE.get(word) as u8,
+            justification: Self::JUSTIFICATION.get(word) as u8,
+            alignment: Self::ALIGNMENT.get(word) as u8,
+            align_to_parent: Self::ALIGN_TO_PARENT.get(word) as u8,
+            visible: Self::VISIBLE.get(word) != 0,
+            point_size: Self::POINT_SIZE.get(word) as u16,
+            dirty: Self::DIRTY.get(word) != 0,
+            string_width_valid: Self::STRING_WIDTH_VALID.get(word) != 0,
+        }
+    }
+
+    /// The word these fields make, bit 31 (no field's) clear; each value
+    /// past its width keeps its low bits.
+    pub fn to_word(&self) -> u32 {
+        [
+            (Self::VISUAL_TYPE, u32::from(self.visual_type)),
+            (Self::BLEND_MODE, u32::from(self.blend_mode)),
+            (Self::JUSTIFICATION, u32::from(self.justification)),
+            (Self::ALIGNMENT, u32::from(self.alignment)),
+            (Self::ALIGN_TO_PARENT, u32::from(self.align_to_parent)),
+            (Self::VISIBLE, u32::from(self.visible)),
+            (Self::POINT_SIZE, u32::from(self.point_size)),
+            (Self::DIRTY, u32::from(self.dirty)),
+            (Self::STRING_WIDTH_VALID, u32::from(self.string_width_valid)),
+        ]
+        .into_iter()
+        .fold(0, |word, (field, value)| field.set(word, value))
+    }
+
+    pub fn kind(&self) -> VisualType {
+        VisualType::from_raw(self.visual_type)
+    }
+}
+
 /// `tfbSpriteInfo`: size 0xE4, one UI sprite.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpriteInfo<'a> {
@@ -127,6 +242,11 @@ impl SpriteInfo<'_> {
     pub const NUM_VALUE: u32 = 0xD8;
     pub const DEPTH: u32 = 0xDC;
     pub const GAME_TRANS: u32 = 0xE0;
+
+    /// `_properties`' bitfields.
+    pub fn bits(&self) -> SpriteBits {
+        SpriteBits::from_word(self.properties)
+    }
 
     /// The local `AnimatableTextureDataInfo` an image sprite draws, if its
     /// context is one.
@@ -202,5 +322,25 @@ impl<'a> Layout<'a> for AnimatableTextureDataInfo<'a> {
             updated_count: v.i32(Self::UPDATED_COUNT, "_updatedCount")?,
             tex_attr: v.object(Self::TEX_ATTR, "_texAttr", "igTextureBindAttr2")?,
         })
+    }
+}
+
+/// `SpriteInfoList`: size 0x18, through `ScriptObjectList`, a template's
+/// `_attachedObjects`. Empty in every file on the disc (AT.1): the scripts
+/// build every tree at run time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpriteInfoList<'a> {
+    pub list: DataList<'a>,
+    /// The attached objects, unfollowed; `None` for a null slot.
+    pub elements: Vec<Option<usize>>,
+}
+
+impl<'a> Layout<'a> for SpriteInfoList<'a> {
+    const TYPE: &'static str = "SpriteInfoList";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        let list = DataList::fields(v)?;
+        let elements = v.elements(&list, None)?;
+        Ok(Self { list, elements })
     }
 }
