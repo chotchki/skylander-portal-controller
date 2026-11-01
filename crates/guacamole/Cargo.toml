@@ -33,6 +33,9 @@ guac-ir = { path = "../guac-ir" }
 # and linked by guac-script at level load.
 guac-formats = { path = "../guac-formats" }
 guac-script = { path = "../guac-script" }
+# The sounds a script plays, looked up off the extract's sounds part (openspec
+# AR.9): what file, at what settings.
+guac-sound = { path = "../guac-sound" }
 
 anyhow = { workspace = true }
 thiserror = { workspace = true }

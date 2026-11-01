@@ -42,6 +42,7 @@ mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
 mod slow_frames;
+mod sound_player;
 mod starfield;
 mod surfaces;
 mod swap;
@@ -485,6 +486,8 @@ fn run_tv(
         (
             orbs::OrbsPlugin,
             emitters::EmittersPlugin,
+            // AR.9: the original's sounds, as the scripts play them.
+            sound_player::SoundPlayerPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,

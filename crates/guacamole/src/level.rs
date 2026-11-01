@@ -1175,6 +1175,29 @@ impl Level {
         &self.report
     }
 
+    /// A level asked for off the extract at `dir`, nothing read yet: for the
+    /// tests of what reads its files (the sounds' audio, openspec AR.9).
+    #[cfg(test)]
+    pub(crate) fn from_extract_for_tests(dir: PathBuf) -> Self {
+        let mut l = Self::new(false);
+        l.source = Some(LevelSource::chapter_1(
+            dir,
+            IrFormat::Ron,
+            guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([0; 32]),
+            },
+        ));
+        l
+    }
+
+    /// The extract the level reads from, once one's been asked for: where
+    /// its sounds' audio is (openspec AR.9).
+    pub(crate) fn extract_dir(&self) -> Option<&std::path::Path> {
+        self.source.as_ref().map(|s| s.dir.as_path())
+    }
+
     /// Why the level's script part didn't load, once its load said so.
     pub(crate) fn scripts_reason(&self) -> Option<&str> {
         self.report.scripts_reason.as_deref()
@@ -1472,6 +1495,8 @@ fn receive_level(
             level_scripts::load(&dir, &name).map(|mut linked| {
                 linked.layout = level_scripts::figure_layout(&dir, ir);
                 linked.palettes = level_scripts::level_palettes(&dir, &name, ir);
+                // The sounds its units' archives play (openspec AR.9).
+                linked.sounds = Some(guacamole::sounds::load(&dir, ir, &linked.program.units));
                 linked
             })
         })
@@ -1634,8 +1659,25 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 left_out,
                 layout,
                 palettes,
+                sounds,
                 ..
             } = linked;
+            if let Some(s) = &sounds {
+                info!(
+                    archives = s.stems.len(),
+                    sounds = s.sounds(),
+                    missing = s.missing.len(),
+                    read_ms = s.read.as_secs_f64() * 1e3,
+                    "the level's sounds read"
+                );
+                for (stem, why) in s
+                    .missing
+                    .iter()
+                    .filter(|(stem, _)| !matches!(stem.as_str(), "bootstrap" | "init_setup"))
+                {
+                    warn!(%stem, reason = %why, "an archive's sounds didn't read: its scripts' sounds play nothing");
+                }
+            }
             let layout = match layout {
                 Ok(l) => Some(l),
                 Err(why) => {
@@ -1659,6 +1701,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         left_out,
                         layout,
                         palettes,
+                        sounds,
                     },
                 );
             });

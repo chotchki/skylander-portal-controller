@@ -2054,7 +2054,15 @@ impl ScriptWorld {
                 v.extend(playing(false));
                 v.into_iter().map(|o| self.objs.value(o)).collect()
             }
-            Member::PlayingSounds => Vec::new(),
+            // The sound copies playing on him, in the order started
+            // (openspec AR.10).
+            Member::PlayingSounds => {
+                let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                let on = self.sounds_on(h);
+                on.into_iter()
+                    .map(|i| self.objs.value(Object::Sequence(i)))
+                    .collect()
+            }
             // A template's copies still playing, on whatever actor, in the
             // order started (openspec AS.37): a clip's that its starts made,
             // a sound's while one plays; a copy named stands for its
@@ -2192,7 +2200,7 @@ impl ScriptWorld {
     /// A play of the sequence at `i` on `actor` (openspec AH.184): refused
     /// while it plays with time left and no `allow restart` (the op fails
     /// and its block is skipped), else started again from its start, his.
-    fn start_again(&mut self, i: usize, actor: Handle) -> Answer {
+    pub(crate) fn start_again(&mut self, i: usize, actor: Handle) -> Answer {
         let s = &mut self.sequences[i];
         if s.refuses_restart() {
             return Answer::Skip;
@@ -2200,6 +2208,8 @@ impl ScriptWorld {
         s.actor = actor;
         s.restart();
         self.restarts.push(i as u32);
+        // A sound's copy started over is a new play (openspec AR.9).
+        self.sound_restarted(i as u32);
         Answer::Run {
             receiver: None,
             result: Some(self.objs.value(Object::Sequence(i as u32))),
@@ -2221,6 +2231,13 @@ impl ScriptWorld {
                 return self.start_again(i as usize, actor);
             }
             template = s.template;
+        }
+        // A sound info the sounds part gives audio for plays as a sound
+        // (openspec AR.9: `crate::sound_members`).
+        if let Value::Object(o) = template
+            && let Some(answer) = self.play_sound(template, o, actor)
+        {
+            return answer;
         }
         if matches!(self.object(Some(template)), Some(Object::Clip { .. }))
             && let Some(i) = self
@@ -2326,7 +2343,13 @@ impl ScriptWorld {
                             }
                         }
                     }
-                    _ => {}
+                    // A sound info's copies on the receiver (openspec AR.9).
+                    _ => {
+                        if let Some(sound) = first {
+                            let on = self.handle(call.receiver);
+                            self.stop_sound(sound, on);
+                        }
+                    }
                 }
                 Ok(Answer::Done)
             }

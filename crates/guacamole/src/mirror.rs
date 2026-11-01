@@ -137,6 +137,10 @@ pub struct TvSnapshot {
     /// and particles alive, quads drawn, the emitters drawing; none without
     /// them.
     pub particles: Option<crate::emitters::ParticleReport>,
+    /// The sounds the scripts play (openspec AR.9): what plays now on the
+    /// game clock and whether it's heard, the last plays ended and starts
+    /// refused; none without the player.
+    pub sounds: Option<crate::sound_player::SoundReport>,
     /// The placements `POST /api/_test/tv/watch` named (openspec AH.28):
     /// each one's state, behaviour and place, decision 17's list and
     /// `Cutscene State`; none unless asked.
@@ -1270,10 +1274,11 @@ fn mirror_tv(
     alert: AlertShots,
     loot: LootShots,
     (creatures, entry, watch): (CreatureShots, Option<Res<DevEntry>>, WatchShots),
-    (hud, defeat, particles): (
+    (hud, defeat, particles, sounds): (
         HudShots,
         DefeatShots,
         Option<Res<crate::emitters::ParticleReport>>,
+        Option<Res<crate::sound_player::SoundReport>>,
     ),
     (warm, level, prepare, arrival): (
         Option<Res<Warm>>,
@@ -1323,6 +1328,7 @@ fn mirror_tv(
         hud: hud.shot(),
         defeat: defeat.shot(),
         particles: particles.map(|p| p.clone()),
+        sounds: sounds.map(|s| s.clone()),
         watch: watch.shot(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
