@@ -9,10 +9,12 @@
 //!
 //! It computes in f32 on whatever values it's given. AE.8's and AE.12's GPU
 //! lanes hand it the remaster's: colours decoded into linear light, tints
-//! and vertex colours as stored, textures as the GPU samples them. Nothing
-//! is clamped on the way out, so a colour past full reaches the tonemapper
-//! as it is (the remaster-look spec). Vectors are view space, and a
-//! directional light is given by the way it travels.
+//! and vertex colours as stored, textures as the GPU samples them, and the
+//! directional sum on the lights' stored values raised to 2.2 once it's
+//! added up ([`Scene::light_power`], AG.286). Nothing is clamped on the way
+//! out, so a colour past full reaches the tonemapper as it is (the
+//! remaster-look spec). Vectors are view space, and a directional light is
+//! given by the way it travels.
 //!
 //! Left to others: the glow's extract, blur and combine ([`crate::glow`],
 //! from the mask [`glow_mask`] gives), a scroll track's motion (AE.21; a
@@ -241,9 +243,19 @@ pub fn unpack_tint(packed: u32) -> Rgba {
 pub struct DirectionalLight {
     /// The way the light travels, unit length.
     pub travel: Vec3,
+    /// The colours as the additive terms take them (the unlit relief and
+    /// specular): decoded in the remaster.
     pub ambient: Vec3,
     pub diffuse: Vec3,
     pub specular: Vec3,
+    /// The ambient and diffuse as the directional sum takes them (openspec
+    /// AG.286): as stored, code over 255, in the remaster. The original adds
+    /// them on stored values and the sum multiplies the colour, so the sum
+    /// goes into the working space after it adds ([`Scene::light_power`]),
+    /// never each term before. Equal to `ambient` and `diffuse` for the
+    /// spec's arithmetic on values as given.
+    pub ambient_stored: Vec3,
+    pub diffuse_stored: Vec3,
 }
 
 impl DirectionalLight {
@@ -253,6 +265,8 @@ impl DirectionalLight {
         ambient: [0.0; 3],
         diffuse: [0.0; 3],
         specular: [0.0; 3],
+        ambient_stored: [0.0; 3],
+        diffuse_stored: [0.0; 3],
     };
 }
 
@@ -281,6 +295,11 @@ pub struct Scene {
     pub placement_tint: Rgba,
     /// RGB, and its amount in alpha.
     pub replace: Rgba,
+    /// The power that takes the directional sum, twice the stored lights
+    /// added up, into the working space before it multiplies the colour
+    /// (openspec AG.286): 1 for the spec's arithmetic on stored values, 2.2
+    /// for the remaster's linear light.
+    pub light_power: f32,
 }
 
 impl Scene {
@@ -296,6 +315,7 @@ impl Scene {
             point_lights: Vec::new(),
             placement_tint: [NEUTRAL, NEUTRAL, NEUTRAL, 1.0],
             replace: [0.0; 4],
+            light_power: 1.0,
         }
     }
 }
@@ -751,14 +771,20 @@ impl Context<'_> {
             .map(|t| mapped_normal(t.sample(uv), self.fragment));
         let normal = mapped.or(self.geometric);
         let base = if self.on.directional {
+            // The sum on the lights' stored values, into the working space
+            // once it's added up (AG.286): 2·c·Σ at power 1.
             let n = normal.unwrap_or(self.fragment.normal);
             let sum = lights.iter().fold([0.0; 3], |sum, l| {
                 add(
                     sum,
-                    add(l.ambient, scale(l.diffuse, facing(n, l.travel).max(0.0))),
+                    add(
+                        l.ambient_stored,
+                        scale(l.diffuse_stored, facing(n, l.travel).max(0.0)),
+                    ),
                 )
             });
-            scale(mul(rgb(c), sum), 2.0)
+            let power = self.scene.light_power;
+            mul(rgb(c), scale(sum, 2.0).map(|s| s.max(0.0).powf(power)))
         } else if let Some(m) = mapped {
             let g = self.fragment.normal;
             let sum = lights.iter().fold([0.0; 3], |sum, l| {
@@ -944,7 +970,9 @@ mod tests {
         s.lights[0] = DirectionalLight {
             travel: [0.0, 0.0, -1.0],
             ambient: [0.0; 3],
+            ambient_stored: [0.0; 3],
             diffuse: d,
+            diffuse_stored: d,
             specular: sp,
         };
         let (c, n, sm, r) = (
@@ -1148,6 +1176,7 @@ mod tests {
         unit_tints(&mut m, &mut s);
         s.lights[0] = DirectionalLight {
             diffuse: [1.0; 3],
+            diffuse_stored: [1.0; 3],
             ..light([0.0, 0.0, -1.0])
         };
         let f = Fragment {
@@ -1192,10 +1221,12 @@ mod tests {
         s.lights = [
             DirectionalLight {
                 diffuse: [0.7; 3],
+                diffuse_stored: [0.7; 3],
                 ..light([0.0, 0.0, -1.0])
             },
             DirectionalLight {
                 diffuse: [0.3; 3],
+                diffuse_stored: [0.3; 3],
                 ..light([0.6, 0.0, -0.8])
             },
             DirectionalLight::OFF,
@@ -1219,10 +1250,12 @@ mod tests {
         let (d, e) = ([0.5, 0.25, 1.0], [0.2, 0.4, 0.8]);
         s.lights[0] = DirectionalLight {
             diffuse: d,
+            diffuse_stored: d,
             ..light([1.0, 0.0, 0.0])
         };
         s.lights[1] = DirectionalLight {
             diffuse: e,
+            diffuse_stored: e,
             ..light([0.0, 0.0, -1.0])
         };
         let c = Flat([0.4, 0.3, 0.2, 1.0]);
@@ -1246,6 +1279,7 @@ mod tests {
         let k = 1.0f32 / 1.0625f32.sqrt();
         s.lights[0] = DirectionalLight {
             diffuse: [1.0; 3],
+            diffuse_stored: [1.0; 3],
             ..light([k, 0.0, 0.25 * k])
         };
         let c = Flat([0.0, 0.0, 0.0, 1.0]);
@@ -1298,7 +1332,9 @@ mod tests {
             *l = DirectionalLight {
                 travel: [0.0, 0.0, 1.0],
                 ambient: a,
+                ambient_stored: a,
                 diffuse: [0.9; 3],
+                diffuse_stored: [0.9; 3],
                 specular: [0.0; 3],
             };
         }
@@ -1328,7 +1364,9 @@ mod tests {
         s.lights[0] = DirectionalLight {
             travel: [1.0, 0.0, 0.0],
             ambient: a,
+            ambient_stored: a,
             diffuse: d,
+            diffuse_stored: d,
             specular: [0.0; 3],
         };
         let c = Flat([0.4, 0.3, 0.2, 1.0]);
@@ -1345,6 +1383,47 @@ mod tests {
         let want: Vec3 =
             std::array::from_fn(|i| 4.0 * c.0[i] * f.vertex_colour[i] * (a[i] + 0.6 * d[i]));
         near(&shaded(&m, &s, &f, &t).colour, &want, 1e-6);
+    }
+
+    /// AG.286: the directional sum adds the lights' stored values and goes
+    /// into the working space after, at the scene's power, never each term
+    /// before; the additive terms keep the light's own colours.
+    #[test]
+    fn the_directional_sum_goes_into_the_working_space_once_its_added() {
+        let mut m = Material {
+            directional: true,
+            ..Material::new()
+        };
+        let mut s = Scene::new();
+        unit_tints(&mut m, &mut s);
+        // The start zone's ambient on the key light, its diffuse (172, 134,
+        // 18), and the light's own colours far off them, so a sum that took
+        // `ambient` or `diffuse` shows.
+        let (a, d) = ([39.0, 42.0, 67.0], [172.0, 134.0, 18.0]);
+        s.lights[0] = DirectionalLight {
+            travel: [0.0, 0.0, -1.0],
+            ambient: [0.9; 3],
+            diffuse: [0.9; 3],
+            specular: [0.0; 3],
+            ambient_stored: a.map(|x: f32| x / 255.0),
+            diffuse_stored: d.map(|x: f32| x / 255.0),
+        };
+        let c = Flat([0.214, 0.214, 0.214, 1.0]);
+        let t = Textures {
+            colour: Some(&c),
+            ..Default::default()
+        };
+        // Facing the light: Σ = (211, 176, 85) / 255, twice it raised to
+        // 2.2 is about (3.03, 2.03, 0.41); half grey counts once.
+        s.light_power = 2.2;
+        let want: Vec3 =
+            std::array::from_fn(|i| 0.214 * (2.0 * (a[i] + d[i]) / 255.0f32).powf(2.2));
+        near(&shaded(&m, &s, &frag(), &t).colour, &want, 1e-5);
+        near(&want, &[0.6484, 0.4347, 0.0877], 5e-4);
+        // At power 1 it's the spec's 2·c·Σ on the same stored values.
+        s.light_power = 1.0;
+        let want: Vec3 = std::array::from_fn(|i| 2.0 * 0.214 * (a[i] + d[i]) / 255.0);
+        near(&shaded(&m, &s, &frag(), &t).colour, &want, 1e-6);
     }
 
     // Specular, the eye direction, the reflection, no eye direction.

@@ -124,7 +124,7 @@ use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_ir::{Category, Model};
 use guac_motion::camera::{CameraDef, GameCamera};
-use guac_motion::hero::Hero;
+use guac_motion::hero::{Hero, PushOut};
 use guac_motion::locomotion::{self, Locomotion, Loops};
 use guac_motion::solid::{HavokSolid, SolidInfo};
 use guacamole::character::attach::{self, SpawnedAttachments};
@@ -918,6 +918,13 @@ impl Play {
             Some(_) if pads.paused() => Mode::Paused,
             Some(_) => Mode::Level,
         }
+    }
+
+    /// Where the last hero in the level stood as he came off (AH.280: what
+    /// a step with no hero in measures the activity rule from); none
+    /// outside a level or before one has come off.
+    pub(crate) fn last_place(&self) -> Option<Vec3> {
+        self.inside.as_ref()?.left.map(|(at, _)| at)
     }
 
     /// The level has started: shown, paused or held. No intro plays from
@@ -1909,11 +1916,20 @@ fn enter(
     };
     let mut hero = Hero::new(solid, walker.tuning, at, facing);
     if replacing {
-        // Where the last one stood is a spot a hero fits: a settle's cast
-        // from a metre up could meet an overhang beside it first (the Mac
-        // run's second replacement came in 0.97 m up). He drops onto it
-        // from [`DROP`] up once his minion is in (AG.100).
-        hero.stand(&seam, &[]);
+        // Where the last one stood is a spot a hero his size fits: a
+        // settle's cast from a metre up could meet an overhang beside it
+        // first (the Mac run's second replacement came in 0.97 m up). A
+        // bigger one is taken out of the walls he'd stand in there
+        // (AG.289; stand-in ledger: `set-down`), then stands. He drops onto
+        // it from [`DROP`] up once his minion is in (AG.100).
+        match hero.push_out(&seam, &[]) {
+            PushOut::Clear => hero.stand(&seam, &[]),
+            out => info!(
+                load_file = walker.load_file,
+                ?out,
+                "set down in a wall: taken out of it"
+            ),
+        }
     } else {
         hero.settle(&seam, &[]);
     }
@@ -3257,6 +3273,103 @@ mod tests {
         assert_eq!(from.offset, written.offset);
     }
 
+    /// AG.289: a hero set down where the last one stood in a wall, and the
+    /// bigger solid his scripts set after, are taken out of the wall before
+    /// his next step: Eruptor taken off 0.5 m into the wall ahead, where the
+    /// walker's file's sphere is 0.2 m in, he comes in KEEP off it, and his setup's
+    /// 7 x 10.5 ft capsule at 120 % (1.28 m round where the sphere was
+    /// 0.56 m) stands off it from the step it's set.
+    #[test]
+    fn a_hero_set_down_in_a_wall_is_taken_out_before_his_first_step() {
+        use guac_formats::script::builder::WalkerFault;
+        use guac_motion::seam::Shape;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app_writing(
+            tmp.path(),
+            WalkerFault::None,
+            crate::test_support::hero_scripts::write_walker_solid,
+        );
+        let wall = START[2] + WALL;
+        // His gap to the wall ahead past the triangles' 0.05 m, his solid
+        // round about his pivot.
+        let gap = |h: &Hero| {
+            let radius = match h.solid().shape {
+                Shape::Sphere { radius } | Shape::Capsule { radius, .. } => radius,
+                other => panic!("{other:?}"),
+            };
+            wall - (h.pivot.z + h.solid().centre.z + radius + 0.05)
+        };
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let mut put = hero(&app);
+        put.pivot.z += gap(&put) + 0.5;
+        put.pivot.x = START[0];
+        app.world_mut()
+            .entity_mut(e)
+            .get_mut::<HeroBody>()
+            .unwrap()
+            .hero = put.clone();
+        clear(&mut app, 0);
+        app.update();
+        let left = app.world().resource::<Play>().last_place().unwrap();
+        let mut there = put.clone();
+        there.pivot = left;
+        assert!(
+            gap(&there) < -0.45,
+            "taken off in the wall: {}",
+            gap(&there)
+        );
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        place(&mut app, 1, WALKER_TOY, "Synthetic");
+        until(&mut app, "the walker in", |a| {
+            a.world()
+                .resource::<Play>()
+                .hero()
+                .is_some_and(|h| a.world().entity(h).contains::<HeroBody>())
+        });
+        let set_down = hero(&app);
+        assert!(
+            (set_down.pivot.x - START[0]).abs() < 1e-3,
+            "where the last stood across: {:?}",
+            set_down.pivot
+        );
+        assert!(
+            gap(&set_down) >= 0.0,
+            "set down in the wall: {}",
+            gap(&set_down)
+        );
+        let walker = app.world().resource::<Play>().hero().unwrap();
+        let written = written_solid();
+        until(&mut app, "his setup's solid", |a| {
+            a.world()
+                .entity(walker)
+                .get::<HeroRun>()
+                .is_some_and(|r| r.shape == written)
+        });
+        let grown = hero(&app);
+        assert!(
+            matches!(grown.solid().shape, Shape::Capsule { .. }),
+            "{:?}",
+            grown.solid()
+        );
+        assert!(
+            gap(&grown) >= 0.0,
+            "his capsule in the wall: {}",
+            gap(&grown)
+        );
+        for _ in 0..5 {
+            app.update();
+            assert!(gap(&hero(&app)) >= 0.0, "back in: {}", gap(&hero(&app)));
+        }
+    }
+
     /// AG.170: a walker whose scripts set his scale again once his setup is
     /// done (150 %, eight ticks of his behaviour after his setup's 120 %)
     /// has his solid built again at it from what his setup wrote (the 7 x
@@ -4280,6 +4393,38 @@ mod tests {
             active(a, SMASH_FAR)
         });
         assert!(!asleep(&app, SMASH_FAR_COIN), "the far coin runs");
+
+        // AH.280: taken off by it, the step the take-off lets run before
+        // the hold (his deactivation's tick, AH.224's and AH.105's) measures
+        // the activity rule from where he left, not the level's start 63 m
+        // off the far barrel, so the barrel he left awake stays awake (the
+        // far coin is his already, taken as he came down by it); then
+        // nothing steps until the next hero is in.
+        assert!(
+            app.world()
+                .resource::<ScriptWorld>()
+                .actor(placed_named(&app, SMASH_FAR_COIN).1)
+                .unwrap()
+                .removed,
+            "the far coin taken"
+        );
+        clear(&mut app, 0);
+        app.update();
+        assert!(
+            app.world().resource::<Play>().hero().is_none(),
+            "off in the take-off frame"
+        );
+        let steps = run_steps(&app);
+        for frame in 0..5 {
+            app.update();
+            assert!(
+                active(&app, SMASH_FAR),
+                "frame {frame}: the far barrel slept"
+            );
+        }
+        let ran = run_steps(&app) - steps;
+        assert!((1..=2).contains(&ran), "{ran} steps with no hero in");
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
     }
 
     // ---- AG.29 over AH.24: the portal's holds and his scripts ------------

@@ -99,6 +99,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # else; `.githooks/one-bevy.sh` (pre-push) fails when the two graphs part again.
 [target.'cfg(unix)'.dependencies]
 rustix = "1"
+# The slow-frame log's 1-minute load average (openspec AG.288): `getloadavg`,
+# the version the tree already locks.
+libc = "0.2"
 
 # Pads on macOS through Apple's GameController framework (openspec AG.53):
 # AG.5 found gilrs connects an 8BitDo over Bluetooth there and reads nothing,

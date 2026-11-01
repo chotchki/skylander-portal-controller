@@ -78,6 +78,34 @@ use crate::stick::Stick;
 use crate::tuning::{FOOT, NOMINAL_STEP, Tuning};
 use crate::walk::{Footing, Walk, turn_facing};
 
+/// Passes [`Hero::push_out`] takes off the walls he's in before it falls
+/// back on the search.
+pub const PUSH_PASSES: usize = 4;
+/// The search's reach and lift (the original's `Portal - Minion Entry Find
+/// Safe Location` as AG.289's diagnosis reads it): eight headings, 10 ft out
+/// at 2 ft up, ground within 3 ft below.
+pub const SEARCH_HEADINGS: usize = 8;
+pub const SEARCH_OUT: f32 = 10.0 * FOOT;
+pub const SEARCH_UP: f32 = 2.0 * FOOT;
+pub const SEARCH_DOWN: f32 = 3.0 * FOOT;
+/// How far past [`KEEP`] into a wall [`Hero::push_out`] counts him in it: a
+/// pass leaves him on the keep, give or take the float's noise.
+pub const IN_A_WALL: f32 = 1e-4;
+
+/// What [`Hero::push_out`] did.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PushOut {
+    /// He was in no wall: left as he was.
+    Clear,
+    /// Pushed off the walls he was in, by this much across the ground.
+    Pushed(Vec3),
+    /// Still in after [`PUSH_PASSES`]: set down at the first of the search's
+    /// spots that's clear with ground under it, by this much.
+    Searched(Vec3),
+    /// In, and no spot the search tried was clear: left where he was.
+    Stuck,
+}
+
 /// What a frame reads of the player: the walking pad and the camera.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Input {
@@ -241,6 +269,129 @@ impl Hero {
     /// it first and set him on that.
     pub fn stand(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) {
         self.look(seam, exclude, Surfaces::NONE, true, false, NOMINAL_STEP);
+    }
+
+    /// Takes him out of any wall he's set down in, before his first step
+    /// (openspec AG.289): a hero put where the last stood, or whose scripts
+    /// grew his solid, can start inside a wall the smaller one only touched
+    /// (Warnado's capsule came in 0.15 m into the start's boundary wall and
+    /// stayed stuck 26 s), and the step's recovery doesn't walk him out of a
+    /// corner. In no wall, he's left as he was, footing and all (a solid
+    /// can change mid-air). Each pass moves him across the ground off every
+    /// wall he's in (a plane steeper than he can stand on, [`KEEP`] off it),
+    /// the floor left to [`Self::stand`]; still in one after
+    /// [`PUSH_PASSES`] (two walls' pushes cancel in a gap narrower than he
+    /// is), the search tries eight headings round him from his facing,
+    /// [`SEARCH_OUT`] out and [`SEARCH_UP`] up, for a spot that's clear with
+    /// ground within [`SEARCH_DOWN`] under it and nothing between his centre
+    /// and its (never through a wall), and settles him there. His footing is
+    /// read wherever he's moved to. Our own rule, the original's unread
+    /// (stand-in ledger: `set-down`).
+    pub fn push_out(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) -> PushOut {
+        let from = self.pivot;
+        if !self.in_a_wall(seam, exclude, from) {
+            return PushOut::Clear;
+        }
+        for _ in 0..PUSH_PASSES {
+            let push = self.wall_push(seam, exclude, self.pivot);
+            if push == Vec3::ZERO {
+                break;
+            }
+            self.pivot += push;
+            if !self.in_a_wall(seam, exclude, self.pivot) {
+                break;
+            }
+        }
+        if !self.in_a_wall(seam, exclude, self.pivot) {
+            self.stand(seam, exclude);
+            return PushOut::Pushed(self.pivot - from);
+        }
+        let centre = |pivot: Vec3| {
+            self.proxy(seam, exclude, Surfaces::NONE)
+                .pose(pivot, self.up)
+                .position
+        };
+        for k in 0..SEARCH_HEADINGS {
+            let heading = (self.facing + k as f32 * 360.0 / SEARCH_HEADINGS as f32).to_radians();
+            let out = Vec3::new(heading.sin(), 0.0, heading.cos()) * SEARCH_OUT;
+            let spot = from + out + Vec3::Y * SEARCH_UP;
+            if self.in_a_wall(seam, exclude, spot) || !self.is_clear(seam, exclude, spot) {
+                continue;
+            }
+            let way = centre(spot) - centre(from);
+            if seam
+                .ray(centre(from), way.normalize(), way.length(), exclude)
+                .is_some()
+            {
+                continue;
+            }
+            let Some(ground) = ground::find(seam, spot, exclude) else {
+                continue;
+            };
+            let below = spot.y - ground.point.y;
+            if !(0.0..=SEARCH_DOWN).contains(&below) || ground.normal.y <= MAX_SLOPE_COS {
+                continue;
+            }
+            self.pivot = spot;
+            self.settle(seam, exclude);
+            return PushOut::Searched(self.pivot - from);
+        }
+        self.pivot = from;
+        self.stand(seam, exclude);
+        PushOut::Stuck
+    }
+
+    /// What takes his shape at `pivot` off every wall it's in, across the
+    /// ground: each wall's share of the move its depth (and [`KEEP`])
+    /// needs along it; zero when he's in none.
+    fn wall_push(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], pivot: Vec3) -> Vec3 {
+        self.proxy(seam, exclude, Surfaces::NONE)
+            .planes(pivot, self.up, 0.0)
+            .iter()
+            .filter(|p| p.distance < 0.0 && p.normal.y < MAX_SLOPE_COS)
+            .fold(Vec3::ZERO, |push, p| {
+                let across = Vec3::new(p.normal.x, 0.0, p.normal.z);
+                let share = across.length_squared();
+                if share < 1e-4 {
+                    return push;
+                }
+                push + across * (-p.distance / share)
+            })
+    }
+
+    /// Whether his shape at `pivot` is in a wall [`Self::wall_push`] moves
+    /// him off, past [`IN_A_WALL`]: asked of the walls themselves, since two
+    /// facing each other push him by nothing between them.
+    fn in_a_wall(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], pivot: Vec3) -> bool {
+        self.proxy(seam, exclude, Surfaces::NONE)
+            .planes(pivot, self.up, 0.0)
+            .iter()
+            .any(|p| {
+                p.distance < -IN_A_WALL
+                    && p.normal.y < MAX_SLOPE_COS
+                    && p.normal.x * p.normal.x + p.normal.z * p.normal.z >= 1e-4
+            })
+    }
+
+    /// The nearest wall's gap (a plane steeper than he can stand on) within
+    /// `reach` past his skin, [`KEEP`] off it reading 0 and negative when
+    /// he's in it; none with no wall that near.
+    pub fn wall_gap(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], reach: f32) -> Option<f32> {
+        self.proxy(seam, exclude, Surfaces::NONE)
+            .planes(self.pivot, self.up, reach)
+            .iter()
+            .filter(|p| p.normal.y < MAX_SLOPE_COS)
+            .map(|p| p.distance)
+            .min_by(f32::total_cmp)
+    }
+
+    /// Whether his shape at `pivot` is in nothing at all, floors and
+    /// ceilings included.
+    fn is_clear(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], pivot: Vec3) -> bool {
+        self.proxy(seam, exclude, Surfaces::NONE)
+            .planes(pivot, self.up, 0.0)
+            .iter()
+            .all(|p| p.distance >= 0.0)
     }
 
     /// One game frame of `step` seconds in a world where nothing moves.

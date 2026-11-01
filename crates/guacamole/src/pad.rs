@@ -570,7 +570,7 @@ pub(crate) fn labels(pad: &Gamepad, printed: Option<&FacesPrinted>) -> Labels {
 
 /// What the TV names a button by: the letter printed on it, or its
 /// position. Never a PlayStation symbol: there's no way to say one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Prompt {
     Letter(&'static str),
     Position(Face),

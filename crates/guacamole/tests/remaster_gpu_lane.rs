@@ -1461,10 +1461,12 @@ fn the_remaster_at_an_oracle_frame() {
     // The game's arithmetic: the same inputs as stored codes over 255, the
     // rig's colours too, clamped per channel at the 8-bit store.
     let mut gamma_scene = scene.clone();
+    gamma_scene.light_power = 1.0;
     for (l, f) in gamma_scene.lights.iter_mut().zip(&codes.lights) {
         l.ambient = f.ambient.map(|c| f32::from(c) / 255.0);
         l.diffuse = f.diffuse.map(|c| f32::from(c) / 255.0);
         l.specular = f.specular.map(|c| f32::from(c) / 255.0);
+        (l.ambient_stored, l.diffuse_stored) = (l.ambient, l.diffuse);
     }
     if let Some(f) = &codes.fog {
         gamma_scene.fog_colour = f.colour.map(|c| f32::from(c) / 255.0);

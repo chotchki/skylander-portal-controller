@@ -682,6 +682,22 @@ impl ScriptLog {
             .map_or(0, |s| s.step)
     }
 
+    /// The steps logged after `since` (the newest's number and how many)
+    /// and their time on the frame's thread, the step's and the engine's
+    /// frame after it, ms (AG.288's slow frames); read from the newest back.
+    pub(crate) fn work_since(&self, since: u64) -> (u64, usize, f64) {
+        let log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let last = log.back().map_or(since, |s| s.step.max(since));
+        let (n, ms) = log
+            .iter()
+            .rev()
+            .take_while(|s| s.step > since)
+            .fold((0, 0.0), |(n, ms), s| {
+                (n + 1, ms + s.took_ms + s.advance_ms)
+            });
+        (last, n, ms)
+    }
+
     /// The steps after `since`, oldest first.
     pub(crate) fn since(&self, since: u64) -> Vec<ScriptStep> {
         self.0
@@ -741,6 +757,7 @@ impl Plugin for HeroScriptsPlugin {
 pub(crate) fn apply_scripted_solid(
     world: Res<ScriptWorld>,
     runtime: Res<ScriptRuntime>,
+    seam: AvianSeam,
     mut heroes: Query<(Entity, &mut HeroRun, &mut HeroBody)>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -770,8 +787,18 @@ pub(crate) fn apply_scripted_solid(
                 "his scripts set his solid"
             );
         }
+        let grew = next.solid != *body.hero.solid();
         body.hero.set_solid(next.solid);
         run.shape = next.shape;
+        if grew {
+            // A new solid can start inside a wall the last one only touched
+            // (AG.289; stand-in ledger: `set-down`): out before his next step.
+            let HeroBody { hero, exclude, .. } = &mut *body;
+            let out = hero.push_out(&seam, exclude);
+            if out != guac_motion::hero::PushOut::Clear {
+                info!(load_file = %run.load_file, ?out, "his solid set in a wall: taken out of it");
+            }
+        }
         if (next.scale - run.scale).abs() < 1e-6 {
             continue;
         }
@@ -947,6 +974,25 @@ pub(crate) fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
     cameras.iter().next().map_or(0.0, |f| f.drawn.heading())
 }
 
+/// Where the activity rule (openspec AH.27, AG.7's rule as the headless
+/// runs apply it) measures from as a step begins: the heroes' pivots; with
+/// none in, where the last one came off once the level has had one
+/// (AH.280), else the level's start, as the props stand. A take-off lets a
+/// step run before the portal's hold stops the clock (the one his
+/// deactivation's clean-up ticks in: AH.224's beam, AH.105's helper);
+/// measured from the start, it put everything past its range from there to
+/// sleep, and a coin asleep for a step left the loot for good.
+pub(crate) fn activity_from(
+    pivots: Vec<Vec3>,
+    last_place: Option<Vec3>,
+    start: Option<Vec3>,
+) -> Vec<Vec3> {
+    if !pivots.is_empty() {
+        return pivots;
+    }
+    last_place.or(start).into_iter().collect()
+}
+
 /// One step of the run, before the hero's (the module docs).
 pub(crate) fn step_scripts(
     mut commands: Commands,
@@ -963,23 +1009,21 @@ pub(crate) fn step_scripts(
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
     mut earning: Option<ResMut<Earning>>,
-    (level, real, mut camera, camera_placements): (
+    (level, real, mut camera, camera_placements, play): (
         Res<Level>,
         Res<Time<Real>>,
         ResMut<CameraScripts>,
         Option<Res<CameraPlacements>>,
+        Option<Res<crate::play::Play>>,
     ),
 ) {
     let began = std::time::Instant::now();
-    // The activity rule (openspec AH.27, AG.7's rule as the headless runs
-    // apply it): each managed placement woken or put to sleep by the
-    // heroes' pivots as the step begins, by the level's start before one is
-    // in, as the props stand.
     let pivots: Vec<Vec3> = heroes.iter().map(|(_, b)| b.hero.pivot).collect();
-    let from: Vec<Vec3> = match pivots.is_empty() {
-        true => level.start().into_iter().collect(),
-        false => pivots,
-    };
+    let from = activity_from(
+        pivots,
+        play.as_deref().and_then(crate::play::Play::last_place),
+        level.start(),
+    );
     runtime.vm.set_activity(&world.activity_at(&from));
     let props = standing_props(&level, &world, source.as_deref());
     let held = actions.take();
@@ -1631,11 +1675,13 @@ pub(crate) fn draw_clones(
         let place = clone_transform(actor);
         match (drawn, transform) {
             (None, _) => {
-                let model = actor
+                let path = actor
                     .template
                     .and_then(|t| world.template(t))
-                    .and_then(|p| p.model.as_deref())
-                    .and_then(|m| models.get(m));
+                    .and_then(|p| p.model.as_deref());
+                let model = path.and_then(|m| models.get(m));
+                // A button icon draws the walking pad's prompt (AG.290).
+                let icon = path.and_then(crate::button_prompt::icon_face);
                 // A model whose effects draw nothing (its parts left out)
                 // draws nothing here either.
                 let draws = model.is_some_and(|parts| !parts.is_empty()) && !actor.removed;
@@ -1653,14 +1699,25 @@ pub(crate) fn draw_clones(
                     CloneDrawn { draws, attack },
                 ));
                 if let (Some(parts), true) = (model, draws) {
+                    if let Some(face) = icon {
+                        commands
+                            .entity(entity)
+                            .insert(crate::button_prompt::ButtonPrompt(face));
+                    }
                     for (mesh, material) in parts {
-                        commands.spawn((
+                        let mut part = commands.spawn((
                             Mesh3d(mesh.clone()),
                             MeshMaterial3d(material.clone()),
                             Transform::IDENTITY,
                             RenderLayers::layer(LEVEL_LAYER),
                             ChildOf(entity),
                         ));
+                        if icon.is_some() {
+                            part.insert(crate::button_prompt::PromptPart {
+                                original: material.clone(),
+                                shown: None,
+                            });
+                        }
                     }
                 }
             }
@@ -1775,6 +1832,22 @@ mod tests {
 
     use super::*;
     use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_attack, write_smash};
+
+    /// AH.280's backstop: with no hero in, the activity rule measures from
+    /// where the last one came off once the level has had one, never the
+    /// level's start; with heroes in, from them alone.
+    #[test]
+    fn with_no_hero_in_activity_measures_from_where_the_last_one_left() {
+        let (him, left, start) = (
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::new(30.0, 0.0, -6.0),
+            Vec3::new(10.0, 43.0, -93.0),
+        );
+        assert_eq!(activity_from(vec![him], Some(left), Some(start)), [him]);
+        assert_eq!(activity_from(Vec::new(), Some(left), Some(start)), [left]);
+        assert_eq!(activity_from(Vec::new(), None, Some(start)), [start]);
+        assert!(activity_from(Vec::new(), None, None).is_empty());
+    }
 
     /// A headless engine: heroes on the parry twin's open ground.
     struct Bench {

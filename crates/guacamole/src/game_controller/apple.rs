@@ -258,8 +258,8 @@ impl Controllers for Framework {
 unsafe fn read_live(state: &GCControllerInputState) -> PadState {
     let mut out = PadState::default();
     // SAFETY: element lookups and reads on a state the framework handed us;
-    // `pressedInput` and a D-pad's directions conform to
-    // `GCPressedStateInput`, whose `isPressed` returns BOOL.
+    // `pressedInput` conforms to `GCPressedStateInput`, whose `isPressed`
+    // returns BOOL.
     unsafe {
         let buttons = state.buttons();
         for element in Element::ALL {
@@ -275,13 +275,9 @@ unsafe fn read_live(state: &GCControllerInputState) -> PadState {
         let [dpad, left, right] =
             dpad_names().map(|n| n.and_then(|n| dpads.objectForKeyedSubscript(n)));
         if let Some(dpad) = dpad {
-            for (element, input) in [
-                (Element::DpadUp, dpad.up()),
-                (Element::DpadDown, dpad.down()),
-                (Element::DpadLeft, dpad.left()),
-                (Element::DpadRight, dpad.right()),
-            ] {
-                let down: bool = msg_send![&*input, isPressed];
+            // Off its axes, the one reading AG.5 measured (AH.279).
+            let v = dpad.xyAxes().value();
+            for (element, down) in super::dpad_directions(Vec2::new(v.x, v.y)) {
                 out.set(element, down);
             }
         }
@@ -314,10 +310,10 @@ unsafe fn read_profile(profile: &GCPhysicalInputProfile) -> PadState {
         let dpads = profile.dpads();
         let [dpad, left, right] = dpad_names().map(|n| n.and_then(|n| dpads.objectForKey(n)));
         if let Some(dpad) = dpad {
-            out.set(Element::DpadUp, dpad.up().isPressed());
-            out.set(Element::DpadDown, dpad.down().isPressed());
-            out.set(Element::DpadLeft, dpad.left().isPressed());
-            out.set(Element::DpadRight, dpad.right().isPressed());
+            let xy = Vec2::new(dpad.xAxis().value(), dpad.yAxis().value());
+            for (element, down) in super::dpad_directions(xy) {
+                out.set(element, down);
+            }
         }
         let stick = |pad: Option<Retained<objc2_game_controller::GCControllerDirectionPad>>| {
             pad.map_or(Vec2::ZERO, |p| {

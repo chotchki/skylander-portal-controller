@@ -65,6 +65,10 @@ Where the TV names a pad button, it SHALL show the label printed at that positio
 - **WHEN** the level is paused from a pad guacamole can't identify
 - **THEN** the overlay shows the bottom position, not a letter or a PlayStation symbol
 
+#### Scenario: The cannon's prompt on the Switch variant names X
+- **WHEN** Eruptor nears the cannon with the 8BitDo in Switch mode walking him
+- **THEN** the button over the barrel shows "X", the pad's top button, not the PS3's triangle; walked by an Xbox-lettered pad it shows "Y", by a pad guacamole can't identify the top position
+
 ### Requirement: Start pauses the level
 Start on any connected pad SHALL pause the level under an overlay naming the button that resumes it, drawn over the level held in view, and nothing in the level SHALL move while it's paused. The bottom face button or Start on any connected pad SHALL resume it.
 

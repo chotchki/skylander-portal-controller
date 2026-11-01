@@ -2737,19 +2737,37 @@ fn loot_count(vm: &Vm, world: &ScriptWorld, rarity: Rarity) -> Option<Value> {
 }
 
 /// An experience orb out in the level (openspec AH.20, AH.25's report):
-/// its actor, its worth and where it is, and whether it's still coming
-/// down (a hero takes one only once it's down).
+/// its actor, its worth, where it is and how it moves.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Orb {
     pub actor: Handle,
     pub worth: i32,
     pub at: Vec3,
-    pub falling: bool,
+    pub state: OrbState,
 }
 
-/// Every orb the orbs' control holds (`combat control data`'s `xp ball
-/// control`: `all active balls` and `balls launching`), each once, the
-/// active first; none before the combat data is made.
+/// Where an orb is in its life (openspec AH.281).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrbState {
+    /// Still coming down (in the control's `balls launching`): a hero
+    /// takes one only once it's down.
+    Falling,
+    /// Down, waiting for a hero to come within reach.
+    Down,
+    /// Taken and on its way in: a joined player's `xp balls collecting`
+    /// (or the enemies' collecting set) holds it until it arrives, its
+    /// actor moving in, and the arrival takes it off.
+    Flying,
+}
+
+/// Every orb out (`combat control data`'s `xp ball control`: `all active
+/// balls` and `balls launching`) and every one flying in (each joined
+/// player's `player joined data.xp balls collecting`, and the control's
+/// `XP Enemies are collecting`), each once, the active first; none before
+/// the combat data is made. Taking an orb moves it out of the active sets
+/// into the collecting one, so without those the TV stopped drawing it the
+/// step it was taken and never drew its flight (AH.281).
 pub fn orbs(vm: &Vm, world: &ScriptWorld) -> Vec<Orb> {
     let control = vm
         .program()
@@ -2761,8 +2779,8 @@ pub fn orbs(vm: &Vm, world: &ScriptWorld) -> Vec<Orb> {
     let Some(control) = control else {
         return Vec::new();
     };
-    let balls = |name: &str| -> Vec<(Handle, i32)> {
-        let Some(set) = vm.field(control, name).map(|v| vm.value(v)) else {
+    let balls = |set: Option<Value>| -> Vec<(Handle, i32)> {
+        let Some(set) = set else {
             return Vec::new();
         };
         vm.set(set)
@@ -2782,23 +2800,59 @@ pub fn orbs(vm: &Vm, world: &ScriptWorld) -> Vec<Orb> {
             })
             .collect()
     };
-    let launching: Vec<Handle> = balls("balls launching").into_iter().map(|b| b.0).collect();
-    let mut out: Vec<Orb> = Vec::new();
-    for (actor, worth) in balls("all active balls")
+    let field = |v: Value, name: &str| vm.field(v, name).map(|v| vm.value(v));
+    let players: Vec<Value> = vm
+        .program()
+        .global_named("portal control data")
+        .and_then(|g| vm.global_peek(g))
+        .map(|v| vm.value(v))
+        .and_then(|pcd| field(pcd, "player joined data"))
+        .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
+        .unwrap_or_default();
+    let mut collecting: Vec<(Handle, i32)> = players
         .into_iter()
-        .chain(balls("balls launching"))
-    {
+        .flat_map(|p| balls(field(vm.value(p), "xp balls collecting")))
+        .collect();
+    collecting.extend(balls(field(control, "XP Enemies are collecting")));
+    listed_orbs(
+        &balls(field(control, "all active balls")),
+        &balls(field(control, "balls launching")),
+        &collecting,
+        world,
+    )
+}
+
+/// The orbs the sets hold, each once in the order given (the active, then
+/// those launching, then those flying in), its state by the set that has
+/// it (collecting over launching over the rest); one whose actor is gone
+/// isn't listed.
+fn listed_orbs(
+    active: &[(Handle, i32)],
+    launching: &[(Handle, i32)],
+    collecting: &[(Handle, i32)],
+    world: &ScriptWorld,
+) -> Vec<Orb> {
+    let has = |set: &[(Handle, i32)], h: Handle| set.iter().any(|b| b.0 == h);
+    let mut out: Vec<Orb> = Vec::new();
+    for &(actor, worth) in active.iter().chain(launching).chain(collecting) {
         if out.iter().any(|o| o.actor == actor) {
             continue;
         }
         let Some(a) = world.actor(actor).filter(|a| !a.removed) else {
             continue;
         };
+        let state = if has(collecting, actor) {
+            OrbState::Flying
+        } else if has(launching, actor) {
+            OrbState::Falling
+        } else {
+            OrbState::Down
+        };
         out.push(Orb {
             actor,
             worth,
             at: a.position,
-            falling: launching.contains(&actor),
+            state,
         });
     }
     out
@@ -3283,6 +3337,41 @@ mod tests {
         let objects = headless_objects(&handles);
         let grunt = handles[&GRUNT];
         (ScriptWorld::new(&files, &handles, objects), grunt, objects)
+    }
+
+    /// AH.281: an orb taken (only in a collecting set now, out of the
+    /// active ones) is still listed, flying, until its actor goes; each orb
+    /// once, its state by the set that holds it.
+    #[test]
+    fn an_orb_flying_in_stays_listed_until_its_actor_goes() {
+        let (mut world, _, _) = world();
+        let at = |x: f32| Actor {
+            position: Vec3::new(x, 0.0, 0.0),
+            ..Actor::blank()
+        };
+        for (h, x) in [(900, 1.0), (901, 2.0), (902, 3.0), (903, 4.0)] {
+            world.actors.insert(h, at(x));
+        }
+        let (down, falling, flying, gone) = ((900, 1), (901, 1), (902, 1), (903, 1));
+        world.actors.get_mut(&903).unwrap().removed = true;
+        let listed = listed_orbs(&[down, falling], &[falling], &[flying, gone, down], &world);
+        let states: Vec<(Handle, OrbState, f32)> =
+            listed.iter().map(|o| (o.actor, o.state, o.at.x)).collect();
+        assert_eq!(
+            states,
+            [
+                (900, OrbState::Flying, 1.0),
+                (901, OrbState::Falling, 2.0),
+                (902, OrbState::Flying, 3.0),
+            ],
+            "the taken one listed at its actor; the gone one not"
+        );
+        // Taken off the collecting set on arrival: no longer listed.
+        assert!(listed_orbs(&[], &[], &[], &world).is_empty());
+        assert_eq!(
+            listed_orbs(&[down], &[], &[], &world)[0].state,
+            OrbState::Down
+        );
     }
 
     /// AH.87: a clone of an emitter answers with the emitter's name, as

@@ -354,7 +354,196 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         let_go_along_a_wall(),
         the_gate_door_stops_him(),
         put_down_under_an_overhang_he_stays(),
+        a_bigger_solid_set_in_a_corner_walks_out(),
+        a_push_out_in_nothing_leaves_him_as_he_was(),
+        wedged_between_two_walls_he_is_searched_out_along_them(),
+        the_search_never_sets_him_through_a_wall(),
     ]
+}
+
+/// A slot of two walls 1.6 m apart facing each other (z = 0 facing +z, z =
+/// 1.6 facing -z) along x from `x[0]` to `x[1]`, closed at either end where
+/// `closed` says, on open ground: narrower than Warnado's capsule, so set
+/// down at its middle he's in both walls by the same depth.
+pub fn slot(x: [f32; 2], closed: [bool; 2]) -> Soup {
+    let mut soup = open_ground();
+    soup.wall_z(0.0, x, [-1.0, 3.4], Vec3::Z);
+    soup.wall_z(1.6, x, [-1.0, 3.4], Vec3::NEG_Z);
+    if closed[0] {
+        soup.wall_x(x[0], [0.0, 1.6], [-1.0, 3.4], Vec3::X);
+    }
+    if closed[1] {
+        soup.wall_x(x[1], [0.0, 1.6], [-1.0, 3.4], Vec3::NEG_X);
+    }
+    soup
+}
+
+/// Warnado as a replacement comes in before the push: standing where he's
+/// put, no cast, so a case can start him inside a wall.
+fn warnado_at(seam: &dyn PhysicsSeam, at: Vec3, facing: f32) -> Hero {
+    let mut hero = Hero::new(warnado_solid(), Tuning::ERUPTOR, at, facing);
+    hero.stand(seam, &[]);
+    hero
+}
+
+/// AG.289's push out on a hero in no wall changes nothing about him, his
+/// footing included: the TV runs it whenever his scripts change his solid,
+/// which can come mid-air, 0.2 m over the floor, where reading his footing
+/// again would call him supported.
+pub fn a_push_out_in_nothing_leaves_him_as_he_was() -> Scenario {
+    Scenario {
+        name: "a_push_out_in_nothing_leaves_him_as_he_was",
+        bodies: bodies(&open_ground(), &[]),
+        check: |seam| {
+            let mut hero = Hero::new(warnado_solid(), Tuning::ERUPTOR, Vec3::Y * 0.2, 0.0);
+            hero.velocity = Vec3::Y * 2.0;
+            let before = hero.clone();
+            let out = hero.push_out(seam, &[]);
+            ensure!(out == crate::hero::PushOut::Clear, "{out:?}");
+            ensure!(hero == before, "moved: {hero:?} from {before:?}");
+            Ok(())
+        },
+    }
+}
+
+/// AG.289: wedged at the middle of a slot narrower than him, the two walls'
+/// pushes cancel; he's still in both, so it's no push and no clear: the
+/// search takes him out along the slot past its open end, where the way
+/// from his centre is clear.
+pub fn wedged_between_two_walls_he_is_searched_out_along_them() -> Scenario {
+    Scenario {
+        name: "wedged_between_two_walls_he_is_searched_out_along_them",
+        bodies: bodies(&slot([-20.0, 1.5], [false, false]), &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(gap.is_some_and(|g| g < -0.1), "not in the walls: {gap:?}");
+            let out = hero.push_out(seam, &[]);
+            let crate::hero::PushOut::Searched(by) = out else {
+                return Err(format!("not searched: {out:?}"));
+            };
+            ensure!(
+                (by.x - crate::hero::SEARCH_OUT).abs() < 1e-3 && by.z.abs() < 1e-3,
+                "searched out {by}, not along the slot"
+            );
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(gap.is_none_or(|g| g > -1e-4), "still in: {gap:?}");
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            Ok(())
+        },
+    }
+}
+
+/// AG.289: wedged in a pocket closed all round, each of the search's spots
+/// is clear and over ground, but past a wall; none is reached through it, so
+/// he's left where he was.
+pub fn the_search_never_sets_him_through_a_wall() -> Scenario {
+    Scenario {
+        name: "the_search_never_sets_him_through_a_wall",
+        bodies: bodies(&slot([-1.5, 1.5], [true, true]), &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(out == crate::hero::PushOut::Stuck, "{out:?}");
+            ensure!(hero.pivot == from, "moved to {}", hero.pivot);
+            Ok(())
+        },
+    }
+}
+
+/// The start's boundary corner as AG.289's playtest met it: a wall facing
+/// +z and one facing (-0.79, 0, 0.62), meeting at the origin (128° between
+/// their faces on his side), 3.4 m tall, on open ground.
+pub fn boundary_corner() -> Soup {
+    let mut soup = open_ground();
+    soup.wall_z(0.0, [-20.0, 0.0], [-1.0, 3.4], Vec3::Z);
+    let along = Vec3::new(0.62, 0.0, 0.79).normalize();
+    let face = Vec3::new(-0.79, 0.0, 0.62).normalize();
+    for i in 0..10 {
+        let (a, b) = (along * (2.0 * i as f32), along * (2.0 * (i + 1) as f32));
+        soup.quad(
+            [
+                a + Vec3::NEG_Y,
+                b + Vec3::NEG_Y,
+                b + Vec3::Y * 3.4,
+                a + Vec3::Y * 3.4,
+            ],
+            face,
+        );
+    }
+    soup
+}
+
+/// Warnado's solid as his scripts set it: a 7 x 10.5 ft capsule.
+pub fn warnado_solid() -> HavokSolid {
+    SolidInfo {
+        kind: SolidKind::Capsule,
+        offset: [0.0; 3],
+        rotation: [0.0; 3],
+        width: 7.0,
+        height: 10.5,
+        length: 7.0,
+    }
+    .havok([100.0; 3])
+    .expect("a capsule stops things")
+}
+
+/// AG.289: a hero set down 0.15 m into a wall at the boundary's corner (his
+/// scripts' bigger solid swapped in where a smaller one stood) is pushed out
+/// across the ground before his first step, KEEP off both walls, and from
+/// there walks out of the corner under a stick pointing away and stands
+/// still without one.
+pub fn a_bigger_solid_set_in_a_corner_walks_out() -> Scenario {
+    Scenario {
+        name: "a_bigger_solid_set_in_a_corner_walks_out",
+        bodies: bodies(&boundary_corner(), &[]),
+        check: |seam| {
+            let solid = warnado_solid();
+            let Shape::Capsule { radius, .. } = solid.shape else {
+                return Err(format!("not a capsule: {:?}", solid.shape));
+            };
+            let set = |seam: &dyn PhysicsSeam| {
+                let at = Vec3::new(-0.6, 0.005, radius + crate::solid::MESH_RADIUS - 0.15);
+                let mut hero = Hero::new(solid, Tuning::ERUPTOR, at, 180.0);
+                hero.stand(seam, &[]);
+                hero
+            };
+            let mut hero = set(seam);
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(
+                gap.is_some_and(|g| g < -0.1),
+                "not set in the wall: {gap:?}"
+            );
+            let before = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            let crate::hero::PushOut::Pushed(by) = out else {
+                return Err(format!("not pushed: {out:?}"));
+            };
+            ensure!(by.y == 0.0 && by.length() < 0.5, "pushed {by}");
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(gap.is_some_and(|g| g > -1e-4), "still in: {gap:?}");
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            // Let go: he stays where the push left him.
+            let still = run(seam, &mut hero.clone(), 120, |_| Stick::CENTRED);
+            let drift = (still.last().unwrap().pivot - hero.pivot).length();
+            ensure!(drift < 1e-3, "drifted {drift} let go");
+            // Out of the corner, along the two faces' bisector.
+            let away = bearing(Vec3::new(-0.79, 0.0, 1.62));
+            let walked = run_viewed(seam, &mut hero, 30, 0.0, |_| stick(1.0, away));
+            let end = walked.last().unwrap().pivot;
+            ensure!(
+                (end - before).length() > 0.5,
+                "walked {} in 30 steps",
+                (end - before).length()
+            );
+            ensure!(
+                hero.wall_gap(seam, &[], 0.5).is_none_or(|g| g > -1e-4),
+                "walked into a wall"
+            );
+            Ok(())
+        },
+    }
 }
 
 /// Open ground with an overhang's underside 1.85 m up, its edge 0.5 m along

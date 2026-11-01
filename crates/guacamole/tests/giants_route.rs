@@ -768,6 +768,10 @@ struct Fight {
     /// Where he stood once Norticus was gone after his scene, and 60 steps
     /// of the stick on after it.
     freed: Option<(Vec3, Vec3)>,
+    /// Each step Norticus moved in `Advance with player`, and whether his
+    /// palette's slot 4 (`move to ... with anim`'s run) played on him at its
+    /// end (AH.282).
+    advance_clip: Vec<(u32, bool)>,
 }
 
 impl Fight {
@@ -813,8 +817,16 @@ fn fight(run: &mut Run, mode: Mode, steps: u32) -> Fight {
     // The stick held once Norticus is gone, not before: his walk to the
     // cave waits on where the hero stands.
     let mut walk_from: Option<u32> = None;
+    let norticus = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == NORTICUS && p.obj.unit == LEVEL)
+        .map(|p| run.handles[&p.obj])
+        .expect("Norticus placed");
     for k in 0..steps {
         let at = run.hero().pivot;
+        let norticus_was = run.world.actor(norticus).map(|a| a.position);
         let alive = CHOMPIES
             .iter()
             .any(|n| ours(run, n).is_some_and(|s| s.state != 3));
@@ -857,6 +869,20 @@ fn fight(run: &mut Run, mode: Mode, steps: u32) -> Fight {
             && let Some((was, _)) = out.freed
         {
             out.freed = Some((was, run.hero().pivot));
+        }
+        let advancing = ours(run, NORTICUS)
+            .is_some_and(|s| s.behaviour.as_deref() == Some("advance with player"));
+        let moved = run
+            .world
+            .actor(norticus)
+            .zip(norticus_was)
+            .is_some_and(|(a, was)| (a.position - was).length() > 1e-4);
+        if advancing && moved {
+            let w = &run.world;
+            let slot4 = w.sequences().iter().any(|q| {
+                q.actor == norticus && q.plays() && w.clip_of(q).is_some_and(|(_, slot)| slot == 4)
+            });
+            out.advance_clip.push((k, slot4));
         }
         for n in names {
             let now = ours(run, n).map(|s| (s.state, s.behaviour));
@@ -1233,6 +1259,21 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     // The scene's end frees the hero: the stick walks him again.
     let (was, now) = f.freed.expect("60 steps past Norticus' going");
     assert!(was.distance(now) > 2.0, "{was:?} -> {now:?}");
+    // AH.282: his walk into the cave is `move to ... with anim` slot 4
+    // (`Mabu_Run2.ma`), which plays on him every step he moves in it.
+    let still: Vec<u32> = f
+        .advance_clip
+        .iter()
+        .filter(|a| !a.1)
+        .map(|a| a.0)
+        .collect();
+    println!(
+        "Norticus advancing: {} steps moving, {} without slot 4 ({still:?})",
+        f.advance_clip.len(),
+        still.len()
+    );
+    assert!(f.advance_clip.len() > 30, "he walks: {:?}", f.advance_clip);
+    assert!(still.is_empty(), "slot 4 not playing at F0 + {still:?}");
     // The members the route and the fight reach (strict: each one asked a
     // value of is registered), against AH.34's ceiling.
     let reached = d.run.vm.reached();

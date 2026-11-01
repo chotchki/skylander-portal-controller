@@ -325,6 +325,13 @@ impl Rng {
         }
     }
 
+    /// A colour as the disc stores one, over 255 as the directional sum
+    /// adds it (AG.286).
+    fn stored(&mut self, max: u8) -> [f32; 3] {
+        let mut c = || (u32::from(self.byte()) * u32::from(max) / 255) as u8;
+        remaster::stored([c(), c(), c()])
+    }
+
     /// A colour as the disc stores one, decoded as the remaster does.
     fn colour(&mut self, max: u8) -> [f32; 3] {
         let mut c = || (u32::from(self.byte()) * u32::from(max) / 255) as u8;
@@ -831,6 +838,8 @@ fn random_scene(rng: &mut Rng) -> Scene {
         ambient: rng.colour(80),
         diffuse: rng.colour(255),
         specular: rng.colour(255),
+        ambient_stored: rng.stored(80),
+        diffuse_stored: rng.stored(255),
     };
     let fog_near = rng.range(5.0, 20.0);
     Scene {
@@ -863,6 +872,7 @@ fn random_scene(rng: &mut Rng) -> Scene {
             };
             [c[0], c[1], c[2], amount]
         },
+        light_power: remaster::LIGHT_POWER,
     }
 }
 

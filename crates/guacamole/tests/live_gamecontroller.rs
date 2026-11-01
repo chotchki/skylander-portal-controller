@@ -11,7 +11,8 @@
 //! lands that way). Home is asked for and reported, never failed: macOS
 //! still takes it for its Games app (AG.51, the backlog's Home menu line).
 //! AG.59 runs it with chotchki's 8BitDo in Switch mode; the letters it
-//! expects are AG.5's (bottom B, right A, left Y, top X).
+//! expects are AG.5's (bottom B, right A, left Y, top X). AH.279 adds the
+//! D-pad's four directions and a quick D-pad tap, read off its axes.
 
 #[cfg(target_os = "macos")]
 mod live {
@@ -86,13 +87,19 @@ mod live {
         if faces != FacesPrinted([Some('B'), Some('A'), Some('Y'), Some('X')]) {
             println!("NOTE: not AG.5's Switch Pro letters; fine for another pad");
         }
-        let steps: [(&str, GamepadButton); 6] = [
+        // The D-pad's four (AH.279): read off its axes since a playtest
+        // found no D-pad move reaching the router.
+        let steps: [(&str, GamepadButton); 10] = [
             ("press the BOTTOM face button", GamepadButton::South),
             ("press the RIGHT face button", GamepadButton::East),
             ("press the LEFT face button", GamepadButton::West),
             ("press the TOP face button", GamepadButton::North),
             ("press PLUS (Start)", GamepadButton::Start),
             ("press MINUS (Select)", GamepadButton::Select),
+            ("press the D-pad RIGHT", GamepadButton::DPadRight),
+            ("press the D-pad LEFT", GamepadButton::DPadLeft),
+            ("press the D-pad UP", GamepadButton::DPadUp),
+            ("press the D-pad DOWN", GamepadButton::DPadDown),
         ];
         for (ask, want) in steps {
             println!("\n>>> {ask} (15 s)");
@@ -129,6 +136,23 @@ mod live {
             None => failures.push(
                 "tap: no frame held a press and its release (the queue isn't reaching us)".into(),
             ),
+        }
+        live.until(1, |_| None::<()>);
+
+        // The same for the D-pad (AH.279): the router counts a direction
+        // pressed in a frame as held in it, so a quick tap still moves the
+        // focus once both halves arrive together.
+        println!("\n>>> TAP the D-pad RIGHT quickly, several times (frames of 250 ms; 15 s)");
+        let tapped = live.until_every(15, 0.25, |events| {
+            let right = |e: &&PadEvent, v: f32| {
+                matches!(e, PadEvent::Button(p, GamepadButton::DPadRight, x) if *p == pad && *x == v)
+            };
+            let mut after_press = events.iter().skip_while(|e| !right(e, 1.0)).skip(1);
+            after_press.any(|e| right(&e, 0.0)).then_some(())
+        });
+        match tapped {
+            Some(()) => println!("ok: a D-pad press and its release inside one 250 ms frame"),
+            None => failures.push("D-pad tap: no frame held a press and its release".into()),
         }
         live.until(1, |_| None::<()>);
 

@@ -3,7 +3,8 @@
 // material key by `material.rs`'s specialize (`key.rs` names the defs). The
 // remaster works it in linear light: the disc's colours arrive decoded (sRGB
 // texture views, colours converted on the CPU), tints and vertex colours as
-// stored, and nothing is clamped on the way out.
+// stored, the directional sum on stored values into linear light after it
+// adds (AG.286), and nothing is clamped on the way out.
 //
 // Lighting is in view space: the eye direction and the rim lookup are
 // view-space by construction, and a turntable's rig is fixed to its camera.
@@ -29,6 +30,10 @@ struct Character {
     light_ambient: array<vec4<f32>, 3>,
     light_diffuse: array<vec4<f32>, 3>,
     light_specular: array<vec4<f32>, 3>,
+    // Each light's ambient and diffuse as stored, what the directional sum
+    // adds (AG.286).
+    light_ambient_stored: array<vec4<f32>, 3>,
+    light_diffuse_stored: array<vec4<f32>, 3>,
     point_position: array<vec4<f32>, 3>,
     point_colour: array<vec4<f32>, 3>,
     // x over (d + 0.001), y over (d + 0.001)^2.
@@ -254,13 +259,16 @@ fn lit_layer(
     n = mapped;
 
     var base = c.rgb;
+    // A lit part: the original multiplies its stored colour by twice the
+    // lights summed on stored values, so the sum goes into linear light once
+    // it's added up (AG.286), at the power the shadow's term takes too.
 @if(CHAR_DIRECTIONAL) {
     var lights = vec3<f32>(0.0);
     for (var i = 0u; i < 3u; i++) {
-        let diffuse = character.light_diffuse[i].rgb * max(facing(n, light_travel(i)), 0.0);
-        lights += character.light_ambient[i].rgb + diffuse;
+        let diffuse = character.light_diffuse_stored[i].rgb * max(facing(n, light_travel(i)), 0.0);
+        lights += character.light_ambient_stored[i].rgb + diffuse;
     }
-    base = 2.0 * (c.rgb * lights);
+    base = c.rgb * pow(max(2.0 * lights, vec3<f32>(0.0)), vec3<f32>(character.shadow.y));
 }
     // Unlit parts show the colour map at full strength, plus what the normal
     // map turns toward or away from each light.

@@ -350,7 +350,7 @@ impl Rig {
     /// The scene the character material draws in: this rig, fog as it
     /// says, shadows and point lights off, neutral placement, no flash.
     pub fn scene(&self) -> Scene {
-        let mut scene = Scene::new();
+        let mut scene = remaster::scene();
         scene.lights = self.lights;
         if let Some(f) = self.fog {
             scene.fog = true;

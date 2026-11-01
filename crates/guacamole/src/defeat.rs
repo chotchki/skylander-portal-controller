@@ -460,4 +460,60 @@ mod tests {
             assert!(!app.world().resource::<ModalOpen>().0, "{alert:?}");
         }
     }
+
+    #[derive(Resource, Default)]
+    struct Moves(usize);
+
+    fn count_moves(mut inputs: MessageReader<crate::input::TvInput>, mut n: ResMut<Moves>) {
+        n.0 += inputs
+            .read()
+            .filter(|i| matches!(i, crate::input::TvInput::Move(_)))
+            .count();
+    }
+
+    /// AH.279, on a pad as Bevy has it, not posted presses: the check open
+    /// on No, a D-pad tap right whose press and release land in one frame
+    /// (GameController drains both halves together) focuses Yes, and South
+    /// asks for the restart once. A direction held on the check repeats on
+    /// the real clock while the level's is stopped under the hold.
+    #[test]
+    fn a_pads_dpad_reaches_yes_on_the_check() {
+        use crate::test_support::test_pad;
+        use bevy::input::gamepad::GamepadButton;
+        let (mut app, _) = beaten_app(Alert::NeedsRest);
+        app.init_resource::<Moves>()
+            .add_systems(Update, count_moves);
+        let pad = test_pad::connect(&mut app, None, None);
+        shows(&mut app, RestartAsk::Offer, RESTART_CHAPTER);
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        shows(&mut app, RestartAsk::Confirm, RESTART_NO);
+        test_pad::button(&mut app, pad, GamepadButton::DPadRight, true);
+        test_pad::button(&mut app, pad, GamepadButton::DPadRight, false);
+        shows(&mut app, RestartAsk::Confirm, RESTART_YES);
+        assert_eq!(restarts(&app), 0);
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(restarts(&app), 1, "once");
+
+        // Held right on the check for a second of the real clock, the
+        // level's stopped: the press and the repeats from 0.4 s on.
+        let (mut app, _) = beaten_app(Alert::NeedsRest);
+        app.init_resource::<Moves>()
+            .add_systems(Update, count_moves);
+        let pad = test_pad::connect(&mut app, None, None);
+        shows(&mut app, RestartAsk::Offer, RESTART_CHAPTER);
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        shows(&mut app, RestartAsk::Confirm, RESTART_NO);
+        app.world_mut().resource_mut::<Moves>().0 = 0;
+        test_pad::button(&mut app, pad, GamepadButton::DPadRight, true);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        let moves = app.world().resource::<Moves>().0;
+        assert!(moves >= 4, "the press and its repeats, {moves}");
+    }
 }

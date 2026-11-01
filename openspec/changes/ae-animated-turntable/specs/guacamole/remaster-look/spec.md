@@ -21,11 +21,15 @@ Drawn under the light rig of the oracle's chapter-one frame, Eruptor's lava SHAL
 - **THEN** his lava reads orange where the oracle's reads yellow, with fewer than 1% of his pixels at full red and green
 
 ### Requirement: The disc's colours are decoded
-Every colour the disc stores encoded for display SHALL be decoded into linear light before it's used: the colour, spec and rim textures plus the light, fog and replace colours. Normal maps, tints and vertex colours (multipliers centred on half grey, not colours) and plain numbers (weights, exponents, alpha references, fog distances) SHALL be used as stored.
+Every colour the disc stores encoded for display SHALL be decoded into linear light before it's used: the colour, spec and rim textures plus the light, fog and replace colours. A lit part's lights SHALL be summed as stored and twice the sum taken into linear light before it multiplies the colour, as the original's stored sum multiplies its stored colour. Normal maps, tints and vertex colours and plain numbers SHALL be used as stored.
 
 #### Scenario: The key light
 - **WHEN** a light's diffuse colour is stored as (172, 134, 18)
-- **THEN** it lights with its linear value, about (0.41, 0.24, 0.006), not with 172/255, 134/255 and 18/255
+- **THEN** its specular and an unlit part's relief light with its linear value, about (0.41, 0.24, 0.006), not with 172/255, 134/255 and 18/255
+
+#### Scenario: A lit part facing the key light
+- **WHEN** a part of a stored grey of a half, at neutral tints, faces the start zone's key light (ambient stored as (39, 42, 67), diffuse as (172, 134, 18))
+- **THEN** it draws about (0.65, 0.43, 0.09) in linear light, the decoded grey times twice the stored sum raised to 2.2, not about (0.19, 0.11, 0.03) from summing the decoded lights
 
 #### Scenario: A neutral tint
 - **WHEN** a part with neutral tints is drawn
