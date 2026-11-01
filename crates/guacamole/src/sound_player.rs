@@ -731,7 +731,9 @@ mod tests {
     /// player's first, the order of chotchki's crash (build-9a5dc82): a
     /// player despawning in PostUpdate leaves the insert a gone entity, which
     /// Bevy's default handler panics on. In `Last` the sink is in first and
-    /// the voice goes after it.
+    /// the voice goes after it. `Last` is the one place it takes: a player
+    /// anywhere before PostUpdate fails its first check (the voice sunk the
+    /// frame it's made, the camera read a frame old).
     #[test]
     fn a_voice_stopped_before_its_sink_is_in_goes_after_the_sink() {
         use bevy::ecs::schedule::ScheduleBuildSettings;

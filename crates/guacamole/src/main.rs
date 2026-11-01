@@ -694,7 +694,10 @@ mod tests {
 
     /// AQ.193: on the TV's app a command on a gone entity (AR.24's crash) and
     /// a system's panic each panic in the dev profile, as Bevy's default
-    /// does; a release build logs both and the frame goes on.
+    /// does; a release build logs both and the frame goes on. Only the panic
+    /// or its absence is checked: the log is the process's, so a handler that
+    /// logged nothing would pass too, and no gate builds the tests without
+    /// debug assertions (the release half runs under `--profile disc`).
     #[test]
     fn an_ecs_error_panics_in_dev_and_is_logged_in_release() {
         use bevy::prelude::{Commands, Name, Update};

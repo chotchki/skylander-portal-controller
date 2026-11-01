@@ -1624,7 +1624,7 @@ one activity pass wake in the order they went to sleep (`Vm::set_activity`): at 
 level placements the read and a run joined at the spawn both hold awake stand in the same order (the three
 above the rest, `giants_camera`). A script's own `reset` of a placement doesn't send it round yet (AH.80), so
 `Sliding_Rock(5)` still ticks ahead of the goats (AH.209). Avian's step in `FixedPostUpdate` stands for the
-next frame's physics. Sound comes late in the TV's frame as in the original's: the sound player
+next frame's physics. Sound is voiced late in the TV's frame: the sound player
 ([`sound_player.rs`](../../crates/guacamole/src/sound_player.rs)) voices the plays in `Last` (AR.24), once
 bevy_audio's playback has given each new voice its sink in PostUpdate. Beside it there, with no order
 possible (bevy_audio's set is private), a voice whose play ended the frame after it was made was despawned
