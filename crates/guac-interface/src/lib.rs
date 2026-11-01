@@ -683,16 +683,59 @@
 //! bottom-left corner shade, the June savestate's lowest at -190, draws
 //! last of the 72 while the other three, at 0, draw 14th to 16th), the
 //! list's order (when each started being drawn) breaking ties.
+//!
+//! # The keeper
+//!
+//! AT.9: the scripts reach the model through a host. A run whose host holds
+//! the model registers `guac-script`'s `INTERFACE` (the 64, each typed as
+//! the live table types it), so every one of those members goes to the
+//! host, which hands it to the [`Keeper`] ([`keeper`] has the code): a
+//! member read, written, reset or, for a set, read and written whole. The
+//! keeper answers a sprite's members on the sprite its receiver names (a
+//! clone it made, or a template's object in its file), a paired measurement
+//! on the receiver and the value stack's other point, a global converter's
+//! on whatever reaches it; and beside the 64, a sprite's `scale` as an
+//! object of its own whose `scalemeasurement` parts it reads and writes, a
+//! sprite as its own orientation (its current matrix's turns, tilt, facing
+//! and roll in the matrix's order), and an initial matrix's turns, read
+//! only. **Hypothesis**: an orientation measurement's facing is the turn
+//! about depth (an actor's is about its up axis, guacamole's rule), and a
+//! relative turn adds to the turn and reads 0, as an actor hung from
+//! nothing's does; no interface script writes one (AT.9's census).
+//!
+//! A clone of one of the keeper's templates or sprites is an instance (the
+//! host asks the keeper first at a spawn), its activator the placement
+//! whose script spawned it, its initial matrix its source's current one,
+//! placed where the spawn's `at` stands when that is one of the keeper's (a
+//! sprite's current place, an initial matrix's) and turned to the spawn's
+//! facing, and current as waking makes it; a remove on one takes it off as
+//! States says. Nothing a script does stops on the keeper (decision 10): a
+//! sprite member asked of what holds no sprite, and a member it doesn't
+//! answer asked of one of its objects, each reads as a path through
+//! nothing, counted ([`Keeper::strays`], [`Keeper::unknown`]) so a run's
+//! test names any it meets; a member the model leaves unmodelled stops as
+//! the registry's strict mode stops on one.
+//!
+//! The model a run holds is loaded at its install ([`load`]): every
+//! template, font and string of the archives it links, from the extract's
+//! interface part and the level's sprites part, each template under its
+//! object in its archive's `level.bld`, its `_ID` read there, its string
+//! the `StringInfo` at its place among the file's in address order or the
+//! one an import's export id names in `global.bld` or `bootstrap.bld`, its
+//! font its archive's or, imported, the one the named font data info holds.
 #![forbid(unsafe_code)]
 
 pub mod draw;
+pub mod keeper;
 pub mod layout;
+pub mod load;
 pub mod matrix;
 pub mod members;
 pub mod model;
 pub mod sprite;
 pub mod text;
 
+pub use keeper::Keeper;
 pub use members::{MEMBERS, Member, find};
 pub use model::{Answer, Bases, LETTER, Model, NoWorld, Refusal, Str, World};
 pub use sprite::{Sprite, SpriteId, State};

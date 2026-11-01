@@ -34,7 +34,9 @@ impl Member {
             "ColorMeasurement" => Kind::Color,
             "ScreenMeasurement" => Kind::Screen,
             "SpriteValueMeasurement" => Kind::Any,
-            "SetVariant" => Kind::Set,
+            // A set reference is written whole as a set is read
+            // (`Model::set_global_elements`).
+            "SetVariant" | "ScriptSetReference" => Kind::Set,
             _ => Kind::Reference,
         }
     }
