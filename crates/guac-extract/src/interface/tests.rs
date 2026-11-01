@@ -190,6 +190,7 @@ fn the_menu_archives_are_the_ui_files_and_the_upgrade_screen() {
         ("misc/ui_options.arc", false),
         ("misc/other.bld", false),
         ("misc/sub/ui_x.bld", false),
+        ("misc/ui_sub/ui_x.bld", false),
         ("level/ui_x.bld", false),
     ] {
         assert_eq!(is_menu(p), menu, "{p}");
@@ -201,5 +202,42 @@ fn the_menu_archives_are_the_ui_files_and_the_upgrade_screen() {
     assert_eq!(
         path(IrFormat::Postcard, "permanent/global.bld"),
         "interface/global.postcard"
+    );
+}
+
+#[test]
+fn a_streamed_image_is_the_arc_entry_under_its_own_folder_alone() {
+    // A folder whose name only ends in the source's isn't it.
+    let near = IgaBuilder::new()
+        .stored(
+            "C:/tfb/build/ps3/old_batteries_low_1.png/0x11111111.png.igb.tex.igz",
+            &image_igz(0x11),
+        )
+        .stored(
+            "C:/tfb/build/ps3/levels/Batteries_Low_1.png/0x22222222.png.igb.tex.igz",
+            &image_igz(0x22),
+        )
+        .build();
+    let arc = Archive::parse(&near).unwrap();
+    assert_eq!(
+        arc_entry(&arc, "batteries_low_1.png"),
+        Ok(1),
+        "case ignored"
+    );
+    // Two entries under its folder name are refused, by count.
+    let two = IgaBuilder::new()
+        .stored(
+            "C:/a/batteries_low_1.png/0x11111111.png.igb.tex.igz",
+            &image_igz(0x11),
+        )
+        .stored(
+            "C:/b/batteries_low_1.png/0x22222222.png.igb.tex.igz",
+            &image_igz(0x22),
+        )
+        .build();
+    let arc = Archive::parse(&two).unwrap();
+    assert_eq!(
+        arc_entry(&arc, "batteries_low_1.png"),
+        Err("2 .arc entries".to_owned())
     );
 }

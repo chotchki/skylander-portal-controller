@@ -1,7 +1,9 @@
 //! The interface part on a synthetic dump (openspec AT.8): guac-formats'
 //! interface archive as `global.bld`, a character archive with the `.arc`
-//! its streamed image comes from and a menu archive, `bootstrap.bld`
-//! missing. The real dump runs in `giants_interface.rs`.
+//! its streamed image comes from and a menu archive with the same `.arc`
+//! beside it (which isn't read), `bootstrap.bld` missing, and chapter 1's
+//! archive holding the same interface for its `sprites` part. The real dump
+//! runs in `giants_interface.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +11,7 @@ use std::path::{Path, PathBuf};
 use guac_extract::interface::{self, PART};
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
-use guac_extract::{ExtractRoot, IdentityDir, models, open};
+use guac_extract::{ExtractRoot, IdentityDir, levels, models, open, stages};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::igz::builder::IgzBuilder;
 use guac_formats::interface::builder::{image, sample};
@@ -43,12 +45,13 @@ fn arc() -> Vec<u8> {
         .build()
 }
 
-/// `global.bld`, `character/009_eruptor.bld` with its `.arc` and
-/// `misc/ui_options.bld`, all the same archive; no `bootstrap.bld`.
+/// `global.bld`, `character/009_eruptor.bld` with its `.arc`,
+/// `misc/ui_options.bld` with the same `.arc` and chapter 1, all the same
+/// archive; no `bootstrap.bld`.
 fn make_dump(tmp: &Path) -> PathBuf {
     let dump = tmp.join("dump");
     let usr = dump.join("PS3_GAME/USRDIR");
-    for d in ["permanent", "character", "misc"] {
+    for d in ["permanent", "character", "misc", levels::LEVEL_FOLDER] {
         fs::create_dir_all(usr.join(d)).unwrap();
     }
     fs::write(
@@ -64,7 +67,9 @@ fn make_dump(tmp: &Path) -> PathBuf {
     ] {
         fs::write(usr.join(p), &bld).unwrap();
     }
+    fs::write(levels::archive_path(&usr, levels::FIRST_RUN[0]), &bld).unwrap();
     fs::write(usr.join("character/009_eruptor.arc"), arc()).unwrap();
+    fs::write(usr.join("misc/ui_options.arc"), arc()).unwrap();
     dump
 }
 
@@ -129,14 +134,30 @@ fn the_part_lands_each_archives_interface_and_names_what_the_dump_lacks() {
     // the character archive has the .arc its streamed image comes from.
     assert_eq!(st.textures, 3);
     assert_eq!((st.texture_files.written, st.texture_files.kept), (3, 0));
-    // global.bld and the menu archive have no .arc: their streamed image
-    // keeps no texture and isn't refused.
+    // global.bld has no .arc and the menu archive's isn't read: their
+    // streamed image keeps no texture and isn't refused.
     assert!(st.refused.is_empty(), "{:?}", st.refused);
     assert_eq!(textures(&opened.dir).len(), 3);
     let part = &opened.dir.manifest().parts[PART];
     assert_eq!(part.len(), 3 + 3, "the IR files and the textures");
     for f in part {
         assert!(opened.dir.output_done(f).unwrap(), "{f}");
+    }
+    // The bytes it reports are the part's files' as recorded.
+    let recorded: u64 = opened
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .filter(|o| part.contains(&o.path))
+        .map(|o| o.size)
+        .sum();
+    assert_eq!(st.files.bytes, recorded);
+    let menu = interface::path(IrFormat::Ron, "misc/ui_options.bld");
+    let menu: guac_ir::interface::Interface = IrFormat::Ron.decode(&opened.dir, &menu).unwrap();
+    match &menu.templates[2].content {
+        guac_ir::interface::Content::Image(a) => assert_eq!(a.texture, None, "no .arc read"),
+        other => panic!("{other:?}"),
     }
     let rel = interface::path(IrFormat::Ron, "character/009_eruptor.bld");
     let ir: guac_ir::interface::Interface = IrFormat::Ron.decode(&opened.dir, &rel).unwrap();
@@ -210,4 +231,38 @@ fn an_extract_from_before_the_part_reads_it_alone() {
     );
     assert_eq!(st.files.written, 1, "the IR files kept as they were");
     assert!(opened.dir.output_done(&lost).unwrap());
+}
+
+/// A level's `sprites` part rides the level stage: chapter 1's archive here
+/// is the interface sample and its English pack (the other parts read it as
+/// an empty level), and its sprites land with the level's text and images.
+#[test]
+fn a_levels_sprites_part_reads_with_the_level_stage() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let lv = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(lv.failed.is_empty(), "{:?}", lv.failed);
+    assert_eq!(lv.parts_read, levels::PARTS.len());
+    let level = levels::FIRST_RUN[0];
+    let rel = IrFormat::Ron.level_path(level, levels::SPRITES);
+    let ir: guac_ir::interface::Interface = IrFormat::Ron.decode(&opened.dir, &rel).unwrap();
+    assert_eq!(ir.archive, format!("level/{level}.bld"));
+    assert_eq!(ir.templates.len(), 8);
+    assert_eq!(ir.strings, vec!["Unused".to_owned(), "Gold".to_owned()]);
+    // The local image and the atlas, recorded with the part; a level's
+    // streamed image (its .arc isn't read) keeps none.
+    let recorded = &opened.dir.manifest().levels[level].parts[levels::SPRITES];
+    let mut named = vec![ir.fonts[0].atlas.clone()];
+    for t in &ir.templates {
+        if let guac_ir::interface::Content::Image(a) = &t.content
+            && let Some(p) = &a.texture
+        {
+            named.push(p.clone());
+        }
+    }
+    assert_eq!(named.len(), 2, "{named:?}");
+    for p in named.iter().chain([&rel]) {
+        assert!(recorded.contains(p), "{p}");
+        assert!(opened.dir.output_done(p).unwrap(), "{p}");
+    }
 }

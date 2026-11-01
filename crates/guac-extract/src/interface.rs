@@ -464,14 +464,7 @@ pub fn interface_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<InterfaceS
         );
     }
     stage.textures = counted.len();
-    // Each texture's bytes, kept or written.
-    for f in &files {
-        if f.starts_with(models::TEXTURE_DIR)
-            && let Some(o) = dir.manifest().outputs.iter().find(|o| o.path == *f)
-        {
-            stage.texture_files.bytes += o.size;
-        }
-    }
+    // `held` counted each texture's bytes once, kept or written.
     stage.files.written += stage.texture_files.written;
     stage.files.kept += stage.texture_files.kept;
     stage.files.bytes += stage.texture_files.bytes;

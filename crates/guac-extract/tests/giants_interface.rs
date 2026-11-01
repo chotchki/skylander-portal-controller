@@ -147,12 +147,15 @@ fn the_interface_extracts_and_resumes_alone() {
     let global = read("permanent/global.bld");
     let global_textures = textures_named(&global);
     println!(
-        "  global.bld: {} templates, {} strings, {} textures named (its file holds 310 images)",
+        "  global.bld: {} templates, {} strings, {} textures named",
         global.templates.len(),
         global.strings.len(),
         global_textures.len()
     );
     assert_eq!(global.templates.len(), 409);
+    // Of the file's 310 images, the 190 its art templates draw and
+    // `contemp`'s atlas; no template or font reaches the other 119.
+    assert_eq!(global_textures.len(), 191);
     assert_eq!(global.strings.len(), 906);
     assert_eq!(global.fonts.len(), 1);
     assert_eq!(global.fonts[0].glyphs.len(), 178);
@@ -228,5 +231,91 @@ fn the_interface_extracts_and_resumes_alone() {
     assert!(again.read && again.failed.is_none());
     assert_eq!(again.files.written, 0, "every file already in is kept");
     assert!(levels::complete(opened.dir.manifest()));
+    assert!(opened.dir.manifest().parts.contains_key(PART));
+}
+
+/// What an extract made before the parts pays for them on its next start:
+/// the dev extract under `GUAC_EXTRACT_DIR` as it stands, cloned file by
+/// file (APFS, `cp -c`) into a throwaway root, then chapter 1's level stage
+/// (the `sprites` part alone) and the interface part run on the clone, in
+/// the format the extract holds. The dev extract itself is never opened.
+/// Skips when there's no extract of this dump there, or one already holding
+/// the interface part.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and the dev extract; run on the Mac"]
+fn the_parts_first_run_on_an_extract_made_before_them() {
+    let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
+    let base = PathBuf::from(env_or_dotenv("GUAC_EXTRACT_DIR").expect("set GUAC_EXTRACT_DIR"));
+    let source_dir = dump.canonicalize().unwrap().to_string_lossy().into_owned();
+    let existing = std::fs::read_dir(&base).unwrap().find_map(|e| {
+        let path = e.ok()?.path();
+        let text = std::fs::read_to_string(path.join("manifest.json")).ok()?;
+        let m: serde_json::Value = serde_json::from_str(&text).ok()?;
+        (m["source_dir"] == source_dir.as_str() && m["complete"] == true).then_some((path, m))
+    });
+    let Some((existing, manifest)) = existing else {
+        println!(
+            "no complete extract of {source_dir} under {}",
+            base.display()
+        );
+        return;
+    };
+    if manifest["parts"].get(PART).is_some() {
+        println!("{} holds the interface part already", existing.display());
+        return;
+    }
+    let ir = if existing.join("ir/roster.ron").is_file() {
+        IrFormat::Ron
+    } else {
+        IrFormat::Postcard
+    };
+    let outputs = manifest["outputs"].as_array().map_or(0, Vec::len);
+    let tmp = tempfile::Builder::new()
+        .prefix("at8-existing-")
+        .tempdir_in(&base)
+        .unwrap();
+    let clone_root = tmp.path().join("extract");
+    std::fs::create_dir_all(&clone_root).unwrap();
+    let started = Instant::now();
+    let cp = std::process::Command::new("cp")
+        .arg("-cR")
+        .arg(&existing)
+        .arg(&clone_root)
+        .status()
+        .unwrap();
+    assert!(cp.success(), "cp -cR {}", existing.display());
+    println!(
+        "  cloned {} ({outputs} outputs, {ir:?}) in {:.2} s",
+        existing.display(),
+        started.elapsed().as_secs_f64()
+    );
+
+    let root = ExtractRoot::checked(clone_root).unwrap();
+    let mut opened = open(&dump, &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
+    assert_eq!(opened.state, DirState::Resume, "the parts missing");
+    println!("load average before the level: {}", load_average());
+    let lv = stages::level_stage(&mut opened.dir, ir, &|_| {}).unwrap();
+    println!(
+        "  chapter 1: {} part read, {} kept, {:?} in {:.2} s; load average {}",
+        lv.parts_read,
+        lv.parts_kept,
+        lv.files,
+        lv.took.as_secs_f64(),
+        load_average()
+    );
+    assert_eq!((lv.parts_read, lv.parts_kept), (1, levels::PARTS.len() - 1));
+    println!("load average before the part: {}", load_average());
+    let s = interface_stage(&mut opened.dir, ir).unwrap();
+    println!(
+        "  interface: {} archives, {} textures ({:?}); {:?} in {:.2} s; load average {}",
+        s.archives,
+        s.textures,
+        s.texture_files,
+        s.files,
+        s.took.as_secs_f64(),
+        load_average()
+    );
+    assert!(s.read && s.failed.is_none(), "{:?}", s.failed);
+    assert!(s.missing.is_empty(), "{:?}", s.missing);
     assert!(opened.dir.manifest().parts.contains_key(PART));
 }
