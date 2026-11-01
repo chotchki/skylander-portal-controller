@@ -161,3 +161,71 @@ fn files(dir: &Path) -> Vec<(String, u64)> {
     out.sort();
     out
 }
+
+/// A level stage stopped after a part's textures reached the disc but
+/// before the manifest's one save for them (openspec AS.26: a part's new
+/// textures are recorded together, then its IR, then the part): on the next
+/// start that part alone is read again, its textures written again, and the
+/// extract comes out as an uninterrupted one, records and bytes alike.
+#[test]
+fn a_part_stopped_before_its_textures_were_recorded_resumes_to_the_same_extract() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path());
+    let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    let known = known_for(&dump);
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    let path = opened.dir.path().to_path_buf();
+    let whole = (opened.dir.manifest().clone(), files(&path));
+    let scene = whole.0.levels[FIRST_RUN[0]].parts[levels::SCENE].clone();
+    let textures: Vec<&String> = scene
+        .iter()
+        .filter(|f| f.starts_with("textures/"))
+        .collect();
+    assert!(!textures.is_empty(), "{scene:?}");
+    // What the stop leaves: the scene's files on disc, neither they nor the
+    // part recorded.
+    let manifest = path.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
+    let parts = json["levels"][FIRST_RUN[0]]["parts"]
+        .as_object_mut()
+        .unwrap();
+    assert!(parts.remove(levels::SCENE).is_some());
+    let outputs = json["outputs"].as_array_mut().unwrap();
+    let before = outputs.len();
+    outputs.retain(|o| !scene.iter().any(|f| o["path"] == f.as_str()));
+    assert_eq!(outputs.len(), before - scene.len());
+    fs::write(&manifest, serde_json::to_string(&json).unwrap()).unwrap();
+    drop(opened);
+
+    let mut again = open(&dump, &root, &known, &|_| {}).unwrap();
+    let done = stages::level_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
+    // The scene, and any part naming one of its textures, whose files then
+    // aren't all as recorded either.
+    let touched = whole.0.levels[FIRST_RUN[0]]
+        .parts
+        .iter()
+        .filter(|(_, fs)| fs.iter().any(|f| scene.contains(f)))
+        .count();
+    assert!(touched >= 1);
+    assert_eq!(
+        (done.parts_read, done.parts_kept),
+        (touched, PARTS.len() - touched)
+    );
+    assert_eq!(done.files.written, scene.len());
+    assert!(levels::complete(again.dir.manifest()));
+    let resumed = (again.dir.manifest().clone(), files(&path));
+    assert_eq!(resumed.0.outputs, whole.0.outputs);
+    assert_eq!(resumed.0.levels, whole.0.levels);
+    let data = |f: &[(String, u64)]| -> Vec<(String, u64)> {
+        f.iter()
+            .filter(|(p, _)| p != "manifest.json")
+            .cloned()
+            .collect()
+    };
+    assert_eq!(data(&resumed.1), data(&whole.1));
+    for f in scene {
+        assert!(again.dir.output_done(&f).unwrap(), "{f}");
+    }
+}

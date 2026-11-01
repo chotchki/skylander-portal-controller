@@ -2091,8 +2091,9 @@ every level on the disc without a first run writing them:
   (load about 4).
 - Outputs aren't flushed one by one any more; the manifest's saves still are. A start re-hashes every kept
   output against its record, so one a crash left short is written again, and only a torn manifest costs
-  the extract. Chapter 1's level stage went from 10.5 s to 7.7 s; the manifest's save per output is the
-  rest (AS.26).
+  the extract. Chapter 1's level stage went from 10.5 s to 7.7 s, and a part's new textures now go in
+  under one manifest save (AR's `IdentityDir::write_outputs`, AS.26), not one each: 8.3-8.5 s to 3.9 s at
+  a load of about 10, the same 655 files byte for byte.
 - 141 of the 143 levels read whole (3 did before): a draw under a transform is baked into its segment
   (positions through the matrix, normals through its inverse transpose, tangents through its 3 x 3 part,
   each at its own length, winding and handedness flipped under a mirror; a scene bakes whatever moves it,
