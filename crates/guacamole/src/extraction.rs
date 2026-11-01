@@ -87,8 +87,9 @@ impl ExtractJob {
         }
     }
 
-    /// What [`spawn`] checks the dump against.
-    fn known(&self) -> Vec<KnownDump> {
+    /// What [`spawn`] checks the dump against, and a level asked for by
+    /// name opens the extract by (openspec AS.13).
+    pub(crate) fn known(&self) -> Vec<KnownDump> {
         KNOWN_DUMPS.iter().copied().chain(self.test_known).collect()
     }
 }
@@ -2532,5 +2533,116 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         job.test_known = Some(parse_test_known(&line).unwrap());
         let (result, _) = run_all(&dump, &job, &job.known());
         assert_eq!(result.unwrap().library.intros(), 2);
+    }
+
+    /// AS.13: a level asked for by name, after the pick's extraction ended:
+    /// a name off the dump's list refused before any of a level is read; a
+    /// level on it extracted part by part beside chapter 1 with its
+    /// progress, its source for the TV's load naming it in the same extract;
+    /// asked again, every part kept; one whose scene won't extract refused
+    /// naming the part, a load needing it.
+    #[test]
+    fn a_level_asked_for_by_name_extracts_on_demand_and_one_off_the_list_is_refused() {
+        use crate::level_choice::{FetchError, FetchEvent, fetch};
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        let usr = dump.join("PS3_GAME/USRDIR");
+        let (arena, broken) = ("pvp_level_001_cubedungeon", "pvp_level_002_broken");
+        let archive = |spec| {
+            IgaBuilder::new()
+                .stored("level.bld", &stage_level(&spec))
+                .build()
+        };
+        fs::write(
+            guac_extract::levels::archive_path(&usr, arena),
+            archive(stage_sample()),
+        )
+        .unwrap();
+        // A material asking for bit 9, which no reader takes: its scene
+        // part alone won't read.
+        let mut spec = stage_sample();
+        spec.scene[0].pixel = Some((0x21C, 0x3FF));
+        fs::write(
+            guac_extract::levels::archive_path(&usr, broken),
+            archive(spec),
+        )
+        .unwrap();
+        let known = known_for(&dump);
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        let extract = tmp.path().join("extract");
+        let job = ExtractJob {
+            test_known: Some(known[0]),
+            ..job(&extract, Some(ffmpeg))
+        };
+        let (first, _) = run_all(&dump, &job, &known);
+        let dir = first.unwrap().library.dir;
+        let manifest = || -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap()
+        };
+        let events = Mutex::new(Vec::new());
+        let send = |e: FetchEvent| events.lock().unwrap().push(format!("{e:?}"));
+
+        let Err(FetchError::Refused(why)) = fetch(&dump, &job, "level_999", &send) else {
+            panic!("a name off the list refused");
+        };
+        assert!(
+            why.contains("level_999 isn't a level on this disc"),
+            "{why}"
+        );
+        assert!(!dir.join("levels/level_999").exists());
+        assert!(manifest()["levels"].get("level_999").is_none());
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|e| e.starts_with("Hashing"))
+        );
+
+        events.lock().unwrap().clear();
+        let f = fetch(&dump, &job, arena, &send).unwrap();
+        assert_eq!(f.source.level, arena);
+        assert_eq!(
+            (f.source.dir.as_path(), f.source.ir),
+            (dir.as_path(), IrFormat::Ron)
+        );
+        assert_eq!(f.kind, guac_extract::levels::Kind::Pvp);
+        assert_eq!(
+            (f.parts_read, f.parts_kept),
+            (guac_extract::levels::PARTS.len(), 0)
+        );
+        assert!(f.failed.is_empty(), "{:?}", f.failed);
+        assert!(dir.join(format!("levels/{arena}/scene.ron")).is_file());
+        let parts = manifest()["levels"][arena]["parts"]
+            .as_object()
+            .unwrap()
+            .len();
+        assert_eq!(parts, guac_extract::levels::PARTS.len());
+        let seen = events.lock().unwrap().clone();
+        assert!(
+            seen.iter().any(|e| e.starts_with("Opened { kind: Pvp")),
+            "{seen:?}"
+        );
+        let last = format!(
+            "Parts {{ done: {n}, total: {n} }}",
+            n = guac_extract::levels::PARTS.len()
+        );
+        assert_eq!(seen.last(), Some(&last), "{seen:?}");
+        // Chapter 1 stays whole beside it: the next start is current.
+        assert!(!run_all(&dump, &job, &known).0.unwrap().ran);
+
+        let again = fetch(&dump, &job, arena, &|_| {}).unwrap();
+        assert_eq!(
+            (again.parts_read, again.parts_kept),
+            (0, guac_extract::levels::PARTS.len())
+        );
+
+        let Err(FetchError::Failed(why)) = fetch(&dump, &job, broken, &|_| {}) else {
+            panic!("a level without its scene failed");
+        };
+        assert!(
+            why.starts_with(&format!("{broken}'s scene didn't extract")),
+            "{why}"
+        );
     }
 }

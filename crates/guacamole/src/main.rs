@@ -27,6 +27,7 @@ mod input;
 mod intro;
 mod intro_player;
 mod level;
+mod level_choice;
 mod look;
 mod mirror;
 mod motion;
@@ -134,7 +135,11 @@ fn main() -> Result<()> {
         hero_scripts::AskedHealth::default(),
         hero_scripts::AskedExperience::default(),
     );
-    let entry_asks = dev_entry::EntryAsks::default();
+    // AH.25's dev entry and AS.13's level by name, asked over the test hooks.
+    let entry_asks = (
+        dev_entry::EntryAsks::default(),
+        level_choice::LevelAsks::default(),
+    );
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
         Ok(loaded) => loaded,
@@ -380,17 +385,19 @@ impl Plugin for TvPacing {
 }
 
 /// `/api/_test/tv` for the e2e harness, and AH.62's health, AH.26's
-/// experience and AH.25's dev entry beside it; nothing outside `test-hooks`.
+/// experience, AH.25's dev entry and AS.13's level by name beside it;
+/// nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
     (health, xp): &(hero_scripts::AskedHealth, hero_scripts::AskedExperience),
-    entry_asks: &dev_entry::EntryAsks,
+    (entry_asks, level_asks): &(dev_entry::EntryAsks, level_choice::LevelAsks),
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
     cfg!(feature = "test-hooks").then(|| {
         mirror::routes(mirror)
             .merge(hero_scripts::health_routes(health))
             .merge(hero_scripts::experience_routes(xp))
             .merge(dev_entry::routes(entry_asks))
+            .merge(level_choice::routes(level_asks))
     })
 }
 
@@ -426,10 +433,10 @@ fn run_tv(
     root: PathBuf,
     job: Option<ExtractJob>,
     latency: OutputLatency,
-    (mirror, (asked_health, asked_xp), entry_asks): (
+    (mirror, (asked_health, asked_xp), (entry_asks, level_asks)): (
         TvMirror,
         (hero_scripts::AskedHealth, hero_scripts::AskedExperience),
-        dev_entry::EntryAsks,
+        (dev_entry::EntryAsks, level_choice::LevelAsks),
     ),
     level_hero: Option<guac_server::progress::LevelHero>,
     log_guard: WorkerGuard,
@@ -465,8 +472,10 @@ fn run_tv(
             // game's glow and the per-slot scenes.
             (CharacterShadingPlugin, GlowPlugin, TurntablePlugin),
             // The level, loaded behind the portal from the Giants pick
-            // (AG.19); the warm compiles its keys.
+            // (AG.19); the warm compiles its keys. Any other level on the
+            // disc, asked for by name (AS.13).
             level::LevelPlugin,
+            level_choice::LevelChoicePlugin { asks: level_asks },
             // The start's pass (AE.25): every pipeline the TV draws
             // Giants with, before the first screen a phone or the setup
             // acts on.
