@@ -323,6 +323,14 @@
 //!   its file gives: a Chompy's `notice player radius` 30) are among its
 //!   variables from the start: `find variable` finds one by name and
 //!   declaration's container, holding the tag's value ([`Program::tags`]).
+//!   A value of literals alone (a roll, an expression of literals) reads as
+//!   it does on a right side, its roll drawn from the session's generator
+//!   when the tag is first found (openspec AS.33: challenge 49's clocks'
+//!   `time` is `random(30)`, 205's elemental wall's `dirt tint` a random
+//!   colour; a reading: whether the original builds a tag's variable, roll
+//!   and all, at the placement's load or at its first find isn't read). A
+//!   value reading a path that names no single object, file variable or
+//!   nothing stops as unsupported.
 //!   A placement with no script has them too, found from any script as
 //!   its table's first entries (AH.21: the loot system's init reads each
 //!   breakable's `archetype ref`, and a breakable runs no script).

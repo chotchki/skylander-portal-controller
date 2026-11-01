@@ -192,3 +192,76 @@ fn a_placements_script_load_reads_0() {
     let halt = vm.tick(id, &mut Bare).unwrap_err();
     assert!(matches!(halt.reason, Reason::UnmodelledMember(_)), "{halt}");
 }
+
+/// A clock placement whose tags are `time` = `value`, found every tick
+/// (filter 1, as challenge 49's clocks find theirs) into `got`.
+fn tagged_clock(value: impl FnOnce(&mut Writer<'_>) -> Location) -> (Arc<Program>, Obj) {
+    let mut clock = None;
+    let (p, obj) = super::init::program_and_objects(|w| {
+        let a = super::init::actor(w);
+        clock = Some(a);
+        let v = value(w);
+        w.tags(a, &[("time", "ValueInfo", INT, v)]);
+        let got = var(w, "got");
+        super::init::script(
+            w,
+            "C:/tfb/Synthetic/Challenge_Clock.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                super::init::behaviour(w, |w| {
+                    let (f, fop) = super::init::find(w, "time", "ValueInfo", INT, 1, &[MY]);
+                    let t = w.rhs(INT, &[El::Local(fop)]);
+                    w.set(&[El::Local(got)], t);
+                    w.close(f);
+                })
+            },
+        );
+    });
+    (p, obj.at(clock.unwrap()))
+}
+
+/// AS.33, challenge 49's clocks on lists built in code: a tag holding a
+/// roll (`random(30)`, under an expression as the disc writes it) reads a
+/// draw of the session's generator taken as the tag is found, as the roll
+/// reads on a right side; one holding an expression of literals its value.
+/// One reading a path stops as unsupported.
+#[test]
+fn a_tag_holding_a_roll_reads_a_draw_as_it_is_found() {
+    let (p, at) = tagged_clock(|w| {
+        let roll = w.literal(INT, 30, true);
+        w.expr(roll, None)
+    });
+    for seed in [5489, 77, 2026] {
+        let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+        let id = vm.add_at(HANDLE, "Challenge_Clock(2)", 0, at);
+        let mut host = Rolling(Generator::seeded(seed));
+        vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+        let first = Generator::seeded(seed).next_u32();
+        assert_eq!(
+            vm.local(id, "got"),
+            random_literal(Value::Int(30), first),
+            "seed {seed}"
+        );
+        // Drawn once, as it's made: a second find reads the same.
+        vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(vm.local(id, "got"), random_literal(Value::Int(30), first));
+    }
+    let (p, at) = tagged_clock(|w| {
+        let (two, three) = (w.int(2), w.int(3));
+        w.expr(two, Some((0, three)))
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add_at(HANDLE, "Challenge_Clock(2)", 0, at);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "got"), Some(Value::Int(5)));
+    let (p, at) = tagged_clock(|w| w.rhs(INT, &[MY, El::Member("system", "script timer")]));
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add_at(HANDLE, "Challenge_Clock(2)", 0, at);
+    let halt = vm.tick(id, &mut Bare).unwrap_err();
+    assert_eq!(
+        halt.reason,
+        Reason::Unsupported("a tag whose value reads a path".into()),
+        "{halt}"
+    );
+}

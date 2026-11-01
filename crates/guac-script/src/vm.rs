@@ -533,6 +533,30 @@ fn tag_names_nothing(program: &Program, o: OperandId) -> bool {
     }
 }
 
+/// Whether a tag's value is literals alone: a literal (a roll included) or
+/// an expression of them, no path step anywhere (openspec AS.33).
+fn of_literals(program: &Program, o: OperandId, depth: u32) -> bool {
+    if depth > MAX_DEPTH {
+        return false;
+    }
+    match program.operands.get(o as usize) {
+        Some(Operand::Path {
+            elems,
+            literal: Some(_),
+            ..
+        }) => elems.is_empty(),
+        Some(Operand::Expr { a: Some(a), op, b }) => {
+            of_literals(program, *a, depth + 1)
+                && match (op, b) {
+                    (None, None) => true,
+                    (Some(_), Some(b)) => of_literals(program, *b, depth + 1),
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
 /// What an embedder runs in a held placement's place during a step's walk
 /// ([`Vm::step_with`]): the VM, the placement and the host.
 pub type Native<'a> = dyn FnMut(&mut Vm, PlacementId, &mut dyn Host) -> Result<(), Halt> + 'a;
@@ -2469,7 +2493,7 @@ impl Vm {
         if let Value::Entity(h) = owner
             && let Some(&pid) = self.handles.get(&h)
         {
-            let cell = self.find_local(pid, name, decl, filter)?;
+            let cell = self.find_local(pid, name, decl, filter, host)?;
             let st = self.op_state.entry(op).or_default();
             st.cached = cell.map(Value::Cell);
             return Ok(cell.is_some());
@@ -2488,7 +2512,7 @@ impl Vm {
             && let Some(obj) = file_obj
             && self.tag(obj, name, decl).is_some()
         {
-            let c = self.tag_cell(obj, name, decl)?;
+            let c = self.tag_cell(obj, name, decl, host)?;
             self.found.insert(key, c);
         }
         let cell = match (filter, self.found.get(&key).copied()) {
@@ -3039,7 +3063,13 @@ impl Vm {
     }
 
     /// A new cell holding the tag `name` `obj`'s file gives it ([`Vm::tag`]).
-    fn tag_cell(&mut self, obj: Obj, name: Sym, decl: Decl) -> Result<u32, Fault> {
+    fn tag_cell(
+        &mut self,
+        obj: Obj,
+        name: Sym,
+        decl: Decl,
+        host: &mut dyn Host,
+    ) -> Result<u32, Fault> {
         let Some(tag) = self.tag(obj, name, decl) else {
             return unsupported("no such tag");
         };
@@ -3062,7 +3092,14 @@ impl Vm {
                         // A tag naming `null` holds nothing: a set
                         // reference to no set (the spike gate's `close_set`).
                         None if tag_names_nothing(&self.program, o) => Value::Null,
-                        None => return unsupported("a tag whose value isn't a literal"),
+                        // A value of literals alone reads as it does on a
+                        // right side, a roll drawn now (openspec AS.33:
+                        // challenge 49's clocks' `random(30)`).
+                        None if of_literals(&self.program, o, 0) => {
+                            let program = Arc::clone(&self.program);
+                            self.rhs(&program, Some(o), host, 0)?
+                        }
+                        None => return unsupported("a tag whose value reads a path"),
                     },
                 },
             },
@@ -3097,6 +3134,7 @@ impl Vm {
         name: Sym,
         decl: Decl,
         filter: u32,
+        host: &mut dyn Host,
     ) -> Result<Option<u32>, Fault> {
         let p = &self.placements[pid as usize];
         let mut existing = p
@@ -3111,7 +3149,7 @@ impl Vm {
             && is_tag
             && let Some(obj) = p.obj
         {
-            let c = self.tag_cell(obj, name, decl)?;
+            let c = self.tag_cell(obj, name, decl, host)?;
             self.placements[pid as usize].locals.insert(name, c);
             existing = Some(c);
         }
