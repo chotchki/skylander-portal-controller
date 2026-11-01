@@ -155,7 +155,7 @@ The HUD needs nothing from the VM's coming work, so it goes first.
 
 ### 11. AP keeps the TV's own screens
 
-The portal UI's own macros (`PortalUI_Macros.ai`, 3,699 ops: the portal's errors, the join prompt, the restart prompt) stay unrun, the portal's alerts being AP's. The defeat screen's Restart Chapter is the one unclear case: the original draws it from the same file (`Portal - Show/Hide Restart Prompt`, `Portal - Restart Chapter Confirm`), and the TV draws it as AP's modal ([`defeat.rs`](../../../crates/guacamole/src/defeat.rs)); AT.20 asks chotchki.
+The portal UI's own macros (`PortalUI_Macros.ai`, 3,699 ops: the portal's errors, the join prompt, the restart prompt) stay unrun, the portal's alerts being AP's. The defeat screen's Restart Chapter is the exception: the original draws it from the same file (`Portal - Show/Hide Restart Prompt`, `Portal - Restart Chapter Confirm`), and chotchki chose the original's (AT.20, 2026-10-31), so AT.32 runs those macros and deletes AP's modal ([`defeat.rs`](../../../crates/guacamole/src/defeat.rs)'s screen).
 
 ### 12. The extract
 
@@ -181,6 +181,6 @@ One-way doors: none. The extract is a cache, and the new parts resume alone.
 
 ## Open Questions
 
-1. **The defeat screen's Restart Chapter**: the original's portal UI (AT runs it) or AP's modal (it stays)? Until chotchki answers, it stays AP's (AT.20).
+1. ~~**The defeat screen's Restart Chapter**: the original's portal UI (AT runs it) or AP's modal (it stays)?~~ Answered 2026-10-31: the original's (AT.20); AT.32 moves it.
 2. **The pause menu's Quit and Return to Village**: the original leaves the level for the front end or the hub, neither of which guacamole has. Recommendation: Quit leaves the level to the portal view (what leaving the level does today), Return to Village stays hidden until the hub exists; asked at AT.16.
 3. **A window that isn't 16:9**: the Mac's window can be any shape. Recommendation: the interface's space keeps the original's aspect, letterboxed in the window, as the original's frame is 16:9; decided at AT.12 from AT.3's mapping.
