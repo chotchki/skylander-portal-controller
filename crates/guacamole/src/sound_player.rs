@@ -88,11 +88,13 @@ impl SoundOut {
 /// The run changed (a level's load, a reinstall: openspec AR.18): every
 /// file let go but those `held` names, which a play of the run now going
 /// still sounds; a file reading for no one is dropped with its read, and
-/// one that didn't read is tried again when a play next asks for it. A
-/// voice holds its own bytes, so one still ringing plays on whatever goes.
+/// one that didn't read goes whoever holds it, so a play asking for it
+/// tries it again. A voice holds its own bytes, so one still ringing plays
+/// on whatever goes.
 fn release(out: &mut SoundOut, held: &HashSet<&str>) -> usize {
     let before = out.files.len();
-    out.files.retain(|rel, _| held.contains(rel.as_str()));
+    out.files
+        .retain(|rel, f| !matches!(f, File::Failed) && held.contains(rel.as_str()));
     let gone = before - out.files.len();
     out.released += gone;
     gone
@@ -852,6 +854,49 @@ mod tests {
         assert!(held_files(&app).is_empty());
         let report = app.world().resource::<SoundReport>().clone();
         assert_eq!((report.files, report.released), (0, 2));
+    }
+
+    /// AR.18: a file that didn't read is read again in the next run, even
+    /// when a play of that run asks for it from its first frame (the first
+    /// run's failure isn't carried into it).
+    #[test]
+    fn a_file_that_didnt_read_is_tried_again_in_the_next_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, actor) = tv(tmp.path().to_path_buf(), false, true);
+        let other = tmp.path().join(OTHER_FILE);
+        let bytes = std::fs::read(&other).unwrap();
+        std::fs::remove_file(&other).unwrap();
+        start(&mut app, actor, OTHER);
+        let failed = |app: &App| {
+            matches!(
+                app.world().resource::<SoundOut>().files.get(OTHER_FILE),
+                Some(File::Failed)
+            )
+        };
+        for _ in 0..2000 {
+            app.update();
+            if failed(&app) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(failed(&app), "the missing file's read failed");
+        assert!(voices(&mut app).is_empty());
+
+        // The file there again, a new run whose first play is its sound's.
+        std::fs::write(&other, bytes).unwrap();
+        let (mut next, actor) = world();
+        next.play_sound_on(
+            Obj {
+                unit: LEVEL,
+                index: OTHER,
+            },
+            actor,
+        )
+        .expect("it plays");
+        app.insert_resource(next);
+        until_voiced(&mut app, 1);
+        assert!(held_bytes(&app, OTHER_FILE).is_some());
     }
 
     fn play_at(at: Option<Vec3>, flags: u32, pan: f32) -> SoundPlay {

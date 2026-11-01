@@ -728,7 +728,6 @@ pub fn run(
         took_s = intros.took.as_secs_f64(),
         "intros converted"
     );
-    logged("intros converted");
     Ok(Ready {
         library: IntroLibrary {
             dir: opened.dir.path().to_path_buf(),
@@ -737,19 +736,6 @@ pub fn run(
         ran: true,
         took: started.elapsed(),
     })
-}
-
-#[cfg(test)]
-thread_local! {
-    /// The stage lines this thread logged, in order (AT.31's test).
-    static LOGGED: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Notes that `line` went to the log: the tests' record of when.
-fn logged(line: &'static str) {
-    #[cfg(test)]
-    LOGGED.with(|l| l.borrow_mut().push(line));
-    let _ = line;
 }
 
 /// What a stage did, said the moment it ends (openspec AT.26, AT.31): what
@@ -769,7 +755,6 @@ fn log_end(end: &StageEnd) {
                 took_s = r.took.as_secs_f64(),
                 "roster written"
             );
-            logged("roster written");
         }
         StageEnd::Progression(p) => match &p.progression {
             Ok(t) => {
@@ -784,7 +769,6 @@ fn log_end(end: &StageEnd) {
                     took_s = p.took.as_secs_f64(),
                     "progression written"
                 );
-                logged("progression written");
             }
             Err(why) => warn!(
                 "the progression tables didn't extract; the next start tries them again: {why}"
@@ -804,7 +788,6 @@ fn log_end(end: &StageEnd) {
                 took_s = m.took.as_secs_f64(),
                 "models written"
             );
-            logged("models written");
             for f in &m.failed {
                 warn!(load_file = %f.load_file, reason = %f.reason, "a model didn't extract; its figures keep their portraits");
             }
@@ -823,7 +806,6 @@ fn log_end(end: &StageEnd) {
                 took_s = p.took.as_secs_f64(),
                 "palettes written"
             );
-            logged("palettes written");
         }
         StageEnd::Level(l) => {
             info!(
@@ -842,7 +824,6 @@ fn log_end(end: &StageEnd) {
                 took_s = l.took.as_secs_f64(),
                 "level written"
             );
-            logged("level written");
             for f in &l.failed {
                 warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
             }
@@ -861,7 +842,6 @@ fn log_end(end: &StageEnd) {
                 took_s = sc.took.as_secs_f64(),
                 "the fight's scripts written"
             );
-            logged("the fight's scripts written");
             for f in &sc.failed {
                 warn!(part = %f.part, archive = %f.archive, reason = %f.reason, "a script part didn't extract; the next start tries it again");
             }
@@ -878,7 +858,6 @@ fn log_end(end: &StageEnd) {
                 took_s = p.took.as_secs_f64(),
                 "the attacks' emitters written"
             );
-            logged("the attacks' emitters written");
             if let Some((archive, reason)) = &p.failed {
                 warn!(%archive, %reason, "the emitters didn't extract; the next start tries them again");
             }
@@ -896,7 +875,6 @@ fn log_end(end: &StageEnd) {
                 took_s = sp.took.as_secs_f64(),
                 "the level's sprites written"
             );
-            logged("the level's sprites written");
             for f in &sp.failed {
                 warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level's sprites didn't extract; the next start tries them again");
             }
@@ -917,7 +895,6 @@ fn log_end(end: &StageEnd) {
                 took_s = so.took.as_secs_f64(),
                 "the sounds written"
             );
-            logged("the sounds written");
             if let Some((archive, reason)) = &so.failed {
                 warn!(%archive, %reason, "the sounds didn't extract; the next start tries them again");
             }
@@ -939,7 +916,6 @@ fn log_end(end: &StageEnd) {
                 took_s = i.took.as_secs_f64(),
                 "the interface written"
             );
-            logged("the interface written");
             if let Some((archive, reason)) = &i.failed {
                 warn!(%archive, %reason, "the interface didn't extract; the next start tries it again");
             }
@@ -2207,13 +2183,87 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         assert_eq!(sounds_feed.0.try_iter().count(), 0);
     }
 
+    /// The lines the TV's log takes from this thread (AT.31's test): the
+    /// message of every event at info or above, off a global recorder
+    /// installed once. A scoped subscriber per test dropped events at random
+    /// under the parallel tests (each callsite's interest is cached across
+    /// every dispatcher); with one global dispatcher it never changes.
+    mod log_lines {
+        use std::cell::RefCell;
+        use std::fmt::Write as _;
+        use std::sync::Once;
+
+        use tracing::field::{Field, Visit};
+        use tracing::{Event, Level, Subscriber};
+        use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+        thread_local! {
+            static LINES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        }
+
+        struct Message(String);
+
+        impl Visit for Message {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    let _ = write!(self.0, "{value:?}");
+                }
+            }
+        }
+
+        struct Recorder;
+
+        impl<S: Subscriber> Layer<S> for Recorder {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                // More verbose levels are greater.
+                if *event.metadata().level() > Level::INFO {
+                    return;
+                }
+                let mut m = Message(String::new());
+                event.record(&mut m);
+                LINES.with(|l| l.borrow_mut().push(m.0));
+            }
+        }
+
+        /// This thread's record emptied, the recorder installed if it isn't.
+        pub(super) fn start() {
+            static INSTALL: Once = Once::new();
+            INSTALL.call_once(|| {
+                tracing::subscriber::set_global_default(
+                    tracing_subscriber::registry().with(Recorder),
+                )
+                .expect("the recorder is the tests' one global subscriber");
+            });
+            LINES.with(|l| l.borrow_mut().clear());
+        }
+
+        /// What this thread has logged since [`start`], in order.
+        pub(super) fn taken() -> Vec<String> {
+            LINES.with(|l| l.borrow().clone())
+        }
+    }
+
+    /// Each stage's line, the order the run ends them in, and the intros'.
+    const STAGE_LINES: [&str; 11] = [
+        "roster written",
+        "progression written",
+        "models written",
+        "palettes written",
+        "level written",
+        "the fight's scripts written",
+        "the attacks' emitters written",
+        "the level's sprites written",
+        "the sounds written",
+        "the interface written",
+        "intros converted",
+    ];
+
     /// AT.31: each stage's line goes to the log as the stage ends, before
     /// the next stage's first status (so a sounds part's line, a failed
     /// one's warning with it, is out before the interface starts, minutes
     /// before the intros end on a first run), and the run's end logs none of
-    /// them again: each once. Read off [`LOGGED`], this thread's record of
-    /// the lines: a scoped subscriber drops events at random under the
-    /// parallel tests (tracing's shared interest cache).
+    /// them again: each once. Read off the events themselves
+    /// ([`log_lines`]), so a line not logged fails it.
     #[test]
     fn each_stages_line_is_logged_as_it_ends_and_once() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2221,20 +2271,23 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         let known = known_for(&dump);
         let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
         let job = job(&tmp.path().join("extract"), Some(ffmpeg));
-        let lines = || LOGGED.with(|l| l.borrow().clone());
-        LOGGED.with(|l| l.borrow_mut().clear());
+        log_lines::start();
         // Each status with the lines logged when it came.
         let seen = Mutex::new(Vec::new());
         let ready = run(&dump, &job, &known, &|e| {
-            seen.lock().unwrap().push((step(&e).kind(), lines()));
+            seen.lock()
+                .unwrap()
+                .push((step(&e).kind(), log_lines::taken()));
         })
         .unwrap();
         assert!(ready.ran);
         let seen = seen.into_inner().unwrap();
+        let has = |lines: &[String], line: &str| lines.iter().any(|l| l == line);
         let at_first =
-            |kind: &str| -> &Vec<&str> { &seen.iter().find(|(k, _)| *k == kind).unwrap().1 };
-        let at_last =
-            |kind: &str| -> &Vec<&str> { &seen.iter().rev().find(|(k, _)| *k == kind).unwrap().1 };
+            |kind: &str| -> &Vec<String> { &seen.iter().find(|(k, _)| *k == kind).unwrap().1 };
+        let at_last = |kind: &str| -> &Vec<String> {
+            &seen.iter().rev().find(|(k, _)| *k == kind).unwrap().1
+        };
         // Out after the stage's own last status, by the next one's first.
         for (line, own, next) in [
             ("roster written", "Roster", "Models"),
@@ -2246,31 +2299,52 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             ("the sounds written", "Sounds", "Interface"),
             ("the interface written", "Interface", "Indexing"),
         ] {
+            assert!(!has(at_last(own), line), "{line} out by the last {own}");
             assert!(
-                !at_last(own).contains(&line),
-                "{line} out by the last {own}"
-            );
-            assert!(
-                at_first(next).contains(&line),
+                has(at_first(next), line),
                 "{line} not out by the first {next}: {:?}",
                 at_first(next)
             );
         }
+        let stage_lines: Vec<String> = log_lines::taken()
+            .into_iter()
+            .filter(|l| STAGE_LINES.contains(&l.as_str()))
+            .collect();
+        assert_eq!(stage_lines, STAGE_LINES);
+    }
+
+    /// AT.31: a sounds part that doesn't read is warned, with the archive
+    /// and why, by the interface's first status, not when the run returns
+    /// after the intros; its line is still logged once.
+    #[test]
+    fn a_sounds_part_that_doesnt_read_is_warned_as_its_stage_ends() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        fs::write(dump.join("PS3_GAME/USRDIR/permanent/global.arc"), b"nope").unwrap();
+        let known = known_for(&dump);
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        let job = job(&tmp.path().join("extract"), Some(ffmpeg));
+        log_lines::start();
+        let seen = Mutex::new(Vec::new());
+        let ready = run(&dump, &job, &known, &|e| {
+            seen.lock()
+                .unwrap()
+                .push((step(&e).kind(), log_lines::taken()));
+        })
+        .unwrap();
+        assert!(ready.ran);
+        let seen = seen.into_inner().unwrap();
+        let warning = "the sounds didn't extract; the next start tries them again";
+        let by_interface = &seen.iter().find(|(k, _)| *k == "Interface").unwrap().1;
+        assert!(
+            by_interface.iter().any(|l| l == warning),
+            "{by_interface:?}"
+        );
+        let lines = log_lines::taken();
+        assert_eq!(lines.iter().filter(|l| *l == warning).count(), 1);
         assert_eq!(
-            lines(),
-            [
-                "roster written",
-                "progression written",
-                "models written",
-                "palettes written",
-                "level written",
-                "the fight's scripts written",
-                "the attacks' emitters written",
-                "the level's sprites written",
-                "the sounds written",
-                "the interface written",
-                "intros converted",
-            ]
+            lines.iter().filter(|l| *l == "the sounds written").count(),
+            1
         );
     }
 
