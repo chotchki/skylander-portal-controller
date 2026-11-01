@@ -164,6 +164,17 @@ fn a_frame_that_changes_the_stream_is_refused() {
     ));
     let e = remux(&data, 2 * 1152).unwrap_err();
     assert_eq!((e.field, e.offset), ("frame_header", 1044));
+    // So is a change of channel mode, as the remux's docs say.
+    let mut mono = frame(&giants(false), 1);
+    mono.extend(frame(
+        &Header {
+            mode: Mode::Mono,
+            ..giants(false)
+        },
+        2,
+    ));
+    let e = remux(&mono, 2 * 1152).unwrap_err();
+    assert_eq!((e.field, e.offset), ("frame_header", 1044));
     // A bitrate change is allowed: variable bitrate streams are MP3s too.
     let mut vbr = frame(&giants(false), 1);
     vbr.extend(frame(

@@ -182,6 +182,37 @@ fn a_second_run_keeps_the_part() {
     assert_eq!(again.files.kept, 4 + 5);
 }
 
+/// An audio file damaged at its own size (one byte flipped) no longer
+/// hashes to its record, so the part isn't held and the next run writes
+/// that file again, the rest kept; the run after keeps the part. Kept by
+/// its size alone, it would be kept damaged and the part read again at
+/// every start (the AR review found it so on the real dump).
+#[test]
+fn an_audio_file_damaged_at_its_size_is_written_again() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let damaged = audio_outputs(&opened.dir)[0].clone();
+    let path = opened.dir.path().join(&damaged);
+    let mut bytes = fs::read(&path).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xFF;
+    fs::write(&path, &bytes).unwrap();
+    assert!(!opened.dir.output_done(&damaged).unwrap());
+
+    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    assert!(st.read, "a damaged file means the part isn't held");
+    assert_eq!(
+        (st.audio_files.written, st.audio_files.kept),
+        (1, 4),
+        "only the damaged file"
+    );
+    assert!(opened.dir.output_done(&damaged).unwrap());
+    let again = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    assert!(again.kept && !again.read);
+}
+
 #[test]
 fn an_extract_from_before_the_part_reads_it_alone_keeping_audio_already_in() {
     let s = setup();

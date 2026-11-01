@@ -46,13 +46,19 @@
 //!   listener modes are camera, player or custom, and nothing in chapter 1's
 //!   scripts sets them). A sound that doesn't attenuate plays at its volume
 //!   wherever it is.
-//! - **3D**: placed left to right by where its actor stands to the listener;
-//!   a sound that isn't plays centred, panned by its pan percent
-//!   (**hypothesis**: -100 left to 100 right).
+//! - **3D**: placed left to right by where its actor stands to the listener
+//!   (**hypothesis**, from the name); a sound that isn't plays centred,
+//!   panned by its pan percent (**hypothesis**: -100 left to 100 right;
+//!   every sound in chapter 1's part stores 0).
 //! - **Looping**: it plays again from its start when it ends, until a
-//!   script stops it or its actor goes. A recording with a loop chunk loops
-//!   between its points; none of chapter 1's has one, so a track loops its
-//!   whole recording (AR.4).
+//!   script stops it or its actor goes (**hypothesis**: the actor's going
+//!   isn't read). A recording with a loop chunk loops between its points
+//!   (**hypothesis**: none of chapter 1's has one to check it on), so a
+//!   track loops its whole recording (AR.4). As remuxed that loop isn't
+//!   seamless: a plain decode of `mu_213_explore` (ffmpeg, AR's review)
+//!   gives its 6,197,760 samples with the first 277 silent and the last at
+//!   full level, and its build-measured length is 794 samples shorter
+//!   (AR.11 decides the seam).
 //! - **Allow restart**: starting it while it plays starts it over; without
 //!   it, a start while it plays is ignored (**hypothesis**, from the name;
 //!   `sequence.allow restart` is a clip's switch too).
@@ -68,6 +74,9 @@
 //!   `Sound - Play From Set` reads the limits before it plays.
 //! - **Rumble duration**: the recording's length as the build measured it,
 //!   on every sound read (the music macros read it as a track's length).
+//!   The MPEG frames run past it: in chapter 1's part by 0 to 3.23 s, a
+//!   median of 675 samples, 991 of the 7,904 recordings by over 0.1 s (AR's
+//!   review), so a play's end and this length aren't the same moment.
 //! - **Reverb, filter, sample-rate reduction**: carried, applied by nothing
 //!   (AR's non-goals).
 //! - **From controller**: carried; what it does isn't read.

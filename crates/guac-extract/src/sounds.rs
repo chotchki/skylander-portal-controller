@@ -349,17 +349,19 @@ pub fn sound_stage(dir: &mut IdentityDir, roster: &Roster, ir: IrFormat) -> Resu
             return Ok(stage);
         }
     };
-    // The audio already in, by path: recorded and on disk at its size.
+    // The audio already in, by path: recorded and on disk with the bytes its
+    // record hashes, as `put` keeps any other output. By size alone, a file
+    // damaged at its own size would be kept, and the part, never held with
+    // it, read again at every start.
     let mut done: HashSet<String> = dir
         .manifest()
         .outputs
         .iter()
         .filter(|o| o.path.starts_with(AUDIO_DIR))
         .filter(|o| {
-            dir.path()
-                .join(&o.path)
-                .metadata()
-                .is_ok_and(|m| m.len() == o.size)
+            std::fs::read(dir.path().join(&o.path)).is_ok_and(|b| {
+                b.len() as u64 == o.size && sha2::Sha256::digest(&b)[..] == o.sha256.0[..]
+            })
         })
         .map(|o| o.path.clone())
         .collect();

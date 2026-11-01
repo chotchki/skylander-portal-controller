@@ -63,6 +63,40 @@ pub fn is_ppc64_be_elf(head: &[u8]) -> bool {
         && u16::from_be_bytes([head[18], head[19]]) == EM_PPC64
 }
 
+/// Not a disc format either: the sounds part's audio (AR.5) is the disc's
+/// MPEG frames as `.mp3` with no tag, so nothing but the frames says what
+/// it is.
+pub const BARE_LAYER3: &str = "bare MPEG Layer III frames (the extract's sounds, AR.5)";
+
+/// A Layer III frame header at the first byte and another where that frame
+/// ends (zeros between skipped, as a bank's sample has them), of the same
+/// version and rate; a first frame running past `head` counts on its header
+/// alone. One header followed by anything else isn't flagged: two in step
+/// are what a two-byte sync word alone can't promise.
+pub fn is_bare_layer3(head: &[u8]) -> bool {
+    use guac_formats::mpeg::{Header, Layer};
+    let word = |at: usize| {
+        head.get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let Some(Ok(first)) = word(0).map(Header::decode) else {
+        return false;
+    };
+    if first.layer != Layer::Three {
+        return false;
+    }
+    let end = first.len();
+    if end > head.len() {
+        return true;
+    }
+    let next = end + head[end..].iter().take_while(|b| **b == 0).count();
+    word(next).map(Header::decode).is_some_and(|h| {
+        h.is_ok_and(|h| {
+            h.layer == Layer::Three && (h.version, h.rate) == (first.version, first.rate)
+        })
+    })
+}
+
 /// The game format `head` starts with, or `None`. What the guard flags.
 pub fn classify(head: &[u8]) -> Option<&'static str> {
     if let Some((_, what)) = GAME_MAGICS
@@ -71,7 +105,10 @@ pub fn classify(head: &[u8]) -> Option<&'static str> {
     {
         return Some(what);
     }
-    is_ppc64_be_elf(head).then_some(PPC64_ELF)
+    if is_ppc64_be_elf(head) {
+        return Some(PPC64_ELF);
+    }
+    is_bare_layer3(head).then_some(BARE_LAYER3)
 }
 
 /// A census-accepted kind the guard leaves alone: generic formats the repo
@@ -240,6 +277,24 @@ mod tests {
         for (magic, what) in GAME_MAGICS {
             assert_eq!(sniff(&starting_with(magic), "x.bin"), Sniff::Game(what));
         }
+    }
+
+    #[test]
+    fn bare_layer3_frames_are_game_and_a_lone_header_isnt() {
+        use guac_formats::mpeg::builder::stream;
+        // The sounds part's `.mp3` and a bank's sample (zeros between frames).
+        assert_eq!(sniff(&stream(3, 0), "a.mp3"), Sniff::Game(BARE_LAYER3));
+        assert_eq!(classify(&stream(3, 3)), Some(BARE_LAYER3));
+        // A head that ends inside the first frame: its header alone.
+        assert_eq!(classify(&stream(1, 0)[..64]), Some(BARE_LAYER3));
+        // One frame, then zeros to the end or something else: not flagged.
+        let mut lone = stream(1, 0);
+        lone.extend([0u8; 16]);
+        assert_eq!(classify(&lone), None);
+        lone.extend(b"text");
+        assert_eq!(classify(&lone), None);
+        // A Layer I header isn't Layer III (a UTF-16 BOM decodes as one).
+        assert_eq!(classify(b"\xff\xfe\x90\x00 and more bytes"), None);
     }
 
     #[test]

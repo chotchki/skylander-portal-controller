@@ -2674,7 +2674,9 @@ disassembler output (Ghidra projects included), no RPCS3 memory dumps, no RSX ca
   staged disc image costs that, not its size. Three of the rule's items hide their magic: RPCS3 writes RSX
   captures gzipped (`.rrc.gz`) and savestates zstd-compressed (`.SAVESTAT.zst`), and a decrypted EBOOT is
   a plain big-endian PPC64 ELF. So a gzip or zstd blob is inflated and checked again, up to three layers
-  deep, and a 64-bit big-endian ELF with machine 21 fails too. Of its 17 tests one scans this repo and
+  deep, and a 64-bit big-endian ELF with machine 21 fails too, as does the sounds part's audio (AR.5): bare
+  MPEG Layer III frames with no tag, caught by two frame headers from the first byte (zeros between them
+  skipped, as a bank's sample has them). Of its 19 tests one scans this repo and
   the rest build their fixtures in code in throwaway git repos. Fixtures everywhere else are built in code
   at test time too, so none ever trips it, and the e2e intro is ffmpeg's `testsrc` made at run time.
   `.githooks/pre-push` runs `cargo test --workspace` on every push from the dev clone. The Windows CI

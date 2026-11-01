@@ -128,6 +128,11 @@ fn counts_and_sizes_past_the_input_are_refused_by_name() {
     let mut b = w.bytes.clone();
     put_u32(&mut b, 0x10, 1 << 30);
     assert_eq!(refusal(&b).0, "name_table");
+    // A name table too short to hold an offset for each sample, refused
+    // before an offset is read out of what follows it.
+    let mut b = w.bytes.clone();
+    put_u32(&mut b, 0x10, 4);
+    assert_eq!(refusal(&b).0, "name_table_size");
     // A version nobody wrote.
     let mut b = w.bytes.clone();
     put_u32(&mut b, 4, 2);
