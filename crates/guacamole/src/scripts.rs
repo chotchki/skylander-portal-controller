@@ -1841,7 +1841,8 @@ pub fn is_camera_script(path: &str) -> bool {
 /// combat target), AG.60's start scripts on the props and AG.28's camera
 /// volumes and activator, the level-up's and the death actor's
 /// ([`EFFECT_SCRIPTS`], AH.39), the first fight's placements left inert
-/// until AH.25's entry brings them.
+/// until AH.25's entry brings them; AS.11's every-level table
+/// ([`members::LEVELS`], openspec AS.37) registered with the rest.
 pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
@@ -1852,6 +1853,9 @@ pub fn smash_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::ROUTE);
     // And the level-up's flourish (openspec AH.39).
     members::register(&mut c.members, members::LEVEL_UP);
+    // What AS.11's every-level run reaches past those (openspec AS.37): a
+    // table the VM lane grows reaches the TV only once it's named here.
+    members::register(&mut c.members, members::LEVELS);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -4167,6 +4171,17 @@ mod tests {
                 c.members
                     .get(MemberId::named(r.namespace, r.name))
                     .is_some(),
+                "{}",
+                r.path()
+            );
+        }
+        // AS.11's every-level table (openspec AS.37): its host's and cells
+        // registered, as the gap test registers them.
+        for r in members::LEVELS {
+            let id = MemberId::named(r.namespace, r.name);
+            assert_eq!(
+                c.members.get(id).is_some(),
+                r.keeper != members::Keeper::Vm,
                 "{}",
                 r.path()
             );

@@ -130,6 +130,9 @@ pub(crate) enum Member {
     /// `sequence.allow restart` (openspec AH.184): a clip's, which a copy
     /// started from it takes, or a sequence's own.
     AllowRestart,
+    /// `clonedsequence.clones` (openspec AS.37): a template's copies
+    /// playing, on any actor, read whole.
+    SeqClones,
     // AH.49's: a clip's or a sequence's animation info.
     /// `animationinfo.blend percent`: the weight the engine blends by.
     Blend,
@@ -411,6 +414,7 @@ impl Member {
         add("sequence", "looping", Member::SeqLooping);
         add("sequence", "raw duration", Member::SeqRawDuration);
         add("sequence", "allow restart", Member::AllowRestart);
+        add("clonedsequence", "clones", Member::SeqClones);
         add("animationinfo", "blend percent", Member::Blend);
         add("animationinfo", "is layered", Member::IsLayered);
         add("animationinfo", "type", Member::ClipKind);
@@ -1499,6 +1503,7 @@ impl ScriptWorld {
             | Member::Clones
             | Member::PlayingAnimations
             | Member::PlayingSounds
+            | Member::SeqClones
             | Member::Palette
             | Member::EnvironmentContacts
             | Member::Waypoints
@@ -2050,6 +2055,32 @@ impl ScriptWorld {
                 v.into_iter().map(|o| self.objs.value(o)).collect()
             }
             Member::PlayingSounds => Vec::new(),
+            // A template's copies still playing, on whatever actor, in the
+            // order started (openspec AS.37): a clip's that its starts made,
+            // a sound's while one plays; a copy named stands for its
+            // template.
+            Member::SeqClones => {
+                let template = match self.object(recv) {
+                    Some(Object::Sequence(i)) => {
+                        self.sequences
+                            .get(i as usize)
+                            .ok_or(HostFault::Nothing)?
+                            .template
+                    }
+                    _ => recv.ok_or(HostFault::Nothing)?,
+                };
+                let copies: Vec<u32> = self
+                    .sequences
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.template == template && s.plays())
+                    .map(|(i, _)| i as u32)
+                    .collect();
+                copies
+                    .into_iter()
+                    .map(|i| self.objs.value(Object::Sequence(i)))
+                    .collect()
+            }
             // The level's and the props' contacts, not another actor's.
             Member::EnvironmentContacts => {
                 let Some(Object::Facet(h, Facet::Collision)) = self.object(recv) else {
@@ -5217,6 +5248,58 @@ mod fight_tests {
         assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
         let s = w.sequences().last().unwrap();
         assert_eq!((s.template, s.length), (clips[3], 0.4));
+    }
+
+    /// AS.37: a clip's copies, as `clonedsequence.clones` reads them off
+    /// the clip: one on each actor its starts played it on, in the order
+    /// started, read off a copy too; the one that ends leaves the set, a
+    /// stopped one with it; none of another clip's.
+    #[test]
+    fn a_clips_copies_read_while_they_play_and_go_once_they_end() {
+        let mut e = pit();
+        let mut w = world();
+        let template = Obj { unit: 4, index: 77 };
+        w.set_palette(template, vec![0.5, 1.0]);
+        for (h, x) in [(C1, 0.0), (C2, 1.0), (C3, 2.0)] {
+            let mut c = chompy(Vec3::new(x, 0.0, 0.0), 0.0);
+            c.obj = Some(template);
+            w.actors.insert(h, c);
+        }
+        let short = w.objs.value(Object::Clip { template, slot: 0 });
+        let long = w.objs.value(Object::Clip { template, slot: 1 });
+        let start = |w: &mut ScriptWorld, e: &mut Pit, on: Handle, clip: Value| {
+            let call = op(Class::StartSequence, on, vec![("_LHS", Some(clip))], vec![]);
+            match ask(w, e, &call) {
+                Answer::Run { result, .. } => result.unwrap(),
+                other => panic!("{other:?}"),
+            }
+        };
+        let clones = |w: &mut ScriptWorld, e: &mut Pit, of: Value| {
+            let at = Access {
+                placement: 1,
+                receiver: Some(of),
+                member: MemberId::named("clonedsequence", "clones"),
+                other_point: None,
+                via: None,
+                op: None,
+            };
+            w.elements(&at, e).unwrap()
+        };
+        let on_c1 = start(&mut w, &mut e, C1, short);
+        let on_c2 = start(&mut w, &mut e, C2, long);
+        let on_c3 = start(&mut w, &mut e, C3, short);
+        assert_eq!(clones(&mut w, &mut e, short), vec![on_c1, on_c3]);
+        assert_eq!(clones(&mut w, &mut e, on_c3), vec![on_c1, on_c3]);
+        assert_eq!(clones(&mut w, &mut e, long), vec![on_c2]);
+        // Half a second on, the short clip's copies have played out.
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        assert_eq!(clones(&mut w, &mut e, short), Vec::<Value>::new());
+        assert_eq!(clones(&mut w, &mut e, long), vec![on_c2]);
+        let stop = op(Class::StopSequence, C2, vec![("_LHS", Some(on_c2))], vec![]);
+        ask(&mut w, &mut e, &stop);
+        assert_eq!(clones(&mut w, &mut e, long), Vec::<Value>::new());
     }
 
     #[test]
