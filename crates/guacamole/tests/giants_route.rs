@@ -1304,30 +1304,17 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
         reached.len()
     );
     // AT.9: the interface's members on the model through the route and
-    // the fight with nothing asked of what holds no sprite, and a bite's
-    // number (each hurt clones `Damage_HealthIcon`) taken off with its
-    // bite: none of them awake once the fight is over.
+    // the fight, strict, with nothing asked of what holds no sprite and no
+    // member the keeper doesn't answer (a bite's number coming and going is
+    // `giants_chompy`'s, where Chompies bite).
     let k = d.run.world.interface().expect("the run holds the model");
     assert!(k.strays().is_empty(), "strays: {:?}", k.strays());
     assert!(k.unknown().is_empty(), "unknown: {:?}", k.unknown());
-    let m = k.model();
-    let numbers = |ids: &[guac_interface::SpriteId]| {
-        ids.iter()
-            .filter(|&&id| {
-                let s = m.sprite(id);
-                s.name == "Damage_HealthIcon"
-                    && s.cloned_from != guac_interface::sprite::Source::None
-            })
-            .count()
-    };
-    let (awake, gone) = (numbers(m.active()), numbers(m.removed()));
     println!(
-        "interface: {} instances awake, {} removed; a bite's number: {gone} taken off, {awake} awake",
+        "interface: {} instances awake, {} sprites taken off",
         k.instances().len(),
-        m.removed().len()
+        k.model().removed().len()
     );
-    assert!(gone > 0, "the fight hurt something");
-    assert_eq!(awake, 0, "a bite's number left over");
     // A dev aid: `AH28_MEMBERS_OUT=<file outside the tree>` writes every
     // member reached by name.
     if let Ok(out) = std::env::var("AH28_MEMBERS_OUT") {

@@ -1883,7 +1883,19 @@ The plan the crates serve:
   last frame dropped), no ffmpeg: the `sounds` part (AR.5) holds, for `global.bld`, the 67 modelled
   characters and level 213, every sound and data info as IR (`sounds/<stem>.<ron|postcard>`) and each
   bank as `audio/sounds/<sha256 prefix>.mp3`, English voices only, a bank two archives share one file:
-  5,875 files, 504.8 MiB (492.9 MiB audio), 46 s; `guac-sound` looks a script's sound up in it. Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
+  5,875 files, 504.8 MiB (492.9 MiB audio), 46 s; `guac-sound` looks a script's sound up in it. The
+  interface (AT.8) is an extract-wide `interface` part (`global.bld`, `bootstrap.bld`, every character
+  archive with its `.arc`'s upgrade images, the 16 menu archives) and a per-level `sprites` part, each
+  archive's templates whole, its fonts with their glyphs and its English strings with their settings, in
+  files named for the record's shape (`interface/<stem>.v2.<ron|postcard>`, a level's `sprites.v2.*`):
+  `guac_ir::interface::RECORD` is 2 (AT.27 gave each string its flags and digits, AT.25 each template its
+  two matrices), the manifest's currency check asks every recorded file to carry it, and an extract
+  holding another shape's names reads those two parts again and nothing else, `IR_VERSION` and the
+  layout unchanged. The model stage is a part of its own as well (AT.30: `models`, its record
+  `ir/models.<ron|postcard>` with every failure and unsettled hero), so a start that isn't current for
+  another part keeps the models without opening an archive (2.8 s to chapter 1's hand-off against 13.4 s).
+  What a template's fields mean on screen, orientation, flips, clipping and the blends among them, is
+  `guac-interface`'s (AT.28). Bink 1 → ffmpeg → H.264 Constrained Baseline in MP4
   plus an MP3 of the voice track (AB.7's pick, below). Logic data (scenes, collision, tfbScript graphs,
   tuning, localization) → IR. Content-hash dedupe (Giants is more than half duplicate bytes by name).
 - ffmpeg is a tool the user installs, found at extract time and never needed after; bundling it waits
@@ -2580,6 +2592,51 @@ design decision 14) draw a placed character's own model in its bezel's plate, wh
 
 What only the TV at couch distance can judge (the titles and the 24 px floor at 10 ft, the focus glow,
 the drift) is on the backlog's TV pass line.
+
+## The original's interface
+
+Verdict (AT, decision sixth batch: "ui, run the originals"): the HUD, the menus, dialogue and hints come
+from the original's interface scripts running on the VM, their sprites kept by a pure model and drawn
+through Bevy's UI; the TV's own screens (setup, the portal's alerts, the cards) stay The TV's UI's.
+[`at-original-interface`](../../openspec/changes/at-original-interface/design.md) owns the plan; what
+each member does is [`guac-interface`](../../crates/guac-interface/src/lib.rs)'s crate docs, read off the
+EBOOT by aj-vm's method and written there before the code.
+
+- **The model** (`guac-interface`, pure, AT.4-AT.7, AT.25-AT.29): sprites made from the disc's
+  templates, their tree, every one of the 64 interface members' get, set and reset, the strings and the
+  bitmap font's measure, the layout and a draw list. A unit is 1.5 frame pixels from (64, 36), the
+  mapping AT.3 measured on AC.13's captures, which falls out of the tree once the scripts build it.
+- **The members' keeper** (AT.9): `guac-script`'s registry has a keeper beside the host's, the cells and
+  the VM's, `members::INTERFACE` (the 64, typed as aj-vm's live table types them, 31 of them cells or
+  host members before) and the viewport's `title safe zone`. A run registers them only when its world
+  holds a model; without one they stay the cells they were. guacamole's host hands them to
+  `guac_interface::Keeper`, which answers a sprite's members on the sprite its receiver names, a sprite's
+  scale and turns and an initial matrix's turns as objects of its own, and never stops a script: a
+  member asked of what holds no sprite, or one it doesn't answer on its own objects, reads as a path
+  through nothing and is counted, so a run's test names any. A clone of a sprite template is an
+  instance, not an actor; a remove takes it off. The string converter's `value set` and the text colour
+  converter's `color set` are set references the VM keeps (the script's own set, read back as written)
+  with a copy the model keeps, so element references still work and a `text` write still hands back
+  the text's characters (`Kind::SetRef`, `Host::set_elements` and `Host::set_ref`).
+- **What the run holds**: the level's load reads the model off the extract's `interface` part and the
+  level's `sprites` part ([`interface_host.rs`](../../crates/guacamole/src/interface_host.rs)), every
+  template under its object in its archive's `level.bld`, its `_ID` and activity state read where the
+  link parses the file; each install starts its run from a copy. The model holds the gameplay viewport's
+  container (`RT Viewport 0`, the frame's size), which `viewportinfo.container sprite` names, and its
+  title-safe info at 64, 64, 36 and 36 frame pixels (a hypothesis until AT.10 reads them live: the
+  margins that make `_UI_Container` 768 by 432 as the June savestate holds it). A template its file holds
+  active or unmanaged is awake from the load (16 on the dump, every one in the June savestate's live
+  list); `Init_Setup.ai`'s `UI - Init UI Containers` builds the root tree over them. On a first run
+  chapter 1 is handed over before the interface part reads (AT.26), so that session's run keeps the
+  cells; AT.40 takes the part to the next install.
+- **Measured** (headless, `giants_hud`, `giants_route`, `giants_chompy`, 2026-11-01): Eruptor's join
+  builds the HUD strict, 60 instances, its main box 237 by 96 bottom-left on bottom-left 20 up at frame
+  (64, 510); AH.8's route and the first fight run strict on the model; a bite's numbers come and go.
+  The draw list isn't yet where AC.13 draws: 0 of its 51 HUD quads within 1 px (AT.39).
+- **Drawing** waits on AT.12: one retained `bevy_ui` node per drawn sprite, glyphs cut from the fonts'
+  atlases, a `UiMaterial` for the blends `ImageNode` lacks. The render side's order is AT.33's: the
+  original sorts its sprite list on a join by visual type then a word of the kind's, an order AC.13's
+  frame contradicts, so the model keeps drawing by computed priority until a reading settles it.
 
 ## Figures
 
