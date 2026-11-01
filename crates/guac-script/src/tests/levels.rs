@@ -548,3 +548,108 @@ fn a_creatures_walk_and_run_are_asked_for_the_placement_running() {
         ]
     );
 }
+
+/// AS.29, PvP's bricks on a list built in code: a brick suspending itself
+/// finishes that tick, then the step's walk passes it (its ticks, its clock
+/// and its place on the list kept) while another reads its flag as 1; once
+/// the other clears it, it ticks again from the next step, at its place. A
+/// write of 7 holds as 1, a reset clears it, and on something the VM
+/// doesn't run the flag goes through nothing.
+#[test]
+fn a_suspended_placement_is_passed_until_its_flag_clears() {
+    let suspended = |of: El<'static>| [of, El::Member("placement", "script suspended")];
+    let p = program(|w| {
+        let (ticks, after, go, seen, far) = (
+            var(w, "ticks"),
+            var(w, "after"),
+            var(w, "go"),
+            var(w, "seen"),
+            var(w, "far"),
+        );
+        let other = w.variable("other", "ScriptReference", None);
+        let stranger = w.variable("stranger", "ScriptReference", None);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[El::Local(ticks)]);
+                for (n, value) in [(1, 1), (3, 7)] {
+                    let k = w.int(n);
+                    let c = check(w, go, 1, k).0;
+                    let v = w.int(value);
+                    w.set(&suspended(MY), v);
+                    w.inc(&[El::Local(after)]);
+                    w.end_block(c);
+                }
+                let s = w.rhs(INT, &suspended(El::Local(other)));
+                w.set(&[El::Local(seen)], s);
+                let two = w.int(2);
+                let c = check(w, go, 1, two).0;
+                let zero = w.int(0);
+                w.set(&suspended(El::Local(other)), zero);
+                w.end_block(c);
+                let four = w.int(4);
+                let c = check(w, go, 1, four).0;
+                let np = w.group(&suspended(El::Local(other)), None);
+                let o = w.op(Class::Reset, "reset");
+                w.refer(o, 0x1C, np);
+                w.push(o);
+                w.end_block(c);
+                let one = w.int(1);
+                w.set(&suspended(El::Local(stranger)), one);
+                let s = w.rhs(INT, &suspended(El::Local(stranger)));
+                w.set(&[El::Local(far)], s);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let (a, b, c) = (
+        vm.add(0x10, "brick1PvP", 0),
+        vm.add(0x11, "brick2PvP", 0),
+        vm.add(0x12, "brick3PvP", 0),
+    );
+    let step = |vm: &mut Vm| {
+        vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    };
+    let ticks = |vm: &Vm, id| vm.local(id, "ticks");
+    step(&mut vm);
+    assert!(vm.set_local(b, "other", Value::Entity(0x10)));
+    assert!(vm.set_local(a, "stranger", Value::Entity(0x999)));
+    vm.set_local(a, "go", Value::Int(1));
+    step(&mut vm);
+    assert!(vm.is_suspended(a));
+    assert_eq!(vm.local(a, "after"), Some(Value::Int(1)), "its tick ran on");
+    let clock = vm.active_seconds(a);
+    for _ in 0..3 {
+        step(&mut vm);
+    }
+    assert_eq!(ticks(&vm, a), Some(Value::Int(2)), "passed");
+    assert_eq!(ticks(&vm, b), Some(Value::Int(5)));
+    assert_eq!(vm.active_seconds(a), clock, "its clock kept");
+    assert_eq!(vm.local(b, "seen"), Some(Value::Int(1)));
+    assert_eq!(vm.local(a, "far"), Some(Value::Int(0)), "a stranger's none");
+    // B clears it after the walk passed A: A ticks from the next step, first.
+    vm.set_local(a, "go", Value::Int(0));
+    vm.set_local(b, "go", Value::Int(2));
+    step(&mut vm);
+    assert!(!vm.is_suspended(a));
+    assert_eq!(ticks(&vm, a), Some(Value::Int(2)), "not this step");
+    vm.set_local(b, "go", Value::Int(0));
+    step(&mut vm);
+    assert_eq!(ticks(&vm, a), Some(Value::Int(3)), "the next");
+    let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+    assert_eq!(
+        order,
+        ["brick1PvP", "brick2PvP", "brick3PvP"],
+        "its place kept"
+    );
+    // 7 holds as 1; B's reset clears it.
+    vm.set_local(a, "go", Value::Int(3));
+    step(&mut vm);
+    assert!(vm.is_suspended(a));
+    assert_eq!(vm.local(b, "seen"), Some(Value::Int(1)));
+    vm.set_local(b, "go", Value::Int(4));
+    step(&mut vm);
+    assert!(!vm.is_suspended(a));
+    assert_eq!(ticks(&vm, c), Some(Value::Int(9)));
+}

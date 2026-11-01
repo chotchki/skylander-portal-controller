@@ -59,6 +59,23 @@
 //! so one joining the end during the walk ticks that step too, and one
 //! leaving a place the walk has passed doesn't make it skip the next.
 //!
+//! A placement whose `placement.script suspended` is set isn't ticked: the
+//! walk passes it, its place on its list, its state, its locals and its
+//! `system.script timer` kept, and once a script clears it, it ticks again
+//! at that place from the next step. Set in its own tick, the rest of that
+//! tick runs. The member is the VM's: on a placement it runs, the flag (0
+//! or 1, a write clamped there, a reset clearing it); on anything else a
+//! path through nothing. Read off the EBOOT, not the oracle (openspec
+//! AS.29: no route reaches a level that sets it): the frame's scripts
+//! updater takes each placement's activity, then runs its tick unless its
+//! flag 4 is set (aj-vm's and AH.59's reading), and the member reads and
+//! writes that flag, a reset putting back its reset template's, clear in
+//! every file on the disc. PvP's bricks suspend themselves until the brick
+//! under them goes, a challenge's replay suspends a troll. A reading: a
+//! suspended placement taken off still runs its SHUTDOWN (whether the
+//! shutdown queue passes one isn't read), and its activity still follows
+//! the embedder's rule.
+//!
 //! One sent round its states by a `reset` ([`Vm::requeue`]: the mover
 //! update, which the music controller's tick resets every frame) leaves its
 //! list, its `system.script timer` back to 0, and goes back on the list's end

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use guac_formats::script::{Class, StackClass};
 
 use crate::host::{
-    Access, Answer, Builtin, Host, HostFault, Kind, MemberId, Members, OpCall, Place,
+    Access, Answer, Builtin, Host, HostFault, Kind, MemberId, MemberSpec, Members, OpCall, Place,
 };
 use crate::ids::{IdMap, IdSet};
 use crate::program::{
@@ -235,6 +235,9 @@ struct Placement {
     activator: bool,
     /// Seconds of ticks so far: `system.script timer`.
     active: f32,
+    /// `placement.script suspended`: the walk passes it (crate docs, The
+    /// tick).
+    suspended: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -328,6 +331,8 @@ enum Spot {
         id: u32,
         part: SliderPart,
     },
+    /// A placement's `placement.script suspended` (crate docs, The tick).
+    Suspended(PlacementId),
 }
 
 /// What of a slider a `sequence` member reads and writes.
@@ -440,6 +445,12 @@ fn recv(v: Value) -> Recv {
     Recv::Value(tag, bits)
 }
 
+/// `placement.script suspended`'s id, the VM's own member (crate docs, The
+/// tick).
+fn suspended_member() -> MemberId {
+    MemberId::named("placement", "script suspended")
+}
+
 /// The place a slide eases as a write ending it compares it: a member's
 /// `_otherPoint` aside, which a read of the same place may differ in.
 fn slide_key(spot: Spot) -> Spot {
@@ -524,6 +535,10 @@ fn slid_place(spot: Spot) -> u64 {
         }
         Spot::Slider { id, .. } => {
             h.write_u8(8);
+            h.write_u32(id);
+        }
+        Spot::Suspended(id) => {
+            h.write_u8(9);
             h.write_u32(id);
         }
     }
@@ -908,6 +923,7 @@ impl Vm {
             asleep: false,
             activator: false,
             active: 0.0,
+            suspended: false,
         });
         let id = (self.placements.len() - 1) as PlacementId;
         self.order.push(id);
@@ -972,6 +988,14 @@ impl Vm {
     /// listing its script for that tick alone).
     pub fn is_held(&self, id: PlacementId) -> bool {
         self.placements.get(id as usize).is_some_and(|p| p.held)
+    }
+
+    /// Whether a script has suspended the placement (`placement.script
+    /// suspended`): the step's walk passes it (crate docs, The tick).
+    pub fn is_suspended(&self, id: PlacementId) -> bool {
+        self.placements
+            .get(id as usize)
+            .is_some_and(|p| p.suspended)
     }
 
     pub fn held(&self) -> Vec<Handle> {
@@ -1648,7 +1672,7 @@ impl Vm {
         native: &mut Native<'_>,
     ) -> Result<(), Halt> {
         let p = &self.placements[id as usize];
-        if p.inert || p.removed || p.asleep || p.stopped.is_some() {
+        if p.inert || p.removed || p.asleep || p.suspended || p.stopped.is_some() {
             return Ok(());
         }
         if p.held {
@@ -3734,6 +3758,18 @@ impl Vm {
         match e {
             Elem::Member(m) => {
                 self.reached.insert(m);
+                // A placement's flag the walk reads (crate docs, The tick):
+                // on one the VM runs, the VM's; anything else holds none.
+                if m == suspended_member() {
+                    let v = self.read(prev, host)?;
+                    return match self.materialize(v) {
+                        Value::Entity(h) => match self.handles.get(&h) {
+                            Some(&id) => Ok(Spot::Suspended(id)),
+                            None => Err(Fault::Nothing),
+                        },
+                        _ => Err(Fault::Nothing),
+                    };
+                }
                 if let Some(part) = Packed::of(m) {
                     let base = match prev {
                         Spot::Cell(c) => Base::Cell(c),
@@ -3966,6 +4002,7 @@ impl Vm {
             Spot::Count(s) => Value::Int(self.sets[s as usize].elems.len() as i32),
             Spot::CastToInteger => self.cast,
             Spot::Undefined => Value::Int(0),
+            Spot::Suspended(id) => Value::Int(i32::from(self.placements[id as usize].suspended)),
             Spot::Slider { id, part } => {
                 let s = &self.sliders[id as usize];
                 let left = if s.running {
@@ -4105,6 +4142,14 @@ impl Vm {
                 Ok(())
             }
             Spot::Undefined => Ok(()),
+            // 0 or 1, as an enum of two takes it; one that won't convert drops.
+            Spot::Suspended(id) => {
+                let spec = MemberSpec::new(Kind::Int, 0.0, 1.0);
+                if let Some(Value::Int(on)) = convert(&spec, self.deref(v)) {
+                    self.placements[id as usize].suspended = on != 0;
+                }
+                Ok(())
+            }
             // Time left set on a slider: it carries on from there, and with
             // none left it lands on its target in the next frame's step.
             Spot::Slider { id, part } => {
@@ -4240,6 +4285,11 @@ impl Vm {
                 Ok(())
             }
             Spot::Undefined | Spot::Slider { .. } => Ok(()),
+            // Back to its reset template's flag: clear in every file.
+            Spot::Suspended(id) => {
+                self.placements[id as usize].suspended = false;
+                Ok(())
+            }
             // A structure or set a reference names, back to its defaults
             // as a variable holding it would be.
             Spot::Const(Value::Struct(st)) => {

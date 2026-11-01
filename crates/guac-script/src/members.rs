@@ -2330,6 +2330,10 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// run, as the original reads them off the actor whose script asks (a
 /// reading of its getters, an aid: the second and third of that actor's
 /// locomotion clips, nothing when it has fewer).
+///
+/// A placement's `script suspended` (AS.29: PvP's bricks, the challenges'
+/// replays, 003's catapult master, 202's closing scene), the VM's: the step's
+/// walk passes a placement it's set on (crate docs, The tick).
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2431,6 +2435,15 @@ pub const LEVELS: &[Registered] = &[
         0.0,
         0.0,
         Host,
+    ),
+    m(
+        "placement",
+        "script suspended",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Vm,
     ),
 ];
 
@@ -3304,6 +3317,23 @@ mod tests {
             );
             assert_eq!(convert(&r.spec(), Value::Int(1)), None, "{name}");
         }
+    }
+
+    /// AS.29: a placement's script suspended, the VM's own, by its two
+    /// labels: named, no host or cell entry.
+    #[test]
+    fn a_placements_script_suspended_is_the_vms() {
+        let r = find(LEVELS, "placement", "script suspended").unwrap();
+        assert_eq!(
+            (r.class, r.kind(), r.keeper),
+            ("EnumMeasurement", Kind::Int, Keeper::Vm)
+        );
+        assert_eq!(label(&r, "true"), Some(Value::Int(1)));
+        let mut members = Members::new();
+        register(&mut members, LEVELS);
+        let id = MemberId::named("placement", "script suspended");
+        assert!(members.get(id).is_none());
+        assert_eq!(members.name(id), "placement.script suspended");
     }
 
     /// AS.27: the streams playing, a cell standing for the engine's set
