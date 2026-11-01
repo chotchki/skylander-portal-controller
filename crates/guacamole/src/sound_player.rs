@@ -224,15 +224,16 @@ impl Plugin for SoundPlayerPlugin {
         if output {
             app.add_audio_source::<Voice>();
         }
+        // In `Last`, after every PostUpdate buffer is applied (AR.24):
+        // bevy_audio's playback (PostUpdate, its set private, so nothing can
+        // order against it) gives a new voice its sink by command, and a
+        // despawn of ours landing at the same sync point ahead of that insert
+        // panicked the TV. Here a voice's sink is always in before the player
+        // looks at it, and the camera's transform is still this frame's.
         app.insert_resource(SoundOut::new(muted || !output))
             .init_resource::<SoundRng>()
             .init_resource::<SoundReport>()
-            .add_systems(
-                PostUpdate,
-                hear_sounds
-                    .after(TransformSystems::Propagate)
-                    .run_if(resource_exists::<ScriptWorld>),
-            );
+            .add_systems(Last, hear_sounds.run_if(resource_exists::<ScriptWorld>));
     }
 }
 
@@ -616,12 +617,12 @@ mod tests {
             app.insert_resource(Play::started_for_tests(camera))
                 .insert_resource(LevelPads::default());
         }
-        app.insert_resource(world)
+        // The plugin's own registration, so every test runs the player
+        // where the TV does (AR.24); with no audio output it would be muted.
+        app.add_plugins(SoundPlayerPlugin)
+            .insert_resource(world)
             .insert_resource(Level::from_extract_for_tests(dir))
-            .insert_resource(SoundOut::new(muted))
-            .init_resource::<SoundRng>()
-            .init_resource::<SoundReport>()
-            .add_systems(PostUpdate, hear_sounds);
+            .insert_resource(SoundOut::new(muted));
         (app, actor)
     }
 
@@ -700,6 +701,84 @@ mod tests {
         // Its asset freed with it, nothing kept per play.
         app.update();
         assert_eq!(app.world().resource::<Assets<Voice>>().len(), 0);
+    }
+
+    /// What stands for bevy_audio's `(AudioSink, PlaybackDespawnMarker)` in
+    /// AR.24's test, and how many voices got it.
+    #[derive(Component)]
+    struct Sunk;
+
+    #[derive(Resource, Default)]
+    struct Sunken(usize);
+
+    /// bevy_audio's `play_queued_audio_system::<Voice>` as far as AR.24's
+    /// race goes: its query (a voice with no sink) and its insert by command.
+    fn playback_stand_in(
+        mut commands: Commands,
+        mut sunken: ResMut<Sunken>,
+        queued: Query<Entity, (With<AudioPlayer<Voice>>, Without<AudioSink>, Without<Sunk>)>,
+    ) {
+        for e in &queued {
+            commands.entity(e).insert(Sunk);
+            sunken.0 += 1;
+        }
+    }
+
+    /// AR.24: a voice whose play stops the step after it's made, bevy_audio
+    /// giving it its sink that frame. The stand-in sits in PostUpdate where
+    /// bevy_audio's playback does, after the player's place there and with no
+    /// sync point between them, so both buffers land together with the
+    /// player's first, the order of chotchki's crash (build-9a5dc82): a
+    /// player despawning in PostUpdate leaves the insert a gone entity, which
+    /// Bevy's default handler panics on. In `Last` the sink is in first and
+    /// the voice goes after it.
+    #[test]
+    fn a_voice_stopped_before_its_sink_is_in_goes_after_the_sink() {
+        use bevy::ecs::schedule::ScheduleBuildSettings;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, actor) = tv(tmp.path().to_path_buf(), false, true);
+        app.edit_schedule(PostUpdate, |s| {
+            s.set_build_settings(ScheduleBuildSettings {
+                auto_insert_apply_deferred: false,
+                ..default()
+            });
+        });
+        app.init_resource::<Sunken>().add_systems(
+            PostUpdate,
+            playback_stand_in
+                .after(TransformSystems::Propagate)
+                .after(hear_sounds),
+        );
+        let seq = start(&mut app, actor, ONCE);
+        until_voiced(&mut app, 1);
+        assert_eq!(app.world().resource::<Sunken>().0, 0, "made, no sink yet");
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequences_mut()[seq as usize]
+            .stopped = true;
+        steps(&mut app, 1);
+        app.update();
+        assert_eq!(app.world().resource::<Sunken>().0, 1, "its sink this frame");
+        assert!(voices(&mut app).is_empty(), "and the voice gone");
+        assert_eq!(
+            app.world().resource::<SoundReport>().ended[0].how,
+            "stopped"
+        );
+    }
+
+    /// No run installed (none yet, or one taken down at a level's change,
+    /// AS.13): the player waits and the frame goes on.
+    #[test]
+    fn with_no_run_the_player_waits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = tv(tmp.path().to_path_buf(), false, true);
+        app.world_mut().remove_resource::<ScriptWorld>();
+        app.update();
+        assert!(voices(&mut app).is_empty());
+        assert_eq!(
+            *app.world().resource::<SoundReport>(),
+            SoundReport::default()
+        );
     }
 
     /// The level held (the portal's alert or an arrival card): its voices
