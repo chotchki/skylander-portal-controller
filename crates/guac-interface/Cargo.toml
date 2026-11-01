@@ -1,0 +1,22 @@
+[package]
+name = "guac-interface"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The original's interface, pure (openspec AT.4, design decisions 2 and 3): the
+# sprites its scripts make, their tree, every interface member's get, set and
+# reset, the strings, the bitmap font's measure, the layout and a draw list. No
+# Bevy and no I/O: guacamole's host forwards the interface namespaces here and
+# draws the draw list; headless tests do the same with no app.
+[lib]
+name = "guac_interface"
+path = "src/lib.rs"
+# No doctests here, so `cargo test` skips the empty doc-test run (openspec AQ.36);
+# a doc example meant to run drops this, and .githooks/no-doctests.sh fails the
+# push until it does.
+doctest = false
+
+[dependencies]
+guac-ir = { path = "../guac-ir" }
+guac-script = { path = "../guac-script" }

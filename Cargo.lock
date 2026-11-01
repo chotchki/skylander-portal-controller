@@ -4404,6 +4404,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "guac-interface"
+version = "0.1.0"
+dependencies = [
+ "guac-ir",
+ "guac-script",
+]
+
+[[package]]
 name = "guac-ir"
 version = "0.1.0"
 dependencies = [
