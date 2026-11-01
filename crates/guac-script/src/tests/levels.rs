@@ -340,3 +340,116 @@ fn a_sprites_origin_and_text_converter_read_nothing() {
     let halt = vm.tick(id, &mut Spawns::default()).unwrap_err();
     assert!(matches!(halt.reason, Reason::UnmodelledMember(_)), "{halt}");
 }
+
+/// AS.34, 003's definition on a list built in code: a random colour
+/// literal (the file's word, alpha high: the eruption's dark colour's
+/// bytes) rolls each byte, alpha's draw first, then blue's, green's and
+/// red's, each up to its own value.
+#[test]
+fn a_random_colour_literal_rolls_each_byte() {
+    let file = 0xFF14_1422u32;
+    let p = program(|w| {
+        let c = w.variable("c", "ValueInfo", Some("ColorMeasurement"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let roll = w.literal("ColorMeasurement", file, true);
+                w.set(&[El::Local(c)], roll);
+            },
+        );
+    });
+    for seed in [5489, 9, 31_337] {
+        let (vm, id) = {
+            let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+            let id = vm.add(HANDLE, "003_Definition", 0);
+            vm.tick(id, &mut Rolling(Generator::seeded(seed)))
+                .unwrap_or_else(|h| panic!("{h}"));
+            (vm, id)
+        };
+        let mut g = Generator::seeded(seed);
+        let d: [u32; 4] = std::array::from_fn(|_| g.next_u32() & 0x7FFF_FFFF);
+        // In the VM's order, red high: red 0x22, green and blue 0x14,
+        // alpha 0xFF.
+        let want =
+            ((d[3] % 0x23) << 24) | ((d[2] % 0x15) << 16) | ((d[1] % 0x15) << 8) | (d[0] % 0x100);
+        assert_eq!(vm.local(id, "c"), Some(Value::Color(want)), "seed {seed}");
+    }
+}
+
+/// AS.34, level 212's definition on a list built in code: a parameter op
+/// outside any call, binding into no definition, binds nothing and the
+/// tick goes on; one naming a definition still stops.
+#[test]
+fn a_parameter_outside_a_call_binds_nothing() {
+    let build = |named: bool| {
+        program(|w| {
+            let after = var(w, "after");
+            let def = w.op(Class::DefineMacro, "Camera - Define Camera");
+            idle(
+                w,
+                |_| {},
+                |w| {
+                    let zero = w.int(0);
+                    let o = w.op(Class::MacroParameter, "parameter");
+                    w.text(o, 0x1C, "look from heading offset");
+                    w.class_word(o, 0x20, "ValueInfo");
+                    w.word(o, 0x28, u32::MAX);
+                    w.refer(o, 0x30, zero);
+                    if named {
+                        w.refer(o, 0x38, def);
+                    }
+                    w.push(o);
+                    w.inc(&[El::Local(after)]);
+                },
+            );
+        })
+    };
+    let mut vm = Vm::new(build(false), Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "_Level_Def", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "after"), Some(Value::Int(1)));
+    let mut vm = Vm::new(build(true), Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "_Level_Def", 0);
+    let halt = vm.tick(id, &mut Bare).unwrap_err();
+    assert_eq!(
+        halt.reason,
+        Reason::Unsupported("a parameter outside a call".into()),
+        "{halt}"
+    );
+}
+
+/// AS.34, challenge 49's trees on a list built in code: raising
+/// `undefined`'s count goes nowhere, as `undefined`'s writes do; its count
+/// still reads 0 and its last nothing, and the tick goes on.
+#[test]
+fn raising_undefineds_count_goes_nowhere() {
+    let undefined = El::Member("abstractscriptgroup", "undefined");
+    let p = program(|w| {
+        let (count, after) = (var(w, "count"), var(w, "after"));
+        let last = w.variable("last", "ScriptReference", None);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[undefined, El::Member("setvariant", "count")]);
+                w.inc(&[undefined, El::Member("setvariant", "count")]);
+                let n = w.rhs(INT, &[undefined, El::Member("setvariant", "count")]);
+                w.set(&[El::Local(count)], n);
+                let l = w.value(&[El::Local(last)]);
+                let r = w.reference(&[undefined, El::Member("setvariant", "last")], None);
+                let o = w.op(Class::SetReference, "set reference");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, r);
+                w.push(o);
+                w.inc(&[El::Local(after)]);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Trunk_Template(1)", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "count"), Some(Value::Int(0)));
+    assert_eq!(vm.local(id, "last"), Some(Value::Null));
+    assert_eq!(vm.local(id, "after"), Some(Value::Int(1)));
+}

@@ -244,6 +244,12 @@
 //! - Entering pushes the definition and skips the definition's own INTERFACE
 //!   block: a parameter's default there is never read. A parameter the call
 //!   leaves out reads 0, nothing or an empty set.
+//! - A parameter op outside any call that binds into no definition (its
+//!   `_macroDef` empty) binds nothing and reads nothing: level 212's
+//!   definition holds one between two camera calls, an editor's leftover,
+//!   and its level plays on past it (openspec AS.34; a reading: the next
+//!   call binds the same parameter, so nothing observable rides on it).
+//!   One outside a call that names a definition stops as unsupported.
 //! - The body's end (its block closing, or `flow end`) returns: the counter
 //!   resumes right after the caller's INTERFACE block, in the caller's
 //!   context. The rest of the use block is the caller's after-return code:
@@ -442,7 +448,13 @@
 //! original's routine is read to do: [0, r), except that the 128 highest
 //! numbers round to 2^32 and read r itself, one draw in 2^25. That corner
 //! is the reading, kept for parity as script-runtime's Random rolls says;
-//! no measurement sees it.
+//! no measurement sees it. A colour literal rolls each byte on its own,
+//! four draws: byte b reads (number & 0x7fffffff) mod (b + 1), so 0 to b
+//! with both ends, the file's word from its high byte down, alpha first,
+//! then blue, green and red (openspec AS.34: 003's definition rolls a
+//! zone's fog colour, the dirt mounds their tint; aj-vm's read of the
+//! routine, an aid, no measurement yet). A screen position's roll stops as
+//! unsupported until a script reaches one.
 //!
 //! # Members
 //!
@@ -452,10 +464,11 @@
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
-//!   into it too, and a membership check, a `for each` or a `find subset`
-//!   of it skips;
+//!   into it and a write to its count too, and a membership check, a `for
+//!   each` or a `find subset` of it skips;
 //!   its `setvariant` members read as an empty set's: a count of 0, no
-//!   element);
+//!   element; openspec AS.34: challenge 49's trees raise its count, then
+//!   read its last);
 //!   `.its`, the
 //!   member under test inside `find subset`; `.valuedereferencer`, the
 //!   object a reference names, as the place to write;
@@ -613,7 +626,9 @@ pub use program::{
 };
 pub use slide::{between, eased};
 pub use stall::{Stall, StallDetector, StallLimit};
-pub use value::{ArithFault, Value, arith, arith_in, compare, convert, random_literal};
+pub use value::{
+    ArithFault, Value, arith, arith_in, compare, convert, random_colour, random_literal,
+};
 pub use vm::{
     Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId, Precision, Reason,
     SLIDERS, StepReport, TICK_SECONDS, Vm,

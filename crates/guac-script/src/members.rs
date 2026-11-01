@@ -2316,6 +2316,13 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// text keyframer); value cells of their registered types reading nothing,
 /// so a path through them goes through nothing, until the original's
 /// interface draws (the backlog's HUD line).
+///
+/// The save system's state (AS.34: the title's Xbox login check sets it,
+/// reached on a host that answers the platform 0; `global.bld`'s checks
+/// manager and save scripts write and poll it on every platform), the
+/// host's: a save asked for completes when the host's saves say so, which a
+/// cell keeping the request would never do. Its labels as the live table
+/// cuts them.
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2390,6 +2397,15 @@ pub const LEVELS: &[Registered] = &[
         0.0,
         0.0,
         Cell,
+    ),
+    m(
+        "system",
+        "save state",
+        "EnumMeasurement",
+        "inactive|load|save|finalize|active|compl",
+        0.0,
+        29.0,
+        Host,
     ),
 ];
 
@@ -3233,6 +3249,21 @@ mod tests {
         );
         assert_eq!(r.spec().default, Value::Null);
         assert_eq!(convert(&r.spec(), Value::Int(2)), None);
+    }
+
+    /// AS.34: the save system's state, the host's enum over the
+    /// registry's 0-29.
+    #[test]
+    fn the_save_state_is_the_hosts_enum_held_to_0_29() {
+        let (r, place) = level_member("system", "save state");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("EnumMeasurement", Kind::Int, Place::Host)
+        );
+        assert_eq!(label(&r, "inactive"), Some(Value::Int(0)));
+        assert_eq!(label(&r, "save"), Some(Value::Int(2)));
+        assert_eq!(convert(&r.spec(), Value::Int(31)), Some(Value::Int(29)));
+        assert_eq!(convert(&r.spec(), Value::Int(23)), Some(Value::Int(23)));
     }
 
     /// AS.27: the streams playing, a cell standing for the engine's set

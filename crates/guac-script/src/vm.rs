@@ -15,7 +15,7 @@ use crate::program::{
     OpId, Operand, OperandId, Param, Program, ScriptId, Sym, Tag,
 };
 use crate::slide::{between, eased};
-use crate::value::{ArithFault, Value, arith_in, compare, convert, random_literal};
+use crate::value::{ArithFault, Value, arith_in, compare, convert, random_colour, random_literal};
 use crate::whitelist::{Listed, Whitelist};
 
 /// A placement as the host knows it (an entity's bits).
@@ -2627,6 +2627,11 @@ impl Vm {
     /// at (openspec AG.171).
     fn bind(&mut self, program: &Program, p: Param, host: &mut dyn Host) -> Result<(), Fault> {
         let Some(call) = self.run.calls.last().copied() else {
+            // Binding into no definition, it binds nothing (crate docs,
+            // Macros; openspec AS.34: level 212's definition holds one).
+            if p.def.is_none() {
+                return Ok(());
+            }
             return unsupported("a parameter outside a call");
         };
         let name = param_name(program, &self.frames, call.def, &p);
@@ -3655,11 +3660,14 @@ impl Vm {
                         // reads 0 and its elements none, as an empty set's
                         // (openspec AH.28: the cannon's rubble plays
                         // `undefined.setvariant.next` as it lands).
+                        // Its count is `undefined` itself, reading 0 and
+                        // taking a write nowhere (openspec AS.34: challenge
+                        // 49's trees raise it).
                         if prev == Spot::Undefined {
-                            return Ok(Spot::Const(match b {
-                                Builtin::Count => Value::Int(0),
-                                _ => Value::Null,
-                            }));
+                            return Ok(match b {
+                                Builtin::Count => Spot::Undefined,
+                                _ => Spot::Const(Value::Null),
+                            });
                         }
                         let v = self.read(prev, host)?;
                         let Value::Set(s) = self.materialize(v) else {
@@ -4190,6 +4198,11 @@ impl Vm {
                     };
                     if !l.random {
                         return Ok(l.value());
+                    }
+                    // A colour rolls each byte (crate docs, Literals and
+                    // rolls; openspec AS.34).
+                    if let Value::Color(c) = l.value() {
+                        return Ok(Value::Color(random_colour(c, || host.draw())));
                     }
                     let word = host.draw();
                     return match random_literal(l.value(), word) {

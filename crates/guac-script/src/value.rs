@@ -303,6 +303,19 @@ pub fn random_literal(v: Value, word: u32) -> Option<Value> {
     }
 }
 
+/// A colour literal's roll (crate docs, Literals and rolls): each byte b of
+/// `colour`, in the VM's order (red high), reads a draw's low 31 bits mod
+/// (b + 1), alpha's drawn first, then blue's, green's and red's, the file's
+/// word from its high byte down.
+pub fn random_colour(colour: u32, mut draw: impl FnMut() -> u32) -> u32 {
+    let mut out = 0;
+    for shift in [0, 8, 16, 24] {
+        let b = (colour >> shift) & 0xff;
+        out |= ((draw() & 0x7fff_ffff) % (b + 1)) << shift;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +523,37 @@ mod tests {
         );
         assert_eq!(random_literal(Value::Int(i32::MAX), 5), Some(Value::Int(5)));
         assert_eq!(random_literal(Value::Color(1), 5), None);
+    }
+
+    /// AS.34: a colour's roll, each byte on its own, against its closed
+    /// form over colours and draws from a seeded generator, the edges
+    /// included: alpha's draw first, each byte 0 to its own value with
+    /// both ends, a 0 byte always 0.
+    #[test]
+    fn a_colours_roll_is_each_byte_up_to_its_own() {
+        let mut g = crate::Generator::seeded(2026);
+        let mut colours = vec![0, 0xFFFF_FFFF, 0x8080_80FF, 0x0000_00FF];
+        colours.extend((0..2_000).map(|_| g.next_u32()));
+        for colour in colours {
+            let draws: [u32; 4] = std::array::from_fn(|_| g.next_u32());
+            let mut i = 0;
+            let got = random_colour(colour, || {
+                i += 1;
+                draws[i - 1]
+            });
+            assert_eq!(i, 4, "four draws");
+            for (k, shift) in [0, 8, 16, 24].into_iter().enumerate() {
+                let b = (colour >> shift) & 0xFF;
+                let r = (got >> shift) & 0xFF;
+                assert_eq!(r, (draws[k] & 0x7FFF_FFFF) % (b + 1), "{colour:08x}");
+                assert!(r <= b, "{colour:08x}");
+            }
+        }
+        // Both ends: a draw of 0 reads 0, one of b reads b.
+        let white = random_colour(0xFFFF_FFFF, || 255);
+        assert_eq!(white, 0xFFFF_FFFF);
+        assert_eq!(random_colour(0xFFFF_FFFF, || 256), 0);
+        // The top bit of a draw is dropped: 2^31 + 3 reads as 3.
+        assert_eq!(random_colour(0x0404_0404, || 0x8000_0003), 0x0303_0303);
     }
 }
