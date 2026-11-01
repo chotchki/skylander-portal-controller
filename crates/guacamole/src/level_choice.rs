@@ -726,6 +726,82 @@ mod tests {
         assert_eq!(loading_band("pvp_level_001_cubedungeon", &r), None);
     }
 
+    /// AS.14: the asked level's load drives the header and the ask's state:
+    /// its band while it loads, the extraction's again (here its failure,
+    /// which stays up) once it shows, the ask `shown`; a failed load `failed`
+    /// with its reason; nothing moves while the fetch still runs or the load
+    /// is another level's.
+    #[test]
+    fn the_asked_levels_load_moves_its_report_and_gives_the_header_back() {
+        let mut app = App::new();
+        let failed = ExtractStatus::Failed(crate::extraction::Failure::Other {
+            code: "GUAC-E-X".into(),
+            message: "made up".into(),
+        });
+        app.insert_resource(Level::new(false))
+            .insert_resource(LevelChoice::default())
+            .insert_resource(Extraction {
+                status: failed.clone(),
+                ..Default::default()
+            })
+            .insert_resource(ExtractBand(None))
+            .add_systems(Update, follow_load);
+        let asked = |app: &App| app.world().resource::<Level>().asked().cloned().unwrap();
+        let band = |app: &App| app.world().resource::<ExtractBand>().0.clone();
+        let set = |app: &mut App, level: &str, state: &str| {
+            let mut l = app.world_mut().resource_mut::<Level>();
+            let r = l.report_mut();
+            (r.level, r.state, r.keys, r.keys_waiting) = (Some(level.into()), state.into(), 4, 1);
+        };
+        app.world_mut()
+            .resource_mut::<Level>()
+            .set_asked(AskedReport {
+                name: "level_200".into(),
+                state: "loading".into(),
+                ..Default::default()
+            });
+        // Another level's load moves nothing.
+        set(&mut app, "level_213_tutotial", "waiting");
+        app.update();
+        assert_eq!((asked(&app).state.as_str(), band(&app)), ("loading", None));
+        set(&mut app, "level_200", "waiting");
+        app.update();
+        assert_eq!(
+            band(&app).map(|b| b.detail),
+            Some("Getting its graphics ready… 3 of 4".into())
+        );
+        assert_eq!(asked(&app).state, "loading");
+        set(&mut app, "level_200", "shown");
+        app.update();
+        assert_eq!(asked(&app).state, "shown");
+        assert_eq!(band(&app), crate::extraction::band(&failed));
+        // Once shown it's done: a later state of the load moves nothing.
+        set(&mut app, "level_200", "waiting");
+        app.update();
+        assert_eq!(asked(&app).state, "shown");
+
+        // A load that fails, its reason the ask's.
+        app.world_mut()
+            .resource_mut::<Level>()
+            .set_asked(AskedReport {
+                name: "level_200".into(),
+                state: "loading".into(),
+                ..Default::default()
+            });
+        {
+            let mut l = app.world_mut().resource_mut::<Level>();
+            let r = l.report_mut();
+            r.state = "failed".into();
+            r.reason = Some("the level has no start".into());
+        }
+        app.update();
+        let a = asked(&app);
+        assert_eq!(
+            (a.state.as_str(), a.reason.as_deref()),
+            ("failed", Some("the level has no start"))
+        );
+    }
+
     /// The header while a level is fetched: the dump's check, then its
     /// parts, each with its bar.
     #[test]

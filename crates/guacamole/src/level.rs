@@ -1317,6 +1317,13 @@ impl Level {
         &self.report
     }
 
+    /// The load's report to set by hand: for the tests of what follows it
+    /// (the asked level's header, openspec AS.14).
+    #[cfg(test)]
+    pub(crate) fn report_mut(&mut self) -> &mut LevelReport {
+        &mut self.report
+    }
+
     /// A level asked for off the extract at `dir`, nothing read yet: for the
     /// tests of what reads its files (the sounds' audio, openspec AR.9).
     #[cfg(test)]
