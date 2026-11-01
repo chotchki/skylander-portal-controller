@@ -163,6 +163,23 @@ impl ScriptSource {
         &self.files
     }
 
+    /// The linked program the run was installed over.
+    pub(crate) fn program(&self) -> &Arc<Program> {
+        &self.program
+    }
+
+    /// The sounds part read again once it landed after the level's load
+    /// (openspec AR.21): what a reinstall hands the run from now on.
+    pub(crate) fn set_sounds(&mut self, sounds: guacamole::sounds::SoundPart) {
+        self.sounds = Some(sounds);
+    }
+
+    /// The sounds part the run was installed with, or read again into.
+    #[cfg(test)]
+    pub(crate) fn sounds(&self) -> Option<&guacamole::sounds::SoundPart> {
+        self.sounds.as_ref()
+    }
+
     /// The unit `load_file`'s scripts link as, if he's a fighter.
     pub(crate) fn fighter(&self, load_file: &str) -> Option<u16> {
         self.fighters

@@ -12,3 +12,7 @@ Extraction SHALL include every sound chapter 1 can play (the shared sounds, each
 #### Scenario: An extraction from before sounds
 - **WHEN** guacamole starts over a completed extraction that holds no sounds
 - **THEN** the sounds extract and nothing else is redone
+
+#### Scenario: Playing before the sounds are in
+- **WHEN** a character plays chapter 1 on a first run before its sounds have extracted
+- **THEN** the level plays without them until they're in, and every sound the scripts start from then on plays (17.3 s after chapter 1 was ready on the M3 Max)

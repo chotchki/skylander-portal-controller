@@ -148,6 +148,27 @@ pub fn level_channel() -> (LevelSender, LevelFeed) {
     (tx, LevelFeed(rx))
 }
 
+/// The sounds part whole in the extract at `dir` after the level loaded
+/// from it (openspec AR.21): a first run hands chapter 1 over before its
+/// sounds stage reads, so the level's load found none or some of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoundsReady {
+    pub dir: PathBuf,
+}
+
+/// Where the extraction puts a [`SoundsReady`] (`ExtractJob::sounds`).
+pub type SoundsSender = Sender<SoundsReady>;
+
+/// The TV's end of it.
+#[derive(Resource)]
+pub struct SoundsFeed(pub Receiver<SoundsReady>);
+
+/// A channel for [`SoundsReady`]s, beside the level's.
+pub fn sounds_channel() -> (SoundsSender, SoundsFeed) {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    (tx, SoundsFeed(rx))
+}
+
 /// The render layer the level draws on: clear of the default one the TV's
 /// cameras see and of the turntables' (16 up).
 pub(crate) const LEVEL_LAYER: usize = 2;
@@ -707,6 +728,10 @@ pub(crate) struct LevelReport {
     /// The script part, once linked (AH.22), or why it didn't.
     pub scripts: Option<ScriptsReport>,
     pub scripts_reason: Option<String>,
+    /// From the source landing to the sounds part read again into the run
+    /// once it landed after the load (AR.21), and the archives it held.
+    pub sounds_again_ms: Option<u64>,
+    pub sounds_again_archives: Option<usize>,
     /// What stopped it: the reading task's error, a part's file or the
     /// lights it lacks.
     pub reason: Option<String>,
@@ -1153,6 +1178,11 @@ pub(crate) struct Level {
     report: LevelReport,
     /// The script part's task, until it's done (AH.22).
     scripts: Option<Task<Result<level_scripts::Linked, String>>>,
+    /// The sounds part landed whole after the level's load read it (AR.21):
+    /// read again once the run is installed.
+    sounds_landed: bool,
+    /// That read, on a task, with the program it was read for.
+    sounds_again: Option<Task<(Arc<guac_script::Program>, guacamole::sounds::SoundPart)>>,
 }
 
 impl Level {
@@ -1167,6 +1197,8 @@ impl Level {
                 ..Default::default()
             },
             scripts: None,
+            sounds_landed: false,
+            sounds_again: None,
         }
     }
 
@@ -1421,7 +1453,14 @@ impl Plugin for LevelPlugin {
             .insert_resource(watch.clone())
             .add_systems(
                 Update,
-                (receive_level, step_level, show_level, scroll_level)
+                (
+                    receive_level,
+                    step_level,
+                    show_level,
+                    scroll_level,
+                    receive_sounds,
+                    sounds_again,
+                )
                     .chain()
                     .in_set(LevelSystems)
                     .after(crate::turntable::TurntableSystems),
@@ -1509,6 +1548,98 @@ fn receive_level(
     level.source = Some(source);
     level.stage = Stage::Reading(task);
     level.since = Some(Instant::now());
+}
+
+/// The sounds part landing after the level loaded (openspec AR.21): news
+/// for the extract the level reads from marks it to read again; any other
+/// extract's is no news for it.
+fn receive_sounds(feed: Option<Res<SoundsFeed>>, mut level: ResMut<Level>) {
+    let Some(feed) = feed else {
+        return;
+    };
+    for ready in feed.0.try_iter() {
+        if level.extract_dir() == Some(ready.dir.as_path()) {
+            info!(dir = %ready.dir.display(), "the sounds part landed after the level loaded");
+            level.sounds_landed = true;
+        }
+    }
+}
+
+/// The sounds read again into the live run once their part has landed
+/// (openspec AR.21), on a task off the frame: once the level's scripts are
+/// linked and installed, the run's [`guacamole::sounds::SoundPart`] read
+/// again for its units, then handed to the run and kept with its part for a
+/// reinstall. A play started before stays as it began (silent where the book
+/// lacked it); one after finds its recording. A read for a run since
+/// replaced is dropped.
+fn sounds_again(
+    mut level: ResMut<Level>,
+    source: Option<ResMut<ScriptSource>>,
+    world: Option<ResMut<ScriptWorld>>,
+) {
+    let level = &mut *level;
+    if let Some(task) = level.sounds_again.as_mut() {
+        let Some((program, part)) = check_ready(task) else {
+            return;
+        };
+        level.sounds_again = None;
+        let (Some(mut source), Some(mut world)) = (source, world) else {
+            return;
+        };
+        if !Arc::ptr_eq(source.program(), &program) {
+            info!("the sounds read again were for a run since replaced: dropped");
+            return;
+        }
+        log_sounds(&part, true);
+        world.set_sounds(part.book.clone(), part.stems.clone());
+        level.report.sounds_again_ms = level.ms();
+        level.report.sounds_again_archives = Some(part.stems.len());
+        source.set_sounds(part);
+        return;
+    }
+    if !level.sounds_landed || level.scripts.is_some() {
+        return;
+    }
+    let (Some(source), Some(from)) = (source, level.source.as_ref()) else {
+        return;
+    };
+    let program = source.program().clone();
+    let (dir, ir) = (from.dir.clone(), from.ir);
+    level.sounds_landed = false;
+    level.sounds_again = Some(AsyncComputeTaskPool::get().spawn(async move {
+        let part = guacamole::sounds::load(&dir, ir, &program.units);
+        (program, part)
+    }));
+}
+
+/// What the level's sounds read found (openspec AR.9, AR.21): the archives
+/// and sounds the book holds, and each archive that didn't read; an extract
+/// with no sounds part yet (a first run's, before its stage) said once, not
+/// an archive at a time.
+fn log_sounds(s: &guacamole::sounds::SoundPart, again: bool) {
+    info!(
+        archives = s.stems.len(),
+        sounds = s.sounds(),
+        missing = s.missing.len(),
+        read_ms = s.read.as_secs_f64() * 1e3,
+        again,
+        "the level's sounds read"
+    );
+    let missing: Vec<&(String, String)> = s
+        .missing
+        .iter()
+        .filter(|(stem, _)| !matches!(stem.as_str(), "bootstrap" | "init_setup"))
+        .collect();
+    if s.stems.is_empty() && !missing.is_empty() {
+        info!(
+            archives = missing.len(),
+            "no sounds part in the extract yet: the level plays silent until it lands"
+        );
+        return;
+    }
+    for (stem, why) in missing {
+        warn!(%stem, reason = %why, "an archive's sounds didn't read: its scripts' sounds play nothing");
+    }
 }
 
 /// What [`step_level`] makes and spawns with.
@@ -1663,20 +1794,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 ..
             } = linked;
             if let Some(s) = &sounds {
-                info!(
-                    archives = s.stems.len(),
-                    sounds = s.sounds(),
-                    missing = s.missing.len(),
-                    read_ms = s.read.as_secs_f64() * 1e3,
-                    "the level's sounds read"
-                );
-                for (stem, why) in s
-                    .missing
-                    .iter()
-                    .filter(|(stem, _)| !matches!(stem.as_str(), "bootstrap" | "init_setup"))
-                {
-                    warn!(%stem, reason = %why, "an archive's sounds didn't read: its scripts' sounds play nothing");
-                }
+                log_sounds(s, false);
             }
             let layout = match layout {
                 Ok(l) => Some(l),
@@ -4436,5 +4554,324 @@ mod tests {
         let m = assets.get(&material).unwrap();
         assert_eq!(m.uniform.effect, Effect::Warp.uniform());
         assert_eq!(m.key.pass, guacamole::character::Pass::Warp);
+    }
+
+    /// AR.21's tests' run: one unit, chapter 1's script part, with an actor
+    /// and the file object of a sound on it.
+    struct Landing {
+        program: Arc<guac_script::Program>,
+        files: guacamole::scripts::Files,
+        actor: guac_script::Handle,
+        sound: Obj,
+    }
+
+    const LANDING_SOUND: u32 = 10;
+    const LANDING_FILE: &str = "audio/sounds/0011223344556677.mp3";
+
+    fn landing() -> Landing {
+        use guacamole::scripts::{Files, Placed, headless_handles};
+        let level = LEVELS[0];
+        let unit = format!("{}/{level}/script.igz", guac_extract::levels::LEVEL_DIR);
+        let program = Arc::new({
+            let mut p = guac_script::Program::default();
+            p.units = vec![unit];
+            p
+        });
+        let actor_obj = Obj {
+            unit: 0,
+            index: 500,
+        };
+        let files = Files {
+            placed: vec![Placed::named(actor_obj, "thrower", None, 4)],
+            ..Files::default()
+        };
+        let actor = headless_handles(&files)[&actor_obj];
+        Landing {
+            program,
+            files,
+            actor,
+            sound: Obj {
+                unit: 0,
+                index: LANDING_SOUND,
+            },
+        }
+    }
+
+    impl Landing {
+        /// A fresh run over it, with `book`'s sounds, as an install makes.
+        fn world(&self, sounds: &guacamole::sounds::SoundPart) -> ScriptWorld {
+            use guacamole::scripts::{headless_handles, headless_objects};
+            let handles = headless_handles(&self.files);
+            let mut world = ScriptWorld::new(&self.files, &handles, headless_objects(&handles));
+            world.set_sounds(sounds.book.clone(), sounds.stems.clone());
+            world
+        }
+
+        fn source(&self) -> crate::hero_scripts::ScriptSource {
+            crate::hero_scripts::ScriptSource::of(self.program.clone(), self.files.clone(), vec![0])
+        }
+
+        /// How many plays a start of its sound makes on the run now.
+        fn plays(&self, app: &mut App) -> usize {
+            let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+            let before = w.plays().len();
+            w.play_sound_on(self.sound, self.actor);
+            w.plays().len() - before
+        }
+    }
+
+    /// The sounds part landing in `dir`: one archive, chapter 1's, a sound
+    /// with its recording.
+    fn land_sounds(dir: &Path) {
+        use guac_ir::sound::{Audio, DataHome, DataRef, Sound, SoundData, Sounds};
+        const ONCE: u32 = LANDING_SOUND;
+        let level = LEVELS[0];
+        let file = LANDING_FILE;
+        let part = Sounds {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: Sha256([0; 32]),
+            },
+            archive: format!("{}/{level}.bld", guac_extract::levels::LEVEL_FOLDER),
+            sounds: vec![Sound {
+                object: ONCE,
+                name: Some("snd_once".into()),
+                data: DataRef::Here(DataHome::Level, 90),
+                flags: 0x4000_0028,
+                properties: 0,
+                playback_mode: 0,
+                playback_percent: 100.0,
+                volume_percent: 50.0,
+                volume_randomness_percent: 0.0,
+                pitch_randomness_percent: 0.0,
+                pan_percent: 0.0,
+                attenuation_distance_full: 1.0,
+                attenuation_distance_silent: 101.0,
+                rumble_duration: 1.0,
+                reverb_amount: 0.0,
+                reverb_randomness_percent: 0.0,
+                filter_percent: 0.0,
+                filter_randomness_percent: 0.0,
+                filter_attenuation_distance_minimum: 1.0,
+                filter_attenuation_distance_maximum: 200.0,
+                filter_maximum_percent: 100.0,
+                sample_rate_reduction: 0.0,
+            }],
+            data: vec![SoundData {
+                home: DataHome::Level,
+                object: 90,
+                name: None,
+                raw_duration: 1.0,
+                streamed: None,
+                lip_sync: false,
+                audio: Some(Audio {
+                    file: file.into(),
+                    rate: 48_000,
+                    channels: 1,
+                    samples: 48_000,
+                    loop_points: None,
+                }),
+            }],
+            refused: Vec::new(),
+        };
+        let rel = guac_extract::sounds::path(IrFormat::Ron, &part.archive);
+        std::fs::create_dir_all(dir.join(&rel).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(&rel), guac_ir::to_ron(&part).unwrap()).unwrap();
+    }
+
+    /// AR.21's live run: a sounds part landing after the level's load is
+    /// read again into the run once its news names the level's extract, its
+    /// book replaced on the run and kept with the part for a reinstall; a
+    /// start before it plays nothing, one after finds its recording. News of
+    /// another extract changes nothing, and a read for a run replaced before
+    /// it lands is dropped.
+    #[test]
+    fn the_sounds_landing_after_the_load_are_read_again_into_the_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let landing = landing();
+        let Landing { program, files, .. } = &landing;
+        // As the load found it: no sounds part yet.
+        let empty = guacamole::sounds::load(&dir, IrFormat::Ron, &program.units);
+        assert!(empty.stems.is_empty() && empty.missing.len() == 1);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let (tx, feed) = sounds_channel();
+        app.insert_resource(Level::from_extract_for_tests(dir.clone()))
+            .insert_resource(landing.source())
+            .insert_resource(landing.world(&empty))
+            .insert_resource(feed)
+            .add_systems(Update, (receive_sounds, sounds_again).chain());
+        let plays = |app: &mut App| landing.plays(app);
+        assert_eq!(plays(&mut app), 0, "no book holds it yet");
+
+        // The part lands.
+        land_sounds(&dir);
+        let file = LANDING_FILE;
+        let taken_up = |app: &App| {
+            app.world()
+                .resource::<Level>()
+                .report()
+                .sounds_again_archives
+        };
+        // Another extract's news is none of this level's.
+        tx.send(SoundsReady {
+            dir: dir.join("other"),
+        })
+        .unwrap();
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(taken_up(&app), None);
+        assert_eq!(plays(&mut app), 0);
+
+        // A read whose run is replaced before it lands is dropped.
+        tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        app.update();
+        assert!(app.world().resource::<Level>().sounds_again.is_some());
+        let replaced = Arc::new({
+            let mut p = guac_script::Program::default();
+            p.units = program.units.clone();
+            p
+        });
+        app.insert_resource(crate::hero_scripts::ScriptSource::of(
+            replaced,
+            files.clone(),
+            vec![0],
+        ));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.world().resource::<Level>().sounds_again.is_some() {
+            assert!(Instant::now() < deadline, "the read never landed");
+            app.update();
+        }
+        assert_eq!(taken_up(&app), None);
+        assert_eq!(plays(&mut app), 0, "the replaced run's read dropped");
+
+        // Its news again while the level's scripts still link: held until
+        // they're in, then read into the run as it stands.
+        app.insert_resource(crate::hero_scripts::ScriptSource::of(
+            program.clone(),
+            files.clone(),
+            vec![0],
+        ));
+        app.world_mut().resource_mut::<Level>().scripts =
+            Some(AsyncComputeTaskPool::get().spawn(std::future::pending()));
+        tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        for _ in 0..20 {
+            app.update();
+        }
+        let l = app.world().resource::<Level>();
+        assert!(
+            l.sounds_landed && l.sounds_again.is_none(),
+            "held for the link"
+        );
+        assert_eq!(taken_up(&app), None);
+        app.world_mut().resource_mut::<Level>().scripts = None;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while taken_up(&app).is_none() {
+            assert!(Instant::now() < deadline, "never read again");
+            app.update();
+        }
+        assert_eq!(taken_up(&app), Some(1));
+        let w = app.world().resource::<ScriptWorld>();
+        assert_eq!(w.sound_book().unwrap().stems().count(), 1);
+        let kept = app
+            .world()
+            .resource::<crate::hero_scripts::ScriptSource>()
+            .sounds()
+            .map(|s| s.stems.len());
+        assert_eq!(kept, Some(1), "kept with the part for a reinstall");
+        assert_eq!(plays(&mut app), 1, "a start after it plays");
+        let w = app.world().resource::<ScriptWorld>();
+        assert_eq!(w.plays().last().unwrap().file, file);
+    }
+
+    /// AR.21's other orders: news that comes before any level is asked for
+    /// waits for nothing (the load reads the part whole); a read that lands
+    /// after the run was installed again (the level left, `/api/quit`) goes
+    /// to the run installed, and a later install takes the part it kept; the
+    /// same news twice reads it twice, to the same book.
+    #[test]
+    fn the_sounds_landing_reach_the_run_as_installed_and_wait_for_no_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let landing = landing();
+        let empty = guacamole::sounds::load(&dir, IrFormat::Ron, &landing.program.units);
+        land_sounds(&dir);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let (tx, feed) = sounds_channel();
+        app.insert_resource(Level::new(false))
+            .insert_resource(landing.source())
+            .insert_resource(landing.world(&empty))
+            .insert_resource(feed)
+            .add_systems(Update, (receive_sounds, sounds_again).chain());
+        let level = |app: &App| {
+            let l = app.world().resource::<Level>();
+            (
+                l.sounds_landed,
+                l.sounds_again.is_some(),
+                l.report.sounds_again_archives,
+            )
+        };
+        // No level asked for yet: the news is no one's.
+        tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(level(&app), (false, false, None));
+        // Then chapter 1 asked for off that extract, as `receive_level` sets
+        // it on the same level.
+        {
+            let mut l = app.world_mut().resource_mut::<Level>();
+            l.source = Level::from_extract_for_tests(dir.clone()).source;
+            l.since = Some(Instant::now());
+        }
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(level(&app), (false, false, None), "nothing kept for it");
+        assert_eq!(landing.plays(&mut app), 0);
+
+        // The news for it, the run installed again while the read is out:
+        // the read lands on the run as it now stands.
+        tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        app.update();
+        assert_eq!(level(&app), (false, true, None));
+        crate::hero_scripts::reinstall(app.world_mut());
+        let run = app.world().resource::<ScriptWorld>().run();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while level(&app).2.is_none() {
+            assert!(Instant::now() < deadline, "never read again");
+            app.update();
+        }
+        let w = app.world().resource::<ScriptWorld>();
+        assert_eq!(w.run(), run, "no install of its own");
+        assert_eq!(w.sound_book().unwrap().stems().count(), 1);
+        assert_eq!(landing.plays(&mut app), 1);
+
+        // Installed again after it: the part kept on the source.
+        crate::hero_scripts::reinstall(app.world_mut());
+        let w = app.world().resource::<ScriptWorld>();
+        assert_ne!(w.run(), run);
+        assert_eq!(w.sound_book().unwrap().stems().count(), 1);
+        assert_eq!(landing.plays(&mut app), 1, "the install's run plays it");
+
+        // The same news again: read again, to the same book.
+        app.world_mut()
+            .resource_mut::<Level>()
+            .report
+            .sounds_again_archives = None;
+        tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while level(&app).2.is_none() {
+            assert!(Instant::now() < deadline, "the second news never read");
+            app.update();
+        }
+        assert_eq!(level(&app), (false, false, Some(1)));
+        assert_eq!(landing.plays(&mut app), 1);
+        let w = app.world().resource::<ScriptWorld>();
+        assert_eq!(w.plays().last().unwrap().file, LANDING_FILE);
     }
 }

@@ -738,12 +738,15 @@ fn tree_of(
             under: Vec::new(),
             seen: false,
         };
-        // What's under it: a structure's fields, a set's elements, or a
-        // reference's structure or placement.
+        // What's under it: a structure's fields, a set's elements, a
+        // reference's structure or placement, or a placement's variables
+        // when it's a cell itself (an export by name: `Macros_Music`, whose
+        // `music data` the level's music runs on, openspec AR.16).
         let target = match (&node.value, c.vtable) {
             (Some(Value::Structure { .. }), _) => Some(c.at),
             (Some(Value::Set { .. }), _) => Some(c.at),
             (Some(Value::Reference { to: Some(to), .. }), _) => Some(*to),
+            (Some(Value::Other { .. }), vtable::ACTOR_INFO) => Some(c.at),
             _ => None,
         };
         // An object counts as met only once it's been read under: one first
@@ -1426,6 +1429,66 @@ mod tests {
         let cells3 = [cells2[0].clone(), cells2[1].clone(), cells2[1].clone()];
         let three = tree(&mut c.w, &mut types, &cells3, 1);
         assert!(!three[1].under.is_empty() && three[2].seen && three[2].under.is_empty());
+    }
+
+    /// AR.16's `Globals` on a placement: an export that is a placement
+    /// (`Macros_Music`) is read through its own variables, as a reference to
+    /// it is, its structures under them; one whose script never started
+    /// holds none and has nothing under it.
+    #[test]
+    fn a_dump_of_a_placement_reads_its_variables() {
+        let mut c = creature();
+        let time = fx::float(&mut c.w, &c.t, "time", 2.5);
+        let timer = fx::float(&mut c.w, &c.t, "repeat timer", 7.0);
+        let env = fx::structure(&mut c.w, "placed env sound ref", &[timer]);
+        let data = fx::structure(&mut c.w, "music data", &[time, env]);
+        let music = fx::placement(&mut c.w, "Macros_Music", None, 1.0, Some(&[data]));
+        let idle = fx::placement(&mut c.w, "never started", None, 1.0, None);
+        let cells = [
+            Named {
+                at: music,
+                vtable: vtable::ACTOR_INFO,
+                name: "Macros_Music".into(),
+            },
+            Named {
+                at: idle,
+                vtable: vtable::ACTOR_INFO,
+                name: "never started".into(),
+            },
+        ];
+        let mut types = Types::default();
+        let nodes = tree(&mut c.w, &mut types, &cells, TREE_DEPTH);
+        assert_eq!(nodes[0].under.len(), 1, "{:?}", nodes[0]);
+        let data = &nodes[0].under[0];
+        assert_eq!(data.name, "music data");
+        let env = data
+            .under
+            .iter()
+            .find(|n| n.name == "placed env sound ref")
+            .unwrap();
+        assert_eq!(env.under[0].name, "repeat timer");
+        assert_eq!(env.under[0].value, Some(Value::Number(Number::Float(7.0))));
+        assert!(
+            nodes[1].under.is_empty() && nodes[1].error.is_none(),
+            "{:?}",
+            nodes[1]
+        );
+        // Any other object is a leaf: listed twice, read twice, never met.
+        let other = fx::named(&mut c.w, 0x0066_0000, 0x10, "a texture");
+        let leaf = Named {
+            at: other,
+            vtable: 0x0066_0000,
+            name: "a texture".into(),
+        };
+        let leaves = tree(&mut c.w, &mut types, &[leaf.clone(), leaf], TREE_DEPTH);
+        assert!(
+            leaves.iter().all(|n| n.under.is_empty() && !n.seen),
+            "{leaves:?}"
+        );
+        // Depth 1: its variables, nothing under them.
+        let one = tree(&mut c.w, &mut types, &cells, 1);
+        assert_eq!(one[0].under[0].name, "music data");
+        assert!(one[0].under[0].under.is_empty());
     }
 
     #[test]

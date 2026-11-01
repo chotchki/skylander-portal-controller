@@ -1,5 +1,5 @@
 //! The extraction's stages in guacamole's order (openspec AE.3, AE.6, AG.14,
-//! AG.15, AH.2, AH.22 and AT.26, design decision 5). Identity is
+//! AG.15, AH.2, AH.22, AT.26, AT.31 and AR.21, design decision 5). Identity is
 //! [`crate::open`], the caller's; then the roster with its portraits, then
 //! the progression tables (a part of their own: a resume reads them only
 //! when they're missing), then the character models with their textures,
@@ -15,7 +15,9 @@
 //! indexed and transcoded. The roster lands first so a phone can place
 //! figures while the rest runs, the models are announced as they finish
 //! ([`Event::ModelsReady`], AE.13) so the turntable draws while the level
-//! and the intros run, chapter 1 plays while the parts after it read, and
+//! and the intros run, chapter 1 plays while the parts after it read (its
+//! sounds taken up once their part is in, [`Event::SoundsReady`], AR.21),
+//! each stage's result goes out as it ends ([`Event::Ended`], AT.31), and
 //! the intros are the only thing a missing or unusable ffmpeg costs. A
 //! model that won't read is reported and its
 //! figures keep their portraits; a hero side that doesn't settle is reported
@@ -100,6 +102,10 @@ pub enum Event {
         done: usize,
         total: usize,
     },
+    /// The sounds part is in, read or kept with nothing failed, and recorded
+    /// (openspec AR.21): a level loaded before it can take it up now. Not
+    /// sent for a part that didn't read.
+    SoundsReady,
     /// `done` of `total` archives' interface read or kept (AT.8).
     Interface {
         done: usize,
@@ -108,6 +114,28 @@ pub enum Event {
     /// ffmpeg was found; mapping toy types to intro movies.
     Indexing,
     Transcode(TranscodeEvent),
+    /// A stage is done, with what it did (openspec AT.31): sent the moment
+    /// it ends, after its last progress event and before the next stage's
+    /// first, so what it read, kept or failed is said then, not when the run
+    /// returns after the intros. The run's [`Extracted`] holds the same.
+    Ended(Box<StageEnd>),
+}
+
+/// A stage's result as it ends ([`Event::Ended`]). The intros have none:
+/// they end the run, and [`Extracted::intros`] is theirs.
+#[derive(Debug, Clone)]
+pub enum StageEnd {
+    Roster(RosterStage),
+    Progression(ProgressionStage),
+    Models(ModelStage),
+    /// The parts of each level the TV reads ([`levels::PLAYED`]).
+    Level(LevelStage),
+    Scripts(ScriptStage),
+    Particles(crate::particles::ParticleStage),
+    /// Each level's sprites part (AT.8).
+    Sprites(LevelStage),
+    Sounds(crate::sounds::SoundStage),
+    Interface(crate::interface::InterfaceStage),
 }
 
 /// Files a stage needed: written this run or kept from an earlier one.
@@ -315,27 +343,41 @@ pub fn run(
     ir: IrFormat,
     send: &(dyn Fn(Event) + Sync),
 ) -> Result<Extracted> {
+    let ended = |end: StageEnd| send(Event::Ended(Box::new(end)));
     let roster = roster_stage(dir, ir, send)?;
+    ended(StageEnd::Roster(roster.clone()));
     send(Event::RosterReady(roster.roster.clone()));
     let progression = progression_stage(dir, ir)?;
+    ended(StageEnd::Progression(progression.clone()));
     if let Ok(p) = &progression.progression {
         send(Event::ProgressionReady(p.clone()));
     }
     let models = model_stage(dir, &roster.roster, ir, send)?;
+    ended(StageEnd::Models(models.clone()));
     send(Event::ModelsReady {
         failed: models.failed.clone(),
     });
     let names = &levels::FIRST_RUN;
     let levels = levels_stage(dir, ir, names, &levels::PLAYED, &level_event, send)?;
+    ended(StageEnd::Level(levels.clone()));
     let scripts = script_stage(dir, ir, send)?;
+    ended(StageEnd::Scripts(scripts.clone()));
     let particles = crate::particles::particle_stage(dir, ir, send)?;
+    ended(StageEnd::Particles(particles.clone()));
     // Whole: every one of its played parts in, for every level.
     if levels.levels == names.len() {
         send(Event::LevelReady);
     }
     let sprites = levels_stage(dir, ir, names, &[levels::SPRITES], &sprite_event, send)?;
+    ended(StageEnd::Sprites(sprites.clone()));
     let sounds = crate::sounds::sound_stage(dir, &roster.roster, ir, send)?;
+    ended(StageEnd::Sounds(sounds.clone()));
+    // Read or kept, and recorded by the stage before it returned (AR.21).
+    if sounds.failed.is_none() {
+        send(Event::SoundsReady);
+    }
     let interface = crate::interface::interface_stage(dir, ir, send)?;
+    ended(StageEnd::Interface(interface.clone()));
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;
