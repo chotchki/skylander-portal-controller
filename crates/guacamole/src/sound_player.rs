@@ -60,13 +60,42 @@ enum File {
     Failed,
 }
 
-/// What the player keeps: whether it's muted, every file read or reading,
-/// and the plays it has given a voice (by serial), heard or rung out.
+/// What the player keeps: whether it's muted, the files read or reading
+/// for the run it last saw (openspec AR.18: let go when the run changes,
+/// [`release`]) and how many it has let go, and the plays it has given a
+/// voice (by serial), heard or rung out.
 #[derive(Resource)]
 pub(crate) struct SoundOut {
     muted: bool,
     files: HashMap<String, File>,
     voiced: HashSet<u64>,
+    run: Option<u64>,
+    released: usize,
+}
+
+impl SoundOut {
+    fn new(muted: bool) -> Self {
+        Self {
+            muted,
+            files: HashMap::new(),
+            voiced: HashSet::new(),
+            run: None,
+            released: 0,
+        }
+    }
+}
+
+/// The run changed (a level's load, a reinstall: openspec AR.18): every
+/// file let go but those `held` names, which a play of the run now going
+/// still sounds; a file reading for no one is dropped with its read, and
+/// one that didn't read is tried again when a play next asks for it. A
+/// voice holds its own bytes, so one still ringing plays on whatever goes.
+fn release(out: &mut SoundOut, held: &HashSet<&str>) -> usize {
+    let before = out.files.len();
+    out.files.retain(|rel, _| held.contains(rel.as_str()));
+    let gone = before - out.files.len();
+    out.released += gone;
+    gone
 }
 
 /// A voice: the play it sounds, its gains, its draws, whether it's paused.
@@ -150,6 +179,10 @@ pub(crate) struct SoundReport {
     pub refused: Vec<RefusedShot>,
     /// Voices sounding now, rung-out ones included.
     pub voices: usize,
+    /// Files the player holds now, read or reading, and how many it has let
+    /// go at a run's change (AR.18).
+    pub files: usize,
+    pub released: usize,
 }
 
 /// How many of the last plays ended and starts refused the report lists.
@@ -171,19 +204,15 @@ impl Plugin for SoundPlayerPlugin {
         if output {
             app.add_audio_source::<Voice>();
         }
-        app.insert_resource(SoundOut {
-            muted: muted || !output,
-            files: HashMap::new(),
-            voiced: HashSet::new(),
-        })
-        .init_resource::<SoundRng>()
-        .init_resource::<SoundReport>()
-        .add_systems(
-            PostUpdate,
-            hear_sounds
-                .after(TransformSystems::Propagate)
-                .run_if(resource_exists::<ScriptWorld>),
-        );
+        app.insert_resource(SoundOut::new(muted || !output))
+            .init_resource::<SoundRng>()
+            .init_resource::<SoundReport>()
+            .add_systems(
+                PostUpdate,
+                hear_sounds
+                    .after(TransformSystems::Propagate)
+                    .run_if(resource_exists::<ScriptWorld>),
+            );
     }
 }
 
@@ -269,6 +298,19 @@ fn hear_sounds(
     let paused = time.is_paused();
     let listener = cameras.iter().next();
     let playing: HashMap<u64, &SoundPlay> = world.plays().iter().map(|p| (p.serial, p)).collect();
+    // A new run: the files its plays don't hold go (AR.18).
+    if out.run != Some(world.run()) {
+        let held: HashSet<&str> = world.plays().iter().map(|p| p.file.as_str()).collect();
+        let kept = held.len();
+        let gone = release(&mut out, &held);
+        if gone > 0 {
+            info!(
+                gone,
+                kept, "a new run: the sounds' files no play holds let go"
+            );
+        }
+        out.run = Some(world.run());
+    }
     let mut gains_now: HashMap<u64, [f32; 2]> = HashMap::new();
     // The voices: followed, rung out, or stopped.
     for (e, mut h, sink) in &mut heard {
@@ -421,6 +463,8 @@ fn hear_sounds(
             })
             .collect(),
         voices: heard.iter().count(),
+        files: out.files.len(),
+        released: out.released,
     };
 }
 
@@ -439,7 +483,10 @@ mod tests {
     const LEVEL: u16 = 4;
     const ONCE: u32 = 10;
     const LOOP: u32 = 11;
+    /// A one-shot of a recording of its own (AR.18).
+    const OTHER: u32 = 12;
     const FILE: &str = "audio/sounds/0011223344556677.mp3";
+    const OTHER_FILE: &str = "audio/sounds/8899aabbccddeeff.mp3";
     const STEP: f32 = 1.0 / 60.0;
 
     fn sound(object: u32, flags: u32) -> Sound {
@@ -477,37 +524,40 @@ mod tests {
                 manifest_hash: guac_ir::Sha256([0; 32]),
             },
             archive: "level/level_213_tutotial.bld".into(),
-            // A one-shot and a loop, each 3D and falling off.
-            sounds: vec![sound(ONCE, 0x28), sound(LOOP, 0x29)],
-            data: vec![SoundData {
-                home: DataHome::Level,
-                object: 90,
-                name: None,
-                raw_duration: 1.0,
-                streamed: None,
-                lip_sync: false,
-                audio: Some(Audio {
-                    file: FILE.into(),
-                    rate: 48_000,
-                    channels: 1,
-                    samples: 48_000,
-                    loop_points: None,
-                }),
-            }],
+            // A one-shot and a loop, each 3D and falling off, and a one-shot
+            // of another recording.
+            sounds: vec![
+                sound(ONCE, 0x28),
+                sound(LOOP, 0x29),
+                Sound {
+                    data: DataRef::Here(DataHome::Level, 91),
+                    ..sound(OTHER, 0x28)
+                },
+            ],
+            data: [(90, FILE), (91, OTHER_FILE)]
+                .into_iter()
+                .map(|(object, file)| SoundData {
+                    home: DataHome::Level,
+                    object,
+                    name: None,
+                    raw_duration: 1.0,
+                    streamed: None,
+                    lip_sync: false,
+                    audio: Some(Audio {
+                        file: file.into(),
+                        rate: 48_000,
+                        channels: 1,
+                        samples: 48_000,
+                        loop_points: None,
+                    }),
+                })
+                .collect(),
             refused: Vec::new(),
         }])
     }
 
-    /// The TV's player over a world with one actor and the book above, its
-    /// file's audio in an extract at `dir`; in the level or on the portal,
-    /// muted or not.
-    fn tv(dir: PathBuf, muted: bool, in_level: bool) -> (App, Handle) {
-        let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
-        app.init_asset::<Voice>();
-        let audio = dir.join(FILE);
-        std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
-        std::fs::write(&audio, guacamole::voice::tests_support::silent_mp3(40)).unwrap();
+    /// The world the tests' TV runs: one actor, the book above.
+    fn world() -> (ScriptWorld, Handle) {
         let obj = Obj {
             unit: LEVEL,
             index: 500,
@@ -522,6 +572,22 @@ mod tests {
             Arc::new(book()),
             HashMap::from([(LEVEL, "level_213_tutotial".to_owned())]),
         );
+        (world, handles[&obj])
+    }
+
+    /// The TV's player over a world with one actor and the book above, its
+    /// file's audio in an extract at `dir`; in the level or on the portal,
+    /// muted or not.
+    fn tv(dir: PathBuf, muted: bool, in_level: bool) -> (App, Handle) {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
+        app.init_asset::<Voice>();
+        for file in [FILE, OTHER_FILE] {
+            let audio = dir.join(file);
+            std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
+            std::fs::write(&audio, guacamole::voice::tests_support::silent_mp3(40)).unwrap();
+        }
+        let (world, actor) = world();
         let camera = app
             .world_mut()
             .spawn((LevelCamera, GlobalTransform::default()))
@@ -532,15 +598,11 @@ mod tests {
         }
         app.insert_resource(world)
             .insert_resource(Level::from_extract_for_tests(dir))
-            .insert_resource(SoundOut {
-                muted,
-                files: HashMap::new(),
-                voiced: HashSet::new(),
-            })
+            .insert_resource(SoundOut::new(muted))
             .init_resource::<SoundRng>()
             .init_resource::<SoundReport>()
             .add_systems(PostUpdate, hear_sounds);
-        (app, handles[&obj])
+        (app, actor)
     }
 
     fn start(app: &mut App, actor: Handle, object: u32) -> u32 {
@@ -597,7 +659,7 @@ mod tests {
         assert_ne!(app.world().resource::<SoundRng>().0, Cosmetic::new(SEED));
         let report = app.world().resource::<SoundReport>().clone();
         assert!(report.audible && !report.muted);
-        assert_eq!((report.archives, report.sounds, report.started), (1, 2, 1));
+        assert_eq!((report.archives, report.sounds, report.started), (1, 3, 1));
         assert!(report.playing[0].heard && report.playing[0].looping);
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
         app.update();
@@ -720,6 +782,76 @@ mod tests {
             assert_eq!(report.ended[0].how, "played out");
             assert_eq!(app.world().resource::<SoundRng>().0, Cosmetic::new(SEED));
         }
+    }
+
+    /// The bytes the player holds for `rel`, once read.
+    fn held_bytes(app: &App, rel: &str) -> Option<Arc<[u8]>> {
+        match app.world().resource::<SoundOut>().files.get(rel)? {
+            File::Ready(b) => Some(b.clone()),
+            _ => None,
+        }
+    }
+
+    fn held_files(app: &App) -> Vec<String> {
+        let mut f: Vec<String> = app
+            .world()
+            .resource::<SoundOut>()
+            .files
+            .keys()
+            .cloned()
+            .collect();
+        f.sort();
+        f
+    }
+
+    /// AR.18: the files a run's plays read stay for the run, a play's
+    /// ending letting none go; once the run changes, each one no play of
+    /// the new run holds goes, one a new play holds stays (the same bytes,
+    /// not read again), and a run with no plays keeps none. The report
+    /// counts what's held and what went.
+    #[test]
+    fn a_new_run_lets_go_of_the_files_no_play_holds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, actor) = tv(tmp.path().to_path_buf(), false, true);
+        start(&mut app, actor, LOOP);
+        let other = start(&mut app, actor, OTHER);
+        until_voiced(&mut app, 2);
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequences_mut()[other as usize]
+            .stopped = true;
+        steps(&mut app, 1);
+        app.update();
+        assert_eq!(voices(&mut app).len(), 1);
+        assert_eq!(held_files(&app), [FILE, OTHER_FILE], "kept through the run");
+        let report = app.world().resource::<SoundReport>().clone();
+        assert_eq!((report.files, report.released), (2, 0));
+        let loop_bytes = held_bytes(&app, FILE).unwrap();
+
+        // A new run (a reinstall) whose first play is the loop's.
+        let (mut next, actor) = world();
+        next.play_sound_on(
+            Obj {
+                unit: LEVEL,
+                index: LOOP,
+            },
+            actor,
+        )
+        .expect("it plays");
+        app.insert_resource(next);
+        app.update();
+        assert_eq!(held_files(&app), [FILE], "the new run's play holds it");
+        assert!(Arc::ptr_eq(&held_bytes(&app, FILE).unwrap(), &loop_bytes));
+        let report = app.world().resource::<SoundReport>().clone();
+        assert_eq!((report.files, report.released), (1, 1));
+        until_voiced(&mut app, 1);
+
+        // Another with nothing playing: every file goes.
+        app.insert_resource(world().0);
+        app.update();
+        assert!(held_files(&app).is_empty());
+        let report = app.world().resource::<SoundReport>().clone();
+        assert_eq!((report.files, report.released), (0, 2));
     }
 
     fn play_at(at: Option<Vec3>, flags: u32, pan: f32) -> SoundPlay {
