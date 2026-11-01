@@ -2288,6 +2288,165 @@ pub const LEVEL_UP: &[Registered] = &[m(
     Cell,
 )];
 
+/// What AS.11's every-level run reaches past every table above (openspec
+/// AS.27-AS.34), each as aj-vm's live table registers it.
+///
+/// The level audio controllers' (AS.27: `MusicController.ai`'s level
+/// placements and the levels' sound watchers): the sound system's reverb,
+/// its setting and its two amounts, which `Environmental Sound - Set
+/// Reverb` writes as a level starts (heading the path: the system's, not a
+/// sound's), a sound's `global limit` on how many of it play at once, and
+/// the streams playing; cosmetic here, nothing plays a level's sound yet, so
+/// each is a value cell and the streams read none. A sequence template's
+/// `clones`, the copies of it playing (the ambience's check for the one it
+/// faded out, a minion's stop of a hurt clip's copies), is the host's: the
+/// engine keeps it, read whole.
+///
+/// A placement's `script load` (AS.30: chapter 1's `Setup_003_Controller`,
+/// the 215 arena's trap avoider and cube controller keep its peak and
+/// average): a profiler's number that reads 0 in the retail build, whose
+/// getter answers 0 whatever the placement ran (aj-vm's way, read as an
+/// aid), so a cell reading its default; nothing on the disc writes it, and
+/// the original registers no setter.
+///
+/// The sprite members the runs reach (AS.32): a sprite matrix's `origin`,
+/// the matrix it's placed by (chapter 1's cutscene manager spawns its
+/// blackout sprite at it, 209's war machine turns its reticle by its
+/// facing), and a sprite's `text color converter` (the title's and the UI's
+/// text keyframer); value cells of their registered types reading nothing,
+/// so a path through them goes through nothing, until the original's
+/// interface draws (the backlog's HUD line).
+///
+/// The save system's state (AS.34: the title's Xbox login check sets it,
+/// reached on a host that answers the platform 0; `global.bld`'s checks
+/// manager and save scripts write and poll it on every platform), the
+/// host's: a save asked for completes when the host's saves say so, which a
+/// cell keeping the request would never do. Its labels as the live table
+/// cuts them.
+///
+/// The clips a creature's locomotion names (AS.31: the maggot starts its
+/// `walk`, 008's pirate boats move along their waypoints playing their
+/// `run`), heading the path, the host's: the running actor's own walk and
+/// run, as the original reads them off the actor whose script asks (a
+/// reading of its getters, an aid: the second and third of that actor's
+/// locomotion clips, nothing when it has fewer).
+///
+/// A placement's `script suspended` (AS.29: PvP's bricks, the challenges'
+/// replays, 003's catapult master, 202's closing scene), the VM's: the step's
+/// walk passes a placement it's set on (crate docs, The tick).
+pub const LEVELS: &[Registered] = &[
+    m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
+    // The labels as the live table cuts them.
+    m(
+        "soundinfo",
+        "reverb setting 1",
+        "EnumMeasurement",
+        "off|generic|paddedcell|room|bathroom|liv",
+        0.0,
+        26.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount 1",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount 2",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "global limit",
+        "IntMeasurement",
+        "(0-31)",
+        0.0,
+        31.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "active sound streams",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "script load",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
+        Cell,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "origin",
+        "MatrixMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "text color converter",
+        "TextColorConverter",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "system",
+        "save state",
+        "EnumMeasurement",
+        "inactive|load|save|finalize|active|compl",
+        0.0,
+        29.0,
+        Host,
+    ),
+    m(
+        "animationinfo",
+        "walk",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "animationinfo",
+        "run",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "placement",
+        "script suspended",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Vm,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2420,7 +2579,22 @@ mod tests {
                 assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
             }
         }
-        for r in earlier.into_iter().chain(CAMERA).chain(WALKERS) {
+        // AS.11's every-level run's are none of the earlier tables' either.
+        for r in LEVELS {
+            for t in [
+                INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE, LEVEL_UP,
+            ] {
+                assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
+            }
+        }
+        for r in earlier
+            .into_iter()
+            .chain(CAMERA)
+            .chain(WALKERS)
+            .chain(ROUTE)
+            .chain(LEVEL_UP)
+            .chain(LEVELS)
+        {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -2996,5 +3170,181 @@ mod tests {
             .get(MemberId::named("soundinfo", "rumble duration"))
             .unwrap();
         assert_eq!(place, Place::ValueCell);
+    }
+
+    /// One of [`LEVELS`]' rows, and where registering the table puts it.
+    fn level_member(namespace: &str, name: &str) -> (Registered, Place) {
+        let r = find(LEVELS, namespace, name).unwrap_or_else(|| panic!("{namespace}.{name}"));
+        let mut members = Members::new();
+        register(&mut members, LEVELS);
+        let (spec, place) = members
+            .get(MemberId::named(namespace, name))
+            .expect("registered");
+        assert_eq!(*spec, r.spec(), "{}", r.path());
+        (r, place)
+    }
+
+    /// AS.27: a sequence template's copies playing, the engine's set the
+    /// host keeps, read whole and never written.
+    #[test]
+    fn a_templates_clones_are_the_hosts_set() {
+        let (r, place) = level_member("clonedsequence", "clones");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("SetVariant", Kind::Set, Place::Host)
+        );
+        assert_eq!(convert(&r.spec(), Value::Set(3)), None, "never written");
+    }
+
+    /// AS.27: the sound system's reverb setting, an enum cell over the
+    /// registry's 0-26, clamped there, reading off (0) until written.
+    #[test]
+    fn the_reverb_setting_is_an_enum_cell_held_to_0_26() {
+        let (r, place) = level_member("soundinfo", "reverb setting 1");
+        assert_eq!((r.kind(), place), (Kind::Int, Place::ValueCell));
+        assert_eq!(r.spec().default, Value::Int(0));
+        assert_eq!(label(&r, "off"), Some(Value::Int(0)));
+        assert_eq!(label(&r, "room"), Some(Value::Int(3)));
+        assert_eq!(convert(&r.spec(), Value::Int(30)), Some(Value::Int(26)));
+        assert_eq!(convert(&r.spec(), Value::Float(4.7)), Some(Value::Int(4)));
+    }
+
+    /// AS.27: the reverb's two amounts, percent cells held to 0-100.
+    #[test]
+    fn the_reverb_amounts_are_percent_cells_held_to_0_100() {
+        for name in ["reverb amount 1", "reverb amount 2"] {
+            let (r, place) = level_member("soundinfo", name);
+            assert_eq!(
+                (r.units, r.kind(), place),
+                ("percent", Kind::Float, Place::ValueCell),
+                "{name}"
+            );
+            assert_eq!(convert(&r.spec(), Value::Int(70)), Some(Value::Float(70.0)));
+            assert_eq!(
+                convert(&r.spec(), Value::Int(250)),
+                Some(Value::Float(100.0))
+            );
+            assert_eq!(
+                convert(&r.spec(), Value::Float(-1.0)),
+                Some(Value::Float(0.0))
+            );
+        }
+    }
+
+    /// AS.27: how many of a sound play at once, a whole-number cell held to
+    /// the registry's 0-31.
+    #[test]
+    fn a_sounds_global_limit_is_a_cell_held_to_0_31() {
+        let (r, place) = level_member("soundinfo", "global limit");
+        assert_eq!(
+            (r.class, r.units, r.kind(), place),
+            ("IntMeasurement", "(0-31)", Kind::Int, Place::ValueCell)
+        );
+        assert_eq!(convert(&r.spec(), Value::Int(40)), Some(Value::Int(31)));
+        assert_eq!(convert(&r.spec(), Value::Float(2.9)), Some(Value::Int(2)));
+        assert_eq!(r.spec().default, Value::Int(0));
+    }
+
+    /// AS.30: a placement's script load, a percent cell from 0, open on
+    /// top, reading 0 until written (the retail build's answer).
+    #[test]
+    fn a_placements_script_load_is_a_percent_cell_reading_0() {
+        let (r, place) = level_member("actorinfo", "script load");
+        assert_eq!(
+            (r.class, r.units, r.kind(), place),
+            ("FloatMeasurement", "percent", Kind::Float, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Float(0.0));
+        assert_eq!((r.min, r.max), (0.0, OPEN));
+        assert_eq!(
+            convert(&r.spec(), Value::Float(-2.0)),
+            Some(Value::Float(0.0))
+        );
+    }
+
+    /// AS.32: a sprite matrix's origin, an object cell reading nothing
+    /// that takes only an object.
+    #[test]
+    fn a_sprite_matrixs_origin_is_an_object_cell_reading_nothing() {
+        let (r, place) = level_member("spritematrixmeasurement", "origin");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("MatrixMeasurement", Kind::Reference, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Null);
+        assert_eq!(convert(&r.spec(), Value::Float(1.0)), None);
+        assert_eq!(convert(&r.spec(), Value::Entity(4)), Some(Value::Entity(4)));
+    }
+
+    /// AS.32: a sprite's text colour converter, an object cell reading
+    /// nothing that takes only an object.
+    #[test]
+    fn a_sprites_text_colour_converter_is_an_object_cell_reading_nothing() {
+        let (r, place) = level_member("spriteinfo", "text color converter");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("TextColorConverter", Kind::Reference, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Null);
+        assert_eq!(convert(&r.spec(), Value::Int(2)), None);
+    }
+
+    /// AS.34: the save system's state, the host's enum over the
+    /// registry's 0-29.
+    #[test]
+    fn the_save_state_is_the_hosts_enum_held_to_0_29() {
+        let (r, place) = level_member("system", "save state");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("EnumMeasurement", Kind::Int, Place::Host)
+        );
+        assert_eq!(label(&r, "inactive"), Some(Value::Int(0)));
+        assert_eq!(label(&r, "save"), Some(Value::Int(2)));
+        assert_eq!(convert(&r.spec(), Value::Int(31)), Some(Value::Int(29)));
+        assert_eq!(convert(&r.spec(), Value::Int(23)), Some(Value::Int(23)));
+    }
+
+    /// AS.31: a creature's walk and run clips, objects the host answers,
+    /// taking only an object.
+    #[test]
+    fn a_creatures_walk_and_run_are_the_hosts_objects() {
+        for name in ["walk", "run"] {
+            let (r, place) = level_member("animationinfo", name);
+            assert_eq!(
+                (r.class, r.kind(), place),
+                ("ReferenceVariant", Kind::Reference, Place::Host),
+                "{name}"
+            );
+            assert_eq!(convert(&r.spec(), Value::Int(1)), None, "{name}");
+        }
+    }
+
+    /// AS.29: a placement's script suspended, the VM's own, by its two
+    /// labels: named, no host or cell entry.
+    #[test]
+    fn a_placements_script_suspended_is_the_vms() {
+        let r = find(LEVELS, "placement", "script suspended").unwrap();
+        assert_eq!(
+            (r.class, r.kind(), r.keeper),
+            ("EnumMeasurement", Kind::Int, Keeper::Vm)
+        );
+        assert_eq!(label(&r, "true"), Some(Value::Int(1)));
+        let mut members = Members::new();
+        register(&mut members, LEVELS);
+        let id = MemberId::named("placement", "script suspended");
+        assert!(members.get(id).is_none());
+        assert_eq!(members.name(id), "placement.script suspended");
+    }
+
+    /// AS.27: the streams playing, a cell standing for the engine's set
+    /// that reads none (nothing plays a stream).
+    #[test]
+    fn the_streams_playing_are_a_cell_reading_none() {
+        let (r, place) = level_member("soundinfo", "active sound streams");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("SetVariant", Kind::Reference, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Null);
     }
 }

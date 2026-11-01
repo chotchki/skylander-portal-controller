@@ -61,8 +61,9 @@ const CAP: usize = 300;
 /// `_activityState` of a placement the level runs (UNMANAGED).
 const RUNNING: u32 = 4;
 
-/// The registry's tables, as guacamole registers them.
-const TABLES: [&[Registered]; 10] = [
+/// The registry's tables: guacamole's, as it registers them, and AS's
+/// every-level table, which the TV's run doesn't register yet (AS.37).
+const TABLES: [&[Registered]; 11] = [
     members::INIT_CHAIN,
     members::HERO,
     members::CREATURES,
@@ -73,6 +74,7 @@ const TABLES: [&[Registered]; 10] = [
     members::WALKERS,
     members::ROUTE,
     members::LEVEL_UP,
+    members::LEVELS,
 ];
 
 /// `global.bld`'s placements guacamole ticks every step in play

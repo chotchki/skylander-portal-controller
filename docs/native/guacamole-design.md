@@ -2148,7 +2148,17 @@ the level run again until its ticks run clean. All 143 link; 19 gaps rank by the
 `clonedsequence.clones` on 47 levels first (the level audio controllers), then the music controller's
 reverb members (29), `for each` over `undefined` (13) and `placement.script suspended` (11); the levels'
 own scripts name 121 members no table registers, the reach a host answering more would go to. Each is a
-box in AS for the VM lane (AS.27-AS.36).
+box in AS for the VM lane (AS.27-AS.36). After it (AS.27-AS.35, 2026-11-01) the level audio controllers'
+members, the sprites' and a placement's script load are value cells of guac-script's `members::LEVELS`, a
+template's copies, the save state and a creature's walk and run its host members, `placement.script
+suspended` the VM's own (the step's walk passes a suspended placement, read off the EBOOT), and `for each`
+over `undefined`, a tag holding a roll, a colour's roll, a stray parameter and `undefined`'s count are
+modelled: every level runs both phases clean but 214, whose candlesticks' hurt loop runs out its ops on
+the null host, and the run takes 581.8 s where it took 1,251.8 s (the slider check indexed, the VM's maps
+off SipHash; the loads differed, 3 against 9, so the clean measure is 214 to B250 on one harness, 134.5 s
+before and 50.1 s after). A tag's roll is drawn at its first find, a reading until AS.41 says when the
+original draws it. The TV's run registering the table and its host's answers are AS.37-AS.39, 214's loop
+on guacamole's host AS.40.
 
 ## Renderer
 

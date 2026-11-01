@@ -8,14 +8,15 @@ use std::sync::Arc;
 use guac_formats::script::{Class, StackClass};
 
 use crate::host::{
-    Access, Answer, Builtin, Host, HostFault, Kind, MemberId, Members, OpCall, Place,
+    Access, Answer, Builtin, Host, HostFault, Kind, MemberId, MemberSpec, Members, OpCall, Place,
 };
+use crate::ids::{IdMap, IdSet};
 use crate::program::{
     Container, Contents, Decl, DefId, DefKind, Elem, Global, GlobalId, Ins, LiteralClass, Obj,
     OpId, Operand, OperandId, Param, Program, ScriptId, Sym, Tag,
 };
 use crate::slide::{between, eased};
-use crate::value::{ArithFault, Value, arith_in, compare, convert, random_literal};
+use crate::value::{ArithFault, Value, arith_in, compare, convert, random_colour, random_literal};
 use crate::whitelist::{Listed, Whitelist};
 
 /// A placement as the host knows it (an entity's bits).
@@ -214,7 +215,7 @@ struct Placement {
     set_up: bool,
     behaviour: Option<u32>,
     shutdown: bool,
-    locals: HashMap<Sym, u32>,
+    locals: IdMap<Sym, u32>,
     stopped: Option<Halt>,
     inert: bool,
     /// Taken off by a `remove`: never ticked again.
@@ -234,6 +235,9 @@ struct Placement {
     activator: bool,
     /// Seconds of ticks so far: `system.script timer`.
     active: f32,
+    /// `placement.script suspended`: the walk passes it (crate docs, The
+    /// tick).
+    suspended: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -327,6 +331,8 @@ enum Spot {
         id: u32,
         part: SliderPart,
     },
+    /// A placement's `placement.script suspended` (crate docs, The tick).
+    Suspended(PlacementId),
 }
 
 /// What of a slider a `sequence` member reads and writes.
@@ -439,6 +445,106 @@ fn recv(v: Value) -> Recv {
     Recv::Value(tag, bits)
 }
 
+/// `placement.script suspended`'s id, the VM's own member (crate docs, The
+/// tick).
+fn suspended_member() -> MemberId {
+    MemberId::named("placement", "script suspended")
+}
+
+/// The place a slide eases as a write ending it compares it: a member's
+/// `_otherPoint` aside, which a read of the same place may differ in.
+fn slide_key(spot: Spot) -> Spot {
+    match spot {
+        Spot::Member {
+            receiver,
+            member,
+            cell,
+            via,
+            ..
+        } => Spot::Member {
+            receiver,
+            member,
+            cell,
+            other: None,
+            via,
+        },
+        other => other,
+    }
+}
+
+/// A fingerprint of the place a slide eases ([`slide_key`]): equal for any
+/// two places a write ends a slide on, since it reads only parts two equal
+/// keys share (a number's bits left out, whose 0 and -0 compare equal); two
+/// places it can't tell apart the exact comparison sorts out.
+fn slid_place(spot: Spot) -> u64 {
+    use std::hash::Hasher;
+    let mut h = crate::ids::IdHasher::default();
+    let value = |h: &mut crate::ids::IdHasher, v: Value| match v {
+        Value::Float(_) | Value::Double(_) => h.write_u8(0xF0),
+        v => match recv(v) {
+            Recv::Value(tag, bits) => {
+                h.write_u8(tag);
+                h.write_u64(bits);
+            }
+            Recv::Head | Recv::ValueCell(_) => {}
+        },
+    };
+    let member = |h: &mut crate::ids::IdHasher, member: MemberId, cell: Option<u32>| {
+        h.write_u32(member.namespace);
+        h.write_u32(member.name);
+        h.write_u32(cell.unwrap_or(u32::MAX));
+    };
+    match spot {
+        Spot::Cell(c) => {
+            h.write_u8(1);
+            h.write_u32(c);
+        }
+        Spot::Const(v) => {
+            h.write_u8(2);
+            value(&mut h, v);
+        }
+        Spot::Count(c) => {
+            h.write_u8(3);
+            h.write_u32(c);
+        }
+        Spot::CastToInteger => h.write_u8(4),
+        Spot::Undefined => h.write_u8(5),
+        Spot::Member {
+            receiver,
+            member: m,
+            cell,
+            via,
+            ..
+        } => {
+            h.write_u8(6);
+            member(&mut h, m, cell);
+            h.write_u32(via.unwrap_or(u32::MAX));
+            if let Some(r) = receiver {
+                value(&mut h, r);
+            }
+        }
+        Spot::Packed { base, .. } => {
+            h.write_u8(7);
+            match base {
+                Base::Cell(c) => h.write_u32(c),
+                Base::Const(v) => value(&mut h, v),
+                Base::Member {
+                    member: m, cell, ..
+                } => member(&mut h, m, cell),
+            }
+        }
+        Spot::Slider { id, .. } => {
+            h.write_u8(8);
+            h.write_u32(id);
+        }
+        Spot::Suspended(id) => {
+            h.write_u8(9);
+            h.write_u32(id);
+        }
+    }
+    h.finish()
+}
+
 /// Whether an operand reads `its`: a path naming it, or an expression with
 /// one on either side (a right side `its.$x` wrapped in an expression is
 /// read anew for each member `find subset` tests).
@@ -533,6 +639,30 @@ fn tag_names_nothing(program: &Program, o: OperandId) -> bool {
     }
 }
 
+/// Whether a tag's value is literals alone: a literal (a roll included) or
+/// an expression of them, no path step anywhere (openspec AS.33).
+fn of_literals(program: &Program, o: OperandId, depth: u32) -> bool {
+    if depth > MAX_DEPTH {
+        return false;
+    }
+    match program.operands.get(o as usize) {
+        Some(Operand::Path {
+            elems,
+            literal: Some(_),
+            ..
+        }) => elems.is_empty(),
+        Some(Operand::Expr { a: Some(a), op, b }) => {
+            of_literals(program, *a, depth + 1)
+                && match (op, b) {
+                    (None, None) => true,
+                    (Some(_), Some(b)) => of_literals(program, *b, depth + 1),
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
 /// What an embedder runs in a held placement's place during a step's walk
 /// ([`Vm::step_with`]): the VM, the placement and the host.
 pub type Native<'a> = dyn FnMut(&mut Vm, PlacementId, &mut dyn Host) -> Result<(), Halt> + 'a;
@@ -571,26 +701,26 @@ pub struct Vm {
     sets: Vec<SetObj>,
     structs: Vec<StructObj>,
     globals: Vec<Option<u32>>,
-    frames: HashMap<DefId, HashMap<Sym, u32>>,
-    busy: HashSet<DefId>,
-    op_state: HashMap<OpId, OpState>,
-    value_cells: HashMap<(Recv, MemberId), u32>,
+    frames: IdMap<DefId, IdMap<Sym, u32>>,
+    busy: IdSet<DefId>,
+    op_state: IdMap<OpId, OpState>,
+    value_cells: IdMap<(Recv, MemberId), u32>,
     value_cell_values: Vec<Value>,
     /// Each engine member's reads and writes since the VM was made.
     uses: HashMap<MemberId, (u64, u64)>,
     /// A set member's set, per receiver: refilled from the host each read.
-    engine_sets: HashMap<(Recv, MemberId), u32>,
+    engine_sets: IdMap<(Recv, MemberId), u32>,
     /// The places [`Value::Bound`] names.
     bound: Vec<Spot>,
     /// What a file object naming a placement reads as: its handle.
-    objects: HashMap<Obj, Handle>,
+    objects: IdMap<Obj, Handle>,
     /// The file object each named handle stands for: what a placement with
     /// no script finds its tags by.
-    named: HashMap<Handle, Obj>,
+    named: IdMap<Handle, Obj>,
     /// The VM's placement running under each handle.
-    handles: HashMap<Handle, PlacementId>,
+    handles: IdMap<Handle, PlacementId>,
     /// `find variable`'s variables, by owner, name and declaration.
-    found: HashMap<(Recv, Sym, Decl), u32>,
+    found: IdMap<(Recv, Sym, Decl), u32>,
     cast: Value,
     reached: HashSet<MemberId>,
     calls: HashMap<DefId, u64>,
@@ -612,6 +742,14 @@ pub struct Vm {
     /// slider a session has made (about 25 a second in the fight). One
     /// that ended leaves at the next scan.
     live: Vec<u32>,
+    /// The running sliders by the place each eases, keyed by the place's
+    /// fingerprint ([`slid_place`]): a script's write looks here before it
+    /// ends any, so a write to a place nothing slides costs a lookup, not a
+    /// scan of every running slider (openspec AS.35).
+    slid_places: IdMap<u64, Vec<u32>>,
+    /// Sliders a write compared its place with, for the index's test.
+    #[cfg(test)]
+    slides_compared: u64,
     /// Frames [`Vm::slide`] has begun: a slider begun in a frame first moves
     /// in the next.
     frame: u64,
@@ -681,18 +819,18 @@ impl Vm {
             sets: Vec::new(),
             structs: Vec::new(),
             globals,
-            frames: HashMap::new(),
-            busy: HashSet::new(),
-            op_state: HashMap::new(),
-            value_cells: HashMap::new(),
+            frames: IdMap::default(),
+            busy: IdSet::default(),
+            op_state: IdMap::default(),
+            value_cells: IdMap::default(),
             value_cell_values: Vec::new(),
             uses: HashMap::new(),
-            engine_sets: HashMap::new(),
+            engine_sets: IdMap::default(),
             bound: Vec::new(),
-            objects: HashMap::new(),
-            named: HashMap::new(),
-            handles: HashMap::new(),
-            found: HashMap::new(),
+            objects: IdMap::default(),
+            named: IdMap::default(),
+            handles: IdMap::default(),
+            found: IdMap::default(),
             cast: Value::Int(0),
             reached: HashSet::new(),
             calls: HashMap::new(),
@@ -704,6 +842,9 @@ impl Vm {
             sliders: Vec::new(),
             running: 0,
             live: Vec::new(),
+            slid_places: IdMap::default(),
+            #[cfg(test)]
+            slides_compared: 0,
             frame: 0,
             slid: false,
             sliding: false,
@@ -772,7 +913,7 @@ impl Vm {
             set_up: false,
             behaviour: None,
             shutdown: false,
-            locals: HashMap::new(),
+            locals: IdMap::default(),
             stopped: None,
             inert,
             removed: false,
@@ -782,6 +923,7 @@ impl Vm {
             asleep: false,
             activator: false,
             active: 0.0,
+            suspended: false,
         });
         let id = (self.placements.len() - 1) as PlacementId;
         self.order.push(id);
@@ -796,14 +938,18 @@ impl Vm {
             }
         }
         // Variables `find variable` made on it before it ran become its
-        // locals.
+        // locals in the order they were made (cells are numbered as made),
+        // so of two by one name the later holds it, as a find on a running
+        // placement leaves it; never in the map's order, which is its
+        // hasher's.
         let key = recv(Value::Entity(handle));
-        let moved: Vec<((Recv, Sym, Decl), u32)> = self
+        let mut moved: Vec<((Recv, Sym, Decl), u32)> = self
             .found
             .iter()
             .filter(|((owner, ..), _)| *owner == key)
             .map(|(k, c)| (*k, *c))
             .collect();
+        moved.sort_unstable_by_key(|&(_, c)| c);
         for (k, c) in moved {
             self.found.remove(&k);
             let p = &mut self.placements[id as usize];
@@ -846,6 +992,14 @@ impl Vm {
     /// listing its script for that tick alone).
     pub fn is_held(&self, id: PlacementId) -> bool {
         self.placements.get(id as usize).is_some_and(|p| p.held)
+    }
+
+    /// Whether a script has suspended the placement (`placement.script
+    /// suspended`): the step's walk passes it (crate docs, The tick).
+    pub fn is_suspended(&self, id: PlacementId) -> bool {
+        self.placements
+            .get(id as usize)
+            .is_some_and(|p| p.suspended)
     }
 
     pub fn held(&self) -> Vec<Handle> {
@@ -1522,7 +1676,7 @@ impl Vm {
         native: &mut Native<'_>,
     ) -> Result<(), Halt> {
         let p = &self.placements[id as usize];
-        if p.inert || p.removed || p.asleep || p.stopped.is_some() {
+        if p.inert || p.removed || p.asleep || p.suspended || p.stopped.is_some() {
             return Ok(());
         }
         if p.held {
@@ -1591,8 +1745,7 @@ impl Vm {
             };
             let (spot, placement, ctx, receiver) = (s.spot, s.placement, s.ctx, s.receiver);
             if done {
-                s.running = false;
-                self.running -= 1;
+                self.stop_slider(id);
             }
             report.ticked += 1;
             self.begin(placement, ctx, receiver);
@@ -1602,10 +1755,7 @@ impl Vm {
             match self.finish(result) {
                 Ok(None) => {}
                 Ok(Some(halt)) => {
-                    if self.sliders[i].running {
-                        self.sliders[i].running = false;
-                        self.running -= 1;
-                    }
+                    self.stop_slider(id);
                     report.stopped.push(halt);
                 }
                 Err(halt) => {
@@ -1633,6 +1783,12 @@ impl Vm {
         if let Some(p) = self.placements.get_mut(id as usize) {
             p.active += dt;
         }
+    }
+
+    /// Sliders a script's writes have compared their places with so far.
+    #[cfg(test)]
+    pub(crate) fn slides_compared(&self) -> u64 {
+        self.slides_compared
     }
 
     /// Sliders running now.
@@ -2469,7 +2625,7 @@ impl Vm {
         if let Value::Entity(h) = owner
             && let Some(&pid) = self.handles.get(&h)
         {
-            let cell = self.find_local(pid, name, decl, filter)?;
+            let cell = self.find_local(pid, name, decl, filter, host)?;
             let st = self.op_state.entry(op).or_default();
             st.cached = cell.map(Value::Cell);
             return Ok(cell.is_some());
@@ -2488,7 +2644,7 @@ impl Vm {
             && let Some(obj) = file_obj
             && self.tag(obj, name, decl).is_some()
         {
-            let c = self.tag_cell(obj, name, decl)?;
+            let c = self.tag_cell(obj, name, decl, host)?;
             self.found.insert(key, c);
         }
         let cell = match (filter, self.found.get(&key).copied()) {
@@ -2603,6 +2759,11 @@ impl Vm {
     /// at (openspec AG.171).
     fn bind(&mut self, program: &Program, p: Param, host: &mut dyn Host) -> Result<(), Fault> {
         let Some(call) = self.run.calls.last().copied() else {
+            // Binding into no definition, it binds nothing (crate docs,
+            // Macros; openspec AS.34: level 212's definition holds one).
+            if p.def.is_none() {
+                return Ok(());
+            }
             return unsupported("a parameter outside a call");
         };
         let name = param_name(program, &self.frames, call.def, &p);
@@ -2688,6 +2849,11 @@ impl Vm {
         host: &mut dyn Host,
     ) -> Result<(), Fault> {
         let spot = self.path(program, lhs, host)?;
+        // `undefined` holds no set: it skips as an empty set does (openspec
+        // AS.28: the spike floors' controller walks it).
+        if spot == Spot::Undefined {
+            return Err(Fault::Nothing);
+        }
         let set = self.read(spot, host)?;
         let Value::Set(s) = self.materialize(set) else {
             return if set == Value::Null {
@@ -2895,12 +3061,8 @@ impl Vm {
                     // A slider is the VM's own: stopped, its place stays
                     // where it stands.
                     if let Value::Slider(id) = t {
-                        if class == Class::StopSequence
-                            && let Some(s) = self.sliders.get_mut(id as usize)
-                            && s.running
-                        {
-                            s.running = false;
-                            self.running -= 1;
+                        if class == Class::StopSequence {
+                            self.stop_slider(id);
                         }
                         continue;
                     }
@@ -3034,7 +3196,13 @@ impl Vm {
     }
 
     /// A new cell holding the tag `name` `obj`'s file gives it ([`Vm::tag`]).
-    fn tag_cell(&mut self, obj: Obj, name: Sym, decl: Decl) -> Result<u32, Fault> {
+    fn tag_cell(
+        &mut self,
+        obj: Obj,
+        name: Sym,
+        decl: Decl,
+        host: &mut dyn Host,
+    ) -> Result<u32, Fault> {
         let Some(tag) = self.tag(obj, name, decl) else {
             return unsupported("no such tag");
         };
@@ -3057,7 +3225,14 @@ impl Vm {
                         // A tag naming `null` holds nothing: a set
                         // reference to no set (the spike gate's `close_set`).
                         None if tag_names_nothing(&self.program, o) => Value::Null,
-                        None => return unsupported("a tag whose value isn't a literal"),
+                        // A value of literals alone reads as it does on a
+                        // right side, a roll drawn now (openspec AS.33:
+                        // challenge 49's clocks' `random(30)`).
+                        None if of_literals(&self.program, o, 0) => {
+                            let program = Arc::clone(&self.program);
+                            self.rhs(&program, Some(o), host, 0)?
+                        }
+                        None => return unsupported("a tag whose value reads a path"),
                     },
                 },
             },
@@ -3092,6 +3267,7 @@ impl Vm {
         name: Sym,
         decl: Decl,
         filter: u32,
+        host: &mut dyn Host,
     ) -> Result<Option<u32>, Fault> {
         let p = &self.placements[pid as usize];
         let mut existing = p
@@ -3106,7 +3282,7 @@ impl Vm {
             && is_tag
             && let Some(obj) = p.obj
         {
-            let c = self.tag_cell(obj, name, decl)?;
+            let c = self.tag_cell(obj, name, decl, host)?;
             self.placements[pid as usize].locals.insert(name, c);
             existing = Some(c);
         }
@@ -3249,6 +3425,10 @@ impl Vm {
         self.running += 1;
         let id = (self.sliders.len() - 1) as u32;
         self.live.push(id);
+        self.slid_places
+            .entry(slid_place(spot))
+            .or_default()
+            .push(id);
         self.op_state.entry(op).or_default().cached = Some(Value::Slider(id));
         self.push(program, op, BlockKind::Plain);
         Ok(())
@@ -3262,32 +3442,47 @@ impl Vm {
         if self.running == 0 {
             return;
         }
-        let key = |s: Spot| match s {
-            Spot::Member {
-                receiver,
-                member,
-                cell,
-                via,
-                ..
-            } => Spot::Member {
-                receiver,
-                member,
-                cell,
-                other: None,
-                via,
-            },
-            other => other,
+        let Some(ids) = self.slid_places.get(&slid_place(spot)) else {
+            return;
         };
-        let k = key(spot);
-        for &i in &self.live {
-            let s = &mut self.sliders[i as usize];
-            if s.running && key(s.spot) == k {
-                s.running = false;
-                self.running -= 1;
-            }
+        let k = slide_key(spot);
+        #[cfg(test)]
+        {
+            self.slides_compared += ids.len() as u64;
+        }
+        let ending: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|&i| slide_key(self.sliders[i as usize].spot) == k)
+            .collect();
+        if ending.is_empty() {
+            return;
+        }
+        for i in ending {
+            self.stop_slider(i);
         }
         let sliders = &self.sliders;
         self.live.retain(|&i| sliders[i as usize].running);
+    }
+
+    /// Ends slider `id` if it runs: off the running count and the index of
+    /// slid places. It leaves [`Vm::live`] at the next scan.
+    fn stop_slider(&mut self, id: u32) {
+        let Some(s) = self.sliders.get_mut(id as usize) else {
+            return;
+        };
+        if !s.running {
+            return;
+        }
+        s.running = false;
+        self.running -= 1;
+        let place = slid_place(s.spot);
+        if let Some(ids) = self.slid_places.get_mut(&place) {
+            ids.retain(|&i| i != id);
+            if ids.is_empty() {
+                self.slid_places.remove(&place);
+            }
+        }
     }
 
     /// A slider's `sequence` members and `slider.ignores time scales`
@@ -3567,6 +3762,18 @@ impl Vm {
         match e {
             Elem::Member(m) => {
                 self.reached.insert(m);
+                // A placement's flag the walk reads (crate docs, The tick):
+                // on one the VM runs, the VM's; anything else holds none.
+                if m == suspended_member() {
+                    let v = self.read(prev, host)?;
+                    return match self.materialize(v) {
+                        Value::Entity(h) => match self.handles.get(&h) {
+                            Some(&id) => Ok(Spot::Suspended(id)),
+                            None => Err(Fault::Nothing),
+                        },
+                        _ => Err(Fault::Nothing),
+                    };
+                }
                 if let Some(part) = Packed::of(m) {
                     let base = match prev {
                         Spot::Cell(c) => Base::Cell(c),
@@ -3612,11 +3819,14 @@ impl Vm {
                         // reads 0 and its elements none, as an empty set's
                         // (openspec AH.28: the cannon's rubble plays
                         // `undefined.setvariant.next` as it lands).
+                        // Its count is `undefined` itself, reading 0 and
+                        // taking a write nowhere (openspec AS.34: challenge
+                        // 49's trees raise it).
                         if prev == Spot::Undefined {
-                            return Ok(Spot::Const(match b {
-                                Builtin::Count => Value::Int(0),
-                                _ => Value::Null,
-                            }));
+                            return Ok(match b {
+                                Builtin::Count => Spot::Undefined,
+                                _ => Spot::Const(Value::Null),
+                            });
                         }
                         let v = self.read(prev, host)?;
                         let Value::Set(s) = self.materialize(v) else {
@@ -3796,6 +4006,7 @@ impl Vm {
             Spot::Count(s) => Value::Int(self.sets[s as usize].elems.len() as i32),
             Spot::CastToInteger => self.cast,
             Spot::Undefined => Value::Int(0),
+            Spot::Suspended(id) => Value::Int(i32::from(self.placements[id as usize].suspended)),
             Spot::Slider { id, part } => {
                 let s = &self.sliders[id as usize];
                 let left = if s.running {
@@ -3935,6 +4146,14 @@ impl Vm {
                 Ok(())
             }
             Spot::Undefined => Ok(()),
+            // 0 or 1, as an enum of two takes it; one that won't convert drops.
+            Spot::Suspended(id) => {
+                let spec = MemberSpec::new(Kind::Int, 0.0, 1.0);
+                if let Some(Value::Int(on)) = convert(&spec, self.deref(v)) {
+                    self.placements[id as usize].suspended = on != 0;
+                }
+                Ok(())
+            }
             // Time left set on a slider: it carries on from there, and with
             // none left it lands on its target in the next frame's step.
             Spot::Slider { id, part } => {
@@ -4070,6 +4289,11 @@ impl Vm {
                 Ok(())
             }
             Spot::Undefined | Spot::Slider { .. } => Ok(()),
+            // Back to its reset template's flag: clear in every file.
+            Spot::Suspended(id) => {
+                self.placements[id as usize].suspended = false;
+                Ok(())
+            }
             // A structure or set a reference names, back to its defaults
             // as a variable holding it would be.
             Spot::Const(Value::Struct(st)) => {
@@ -4147,6 +4371,11 @@ impl Vm {
                     };
                     if !l.random {
                         return Ok(l.value());
+                    }
+                    // A colour rolls each byte (crate docs, Literals and
+                    // rolls; openspec AS.34).
+                    if let Value::Color(c) = l.value() {
+                        return Ok(Value::Color(random_colour(c, || host.draw())));
                     }
                     let word = host.draw();
                     return match random_literal(l.value(), word) {
@@ -4912,7 +5141,7 @@ fn own_parameter(program: &Program, def: DefId, name: &str) -> Option<Param> {
 /// INTERFACE gives the same id.
 fn param_name(
     program: &Program,
-    frames: &HashMap<DefId, HashMap<Sym, u32>>,
+    frames: &IdMap<DefId, IdMap<Sym, u32>>,
     def: DefId,
     p: &Param,
 ) -> Sym {

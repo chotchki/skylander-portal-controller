@@ -59,6 +59,26 @@
 //! so one joining the end during the walk ticks that step too, and one
 //! leaving a place the walk has passed doesn't make it skip the next.
 //!
+//! A placement whose `placement.script suspended` is set isn't ticked: the
+//! walk passes it, its place on its list, its state, its locals and its
+//! `system.script timer` kept (the tick is what adds a frame's seconds to
+//! it), and once a script clears it, it ticks again at that place the next
+//! time the walk reaches it: that step when a placement ahead of it on the
+//! list cleared it, the next when one behind it did. Set in its own tick,
+//! the rest of that tick runs. The member is the VM's: on a placement it
+//! runs, the flag (0 or 1, a write clamped there, a reset clearing it); on
+//! anything else a path through nothing. Read off the EBOOT, not the oracle
+//! (openspec AS.29: no route reaches a level that sets it): the frame's
+//! scripts updater takes each placement's activity, then runs its tick
+//! unless its flag 4 is set, reading the flag as it comes to the placement
+//! (aj-vm's and AH.59's reading), so its activity still follows the
+//! embedder's rule while it's suspended; the member reads and writes that
+//! flag, a reset putting back its reset template's, clear in every file on
+//! the disc (all 51,686 placements' flag words are 0). PvP's bricks suspend
+//! themselves until the brick under them goes, a challenge's replay
+//! suspends a troll. A reading: a suspended placement taken off still runs
+//! its SHUTDOWN (whether the shutdown queue passes one isn't read).
+//!
 //! One sent round its states by a `reset` ([`Vm::requeue`]: the mover
 //! update, which the music controller's tick resets every frame) leaves its
 //! list, its `system.script timer` back to 0, and goes back on the list's end
@@ -208,7 +228,10 @@
 //!   index, read as a path element, runs 0 to count - 1.
 //! - `for each` snapshots the set it names, rotated left by its offset
 //!   (modulo the count, negatives wrapping); direction 0 runs it forward, 1
-//!   backward, 2 in a shuffled order. An empty set skips. Its element, read
+//!   backward, 2 in a shuffled order. An empty set skips, as `undefined`
+//!   does, which holds no set (Members; openspec AS.28: the spike floors'
+//!   controller, chapter 1's among them, walks `undefined` in its
+//!   STARTUP). Its element, read
 //!   as a path element, is the current one.
 //! - `find subset` reads a path with one empty slot: the part before the
 //!   slot names a set; each member but the running placement goes in the
@@ -241,6 +264,12 @@
 //! - Entering pushes the definition and skips the definition's own INTERFACE
 //!   block: a parameter's default there is never read. A parameter the call
 //!   leaves out reads 0, nothing or an empty set.
+//! - A parameter op outside any call that binds into no definition (its
+//!   `_macroDef` empty) binds nothing and reads nothing: level 212's
+//!   definition holds one between two camera calls, an editor's leftover,
+//!   and its level plays on past it (openspec AS.34; a reading: the next
+//!   call binds the same parameter, so nothing observable rides on it).
+//!   One outside a call that names a definition stops as unsupported.
 //! - The body's end (its block closing, or `flow end`) returns: the counter
 //!   resumes right after the caller's INTERFACE block, in the caller's
 //!   context. The rest of the use block is the caller's after-return code:
@@ -320,6 +349,16 @@
 //!   its file gives: a Chompy's `notice player radius` 30) are among its
 //!   variables from the start: `find variable` finds one by name and
 //!   declaration's container, holding the tag's value ([`Program::tags`]).
+//!   A value of literals alone (a roll, an expression of literals) reads as
+//!   it does on a right side, its roll drawn from the session's generator
+//!   when the tag is first found (openspec AS.33: challenge 49's clocks'
+//!   `time` is `random(30)`, 205's elemental wall's `dirt tint` a random
+//!   colour, the disc's only two; a reading: whether the original builds a
+//!   tag's variable, roll and all, at the placement's load or at its first
+//!   find isn't read, and a draw at another moment moves every roll after
+//!   it, AS.41). A
+//!   value reading a path that names no single object, file variable or
+//!   nothing stops as unsupported.
 //!   A placement with no script has them too, found from any script as
 //!   its table's first entries (AH.21: the loot system's init reads each
 //!   breakable's `archetype ref`, and a breakable runs no script).
@@ -431,7 +470,13 @@
 //! original's routine is read to do: [0, r), except that the 128 highest
 //! numbers round to 2^32 and read r itself, one draw in 2^25. That corner
 //! is the reading, kept for parity as script-runtime's Random rolls says;
-//! no measurement sees it.
+//! no measurement sees it. A colour literal rolls each byte on its own,
+//! four draws: byte b reads (number & 0x7fffffff) mod (b + 1), so 0 to b
+//! with both ends, the file's word from its high byte down, alpha first,
+//! then blue, green and red (openspec AS.34: 003's definition rolls a
+//! zone's fog colour, the dirt mounds their tint; aj-vm's read of the
+//! routine, an aid, no measurement yet). A screen position's roll stops as
+//! unsupported until a script reaches one.
 //!
 //! # Members
 //!
@@ -441,9 +486,11 @@
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
-//!   into it too, and a membership check or a `find subset` of it skips;
+//!   into it and a write to its count too, and a membership check, a `for
+//!   each` or a `find subset` of it skips;
 //!   its `setvariant` members read as an empty set's: a count of 0, no
-//!   element);
+//!   element; openspec AS.34: challenge 49's trees raise its count, then
+//!   read its last);
 //!   `.its`, the
 //!   member under test inside `find subset`; `.valuedereferencer`, the
 //!   object a reference names, as the place to write;
@@ -579,6 +626,7 @@
 
 mod generator;
 mod host;
+mod ids;
 pub mod members;
 mod program;
 mod slide;
@@ -601,7 +649,9 @@ pub use program::{
 };
 pub use slide::{between, eased};
 pub use stall::{Stall, StallDetector, StallLimit};
-pub use value::{ArithFault, Value, arith, arith_in, compare, convert, random_literal};
+pub use value::{
+    ArithFault, Value, arith, arith_in, compare, convert, random_colour, random_literal,
+};
 pub use vm::{
     Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId, Precision, Reason,
     SLIDERS, StepReport, TICK_SECONDS, Vm,

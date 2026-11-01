@@ -17,6 +17,7 @@ mod creatures;
 mod embed;
 mod hero;
 mod init;
+mod levels;
 mod loot;
 mod order;
 mod route;
