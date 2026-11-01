@@ -759,23 +759,40 @@ mod tests {
         &DOCS[from..to]
     }
 
+    /// The bullet or paragraph of `section` that introduces `name`: ticked and
+    /// followed by its own ` (`, or by `, ` and the next name in a run (`a`,
+    /// `b` (...)); not one that only mentions it.
+    fn entry(section: &str, name: &str) -> Option<String> {
+        let tick = format!("`{name}`");
+        let mut blocks: Vec<Vec<&str>> = vec![Vec::new()];
+        for l in section.lines() {
+            if l.starts_with("//! - ") || l.trim_end() == "//!" {
+                blocks.push(Vec::new());
+            }
+            blocks.last_mut().unwrap().push(l);
+        }
+        blocks.into_iter().map(|b| b.join("\n")).find(|b| {
+            b.match_indices(&tick).any(|(i, _)| {
+                let rest = &b[i + tick.len()..];
+                rest.starts_with(" (") || rest.starts_with(", `")
+            })
+        })
+    }
+
     #[test]
     fn every_member_is_in_its_namespaces_section_with_its_handlers() {
         let mut counts = std::collections::BTreeMap::new();
         for m in &MEMBERS {
             *counts.entry(m.namespace).or_insert(0) += 1;
             let s = section(m.namespace);
-            // Its name, ticked, its own or in a pair (`a`, `b` (...)).
-            assert!(
-                s.contains(&format!("`{}`", m.name)),
-                "{}.{}",
-                m.namespace,
-                m.name
-            );
+            // Its name, ticked, its own or in a pair (`a`, `b` (...)), and
+            // every handler address in that bullet or paragraph.
+            let e = entry(s, m.name)
+                .unwrap_or_else(|| panic!("{}.{} not in its section", m.namespace, m.name));
             for a in [m.get, m.set, m.reset].into_iter().flatten() {
                 assert!(
-                    s.contains(&format!("0x{a:X}")),
-                    "{}.{}'s 0x{a:X} not in its section",
+                    e.contains(&format!("0x{a:X}")),
+                    "{}.{}'s 0x{a:X} not in its entry:\n{e}",
                     m.namespace,
                     m.name
                 );

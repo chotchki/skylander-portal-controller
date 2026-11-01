@@ -81,8 +81,14 @@ struct Setup {
 }
 
 fn setup() -> Setup {
+    setup_with(|_| {})
+}
+
+/// [`setup`] with `edit` run on the dump's `USRDIR` before it's scanned.
+fn setup_with(edit: impl FnOnce(&Path)) -> Setup {
     let tmp = tempfile::tempdir().unwrap();
     let dump = make_dump(tmp.path());
+    edit(&dump.join("PS3_GAME/USRDIR"));
     let scan = guac_extract::dump::scan(&dump, &Default::default(), &|_| {}).unwrap();
     let known = vec![KnownDump {
         title_id: "BLUS30968",
@@ -183,6 +189,32 @@ fn a_second_run_keeps_the_part() {
     assert!(again.kept && !again.read);
     assert_eq!(again.files.written, 0);
     assert_eq!(again.files.kept, 3 + 3);
+}
+
+/// An archive on the dump that won't read refuses the part alone: named in
+/// `failed`, the part left off the manifest (so the extract isn't current
+/// and the next start reads it again), what read before it kept for then.
+#[test]
+fn an_archive_that_wont_read_leaves_the_part_unrecorded() {
+    let broken = IgaBuilder::new().lzma("level.bld", b"not an igz").build();
+    let s = setup_with(|usr| fs::write(usr.join("character/009_eruptor.bld"), &broken).unwrap());
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    let (archive, why) = st.failed.clone().expect("the broken archive named");
+    assert_eq!(archive, "character/009_eruptor.bld", "{why}");
+    assert!(!st.read && !st.kept);
+    assert!(!opened.dir.manifest().parts.contains_key(PART));
+    let global = interface::path(IrFormat::Ron, "permanent/global.bld");
+    assert!(
+        opened.dir.output_done(&global).unwrap(),
+        "global.bld's kept"
+    );
+    // The next run reads the part again and fails the same way, keeping
+    // what's in.
+    let again = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    assert_eq!(again.failed.map(|(a, _)| a), Some(archive));
+    assert_eq!((again.files.written, again.texture_files.written), (0, 0));
+    assert!(!opened.dir.manifest().parts.contains_key(PART));
 }
 
 /// An extract made before the part: its record gone and one texture gone

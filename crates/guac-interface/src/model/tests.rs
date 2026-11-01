@@ -283,6 +283,11 @@ fn the_replace_percentage_and_the_bloom_intensity_clamp_and_round() {
     );
     m.set(a, pct, Value::Int(-4)).unwrap();
     assert_eq!(read(&m, a, pct), Value::Int(0));
+    // The read rounds half up (0xB33AC): a byte of 2 is 0.78 %, 254 99.6 %.
+    for (byte, percent) in [(2, 1), (254, 100), (1, 0)] {
+        m.sprite_mut(a).replace[3] = byte;
+        assert_eq!(read(&m, a, pct), Value::Int(percent), "byte {byte}");
+    }
     let bloom = si("bloom intensity");
     m.sprite_mut(a).properties &= !props::DIRTY;
     m.set(a, bloom, Value::Int(250)).unwrap();
@@ -326,6 +331,11 @@ fn a_size_written_reads_back_and_one_unwritten_is_the_kinds() {
     assert_eq!(read(&m, image, si("width")), Value::Float(24.0));
     assert_eq!(read(&m, image, si("height")), Value::Float(16.0));
     assert_eq!(read(&m, pending, si("width")), Value::Float(8.0));
+    // No image and a desired size that isn't one (a movie's -1, -1): the
+    // stored size (the crate docs' Hypothesis on 0xB6950's fallback).
+    let movie = m.add_template(None, &art(None, [-1, -1]), Value::Null);
+    let movie = m.spawn(movie);
+    assert_eq!(read(&m, movie, si("width")), Value::Float(237.0));
     assert_eq!(m.get(text, si("width"), &NoWorld), Err(Refusal::Unmodelled));
     let (_, _, boxed) = one();
     let _ = boxed;
@@ -474,6 +484,16 @@ fn a_numeric_value_reads_whole_unless_its_string_has_decimals() {
     assert_eq!(read(&m, a, nv), Value::Float(1.25));
     let p = m.sprite(a).properties;
     assert_eq!((p & props::DIRTY != 0, p & props::WIDTH_VALID), (true, 0));
+    // One decimal digit is enough to read as a float (0xB3E40: below 1 reads
+    // whole).
+    let one = Str {
+        decimal_digits: 1,
+        ..Str::default()
+    };
+    let s = m.add_file_string(Obj { unit: 1, index: 3 }, "@", one);
+    m.set(a, si("text"), s).unwrap();
+    m.set(a, nv, Value::Float(2.5)).unwrap();
+    assert_eq!(read(&m, a, nv), Value::Float(2.5));
 }
 
 #[test]

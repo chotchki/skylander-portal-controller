@@ -387,6 +387,15 @@ impl Model {
         if s.sized() {
             return Ok(s.size);
         }
+        self.kind_size(id, world)
+    }
+
+    /// The size a sprite reads unwritten, *sized* or not (`natural size`
+    /// reads this too): the world's when it knows it, else an image's own,
+    /// else its desired size, else the stored numbers; a text's refuses
+    /// until AT.6.
+    fn kind_size(&self, id: SpriteId, world: &dyn World) -> Result<[f32; 3], Refusal> {
+        let s = self.sprite(id);
         if let Some(size) = world.size(self, id) {
             return Ok(size);
         }
@@ -459,9 +468,7 @@ impl Model {
                     None => {
                         // Art and a container measure what their size reads
                         // unwritten.
-                        let mut bare = self.clone();
-                        bare.sprite_mut(id).flags &= !flags::SIZED;
-                        let [w, h, _] = bare.size_read(id, world)?;
+                        let [w, h, _] = self.kind_size(id, world)?;
                         [w, h]
                     }
                 };

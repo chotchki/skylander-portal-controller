@@ -234,13 +234,15 @@ fn the_interface_extracts_and_resumes_alone() {
     assert!(opened.dir.manifest().parts.contains_key(PART));
 }
 
-/// What an extract made before the parts pays for them on its next start:
-/// the dev extract under `GUAC_EXTRACT_DIR` as it stands, cloned file by
-/// file (APFS, `cp -c`) into a throwaway root, then chapter 1's level stage
-/// (the `sprites` part alone) and the interface part run on the clone, in
-/// the format the extract holds. The dev extract itself is never opened.
-/// Skips when there's no extract of this dump there, or one already holding
-/// the interface part.
+/// What an extract made before the parts pays on its next start: the dev
+/// extract under `GUAC_EXTRACT_DIR` as it stands, cloned file by file (APFS,
+/// `cp -c`) into a throwaway root, then every stage guacamole's Giants pick
+/// runs on an extract that isn't current (`stages::run`, ffmpeg from
+/// `GUAC_FFMPEG` or found), in the format the extract holds: each kept part
+/// re-hashed, chapter 1's `sprites` part and the interface part read, the
+/// intros resumed. Printed: each stage's time and the whole. The dev extract
+/// itself is never opened. Skips when there's no extract of this dump there,
+/// or one already holding the interface part.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP and the dev extract; run on the Mac"]
 fn the_parts_first_run_on_an_extract_made_before_them() {
@@ -291,31 +293,55 @@ fn the_parts_first_run_on_an_extract_made_before_them() {
     );
 
     let root = ExtractRoot::checked(clone_root).unwrap();
+    let opened_at = Instant::now();
     let mut opened = open(&dump, &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
     assert_eq!(opened.state, DirState::Resume, "the parts missing");
-    println!("load average before the level: {}", load_average());
-    let lv = stages::level_stage(&mut opened.dir, ir, &|_| {}).unwrap();
     println!(
-        "  chapter 1: {} part read, {} kept, {:?} in {:.2} s; load average {}",
+        "  opened ({} hashed, {} cached) in {:.2} s",
+        opened.files_hashed,
+        opened.files_cached,
+        opened_at.elapsed().as_secs_f64()
+    );
+    let ffmpeg = env_or_dotenv("GUAC_FFMPEG").map(PathBuf::from);
+    println!("load average before the run: {}", load_average());
+    let started = Instant::now();
+    let x = stages::run(&mut opened.dir, ffmpeg.as_deref(), ir, &|_| {}).unwrap();
+    let took = started.elapsed();
+    let lv = &x.levels;
+    let s = &x.interface;
+    println!(
+        "  roster {:.2} s, progression {:.2} s, models {:.2} s, level {:.2} s ({} part read, {} kept, {:?}), scripts {:.2} s, particles {:.2} s, sounds {:.2} s, interface {:.2} s, intros {:?} s",
+        x.roster.took.as_secs_f64(),
+        x.progression.took.as_secs_f64(),
+        x.models.took.as_secs_f64(),
+        lv.took.as_secs_f64(),
         lv.parts_read,
         lv.parts_kept,
         lv.files,
-        lv.took.as_secs_f64(),
+        x.scripts.took.as_secs_f64(),
+        x.particles.took.as_secs_f64(),
+        x.sounds.took.as_secs_f64(),
+        s.took.as_secs_f64(),
+        x.intros
+            .as_ref()
+            .map(|i| i.took.as_secs_f64())
+            .map_err(|e| e.to_string()),
+    );
+    println!(
+        "  interface: {} archives, {} textures ({:?}); {:?}",
+        s.archives, s.textures, s.texture_files, s.files
+    );
+    let after = opened.dir.manifest().outputs.len();
+    println!(
+        "  the whole start: {:.2} s, outputs {outputs} -> {after}; load average {}",
+        took.as_secs_f64(),
         load_average()
     );
     assert_eq!((lv.parts_read, lv.parts_kept), (1, levels::PARTS.len() - 1));
-    println!("load average before the part: {}", load_average());
-    let s = interface_stage(&mut opened.dir, ir).unwrap();
-    println!(
-        "  interface: {} archives, {} textures ({:?}); {:?} in {:.2} s; load average {}",
-        s.archives,
-        s.textures,
-        s.texture_files,
-        s.files,
-        s.took.as_secs_f64(),
-        load_average()
-    );
+    assert!(x.sounds.kept && x.particles.kept, "nothing else read again");
     assert!(s.read && s.failed.is_none(), "{:?}", s.failed);
     assert!(s.missing.is_empty(), "{:?}", s.missing);
+    assert!(x.intros.is_ok(), "{:?}", x.intros.as_ref().err());
     assert!(opened.dir.manifest().parts.contains_key(PART));
+    assert!(opened.dir.manifest().complete);
 }

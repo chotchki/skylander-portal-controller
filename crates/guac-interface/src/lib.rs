@@ -121,6 +121,11 @@
 //!   art sprite whose image is bound reads the data info's desired size, any
 //!   other sprite its stored width and height. The fit loops read this
 //!   against `width` until the text fits, so it has to match to the unit.
+//!   **Hypothesis** (AT.7): when art falls back to the desired size. The
+//!   decompile of 0xB6950 takes it when the data info's `_texAttr` is bound
+//!   and its `_data` isn't in, and scales whichever size it takes by a
+//!   constant at 0x724360 not read here; the model takes it when both halves
+//!   are positive (a movie's are -1) and the stored size otherwise, unscaled.
 //! - `origin` (matrix measurement; get 0xB3B34): the sprite's
 //!   `spritematrixmeasurement` (below).
 //! - `blend mode` (enum `opaque|crossfade|additive|cuts out|gets cut out|clears
@@ -156,12 +161,12 @@
 //!   otherwise.
 //! - `playing animations` (set; get 0x6AA68, reset 0x7BB04): the animations
 //!   playing on it; empty for every interface kind but a model's.
-//! - `model attach nodes` (set; get 0xB47C4): a model sprite's attach nodes
-//!   (its `tfbModelInfo`'s), reached through a path; empty otherwise. Reading
-//!   it remembers the sprite, so the next `attach node` write hangs its
-//!   object on that model.
-//! - `generators` (set; get 0xB3EB4): an emitter sprite's generators (its
-//!   `tfbParticleInfo`'s); empty otherwise.
+//! - `model attach nodes` (set; get 0xB47C4, reset 0x7BB04): a model sprite's
+//!   attach nodes (its `tfbModelInfo`'s), reached through a path; empty
+//!   otherwise. Reading it remembers the sprite, so the next `attach node`
+//!   write hangs its object on that model.
+//! - `generators` (set; get 0xB3EB4, reset 0x7BB04): an emitter sprite's
+//!   generators (its `tfbParticleInfo`'s); empty otherwise.
 //! - `Z Depth` (float, ±10,000; get 0xB3670, set 0xB3684): stored as written.
 //! - `replace color` (colour; get 0xB3358, set 0xB336C): a write sets the
 //!   replace colour's red, green and blue and leaves the percentage byte. A
@@ -388,7 +393,8 @@
 //! **The frame** (AT.3, measured on AC.13's captures and the June savestate's
 //! live tree): the root is the 1280x720 frame. `_Screen_Container` is resized
 //! at run time to 853.333 by 480 units at 150 %, the UI and gameplay
-//! containers to 768 by 432 at 90 % centred in it at frame (64, 36); so one
+//! containers to 768 by 432 units (90 % of its size, the title-safe area; the
+//! scale stays 1.5) centred in it at frame (64, 36); so one
 //! unit is 1.5 frame pixels on each axis, from the frame's top-left, offset
 //! by (64, 36) for a sprite in the UI or gameplay container. A sprite with no
 //! parent draws on the root, in frame pixels.
