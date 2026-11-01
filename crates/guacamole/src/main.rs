@@ -420,6 +420,19 @@ fn pick_before_the_window(root: &Path) -> bool {
     code == 0
 }
 
+/// The TV's app before its plugins. A release build meets an ECS error by
+/// logging it at ERROR and playing on (openspec AQ.193, chotchki's call
+/// after AR.24's crash, 2026-11-01), where Bevy's default handler panics;
+/// that takes a system's panic as well as a command on a gone entity. The dev
+/// profile (debug assertions on) and every test keep the panic.
+fn tv_app() -> App {
+    let mut app = App::new();
+    if !cfg!(debug_assertions) {
+        app.set_error_handler(bevy::ecs::error::error);
+    }
+    app
+}
+
 /// Runs the TV until it exits, then writes every figure's progress before the
 /// file log's guard flushes it (AH.1).
 fn run_tv(
@@ -443,7 +456,7 @@ fn run_tv(
 ) -> Result<()> {
     exit_after_farewell(link.status.clone(), progress.clone());
 
-    let mut app = App::new();
+    let mut app = tv_app();
     app.add_plugins(tv_plugins(mode, posted_pads_only()))
         .insert_resource(link)
         .insert_resource(PortalFeed(portal))
@@ -678,6 +691,40 @@ fn exit_after_farewell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AQ.193: on the TV's app a command on a gone entity (AR.24's crash) and
+    /// a system's panic each panic in the dev profile, as Bevy's default
+    /// does; a release build logs both and the frame goes on. Only the panic
+    /// or its absence is checked: the log is the process's, so a handler that
+    /// logged nothing would pass too, and no gate builds the tests without
+    /// debug assertions (the release half runs under `--profile disc`).
+    #[test]
+    fn an_ecs_error_panics_in_dev_and_is_logged_in_release() {
+        use bevy::prelude::{Commands, Name, Update};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let gone = |app: &mut App| {
+            let e = app.world_mut().spawn_empty().id();
+            app.add_systems(Update, move |mut commands: Commands| {
+                commands.entity(e).despawn();
+                commands.entity(e).insert(Name::new("too late"));
+            });
+        };
+        fn panicking() {
+            panic!("a system's own panic");
+        }
+        let panics = |app: &mut App| {
+            app.add_systems(Update, panicking);
+        };
+        for (what, cause) in [
+            ("a command on a gone entity", &gone as &dyn Fn(&mut App)),
+            ("a system's panic", &panics),
+        ] {
+            let mut app = tv_app();
+            cause(&mut app);
+            let panicked = catch_unwind(AssertUnwindSafe(|| app.update())).is_err();
+            assert_eq!(panicked, cfg!(debug_assertions), "{what}");
+        }
+    }
 
     /// AG.55: the TV updates continuously focused, and unfocused waits no
     /// longer than a 240 Hz display's frame, where Bevy's default waits a
