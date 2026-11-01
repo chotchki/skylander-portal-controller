@@ -381,6 +381,9 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     level_failures(&done.levels);
     println!("scripts     {}", scripts_line(&done.scripts));
     script_failures(&done.scripts);
+    // Read after chapter 1's hand-off since AT.26, so not in the levels' line.
+    println!("sprites     {}", levels_line(&done.sprites));
+    level_failures(&done.sprites);
     match &done.intros {
         Ok(i) => println!(
             "intros      {} of {} toy types; {} transcoded, {} already done, {} linked; {:.1} s",

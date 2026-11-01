@@ -16,7 +16,7 @@ Extraction SHALL include the interface: every sprite, image and font and the Eng
 ## MODIFIED Requirements
 
 ### Requirement: Extraction runs once and survives interruption
-The first time Giants is picked with a recognized dump and no current extraction, the TV SHALL show extraction progress on the portal screen while it runs, naming what it reads, and phones SHALL still place figures. Chapter 1 SHALL be playable as soon as its own parts are in, the rest extracting meanwhile. Later starts SHALL reuse a current extraction. An interrupted one SHALL resume, redoing only unfinished files, and one in a different format SHALL be redone, with progress shown again.
+The first time Giants is picked with a recognized dump and no current extraction, the TV SHALL show progress on the portal screen naming what it reads, and phones SHALL still place figures. Chapter 1 SHALL be playable once its own parts are in, the rest extracting meanwhile (35-38 s into a first run on the M3 Max, where it had waited 139 s). Later starts SHALL reuse a current extraction; an interrupted one SHALL resume, redoing only unfinished files; one in another format SHALL be redone.
 
 #### Scenario: First pick
 - **WHEN** Giants is picked for the first time with the known dump

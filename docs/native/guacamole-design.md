@@ -2049,9 +2049,10 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
   sprites and the interface until AT.9, the sounds until the TV plays them), then the intros. So a kid
   plays while the rest reads, and a sprites part that won't read keeps nothing from the TV. Each part
   names itself on the band, archives done of total, and logs a line, a warning when it doesn't read.
-  Measured on the dump (release, 2026-11-01, load 3.7-5.0): on a fresh root the hand-off moved from
-  139.3 s after the pick (it waited on the 48 intros' transcode) to 37.3 s; on an extract made before
-  AT.8 from 35.2 s to 13.9 s, Eruptor in the level at 16.5 s with the interface still reading.
+  Measured on the dump (release, 2026-11-01): on a fresh root the hand-off moved from 139.3 s after the
+  pick (it waited on the 48 intros' transcode; load 5.0 to 18.5) to 34.9-37.3 s (load 3.8 to 6.9 up to
+  the hand-off); on an extract made before AT.8 from 35.2 s to 13.9 s (load 3.6-4.8), Eruptor in the
+  level at 16.5 s with the interface still reading.
 - The extraction's thread runs at macOS's utility class (AG.298, `EXTRACT_QOS`), under the TV's frame
   and its level load. What it starts takes the same ([`guac_extract::qos`](../../crates/guac-extract/src/qos.rs)):
   the dump's hashing threads set their spawner's class (a thread starts at the default otherwise), and
