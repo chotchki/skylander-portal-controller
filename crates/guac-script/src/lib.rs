@@ -61,20 +61,23 @@
 //!
 //! A placement whose `placement.script suspended` is set isn't ticked: the
 //! walk passes it, its place on its list, its state, its locals and its
-//! `system.script timer` kept, and once a script clears it, it ticks again
-//! at that place from the next step. Set in its own tick, the rest of that
-//! tick runs. The member is the VM's: on a placement it runs, the flag (0
-//! or 1, a write clamped there, a reset clearing it); on anything else a
-//! path through nothing. Read off the EBOOT, not the oracle (openspec
-//! AS.29: no route reaches a level that sets it): the frame's scripts
-//! updater takes each placement's activity, then runs its tick unless its
-//! flag 4 is set (aj-vm's and AH.59's reading), and the member reads and
-//! writes that flag, a reset putting back its reset template's, clear in
-//! every file on the disc. PvP's bricks suspend themselves until the brick
-//! under them goes, a challenge's replay suspends a troll. A reading: a
-//! suspended placement taken off still runs its SHUTDOWN (whether the
-//! shutdown queue passes one isn't read), and its activity still follows
-//! the embedder's rule.
+//! `system.script timer` kept (the tick is what adds a frame's seconds to
+//! it), and once a script clears it, it ticks again at that place the next
+//! time the walk reaches it: that step when a placement ahead of it on the
+//! list cleared it, the next when one behind it did. Set in its own tick,
+//! the rest of that tick runs. The member is the VM's: on a placement it
+//! runs, the flag (0 or 1, a write clamped there, a reset clearing it); on
+//! anything else a path through nothing. Read off the EBOOT, not the oracle
+//! (openspec AS.29: no route reaches a level that sets it): the frame's
+//! scripts updater takes each placement's activity, then runs its tick
+//! unless its flag 4 is set, reading the flag as it comes to the placement
+//! (aj-vm's and AH.59's reading), so its activity still follows the
+//! embedder's rule while it's suspended; the member reads and writes that
+//! flag, a reset putting back its reset template's, clear in every file on
+//! the disc (all 51,686 placements' flag words are 0). PvP's bricks suspend
+//! themselves until the brick under them goes, a challenge's replay
+//! suspends a troll. A reading: a suspended placement taken off still runs
+//! its SHUTDOWN (whether the shutdown queue passes one isn't read).
 //!
 //! One sent round its states by a `reset` ([`Vm::requeue`]: the mover
 //! update, which the music controller's tick resets every frame) leaves its
@@ -350,8 +353,10 @@
 //!   it does on a right side, its roll drawn from the session's generator
 //!   when the tag is first found (openspec AS.33: challenge 49's clocks'
 //!   `time` is `random(30)`, 205's elemental wall's `dirt tint` a random
-//!   colour; a reading: whether the original builds a tag's variable, roll
-//!   and all, at the placement's load or at its first find isn't read). A
+//!   colour, the disc's only two; a reading: whether the original builds a
+//!   tag's variable, roll and all, at the placement's load or at its first
+//!   find isn't read, and a draw at another moment moves every roll after
+//!   it, AS.41). A
 //!   value reading a path that names no single object, file variable or
 //!   nothing stops as unsupported.
 //!   A placement with no script has them too, found from any script as

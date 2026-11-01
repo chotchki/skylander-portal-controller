@@ -938,14 +938,18 @@ impl Vm {
             }
         }
         // Variables `find variable` made on it before it ran become its
-        // locals.
+        // locals in the order they were made (cells are numbered as made),
+        // so of two by one name the later holds it, as a find on a running
+        // placement leaves it; never in the map's order, which is its
+        // hasher's.
         let key = recv(Value::Entity(handle));
-        let moved: Vec<((Recv, Sym, Decl), u32)> = self
+        let mut moved: Vec<((Recv, Sym, Decl), u32)> = self
             .found
             .iter()
             .filter(|((owner, ..), _)| *owner == key)
             .map(|(k, c)| (*k, *c))
             .collect();
+        moved.sort_unstable_by_key(|&(_, c)| c);
         for (k, c) in moved {
             self.found.remove(&k);
             let p = &mut self.placements[id as usize];

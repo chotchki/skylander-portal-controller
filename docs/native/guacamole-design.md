@@ -2130,8 +2130,10 @@ suspended` the VM's own (the step's walk passes a suspended placement, read off 
 over `undefined`, a tag holding a roll, a colour's roll, a stray parameter and `undefined`'s count are
 modelled: every level runs both phases clean but 214, whose candlesticks' hurt loop runs out its ops on
 the null host, and the run takes 581.8 s where it took 1,251.8 s (the slider check indexed, the VM's maps
-off SipHash). The TV's run registering the table and its host's answers are AS.37-AS.39, 214's loop on
-guacamole's host AS.40.
+off SipHash; the loads differed, 3 against 9, so the clean measure is 214 to B250 on one harness, 134.5 s
+before and 50.1 s after). A tag's roll is drawn at its first find, a reading until AS.41 says when the
+original draws it. The TV's run registering the table and its host's answers are AS.37-AS.39, 214's loop
+on guacamole's host AS.40.
 
 ## Renderer
 

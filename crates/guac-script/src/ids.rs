@@ -1,12 +1,12 @@
 //! The hashing behind the VM's own maps (openspec AS.35): their keys are its
 //! ids and the disc's member hashes, never an attacker's, so std's SipHash
 //! buys nothing and cost about a fifth of a long level's run (level 214's
-//! hurt checks, sampled). A multiply-rotate hash, as rustc's own maps use.
+//! hurt checks, sampled). A multiply-rotate hash, rustc-hash 1's FxHasher.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
-/// The word mixed in each step: 2^64 over the golden ratio, odd.
+/// The word mixed in each step: 2^64 over pi, made odd (FxHasher's).
 const K: u64 = 0x517c_c1b7_2722_0a95;
 
 #[derive(Debug, Default, Clone, Copy)]

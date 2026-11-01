@@ -772,3 +772,150 @@ fn a_writes_slider_check_finds_only_the_slides_on_its_place() {
     }
     assert_eq!(vm.sliders_running(), 0);
 }
+
+/// `set <lhs> = <rhs>` with the left side's `_otherPoint` naming `point`.
+fn set_from(w: &mut Writer<'_>, lhs: &[El<'_>], point: &[El<'_>], rhs: Location) {
+    let l = w.value(lhs);
+    let from = w.reference(point, None);
+    w.refer(l, 0x18, from);
+    let o = w.op(Class::SetValue, "set||=");
+    w.refer(o, 0x1C, l);
+    w.refer(o, 0x20, rhs);
+    w.push(o);
+}
+
+/// AS.35's index finds a slide by its place, a path's `_otherPoint` aside
+/// (what a distance or a heading on the path is measured from, which two
+/// paths to one place may differ in): a write to `my.test.v` naming a point
+/// ends the slide its STARTUP began there naming none, and the write holds.
+#[test]
+fn a_write_naming_another_point_ends_the_slide_on_its_place() {
+    let p = program(|w| {
+        let ticks = var(w, "ticks");
+        idle(
+            w,
+            |w| {
+                let (to, secs) = (w.int(600), w.float(1.0));
+                let (out, in_) = (w.int(0), w.int(0));
+                let (at, _) = slide(w, &[my(), El::Member("test", "v")], to, secs, out, in_);
+                w.end_block(at);
+            },
+            |w| {
+                w.inc(&[El::Local(ticks)]);
+                let three = w.int(3);
+                let at = w.check(&[El::Local(ticks)], 1, three);
+                let eighty = w.int(80);
+                set_from(w, &[my(), El::Member("test", "v")], &[my()], eighty);
+                w.end_block(at);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config(Mode::Strict, &["v"]));
+    vm.add(HANDLE, "Slider", 0);
+    let v = |vm: &Vm| vm.value_cell(Some(Value::Entity(HANDLE)), MemberId::named("test", "v"));
+    let mut host = Bare;
+    for _ in 0..2 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.sliders_running(), 1);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.sliders_running(), 0, "the same place, the point aside");
+    assert_eq!(v(&vm), Some(Value::Int(80)));
+    for _ in 0..5 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(v(&vm), Some(Value::Int(80)), "it holds");
+}
+
+/// A host keeping `test.h` per receiver, a number's bits its key.
+#[derive(Default)]
+struct PerReceiver(std::collections::HashMap<u64, Value>);
+
+impl PerReceiver {
+    fn key(at: &Access) -> u64 {
+        match at.receiver {
+            Some(Value::Float(f)) => u64::from(f.to_bits()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn at(&self, receiver: f32) -> f32 {
+        self.0
+            .get(&u64::from(receiver.to_bits()))
+            .and_then(|v| v.as_f32())
+            .unwrap_or(0.0)
+    }
+}
+
+impl Host for PerReceiver {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        Ok(*self.0.get(&Self::key(at)).unwrap_or(&Value::Float(0.0)))
+    }
+    fn set(&mut self, at: &Access, v: Value) -> Result<(), HostFault> {
+        self.0.insert(Self::key(at), v);
+        Ok(())
+    }
+    fn reset(&mut self, _: &Access) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+}
+
+/// AS.35's fingerprint leaves a number's bits out (0 and -0 compare
+/// equal), so two places a number names, a host member of 1.0 and of 2.0,
+/// share one; the exact comparison behind it keeps them apart: a write to
+/// the first's ends its slide alone and the second's eases on.
+#[test]
+fn places_sharing_a_fingerprint_end_only_the_slide_on_the_place_written() {
+    let p = program(|w| {
+        let (a, b, ticks) = (fvar(w, "a"), fvar(w, "b"), var(w, "ticks"));
+        idle(
+            w,
+            |w| {
+                let (one, two) = (w.float(1.0), w.float(2.0));
+                w.set(&[El::Local(a)], one);
+                w.set(&[El::Local(b)], two);
+                for r in [a, b] {
+                    let (to, secs) = (w.int(600), w.float(1.0));
+                    let (out, in_) = (w.int(0), w.int(0));
+                    let (at, _) = slide(
+                        w,
+                        &[El::Local(r), El::Member("test", "h")],
+                        to,
+                        secs,
+                        out,
+                        in_,
+                    );
+                    w.end_block(at);
+                }
+            },
+            |w| {
+                w.inc(&[El::Local(ticks)]);
+                let three = w.int(3);
+                let at = w.check(&[El::Local(ticks)], 1, three);
+                let eighty = w.int(80);
+                w.set(&[El::Local(a), El::Member("test", "h")], eighty);
+                w.end_block(at);
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "h", MemberSpec::new(Kind::Float, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    vm.add(HANDLE, "Slider", 0);
+    let mut host = PerReceiver::default();
+    for _ in 0..2 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.sliders_running(), 2);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.sliders_running(), 1, "the written place's alone");
+    assert_eq!(host.at(1.0), 80.0);
+    let before = host.at(2.0);
+    vm.step(&mut host).unwrap();
+    assert_eq!(host.at(1.0), 80.0, "it holds");
+    assert!(host.at(2.0) > before, "the other eases on");
+}

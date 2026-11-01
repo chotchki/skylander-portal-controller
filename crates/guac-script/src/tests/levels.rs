@@ -1,8 +1,9 @@
 //! What AS.11's every-level run needed of the VM (openspec AS.27-AS.35),
 //! each rule on scripts built in code: the level audio controllers' members,
 //! `for each` over `undefined`, a tag holding a roll, a random colour, a
-//! parameter outside a call, a write to `undefined`'s count and the slider
-//! check's index.
+//! parameter outside a call, a write to `undefined`'s count, a suspended
+//! placement and the walk passing it, and the order variables found before
+//! a placement runs join it in (AS.35's maps' order being their hasher's).
 
 use super::*;
 
@@ -652,4 +653,159 @@ fn a_suspended_placement_is_passed_until_its_flag_clears() {
     step(&mut vm);
     assert!(!vm.is_suspended(a));
     assert_eq!(ticks(&vm, c), Some(Value::Int(9)));
+}
+
+/// AS.29: the walk reads the flag as it reaches a placement (the original's
+/// updater checks it per placement, just before that placement's tick), so
+/// one a placement ahead of it on the list clears ticks in that same step;
+/// one it suspends ahead of it is passed that step.
+#[test]
+fn a_flag_cleared_ahead_of_it_in_the_walk_ticks_it_that_step() {
+    let p = program(|w| {
+        let (ticks, go, seen) = (var(w, "ticks"), var(w, "go"), var(w, "seen"));
+        let other = w.variable("other", "ScriptReference", None);
+        let suspended = [
+            El::Local(other),
+            El::Member("placement", "script suspended"),
+        ];
+        idle(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[El::Local(ticks)]);
+                let s = w.rhs(INT, &suspended);
+                w.set(&[El::Local(seen)], s);
+                for (n, value) in [(1, 1), (2, 0)] {
+                    let k = w.int(n);
+                    let c = check(w, go, 1, k).0;
+                    let v = w.int(value);
+                    w.set(&suspended, v);
+                    w.end_block(c);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let (a, b) = (vm.add(0x10, "brick1PvP", 0), vm.add(0x11, "brick2PvP", 0));
+    let step = |vm: &mut Vm| vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    let ticks = |vm: &Vm, id| vm.local(id, "ticks");
+    step(&mut vm);
+    assert!(vm.set_local(a, "other", Value::Entity(0x11)));
+    vm.set_local(a, "go", Value::Int(1));
+    step(&mut vm);
+    assert!(vm.is_suspended(b));
+    assert_eq!(
+        ticks(&vm, b),
+        Some(Value::Int(1)),
+        "passed the step A set it"
+    );
+    vm.set_local(a, "go", Value::Int(0));
+    step(&mut vm);
+    assert_eq!(ticks(&vm, b), Some(Value::Int(1)));
+    vm.set_local(a, "go", Value::Int(2));
+    step(&mut vm);
+    assert!(!vm.is_suspended(b));
+    assert_eq!(
+        ticks(&vm, b),
+        Some(Value::Int(2)),
+        "ticked the step A cleared it"
+    );
+    assert_eq!(ticks(&vm, a), Some(Value::Int(4)));
+}
+
+/// AS.29's reading on the way out: a placement suspended and then taken off
+/// still runs its SHUTDOWN once, after the step's walk, as one not
+/// suspended does (whether the original's shutdown queue passes a suspended
+/// placement isn't read; the crate docs, The tick, say so).
+#[test]
+fn a_suspended_placement_taken_off_still_runs_its_shutdown() {
+    let p = program(|w| {
+        let (ticks, shut) = (var(w, "ticks"), var(w, "shut"));
+        frame(
+            w,
+            |_| {},
+            |w| {
+                w.inc(&[El::Local(shut)]);
+            },
+            |_| {},
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                w.inc(&[El::Local(ticks)]);
+                let one = w.int(1);
+                w.set(&[MY, El::Member("placement", "script suspended")], one);
+                w.end_block(b);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "brick1PvP", 0);
+    for _ in 0..3 {
+        vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert!(vm.is_suspended(id));
+    assert_eq!(vm.local(id, "ticks"), Some(Value::Int(1)), "passed");
+    assert_eq!(vm.local(id, "shut"), None);
+    assert!(vm.remove(HANDLE));
+    vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(
+        vm.local(id, "shut"),
+        Some(Value::Int(1)),
+        "its SHUTDOWN ran"
+    );
+    assert_eq!(vm.local(id, "ticks"), Some(Value::Int(1)));
+}
+
+/// AS.35's maps hash in an order of their own, so a rule that walks one
+/// can't lean on it: two variables `find variable` made by one name (an int
+/// and a set) on a handle no placement runs under yet both join that
+/// placement's locals when it's added, and whichever was made later holds
+/// the name, as a find on a running placement leaves it, either way round.
+#[test]
+fn of_two_variables_found_by_one_name_before_it_runs_the_later_holds_it() {
+    for int_first in [true, false] {
+        let p = program(|w| {
+            let other = w.variable("other", "ScriptReference", None);
+            idle(
+                w,
+                |_| {},
+                |w| {
+                    let int = |w: &mut Writer<'_>| {
+                        let (f, fo) =
+                            super::init::find(w, "x", "ValueInfo", INT, 2, &[El::Local(other)]);
+                        let five = w.int(5);
+                        w.set(&[El::Local(fo)], five);
+                        w.end_block(f);
+                    };
+                    let set = |w: &mut Writer<'_>| {
+                        let (f, _) =
+                            super::init::find(w, "x", "ScriptSet", INT, 2, &[El::Local(other)]);
+                        w.end_block(f);
+                    };
+                    if int_first {
+                        int(w);
+                        set(w);
+                    } else {
+                        set(w);
+                        int(w);
+                    }
+                },
+            );
+        });
+        let mut vm = Vm::new(p, Config::new(Mode::Strict));
+        let finder = vm.add(0x10, "Finder", 0);
+        vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+        assert!(vm.set_local(finder, "other", Value::Entity(0x99)));
+        vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+        let owner = vm.add(0x99, "Owner", 0);
+        let x = vm.local(owner, "x");
+        if int_first {
+            assert!(
+                matches!(x, Some(Value::Set(_))),
+                "the set, made later: {x:?}"
+            );
+        } else {
+            assert_eq!(x, Some(Value::Int(5)), "the int, made later");
+        }
+    }
 }
