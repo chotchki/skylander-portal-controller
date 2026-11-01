@@ -14,7 +14,8 @@
 //! figures while the rest runs, the models are announced as they finish
 //! ([`Event::ModelsReady`], AE.13) so the turntable draws while the level
 //! and the intros run, chapter 1 plays while the parts after it read, and
-//! the intros are the only thing a missing or unusable ffmpeg costs. A model that won't read is reported and its
+//! the intros are the only thing a missing or unusable ffmpeg costs. A
+//! model that won't read is reported and its
 //! figures keep their portraits; a hero side that doesn't settle is reported
 //! and its model stays; a level part that won't read is reported and the
 //! other parts land; the others extract. Every file goes through the identity

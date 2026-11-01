@@ -308,18 +308,21 @@ fn the_parts_first_run_on_an_extract_made_before_them() {
     let x = stages::run(&mut opened.dir, ffmpeg.as_deref(), ir, &|_| {}).unwrap();
     let took = started.elapsed();
     let lv = &x.levels;
+    let sp = &x.sprites;
     let s = &x.interface;
     println!(
-        "  roster {:.2} s, progression {:.2} s, models {:.2} s, level {:.2} s ({} part read, {} kept, {:?}), scripts {:.2} s, particles {:.2} s, sounds {:.2} s, interface {:.2} s, intros {:?} s",
+        "  roster {:.2} s, progression {:.2} s, models {:.2} s, level {:.2} s ({} parts read, {} kept), scripts {:.2} s, particles {:.2} s, then chapter 1's hand-off; sprites {:.2} s ({} read, {:?}), sounds {:.2} s, interface {:.2} s, intros {:?} s",
         x.roster.took.as_secs_f64(),
         x.progression.took.as_secs_f64(),
         x.models.took.as_secs_f64(),
         lv.took.as_secs_f64(),
         lv.parts_read,
         lv.parts_kept,
-        lv.files,
         x.scripts.took.as_secs_f64(),
         x.particles.took.as_secs_f64(),
+        sp.took.as_secs_f64(),
+        sp.parts_read,
+        sp.files,
         x.sounds.took.as_secs_f64(),
         s.took.as_secs_f64(),
         x.intros
@@ -337,7 +340,10 @@ fn the_parts_first_run_on_an_extract_made_before_them() {
         took.as_secs_f64(),
         load_average()
     );
-    assert_eq!((lv.parts_read, lv.parts_kept), (1, levels::PARTS.len() - 1));
+    // The parts the TV reads all kept; the sprites read after the hand-off
+    // (AT.26).
+    assert_eq!((lv.parts_read, lv.parts_kept), (0, levels::PLAYED.len()));
+    assert_eq!((sp.parts_read, sp.parts_kept), (1, 0));
     assert!(x.sounds.kept && x.particles.kept, "nothing else read again");
     assert!(s.read && s.failed.is_none(), "{:?}", s.failed);
     assert!(s.missing.is_empty(), "{:?}", s.missing);
