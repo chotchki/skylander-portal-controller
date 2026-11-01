@@ -38,6 +38,8 @@ pub mod singleton {
     pub const STRING_CONVERTER: u64 = 0;
     pub const TEXT_COLOR_CONVERTER: u64 = 1;
     pub const NAME_EXTRACTOR: u64 = 2;
+    /// The gameplay viewport's title-safe info (`viewporttitlesafeinfo`).
+    pub const TITLE_SAFE: u64 = 3;
 }
 
 /// What a member reads: one value, a set's elements, or `scale`'s three

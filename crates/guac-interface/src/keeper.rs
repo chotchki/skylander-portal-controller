@@ -3,7 +3,7 @@
 //! (the crate docs, The keeper). guacamole's script host and a headless
 //! test's host both forward through it, so neither knows a sprite.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use guac_script::{Access, HostFault, MemberId, Value};
 
@@ -53,6 +53,9 @@ enum Own {
     Turn(usize),
     RelativeTurn(usize),
     Orientation,
+    /// `viewportinfo.title safe zone` on the gameplay viewport: the
+    /// title-safe info whose margins `viewporttitlesafeinfo` reads.
+    TitleSafe,
 }
 
 fn own_members() -> HashMap<MemberId, Own> {
@@ -81,6 +84,10 @@ fn own_members() -> HashMap<MemberId, Own> {
         MemberId::named("matrixmeasurement", "orientation"),
         Own::Orientation,
     );
+    t.insert(
+        MemberId::named("viewportinfo", "title safe zone"),
+        Own::TitleSafe,
+    );
     t
 }
 
@@ -107,6 +114,12 @@ pub struct Keeper {
     /// A member the keeper doesn't answer asked of one of its objects, by
     /// id, each answered as a path through nothing.
     unknown: BTreeMap<MemberId, u64>,
+    /// The two set references whose set the model changed since the VM
+    /// last wrote or read it (`value set` by a `text` write, `color set` by
+    /// a `text sprite` write or either's reset).
+    fresh: HashSet<MemberId>,
+    /// The gameplay viewport's container (`viewportinfo.container sprite`).
+    container: SpriteId,
 }
 
 impl Default for Keeper {
@@ -122,9 +135,47 @@ fn fault(r: Refusal) -> HostFault {
     }
 }
 
+/// The gameplay viewport's title-safe margins in frame pixels, left, right,
+/// upper and lower (**Hypothesis**, AT.10's to read live): 5 % of the
+/// 1280 by 720 frame a side, the margins that make `UI - Init UI
+/// Containers` (`Init_Setup.ai`) size `_UI_Container` 768 by 432 units,
+/// standing at frame (64, 36), as the June savestate holds it and AC.13
+/// draws it (AT.3).
+pub const TITLE_SAFE: [i32; 4] = [64, 64, 36, 36];
+
+/// The gameplay viewport's container as the June savestate holds it:
+/// `RT Viewport 0`, a container the frame's size at 100 %, standing at the
+/// frame's top-left, visible, blend 1 (the crate docs, The keeper).
+fn viewport_container(frame: [f32; 2]) -> guac_ir::interface::Template {
+    guac_ir::interface::Template {
+        name: "RT Viewport 0".into(),
+        object: u32::MAX,
+        properties: crate::sprite::props::VISIBLE | (1 << 3) | crate::sprite::kind::CONTAINER,
+        flags: 0,
+        position: [0, 0],
+        z_depth: 0.0,
+        priority: 0.0,
+        width: frame[0],
+        height: frame[1],
+        scale: [100.0; 3],
+        color: crate::model::LETTER,
+        replace_color: [0x80, 0x80, 0x80, 0],
+        num_value: 0,
+        depth: 0.0,
+        init_matrix: Default::default(),
+        matrix: Default::default(),
+        content: guac_ir::interface::Content::Container,
+        string: None,
+    }
+}
+
 impl Keeper {
-    /// A keeper over `model`, whose bases should be [`BASES`].
-    pub fn new(model: Model) -> Self {
+    /// A keeper over `model`, whose bases should be [`BASES`], with the
+    /// gameplay viewport's container added to it, awake.
+    pub fn new(mut model: Model) -> Self {
+        let container = model.add_template(None, &viewport_container(model.frame), Value::Null);
+        model.wake(container);
+        model.title_safe = TITLE_SAFE;
         let members = MEMBERS
             .iter()
             .map(|m| {
@@ -138,6 +189,28 @@ impl Keeper {
             own: own_members(),
             strays: BTreeMap::new(),
             unknown: BTreeMap::new(),
+            fresh: HashSet::new(),
+            container,
+        }
+    }
+
+    /// The gameplay viewport's container, which `viewportinfo.container
+    /// sprite` names on a run holding the model: the sprite the scripts
+    /// hang `_Screen_Container` on and size the screen by.
+    pub fn container(&self) -> Value {
+        self.model.value_of(self.container)
+    }
+
+    /// The set reference whose set a write of `m` changes in the model.
+    fn changes(m: &Member) -> Option<MemberId> {
+        match (m.namespace, m.name) {
+            ("stringconverter", "text" | "value set") => {
+                Some(MemberId::named("stringconverter", "value set"))
+            }
+            ("textcolorconverter", "text sprite" | "color set") => {
+                Some(MemberId::named("textcolorconverter", "color set"))
+            }
+            _ => None,
         }
     }
 
@@ -319,7 +392,15 @@ impl Keeper {
                 let (first, second) = self.pair(m, at)?;
                 self.model.set_paired(first, second, m, v)
             }
-            _ => self.model.set_global(m, v, world),
+            _ => {
+                let done = self.model.set_global(m, v, world);
+                if done.is_ok()
+                    && let Some(set) = Self::changes(m)
+                {
+                    self.fresh.insert(set);
+                }
+                done
+            }
         };
         match done {
             Ok(()) | Err(Refusal::ReadOnly) => Ok(()),
@@ -327,16 +408,31 @@ impl Keeper {
         }
     }
 
-    /// A set member written whole, as `guac_script::Host::set_elements`
-    /// asks it: the string converter's `value set` and the text colour
-    /// converter's `color set`; the engine's sets take no write.
+    /// A set reference written, as `guac_script::Host::set_elements` hands
+    /// it: the string converter's `value set` and the text colour
+    /// converter's `color set`, which the VM keeps and the model copies.
     pub fn set_elements(&mut self, at: &Access, elements: &[Value]) -> Result<(), HostFault> {
         let Some(&m) = self.members.get(&at.member) else {
             return Err(self.not_known(at.member));
         };
+        self.fresh.remove(&at.member);
         match self.model.set_global_elements(m, elements) {
             Ok(()) => Ok(()),
             Err(_) => Err(HostFault::Nothing),
+        }
+    }
+
+    /// A set reference about to be read, as `guac_script::Host::set_ref`
+    /// asks it: the set the model changed it to since the VM last wrote or
+    /// read it, once.
+    pub fn set_ref(&mut self, at: &Access, world: &dyn World) -> Option<Vec<Value>> {
+        let &m = self.members.get(&at.member)?;
+        if !self.fresh.remove(&at.member) {
+            return None;
+        }
+        match self.model.get_global(m, world) {
+            Ok(Answer::Elements(e)) => Some(e),
+            _ => None,
         }
     }
 
@@ -353,7 +449,16 @@ impl Keeper {
                 self.model.reset(id, m, world)
             }
             "spritepositionmeasurement" => Ok(()),
-            _ => self.model.reset_global(m),
+            _ => {
+                let done = self.model.reset_global(m);
+                if done.is_ok()
+                    && m.reset.is_some()
+                    && let Some(set) = Self::changes(m)
+                {
+                    self.fresh.insert(set);
+                }
+                done
+            }
         };
         done.map_err(fault)
     }
@@ -386,6 +491,10 @@ impl Keeper {
                 Ok(Value::Entity(ORIGIN_TURNS + u64::from(id.0)))
             }
             (Some(Own::Orientation), Some(Held::Sprite(id))) => Ok(self.model.value_of(id)),
+            // The host routes it here from the viewport, which isn't ours.
+            (Some(Own::TitleSafe), _) => {
+                Ok(self.model.singleton(crate::model::singleton::TITLE_SAFE))
+            }
             _ => Err(self.not_known(at.member)),
         }
     }

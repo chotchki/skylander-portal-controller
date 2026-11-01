@@ -191,13 +191,16 @@ fn a_member_write_reaches_the_model() {
         &NoWorld,
     )
     .unwrap();
-    assert_eq!(
-        k.elements(
-            &at(Some(converter), "stringconverter", "value set"),
-            &NoWorld
-        ),
-        Ok("Level".bytes().map(|b| Value::Int(i32::from(b))).collect())
-    );
+    // The VM keeps the set it wrote until the model changes it: a text
+    // write makes it the text's characters, handed over once.
+    let value_set = at(Some(converter), "stringconverter", "value set");
+    let level: Vec<Value> = "Level".bytes().map(|b| Value::Int(i32::from(b))).collect();
+    assert_eq!(k.set_ref(&value_set, &NoWorld), Some(level));
+    assert_eq!(k.set_ref(&value_set, &NoWorld), None, "once");
+    k.set_elements(&value_set, &[Value::Int(65)]).unwrap();
+    assert_eq!(k.set_ref(&value_set, &NoWorld), None, "the VM's own");
+    k.reset(&value_set, &NoWorld).unwrap();
+    assert_eq!(k.set_ref(&value_set, &NoWorld), Some(Vec::new()));
     // A reset reaches it too: `ID` back to before its first write.
     let id_at = at(Some(child), "spritematrixmeasurement", "id");
     k.set(&id_at, Value::Int(5), &NoWorld).unwrap();
@@ -324,10 +327,11 @@ fn strays_and_unknown_members_are_nothing_and_counted() {
     let odd = at(Some(s), "abstractplacement", "attach node");
     assert_eq!(k.get(&odd, &NoWorld), Err(HostFault::Nothing));
     assert_eq!(k.unknown().get(&odd.member), Some(&1));
-    // The class's own sets read on any receiver.
+    // The class's own sets read on any receiver: the viewport's
+    // container, awake from the start, and the clone.
     assert_eq!(
         k.elements(&at(None, "spriteinfo", "active"), &NoWorld),
-        Ok(vec![s])
+        Ok(vec![k.container(), s])
     );
 }
 

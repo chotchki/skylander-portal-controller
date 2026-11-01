@@ -720,6 +720,54 @@ pub struct Setup {
     /// openspec AR.16): a probe's way to set their draws apart; the TV's run
     /// lists them.
     pub no_music: bool,
+    /// The interface's model over the dump ([`interface_part`]): the run's
+    /// config registers its members and the world holds it, as the TV's run
+    /// does once the extract holds the part (openspec AT.9); without it the
+    /// members are cells, as before AT.9.
+    pub interface: bool,
+}
+
+/// The interface records of the script part's archives (`ARCHIVES`, by
+/// unit), read off the dump in memory by guac-extract's own reader, once a
+/// test binary (openspec AT.9): what the TV's run reads off the extract's
+/// interface part and the level's sprites part.
+pub fn interface_records() -> Vec<guac_ir::interface::Interface> {
+    static RECORDS: std::sync::OnceLock<Vec<guac_ir::interface::Interface>> =
+        std::sync::OnceLock::new();
+    RECORDS
+        .get_or_init(|| {
+            let usr = dump().join("PS3_GAME/USRDIR");
+            ARCHIVES
+                .iter()
+                .map(|(archive, _)| {
+                    let bld = std::fs::read(usr.join(archive))
+                        .unwrap_or_else(|e| panic!("{archive}: {e}"));
+                    let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
+                    guac_extract::interface::read(archive, &bld, arc.as_deref(), identity())
+                        .unwrap_or_else(|e| panic!("{archive}'s interface: {e}"))
+                        .ir
+                })
+                .collect()
+        })
+        .clone()
+}
+
+/// The interface's model over the script part's files (`igzs`, by unit) and
+/// [`interface_records`], as the TV's install loads it.
+pub fn interface_part(igzs: &[Igz<'_>]) -> guac_interface::load::Loaded {
+    let records = interface_records();
+    let keys: Vec<guac_interface::load::Keys> = igzs
+        .iter()
+        .enumerate()
+        .map(|(u, igz)| guac_interface::load::Keys::read(u as u16, igz))
+        .collect();
+    let imports = guac_interface::load::Imports {
+        exports: guac_formats::exports::Exports::new(&igzs[0], &igzs[1]).unwrap(),
+        bootstrap: 0,
+        global: 1,
+    };
+    let pairs: Vec<_> = keys.iter().zip(&records).collect();
+    guac_interface::load::load(&pairs, Some(&imports))
 }
 
 /// The sounds part of `global.bld`, Eruptor's archive and chapter 1, read
@@ -787,6 +835,9 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     if setup.no_music {
         config = scripts::without_music(config);
     }
+    if setup.interface {
+        config = guacamole::interface_host::with_interface(config);
+    }
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
@@ -794,6 +845,9 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     if setup.sounds {
         let (book, stems) = sound_part();
         world.set_sounds(book, stems);
+    }
+    if setup.interface {
+        world.set_interface(interface_part(&igzs).keeper);
     }
     let template = files
         .placed

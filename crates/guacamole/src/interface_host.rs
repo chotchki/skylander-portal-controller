@@ -5,10 +5,13 @@
 //! `guac-interface`'s ([`guac_interface::Keeper`]); the host only decides
 //! what goes there:
 //!
-//! - every one of the interface's 64 members, but a sprite's screen size on
-//!   the gameplay viewport's container (the camera's framing reads it, AG.28)
-//!   and `spritematrixmeasurement.id` on what isn't a sprite (an actor's,
-//!   a placement's `_ID`), which the host answers as before;
+//! - every one of the interface's 64 members, but `spritematrixmeasurement.id`
+//!   on what isn't a sprite (an actor's, a placement's `_ID`), which the
+//!   host answers as before;
+//! - the gameplay viewport's `container sprite`, the model's `RT Viewport
+//!   0` (the camera's framing reads its screen size, AG.28: the model
+//!   answers 1280 by 720 as the host's own container did), and its `title
+//!   safe zone`, the model's title-safe info;
 //! - any member on one of the keeper's objects (a sprite, a string, a
 //!   converter, a sprite's scale, an initial matrix);
 //! - a spawn of a sprite template or a sprite (an instance, not an actor)
@@ -25,7 +28,7 @@ use guac_extract::intros::IrFormat;
 use guac_interface::Keeper;
 use guac_interface::load::{self, Imports, Keys};
 use guac_ir::interface::{Interface, RECORD};
-use guac_script::{Access, Answer, Config, HostFault, Value, members};
+use guac_script::{Access, Answer, Config, HostFault, MemberId, Value, members};
 
 use crate::script_engine::Object;
 use crate::script_members::Member;
@@ -36,6 +39,7 @@ use crate::scripts::ScriptWorld;
 /// cells): only for a run whose world holds one.
 pub fn with_interface(mut config: Config) -> Config {
     members::register(&mut config.members, members::INTERFACE);
+    members::register(&mut config.members, members::VIEWPORT_INTERFACE);
     config
 }
 
@@ -190,6 +194,13 @@ impl ScriptWorld {
             return false;
         };
         let held = at.receiver.is_some_and(|r| k.holds(r));
+        // The viewport's container (`RT Viewport 0`) and title-safe info
+        // are the model's.
+        if self.members.get(&at.member) == Some(&Member::Container)
+            || at.member == MemberId::named("viewportinfo", "title safe zone")
+        {
+            return at.receiver.and_then(|r| self.handle(r)) == Some(self.viewport);
+        }
         if !k.is_member(at.member) {
             return held;
         }
@@ -209,7 +220,11 @@ impl ScriptWorld {
     }
 
     pub(crate) fn interface_get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        let container = self.members.get(&at.member) == Some(&Member::Container);
         let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
+        if container {
+            return Ok(k.container());
+        }
         k.get(at, &guac_interface::NoWorld)
     }
 
@@ -228,14 +243,24 @@ impl ScriptWorld {
         k.elements(at, &guac_interface::NoWorld)
     }
 
-    /// A set written whole: the model's when it's the interface's, else
-    /// dropped as before.
+    /// A set reference written: the model's copy when it's the
+    /// interface's, else none kept.
     pub(crate) fn set_elements(&mut self, at: &Access, e: &[Value]) -> Result<(), HostFault> {
         if !self.to_interface(at) {
             return Err(HostFault::Nothing);
         }
         let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
         k.set_elements(at, e)
+    }
+
+    /// A set reference about to be read: the set the model changed it to.
+    pub(crate) fn set_ref(&mut self, at: &Access) -> Option<Vec<Value>> {
+        if !self.to_interface(at) {
+            return None;
+        }
+        self.interface
+            .as_mut()?
+            .set_ref(at, &guac_interface::NoWorld)
     }
 
     /// A spawn of one of the model's templates or sprites: an instance,
@@ -395,6 +420,7 @@ mod tests {
             ),
             Ok(Value::Int(41))
         );
+        // The viewport's container is the model's, the screen's size.
         let viewport = w
             .get(&at(None, "viewportinfo", "default"), &mut NoEngine)
             .unwrap();
@@ -404,17 +430,20 @@ mod tests {
                 &mut NoEngine,
             )
             .unwrap();
-        assert_eq!(
-            w.get(
-                &at(Some(container), "spriteinfo", "screen width"),
-                &mut NoEngine
-            ),
-            Ok(Value::Float(crate::viewport::SCREEN_WIDTH))
-        );
+        assert_eq!(container, w.interface().unwrap().container());
+        for (name, size) in [
+            ("screen width", crate::viewport::SCREEN_WIDTH),
+            ("screen height", crate::viewport::SCREEN_HEIGHT),
+        ] {
+            assert_eq!(
+                w.get(&at(Some(container), "spriteinfo", name), &mut NoEngine),
+                Ok(Value::Float(size))
+            );
+        }
         // The class's own set reads through the host.
         assert_eq!(
             w.elements(&at(None, "spriteinfo", "active"), &mut NoEngine),
-            Ok(vec![clone])
+            Ok(vec![container, clone])
         );
         let remove = OpCall {
             class: Class::Remove,

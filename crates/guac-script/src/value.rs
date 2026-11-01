@@ -275,7 +275,7 @@ pub fn convert(spec: &MemberSpec, v: Value) -> Option<Value> {
         }
         Kind::Color => matches!(v, Value::Color(_)).then_some(v),
         Kind::Screen => matches!(v, Value::Screen(_)).then_some(v),
-        Kind::Reference => (!v.is_number()).then_some(v),
+        Kind::Reference | Kind::SetRef => (!v.is_number()).then_some(v),
         // The engine's sets are read, never written.
         Kind::Set => None,
         Kind::Any => Some(v),

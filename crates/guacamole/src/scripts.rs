@@ -1691,6 +1691,9 @@ impl Host for WorldHost<'_, '_> {
     fn set_elements(&mut self, at: &Access, elements: &[Value]) -> Result<(), HostFault> {
         self.world.set_elements(at, elements)
     }
+    fn set_ref(&mut self, at: &Access) -> Option<Vec<Value>> {
+        self.world.set_ref(at)
+    }
 }
 
 /// `global.bld`'s running placements' scripts: their first tick only.

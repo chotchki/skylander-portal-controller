@@ -141,8 +141,11 @@ pub(super) struct Engine {
     /// Each op's receiver, in order.
     receivers: Vec<Value>,
     items: Vec<Value>,
-    /// Each whole write of a set member, its elements.
+    /// Each write of a set reference it copies, its elements.
     written: Vec<Vec<Value>>,
+    /// What each read of a set reference it copies finds changed, in turn.
+    refs: std::collections::VecDeque<Option<Vec<Value>>>,
+    resets: usize,
 }
 
 impl Host for Engine {
@@ -158,6 +161,7 @@ impl Host for Engine {
         Ok(())
     }
     fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.resets += 1;
         self.cells
             .remove(&(format!("{:?}", at.receiver), at.member));
         Ok(())
@@ -195,6 +199,9 @@ impl Host for Engine {
     fn set_elements(&mut self, _: &Access, elements: &[Value]) -> Result<(), HostFault> {
         self.written.push(elements.to_vec());
         Ok(())
+    }
+    fn set_ref(&mut self, _: &Access) -> Option<Vec<Value>> {
+        self.refs.pop_front().flatten()
     }
 }
 
@@ -993,14 +1000,18 @@ fn an_engine_set_member_is_read_whole_from_the_host() {
     );
 }
 
-/// A set the host keeps, written whole (openspec AT.9: the string
-/// converter's `value set`): a script set's elements handed over as they
-/// read, numbers in cells of their own as the numbers, a null as no
-/// elements, a number dropped; a value cell standing for a set never asks.
+/// A set reference the host copies (openspec AT.9: the string converter's
+/// `value set`): the VM keeps the script's own set, reading it back as
+/// written while the host changed nothing; each write hands the host the
+/// set's elements as they read (numbers in cells of their own as the
+/// numbers, a null as none), a number dropped; a set the host changed reads
+/// as a fresh set of number cells, kept from then; a reset asks the host
+/// too.
 #[test]
-fn a_set_the_host_keeps_is_written_whole() {
+fn a_set_reference_the_host_copies_is_the_vms_with_the_hosts_copy() {
     let p = program(|w| {
         let s = w.variable("s", "ScriptSet", Some("ValueInfo"));
+        let (same, n, m, first) = (var(w, "same"), var(w, "n"), var(w, "m"), var(w, "first"));
         idle(
             w,
             |_| {},
@@ -1025,32 +1036,74 @@ fn a_set_the_host_keeps_is_written_whole() {
                         lit,
                     );
                 }
-                setref(w, &[El::Member("test", "items")], &[El::Local(s)]);
-                setref(
-                    w,
-                    &[El::Member("test", "items")],
-                    &[El::Member("abstractscriptgroup", "null")],
+                let text = [El::Member("test", "text")];
+                setref(w, &text, &[El::Local(s)]);
+                // Read back as the script's own set.
+                let p = check_ref(w, &text, 1, &[El::Local(s)]);
+                let one = w.int(1);
+                w.set(&[El::Local(same)], one);
+                w.end_block(p);
+                let c = w.rhs(
+                    INT,
+                    &[
+                        El::Member("test", "text"),
+                        El::Member("setvariant", "count"),
+                    ],
                 );
+                w.set(&[El::Local(n)], c);
+                // The host changed it: a fresh set of its numbers.
+                let c = w.rhs(
+                    INT,
+                    &[
+                        El::Member("test", "text"),
+                        El::Member("setvariant", "count"),
+                    ],
+                );
+                w.set(&[El::Local(m)], c);
+                let f = w.rhs(
+                    INT,
+                    &[
+                        El::Member("test", "text"),
+                        El::Member("setvariant", "first"),
+                    ],
+                );
+                w.set(&[El::Local(first)], f);
+                setref(w, &text, &[El::Member("abstractscriptgroup", "null")]);
                 let seven = w.int(7);
-                w.set(&[El::Member("test", "items")], seven);
-                setref(w, &[El::Member("test", "kept")], &[El::Local(s)]);
+                w.set(&text, seven);
+                reset(w, &text);
             },
         );
     });
     let mut c = Config::new(Mode::Strict);
     c.members
-        .host("test", "items", MemberSpec::new(Kind::Set, 0.0, 0.0));
-    c.members
-        .value_cell("test", "kept", MemberSpec::new(Kind::Set, 0.0, 0.0));
+        .host("test", "text", MemberSpec::new(Kind::SetRef, 0.0, 0.0));
     let mut vm = Vm::new(p, c);
     let id = vm.add(HANDLE, "Writer", 0);
-    let mut host = Engine::default();
+    let mut host = Engine {
+        refs: vec![
+            None,
+            None,
+            Some(vec![Value::Int(65), Value::Int(66), Value::Int(67)]),
+        ]
+        .into(),
+        ..Engine::default()
+    };
     vm.tick(id, &mut host).unwrap();
     assert_eq!(
         host.written,
         vec![vec![Value::Int(72), Value::Int(105)], vec![]],
         "the set's numbers, then none for the null, the number dropped"
     );
+    assert_eq!(vm.local(id, "same"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "n"), Some(Value::Int(2)));
+    assert_eq!(vm.local(id, "m"), Some(Value::Int(3)), "the host's set");
+    assert_eq!(
+        vm.local(id, "first"),
+        Some(Value::Int(65)),
+        "kept from then"
+    );
+    assert_eq!(host.resets, 1);
 }
 
 #[test]

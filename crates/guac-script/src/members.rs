@@ -58,9 +58,10 @@ impl Registered {
             // An engine set the host keeps is read whole; a value cell
             // standing for one reads none.
             "SetVariant" if self.keeper == Keeper::Host => Kind::Set,
-            // The interface's sets, and its two set references, which a
-            // script also writes whole (openspec AT.9).
-            "SetVariant" | "ScriptSetReference" if self.keeper == Keeper::Interface => Kind::Set,
+            // The interface's sets, and its two set references, which the
+            // VM keeps and the host copies (openspec AT.9).
+            "SetVariant" if self.keeper == Keeper::Interface => Kind::Set,
+            "ScriptSetReference" if self.keeper == Keeper::Interface => Kind::SetRef,
             // A sprite's `numeric value` takes any number: its handler
             // reads it as an integer or a float by the sprite's text.
             "SpriteValueMeasurement" if self.keeper == Keeper::Interface => Kind::Any,
@@ -3537,6 +3538,20 @@ pub const INTERFACE: &[Registered] = &[
     ),
 ];
 
+/// The gameplay viewport's title-safe info (openspec AT.9), which `UI -
+/// Init UI Containers` (`Init_Setup.ai`) sizes `_UI_Container` by: the
+/// interface's beside [`INTERFACE`] on a run whose host holds the model,
+/// over the init chain's cell, the same class, units and range.
+pub const VIEWPORT_INTERFACE: &[Registered] = &[m(
+    "viewportinfo",
+    "title safe zone",
+    "ReferenceVariant",
+    "",
+    0.0,
+    0.0,
+    Interface,
+)];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -3746,7 +3761,8 @@ mod tests {
     /// AT.9's rows: the eight interface namespaces' 64, each once, the
     /// interface's; the 31 the earlier tables registered taken over with
     /// the same class, units and range, the other 33 new; each converting
-    /// by its class (a set or set reference read whole and written whole,
+    /// by its class (a set read whole, a set reference the VM's with the
+    /// host's copy,
     /// `numeric value` any number, the depths held to ±10,000), and every
     /// one going to the host once registered.
     #[test]
@@ -3808,10 +3824,12 @@ mod tests {
             ("spriteinfo", "removed"),
             ("spritematrixmeasurement", "attached objects"),
             ("spritematrixmeasurement", "clones"),
-            ("stringconverter", "value set"),
-            ("textcolorconverter", "color set"),
         ] {
             assert_eq!(kind(ns, name), Kind::Set, "{ns}.{name}");
+        }
+        for name in ["stringconverter.value set", "textcolorconverter.color set"] {
+            let (ns, n) = name.split_once('.').unwrap();
+            assert_eq!(kind(ns, n), Kind::SetRef, "{name}");
         }
         assert_eq!(kind("spriteinfo", "numeric value"), Kind::Any);
         assert_eq!(kind("spriteinfo", "width"), Kind::Float);
@@ -3833,10 +3851,18 @@ mod tests {
             Some(Value::Float(2.5)),
             "a number reaches the host"
         );
+        let zone = VIEWPORT_INTERFACE[0];
+        let cell = find(INIT_CHAIN, zone.namespace, zone.name).unwrap();
+        assert_eq!(
+            (cell.class, cell.units, cell.min, cell.max, cell.keeper),
+            (zone.class, zone.units, zone.min, zone.max, Keeper::Cell)
+        );
+        assert_eq!(zone.keeper, Keeper::Interface);
         let mut members = Members::new();
         register(&mut members, INIT_CHAIN);
         register(&mut members, INTERFACE);
-        for r in INTERFACE {
+        register(&mut members, VIEWPORT_INTERFACE);
+        for r in INTERFACE.iter().chain(VIEWPORT_INTERFACE) {
             let (spec, place) = members.get(MemberId::named(r.namespace, r.name)).unwrap();
             assert_eq!(place, Place::Host, "{}", r.path());
             assert_eq!(spec.kind, r.kind(), "{}", r.path());

@@ -46,13 +46,14 @@ fn each_template_loads_under_its_object_with_its_string_and_font() {
     let s = sample();
     let igz = Igz::parse(&s.bytes).unwrap();
     let ir = record(&igz, 2);
-    let loaded = load(&[Archive {
+    let loaded = load_igz(&[Archive {
         unit: UNIT,
         igz: &igz,
         interface: &ir,
     }]);
     let m = loaded.keeper.model();
-    assert_eq!(m.len(), 8);
+    // The eight and the viewport's container.
+    assert_eq!(m.len(), 9);
     for (n, &at) in s.templates.iter().enumerate() {
         let obj = Obj {
             unit: UNIT,
@@ -110,7 +111,7 @@ fn strings_that_dont_pair_with_the_files_keys_load_none() {
     let s = sample();
     let igz = Igz::parse(&s.bytes).unwrap();
     let ir = record(&igz, 1);
-    let loaded = load(&[Archive {
+    let loaded = load_igz(&[Archive {
         unit: UNIT,
         igz: &igz,
         interface: &ir,
@@ -143,7 +144,7 @@ fn a_templates_id_is_its_placements() {
     let bytes = b.build();
     let igz = Igz::parse(&bytes).unwrap();
     let ir = record(&igz, 0);
-    let loaded = load(&[Archive {
+    let loaded = load_igz(&[Archive {
         unit: UNIT,
         igz: &igz,
         interface: &ir,
