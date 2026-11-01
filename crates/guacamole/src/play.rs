@@ -1920,7 +1920,7 @@ fn enter(
         // settle's cast from a metre up could meet an overhang beside it
         // first (the Mac run's second replacement came in 0.97 m up). A
         // bigger one is taken out of the walls he'd stand in there
-        // (AG.289), then stands. He drops onto it from [`DROP`] up once his
+        // (AG.289; stand-in ledger: `set-down`), then stands. He drops onto it from [`DROP`] up once his
         // minion is in (AG.100).
         let out = hero.push_out(&seam, &[]);
         if out != PushOut::Clear {

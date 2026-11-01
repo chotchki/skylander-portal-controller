@@ -279,7 +279,8 @@ impl Hero {
     /// tries eight headings round him from his facing, [`SEARCH_OUT`] out
     /// and [`SEARCH_UP`] up, for a spot that's clear with ground within
     /// [`SEARCH_DOWN`] under it, and settles him there. His footing is read
-    /// wherever he ends.
+    /// wherever he ends. Our own rule, the original's unread (stand-in
+    /// ledger: `set-down`).
     pub fn push_out(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) -> PushOut {
         let from = self.pivot;
         let mut moved = false;

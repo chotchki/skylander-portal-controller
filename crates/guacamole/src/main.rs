@@ -9,6 +9,7 @@
 
 mod alert;
 mod arrival;
+mod button_prompt;
 mod card_motion;
 mod card_view;
 mod cards;
@@ -485,6 +486,8 @@ fn run_tv(
             orbs::OrbsPlugin,
             emitters::EmittersPlugin,
             slow_frames::SlowFramesPlugin,
+            // AG.290: the world's button prompts by the walking pad.
+            button_prompt::ButtonPromptPlugin,
         ),
     ));
     // AH.25's dev entry, in a dev build only.

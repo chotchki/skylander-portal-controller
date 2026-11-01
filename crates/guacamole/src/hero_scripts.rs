@@ -792,7 +792,7 @@ pub(crate) fn apply_scripted_solid(
         run.shape = next.shape;
         if grew {
             // A new solid can start inside a wall the last one only touched
-            // (AG.289): taken out of it before his next step.
+            // (AG.289; stand-in ledger: `set-down`): out before his next step.
             let HeroBody { hero, exclude, .. } = &mut *body;
             let out = hero.push_out(&seam, exclude);
             if out != guac_motion::hero::PushOut::Clear {
@@ -1675,11 +1675,13 @@ pub(crate) fn draw_clones(
         let place = clone_transform(actor);
         match (drawn, transform) {
             (None, _) => {
-                let model = actor
+                let path = actor
                     .template
                     .and_then(|t| world.template(t))
-                    .and_then(|p| p.model.as_deref())
-                    .and_then(|m| models.get(m));
+                    .and_then(|p| p.model.as_deref());
+                let model = path.and_then(|m| models.get(m));
+                // A button icon draws the walking pad's prompt (AG.290).
+                let icon = path.and_then(crate::button_prompt::icon_face);
                 // A model whose effects draw nothing (its parts left out)
                 // draws nothing here either.
                 let draws = model.is_some_and(|parts| !parts.is_empty()) && !actor.removed;
@@ -1697,14 +1699,25 @@ pub(crate) fn draw_clones(
                     CloneDrawn { draws, attack },
                 ));
                 if let (Some(parts), true) = (model, draws) {
+                    if let Some(face) = icon {
+                        commands
+                            .entity(entity)
+                            .insert(crate::button_prompt::ButtonPrompt(face));
+                    }
                     for (mesh, material) in parts {
-                        commands.spawn((
+                        let mut part = commands.spawn((
                             Mesh3d(mesh.clone()),
                             MeshMaterial3d(material.clone()),
                             Transform::IDENTITY,
                             RenderLayers::layer(LEVEL_LAYER),
                             ChildOf(entity),
                         ));
+                        if icon.is_some() {
+                            part.insert(crate::button_prompt::PromptPart {
+                                original: material.clone(),
+                                shown: None,
+                            });
+                        }
                     }
                 }
             }
