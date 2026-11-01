@@ -282,6 +282,9 @@ fn held_direction(dpad: Vec2, stick: Vec2) -> Option<CompassOctant> {
 
 /// The press half of a frame from the keys and pads, with the D-pad and
 /// arrows held (each axis clamped to -1..1) and the most deflected stick.
+/// A direction pressed this frame counts as held in it, so a tap whose
+/// press and release land in one frame still moves (AH.279: GameController
+/// drains a pad's queue each frame, both halves of a quick tap with it).
 pub(crate) fn read_devices<'a>(
     keys: Option<&ButtonInput<KeyCode>>,
     pads: impl Iterator<Item = &'a Gamepad>,
@@ -301,7 +304,7 @@ pub(crate) fn read_devices<'a>(
                 frame.inputs.push(input);
             }
         }
-        dpad += axes(|b| pad.pressed(b), DPAD);
+        dpad += axes(|b| pad.pressed(b) || pad.just_pressed(b), DPAD);
         if pad.left_stick().length() > stick.length() {
             stick = pad.left_stick();
         }
@@ -314,7 +317,7 @@ pub(crate) fn read_devices<'a>(
         if keys.just_pressed(KeyCode::Escape) {
             frame.inputs.push(TvInput::Back);
         }
-        dpad += axes(|k| keys.pressed(k), ARROWS);
+        dpad += axes(|k| keys.pressed(k) || keys.just_pressed(k), ARROWS);
     }
     (frame, dpad.clamp(Vec2::NEG_ONE, Vec2::ONE), stick)
 }
@@ -369,8 +372,11 @@ impl Plugin for InputRouter {
     }
 }
 
+/// The router. Its repeats step on the real clock (AH.279): the level's
+/// clock stops under a hold, an alert's or a modal's over it, where a held
+/// direction still has to repeat.
 fn route_input(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     pads: Query<(Entity, &Gamepad)>,
     presses: Option<Res<PostedPresses>>,
@@ -717,6 +723,37 @@ mod tests {
             Some(CompassOctant::East)
         );
         assert_eq!(repeat.step(Vec2::X, Vec2::ZERO, at(1030)), None);
+    }
+
+    /// AH.279: a D-pad tap whose press and release reach Bevy in one frame
+    /// (GameController drains both halves of a quick tap together) moves
+    /// the router as a hold of one frame would; an arrow key's the same.
+    #[test]
+    fn a_tap_inside_one_frame_still_moves() {
+        use crate::test_support::test_pad;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin));
+        let pad = test_pad::connect(&mut app, None, None);
+        app.update();
+        test_pad::button(&mut app, pad, GamepadButton::DPadRight, true);
+        test_pad::button(&mut app, pad, GamepadButton::DPadRight, false);
+        app.update();
+        let mut q = app.world_mut().query::<&Gamepad>();
+        let (frame, dpad, stick) = read_devices(None, q.iter(app.world()));
+        assert!(frame.pressed);
+        assert_eq!(dpad, Vec2::X, "the tap counts as held this frame");
+        let mut repeat = NavRepeat::default();
+        assert_eq!(repeat.step(dpad, stick, at(0)), Some(CompassOctant::East));
+        // Counted for its own frame only, so one tap never repeats.
+        app.update();
+        let (_, dpad, _) = read_devices(None, q.iter(app.world()));
+        assert_eq!(dpad, Vec2::ZERO);
+
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowLeft);
+        keys.release(KeyCode::ArrowLeft);
+        let (_, dpad, _) = read_devices(Some(&keys), std::iter::empty());
+        assert_eq!(dpad, -Vec2::X);
     }
 
     #[test]

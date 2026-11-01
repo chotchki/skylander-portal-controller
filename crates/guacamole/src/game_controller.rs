@@ -127,6 +127,24 @@ impl PadState {
     }
 }
 
+/// How far a D-pad's axis goes before its direction reads pressed.
+pub const DPAD_PRESSED: f32 = 0.5;
+
+/// A D-pad's four directions off its axes, x right and y up (openspec
+/// AH.279): AG.5's probe saw the 8BitDo's D-pad only as the profile's
+/// `xyAxes`, exactly ±1 a direction, and never measured the queued
+/// readings' per-direction `isPressed`, which the router's moves were read
+/// from until a playtest found no move reaching the router, so the axes
+/// are the one source. Up, down, left, right.
+pub fn dpad_directions(xy: Vec2) -> [(Element, bool); 4] {
+    [
+        (Element::DpadUp, xy.y > DPAD_PRESSED),
+        (Element::DpadDown, xy.y < -DPAD_PRESSED),
+        (Element::DpadLeft, xy.x < -DPAD_PRESSED),
+        (Element::DpadRight, xy.x > DPAD_PRESSED),
+    ]
+}
+
 /// Which of Apple's elements sit at the face positions on a product
 /// category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -943,6 +961,47 @@ mod tests {
         app.update();
         let gamepad = app.world().get::<Gamepad>(pad).unwrap();
         assert!(!gamepad.just_pressed(GamepadButton::South), "once");
+    }
+
+    /// AH.279: a D-pad tap whose press and release drain in one frame
+    /// reaches Bevy as a press this frame and not as held, as a face tap
+    /// does; the router counts it as held for that frame
+    /// (`input::read_devices`), so it still moves the focus.
+    #[test]
+    fn a_one_frame_dpad_tap_reaches_bevy_as_a_press() {
+        let fake = Fake::default();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin));
+        install(&mut app, Box::new(fake.clone()));
+        fake.connect(1, "Switch Pro Controller");
+        app.update();
+        fake.send(1, PadState::default().with(Element::DpadRight, true));
+        fake.send(1, PadState::default());
+        app.update();
+        let mut q = app.world_mut().query::<&Gamepad>();
+        let gamepad = q.single(app.world()).unwrap();
+        assert!(gamepad.just_pressed(GamepadButton::DPadRight), "the tap");
+        assert!(!gamepad.pressed(GamepadButton::DPadRight), "let go already");
+    }
+
+    /// AH.279: a D-pad's directions come off its axes at AG.5's ±1, a half
+    /// way the edge; a diagonal holds two.
+    #[test]
+    fn the_dpads_directions_come_off_its_axes() {
+        let held = |x: f32, y: f32| -> Vec<Element> {
+            dpad_directions(Vec2::new(x, y))
+                .into_iter()
+                .filter_map(|(e, down)| down.then_some(e))
+                .collect()
+        };
+        assert_eq!(held(1.0, 0.0), [Element::DpadRight]);
+        assert_eq!(held(-1.0, 0.0), [Element::DpadLeft]);
+        assert_eq!(held(0.0, 1.0), [Element::DpadUp]);
+        assert_eq!(held(0.0, -1.0), [Element::DpadDown]);
+        assert_eq!(held(-1.0, 1.0), [Element::DpadUp, Element::DpadLeft]);
+        assert!(held(0.0, 0.0).is_empty());
+        assert!(held(0.5, -0.5).is_empty(), "the edge itself isn't past it");
+        assert_eq!(held(0.51, 0.0), [Element::DpadRight]);
     }
 
     /// A long frame (a level's load, a hitch) loses nothing the queue holds:
