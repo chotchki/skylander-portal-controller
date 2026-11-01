@@ -2049,7 +2049,14 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
   `Event::LevelReady` hands it over; what nothing draws yet reads after, on the same thread (the level's
   sprites and the interface until AT.9, the sounds until the TV plays them), then the intros. So a kid
   plays while the rest reads, and a sprites part that won't read keeps nothing from the TV. Each part
-  names itself on the band, archives done of total, and logs a line, a warning when it doesn't read.
+  names itself on the band, archives done of total, and logs a line, a warning when it doesn't read,
+  the moment its stage ends (AT.31: `Event::Ended` carries the stage's result; the run's return logs
+  only the intros, so a failed part is warned minutes before a first run's transcode ends, and even when
+  the app quits during it). The sounds part, once read or kept whole, is handed to a level loaded before
+  it (AR.21: `Event::SoundsReady`, forwarded on a channel beside the level's), which reads it again into
+  the live run on a task off the frame once its scripts are linked: on a fresh root (release, 2026-11-01,
+  load 5.0-7.0) chapter 1 was handed over at 36.2 s and the sounds 17.3 s after it, Eruptor's lobs from
+  38.9 s playing nothing until 53.5 s and finding their recordings from 54.1 s.
   Measured on the dump (release, 2026-11-01): on a fresh root the hand-off moved from 139.3 s after the
   pick (it waited on the 48 intros' transcode; load 5.0 to 18.5) to 34.9-37.3 s (load 3.8 to 6.9 up to
   the hand-off); on an extract made before AT.8 from 35.2 s to 13.9 s (load 3.6-4.8), Eruptor in the
