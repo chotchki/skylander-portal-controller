@@ -2308,6 +2308,14 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// getter answers 0 whatever the placement ran (aj-vm's way, read as an
 /// aid), so a cell reading its default; nothing on the disc writes it, and
 /// the original registers no setter.
+///
+/// The sprite members the runs reach (AS.32): a sprite matrix's `origin`,
+/// the matrix it's placed by (chapter 1's cutscene manager spawns its
+/// blackout sprite at it, 209's war machine turns its reticle by its
+/// facing), and a sprite's `text color converter` (the title's and the UI's
+/// text keyframer); value cells of their registered types reading nothing,
+/// so a path through them goes through nothing, until the original's
+/// interface draws (the backlog's HUD line).
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2363,6 +2371,24 @@ pub const LEVELS: &[Registered] = &[
         "percent",
         0.0,
         OPEN,
+        Cell,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "origin",
+        "MatrixMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "spriteinfo",
+        "text color converter",
+        "TextColorConverter",
+        "",
+        0.0,
+        0.0,
         Cell,
     ),
 ];
@@ -3180,6 +3206,33 @@ mod tests {
             convert(&r.spec(), Value::Float(-2.0)),
             Some(Value::Float(0.0))
         );
+    }
+
+    /// AS.32: a sprite matrix's origin, an object cell reading nothing
+    /// that takes only an object.
+    #[test]
+    fn a_sprite_matrixs_origin_is_an_object_cell_reading_nothing() {
+        let (r, place) = level_member("spritematrixmeasurement", "origin");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("MatrixMeasurement", Kind::Reference, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Null);
+        assert_eq!(convert(&r.spec(), Value::Float(1.0)), None);
+        assert_eq!(convert(&r.spec(), Value::Entity(4)), Some(Value::Entity(4)));
+    }
+
+    /// AS.32: a sprite's text colour converter, an object cell reading
+    /// nothing that takes only an object.
+    #[test]
+    fn a_sprites_text_colour_converter_is_an_object_cell_reading_nothing() {
+        let (r, place) = level_member("spriteinfo", "text color converter");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("TextColorConverter", Kind::Reference, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Null);
+        assert_eq!(convert(&r.spec(), Value::Int(2)), None);
     }
 
     /// AS.27: the streams playing, a cell standing for the engine's set

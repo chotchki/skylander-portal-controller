@@ -265,3 +265,78 @@ fn a_tag_holding_a_roll_reads_a_draw_as_it_is_found() {
         "{halt}"
     );
 }
+
+/// A host recording each world op's `_RHS` operand as read, finding no
+/// target.
+#[derive(Default)]
+struct Spawns(Vec<Option<Value>>);
+
+impl Host for Spawns {
+    fn get(&mut self, _: &Access) -> Result<Value, HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn set(&mut self, _: &Access, _: Value) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn reset(&mut self, _: &Access) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn op(&mut self, call: &OpCall) -> Result<Answer, HostFault> {
+        let rhs = call
+            .operands
+            .iter()
+            .find(|(n, _)| *n == "_RHS")
+            .and_then(|(_, v)| *v);
+        self.0.push(rhs);
+        Ok(Answer::Skip)
+    }
+}
+
+/// AS.32, chapter 1's cutscene manager and the title's text keyframer on a
+/// list built in code: a spawn at a sprite's origin is asked at nothing, a
+/// write through the text colour converter goes nowhere, and the tick goes
+/// on. Without the table strict mode halts on the first.
+#[test]
+fn a_sprites_origin_and_text_converter_read_nothing() {
+    let p = program(|w| {
+        let after = var(w, "after");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let zero = w.int(0);
+                let spawn = w.spawn(
+                    &[MY],
+                    &[MY, El::Member("spritematrixmeasurement", "origin")],
+                    zero,
+                );
+                w.end_block(spawn);
+                let l = w.value(&[
+                    El::Member("spriteinfo", "text color converter"),
+                    El::Member("textcolorconverter", "text sprite"),
+                ]);
+                let r = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+                let o = w.op(Class::SetReference, "set reference");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, r);
+                w.push(o);
+                w.inc(&[El::Local(after)]);
+            },
+        );
+    });
+    let mut config = Config::new(Mode::Strict);
+    members::register(&mut config.members, members::LEVELS);
+    let mut vm = Vm::new(p.clone(), config);
+    let id = vm.add(HANDLE, "CutsceneHandler", 0);
+    let mut host = Spawns::default();
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(host.0, vec![Some(Value::Null)], "spawned at nothing");
+    assert_eq!(vm.local(id, "after"), Some(Value::Int(1)));
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "CutsceneHandler", 0);
+    let halt = vm.tick(id, &mut Spawns::default()).unwrap_err();
+    assert!(matches!(halt.reason, Reason::UnmodelledMember(_)), "{halt}");
+}
