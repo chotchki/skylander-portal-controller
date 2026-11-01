@@ -280,7 +280,7 @@ fn a_material_with_bit_6_7_or_9_is_refused_by_name() {
 }
 
 #[test]
-fn a_tfn1_image_outside_the_normal_map_slot_is_refused() {
+fn a_tfn1_image_outside_the_normal_map_slot_is_refused_and_a_levels_may_go_without() {
     // The colour map carrying the hint.
     let e = first(&with_body(|b| {
         b.binds[2] = BindSpec::new(0, 2).normal_map()
@@ -293,14 +293,28 @@ fn a_tfn1_image_outside_the_normal_map_slot_is_refused() {
             hinted: true
         }
     );
-    // The normal-map slot without it.
-    let e = first(&with_body(|b| b.binds[0] = BindSpec::new(4, 0))).unwrap_err();
+    // The normal-map slot without it: a character's refused, a level's read
+    // as its normal map (openspec AS.5, the hub's card-table felt); the
+    // colour map carrying it is refused on a level too.
+    let unhinted = with_body(|b| b.binds[0] = BindSpec::new(4, 0));
+    let e = first(&unhinted).unwrap_err();
     assert_eq!(
         e.kind,
         ErrorKind::NormalMapHint {
             role: "layer1BaseNormalMap",
             hinted: false
         }
+    );
+    let m = level(&unhinted).unwrap();
+    assert_eq!(m.textures[0].role, Role::Layer1BaseNormalMap);
+    assert_ne!(m.textures[0].sampler.format_hint, TFN1);
+    let e = level(&with_body(|b| {
+        b.binds[2] = BindSpec::new(0, 2).normal_map()
+    }))
+    .unwrap_err();
+    assert!(
+        matches!(e.kind, ErrorKind::NormalMapHint { hinted: true, .. }),
+        "{e}"
     );
 }
 
@@ -401,18 +415,37 @@ fn a_level_takes_the_gloss_map_a_character_refuses() {
             (Role::Layer4ColorMap, Some("eruptorrim")),
         ]
     );
-    // Bits 6 and 9 stay refused on a level, by name.
-    for (pixel, bit, name) in [
-        (0x5C, 6, "layer4UsesPositions"),
-        (0x21C, 9, "receivesReflections"),
-    ] {
-        let e = level(&with_body(|b| b.pixel = Some((pixel, 0x3FF)))).unwrap_err();
-        assert_eq!(e.kind, ErrorKind::Feature { bit, name }, "{pixel:#x}");
-        assert_eq!(e.field, "_baseMask");
-    }
-    // And on the vertex side, bits 6 and 9 with skinning.
+    // Bit 9 stays refused on a level, by name; bit 6 (layer 4 by
+    // positions, the water's) is taken and kept in the mask (openspec AS.5).
+    let e = level(&with_body(|b| b.pixel = Some((0x21C, 0x3FF)))).unwrap_err();
+    assert_eq!(
+        e.kind,
+        ErrorKind::Feature {
+            bit: 9,
+            name: "receivesReflections"
+        }
+    );
+    assert_eq!(e.field, "_baseMask");
+    let water = level(&with_body(|b| {
+        b.pixel = Some((0x5C, 0x3FF));
+        b.vertex = Some((0x105C, 0x1BFF));
+    }))
+    .unwrap();
+    assert_eq!(
+        (water.pixel.base_mask, water.vertex.base_mask),
+        (0x5C, 0x105C)
+    );
+    let e = first(&with_body(|b| b.pixel = Some((0x5C, 0x3FF)))).unwrap_err();
+    assert_eq!(
+        e.kind,
+        ErrorKind::Feature {
+            bit: 6,
+            name: "layer4UsesPositions"
+        },
+        "a character still refuses it"
+    );
+    // And on the vertex side, bit 9 with skinning.
     for (vertex, bit, name) in [
-        (0x5C, 6, "layer4UsesPositions"),
         (0x21C, 9, "receivesReflections"),
         (0x81C, 11, "vertexSkinning"),
     ] {
@@ -420,9 +453,9 @@ fn a_level_takes_the_gloss_map_a_character_refuses() {
         assert_eq!(e.kind, ErrorKind::Feature { bit, name }, "{vertex:#x}");
         assert_eq!(e.field, "_baseMask");
     }
-    assert_eq!(Drawn::Level.pixel_undrawn(), [6, 9]);
+    assert_eq!(Drawn::Level.pixel_undrawn(), [9]);
     assert_eq!(Drawn::Character.pixel_undrawn(), [6, 7, 9]);
-    assert_eq!(Drawn::Level.vertex_undrawn(), [6, 9, 11]);
+    assert_eq!(Drawn::Level.vertex_undrawn(), [9, 11]);
 }
 
 #[test]

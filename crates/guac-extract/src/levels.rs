@@ -8,11 +8,16 @@
 //!   tfbmulti2's read as a level's ([`Drawn::Level`]: the gloss map taken,
 //!   bits 6 and 9 refused by name), the grass's, `0xAA8`'s and tfbwarp's as
 //!   [`EffectMaterial`]s, and the sky's groups. A draw under a transform is
-//!   refused: level 213's scenes have none.
+//!   baked into the level's frame ([`bake`], openspec AS.3): 10 of the
+//!   disc's levels hold 54, level 213's scenes none. One a keyframe source
+//!   moves is baked at the matrix its file stores, which the level's
+//!   animation drives at run time ([`animated_draws`] lists them).
 //! - The props: each model a placement names, a skinned one as a
 //!   character's is read (its skeleton, slot 0 as its idle when that poses
-//!   it), a static one through its body's graph. One that doesn't read is
-//!   listed in the part, not fatal to it.
+//!   it), a static one through its body's graph, a draw under a still
+//!   transform baked as the scene's are. One that doesn't read is listed in
+//!   the part, not fatal to it: a draw an animated transform moves is (the
+//!   wings of level 213's fairy gem), until the animation plays.
 //! - The collision (AG.2's reader), the placements and the lights (AG.3's).
 //! - The atmosphere (AG.41): the zones the level's definition script adds
 //!   at its start on a PS3, read statically ([`guac_formats::atmosphere`]).
@@ -42,11 +47,14 @@ use guac_formats::collision;
 use guac_formats::edge::{BoneMap, Segment as EdgeSegment};
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
+use guac_formats::igz::layouts::Mat44;
 use guac_formats::igz::layouts::{
     Actor2, AttrList, Hero, Layout, ObjectRef, Passes, PhysicsBody, PhysicsModel, PhysicsWorld,
     RuntimeTechniqueInstance, is_a, read_all,
 };
-use guac_formats::level::{GroupKind, IDENTITY, Placements as FormatPlacements, StaticModel};
+use guac_formats::level::{
+    Draw, Graph, GroupKind, IDENTITY, Placements as FormatPlacements, StaticModel, transform_point,
+};
 use guac_formats::material::{self, Drawn, OwnEffects, TFBMULTI2};
 use guac_formats::model::{self as fmodel, IDLE_SLOT, JointMap};
 use guac_ir::level::{
@@ -67,9 +75,98 @@ use crate::roster::LEVEL;
 pub const LEVEL_DIR: &str = "levels";
 /// The folder holding the level archives, under `PS3_GAME/USRDIR`.
 pub const LEVEL_FOLDER: &str = "level";
-/// The levels this build plays, by archive name: chapter 1, "Time of the
-/// Giants" (ag-motion section 4; the archive's own spelling).
-pub const LEVELS: [&str; 1] = ["level_213_tutotial"];
+/// The levels a first run extracts, by archive name (openspec AS.1): chapter
+/// 1, "Time of the Giants" (ag-motion section 4; the archive's own
+/// spelling). Every other level on the disc ([`on_disc`]) is extracted when
+/// asked for ([`crate::stages::extract_level`]), and only these decide
+/// whether an extract is current.
+pub const FIRST_RUN: [&str; 1] = ["level_213_tutotial"];
+/// [`FIRST_RUN`] under the name guacamole reads it by (chapter 1's archive),
+/// until the TV loads a level by name (openspec AS.13).
+pub const LEVELS: [&str; 1] = FIRST_RUN;
+
+/// What a level file on the disc is, by its archive's name (openspec AS.1):
+/// the 143 on the Giants disc are 20 story levels and the 4 hub stages, 18
+/// PvP arenas, 45 challenge levels and 21 arena challenges, the 9 mesh
+/// bundles those draw from and a voice pack, 19 ship parts, the title, the
+/// credits and 4 minion and misc packs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Kind {
+    Story,
+    Hub,
+    Pvp,
+    Challenge,
+    ArenaChallenge,
+    MeshBundle,
+    VoicePack,
+    ShipPart,
+    Title,
+    Credits,
+    Pack,
+    /// A name none of the others fits.
+    Other,
+}
+
+impl Kind {
+    /// By the archive's name (`pvp_level_001_cubedungeon`).
+    pub fn of(name: &str) -> Self {
+        let starts = |p: &str| name.starts_with(p);
+        if starts("level_hub_") {
+            Self::Hub
+        } else if starts("level_") {
+            Self::Story
+        } else if starts("pvp_") {
+            Self::Pvp
+        } else if starts("challenge_level_") {
+            Self::Challenge
+        } else if starts("arena_challenge_") {
+            Self::ArenaChallenge
+        } else if starts("challengemesh_") || starts("arena_mesh_") {
+            Self::MeshBundle
+        } else if starts("challengevo") {
+            Self::VoicePack
+        } else if starts("ship_part_") {
+            Self::ShipPart
+        } else if name == "title" {
+            Self::Title
+        } else if starts("credits") {
+            Self::Credits
+        } else if starts("_minions") || starts("_misc") {
+            Self::Pack
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// A level file on the disc: its archive's name, kind and size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscLevel {
+    pub name: String,
+    pub kind: Kind,
+    pub bytes: u64,
+}
+
+/// Every level file the dump holds (openspec AS.1, design decision 2), by
+/// name: each `level/<name>.bld` the dump scan recorded in `m`'s sources,
+/// the folder the game's own loader opens a level from by name.
+pub fn on_disc(m: &Manifest) -> Vec<DiscLevel> {
+    let prefix = format!("{LEVEL_FOLDER}/");
+    let mut out: Vec<DiscLevel> = m
+        .sources
+        .iter()
+        .filter_map(|s| {
+            let name = s.path.strip_prefix(&prefix)?.strip_suffix(".bld")?;
+            (!name.is_empty() && !name.contains('/')).then(|| DiscLevel {
+                name: name.to_owned(),
+                kind: Kind::of(name),
+                bytes: s.size,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
 
 /// The parts, in the order the stage reads them.
 pub const SCENE: &str = "scene";
@@ -105,9 +202,10 @@ pub fn archive_path(usrdir: &Path, level: &str) -> PathBuf {
     usrdir.join(LEVEL_FOLDER).join(format!("{level}.bld"))
 }
 
-/// Whether `m` holds every part of every level this build plays.
+/// Whether `m` holds every part of every level a first run extracts
+/// ([`FIRST_RUN`]); a level extracted on demand, or not, changes nothing.
 pub fn complete(m: &Manifest) -> bool {
-    LEVELS.iter().all(|level| {
+    FIRST_RUN.iter().all(|level| {
         m.levels
             .get(*level)
             .is_some_and(|l| PARTS.iter().all(|p| l.parts.contains_key(*p)))
@@ -195,21 +293,125 @@ fn level_material(
     }))
 }
 
+/// What a graph's draws under a transform get (openspec AS.3): a scene's
+/// are baked whatever moves them, a prop's only when no keyframe source
+/// does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Moved {
+    Bake,
+    BakeStill,
+}
+
+/// Whether a transform at or above `draw` has a keyframe source.
+fn animated(graph: &Graph<'_>, draw: &Draw<'_>) -> bool {
+    let mut at = draw.parent;
+    while let Some(g) = at {
+        let group = &graph.groups[&g];
+        if matches!(&group.kind, GroupKind::Transform(t) if t.is_animated()) {
+            return true;
+        }
+        at = group.parent;
+    }
+    false
+}
+
+fn det3(a: &[[f64; 3]; 3]) -> f64 {
+    a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+        - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+        + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+}
+
+/// `v` at `of`'s length (the file's normals and tangents aren't all unit
+/// length, and a bake keeps each as long as it was); a zero vector stays
+/// zero.
+fn as_long(v: [f64; 3], of: [f32; 3]) -> [f32; 3] {
+    let len = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let (new, old) = (len(v), len(of.map(f64::from)));
+    if new > 0.0 {
+        v.map(|x| (x * (old / new)) as f32)
+    } else {
+        [0.0; 3]
+    }
+}
+
+/// `segment` moved by `m`, a row-vector affine (a point p lands at p · m),
+/// into the frame its draw sits in (openspec AS.3): positions through `m`,
+/// normals through the inverse transpose of its 3 × 3 part and tangents
+/// through that part, each kept at its own length, and under a mirror (a negative
+/// determinant) each tangent's handedness negated and each triangle's
+/// winding swapped, so its front stays its front. Refused: a matrix that
+/// flattens (its 3 × 3 part has no inverse) or isn't finite.
+pub fn bake(segment: &mut Segment, m: &Mat44) -> Result<(), String> {
+    let a: [[f64; 3]; 3] = std::array::from_fn(|r| std::array::from_fn(|c| f64::from(m[r][c])));
+    let det = det3(&a);
+    if !det.is_finite() || det.abs() < 1e-12 || m.as_flattened().iter().any(|x| !x.is_finite()) {
+        return Err(format!("a transform that flattens or isn't finite: {m:?}"));
+    }
+    // The inverse by cofactors: inv[c][r] = cofactor(r, c) / det.
+    let cof = |r: usize, c: usize| {
+        let (r1, r2) = ((r + 1) % 3, (r + 2) % 3);
+        let (c1, c2) = ((c + 1) % 3, (c + 2) % 3);
+        a[r1][c1] * a[r2][c2] - a[r1][c2] * a[r2][c1]
+    };
+    let inv: [[f64; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| cof(j, i) / det));
+    for p in &mut segment.positions {
+        *p = transform_point(*p, m);
+    }
+    // n · (M⁻¹)ᵀ: component c is Σ_k n_k inv[c][k].
+    for n in &mut segment.normals {
+        let v = std::array::from_fn(|c| (0..3).map(|k| f64::from(n[k]) * inv[c][k]).sum());
+        *n = as_long(v, *n);
+    }
+    let mirror = det < 0.0;
+    if let Some(tangents) = &mut segment.tangents {
+        for t in tangents {
+            let v = std::array::from_fn(|c| (0..3).map(|k| f64::from(t[k]) * a[k][c]).sum());
+            let [x, y, z] = as_long(v, [t[0], t[1], t[2]]);
+            *t = [x, y, z, if mirror { -t[3] } else { t[3] }];
+        }
+    }
+    if mirror {
+        for tri in segment.indices.as_chunks_mut::<3>().0 {
+            tri.swap(1, 2);
+        }
+    }
+    Ok(())
+}
+
+/// Each scene draw a keyframe source moves (openspec AS.3), by its
+/// technique's name, the scene's object and whether its matrix is the
+/// identity: baked at the matrix its file stores until the animation plays.
+pub fn animated_draws(igz: &Igz<'_>) -> Result<Vec<(usize, String, bool)>, String> {
+    let mut out = Vec::new();
+    for (index, sc) in guac_formats::level::scenes(igz) {
+        let sc = sc.map_err(s)?;
+        for d in sc.draws.iter().filter(|d| animated(&sc, d)) {
+            let name = d.technique.node.name.unwrap_or_default().to_owned();
+            out.push((index, name, d.world == IDENTITY));
+        }
+    }
+    Ok(out)
+}
+
 /// A static graph's draws as materials and segments, where the graph has
-/// them: a draw under a transform is refused. `own`: [`level_material`]'s.
+/// them, each under a transform baked by `moved`'s rule. `own`:
+/// [`level_material`]'s.
+#[allow(clippy::too_many_arguments)]
 fn static_draws(
     igz: &Igz<'_>,
-    graph: &guac_formats::level::Graph<'_>,
+    graph: &Graph<'_>,
+    moved: Moved,
     textures: &mut Textures,
     materials: &mut Vec<LevelMaterial>,
     segments: &mut Vec<Segment>,
     own: Option<&OwnEffects>,
-    mut each: impl FnMut(&guac_formats::level::Draw<'_>, u32),
+    mut each: impl FnMut(&Draw<'_>, u32),
 ) -> Result<(), String> {
     let lists = graph.material_lists(igz).map_err(s)?;
     for draw in &graph.draws {
         let name = draw.technique.node.name.unwrap_or_default();
-        if draw.world != IDENTITY {
+        let baked = draw.world != IDENTITY;
+        if baked && moved == Moved::BakeStill && animated(graph, draw) {
             return Err(format!(
                 "{name} (technique #{}) sits under a transform",
                 draw.technique_index
@@ -229,8 +431,12 @@ fn static_draws(
         materials.push(m);
         for (i, layout) in graph.draw_segments(draw) {
             let decoded = EdgeSegment::decode(igz, i, layout).map_err(s)?;
-            let seg = models::static_segment(&decoded, index, i as u32, normals)
+            let mut seg = models::static_segment(&decoded, index, i as u32, normals)
                 .map_err(|e| format!("segment #{i}: {e}"))?;
+            if baked {
+                bake(&mut seg, &draw.world)
+                    .map_err(|e| format!("{name} (technique #{}): {e}", draw.technique_index))?;
+            }
             each(draw, segments.len() as u32);
             segments.push(seg);
         }
@@ -264,6 +470,7 @@ pub fn scene(igz: &Igz<'_>, level: &str, identity: DumpIdentity) -> Result<Read<
         static_draws(
             igz,
             &sc,
+            Moved::Bake,
             &mut textures,
             &mut materials,
             &mut segments,
@@ -373,6 +580,7 @@ fn static_prop(
     static_draws(
         igz,
         &sm.graph,
+        Moved::BakeStill,
         textures,
         &mut materials,
         &mut segments,

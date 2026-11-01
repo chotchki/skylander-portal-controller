@@ -6,6 +6,8 @@
 //! Done outputs are kept (resume) while their movie's [`recipe`] holds; a
 //! movie with the recipe of one already done is linked, not re-run
 //! (content-hash dedupe). Intros done for another [`Target::tag`] are redone.
+//! The disc's cinematics take the same path when asked for, one at a time
+//! ([`transcode_movie`], openspec AS.9), into folders of their own.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -23,6 +25,12 @@ use crate::intros::MOVIE_DIR;
 
 pub const VIDEO_DIR: &str = "video/intro";
 pub const AUDIO_DIR: &str = "audio/intro";
+/// Where a cinematic movie goes once it's asked for (openspec AS.9).
+pub const FMV_VIDEO_DIR: &str = "video/fmv";
+pub const FMV_AUDIO_DIR: &str = "audio/fmv";
+/// The folders every output of this transcode lives in: a target change
+/// forgets them all.
+const DIRS: [&str; 4] = [VIDEO_DIR, AUDIO_DIR, FMV_VIDEO_DIR, FMV_AUDIO_DIR];
 
 /// What an intro becomes. The one place the format is chosen: AB.7's spike
 /// may change it, and [`Target::tag`] then redoes every intro.
@@ -97,9 +105,14 @@ impl Target {
 
     /// `(video, audio)` output paths for `movie`, relative to the identity dir.
     pub fn outputs(&self, movie: &str) -> (String, String) {
+        self.outputs_in(VIDEO_DIR, AUDIO_DIR, movie)
+    }
+
+    /// `(video, audio)` output paths for `movie` in folders of its own.
+    pub fn outputs_in(&self, video: &str, audio: &str, movie: &str) -> (String, String) {
         (
-            format!("{VIDEO_DIR}/{movie}.{}", self.video_ext),
-            format!("{AUDIO_DIR}/{movie}.{}", self.audio_ext),
+            format!("{video}/{movie}.{}", self.video_ext),
+            format!("{audio}/{movie}.{}", self.audio_ext),
         )
     }
 }
@@ -290,15 +303,7 @@ pub fn transcode_intros(
     progress: &dyn Fn(TranscodeEvent),
 ) -> Result<Summary> {
     let jobs = jobs(table)?;
-    let tag = TARGET.tag();
-    if dir.manifest().transcode.as_ref().map(|t| &t.target) != Some(&tag) {
-        dir.forget_outputs(&format!("{VIDEO_DIR}/"))?;
-        dir.forget_outputs(&format!("{AUDIO_DIR}/"))?;
-        dir.set_transcode(TranscodeRecord {
-            target: tag,
-            movies: BTreeMap::new(),
-        })?;
-    }
+    current_target(dir)?;
 
     let movie_dir = PathBuf::from(&dir.manifest().source_dir).join(MOVIE_DIR);
     // Recipe → the movie done with it this run.
@@ -379,6 +384,165 @@ pub fn transcode_intros(
         event(Step::Done(done));
     }
     Ok(summary)
+}
+
+/// Makes the manifest's transcode record this build's [`TARGET`]: one made
+/// for another target is dropped with every output it made, intros and
+/// cinematics alike, so each is redone when next asked for.
+fn current_target(dir: &mut IdentityDir) -> Result<()> {
+    let tag = TARGET.tag();
+    if dir.manifest().transcode.as_ref().map(|t| &t.target) != Some(&tag) {
+        for d in DIRS {
+            dir.forget_outputs(&format!("{d}/"))?;
+        }
+        dir.set_transcode(TranscodeRecord {
+            target: tag,
+            movies: BTreeMap::new(),
+        })?;
+    }
+    Ok(())
+}
+
+/// Whether `movie` (a `movies/<name>.mov` stem) is one of the disc's
+/// cinematics, `fmv` and a number (openspec AS.9): fmv01-fmv04 and
+/// fmv06-fmv12 on Giants. The intros and the two logos aren't.
+pub fn is_cinematic(movie: &str) -> bool {
+    movie
+        .strip_prefix("fmv")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Every cinematic the dump holds, by name, off the manifest's sources.
+pub fn cinematics(m: &crate::Manifest) -> Vec<String> {
+    let mut out: Vec<String> = m
+        .sources
+        .iter()
+        .filter_map(|s| {
+            let name = s.path.strip_prefix("movies/")?.strip_suffix(".mov")?;
+            is_cinematic(name).then(|| name.to_owned())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The English voice of a cinematic, off its Bink header (openspec AS.9,
+/// design decision 7): its one track when it has one; otherwise the track
+/// whose id is English's language id plus one (each of the disc's 12 mono
+/// voices is a language pack's id plus one), mixed over the stereo track
+/// with id 0. Streams are numbered as ffmpeg numbers them, the video 0 and
+/// the tracks from 1 in the header's order. `None` when there's no English
+/// voice, or no bed beside one.
+pub fn english_voice(header: &guac_formats::bink::Header) -> Option<VoiceTrack> {
+    if header.tracks.len() == 1 {
+        return Some(VoiceTrack::Only);
+    }
+    let english = u32::try_from(guac_formats::language::ENGLISH).ok()? + 1;
+    let voice = header.track(english)?;
+    let bed = header.track(0).filter(|&b| header.tracks[b].stereo())?;
+    Some(VoiceTrack::Stream {
+        index: voice as u32 + 1,
+        bed: Some(bed as u32 + 1),
+    })
+}
+
+/// What [`transcode_movie`] did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MovieDone {
+    pub voice: VoiceTrack,
+    pub done: Done,
+    /// The video's and the audio's paths in the identity dir, and their
+    /// bytes together.
+    pub video: String,
+    pub audio: String,
+    pub bytes: u64,
+}
+
+/// Converts the cinematic `movie` the first time it's asked for (openspec
+/// AS.9): on the intros' path and their target, into
+/// `video/fmv/<movie>.<ext>` and `audio/fmv/<movie>.<ext>`, the voice from
+/// [`english_voice`], recorded in the manifest's transcode record beside
+/// the intros and kept while its recipe holds. Refused: a name that isn't a
+/// cinematic the dump holds (`GUAC-E-NO-SUCH-MOVIE`), and one with no
+/// English voice.
+pub fn transcode_movie(
+    dir: &mut IdentityDir,
+    movie: &str,
+    ffmpeg: &Ffmpeg,
+    progress: &dyn Fn(Progress),
+) -> Result<MovieDone> {
+    let rel = format!("movies/{movie}.mov");
+    let source = dir
+        .manifest()
+        .sources
+        .iter()
+        .find(|s| s.path == rel)
+        .filter(|_| is_cinematic(movie))
+        .map(|s| s.sha256)
+        .ok_or_else(|| ExtractError::NoSuchMovie {
+            movie: movie.to_owned(),
+        })?;
+    let src = PathBuf::from(&dir.manifest().source_dir)
+        .join(MOVIE_DIR)
+        .join(format!("{movie}.mov"));
+    let failed = |reason: String| ExtractError::TranscodeFailed {
+        movie: movie.to_owned(),
+        reason,
+    };
+    let mut head = vec![0u8; 4096];
+    let n = std::fs::File::open(&src)
+        .and_then(|mut f| f.read(&mut head))
+        .map_err(ExtractError::io(&src))?;
+    let header = guac_formats::bink::Header::read(&head[..n]).map_err(|e| failed(e.to_string()))?;
+    let voice = english_voice(&header)
+        .ok_or_else(|| failed("no English voice track over a stereo bed".into()))?;
+    current_target(dir)?;
+    let recipe = recipe(&source, voice, &TARGET);
+    let (video, audio) = TARGET.outputs_in(FMV_VIDEO_DIR, FMV_AUDIO_DIR, movie);
+    let recorded = dir
+        .manifest()
+        .transcode
+        .as_ref()
+        .and_then(|t| t.movies.get(movie))
+        .is_some_and(|m| m.recipe == recipe);
+    let done = if recorded && dir.output_done(&video)? && dir.output_done(&audio)? {
+        Done::Resumed
+    } else {
+        // Unrecorded first, so a crash mid-way can't pass for done.
+        dir.set_movie(movie, None)?;
+        let args = command_line(
+            &src,
+            &dir.partial_path(&video)?,
+            &dir.partial_path(&audio)?,
+            voice,
+            &TARGET,
+        );
+        run(&ffmpeg.path, &args, progress).map_err(failed)?;
+        dir.commit(&video)?;
+        dir.commit(&audio)?;
+        dir.set_movie(
+            movie,
+            Some(MovieRecord {
+                recipe,
+                ffmpeg: ffmpeg.version.clone(),
+            }),
+        )?;
+        Done::Transcoded
+    };
+    let bytes = dir
+        .manifest()
+        .outputs
+        .iter()
+        .filter(|o| o.path == video || o.path == audio)
+        .map(|o| o.size)
+        .sum();
+    Ok(MovieDone {
+        voice,
+        done,
+        video,
+        audio,
+        bytes,
+    })
 }
 
 /// Runs ffmpeg, feeding each `-progress` block to `on`. `Err` carries the

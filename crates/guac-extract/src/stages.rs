@@ -355,7 +355,7 @@ pub fn progression_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<Progress
     })
 }
 
-/// Each level the build plays ([`levels::LEVELS`]), part by part, into
+/// Each level a first run extracts ([`levels::FIRST_RUN`]), part by part, into
 /// `levels/<archive>/<part>.<ron|postcard>` and its textures into the
 /// characters' store. A part already in ([`IdentityDir::level_part_done`])
 /// is kept without reading the level; one that won't read is reported in
@@ -364,6 +364,38 @@ pub fn progression_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<Progress
 pub fn level_stage(
     dir: &mut IdentityDir,
     ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<LevelStage> {
+    levels_stage(dir, ir, &levels::FIRST_RUN, send)
+}
+
+/// One level off the disc's list ([`levels::on_disc`]), by its archive's
+/// name, extracted as the first run's are (openspec AS.1, design decision
+/// 1): its parts under `levels/<archive>/`, recorded under its name, each
+/// kept when already in, its textures into the shared store. A name the
+/// dump holds no level file of is refused before anything is read.
+pub fn extract_level(
+    dir: &mut IdentityDir,
+    level: &str,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<LevelStage> {
+    if !levels::on_disc(dir.manifest())
+        .iter()
+        .any(|l| l.name == level)
+    {
+        return Err(ExtractError::NoSuchLevel {
+            level: level.to_owned(),
+        });
+    }
+    levels_stage(dir, ir, &[level], send)
+}
+
+/// [`level_stage`] over `names`.
+fn levels_stage(
+    dir: &mut IdentityDir,
+    ir: IrFormat,
+    names: &[&str],
     send: &(dyn Fn(Event) + Sync),
 ) -> Result<LevelStage> {
     let started = Instant::now();
@@ -391,14 +423,14 @@ pub fn level_stage(
         files: Files::default(),
         took: Duration::ZERO,
     };
-    let total = levels::LEVELS.len() * levels::PARTS.len();
+    let total = names.len() * levels::PARTS.len();
     let mut done = 0;
     send(Event::Level { done, total });
     // Every file counted, kept or written, and the textures the parts read
     // this run bind.
     let mut counted: HashSet<String> = HashSet::new();
     let mut read_textures: HashSet<String> = HashSet::new();
-    for level in levels::LEVELS {
+    for &level in names {
         let mut needed = Vec::new();
         for part in levels::PARTS {
             if dir.level_part_done(level, part, &levels::part_path(ir, level, part))? {
@@ -507,15 +539,19 @@ pub fn level_stage(
             match read {
                 Ok((bytes, part_textures)) => {
                     let mut files = Vec::with_capacity(part_textures.len() + 1);
+                    let mut new: Vec<(String, &[u8])> = Vec::new();
                     for (rel, ktx2) in &part_textures {
                         if read_textures.insert(rel.clone()) && store.contains(rel) {
                             stage.shared += 1;
                         }
-                        if counted.insert(rel.clone()) {
-                            put(dir, rel, ktx2, &mut stage.files)?;
+                        if counted.insert(rel.clone()) && !held(dir, rel, ktx2, &mut stage.files)? {
+                            new.push((rel.clone(), ktx2));
                         }
                         files.push(rel.clone());
                     }
+                    // The part's new textures under one manifest save, not one
+                    // each (openspec AS.26).
+                    dir.write_outputs(&new)?;
                     let rel = ir.level_path(level, part);
                     let before = stage.files;
                     put(dir, &rel, &bytes, &mut stage.files)?;
@@ -979,6 +1015,16 @@ fn intro_stage(
 /// Writes `bytes` to `rel` unless the extract already holds exactly them: the
 /// manifest records these bytes and the file still hashes to the record.
 pub(crate) fn put(dir: &mut IdentityDir, rel: &str, bytes: &[u8], files: &mut Files) -> Result<()> {
+    if !held(dir, rel, bytes, files)? {
+        dir.write_output(rel, bytes)?;
+    }
+    Ok(())
+}
+
+/// Whether the extract already holds exactly `bytes` at `rel` (recorded, and
+/// the file still hashes to the record), counted in `files` as kept or as
+/// one to write; writing it is the caller's.
+fn held(dir: &IdentityDir, rel: &str, bytes: &[u8], files: &mut Files) -> Result<bool> {
     let sha = Sha256(sha2::Sha256::digest(bytes).into());
     let size = bytes.len() as u64;
     let recorded = dir
@@ -986,12 +1032,12 @@ pub(crate) fn put(dir: &mut IdentityDir, rel: &str, bytes: &[u8], files: &mut Fi
         .outputs
         .iter()
         .any(|o| o.path == rel && (o.size, o.sha256) == (size, sha));
-    if recorded && dir.output_done(rel)? {
+    let held = recorded && dir.output_done(rel)?;
+    if held {
         files.kept += 1;
     } else {
-        dir.write_output(rel, bytes)?;
         files.written += 1;
     }
     files.bytes += size;
-    Ok(())
+    Ok(held)
 }

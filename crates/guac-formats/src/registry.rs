@@ -6,8 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    atmosphere, attachments, edge, exports, fsb, havok, iga, igz, language, material, model, mpeg,
-    particle, progression, roster, script, sfo, sound, texture, toys,
+    atmosphere, attachments, bink, edge, exports, fsb, havok, iga, igz, language, material, model,
+    mpeg, particle, progression, roster, script, sfo, sound, texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -25,6 +25,13 @@ pub struct RegisteredParser {
 }
 
 pub const PARSERS: &[RegisteredParser] = &[
+    RegisteredParser {
+        name: "bink_header",
+        parse: |bytes| bink::Header::read(bytes).map(drop),
+        seeds: bink::builder::seeds,
+        // At most 256 tracks of 8 bytes each, whatever the input says.
+        heap_budget: |_| 4096,
+    },
     RegisteredParser {
         name: "param_sfo",
         parse: |bytes| sfo::ParamSfo::parse(bytes).map(drop),

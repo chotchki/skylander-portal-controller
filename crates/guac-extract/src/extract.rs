@@ -1,6 +1,8 @@
 //! The per-identity extract dir and its `manifest.json` (design decision 5):
 //! `<root>/<TITLE_ID>-<APP_VER>-<hash8>/`. Every file in it, the manifest
-//! included, is written to `<file>.partial` and renamed when complete.
+//! included, is written to `<file>.partial` and renamed when complete; only
+//! the manifest's saves are forced to disk (openspec AS.4), every output
+//! being re-hashed against its record when a start keeps it.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -418,7 +420,7 @@ impl IdentityDir {
 
     pub fn write_output(&mut self, rel: &str, bytes: &[u8]) -> Result<OutputFile> {
         let partial = self.partial_path(rel)?;
-        write_file(&partial, bytes)?;
+        write_file(&partial, bytes, false)?;
         self.commit(rel)
     }
 
@@ -436,7 +438,7 @@ impl IdentityDir {
         for (rel, bytes) in files {
             let path = self.output_path(rel)?;
             let partial = self.partial_path(rel)?;
-            write_file(&partial, bytes)?;
+            write_file(&partial, bytes, false)?;
             fs::rename(&partial, &path).map_err(ExtractError::io(&path))?;
             done.push(OutputFile {
                 path: rel.clone(),
@@ -602,13 +604,23 @@ impl IdentityDir {
         text.push('\n');
         let path = self.path.join(MANIFEST);
         let partial = partial_of(&path);
-        write_file(&partial, text.as_bytes())?;
+        write_file(&partial, text.as_bytes(), true)?;
         fs::rename(&partial, &path).map_err(ExtractError::io(&path))
     }
 }
 
-fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
+/// Writes `bytes` to `path`, forced to disk first when `sync` says (openspec
+/// AS.4, design decision 3): the manifest's saves are, since a torn manifest
+/// reads as unusable and the extract starts over; an output isn't, since a
+/// start re-hashes every kept output against its record
+/// ([`IdentityDir::output_done`]), so one a crash left short or empty reads
+/// as not done and is written again. Chapter 1's level stage alone flushed
+/// 5,475 times (AQ.4).
+fn write_file(path: &Path, bytes: &[u8], sync: bool) -> Result<()> {
     let mut f = fs::File::create(path).map_err(ExtractError::io(path))?;
     f.write_all(bytes).map_err(ExtractError::io(path))?;
-    f.sync_all().map_err(ExtractError::io(path))
+    if sync {
+        f.sync_all().map_err(ExtractError::io(path))?;
+    }
+    Ok(())
 }

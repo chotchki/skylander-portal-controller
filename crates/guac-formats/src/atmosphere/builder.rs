@@ -65,6 +65,10 @@ pub struct Shape {
     pub colours_as_ints: bool,
     /// "use lights from zone", else -1.
     pub lights_from: Option<i32>,
+    /// The fog's start written as `start <operator> b` (openspec AS.6:
+    /// level 206's `122 + 0`), as an operator code and `b`; `b` a float when
+    /// the flag says, an integer otherwise.
+    pub start_as: Option<(u32, i32, bool)>,
 }
 
 /// One call of the add macro (`add`, its stub) with `z`'s arguments, the
@@ -104,7 +108,14 @@ pub fn zone_call(w: &mut Writer<'_>, add: Location, z: &ZoneCall, shape: &Shape)
     }
     for (name, value) in ints {
         if !shape.omit.contains(&name) {
-            let l = w.int(value);
+            let l = match shape.start_as {
+                Some((operator, b, float)) if name == params::FOG_START => {
+                    let a = w.int(value);
+                    let b = if float { w.float(b as f32) } else { w.int(b) };
+                    w.expr(a, Some((operator, b)))
+                }
+                _ => w.int(value),
+            };
             args.push((name, l));
         }
     }

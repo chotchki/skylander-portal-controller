@@ -67,6 +67,11 @@ pub enum ExtractError {
     #[error("GUAC-E-TRANSCODE-FAILED: intro `{movie}`: {reason}")]
     TranscodeFailed { movie: String, reason: String },
 
+    /// A cinematic asked for by name that the dump holds no movie of, or a
+    /// movie that isn't a cinematic (openspec AS.9): nothing is converted.
+    #[error("GUAC-E-NO-SUCH-MOVIE: `{movie}` isn't a cinematic on this disc")]
+    NoSuchMovie { movie: String },
+
     #[error("GUAC-E-BAD-OUTPUT-PATH: `{path}` isn't a plain relative path inside the extract")]
     BadOutputPath { path: String },
 
@@ -101,6 +106,11 @@ pub enum ExtractError {
         reason: String,
     },
 
+    /// A level asked for by name that the dump holds no file of (openspec
+    /// AS.1): nothing is read or written.
+    #[error("GUAC-E-NO-SUCH-LEVEL: `{level}` isn't a level on this disc")]
+    NoSuchLevel { level: String },
+
     /// A part of the fight's script data outside a level (AH.22: the
     /// script entries or the spawn models) didn't read: the other parts
     /// land, and the next start tries this one again.
@@ -130,12 +140,14 @@ impl ExtractError {
             Self::NoFfmpeg { .. } => "GUAC-E-NO-FFMPEG",
             Self::FfmpegUnusable { .. } => "GUAC-E-FFMPEG-UNUSABLE",
             Self::TranscodeFailed { .. } => "GUAC-E-TRANSCODE-FAILED",
+            Self::NoSuchMovie { .. } => "GUAC-E-NO-SUCH-MOVIE",
             Self::BadOutputPath { .. } => "GUAC-E-BAD-OUTPUT-PATH",
             Self::RosterUnreadable { .. } => "GUAC-E-ROSTER-UNREADABLE",
             Self::ProgressionUnreadable { .. } => "GUAC-E-PROGRESSION-UNREADABLE",
             Self::ModelUnreadable { .. } => "GUAC-E-MODEL-UNREADABLE",
             Self::HeroUnsettled { .. } => "GUAC-E-HERO-UNSETTLED",
             Self::LevelUnreadable { .. } => "GUAC-E-LEVEL-UNREADABLE",
+            Self::NoSuchLevel { .. } => "GUAC-E-NO-SUCH-LEVEL",
             Self::ScriptsUnreadable { .. } => "GUAC-E-SCRIPTS-UNREADABLE",
             Self::Io { .. } => "GUAC-E-EXTRACT-IO",
         }
@@ -198,6 +210,9 @@ mod tests {
                 movie: "m".into(),
                 reason: "x".into(),
             },
+            ExtractError::NoSuchMovie {
+                movie: "eruptor".into(),
+            },
             ExtractError::BadOutputPath { path: "..".into() },
             ExtractError::RosterUnreadable {
                 path: "character/init_setup.bld".into(),
@@ -219,6 +234,9 @@ mod tests {
                 level: "level_213_tutotial".into(),
                 part: "scene".into(),
                 reason: "x".into(),
+            },
+            ExtractError::NoSuchLevel {
+                level: "level_999".into(),
             },
             ExtractError::ScriptsUnreadable {
                 part: "scripts".into(),

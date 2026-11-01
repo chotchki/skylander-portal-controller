@@ -1189,13 +1189,13 @@ fn a_texture_already_in_the_store_isnt_written_twice() {
     assert_eq!(m.outputs.iter().filter(|o| &o.path == shared[0]).count(), 1);
 }
 
-/// A part that won't read (the scene asking for bit 6) is reported; the
+/// A part that won't read (the scene asking for bit 9) is reported; the
 /// others land; the extract isn't current, so the next start tries it.
 #[test]
 fn a_level_part_that_doesnt_read_leaves_the_others() {
     let tmp = tempfile::tempdir().unwrap();
     let mut level = stage_sample();
-    level.scene[0].pixel = Some((0x5C, 0x3FF));
+    level.scene[0].pixel = Some((0x21C, 0x3FF));
     let dump = make_dump_with(tmp.path(), &level);
     let known = known_for(&dump);
     let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
@@ -1214,7 +1214,7 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
         "{}",
         f.reason
     );
-    assert!(f.reason.contains("layer4UsesPositions"), "{}", f.reason);
+    assert!(f.reason.contains("receivesReflections"), "{}", f.reason);
     assert!(done.intros.is_ok());
     let m = manifest_on_disk(opened.dir.path());
     assert!(m.complete && !levels::complete(&m));

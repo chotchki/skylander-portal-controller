@@ -182,8 +182,8 @@ fn what_it_doesnt_model_is_refused() {
 }
 
 /// A zone call under a condition it can't evaluate, or another
-/// atmosphere macro in STARTUP, is refused; so is a level with no
-/// definition, or two.
+/// atmosphere macro in the STARTUP that adds the zones, is refused; so is a
+/// level with two scripts adding zones.
 #[test]
 fn a_zone_it_cant_place_is_refused() {
     // Under a check on something else.
@@ -227,13 +227,15 @@ fn a_zone_it_cant_place_is_refused() {
         "an atmosphere macro inside a block"
     );
 
-    // A switch in STARTUP.
+    // A switch in the STARTUP that adds the zones.
     let mut b = IgzBuilder::new();
     let mut w = Writer::new(&mut b);
+    let add = w.op(Class::DefineMacro, ADD_ZONE);
     let switch = w.op(Class::DefineMacro, OTHER_MACROS[1]);
     w.script(
         SCRIPT,
         |w| {
+            write_call(w, add, &ZoneCall::sample(0, 1));
             let zero = w.int(0);
             w.call(switch, &[("to zone ID", zero)]);
         },
@@ -246,30 +248,116 @@ fn a_zone_it_cant_place_is_refused() {
         "an atmosphere macro in STARTUP"
     );
 
-    // No definition script; two.
-    let mut b = IgzBuilder::new();
-    Writer::new(&mut b).script("C:/tfb/Other.ai", |_| {}, |_| {}, |_| {});
-    let bytes = b.build();
-    assert_eq!(read(&bytes).unwrap_err().kind, ErrorKind::Missing);
+    // Two scripts whose STARTUPs add zones, whatever they're called.
     let mut b = IgzBuilder::new();
     let mut w = Writer::new(&mut b);
-    w.script(SCRIPT, |_| {}, |_| {}, |_| {});
-    w.script(
-        "C:/tfb/Content/Levels/Level_901/Scripts/Level_Definition_901.ai",
-        |_| {},
-        |_| {},
-        |_| {},
-    );
+    let add = w.op(Class::DefineMacro, ADD_ZONE);
+    for name in ["C:/tfb/A_LevelDef.ai", "C:/tfb/B_Setup.ai"] {
+        w.script(
+            name,
+            |w| write_call(w, add, &ZoneCall::sample(0, 1)),
+            |_| {},
+            |_| {},
+        );
+    }
     let bytes = b.build();
     assert_eq!(read(&bytes).unwrap_err().kind, ErrorKind::Duplicate);
 }
 
-/// A definition whose STARTUP adds nothing reads as no zones.
+/// The definition is the script whose STARTUP adds the zones, whatever its
+/// file is called (openspec AS.6: the hub's is `Hub2_LevelDef.ai`), beside
+/// scripts that switch zones in their own STARTUPs or add them later.
+#[test]
+fn the_definition_is_the_script_that_adds_the_zones() {
+    let mut b = IgzBuilder::new();
+    let mut w = Writer::new(&mut b);
+    let add = w.op(Class::DefineMacro, ADD_ZONE);
+    let switch = w.op(Class::DefineMacro, OTHER_MACROS[1]);
+    w.script(
+        "C:/tfb/Content/Levels/Hub/AtmZone_Controller.ai",
+        |w| {
+            let zero = w.int(0);
+            w.call(switch, &[("to zone ID", zero)]);
+        },
+        |_| {},
+        |_| {},
+    );
+    let want = ZoneCall::sample(0, 5);
+    w.script(
+        "C:/tfb/Content/Levels/Hub/Hub2_LevelDef.ai",
+        |w| write_call(w, add, &want),
+        |_| {},
+        |_| {},
+    );
+    let bytes = b.build();
+    let a = read(&bytes).unwrap();
+    assert_eq!(a.script, "C:/tfb/Content/Levels/Hub/Hub2_LevelDef.ai");
+    assert_eq!(a.zones.len(), 1);
+    assert_eq!(got(a.start_zone().unwrap()), expected(&want));
+}
+
+/// An argument written as two literals under an operator reads as the VM
+/// computes it (openspec AS.6: level 206's fog start `122 + 0`); a division
+/// by zero or two classes is refused.
+#[test]
+fn an_argument_of_two_literals_is_computed() {
+    let zones = [ZoneCall::sample(0, 1)];
+    let start = |operator, b, float| {
+        let bytes = level(
+            &[],
+            &zones,
+            &[],
+            &Shape {
+                start_as: Some((operator, b, float)),
+                ..Shape::default()
+            },
+        );
+        read(&bytes).map(|a| a.zones[0].fog.start)
+    };
+    let s = zones[0].start;
+    assert_eq!(start(0, 0, false).unwrap(), s);
+    assert_eq!(start(0, 70, false).unwrap(), s + 70);
+    assert_eq!(start(1, 1, false).unwrap(), s - 1);
+    assert_eq!(start(2, 3, false).unwrap(), s * 3);
+    assert_eq!(start(3, 2, false).unwrap(), s / 2);
+    for (operator, b, float, why) in [
+        (3, 0, false, "a division by zero"),
+        (0, 1, true, "an integer and a float"),
+        (4, 1, false, "an operator past 3"),
+    ] {
+        let e = start(operator, b, float).unwrap_err();
+        assert_eq!(e.field, "_RHS", "{why}");
+        assert!(
+            matches!(e.kind, ErrorKind::Unsupported { .. }),
+            "{why}: {e}"
+        );
+    }
+}
+
+/// No script whose STARTUP adds a zone (a script named as a definition
+/// whose STARTUP adds nothing, one that only switches, or none at all)
+/// reads as no zones and no definition: an arena challenge sets none up.
 #[test]
 fn no_zones_is_no_zones() {
     let mut b = IgzBuilder::new();
-    Writer::new(&mut b).script(SCRIPT, |_| {}, |_| {}, |_| {});
+    let mut w = Writer::new(&mut b);
+    let switch = w.op(Class::DefineMacro, OTHER_MACROS[1]);
+    w.script(SCRIPT, |_| {}, |_| {}, |_| {});
+    w.script(
+        "C:/tfb/Other.ai",
+        |w| {
+            let zero = w.int(0);
+            w.call(switch, &[("to zone ID", zero)]);
+        },
+        |_| {},
+        |_| {},
+    );
     let bytes = b.build();
     let a = read(&bytes).unwrap();
     assert!(a.zones.is_empty() && a.start.is_none());
+    assert_eq!(a.script, "");
+    let mut b = IgzBuilder::new();
+    Writer::new(&mut b);
+    let bytes = b.build();
+    assert!(read(&bytes).unwrap().zones.is_empty());
 }
