@@ -137,7 +137,7 @@ fn the_part_lands_each_archives_sounds_and_each_bank_once() {
     let s = setup();
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
-    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(
         st.read && !st.kept && st.failed.is_none(),
         "{:?}",
@@ -175,8 +175,9 @@ fn a_second_run_keeps_the_part() {
     let s = setup();
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
-    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
-    let again = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    let again =
+        sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(again.kept && !again.read);
     assert_eq!(again.files.written, 0);
     assert_eq!(again.files.kept, 4 + 5);
@@ -192,7 +193,7 @@ fn an_audio_file_damaged_at_its_size_is_written_again() {
     let s = setup();
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
-    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     let damaged = audio_outputs(&opened.dir)[0].clone();
     let path = opened.dir.path().join(&damaged);
     let mut bytes = fs::read(&path).unwrap();
@@ -201,7 +202,7 @@ fn an_audio_file_damaged_at_its_size_is_written_again() {
     fs::write(&path, &bytes).unwrap();
     assert!(!opened.dir.output_done(&damaged).unwrap());
 
-    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(st.read, "a damaged file means the part isn't held");
     assert_eq!(
         (st.audio_files.written, st.audio_files.kept),
@@ -209,7 +210,8 @@ fn an_audio_file_damaged_at_its_size_is_written_again() {
         "only the damaged file"
     );
     assert!(opened.dir.output_done(&damaged).unwrap());
-    let again = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let again =
+        sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(again.kept && !again.read);
 }
 
@@ -218,7 +220,7 @@ fn an_extract_from_before_the_part_reads_it_alone_keeping_audio_already_in() {
     let s = setup();
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
-    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     let dir = opened.dir.path().to_path_buf();
     drop(opened);
     // The part's record gone, one audio file gone with its record, the
@@ -249,7 +251,7 @@ fn an_extract_from_before_the_part_reads_it_alone_keeping_audio_already_in() {
     let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     assert_eq!(again.state, DirState::Resume);
     let roster = stages::roster_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
-    let st = sounds::sound_stage(&mut again.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let st = sounds::sound_stage(&mut again.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(st.read);
     assert_eq!(
         (st.audio_files.written, st.audio_files.kept),
@@ -273,7 +275,7 @@ fn an_archive_that_wont_read_refuses_the_part() {
     let known = known_for(&s.dump);
     let mut opened = open(&s.dump, &s.root, &known, &|_| {}).unwrap();
     let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
-    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     let (archive, why) = st.failed.expect("refused");
     assert!(archive.contains("gemgolem"), "{archive}");
     assert!(

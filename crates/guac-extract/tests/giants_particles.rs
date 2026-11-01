@@ -71,7 +71,7 @@ fn every_emitter_the_spawn_archives_place_extracts_and_resumes() {
     assert_eq!(opened.state, DirState::Fresh);
     let dir = opened.dir.path().to_path_buf();
 
-    let s = particle_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    let s = particle_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     println!(
         "  first run: {} emitters, {} refused, {:?} in {:.2} s; load average {}",
         s.emitters,
@@ -177,7 +177,7 @@ fn every_emitter_the_spawn_archives_place_extracts_and_resumes() {
 
     // Kept on the next run, then in postcard agreeing with the RON.
     let mut again = open(&dump, &root, KNOWN_DUMPS, &|_| {}).unwrap();
-    let k = particle_stage(&mut again.dir, IrFormat::Ron).unwrap();
+    let k = particle_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
     assert!(k.kept && !k.read);
     assert_eq!(k.files.written, 0);
     println!("  kept: {:?} in {:.3} s", k.files, k.took.as_secs_f64());
@@ -190,7 +190,7 @@ fn every_emitter_the_spawn_archives_place_extracts_and_resumes() {
     std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
     drop(again);
     let mut again = open(&dump, &root, KNOWN_DUMPS, &|_| {}).unwrap();
-    let p = particle_stage(&mut again.dir, IrFormat::Postcard).unwrap();
+    let p = particle_stage(&mut again.dir, IrFormat::Postcard, &|_| {}).unwrap();
     assert!(p.read);
     for archive in particles::archives() {
         let ron = read(&archive);

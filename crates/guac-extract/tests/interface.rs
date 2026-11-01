@@ -127,7 +127,7 @@ fn the_part_lands_each_archives_interface_and_names_what_the_dump_lacks() {
             "misc/ui_options.bld",
         ]
     );
-    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     assert!(
         st.read && !st.kept && st.failed.is_none(),
         "{:?}",
@@ -184,8 +184,8 @@ fn the_part_lands_each_archives_interface_and_names_what_the_dump_lacks() {
 fn a_second_run_keeps_the_part() {
     let s = setup();
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
-    interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
-    let again = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    let again = interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     assert!(again.kept && !again.read);
     assert_eq!(again.files.written, 0);
     assert_eq!(again.files.kept, 3 + 3);
@@ -199,7 +199,7 @@ fn an_archive_that_wont_read_leaves_the_part_unrecorded() {
     let broken = IgaBuilder::new().lzma("level.bld", b"not an igz").build();
     let s = setup_with(|usr| fs::write(usr.join("character/009_eruptor.bld"), &broken).unwrap());
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
-    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     let (archive, why) = st.failed.clone().expect("the broken archive named");
     assert_eq!(archive, "character/009_eruptor.bld", "{why}");
     assert!(!st.read && !st.kept);
@@ -211,7 +211,7 @@ fn an_archive_that_wont_read_leaves_the_part_unrecorded() {
     );
     // The next run reads the part again and fails the same way, keeping
     // what's in.
-    let again = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    let again = interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(again.failed.map(|(a, _)| a), Some(archive));
     assert_eq!((again.files.written, again.texture_files.written), (0, 0));
     assert!(!opened.dir.manifest().parts.contains_key(PART));
@@ -224,7 +224,7 @@ fn an_archive_that_wont_read_leaves_the_part_unrecorded() {
 fn an_extract_from_before_the_part_reads_it_alone() {
     let s = setup();
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
-    interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     let dir = opened.dir.path().to_path_buf();
     drop(opened);
     let path = dir.join("manifest.json");
@@ -254,7 +254,7 @@ fn an_extract_from_before_the_part_reads_it_alone() {
 
     let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     assert!(!opened.dir.manifest().parts.contains_key(PART));
-    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron).unwrap();
+    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
     assert!(st.read);
     assert_eq!(
         (st.texture_files.written, st.texture_files.kept),

@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
-use guac_extract::levels::{self, LEVELS, PARTS};
+use guac_extract::levels::{self, LEVELS, PARTS, PLAYED};
 use guac_extract::stages::{self, Event, Files};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
 use guac_extract::{roster, scripts};
@@ -59,8 +59,10 @@ const LEVEL_SHARED: usize = 5;
 /// The interface part's own (AT.8): the collection archive's portraits, the
 /// one menu archive the roster builder's dump holds.
 const INTERFACE_TEXTURES: usize = 6;
-/// A level's events: none of its parts done, then each.
-const LEVEL_EVENTS: usize = PARTS.len() + 1;
+/// A level's events: none of the parts the TV reads done, then each.
+const LEVEL_EVENTS: usize = PLAYED.len() + 1;
+/// The emitters' archives: global.bld and the fighter's.
+const PARTICLE_ARCHIVES: usize = 2;
 /// The script stage's events: none of its two parts done, then each.
 const SCRIPT_EVENTS: usize = 3;
 /// The script entries (bootstrap, global, init_setup and the fighter's),
@@ -205,6 +207,11 @@ enum Seen {
     ModelsReady(Vec<String>),
     Level(usize, usize),
     Scripts(usize, usize),
+    Particles(usize, usize),
+    LevelReady,
+    Sprites(usize, usize),
+    Sounds(usize, usize),
+    Interface(usize, usize),
     Indexing,
     Transcode,
 }
@@ -222,6 +229,11 @@ impl Seen {
             }
             Event::Level { done, total } => Self::Level(*done, *total),
             Event::Scripts { done, total } => Self::Scripts(*done, *total),
+            Event::Particles { done, total } => Self::Particles(*done, *total),
+            Event::LevelReady => Self::LevelReady,
+            Event::Sprites { done, total } => Self::Sprites(*done, *total),
+            Event::Sounds { done, total } => Self::Sounds(*done, *total),
+            Event::Interface { done, total } => Self::Interface(*done, *total),
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
         }
@@ -269,9 +281,14 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(opened.state, DirState::Fresh);
     let dir = opened.dir.path().to_path_buf();
     let seen = Mutex::new(Vec::new());
-    // What the manifest on disk held when the intros started.
+    // What the manifest on disk held when chapter 1 was handed over and
+    // when the intros started.
+    let at_ready = Mutex::new(None);
     let at_indexing = Mutex::new(None);
     let done = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
+        if matches!(e, Event::LevelReady) {
+            *at_ready.lock().unwrap() = Some(manifest_on_disk(&dir));
+        }
         if matches!(e, Event::Indexing) {
             *at_indexing.lock().unwrap() = Some(manifest_on_disk(&dir));
         }
@@ -301,11 +318,12 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
     );
     let level: Vec<Seen> = (0..LEVEL_EVENTS)
-        .map(|i| Seen::Level(i, PARTS.len()))
+        .map(|i| Seen::Level(i, PLAYED.len()))
         .collect();
     let at = FIGURES + 6 + LOADS;
     assert_eq!(seen[at..at + LEVEL_EVENTS], level[..]);
-    // The script entries and the spawn models, then the intros.
+    // The script entries and the spawn models, then the emitters, an
+    // archive each, then chapter 1's hand-off (AT.26).
     let at = at + LEVEL_EVENTS;
     assert_eq!(
         seen[at..at + SCRIPT_EVENTS],
@@ -315,8 +333,55 @@ fn the_roster_is_written_before_any_intro_work_starts() {
             Seen::Scripts(2, 2)
         ]
     );
-    assert_eq!(indexing, Some(at + SCRIPT_EVENTS));
+    let at = at + SCRIPT_EVENTS;
+    let particles: Vec<Seen> = (0..=PARTICLE_ARCHIVES)
+        .map(|i| Seen::Particles(i, PARTICLE_ARCHIVES))
+        .collect();
+    assert_eq!(seen[at..=at + PARTICLE_ARCHIVES], particles[..]);
+    let at = at + PARTICLE_ARCHIVES + 1;
+    assert_eq!(seen[at], Seen::LevelReady);
+    assert_eq!(
+        seen.iter().filter(|e| **e == Seen::LevelReady).count(),
+        1,
+        "{seen:?}"
+    );
+    // Then what nothing draws yet: the level's sprites, the sounds an
+    // archive each, the interface an archive each; then the intros.
+    assert_eq!(
+        seen[at + 1..at + 3],
+        [Seen::Sprites(0, 1), Seen::Sprites(1, 1)]
+    );
+    let at = at + 3;
+    let sounds: Vec<Seen> = (0..=SOUND_ARCHIVES)
+        .map(|i| Seen::Sounds(i, SOUND_ARCHIVES))
+        .collect();
+    assert_eq!(seen[at..=at + SOUND_ARCHIVES], sounds[..]);
+    let at = at + SOUND_ARCHIVES + 1;
+    let Seen::Interface(0, menus) = seen[at] else {
+        panic!("{:?}", &seen[at..]);
+    };
+    assert_eq!(menus, done.interface.archives);
+    let interface: Vec<Seen> = (0..=menus).map(|i| Seen::Interface(i, menus)).collect();
+    assert_eq!(seen[at..=at + menus], interface[..]);
+    assert_eq!(indexing, Some(at + menus + 1));
     assert!(first_transcode > indexing, "{seen:?}");
+
+    // At the hand-off every part chapter 1 loads with was recorded, and
+    // none of what reads after it.
+    let m = at_ready
+        .into_inner()
+        .unwrap()
+        .expect("chapter 1 handed over");
+    let held = &m.levels[LEVELS[0]].parts;
+    assert!(PLAYED.iter().all(|p| held.contains_key(*p)), "{held:?}");
+    assert!(!held.contains_key(levels::SPRITES));
+    assert!(scripts::complete(&m));
+    assert!(m.parts.contains_key("particles"));
+    for later in ["sounds", "interface"] {
+        assert!(!m.parts.contains_key(later), "{later}");
+    }
+    assert_eq!(recorded(&m, "interface/"), 0);
+    assert_eq!(recorded(&m, "sounds/"), 0);
 
     // The roster's IR, every portrait, the models, their textures, the
     // heroes and the rig were recorded before the intro index.
@@ -364,11 +429,16 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     let on_disk: guac_ir::progression::Progression =
         guac_ir::from_ron(&fs::read_to_string(dir.join("ir/progression.ron")).unwrap()).unwrap();
     assert_eq!(on_disk, **tables);
+    // The parts the TV reads, then the sprites alone after the hand-off.
     let lv = &done.levels;
     assert_eq!(
         (lv.levels, lv.parts_read, lv.parts_kept),
-        (1, PARTS.len(), 0)
+        (1, PLAYED.len(), 0)
     );
+    let sp = &done.sprites;
+    assert_eq!((sp.levels, sp.parts_read, sp.parts_kept), (1, 1, 0));
+    assert!(sp.failed.is_empty(), "{:?}", sp.failed);
+    assert_eq!((sp.files.written, sp.files.kept), (1, 0));
     assert!(lv.failed.is_empty(), "{:?}", lv.failed);
     assert_eq!((lv.props, lv.refused_props.len()), (2, 1));
     // The level's entry, and its one creature's palette: the chest runs the
@@ -396,7 +466,7 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!((lv.textures, lv.shared), (LEVEL_TEXTURES, LEVEL_SHARED));
     assert_eq!(
         (lv.files.written, lv.files.kept),
-        (PARTS.len() + LEVEL_TEXTURES - LEVEL_SHARED, LEVEL_SHARED)
+        (PLAYED.len() + LEVEL_TEXTURES - LEVEL_SHARED, LEVEL_SHARED)
     );
     let scene: guac_ir::level::Scene = guac_ir::from_ron(
         &fs::read_to_string(dir.join("levels/level_213_tutotial/scene.ron")).unwrap(),
@@ -557,20 +627,30 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     assert_eq!(e.code(), "GUAC-E-NO-FFMPEG", "{e}");
     assert_eq!(done.roster.roster.figures.len(), FIGURES);
     let seen = seen.into_inner().unwrap();
-    // The models, the turntable's cue, the level and the scripts: nothing
-    // after them.
-    let at = seen.len() - LEVEL_EVENTS - SCRIPT_EVENTS;
+    // The models, the turntable's cue, the level, the scripts, the
+    // emitters, chapter 1's hand-off and the parts after it: nothing of the
+    // intros.
+    let at = seen
+        .iter()
+        .position(|e| *e == Seen::Level(0, PLAYED.len()))
+        .unwrap();
     assert_eq!(seen[at - 2], Seen::Models(LOADS, LOADS));
     assert_eq!(
         seen[at - 1],
         Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])
     );
-    assert_eq!(seen[at], Seen::Level(0, PARTS.len()));
     assert_eq!(
         seen[at + LEVEL_EVENTS - 1],
-        Seen::Level(PARTS.len(), PARTS.len())
+        Seen::Level(PLAYED.len(), PLAYED.len())
     );
-    assert_eq!(seen.last(), Some(&Seen::Scripts(2, 2)));
+    assert_eq!(
+        seen[at + LEVEL_EVENTS + SCRIPT_EVENTS - 1],
+        Seen::Scripts(2, 2)
+    );
+    assert!(seen.contains(&Seen::LevelReady), "{seen:?}");
+    let menus = done.interface.archives;
+    assert_eq!(seen.last(), Some(&Seen::Interface(menus, menus)));
+    assert!(!seen.contains(&Seen::Indexing));
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "ir/roster.ron"), 1);
     assert_eq!(recorded(&m, "portraits/"), FIGURES);
@@ -632,8 +712,9 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     );
     assert_eq!(
         (done.levels.parts_read, done.levels.parts_kept),
-        (0, PARTS.len())
+        (0, PLAYED.len())
     );
+    assert_eq!((done.sprites.parts_read, done.sprites.parts_kept), (0, 1));
     assert_eq!(done.levels.files.written, 0);
     // The palettes are written again as they were (kept); the script
     // parts, whole, are kept without reading them.
@@ -834,7 +915,10 @@ fn a_v1_extract_is_rebuilt_and_extracted_again() {
     assert!(!dir.join("heroes").exists() && !dir.join("levels").exists());
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(done.models.heroes, HEROES);
-    assert_eq!(done.levels.parts_read, PARTS.len());
+    assert_eq!(
+        done.levels.parts_read + done.sprites.parts_read,
+        PARTS.len()
+    );
     let m = manifest_on_disk(&dir);
     assert_eq!(recorded(&m, "heroes/"), HEROES);
     assert_eq!(recorded(&m, "levels/"), PARTS.len());
@@ -1002,11 +1086,12 @@ fn a_level_part_the_manifest_lacks_resumes_alone() {
     assert_eq!(done.roster.files.written, 0);
     assert_eq!(done.models.files.written, 0);
     let lv = &done.levels;
-    assert_eq!((lv.parts_read, lv.parts_kept), (1, PARTS.len() - 1));
+    assert_eq!((lv.parts_read, lv.parts_kept), (1, PLAYED.len() - 1));
+    assert_eq!((done.sprites.parts_read, done.sprites.parts_kept), (0, 1));
     // Its file was there as recorded: kept, not written again.
     assert_eq!(
         (lv.files.written, lv.files.kept),
-        (0, PARTS.len() + LEVEL_TEXTURES)
+        (0, PLAYED.len() + LEVEL_TEXTURES)
     );
     assert_eq!(
         fs::metadata(dir.join(&lights)).unwrap().modified().unwrap(),
@@ -1051,7 +1136,8 @@ fn an_extract_from_before_the_atmosphere_adds_it_alone() {
     assert_eq!(done.models.files.written, 0);
     assert_eq!(done.progression.files.written, 0);
     let lv = &done.levels;
-    assert_eq!((lv.parts_read, lv.parts_kept), (1, PARTS.len() - 1));
+    assert_eq!((lv.parts_read, lv.parts_kept), (1, PLAYED.len() - 1));
+    assert_eq!(done.sprites.parts_kept, 1);
     assert_eq!(lv.files.written, 1);
     assert!(lv.failed.is_empty(), "{:?}", lv.failed);
     assert_eq!(done.intros.unwrap().summary.transcoded, 0);
@@ -1102,8 +1188,9 @@ fn the_progression_part_an_older_manifest_lacks_resumes_alone() {
     assert_eq!(done.models.files.written, 0);
     assert_eq!(
         (done.levels.parts_read, done.levels.parts_kept),
-        (0, PARTS.len())
+        (0, PLAYED.len())
     );
+    assert_eq!((done.sprites.parts_read, done.sprites.parts_kept), (0, 1));
     // Without `parts` the palettes and both script parts are missing too:
     // read again, their files kept.
     assert_eq!(done.models.palettes.files.written, 0);
@@ -1145,7 +1232,10 @@ fn progression_tables_that_dont_read_leave_the_rest() {
             .any(|e| matches!(e, Seen::ProgressionReady(_)))
     );
     assert_eq!(done.models.models, MODELS);
-    assert_eq!(done.levels.parts_read, PARTS.len());
+    assert_eq!(
+        done.levels.parts_read + done.sprites.parts_read,
+        PARTS.len()
+    );
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     let dir = opened.dir.path().to_path_buf();
     drop(opened);
@@ -1204,9 +1294,19 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
     let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
     let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
     let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
-    let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let seen = Mutex::new(Vec::new());
+    let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|e| {
+        seen.lock().unwrap().push(Seen::of(&e));
+    })
+    .unwrap();
+    // A level the TV can't load isn't handed over (AT.26); its sprites
+    // still read after.
+    let seen = seen.into_inner().unwrap();
+    assert!(!seen.contains(&Seen::LevelReady), "{seen:?}");
+    assert!(seen.contains(&Seen::Sprites(1, 1)), "{seen:?}");
+    assert_eq!((done.sprites.levels, done.sprites.parts_read), (1, 1));
     let lv = &done.levels;
-    assert_eq!((lv.levels, lv.parts_read), (0, PARTS.len() - 1));
+    assert_eq!((lv.levels, lv.parts_read), (0, PLAYED.len() - 1));
     let [f] = &lv.failed[..] else {
         panic!("{:?}", lv.failed);
     };
@@ -1236,7 +1336,8 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
     let known = known_for(&dump);
     let mut again = open(&dump, &root, &known, &|_| {}).unwrap();
     let done = stages::run(&mut again.dir, Some(&ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!(done.levels.failed.len(), PARTS.len());
+    assert_eq!(done.levels.failed.len(), PLAYED.len());
+    assert_eq!(done.sprites.failed.len(), 1);
     assert!(
         done.levels.failed[0].reason.contains("no archive at"),
         "{:?}",
@@ -1687,7 +1788,10 @@ fn script_parts_that_dont_read_leave_the_rest() {
     assert_eq!(sc.files, Files::default());
     assert_eq!(done.models.palettes.palettes, MODELS);
     assert!(done.levels.failed.is_empty());
-    assert_eq!(done.levels.parts_read, PARTS.len());
+    assert_eq!(
+        done.levels.parts_read + done.sprites.parts_read,
+        PARTS.len()
+    );
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     let dir = opened.dir.path().to_path_buf();
     drop(opened);

@@ -21,7 +21,7 @@ use guac_ir::particle::{
 use crate::intros::IrFormat;
 use crate::levels::Read;
 use crate::models::{self, Textures};
-use crate::stages::{Files, count_kept, put};
+use crate::stages::{Event, Files, count_kept, put};
 use crate::{ExtractError, IdentityDir, Result, scripts};
 
 /// The extract-wide part ([`crate::PARTS`]).
@@ -231,23 +231,32 @@ pub struct ParticleStage {
 /// `particles/<stem>.<ron|postcard>` and their textures into the store,
 /// recorded once every archive's is in. An archive that won't read stops
 /// the part and is reported ([`ParticleStage::failed`]); a file that won't
-/// write stops the run.
-pub fn particle_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<ParticleStage> {
+/// write stops the run. Its progress goes out as [`Event::Particles`]: none
+/// of the archives done, then each as it reads (all at once when the part
+/// is kept), openspec AT.26.
+pub fn particle_stage(
+    dir: &mut IdentityDir,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<ParticleStage> {
     let started = Instant::now();
     let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
     let identity = dir.manifest().identity.clone();
     let mut stage = ParticleStage::default();
     let archives = archives();
+    let total = archives.len();
+    send(Event::Particles { done: 0, total });
     let irs: Vec<String> = archives.iter().map(|a| path(ir, a)).collect();
     if dir.part_holds(PART, &irs)? {
         let recorded = dir.manifest().parts[PART].clone();
         count_kept(dir, &recorded, &mut stage.files);
         stage.kept = true;
         stage.took = started.elapsed();
+        send(Event::Particles { done: total, total });
         return Ok(stage);
     }
     let mut read = Vec::with_capacity(archives.len());
-    for (archive, rel) in archives.iter().zip(&irs) {
+    for (i, (archive, rel)) in archives.iter().zip(&irs).enumerate() {
         let one = scripts::entry(&usrdir, archive).and_then(|bytes| {
             let igz = Igz::parse(&bytes).map_err(|e| e.to_string())?;
             let r = emitters(&igz, archive, identity.clone());
@@ -267,6 +276,7 @@ pub fn particle_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<ParticleSta
                 return Ok(stage);
             }
         }
+        send(Event::Particles { done: i + 1, total });
     }
     let mut files = Vec::new();
     for ((r, bytes), rel) in read.into_iter().zip(&irs) {

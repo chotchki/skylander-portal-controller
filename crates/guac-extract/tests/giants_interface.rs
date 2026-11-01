@@ -117,7 +117,7 @@ fn the_interface_extracts_and_resumes_alone() {
     assert_eq!((sprites.templates.len(), sprites.strings.len()), (31, 187));
 
     println!("load average before the part: {}", load_average());
-    let s = interface_stage(&mut opened.dir, IR).unwrap();
+    let s = interface_stage(&mut opened.dir, IR, &|_| {}).unwrap();
     println!(
         "  first run: {} archives, {} templates, {} fonts, {} strings, {} textures ({:?}); {:?} in {:.2} s; load average {}",
         s.archives,
@@ -215,7 +215,7 @@ fn the_interface_extracts_and_resumes_alone() {
     println!("load average before the resume: {}", load_average());
     let started = Instant::now();
     let lv = stages::level_stage(&mut opened.dir, IR, &|_| {}).unwrap();
-    let again = interface_stage(&mut opened.dir, IR).unwrap();
+    let again = interface_stage(&mut opened.dir, IR, &|_| {}).unwrap();
     println!(
         "  resumed: level {} read, {} kept in {:.2} s; interface read {} ({:?}) in {:.2} s; {:.2} s together; load average {}",
         lv.parts_read,

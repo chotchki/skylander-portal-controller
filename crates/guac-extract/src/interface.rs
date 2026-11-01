@@ -35,7 +35,7 @@ use guac_ir::interface::{Art, Content, Font, Glyph, Import, Interface, Kind, Tem
 use crate::extract::Manifest;
 use crate::intros::IrFormat;
 use crate::models::Textures;
-use crate::stages::{Files, count_kept, held, put};
+use crate::stages::{Event, Files, count_kept, held, put};
 use crate::{ExtractError, IdentityDir, Result, models, roster, scripts, sounds};
 
 /// The extract-wide part ([`crate::PARTS`]).
@@ -404,8 +404,14 @@ pub struct InterfaceStage {
 /// ([`IdentityDir::part_holds`]): each archive's interface into
 /// `interface/<stem>.<ron|postcard>` and its textures into the store,
 /// recorded once every archive's is in. A file that won't write stops the
-/// run.
-pub fn interface_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<InterfaceStage> {
+/// run. Its progress goes out as [`Event::Interface`]: none of the archives
+/// the dump holds done, then each as it lands (all at once when the part is
+/// kept), openspec AT.26.
+pub fn interface_stage(
+    dir: &mut IdentityDir,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<InterfaceStage> {
     let started = Instant::now();
     let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
     let identity = dir.manifest().identity.clone();
@@ -414,17 +420,20 @@ pub fn interface_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<InterfaceS
         .into_iter()
         .partition(|a| usrdir.join(a).is_file());
     stage.missing = missing;
+    let total = present.len();
+    send(Event::Interface { done: 0, total });
     let irs: Vec<String> = present.iter().map(|a| path(ir, a)).collect();
     if dir.part_holds(PART, &irs)? {
         let recorded = dir.manifest().parts[PART].clone();
         count_kept(dir, &recorded, &mut stage.files);
         stage.kept = true;
         stage.took = started.elapsed();
+        send(Event::Interface { done: total, total });
         return Ok(stage);
     }
     let mut files: Vec<String> = Vec::new();
     let mut counted: HashSet<String> = HashSet::new();
-    for (archive, rel) in present.iter().zip(&irs) {
+    for (i, (archive, rel)) in present.iter().zip(&irs).enumerate() {
         let r = match read_archive(&usrdir, archive, identity.clone()) {
             Ok(r) => r,
             Err(ExtractError::ScriptsUnreadable { reason, .. }) => {
@@ -462,6 +471,7 @@ pub fn interface_stage(dir: &mut IdentityDir, ir: IrFormat) -> Result<InterfaceS
                 .iter()
                 .map(|(n, why)| (format!("{archive}: {n}"), why.clone())),
         );
+        send(Event::Interface { done: i + 1, total });
     }
     stage.textures = counted.len();
     // `held` counted each texture's bytes once, kept or written.

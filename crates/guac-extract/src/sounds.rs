@@ -28,7 +28,7 @@ use guac_ir::{DumpIdentity, Roster};
 use sha2::Digest;
 
 use crate::intros::IrFormat;
-use crate::stages::{Files, count_kept, put};
+use crate::stages::{Event, Files, count_kept, put};
 use crate::{ExtractError, IdentityDir, Result, levels, models, roster, scripts};
 
 /// The extract-wide part ([`crate::PARTS`]).
@@ -314,8 +314,15 @@ pub struct SoundStage {
 /// ([`IdentityDir::part_holds`]): each archive's sounds into
 /// `sounds/<stem>.<ron|postcard>` and their audio into `audio/sounds/`,
 /// recorded once every archive's is in. A file that won't write stops the
-/// run.
-pub fn sound_stage(dir: &mut IdentityDir, roster: &Roster, ir: IrFormat) -> Result<SoundStage> {
+/// run. Its progress goes out as [`Event::Sounds`]: none of the archives
+/// the dump holds done, then each as it lands (all at once when the part is
+/// kept), openspec AT.26.
+pub fn sound_stage(
+    dir: &mut IdentityDir,
+    roster: &Roster,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<SoundStage> {
     let started = Instant::now();
     let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
     let identity = dir.manifest().identity.clone();
@@ -325,12 +332,15 @@ pub fn sound_stage(dir: &mut IdentityDir, roster: &Roster, ir: IrFormat) -> Resu
         .into_iter()
         .partition(|a| usrdir.join(a).is_file());
     stage.missing = missing;
+    let total = present.len();
+    send(Event::Sounds { done: 0, total });
     let irs: Vec<String> = present.iter().map(|a| path(ir, a)).collect();
     if dir.part_holds(PART, &irs)? {
         let recorded = dir.manifest().parts[PART].clone();
         count_kept(dir, &recorded, &mut stage.files);
         stage.kept = true;
         stage.took = started.elapsed();
+        send(Event::Sounds { done: total, total });
         return Ok(stage);
     }
     let fail = |stage: &mut SoundStage, archive: &str, reason: String| {
@@ -367,7 +377,7 @@ pub fn sound_stage(dir: &mut IdentityDir, roster: &Roster, ir: IrFormat) -> Resu
         .collect();
     let mut files: Vec<String> = Vec::new();
     let mut part_audio: HashSet<String> = HashSet::new();
-    for (archive, rel) in present.iter().zip(&irs) {
+    for (i, (archive, rel)) in present.iter().zip(&irs).enumerate() {
         let bld_path = usrdir.join(archive);
         let bld = std::fs::read(&bld_path).map_err(ExtractError::io(&bld_path))?;
         let arc_path = bld_path.with_extension("arc");
@@ -409,6 +419,7 @@ pub fn sound_stage(dir: &mut IdentityDir, roster: &Roster, ir: IrFormat) -> Resu
                 .iter()
                 .map(|(n, why)| (format!("{archive}: {n}"), why.clone())),
         );
+        send(Event::Sounds { done: i + 1, total });
     }
     stage.audio = part_audio.len();
     stage.files.written += stage.audio_files.written;

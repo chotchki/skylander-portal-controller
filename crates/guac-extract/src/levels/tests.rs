@@ -446,6 +446,10 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             "sprites"
         ]
     );
+    // AT.26: the TV reads every part but the sprites, so a part added to
+    // the list is one the hand-off waits for until it says otherwise.
+    assert_eq!(PLAYED[..], PARTS[..PARTS.len() - 1]);
+    assert_eq!(PARTS[PARTS.len() - 1], SPRITES);
     let mut m: crate::extract::Manifest = serde_json::from_value(serde_json::json!({
         "extractor": "0", "layout": 4, "ir_version": 3,
         "identity": identity(), "source_dir": "/d", "complete": true,
