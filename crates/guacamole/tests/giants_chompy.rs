@@ -407,6 +407,9 @@ struct Script {
     seed: Option<u32>,
     /// Steps past the opening's start.
     steps: u32,
+    /// The interface's model held, as the TV's run holds it (openspec AT.9,
+    /// `common::Setup::interface`).
+    interface: bool,
 }
 
 /// The last step [`Script::pinned`] sets the four at.
@@ -734,6 +737,7 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
         Setup {
             props: script.props,
             sounds: script.sounds,
+            interface: script.interface,
             ..Setup::default()
         },
     );
@@ -1895,6 +1899,61 @@ fn standing_still_they_wake_close_in_and_bite_as_ah10_recorded() {
         "{bites:?}"
     );
     println!("load after: {}", load());
+}
+
+/// AT.9: on the interface's model, the standing-still fight's bites each
+/// put a number up by him (`Combat - Spawn Damage Number` clones
+/// `Generic_Text`) that its own scripts take off again: by F0 + 900 every
+/// text clone made after the join taken off and none left awake, every
+/// member on the model, nothing asked of what holds no sprite. The join is
+/// the run's own (seeded, so the same sprites as a join alone makes).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_bites_number_goes_with_its_bite_on_the_interfaces_model() {
+    println!("load before: {}", load());
+    let setup = Setup {
+        interface: true,
+        ..Setup::default()
+    };
+    let (joined, _) = joined_with(Mode::Strict, setup);
+    let at_join = joined.world.interface().unwrap().model().len();
+    let (run, snaps) = fight(Script {
+        steps: 900,
+        interface: true,
+        ..Script::default()
+    });
+    let drops: Vec<(i64, f32)> = snaps
+        .windows(2)
+        .filter(|w| w[0].health > w[1].health)
+        .map(|w| (w[1].k, w[0].health - w[1].health))
+        .collect();
+    let bites = drops.len();
+    println!("his health's drops (step, lost): {drops:?}");
+    let k = run.world.interface().expect("the run holds the model");
+    assert!(k.strays().is_empty(), "strays: {:?}", k.strays());
+    assert!(k.unknown().is_empty(), "unknown: {:?}", k.unknown());
+    let m = k.model();
+    let numbers = |ids: &[guac_interface::SpriteId]| {
+        ids.iter()
+            .filter(|&&id| {
+                let s = m.sprite(id);
+                id.0 as usize >= at_join
+                    && s.name == "Generic_Text"
+                    && s.cloned_from != guac_interface::sprite::Source::None
+            })
+            .count()
+    };
+    let (awake, gone) = (numbers(m.active()), numbers(m.removed()));
+    println!(
+        "{bites} bites; numbers made after the join: {gone} taken off, {awake} awake; {} sprites at the join, {} at the end, {} instances awake; load after: {}",
+        at_join,
+        m.len(),
+        k.instances().len(),
+        load()
+    );
+    assert!(bites > 0, "no bite landed");
+    assert!(gone > 0, "no bite's number made");
+    assert_eq!(awake, 0, "a bite's number left over");
 }
 
 /// AH.10's limits for the stall detector: over its recordings

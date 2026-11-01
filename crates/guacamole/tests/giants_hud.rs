@@ -130,6 +130,39 @@ fn eruptors_join_builds_the_hud() {
             r.map(|r| r.map(|v| (v * 100.0).round() / 100.0))
         );
     }
+    // The templates awake from the load, by their files' activity states.
+    let woken: Vec<String> = m
+        .active()
+        .iter()
+        .filter(|&&id| m.sprite(id).cloned_from == Source::None)
+        .map(|&id| m.sprite(id).name.clone())
+        .collect();
+    println!("templates awake: {} {woken:?}", woken.len());
+    // Each one the June savestate's live sprite list holds (AT.3's read of
+    // it, `at-lane/notes/live_sprites.txt`), the viewport's container first
+    // there and last here.
+    assert_eq!(
+        woken,
+        [
+            "PortalUI_Container",
+            "GameplayOverlay_BL",
+            "GameplayOverlay_BR",
+            "GameplayOverlay_UL",
+            "GameplayOverlay_UR",
+            "darkness_Fade_out",
+            "CSMetrics_CameraSpr",
+            "CSMetrics_CameraVal",
+            "CSMetrics_CSTotalSpr",
+            "CSMetrics_CSTotalVal",
+            "CSMetrics_TimeSpr",
+            "CSMetrics_TimeVal",
+            "RT Viewport 0",
+            "_Screen_Container",
+            "_UI_Container",
+            "_UI_PauseContainer",
+            "_Gameplay_Container",
+        ]
+    );
     assert!(k.strays().is_empty(), "strays: {:?}", k.strays());
     assert!(k.unknown().is_empty(), "unknown: {:?}", k.unknown());
     // The main box: a clone of `Generic_Container` hung on a clone of

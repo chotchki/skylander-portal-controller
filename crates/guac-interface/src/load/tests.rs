@@ -132,15 +132,24 @@ fn strings_that_dont_pair_with_the_files_keys_load_none() {
 }
 
 /// A template is a placement: its `_ID` read off its object, which a clone
-/// copies (`spritematrixmeasurement.id`).
+/// copies (`spritematrixmeasurement.id`), and awake from the load when its
+/// file holds it active (1) or unmanaged (4), asleep when a template (5).
 #[test]
-fn a_templates_id_is_its_placements() {
+fn a_templates_id_and_waking_are_its_placements() {
     use guac_formats::interface::builder::{at, template};
     let mut b = guac_formats::igz::builder::IgzBuilder::new();
-    let o = b.object(0, "tfbSpriteInfo", 0xE4);
-    // A container: visual type 3, no context.
-    template(&mut b, o, "Generic_Container", 3, 1);
-    b.put_u32(at(o, 0x20), 77);
+    let objects: Vec<_> = [(77, 4), (78, 5), (79, 1)]
+        .iter()
+        .enumerate()
+        .map(|(n, &(id, state))| {
+            let o = b.object(0, "tfbSpriteInfo", 0xE4);
+            // A container: visual type 3, no context.
+            template(&mut b, o, "Generic_Container", 3, n as u16 + 1);
+            b.put_u32(at(o, 0x20), id);
+            b.put_u32(at(o, 0x54), state);
+            o
+        })
+        .collect();
     let bytes = b.build();
     let igz = Igz::parse(&bytes).unwrap();
     let ir = record(&igz, 0);
@@ -150,12 +159,20 @@ fn a_templates_id_is_its_placements() {
         interface: &ir,
     }]);
     let m = loaded.keeper.model();
-    let id = m
-        .sprite_of(Value::Object(Obj {
-            unit: UNIT,
-            index: object(&igz, o),
-        }))
-        .unwrap();
-    assert_eq!(m.sprite(id).id, 77);
+    let ids: Vec<_> = objects
+        .iter()
+        .map(|&o| {
+            m.sprite_of(Value::Object(Obj {
+                unit: UNIT,
+                index: object(&igz, o),
+            }))
+            .unwrap()
+        })
+        .collect();
+    let read: Vec<(i32, bool)> = ids
+        .iter()
+        .map(|&id| (m.sprite(id).id, m.active().contains(&id)))
+        .collect();
+    assert_eq!(read, [(77, true), (78, false), (79, true)]);
     assert!(loaded.refused.is_empty(), "{:?}", loaded.refused);
 }

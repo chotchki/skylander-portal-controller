@@ -280,11 +280,18 @@
 //! `reset` ops names an interface member, AT.25's census).
 //!
 //! **States** (AT.5, read at the placement's state change, 0x69508, and its
-//! deactivate hook, 0x6A620): a template in a file is a placement too,
-//! asleep until a script wakes it, and a clone is awake from its spawn
-//! (**Hypothesis** for which templates wake: the June savestate's 153 live
-//! sprites hold the root containers and not the templates only cloned; AT.9
-//! checks it against its run). A clone hangs on nothing and holds nothing
+//! deactivate hook, 0x6A620): a template in a file is a placement too, and
+//! a clone is awake from its spawn. A template whose file holds its
+//! `_activityState` active (1) or unmanaged (4) is awake from the load, as a
+//! level's running placements are; one held a template (5) sleeps until a
+//! script clones it (AT.9: `global.bld`'s four root containers are held
+//! unmanaged, and `Init_Setup.ai`'s `UI - Init UI Containers` hangs them on
+//! the viewport's container and on each other and sizes them, which it can
+//! do only on sprites awake. On the dump the rule wakes 16 of the run's
+//! templates, those four, `PortalUI_Container`, the four corner shades,
+//! `darkness_Fade_out` and the cutscene metrics' six, and the June
+//! savestate's 153 live sprites hold every one of them and none of the
+//! templates only cloned). A clone hangs on nothing and holds nothing
 //! until a script hangs it (**Hypothesis**: the clone's internals, 0x69D7C,
 //! are unread here as in aj-vm's notes; AT.9's HUD build, which writes every
 //! clone's `attach node`, checks it).
@@ -427,8 +434,13 @@
 //!
 //! `left margin`, `right margin`, `upper margin`, `lower margin` (int, pixels;
 //! get 0x1DE74, 0x1DE88, 0x1DE9C, 0x1DEB0): four integers kept on the
-//! viewport's title-safe info, read-only. **Hypothesis**: the title-safe
-//! margins in frame pixels, AT.10's to read live.
+//! viewport's title-safe info, read-only, which `viewportinfo.title safe
+//! zone` reaches on the gameplay viewport. **Hypothesis** (AT.10's to read
+//! live): the margins in frame pixels, 64, 64, 36 and 36, 5 % of the
+//! 1280x720 frame a side: `UI - Init UI Containers` takes their sums over
+//! the screen's scale off `_UI_Container`'s 853.333 by 480 units, and these
+//! leave it 768 by 432 at frame (64, 36), as the June savestate and AC.13
+//! have it (AT.3).
 //!
 //! # Text
 //!
@@ -676,8 +688,20 @@
 //! (read for AT.28): its take-on (0x10C8A8) appends the frame's joins in
 //! order, and 0x10CB68 takes the frame's leaves off it, so it holds every
 //! drawn sprite in the order each joined; no sort is in either.
-//! **Hypothesis** (AT.33 checks AC.13's 72 draws on AT.9's HUD; the sort
-//! over that list isn't found): drawn by computed priority, lower in front
+//! The list is drawn in its order (0x33774, a call of the sprite draw
+//! 0x32528 an element), and sorted first when a sprite joined since the last
+//! sort (0x31E14, read for AT.33: the per-sprite update raises a flag on
+//! every join, 0x8A1F7C, and the sort clears it), an introsort (0x350BB8:
+//! quicksort on a median, heapsort past its depth, insertion sort at 32
+//! elements or fewer, so unstable over 32) by a comparison that puts the
+//! higher visual type first (the kind's word's low three bits, which the
+//! layout writes from the properties' visual type) and, between two of one
+//! type, the lower of a word the kind holds at +8 first (0x4D17C, read in
+//! the disassembly; the word not yet traced). That order puts every text
+//! before every art quad, and AC.13's frame interleaves its 13 text runs
+//! with its art, so that sort can't be what drew it: either it doesn't run
+//! in a level's frames or the interface reaches the draw another way
+//! (AT.33). **Hypothesis**: drawn by computed priority, lower in front
 //! (a message box's text is written at priority -2 over its box; AC.13's
 //! number shadows at 10 draw before their numbers at 5, and its
 //! bottom-left corner shade, the June savestate's lowest at -190, draws
