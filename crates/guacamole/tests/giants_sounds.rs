@@ -348,7 +348,7 @@ fn probe_the_music_from_the_start() {
         common::Setup {
             props: true,
             sounds: true,
-            music: std::env::var_os("AR11_NO_MUSIC").is_none(),
+            no_music: std::env::var_os("AR11_NO_MUSIC").is_some(),
         },
     );
     let every: u64 = std::env::var("AR11_EVERY")
@@ -432,7 +432,7 @@ fn probe_the_update_set() {
         common::Setup {
             props: true,
             sounds: true,
-            music: std::env::var_os("AR11_NO_MUSIC").is_none(),
+            no_music: std::env::var_os("AR11_NO_MUSIC").is_some(),
         },
     );
     for _ in 0..30 {
@@ -488,7 +488,7 @@ fn the_music_plays_the_intro_then_explore_on_its_bar() {
         common::Setup {
             props: true,
             sounds: true,
-            music: true,
+            ..Default::default()
         },
     );
     println!("load before: {}", common::load());

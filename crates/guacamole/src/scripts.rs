@@ -1946,9 +1946,10 @@ pub fn is_camera_script(path: &str) -> bool {
 /// creatures' and the loop's: the destructibles system makes a breakable a
 /// combat target), AG.60's start scripts on the props and AG.28's camera
 /// volumes and activator, the level-up's and the death actor's
-/// ([`EFFECT_SCRIPTS`], AH.39), the first fight's placements left inert
-/// until AH.25's entry brings them; AS.11's every-level table
-/// ([`members::LEVELS`], openspec AS.37) registered with the rest.
+/// ([`EFFECT_SCRIPTS`], AH.39) and chapter 1's music ([`MUSIC_SCRIPTS`],
+/// AR.16), the first fight's placements left inert until AH.25's entry
+/// brings them; AS.11's every-level table ([`members::LEVELS`], openspec
+/// AS.37) registered with the rest.
 pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
@@ -1980,6 +1981,9 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // Chapter 1's music (openspec AR.16): their rolls draw on the
+        // session's generator, as the original's do.
+        scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -2175,14 +2179,13 @@ pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
     config
 }
 
-/// `config` with chapter 1's music scripts every tick ([`MUSIC_SCRIPTS`],
-/// openspec AR.11): the level's music controller and its watchers. Not in
-/// the TV's listing yet (AR.16): with them the session's generator draws
-/// shift, and the fight's checks calibrated on the draws before wait on a
-/// read of the original's.
-pub fn with_music(mut config: Config) -> Config {
+/// `config` without chapter 1's music scripts ([`MUSIC_SCRIPTS`], openspec
+/// AR.16): what a probe sets the music's draws apart by. The TV's run lists
+/// them since AR.16 read the original's music controller rolling the same
+/// placed environment sounds' repeat timers.
+pub fn without_music(mut config: Config) -> Config {
     if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
-        scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        scripts.retain(|s| !MUSIC_SCRIPTS.contains(&s.as_str()));
     }
     config
 }
@@ -4316,6 +4319,34 @@ mod tests {
                 r.keeper != members::Keeper::Vm,
                 "{}",
                 r.path()
+            );
+        }
+        // Chapter 1's music every tick (openspec AR.16), the TV's and the
+        // fight's alike; a probe's `without_music` takes them off alone.
+        let music = |c: &Config, script: &str| {
+            let path = format!("C:/tfb/Content/Levels/Level_213/Scripts/{script}");
+            c.whitelist.listing("a music placement", &path)
+        };
+        let without = without_music(fight_config(Mode::Play));
+        for script in MUSIC_SCRIPTS {
+            assert_eq!(music(&c, script), guac_script::Listed::Every, "{script}");
+            assert_eq!(
+                music(&fight, script),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+            assert_ne!(
+                music(&without, script),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
+        for script in ROUTE_SCRIPTS {
+            let path = format!("C:/tfb/Content/Levels/Includes/{script}");
+            assert_eq!(
+                without.whitelist.listing("a route placement", &path),
+                guac_script::Listed::Every,
+                "{script}"
             );
         }
     }
