@@ -492,7 +492,7 @@ fn slid_place(spot: Spot) -> u64 {
     let member = |h: &mut crate::ids::IdHasher, member: MemberId, cell: Option<u32>| {
         h.write_u32(member.namespace);
         h.write_u32(member.name);
-        h.write_u32(cell.map_or(u32::MAX, |c| c));
+        h.write_u32(cell.unwrap_or(u32::MAX));
     };
     match spot {
         Spot::Cell(c) => {
@@ -518,7 +518,7 @@ fn slid_place(spot: Spot) -> u64 {
         } => {
             h.write_u8(6);
             member(&mut h, m, cell);
-            h.write_u32(via.map_or(u32::MAX, |c| c));
+            h.write_u32(via.unwrap_or(u32::MAX));
             if let Some(r) = receiver {
                 value(&mut h, r);
             }
