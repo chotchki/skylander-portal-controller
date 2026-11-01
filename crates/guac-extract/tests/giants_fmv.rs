@@ -9,7 +9,7 @@
 //! default: it reads `GUAC_GIANTS_DUMP`, needs ffmpeg (`GUAC_FFMPEG`, else
 //! where guac-extract looks) and writes under `GUAC_EXTRACT_DIR`:
 //!
-//! `cargo test -p guac-extract --release --test giants_fmv -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_fmv -- --ignored --nocapture`
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;

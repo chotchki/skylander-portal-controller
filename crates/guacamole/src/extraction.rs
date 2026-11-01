@@ -3,11 +3,13 @@
 //! current extract or runs one on its own thread, progress coming back over a
 //! channel. Cards don't wait on it: the portal screen draws [`band`] in its
 //! header while the thread runs or after it fails. The stages run in
-//! guac-extract's order (AE.3): the roster and its portraits, the models, the
-//! level (AG.15), then ffmpeg and the intros. The roster goes on the server's
-//! figure list the moment it lands, or at start when the extract is already
-//! current (AE.4), and the progression tables into the server's slot the
-//! same way (AH.2).
+//! guac-extract's order (AE.3, AT.26): the roster and its portraits, the
+//! models, the level (AG.15), the fight's scripts and emitters, the hand-off
+//! of chapter 1 to the TV, then what nothing draws yet (the level's sprites,
+//! the sounds, the interface), then ffmpeg and the intros. The roster goes
+//! on the server's figure list the moment it lands, or at start when the
+//! extract is already current (AE.4), and the progression tables into the
+//! server's slot the same way (AH.2).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -19,6 +21,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use guac_extract::dump::HashProgress;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::{KNOWN_DUMPS, KnownDump};
+use guac_extract::qos::Qos;
 use guac_extract::stages::{self, Event, ModelFailure};
 use guac_extract::transcode::{Done, Step, TranscodeEvent};
 use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
@@ -140,6 +143,27 @@ pub enum ExtractStatus {
         done: usize,
         total: usize,
     },
+    /// `done` of `total` archives' emitters (AH.87, AT.26).
+    Particles {
+        done: usize,
+        total: usize,
+    },
+    /// `done` of `total` levels' sprites, read after chapter 1's hand-off
+    /// (AT.8, AT.26).
+    Sprites {
+        done: usize,
+        total: usize,
+    },
+    /// `done` of `total` archives' sounds (AR.5, AT.26).
+    Sounds {
+        done: usize,
+        total: usize,
+    },
+    /// `done` of `total` archives' interface (AT.8, AT.26).
+    Interface {
+        done: usize,
+        total: usize,
+    },
     /// Mapping toy types to intro movies.
     Indexing,
     /// `done` of `total` intros converted; `movie` is the one in hand.
@@ -167,6 +191,10 @@ impl ExtractStatus {
             Self::Models { .. } => "Models",
             Self::Level { .. } => "Level",
             Self::Scripts { .. } => "Scripts",
+            Self::Particles { .. } => "Particles",
+            Self::Sprites { .. } => "Sprites",
+            Self::Sounds { .. } => "Sounds",
+            Self::Interface { .. } => "Interface",
             Self::Indexing => "Indexing",
             Self::Converting { .. } => "Converting",
             Self::Ready { .. } => "Ready",
@@ -321,6 +349,34 @@ pub fn band(status: &ExtractStatus) -> Option<Band> {
                 Some(pct),
             )
         }
+        ExtractStatus::Particles { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading the game's effects off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
+        ExtractStatus::Sprites { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading chapter 1's menus off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
+        ExtractStatus::Sounds { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading the game's sounds off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
+        ExtractStatus::Interface { done, total } => {
+            let pct = percent(*done as u64, *total as u64);
+            progress(
+                format!("Reading the game's menus off your disc… {pct}%"),
+                Some(pct),
+            )
+        }
         ExtractStatus::Indexing => progress("Finding each character's intro…".into(), None),
         ExtractStatus::Converting { done, total, .. } => progress(
             format!("Converting intro {} of {total}…", (done + 1).min(*total)),
@@ -394,6 +450,10 @@ pub fn band_after(status: &ExtractStatus, running_for: Duration) -> Option<Band>
             | ExtractStatus::Models { .. }
             | ExtractStatus::Level { .. }
             | ExtractStatus::Scripts { .. }
+            | ExtractStatus::Particles { .. }
+            | ExtractStatus::Sprites { .. }
+            | ExtractStatus::Sounds { .. }
+            | ExtractStatus::Interface { .. }
             | ExtractStatus::Indexing
             | ExtractStatus::Converting { .. }
     );
@@ -426,6 +486,26 @@ pub enum ExtractEvent {
     },
     /// The script stage: `done` of `total` parts (AH.22).
     Scripts {
+        done: usize,
+        total: usize,
+    },
+    /// The emitters: `done` of `total` archives (AH.87, AT.26).
+    Particles {
+        done: usize,
+        total: usize,
+    },
+    /// The levels' sprites: `done` of `total` levels (AT.8, AT.26).
+    Sprites {
+        done: usize,
+        total: usize,
+    },
+    /// The sounds: `done` of `total` archives (AR.5, AT.26).
+    Sounds {
+        done: usize,
+        total: usize,
+    },
+    /// The interface: `done` of `total` archives (AT.8, AT.26).
+    Interface {
         done: usize,
         total: usize,
     },
@@ -484,6 +564,22 @@ pub fn step(event: &ExtractEvent) -> ExtractStatus {
             done: *done,
             total: *total,
         },
+        ExtractEvent::Particles { done, total } => ExtractStatus::Particles {
+            done: *done,
+            total: *total,
+        },
+        ExtractEvent::Sprites { done, total } => ExtractStatus::Sprites {
+            done: *done,
+            total: *total,
+        },
+        ExtractEvent::Sounds { done, total } => ExtractStatus::Sounds {
+            done: *done,
+            total: *total,
+        },
+        ExtractEvent::Interface { done, total } => ExtractStatus::Interface {
+            done: *done,
+            total: *total,
+        },
         ExtractEvent::Indexing => ExtractStatus::Indexing,
         ExtractEvent::Transcode(e) => {
             let done = match e.step {
@@ -505,9 +601,10 @@ pub fn step(event: &ExtractEvent) -> ExtractStatus {
 }
 
 /// Identify, then load the current extract or make it, stage by stage
-/// ([`stages::run`]): the roster and its portraits, then ffmpeg, the intro
-/// index with the roster's names as the fallback, the IR, the transcode.
-/// Blocking.
+/// ([`stages::run`]): the roster and its portraits, the models, chapter 1
+/// and the fight's parts, the level handed to the TV the moment those are in
+/// (AT.26), the parts nothing draws yet, then ffmpeg, the intro index with
+/// the roster's names as the fallback, the IR, the transcode. Blocking.
 pub fn run(
     dump: &Path,
     job: &ExtractJob,
@@ -540,7 +637,7 @@ pub fn run(
                 }
                 put_on_shelf(job, &roster, opened.dir.path(), &[]);
                 // Current means every part of every level is in.
-                send_level(job, &roster, opened.dir.path());
+                send_level(job, &roster.identity, opened.dir.path());
                 return Ok(Ready {
                     library: IntroLibrary {
                         dir: opened.dir.path().to_path_buf(),
@@ -554,6 +651,7 @@ pub fn run(
         }
     }
     let dir = opened.dir.path().to_path_buf();
+    let identity = opened.dir.manifest().identity.clone();
     // The roster as it landed, for the shelf once the models are in.
     let landed: Mutex<Option<std::sync::Arc<Roster>>> = Mutex::new(None);
     let extracted = stages::run(
@@ -576,6 +674,19 @@ pub fn run(
             }
             Event::Level { done, total } => send(ExtractEvent::Level { done, total }),
             Event::Scripts { done, total } => send(ExtractEvent::Scripts { done, total }),
+            Event::Particles { done, total } => send(ExtractEvent::Particles { done, total }),
+            // Chapter 1's parts the TV reads are in: it loads while the
+            // rest reads (AT.26).
+            Event::LevelReady => {
+                info!(
+                    after_s = started.elapsed().as_secs_f64(),
+                    "chapter 1 handed to the TV"
+                );
+                send_level(job, &identity, &dir);
+            }
+            Event::Sprites { done, total } => send(ExtractEvent::Sprites { done, total }),
+            Event::Sounds { done, total } => send(ExtractEvent::Sounds { done, total }),
+            Event::Interface { done, total } => send(ExtractEvent::Interface { done, total }),
             Event::Indexing => send(ExtractEvent::Indexing),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
@@ -688,11 +799,7 @@ pub fn run(
     for f in &sc.failed {
         warn!(part = %f.part, archive = %f.archive, reason = %f.reason, "a script part didn't extract; the next start tries it again");
     }
-    // The level is whole before ffmpeg is looked for, so a missing one
-    // doesn't keep it from the TV.
-    if l.failed.is_empty() && l.levels == guac_extract::levels::LEVELS.len() {
-        send_level(job, &extracted.roster.roster, &dir);
-    }
+    log_later_parts(&extracted);
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;
     info!(ffmpeg = %ffmpeg.path.display(), how = ?ffmpeg.how, version = %ffmpeg.version, "ffmpeg");
@@ -711,6 +818,83 @@ pub fn run(
         ran: true,
         took: started.elapsed(),
     })
+}
+
+/// The parts after the fight's scripts, each with what it read or kept and
+/// a warning for one that didn't read (AT.26): the emitters, which chapter 1
+/// loads with, then the level's sprites, the sounds and the interface, read
+/// after the hand-off.
+fn log_later_parts(x: &stages::Extracted) {
+    let p = &x.particles;
+    info!(
+        read = p.read,
+        kept = p.kept,
+        emitters = p.emitters,
+        refused = p.refused.len(),
+        written = p.files.written,
+        kept_files = p.files.kept,
+        bytes = p.files.bytes,
+        took_s = p.took.as_secs_f64(),
+        "the attacks' emitters written"
+    );
+    if let Some((archive, reason)) = &p.failed {
+        warn!(%archive, %reason, "the emitters didn't extract; the next start tries them again");
+    }
+    let sp = &x.sprites;
+    info!(
+        levels = sp.levels,
+        read = sp.parts_read,
+        kept = sp.parts_kept,
+        failed = sp.failed.len(),
+        textures = sp.textures,
+        written = sp.files.written,
+        kept_files = sp.files.kept,
+        bytes = sp.files.bytes,
+        took_s = sp.took.as_secs_f64(),
+        "the level's sprites written"
+    );
+    for f in &sp.failed {
+        warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level's sprites didn't extract; the next start tries them again");
+    }
+    let so = &x.sounds;
+    info!(
+        read = so.read,
+        kept = so.kept,
+        archives = so.archives,
+        missing = so.missing.len(),
+        sounds = so.sounds,
+        data = so.data,
+        audio = so.audio,
+        refused = so.refused.len(),
+        written = so.files.written,
+        kept_files = so.files.kept,
+        bytes = so.files.bytes,
+        took_s = so.took.as_secs_f64(),
+        "the sounds written"
+    );
+    if let Some((archive, reason)) = &so.failed {
+        warn!(%archive, %reason, "the sounds didn't extract; the next start tries them again");
+    }
+    let i = &x.interface;
+    info!(
+        read = i.read,
+        kept = i.kept,
+        archives = i.archives,
+        missing = i.missing.len(),
+        templates = i.templates,
+        fonts = i.fonts,
+        strings = i.strings,
+        textures = i.textures,
+        refused = i.refused.len(),
+        written = i.files.written,
+        kept_files = i.files.kept,
+        bytes = i.files.bytes,
+        took_s = i.took.as_secs_f64(),
+        "the interface written"
+    );
+    if let Some((archive, reason)) = &i.failed {
+        warn!(%archive, %reason, "the interface didn't extract; the next start tries it again");
+    }
 }
 
 /// Puts a landed roster on the server's figure list, its portraits under
@@ -751,12 +935,12 @@ fn put_on_shelf(job: &ExtractJob, roster: &Roster, dir: &Path, failed: &[ModelFa
 }
 
 /// Tells the TV's level loader that chapter 1 is whole in the extract at
-/// `dir` (AG.19).
-fn send_level(job: &ExtractJob, roster: &Roster, dir: &Path) {
+/// `dir` (AG.19), the extract of the dump `identity` names.
+fn send_level(job: &ExtractJob, identity: &guac_ir::DumpIdentity, dir: &Path) {
     let Some(tx) = &job.level else {
         return;
     };
-    let source = LevelSource::chapter_1(dir.to_path_buf(), job.ir, roster.identity.clone());
+    let source = LevelSource::chapter_1(dir.to_path_buf(), job.ir, identity.clone());
     // The app is gone; nothing to tell.
     let _ = tx.send(source);
 }
@@ -824,13 +1008,39 @@ fn load_table(dir: &IdentityDir, ir: IrFormat) -> Result<CharacterTable, String>
     Ok(table)
 }
 
+/// The class the extraction's thread runs at on macOS (openspec AG.298):
+/// under the TV's frame and its level load, which run at the default and
+/// above, with every thread and ffmpeg it starts at the same
+/// ([`guac_extract::qos`]). Utility, not background: a first run's kid waits
+/// on it for chapter 1, and background throttles its disk reads too.
+pub const EXTRACT_QOS: Qos = Qos::Utility;
+
+/// `body` on the `extract` thread, put at [`EXTRACT_QOS`] before anything
+/// else runs on it.
+fn spawn_extract_thread(
+    body: impl FnOnce() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("extract".into())
+        .spawn(move || {
+            match guac_extract::qos::set_current(EXTRACT_QOS) {
+                Ok(()) => info!(qos = ?guac_extract::qos::current(), "the extraction's thread"),
+                Err(e) => warn!(
+                    error = e,
+                    "the extraction's thread couldn't go below the TV; it runs at the default"
+                ),
+            }
+            body();
+        })
+}
+
 /// Runs [`run`] on its own thread; events, then one `Finished`, come back.
 pub fn spawn(dump: PathBuf, job: ExtractJob) -> Receiver<ExtractEvent> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let known = job.known();
-    let thread = std::thread::Builder::new()
-        .name("extract".into())
-        .spawn(move || finish(&tx, run(&dump, &job, &known, &|e| send(&tx, e))));
+    let thread = spawn_extract_thread(move || {
+        finish(&tx, run(&dump, &job, &known, &|e| send(&tx, e)));
+    });
     if let Err(e) = thread {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let message = format!("couldn't start the extraction thread: {e}");
@@ -1193,6 +1403,57 @@ mod tests {
         assert_eq!(band_after(&scripts, QUIET_START), Some(b));
     }
 
+    /// AT.26: each part after the fight's scripts names itself on the band
+    /// and counts its archives (the sprites their levels), hidden through
+    /// the quiet start like every other stage.
+    #[test]
+    fn the_later_parts_name_themselves_and_count_their_archives() {
+        for (event, kind, detail, pct) in [
+            (
+                ExtractEvent::Particles { done: 1, total: 4 },
+                "Particles",
+                "Reading the game's effects off your disc… 25%",
+                25,
+            ),
+            (
+                ExtractEvent::Sprites { done: 0, total: 1 },
+                "Sprites",
+                "Reading chapter 1's menus off your disc… 0%",
+                0,
+            ),
+            (
+                ExtractEvent::Sounds {
+                    done: 34,
+                    total: 69,
+                },
+                "Sounds",
+                "Reading the game's sounds off your disc… 49%",
+                49,
+            ),
+            (
+                ExtractEvent::Interface {
+                    done: 176,
+                    total: 176,
+                },
+                "Interface",
+                "Reading the game's menus off your disc… 100%",
+                100,
+            ),
+        ] {
+            let status = step(&event);
+            assert_eq!(status.kind(), kind, "{event:?}");
+            let b = band(&status).unwrap();
+            assert_eq!(b.title, GETTING_READY);
+            assert_eq!(b.detail, detail);
+            assert_eq!((b.percent, b.code.as_deref()), (Some(pct), None));
+            assert_eq!(band_after(&status, QUIET_START / 2), None, "{kind}");
+            assert_eq!(band_after(&status, QUIET_START), Some(b));
+        }
+        // A part with nothing to read counts as done.
+        let none = step(&ExtractEvent::Interface { done: 0, total: 0 });
+        assert_eq!(band(&none).unwrap().percent, Some(100));
+    }
+
     #[test]
     fn an_unknown_dump_says_so_with_its_code_and_the_report() {
         let b = failed(Failure::UnknownDump {
@@ -1471,6 +1732,30 @@ mod tests {
         }
     }
 
+    /// AG.298: the extraction's thread reads back the class it asked for
+    /// (utility on macOS; elsewhere no class at all) and keeps its name.
+    #[test]
+    fn the_extraction_thread_runs_below_the_tv() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        spawn_extract_thread(move || {
+            let me = std::thread::current();
+            tx.send((guac_extract::qos::current(), me.name().map(str::to_owned)))
+                .unwrap();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let (qos, name) = rx.recv().unwrap();
+        let want = if cfg!(target_os = "macos") {
+            Qos::Utility
+        } else {
+            Qos::Unspecified
+        };
+        assert_eq!(qos, want);
+        assert!(EXTRACT_QOS.is_below_default());
+        assert_eq!(name.as_deref(), Some("extract"));
+    }
+
     #[test]
     fn the_test_known_dump_parses_and_joins_the_table() {
         let hash = "ab".repeat(32);
@@ -1694,6 +1979,10 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
                 "Models",
                 "Level",
                 "Scripts",
+                "Particles",
+                "Sprites",
+                "Sounds",
+                "Interface",
                 "Indexing",
                 "Converting"
             ]
@@ -1766,6 +2055,63 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             set.portrait(&jet_vac),
             Some(dir.join("portraits/000064-0000.png").as_path())
         );
+    }
+
+    /// AT.26: chapter 1 goes to the TV once the parts it loads with are in,
+    /// after the emitters and before the level's sprites, the sounds and the
+    /// interface read, so the level plays while they do; once only, and a
+    /// current extract sends it at once.
+    #[test]
+    fn chapter_1_is_handed_over_before_the_parts_nothing_draws_yet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        let known = known_for(&dump);
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        let extract = tmp.path().join("extract");
+        let (level, feed) = crate::level::level_channel();
+        let job = ExtractJob {
+            level: Some(level),
+            ..job(&extract, Some(ffmpeg))
+        };
+        // Each status with how many sources the TV's loader had been sent
+        // by then.
+        let seen = Mutex::new(Vec::new());
+        let ready = run(&dump, &job, &known, &|e| {
+            seen.lock().unwrap().push((step(&e).kind(), feed.0.len()));
+        })
+        .unwrap();
+        assert!(ready.ran);
+        let seen = seen.into_inner().unwrap();
+        let sent_at = |kind: &str| -> Vec<usize> {
+            seen.iter()
+                .filter(|(k, _)| *k == kind)
+                .map(|(_, n)| *n)
+                .collect()
+        };
+        for kind in ["Roster", "Models", "Level", "Scripts", "Particles"] {
+            let at = sent_at(kind);
+            assert!(
+                !at.is_empty() && at.iter().all(|n| *n == 0),
+                "{kind}: {seen:?}"
+            );
+        }
+        for kind in ["Sprites", "Sounds", "Interface", "Indexing", "Converting"] {
+            let at = sent_at(kind);
+            assert!(
+                !at.is_empty() && at.iter().all(|n| *n == 1),
+                "{kind}: {seen:?}"
+            );
+        }
+        let source = feed.0.try_recv().unwrap();
+        assert_eq!(source.level, guac_extract::levels::LEVELS[0]);
+        assert_eq!(source.dir, ready.library.dir);
+        assert!(feed.0.try_recv().is_err(), "sent once");
+        // The extract is current now: the next pick sends it before any
+        // stage.
+        let (result, seen) = run_all(&dump, &job, &known);
+        assert!(!result.unwrap().ran);
+        assert!(seen.iter().all(|s| s.kind() == "Checking"), "{seen:?}");
+        assert_eq!(feed.0.try_iter().count(), 1);
     }
 
     /// AE.4: at start, a current extract's roster lands with no pick; one
@@ -1863,8 +2209,18 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             }
         );
         assert!(
-            seen.iter()
-                .all(|s| ["Checking", "Roster", "Models", "Level", "Scripts"].contains(&s.kind())),
+            seen.iter().all(|s| [
+                "Checking",
+                "Roster",
+                "Models",
+                "Level",
+                "Scripts",
+                "Particles",
+                "Sprites",
+                "Sounds",
+                "Interface"
+            ]
+            .contains(&s.kind())),
             "{seen:?}"
         );
         // The roster and its portraits are there; the intros aren't.

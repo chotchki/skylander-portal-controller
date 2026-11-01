@@ -541,11 +541,11 @@ impl Playback {
                     "the decode thread stopped after {out} of {frames} frames"
                 )));
             }
-            let audio_done = match self.audio {
-                Audio::Sink(entity) => sinks.get(entity).map_or(true, |s| s.empty()),
-                _ => true,
+            let sink_empty = match self.audio {
+                Audio::Sink(entity) => Some(sinks.get(entity).map_or(true, |s| s.empty())),
+                _ => None,
             };
-            if audio_done {
+            if sound_done(muted, sink_empty) {
                 return Some(Over::Finished);
             }
         }
@@ -691,9 +691,31 @@ impl IntroShots<'_, '_> {
     }
 }
 
+/// Whether an intro whose every frame is out may end, by its sound: a muted
+/// one (`GUAC_MUTE`, dev builds only) ends on its video, whatever its sink
+/// says, since a muted sink drains as slowly as the Mac's output does
+/// (openspec AQ.167: the shut lid's speakers took 15.2 s to play 1.5 s, and
+/// the e2e's 2 s intro ended on the 2 s grace); an unmuted one once its sink
+/// is empty, or at once with no sink.
+fn sound_done(muted: bool, sink_empty: Option<bool>) -> bool {
+    muted || sink_empty.unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_muted_intro_ends_on_its_video_and_an_unmuted_one_on_its_sound() {
+        // Muted: the sink still playing doesn't hold it.
+        assert!(sound_done(true, Some(false)));
+        assert!(sound_done(true, Some(true)));
+        assert!(sound_done(true, None));
+        // Unmuted: held until the sink drains; no sink, nothing to wait on.
+        assert!(!sound_done(false, Some(false)));
+        assert!(sound_done(false, Some(true)));
+        assert!(sound_done(false, None));
+    }
 
     fn near(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
@@ -909,7 +931,12 @@ mod tests {
 
         /// Sound assets but no output device, as on a machine with none.
         fn tv_with_sound(dir: &Path, mp3: &[u8]) -> Tv {
-            let lib = library(dir, &[("eruptor", 100)]);
+            tv_with_sound_of(dir, mp3, 100)
+        }
+
+        /// [`tv_with_sound`] with an intro of `frames` at 25 fps.
+        fn tv_with_sound_of(dir: &Path, mp3: &[u8], frames: usize) -> Tv {
+            let lib = library(dir, &[("eruptor", frames)]);
             let audio = dir.join("audio/intro");
             std::fs::create_dir_all(&audio).unwrap();
             std::fs::write(audio.join("eruptor.mp3"), mp3).unwrap();
@@ -949,6 +976,48 @@ mod tests {
             tv.app.update();
             assert_eq!(tv.players(), 0, "the player outlived its sink's wait");
             assert!(tv.shot().intro.is_some());
+        }
+
+        /// AQ.167 through the player: with a sink that never drains (the
+        /// shut lid's speakers, at their extreme), a muted intro ends once
+        /// its 10 frames (0.4 s) are out and an unmuted one holds to the 2 s
+        /// grace past its end.
+        #[test]
+        fn a_muted_intro_ends_on_its_frames_while_its_sink_still_plays() {
+            for muted in [true, false] {
+                let tmp = tempfile::tempdir().unwrap();
+                let mut tv = tv_with_sound_of(tmp.path(), &super::silent_mp3(20), 10);
+                tv.app.world_mut().resource_mut::<IntroPlayer>().muted = muted;
+                tv.place(0, "000009-0000");
+                tv.until("a player", |s| {
+                    s.intro.as_ref().is_some_and(|i| i.audio == "starting")
+                });
+                // A sink whose endless silence nothing pulls: never empty.
+                let (sink, _queue) = rodio::Player::new();
+                let one = std::num::NonZero::new(1).unwrap();
+                sink.append(rodio::source::Zero::new(
+                    one,
+                    std::num::NonZero::new(44_100).unwrap(),
+                ));
+                let world = tv.app.world_mut();
+                let player = world
+                    .query_filtered::<Entity, With<AudioPlayer>>()
+                    .iter(world)
+                    .next()
+                    .unwrap();
+                world.entity_mut(player).insert(AudioSink::new(sink));
+                tv.until("its sink", |s| {
+                    s.intro.as_ref().is_some_and(|i| i.audio == "playing")
+                });
+                let playing = Instant::now();
+                tv.until("the end", |s| s.intro.is_none());
+                let took = playing.elapsed();
+                if muted {
+                    assert!(took < END_GRACE, "muted, ended {took:?} after its sink");
+                } else {
+                    assert!(took >= END_GRACE, "unmuted, ended {took:?} after its sink");
+                }
+            }
         }
 
         #[test]

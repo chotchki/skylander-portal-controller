@@ -7,7 +7,7 @@
 //! IGZ some `.arc`s hold). Release mode keeps the LZMA quick, and four
 //! threads share the archives:
 //!
-//! `cargo test -p guac-formats --release --test giants_sounds -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guac-formats --profile disc --test giants_sounds -- --ignored --nocapture --test-threads=1`
 //!
 //! `remuxed_banks_decode` also needs `GUAC_EXTRACT_DIR` (it writes its MP3s
 //! into a throwaway folder there and removes it) and ffprobe and ffmpeg

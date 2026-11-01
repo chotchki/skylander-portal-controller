@@ -6,7 +6,7 @@
 //! Ignored by default; they read `GUAC_GIANTS_DUMP` (process env, else
 //! `.env.dev`):
 //!
-//! `cargo test -p guacamole --release --test giants_init_chain -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_init_chain -- --ignored --nocapture --test-threads=1`
 //!
 //! What they hold the run to is the oracle's reads, never the disc's own
 //! literals: AH.4's live reads of AF.8's fresh state (level 213 at medium:

@@ -5,7 +5,7 @@
 //! triangles, its translation, bounds and materials).
 //! Ignored by default; it reads `GUAC_GIANTS_DUMP` like `giants_igz`:
 //!
-//! `cargo test -p guac-formats --release --test giants_collision -- --ignored --nocapture --test-threads 1`
+//! `cargo test -p guac-formats --profile disc --test giants_collision -- --ignored --nocapture --test-threads 1`
 
 mod common;
 

@@ -10,7 +10,7 @@
 //! writes under `GUAC_EXTRACT_DIR` (removed after), from the environment
 //! or the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_sounds -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_sounds -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -59,7 +59,7 @@ fn the_sounds_chapter_1_plays_extract_and_resolve() {
     let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
 
     println!("load average before the part: {}", load_average());
-    let s = sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let s = sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     println!(
         "  first run: {} archives, {} sounds, {} data infos, {} audio files; {:?} (audio {:?}) in {:.2} s; load average {}",
         s.archives,
@@ -203,7 +203,7 @@ fn the_sounds_chapter_1_plays_extract_and_resolve() {
     );
 
     // A second run finds the part whole and writes nothing.
-    let again = sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron).unwrap();
+    let again = sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     println!(
         "  second run: kept {}, {:?} in {:.2} s; load average {}",
         again.kept,

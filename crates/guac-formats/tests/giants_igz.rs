@@ -4,7 +4,7 @@
 //! fixup-kind census printed.
 //! Ignored by default; it reads `GUAC_GIANTS_DUMP` like `giants_iga`:
 //!
-//! `cargo test -p guac-formats --release --test giants_igz -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_igz -- --ignored --nocapture`
 
 mod common;
 

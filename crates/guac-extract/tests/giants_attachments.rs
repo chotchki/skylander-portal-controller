@@ -11,7 +11,7 @@
 //! (the sweep's run, the newest `BLUS30968/ae22-full-*` holding a
 //! `table.tsv`) from the environment or the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_attachments -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_attachments -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

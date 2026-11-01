@@ -1,6 +1,6 @@
 //! The fresh-figure attachment rule over every character archive on the
 //! Giants disc (openspec AE.23): `#[ignore]`d, reads `GUAC_GIANTS_DUMP`.
-//! Run: `cargo test -p guac-formats --release --test giants_attachments --
+//! Run: `cargo test -p guac-formats --profile disc --test giants_attachments --
 //! --ignored --nocapture`. The per-figure check against the oracle's sweep
 //! (AE.22) is guac-extract's, on the extracted IR.
 

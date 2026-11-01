@@ -22,7 +22,7 @@
 //! reads; without it the probe runs on the members it names (AG.182: the
 //! plain run of every RPCS3-free disc test passes):
 //!
-//! `cargo test -p guacamole --release --test giants_walkers -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_walkers -- --ignored --nocapture --test-threads=1`
 
 mod common;
 

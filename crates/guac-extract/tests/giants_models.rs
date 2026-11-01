@@ -13,7 +13,7 @@
 //! AE.5's tick. Ignored by default: it reads `GUAC_GIANTS_DUMP` from the
 //! environment or the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_models -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_models -- --ignored --nocapture`
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};

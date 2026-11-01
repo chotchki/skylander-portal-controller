@@ -7,7 +7,7 @@
 //! Ignored by default: it reads `GUAC_GIANTS_DUMP` from the environment or
 //! the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_levels -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_levels -- --ignored --nocapture`
 //!
 //! Lines start with a tag for grepping: `PART` (level, part, ok or FAIL,
 //! bytes, hash, reason), `LEVEL` (level, kind, parts passing, bytes, read

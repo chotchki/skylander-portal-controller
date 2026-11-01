@@ -5,7 +5,7 @@
 //! reaching the words and through the TV's map a profile's row. Ignored by
 //! default; they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
 //!
-//! `cargo test -p guacamole --release --test giants_figure -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_figure -- --ignored --nocapture --test-threads=1`
 
 mod common;
 

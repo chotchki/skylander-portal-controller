@@ -35,6 +35,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # this version in, so it adds no crate to the lock.
 png = "0.18"
 
+# The thread classes on macOS (openspec AG.298): `pthread_set_qos_class_self_np`
+# and the test's thread priority read, the version the tree already locks.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # The game-magic guard (tests/no_game_bytes.rs) inflates gzip and zstd heads
 # (RPCS3's `.rrc.gz` captures and `.SAVESTAT.zst` savestates) and builds

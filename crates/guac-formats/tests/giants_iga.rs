@@ -4,7 +4,7 @@
 //! `GUAC_IGA_SAMPLE` is how many LZMA entries to unpack, 200 by default or
 //! `all`. Release mode keeps the unpacking quick:
 //!
-//! `cargo test -p guac-formats --release --test giants_iga -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_iga -- --ignored --nocapture`
 
 mod common;
 

@@ -4382,6 +4382,7 @@ dependencies = [
  "guac-formats",
  "guac-ir",
  "guac-sound",
+ "libc",
  "png 0.18.1",
  "serde",
  "serde_json",

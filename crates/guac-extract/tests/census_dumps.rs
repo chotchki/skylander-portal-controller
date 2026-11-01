@@ -7,7 +7,7 @@
 //! high-entropy unknown file or IGA entry, an unprobed Bink, and on Giants any
 //! unknown entry or an archive or entry that didn't read:
 //!
-//! `cargo test -p guac-extract --release --test census_dumps -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test census_dumps -- --ignored --nocapture`
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

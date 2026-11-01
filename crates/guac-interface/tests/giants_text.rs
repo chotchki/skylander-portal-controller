@@ -23,7 +23,7 @@
 //! Ignored by default: it reads `GUAC_GIANTS_DUMP` from the environment or
 //! the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-interface --release --test giants_text -- --ignored --nocapture`
+//! `cargo test -p guac-interface --profile disc --test giants_text -- --ignored --nocapture`
 
 use std::path::Path;
 

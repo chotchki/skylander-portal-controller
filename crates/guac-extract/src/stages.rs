@@ -1,17 +1,21 @@
 //! The extraction's stages in guacamole's order (openspec AE.3, AE.6, AG.14,
-//! AG.15, AH.2 and AH.22, design decision 5). Identity is [`crate::open`],
-//! the caller's; then the roster with its portraits, then the progression
-//! tables (a part of their own: a resume reads them only when they're
-//! missing), then the character models with their textures, each with its
-//! hero side and its palette, and the 3D-UI rig, then the levels the build
-//! plays, part by part, then the fight's script entries and spawn models,
-//! the attacks' emitters and the sounds (AR.5, which need no ffmpeg), then
-//! ffmpeg is looked for and the intros are indexed and transcoded. The
-//! roster lands first so a phone can place
+//! AG.15, AH.2, AH.22 and AT.26, design decision 5). Identity is
+//! [`crate::open`], the caller's; then the roster with its portraits, then
+//! the progression tables (a part of their own: a resume reads them only
+//! when they're missing), then the character models with their textures,
+//! each with its hero side and its palette, and the 3D-UI rig, then the
+//! parts the TV reads of each level the build plays ([`levels::PLAYED`]),
+//! then the fight's script entries and spawn models and the attacks'
+//! emitters, and chapter 1 is handed over ([`Event::LevelReady`]); then
+//! what nothing on the TV draws yet: each level's sprites (until AT.9), the
+//! sounds (AR.5, which need no ffmpeg, until the TV plays them) and the
+//! interface (until AT.9); then ffmpeg is looked for and the intros are
+//! indexed and transcoded. The roster lands first so a phone can place
 //! figures while the rest runs, the models are announced as they finish
 //! ([`Event::ModelsReady`], AE.13) so the turntable draws while the level
-//! and the intros run, and the intros are the only thing a missing
-//! or unusable ffmpeg costs. A model that won't read is reported and its
+//! and the intros run, chapter 1 plays while the parts after it read, and
+//! the intros are the only thing a missing or unusable ffmpeg costs. A
+//! model that won't read is reported and its
 //! figures keep their portraits; a hero side that doesn't settle is reported
 //! and its model stays; a level part that won't read is reported and the
 //! other parts land; the others extract. Every file goes through the identity
@@ -70,6 +74,32 @@ pub enum Event {
     },
     /// `done` of `total` script parts written, kept or reported (AH.22).
     Scripts {
+        done: usize,
+        total: usize,
+    },
+    /// `done` of `total` archives' emitters read or kept (AH.87).
+    Particles {
+        done: usize,
+        total: usize,
+    },
+    /// Every part of chapter 1 the TV reads ([`levels::PLAYED`]) is in, and
+    /// the script and emitter parts it loads with it have been through
+    /// their stages (AT.26): the TV can load the level now, while the parts
+    /// nothing draws yet read. Not sent when a part it reads didn't.
+    LevelReady,
+    /// `done` of `total` levels' sprites parts written, kept or reported
+    /// (AT.8).
+    Sprites {
+        done: usize,
+        total: usize,
+    },
+    /// `done` of `total` archives' sounds read or kept (AR.5).
+    Sounds {
+        done: usize,
+        total: usize,
+    },
+    /// `done` of `total` archives' interface read or kept (AT.8).
+    Interface {
         done: usize,
         total: usize,
     },
@@ -255,8 +285,11 @@ pub struct Extracted {
     pub roster: RosterStage,
     pub progression: ProgressionStage,
     pub models: ModelStage,
+    /// The parts of each level the TV reads ([`levels::PLAYED`]).
     pub levels: LevelStage,
     pub scripts: ScriptStage,
+    /// Each level's sprites part (AT.8), read after chapter 1's hand-off.
+    pub sprites: LevelStage,
     /// The attacks' emitters (AH.87).
     pub particles: crate::particles::ParticleStage,
     /// The sounds chapter 1 can play (AR.5).
@@ -287,11 +320,17 @@ pub fn run(
     send(Event::ModelsReady {
         failed: models.failed.clone(),
     });
-    let levels = level_stage(dir, ir, send)?;
+    let names = &levels::FIRST_RUN;
+    let levels = levels_stage(dir, ir, names, &levels::PLAYED, &level_event, send)?;
     let scripts = script_stage(dir, ir, send)?;
-    let particles = crate::particles::particle_stage(dir, ir)?;
-    let sounds = crate::sounds::sound_stage(dir, &roster.roster, ir)?;
-    let interface = crate::interface::interface_stage(dir, ir)?;
+    let particles = crate::particles::particle_stage(dir, ir, send)?;
+    // Whole: every one of its played parts in, for every level.
+    if levels.levels == names.len() {
+        send(Event::LevelReady);
+    }
+    let sprites = levels_stage(dir, ir, names, &[levels::SPRITES], &sprite_event, send)?;
+    let sounds = crate::sounds::sound_stage(dir, &roster.roster, ir, send)?;
+    let interface = crate::interface::interface_stage(dir, ir, send)?;
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;
@@ -302,11 +341,22 @@ pub fn run(
         models,
         levels,
         scripts,
+        sprites,
         particles,
         sounds,
         interface,
         intros,
     })
+}
+
+/// The level stage's progress, as [`Event::Level`].
+fn level_event(done: usize, total: usize) -> Event {
+    Event::Level { done, total }
+}
+
+/// The sprites' progress, as [`Event::Sprites`].
+fn sprite_event(done: usize, total: usize) -> Event {
+    Event::Sprites { done, total }
 }
 
 /// The progression tables into `ir/progression.<ron|postcard>`, unless the
@@ -370,7 +420,14 @@ pub fn level_stage(
     ir: IrFormat,
     send: &(dyn Fn(Event) + Sync),
 ) -> Result<LevelStage> {
-    levels_stage(dir, ir, &levels::FIRST_RUN, send)
+    levels_stage(
+        dir,
+        ir,
+        &levels::FIRST_RUN,
+        &levels::PARTS,
+        &level_event,
+        send,
+    )
 }
 
 /// One level off the disc's list ([`levels::on_disc`]), by its archive's
@@ -392,14 +449,18 @@ pub fn extract_level(
             level: level.to_owned(),
         });
     }
-    levels_stage(dir, ir, &[level], send)
+    levels_stage(dir, ir, &[level], &levels::PARTS, &level_event, send)
 }
 
-/// [`level_stage`] over `names`.
+/// [`level_stage`] over `names`, each level's `parts` alone (in
+/// [`levels::PARTS`]' order), its progress sent through `event`;
+/// [`LevelStage::levels`] counts the levels with every one of `parts` in.
 fn levels_stage(
     dir: &mut IdentityDir,
     ir: IrFormat,
     names: &[&str],
+    parts: &[&str],
+    event: &dyn Fn(usize, usize) -> Event,
     send: &(dyn Fn(Event) + Sync),
 ) -> Result<LevelStage> {
     let started = Instant::now();
@@ -427,16 +488,16 @@ fn levels_stage(
         files: Files::default(),
         took: Duration::ZERO,
     };
-    let total = names.len() * levels::PARTS.len();
+    let total = names.len() * parts.len();
     let mut done = 0;
-    send(Event::Level { done, total });
+    send(event(done, total));
     // Every file counted, kept or written, and the textures the parts read
     // this run bind.
     let mut counted: HashSet<String> = HashSet::new();
     let mut read_textures: HashSet<String> = HashSet::new();
     for &level in names {
         let mut needed = Vec::new();
-        for part in levels::PARTS {
+        for &part in parts {
             if dir.level_part_done(level, part, &levels::part_path(ir, level, part))? {
                 let files = dir.manifest().levels[level].parts[part].clone();
                 // A texture two parts bind is one file, counted once.
@@ -451,7 +512,7 @@ fn levels_stage(
                 }
                 stage.parts_kept += 1;
                 done += 1;
-                send(Event::Level { done, total });
+                send(event(done, total));
             } else {
                 needed.push(part);
             }
@@ -501,7 +562,7 @@ fn levels_stage(
                     }
                 }
                 done += 1;
-                send(Event::Level { done, total });
+                send(event(done, total));
                 continue;
             }
             let mut props = None;
@@ -606,7 +667,7 @@ fn levels_stage(
                 }
             }
             done += 1;
-            send(Event::Level { done, total });
+            send(event(done, total));
         }
         if whole {
             stage.levels += 1;

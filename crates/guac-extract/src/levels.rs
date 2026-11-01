@@ -188,6 +188,13 @@ pub const SPRITES: &str = "sprites";
 pub const PARTS: [&str; 10] = [
     SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, SPRITES,
 ];
+/// The parts the TV reads when it loads a level: every part but the
+/// sprites, which nothing draws until the interface does (openspec AT.9), so
+/// a first run hands chapter 1 over once these are in and reads the sprites
+/// after (AT.26).
+pub const PLAYED: [&str; 9] = [
+    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES,
+];
 
 /// The script part's file, `levels/<archive>/script.igz`: raw, so the same
 /// in either IR format.

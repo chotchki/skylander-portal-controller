@@ -11,7 +11,7 @@
 //! `GUAC_GIANTS_DUMP` (process env, else `.env.dev`) and, for the probes'
 //! comparisons, AH.8's recordings under `GUAC_CAPTURE_DIR`:
 //!
-//! `cargo test -p guacamole --release --test giants_route -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_route -- --ignored --nocapture --test-threads=1`
 //!
 //! The route is driven, not replayed: AH.8's `input.ron` is what the
 //! oracle's closed loop held on the pad, and replayed open loop here

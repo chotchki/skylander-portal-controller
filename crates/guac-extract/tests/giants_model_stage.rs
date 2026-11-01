@@ -9,7 +9,7 @@
 //! under `GUAC_EXTRACT_DIR`, from the environment or the workspace's
 //! `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_model_stage -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_model_stage -- --ignored --nocapture`
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

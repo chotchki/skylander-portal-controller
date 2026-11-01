@@ -12,7 +12,7 @@
 //! `.env.dev`; the whole run needs ffmpeg (`GUAC_FFMPEG`, else where
 //! guac-extract looks):
 //!
-//! `cargo test -p guac-extract --release --test giants_fight_stage -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_fight_stage -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
