@@ -182,6 +182,10 @@ pub struct Model {
     /// `viewporttitlesafeinfo`'s margins: left, right, upper, lower. 0 until
     /// AT.10 reads the original's, as the value cells read today.
     pub title_safe: [i32; 4],
+    /// The root's width and height, what a sprite with no parent sprite
+    /// hangs on (the crate docs, Layout): `RT Viewport 0`'s 1280 by 720 in
+    /// the June savestate.
+    pub frame: [f32; 2],
 }
 
 impl Default for Model {
@@ -221,6 +225,7 @@ impl Model {
             fonts: Vec::new(),
             drawing: Vec::new(),
             title_safe: [0; 4],
+            frame: [1280.0, 720.0],
         }
     }
 

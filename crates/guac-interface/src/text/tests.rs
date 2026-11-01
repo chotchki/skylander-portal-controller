@@ -481,3 +481,53 @@ fn the_fit_takes_the_pass_that_wraps_into_the_lines_that_fit() {
     assert_eq!(out.scale, [0.5, 0.5]);
     assert_eq!(out.units, m.wrap(400.0, &text).0);
 }
+
+#[test]
+fn a_fit_takes_at_least_the_strings_own_lines() {
+    // Three source lines in a box two high: the first pass is for 3 lines,
+    // not the 2 that fit, and the height shrinks the three into the box.
+    let f = even_font();
+    let m = Metrics::new(&f);
+    let t = TextIn {
+        flags: flags::SIZED | flags::WRAPS | flags::FITS,
+        point_size: 0,
+        width: 300.0,
+        height: 164.0,
+    };
+    let out = layout(&m, &t, &u("aaa\naaa\naaa"));
+    let r = 164.0f32 / 246.0;
+    assert_eq!(out.scale, [r, r]);
+    assert_eq!(out.size, [300.0, 246.0 * r]);
+}
+
+#[test]
+fn a_wrapped_natural_height_counts_the_source_from_the_last_kept_line() {
+    // One line fits, but the source runs on past the kept line's line feed:
+    // two lines high.
+    let f = font(0.0, 0.0);
+    let m = Metrics::new(&f);
+    let t = TextIn {
+        flags: flags::SIZED | flags::WRAPS,
+        point_size: 0,
+        width: 1000.0,
+        height: 82.0,
+    };
+    let [w, h] = natural_size(&m, &t, &u("ab\ncd"));
+    assert_eq!(h, 2.0 * 82.0);
+    assert_eq!(w, m.string_width(&u("ab\ncd")));
+}
+
+#[test]
+fn a_baseline_spaces_the_lines() {
+    // −baseline 4: each line 86 apart, the last one's 4 not counted.
+    let mut f = font(0.0, 0.0);
+    f.base_line = -4.0;
+    let m = Metrics::new(&f);
+    assert_eq!(m.nb(), 4.0);
+    assert_eq!(m.lines_height(2), 2.0 * 86.0 - 4.0);
+    assert_eq!(m.lines_that_fit(168.0), 2);
+    assert_eq!(m.lines_that_fit(167.0), 1);
+    let g = glyphs(&m, f32::MAX, Justify::Left, &u("a\nb"));
+    assert_eq!(g[2].char, 'b' as u16);
+    assert_eq!(g[2].rect[1], 86.0);
+}

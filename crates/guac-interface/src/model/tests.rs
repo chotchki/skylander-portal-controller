@@ -863,6 +863,19 @@ fn a_text_measures_its_filled_string_in_its_font() {
 }
 
 #[test]
+fn natural_size_reads_the_sixteenth_below() {
+    // 65 font pixels at 26 points is 20.6098 units, 329.76 sixteenths: read
+    // as 329, so a width written back from it draws a hair narrower (AC.13's
+    // gold `0`, AT.6).
+    let (mut m, a, _) = number_text();
+    m.set(a, si("point size"), Value::Int(26)).unwrap();
+    let Value::Screen(n) = read(&m, a, si("natural size")) else {
+        unreachable!()
+    };
+    assert_eq!(n >> 16, 329);
+}
+
+#[test]
 fn a_text_holding_an_object_shows_its_name() {
     let (mut m, a, f) = number_text();
     struct Named;

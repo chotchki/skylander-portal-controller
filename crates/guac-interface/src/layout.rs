@@ -148,8 +148,34 @@ impl Model {
         frame
     }
 
-    /// One sprite's layout (0xBA240) under its parent's.
+    /// The root a sprite with no parent sprite hangs on (the crate docs,
+    /// Layout): a container the frame's size at 100 %, its place (0, 0) at
+    /// depth 10,000 (20,000 × ½: the one sprite with no parent at all).
+    fn root(&self) -> Placed {
+        Placed {
+            point: [0.0, 20_000.0 * 0.5, 0.0],
+            scale: [1.0; 3],
+            size: self.frame,
+            priority: 0.0,
+            depth: 0.0,
+            color: [0x80, 0x80, 0x80, 0xFF],
+            replace: [0x80, 0x80, 0x80, 0],
+            drawn: true,
+            dirty: false,
+            text: None,
+        }
+    }
+
+    /// One sprite's layout (0xBA240) under its parent's, or the root's.
     fn place(&self, id: SpriteId, parent: Option<&Placed>, world: &dyn World) -> Placed {
+        let root;
+        let p = match parent {
+            Some(p) => p,
+            None => {
+                root = self.root();
+                &root
+            }
+        };
         let s = self.sprite(id);
         let k = s.kind();
         let z = if matches!(k, kind::MODEL | kind::CONTAINER | kind::PARTICLES) {
@@ -163,19 +189,13 @@ impl Model {
             s.z_depth * 25.0,
             f32::from(s.location[1]) * 0.0625,
         ];
-        let (scale, priority, depth, alpha) = match parent {
-            None => (own, s.priority, s.z_depth, 255.0),
-            Some(p) => (
-                [
-                    own[0] * p.scale[0],
-                    own[1] * p.scale[1],
-                    own[2] * p.scale[2],
-                ],
-                s.priority + p.priority,
-                s.z_depth + p.depth,
-                f32::from(p.color[3]),
-            ),
-        };
+        let scale = [
+            own[0] * p.scale[0],
+            own[1] * p.scale[1],
+            own[2] * p.scale[2],
+        ];
+        let (priority, depth) = (s.priority + p.priority, s.z_depth + p.depth);
+        let alpha = f32::from(p.color[3]);
         let mut color = s.color;
         color[3] = (f32::from(s.color[3]) * (alpha / 255.0)) as u8;
         let text = self.glyph_layout(id, world);
@@ -186,22 +206,18 @@ impl Model {
                 [w, h]
             }
         };
-        match parent {
-            None => point[1] = 20_000.0 * 0.5,
-            Some(p) => {
-                for (v, by) in point.iter_mut().zip(p.scale) {
-                    *v *= by;
-                }
-                let parent_kind = s.parent.map_or(kind::CONTAINER, |q| self.sprite(q).kind());
-                if !unanchored(parent_kind) {
-                    let (col, row) = anchor(props::ALIGN_TO_PARENT.get(s.properties));
-                    point[0] += col * 0.5 * (p.size[0] * p.scale[0]);
-                    point[2] += row * 0.5 * (p.size[1] * p.scale[2]);
-                }
-                for (v, at) in point.iter_mut().zip(p.point) {
-                    *v += at;
-                }
-            }
+        for (v, by) in point.iter_mut().zip(p.scale) {
+            *v *= by;
+        }
+        // The root is a container.
+        let parent_kind = s.parent.map_or(kind::CONTAINER, |q| self.sprite(q).kind());
+        if !unanchored(parent_kind) {
+            let (col, row) = anchor(props::ALIGN_TO_PARENT.get(s.properties));
+            point[0] += col * 0.5 * (p.size[0] * p.scale[0]);
+            point[2] += row * 0.5 * (p.size[1] * p.scale[2]);
+        }
+        for (v, at) in point.iter_mut().zip(p.point) {
+            *v += at;
         }
         if !unanchored(k) {
             let (col, row) = anchor(props::ALIGNMENT.get(s.properties));

@@ -10,6 +10,16 @@
 //! The frame's rectangles are AT.3's measurements off the captures
 //! (`at-interface/` research, `out/at3.json`), numbers only.
 //!
+//! What that checks: each glyph's width and height (one x and one y scale a
+//! run) and, in the 9 runs of more than one glyph, the 30 steps between
+//! neighbours; not where any run or its first glyph stands, which the
+//! translation takes (justification, the glyph's offset, the sprite's place:
+//! AT.24's). `contemp`'s padding and kern amount are 0, so no kern is
+//! exercised here. The squeezes AT.3 measured (`natural size` truncated to a
+//! sixteenth and written back as the width) move the gold `0` 0.043 px and
+//! `Level` 0.025 px against the same layout unsqueezed, inside 0.5 px, so the
+//! worst is held under 0.001 px as well (the frame's numbers are to 0.0001).
+//!
 //! Ignored by default: it reads `GUAC_GIANTS_DUMP` from the environment or
 //! the workspace's `.env.dev`:
 //!
@@ -331,15 +341,17 @@ fn ac13s_43_glyphs_lay_out_again_from_their_strings() {
     let started = std::time::Instant::now();
     let ir = global_bld();
     assert_eq!(MEMBERS.len(), 64);
-    let font = &ir.fonts[0];
-    println!(
-        "font {:?}: {} glyphs, height {}, padding {}, kern {}",
-        font.source,
-        font.glyphs.len(),
-        font.height,
-        font.char_padding,
-        font.kern_amount
-    );
+    for font in &ir.fonts {
+        println!(
+            "font {:?}: {} glyphs, height {}, baseline {}, padding {}, kern {}",
+            font.source,
+            font.glyphs.len(),
+            font.height,
+            font.base_line,
+            font.char_padding,
+            font.kern_amount
+        );
+    }
     // The disc's wrap flag never stands without the fit flag (the crate
     // docs' Hypothesis on that path).
     let wraps_alone = ir
@@ -427,5 +439,7 @@ fn ac13s_43_glyphs_lay_out_again_from_their_strings() {
     );
     assert_eq!(glyphs, 43);
     assert_eq!(within, 43, "worst {:.4} px at {}", worst.0, worst.1);
+    // The squeezes are a few hundredths of a pixel: held here, not by 0.5.
+    assert!(worst.0 < 0.001, "worst {:.4} px at {}", worst.0, worst.1);
     assert_eq!(wraps_alone, 0);
 }

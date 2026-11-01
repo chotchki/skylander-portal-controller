@@ -482,7 +482,11 @@
 //! scale stays 1.5) centred in it at frame (64, 36); so one
 //! unit is 1.5 frame pixels on each axis, from the frame's top-left, offset
 //! by (64, 36) for a sprite in the UI or gameplay container. A sprite with no
-//! parent draws on the root, in frame pixels.
+//! parent hangs on the root, `RT Viewport 0` (a 1280 by 720 container at
+//! 100 % standing at (0, 0)), as any child hangs, by its `align to parent`:
+//! so it draws in frame pixels from that anchor of the frame (the
+//! savestate's four corner shades and four flash squares stand where that
+//! puts them, 0 px off).
 //!
 //! **The updater** (`tfbSpriteUpdateGame`, 0xBCB0C, eighth of the frame's
 //! twelve updaters): once a frame it walks `active` in order. A sprite's
@@ -526,9 +530,10 @@
 //!   ½ its computed width and row × ½ its height, at its scale) is turned by
 //!   its orientation and taken off both axes (0xBA82C to 0xBA92C), so that
 //!   point of it sits on the point above;
-//! - with no parent sprite its depth is 10,000 (20,000 × ½) and its point
-//!   is in frame pixels; with one, its `Z Depth` × 25 at the parent's z scale
-//!   plus the parent's.
+//! - its depth is its `Z Depth` × 25 at the parent's z scale plus the
+//!   parent's; the root's is 10,000 (20,000 × ½, taken only by a sprite with
+//!   no parent at all, 0xBAB70), so a sprite on the root stands at 10,000
+//!   plus its own.
 //!
 //! What it draws (the draw list): art its image over its size at its scale
 //! from that top-left, texture key and UV box with it; text its glyphs at
