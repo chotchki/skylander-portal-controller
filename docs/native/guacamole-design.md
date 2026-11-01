@@ -2162,7 +2162,12 @@ draw yet is left out by name rather than drawn wrong: bit 6 by its shader key, a
 texture isn't DXT5 by its KTX2's format (the hub's card-table felt is DXT1; every normal map chapter 1 binds is
 DXT5). No recording of any level but chapter 1 and the title exists to compare with; what the three lack on their
 own shots: level 200's sky dome drawn in place leaves black where its camera stands past it (AS.45), and hub
-stage 1 holds no sky at all (AS.46).
+stage 1 holds no sky at all (AS.46). The header stays up through the load, its parts read, handed to the
+graphics card, then its keys compiled (AS.14): a level's census is the keys its load reads off its own parts,
+the level's scene switches being the same everywhere (so a hero's, a creature's, a clone's and a particle's keys
+are the census's in any level), and the three compile 45, 19 and 28 pipelines under it and none after they
+show. Leaving a level takes its entities, solids and assets down as the next comes up, the GPU's share back to
+the byte, but malloc's live bytes keep about 6-8 MB a round trip (AS.16, open).
 
 What every other level's scripts need from the VM is measured by guac-script's `giants_levels`: each level
 linked with `bootstrap.bld`, `global.bld` and `init_setup.bld` and run strict on a host that keeps every
