@@ -4,14 +4,16 @@
 //! extract made before them) and read again alone. Checked: `global.bld`'s
 //! templates, strings and font, `bootstrap.bld`'s, the character and menu
 //! archives' templates, the menus' strings, chapter 1's templates and
-//! strings, every texture the IR names in the extract. Printed: each run's
-//! time, files and bytes with the load average. Ignored by default: it
+//! strings, every texture the IR names in the extract, and every string's
+//! settings beside its text (AT.27): each `@` string counted by its flags
+//! and digits. Printed: each run's time, files and bytes with the load
+//! average. Ignored by default: it
 //! reads `GUAC_GIANTS_DUMP` and writes under `GUAC_EXTRACT_DIR` (removed
 //! after), from the environment or the workspace's `.env.dev`:
 //!
 //! `cargo test -p guac-extract --profile disc --test giants_interface -- --ignored --nocapture`
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -105,7 +107,7 @@ fn the_interface_extracts_and_resumes_alone() {
         lv.took.as_secs_f64(),
         load_average()
     );
-    let sprites = decode(&opened.dir, &IR.level_path(LEVEL, levels::SPRITES));
+    let sprites = decode(&opened.dir, &levels::part_path(IR, LEVEL, levels::SPRITES));
     println!(
         "  level 213: {} templates, {} strings, {} fonts, {} textures, refused {:?}",
         sprites.templates.len(),
@@ -159,6 +161,35 @@ fn the_interface_extracts_and_resumes_alone() {
     assert_eq!(global.strings.len(), 906);
     assert_eq!(global.fonts.len(), 1);
     assert_eq!(global.fonts[0].glyphs.len(), 178);
+    // Each template's two matrices (AT.25): the corner shades turn by
+    // their initial matrices' depth turn, as the June savestate's do.
+    let mut turned = 0usize;
+    for t in &global.templates {
+        if t.init_matrix.rotation != [0.0; 3] || t.matrix.rotation != [0.0; 3] {
+            turned += 1;
+        }
+        if t.name.starts_with("GameplayOverlay_") {
+            println!(
+                "    {}: initial {:?} {:?}, current {:?} {:?}",
+                t.name,
+                t.init_matrix.position,
+                t.init_matrix.rotation,
+                t.matrix.position,
+                t.matrix.rotation
+            );
+        }
+    }
+    println!("  global.bld: {turned} templates turned by a matrix");
+    assert_eq!(turned, 21);
+    let shade = |n: &str| {
+        let t = global.templates.iter().find(|t| t.name == n).unwrap();
+        assert_eq!(t.matrix, Default::default(), "{n}: current, the file's");
+        t.init_matrix.rotation
+    };
+    assert_eq!(shade("GameplayOverlay_BL"), [0.0, 90.0, 0.0]);
+    assert_eq!(shade("GameplayOverlay_BR"), [0.0, 180.00078, 0.0]);
+    assert_eq!(shade("GameplayOverlay_UL"), [0.0; 3]);
+    assert_eq!(shade("GameplayOverlay_UR"), [0.0, 270.0, 0.0]);
     let bootstrap = read("permanent/bootstrap.bld");
     assert_eq!(bootstrap.templates.len(), 2);
     assert_eq!(bootstrap.fonts.len(), 1);
@@ -205,6 +236,109 @@ fn the_interface_extracts_and_resumes_alone() {
     for t in &part_textures {
         assert!(opened.dir.output_done(t).unwrap(), "{t}");
     }
+
+    // Every string's settings beside its text (AT.27), over every archive
+    // the two parts read: the `@` strings by flags and digits, the strings
+    // whose flags say a number or a time, and any flag bits past those.
+    let mut irs: Vec<(String, Interface)> = archives.iter().map(|a| (a.clone(), read(a))).collect();
+    irs.push((format!("level/{LEVEL}.bld"), sprites.clone()));
+    let (mut strings, mut at, mut flagged, mut flagged_without_at) =
+        (0usize, 0usize, 0usize, 0usize);
+    let mut by_settings: BTreeMap<(i32, i32, i32), usize> = BTreeMap::new();
+    let mut flags_seen: BTreeSet<i32> = BTreeSet::new();
+    let mut unpacked = Vec::new();
+    for (a, ir) in &irs {
+        strings += ir.strings.len();
+        for st in &ir.strings {
+            flags_seen.insert(st.flags);
+            let has_at = st.text.contains('@');
+            let number = st.flags & (0x800 | 0x400) != 0;
+            if has_at {
+                at += 1;
+                *by_settings
+                    .entry((st.flags, st.integer_digits, st.decimal_digits))
+                    .or_default() += 1;
+            }
+            if number {
+                flagged += 1;
+                if !has_at {
+                    flagged_without_at += 1;
+                    if flagged_without_at <= 5 {
+                        println!(
+                            "    flagged without an @: {a}: {:?} {:#x}",
+                            st.text, st.flags
+                        );
+                    }
+                }
+            }
+        }
+        if ir.strings.is_empty() && ir.templates.iter().any(|t| t.string.is_some()) {
+            unpacked.push(a.clone());
+        }
+    }
+    println!(
+        "  strings: {strings} in {} archives, {at} with an @, {flagged} flagged a number or a time ({flagged_without_at} of them without an @); flags seen {:x?}",
+        irs.len(),
+        flags_seen
+    );
+    for ((flags, int, dec), n) in &by_settings {
+        println!("    @ strings with flags {flags:#06x}, {int} integer digits, {dec} decimal: {n}");
+    }
+    println!("  archives whose templates name strings and that hold none: {unpacked:?}");
+
+    // The templates holding flags bit 21 (AT.29): no member writes the bit,
+    // so a sprite holds it only as its template does; a drawn container
+    // with it joins the frame's sprite list.
+    let mut bit21: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut bit21_containers: BTreeMap<String, usize> = BTreeMap::new();
+    for (a, ir) in &irs {
+        for t in &ir.templates {
+            if t.flags & (1 << 21) == 0 {
+                continue;
+            }
+            let kind = match &t.content {
+                Content::Container => "container",
+                Content::Image(_) | Content::Movie(_) => "art",
+                Content::Text(_) => "text",
+                Content::Model(_) => "model",
+                Content::Emitter(_) => "particles",
+                Content::Empty(_) => "empty",
+                Content::Imported(..) => "imported",
+            };
+            *bit21.entry(kind).or_default() += 1;
+            if kind == "container" {
+                *bit21_containers
+                    .entry(format!("{a}: {}", t.name))
+                    .or_default() += 1;
+            }
+        }
+    }
+    println!("  flags bit 21 by kind: {bit21:?}");
+    for (n, c) in bit21_containers.iter().take(20) {
+        println!("    container with bit 21: {n} x{c}");
+    }
+    assert_eq!(
+        strings,
+        s.strings + sprites.strings.len(),
+        "every string the part counted"
+    );
+    // The disc's (AT.27): 4,146 strings, the 103 with an `@` each flagged
+    // *has an `@`* (0x800), five of them a time too (0x400), none with
+    // commas; no string flagged a number or a time without an `@`.
+    assert_eq!((strings, irs.len(), at, flagged), (4_146, 177, 103, 103));
+    assert_eq!(flagged_without_at, 0);
+    assert_eq!(flags_seen, BTreeSet::from([0, 0x800, 0xC00]));
+    assert_eq!(
+        by_settings,
+        BTreeMap::from([
+            ((0x800, 0, 0), 96),
+            ((0x800, 0, 2), 2),
+            ((0x800, 0, 3), 2),
+            ((0xC00, 3, 1), 1),
+            ((0xC00, 4, 0), 2),
+        ])
+    );
+    assert!(unpacked.is_empty(), "{unpacked:?}");
 
     // An extract made before the parts: both records gone, everything else
     // as it stands. The next start reads the sprites part and the interface
@@ -262,15 +396,22 @@ fn the_parts_first_run_on_an_extract_made_before_them() {
         );
         return;
     };
-    if manifest["parts"].get(PART).is_some() {
-        println!("{} holds the interface part already", existing.display());
-        return;
-    }
     let ir = if existing.join("ir/roster.ron").is_file() {
         IrFormat::Ron
     } else {
         IrFormat::Postcard
     };
+    // An extract holding the part in this record's shape has nothing to
+    // read; one holding AT.8's (its files without the shape in their names)
+    // reads it again (AT.27).
+    let global = interface::path(ir, "permanent/global.bld");
+    if manifest["parts"][PART]
+        .as_array()
+        .is_some_and(|files| files.iter().any(|f| *f == global.as_str()))
+    {
+        println!("{} holds the interface part already", existing.display());
+        return;
+    }
     let outputs = manifest["outputs"].as_array().map_or(0, Vec::len);
     let tmp = tempfile::Builder::new()
         .prefix("at8-existing-")

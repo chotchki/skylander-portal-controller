@@ -334,6 +334,11 @@ fn every_archives_interface_reads() {
     let mut empty: BTreeMap<String, usize> = BTreeMap::new();
     let mut keys: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut fonts = Vec::new();
+    // Every template holding flags bit 21, by kind (AT.29: a drawn
+    // container with it joins the frame's sprite list), and every string's
+    // settings read (AT.27).
+    let mut bit21: BTreeMap<String, usize> = BTreeMap::new();
+    let mut strings = 0usize;
     for name in names {
         let Some(bytes) = level_bld(&root, &name) else {
             continue;
@@ -354,6 +359,10 @@ fn every_archives_interface_reads() {
         };
         for f in &ui.fonts {
             fonts.push((name.clone(), f.height, f.glyphs.len()));
+        }
+        strings += ui.strings.len();
+        for t in ui.templates.iter().filter(|t| t.flags & (1 << 21) != 0) {
+            *bit21.entry(format!("{:?}", t.bits.kind())).or_default() += 1;
         }
         if ui.templates.is_empty() {
             continue;
@@ -407,11 +416,17 @@ fn every_archives_interface_reads() {
     println!("global.bld {global_kinds:?}");
     println!("imported contexts {imported:?}; empty by kind {empty:?}");
     println!("fonts {fonts:?}");
+    println!("strings' settings read: {strings}; templates with flags bit 21 by kind: {bit21:?}");
     for f in failures.iter().take(40) {
         println!("FAIL {f}");
     }
     assert!(failures.is_empty(), "{} failures", failures.len());
     assert_eq!((templates, files_with), (12_275, 503));
+    // AT.29: no template holds flags bit 21, so no container joins the
+    // frame's sprite list and its quad stays unmodelled; every string's
+    // settings read (AT.27).
+    assert!(bit21.is_empty(), "{bit21:?}");
+    assert_eq!(strings, 26_260);
     assert_eq!(character, (75, 1_970));
     assert_eq!(menus, (16, 887));
     assert_eq!(

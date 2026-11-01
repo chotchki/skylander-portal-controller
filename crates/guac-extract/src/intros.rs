@@ -412,6 +412,14 @@ impl IrFormat {
         }
     }
 
+    /// The model stage's record (AT.30, [`crate::models::StageRecord`]).
+    pub fn model_record_path(self) -> &'static str {
+        match self {
+            Self::Ron => "ir/models.ron",
+            Self::Postcard => "ir/models.postcard",
+        }
+    }
+
     /// The 3D-UI rig's file (AE.6).
     pub fn rig_path(self) -> &'static str {
         match self {

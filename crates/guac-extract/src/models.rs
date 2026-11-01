@@ -73,6 +73,33 @@ pub const PALETTES: &str = "palettes";
 pub const NODE_DIR: &str = "nodes";
 /// The attach nodes' part in the manifest, recorded as the palettes' is.
 pub const NODES: &str = "nodes";
+/// The model stage's own part (openspec AT.30): every model, hero side,
+/// texture and the rig it wrote or kept, and its [`StageRecord`], recorded
+/// once the stage has been through every model, so a start that holds it
+/// (and the palettes and nodes) keeps them all without opening an archive.
+pub const PART: &str = "models";
+
+/// What the model stage did, written with its files (`ir/models.<ron|postcard>`)
+/// so a start that keeps the part reports the same models, failures and
+/// counts without reading the dump (openspec AT.30): the turntable's shelf
+/// takes the failures (AE.13).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StageRecord {
+    /// The character load files the stage went through, in order: a start
+    /// whose roster names others reads the models again.
+    pub loads: Vec<String>,
+    pub models: usize,
+    /// Each model (or the rig) that didn't read: its load file and why.
+    pub failed: Vec<(String, String)>,
+    pub heroes: usize,
+    /// Each hero side that didn't settle: its load file and why.
+    pub unsettled: Vec<(String, String)>,
+    pub textures: usize,
+    pub binds: usize,
+    /// The palettes' counts: palettes, slots holding a clip, a network, or
+    /// refused.
+    pub palettes: [usize; 4],
+}
 /// Each gait's slot in the animation set ([`guac_formats::model`]'s).
 pub const GAITS: [(Gait, usize); 5] = [
     (Gait::Walk, fmodel::WALK_SLOT),

@@ -39,6 +39,16 @@ fn one_template_of_each_kind_reads_with_what_it_draws() {
         ([0x80, 0x80, 1, 0xFF], [0x80, 0x80, 0x80, 1])
     );
     assert_eq!((t(0).num_value, t(0).depth), (3, 100.0));
+    // Its two matrices (AT.25), each a place and three turns.
+    assert_eq!(
+        (t(0).init_matrix.position, t(0).init_matrix.rotation),
+        ([1.0, 1.0, 2.0], [0.0, 90.0, 0.0])
+    );
+    assert_eq!(
+        (t(0).matrix.position, t(0).matrix.rotation),
+        ([3.0, 0.0, 4.0], [0.0, 45.0, 0.0])
+    );
+    assert_eq!(t(2).init_matrix.rotation, [0.0, 270.0, 0.0], "n = 3");
 
     assert_eq!(
         t(1).content,
@@ -307,4 +317,45 @@ fn a_string_ref_to_another_type_is_refused() {
     let igz = Igz::parse(&bytes).unwrap();
     let e = Interface::read(&igz).unwrap_err();
     assert_eq!(e.field, "_stringInfo");
+}
+
+#[test]
+fn each_strings_settings_read_in_the_order_its_keys_take() {
+    let s = sample();
+    let igz = Igz::parse(&s.bytes).unwrap();
+    let ui = Interface::read(&igz).unwrap();
+    assert_eq!(
+        ui.strings,
+        vec![
+            Settings {
+                flags: 0x400,
+                integer_digits: 4,
+                decimal_digits: 0,
+            },
+            Settings {
+                flags: 0x2800,
+                integer_digits: 5,
+                decimal_digits: 1,
+            },
+        ]
+    );
+    // The text template's key is the second, and so are its settings.
+    let Some(TextKey::Local(n)) = ui.templates[4].string else {
+        panic!("{:?}", ui.templates[4].string);
+    };
+    assert_eq!(ui.strings[n].flags, 0x2800);
+}
+
+#[test]
+fn a_string_of_another_shape_is_refused() {
+    let mut b = IgzBuilder::new();
+    b.object(0, "StringInfo", 0x24);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let e = Interface::read(&igz).unwrap_err();
+    assert_eq!(
+        (e.field, &e.kind),
+        ("MTSZ", &ErrorKind::Unsupported { value: 0x24 }),
+        "its size check's: {e}"
+    );
 }

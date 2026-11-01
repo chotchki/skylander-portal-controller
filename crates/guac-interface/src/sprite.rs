@@ -1,7 +1,7 @@
 //! A sprite's own fields (the crate docs, The sprite) and the bits of its
 //! three words, as AT.1 and AT.4 read them.
 
-use guac_ir::interface::{Content, Template};
+use guac_ir::interface::{Content, Matrix, Template};
 use guac_script::Value;
 
 /// A sprite in a [`crate::Model`]: its place in the model's list.
@@ -69,8 +69,15 @@ pub mod flags {
     /// Bits 10-13, the text's string flags.
     pub const STRING: u32 = 0xF << 10;
     pub const POINT_SIZE_SET: u32 = 1 << 17;
+    /// Bit 21: a drawn container joins the frame's sprite list (AT.29).
+    pub const DRAWN_CONTAINER: u32 = 1 << 21;
     pub const FLIP: Bits = Bits::new(18, 2);
     pub const CLIPPING: u32 = 1 << 25;
+    /// Bit 26: an art sprite draws its cut-out blends plain (the crate
+    /// docs, Colour and blends) and hands bits 27-29 to the program.
+    pub const PLAIN_BLEND: u32 = 1 << 26;
+    /// Bits 27-29: the fragment program's mode under bit 26.
+    pub const PROGRAM_MODE: Bits = Bits::new(27, 3);
 }
 
 /// The placement's own flags word.
@@ -113,6 +120,17 @@ pub struct Sprite {
     pub placement: u32,
     pub z_depth: f32,
     pub priority: f32,
+    /// `_initMatrix`: where it was placed (the crate docs, The sprite).
+    pub init_matrix: Matrix,
+    /// `_currentMatrix`: where it stands; each layout writes its top-left
+    /// into the place.
+    pub matrix: Matrix,
+    /// Its computed scale (x, depth, y) as its last layout left it, `None`
+    /// before its first (what `screen location` scales its offset by).
+    pub computed_scale: Option<[f32; 3]>,
+    /// The ID `reset` puts back: the one it held before the first write to
+    /// `ID` (its reset template's).
+    pub reset_id: Option<i32>,
     /// Width, height, depth.
     pub size: [f32; 3],
     /// Percent per axis.
@@ -153,6 +171,10 @@ impl Sprite {
             placement: 0,
             z_depth: t.z_depth,
             priority: t.priority,
+            init_matrix: t.init_matrix,
+            matrix: t.matrix,
+            computed_scale: None,
+            reset_id: None,
             size: [t.width, t.height, t.depth],
             scale: t.scale,
             color: t.color,
@@ -170,11 +192,16 @@ impl Sprite {
     }
 
     /// A clone of `self`: every field copied, awake, hung on nothing, holding
-    /// nothing.
+    /// nothing; its initial matrix `self`'s current one, and its current one
+    /// that, as its waking copies it (0x69D7C, 0x69508; the spawn's `at` and
+    /// facing are the host's).
     pub fn clone_of(&self, source: SpriteId) -> Self {
         Sprite {
             state: State::Awake,
             cloned_from: Source::Sprite(source),
+            init_matrix: self.matrix,
+            computed_scale: None,
+            reset_id: None,
             placement: self.placement & !placement::ATTACHED,
             parent: None,
             children: Vec::new(),

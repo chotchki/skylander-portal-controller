@@ -40,10 +40,33 @@
 //!   layout (bit 10 *a time*, bit 11 *has an `@`*, bit 13 *commas*; bit 12 is
 //!   read by the number fill, 0x9C858, and set by nothing read); bit 17
 //!   *point size set* (a positive point size written); bits 18-19 `texture
-//!   flip`; bit 25 `clipping`. Bits 21, 24, 26 and 27-29 are the updater's
-//!   and the art's (**Hypothesis**: what they do isn't read, AT.28).
+//!   flip`; bit 25 `clipping`. Read for AT.28: bit 5 makes art tile (the
+//!   geometry build sets its texture's wrap from it, 0xB66BC, and the draw
+//!   scales its UVs by the image's desired size); the layout clears bit 21
+//!   on its kind's copy of the word when the sprite has no parent at all
+//!   (the frame's root alone) and sets bit 24 there when it hangs on a
+//!   model's node (0xBA240), the updater reading bit 21 (AT.29) and the
+//!   model kind's draw turning one not hung on a node by a fixed matrix
+//!   (0x8A1F90, at 0x334FC); bit 26 and bits 27-29 are copied into the art
+//!   kind's word (0xB64BC), and an art sprite with bit 26 draws its cut-out
+//!   blends plain (Colour and blends) and hands bits 27-29 to the fragment
+//!   program's mode (the render context's bits 4-6, 0x3A9EE0;
+//!   **Hypothesis**: a mask channel, the program's use unread, AT.24 or
+//!   AT.13 when a frame draws one). Bit 25 (`clipping`) is read by its own
+//!   handlers alone: no draw, layout or kind tests it (AT.28's search of the
+//!   EBOOT for every test of the bit), so it clips nothing.
 //! - **Depths**: `Z Depth` and `priority`, floats the registry ranges at
 //!   ±10,000.
+//! - **Matrices**, the placement's two (AT.25): `_initMatrix`, where it was
+//!   placed, and `_currentMatrix`, where it stands, each a place (x, depth,
+//!   y) and three turns in degrees about those axes in that order (0x113688
+//!   makes the matrix: rows x, depth, y and the place). Waking a sprite
+//!   copies the first into the second (0x69508). A clone's first is its
+//!   source's second, its place the spawn's `at` and its facing the
+//!   spawn's (0x69D7C), and its waking copies that in. Every layout writes
+//!   the sprite's top-left on screen into the second's place (0xBA240) and
+//!   leaves its turns. The four corner shades of the June savestate turn by
+//!   their matrices' depth turn (90, 180, 0 and 270), their templates'.
 //! - **Size**: `width`, `height` and `depth`, floats in interface units.
 //! - **Scale**: three floats in percent (100 is 1), x, y, z; read-only to the
 //!   scripts (no setter is registered).
@@ -96,10 +119,15 @@
 //! - `scale` (scale; get 0xB3430): the scale vector, read-only.
 //! - `location` (screen; get 0xB3444, set 0xB3458): the two 12.4 halves; a
 //!   write sets both.
-//! - `screen location` (screen; get 0xB3480): read-only: the sprite's own
-//!   alignment point on screen in 12.4: its alignment's column times half its
-//!   width and row times half its height, at its computed scale, carried by
-//!   its place on screen.
+//! - `screen location` (screen; get 0xB3480, read in the disassembly for
+//!   AT.25): read-only: the sprite's own alignment point on screen in 12.4,
+//!   off its last layout: its alignment's column × ½ × its stored width and
+//!   row × ½ × its stored height (each in single precision, the depth 0), at
+//!   its computed scale when it has been laid out (its kind's transform, x
+//!   and y), turned and carried by its current matrix (its top-left), each
+//!   half × 16 truncated toward zero into 16 bits. On a sprite turned by
+//!   nothing that is the point it hangs from; on one never laid out, its
+//!   current matrix's place plus the unscaled offset.
 //! - `screen width`, `screen height` (float; get 0xB36C4, 0xB3734): its width
 //!   (height), as `width` reads it, times its own scale's x (y) over 100 and
 //!   every ancestor's in turn (0xBA018): what it measures on screen in
@@ -216,9 +244,18 @@
 //! - `-orientation` (orientation; get 0xB01D4): the sprite itself, as an
 //!   orientation, when reached through a path; nothing otherwise.
 //! - `ID` (int; get 0x6A810, set 0x6A824, reset 0x6A830): an integer kept on
-//!   the placement; the reset gives it an id object of its own
-//!   (**Hypothesis**: unused by the interface's scripts, AT.9's census).
-//! - `origin` (matrix; get 0x6A914): the placement's matrix, read-only.
+//!   the placement. Its reset is the snapshot every write takes first
+//!   (aj-vm's protocol): asked with nowhere to answer, it copies the whole
+//!   placement into its reset template once, if it has none; asked for the
+//!   snapshot (`reset`), it answers the reset template's ID, which `reset`
+//!   writes back. So `reset` puts back the ID the sprite held before the
+//!   first write to it, and does nothing on one never written (read for
+//!   AT.25; the reset template is a copy of the whole placement, the model
+//!   keeping its ID alone).
+//! - `origin` (matrix; get 0x6A914): its initial matrix (`_initMatrix`, The
+//!   sprite), read-only: where a template stands in its file, what a clone
+//!   was spawned at. Level 213's cutscene manager spawns its blackout sprite
+//!   at its own template's, and the treasure screen reads one's turns.
 //! - `clones` (set; get 0x6A928, reset 0x7BB04): the clones made of this
 //!   template that are still awake.
 //! - `parent` (reference; get 0x6AB0C through 0x5E524): the template the
@@ -226,8 +263,21 @@
 //! - `activator` (reference; get 0x6AB50 through 0x5E524): the placement that
 //!   activated it.
 //!
-//! A set's reset (0x7BB04, every set above) takes each element out of the
-//! set, last first.
+//! A set's reset (0x7BB04, every set above and `spriteinfo`'s, read in the
+//! disassembly for AT.25) changes no set. Asked with nowhere to answer (the
+//! snapshot before a write) it does nothing. Asked for the snapshot
+//! (`reset`), it reads the set and resets each element, last first, as a
+//! path element through the element's own reset accessor (0x5BF18): a
+//! sprite's (0x6A020, its accessors live in the June savestate on every
+//! one) takes an awake clone off and wakes it again, its source and
+//! activator kept (so off its parent, its children off it, back last in
+//! `active`, its current matrix its initial one), and puts a template that
+//! isn't a clone to sleep; it answers no snapshot, so nothing is written
+//! back. AT.4's docs had it emptying the set. **Hypothesis**: a sprite that
+//! isn't awake, a removed clone among them, is left as it is (the original
+//! may wake a removed clone again: its state change out of removed isn't
+//! read); no interface script resets a set (none of the UI's archives' 114
+//! `reset` ops names an interface member, AT.25's census).
 //!
 //! **States** (AT.5, read at the placement's state change, 0x69508, and its
 //! deactivate hook, 0x6A620): a template in a file is a placement too,
@@ -251,16 +301,30 @@
 //! ## `spritepositionmeasurement` (5)
 //!
 //! Paired measurements, one sprite's place against another's (the pair's
-//! second), each in the place on screen the layout gives (x, the computed
-//! depth, y):
+//! second), each the place in its current matrix (x, the computed depth, y:
+//! its top-left from its last layout, read through the placement's position
+//! getter, 0x3A9198). A write goes through the first's position setter
+//! (0x69C48, read for AT.25): the current matrix's place, the attached
+//! objects without *attached* moved by the change (0x65868; a sprite hung by
+//! `attach node` has it, so none moves). It doesn't reach `location`: the
+//! sprite's next layout writes its place again, so on a drawn sprite a write
+//! lasts until the updater's next run:
 //!
 //! - `screen distance` (paired float, 0 to 2^31-1 pixels; get 0xAE8D8, set
-//!   0xAE9D8): the distance between the two in x and y; a write moves the
-//!   first along the line from the second to that distance.
+//!   0xAE9D8): the distance between the two in x and y; a write puts the
+//!   first's depth at the second's and moves it along the line from the
+//!   second to that distance (the difference scaled by the distance over
+//!   its length, in single precision). The length is taken with the
+//!   smallest normal float under its root (0xAE9D4), so it is never 0: the
+//!   branch that would move a sprite standing on the second along its own y
+//!   row (0xAEC5C) never runs, and two that meet stay met (the difference
+//!   0 times a finite ratio; read in the disassembly).
 //! - `heading` (paired float, degrees; get 0xAECE8, set 0xAEED0): the angle
 //!   of the first from the second, atan2 of the x difference over the y
 //!   difference in degrees, 0 when both differences are within 0.001; a write
-//!   moves the first round the second to that angle at the same distance.
+//!   moves the first round the second to that angle at the same distance in
+//!   x and y (x the second's plus the sine × the distance, y plus the
+//!   cosine), its depth kept.
 //! - `X offset`, `Y offset` (paired float, pixels; get 0xAF45C, 0xAF15C; set
 //!   0xAF618, 0xAF318): the first's x (y) less the second's; a write sets the
 //!   first's x (y) to the second's less the value.
@@ -269,7 +333,9 @@
 //!   second's less the value.
 //!
 //! None is read by the HUD's, dialogue's, pause menu's or upgrade screen's
-//! closures (AT's census), so these wait for a screen that does.
+//! closures (AT's census); the menus' navigation reads `X offset`, `Y
+//! offset` and `screen distance` (28 reads in 26 ops of two macros), and no
+//! interface script writes any of the five (AT.25's census).
 //!
 //! ## `stringconverter` (6) and `stringinfo` (1)
 //!
@@ -294,6 +360,13 @@
 //!   0x9EC94, set 0x9ECB8): the settings the next `value set` write copies
 //!   into its string. `'@' representation` and `use comma` keep only whether
 //!   the value is nonzero.
+//!
+//! `value set`'s reset, and `textcolorconverter.color set`'s (0x80E0C, read
+//! for AT.25), hand the set itself to its own reset (the VM's set), and
+//! `reset` writes what comes back through the setter. **Hypothesis**: the
+//! set back to its default, empty, so a `reset` of `value set` makes no
+//! string and one of `color set` colours no letter (the VM's set snapshot
+//! isn't modelled; no interface script resets either, AT.25's census).
 //!
 //! `stringinfo`'s one member, `String Converter` (string converter; get
 //! 0x3A8DF0), answers the string converter itself from any string.
@@ -346,9 +419,9 @@
 //!   the object.
 //! - `Name checksum` (int; get 0x9DC50): the 32-bit FNV-1a of the object's
 //!   name (offset basis 0x811C9DC5), 0 when it has none or there's no object.
-//! - `Instantiation size`, `type count` (int; get 0x9DCD0, 0x9DD40): numbers
-//!   the object's class answers, 0 with no object; nothing in the interface's
-//!   closures reads either.
+//! - `Instantiation size`, `type count` (int; get 0x9DCD0, 0x9DD40, read for
+//!   AT.25): what the held object answers at its virtual slots 24 and 25, 0
+//!   with no object; no interface script reads either (AT.25's census).
 //!
 //! ## `viewporttitlesafeinfo` (4)
 //!
@@ -502,9 +575,23 @@
 //!   this frame; a sprite not drawn has its dirty bit cleared and its kind's
 //!   geometry released;
 //! - is laid out (0xBA240) when drawn or dirty;
-//! - is drawn by its kind unless it is a container, which draws nothing; when
-//!   dirty its kind builds its geometry again first (a text's glyphs), and a
-//!   kind not ready (an image still loading) skips the sprite this frame.
+//! - then, read for AT.29: a sprite not drawn, and a drawn container without
+//!   flags bit 21, leaves the frame's sprite list (0xB9B1C), a container's
+//!   dirty bit cleared (two globals the June savestate holds 0, 0x8A1E54 and
+//!   0x8A200C, would keep every drawn container on it; the model takes them
+//!   as 0). Any other drawn sprite stays on it, and when dirty this frame its
+//!   kind builds its geometry first (slot 18): a build that answers 0 leaves
+//!   it as it was, on the list or off it, its dirty bit kept to try again
+//!   next frame; one that answers 1 clears the bit. Then it joins the list if
+//!   it isn't on it. Art's build (0xB66BC) answers 0 with no context, or
+//!   while its texture isn't bound and its data isn't in (an image still
+//!   loading, the [`model::World`]'s to say); text's (0xB79A8) with no font
+//!   (no context, the default font null); particles' (0xB9280) with no
+//!   emitter context; a container's and a model's always 1. So a drawn
+//!   container with bit 21 joins the list, its draw (a quad, 0x8A1E90, its
+//!   texture state unread) not modelled: no template on the disc holds the
+//!   bit (all 12,275 in 503 files, AT.29's census), and no member writes
+//!   it.
 //!
 //! **Laying out one sprite** (0xBA240, its anchors read in the disassembly
 //! for AT.7), in its parent's space ([`layout`] has the code):
@@ -524,12 +611,16 @@
 //!   parent's scale and, unless the parent is a model or particles, moved by
 //!   its own `align to parent` anchor on the parent (that anchor's column ×
 //!   ½ the parent's computed width and row × ½ its height, each at the
-//!   parent's scale: 0xBAA98); then carried by the parent's place, the
-//!   parent's own top-left once its anchor is off;
+//!   parent's scale: 0xBAA98); then carried by the parent's current matrix
+//!   (0x113688, 0x1E2EA0, read for AT.28): turned by the parent's turns and
+//!   moved to the parent's top-left once its anchor is off. A parent's turn
+//!   turns where its children hang, not the children: each draws turned by
+//!   its own matrix alone;
 //! - unless it is a model or particles, its own `alignment` anchor (column ×
-//!   ½ its computed width and row × ½ its height, at its scale) is turned by
-//!   its orientation and taken off both axes (0xBA82C to 0xBA92C), so that
-//!   point of it sits on the point above;
+//!   ½ its computed width and row × ½ its height, at its scale, the depth 0)
+//!   is turned by its own matrix's turns (0x1E2E24) and taken off all three
+//!   axes (0xBA82C to 0xBA92C), so that point of it sits on the point
+//!   above;
 //! - its depth is its `Z Depth` × 25 at the parent's z scale plus the
 //!   parent's; the root's is 10,000 (20,000 × ½, taken only by a sprite with
 //!   no parent at all, 0xBAB70), so a sprite on the root stands at 10,000
@@ -539,12 +630,14 @@
 //! from that top-left, texture key and UV box with it; text its glyphs at
 //! the text's x and y scales times its scale from the same top-left (Text
 //! above); a model, emitter or movie an entry over the same rectangle for
-//! the adapter. A container draws nothing. **Hypothesis** (AT.28, which reads
-//! where each takes effect): `texture flip` swaps the UV box's u ends for
-//! horizontal and v ends for vertical, by its names; orientation and
-//! `clipping` aren't applied (no captured sprite clips; the four rotated
-//! corner shades AT.3 matched are parentless, their rotation the
-//! placement's, which the model holds no member for yet).
+//! the adapter. A container draws nothing. Art and glyph quads run from the
+//! top-left along the sprite's own turned axes (its matrix's rows): so the
+//! June savestate's corner shades, 200 by 200 at their roots' corners,
+//! turned 90, 180, 0 and 270, cover the frame's four corners as AC.13 draws
+//! them. `texture flip` picks one of art's four quads (0x32528, their UVs
+//! read in the June savestate's video memory for AT.28): none draws u along
+//! x and v up y, horizontal reverses u, vertical v, both both; text ignores
+//! it. `clipping` changes nothing drawn (the flags above).
 //!
 //! # Colour and blends
 //!
@@ -552,32 +645,49 @@
 //! maths as functions): a sprite draws rgb = texture × tint × 2 and alpha =
 //! texture alpha × tint alpha, the tint its colour bytes over 255, then
 //! mixes rgb toward its replace colour by the replace percentage (its fourth
-//! byte over 255), and inverts alpha where the program is told to. The
-//! blends the captures draw: crossfade (1: rgb over by the source's alpha,
-//! alpha kept), cuts out (3: the source's alpha added into the
-//! destination's, rgb kept), cuts out (invert) (7: the same with the alpha
-//! inverted), gets cut out (4: rgb by the destination's alpha, the source
-//! where it is 0, alpha kept) and clears cut out (5: the source's alpha
-//! taken off the destination's, rgb kept). **Hypothesis**: opaque (0),
-//! additive (2) and gets cut out (add) (6), which no captured frame draws,
-//! by their names; clears cut out's alpha inverted, as 10 of AC.13's 11 are
-//! (the one straight clears a straight cut; AT.24 checks each against its
-//! cut once the HUD is built).
+//! byte over 255), and inverts alpha where the program is told to. Each
+//! mode's state is what the sprite draw's switch (0x32528) pushes, read for
+//! AT.28 off the attributes the June savestate holds: opaque (0) blending
+//! off, one and zero (rgb the source's, alpha kept); crossfade (1) nothing
+//! pushed, the frame's default (rgb over by the source's alpha, alpha
+//! kept); additive (2) the source's alpha and one, added; cuts out (3) the
+//! destination-alpha attribute (alpha written alone) and one and one,
+//! added (the source's alpha into the destination's); gets cut out (4) one
+//! minus the destination's alpha and the destination's alpha, added (rgb by
+//! the destination's alpha, the source where it is 0); clears cut out (5)
+//! the destination-alpha attribute and one and one, reverse-subtracted (the
+//! source's alpha taken off the destination's); gets cut out (add) (6) one
+//! minus the destination's alpha and one, added; cuts out (invert) (7) as
+//! cuts out with the invert-alpha attribute. The layout draws an opaque
+//! sprite under a parent whose computed alpha isn't full as crossfade
+//! (0xBA240), and an art sprite with flags bit 26 draws 3, 4, 5 and 7 as
+//! crossfade and 6 as additive (0x32528). **Hypothesis**: clears cut out's
+//! alpha inverted, as 10 of AC.13's 11 are, each the clear of an inverted
+//! cut (the one straight clears a straight cut), though the switch pushes
+//! the invert attribute for cuts out (invert) alone (the attribute stack's
+//! push and pop, 0x1FC78C and 0x1FD118, unread; AT.24 checks each against
+//! its cut once the HUD is built).
 //!
 //! # Draw order
 //!
 //! A sprite joins the frame's sprite list the first frame it is drawn and
 //! leaves it the first frame it isn't (0x10C59C at 0xBBD04, 0x10C5E4 at
-//! 0xB9B1C); the render side takes the list on (0x10C8A8). **Hypothesis**
-//! (AT.24 checks AC.13's 72 draws against it; the render side's sort isn't
-//! read): drawn by computed priority, lower in front (a message box's text
-//! is written at priority -2 over its box; AC.13's number shadows at 10
-//! draw before their numbers at 5), the list's order (when each started
-//! being drawn) breaking ties.
+//! 0xB9B1C). The render side keeps a list of its own across frames
+//! (read for AT.28): its take-on (0x10C8A8) appends the frame's joins in
+//! order, and 0x10CB68 takes the frame's leaves off it, so it holds every
+//! drawn sprite in the order each joined; no sort is in either.
+//! **Hypothesis** (AT.33 checks AC.13's 72 draws on AT.9's HUD; the sort
+//! over that list isn't found): drawn by computed priority, lower in front
+//! (a message box's text is written at priority -2 over its box; AC.13's
+//! number shadows at 10 draw before their numbers at 5, and its
+//! bottom-left corner shade, the June savestate's lowest at -190, draws
+//! last of the 72 while the other three, at 0, draw 14th to 16th), the
+//! list's order (when each started being drawn) breaking ties.
 #![forbid(unsafe_code)]
 
 pub mod draw;
 pub mod layout;
+pub mod matrix;
 pub mod members;
 pub mod model;
 pub mod sprite;

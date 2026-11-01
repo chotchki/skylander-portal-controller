@@ -1,7 +1,7 @@
 #![no_main]
 
 use guac_formats::igz::Igz;
-use guac_formats::interface::{Content, Interface};
+use guac_formats::interface::{Content, Interface, TextKey};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -12,10 +12,14 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     // What a read hands out hangs together: a text template names a font
-    // it holds, and every glyph's box sits inside its atlas.
+    // it holds and a string whose settings it read, and every glyph's box
+    // sits inside its atlas.
     for t in &ui.templates {
         if let Content::Text { face } = t.content {
             assert!(face < ui.fonts.len());
+        }
+        if let Some(TextKey::Local(n)) = t.string {
+            assert!(n < ui.strings.len());
         }
     }
     for f in &ui.fonts {

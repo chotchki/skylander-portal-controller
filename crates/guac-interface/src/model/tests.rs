@@ -26,6 +26,8 @@ fn template(name: &str, visual: u32) -> Template {
         replace_color: [0x80, 0x80, 0x80, 0],
         num_value: 7,
         depth: 100.0,
+        init_matrix: Default::default(),
+        matrix: Default::default(),
         content: Content::Container,
         string: None,
     }
@@ -375,16 +377,19 @@ fn a_reset_with_no_handler_leaves_every_member_as_it_reads() {
         match mem.namespace {
             "spriteinfo" | "spritematrixmeasurement" => {
                 let before = m.get(a, mem, &NoWorld);
-                assert_eq!(m.reset(a, mem), Ok(()), "{}", mem.path());
+                assert_eq!(m.reset(a, mem, &NoWorld), Ok(()), "{}", mem.path());
                 assert_eq!(m.get(a, mem, &NoWorld), before, "{}", mem.path());
             }
             _ => {}
         }
     }
+    // Every member with a reset handler resets (AT.25): none unmodelled.
     for mem in MEMBERS.iter().filter(|x| x.reset.is_some()) {
-        if matches!(mem.namespace, "spriteinfo" | "spritematrixmeasurement") {
-            assert_eq!(m.reset(a, mem), Err(Refusal::Unmodelled), "{}", mem.path());
-        }
+        let r = match mem.namespace {
+            "spriteinfo" | "spritematrixmeasurement" => m.reset(a, mem, &NoWorld),
+            _ => m.reset_global(mem),
+        };
+        assert_eq!(r, Ok(()), "{}", mem.path());
     }
 }
 
@@ -549,12 +554,8 @@ fn read_only_members_refuse_writes_and_resets_follow_their_handlers() {
     }
     // No reset handler: nothing changes.
     m.set(a, si("priority"), Value::Float(3.0)).unwrap();
-    m.reset(a, si("priority")).unwrap();
+    m.reset(a, si("priority"), &NoWorld).unwrap();
     assert_eq!(read(&m, a, si("priority")), Value::Float(3.0));
-    assert_eq!(
-        m.reset(a, smm("attached objects")),
-        Err(Refusal::Unmodelled)
-    );
     m.set(a, smm("ID"), Value::Int(12)).unwrap();
     assert_eq!(read(&m, a, smm("ID")), Value::Int(12));
 }
@@ -649,61 +650,291 @@ fn the_name_checksum_is_the_names_fnv1a_and_the_margins_read_zero() {
     );
 }
 
+/// The paired reads and writes on the sprites' current matrices (AT.25):
+/// each place as its last layout left it, each setter moving the first's.
 #[test]
-fn the_paired_measures_read_off_the_layouts_places() {
+fn the_paired_measures_read_and_move_the_current_matrices_places() {
     let (mut m, t, a) = one();
     let b = m.spawn(t);
-    struct Places;
-    impl World for Places {
-        fn place(&self, _: &Model, s: SpriteId) -> Option<[f32; 3]> {
-            Some(if s.0 == 1 {
-                [3.0, 10.0, 4.0]
-            } else {
-                [0.0, 4.0, 0.0]
-            })
-        }
-    }
+    m.sprite_mut(a).matrix.position = [3.0, 10.0, 4.0];
+    m.sprite_mut(b).matrix.position = [0.0, 4.0, 0.0];
     let p = |n: &str| member("spritepositionmeasurement", n);
     let f = |r| match r {
         Ok(Answer::Value(Value::Float(f))) => f,
         other => panic!("{other:?}"),
     };
-    assert_eq!(f(m.get_paired(a, b, p("screen distance"), &Places)), 5.0);
-    assert_eq!(f(m.get_paired(a, b, p("X offset"), &Places)), 3.0);
-    assert_eq!(f(m.get_paired(a, b, p("Y offset"), &Places)), 4.0);
-    assert_eq!(f(m.get_paired(a, b, p("priority offset"), &Places)), 6.0);
-    let h = f(m.get_paired(a, b, p("heading"), &Places));
+    assert_eq!(f(m.get_paired(a, b, p("screen distance"))), 5.0);
+    assert_eq!(f(m.get_paired(a, b, p("X offset"))), 3.0);
+    assert_eq!(f(m.get_paired(a, b, p("Y offset"))), 4.0);
+    assert_eq!(f(m.get_paired(a, b, p("priority offset"))), 6.0);
+    let h = f(m.get_paired(a, b, p("heading")));
     assert!((h - 36.869_9).abs() < 1e-3, "{h}");
-    assert_eq!(f(m.get_paired(a, a, p("heading"), &Places)), 0.0);
-    assert_eq!(
-        m.get_paired(a, b, p("heading"), &NoWorld),
-        Err(Refusal::Unmodelled)
+    assert_eq!(f(m.get_paired(a, a, p("heading"))), 0.0);
+
+    // The offsets set the first's x, y or depth to the second's less the
+    // value (so they read back negated), the rest kept.
+    let at = |m: &Model| m.sprite(a).matrix.position;
+    m.set_paired(a, b, p("X offset"), Value::Float(2.0))
+        .unwrap();
+    assert_eq!(at(&m), [-2.0, 10.0, 4.0]);
+    m.set_paired(a, b, p("Y offset"), Value::Float(1.5))
+        .unwrap();
+    assert_eq!(at(&m), [-2.0, 10.0, -1.5]);
+    m.set_paired(a, b, p("priority offset"), Value::Float(-3.0))
+        .unwrap();
+    assert_eq!(at(&m), [-2.0, 7.0, -1.5]);
+    assert_eq!(f(m.get_paired(a, b, p("X offset"))), -2.0);
+
+    // The heading round the second at the same distance in x and y, the
+    // depth kept: 90 puts it on the second's x axis, 180 straight up.
+    m.sprite_mut(a).matrix.position = [3.0, 10.0, 4.0];
+    m.set_paired(a, b, p("heading"), Value::Float(90.0))
+        .unwrap();
+    let [x, d, y] = at(&m);
+    assert!(
+        (x - 5.0).abs() < 1e-5 && y.abs() < 1e-5 && d == 10.0,
+        "{x} {d} {y}"
     );
+    m.set_paired(a, b, p("heading"), Value::Float(180.0))
+        .unwrap();
+    let [x, _, y] = at(&m);
+    assert!(x.abs() < 1e-4 && (y + 5.0).abs() < 1e-4, "{x} {y}");
+    assert!((f(m.get_paired(a, b, p("heading"))).abs() - 180.0).abs() < 1e-3);
+
+    // The distance along the line from the second, the depth the second's.
+    m.sprite_mut(a).matrix.position = [3.0, 10.0, 4.0];
+    m.set_paired(a, b, p("screen distance"), Value::Float(10.0))
+        .unwrap();
+    let [x, d, y] = at(&m);
+    assert!((x - 6.0).abs() < 1e-5 && (y - 8.0).abs() < 1e-5, "{x} {y}");
+    assert_eq!(d, 4.0, "the second's depth");
+    // Standing on it in x and y: the length is never 0, so it stays on the
+    // second, its depth the second's.
+    m.sprite_mut(a).matrix.position = [0.0, 9.0, 0.0];
+    m.set_paired(a, b, p("screen distance"), Value::Float(7.0))
+        .unwrap();
+    assert_eq!(at(&m), [0.0, 4.0, 0.0]);
+
+    // A write doesn't reach `location`: the next layout puts the place back.
+    m.sprite_mut(a).matrix.rotation = [0.0; 3];
+    m.set(a, si("visible"), Value::Int(1)).unwrap();
+    m.set_paired(a, b, p("X offset"), Value::Float(100.0))
+        .unwrap();
+    m.lay_out(&NoWorld);
+    assert_ne!(at(&m)[0], -100.0, "laid out again");
+    assert_eq!(read(&m, a, si("location")), Value::Screen(0x0140_FEC0));
     m.remove(b);
 }
 
-/// Every member answers a read, but the computed ones the layout and the
-/// text measure give (AT.6, AT.7) and the ones no interface closure reads.
+/// `screen location` is the sprite's anchor point off its last layout: its
+/// alignment's offset off its stored size, at its computed scale, carried
+/// by its current matrix (AT.25).
 #[test]
-fn every_member_but_the_layouts_and_the_texts_answers() {
-    let (m, _, a) = one();
-    let unmodelled = [
-        "spriteinfo.screen location",
-        "spritematrixmeasurement.origin",
-        "nameextractor.instantiation size",
-        "nameextractor.type count",
-    ];
+fn screen_location_is_the_anchor_point_off_the_last_layout() {
+    let mut m = Model::default();
+    let mut root = template("Root", kind::CONTAINER);
+    root.position = [0, 0];
+    root.width = 640.0;
+    root.height = 480.0;
+    root.scale = [150.0; 3];
+    let mut box_ = template("Box", kind::CONTAINER);
+    // Bottom-right on its parent's bottom-right, 20 units in and up.
+    box_.properties = props::VISIBLE | (8 << 8) | (8 << 12) | kind::CONTAINER;
+    box_.position = [-20 * 16, -20 * 16];
+    box_.width = 100.0;
+    box_.height = 40.0;
+    box_.scale = [100.0; 3];
+    let r = m.add_template(None, &root, Value::Null);
+    let b = m.add_template(None, &box_, Value::Null);
+    m.wake(r);
+    m.wake(b);
+    m.attach(b, Some(r));
+    // Before any layout: its current matrix's place (the template's) and
+    // the offset unscaled, 100 by 40 at the bottom-right.
+    m.sprite_mut(b).matrix.position = [1.0, 0.0, 2.0];
+    let sl = |m: &Model| read(m, b, si("screen location"));
+    assert_eq!(sl(&m), Value::Screen((101 * 16) << 16 | (42 * 16)));
+    m.lay_out(&NoWorld);
+    // The root 960 by 720 frame pixels at 1.5; the box hangs 30 px in from
+    // its bottom-right, (930, 690), its top-left 150 by 60 back from there.
+    assert_eq!(m.sprite(b).matrix.position[0], 930.0 - 150.0);
+    assert_eq!(m.sprite(b).computed_scale, Some([1.5; 3]));
+    assert_eq!(sl(&m), Value::Screen((930 * 16) << 16 | (690 * 16)));
+    // Its anchor turned with it: turned 90 about depth, the offset (150, 60)
+    // goes to (60, -150) from its top-left.
+    m.sprite_mut(b).matrix.rotation = [0.0, 90.0, 0.0];
+    let [x, _, y] = m.sprite(b).matrix.position;
+    let Value::Screen(w) = sl(&m) else { panic!() };
+    let (sx, sy) = ((w >> 16) as u16 as i16, w as u16 as i16);
+    assert_eq!(
+        (sx, sy),
+        (((x + 60.0) * 16.0) as i16, ((y - 150.0) * 16.0) as i16)
+    );
+    // Truncated toward zero to 1/16, into 16 bits.
+    m.sprite_mut(b).matrix.rotation = [0.0; 3];
+    m.sprite_mut(b).matrix.position = [-0.09, 0.0, 0.0];
+    m.sprite_mut(b).computed_scale = Some([0.0; 3]);
+    let Value::Screen(w) = sl(&m) else { panic!() };
+    assert_eq!(((w >> 16) as u16 as i16, w as u16 as i16), (-1, 0));
+}
+
+/// `origin` is the initial matrix; waking copies it into the current one,
+/// and a clone starts from its source's current one (AT.25).
+#[test]
+fn origin_is_the_initial_matrix_and_waking_copies_it() {
+    let mut m = Model::default();
+    let mut t = template("Shade", kind::CONTAINER);
+    t.init_matrix = Matrix {
+        position: [0.914, 10_000.0, 480.0],
+        rotation: [0.0, 90.0, 0.0],
+    };
+    t.matrix = Matrix {
+        position: [5.0, 0.0, 6.0],
+        rotation: [0.0, 45.0, 0.0],
+    };
+    let id = m.add_template(None, &t, Value::Null);
+    assert_eq!(
+        m.get(id, smm("origin"), &NoWorld),
+        Ok(Answer::Matrix(t.init_matrix))
+    );
+    assert_eq!(m.sprite(id).matrix, t.matrix, "asleep, as the file has it");
+    let c = m.spawn(id);
+    assert_eq!(
+        (m.sprite(c).init_matrix, m.sprite(c).matrix),
+        (t.matrix, t.matrix),
+        "a clone from its source's current matrix"
+    );
+    m.wake(id);
+    assert_eq!(m.sprite(id).matrix, t.init_matrix);
+}
+
+/// `ID`'s reset puts back what it held before its first write, and does
+/// nothing on one never written (AT.25, 0x6A830).
+#[test]
+fn an_ids_reset_takes_back_the_one_before_its_first_write() {
+    let (mut m, _, a) = one();
+    let id = smm("ID");
+    m.reset(a, id, &NoWorld).unwrap();
+    assert_eq!(read(&m, a, id), Value::Int(0), "never written");
+    m.set(a, id, Value::Int(5)).unwrap();
+    m.set(a, id, Value::Int(9)).unwrap();
+    m.reset(a, id, &NoWorld).unwrap();
+    assert_eq!(read(&m, a, id), Value::Int(0));
+    m.set(a, id, Value::Int(3)).unwrap();
+    m.reset(a, id, &NoWorld).unwrap();
+    assert_eq!(read(&m, a, id), Value::Int(0), "the first snapshot kept");
+}
+
+/// A set's reset resets each sprite in it, last first, and writes nothing
+/// back (AT.25, 0x7BB04 and 0x6A020): an awake clone taken off and woken
+/// again, a template that isn't a clone put to sleep.
+#[test]
+fn a_sets_reset_restarts_each_sprite_it_holds() {
+    let mut m = Model::default();
+    let t = m.add_template(None, &template("Box", kind::CONTAINER), Value::Null);
+    let other = m.add_template(None, &template("Other", kind::CONTAINER), Value::Null);
+    m.wake(t);
+    m.wake(other);
+    let [a, b, g] = [m.spawn(t), m.spawn(t), m.spawn(t)];
+    m.attach(a, Some(t));
+    m.attach(other, Some(t));
+    m.attach(b, Some(t));
+    m.attach(g, Some(a));
+    m.sprite_mut(a).activator = Value::Int(77);
+    m.sprite_mut(a).init_matrix.position = [1.0, 2.0, 3.0];
+    m.sprite_mut(a).matrix.position = [9.0, 9.0, 9.0];
+    assert_eq!(m.active(), &[t, other, a, b, g]);
+    m.reset(t, smm("attached objects"), &NoWorld).unwrap();
+    // b first, then the template, then a: each off t; a's child off it.
+    assert!(elements(&m, t, smm("attached objects")).is_empty());
+    assert!(m.sprite(a).children.is_empty() && m.sprite(g).parent.is_none());
+    assert_eq!(m.sprite(other).state, State::Asleep);
+    assert_eq!(m.active(), &[t, g, b, a], "woken again, last first");
+    assert_eq!(m.sprite(a).matrix.position, [1.0, 2.0, 3.0]);
+    assert_eq!(m.sprite(a).activator, Value::Int(77), "its activator kept");
+    assert_eq!(
+        elements(&m, t, smm("clones")),
+        [a, b, g].map(|x| m.value_of(x)).to_vec(),
+        "its source kept, its clones as they were"
+    );
+    // `active`'s puts every awake template to sleep and wakes each clone.
+    m.reset(t, si("active"), &NoWorld).unwrap();
+    assert_eq!(m.sprite(t).state, State::Asleep);
+    assert_eq!(m.active(), &[a, b, g]);
+}
+
+/// `Instantiation size` and `type count` are what the held object answers,
+/// 0 with none (AT.25).
+#[test]
+fn the_name_extractors_class_numbers_come_from_the_object() {
+    let mut m = Model::default();
+    struct Class;
+    impl World for Class {
+        fn class_numbers(&self, v: Value) -> Option<[i32; 2]> {
+            (v == Value::Entity(5)).then_some([0xE4, 3])
+        }
+    }
+    let size = member("nameextractor", "Instantiation size");
+    let count = member("nameextractor", "type count");
+    let n = |m: &Model, mem| match m.get_global(mem, &Class) {
+        Ok(Answer::Value(Value::Int(n))) => n,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!((n(&m, size), n(&m, count)), (0, 0), "no object");
+    m.set_global(
+        member("nameextractor", "Object to name"),
+        Value::Entity(5),
+        &Class,
+    )
+    .unwrap();
+    assert_eq!((n(&m, size), n(&m, count)), (0xE4, 3));
+}
+
+/// The converters' set resets write an empty set back: no string, no
+/// colours (AT.25, the Hypothesis in the crate docs).
+#[test]
+fn the_converters_set_resets_write_an_empty_set_back() {
+    let mut m = Model::default();
+    let vs = member("stringconverter", "value set");
+    m.set_global_elements(vs, &[Value::Int(72), Value::Int(105)])
+        .unwrap();
+    let text = member("stringconverter", "text");
+    assert_ne!(m.get_global(text, &NoWorld), Ok(Answer::Value(Value::Null)));
+    m.reset_global(vs).unwrap();
+    assert_eq!(m.get_global(text, &NoWorld), Ok(Answer::Value(Value::Null)));
+    assert_eq!(m.get_global(vs, &NoWorld), Ok(Answer::Elements(Vec::new())));
+    let cs = member("textcolorconverter", "color set");
+    m.set_global_elements(cs, &[Value::Color(0xFF00_00FF)])
+        .unwrap();
+    m.reset_global(cs).unwrap();
+    assert_eq!(m.get_global(cs, &NoWorld), Ok(Answer::Elements(Vec::new())));
+}
+
+/// Every member answers a read and a reset, and a paired one its pair
+/// (AT.25): none left unmodelled.
+#[test]
+fn every_member_answers() {
+    let (m, t, a) = one();
+    let mut m = m;
+    let b = m.spawn(t);
     for mem in &MEMBERS {
         let r = match mem.namespace {
-            "spriteinfo" | "spritematrixmeasurement" => m.get(a, mem, &NoWorld),
-            "spritepositionmeasurement" => continue,
-            _ => m.get_global(mem, &NoWorld),
+            "spriteinfo" | "spritematrixmeasurement" => m.get(a, mem, &NoWorld).map(drop),
+            "spritepositionmeasurement" => m.get_paired(a, b, mem).map(drop),
+            _ => m.get_global(mem, &NoWorld).map(drop),
         };
-        if unmodelled.contains(&mem.path().as_str()) {
-            assert_eq!(r, Err(Refusal::Unmodelled), "{}", mem.path());
-        } else {
-            assert!(r.is_ok(), "{}: {r:?}", mem.path());
+        assert!(r.is_ok(), "{}: {r:?}", mem.path());
+        if mem.set.is_none() {
+            continue;
         }
+        // Every write lands or is a value the member can't take, never
+        // unmodelled.
+        let w = match mem.namespace {
+            "spriteinfo" | "spritematrixmeasurement" => m.set(a, mem, Value::Int(1)),
+            "spritepositionmeasurement" => m.set_paired(a, b, mem, Value::Float(1.0)),
+            _ => m.set_global(mem, Value::Int(1), &NoWorld),
+        };
+        assert_ne!(w, Err(Refusal::Unmodelled), "{}", mem.path());
     }
 }
 

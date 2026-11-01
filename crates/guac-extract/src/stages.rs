@@ -3,7 +3,9 @@
 //! [`crate::open`], the caller's; then the roster with its portraits, then
 //! the progression tables (a part of their own: a resume reads them only
 //! when they're missing), then the character models with their textures,
-//! each with its hero side and its palette, and the 3D-UI rig, then the
+//! each with its hero side and its palette, and the 3D-UI rig (a part of
+//! their own too since AT.30, with a record of what failed: a start that
+//! holds it keeps every model without opening an archive), then the
 //! parts the TV reads of each level the build plays ([`levels::PLAYED`]),
 //! then the fight's script entries and spawn models and the attacks'
 //! emitters, and chapter 1 is handed over ([`Event::LevelReady`]); then
@@ -179,6 +181,9 @@ pub struct ProgressionStage {
 
 #[derive(Debug, Clone)]
 pub struct ModelStage {
+    /// The part was in already (its record, the palettes and the nodes),
+    /// and kept without opening an archive (openspec AT.30).
+    pub kept: bool,
     /// Character load files whose model is in the extract.
     pub models: usize,
     pub failed: Vec<ModelFailure>,
@@ -611,7 +616,7 @@ fn levels_stage(
             let palettes_started = Instant::now();
             let mut palettes = None;
             let read = igz.as_ref().map_err(Clone::clone).and_then(|igz| {
-                let (id, rel) = (identity.clone(), ir.level_path(level, part));
+                let (id, rel) = (identity.clone(), levels::part_path(ir, level, part));
                 match part {
                     levels::SCENE => {
                         levels::scene(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
@@ -679,7 +684,7 @@ fn levels_stage(
                     // The part's new textures under one manifest save, not one
                     // each (openspec AS.26).
                     dir.write_outputs(&new)?;
-                    let rel = ir.level_path(level, part);
+                    let rel = levels::part_path(ir, level, part);
                     let before = stage.files;
                     put(dir, &rel, &bytes, &mut stage.files)?;
                     if let Some(mut count) = palettes {
@@ -951,10 +956,15 @@ fn level_failure(level: &str, part: &str, reason: String) -> LevelFailure {
 /// `textures/<sha256>.ktx2`, its hero side into
 /// `heroes/<load file>.<ron|postcard>`, its palette into
 /// `palettes/<load file>.<ron|postcard>` and its attach nodes into
-/// `nodes/<load file>.<ron|postcard>` (each part recorded once every
-/// model has been through), then `global.bld`'s rig into
-/// `ir/rig.<ron|postcard>`. A model or rig that won't read is reported in
-/// [`ModelStage::failed`], a hero that doesn't settle in
+/// `nodes/<load file>.<ron|postcard>`, each model's new files under one
+/// manifest save (AS.26's batching, openspec AT.30), then `global.bld`'s
+/// rig into `ir/rig.<ron|postcard>` and the stage's record into
+/// `ir/models.<ron|postcard>` ([`models::StageRecord`]), the palettes',
+/// nodes' and models' parts recorded once every model has been through. A
+/// start whose extract holds all three parts as recorded, its record naming
+/// the roster's load files, keeps them without opening an archive and
+/// reports the record's models and failures. A model or rig that won't read
+/// is reported in [`ModelStage::failed`], a hero that doesn't settle in
 /// [`ModelStage::unsettled`]; a file that won't write stops the run.
 pub fn model_stage(
     dir: &mut IdentityDir,
@@ -968,6 +978,7 @@ pub fn model_stage(
     let loads = models::character_loads(roster);
     let total = loads.len();
     let mut stage = ModelStage {
+        kept: false,
         models: 0,
         failed: Vec::new(),
         heroes: 0,
@@ -979,7 +990,36 @@ pub fn model_stage(
         files: Files::default(),
         took: Duration::ZERO,
     };
+    send(Event::Models { done: 0, total });
+    let record_rel = ir.model_record_path();
+    if dir.part_holds(models::PART, &[record_rel.to_owned()])?
+        && dir.part_holds(models::PALETTES, &[])?
+        && dir.part_holds(models::NODES, &[])?
+        && let Ok(record) = ir.decode::<models::StageRecord>(dir, record_rel)
+        && record.loads == loads
+    {
+        let failure = |(load_file, reason): (String, String)| ModelFailure { load_file, reason };
+        for part in [models::PART, models::NODES] {
+            let recorded = dir.manifest().parts[part].clone();
+            count_kept(dir, &recorded, &mut stage.files);
+        }
+        let recorded = dir.manifest().parts[models::PALETTES].clone();
+        count_kept(dir, &recorded, &mut stage.palettes.files);
+        let [palettes, clips, networks, refused] = record.palettes;
+        (stage.palettes.palettes, stage.palettes.clips) = (palettes, clips);
+        (stage.palettes.networks, stage.palettes.refused) = (networks, refused);
+        stage.kept = true;
+        stage.models = record.models;
+        stage.failed = record.failed.into_iter().map(failure).collect();
+        stage.heroes = record.heroes;
+        stage.unsettled = record.unsettled.into_iter().map(failure).collect();
+        (stage.textures, stage.binds) = (record.textures, record.binds);
+        stage.took = started.elapsed();
+        send(Event::Models { done: total, total });
+        return Ok(stage);
+    }
     let mut written: HashSet<String> = HashSet::new();
+    let mut files: Vec<String> = Vec::new();
     let mut palette_files = Vec::new();
     let mut node_files = Vec::new();
     // `global.bld` and `bootstrap.bld`, for the attachments a global
@@ -994,7 +1034,6 @@ pub fn model_stage(
         (Some(g), Some(b)) => models::Globals::new(g, b).ok(),
         _ => None,
     };
-    send(Event::Models { done: 0, total });
     for (i, load) in loads.iter().enumerate() {
         let path = models::archive_path(&usrdir, load);
         let extracted = models::archive(&path, load)
@@ -1003,40 +1042,63 @@ pub fn model_stage(
         match extracted {
             Ok(m) => {
                 stage.binds += m.binds;
+                // The model's files not already in, under one manifest
+                // save (AS.26's batching).
+                let mut new: Vec<(String, &[u8])> = Vec::new();
                 for (rel, ktx2) in &m.textures {
                     if written.insert(rel.clone()) {
-                        put(dir, rel, ktx2, &mut stage.files)?;
+                        files.push(rel.clone());
+                        if !held(dir, rel, ktx2, &mut stage.files)? {
+                            new.push((rel.clone(), ktx2));
+                        }
                     }
                 }
-                let rel = ir.model_path(load);
-                let bytes = ir.encode(&m.model, dir, &rel)?;
-                put(dir, &rel, &bytes, &mut stage.files)?;
+                let model_rel = ir.model_path(load);
+                let model = ir.encode(&m.model, dir, &model_rel)?;
+                if !held(dir, &model_rel, &model, &mut stage.files)? {
+                    new.push((model_rel.clone(), &model));
+                }
+                files.push(model_rel);
                 stage.models += 1;
                 let started = Instant::now();
-                match &m.hero {
+                let hero = match &m.hero {
                     Ok(hero) => {
                         let rel = ir.hero_path(load);
                         let bytes = ir.encode(hero, dir, &rel)?;
-                        put(dir, &rel, &bytes, &mut stage.files)?;
                         stage.heroes += 1;
+                        Some((rel, bytes))
                     }
-                    Err(reason) => stage.unsettled.push(ModelFailure {
-                        load_file: (*load).to_owned(),
-                        reason: reason.clone(),
-                    }),
+                    Err(reason) => {
+                        stage.unsettled.push(ModelFailure {
+                            load_file: (*load).to_owned(),
+                            reason: reason.clone(),
+                        });
+                        None
+                    }
+                };
+                if let Some((rel, bytes)) = &hero {
+                    if !held(dir, rel, bytes, &mut stage.files)? {
+                        new.push((rel.clone(), bytes));
+                    }
+                    files.push(rel.clone());
                 }
                 stage.heroes_took += m.hero_took + started.elapsed();
                 let started = Instant::now();
-                let rel = ir.palette_path(load);
-                let bytes = ir.encode(&m.palette, dir, &rel)?;
-                put(dir, &rel, &bytes, &mut stage.palettes.files)?;
+                let palette_rel = ir.palette_path(load);
+                let palette = ir.encode(&m.palette, dir, &palette_rel)?;
+                if !held(dir, &palette_rel, &palette, &mut stage.palettes.files)? {
+                    new.push((palette_rel.clone(), &palette));
+                }
                 stage.palettes.add(&m.palette);
                 stage.palettes.took += m.palette_took + started.elapsed();
-                palette_files.push(rel);
-                let rel = ir.nodes_path(load);
-                let bytes = ir.encode(&m.nodes, dir, &rel)?;
-                put(dir, &rel, &bytes, &mut stage.files)?;
-                node_files.push(rel);
+                palette_files.push(palette_rel);
+                let nodes_rel = ir.nodes_path(load);
+                let nodes = ir.encode(&m.nodes, dir, &nodes_rel)?;
+                if !held(dir, &nodes_rel, &nodes, &mut stage.files)? {
+                    new.push((nodes_rel.clone(), &nodes));
+                }
+                node_files.push(nodes_rel);
+                dir.write_outputs(&new)?;
             }
             Err(e @ ExtractError::ModelUnreadable { .. }) => stage.failed.push(ModelFailure {
                 load_file: (*load).to_owned(),
@@ -1058,6 +1120,7 @@ pub fn model_stage(
         Ok(rig) => {
             let bytes = ir.encode(&rig, dir, ir.rig_path())?;
             put(dir, ir.rig_path(), &bytes, &mut stage.files)?;
+            files.push(ir.rig_path().to_owned());
         }
         Err(e @ ExtractError::ModelUnreadable { .. }) => stage.failed.push(ModelFailure {
             load_file: "ir/rig".into(),
@@ -1065,6 +1128,28 @@ pub fn model_stage(
         }),
         Err(e) => return Err(e),
     }
+    // The record last, then the part: a stage that stopped before it is
+    // read again whole by the next start, every file it wrote kept.
+    let failures = |f: &[ModelFailure]| {
+        f.iter()
+            .map(|f| (f.load_file.clone(), f.reason.clone()))
+            .collect()
+    };
+    let p = &stage.palettes;
+    let record = models::StageRecord {
+        loads: loads.iter().map(|l| (*l).to_owned()).collect(),
+        models: stage.models,
+        failed: failures(&stage.failed),
+        heroes: stage.heroes,
+        unsettled: failures(&stage.unsettled),
+        textures: stage.textures,
+        binds: stage.binds,
+        palettes: [p.palettes, p.clips, p.networks, p.refused],
+    };
+    let bytes = ir.encode(&record, dir, record_rel)?;
+    put(dir, record_rel, &bytes, &mut stage.files)?;
+    files.push(record_rel.to_owned());
+    dir.record_part(models::PART, files)?;
     stage.took = started.elapsed();
     Ok(stage)
 }

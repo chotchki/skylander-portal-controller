@@ -60,6 +60,11 @@ pub fn template(b: &mut IgzBuilder, o: Location, name: &str, properties: u32, n:
     b.put_bytes(at(o, 0xC8), &[0x80, 0x80, c, 0xFF, 0x80, 0x80, 0x80, c]);
     b.put_u32(at(o, 0xD8), u32::from(n) * 3);
     floats(b, o, 0xDC, &[100.0]);
+    // The placement's matrices: placed at (n, 1, 2n) turned 90n degrees
+    // about the depth axis, standing at (3n, 0, 4n) turned 45.
+    let turn = 90.0 * f32::from(n % 4);
+    floats(b, o, 0x24, &[f, 1.0, 2.0 * f, 0.0, turn, 0.0]);
+    floats(b, o, 0x3C, &[3.0 * f, 0.0, 4.0 * f, 0.0, 45.0, 0.0]);
 }
 
 /// An `AnimatableTextureDataInfo` named `source`; with `image`, its chain
@@ -215,6 +220,13 @@ pub fn sample() -> Sample {
     b.string(at(emitter, 0x08), "UI_LevelUp_ArrowParticle_VFX");
     b.string(at(strings[0], 0x08), "UI_Unused");
     b.string(at(strings[1], 0x08), "UI_Gold");
+    // Their settings, each field distinct: a time of four digits, and a
+    // number with an `@`, commas, five digits and one decimal.
+    for (s, [flags, integer, decimal]) in strings.iter().zip([[0x400, 4, 0], [0x2800, 5, 1]]) {
+        for (offset, v) in [(0x1C, flags), (0x20, integer), (0x24, decimal)] {
+            b.put_u32(at(*s, offset), v);
+        }
+    }
 
     b.string(at(font_data, 0x08), "fonts/contemp.png");
     b.put_bytes(at(font_data, 0x10), &[1]);

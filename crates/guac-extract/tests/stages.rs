@@ -22,7 +22,7 @@ use guac_extract::known::KnownDump;
 use guac_extract::levels::{self, LEVELS, PARTS, PLAYED};
 use guac_extract::stages::{self, Event, Files, StageEnd};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
-use guac_extract::{roster, scripts};
+use guac_extract::{interface, models, roster, scripts};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::level::builder::{StageSpec, stage_level, stage_sample};
 use guac_formats::model::builder as model;
@@ -50,6 +50,9 @@ const NODES: usize = MODELS;
 const HEROLESS: &str = "MinionLoad_106_IceSorcLegendary";
 /// The model builder's sample binds eight textures, five distinct.
 const TEXTURES: usize = 5;
+/// The model stage's own IR beside the models: the rig and its record
+/// (AT.30).
+const MODEL_PART_IR: usize = 2;
 /// The level builder's sample: eight scene textures, the props' five (the
 /// chest is the model builder's sample, the gourd its colour map), one
 /// shared between them: twelve, of which the characters' store already
@@ -901,7 +904,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     );
     assert_eq!(
         (done.models.files.written, done.models.files.kept),
-        (0, MODELS + NODES + HEROES + TEXTURES + 1)
+        (0, MODELS + NODES + HEROES + TEXTURES + MODEL_PART_IR)
     );
     // The progression and the level, whole, are kept without reading them.
     assert!(!done.progression.read);
@@ -983,7 +986,7 @@ fn a_resume_rewrites_only_the_files_that_arent_as_recorded() {
     let models = stages::model_stage(&mut again.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
     assert_eq!(
         (models.files.written, models.files.kept),
-        (4, MODELS + NODES + HEROES + TEXTURES + 1 - 4)
+        (4, MODELS + NODES + HEROES + TEXTURES + MODEL_PART_IR - 4)
     );
     assert!(again.dir.output_done(&texture).unwrap());
     assert!(
@@ -1707,6 +1710,107 @@ fn an_extract_whose_spawn_part_predates_ah39_reads_it_again() {
     );
 }
 
+/// The interface part's and chapter 1's sprites part's IR files back to
+/// AT.8's names (`interface/<stem>.ron`, `sprites.ron`), in the manifest and
+/// on disk, as an extract made before AT.27 holds them; how many.
+fn to_at8_record(dir: &Path) -> usize {
+    let old = |f: &str| match f.strip_suffix(".ron").and_then(|f| f.rsplit_once(".v")) {
+        Some((stem, n)) if n.chars().all(|c| c.is_ascii_digit()) => format!("{stem}.ron"),
+        _ => f.to_owned(),
+    };
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut renamed = Vec::new();
+    let mut rename = |files: &mut serde_json::Value| {
+        for f in files.as_array_mut().unwrap() {
+            let name = f.as_str().unwrap().to_owned();
+            if old(&name) != name {
+                *f = serde_json::Value::String(old(&name));
+                renamed.push(name);
+            }
+        }
+    };
+    rename(&mut json["parts"][interface::PART]);
+    rename(&mut json["levels"][levels::FIRST_RUN[0]]["parts"][levels::SPRITES]);
+    // An old name a run before left behind is taken over by the rename.
+    let olds: Vec<String> = renamed.iter().map(|p| old(p)).collect();
+    let outputs = json["outputs"].as_array_mut().unwrap();
+    outputs.retain(|o| !olds.iter().any(|f| o["path"] == f.as_str()));
+    for o in outputs {
+        let p = o["path"].as_str().unwrap().to_owned();
+        if renamed.contains(&p) {
+            fs::rename(dir.join(&p), dir.join(old(&p))).unwrap();
+            o["path"] = serde_json::Value::String(old(&p));
+        }
+    }
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    renamed.len()
+}
+
+/// AT.27: a whole extract whose interface and sprites parts hold AT.8's
+/// record isn't current, though every part's key is there: it opens as a
+/// resume and its next run reads those two parts again and nothing else,
+/// then is current. One made at 2.0's tip before AT.30 (no `models` part
+/// either) reads the models as well, and still nothing else.
+#[test]
+fn an_extract_holding_at8s_interface_record_reads_its_two_parts_again() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    for without_models in [false, true] {
+        assert_eq!(
+            open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+            DirState::Current
+        );
+        let renamed = to_at8_record(&dir);
+        assert!(renamed > 1, "the archives' IR and chapter 1's sprites");
+        if without_models {
+            let path = dir.join("manifest.json");
+            let mut json: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            json["parts"]
+                .as_object_mut()
+                .unwrap()
+                .remove(models::PART)
+                .unwrap();
+            fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+        }
+        let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+        assert_eq!(again.state, DirState::Resume, "AT.8's record isn't current");
+        assert!(
+            guac_extract::find_current(&s.dump, &s.root, &s.known)
+                .unwrap()
+                .is_none()
+        );
+        let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+        assert!(done.interface.read && !done.interface.kept, "read again");
+        assert_eq!(
+            (done.sprites.parts_read, done.sprites.parts_kept),
+            (1, 0),
+            "chapter 1's sprites read again"
+        );
+        assert_eq!(done.models.kept, !without_models);
+        assert_eq!(
+            done.models.files.written + done.models.palettes.files.written,
+            0
+        );
+        assert!(!done.progression.read);
+        assert_eq!(done.levels.parts_read, 0);
+        assert_eq!(done.scripts.parts_read, 0);
+        assert!(done.particles.kept && done.sounds.kept);
+        assert_eq!(done.roster.files.written, 0);
+        assert_eq!(done.intros.unwrap().summary.transcoded, 0);
+        drop(again);
+    }
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
 /// Each of AH.22's parts, AH.50's attach nodes, AH.87's emitters and AR.5's
 /// sounds, missing
 /// alone from a finished extract (one made before the build that adds it),
@@ -2073,4 +2177,210 @@ fn the_script_part_reads_back_through_ah13s_readers() {
             "Level_Definition_900.ai",
         ]
     );
+}
+
+/// Every character load file's archive on the dump (what the model stage
+/// reads), by path.
+fn character_archives(dump: &Path) -> Vec<PathBuf> {
+    let dir = dump.join("PS3_GAME/USRDIR/character");
+    let mut out: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("minionload_") && n.ends_with(".bld"))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// AT.30: a start that holds the model stage's part (its record, the
+/// palettes and the nodes) keeps it without opening an archive, every
+/// character archive unreadable here, and reports the record's models and
+/// failures: the missing and the refused model to the turntable, the
+/// heroless one unsettled.
+#[test]
+fn a_start_holding_the_models_part_keeps_it_without_opening_an_archive() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let first = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    assert!(!first.models.kept);
+    let dir = opened.dir.path().to_path_buf();
+    let part = opened.dir.manifest().parts[models::PART].clone();
+    assert!(part.contains(&IrFormat::Ron.model_record_path().to_owned()));
+    assert!(part.contains(&IrFormat::Ron.rig_path().to_owned()));
+    drop(opened);
+    // Not current: a level part gone (the level stage reads the level's
+    // archive alone), so the next start runs the stages.
+    without_part(&dir, true, levels::LIGHTS);
+    let mut reopened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    // Every character load file's archive unreadable from here: a model
+    // stage that opened one would stop the run.
+    let archives = character_archives(&s.dump);
+    assert_eq!(archives.len(), LOADS - 1, "all but the missing one");
+    for a in &archives {
+        fs::set_permissions(a, fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let seen = Mutex::new(Vec::new());
+    let again = stages::run(&mut reopened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
+        seen.lock().unwrap().push(Seen::of(&e))
+    });
+    for a in &archives {
+        fs::set_permissions(a, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    let again = again.expect("no archive opened");
+    let m = &again.models;
+    assert!(m.kept, "kept off the record");
+    assert_eq!(
+        (m.models, m.heroes, m.textures, m.binds),
+        (
+            first.models.models,
+            first.models.heroes,
+            first.models.textures,
+            first.models.binds
+        )
+    );
+    let names = |f: &[guac_extract::stages::ModelFailure]| -> Vec<String> {
+        f.iter().map(|f| f.load_file.clone()).collect()
+    };
+    assert_eq!(names(&m.failed), [MISSING, REFUSED]);
+    assert_eq!(
+        m.failed.iter().map(|f| &f.reason).collect::<Vec<_>>(),
+        first
+            .models
+            .failed
+            .iter()
+            .map(|f| &f.reason)
+            .collect::<Vec<_>>(),
+        "each reason as the read gave it"
+    );
+    assert_eq!(names(&m.unsettled), [HEROLESS]);
+    assert_eq!(m.palettes.palettes, first.models.palettes.palettes);
+    assert_eq!(m.files.written, 0);
+    assert_eq!(
+        m.files.kept,
+        first.models.files.written + first.models.files.kept
+    );
+    let seen = seen.into_inner().unwrap();
+    assert!(seen.contains(&Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()])));
+    let models: Vec<&Seen> = seen
+        .iter()
+        .filter(|e| matches!(e, Seen::Models(..)))
+        .collect();
+    assert_eq!(
+        models,
+        [&Seen::Models(0, LOADS), &Seen::Models(LOADS, LOADS)],
+        "none done, then all at once"
+    );
+}
+
+/// AT.30: a roster naming other load files than the record's reads the
+/// models again, as does a record the part lacks. A read over files already
+/// in records every one as the first read did, so a hero it found in place
+/// and a crash then left short is read and written again, not kept.
+#[test]
+fn a_record_for_other_load_files_reads_the_models_again() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let first_part = opened.dir.manifest().parts[models::PART].clone();
+    let rel = IrFormat::Ron.model_record_path();
+    let mut record: models::StageRecord = IrFormat::Ron.decode(&opened.dir, rel).unwrap();
+    record.loads.pop();
+    let bytes = IrFormat::Ron.encode(&record, &opened.dir, rel).unwrap();
+    opened.dir.write_output(rel, &bytes).unwrap();
+    let roster = guac_extract::roster::load(&opened.dir, IrFormat::Ron).unwrap();
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(!m.kept, "another roster's record");
+    assert_eq!(m.models, MODELS);
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(m.kept, "its own record written again");
+    assert_eq!(
+        opened.dir.manifest().parts[models::PART],
+        first_part,
+        "every file the read held recorded, as a fresh read records it"
+    );
+    let dir = opened.dir.path().to_path_buf();
+    let hero = IrFormat::Ron.hero_path("MinionLoad_112_TitanLife");
+    fs::write(dir.join(&hero), b"short").unwrap();
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(!m.kept, "a hero the part holds isn't as recorded");
+    assert!(opened.dir.output_done(&hero).unwrap(), "written again");
+    // The palettes' part gone (its files kept): read again and recorded.
+    drop(opened);
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["parts"]
+        .as_object_mut()
+        .unwrap()
+        .remove(models::PALETTES)
+        .unwrap();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(!m.kept, "the palettes' part missing");
+    assert!(opened.dir.part_holds(models::PALETTES, &[]).unwrap());
+}
+
+/// AT.30: a model's files go in under one manifest save; a stage stopped
+/// partway (its last models' files on disk but unrecorded, the part and
+/// its record not yet in) is read again by the next start and comes out
+/// the same extract, every file as an uninterrupted run left it.
+#[test]
+fn a_model_batch_stopped_partway_resumes_to_the_same_extract() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    let whole: Vec<(String, u64, String)> = opened
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .map(|o| (o.path.clone(), o.size, o.sha256.to_string()))
+        .collect();
+    drop(opened);
+    // Stopped partway: the part, the palettes' and nodes' parts and the
+    // record never recorded, the last model's files written but their batch's
+    // save never made.
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    for part in [models::PART, models::PALETTES, models::NODES] {
+        json["parts"].as_object_mut().unwrap().remove(part).unwrap();
+    }
+    let last = "MinionLoad_112_TitanLife";
+    let unsaved = |p: &str| p.contains(last) || p == IrFormat::Ron.model_record_path();
+    let before = json["outputs"].as_array().unwrap().len();
+    json["outputs"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|o| !unsaved(o["path"].as_str().unwrap()));
+    let dropped = before - json["outputs"].as_array().unwrap().len();
+    assert_eq!(
+        dropped,
+        1 + 1 + 1 + 1 + 1,
+        "its model, hero, palette, nodes and the record"
+    );
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let roster = guac_extract::roster::load(&opened.dir, IrFormat::Ron).unwrap();
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(!m.kept);
+    assert_eq!(m.files.written + m.palettes.files.written, dropped);
+    let again: Vec<(String, u64, String)> = opened
+        .dir
+        .manifest()
+        .outputs
+        .iter()
+        .map(|o| (o.path.clone(), o.size, o.sha256.to_string()))
+        .collect();
+    assert_eq!(again, whole, "the same extract, file for file");
+    for part in [models::PART, models::PALETTES, models::NODES] {
+        assert!(opened.dir.part_holds(part, &[]).unwrap(), "{part}");
+    }
 }

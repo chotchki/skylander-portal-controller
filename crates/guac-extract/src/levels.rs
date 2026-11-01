@@ -202,12 +202,13 @@ pub fn script_path(level: &str) -> String {
     format!("{LEVEL_DIR}/{level}/{SCRIPT}.igz")
 }
 
-/// `part`'s file in `ir`'s format: its IR, or the script's raw entry.
+/// `part`'s file in `ir`'s format: its IR, the script's raw entry, or the
+/// sprites' IR named by its record's shape ([`crate::interface::level_path`]).
 pub fn part_path(ir: crate::intros::IrFormat, level: &str, part: &str) -> String {
-    if part == SCRIPT {
-        script_path(level)
-    } else {
-        ir.level_path(level, part)
+    match part {
+        SCRIPT => script_path(level),
+        SPRITES => crate::interface::level_path(ir, level),
+        _ => ir.level_path(level, part),
     }
 }
 

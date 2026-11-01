@@ -168,7 +168,8 @@ fn the_part_lands_each_archives_interface_and_names_what_the_dump_lacks() {
     let rel = interface::path(IrFormat::Ron, "character/009_eruptor.bld");
     let ir: guac_ir::interface::Interface = IrFormat::Ron.decode(&opened.dir, &rel).unwrap();
     assert_eq!(ir.templates.len(), 8);
-    assert_eq!(ir.strings[1], "Gold");
+    assert_eq!(ir.strings[1].text, "Gold");
+    assert_eq!(ir.strings[1].flags, 0x2800, "its settings with it");
     for t in &ir.templates {
         if let guac_ir::interface::Content::Image(a) = &t.content {
             assert!(
@@ -276,11 +277,16 @@ fn a_levels_sprites_part_reads_with_the_level_stage() {
     assert!(lv.failed.is_empty(), "{:?}", lv.failed);
     assert_eq!(lv.parts_read, levels::PARTS.len());
     let level = levels::FIRST_RUN[0];
-    let rel = IrFormat::Ron.level_path(level, levels::SPRITES);
+    let rel = levels::part_path(IrFormat::Ron, level, levels::SPRITES);
     let ir: guac_ir::interface::Interface = IrFormat::Ron.decode(&opened.dir, &rel).unwrap();
     assert_eq!(ir.archive, format!("level/{level}.bld"));
     assert_eq!(ir.templates.len(), 8);
-    assert_eq!(ir.strings, vec!["Unused".to_owned(), "Gold".to_owned()]);
+    let texts: Vec<&str> = ir.strings.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(texts, ["Unused", "Gold"]);
+    assert_eq!(
+        (ir.strings[0].flags, ir.strings[0].integer_digits),
+        (0x400, 4)
+    );
     // The local image and the atlas, recorded with the part; a level's
     // streamed image (its .arc isn't read) keeps none.
     let recorded = &opened.dir.manifest().levels[level].parts[levels::SPRITES];
@@ -296,5 +302,85 @@ fn a_levels_sprites_part_reads_with_the_level_stage() {
     for p in named.iter().chain([&rel]) {
         assert!(recorded.contains(p), "{p}");
         assert!(opened.dir.output_done(p).unwrap(), "{p}");
+    }
+}
+
+/// An extract made before AT.27: both parts in under AT.8's names
+/// (`interface/<stem>.ron`, a level's `sprites.ron`; the files' bytes are
+/// this build's, which nothing reads under those names). The next run reads
+/// the two parts again and nothing else: every texture and every other level
+/// part kept, the IR written under the record's new names with each string's
+/// settings.
+#[test]
+fn an_extract_from_before_the_strings_settings_reads_both_parts_again() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    let lv = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(lv.failed.is_empty(), "{:?}", lv.failed);
+    let level = levels::FIRST_RUN[0];
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+
+    // Each of the record's files (every one but the textures) back to
+    // AT.8's name, `<stem>.ron`: whatever shape its name says now dropped,
+    // so this holds whatever the build names them.
+    let old = |f: &str| match f.strip_suffix(".ron").and_then(|f| f.rsplit_once(".v")) {
+        Some((stem, n)) if n.chars().all(|c| c.is_ascii_digit()) => format!("{stem}.ron"),
+        _ => f.to_owned(),
+    };
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut record = Vec::new();
+    let mut rename = |v: &mut serde_json::Value| {
+        let f = v.as_str().unwrap().to_owned();
+        if !f.starts_with(models::TEXTURE_DIR) {
+            *v = serde_json::Value::String(old(&f));
+            record.push(f);
+        }
+    };
+    for f in json["parts"][PART].as_array_mut().unwrap() {
+        rename(f);
+    }
+    for f in json["levels"][level]["parts"][levels::SPRITES]
+        .as_array_mut()
+        .unwrap()
+    {
+        rename(f);
+    }
+    for o in json["outputs"].as_array_mut().unwrap() {
+        let p = o["path"].as_str().unwrap().to_owned();
+        if record.contains(&p) && old(&p) != p {
+            fs::rename(dir.join(&p), dir.join(old(&p))).unwrap();
+            o["path"] = serde_json::Value::String(old(&p));
+        }
+    }
+    assert_eq!(
+        record.len(),
+        3 + 1,
+        "three archives and chapter 1's sprites"
+    );
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let st = interface::interface_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(st.read && !st.kept, "read again");
+    assert_eq!(
+        (st.texture_files.written, st.texture_files.kept),
+        (0, 3),
+        "every texture kept"
+    );
+    assert_eq!(st.files.written, 3, "the three archives' IR, renamed");
+    let lv = stages::level_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(
+        (lv.parts_read, lv.parts_kept),
+        (1, levels::PARTS.len() - 1),
+        "the sprites alone"
+    );
+    for rel in record {
+        assert!(opened.dir.output_done(&rel).unwrap(), "{rel}");
+        let ir: guac_ir::interface::Interface = IrFormat::Ron.decode(&opened.dir, &rel).unwrap();
+        assert_eq!(ir.strings[1].flags, 0x2800, "{rel}: its settings read");
     }
 }
