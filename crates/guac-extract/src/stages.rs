@@ -569,7 +569,7 @@ fn levels_stage(
             let palettes_started = Instant::now();
             let mut palettes = None;
             let read = igz.as_ref().map_err(Clone::clone).and_then(|igz| {
-                let (id, rel) = (identity.clone(), ir.level_path(level, part));
+                let (id, rel) = (identity.clone(), levels::part_path(ir, level, part));
                 match part {
                     levels::SCENE => {
                         levels::scene(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
@@ -637,7 +637,7 @@ fn levels_stage(
                     // The part's new textures under one manifest save, not one
                     // each (openspec AS.26).
                     dir.write_outputs(&new)?;
-                    let rel = ir.level_path(level, part);
+                    let rel = levels::part_path(ir, level, part);
                     let before = stage.files;
                     put(dir, &rel, &bytes, &mut stage.files)?;
                     if let Some(mut count) = palettes {

@@ -215,6 +215,13 @@ pub fn sample() -> Sample {
     b.string(at(emitter, 0x08), "UI_LevelUp_ArrowParticle_VFX");
     b.string(at(strings[0], 0x08), "UI_Unused");
     b.string(at(strings[1], 0x08), "UI_Gold");
+    // Their settings, each field distinct: a time of four digits, and a
+    // number with an `@`, commas, five digits and one decimal.
+    for (s, [flags, integer, decimal]) in strings.iter().zip([[0x400, 4, 0], [0x2800, 5, 1]]) {
+        for (offset, v) in [(0x1C, flags), (0x20, integer), (0x24, decimal)] {
+            b.put_u32(at(*s, offset), v);
+        }
+    }
 
     b.string(at(font_data, 0x08), "fonts/contemp.png");
     b.put_bytes(at(font_data, 0x10), &[1]);

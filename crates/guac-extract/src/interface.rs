@@ -15,7 +15,9 @@
 //!   read) keep no texture.
 //!
 //! Every archive gets a file, an archive with no templates an empty one, so
-//! the part knows what it holds without reading the archive. An archive the
+//! the part knows what it holds without reading the archive. The files'
+//! names carry the record's shape ([`guac_ir::interface::RECORD`], AT.27):
+//! an extract holding another shape's reads both parts again, nothing else. An archive the
 //! dump lacks is listed and the part lands without it (the e2e fixture's
 //! dump holds none); one that's there and won't read refuses the part, and
 //! the other stages land.
@@ -30,7 +32,9 @@ use guac_formats::igz::{ExternalId, Igz};
 use guac_formats::interface::{self as finterface, Art as FArt, Content as FContent, TextKey};
 use guac_formats::language::{LanguagePack, join};
 use guac_ir::DumpIdentity;
-use guac_ir::interface::{Art, Content, Font, Glyph, Import, Interface, Kind, Template};
+use guac_ir::interface::{
+    Art, Content, Font, Glyph, Import, Interface, Kind, RECORD, Str, Template,
+};
 
 use crate::extract::Manifest;
 use crate::intros::IrFormat;
@@ -47,13 +51,26 @@ pub const MENU_DIR: &str = "misc";
 /// The upgrade screen's archive, the one menu archive not named `ui_*`.
 pub const UPGRADE_UI: &str = "misc/upgradeui.bld";
 
-/// `interface/<stem>.<ron|postcard>`.
-pub fn path(ir: IrFormat, archive: &str) -> String {
-    let ext = match ir {
+fn ext(ir: IrFormat) -> &'static str {
+    match ir {
         IrFormat::Ron => "ron",
         IrFormat::Postcard => "postcard",
-    };
-    format!("{DIR}/{}.{ext}", scripts::stem(archive))
+    }
+}
+
+/// `interface/<stem>.v<RECORD>.<ron|postcard>`.
+pub fn path(ir: IrFormat, archive: &str) -> String {
+    format!("{DIR}/{}.v{RECORD}.{}", scripts::stem(archive), ext(ir))
+}
+
+/// A level's `sprites` part's file, `levels/<level>/sprites.v<RECORD>.<ron|postcard>`.
+pub fn level_path(ir: IrFormat, level: &str) -> String {
+    format!(
+        "{}/{level}/{}.v{RECORD}.{}",
+        crate::levels::LEVEL_DIR,
+        crate::levels::SPRITES,
+        ext(ir)
+    )
 }
 
 /// Whether `archive` (a path under `USRDIR`) is one of the menu archives.
@@ -225,10 +242,18 @@ pub fn read_igz(
         Some(pack) => {
             let pack = Igz::parse(pack).map_err(|e| format!("{}: {e}", sounds::ENGLISH_PACK))?;
             let pack = LanguagePack::read(&pack).map_err(|e| e.to_string())?;
+            // The pack's strings follow the same keys in the same order as
+            // the reader's settings, and `join` holds their counts equal.
             join(igz, &pack)
                 .map_err(|e| e.to_string())?
                 .into_iter()
-                .map(|(_, s)| s.to_owned())
+                .zip(&ui.strings)
+                .map(|((_, text), s)| Str {
+                    text: text.to_owned(),
+                    flags: s.flags,
+                    integer_digits: s.integer_digits,
+                    decimal_digits: s.decimal_digits,
+                })
                 .collect()
         }
     };

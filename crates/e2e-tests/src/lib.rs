@@ -2033,7 +2033,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
         strings: Vec::new(),
         refused: Vec::new(),
     };
-    let rel = ir.level_path(&level, guac_extract::levels::SPRITES);
+    let rel = guac_extract::levels::part_path(ir, &level, guac_extract::levels::SPRITES);
     dir.write_output(&rel, &ir.encode(&sprites, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::SPRITES, vec![rel])?;
     // A part the level stage reads that this left out would make the TV's

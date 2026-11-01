@@ -65,7 +65,10 @@ use serde::{Deserialize, Serialize};
 /// can't say, so a v5 extract redoes itself. AH.50's attach nodes
 /// ([`nodes`]) are a new record in files of their own, so v6 holds, and so
 /// are AH.87's emitters ([`particle`]), AR.5's sounds ([`sound`]) and AT.8's
-/// interface ([`interface`]).
+/// interface ([`interface`]). AT.27's strings with their settings change the
+/// interface's shape, which [`interface::RECORD`] versions in its files'
+/// names, so v6 holds and an extract reads the interface's two parts again
+/// alone.
 pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]

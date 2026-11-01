@@ -58,13 +58,48 @@ pub(crate) fn arc() -> Vec<u8> {
         .build()
 }
 
+/// The files' names carry the record's shape (AT.27), so an extract holding
+/// AT.8's (`interface/global.ron`, `sprites.ron`) reads the parts again.
+#[test]
+fn the_files_names_carry_the_records_shape() {
+    assert_eq!(guac_ir::interface::RECORD, 2);
+    assert_eq!(
+        path(IrFormat::Ron, "permanent/global.bld"),
+        "interface/global.v2.ron"
+    );
+    assert_eq!(
+        path(IrFormat::Postcard, "misc/ui_options.bld"),
+        "interface/ui_options.v2.postcard"
+    );
+    assert_eq!(
+        level_path(IrFormat::Ron, "level_213_tutotial"),
+        "levels/level_213_tutotial/sprites.v2.ron"
+    );
+    assert_eq!(
+        crate::levels::part_path(
+            IrFormat::Postcard,
+            "level_213_tutotial",
+            crate::levels::SPRITES
+        ),
+        "levels/level_213_tutotial/sprites.v2.postcard"
+    );
+}
+
 #[test]
 fn each_template_lands_with_what_it_draws_and_the_text_in_english() {
     let r = read("permanent/global.bld", &bld(), Some(&arc()), identity()).unwrap();
     let ir = &r.ir;
     assert_eq!(ir.archive, "permanent/global.bld");
     assert_eq!(ir.templates.len(), 8);
-    assert_eq!(ir.strings, vec!["Unused".to_owned(), "Gold".to_owned()]);
+    // Each string with its text and its settings (the sample's: a time of
+    // four digits, a number with an `@`, commas, five digits and one
+    // decimal).
+    let strings: Vec<(&str, i32, i32, i32)> = ir
+        .strings
+        .iter()
+        .map(|s| (s.text.as_str(), s.flags, s.integer_digits, s.decimal_digits))
+        .collect();
+    assert_eq!(strings, [("Unused", 0x400, 4, 0), ("Gold", 0x2800, 5, 1)]);
     assert!(ir.refused.is_empty(), "{:?}", ir.refused);
     let t = |n: usize| &ir.templates[n];
     assert_eq!(t(0).content, Content::Container);
@@ -90,7 +125,7 @@ fn each_template_lands_with_what_it_draws_and_the_text_in_english() {
     }
     assert_eq!(t(4).content, Content::Text(0));
     assert_eq!(t(4).string, Some(TextKey::Local(1)));
-    assert_eq!(ir.strings[1], "Gold");
+    assert_eq!(ir.strings[1].text, "Gold");
     match &t(5).content {
         Content::Imported(Kind::Text, i) => assert_eq!(i.object, 0x33),
         other => panic!("{other:?}"),
@@ -197,11 +232,11 @@ fn the_menu_archives_are_the_ui_files_and_the_upgrade_screen() {
     }
     assert_eq!(
         path(IrFormat::Ron, "misc/ui_options.bld"),
-        "interface/ui_options.ron"
+        "interface/ui_options.v2.ron"
     );
     assert_eq!(
         path(IrFormat::Postcard, "permanent/global.bld"),
-        "interface/global.postcard"
+        "interface/global.v2.postcard"
     );
 }
 

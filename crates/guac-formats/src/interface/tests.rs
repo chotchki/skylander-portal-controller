@@ -308,3 +308,44 @@ fn a_string_ref_to_another_type_is_refused() {
     let e = Interface::read(&igz).unwrap_err();
     assert_eq!(e.field, "_stringInfo");
 }
+
+#[test]
+fn each_strings_settings_read_in_the_order_its_keys_take() {
+    let s = sample();
+    let igz = Igz::parse(&s.bytes).unwrap();
+    let ui = Interface::read(&igz).unwrap();
+    assert_eq!(
+        ui.strings,
+        vec![
+            Settings {
+                flags: 0x400,
+                integer_digits: 4,
+                decimal_digits: 0,
+            },
+            Settings {
+                flags: 0x2800,
+                integer_digits: 5,
+                decimal_digits: 1,
+            },
+        ]
+    );
+    // The text template's key is the second, and so are its settings.
+    let Some(TextKey::Local(n)) = ui.templates[4].string else {
+        panic!("{:?}", ui.templates[4].string);
+    };
+    assert_eq!(ui.strings[n].flags, 0x2800);
+}
+
+#[test]
+fn a_string_of_another_shape_is_refused() {
+    let mut b = IgzBuilder::new();
+    b.object(0, "StringInfo", 0x24);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let e = Interface::read(&igz).unwrap_err();
+    assert_eq!(
+        (e.field, &e.kind),
+        ("MTSZ", &ErrorKind::Unsupported { value: 0x24 }),
+        "its size check's: {e}"
+    );
+}

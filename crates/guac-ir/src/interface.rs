@@ -1,8 +1,9 @@
 //! An archive's interface (openspec AT.8): every sprite template its
-//! `level.bld` holds, its bitmap fonts and its English text. A new record in
-//! files of its own, `interface/<stem>.<ron|postcard>` for the extract-wide
+//! `level.bld` holds, its bitmap fonts and its English text with each
+//! string's settings. A record in files of its own, for the extract-wide
 //! archives and each level's `sprites` part, the images beside them in the
-//! characters' texture store, so [`crate::IR_VERSION`] holds.
+//! characters' texture store, so [`crate::IR_VERSION`] holds; its own shape
+//! is [`RECORD`], which the files' names carry.
 //!
 //! Numbers are kept as the disc stores them: places in 12.4 fixed point,
 //! sizes in interface units, the scale in percent, colours as their four
@@ -14,6 +15,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::DumpIdentity;
 
+/// The record's shape inside [`crate::IR_VERSION`], carried in its files'
+/// names (`interface/<stem>.v2.ron`, a level's `sprites.v2.ron`), so an
+/// extract holding another shape reads the two parts again and nothing
+/// else. AT.8's was 1, its files named without it; 2 (AT.27) gives each
+/// string its settings ([`Str`]), which a 1's strings can't say. Bump it
+/// whenever a type here changes shape.
+pub const RECORD: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Interface {
     pub identity: DumpIdentity,
@@ -22,10 +31,10 @@ pub struct Interface {
     /// In object order.
     pub templates: Vec<Template>,
     pub fonts: Vec<Font>,
-    /// The archive's English text, one per `StringInfo` in address order:
-    /// a [`TextKey::Local`] indexes it. Empty when the archive has no
+    /// The archive's `StringInfo`s in address order, each with its English
+    /// text: a [`TextKey::Local`] indexes it. Empty when the archive has no
     /// English pack.
-    pub strings: Vec<String>,
+    pub strings: Vec<Str>,
     /// What didn't extract (an image that won't decode, a streamed one its
     /// `.arc` lacks), by name, with why.
     pub refused: Vec<(String, String)>,
@@ -105,6 +114,18 @@ pub struct Art {
     pub size: Option<[u32; 2]>,
     pub stream_archive_hash: i32,
     pub desired: [i32; 2],
+}
+
+/// One `StringInfo`: its English text and what a number fills its `@`s by,
+/// as the disc stores them (`guac-interface`'s number fill says what each
+/// means).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Str {
+    pub text: String,
+    /// `_flags`, raw: 0x400 a time, 0x800 has an `@`, 0x2000 commas.
+    pub flags: i32,
+    pub integer_digits: i32,
+    pub decimal_digits: i32,
 }
 
 /// Which string a template shows: one of its archive's, or another's by import.
@@ -205,7 +226,12 @@ mod tests {
                     kern: [0, 0, 1, 1],
                 }],
             }],
-            strings: vec!["Eruptor".into()],
+            strings: vec![Str {
+                text: "@ Gold".into(),
+                flags: 0x2800,
+                integer_digits: 5,
+                decimal_digits: 1,
+            }],
             refused: vec![("eruptor_up5b.png".into(), "no .arc entry".into())],
         }
     }
@@ -218,5 +244,29 @@ mod tests {
             from_postcard::<Interface>(&to_postcard(&i).unwrap()).unwrap(),
             i
         );
+    }
+
+    /// A string's settings come back as written, each field its own.
+    #[test]
+    fn a_strings_settings_round_trip() {
+        let mut i = sample();
+        i.strings.push(Str {
+            text: "@".into(),
+            flags: 0x400,
+            integer_digits: 4,
+            decimal_digits: 0,
+        });
+        for back in [
+            from_ron::<Interface>(&to_ron(&i).unwrap()).unwrap(),
+            from_postcard::<Interface>(&to_postcard(&i).unwrap()).unwrap(),
+        ] {
+            let got: Vec<(i32, i32, i32)> = back
+                .strings
+                .iter()
+                .map(|s| (s.flags, s.integer_digits, s.decimal_digits))
+                .collect();
+            assert_eq!(got, [(0x2800, 5, 1), (0x400, 4, 0)]);
+            assert_eq!(back.strings[0].text, "@ Gold");
+        }
     }
 }

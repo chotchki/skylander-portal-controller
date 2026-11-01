@@ -15,13 +15,19 @@
 //! A font is an `igBitmapFont`: its metrics, its glyphs and its atlas image.
 //! A glyph whose box leaves the atlas (a coordinate outside 0-1, or a
 //! minimum past its maximum) is refused.
+//!
+//! A string is a `StringInfo`, read in address order (the order a template's
+//! [`TextKey::Local`] and a language pack's strings follow,
+//! [`crate::language`]) for its settings: the flags and the integer and
+//! decimal digits a number fills its `@`s by (openspec AT.27). Its text is
+//! the language pack's.
 
 use std::collections::HashMap;
 
 use crate::igz::layouts::{
     AlphaTextureUnitIdAttr, AnimatableTextureDataInfo, BitmapFont, CharMetrics, CharMetricsList,
     FontDataInfo, KernCorners, Layout, ObjectRef, ParticleInfo, PhysicsModel, Rgba8, SpriteBits,
-    SpriteInfo, TextureAttr2, VisualType, is_a, read_all,
+    SpriteInfo, StringInfo, TextureAttr2, VisualType, is_a, read_all,
 };
 use crate::igz::{ExternalId, Igz};
 use crate::language::string_infos;
@@ -39,11 +45,25 @@ pub const FORMAT: &str = "interface";
 /// the reader doesn't know.
 pub const CONTEXT: &str = "a sprite context";
 
-/// An archive's templates and fonts, in object order.
+/// An archive's templates and fonts, in object order, and its strings'
+/// settings in address order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interface<'a> {
     pub templates: Vec<Template<'a>>,
     pub fonts: Vec<Face<'a>>,
+    /// Every `StringInfo`, in address order: [`TextKey::Local`]`(n)` is
+    /// `strings[n]`.
+    pub strings: Vec<Settings>,
+}
+
+/// A `StringInfo`'s settings, as the disc stores them: what a number fills
+/// the string's `@`s by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Settings {
+    /// `_flags`, raw.
+    pub flags: i32,
+    pub integer_digits: i32,
+    pub decimal_digits: i32,
 }
 
 /// One `tfbSpriteInfo`, every field read.
@@ -159,7 +179,9 @@ pub struct Glyph {
 }
 
 impl<'a> Interface<'a> {
-    /// Every font, then every template, of `igz`.
+    /// Every font, then every template, then every string's settings, of
+    /// `igz`. A `StringInfo` whose shape differs from its layout is refused
+    /// by its type name.
     pub fn read(igz: &Igz<'a>) -> Result<Self, FormatError> {
         let mut fonts = Vec::new();
         let mut by_object = HashMap::new();
@@ -172,16 +194,28 @@ impl<'a> Interface<'a> {
             by_object.insert(i, fonts.len());
             fonts.push(face(igz, i, font, data)?);
         }
-        let strings: HashMap<usize, usize> = string_infos(igz)
-            .into_iter()
-            .enumerate()
-            .map(|(n, o)| (o, n))
-            .collect();
+        let keys = string_infos(igz);
+        let strings: HashMap<usize, usize> =
+            keys.iter().enumerate().map(|(n, &o)| (o, n)).collect();
         let mut templates = Vec::new();
         for (i, sprite) in read_all::<SpriteInfo>(igz) {
             templates.push(template(igz, i, sprite?, &datas, &by_object, &strings)?);
         }
-        Ok(Self { templates, fonts })
+        let strings = keys
+            .into_iter()
+            .map(|o| {
+                StringInfo::read(igz, o).map(|s| Settings {
+                    flags: s.flags,
+                    integer_digits: s.integer_digits,
+                    decimal_digits: s.decimal_digits,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            templates,
+            fonts,
+            strings,
+        })
     }
 }
 
