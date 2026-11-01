@@ -208,7 +208,10 @@
 //!   index, read as a path element, runs 0 to count - 1.
 //! - `for each` snapshots the set it names, rotated left by its offset
 //!   (modulo the count, negatives wrapping); direction 0 runs it forward, 1
-//!   backward, 2 in a shuffled order. An empty set skips. Its element, read
+//!   backward, 2 in a shuffled order. An empty set skips, as `undefined`
+//!   does, which holds no set (Members; openspec AS.28: the spike floors'
+//!   controller, chapter 1's among them, walks `undefined` in its
+//!   STARTUP). Its element, read
 //!   as a path element, is the current one.
 //! - `find subset` reads a path with one empty slot: the part before the
 //!   slot names a set; each member but the running placement goes in the
@@ -441,7 +444,8 @@
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
-//!   into it too, and a membership check or a `find subset` of it skips;
+//!   into it too, and a membership check, a `for each` or a `find subset`
+//!   of it skips;
 //!   its `setvariant` members read as an empty set's: a count of 0, no
 //!   element);
 //!   `.its`, the

@@ -103,3 +103,43 @@ fn a_level_audio_controllers_reverb_limit_and_copies() {
     assert!(matches!(halt.reason, Reason::UnmodelledMember(_)), "{halt}");
     assert_eq!(halt.position, 9, "the first write, {halt}");
 }
+
+/// AS.28, the spike floors' controller's STARTUP on a list built in code: a
+/// `for each` over `undefined` (offset 3, as the controller's first) skips
+/// its block as one over an empty set does, and the tick goes on.
+#[test]
+fn a_for_each_over_undefined_skips_as_an_empty_sets_does() {
+    let p = program(|w| {
+        let (inside, after) = (var(w, "inside"), var(w, "after"));
+        let empty = w.variable("empty", "ScriptSet", Some("ValueInfo"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let undefined = w.stack(
+                    StackClass::Set,
+                    &[El::Member("abstractscriptgroup", "undefined")],
+                );
+                let none = w.stack(StackClass::Set, &[El::Local(empty)]);
+                for set in [undefined, none] {
+                    let three = w.int(3);
+                    let (at, fe) = w.open(Class::ForEach, "for each");
+                    w.refer(fe, 0x20, set);
+                    w.refer(fe, 0x28, three);
+                    w.inc(&[El::Local(inside)]);
+                    w.end_loop(at);
+                }
+                w.inc(&[El::Local(after)]);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "SpikeFloorController", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "inside"), None, "neither block ran");
+    assert_eq!(
+        vm.local(id, "after"),
+        Some(Value::Int(1)),
+        "the tick went on"
+    );
+}

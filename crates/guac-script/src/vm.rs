@@ -2688,6 +2688,11 @@ impl Vm {
         host: &mut dyn Host,
     ) -> Result<(), Fault> {
         let spot = self.path(program, lhs, host)?;
+        // `undefined` holds no set: it skips as an empty set does (openspec
+        // AS.28: the spike floors' controller walks it).
+        if spot == Spot::Undefined {
+            return Err(Fault::Nothing);
+        }
         let set = self.read(spot, host)?;
         let Value::Set(s) = self.materialize(set) else {
             return if set == Value::Null {
