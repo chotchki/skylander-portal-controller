@@ -469,6 +469,13 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
   `guac-script`); the runs take a half to a sixth (`cargo test --workspace` 61 to 32 s, the guacamole
   e2e 596 to 277 s, AH.16's disc tests 526 to 84 s, bit for bit the same numbers). So keep a target dir
   warm rather than starting another.
+- The disc tests build under the root's `disc` profile (AQ.159): release with incremental compilation
+  on, which release turns off, so `cargo test -p <crate> --profile disc --test giants_<name> -- --ignored`
+  (each file's header has its line) rebuilds only what a change touched. After a one-line change in
+  guacamole's binary, `giants_census`' build took 4.95-5.37 s there against release's 30.76-33.90 s,
+  alternated three times each at a load of 6.8-11.6 (2026-11-01), its printed numbers and its 12.37 s run
+  the same under both; a cold `target/disc/` cost 6 m 07 s at 4 jobs. Its codegen units stay at the
+  incremental default, which cost the run nothing.
 - Test runs take `TMPDIR` on a RAM disk (AQ.35):
   [`.githooks/ram-tmpdir.sh`](../../.githooks/ram-tmpdir.sh) makes a 2 GiB APFS RAM disk, runs the
   command it's given with `TMPDIR` on it and detaches it after, an interrupted run included.
@@ -2036,6 +2043,21 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
   the extract is ready). Progress stays hidden for the first second (`QUIET_START`), so a start over a
   current extract shows nothing. A failure (an unknown or unreadable dump, no or an unusable ffmpeg, a
   root in a checkout, the thread dying as `GUAC-E-EXTRACT-IO`) stays up until guacamole starts again.
+- Chapter 1 goes to the TV the moment its own parts are in (AT.26): the level's parts the TV reads
+  (`levels::PLAYED`, every part but the sprites), the fight's scripts and the attacks' emitters, then
+  `Event::LevelReady` hands it over; what nothing draws yet reads after, on the same thread (the level's
+  sprites and the interface until AT.9, the sounds until the TV plays them), then the intros. So a kid
+  plays while the rest reads, and a sprites part that won't read keeps nothing from the TV. Each part
+  names itself on the band, archives done of total, and logs a line, a warning when it doesn't read.
+  Measured on the dump (release, 2026-11-01, load 3.7-5.0): on a fresh root the hand-off moved from
+  139.3 s after the pick (it waited on the 48 intros' transcode) to 37.3 s; on an extract made before
+  AT.8 from 35.2 s to 13.9 s, Eruptor in the level at 16.5 s with the interface still reading.
+- The extraction's thread runs at macOS's utility class (AG.298, `EXTRACT_QOS`), under the TV's frame
+  and its level load. What it starts takes the same ([`guac_extract::qos`](../../crates/guac-extract/src/qos.rs)):
+  the dump's hashing threads set their spawner's class (a thread starts at the default otherwise), and
+  the transcodes' ffmpeg runs under `taskpolicy -c utility`, which clamps every thread of it (a child
+  starts its main thread at user interactive otherwise, its encoder threads at the default). Windows
+  takes no call yet.
 - Measured on the Mac: the first pick on a release build with no `extract/` yet took 63.5 s from pick to
   ready (AB.20, chotchki at the Mac: identify 3.2 s with all 955 files hashed, index 0.3 s, 48 intros
   transcoded in 59.8 s), against 127.2 s for the same first pick under a load average of 23-33 from other
@@ -2058,7 +2080,9 @@ on Bevy 0.9-0.19, the newest on FFmpeg). Measured on the M3 Max with the display
   the anchored clock, the wall time since the sink appeared minus the smallest (wall − sink position)
   seen, held back by the output latency. No sink within 500 ms plays by the wall clock alone; an intro
   ends when every frame is out and the sink is empty (or 2 s past the video's end), and the next queued
-  one starts in the same frame. Any key or gamepad button skips.
+  one starts in the same frame. A muted one (`GUAC_MUTE`, dev builds) ends when every frame is out
+  (AQ.167): its sink drains as slowly as the output does, and the shut MacBook's speakers took 15.2 s to
+  play 1.5 s. Any key or gamepad button skips.
 - The output latency is `output_latency_ms` in guacamole's settings, 0 to 1,000 ms
   (`GUAC_OUTPUT_LATENCY_MS` over it in dev), logged at start. Its default, `DEFAULT_OUTPUT_LATENCY`, is a
   PROVISIONAL 43 ms: one rodio device buffer (2048 frames at 48 kHz) without the output path's own

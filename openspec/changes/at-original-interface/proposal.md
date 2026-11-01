@@ -27,7 +27,7 @@ The disc already holds every screen as script data, and the VM already runs part
 ### Modified Capabilities
 
 - `guacamole/tv-hud`: two ADDED requirements, the original's HUD with its banners and a bite's number by the hero, which replace AH's "The hero's numbers on the TV" and its level-up arrows once both changes archive (AT archives after AH; AT.21 says what changes then). ADDED, not MODIFIED: the capability lives only in AH's unarchived change, so `openspec/specs/` holds no tv-hud spec to modify yet (AP's reasoning for `guacamole/shell`).
-- `guacamole/disc-extraction`: one ADDED requirement, the interface extracted with the rest and resumed alone.
+- `guacamole/disc-extraction`: one ADDED requirement, the interface extracted with the rest and resumed alone; one MODIFIED (AT.26), chapter 1 playable once its own parts are in while the rest extracts, the progress naming each part.
 
 ## Impact
 
