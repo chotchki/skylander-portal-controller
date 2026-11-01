@@ -112,9 +112,12 @@ fn a_looping_bed_loops_its_frames_on_through_the_seam() {
             .fold(0.0_f32, f32::max);
         let plain = (left[n - 1] - left[0]).abs();
         let silent = left.iter().take_while(|v| v.abs() <= 1e-4).count();
-        let resettled = (4096..8192).all(|i| tv[i] == tv[n + i] && tv[n + i] == tv[2 * n + i - n]);
+        // The second pass the first's from frame 4096 to its end, and the
+        // third's start the first's again.
+        let resettled =
+            (4096..n).all(|i| tv[n + i] == tv[i]) && (4096..8192).all(|i| tv[2 * n + i] == tv[i]);
         println!(
-            "{name}: {n} frames; the TV's loop steps {:.2} x p99 ({p99:.4}) across the seam; a loop of the samples steps {:.2} x and then holds {silent} frames under 1e-4 ({:.1} ms); second pass the first's again from frame 4096: {resettled}",
+            "{name}: {n} frames; the TV's loop steps {:.2} x p99 ({p99:.4}) across the seam; a loop of the samples steps {:.2} x and then holds {silent} frames under 1e-4 ({:.1} ms); second pass the first's from frame 4096 to its end and the third's start too: {resettled}",
             join / p99,
             plain / p99,
             silent as f32 * 1e3 / data.audio.as_ref().unwrap().rate as f32
@@ -533,4 +536,21 @@ fn the_music_plays_the_intro_then_explore_on_its_bar() {
         "played at {played}, the intro ending at {intro_end}"
     );
     assert!(off >= played, "the intro stopped as explore starts: {off}");
+    // The music controller's own clock, which its update times delayed
+    // starts and fades by, ran with the steps (its tick counted, as its own
+    // would be): 1,200 steps are 20 s.
+    let places = guacamole::player_loop::Places::of(&run.vm, &run.world);
+    let music = places.music.expect("the music controller runs");
+    let data = run
+        .vm
+        .local(music, "music data")
+        .map(|v| run.vm.value(v))
+        .expect("its music data");
+    let time = run
+        .vm
+        .field(data, "time")
+        .and_then(|v| run.vm.value(v).as_f32())
+        .expect("its time");
+    println!("the music controller's time {time:.3} s");
+    assert!(time > 19.9, "the music controller's time {time}");
 }

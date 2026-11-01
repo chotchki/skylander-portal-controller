@@ -325,7 +325,14 @@ fn hear_sounds(
             let (volume_draw, speed_draw) = (rng.0.unit() * 2.0 - 1.0, rng.0.unit() * 2.0 - 1.0);
             let params = world.play_params(p);
             let volume = params.volume_for(volume_draw) * world.master_gain(p);
-            let speed = params.speed_for(speed_draw) * world.master_rate(p);
+            // Its sequence's rate from the start, as each frame after sets
+            // it: a play held at rate 0 (`Sound - Play With Delay`) starts
+            // held, not a frame at full speed.
+            let rate = world
+                .sequences()
+                .get(p.sequence as usize)
+                .map_or(1.0, |s| (s.rate / 100.0).max(0.0));
+            let speed = params.speed_for(speed_draw) * rate * world.master_rate(p);
             let (l, r) = gains_of(p, &params, volume, listener);
             let gains = Gains::new(l, r);
             let voice = voices.add(Voice {
@@ -586,6 +593,7 @@ mod tests {
         let (mut app, actor) = tv(tmp.path().to_path_buf(), false, true);
         let seq = start(&mut app, actor, LOOP);
         until_voiced(&mut app, 1);
+        assert_eq!(app.world().resource::<Assets<Voice>>().len(), 1, "its own");
         assert_ne!(app.world().resource::<SoundRng>().0, Cosmetic::new(SEED));
         let report = app.world().resource::<SoundReport>().clone();
         assert!(report.audible && !report.muted);
@@ -607,6 +615,57 @@ mod tests {
         let report = app.world().resource::<SoundReport>().clone();
         assert_eq!(report.ended[0].how, "stopped");
         assert!(report.playing.is_empty());
+        // Its asset freed with it, nothing kept per play.
+        app.update();
+        assert_eq!(app.world().resource::<Assets<Voice>>().len(), 0);
+    }
+
+    /// The level held (the portal's alert or an arrival card): its voices
+    /// pause and stay, the same voice going on once it's let go.
+    #[test]
+    fn a_held_level_pauses_its_voices_and_keeps_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, actor) = tv(tmp.path().to_path_buf(), false, true);
+        start(&mut app, actor, LOOP);
+        until_voiced(&mut app, 1);
+        let serial = voices(&mut app)[0].0;
+        let hold = |app: &mut App, held: bool| {
+            let mut pads = app.world_mut().resource_mut::<LevelPads>();
+            pads.show();
+            pads.hold(held);
+            let mut time = app.world_mut().resource_mut::<Time<Virtual>>();
+            if held {
+                time.pause();
+            } else {
+                time.unpause();
+            }
+            app.update();
+        };
+        hold(&mut app, true);
+        assert_eq!(voices(&mut app), [(serial, false, true)], "held, paused");
+        hold(&mut app, false);
+        assert_eq!(voices(&mut app), [(serial, false, false)], "the same voice");
+    }
+
+    /// A play held at rate 0 (`Sound - Play With Delay`) gets a voice held
+    /// from the start, its speed its sequence's rate.
+    #[test]
+    fn a_held_play_starts_its_voice_held() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, actor) = tv(tmp.path().to_path_buf(), false, true);
+        let seq = start(&mut app, actor, LOOP);
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequences_mut()[seq as usize]
+            .rate = 0.0;
+        until_voiced(&mut app, 1);
+        let world = app.world_mut();
+        let speeds: Vec<f32> = world
+            .query::<(&Heard, &PlaybackSettings)>()
+            .iter(world)
+            .map(|(_, s)| s.speed)
+            .collect();
+        assert_eq!(speeds, [0.0]);
     }
 
     /// One that plays out rings to its own end, followed no more; the

@@ -519,6 +519,9 @@ pub struct ScriptWorld {
     /// sound info and member: later plays start with it, the playing ones
     /// follow it.
     pub(crate) sound_written: HashMap<(Obj, crate::sound_members::SoundField), Value>,
+    /// What scripts wrote to a playing copy's members, by its sequence: the
+    /// copy's own, over its sound's.
+    pub(crate) copy_written: HashMap<(u32, crate::sound_members::SoundField), Value>,
     /// The sound system's members as written; one never written reads its
     /// start ([`crate::sound_members::SystemField::start`]).
     pub(crate) sound_system: HashMap<crate::sound_members::SystemField, Value>,
@@ -685,6 +688,7 @@ impl ScriptWorld {
             sound_ended: Default::default(),
             sound_refused: Default::default(),
             sound_written: HashMap::new(),
+            copy_written: HashMap::new(),
             sound_system: HashMap::new(),
             run: fresh_serial(),
         }

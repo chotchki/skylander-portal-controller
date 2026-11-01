@@ -25,7 +25,12 @@
 //! the sounds part holds of it until a script writes one, then what was
 //! written; a write holds for the sound's later plays and the ones playing
 //! (a fade's volume reaches what's playing as it slides: a hypothesis, the
-//! music macros' fades read so). A copy reads and writes its sound's. An
+//! music macros' fades read so). A copy reads its sound's until a script
+//! writes the copy's own, which holds for that copy alone: `Sound - Ultra
+//! Sound` sets a copy's volume to 0 and slides it to its sound's, and
+//! `Sound - Play With Delay` saves a copy's volume and silences it, which
+//! only reads so if the copy's settings are its own (a reading of the
+//! scripts: the original's copy isn't read). An
 //! object the book doesn't know as a sound keeps what's written and reads
 //! 0 until then, as the value cell it was. The deprecated categories read
 //! 0. The sound system's read their start until written: the master
@@ -137,7 +142,7 @@ impl ScriptWorld {
         let length = play_length(PLAY_END, p.audio, p.duration);
         let mut play = SoundPlay::of(fresh_serial(), i, id, &p, length, self.sound_clock);
         if let Some(Value::Object(o)) = self.sequences.get(i as usize).map(|s| s.template) {
-            play.params = self.written_params(o, play.params);
+            play.params = self.copy_params(i, o, play.params);
         }
         self.plays.push(play);
         self.sounds_started += 1;
@@ -531,13 +536,14 @@ fn behavior_of(v: Option<&Value>, was: LimitBehavior) -> LimitBehavior {
 }
 
 impl ScriptWorld {
-    /// The sound info a receiver names: itself, or a copy's sound.
-    fn sound_of(&self, recv: Option<Value>) -> Option<Obj> {
+    /// The sound info a receiver names, and the copy when it's one: the
+    /// sound itself, or a copy and its sound.
+    fn sound_of(&self, recv: Option<Value>) -> Option<(Obj, Option<u32>)> {
         match recv? {
-            Value::Object(o) => Some(o),
+            Value::Object(o) => Some((o, None)),
             v => match self.handle(v).and_then(|h| self.objs.get(h)) {
                 Some(Object::Sequence(i)) => match self.sequences.get(i as usize)?.template {
-                    Value::Object(o) => Some(o),
+                    Value::Object(o) => Some((o, Some(i))),
                     _ => None,
                 },
                 _ => None,
@@ -565,8 +571,36 @@ impl ScriptWorld {
 
     /// `params` with what scripts wrote to sound info `o` laid over them.
     pub(crate) fn written_params(&self, o: Obj, params: Params) -> Params {
+        self.laid_over(o, params, &|f| self.sound_written.get(&(o, f)))
+    }
+
+    /// `f` of copy `i` of sound info `o` as read now: what was written to
+    /// the copy, else its sound's ([`ScriptWorld::sound_value`]).
+    pub(crate) fn copy_value(&self, i: u32, o: Obj, f: SoundField) -> Value {
+        match self.copy_written.get(&(i, f)) {
+            Some(v) => *v,
+            None => self.sound_value(o, f),
+        }
+    }
+
+    /// `params` with what scripts wrote to sound info `o`, then to its copy
+    /// `i`, laid over them: a copy's settings are its own once written
+    /// (`Sound - Ultra Sound` fades a copy in from 0 to its sound's volume,
+    /// `Sound - Play With Delay` saves a copy's volume and silences it).
+    pub(crate) fn copy_params(&self, i: u32, o: Obj, params: Params) -> Params {
+        let p = self.written_params(o, params);
+        self.laid_over(o, p, &|f| self.copy_written.get(&(i, f)))
+    }
+
+    /// `params` with the writes `w` finds laid over them, for sound info
+    /// `o`.
+    fn laid_over<'a>(
+        &'a self,
+        o: Obj,
+        params: Params,
+        w: &dyn Fn(SoundField) -> Option<&'a Value>,
+    ) -> Params {
         use SoundField as F;
-        let w = |f| self.sound_written.get(&(o, f));
         let float = |f, was: f32| w(f).and_then(Value::as_f32).unwrap_or(was);
         let int = |f, was: u32| {
             w(f).and_then(Value::as_i32)
@@ -580,13 +614,11 @@ impl ScriptWorld {
         p.rumble_duration = float(F::RumbleDuration, p.rumble_duration);
         p.pan_percent = float(F::Pan, p.pan_percent);
         p.three_d = flag(F::ThreeD, p.three_d);
+        // A falloff turned off keeps its distances: its sound's as read.
         let (full, silent) = p.falloff.map_or_else(
             || {
-                let s = self.book_sound(o);
-                (
-                    s.map_or(0.0, |s| s.attenuation_distance_full),
-                    s.map_or(0.0, |s| s.attenuation_distance_silent),
-                )
+                let d = |f| self.sound_value(o, f).as_f32().unwrap_or(0.0);
+                (d(F::AttenuationFull), d(F::AttenuationSilent))
             },
             |f| (f.full, f.silent),
         );
@@ -621,8 +653,8 @@ impl ScriptWorld {
     }
 
     /// A play's settings now: its sound's as the data holds them with what
-    /// scripts have written to them since (the player reads these each
-    /// frame, so a fade reaches what's playing).
+    /// scripts have written to the sound since, then to its copy (the
+    /// player reads these each frame, so a fade reaches what's playing).
     pub fn play_params(&self, play: &crate::sounds::SoundPlay) -> Params {
         match self
             .sequences
@@ -631,7 +663,7 @@ impl ScriptWorld {
         {
             Some(Value::Object(o)) => {
                 let base = self.book_sound(o).map_or(play.params, Params::of);
-                self.written_params(o, base)
+                self.copy_params(play.sequence, o, base)
             }
             _ => play.params,
         }
@@ -701,7 +733,8 @@ impl ScriptWorld {
     ) -> Option<Result<Value, HostFault>> {
         Some(match m {
             Member::Sound(f) => match self.sound_of(at.receiver) {
-                Some(o) => Ok(self.sound_value(o, f)),
+                Some((o, Some(i))) => Ok(self.copy_value(i, o, f)),
+                Some((o, None)) => Ok(self.sound_value(o, f)),
                 None => Err(HostFault::Nothing),
             },
             Member::SoundSystem(f) => Ok(self.system_value(f)),
@@ -730,7 +763,11 @@ impl ScriptWorld {
         use SystemField as F;
         Some(match m {
             Member::Sound(f) => match self.sound_of(at.receiver) {
-                Some(o) => {
+                Some((_, Some(i))) => {
+                    self.copy_written.insert((i, f), v);
+                    Ok(())
+                }
+                Some((o, None)) => {
                     self.sound_written.insert((o, f), v);
                     Ok(())
                 }
@@ -1054,6 +1091,10 @@ mod tests {
             set(&mut w, "clonedsequence", "clones", sound_value(LOOP)),
             [on_a, on_b]
         );
+        // A stop of the sound with no actor receiving it stops none.
+        assert!(w.stop_sound(sound_value(LOOP), None));
+        steps(&mut w, 1);
+        assert!(w.sounds_ended().next().is_none(), "none stopped");
         w.op(
             &call(Class::StopSequence, A, sound_value(LOOP)),
             &mut |_| 0,
@@ -1149,9 +1190,10 @@ mod tests {
     /// AR.10: a sound's members read the data until written (its volume,
     /// category, limits and flags as the part holds them), then what was
     /// written, for its next play and the one playing (a fade); a copy
-    /// reads its sound's; the deprecated two read 0; an object the book
-    /// doesn't know keeps a write and reads 0 before one; no object, no
-    /// value.
+    /// reads its sound's until its own is written, which is the copy's
+    /// alone (`Sound - Ultra Sound`'s fade in from 0 to its sound's volume);
+    /// the deprecated two read 0; an object the book doesn't know keeps a
+    /// write and reads 0 before one; no object, no value.
     #[test]
     fn a_sounds_members_read_its_data_until_written() {
         let mut w = world();
@@ -1194,6 +1236,47 @@ mod tests {
             read(&mut w, "soundinfo", "volume", playing),
             Value::Float(80.0)
         );
+        // The copy's volume to 0, as `Sound - Ultra Sound` starts a fade in:
+        // the copy's alone, its sound still reading its own (the fade's
+        // goal).
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "volume",
+            Some(playing),
+            Value::Float(0.0)
+        ));
+        assert_eq!(
+            read(&mut w, "soundinfo", "volume", playing),
+            Value::Float(0.0)
+        );
+        assert_eq!(
+            read(&mut w, "soundinfo", "volume", once),
+            Value::Float(80.0),
+            "its sound's untouched"
+        );
+        let p = w.plays()[0].clone();
+        assert_eq!(w.play_params(&p).volume_percent, 0.0, "the copy silent");
+        // Its sound's written: the one playing that wrote its own keeps it.
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "volume",
+            Some(once),
+            Value::Float(20.0)
+        ));
+        assert_eq!(w.play_params(&p).volume_percent, 0.0, "the copy's own");
+        let second = started(start(&mut w, A, ONCE));
+        assert_eq!(
+            read(&mut w, "soundinfo", "volume", second),
+            Value::Float(20.0)
+        );
+        let p2 = w.plays()[1].clone();
+        assert_eq!(
+            w.play_params(&p2).volume_percent,
+            20.0,
+            "one playing with none of its own follows its sound's (a fade)"
+        );
         assert!(write(
             &mut w,
             "soundinfo",
@@ -1201,16 +1284,6 @@ mod tests {
             Some(playing),
             Value::Float(20.0)
         ));
-        assert_eq!(
-            read(&mut w, "soundinfo", "volume", once),
-            Value::Float(20.0)
-        );
-        let p = w.plays()[0].clone();
-        assert_eq!(
-            w.play_params(&p).volume_percent,
-            20.0,
-            "the one playing fades"
-        );
         assert!(write(
             &mut w,
             "soundinfo",
@@ -1229,7 +1302,7 @@ mod tests {
         assert_eq!((falloff.full, falloff.silent), (4.0, 150.0));
         started(start(&mut w, B, ONCE));
         assert_eq!(
-            w.plays()[1].params.volume_percent,
+            w.plays()[2].params.volume_percent,
             20.0,
             "the next starts so"
         );
@@ -1253,6 +1326,38 @@ mod tests {
         ));
         assert_eq!(read(&mut w, "soundinfo", "pan", other), Value::Float(-40.0));
         assert!(!write(&mut w, "soundinfo", "pan", None, Value::Float(1.0)));
+    }
+
+    /// A sound's copy is no animation: `actorinfo.playing animations` holds
+    /// an actor's clips alone and `playing sounds` his sound copies alone
+    /// (a walker's locomotion reads the first, and took his footsteps for
+    /// animations).
+    #[test]
+    fn a_sound_copy_is_no_animation() {
+        let mut w = world();
+        let template = Obj {
+            unit: LEVEL,
+            index: 77,
+        };
+        w.set_palette(template, vec![0.5]);
+        let clip = w.objs.value(Object::Clip { template, slot: 0 });
+        let clip_copy = started(
+            w.op(
+                &call(Class::StartSequence, A, clip),
+                &mut |_| 0,
+                &mut NoEngine,
+            )
+            .unwrap(),
+        );
+        let sound_copy = started(start(&mut w, A, LOOP));
+        assert_eq!(
+            set(&mut w, "actorinfo", "playing animations", Value::Entity(A)),
+            [clip_copy]
+        );
+        assert_eq!(
+            set(&mut w, "actorinfo", "playing sounds", Value::Entity(A)),
+            [sound_copy]
+        );
     }
 
     /// AR.10: the sound system's members read their start until written;

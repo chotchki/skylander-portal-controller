@@ -501,12 +501,16 @@ impl PlayerLoop {
         if places.game_systems == Some(id) {
             self.game_systems_tick(vm, host, id, joined)
         } else if places.music == Some(id) {
-            // Its sound system's update (openspec AR.11), then its reset of
-            // the mover update.
-            if let Some((_, r)) = &self.sound
-                && vm.is_held(id)
-            {
-                vm.run_span(id, r.start, r.end, host)?;
+            // Its sound system's update (openspec AR.11), its clock counted
+            // as its own tick would (the update times delayed starts and
+            // fades by its `system.script timer`: uncounted, a delayed play
+            // held at rate 0 never starts), then its reset of the mover
+            // update.
+            if vm.is_held(id) {
+                if let Some((_, r)) = &self.sound {
+                    vm.run_span(id, r.start, r.end, host)?;
+                }
+                vm.count_tick(id);
             }
             if let Some(mover) = places.mover {
                 vm.requeue(mover);
@@ -1708,6 +1712,14 @@ mod tests {
             );
             assert_eq!(read(&vm, "Enemy_Chompy(1)", "seen"), calls, "after it");
             assert_eq!(read(&vm, "movementUpdate", "seen"), calls);
+            // The music controller's clock counted as its own tick would
+            // (openspec AR.11): its first tick's and one a step since.
+            let tick = vm.config().tick_seconds;
+            let music = vm.active_seconds(ids["Macros_Music"]).unwrap();
+            assert!(
+                (music - (step + 1) as f32 * tick).abs() < 1e-5,
+                "step {step}: the music controller's clock {music}"
+            );
         }
         assert_eq!(
             vm.tick_order()

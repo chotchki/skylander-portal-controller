@@ -2070,11 +2070,20 @@ impl ScriptWorld {
             // order started (its insert at 0 and append).
             Member::PlayingAnimations => {
                 let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                // Clips alone: a sound's copy (openspec AR.9, a sequence with
+                // a length since) is in `playing sounds`, never here, or a
+                // walker's locomotion takes his footsteps for animations.
+                let this = &*self;
                 let playing = |whole: bool| {
-                    self.sequences
+                    this.sequences
                         .iter()
                         .enumerate()
-                        .filter(move |(_, s)| s.actor == h && s.plays() && s.is_layered() != whole)
+                        .filter(move |(_, s)| {
+                            s.actor == h
+                                && s.plays()
+                                && s.is_layered() != whole
+                                && this.clip_of(s).is_some()
+                        })
                         .map(|(i, _)| Object::Sequence(i as u32))
                 };
                 let mut v: Vec<Object> = playing(true).collect();
