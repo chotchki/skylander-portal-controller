@@ -2225,7 +2225,7 @@ fn a_start_holding_the_models_part_keeps_it_without_opening_an_archive() {
     }
     let seen = Mutex::new(Vec::new());
     let again = stages::run(&mut reopened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e))
+        seen.lock().unwrap().extend(Seen::of(&e))
     });
     for a in &archives {
         fs::set_permissions(a, fs::Permissions::from_mode(0o644)).unwrap();
