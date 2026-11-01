@@ -411,3 +411,59 @@ fn probe_the_hud_under_other_title_safe_margins() {
         }
     }
 }
+
+/// AT.9's review: the HUD through a swap, as the TV's runs it (AH.105's
+/// deactivate path, then the next join on the same run), strict, every
+/// member on the model: his coming off takes his HUD down (60 instances to
+/// 9 on the dump, 51 taken off) and the next join builds it once (60
+/// again, not 111); what's taken off stays in the model, as a run's
+/// sprites all do.
+#[test]
+#[ignore = "reads the Giants dump (GUAC_GIANTS_DUMP)"]
+fn a_swap_takes_his_hud_down_and_the_next_join_builds_it_once() {
+    let (mut run, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            interface: true,
+            ..Setup::default()
+        },
+    );
+    let count = |run: &common::Run| {
+        let k = run.world.interface().unwrap();
+        (
+            k.instances().len(),
+            k.model().len(),
+            k.model().removed().len(),
+        )
+    };
+    let at_join = count(&run);
+    let values = run.figure_values().expect("his figure's words");
+    run.deactivate()
+        .unwrap_or_else(|h| panic!("the deactivation: {h}"));
+    for _ in 0..120 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    let off = count(&run);
+    run.join_tag(guacamole::figure::Tag {
+        serial: 2,
+        ..common::eruptor_tag(values)
+    })
+    .unwrap_or_else(|h| panic!("the join again: {h}"));
+    for _ in 0..120 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    let again = count(&run);
+    let k = run.world.interface().unwrap();
+    println!(
+        "(instances awake, sprites, taken off): at the join {at_join:?}, 120 steps after he came off {off:?}, 120 after the next join {again:?}"
+    );
+    assert!(k.strays().is_empty(), "strays: {:?}", k.strays());
+    assert!(k.unknown().is_empty(), "unknown: {:?}", k.unknown());
+    assert!(off.0 < at_join.0, "his HUD down with him");
+    assert_eq!(
+        off.2 - at_join.2,
+        at_join.0 - off.0,
+        "what came down taken off"
+    );
+    assert_eq!(again.0, at_join.0, "the next join's HUD, once");
+}
