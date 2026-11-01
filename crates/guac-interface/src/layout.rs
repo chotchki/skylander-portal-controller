@@ -118,11 +118,14 @@ impl Model {
             }
             if shown || changed {
                 let placed = self.place(id, parent.and_then(|p| frame.get(p)), world);
-                if !self.sprite(id).sized() {
-                    let s = self.sprite_mut(id);
+                let s = self.sprite_mut(id);
+                if !s.sized() {
                     s.size[0] = placed.size[0];
                     s.size[1] = placed.size[1];
                 }
+                // Its current matrix's place and its kind's scale (0xBA240).
+                s.matrix.position = placed.point;
+                s.computed_scale = Some(placed.scale);
                 frame.placed[id.0 as usize] = Some(Placed {
                     drawn: shown,
                     dirty: changed,

@@ -60,6 +60,11 @@ pub fn template(b: &mut IgzBuilder, o: Location, name: &str, properties: u32, n:
     b.put_bytes(at(o, 0xC8), &[0x80, 0x80, c, 0xFF, 0x80, 0x80, 0x80, c]);
     b.put_u32(at(o, 0xD8), u32::from(n) * 3);
     floats(b, o, 0xDC, &[100.0]);
+    // The placement's matrices: placed at (n, 1, 2n) turned 90n degrees
+    // about the depth axis, standing at (3n, 0, 4n) turned 45.
+    let turn = 90.0 * f32::from(n % 4);
+    floats(b, o, 0x24, &[f, 1.0, 2.0 * f, 0.0, turn, 0.0]);
+    floats(b, o, 0x3C, &[3.0 * f, 0.0, 4.0 * f, 0.0, 45.0, 0.0]);
 }
 
 /// An `AnimatableTextureDataInfo` named `source`; with `image`, its chain

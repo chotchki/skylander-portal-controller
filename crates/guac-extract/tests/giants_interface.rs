@@ -161,6 +161,35 @@ fn the_interface_extracts_and_resumes_alone() {
     assert_eq!(global.strings.len(), 906);
     assert_eq!(global.fonts.len(), 1);
     assert_eq!(global.fonts[0].glyphs.len(), 178);
+    // Each template's two matrices (AT.25): the corner shades turn by
+    // their initial matrices' depth turn, as the June savestate's do.
+    let mut turned = 0usize;
+    for t in &global.templates {
+        if t.init_matrix.rotation != [0.0; 3] || t.matrix.rotation != [0.0; 3] {
+            turned += 1;
+        }
+        if t.name.starts_with("GameplayOverlay_") {
+            println!(
+                "    {}: initial {:?} {:?}, current {:?} {:?}",
+                t.name,
+                t.init_matrix.position,
+                t.init_matrix.rotation,
+                t.matrix.position,
+                t.matrix.rotation
+            );
+        }
+    }
+    println!("  global.bld: {turned} templates turned by a matrix");
+    assert_eq!(turned, 21);
+    let shade = |n: &str| {
+        let t = global.templates.iter().find(|t| t.name == n).unwrap();
+        assert_eq!(t.matrix, Default::default(), "{n}: current, the file's");
+        t.init_matrix.rotation
+    };
+    assert_eq!(shade("GameplayOverlay_BL"), [0.0, 90.0, 0.0]);
+    assert_eq!(shade("GameplayOverlay_BR"), [0.0, 180.00078, 0.0]);
+    assert_eq!(shade("GameplayOverlay_UL"), [0.0; 3]);
+    assert_eq!(shade("GameplayOverlay_UR"), [0.0, 270.0, 0.0]);
     let bootstrap = read("permanent/bootstrap.bld");
     assert_eq!(bootstrap.templates.len(), 2);
     assert_eq!(bootstrap.fonts.len(), 1);

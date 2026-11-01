@@ -25,6 +25,8 @@ fn template(visual: u32, w: f32, h: f32) -> Template {
         replace_color: [0x80, 0x80, 0x80, 0],
         num_value: 0,
         depth: 0.0,
+        init_matrix: Default::default(),
+        matrix: Default::default(),
         content: if visual == kind::ART {
             Content::Image(Art {
                 source: Some("a.png".into()),

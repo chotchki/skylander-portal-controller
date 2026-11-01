@@ -26,8 +26,8 @@ use std::collections::HashMap;
 
 use crate::igz::layouts::{
     AlphaTextureUnitIdAttr, AnimatableTextureDataInfo, BitmapFont, CharMetrics, CharMetricsList,
-    FontDataInfo, KernCorners, Layout, ObjectRef, ParticleInfo, PhysicsModel, Rgba8, SpriteBits,
-    SpriteInfo, StringInfo, TextureAttr2, VisualType, is_a, read_all,
+    EulerTransform, FontDataInfo, KernCorners, Layout, ObjectRef, ParticleInfo, PhysicsModel,
+    Rgba8, SpriteBits, SpriteInfo, StringInfo, TextureAttr2, VisualType, is_a, read_all,
 };
 use crate::igz::{ExternalId, Igz};
 use crate::language::string_infos;
@@ -85,6 +85,10 @@ pub struct Template<'a> {
     pub replace_color: Rgba8,
     pub num_value: i32,
     pub depth: f32,
+    /// The placement's `_initMatrix` and `_currentMatrix` (openspec AT.25):
+    /// where it was placed and where it stands, a place and three turns.
+    pub init_matrix: EulerTransform,
+    pub matrix: EulerTransform,
     pub content: Content<'a>,
     /// Its text key, if it holds one.
     pub string: Option<TextKey>,
@@ -352,6 +356,8 @@ fn template<'a>(
         replace_color: s.replace_color,
         num_value: s.num_value,
         depth: s.depth,
+        init_matrix: s.placement.init_matrix,
+        matrix: s.placement.current_matrix,
         content,
         string,
     })

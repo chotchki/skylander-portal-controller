@@ -4,9 +4,10 @@
 
 use std::collections::HashMap;
 
-use guac_ir::interface::{Content, Font, Template};
+use guac_ir::interface::{Content, Font, Matrix, Template};
 use guac_script::{Obj, Value, convert};
 
+use crate::matrix;
 use crate::members::Member;
 use crate::sprite::{Source, Sprite, SpriteId, State, flags, kind, placement, props};
 use crate::text::{self, Metrics, TextIn};
@@ -49,6 +50,9 @@ pub enum Answer {
     /// `scale`'s three percents: the measurement its parts are read and
     /// written through ([`Model::set_scale`]).
     Scale([f32; 3]),
+    /// A placement's matrix (`spritematrixmeasurement.origin`): the host
+    /// hands it on as its matrices go.
+    Matrix(Matrix),
 }
 
 /// Why a member gave no answer or took no write.
@@ -65,9 +69,8 @@ pub enum Refusal {
 }
 
 /// What the model asks of what it doesn't hold: a kind's answer the adapter
-/// knows better (a model's, an emitter's), the place on screen (the
-/// layout's, which AT.25 hands the members), an
-/// image still loading, an object's name. `None` is "not known": the model
+/// knows better (a model's, an emitter's), an image still loading, an
+/// object's name and its class's numbers. `None` is "not known": the model
 /// answers itself where the crate docs give it a rule and refuses as
 /// [`Refusal::Unmodelled`] otherwise.
 pub trait World {
@@ -81,16 +84,6 @@ pub trait World {
         let _ = (model, sprite);
         None
     }
-    /// The sprite's alignment point on screen, in units (`screen location`).
-    fn screen_point(&self, model: &Model, sprite: SpriteId) -> Option<[f32; 2]> {
-        let _ = (model, sprite);
-        None
-    }
-    /// The sprite's place on screen: x, the computed depth, y.
-    fn place(&self, model: &Model, sprite: SpriteId) -> Option<[f32; 3]> {
-        let _ = (model, sprite);
-        None
-    }
     /// Whether an art sprite's texture data is still loading.
     fn loading(&self, model: &Model, sprite: SpriteId) -> bool {
         let _ = (model, sprite);
@@ -98,6 +91,13 @@ pub trait World {
     }
     /// An object's name, for `nameextractor.Name checksum`.
     fn name_of(&self, value: Value) -> Option<String> {
+        let _ = value;
+        None
+    }
+    /// What an object answers at its virtual slots 24 and 25, for
+    /// `nameextractor`'s `Instantiation size` and `type count`; `None` reads
+    /// 0, as no object does.
+    fn class_numbers(&self, value: Value) -> Option<[i32; 2]> {
         let _ = value;
         None
     }
@@ -373,11 +373,43 @@ impl Model {
         Value::Entity(self.bases.strings + (self.strings.len() - 1) as u64)
     }
 
-    /// Wakes a template's placement: into `active`, at its end.
+    /// Wakes a template's placement: into `active`, at its end, its current
+    /// matrix its initial one (0x69508).
     pub fn wake(&mut self, id: SpriteId) {
         if self.sprite(id).state == State::Asleep {
-            self.sprite_mut(id).state = State::Awake;
+            let s = self.sprite_mut(id);
+            s.state = State::Awake;
+            s.matrix = s.init_matrix;
             self.active.push(id);
+        }
+    }
+
+    /// A sprite reset as a path element (0x6A020, the crate docs' set
+    /// reset): an awake clone taken off and woken again, its source and
+    /// activator kept (off its parent, its children off it, last in `active`,
+    /// its current matrix its initial one); an awake template not a clone
+    /// put to sleep. Anything else as it is (**Hypothesis** for a removed
+    /// clone, which the original may wake).
+    fn restart(&mut self, id: SpriteId) {
+        let s = self.sprite(id);
+        if s.state != State::Awake {
+            return;
+        }
+        let (clone, activator) = (s.cloned_from != Source::None, s.activator);
+        // The deactivate hook (0x6A620), as `remove` runs it.
+        self.attach(id, None);
+        while let Some(&child) = self.sprite(id).children.last() {
+            self.attach(child, None);
+        }
+        self.active.retain(|&a| a != id);
+        let s = self.sprite_mut(id);
+        s.activator = Value::Null;
+        if clone {
+            s.matrix = s.init_matrix;
+            s.activator = activator;
+            self.active.push(id);
+        } else {
+            s.state = State::Asleep;
         }
     }
 
@@ -548,7 +580,16 @@ impl Model {
                 u32::from(s.location[0] as u16) << 16 | u32::from(s.location[1] as u16),
             ))),
             ("spriteinfo", "screen location") => {
-                let [x, y] = world.screen_point(self, id).ok_or(Refusal::Unmodelled)?;
+                // Its anchor's offset off its stored size, at its last
+                // computed scale, carried by its current matrix (0xB3480).
+                let a = props::ALIGNMENT.get(s.properties);
+                let mut x = (a % 3) as f32 * 0.5 * s.size[0];
+                let mut y = (a / 3) as f32 * 0.5 * s.size[1];
+                if let Some(c) = s.computed_scale {
+                    x *= c[0];
+                    y *= c[2];
+                }
+                let [x, _, y] = matrix::carry(&matrix::rows(&s.matrix), [x, 0.0, y]);
                 Ok(Answer::Value(screen(x, y)))
             }
             ("spriteinfo", "screen width") | ("spriteinfo", "screen height") => {
@@ -611,24 +652,17 @@ impl Model {
                 Source::None => Value::Null,
             })),
             ("spritematrixmeasurement", "activator") => Ok(Answer::Value(s.activator)),
-            // The placement's matrix: a sprite's place is its location
-            // (AT.25, off the layout).
-            ("spritematrixmeasurement", "origin") => Err(Refusal::Unmodelled),
+            // Its initial matrix (0x6A914).
+            ("spritematrixmeasurement", "origin") => Ok(Answer::Matrix(s.init_matrix)),
             _ => Err(Refusal::Unmodelled),
         }
     }
 
     /// A paired `spritepositionmeasurement` read: `id`'s place against
-    /// `other`'s, both off the layout's places (AT.25 hands them over).
-    pub fn get_paired(
-        &self,
-        id: SpriteId,
-        other: SpriteId,
-        m: &Member,
-        world: &dyn World,
-    ) -> Result<Answer, Refusal> {
-        let a = world.place(self, id).ok_or(Refusal::Unmodelled)?;
-        let b = world.place(self, other).ok_or(Refusal::Unmodelled)?;
+    /// `other`'s, each its current matrix's (the crate docs).
+    pub fn get_paired(&self, id: SpriteId, other: SpriteId, m: &Member) -> Result<Answer, Refusal> {
+        let a = self.sprite(id).matrix.position;
+        let b = self.sprite(other).matrix.position;
         let (dx, dy) = (a[0] - b[0], a[2] - b[2]);
         let v = match m.name {
             "screen distance" => (dx * dx + dy * dy).sqrt(),
@@ -640,6 +674,55 @@ impl Model {
             _ => return Err(Refusal::Unmodelled),
         };
         Ok(Answer::Value(Value::Float(v)))
+    }
+
+    /// A paired `spritepositionmeasurement` write: `id`'s current matrix's
+    /// place moved against `other`'s as each setter moves it (the crate
+    /// docs). The sprite's next layout writes it again.
+    pub fn set_paired(
+        &mut self,
+        id: SpriteId,
+        other: SpriteId,
+        m: &Member,
+        v: Value,
+    ) -> Result<(), Refusal> {
+        let v = convert(&m.spec(), v)
+            .and_then(|v| v.as_f32())
+            .ok_or(Refusal::Nothing)?;
+        let b = self.sprite(other).matrix.position;
+        let a = &mut self.sprite_mut(id).matrix;
+        let p = a.position;
+        a.position = match m.name {
+            // 0xAF618, 0xAF318, 0xAF820.
+            "X offset" => [b[0] - v, p[1], p[2]],
+            "Y offset" => [p[0], p[1], b[2] - v],
+            "priority offset" => [p[0], b[1] - v, p[2]],
+            // 0xAEED0: round the second at the distance in x and y, the
+            // depth's difference kept.
+            "heading" => {
+                let (dx, dd, dy) = (p[0] - b[0], p[1] - b[1], p[2] - b[2]);
+                let d = (dy * dy + dx * dx + f32::MIN_POSITIVE).sqrt();
+                let a = (f64::from(v * 0.017_453_292)) as f32;
+                let (sin, cos) = f64::from(a).sin_cos();
+                [
+                    b[0] + sin as f32 * d,
+                    (f64::from(b[1]) + f64::from(dd)) as f32,
+                    b[2] + cos as f32 * d,
+                ]
+            }
+            // 0xAE9D8: the depth the second's, then along the line from it
+            // (its length never 0: two that meet stay met).
+            "screen distance" => {
+                let diff = [p[0] - b[0], 0.0, p[2] - b[2]];
+                let len = diff[2].mul_add(diff[2], diff[1].mul_add(diff[1], diff[0] * diff[0]))
+                    + f32::MIN_POSITIVE;
+                let by = v / len.sqrt();
+                let diff = diff.map(|d| d * by);
+                [b[0] + diff[0], b[1] + diff[1], b[2] + diff[2]]
+            }
+            _ => return Err(Refusal::Unmodelled),
+        };
+        Ok(())
     }
 
     /// A sprite member's write, converted and clamped as the VM does first
@@ -800,7 +883,13 @@ impl Model {
                 let parent = self.sprite_of(v);
                 self.attach(id, parent);
             }
-            ("spritematrixmeasurement", "ID") => self.sprite_mut(id).id = int(v)?,
+            ("spritematrixmeasurement", "ID") => {
+                let n = int(v)?;
+                // The snapshot every write takes first (0x6A830).
+                let s = self.sprite_mut(id);
+                s.reset_id.get_or_insert(s.id);
+                s.id = n;
+            }
             _ => return Err(Refusal::Unmodelled),
         }
         Ok(())
@@ -812,14 +901,48 @@ impl Model {
         self.sprite_mut(id).scale[axis] = percent;
     }
 
-    /// A sprite member's `reset`. A member with no reset handler resets to
-    /// nothing (**Hypothesis**: the op finds no handler and does nothing,
-    /// AT.9's census); the engine's sets' reset (0x7BB04) isn't modelled.
-    pub fn reset(&mut self, id: SpriteId, m: &Member) -> Result<(), Refusal> {
-        let _ = id;
-        match m.reset {
-            None => Ok(()),
-            Some(_) => Err(Refusal::Unmodelled),
+    /// A sprite member's `reset` (the op's: its snapshot written back, the
+    /// crate docs). A member with no reset handler resets to nothing
+    /// (**Hypothesis**: the op finds no handler and does nothing, AT.9's
+    /// census); `ID` takes back the one it held before its first write; a
+    /// set (0x7BB04) resets each of its sprites, last first, and writes
+    /// nothing back.
+    pub fn reset(&mut self, id: SpriteId, m: &Member, world: &dyn World) -> Result<(), Refusal> {
+        match (m.namespace, m.name, m.reset) {
+            (_, _, None) => Ok(()),
+            ("spritematrixmeasurement", "ID", _) => {
+                let s = self.sprite_mut(id);
+                if let Some(n) = s.reset_id {
+                    s.id = n;
+                }
+                Ok(())
+            }
+            (_, _, Some(SET_RESET)) => {
+                let Answer::Elements(elements) = self.get(id, m, world)? else {
+                    return Err(Refusal::Unmodelled);
+                };
+                for e in elements.into_iter().rev() {
+                    if let Some(s) = self.sprite_of(e) {
+                        self.restart(s);
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(Refusal::Unmodelled),
+        }
+    }
+
+    /// A global converter's member's `reset`: `value set`'s and `color
+    /// set`'s (0x80E0C) hand the set to its own reset and write it back,
+    /// taken as empty (**Hypothesis**, the crate docs); every other global
+    /// member has no reset handler and resets to nothing.
+    pub fn reset_global(&mut self, m: &Member) -> Result<(), Refusal> {
+        match (m.namespace, m.name, m.reset) {
+            (_, _, None) => Ok(()),
+            ("stringconverter", "value set", _) | ("textcolorconverter", "color set", _) => {
+                self.set_global_elements(m, &[])
+            }
+            _ => Err(Refusal::Unmodelled),
         }
     }
 
@@ -842,6 +965,13 @@ impl Model {
             ("textcolorconverter", "text sprite") => Ok(Answer::Value(self.text_colors.sprite)),
             ("textcolorconverter", "color set") => set(&self.text_colors.colors),
             ("nameextractor", "Object to name") => Ok(Answer::Value(self.name_object)),
+            ("nameextractor", "Instantiation size") | ("nameextractor", "type count") => {
+                let n = (self.name_object != Value::Null)
+                    .then(|| world.class_numbers(self.name_object))
+                    .flatten()
+                    .unwrap_or([0; 2]);
+                int(n[usize::from(m.name == "type count")])
+            }
             ("nameextractor", "Name checksum") => {
                 let name = (self.name_object != Value::Null)
                     .then(|| world.name_of(self.name_object))
@@ -953,6 +1083,9 @@ impl Model {
         Ok(())
     }
 }
+
+/// The engine sets' shared reset handler (the crate docs, A set's reset).
+const SET_RESET: u32 = 0x7BB04;
 
 /// A letter's colour until the text colour converter sets it: the font's
 /// colour at run time (0.5, 0.5, 0.5, 1).

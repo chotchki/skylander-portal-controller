@@ -33,7 +33,7 @@ use guac_formats::interface::{self as finterface, Art as FArt, Content as FConte
 use guac_formats::language::{LanguagePack, join};
 use guac_ir::DumpIdentity;
 use guac_ir::interface::{
-    Art, Content, Font, Glyph, Import, Interface, Kind, RECORD, Str, Template,
+    Art, Content, Font, Glyph, Import, Interface, Kind, Matrix, RECORD, Str, Template,
 };
 
 use crate::extract::Manifest;
@@ -152,6 +152,13 @@ fn kind(k: VisualType) -> Option<Kind> {
         VisualType::Particles => Kind::Particles,
         VisualType::Other(_) => return None,
     })
+}
+
+fn matrix(m: guac_formats::igz::layouts::EulerTransform) -> Matrix {
+    Matrix {
+        position: m.position,
+        rotation: m.rotation,
+    }
 }
 
 fn import(id: ExternalId) -> Import {
@@ -373,6 +380,8 @@ pub fn read_igz(
             replace_color: t.replace_color,
             num_value: t.num_value,
             depth: t.depth,
+            init_matrix: matrix(t.init_matrix),
+            matrix: matrix(t.matrix),
             content,
             string: t.string.map(|k| match k {
                 TextKey::Local(n) => guac_ir::interface::TextKey::Local(n),

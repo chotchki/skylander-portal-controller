@@ -39,6 +39,16 @@ fn one_template_of_each_kind_reads_with_what_it_draws() {
         ([0x80, 0x80, 1, 0xFF], [0x80, 0x80, 0x80, 1])
     );
     assert_eq!((t(0).num_value, t(0).depth), (3, 100.0));
+    // Its two matrices (AT.25), each a place and three turns.
+    assert_eq!(
+        (t(0).init_matrix.position, t(0).init_matrix.rotation),
+        ([1.0, 1.0, 2.0], [0.0, 90.0, 0.0])
+    );
+    assert_eq!(
+        (t(0).matrix.position, t(0).matrix.rotation),
+        ([3.0, 0.0, 4.0], [0.0, 45.0, 0.0])
+    );
+    assert_eq!(t(2).init_matrix.rotation, [0.0, 270.0, 0.0], "n = 3");
 
     assert_eq!(
         t(1).content,

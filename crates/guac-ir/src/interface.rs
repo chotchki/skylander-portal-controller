@@ -18,8 +18,9 @@ use crate::DumpIdentity;
 /// The record's shape inside [`crate::IR_VERSION`], carried in its files'
 /// names (`interface/<stem>.v2.ron`, a level's `sprites.v2.ron`), so an
 /// extract holding another shape reads the two parts again and nothing
-/// else. AT.8's was 1, its files named without it; 2 (AT.27) gives each
-/// string its settings ([`Str`]), which a 1's strings can't say. Bump it
+/// else. AT.8's was 1, its files named without it; 2 gives each string its
+/// settings ([`Str`], AT.27) and each template its two matrices
+/// ([`Template::init_matrix`], AT.25), which a 1 can't say. Bump it
 /// whenever a type here changes shape.
 pub const RECORD: u32 = 2;
 
@@ -62,8 +63,21 @@ pub struct Template {
     pub replace_color: [u8; 4],
     pub num_value: i32,
     pub depth: f32,
+    /// The placement's `_initMatrix`, where the file placed it.
+    pub init_matrix: Matrix,
+    /// Its `_currentMatrix`, where it stands in the file.
+    pub matrix: Matrix,
     pub content: Content,
     pub string: Option<TextKey>,
+}
+
+/// A placement's matrix as the disc stores it: a place and three turns in
+/// degrees, about the place's axes in order (`guac-interface` says how the
+/// interface reads them).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct Matrix {
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
 }
 
 /// What a sprite's visual type says it draws, the raw `_visualType` order.
@@ -197,6 +211,11 @@ mod tests {
                 replace_color: [0x80, 0x80, 0x80, 0],
                 num_value: 0,
                 depth: 100.0,
+                init_matrix: Matrix {
+                    position: [0.914, 10_000.0, 480.0],
+                    rotation: [0.0, 90.0, 0.0],
+                },
+                matrix: Matrix::default(),
                 content: Content::Imported(
                     Kind::Text,
                     Import {

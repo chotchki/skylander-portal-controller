@@ -105,6 +105,12 @@ fn each_template_lands_with_what_it_draws_and_the_text_in_english() {
     assert_eq!(t(0).content, Content::Container);
     assert_eq!(t(0).properties, 0x2001_660B);
     assert_eq!(t(0).name, "Generic_Container");
+    // Its matrices (AT.25), as the builder placed it.
+    assert_eq!(
+        (t(0).init_matrix.position, t(0).init_matrix.rotation),
+        ([1.0, 1.0, 2.0], [0.0, 90.0, 0.0])
+    );
+    assert_eq!(t(0).matrix.position, [3.0, 0.0, 4.0]);
     let texture = |c: &Content| match c {
         Content::Image(a) => (a.texture.clone(), a.size),
         other => panic!("{other:?}"),
