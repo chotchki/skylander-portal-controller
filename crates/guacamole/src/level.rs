@@ -1548,10 +1548,6 @@ fn receive_level(
     level.source = Some(source);
     level.stage = Stage::Reading(task);
     level.since = Some(Instant::now());
-    // This load reads the sounds as they stand: an earlier extract's news
-    // and read are no longer this level's.
-    level.sounds_landed = false;
-    level.sounds_again = None;
 }
 
 /// The sounds part landing after the level loaded (openspec AR.21): news
@@ -4712,13 +4708,26 @@ mod tests {
         assert_eq!(taken_up(&app), None);
         assert_eq!(plays(&mut app), 0, "the replaced run's read dropped");
 
-        // Its news again, for the run as it stands: read into it.
+        // Its news again while the level's scripts still link: held until
+        // they're in, then read into the run as it stands.
         app.insert_resource(crate::hero_scripts::ScriptSource::of(
             program.clone(),
             files.clone(),
             vec![0],
         ));
+        app.world_mut().resource_mut::<Level>().scripts =
+            Some(AsyncComputeTaskPool::get().spawn(std::future::pending()));
         tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        for _ in 0..20 {
+            app.update();
+        }
+        let l = app.world().resource::<Level>();
+        assert!(
+            l.sounds_landed && l.sounds_again.is_none(),
+            "held for the link"
+        );
+        assert_eq!(taken_up(&app), None);
+        app.world_mut().resource_mut::<Level>().scripts = None;
         let deadline = Instant::now() + Duration::from_secs(5);
         while taken_up(&app).is_none() {
             assert!(Instant::now() < deadline, "never read again");
