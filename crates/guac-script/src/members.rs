@@ -2288,6 +2288,69 @@ pub const LEVEL_UP: &[Registered] = &[m(
     Cell,
 )];
 
+/// What AS.11's every-level run reaches past every table above (openspec
+/// AS.27-AS.34), each as aj-vm's live table registers it.
+///
+/// The level audio controllers' (AS.27: `MusicController.ai`'s level
+/// placements and the levels' sound watchers): the sound system's reverb,
+/// its setting and its two amounts, which `Environmental Sound - Set
+/// Reverb` writes as a level starts (heading the path: the system's, not a
+/// sound's), a sound's `global limit` on how many of it play at once, and
+/// the streams playing; cosmetic here, nothing plays a level's sound yet, so
+/// each is a value cell and the streams read none. A sequence template's
+/// `clones`, the copies of it playing (the ambience's check for the one it
+/// faded out, a minion's stop of a hurt clip's copies), is the host's: the
+/// engine keeps it, read whole.
+pub const LEVELS: &[Registered] = &[
+    m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
+    // The labels as the live table cuts them.
+    m(
+        "soundinfo",
+        "reverb setting 1",
+        "EnumMeasurement",
+        "off|generic|paddedcell|room|bathroom|liv",
+        0.0,
+        26.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount 1",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount 2",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "global limit",
+        "IntMeasurement",
+        "(0-31)",
+        0.0,
+        31.0,
+        Cell,
+    ),
+    m(
+        "soundinfo",
+        "active sound streams",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2420,7 +2483,22 @@ mod tests {
                 assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
             }
         }
-        for r in earlier.into_iter().chain(CAMERA).chain(WALKERS) {
+        // AS.11's every-level run's are none of the earlier tables' either.
+        for r in LEVELS {
+            for t in [
+                INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE, LEVEL_UP,
+            ] {
+                assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
+            }
+        }
+        for r in earlier
+            .into_iter()
+            .chain(CAMERA)
+            .chain(WALKERS)
+            .chain(ROUTE)
+            .chain(LEVEL_UP)
+            .chain(LEVELS)
+        {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
                 assert!(!part.starts_with('-'), "{}", r.path());
@@ -2996,5 +3074,90 @@ mod tests {
             .get(MemberId::named("soundinfo", "rumble duration"))
             .unwrap();
         assert_eq!(place, Place::ValueCell);
+    }
+
+    /// One of [`LEVELS`]' rows, and where registering the table puts it.
+    fn level_member(namespace: &str, name: &str) -> (Registered, Place) {
+        let r = find(LEVELS, namespace, name).unwrap_or_else(|| panic!("{namespace}.{name}"));
+        let mut members = Members::new();
+        register(&mut members, LEVELS);
+        let (spec, place) = members
+            .get(MemberId::named(namespace, name))
+            .expect("registered");
+        assert_eq!(*spec, r.spec(), "{}", r.path());
+        (r, place)
+    }
+
+    /// AS.27: a sequence template's copies playing, the engine's set the
+    /// host keeps, read whole and never written.
+    #[test]
+    fn a_templates_clones_are_the_hosts_set() {
+        let (r, place) = level_member("clonedsequence", "clones");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("SetVariant", Kind::Set, Place::Host)
+        );
+        assert_eq!(convert(&r.spec(), Value::Set(3)), None, "never written");
+    }
+
+    /// AS.27: the sound system's reverb setting, an enum cell over the
+    /// registry's 0-26, clamped there, reading off (0) until written.
+    #[test]
+    fn the_reverb_setting_is_an_enum_cell_held_to_0_26() {
+        let (r, place) = level_member("soundinfo", "reverb setting 1");
+        assert_eq!((r.kind(), place), (Kind::Int, Place::ValueCell));
+        assert_eq!(r.spec().default, Value::Int(0));
+        assert_eq!(label(&r, "off"), Some(Value::Int(0)));
+        assert_eq!(label(&r, "room"), Some(Value::Int(3)));
+        assert_eq!(convert(&r.spec(), Value::Int(30)), Some(Value::Int(26)));
+        assert_eq!(convert(&r.spec(), Value::Float(4.7)), Some(Value::Int(4)));
+    }
+
+    /// AS.27: the reverb's two amounts, percent cells held to 0-100.
+    #[test]
+    fn the_reverb_amounts_are_percent_cells_held_to_0_100() {
+        for name in ["reverb amount 1", "reverb amount 2"] {
+            let (r, place) = level_member("soundinfo", name);
+            assert_eq!(
+                (r.units, r.kind(), place),
+                ("percent", Kind::Float, Place::ValueCell),
+                "{name}"
+            );
+            assert_eq!(convert(&r.spec(), Value::Int(70)), Some(Value::Float(70.0)));
+            assert_eq!(
+                convert(&r.spec(), Value::Int(250)),
+                Some(Value::Float(100.0))
+            );
+            assert_eq!(
+                convert(&r.spec(), Value::Float(-1.0)),
+                Some(Value::Float(0.0))
+            );
+        }
+    }
+
+    /// AS.27: how many of a sound play at once, a whole-number cell held to
+    /// the registry's 0-31.
+    #[test]
+    fn a_sounds_global_limit_is_a_cell_held_to_0_31() {
+        let (r, place) = level_member("soundinfo", "global limit");
+        assert_eq!(
+            (r.class, r.units, r.kind(), place),
+            ("IntMeasurement", "(0-31)", Kind::Int, Place::ValueCell)
+        );
+        assert_eq!(convert(&r.spec(), Value::Int(40)), Some(Value::Int(31)));
+        assert_eq!(convert(&r.spec(), Value::Float(2.9)), Some(Value::Int(2)));
+        assert_eq!(r.spec().default, Value::Int(0));
+    }
+
+    /// AS.27: the streams playing, a cell standing for the engine's set
+    /// that reads none (nothing plays a stream).
+    #[test]
+    fn the_streams_playing_are_a_cell_reading_none() {
+        let (r, place) = level_member("soundinfo", "active sound streams");
+        assert_eq!(
+            (r.class, r.kind(), place),
+            ("SetVariant", Kind::Reference, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Null);
     }
 }
