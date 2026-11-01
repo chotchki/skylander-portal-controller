@@ -682,7 +682,6 @@ impl ScriptLog {
             .map_or(0, |s| s.step)
     }
 
-    /// The steps after `since`, oldest first.
     /// The steps logged after `since` (the newest's number and how many)
     /// and their time on the frame's thread, the step's and the engine's
     /// frame after it, ms (AG.288's slow frames); read from the newest back.
@@ -699,6 +698,7 @@ impl ScriptLog {
         (last, n, ms)
     }
 
+    /// The steps after `since`, oldest first.
     pub(crate) fn since(&self, since: u64) -> Vec<ScriptStep> {
         self.0
             .lock()

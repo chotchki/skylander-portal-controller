@@ -88,11 +88,14 @@ pub const SEARCH_HEADINGS: usize = 8;
 pub const SEARCH_OUT: f32 = 10.0 * FOOT;
 pub const SEARCH_UP: f32 = 2.0 * FOOT;
 pub const SEARCH_DOWN: f32 = 3.0 * FOOT;
+/// How far past [`KEEP`] into a wall [`Hero::push_out`] counts him in it: a
+/// pass leaves him on the keep, give or take the float's noise.
+pub const IN_A_WALL: f32 = 1e-4;
 
 /// What [`Hero::push_out`] did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PushOut {
-    /// He was in nothing.
+    /// He was in no wall: left as he was.
     Clear,
     /// Pushed off the walls he was in, by this much across the ground.
     Pushed(Vec3),
@@ -273,39 +276,52 @@ impl Hero {
     /// grew his solid, can start inside a wall the smaller one only touched
     /// (Warnado's capsule came in 0.15 m into the start's boundary wall and
     /// stayed stuck 26 s), and the step's recovery doesn't walk him out of a
-    /// corner. Each pass moves him across the ground off every wall he's in
-    /// (a plane steeper than he can stand on, [`KEEP`] off it), the floor
-    /// left to [`Self::stand`]; still in after [`PUSH_PASSES`], the search
-    /// tries eight headings round him from his facing, [`SEARCH_OUT`] out
-    /// and [`SEARCH_UP`] up, for a spot that's clear with ground within
-    /// [`SEARCH_DOWN`] under it, and settles him there. His footing is read
-    /// wherever he ends. Our own rule, the original's unread (stand-in
-    /// ledger: `set-down`).
+    /// corner. In no wall, he's left as he was, footing and all (a solid
+    /// can change mid-air). Each pass moves him across the ground off every
+    /// wall he's in (a plane steeper than he can stand on, [`KEEP`] off it),
+    /// the floor left to [`Self::stand`]; still in one after
+    /// [`PUSH_PASSES`] (two walls' pushes cancel in a gap narrower than he
+    /// is), the search tries eight headings round him from his facing,
+    /// [`SEARCH_OUT`] out and [`SEARCH_UP`] up, for a spot that's clear with
+    /// ground within [`SEARCH_DOWN`] under it and nothing between his centre
+    /// and its (never through a wall), and settles him there. His footing is
+    /// read wherever he's moved to. Our own rule, the original's unread
+    /// (stand-in ledger: `set-down`).
     pub fn push_out(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) -> PushOut {
         let from = self.pivot;
-        let mut moved = false;
+        if !self.in_a_wall(seam, exclude, from) {
+            return PushOut::Clear;
+        }
         for _ in 0..PUSH_PASSES {
             let push = self.wall_push(seam, exclude, self.pivot);
             if push == Vec3::ZERO {
                 break;
             }
             self.pivot += push;
-            moved = true;
+            if !self.in_a_wall(seam, exclude, self.pivot) {
+                break;
+            }
         }
-        if self.wall_push(seam, exclude, self.pivot) == Vec3::ZERO {
+        if !self.in_a_wall(seam, exclude, self.pivot) {
             self.stand(seam, exclude);
-            return if moved {
-                PushOut::Pushed(self.pivot - from)
-            } else {
-                PushOut::Clear
-            };
+            return PushOut::Pushed(self.pivot - from);
         }
+        let centre = |pivot: Vec3| {
+            self.proxy(seam, exclude, Surfaces::NONE)
+                .pose(pivot, self.up)
+                .position
+        };
         for k in 0..SEARCH_HEADINGS {
             let heading = (self.facing + k as f32 * 360.0 / SEARCH_HEADINGS as f32).to_radians();
             let out = Vec3::new(heading.sin(), 0.0, heading.cos()) * SEARCH_OUT;
             let spot = from + out + Vec3::Y * SEARCH_UP;
-            if self.wall_push(seam, exclude, spot) != Vec3::ZERO
-                || !self.is_clear(seam, exclude, spot)
+            if self.in_a_wall(seam, exclude, spot) || !self.is_clear(seam, exclude, spot) {
+                continue;
+            }
+            let way = centre(spot) - centre(from);
+            if seam
+                .ray(centre(from), way.normalize(), way.length(), exclude)
+                .is_some()
             {
                 continue;
             }
@@ -340,6 +356,20 @@ impl Hero {
                     return push;
                 }
                 push + across * (-p.distance / share)
+            })
+    }
+
+    /// Whether his shape at `pivot` is in a wall [`Self::wall_push`] moves
+    /// him off, past [`IN_A_WALL`]: asked of the walls themselves, since two
+    /// facing each other push him by nothing between them.
+    fn in_a_wall(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], pivot: Vec3) -> bool {
+        self.proxy(seam, exclude, Surfaces::NONE)
+            .planes(pivot, self.up, 0.0)
+            .iter()
+            .any(|p| {
+                p.distance < -IN_A_WALL
+                    && p.normal.y < MAX_SLOPE_COS
+                    && p.normal.x * p.normal.x + p.normal.z * p.normal.z >= 1e-4
             })
     }
 

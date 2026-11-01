@@ -52,6 +52,25 @@ fn a_bigger_solid_set_in_a_corner_walks_out() {
     on_parry(scenarios::a_bigger_solid_set_in_a_corner_walks_out());
 }
 
+/// AG.289's push out on a hero in no wall leaves him as he was.
+#[test]
+fn a_push_out_in_nothing_leaves_him_as_he_was() {
+    on_parry(scenarios::a_push_out_in_nothing_leaves_him_as_he_was());
+}
+
+/// Wedged between two walls whose pushes cancel, he's searched out.
+#[test]
+fn wedged_between_two_walls_he_is_searched_out_along_them() {
+    on_parry(scenarios::wedged_between_two_walls_he_is_searched_out_along_them());
+}
+
+/// The search reaches no spot through a wall: past one is the level's other
+/// side, out of bounds behind a boundary.
+#[test]
+fn the_search_never_sets_him_through_a_wall() {
+    on_parry(scenarios::the_search_never_sets_him_through_a_wall());
+}
+
 /// What he walks up in [`steps_up`].
 fn riser(height: f32) -> Soup {
     let mut soup = Soup::default();

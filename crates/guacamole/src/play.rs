@@ -920,8 +920,6 @@ impl Play {
         }
     }
 
-    /// The level has started: shown, paused or held. No intro plays from
-    /// then on (character-intros).
     /// Where the last hero in the level stood as he came off (AH.280: what
     /// a step with no hero in measures the activity rule from); none
     /// outside a level or before one has come off.
@@ -929,6 +927,8 @@ impl Play {
         self.inside.as_ref()?.left.map(|(at, _)| at)
     }
 
+    /// The level has started: shown, paused or held. No intro plays from
+    /// then on (character-intros).
     pub(crate) fn started(&self) -> bool {
         self.inside.is_some()
     }
@@ -1920,15 +1920,15 @@ fn enter(
         // settle's cast from a metre up could meet an overhang beside it
         // first (the Mac run's second replacement came in 0.97 m up). A
         // bigger one is taken out of the walls he'd stand in there
-        // (AG.289; stand-in ledger: `set-down`), then stands. He drops onto it from [`DROP`] up once his
-        // minion is in (AG.100).
-        let out = hero.push_out(&seam, &[]);
-        if out != PushOut::Clear {
-            info!(
+        // (AG.289; stand-in ledger: `set-down`), then stands. He drops onto
+        // it from [`DROP`] up once his minion is in (AG.100).
+        match hero.push_out(&seam, &[]) {
+            PushOut::Clear => hero.stand(&seam, &[]),
+            out => info!(
                 load_file = walker.load_file,
                 ?out,
                 "set down in a wall: taken out of it"
-            );
+            ),
         }
     } else {
         hero.settle(&seam, &[]);
