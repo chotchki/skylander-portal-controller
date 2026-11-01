@@ -3275,8 +3275,8 @@ mod tests {
 
     /// AG.289: a hero set down where the last one stood in a wall, and the
     /// bigger solid his scripts set after, are taken out of the wall before
-    /// his next step: Eruptor taken off 0.2 m into the wall ahead, the
-    /// walker comes in KEEP off it on his file's sphere, and his setup's
+    /// his next step: Eruptor taken off 0.5 m into the wall ahead, where the
+    /// walker's file's sphere is 0.2 m in, he comes in KEEP off it, and his setup's
     /// 7 x 10.5 ft capsule at 120 % (1.28 m round where the sphere was
     /// 0.56 m) stands off it from the step it's set.
     #[test]
@@ -3307,7 +3307,7 @@ mod tests {
         });
         let e = app.world().resource::<Play>().hero().unwrap();
         let mut put = hero(&app);
-        put.pivot.z += gap(&put) + 0.2;
+        put.pivot.z += gap(&put) + 0.5;
         put.pivot.x = START[0];
         app.world_mut()
             .entity_mut(e)
@@ -3320,7 +3320,7 @@ mod tests {
         let mut there = put.clone();
         there.pivot = left;
         assert!(
-            gap(&there) < -0.15,
+            gap(&there) < -0.45,
             "taken off in the wall: {}",
             gap(&there)
         );
@@ -4397,8 +4397,17 @@ mod tests {
         // AH.280: taken off by it, the step the take-off lets run before
         // the hold (his deactivation's tick, AH.224's and AH.105's) measures
         // the activity rule from where he left, not the level's start 63 m
-        // off the coin, so the coin he left awake stays awake; then nothing
-        // steps until the next hero is in.
+        // off the far barrel, so the barrel he left awake stays awake (the
+        // far coin is his already, taken as he came down by it); then
+        // nothing steps until the next hero is in.
+        assert!(
+            app.world()
+                .resource::<ScriptWorld>()
+                .actor(placed_named(&app, SMASH_FAR_COIN).1)
+                .unwrap()
+                .removed,
+            "the far coin taken"
+        );
         clear(&mut app, 0);
         app.update();
         assert!(
@@ -4409,8 +4418,8 @@ mod tests {
         for frame in 0..5 {
             app.update();
             assert!(
-                !asleep(&app, SMASH_FAR_COIN),
-                "frame {frame}: the coin slept"
+                active(&app, SMASH_FAR),
+                "frame {frame}: the far barrel slept"
             );
         }
         let ran = run_steps(&app) - steps;
