@@ -143,3 +143,52 @@ fn a_for_each_over_undefined_skips_as_an_empty_sets_does() {
         "the tick went on"
     );
 }
+
+/// AS.30, `Setup_003_Controller`'s profile on a list built in code: its
+/// script load reads 0, so a peak kept only when it's over the last one
+/// stays as it was, and an average's total stays 0; without the table
+/// strict mode halts on it.
+#[test]
+fn a_placements_script_load_reads_0() {
+    let load = [MY, El::Member("actorinfo", "script load")];
+    let p = program(|w| {
+        let float = Some("FloatMeasurement");
+        let (peak, total, after) = (
+            w.variable("peak", "ValueInfo", float),
+            w.variable("total", "ValueInfo", float),
+            var(w, "after"),
+        );
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let pk = w.rhs("FloatMeasurement", &[El::Local(peak)]);
+                let c = w.check(&load, 4, pk);
+                let l = w.rhs("FloatMeasurement", &load);
+                w.set(&[El::Local(peak)], l);
+                w.end_block(c);
+                let t = w.rhs("FloatMeasurement", &[El::Local(total)]);
+                let l = w.rhs("FloatMeasurement", &load);
+                let sum = w.expr(t, Some((0, l)));
+                w.set(&[El::Local(total)], sum);
+                w.inc(&[El::Local(after)]);
+            },
+        );
+    });
+    let mut config = Config::new(Mode::Strict);
+    members::register(&mut config.members, members::LEVELS);
+    let mut vm = Vm::new(p.clone(), config);
+    let id = vm.add(HANDLE, "Setup_003_Controller", 0);
+    for _ in 0..3 {
+        vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    }
+    // Read, the local holds its default; set, it would hold the load's
+    // float.
+    assert_eq!(vm.local(id, "peak"), Some(Value::Int(0)), "never over");
+    assert_eq!(vm.local(id, "total"), Some(Value::Float(0.0)));
+    assert_eq!(vm.local(id, "after"), Some(Value::Int(3)));
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Setup_003_Controller", 0);
+    let halt = vm.tick(id, &mut Bare).unwrap_err();
+    assert!(matches!(halt.reason, Reason::UnmodelledMember(_)), "{halt}");
+}

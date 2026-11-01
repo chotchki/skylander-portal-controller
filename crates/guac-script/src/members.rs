@@ -2301,6 +2301,13 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// `clones`, the copies of it playing (the ambience's check for the one it
 /// faded out, a minion's stop of a hurt clip's copies), is the host's: the
 /// engine keeps it, read whole.
+///
+/// A placement's `script load` (AS.30: chapter 1's `Setup_003_Controller`,
+/// the 215 arena's trap avoider and cube controller keep its peak and
+/// average): a profiler's number that reads 0 in the retail build, whose
+/// getter answers 0 whatever the placement ran (aj-vm's way, read as an
+/// aid), so a cell reading its default; nothing on the disc writes it, and
+/// the original registers no setter.
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2347,6 +2354,15 @@ pub const LEVELS: &[Registered] = &[
         "",
         0.0,
         0.0,
+        Cell,
+    ),
+    m(
+        "actorinfo",
+        "script load",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
         Cell,
     ),
 ];
@@ -3147,6 +3163,23 @@ mod tests {
         assert_eq!(convert(&r.spec(), Value::Int(40)), Some(Value::Int(31)));
         assert_eq!(convert(&r.spec(), Value::Float(2.9)), Some(Value::Int(2)));
         assert_eq!(r.spec().default, Value::Int(0));
+    }
+
+    /// AS.30: a placement's script load, a percent cell from 0, open on
+    /// top, reading 0 until written (the retail build's answer).
+    #[test]
+    fn a_placements_script_load_is_a_percent_cell_reading_0() {
+        let (r, place) = level_member("actorinfo", "script load");
+        assert_eq!(
+            (r.class, r.units, r.kind(), place),
+            ("FloatMeasurement", "percent", Kind::Float, Place::ValueCell)
+        );
+        assert_eq!(r.spec().default, Value::Float(0.0));
+        assert_eq!((r.min, r.max), (0.0, OPEN));
+        assert_eq!(
+            convert(&r.spec(), Value::Float(-2.0)),
+            Some(Value::Float(0.0))
+        );
     }
 
     /// AS.27: the streams playing, a cell standing for the engine's set
