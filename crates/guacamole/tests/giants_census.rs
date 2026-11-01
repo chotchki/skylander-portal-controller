@@ -60,8 +60,9 @@ struct Cards {
     /// nothing of (helpers whose material it doesn't read).
     carried: usize,
     undrawn: usize,
-    /// The characters no part of whose model the directional lights reach
-    /// (AG.286: the lit parts' sum, which only these escape).
+    /// The characters no part of whose model, nor of what a fresh figure of
+    /// him carries, the directional lights reach (AG.286: the lit parts'
+    /// sum, which only these escape).
     unlit: Vec<String>,
 }
 
@@ -102,9 +103,19 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
             model.attachments_unsettled
         );
         cards.models += 1;
-        let lit = model.materials.iter().any(|m| {
+        // His body's materials and what a fresh figure of him carries
+        // (Legendary Stealth Elf's body is unlit, his knives lit).
+        let lit_material = |m: &guac_ir::model::Material| {
             guacamole::character::material::reference_material(m).is_ok_and(|r| r.directional)
-        });
+        };
+        let lit = model.materials.iter().any(lit_material)
+            || model.attachments.iter().any(|a| {
+                a.model
+                    .materials
+                    .iter()
+                    .filter_map(level_scene::drawn_material)
+                    .any(|m| lit_material(&m))
+            });
         if !lit {
             cards.unlit.push(load.to_string());
         }

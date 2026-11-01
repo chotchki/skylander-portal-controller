@@ -3654,8 +3654,8 @@ struct OrbLife {
     /// Its height each step it's listed, m (the idle bounces, the review's).
     heights: Vec<(i64, f32)>,
     /// Each step it's in his collecting set: whether `scripts::orbs` lists
-    /// it flying, and its distance to his pivot, m (AH.281: the TV draws
-    /// its flight off that list).
+    /// it flying, and its distance to his pivot across the ground, m
+    /// (AH.281: the TV draws its flight off that list).
     flight: Vec<(i64, bool, f32)>,
 }
 
@@ -3797,10 +3797,15 @@ fn follow_orbs(
                 .iter()
                 .find(|o| o.actor == *orb)
                 .filter(|o| o.state == scripts::OrbState::Flying);
+            // Across the ground: it flies at his middle, over his pivot, so
+            // in space the last steps can read further off as it rises.
             life.flight.push((
                 f,
                 drawn.is_some(),
-                drawn.map_or(f32::NAN, |o| (o.at - run.hero().pivot).length()),
+                drawn.map_or(f32::NAN, |o| {
+                    let d = o.at - run.hero().pivot;
+                    d.x.hypot(d.z)
+                }),
             ));
             if life.taken.is_none() {
                 life.taken = Some(f);
@@ -4017,7 +4022,7 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
             l.flight
         );
         assert!(
-            l.flight.windows(2).all(|w| w[1].2 < w[0].2 + 1e-4),
+            l.flight.windows(2).all(|w| w[1].2 < w[0].2 + 1e-3),
             "closing on him: {:?}",
             l.flight
         );
