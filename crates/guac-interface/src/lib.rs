@@ -699,9 +699,10 @@
 //! type, the lower of a word the kind holds at +8 first (0x4D17C, read in
 //! the disassembly; the word not yet traced). That order puts every text
 //! before every art quad, and AC.13's frame interleaves its 13 text runs
-//! with its art, so that sort can't be what drew it: either it doesn't run
-//! in a level's frames or the interface reaches the draw another way
-//! (AT.33). **Hypothesis**: drawn by computed priority, lower in front
+//! with its art, so that sort can't be what drew it, though both render
+//! classes whose tables hold the draw hold the sort beside it (AT.33: the
+//! contradiction stands). **Hypothesis**: drawn by computed priority, lower
+//! in front
 //! (a message box's text is written at priority -2 over its box; AC.13's
 //! number shadows at 10 draw before their numbers at 5, and its
 //! bottom-left corner shade, the June savestate's lowest at -190, draws
