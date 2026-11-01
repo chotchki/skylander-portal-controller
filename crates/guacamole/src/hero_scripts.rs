@@ -757,6 +757,7 @@ impl Plugin for HeroScriptsPlugin {
 pub(crate) fn apply_scripted_solid(
     world: Res<ScriptWorld>,
     runtime: Res<ScriptRuntime>,
+    seam: AvianSeam,
     mut heroes: Query<(Entity, &mut HeroRun, &mut HeroBody)>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -786,8 +787,18 @@ pub(crate) fn apply_scripted_solid(
                 "his scripts set his solid"
             );
         }
+        let grew = next.solid != *body.hero.solid();
         body.hero.set_solid(next.solid);
         run.shape = next.shape;
+        if grew {
+            // A new solid can start inside a wall the last one only touched
+            // (AG.289): taken out of it before his next step.
+            let HeroBody { hero, exclude, .. } = &mut *body;
+            let out = hero.push_out(&seam, exclude);
+            if out != guac_motion::hero::PushOut::Clear {
+                info!(load_file = %run.load_file, ?out, "his solid set in a wall: taken out of it");
+            }
+        }
         if (next.scale - run.scale).abs() < 1e-6 {
             continue;
         }

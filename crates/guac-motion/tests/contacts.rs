@@ -45,6 +45,13 @@ fn the_gate_door_stops_him() {
     on_parry(scenarios::the_gate_door_stops_him());
 }
 
+/// AG.289: set into the boundary's corner by a bigger solid, he's pushed
+/// out before his first step and walks out.
+#[test]
+fn a_bigger_solid_set_in_a_corner_walks_out() {
+    on_parry(scenarios::a_bigger_solid_set_in_a_corner_walks_out());
+}
+
 /// What he walks up in [`steps_up`].
 fn riser(height: f32) -> Soup {
     let mut soup = Soup::default();

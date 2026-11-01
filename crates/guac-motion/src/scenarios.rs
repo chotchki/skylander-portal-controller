@@ -354,7 +354,102 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         let_go_along_a_wall(),
         the_gate_door_stops_him(),
         put_down_under_an_overhang_he_stays(),
+        a_bigger_solid_set_in_a_corner_walks_out(),
     ]
+}
+
+/// The start's boundary corner as AG.289's playtest met it: a wall facing
+/// +z and one facing (-0.79, 0, 0.62), meeting at the origin (128° between
+/// their faces on his side), 3.4 m tall, on open ground.
+pub fn boundary_corner() -> Soup {
+    let mut soup = open_ground();
+    soup.wall_z(0.0, [-20.0, 0.0], [-1.0, 3.4], Vec3::Z);
+    let along = Vec3::new(0.62, 0.0, 0.79).normalize();
+    let face = Vec3::new(-0.79, 0.0, 0.62).normalize();
+    for i in 0..10 {
+        let (a, b) = (along * (2.0 * i as f32), along * (2.0 * (i + 1) as f32));
+        soup.quad(
+            [
+                a + Vec3::NEG_Y,
+                b + Vec3::NEG_Y,
+                b + Vec3::Y * 3.4,
+                a + Vec3::Y * 3.4,
+            ],
+            face,
+        );
+    }
+    soup
+}
+
+/// Warnado's solid as his scripts set it: a 7 x 10.5 ft capsule.
+pub fn warnado_solid() -> HavokSolid {
+    SolidInfo {
+        kind: SolidKind::Capsule,
+        offset: [0.0; 3],
+        rotation: [0.0; 3],
+        width: 7.0,
+        height: 10.5,
+        length: 7.0,
+    }
+    .havok([100.0; 3])
+    .expect("a capsule stops things")
+}
+
+/// AG.289: a hero set down 0.15 m into a wall at the boundary's corner (his
+/// scripts' bigger solid swapped in where a smaller one stood) is pushed out
+/// across the ground before his first step, KEEP off both walls, and from
+/// there walks out of the corner under a stick pointing away and stands
+/// still without one.
+pub fn a_bigger_solid_set_in_a_corner_walks_out() -> Scenario {
+    Scenario {
+        name: "a_bigger_solid_set_in_a_corner_walks_out",
+        bodies: bodies(&boundary_corner(), &[]),
+        check: |seam| {
+            let solid = warnado_solid();
+            let Shape::Capsule { radius, .. } = solid.shape else {
+                return Err(format!("not a capsule: {:?}", solid.shape));
+            };
+            let set = |seam: &dyn PhysicsSeam| {
+                let at = Vec3::new(-0.6, 0.005, radius + crate::solid::MESH_RADIUS - 0.15);
+                let mut hero = Hero::new(solid, Tuning::ERUPTOR, at, 180.0);
+                hero.stand(seam, &[]);
+                hero
+            };
+            let mut hero = set(seam);
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(
+                gap.is_some_and(|g| g < -0.1),
+                "not set in the wall: {gap:?}"
+            );
+            let before = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            let crate::hero::PushOut::Pushed(by) = out else {
+                return Err(format!("not pushed: {out:?}"));
+            };
+            ensure!(by.y == 0.0 && by.length() < 0.5, "pushed {by}");
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(gap.is_some_and(|g| g > -1e-4), "still in: {gap:?}");
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            // Let go: he stays where the push left him.
+            let still = run(seam, &mut hero.clone(), 120, |_| Stick::CENTRED);
+            let drift = (still.last().unwrap().pivot - hero.pivot).length();
+            ensure!(drift < 1e-3, "drifted {drift} let go");
+            // Out of the corner, along the two faces' bisector.
+            let away = bearing(Vec3::new(-0.79, 0.0, 1.62));
+            let walked = run_viewed(seam, &mut hero, 30, 0.0, |_| stick(1.0, away));
+            let end = walked.last().unwrap().pivot;
+            ensure!(
+                (end - before).length() > 0.5,
+                "walked {} in 30 steps",
+                (end - before).length()
+            );
+            ensure!(
+                hero.wall_gap(seam, &[], 0.5).is_none_or(|g| g > -1e-4),
+                "walked into a wall"
+            );
+            Ok(())
+        },
+    }
 }
 
 /// Open ground with an overhang's underside 1.85 m up, its edge 0.5 m along
