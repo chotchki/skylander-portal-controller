@@ -4,7 +4,7 @@
 //! read them (section 1 of its findings).
 //! Ignored by default; it reads `GUAC_GIANTS_DUMP` like `giants_igz`:
 //!
-//! `cargo test -p guac-formats --release --test giants_progression -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_progression -- --ignored --nocapture`
 
 mod common;
 

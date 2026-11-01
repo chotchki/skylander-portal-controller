@@ -11,7 +11,7 @@
 //! list of archive names) picks the levels, chapter 1, a story level past
 //! it, a PvP arena and a hub stage by default:
 //!
-//! `cargo test -p guac-extract --release --test giants_level_on_demand -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_level_on_demand -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

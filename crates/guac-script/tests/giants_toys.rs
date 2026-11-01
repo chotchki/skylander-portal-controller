@@ -2,7 +2,7 @@
 //! in run-time order, as aj-vm's research tool built it. Ignored by default;
 //! it reads `GUAC_GIANTS_DUMP` like guac-formats' disc tests:
 //!
-//! `cargo test -p guac-script --release --test giants_toys -- --ignored --nocapture`
+//! `cargo test -p guac-script --profile disc --test giants_toys -- --ignored --nocapture`
 
 mod common;
 

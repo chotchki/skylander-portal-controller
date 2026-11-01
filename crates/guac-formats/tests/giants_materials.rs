@@ -6,7 +6,7 @@
 //! reader, refusals tallied by reason. Ignored by default; it reads
 //! `GUAC_GIANTS_DUMP` like `giants_layouts`:
 //!
-//! `cargo test -p guac-formats --release --test giants_materials -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_materials -- --ignored --nocapture`
 
 mod common;
 

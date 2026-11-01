@@ -79,3 +79,12 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The disc tests' own (openspec AQ.159): release with incremental compilation
+# on, which release turns off, so a lane's one-line change before a disc test
+# rebuilds what changed instead of the whole crate again (release's 48-52 s a
+# rebuild, AQ.157). `cargo test --profile disc`; its artifacts go under
+# `target/disc/`.
+[profile.disc]
+inherits = "release"
+incremental = true

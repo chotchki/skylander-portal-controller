@@ -4,7 +4,7 @@
 //! environment or the workspace's `.env.dev`. A cold run (no manifest to cache
 //! from) then a warm one; release mode, since debug SHA-256 is slow:
 //!
-//! `cargo test -p guac-extract --release --test giants_identity -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_identity -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -10,7 +10,7 @@
 //! writes under `GUAC_EXTRACT_DIR` (removed after), from the environment
 //! or the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_sounds -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_sounds -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

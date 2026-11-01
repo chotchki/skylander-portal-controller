@@ -1,6 +1,6 @@
 //! AG.28's verify, headless on the dump and the oracle's recordings
 //! (`#[ignore]`d: `GUAC_GIANTS_DUMP` and `GUAC_CAPTURE_DIR` from the process
-//! env, else `.env.dev`). Run with `cargo test --release -p guacamole --test
+//! env, else `.env.dev`). Run with `cargo test --profile disc -p guacamole --test
 //! giants_camera -- --ignored --nocapture --test-threads 1`.
 //!
 //! The camera is the original's scripts on the VM, strict, with the level's

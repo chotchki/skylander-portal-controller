@@ -7,7 +7,7 @@
 //! Ignored by default; they read `GUAC_GIANTS_DUMP` (process env, else
 //! `.env.dev`):
 //!
-//! `cargo test -p guacamole --release --test giants_eruptor -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_eruptor -- --ignored --nocapture --test-threads=1`
 //!
 //! A dev aid, not a check: `AH17_LIVE_TABLE=<aj-vm's live member table>`
 //! answers every member the registry doesn't hold with a value cell of its

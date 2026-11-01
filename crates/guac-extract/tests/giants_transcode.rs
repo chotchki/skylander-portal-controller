@@ -5,7 +5,7 @@
 //! Homebrew's bin folders on macOS). `GUAC_TRANSCODE_INTRO` picks
 //! the movie (default `eruptor`). Release mode, for the hashing:
 //!
-//! `cargo test -p guac-extract --release --test giants_transcode -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_transcode -- --ignored --nocapture`
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

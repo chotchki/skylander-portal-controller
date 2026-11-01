@@ -9,7 +9,7 @@
 //! `.env.dev`) and, for the comparisons, AH.9's recordings under
 //! `GUAC_CAPTURE_DIR`:
 //!
-//! `cargo test -p guacamole --release --test giants_breakables -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_breakables -- --ignored --nocapture --test-threads=1`
 //!
 //! `AH21_STATE_OUT=<file outside the tree>` has the ledge route's test
 //! write the props the scripts took off, by name, as JSON: what AG.7's

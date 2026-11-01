@@ -30,7 +30,7 @@
 //! Ignored by default: it reads `GUAC_GIANTS_DUMP` (env, else `.env.dev`).
 //! `GUAC_LEVELS` (a comma list of archive names) runs those alone.
 //!
-//! `cargo test -p guac-script --release --test giants_levels -- --ignored --nocapture`
+//! `cargo test -p guac-script --profile disc --test giants_levels -- --ignored --nocapture`
 
 mod common;
 

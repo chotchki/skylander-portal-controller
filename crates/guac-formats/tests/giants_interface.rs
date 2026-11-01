@@ -4,7 +4,7 @@
 //! it draws, and the three bitmap fonts read down to their glyphs.
 //! Ignored by default; it reads `GUAC_GIANTS_DUMP`:
 //!
-//! `cargo test -p guac-formats --release --test giants_interface -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_interface -- --ignored --nocapture`
 
 mod common;
 

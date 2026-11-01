@@ -2,7 +2,7 @@
 //! igSkeleton2 and his idle evaluated, then every Havok payload in every
 //! character archive. Ignored by default; it reads `GUAC_GIANTS_DUMP`:
 //!
-//! `cargo test -p guac-formats --release --test giants_havok -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_havok -- --ignored --nocapture`
 
 mod common;
 

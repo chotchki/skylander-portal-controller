@@ -5,7 +5,7 @@
 //! Ignored by default; they read `GUAC_GIANTS_DUMP` and the recordings under
 //! `GUAC_CAPTURE_DIR` (each from the process env, else `.env.dev`):
 //!
-//! `cargo test -p guacamole --release --test giants_locomotion -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_locomotion -- --ignored --nocapture --test-threads=1`
 //!
 //! A dev aid, not a check: [`probe_one_replay`] replays one recording
 //! (`AH49_REPLAY=<run>/<label>`), printing each record's weights, rates and

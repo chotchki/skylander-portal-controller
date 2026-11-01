@@ -9,7 +9,7 @@
 //! by default; they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`)
 //! and, for the comparisons, AH.10's recordings under `GUAC_CAPTURE_DIR`:
 //!
-//! `cargo test -p guacamole --release --test giants_chompy -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p guacamole --profile disc --test giants_chompy -- --ignored --nocapture --test-threads=1`
 //!
 //! AH.19's are the hurt and kill chain's: bites pushing him by his
 //! resistance and his hurt reaction, a turned-away bite, a Lava Lob's kill,

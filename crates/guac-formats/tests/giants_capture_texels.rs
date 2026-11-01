@@ -15,7 +15,7 @@
 //!   captures, pinned by name in [`CAPTURES`]; its own key, as AC.13's `GUAC_AC13_CAPTURE_DIR` is
 //!   `giants_capture`'s), each from the environment, else `.env.dev`:
 //!
-//! `cargo test -p guac-formats --release --test giants_capture_texels -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_capture_texels -- --ignored --nocapture`
 //!
 //! Everything read stays in memory; nothing is written.
 

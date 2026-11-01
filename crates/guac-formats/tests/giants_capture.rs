@@ -9,7 +9,7 @@
 //! is, since `GUAC_CAPTURE_DIR` is the captures root the recording tests read),
 //! each from the environment, else `.env.dev`:
 //!
-//! `cargo test -p guac-formats --release --test giants_capture -- --ignored --nocapture`
+//! `cargo test -p guac-formats --profile disc --test giants_capture -- --ignored --nocapture`
 //!
 //! Everything read stays in memory; nothing is written.
 

@@ -10,7 +10,7 @@
 //! movement numbers. Ignored by default: it reads `GUAC_GIANTS_DUMP` from
 //! the environment or the workspace's `.env.dev`:
 //!
-//! `cargo test -p guac-extract --release --test giants_heroes -- --ignored --nocapture`
+//! `cargo test -p guac-extract --profile disc --test giants_heroes -- --ignored --nocapture`
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
