@@ -4521,6 +4521,7 @@ dependencies = [
  "crossbeam-channel",
  "guac-extract",
  "guac-formats",
+ "guac-interface",
  "guac-ir",
  "guac-motion",
  "guac-oracle",

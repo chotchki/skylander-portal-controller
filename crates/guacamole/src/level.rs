@@ -1536,6 +1536,14 @@ fn receive_level(
                 linked.palettes = level_scripts::level_palettes(&dir, &name, ir);
                 // The sounds its units' archives play (openspec AR.9).
                 linked.sounds = Some(guacamole::sounds::load(&dir, ir, &linked.program.units));
+                // The original's interface its scripts write (openspec AT.9).
+                linked.interface = guacamole::interface_host::load(
+                    &dir,
+                    ir,
+                    &linked.program.units,
+                    &linked.interface_keys,
+                    linked.interface_imports.as_ref(),
+                );
                 linked
             })
         })
@@ -1791,11 +1799,13 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 layout,
                 palettes,
                 sounds,
+                interface,
                 ..
             } = linked;
             if let Some(s) = &sounds {
                 log_sounds(s, false);
             }
+            guacamole::interface_host::log(interface.as_ref());
             let layout = match layout {
                 Ok(l) => Some(l),
                 Err(why) => {
@@ -1820,6 +1830,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         layout,
                         palettes,
                         sounds,
+                        interface,
                     },
                 );
             });

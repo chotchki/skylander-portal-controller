@@ -149,6 +149,9 @@ pub(crate) struct ScriptSource {
     /// The sounds the run's units play (openspec AR.9); none read, none
     /// play.
     sounds: Option<guacamole::sounds::SoundPart>,
+    /// The original's interface each install starts its run from (openspec
+    /// AT.9); none when the extract held no part at the level's load.
+    interface: Option<guacamole::interface_host::InterfacePart>,
 }
 
 impl ScriptSource {
@@ -258,6 +261,7 @@ impl ScriptSource {
             layout: None,
             palettes: Vec::new(),
             sounds: None,
+            interface: None,
         }
     }
 }
@@ -273,6 +277,8 @@ pub(crate) struct Part {
     pub(crate) layout: Option<Layout>,
     pub(crate) palettes: Vec<(String, Vec<f32>)>,
     pub(crate) sounds: Option<guacamole::sounds::SoundPart>,
+    /// The original's interface each run starts from (openspec AT.9).
+    pub(crate) interface: Option<guacamole::interface_host::InterfacePart>,
 }
 
 /// Installs the run over a linked part (the level's load), keeping the part
@@ -288,6 +294,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         layout: part.layout,
         palettes: part.palettes,
         sounds: part.sounds,
+        interface: part.interface,
     };
     install_from(world, &source);
     world.insert_resource(source);
@@ -328,6 +335,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     let config = guacamole::scripts::fight_config(Mode::Play);
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
+    // The interface's members on the model, when the run holds one (AT.9).
+    if source.interface.is_some() {
+        config = guacamole::interface_host::with_interface(config);
+    }
     #[cfg(feature = "unmodel")]
     if let Some(Unmodel(request)) = world.get_resource::<Unmodel>() {
         match take_out(&mut config, request) {
@@ -350,6 +361,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
+    }
+    // A fresh copy of the interface's model (openspec AT.9).
+    if let Some(i) = &source.interface {
+        script_world.set_interface(i.keeper.clone());
     }
     script_world.walk_first_fight(level);
     script_world.walk_goats(level);
@@ -2478,6 +2493,7 @@ mod tests {
                 layout: None,
                 palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
                 sounds: None,
+                interface: None,
             },
         );
         let w = world.resource::<ScriptWorld>();

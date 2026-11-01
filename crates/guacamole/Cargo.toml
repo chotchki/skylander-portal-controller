@@ -36,6 +36,9 @@ guac-script = { path = "../guac-script" }
 # The sounds a script plays, looked up off the extract's sounds part (openspec
 # AR.9): what file, at what settings.
 guac-sound = { path = "../guac-sound" }
+# The original's interface (openspec AT.9): the model the run holds, which
+# the host forwards the interface's members to.
+guac-interface = { path = "../guac-interface" }
 
 anyhow = { workspace = true }
 thiserror = { workspace = true }
