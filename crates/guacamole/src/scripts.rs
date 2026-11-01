@@ -515,6 +515,13 @@ pub struct ScriptWorld {
     /// The last plays ended and the last starts refused, newest last.
     pub(crate) sound_ended: std::collections::VecDeque<crate::sounds::SoundEnded>,
     pub(crate) sound_refused: std::collections::VecDeque<crate::sounds::SoundRefused>,
+    /// What scripts wrote to a sound's members (openspec AR.10), by the
+    /// sound info and member: later plays start with it, the playing ones
+    /// follow it.
+    pub(crate) sound_written: HashMap<(Obj, crate::sound_members::SoundField), Value>,
+    /// The sound system's members as written; one never written reads its
+    /// start ([`crate::sound_members::SystemField::start`]).
+    pub(crate) sound_system: HashMap<crate::sound_members::SystemField, Value>,
     /// This run, unique on the TV: a player holding a play of an earlier
     /// run's stops it.
     run: u64,
@@ -677,6 +684,8 @@ impl ScriptWorld {
             sounds_started: 0,
             sound_ended: Default::default(),
             sound_refused: Default::default(),
+            sound_written: HashMap::new(),
+            sound_system: HashMap::new(),
             run: fresh_serial(),
         }
     }
@@ -714,12 +723,12 @@ impl ScriptWorld {
     }
 
     /// The last plays that ended, newest last ([`crate::sounds::RECENT`]).
-    pub fn sounds_ended(&self) -> impl Iterator<Item = &crate::sounds::SoundEnded> {
+    pub fn sounds_ended(&self) -> impl ExactSizeIterator<Item = &crate::sounds::SoundEnded> {
         self.sound_ended.iter()
     }
 
     /// The last starts that played nothing, newest last.
-    pub fn sounds_refused(&self) -> impl Iterator<Item = &crate::sounds::SoundRefused> {
+    pub fn sounds_refused(&self) -> impl ExactSizeIterator<Item = &crate::sounds::SoundRefused> {
         self.sound_refused.iter()
     }
 
@@ -1931,6 +1940,9 @@ pub fn smash_config(mode: Mode) -> Config {
     // What AS.11's every-level run reaches past those (openspec AS.37): a
     // table the VM lane grows reaches the TV only once it's named here.
     members::register(&mut c.members, members::LEVELS);
+    // The sounds' members on the host, over the cells the tables above
+    // registered for them (openspec AR.10).
+    members::register(&mut c.members, members::SOUNDS);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -4249,6 +4261,15 @@ mod tests {
                 "{}",
                 r.path()
             );
+        }
+        // The sounds' members on the host (openspec AR.10), over the cells
+        // the earlier tables registered for some of them.
+        for r in members::SOUNDS {
+            let (_, place) = c
+                .members
+                .get(MemberId::named(r.namespace, r.name))
+                .unwrap_or_else(|| panic!("{}", r.path()));
+            assert_eq!(place, guac_script::Place::Host, "{}", r.path());
         }
         // AS.11's every-level table (openspec AS.37): its host's and cells
         // registered, as the gap test registers them.

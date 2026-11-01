@@ -20,12 +20,31 @@
 //! - a `stop sequence` on the sound info stops its copies on the receiver,
 //!   one on a copy stops that copy; a copy whose actor leaves play (taken
 //!   off, or gone) stops with it.
+//!
+//! The members (openspec AR.10): a sound's `soundinfo` members read what
+//! the sounds part holds of it until a script writes one, then what was
+//! written; a write holds for the sound's later plays and the ones playing
+//! (a fade's volume reaches what's playing as it slides: a hypothesis, the
+//! music macros' fades read so). A copy reads and writes its sound's. An
+//! object the book doesn't know as a sound keeps what's written and reads
+//! 0 until then, as the value cell it was. The deprecated categories read
+//! 0. The sound system's read their start until written: the master
+//! volumes, music volumes and rates 100, the rest 0 (the listener the
+//! camera); its effects, streams and music master volumes scale what plays
+//! by whether it streams and its category, `music disabled` silences the
+//! music, the master rates scale its speed (each a hypothesis: the oracle
+//! runs silent and no script in chapter 1 writes them); reverb, the music
+//! volumes, the listener modes and the diagnostic level are carried. Its
+//! sets: the copies playing of embedded sounds, of streamed ones, and no
+//! movie, rumble or category template.
 
-use guac_script::{Answer, Handle, Obj, Value};
-use guac_sound::{Limit, LimitBehavior, Lookup, SoundId};
+use guac_ir::sound::{DataHome, DataRef, Sound};
+use guac_script::{Access, Answer, Handle, HostFault, Obj, Value};
+use guac_sound::{Falloff, Limit, LimitBehavior, Lookup, Params, SoundId};
 use tracing::debug;
 
 use crate::script_engine::{Engine, Object, Sequence};
+use crate::script_members::Member;
 use crate::scripts::{ScriptWorld, fresh_serial};
 use crate::sounds::{Ended, PLAY_END, RECENT, SoundEnded, SoundPlay, SoundRefused, play_length};
 
@@ -116,14 +135,11 @@ impl ScriptWorld {
             return;
         };
         let length = play_length(PLAY_END, p.audio, p.duration);
-        self.plays.push(SoundPlay::of(
-            fresh_serial(),
-            i,
-            id,
-            &p,
-            length,
-            self.sound_clock,
-        ));
+        let mut play = SoundPlay::of(fresh_serial(), i, id, &p, length, self.sound_clock);
+        if let Some(Value::Object(o)) = self.sequences.get(i as usize).map(|s| s.template) {
+            play.params = self.written_params(o, play.params);
+        }
+        self.plays.push(play);
         self.sounds_started += 1;
     }
 
@@ -187,7 +203,8 @@ impl ScriptWorld {
         let Lookup::Playable(p) = book.lookup(&id.stem, id.object) else {
             return None;
         };
-        let params = p.params;
+        // As written since, a script's settings over the data's (AR.10).
+        let params = self.written_params(o, p.params);
         let name = p.sound.name.clone();
         if params.allow_restart
             && let Some(&i) = self.playing_copies(template, Some(actor)).last()
@@ -300,6 +317,470 @@ impl ScriptWorld {
     }
 }
 
+/// A sound's `soundinfo` members (openspec AR.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SoundField {
+    Volume,
+    VolumeRandomness,
+    PitchRandomness,
+    RumbleDuration,
+    Pan,
+    ThreeD,
+    Attenuates,
+    AttenuationFull,
+    AttenuationSilent,
+    IgnoresTimeScales,
+    Category,
+    ReverbAmount,
+    ReverbRandomness,
+    FilterPercent,
+    FilterRandomness,
+    FilterAttenuates,
+    FilterMinimum,
+    FilterMaximum,
+    FilterMaximumPercent,
+    Priority,
+    ActorLimit,
+    ActorLimitBehavior,
+    GlobalLimit,
+    GlobalLimitBehavior,
+    FromController,
+    DesignerCategory,
+    AuthoredCategory,
+}
+
+/// The sound system's members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SystemField {
+    EffectsMasterVolume,
+    EffectsMasterRate,
+    ActiveSoundEffects,
+    ActiveMovies,
+    StreamsMasterVolume,
+    StreamsMasterRate,
+    ActiveSoundStreams,
+    ActiveControllerRumbles,
+    CategoryTemplates,
+    MusicDisabled,
+    MusicMasterVolume,
+    ReverbSetting(u8),
+    ReverbAmount(u8),
+    MusicVolume(u8),
+    PanListenerMode,
+    VolumeListenerMode,
+    DiagnosticLevel,
+}
+
+/// Each sound member by its registered name.
+pub(crate) const SOUND_FIELDS: &[(&str, SoundField)] = {
+    use SoundField as F;
+    &[
+        ("volume", F::Volume),
+        ("volume randomness", F::VolumeRandomness),
+        ("pitch randomness", F::PitchRandomness),
+        ("rumble duration", F::RumbleDuration),
+        ("pan", F::Pan),
+        ("3d", F::ThreeD),
+        ("attenuates", F::Attenuates),
+        ("attenuation distance full", F::AttenuationFull),
+        ("attenuation distance silent", F::AttenuationSilent),
+        ("ignores time scales", F::IgnoresTimeScales),
+        ("category", F::Category),
+        ("reverb amount", F::ReverbAmount),
+        ("reverb randomness", F::ReverbRandomness),
+        ("filter percent", F::FilterPercent),
+        ("filter randomness", F::FilterRandomness),
+        ("filter attenuates", F::FilterAttenuates),
+        ("filter attenuation distance minimum", F::FilterMinimum),
+        ("filter attenuation distance maximum", F::FilterMaximum),
+        ("filter maximum percent", F::FilterMaximumPercent),
+        ("priority", F::Priority),
+        ("actor limit", F::ActorLimit),
+        ("actor limit behavior", F::ActorLimitBehavior),
+        ("global limit", F::GlobalLimit),
+        ("global limit behavior", F::GlobalLimitBehavior),
+        ("from controller", F::FromController),
+        ("designer category", F::DesignerCategory),
+        ("authored category", F::AuthoredCategory),
+    ]
+};
+
+/// Each sound system member by its registered name.
+pub(crate) const SYSTEM_FIELDS: &[(&str, SystemField)] = {
+    use SystemField as F;
+    &[
+        ("effects master volume", F::EffectsMasterVolume),
+        ("effects master rate", F::EffectsMasterRate),
+        ("active sound effects", F::ActiveSoundEffects),
+        ("active movies", F::ActiveMovies),
+        ("streams master volume", F::StreamsMasterVolume),
+        ("streams master rate", F::StreamsMasterRate),
+        ("active sound streams", F::ActiveSoundStreams),
+        ("active controller rumbles", F::ActiveControllerRumbles),
+        ("category templates", F::CategoryTemplates),
+        ("music disabled", F::MusicDisabled),
+        ("music master volume", F::MusicMasterVolume),
+        ("reverb setting 1", F::ReverbSetting(1)),
+        ("reverb setting 2", F::ReverbSetting(2)),
+        ("reverb amount 1", F::ReverbAmount(1)),
+        ("reverb amount 2", F::ReverbAmount(2)),
+        ("music volume 1", F::MusicVolume(1)),
+        ("music volume 2", F::MusicVolume(2)),
+        ("music volume 3", F::MusicVolume(3)),
+        ("pan listener mode", F::PanListenerMode),
+        ("volume listener mode", F::VolumeListenerMode),
+        ("diagnostic level", F::DiagnosticLevel),
+    ]
+};
+
+impl SystemField {
+    /// What it reads until a script writes it (the module docs).
+    pub(crate) fn start(self) -> Value {
+        use SystemField as F;
+        match self {
+            F::EffectsMasterVolume
+            | F::EffectsMasterRate
+            | F::StreamsMasterVolume
+            | F::StreamsMasterRate
+            | F::MusicMasterVolume
+            | F::MusicVolume(_) => Value::Float(100.0),
+            F::ReverbAmount(_) => Value::Float(0.0),
+            _ => Value::Int(0),
+        }
+    }
+}
+
+const BIT_ATTENUATES: u32 = 1 << 3;
+const BIT_THREE_D: u32 = 1 << 5;
+const BIT_FILTER_ATTENUATES: u32 = 1 << 6;
+const BIT_FROM_CONTROLLER: u32 = 1 << 8;
+const BIT_IGNORES_TIME_SCALES: u32 = 1 << 24;
+
+fn bit(word: u32, b: u32) -> Value {
+    Value::Int(i32::from(word & b != 0))
+}
+
+fn field(word: u32, shift: u32, mask: u32) -> Value {
+    Value::Int(((word >> shift) & mask) as i32)
+}
+
+/// What `sound` holds of `f`, as its member reads it.
+fn data_value(sound: &Sound, f: SoundField) -> Value {
+    use SoundField as F;
+    let (fl, p) = (sound.flags, sound.properties);
+    match f {
+        F::Volume => Value::Float(sound.volume_percent),
+        F::VolumeRandomness => Value::Float(sound.volume_randomness_percent),
+        F::PitchRandomness => Value::Float(sound.pitch_randomness_percent),
+        F::RumbleDuration => Value::Float(sound.rumble_duration),
+        F::Pan => Value::Float(sound.pan_percent),
+        F::ThreeD => bit(fl, BIT_THREE_D),
+        F::Attenuates => bit(fl, BIT_ATTENUATES),
+        F::AttenuationFull => Value::Float(sound.attenuation_distance_full),
+        F::AttenuationSilent => Value::Float(sound.attenuation_distance_silent),
+        F::IgnoresTimeScales => bit(fl, BIT_IGNORES_TIME_SCALES),
+        F::Category => field(p, 1, 0x1F),
+        F::ReverbAmount => Value::Float(sound.reverb_amount),
+        F::ReverbRandomness => Value::Float(sound.reverb_randomness_percent),
+        F::FilterPercent => Value::Float(sound.filter_percent),
+        F::FilterRandomness => Value::Float(sound.filter_randomness_percent),
+        F::FilterAttenuates => bit(fl, BIT_FILTER_ATTENUATES),
+        F::FilterMinimum => Value::Float(sound.filter_attenuation_distance_minimum),
+        F::FilterMaximum => Value::Float(sound.filter_attenuation_distance_maximum),
+        F::FilterMaximumPercent => Value::Float(sound.filter_maximum_percent),
+        F::Priority => field(p, 6, 0xFFF),
+        F::ActorLimit => field(p, 18, 0x1F),
+        F::ActorLimitBehavior => field(p, 23, 3),
+        F::GlobalLimit => field(p, 25, 0x1F),
+        F::GlobalLimitBehavior => field(p, 30, 3),
+        F::FromController => bit(fl, BIT_FROM_CONTROLLER),
+        F::DesignerCategory | F::AuthoredCategory => Value::Int(0),
+    }
+}
+
+/// What an unwritten member of an object the book doesn't know reads: its
+/// value cell's start.
+fn unknown_value(f: SoundField) -> Value {
+    use SoundField as F;
+    match f {
+        F::ThreeD
+        | F::Attenuates
+        | F::IgnoresTimeScales
+        | F::Category
+        | F::FilterAttenuates
+        | F::Priority
+        | F::ActorLimit
+        | F::ActorLimitBehavior
+        | F::GlobalLimit
+        | F::GlobalLimitBehavior
+        | F::FromController
+        | F::DesignerCategory
+        | F::AuthoredCategory => Value::Int(0),
+        _ => Value::Float(0.0),
+    }
+}
+
+fn behavior_of(v: Option<&Value>, was: LimitBehavior) -> LimitBehavior {
+    match v.and_then(Value::as_i32) {
+        Some(0) => LimitBehavior::Fail,
+        Some(1) => LimitBehavior::StealQuietest,
+        Some(2) => LimitBehavior::StealFurthest,
+        Some(3) => LimitBehavior::StealOldest,
+        _ => was,
+    }
+}
+
+impl ScriptWorld {
+    /// The sound info a receiver names: itself, or a copy's sound.
+    fn sound_of(&self, recv: Option<Value>) -> Option<Obj> {
+        match recv? {
+            Value::Object(o) => Some(o),
+            v => match self.handle(v).and_then(|h| self.objs.get(h)) {
+                Some(Object::Sequence(i)) => match self.sequences.get(i as usize)?.template {
+                    Value::Object(o) => Some(o),
+                    _ => None,
+                },
+                _ => None,
+            },
+        }
+    }
+
+    /// The book's sound at `o`, if it knows one there.
+    fn book_sound(&self, o: Obj) -> Option<&Sound> {
+        let stem = self.sound_stems.get(&o.unit)?;
+        self.sounds.as_deref()?.sound(stem, o.index)
+    }
+
+    /// `f` of sound info `o` as read now: written, else the data's, else
+    /// its cell's start.
+    pub(crate) fn sound_value(&self, o: Obj, f: SoundField) -> Value {
+        if let Some(v) = self.sound_written.get(&(o, f)) {
+            return *v;
+        }
+        match self.book_sound(o) {
+            Some(s) => data_value(s, f),
+            None => unknown_value(f),
+        }
+    }
+
+    /// `params` with what scripts wrote to sound info `o` laid over them.
+    pub(crate) fn written_params(&self, o: Obj, params: Params) -> Params {
+        use SoundField as F;
+        let w = |f| self.sound_written.get(&(o, f));
+        let float = |f, was: f32| w(f).and_then(Value::as_f32).unwrap_or(was);
+        let int = |f, was: u32| {
+            w(f).and_then(Value::as_i32)
+                .map_or(was, |i| i.max(0) as u32)
+        };
+        let flag = |f, was: bool| w(f).and_then(Value::as_i32).map_or(was, |i| i != 0);
+        let mut p = params;
+        p.volume_percent = float(F::Volume, p.volume_percent);
+        p.volume_randomness_percent = float(F::VolumeRandomness, p.volume_randomness_percent);
+        p.pitch_randomness_percent = float(F::PitchRandomness, p.pitch_randomness_percent);
+        p.rumble_duration = float(F::RumbleDuration, p.rumble_duration);
+        p.pan_percent = float(F::Pan, p.pan_percent);
+        p.three_d = flag(F::ThreeD, p.three_d);
+        let (full, silent) = p.falloff.map_or_else(
+            || {
+                let s = self.book_sound(o);
+                (
+                    s.map_or(0.0, |s| s.attenuation_distance_full),
+                    s.map_or(0.0, |s| s.attenuation_distance_silent),
+                )
+            },
+            |f| (f.full, f.silent),
+        );
+        let attenuates = flag(F::Attenuates, p.falloff.is_some());
+        p.falloff = attenuates.then_some(Falloff {
+            full: float(F::AttenuationFull, full),
+            silent: float(F::AttenuationSilent, silent),
+        });
+        p.ignores_time_scales = flag(F::IgnoresTimeScales, p.ignores_time_scales);
+        p.category = int(F::Category, p.category);
+        p.reverb_amount = float(F::ReverbAmount, p.reverb_amount);
+        p.reverb_randomness_percent = float(F::ReverbRandomness, p.reverb_randomness_percent);
+        p.filter_percent = float(F::FilterPercent, p.filter_percent);
+        p.filter_randomness_percent = float(F::FilterRandomness, p.filter_randomness_percent);
+        p.filter_attenuates = flag(F::FilterAttenuates, p.filter_attenuates);
+        p.filter_attenuation_distance_minimum =
+            float(F::FilterMinimum, p.filter_attenuation_distance_minimum);
+        p.filter_attenuation_distance_maximum =
+            float(F::FilterMaximum, p.filter_attenuation_distance_maximum);
+        p.filter_maximum_percent = float(F::FilterMaximumPercent, p.filter_maximum_percent);
+        p.priority = int(F::Priority, p.priority);
+        p.actor_limit = Limit {
+            count: int(F::ActorLimit, p.actor_limit.count),
+            behavior: behavior_of(w(F::ActorLimitBehavior), p.actor_limit.behavior),
+        };
+        p.global_limit = Limit {
+            count: int(F::GlobalLimit, p.global_limit.count),
+            behavior: behavior_of(w(F::GlobalLimitBehavior), p.global_limit.behavior),
+        };
+        p.from_controller = flag(F::FromController, p.from_controller);
+        p
+    }
+
+    /// A play's settings now: its sound's as the data holds them with what
+    /// scripts have written to them since (the player reads these each
+    /// frame, so a fade reaches what's playing).
+    pub fn play_params(&self, play: &crate::sounds::SoundPlay) -> Params {
+        match self
+            .sequences
+            .get(play.sequence as usize)
+            .map(|s| s.template)
+        {
+            Some(Value::Object(o)) => {
+                let base = self.book_sound(o).map_or(play.params, Params::of);
+                self.written_params(o, base)
+            }
+            _ => play.params,
+        }
+    }
+
+    /// The sound system's member `f` as read now.
+    pub(crate) fn system_value(&self, f: SystemField) -> Value {
+        self.sound_system.get(&f).copied().unwrap_or(f.start())
+    }
+
+    fn system_percent(&self, f: SystemField) -> f32 {
+        self.system_value(f).as_f32().unwrap_or(100.0).max(0.0) / 100.0
+    }
+
+    /// Whether the play's recording streams (a voice, music, ambience) or
+    /// sits in its file (an effect).
+    pub(crate) fn play_streams(&self, play: &crate::sounds::SoundPlay) -> bool {
+        let Some(book) = self.sounds.as_deref() else {
+            return false;
+        };
+        let Some(sound) = book.sound(&play.id.stem, play.id.object) else {
+            return false;
+        };
+        let (stem, home, object) = match sound.data {
+            DataRef::Here(home, o) => (play.id.stem.as_str(), home, o),
+            DataRef::Global(o) => ("global", DataHome::Level, o),
+            _ => return false,
+        };
+        book.file(stem)
+            .and_then(|f| f.data_at(home, object))
+            .is_some_and(|d| d.streamed.is_some())
+    }
+
+    /// The sound system's share of a play's gain (the module docs): the
+    /// music master volume for music (none while it's disabled), else the
+    /// streams' or the effects' master volume.
+    pub fn master_gain(&self, play: &crate::sounds::SoundPlay) -> f32 {
+        use SystemField as F;
+        if self.play_params(play).category == guac_sound::MUSIC {
+            if self.system_value(F::MusicDisabled).as_i32().unwrap_or(0) != 0 {
+                return 0.0;
+            }
+            return self.system_percent(F::MusicMasterVolume);
+        }
+        if self.play_streams(play) {
+            self.system_percent(F::StreamsMasterVolume)
+        } else {
+            self.system_percent(F::EffectsMasterVolume)
+        }
+    }
+
+    /// The sound system's share of a play's speed: its streams' or effects'
+    /// master rate.
+    pub fn master_rate(&self, play: &crate::sounds::SoundPlay) -> f32 {
+        if self.play_streams(play) {
+            self.system_percent(SystemField::StreamsMasterRate)
+        } else {
+            self.system_percent(SystemField::EffectsMasterRate)
+        }
+    }
+
+    /// A read of a sound member, or `None` for any other member.
+    pub(crate) fn sound_member(
+        &mut self,
+        at: &Access,
+        m: Member,
+    ) -> Option<Result<Value, HostFault>> {
+        Some(match m {
+            Member::Sound(f) => match self.sound_of(at.receiver) {
+                Some(o) => Ok(self.sound_value(o, f)),
+                None => Err(HostFault::Nothing),
+            },
+            Member::SoundSystem(f) => Ok(self.system_value(f)),
+            Member::SeqActivator => {
+                match self.handle(at.receiver?).and_then(|h| self.objs.get(h)) {
+                    Some(Object::Sequence(i)) => self
+                        .sequences
+                        .get(i as usize)
+                        .map(|s| Value::Entity(s.actor))
+                        .ok_or(HostFault::Nothing),
+                    _ => Err(HostFault::Nothing),
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// A write of a sound member, or `None` for any other member. The
+    /// activator and the system's sets read only: a write drops.
+    pub(crate) fn set_sound_member(
+        &mut self,
+        at: &Access,
+        m: Member,
+        v: Value,
+    ) -> Option<Result<(), HostFault>> {
+        use SystemField as F;
+        Some(match m {
+            Member::Sound(f) => match self.sound_of(at.receiver) {
+                Some(o) => {
+                    self.sound_written.insert((o, f), v);
+                    Ok(())
+                }
+                None => Err(HostFault::Nothing),
+            },
+            Member::SoundSystem(
+                F::ActiveSoundEffects
+                | F::ActiveMovies
+                | F::ActiveSoundStreams
+                | F::ActiveControllerRumbles
+                | F::CategoryTemplates,
+            ) => Err(HostFault::Nothing),
+            Member::SoundSystem(f) => {
+                self.sound_system.insert(f, v);
+                Ok(())
+            }
+            Member::SeqActivator => Err(HostFault::Nothing),
+            _ => return None,
+        })
+    }
+
+    /// One of the sound system's sets (the module docs).
+    pub(crate) fn sound_set(&mut self, f: SystemField) -> Result<Vec<Value>, HostFault> {
+        use SystemField as F;
+        let streams = match f {
+            F::ActiveSoundEffects => false,
+            F::ActiveSoundStreams => true,
+            F::ActiveMovies | F::ActiveControllerRumbles | F::CategoryTemplates => {
+                return Ok(Vec::new());
+            }
+            _ => return Err(HostFault::Nothing),
+        };
+        let copies: Vec<u32> = self
+            .plays
+            .iter()
+            .filter(|p| self.play_streams(p) == streams)
+            .filter(|p| {
+                self.sequences
+                    .get(p.sequence as usize)
+                    .is_some_and(Sequence::plays)
+            })
+            .map(|p| p.sequence)
+            .collect();
+        Ok(copies
+            .into_iter()
+            .map(|i| self.objs.value(Object::Sequence(i)))
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -330,6 +811,9 @@ mod tests {
     const STEALS: u32 = 14;
     const GLOBAL: u32 = 15;
     const SILENT: u32 = 16;
+    /// A streamed one, and a music track (streamed too).
+    const STREAMED: u32 = 17;
+    const MUSIC: u32 = 18;
 
     fn props(actor: u32, actor_how: u32, global: u32, global_how: u32) -> u32 {
         actor << 18 | actor_how << 23 | global << 25 | global_how << 30
@@ -380,22 +864,32 @@ mod tests {
                 sound(STEALS, 0, props(1, 3, 0, 0), here),
                 sound(GLOBAL, 0, props(0, 0, 2, 0), here),
                 sound(SILENT, 0, no_limit, DataRef::None),
+                sound(STREAMED, 0, no_limit, DataRef::Here(DataHome::Level, 91)),
+                sound(
+                    MUSIC,
+                    1,
+                    no_limit | guac_sound::MUSIC << 1,
+                    DataRef::Here(DataHome::Level, 91),
+                ),
             ],
-            data: vec![SoundData {
-                home: DataHome::Level,
-                object: 90,
-                name: Some("Levels/x.wav".into()),
-                raw_duration: 0.9,
-                streamed: None,
-                lip_sync: false,
-                audio: Some(Audio {
-                    file: "audio/sounds/0011223344556677.mp3".into(),
-                    rate: 48_000,
-                    channels: 1,
-                    samples: 48_000,
-                    loop_points: None,
-                }),
-            }],
+            data: [(90, None), (91, Some(-7))]
+                .into_iter()
+                .map(|(object, streamed)| SoundData {
+                    home: DataHome::Level,
+                    object,
+                    name: Some("Levels/x.wav".into()),
+                    raw_duration: 0.9,
+                    streamed,
+                    lip_sync: false,
+                    audio: Some(Audio {
+                        file: "audio/sounds/0011223344556677.mp3".into(),
+                        rate: 48_000,
+                        channels: 1,
+                        samples: 48_000,
+                        loop_points: None,
+                    }),
+                })
+                .collect(),
             refused: Vec::new(),
         };
         SoundBook::new([level])
@@ -472,6 +966,18 @@ mod tests {
             op: None,
         };
         w.elements(&at, &mut NoEngine).unwrap()
+    }
+
+    fn write(w: &mut ScriptWorld, ns: &str, name: &str, on: Option<Value>, v: Value) -> bool {
+        let at = Access {
+            placement: 1,
+            receiver: on,
+            member: MemberId::named(ns, name),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        w.set(&at, v, &mut NoEngine).is_ok()
     }
 
     fn steps(w: &mut ScriptWorld, n: u32) {
@@ -638,5 +1144,202 @@ mod tests {
         let refused = w.sounds_refused().count();
         started(start(&mut w, A, 999));
         assert_eq!(w.sounds_refused().count(), refused, "not a sound");
+    }
+
+    /// AR.10: a sound's members read the data until written (its volume,
+    /// category, limits and flags as the part holds them), then what was
+    /// written, for its next play and the one playing (a fade); a copy
+    /// reads its sound's; the deprecated two read 0; an object the book
+    /// doesn't know keeps a write and reads 0 before one; no object, no
+    /// value.
+    #[test]
+    fn a_sounds_members_read_its_data_until_written() {
+        let mut w = world();
+        let once = sound_value(ONCE);
+        assert_eq!(
+            read(&mut w, "soundinfo", "volume", once),
+            Value::Float(80.0)
+        );
+        assert_eq!(
+            read(&mut w, "soundinfo", "rumble duration", once),
+            Value::Float(0.9)
+        );
+        assert_eq!(
+            read(&mut w, "soundinfo", "actor limit", sound_value(STEALS)),
+            Value::Int(1)
+        );
+        assert_eq!(
+            read(
+                &mut w,
+                "soundinfo",
+                "actor limit behavior",
+                sound_value(STEALS)
+            ),
+            Value::Int(3)
+        );
+        assert_eq!(
+            read(&mut w, "soundinfo", "global limit", sound_value(GLOBAL)),
+            Value::Int(2)
+        );
+        assert_eq!(
+            read(&mut w, "soundinfo", "category", sound_value(MUSIC)),
+            Value::Int(guac_sound::MUSIC as i32)
+        );
+        assert_eq!(
+            read(&mut w, "soundinfo", "designer category", once),
+            Value::Int(0)
+        );
+        let playing = started(start(&mut w, A, ONCE));
+        assert_eq!(
+            read(&mut w, "soundinfo", "volume", playing),
+            Value::Float(80.0)
+        );
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "volume",
+            Some(playing),
+            Value::Float(20.0)
+        ));
+        assert_eq!(
+            read(&mut w, "soundinfo", "volume", once),
+            Value::Float(20.0)
+        );
+        let p = w.plays()[0].clone();
+        assert_eq!(
+            w.play_params(&p).volume_percent,
+            20.0,
+            "the one playing fades"
+        );
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "attenuates",
+            Some(once),
+            Value::Int(1)
+        ));
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "attenuation distance full",
+            Some(once),
+            Value::Float(4.0)
+        ));
+        let falloff = w.play_params(&p).falloff.unwrap();
+        assert_eq!((falloff.full, falloff.silent), (4.0, 150.0));
+        started(start(&mut w, B, ONCE));
+        assert_eq!(
+            w.plays()[1].params.volume_percent,
+            20.0,
+            "the next starts so"
+        );
+        // Its limit written down to 1 refusing: the next on B is refused.
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "actor limit",
+            Some(once),
+            Value::Int(1)
+        ));
+        assert_eq!(start(&mut w, B, ONCE), Answer::Skip);
+        let other = Value::Object(Obj { unit: 9, index: 1 });
+        assert_eq!(read(&mut w, "soundinfo", "pan", other), Value::Float(0.0));
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "pan",
+            Some(other),
+            Value::Float(-40.0)
+        ));
+        assert_eq!(read(&mut w, "soundinfo", "pan", other), Value::Float(-40.0));
+        assert!(!write(&mut w, "soundinfo", "pan", None, Value::Float(1.0)));
+    }
+
+    /// AR.10: the sound system's members read their start until written;
+    /// its sets hold the copies playing, embedded and streamed apart, none
+    /// of a movie, and take no write; its master volumes scale a play's
+    /// gain by kind, music silenced while disabled; a copy's activator is
+    /// its actor.
+    #[test]
+    fn the_sound_systems_members_scale_what_plays() {
+        let mut w = world();
+        let sys = |w: &mut ScriptWorld, name: &str| {
+            let at = Access {
+                placement: 1,
+                receiver: None,
+                member: MemberId::named("soundinfo", name),
+                other_point: None,
+                via: None,
+                op: None,
+            };
+            w.get(&at, &mut NoEngine).unwrap()
+        };
+        assert_eq!(sys(&mut w, "music master volume"), Value::Float(100.0));
+        assert_eq!(sys(&mut w, "reverb setting 1"), Value::Int(0));
+        let effect = started(start(&mut w, A, ONCE));
+        let stream = started(start(&mut w, A, STREAMED));
+        let music = started(start(&mut w, B, MUSIC));
+        let set = |w: &mut ScriptWorld, name: &str| {
+            let at = Access {
+                placement: 1,
+                receiver: None,
+                member: MemberId::named("soundinfo", name),
+                other_point: None,
+                via: None,
+                op: None,
+            };
+            w.elements(&at, &mut NoEngine).unwrap()
+        };
+        assert_eq!(set(&mut w, "active sound effects"), [effect]);
+        assert_eq!(set(&mut w, "active sound streams"), [stream, music]);
+        assert!(set(&mut w, "active movies").is_empty());
+        assert!(!write(
+            &mut w,
+            "soundinfo",
+            "active sound streams",
+            None,
+            Value::Null
+        ));
+        let plays = w.plays().to_vec();
+        assert_eq!(
+            plays.iter().map(|p| w.master_gain(p)).collect::<Vec<_>>(),
+            [1.0; 3]
+        );
+        for (name, v) in [
+            ("effects master volume", 50.0),
+            ("streams master volume", 25.0),
+            ("music master volume", 80.0),
+            ("streams master rate", 50.0),
+        ] {
+            assert!(write(&mut w, "soundinfo", name, None, Value::Float(v)));
+        }
+        assert_eq!(sys(&mut w, "music master volume"), Value::Float(80.0));
+        assert_eq!(
+            plays.iter().map(|p| w.master_gain(p)).collect::<Vec<_>>(),
+            [0.5, 0.25, 0.8]
+        );
+        assert_eq!(w.master_rate(&plays[1]), 0.5);
+        assert_eq!(w.master_rate(&plays[0]), 1.0);
+        assert!(write(
+            &mut w,
+            "soundinfo",
+            "music disabled",
+            None,
+            Value::Int(1)
+        ));
+        assert_eq!(w.master_gain(&plays[2]), 0.0);
+        assert_eq!(
+            read(&mut w, "clonedsequence", "activator", music),
+            Value::Entity(B)
+        );
+        let at = Access {
+            placement: 1,
+            receiver: Some(sound_value(MUSIC)),
+            member: MemberId::named("clonedsequence", "activator"),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        assert_eq!(w.get(&at, &mut NoEngine), Err(HostFault::Nothing));
     }
 }

@@ -76,10 +76,10 @@ pub(crate) struct Heard {
     serial: u64,
     sequence: u32,
     gains: Arc<Gains>,
-    /// Its volume as drawn (linear, the volume and its randomness), and its
-    /// speed (the pitch randomness).
-    volume: f32,
-    speed: f32,
+    /// Its draws, each in -1..=1: its volume's straying and its pitch's,
+    /// laid on its settings as they stand each frame (a fade reaches it).
+    volume_draw: f32,
+    speed_draw: f32,
     /// Its play ended by playing out: it rings to its end, no longer
     /// followed.
     ringing: bool,
@@ -152,6 +152,15 @@ pub(crate) struct SoundReport {
     pub voices: usize,
 }
 
+/// How many of the last plays ended and starts refused the report lists.
+const SHOWN: usize = 32;
+
+/// The last `n` of `items`.
+fn last<T>(items: impl ExactSizeIterator<Item = T>, n: usize) -> impl Iterator<Item = T> {
+    let skip = items.len().saturating_sub(n);
+    items.skip(skip)
+}
+
 pub(crate) struct SoundPlayerPlugin;
 
 impl Plugin for SoundPlayerPlugin {
@@ -217,8 +226,12 @@ fn file(out: &mut SoundOut, dir: Option<&Path>, rel: &str) -> Option<Arc<[u8]>> 
 /// A play's left and right gains now: its drawn volume, its falloff at the
 /// listener and its pan from where its actor stands to the listener (a 3D
 /// sound's) or its own pan percent (any other's).
-fn gains_of(play: &SoundPlay, volume: f32, listener: Option<&GlobalTransform>) -> (f32, f32) {
-    let p = &play.params;
+fn gains_of(
+    play: &SoundPlay,
+    p: &guac_sound::Params,
+    volume: f32,
+    listener: Option<&GlobalTransform>,
+) -> (f32, f32) {
     let local = match (play.at, listener) {
         (Some(at), Some(l)) => Some(l.affine().inverse().transform_point3(at)),
         _ => None,
@@ -261,13 +274,16 @@ fn hear_sounds(
     for (e, mut h, sink) in &mut heard {
         let follows = h.run == world.run() && in_level;
         if let (true, Some(p)) = (follows, playing.get(&h.serial)) {
-            let (l, r) = gains_of(p, h.volume, listener);
+            let params = world.play_params(p);
+            let volume = params.volume_for(h.volume_draw) * world.master_gain(p);
+            let (l, r) = gains_of(p, &params, volume, listener);
             h.gains.set(l, r);
             gains_now.insert(h.serial, [l, r]);
             if let Some(s) = world.sequences().get(h.sequence as usize)
                 && let Some(sink) = sink
             {
-                sink.set_speed(h.speed * (s.rate / 100.0).max(0.0));
+                let rate = (s.rate / 100.0).max(0.0) * world.master_rate(p);
+                sink.set_speed(params.speed_for(h.speed_draw) * rate);
             }
         } else if follows
             && !h.ringing
@@ -306,9 +322,11 @@ fn hear_sounds(
             let Some(bytes) = file(&mut out, dir.as_deref(), &p.file) else {
                 continue;
             };
-            let volume = p.params.volume_for(rng.0.unit() * 2.0 - 1.0);
-            let speed = p.params.speed_for(rng.0.unit() * 2.0 - 1.0);
-            let (l, r) = gains_of(p, volume, listener);
+            let (volume_draw, speed_draw) = (rng.0.unit() * 2.0 - 1.0, rng.0.unit() * 2.0 - 1.0);
+            let params = world.play_params(p);
+            let volume = params.volume_for(volume_draw) * world.master_gain(p);
+            let speed = params.speed_for(speed_draw) * world.master_rate(p);
+            let (l, r) = gains_of(p, &params, volume, listener);
             let gains = Gains::new(l, r);
             let voice = voices.add(Voice {
                 bytes,
@@ -329,8 +347,8 @@ fn hear_sounds(
                     serial: p.serial,
                     sequence: p.sequence,
                     gains,
-                    volume,
-                    speed,
+                    volume_draw,
+                    speed_draw,
                     ringing: false,
                     paused,
                 },
@@ -376,8 +394,7 @@ fn hear_sounds(
             })
             .collect(),
         started: world.sounds_started(),
-        ended: world
-            .sounds_ended()
+        ended: last(world.sounds_ended(), SHOWN)
             .map(|e| EndedShot {
                 name: e.name.clone(),
                 stem: e.id.stem.clone(),
@@ -387,8 +404,7 @@ fn hear_sounds(
                 how: e.how.name(),
             })
             .collect(),
-        refused: world
-            .sounds_refused()
+        refused: last(world.sounds_refused(), SHOWN)
             .map(|r| RefusedShot {
                 name: r.name.clone(),
                 stem: r.id.stem.clone(),
@@ -669,22 +685,39 @@ mod tests {
         let feet = |f: f32| f / FEET_PER_METRE;
         let camera = GlobalTransform::default();
         let right = play_at(Some(Vec3::new(feet(0.5), 0.0, 0.0)), 0x28, 0.0);
-        assert_eq!(gains_of(&right, 0.8, Some(&camera)), stereo(0.8, 1.0));
+        assert_eq!(
+            gains_of(&right, &right.params, 0.8, Some(&camera)),
+            stereo(0.8, 1.0)
+        );
         let middle = play_at(Some(Vec3::new(0.0, 0.0, -feet(51.0))), 0x28, 0.0);
-        let (l, r) = gains_of(&middle, 1.0, Some(&camera));
+        let (l, r) = gains_of(&middle, &middle.params, 1.0, Some(&camera));
         assert!((l - 0.5).abs() < 1e-4 && (r - 0.5).abs() < 1e-4, "{l} {r}");
         let gone = play_at(Some(Vec3::new(-feet(200.0), 0.0, 0.0)), 0x28, 0.0);
-        assert_eq!(gains_of(&gone, 1.0, Some(&camera)), (0.0, 0.0));
+        assert_eq!(
+            gains_of(&gone, &gone.params, 1.0, Some(&camera)),
+            (0.0, 0.0)
+        );
         let flat = play_at(Some(Vec3::new(feet(0.5), 0.0, 0.0)), 0x08, -50.0);
-        assert_eq!(gains_of(&flat, 1.0, Some(&camera)), stereo(1.0, -0.5));
+        assert_eq!(
+            gains_of(&flat, &flat.params, 1.0, Some(&camera)),
+            stereo(1.0, -0.5)
+        );
         let turned = GlobalTransform::from(Transform::from_rotation(Quat::from_rotation_y(
             std::f32::consts::PI,
         )));
-        assert_eq!(gains_of(&right, 1.0, Some(&turned)), stereo(1.0, -1.0));
         assert_eq!(
-            gains_of(&play_at(None, 0x28, 0.0), 0.7, Some(&camera)),
+            gains_of(&right, &right.params, 1.0, Some(&turned)),
+            stereo(1.0, -1.0)
+        );
+        assert_eq!(
+            gains_of(
+                &play_at(None, 0x28, 0.0),
+                &play_at(None, 0x28, 0.0).params,
+                0.7,
+                Some(&camera)
+            ),
             (0.7, 0.7)
         );
-        assert_eq!(gains_of(&right, 0.7, None), (0.7, 0.7));
+        assert_eq!(gains_of(&right, &right.params, 0.7, None), (0.7, 0.7));
     }
 }

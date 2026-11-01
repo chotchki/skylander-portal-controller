@@ -2447,6 +2447,464 @@ pub const LEVELS: &[Registered] = &[
     ),
 ];
 
+/// The sounds' members on the host (openspec AR.10), as aj-vm's live table
+/// registers them: every `soundinfo` member of a sound (its settings, read
+/// as the sounds part holds them and written for later plays and the ones
+/// playing, the deprecated two reading 0), every one of the sound system's
+/// (its master volumes and rates, music volumes and switch, reverb, listener
+/// modes and the sets of what plays), and what a playing copy names as the
+/// actor playing it. Those the earlier tables registered as value cells
+/// (the init chain's priority, volume and category templates, the hero's
+/// active sound effects, the camera's attenuation distance silent, the
+/// route's category, the level-up's rumble duration, AS.27's reverb, global
+/// limit and active streams) the host takes over here, the same class,
+/// units and range. The labels as the live table cuts them.
+pub const SOUNDS: &[Registered] = &[
+    m(
+        "soundinfo",
+        "volume",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "volume randomness",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "pitch randomness",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "rumble duration",
+        "FloatMeasurement",
+        "seconds",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "pan",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "3d",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "attenuates",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "attenuation distance full",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "attenuation distance silent",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "ignores time scales",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "category",
+        "EnumMeasurement",
+        "Effects/|Effects/Champion/|Effects/Champ",
+        0.0,
+        31.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "reverb randomness",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "filter percent",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "filter randomness",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "filter attenuates",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "filter attenuation distance minimum",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "filter attenuation distance maximum",
+        "FloatMeasurement",
+        "feet",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "filter maximum percent",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "priority",
+        "IntMeasurement",
+        "(0-100)",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "actor limit",
+        "IntMeasurement",
+        "(0-31)",
+        0.0,
+        31.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "actor limit behavior",
+        "EnumMeasurement",
+        "just fail|steal quietest|steal furthest|",
+        0.0,
+        3.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "global limit",
+        "IntMeasurement",
+        "(0-31)",
+        0.0,
+        31.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "global limit behavior",
+        "EnumMeasurement",
+        "just fail|steal quietest|steal furthest|",
+        0.0,
+        3.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "from controller",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "designer category",
+        "EnumMeasurement",
+        "deprecated",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "authored category",
+        "EnumMeasurement",
+        "deprecated",
+        0.0,
+        0.0,
+        Host,
+    ),
+    // The sound system's, heading the path.
+    m(
+        "soundinfo",
+        "effects master volume",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "effects master rate",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "active sound effects",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "active movies",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "streams master volume",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "streams master rate",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "active sound streams",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "active controller rumbles",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "category templates",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "music disabled",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "music master volume",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        OPEN,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "reverb setting 1",
+        "EnumMeasurement",
+        "off|generic|paddedcell|room|bathroom|liv",
+        0.0,
+        26.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "reverb setting 2",
+        "EnumMeasurement",
+        "off|generic|paddedcell|room|bathroom|liv",
+        0.0,
+        26.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount 1",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "reverb amount 2",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "music volume 1",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "music volume 2",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "music volume 3",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "pan listener mode",
+        "EnumMeasurement",
+        "camera|player|custom",
+        0.0,
+        2.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "volume listener mode",
+        "EnumMeasurement",
+        "camera|player|custom",
+        0.0,
+        2.0,
+        Host,
+    ),
+    m(
+        "soundinfo",
+        "diagnostic level",
+        "IntMeasurement",
+        "(0-10)",
+        0.0,
+        10.0,
+        Host,
+    ),
+    // A playing copy's actor.
+    m(
+        "clonedsequence",
+        "activator",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2587,6 +3045,37 @@ mod tests {
                 assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
             }
         }
+        // The sounds' take over cells the earlier tables registered, the same
+        // class, units and range, the host's now (AR.10).
+        for r in SOUNDS {
+            for earlier in [
+                INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+                LEVEL_UP, LEVELS,
+            ] {
+                if let Some(i) = find(earlier, r.namespace, r.name) {
+                    assert_eq!(
+                        (i.keeper, r.keeper),
+                        (Keeper::Cell, Keeper::Host),
+                        "{}",
+                        r.path()
+                    );
+                    assert_eq!(
+                        (i.class, i.units, i.min, i.max),
+                        (r.class, r.units, r.min, r.max),
+                        "{}",
+                        r.path()
+                    );
+                }
+            }
+        }
+        let sounds = SOUNDS.iter().filter(|r| {
+            [
+                INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+                LEVEL_UP, LEVELS,
+            ]
+            .iter()
+            .all(|t| find(t, r.namespace, r.name).is_none())
+        });
         for r in earlier
             .into_iter()
             .chain(CAMERA)
@@ -2594,6 +3083,7 @@ mod tests {
             .chain(ROUTE)
             .chain(LEVEL_UP)
             .chain(LEVELS)
+            .chain(sounds)
         {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());
@@ -2606,6 +3096,36 @@ mod tests {
             if let Some(b) = Builtin::of(id) {
                 assert_eq!(r.keeper, Keeper::Vm, "{}", b.name());
             }
+        }
+    }
+
+    /// AR.10's rows: every one the host's, each converting by its class (a
+    /// volume a float, a switch and a limit integers held to their ranges, a
+    /// set read whole, the activator a reference), all 27 of a sound's
+    /// members and the system's 21 (aj-vm's live table's `x` rows) with the
+    /// copy's activator.
+    #[test]
+    fn the_sounds_members_are_the_hosts_by_their_class() {
+        assert_eq!(SOUNDS.len(), 27 + 21 + 1);
+        assert!(SOUNDS.iter().all(|r| r.keeper == Keeper::Host));
+        let kind = |ns: &str, name: &str| find(SOUNDS, ns, name).unwrap().kind();
+        assert_eq!(kind("soundinfo", "volume"), Kind::Float);
+        assert_eq!(kind("soundinfo", "3d"), Kind::Int);
+        assert_eq!(kind("soundinfo", "active sound effects"), Kind::Set);
+        assert_eq!(kind("clonedsequence", "activator"), Kind::Reference);
+        let limit = find(SOUNDS, "soundinfo", "actor limit").unwrap();
+        assert_eq!(
+            convert(&limit.spec(), Value::Float(40.0)),
+            Some(Value::Int(31))
+        );
+        let how = find(SOUNDS, "soundinfo", "global limit behavior").unwrap();
+        assert_eq!(label(&how, "steal furthest"), Some(Value::Int(2)));
+        let mut members = Members::new();
+        register(&mut members, LEVELS);
+        register(&mut members, SOUNDS);
+        for r in SOUNDS {
+            let (_, place) = members.get(MemberId::named(r.namespace, r.name)).unwrap();
+            assert_eq!(place, Place::Host, "{}", r.path());
         }
     }
 

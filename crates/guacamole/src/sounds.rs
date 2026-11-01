@@ -211,8 +211,9 @@ pub struct SoundEnded {
     pub how: Ended,
 }
 
-/// How many ended plays the world keeps for the test hooks.
-pub const RECENT: usize = 48;
+/// How many ended plays and refused starts the world keeps for the test
+/// hooks: a fight's worth.
+pub const RECENT: usize = 256;
 
 /// A play that couldn't be made: the sound's silent or unknown, or a limit
 /// refused it.

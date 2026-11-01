@@ -133,6 +133,13 @@ pub(crate) enum Member {
     /// `clonedsequence.clones` (openspec AS.37): a template's copies
     /// playing, on any actor, read whole.
     SeqClones,
+    /// `clonedsequence.activator` (openspec AR.10): the actor a copy plays
+    /// on.
+    SeqActivator,
+    /// A sound's `soundinfo` member (openspec AR.10).
+    Sound(crate::sound_members::SoundField),
+    /// The sound system's (openspec AR.10).
+    SoundSystem(crate::sound_members::SystemField),
     // AH.49's: a clip's or a sequence's animation info.
     /// `animationinfo.blend percent`: the weight the engine blends by.
     Blend,
@@ -415,6 +422,13 @@ impl Member {
         add("sequence", "raw duration", Member::SeqRawDuration);
         add("sequence", "allow restart", Member::AllowRestart);
         add("clonedsequence", "clones", Member::SeqClones);
+        add("clonedsequence", "activator", Member::SeqActivator);
+        for &(name, f) in crate::sound_members::SOUND_FIELDS {
+            add("soundinfo", name, Member::Sound(f));
+        }
+        for &(name, f) in crate::sound_members::SYSTEM_FIELDS {
+            add("soundinfo", name, Member::SoundSystem(f));
+        }
         add("animationinfo", "blend percent", Member::Blend);
         add("animationinfo", "is layered", Member::IsLayered);
         add("animationinfo", "type", Member::ClipKind);
@@ -1034,6 +1048,9 @@ impl ScriptWorld {
         m: Member,
         engine: &mut dyn Engine,
     ) -> Result<Value, HostFault> {
+        if let Some(v) = self.sound_member(at, m) {
+            return v;
+        }
         let recv = at.receiver;
         let actor = self.actor_of(recv);
         let object = self.object(recv);
@@ -1581,6 +1598,9 @@ impl ScriptWorld {
         v: Value,
         engine: &mut dyn Engine,
     ) -> Result<(), HostFault> {
+        if let Some(done) = self.set_sound_member(at, m, v) {
+            return done;
+        }
         let recv = at.receiver;
         let actor = self.actor_of(recv);
         let object = self.object(recv);
@@ -2063,6 +2083,7 @@ impl ScriptWorld {
                     .map(|i| self.objs.value(Object::Sequence(i)))
                     .collect()
             }
+            Member::SoundSystem(f) => self.sound_set(f)?,
             // A template's copies still playing, on whatever actor, in the
             // order started (openspec AS.37): a clip's that its starts made,
             // a sound's while one plays; a copy named stands for its
