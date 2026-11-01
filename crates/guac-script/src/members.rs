@@ -2323,6 +2323,13 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// host's: a save asked for completes when the host's saves say so, which a
 /// cell keeping the request would never do. Its labels as the live table
 /// cuts them.
+///
+/// The clips a creature's locomotion names (AS.31: the maggot starts its
+/// `walk`, 008's pirate boats move along their waypoints playing their
+/// `run`), heading the path, the host's: the running actor's own walk and
+/// run, as the original reads them off the actor whose script asks (a
+/// reading of its getters, an aid: the second and third of that actor's
+/// locomotion clips, nothing when it has fewer).
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2405,6 +2412,24 @@ pub const LEVELS: &[Registered] = &[
         "inactive|load|save|finalize|active|compl",
         0.0,
         29.0,
+        Host,
+    ),
+    m(
+        "animationinfo",
+        "walk",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+    m(
+        "animationinfo",
+        "run",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
         Host,
     ),
 ];
@@ -3264,6 +3289,21 @@ mod tests {
         assert_eq!(label(&r, "save"), Some(Value::Int(2)));
         assert_eq!(convert(&r.spec(), Value::Int(31)), Some(Value::Int(29)));
         assert_eq!(convert(&r.spec(), Value::Int(23)), Some(Value::Int(23)));
+    }
+
+    /// AS.31: a creature's walk and run clips, objects the host answers,
+    /// taking only an object.
+    #[test]
+    fn a_creatures_walk_and_run_are_the_hosts_objects() {
+        for name in ["walk", "run"] {
+            let (r, place) = level_member("animationinfo", name);
+            assert_eq!(
+                (r.class, r.kind(), place),
+                ("ReferenceVariant", Kind::Reference, Place::Host),
+                "{name}"
+            );
+            assert_eq!(convert(&r.spec(), Value::Int(1)), None, "{name}");
+        }
     }
 
     /// AS.27: the streams playing, a cell standing for the engine's set

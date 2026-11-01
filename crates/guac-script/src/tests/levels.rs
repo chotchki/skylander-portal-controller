@@ -453,3 +453,98 @@ fn raising_undefineds_count_goes_nowhere() {
     assert_eq!(vm.local(id, "last"), Some(Value::Null));
     assert_eq!(vm.local(id, "after"), Some(Value::Int(1)));
 }
+
+/// A host answering `animationinfo.walk` and `run` heading a path with the
+/// clip it holds for the placement asking, and recording each world op's
+/// clip as read (`_LHS` of a play, `_NP` of a move).
+#[derive(Default)]
+struct Clips {
+    asked: Vec<(u64, Option<Value>, &'static str)>,
+    played: Vec<(Class, Option<Value>)>,
+}
+
+impl Host for Clips {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        for (name, clip) in [("walk", 0x77), ("run", 0x78)] {
+            if at.member == MemberId::named("animationinfo", name) {
+                self.asked.push((at.placement, at.receiver, name));
+                return Ok(Value::Entity(clip + at.placement));
+            }
+        }
+        Err(HostFault::Unmodelled)
+    }
+    fn set(&mut self, _: &Access, _: Value) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn reset(&mut self, _: &Access) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn op(&mut self, call: &OpCall) -> Result<Answer, HostFault> {
+        let field = if call.class == Class::StartSequence {
+            "_LHS"
+        } else {
+            "_NP"
+        };
+        let clip = call
+            .operands
+            .iter()
+            .find(|(n, _)| *n == field)
+            .and_then(|(_, v)| *v);
+        self.played.push((call.class, clip));
+        Ok(Answer::Done)
+    }
+}
+
+/// AS.31, the maggot's walk and 008's boats' run on lists built in code:
+/// each heads its path, asked of the host on the running placement's
+/// behalf with no receiver, and the play or the move gets the clip the
+/// host answers for that placement.
+#[test]
+fn a_creatures_walk_and_run_are_asked_for_the_placement_running() {
+    let p = program(|w| {
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let play = w.start_sequence(&[El::Member("animationinfo", "walk")]);
+                w.end_block(play);
+                let np = w.group(&[El::Member("animationinfo", "run")], None);
+                let o = w.op(Class::MoveTo, "move to");
+                w.refer(o, 0x2C, np);
+                w.push(o);
+            },
+        );
+    });
+    let mut config = Config::new(Mode::Strict);
+    members::register(&mut config.members, members::LEVELS);
+    let mut vm = Vm::new(p, config);
+    let (maggot, boat) = (0x100, 0x200);
+    let a = vm.add(maggot, "Magot", 0);
+    let b = vm.add(boat, "Ship_Pirate1", 0);
+    let mut host = Clips::default();
+    vm.tick(a, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    vm.tick(b, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(
+        host.asked,
+        vec![
+            (maggot, None, "walk"),
+            (maggot, None, "run"),
+            (boat, None, "walk"),
+            (boat, None, "run"),
+        ]
+    );
+    let walk = |h: u64| Some(Value::Entity(0x77 + h));
+    let run = |h: u64| Some(Value::Entity(0x78 + h));
+    assert_eq!(
+        host.played,
+        vec![
+            (Class::StartSequence, walk(maggot)),
+            (Class::MoveTo, run(maggot)),
+            (Class::StartSequence, walk(boat)),
+            (Class::MoveTo, run(boat)),
+        ]
+    );
+}
