@@ -5,7 +5,9 @@
 //! missing), then the character models with their textures, each with its
 //! hero side and its palette, and the 3D-UI rig, then the levels the build
 //! plays, part by part, then the fight's script entries and spawn models,
-//! then ffmpeg is looked for and the intros are indexed and transcoded. The roster lands first so a phone can place
+//! the attacks' emitters and the sounds (AR.5, which need no ffmpeg), then
+//! ffmpeg is looked for and the intros are indexed and transcoded. The
+//! roster lands first so a phone can place
 //! figures while the rest runs, the models are announced as they finish
 //! ([`Event::ModelsReady`], AE.13) so the turntable draws while the level
 //! and the intros run, and the intros are the only thing a missing
@@ -257,6 +259,8 @@ pub struct Extracted {
     pub scripts: ScriptStage,
     /// The attacks' emitters (AH.87).
     pub particles: crate::particles::ParticleStage,
+    /// The sounds chapter 1 can play (AR.5).
+    pub sounds: crate::sounds::SoundStage,
     /// The intros, or why there are none. The roster stays either way, and
     /// the manifest stays unmarked, so the next start tries the intros again.
     pub intros: Result<IntroStage>,
@@ -284,6 +288,7 @@ pub fn run(
     let levels = level_stage(dir, ir, send)?;
     let scripts = script_stage(dir, ir, send)?;
     let particles = crate::particles::particle_stage(dir, ir)?;
+    let sounds = crate::sounds::sound_stage(dir, &roster.roster, ir)?;
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;
@@ -295,6 +300,7 @@ pub fn run(
         levels,
         scripts,
         particles,
+        sounds,
         intros,
     })
 }

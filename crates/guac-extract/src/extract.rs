@@ -424,6 +424,37 @@ impl IdentityDir {
         self.commit(rel)
     }
 
+    /// Writes and records every file of `files`, saving the manifest once
+    /// at the end: what [`Self::write_output`] does for each, for a stage
+    /// writing thousands of small files (AR.5's audio), where a save after
+    /// each would rewrite the whole manifest thousands of times. A run that
+    /// stops partway leaves the written files unrecorded, so the next one
+    /// writes them again.
+    pub fn write_outputs(&mut self, files: &[(String, &[u8])]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let mut done = Vec::with_capacity(files.len());
+        for (rel, bytes) in files {
+            let path = self.output_path(rel)?;
+            let partial = self.partial_path(rel)?;
+            write_file(&partial, bytes, false)?;
+            fs::rename(&partial, &path).map_err(ExtractError::io(&path))?;
+            done.push(OutputFile {
+                path: rel.clone(),
+                size: bytes.len() as u64,
+                sha256: Sha256(sha2::Sha256::digest(bytes).into()),
+            });
+        }
+        let paths: std::collections::HashSet<&str> = done.iter().map(|o| o.path.as_str()).collect();
+        self.manifest
+            .outputs
+            .retain(|o| !paths.contains(o.path.as_str()));
+        self.manifest.outputs.extend(done);
+        self.manifest.outputs.sort_by(|a, b| a.path.cmp(&b.path));
+        self.save()
+    }
+
     /// Recorded, present, and its bytes still hash to the record.
     pub fn output_done(&self, rel: &str) -> Result<bool> {
         let path = self.output_path(rel)?;

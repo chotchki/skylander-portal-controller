@@ -26,6 +26,7 @@ mod placement;
 mod scene;
 mod script;
 mod skeleton;
+mod sound;
 mod sprite;
 mod tfb;
 mod world;
@@ -69,6 +70,7 @@ pub use skeleton::{
     AnimationSystem2, PhysicsCombiner, PhysicsCombinerLink, Skeleton2, SkeletonBone,
     SkeletonBoneList,
 };
+pub use sound::{CATEGORIES, LIMIT_BEHAVIORS, SoundDataInfo, SoundInfo, flag as sound_flag};
 pub use sprite::{AbstractPlacement, AnimatableTextureDataInfo, SpriteInfo};
 pub use tfb::{
     AnimationInfo, AnimationInfoList, BodyInfo, BuildDataInfo, HAVOK_MAGIC, Info, LIP_SYNC_MAGIC,
@@ -211,6 +213,10 @@ pub const TYPES: &[TypeDef] = &[
     def("ClonedSequence", "Sequence", 0x30),
     def("AbstractAnimSequence", "ClonedSequence", 0x30),
     def("AnimationInfo", "AbstractAnimSequence", 0x44),
+    // A sound and its bank (AR.3): a sound is a sequence too.
+    def("AbstractSoundSequence", "ClonedSequence", 0x30),
+    def("tfbSoundInfo", "AbstractSoundSequence", 0x80),
+    def("tfbSoundDataInfo", "tfbBuildDataInfo", 0x28),
     // The roster's script objects (AE.1): names, numbers and sets.
     def("StringInfo", "tfbScriptObject", 0x28),
     def("AbstractScriptVariant", "tfbScriptObject", 0x18),

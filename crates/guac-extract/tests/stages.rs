@@ -30,6 +30,10 @@ use guac_formats::roster::builder::{DiscSpec, disc, sample};
 use guac_formats::sfo::builder::SfoBuilder;
 use guac_ir::{IntroSource, Roster};
 
+/// The sounds part's IR files: global.bld, each
+/// modelled character's the dump has (the roster's eleven loads but the missing
+/// one), and the level's. None of them holds a sound, so no audio.
+const SOUND_ARCHIVES: usize = 1 + LOADS - 1 + 1;
 /// The sample roster's figure count, each with a portrait.
 const FIGURES: usize = 24;
 /// Its character load files, and those [`make_dump`] gives a good model:
@@ -591,11 +595,16 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         scripts::SPAWNS,
         "nodes",
         guac_extract::particles::PART,
+        guac_extract::sounds::PART,
     ] {
         for f in &m.parts[part] {
             assert!(dir.join(f).is_file(), "{f}");
         }
     }
+    // AR.5's sounds land without ffmpeg: one file for global.bld, each
+    // character archive the dump has and the level, none of them holding
+    // a sound.
+    assert_eq!(m.parts[guac_extract::sounds::PART].len(), SOUND_ARCHIVES);
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert!(!m.complete, "only the whole extraction marks it");
 
@@ -638,6 +647,9 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     let pa = &done.particles;
     assert!(pa.kept && !pa.read);
     assert_eq!((pa.files.written, pa.files.kept), (0, 2));
+    let so = &done.sounds;
+    assert!(so.kept && !so.read);
+    assert_eq!((so.files.written, so.files.kept), (0, SOUND_ARCHIVES));
     assert_eq!(done.intros.unwrap().summary.transcoded, 2);
     assert!(manifest_on_disk(&dir).complete);
 }
@@ -1362,7 +1374,8 @@ fn an_extract_whose_spawn_part_predates_ah39_reads_it_again() {
     );
 }
 
-/// Each of AH.22's parts, AH.50's attach nodes and AH.87's emitters, missing
+/// Each of AH.22's parts, AH.50's attach nodes, AH.87's emitters and AR.5's
+/// sounds, missing
 /// alone from a finished extract (one made before the build that adds it),
 /// resumes alone: the extract isn't current, the next run writes that part's
 /// files and no other (the model stage, which reads every archive on a
@@ -1383,6 +1396,7 @@ fn each_of_the_fights_parts_resumes_alone() {
         (false, scripts::SCRIPTS),
         (false, scripts::SPAWNS),
         (false, guac_extract::particles::PART),
+        (false, guac_extract::sounds::PART),
     ] {
         let gone = without_part(&dir, level, part);
         assert!(!gone.is_empty(), "{part}");
@@ -1395,17 +1409,23 @@ fn each_of_the_fights_parts_resumes_alone() {
             + done.models.palettes.files.written
             + done.levels.files.written
             + done.scripts.files.written
-            + done.particles.files.written;
+            + done.particles.files.written
+            + done.sounds.files.written;
         assert_eq!(written, gone.len(), "{part}: only its files");
         assert_eq!(
             done.particles.read,
             part == guac_extract::particles::PART,
             "{part}"
         );
+        assert_eq!(
+            done.sounds.read,
+            part == guac_extract::sounds::PART,
+            "{part}"
+        );
         let (lv, sc) = (&done.levels, &done.scripts);
         let (level_read, script_read) = match (level, part) {
             (true, _) => (1, 0),
-            (false, "palettes" | "nodes" | "particles") => (0, 0),
+            (false, "palettes" | "nodes" | "particles" | "sounds") => (0, 0),
             _ => (0, 1),
         };
         assert_eq!(lv.parts_read, level_read, "{part}");

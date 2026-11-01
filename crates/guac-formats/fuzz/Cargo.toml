@@ -146,3 +146,10 @@ path = "fuzz_targets/bink_header.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fsb5"
+path = "fuzz_targets/fsb5.rs"
+test = false
+doc = false
+bench = false

@@ -2,8 +2,9 @@
 //! docs/native/guacamole-design.md, "No game bytes in the repo"): fails when any
 //! file git would commit or push starts with a game magic, is a gzip or zstd
 //! file whose inflated head does (RPCS3 writes RSX captures as `.rrc.gz` and
-//! savestates as `.SAVESTAT.zst`, openspec AF design decision 11) or is a
-//! big-endian PPC64 ELF (a decrypted EBOOT).
+//! savestates as `.SAVESTAT.zst`, openspec AF design decision 11), is a
+//! big-endian PPC64 ELF (a decrypted EBOOT) or is bare MPEG Layer III frames
+//! (the extract's sounds, AR.5).
 //!
 //! It reads git, not the working tree: the index, because that's what the next
 //! commit holds, plus every blob reachable from HEAD or a local branch that no
@@ -381,6 +382,23 @@ fn flags_a_staged_ktx2() {
     assert!(findings[0].1.contains("KTX2"), "{findings:?}");
     // KTX 1 isn't what the extract writes, and isn't flagged.
     let repo = repo_with(&[("old.ktx", starting_with(b"\xabKTX 11\xbb\r\n\x1a\n"))]);
+    assert_eq!(scan(repo.path()), Vec::<(String, String)>::new());
+}
+
+#[test]
+fn flags_the_extracts_bare_mpeg_audio() {
+    // The sounds part (AR.5) keeps the disc's MPEG frames as `.mp3` with no
+    // tag, and a bank's sample has the same frames with zeros between: either,
+    // staged under any name, is caught by its first two frame headers.
+    use guac_formats::mpeg::builder::stream;
+    let repo = repo_with(&[("a/9e0a.mp3", stream(4, 0)), ("b/sample.bin", stream(4, 3))]);
+    let findings = scan(repo.path());
+    assert_eq!(paths(&findings), ["a/9e0a.mp3", "b/sample.bin"]);
+    assert!(findings[0].1.contains("MPEG"), "{findings:?}");
+    // One valid-looking header followed by something else isn't flagged.
+    let mut lone = stream(1, 0);
+    lone.extend(b"plain text after one header");
+    let repo = repo_with(&[("lone.bin", lone)]);
     assert_eq!(scan(repo.path()), Vec::<(String, String)>::new());
 }
 

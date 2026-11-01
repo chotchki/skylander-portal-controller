@@ -4381,6 +4381,7 @@ dependencies = [
  "flate2",
  "guac-formats",
  "guac-ir",
+ "guac-sound",
  "png 0.18.1",
  "serde",
  "serde_json",
@@ -4486,6 +4487,13 @@ dependencies = [
  "ulid",
  "uuid",
  "windows 0.61.3",
+]
+
+[[package]]
+name = "guac-sound"
+version = "0.1.0"
+dependencies = [
+ "guac-ir",
 ]
 
 [[package]]

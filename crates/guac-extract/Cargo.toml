@@ -46,3 +46,6 @@ zstd = "0.13"
 tempfile = "3"
 # SfoBuilder, for the synthetic dumps the identity tests build.
 guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
+# The lookup over the sounds part (AR.6), which `giants_sounds` runs on the
+# real dump's part.
+guac-sound = { path = "../guac-sound" }

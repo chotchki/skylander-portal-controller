@@ -1613,6 +1613,11 @@ impl IntroFixture {
         write_models(&mut opened.dir, walking, fighting)?;
         write_level(&mut opened.dir, entry)?;
         write_scripts(&mut opened.dir, fighting)?;
+        // AR.5's sounds: the fixture's dump holds no archive, so the part the
+        // stage keeps over it names no file.
+        opened
+            .dir
+            .record_part(guac_extract::sounds::PART, Vec::new())?;
 
         // Only the intros need ffmpeg.
         let ffmpeg = match intros {
@@ -1654,6 +1659,19 @@ impl IntroFixture {
                 }
                 opened.dir.commit(&rel)?;
             }
+        }
+        // An extract-wide part this left out makes every spawn's extract
+        // stale, so the TV runs the stages over a dump with no archives and
+        // fails before the roster (AR.5's sounds part did): name it here.
+        let parts = &opened.dir.manifest().parts;
+        let missing: Vec<&str> = guac_extract::PARTS
+            .into_iter()
+            .filter(|p| !parts.contains_key(*p))
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "the e2e fixture writes no extract-wide part {missing:?}: write it in build_with_fight"
+            );
         }
         opened.dir.mark_complete()?;
         Ok(Self {
@@ -3571,7 +3589,8 @@ mod fixture_tests {
     /// reads, or the TV's first pick extracts the missing one again over it
     /// and the guacamole suite fails at its first level (AH.138's nodes
     /// part: 43 tests). A part added to `guac_extract::levels::PARTS` fails
-    /// this, naming it, until `write_level` writes it.
+    /// this, naming it, until `write_level` writes it; one added to
+    /// `guac_extract::PARTS` (AR.5's sounds) until `build_with_fight` does.
     #[test]
     fn the_fixture_writes_every_level_part() {
         let tmp = tempfile::tempdir().unwrap();
