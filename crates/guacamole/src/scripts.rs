@@ -502,6 +502,40 @@ pub struct ScriptWorld {
     pub(crate) walking_alone: std::collections::HashSet<Handle>,
     /// What scripts wrote to those, by the placement that wrote it.
     pub(crate) written: std::collections::BTreeMap<(Handle, HeroWrite), u32>,
+    /// The sounds part's book (openspec AR.9): a start of a sound info it
+    /// gives audio for plays it, by the archive stem of the unit the
+    /// sound's file links as.
+    pub(crate) sounds: Option<Arc<guac_sound::SoundBook>>,
+    pub(crate) sound_stems: HashMap<u16, String>,
+    /// The sounds playing, in the order started ([`crate::sounds`]).
+    pub(crate) plays: Vec<crate::sounds::SoundPlay>,
+    /// The engine frames this run has made, which plays are stamped by.
+    pub(crate) sound_clock: u64,
+    pub(crate) sounds_started: usize,
+    /// The last plays ended and the last starts refused, newest last.
+    pub(crate) sound_ended: std::collections::VecDeque<crate::sounds::SoundEnded>,
+    pub(crate) sound_refused: std::collections::VecDeque<crate::sounds::SoundRefused>,
+    /// What scripts wrote to a sound's members (openspec AR.10), by the
+    /// sound info and member: later plays start with it, the playing ones
+    /// follow it.
+    pub(crate) sound_written: HashMap<(Obj, crate::sound_members::SoundField), Value>,
+    /// What scripts wrote to a playing copy's members, by its sequence: the
+    /// copy's own, over its sound's.
+    pub(crate) copy_written: HashMap<(u32, crate::sound_members::SoundField), Value>,
+    /// The sound system's members as written; one never written reads its
+    /// start ([`crate::sound_members::SystemField::start`]).
+    pub(crate) sound_system: HashMap<crate::sound_members::SystemField, Value>,
+    /// This run, unique on the TV: a player holding a play of an earlier
+    /// run's stops it.
+    run: u64,
+}
+
+/// Each world's [`ScriptWorld::run`], and each play's serial.
+static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// A fresh number, unique on the TV.
+pub(crate) fn fresh_serial() -> u64 {
+    RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A script's write to a hero off his scripts (openspec AH.151): to his
@@ -646,7 +680,60 @@ impl ScriptWorld {
             embodied: Vec::new(),
             walking_alone: Default::default(),
             written: Default::default(),
+            sounds: None,
+            sound_stems: HashMap::new(),
+            plays: Vec::new(),
+            sound_clock: 0,
+            sounds_started: 0,
+            sound_ended: Default::default(),
+            sound_refused: Default::default(),
+            sound_written: HashMap::new(),
+            copy_written: HashMap::new(),
+            sound_system: HashMap::new(),
+            run: fresh_serial(),
         }
+    }
+
+    /// The sounds the scripts play from here on (openspec AR.9): `book`,
+    /// each unit's archive stem by `stems`.
+    pub fn set_sounds(&mut self, book: Arc<guac_sound::SoundBook>, stems: HashMap<u16, String>) {
+        self.sounds = Some(book);
+        self.sound_stems = stems;
+    }
+
+    /// The book the scripts' sounds come from, if one was set.
+    pub fn sound_book(&self) -> Option<&guac_sound::SoundBook> {
+        self.sounds.as_deref()
+    }
+
+    /// This run's number, unique on the TV.
+    pub fn run(&self) -> u64 {
+        self.run
+    }
+
+    /// The sounds playing, in the order started.
+    pub fn plays(&self) -> &[crate::sounds::SoundPlay] {
+        &self.plays
+    }
+
+    /// The engine frames the run has made.
+    pub fn sound_clock(&self) -> u64 {
+        self.sound_clock
+    }
+
+    /// Plays started, every one since the run began.
+    pub fn sounds_started(&self) -> usize {
+        self.sounds_started
+    }
+
+    /// The last plays that ended, newest last ([`crate::sounds::RECENT`]).
+    pub fn sounds_ended(&self) -> impl ExactSizeIterator<Item = &crate::sounds::SoundEnded> {
+        self.sound_ended.iter()
+    }
+
+    /// The last starts that played nothing, newest last.
+    pub fn sounds_refused(&self) -> impl ExactSizeIterator<Item = &crate::sounds::SoundRefused> {
+        self.sound_refused.iter()
     }
 
     /// `hero`'s walk and facing handed back to AG.16's controller for good
@@ -1095,6 +1182,7 @@ impl ScriptWorld {
             s.advance(dt);
         }
         self.move_actors(dt, engine);
+        self.advance_sounds(engine);
     }
 
     /// The actor under `h`, if the scripts reach one.
@@ -1829,6 +1917,24 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// (the death stars).
 pub const EFFECT_SCRIPTS: [&str; 2] = ["LevelUp.ai", "MinionDeathActor.ai"];
 
+/// Chapter 1's music (openspec AR.11, AR.4's reading): the level's music
+/// controller, which plays its intro track at its start, its tracks
+/// through the level's transitions and the combat bed for the robot, and its
+/// watchers, the combat watcher (the inside combat bed and its two
+/// percussion stingers), the interior watcher (inside and explore swapped),
+/// the three elemental gates' and the audio environment's and the robot's
+/// ducking, each placed or spawned by the controller; every tick.
+pub const MUSIC_SCRIPTS: [&str; 8] = [
+    "Music_Level_Controller.ai",
+    "snd_combat_watcher_213.ai",
+    "snd_interior_watcher_213.ai",
+    "snd_elemental_air_watcher_213.ai",
+    "snd_elemental_life_watcher_213.ai",
+    "snd_elemental_undead_watcher_213.ai",
+    "snd_level_audio_environment.ai",
+    "snd_robo_ducking.ai",
+];
+
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
 pub fn is_camera_script(path: &str) -> bool {
@@ -1841,7 +1947,8 @@ pub fn is_camera_script(path: &str) -> bool {
 /// combat target), AG.60's start scripts on the props and AG.28's camera
 /// volumes and activator, the level-up's and the death actor's
 /// ([`EFFECT_SCRIPTS`], AH.39), the first fight's placements left inert
-/// until AH.25's entry brings them.
+/// until AH.25's entry brings them; AS.11's every-level table
+/// ([`members::LEVELS`], openspec AS.37) registered with the rest.
 pub fn smash_config(mode: Mode) -> Config {
     let mut c = hero_config(mode);
     members::register(&mut c.members, members::CREATURES);
@@ -1852,6 +1959,14 @@ pub fn smash_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::ROUTE);
     // And the level-up's flourish (openspec AH.39).
     members::register(&mut c.members, members::LEVEL_UP);
+    // What AS.11's every-level run reaches past those (openspec AS.37): a
+    // table the VM lane grows reaches the TV only once it's named here.
+    members::register(&mut c.members, members::LEVELS);
+    // The sounds' members on the host, over the cells the tables above
+    // registered for them (openspec AR.10).
+    members::register(&mut c.members, members::SOUNDS);
+    // And what chapter 1's music reaches past them (openspec AR.11).
+    members::register(&mut c.members, members::MUSIC);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -2056,6 +2171,18 @@ pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
         for w in walkers.iter().filter(|w| w.asks == 0 && w.minion.is_some()) {
             scripts.extend(w.scripts.iter().cloned());
         }
+    }
+    config
+}
+
+/// `config` with chapter 1's music scripts every tick ([`MUSIC_SCRIPTS`],
+/// openspec AR.11): the level's music controller and its watchers. Not in
+/// the TV's listing yet (AR.16): with them the session's generator draws
+/// shift, and the fight's checks calibrated on the draws before wait on a
+/// read of the original's.
+pub fn with_music(mut config: Config) -> Config {
+    if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
+        scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
     }
     config
 }
@@ -4167,6 +4294,26 @@ mod tests {
                 c.members
                     .get(MemberId::named(r.namespace, r.name))
                     .is_some(),
+                "{}",
+                r.path()
+            );
+        }
+        // The sounds' members on the host (openspec AR.10), over the cells
+        // the earlier tables registered for some of them.
+        for r in members::SOUNDS {
+            let (_, place) = c
+                .members
+                .get(MemberId::named(r.namespace, r.name))
+                .unwrap_or_else(|| panic!("{}", r.path()));
+            assert_eq!(place, guac_script::Place::Host, "{}", r.path());
+        }
+        // AS.11's every-level table (openspec AS.37): its host's and cells
+        // registered, as the gap test registers them.
+        for r in members::LEVELS {
+            let id = MemberId::named(r.namespace, r.name);
+            assert_eq!(
+                c.members.get(id).is_some(),
+                r.keeper != members::Keeper::Vm,
                 "{}",
                 r.path()
             );

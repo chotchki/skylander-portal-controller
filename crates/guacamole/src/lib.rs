@@ -26,7 +26,10 @@ pub mod props;
 pub mod script_engine;
 mod script_members;
 pub mod scripts;
+mod sound_members;
+pub mod sounds;
 #[cfg(feature = "unmodel")]
 pub mod unmodel;
 pub mod viewport;
+pub mod voice;
 pub mod walkers;

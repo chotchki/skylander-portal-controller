@@ -369,6 +369,9 @@ struct Script {
     /// (AG.60): the spike gate's solid holds Norticus until it lowers
     /// (openspec AH.56).
     props: bool,
+    /// The sounds part over the dump, each start of a sound playing it on
+    /// the game clock (openspec AR.9, `common::Setup::sounds`).
+    sounds: bool,
     /// AH.10's `stun` staging (openspec AH.19): the four's health and full
     /// health set to 100 at F0, then South down a step and up a step 90
     /// times from F0 + 120.
@@ -730,6 +733,8 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
         Mode::Strict,
         Setup {
             props: script.props,
+            sounds: script.sounds,
+            ..Setup::default()
         },
     );
     let mut snaps = Vec::new();
@@ -2162,6 +2167,109 @@ fn the_fight_ends_with_norticus_walking_into_the_cave() {
     println!("woken off the whitelist: {woken:?}; load after: {}", load());
 }
 
+/// The fight above with its sounds (openspec AR.9, AR.12): every start of a
+/// sound the book gives audio for plays its recording on the game clock,
+/// Eruptor's throws and eruptions and the Chompies' bites among them, and
+/// Norticus' scene waits on what it waits on with them playing; what
+/// played, on whom and when, and the scene's steps against AH.10's 300.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_fight_with_its_sounds_plays_and_norticus_scene_waits_on_them() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let (run, snaps) = fight(Script {
+        lob: Some(90),
+        erupt: Some(160),
+        erupt_every: Some(700),
+        props: true,
+        sounds: true,
+        steps: 1450,
+        ..Script::default()
+    });
+    println!("{} snaps in {:.2?}", snaps.len(), started.elapsed());
+    let w = &run.world;
+    let chompies: Vec<u64> = CHOMPIES.iter().map(|n| run.placed(n).0).collect();
+    let mut by_name: BTreeMap<String, (usize, u64, u64)> = BTreeMap::new();
+    for e in w.sounds_ended() {
+        let n = e.name.clone().unwrap_or_default();
+        let r = by_name
+            .entry(n)
+            .or_insert((0, e.started, e.ended - e.started));
+        r.0 += 1;
+    }
+    println!(
+        "sounds started {}, playing at the end {}, ended kept {}, refused kept {}",
+        w.sounds_started(),
+        w.plays().len(),
+        w.sounds_ended().count(),
+        w.sounds_refused().count()
+    );
+    for (n, (count, first, steps)) in &by_name {
+        println!("  {n}: {count} ended, the first started at frame {first}, {steps} frames");
+    }
+    for r in w.sounds_refused() {
+        println!("  refused {:?} at {}: {}", r.name, r.at, r.why);
+    }
+    for p in w.plays() {
+        let s = &w.sequences()[p.sequence as usize];
+        println!(
+            "  playing {:?} on {:#x} from frame {}, {:.2} of {:.2} s",
+            p.name, s.actor, p.started, s.time, p.length
+        );
+    }
+    let on = |actors: &[u64]| {
+        w.sequences()
+            .iter()
+            .filter(|s| actors.contains(&s.actor) && s.length > 0.0)
+            .filter(|s| matches!(s.template, guac_script::Value::Object(_)))
+            .count()
+    };
+    println!("sound copies on the Chompies {}", on(&chompies));
+    let norticus: Vec<(Option<String>, i64)> = snaps.iter().fold(Vec::new(), |mut v, s| {
+        if v.last()
+            .is_none_or(|l: &(Option<String>, i64)| l.0 != s.norticus.0)
+        {
+            v.push((s.norticus.0.clone(), s.k));
+        }
+        v
+    });
+    let at = |name: &str| {
+        norticus
+            .iter()
+            .find(|n| n.0.as_deref() == Some(name))
+            .map(|n| n.1)
+    };
+    let (go, advance) = (at("cutscene go"), at("advance with player"));
+    println!(
+        "Norticus: {norticus:?}; 'cutscene go' F0 + {go:?}, 'advance with player' {:?} steps on (AH.10: 300); load after: {}",
+        go.zip(advance).map(|(g, a)| a - g),
+        load()
+    );
+    // The members the run reaches with its sounds playing, against AH.34's
+    // ceiling as AG.28 raised it (openspec AR.10), and the sounds' among them.
+    let reached = run.vm.reached();
+    let mut sound_members: Vec<String> = reached
+        .iter()
+        .map(|m| run.vm.config().members.name(*m))
+        .filter(|n| {
+            n.starts_with("soundinfo.")
+                || n.starts_with("clonedsequence.")
+                || n == "actorinfo.playing sounds"
+        })
+        .collect();
+    sound_members.sort();
+    println!(
+        "members reached {}, the sounds' {sound_members:?}",
+        reached.len()
+    );
+    assert!(w.sounds_started() > 0, "the fight plays sounds");
+    assert!(
+        reached.len() <= 325,
+        "past AG.28's ceiling: {}",
+        reached.len()
+    );
+}
+
 /// The members the fight reaches from the join to the end of Norticus'
 /// part (the run above, 1,930 steps past the join, strict: it halts on any
 /// member it asks
@@ -2192,6 +2300,10 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .chain(CAMERA)
             .chain(WALKERS)
             .chain(ROUTE_MEMBERS)
+            .chain(guac_script::members::LEVEL_UP)
+            .chain(guac_script::members::LEVELS)
+            .chain(guac_script::members::SOUNDS)
+            .chain(guac_script::members::MUSIC)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

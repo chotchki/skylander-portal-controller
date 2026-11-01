@@ -1,7 +1,8 @@
 //! AG.27's disc tests: every modelled character on his own scripts, headless
 //! over level 213 with guacamole's host (the walkers' part as the TV links
 //! it, `level_scripts::load` over a throwaway extract made by the real
-//! stages), each joined by AH.17's join, his setup on the VM writing the
+//! stages, the sounds playing off its sounds part as on the TV, AR.9), each
+//! joined by AH.17's join, his setup on the VM writing the
 //! `movement parameters` and the scale the mover update reads; AH.165's
 //! and AH.169's swaps of a walker; AG.162's whitelist against the TV's
 //! listing; and a walker's fall-back once his script stops in play, as the
@@ -90,6 +91,22 @@ fn named(halt: &str) -> String {
 
 fn capture_dir() -> PathBuf {
     PathBuf::from(env_or_dotenv("GUAC_CAPTURE_DIR").expect("set GUAC_CAPTURE_DIR"))
+}
+
+/// The extract's sounds part for the level's linked units, read once a test
+/// binary as the TV's level load reads it (openspec AR.9).
+fn sound_part(l: &Level) -> &'static guacamole::sounds::SoundPart {
+    static PART: std::sync::OnceLock<guacamole::sounds::SoundPart> = std::sync::OnceLock::new();
+    PART.get_or_init(|| {
+        let part = guacamole::sounds::load(&l.dir, IrFormat::Ron, &l.program.units);
+        assert!(
+            part.stems.len() > 3,
+            "the sounds part: {} archives, missing {:?}",
+            part.stems.len(),
+            part.missing
+        );
+        part
+    })
 }
 
 fn read_ron<T: serde::de::DeserializeOwned>(dir: &Path, rel: &str) -> T {
@@ -402,6 +419,12 @@ impl W {
         let vm = scripts::init_chain(l.program.clone(), &l.files, &handles, &l.order, config);
         let mut world = ScriptWorld::new(&l.files, &handles, objects);
         world.set_inert(vm.inert());
+        // As the TV's: the sounds part the level's load reads, each start of
+        // a sound it gives audio for playing on the game clock (openspec
+        // AR.9; AR.9's review: a sound's copy listed as an animation moved
+        // four walkers' picks off their recordings).
+        let sounds = sound_part(l);
+        world.set_sounds(sounds.book.clone(), sounds.stems.clone());
         // As the TV's: the asks read as gating play off the camera's view
         // (openspec AH.150).
         world.answer_from_view(on_screen::answered(&l.program, on_screen::READ));

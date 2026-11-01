@@ -146,6 +146,9 @@ pub(crate) struct ScriptSource {
     layout: Option<Layout>,
     /// The level's placements' palettes by model (openspec AH.27).
     palettes: Vec<(String, Vec<f32>)>,
+    /// The sounds the run's units play (openspec AR.9); none read, none
+    /// play.
+    sounds: Option<guacamole::sounds::SoundPart>,
 }
 
 impl ScriptSource {
@@ -237,6 +240,7 @@ impl ScriptSource {
             left_out: Vec::new(),
             layout: None,
             palettes: Vec::new(),
+            sounds: None,
         }
     }
 }
@@ -251,6 +255,7 @@ pub(crate) struct Part {
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
     pub(crate) palettes: Vec<(String, Vec<f32>)>,
+    pub(crate) sounds: Option<guacamole::sounds::SoundPart>,
 }
 
 /// Installs the run over a linked part (the level's load), keeping the part
@@ -265,6 +270,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         left_out: part.left_out,
         layout: part.layout,
         palettes: part.palettes,
+        sounds: part.sounds,
     };
     install_from(world, &source);
     world.insert_resource(source);
@@ -324,6 +330,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         return;
     };
     let mut script_world = world.resource_mut::<ScriptWorld>();
+    // The sounds its starts play (openspec AR.9).
+    if let Some(s) = &source.sounds {
+        script_world.set_sounds(s.book.clone(), s.stems.clone());
+    }
     script_world.walk_first_fight(level);
     script_world.walk_goats(level);
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
@@ -2450,6 +2460,7 @@ mod tests {
                 left_out: Vec::new(),
                 layout: None,
                 palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
+                sounds: None,
             },
         );
         let w = world.resource::<ScriptWorld>();

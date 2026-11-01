@@ -107,6 +107,10 @@ pub struct Linked {
     /// why not: [`load`] leaves them unread, the level's load reads them
     /// beside.
     pub palettes: Result<Vec<(String, Vec<f32>)>, String>,
+    /// The sounds part for the linked units ([`crate::sounds::load`],
+    /// openspec AR.9): [`load`] leaves it unread, the level's load reads it
+    /// beside.
+    pub sounds: Option<crate::sounds::SoundPart>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -235,6 +239,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         left_out: list.left_out,
         layout: Err("not read".into()),
         palettes: Err("not read".into()),
+        sounds: None,
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,

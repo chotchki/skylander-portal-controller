@@ -408,7 +408,13 @@ fn step(run: &mut Run, mode: Mode) -> Vec<Halt> {
 /// spawn played out: the init chain's two steps, the join with a fresh
 /// figure, 120 steps; the stops in play on the way.
 fn joined(mode: Mode) -> (Run, Vec<(u32, Halt)>, HashMap<MemberId, String>) {
-    let (mut run, found) = run_on_with(mode, Setup { props: true });
+    let (mut run, found) = run_on_with(
+        mode,
+        Setup {
+            props: true,
+            ..Setup::default()
+        },
+    );
     let mut stops = Vec::new();
     let go = |run: &mut Run, stops: &mut Vec<(u32, Halt)>| {
         let k = run.steps;

@@ -7,9 +7,11 @@
 //! Each step's walk ([`PlayerLoop::walk`], openspec AH.59, the original's
 //! order as [`crate::frame`] has it) runs the loop's slices where their
 //! placements sit in the scheduler's list: the game systems' tick at
-//! `Macros_GameSystems`' place, the music controller's reset of the mover
-//! update at `Macros_Music`'s (the mover update leaves the list and ticks
-//! at its end once the walk is through, after every other awake placement),
+//! `Macros_GameSystems`' place, the music controller's sound system update
+//! (openspec AR.11: `Sound - System Update`, delayed starts, fades and the
+//! beat sync) and its reset of the mover update at `Macros_Music`'s (the
+//! mover update leaves the list and ticks at its end once the walk is
+//! through, after every other awake placement),
 //! and the portal manager's tick at `Spyro_PortalManager`'s, after the UI's,
 //! whose tick moves the game timer. The portal manager's, once a step:
 //!
@@ -154,6 +156,12 @@ pub struct PlayerLoop {
     /// The game systems' script and its tick's `Xp Balls - Xp Ball
     /// Control`: the orbs popping out, coming down and bouncing.
     pub orbs: Option<(ScriptId, Range<u32>)>,
+    /// The music controller's script and its tick's statement calling
+    /// `Sound - System Update` (openspec AR.11): what starts a sound played
+    /// with a delay once its time comes (a track waiting on the bar or the
+    /// loop it changes on), slides the volumes a fade writes and keeps a
+    /// beat-synced track in step.
+    pub sound: Option<(ScriptId, Range<u32>)>,
 }
 
 /// The macro a `use macro` op names, by its display name.
@@ -301,6 +309,13 @@ impl PlayerLoop {
                     called(program, ops[r.start as usize]) == Some("Xp Balls - Xp Ball Control")
                 })
                 .map(|r| (gs, r));
+        }
+        if let Some(ms) = program.script_named(MUSIC) {
+            let ops = &program.scripts[ms as usize].ops;
+            out.sound = tick_body(program, ops)
+                .into_iter()
+                .find(|r| calls_in(program, ops, r, "Sound - System Update").is_some())
+                .map(|r| (ms, r));
         }
         let Some(script) = program.script_named(SCRIPT) else {
             return out;
@@ -486,6 +501,17 @@ impl PlayerLoop {
         if places.game_systems == Some(id) {
             self.game_systems_tick(vm, host, id, joined)
         } else if places.music == Some(id) {
+            // Its sound system's update (openspec AR.11), its clock counted
+            // as its own tick would (the update times delayed starts and
+            // fades by its `system.script timer`: uncounted, a delayed play
+            // held at rate 0 never starts), then its reset of the mover
+            // update.
+            if vm.is_held(id) {
+                if let Some((_, r)) = &self.sound {
+                    vm.run_span(id, r.start, r.end, host)?;
+                }
+                vm.count_tick(id);
+            }
             if let Some(mover) = places.mover {
                 vm.requeue(mover);
             }
@@ -1686,6 +1712,14 @@ mod tests {
             );
             assert_eq!(read(&vm, "Enemy_Chompy(1)", "seen"), calls, "after it");
             assert_eq!(read(&vm, "movementUpdate", "seen"), calls);
+            // The music controller's clock counted as its own tick would
+            // (openspec AR.11): its first tick's and one a step since.
+            let tick = vm.config().tick_seconds;
+            let music = vm.active_seconds(ids["Macros_Music"]).unwrap();
+            assert!(
+                (music - (step + 1) as f32 * tick).abs() < 1e-5,
+                "step {step}: the music controller's clock {music}"
+            );
         }
         assert_eq!(
             vm.tick_order()

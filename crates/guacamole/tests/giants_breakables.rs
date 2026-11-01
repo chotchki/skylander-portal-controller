@@ -66,7 +66,13 @@ const LEDGE: [&str; 3] = ["barrel_b_intact(1)", "barrel_b_intact(4)", "pottery_1
 /// seam, set down at anchor A's pose with his idle where AH.9's replays
 /// have it and the loot counts at its read.
 fn at_anchor_a() -> Run {
-    let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+    let (mut run, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            ..Setup::default()
+        },
+    );
     to_anchor_a(&mut run);
     for (rarity, index) in ANCHOR_A_LOOT {
         assert!(scripts::set_loot_index(
@@ -1100,7 +1106,13 @@ fn three_hundred_common_coins_are_two_in_three_worth_1() {
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_placed_gems_pay_5_and_10() {
     println!("load before: {}", load());
-    let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+    let (mut run, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            ..Setup::default()
+        },
+    );
     let (copper, copper_at) = run.placed("Copper_Coins");
     let (emerald, emerald_at) = run.placed("Emerald");
     assert_eq!(
@@ -1158,7 +1170,13 @@ fn the_stone_wall_and_a_titan_boulder_stand_under_his_attacks() {
             1,
         ),
     ] {
-        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+        let (mut run, _) = joined_with(
+            Mode::Strict,
+            Setup {
+                props: true,
+                ..Setup::default()
+            },
+        );
         let (h, at) = run.placed(name);
         run.put(at + offset, facing);
         let w = drive(&mut run, 420, |k, _| {
@@ -1545,7 +1563,13 @@ fn a_replacement_put_up_over_where_the_last_stood_drops_onto_it() {
         ("anchor A", ANCHOR_A, ANCHOR_A_FACING, 0.07),
         ("evening", EVENING, EVENING_FACING, 0.35),
     ] {
-        let (mut run, _) = joined_with(Mode::Strict, Setup { props: true });
+        let (mut run, _) = joined_with(
+            Mode::Strict,
+            Setup {
+                props: true,
+                ..Setup::default()
+            },
+        );
         let at = Vec3::from_array(at);
         let up = at + Vec3::Y * DROP;
         let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, up, facing);

@@ -130,6 +130,16 @@ pub(crate) enum Member {
     /// `sequence.allow restart` (openspec AH.184): a clip's, which a copy
     /// started from it takes, or a sequence's own.
     AllowRestart,
+    /// `clonedsequence.clones` (openspec AS.37): a template's copies
+    /// playing, on any actor, read whole.
+    SeqClones,
+    /// `clonedsequence.activator` (openspec AR.10): the actor a copy plays
+    /// on.
+    SeqActivator,
+    /// A sound's `soundinfo` member (openspec AR.10).
+    Sound(crate::sound_members::SoundField),
+    /// The sound system's (openspec AR.10).
+    SoundSystem(crate::sound_members::SystemField),
     // AH.49's: a clip's or a sequence's animation info.
     /// `animationinfo.blend percent`: the weight the engine blends by.
     Blend,
@@ -162,6 +172,9 @@ pub(crate) enum Member {
     ConverterScreen,
     /// `viewportinfo.container sprite`: the screen the picture fills.
     Container,
+    /// `viewportinfo.audio listener` (openspec AR.11): the viewport itself,
+    /// the camera standing as the listener (a hypothesis).
+    AudioListener,
     /// `spriteinfo.screen width` and `screen height` on the container.
     ScreenWidth,
     ScreenHeight,
@@ -411,6 +424,14 @@ impl Member {
         add("sequence", "looping", Member::SeqLooping);
         add("sequence", "raw duration", Member::SeqRawDuration);
         add("sequence", "allow restart", Member::AllowRestart);
+        add("clonedsequence", "clones", Member::SeqClones);
+        add("clonedsequence", "activator", Member::SeqActivator);
+        for &(name, f) in crate::sound_members::SOUND_FIELDS {
+            add("soundinfo", name, Member::Sound(f));
+        }
+        for &(name, f) in crate::sound_members::SYSTEM_FIELDS {
+            add("soundinfo", name, Member::SoundSystem(f));
+        }
         add("animationinfo", "blend percent", Member::Blend);
         add("animationinfo", "is layered", Member::IsLayered);
         add("animationinfo", "type", Member::ClipKind);
@@ -441,6 +462,7 @@ impl Member {
         add("viewconverter", "world position", Member::ConverterWorld);
         add("viewconverter", "screen location", Member::ConverterScreen);
         add("viewportinfo", "container sprite", Member::Container);
+        add("viewportinfo", "audio listener", Member::AudioListener);
         add("spriteinfo", "screen width", Member::ScreenWidth);
         add("spriteinfo", "screen height", Member::ScreenHeight);
         add("actorinfo", "players", Member::Players);
@@ -1030,6 +1052,9 @@ impl ScriptWorld {
         m: Member,
         engine: &mut dyn Engine,
     ) -> Result<Value, HostFault> {
+        if let Some(v) = self.sound_member(at, m) {
+            return v;
+        }
         let recv = at.receiver;
         let actor = self.actor_of(recv);
         let object = self.object(recv);
@@ -1411,6 +1436,10 @@ impl ScriptWorld {
             Member::ViewportFarClip => Value::Float(self.view.far_clip),
             Member::Converter => self.objs.value(Object::ViewConverter),
             Member::Container => self.objs.value(Object::ContainerSprite),
+            Member::AudioListener if object == Some(Object::Viewport) => {
+                self.objs.value(Object::Viewport)
+            }
+            Member::AudioListener => return Err(HostFault::Nothing),
             Member::ConverterWorld | Member::ConverterScreen
                 if object != Some(Object::ViewConverter) =>
             {
@@ -1499,6 +1528,7 @@ impl ScriptWorld {
             | Member::Clones
             | Member::PlayingAnimations
             | Member::PlayingSounds
+            | Member::SeqClones
             | Member::Palette
             | Member::EnvironmentContacts
             | Member::Waypoints
@@ -1576,6 +1606,9 @@ impl ScriptWorld {
         v: Value,
         engine: &mut dyn Engine,
     ) -> Result<(), HostFault> {
+        if let Some(done) = self.set_sound_member(at, m, v) {
+            return done;
+        }
         let recv = at.receiver;
         let actor = self.actor_of(recv);
         let object = self.object(recv);
@@ -2037,11 +2070,20 @@ impl ScriptWorld {
             // order started (its insert at 0 and append).
             Member::PlayingAnimations => {
                 let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                // Clips alone: a sound's copy (openspec AR.9, a sequence with
+                // a length since) is in `playing sounds`, never here, or a
+                // walker's locomotion takes his footsteps for animations.
+                let this = &*self;
                 let playing = |whole: bool| {
-                    self.sequences
+                    this.sequences
                         .iter()
                         .enumerate()
-                        .filter(move |(_, s)| s.actor == h && s.plays() && s.is_layered() != whole)
+                        .filter(move |(_, s)| {
+                            s.actor == h
+                                && s.plays()
+                                && s.is_layered() != whole
+                                && this.clip_of(s).is_some()
+                        })
                         .map(|(i, _)| Object::Sequence(i as u32))
                 };
                 let mut v: Vec<Object> = playing(true).collect();
@@ -2049,7 +2091,42 @@ impl ScriptWorld {
                 v.extend(playing(false));
                 v.into_iter().map(|o| self.objs.value(o)).collect()
             }
-            Member::PlayingSounds => Vec::new(),
+            // The sound copies playing on him, in the order started
+            // (openspec AR.10).
+            Member::PlayingSounds => {
+                let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
+                let on = self.sounds_on(h);
+                on.into_iter()
+                    .map(|i| self.objs.value(Object::Sequence(i)))
+                    .collect()
+            }
+            Member::SoundSystem(f) => self.sound_set(f)?,
+            // A template's copies still playing, on whatever actor, in the
+            // order started (openspec AS.37): a clip's that its starts made,
+            // a sound's while one plays; a copy named stands for its
+            // template.
+            Member::SeqClones => {
+                let template = match self.object(recv) {
+                    Some(Object::Sequence(i)) => {
+                        self.sequences
+                            .get(i as usize)
+                            .ok_or(HostFault::Nothing)?
+                            .template
+                    }
+                    _ => recv.ok_or(HostFault::Nothing)?,
+                };
+                let copies: Vec<u32> = self
+                    .sequences
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.template == template && s.plays())
+                    .map(|(i, _)| i as u32)
+                    .collect();
+                copies
+                    .into_iter()
+                    .map(|i| self.objs.value(Object::Sequence(i)))
+                    .collect()
+            }
             // The level's and the props' contacts, not another actor's.
             Member::EnvironmentContacts => {
                 let Some(Object::Facet(h, Facet::Collision)) = self.object(recv) else {
@@ -2161,7 +2238,7 @@ impl ScriptWorld {
     /// A play of the sequence at `i` on `actor` (openspec AH.184): refused
     /// while it plays with time left and no `allow restart` (the op fails
     /// and its block is skipped), else started again from its start, his.
-    fn start_again(&mut self, i: usize, actor: Handle) -> Answer {
+    pub(crate) fn start_again(&mut self, i: usize, actor: Handle) -> Answer {
         let s = &mut self.sequences[i];
         if s.refuses_restart() {
             return Answer::Skip;
@@ -2169,6 +2246,8 @@ impl ScriptWorld {
         s.actor = actor;
         s.restart();
         self.restarts.push(i as u32);
+        // A sound's copy started over is a new play (openspec AR.9).
+        self.sound_restarted(i as u32);
         Answer::Run {
             receiver: None,
             result: Some(self.objs.value(Object::Sequence(i as u32))),
@@ -2190,6 +2269,13 @@ impl ScriptWorld {
                 return self.start_again(i as usize, actor);
             }
             template = s.template;
+        }
+        // A sound info the sounds part gives audio for plays as a sound
+        // (openspec AR.9: `crate::sound_members`).
+        if let Value::Object(o) = template
+            && let Some(answer) = self.play_sound(template, o, actor)
+        {
+            return answer;
         }
         if matches!(self.object(Some(template)), Some(Object::Clip { .. }))
             && let Some(i) = self
@@ -2295,7 +2381,13 @@ impl ScriptWorld {
                             }
                         }
                     }
-                    _ => {}
+                    // A sound info's copies on the receiver (openspec AR.9).
+                    _ => {
+                        if let Some(sound) = first {
+                            let on = self.handle(call.receiver);
+                            self.stop_sound(sound, on);
+                        }
+                    }
                 }
                 Ok(Answer::Done)
             }
@@ -3173,6 +3265,33 @@ mod tests {
         for _ in 0..frames {
             w.advance(STEP, e);
         }
+    }
+
+    /// AR.11: the gameplay viewport's audio listener is the viewport, the
+    /// camera standing as the listener, so a point taken from it is the
+    /// eye; nothing on any other receiver.
+    #[test]
+    fn the_audio_listener_is_the_viewport() {
+        let mut w = world();
+        let mut e = bench();
+        w.view.eye = Vec3::new(1.0, 2.0, 3.0);
+        let viewport = w.objs.value(Object::Viewport);
+        let listener = w
+            .get(
+                &at("viewportinfo", "audio listener", Some(viewport), None),
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(listener, viewport);
+        assert_eq!(w.point(listener, &mut e), Some(Vec3::new(1.0, 2.0, 3.0)));
+        let ray = w.objs.value(Object::RayCast);
+        assert_eq!(
+            w.get(
+                &at("viewportinfo", "audio listener", Some(ray), None),
+                &mut e
+            ),
+            Err(HostFault::Nothing)
+        );
     }
 
     #[test]
@@ -5217,6 +5336,58 @@ mod fight_tests {
         assert!(matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }));
         let s = w.sequences().last().unwrap();
         assert_eq!((s.template, s.length), (clips[3], 0.4));
+    }
+
+    /// AS.37: a clip's copies, as `clonedsequence.clones` reads them off
+    /// the clip: one on each actor its starts played it on, in the order
+    /// started, read off a copy too; the one that ends leaves the set, a
+    /// stopped one with it; none of another clip's.
+    #[test]
+    fn a_clips_copies_read_while_they_play_and_go_once_they_end() {
+        let mut e = pit();
+        let mut w = world();
+        let template = Obj { unit: 4, index: 77 };
+        w.set_palette(template, vec![0.5, 1.0]);
+        for (h, x) in [(C1, 0.0), (C2, 1.0), (C3, 2.0)] {
+            let mut c = chompy(Vec3::new(x, 0.0, 0.0), 0.0);
+            c.obj = Some(template);
+            w.actors.insert(h, c);
+        }
+        let short = w.objs.value(Object::Clip { template, slot: 0 });
+        let long = w.objs.value(Object::Clip { template, slot: 1 });
+        let start = |w: &mut ScriptWorld, e: &mut Pit, on: Handle, clip: Value| {
+            let call = op(Class::StartSequence, on, vec![("_LHS", Some(clip))], vec![]);
+            match ask(w, e, &call) {
+                Answer::Run { result, .. } => result.unwrap(),
+                other => panic!("{other:?}"),
+            }
+        };
+        let clones = |w: &mut ScriptWorld, e: &mut Pit, of: Value| {
+            let at = Access {
+                placement: 1,
+                receiver: Some(of),
+                member: MemberId::named("clonedsequence", "clones"),
+                other_point: None,
+                via: None,
+                op: None,
+            };
+            w.elements(&at, e).unwrap()
+        };
+        let on_c1 = start(&mut w, &mut e, C1, short);
+        let on_c2 = start(&mut w, &mut e, C2, long);
+        let on_c3 = start(&mut w, &mut e, C3, short);
+        assert_eq!(clones(&mut w, &mut e, short), vec![on_c1, on_c3]);
+        assert_eq!(clones(&mut w, &mut e, on_c3), vec![on_c1, on_c3]);
+        assert_eq!(clones(&mut w, &mut e, long), vec![on_c2]);
+        // Half a second on, the short clip's copies have played out.
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        assert_eq!(clones(&mut w, &mut e, short), Vec::<Value>::new());
+        assert_eq!(clones(&mut w, &mut e, long), vec![on_c2]);
+        let stop = op(Class::StopSequence, C2, vec![("_LHS", Some(on_c2))], vec![]);
+        ask(&mut w, &mut e, &stop);
+        assert_eq!(clones(&mut w, &mut e, long), Vec::<Value>::new());
     }
 
     #[test]

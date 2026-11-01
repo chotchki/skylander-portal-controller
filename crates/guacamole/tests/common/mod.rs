@@ -712,6 +712,40 @@ pub fn discovery(config: &mut guac_script::Config) -> HashMap<MemberId, String> 
 pub struct Setup {
     /// The level's props in the seam by AG.25's rule (openspec AH.21).
     pub props: bool,
+    /// The sounds part over the dump ([`sound_part`]): each start of a
+    /// sound plays it on the game clock, as the TV's run does (openspec
+    /// AR.9); without it a sound plays nothing, as before AR.9.
+    pub sounds: bool,
+    /// Chapter 1's music scripts on the run (`scripts::with_music`, openspec
+    /// AR.11), off the TV's listing until AR.16.
+    pub music: bool,
+}
+
+/// The sounds part of `global.bld`, Eruptor's archive and chapter 1, read
+/// off the dump in memory by guac-extract's own reader (nothing written),
+/// once a test binary, by unit (openspec AR.9): what the TV's run reads off
+/// the extract's sounds part.
+pub fn sound_part() -> (Arc<guac_sound::SoundBook>, HashMap<u16, String>) {
+    static PART: std::sync::OnceLock<(Arc<guac_sound::SoundBook>, HashMap<u16, String>)> =
+        std::sync::OnceLock::new();
+    PART.get_or_init(|| {
+        let usr = dump().join("PS3_GAME/USRDIR");
+        let exports = guac_extract::sounds::exports(&usr).expect("global's exports");
+        let mut stems = HashMap::new();
+        let mut parts = Vec::new();
+        for unit in [1u16, ERUPTOR, LEVEL] {
+            let archive = ARCHIVES[unit as usize].0;
+            let bld = std::fs::read(usr.join(archive)).unwrap_or_else(|e| panic!("{archive}: {e}"));
+            let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
+            let read =
+                guac_extract::sounds::read(archive, &bld, arc.as_deref(), &exports, identity())
+                    .unwrap_or_else(|e| panic!("{archive}'s sounds: {e}"));
+            stems.insert(unit, guac_sound::stem(archive));
+            parts.push(read.ir);
+        }
+        (Arc::new(guac_sound::SoundBook::new(parts)), stems)
+    })
+    .clone()
 }
 
 pub fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
@@ -749,10 +783,17 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
     let mut config = scripts::fight_config(mode);
+    if setup.music {
+        config = scripts::with_music(config);
+    }
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
+    if setup.sounds {
+        let (book, stems) = sound_part();
+        world.set_sounds(book, stems);
+    }
     let template = files
         .placed
         .iter()
