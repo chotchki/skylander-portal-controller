@@ -1082,7 +1082,37 @@ fn a_level_part_the_manifest_lacks_resumes_alone() {
             .unwrap()
             .is_none()
     );
-    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let seen = Mutex::new(Vec::new());
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
+        seen.lock().unwrap().push(Seen::of(&e));
+    })
+    .unwrap();
+    // The parts kept whole each say so at once: none done, then all
+    // (AT.26), and chapter 1 goes over once its lights are in again.
+    let seen = seen.into_inner().unwrap();
+    let Some(&Seen::Interface(0, menus)) = seen.iter().find(|e| matches!(e, Seen::Interface(0, _)))
+    else {
+        panic!("{seen:?}");
+    };
+    assert!(done.interface.kept && menus > 0, "{seen:?}");
+    let particles = PARTICLE_ARCHIVES;
+    for (none, all) in [
+        (
+            Seen::Particles(0, particles),
+            Seen::Particles(particles, particles),
+        ),
+        (
+            Seen::Sounds(0, SOUND_ARCHIVES),
+            Seen::Sounds(SOUND_ARCHIVES, SOUND_ARCHIVES),
+        ),
+        (Seen::Interface(0, menus), Seen::Interface(menus, menus)),
+        (Seen::Sprites(0, 1), Seen::Sprites(1, 1)),
+    ] {
+        let at = seen.iter().position(|e| *e == none).unwrap();
+        assert_eq!(seen[at + 1], all, "{seen:?}");
+    }
+    assert!(done.particles.kept && done.sounds.kept);
+    assert!(seen.contains(&Seen::LevelReady));
     assert_eq!(done.roster.files.written, 0);
     assert_eq!(done.models.files.written, 0);
     let lv = &done.levels;

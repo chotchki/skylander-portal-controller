@@ -323,7 +323,8 @@ pub fn run(
     let levels = levels_stage(dir, ir, names, &levels::PLAYED, &level_event, send)?;
     let scripts = script_stage(dir, ir, send)?;
     let particles = crate::particles::particle_stage(dir, ir, send)?;
-    if levels.failed.is_empty() && levels.levels == names.len() {
+    // Whole: every one of its played parts in, for every level.
+    if levels.levels == names.len() {
         send(Event::LevelReady);
     }
     let sprites = levels_stage(dir, ir, names, &[levels::SPRITES], &sprite_event, send)?;
