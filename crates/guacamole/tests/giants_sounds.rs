@@ -59,7 +59,7 @@ fn decode(bytes: &Arc<[u8]>, gapless: bool) -> (Vec<f32>, u16) {
         .build()
         .expect("it decodes");
     let channels = d.channels().get();
-    (d.map(|s| s as f32).collect(), channels)
+    (d.collect(), channels)
 }
 
 /// The step across each looping track's seam against its music's own 99th
@@ -101,7 +101,6 @@ fn a_looping_bed_loops_its_frames_on_through_the_seam() {
         let tv: Vec<f32> = VoiceDecoder::new(bytes.clone(), Gains::new(1.0, 1.0), true)
             .step_by(2)
             .take(2 * n + 8192)
-            .map(|s| s as f32)
             .collect();
         assert_eq!(tv.len(), 2 * n + 8192, "{name}: the loop plays on");
         let left: Vec<f32> = once.iter().step_by(ch).copied().collect();

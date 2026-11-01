@@ -734,6 +734,7 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
         Setup {
             props: script.props,
             sounds: script.sounds,
+            ..Setup::default()
         },
     );
     let mut snaps = Vec::new();
