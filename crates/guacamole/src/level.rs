@@ -1312,7 +1312,7 @@ impl Level {
         }
     }
 
-    #[cfg(test)]
+    /// The load's report as it stands (the props as of the load's spawn).
     pub(crate) fn report(&self) -> &LevelReport {
         &self.report
     }
@@ -2988,6 +2988,127 @@ mod tests {
             app.update();
         }
         assert_eq!(report(&app).scripts_reason, None);
+    }
+
+    /// AS.16: leaving a level for another takes the first down as the next
+    /// comes: its root and everything under it (its parts, its props' draws,
+    /// its shadow light), its solids in Avian's world (the collision's and a
+    /// standing prop's), and its textures, meshes and materials once their
+    /// handles go, so the next, the same level from another extract, comes
+    /// up with as many of each as the first had and none of the first's.
+    #[test]
+    fn leaving_a_level_takes_its_entities_solids_and_assets_down() {
+        use crate::physics::SeamBody;
+        use guac_ir::actor::{Shape, Solid};
+        let level_in = |dir: &Path| {
+            let source = write_level(dir, &lights());
+            let scene: guac_ir::level::Scene = guac_ir::from_ron(
+                &std::fs::read_to_string(dir.join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+            )
+            .unwrap();
+            let shape = MeshShape {
+                uv_sets: 2,
+                tangents: true,
+                colours: false,
+                skinned: false,
+            };
+            let gourd = guac_ir::level::Prop {
+                path: "gourd.mdl".into(),
+                skeleton: None,
+                materials: vec![scene.scenes[0].materials[0].clone()],
+                segments: vec![segment(0, shape, 0.0)],
+                idle: None,
+            };
+            let placed = guac_ir::level::Placement {
+                object: 20,
+                id: 0,
+                name: "gourd".into(),
+                script: None,
+                position: [START[0] + 4.5, START[1], START[2]],
+                rotation: [0.0; 3],
+                scale: [100.0; 3],
+                model: Some("gourd.mdl".into()),
+                solid: Some(Solid {
+                    shape: Shape::Sphere,
+                    solid: true,
+                    world: true,
+                    actor_surface: false,
+                    offset: [0.0; 3],
+                    rotation: [0.0; 3],
+                    width: 7.25,
+                    height: 6.5,
+                    length: 3.0,
+                    weight: 1.0,
+                    rebound: 0.0,
+                }),
+                movement: None,
+                waypoints: None,
+                activity_state: 4,
+                activation_range: 160.0,
+            };
+            write_props(dir, vec![gourd], vec![placed]);
+            source
+        };
+        let (first_dir, next_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = level_in(first_dir.path());
+        let next = level_in(next_dir.path());
+        let mut app = level_app(first_dir.path(), first, false);
+        app.add_plugins(crate::physics::SeamPlugin);
+        app.finish();
+        app.cleanup();
+        until(&mut app, &["ready"], |_| {});
+        let world_counts = |app: &mut App| {
+            let w = app.world_mut();
+            let bodies = w
+                .query_filtered::<Entity, With<SeamBody>>()
+                .iter(w)
+                .collect::<Vec<_>>();
+            (
+                bodies,
+                w.resource::<Assets<Mesh>>().len(),
+                w.resource::<Assets<Image>>().len(),
+                w.resource::<Assets<CharacterMaterial>>().len(),
+            )
+        };
+        let root = app.world().resource::<Level>().loaded().unwrap().root;
+        let mut under = Vec::new();
+        let mut stack = vec![root];
+        while let Some(e) = stack.pop() {
+            under.push(e);
+            if let Some(children) = app.world().get::<Children>(e) {
+                stack.extend(children.iter());
+            }
+        }
+        let (bodies, meshes, images, materials) = world_counts(&mut app);
+        // The collision's mesh and the gourd's sphere; the level's parts,
+        // its props' draw and its shadow light under its root.
+        assert_eq!(bodies.len(), 2, "{bodies:?}");
+        assert!(under.len() > 3, "{under:?}");
+
+        send_source(&mut app, &next, false);
+        app.update();
+        for e in under.iter().chain(&bodies) {
+            assert!(
+                app.world().get_entity(*e).is_err(),
+                "{e} outlived its level"
+            );
+        }
+        assert!(
+            world_counts(&mut app).0.is_empty(),
+            "no solid but the next level's"
+        );
+        until(&mut app, &["ready"], |_| {});
+        for _ in 0..3 {
+            app.update();
+        }
+        let (now_bodies, now_meshes, now_images, now_materials) = world_counts(&mut app);
+        assert_eq!(now_bodies.len(), 2);
+        assert!(now_bodies.iter().all(|b| !bodies.contains(b)));
+        assert_eq!(
+            (now_meshes, now_images, now_materials),
+            (meshes, images, materials),
+            "the first level's assets let go"
+        );
     }
 
     /// The other order: everything resident, the level still waits on the

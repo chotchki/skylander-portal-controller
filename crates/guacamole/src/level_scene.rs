@@ -1984,6 +1984,67 @@ mod tests {
         );
     }
 
+    /// AS.14: what a level's load pre-warms is that level's own, read off
+    /// its parts: two levels whose scenes differ in one material (a gloss
+    /// map where the other has none) key differently there and alike
+    /// everywhere else, each at its start in its own zone's light.
+    #[test]
+    fn two_levels_keys_differ_where_their_materials_do() {
+        let ground = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        let level = |name: &str, second: model::Material| guac_ir::level::Scene {
+            identity: identity(),
+            level: name.into(),
+            scenes: vec![SceneGraph {
+                world: "w".into(),
+                materials: vec![
+                    LevelMaterial::Multi2(ground.clone()),
+                    LevelMaterial::Multi2(second),
+                ],
+                segments: vec![segment(0, false), segment(1, true)],
+                sky: Vec::new(),
+            }],
+        };
+        let atmosphere = Atmosphere {
+            identity: identity(),
+            level: "level_x".into(),
+            script: "Level_Definition_900.ai".into(),
+            zones: vec![zone()],
+            start: Some(0),
+        };
+        let keys_of = |scene| -> Vec<WarmKey> {
+            let s = at_start(scene, &lights(), &atmosphere, &|_| Some(137)).unwrap();
+            assert_eq!(s.refused, []);
+            s.keys.into_iter().map(|(k, _)| k).collect()
+        };
+        let plain = keys_of(level(
+            "level_a",
+            multi2(mask(0x1C, 0x3FF), mask(0x101C, 0x1BFF)),
+        ));
+        let glossed = keys_of(level(
+            "level_b",
+            multi2(mask(0x9C, 0x3FF), mask(0x109C, 0x1BFF)),
+        ));
+        assert_eq!(plain.len(), 2);
+        assert_eq!(glossed.len(), 2);
+        // The ground's key both levels share; the second material's differs
+        // by its gloss map alone.
+        assert_eq!(plain[0], glossed[0]);
+        assert_ne!(plain[1], glossed[1]);
+        assert_eq!(plain[1].mesh, glossed[1].mesh);
+        assert_eq!(
+            plain[1].material.shader.pixel() ^ glossed[1].material.shader.pixel(),
+            1 << bit::GLOSS_MAP
+        );
+        // The same level twice keys the same.
+        assert_eq!(
+            plain,
+            keys_of(level(
+                "level_a",
+                multi2(mask(0x1C, 0x3FF), mask(0x101C, 0x1BFF))
+            ))
+        );
+    }
+
     /// AS.13: what the TV can't draw yet is left out by name with its
     /// segments, never drawn without its feature: a material asking for the
     /// water's layer 4 by positions (bit 6, which the shader doesn't draw)

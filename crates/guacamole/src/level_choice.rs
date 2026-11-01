@@ -18,6 +18,11 @@
 //!   the level it replaces taken down first. Chapter 1 runs its scripts;
 //!   another level is drawn, solid and propped by AG.7's rule with its
 //!   scripts unread until AS.15.
+//! - Its getting-ready screen (openspec AS.14): the header goes on saying
+//!   what the load is at ([`loading_band`]) until the level is ready, its
+//!   own keys (the census of what it draws, read off its parts at its load)
+//!   compiled on the warm's hidden stage first, so the frame it shows in
+//!   compiles nothing.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -255,6 +260,37 @@ fn band(name: &str, p: Progress) -> Band {
     }
 }
 
+/// What the portal's header draws while the level `name` loads, from its
+/// load's report (openspec AS.14): its parts read, handed to the graphics
+/// card, then its keys compiled, each with how far; none once it's ready,
+/// shown or failed, or while the load is another level's.
+pub(crate) fn loading_band(name: &str, r: &crate::level::LevelReport) -> Option<Band> {
+    if r.level.as_deref() != Some(name) {
+        return None;
+    }
+    let (detail, pct) = match r.state.as_str() {
+        "reading" => ("Reading its parts…".to_owned(), 0),
+        "uploading" => ("Handing it to the graphics card…".to_owned(), 0),
+        "waiting" => {
+            let compiled = r.keys.saturating_sub(r.keys_waiting);
+            let pct = (compiled.min(r.keys) * 100)
+                .checked_div(r.keys)
+                .unwrap_or(100) as u8;
+            (
+                format!("Getting its graphics ready… {compiled} of {}", r.keys),
+                pct,
+            )
+        }
+        _ => return None,
+    };
+    Some(Band {
+        title: format!("Getting {name} ready"),
+        detail,
+        percent: Some(pct),
+        code: None,
+    })
+}
+
 /// Whether the Giants pick's extraction has ended, done or not: it owns
 /// the extract while it runs.
 fn extraction_ended(e: &Extraction) -> bool {
@@ -297,7 +333,8 @@ impl Plugin for LevelChoicePlugin {
                 (take_asks, start_fetch, drain_fetch)
                     .chain()
                     .before(crate::level::LevelSystems),
-            );
+            )
+            .add_systems(Update, follow_load.after(crate::level::LevelSystems));
     }
 }
 
@@ -493,6 +530,50 @@ fn drain_fetch(
     }
 }
 
+/// The asked level's load into its report and the header (openspec AS.14):
+/// [`loading_band`] while it loads, then the extraction's band again, the
+/// ask `ready` (or `shown`, the dev view's) or `failed` with the load's
+/// reason.
+fn follow_load(
+    choice: Res<LevelChoice>,
+    mut level: ResMut<Level>,
+    extraction: Res<Extraction>,
+    mut drawn: ResMut<ExtractBand>,
+    mut held: Local<bool>,
+) {
+    let Some(name) = level
+        .asked()
+        .filter(|a| a.state == "loading" && choice.running.is_none())
+        .map(|a| a.name.clone())
+    else {
+        return;
+    };
+    let r = level.report();
+    if r.level.as_deref() != Some(name.as_str()) {
+        return;
+    }
+    if let Some(band) = loading_band(&name, r) {
+        drawn.set_if_neq(ExtractBand(Some(band)));
+        *held = true;
+        return;
+    }
+    let (state, reason) = match r.state.as_str() {
+        "failed" => ("failed", r.reason.clone()),
+        "shown" => ("shown", None),
+        _ => ("ready", None),
+    };
+    if *held {
+        drawn.set_if_neq(ExtractBand(crate::extraction::band(&extraction.status)));
+        *held = false;
+    }
+    level.update_asked(|a| {
+        a.state = state.into();
+        if reason.is_some() {
+            a.reason = reason;
+        }
+    });
+}
+
 /// `POST /api/_test/tv/level`'s body.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -602,6 +683,47 @@ mod tests {
         assert_eq!(asked_at_start(false, Some("level_200")), None);
         assert_eq!(asked_at_start(true, Some("../x")), None);
         assert_eq!(asked_at_start(true, None), None);
+    }
+
+    /// AS.14: the header while the asked level loads, off its load's
+    /// report: reading, handing over, then its keys compiled of all it
+    /// draws; nothing once it's ready, shown or failed, or for another
+    /// level's load.
+    #[test]
+    fn the_header_follows_the_asked_levels_load_until_its_keys_are_compiled() {
+        let mut r = crate::level::LevelReport {
+            state: "reading".into(),
+            level: Some("level_200".into()),
+            keys: 40,
+            ..Default::default()
+        };
+        let detail = |r: &crate::level::LevelReport| {
+            loading_band("level_200", r).map(|b| (b.detail, b.percent))
+        };
+        assert_eq!(
+            loading_band("level_200", &r).map(|b| b.title).as_deref(),
+            Some("Getting level_200 ready")
+        );
+        assert_eq!(detail(&r), Some(("Reading its parts…".into(), Some(0))));
+        r.state = "uploading".into();
+        assert_eq!(
+            detail(&r),
+            Some(("Handing it to the graphics card…".into(), Some(0)))
+        );
+        r.state = "waiting".into();
+        r.keys_waiting = 30;
+        assert_eq!(
+            detail(&r),
+            Some(("Getting its graphics ready… 10 of 40".into(), Some(25)))
+        );
+        r.keys_waiting = 0;
+        assert_eq!(detail(&r).and_then(|d| d.1), Some(100));
+        for done in ["ready", "shown", "failed", "idle"] {
+            r.state = done.into();
+            assert_eq!(detail(&r), None, "{done}");
+        }
+        r.state = "waiting".into();
+        assert_eq!(loading_band("pvp_level_001_cubedungeon", &r), None);
     }
 
     /// The header while a level is fetched: the dump's check, then its
