@@ -2905,6 +2905,34 @@ pub const SOUNDS: &[Registered] = &[
     ),
 ];
 
+/// What chapter 1's music reaches past every table above (openspec AR.11),
+/// as aj-vm's live table registers them: the music controller's sound
+/// system update checks the game's pause state to hush the music while the
+/// game is paused, a value cell reading unpaused until a script writes it
+/// (the TV's pause stops the game clock, so no script runs while it holds);
+/// and it measures from the gameplay viewport's audio listener, the host's
+/// (the camera, a hypothesis: `guac-sound`'s crate docs).
+pub const MUSIC: &[Registered] = &[
+    m(
+        "system",
+        "pause state",
+        "EnumMeasurement",
+        "unpaused|paused",
+        0.0,
+        1.0,
+        Cell,
+    ),
+    m(
+        "viewportinfo",
+        "audio listener",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
+];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -3068,6 +3096,15 @@ mod tests {
                 }
             }
         }
+        // The music's are none of the earlier tables' (AR.11).
+        for r in MUSIC {
+            for t in [
+                INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+                LEVEL_UP, LEVELS, SOUNDS,
+            ] {
+                assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
+            }
+        }
         let sounds = SOUNDS.iter().filter(|r| {
             [
                 INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
@@ -3084,6 +3121,7 @@ mod tests {
             .chain(LEVEL_UP)
             .chain(LEVELS)
             .chain(sounds)
+            .chain(MUSIC)
         {
             for part in [r.namespace, r.name] {
                 assert_eq!(part, part.to_ascii_lowercase(), "{}", r.path());

@@ -1913,6 +1913,24 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// (the death stars).
 pub const EFFECT_SCRIPTS: [&str; 2] = ["LevelUp.ai", "MinionDeathActor.ai"];
 
+/// Chapter 1's music (openspec AR.11, AR.4's reading): the level's music
+/// controller, which plays its intro track at its start, its tracks
+/// through the level's transitions and the combat bed for the robot, and its
+/// watchers, the combat watcher (the inside combat bed and its two
+/// percussion stingers), the interior watcher (inside and explore swapped),
+/// the three elemental gates' and the audio environment's and the robot's
+/// ducking, each placed or spawned by the controller; every tick.
+pub const MUSIC_SCRIPTS: [&str; 8] = [
+    "Music_Level_Controller.ai",
+    "snd_combat_watcher_213.ai",
+    "snd_interior_watcher_213.ai",
+    "snd_elemental_air_watcher_213.ai",
+    "snd_elemental_life_watcher_213.ai",
+    "snd_elemental_undead_watcher_213.ai",
+    "snd_level_audio_environment.ai",
+    "snd_robo_ducking.ai",
+];
+
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
 pub fn is_camera_script(path: &str) -> bool {
@@ -1943,6 +1961,8 @@ pub fn smash_config(mode: Mode) -> Config {
     // The sounds' members on the host, over the cells the tables above
     // registered for them (openspec AR.10).
     members::register(&mut c.members, members::SOUNDS);
+    // And what chapter 1's music reaches past them (openspec AR.11).
+    members::register(&mut c.members, members::MUSIC);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -2147,6 +2167,18 @@ pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
         for w in walkers.iter().filter(|w| w.asks == 0 && w.minion.is_some()) {
             scripts.extend(w.scripts.iter().cloned());
         }
+    }
+    config
+}
+
+/// `config` with chapter 1's music scripts every tick ([`MUSIC_SCRIPTS`],
+/// openspec AR.11): the level's music controller and its watchers. Not in
+/// the TV's listing yet (AR.16): with them the session's generator draws
+/// shift, and the fight's checks calibrated on the draws before wait on a
+/// read of the original's.
+pub fn with_music(mut config: Config) -> Config {
+    if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
+        scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
     }
     config
 }

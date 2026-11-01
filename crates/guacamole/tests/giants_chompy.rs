@@ -2299,6 +2299,10 @@ fn the_members_the_fight_reaches_stay_under_the_ceiling() {
             .chain(CAMERA)
             .chain(WALKERS)
             .chain(ROUTE_MEMBERS)
+            .chain(guac_script::members::LEVEL_UP)
+            .chain(guac_script::members::LEVELS)
+            .chain(guac_script::members::SOUNDS)
+            .chain(guac_script::members::MUSIC)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

@@ -716,6 +716,9 @@ pub struct Setup {
     /// sound plays it on the game clock, as the TV's run does (openspec
     /// AR.9); without it a sound plays nothing, as before AR.9.
     pub sounds: bool,
+    /// Chapter 1's music scripts on the run (`scripts::with_music`, openspec
+    /// AR.11), off the TV's listing until AR.16.
+    pub music: bool,
 }
 
 /// The sounds part of `global.bld`, Eruptor's archive and chapter 1, read
@@ -780,6 +783,9 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
     let mut config = scripts::fight_config(mode);
+    if setup.music {
+        config = scripts::with_music(config);
+    }
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);

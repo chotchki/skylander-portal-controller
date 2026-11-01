@@ -621,6 +621,12 @@ mod tests {
         app.update();
         assert_eq!(voices(&mut app).len(), 1);
         assert!(voices(&mut app)[0].1, "ringing");
+        // Frames on, past the play's end on the game's side, it rings on.
+        for _ in 0..3 {
+            steps(&mut app, 1);
+            app.update();
+        }
+        assert_eq!(voices(&mut app).len(), 1, "it rings on");
         assert_eq!(
             app.world().resource::<SoundReport>().ended[0].how,
             "played out"

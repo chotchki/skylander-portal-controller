@@ -172,6 +172,9 @@ pub(crate) enum Member {
     ConverterScreen,
     /// `viewportinfo.container sprite`: the screen the picture fills.
     Container,
+    /// `viewportinfo.audio listener` (openspec AR.11): the viewport itself,
+    /// the camera standing as the listener (a hypothesis).
+    AudioListener,
     /// `spriteinfo.screen width` and `screen height` on the container.
     ScreenWidth,
     ScreenHeight,
@@ -459,6 +462,7 @@ impl Member {
         add("viewconverter", "world position", Member::ConverterWorld);
         add("viewconverter", "screen location", Member::ConverterScreen);
         add("viewportinfo", "container sprite", Member::Container);
+        add("viewportinfo", "audio listener", Member::AudioListener);
         add("spriteinfo", "screen width", Member::ScreenWidth);
         add("spriteinfo", "screen height", Member::ScreenHeight);
         add("actorinfo", "players", Member::Players);
@@ -1432,6 +1436,10 @@ impl ScriptWorld {
             Member::ViewportFarClip => Value::Float(self.view.far_clip),
             Member::Converter => self.objs.value(Object::ViewConverter),
             Member::Container => self.objs.value(Object::ContainerSprite),
+            Member::AudioListener if object == Some(Object::Viewport) => {
+                self.objs.value(Object::Viewport)
+            }
+            Member::AudioListener => return Err(HostFault::Nothing),
             Member::ConverterWorld | Member::ConverterScreen
                 if object != Some(Object::ViewConverter) =>
             {
