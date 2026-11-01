@@ -34,6 +34,10 @@
 //!   one's nodes on its joints, so what a script hangs on a creature's node
 //!   rides it (Norticus' turban on his node 2). An extract written before it
 //!   gains this part alone on its next start.
+//! - The sprites (openspec AT.8): the level's sprite templates, fonts and
+//!   English text as the interface part reads an archive's
+//!   ([`crate::interface`]), their images into the store. An extract
+//!   written before it gains this part alone on its next start.
 //!
 //! A part that doesn't read is the level stage's failure for that part
 //! alone: the other parts land, and the next start tries it again.
@@ -178,8 +182,11 @@ pub const ATMOSPHERE: &str = "atmosphere";
 pub const SCRIPT: &str = "script";
 pub const PALETTES: &str = "palettes";
 pub const NODES: &str = "nodes";
-pub const PARTS: [&str; 9] = [
-    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES,
+/// The level's own interface (openspec AT.8, [`crate::interface`]): its
+/// templates, fonts and English text, read with its other parts.
+pub const SPRITES: &str = "sprites";
+pub const PARTS: [&str; 10] = [
+    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, SPRITES,
 ];
 
 /// The script part's file, `levels/<archive>/script.igz`: raw, so the same

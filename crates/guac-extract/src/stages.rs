@@ -261,6 +261,8 @@ pub struct Extracted {
     pub particles: crate::particles::ParticleStage,
     /// The sounds chapter 1 can play (AR.5).
     pub sounds: crate::sounds::SoundStage,
+    /// The shared, character and menu archives' interface (AT.8).
+    pub interface: crate::interface::InterfaceStage,
     /// The intros, or why there are none. The roster stays either way, and
     /// the manifest stays unmarked, so the next start tries the intros again.
     pub intros: Result<IntroStage>,
@@ -289,6 +291,7 @@ pub fn run(
     let scripts = script_stage(dir, ir, send)?;
     let particles = crate::particles::particle_stage(dir, ir)?;
     let sounds = crate::sounds::sound_stage(dir, &roster.roster, ir)?;
+    let interface = crate::interface::interface_stage(dir, ir)?;
     let intros = intro_stage(dir, &roster.roster, ffmpeg, ir, send);
     if intros.is_ok() {
         dir.mark_complete()?;
@@ -301,6 +304,7 @@ pub fn run(
         scripts,
         particles,
         sounds,
+        interface,
         intros,
     })
 }
@@ -464,7 +468,10 @@ fn levels_stage(
             }
             Err(e) => return Err(ExtractError::io(&path)(e)),
         };
-        let unpacked = bytes.and_then(|b| levels::level_bld(&b));
+        let unpacked = bytes
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|b| levels::level_bld(b));
         let igz = match &unpacked {
             Ok(b) => guac_formats::igz::Igz::parse(b).map_err(|e| e.to_string()),
             Err(e) => Err(e.clone()),
@@ -500,42 +507,59 @@ fn levels_stage(
             let mut props = None;
             let palettes_started = Instant::now();
             let mut palettes = None;
-            let read =
-                igz.as_ref().map_err(Clone::clone).and_then(|igz| {
-                    let (id, rel) = (identity.clone(), ir.level_path(level, part));
-                    match part {
-                        levels::SCENE => {
-                            levels::scene(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
-                        }
-                        levels::PROPS => levels::props(igz, level, id).and_then(|r| {
-                            let refused =
-                                r.ir.refused
-                                    .iter()
-                                    .map(|p| (p.path.clone(), p.reason.clone()));
-                            props = Some((r.ir.props.len(), refused.collect::<Vec<_>>()));
-                            encoded(ir, dir, &rel, r)
-                        }),
-                        levels::COLLISION => levels::collision(igz, level, id)
-                            .and_then(|r| encoded(ir, dir, &rel, r)),
-                        levels::PLACEMENTS => levels::placements(igz, level, id)
-                            .and_then(|r| encoded(ir, dir, &rel, r)),
-                        levels::LIGHTS => {
-                            levels::lights(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
-                        }
-                        levels::ATMOSPHERE => levels::atmosphere(igz, level, id)
-                            .and_then(|r| encoded(ir, dir, &rel, r)),
-                        levels::PALETTES => levels::palettes(igz, level, id).and_then(|r| {
-                            let mut count = PaletteCount::default();
-                            r.ir.palettes.iter().for_each(|p| count.add(p));
-                            palettes = Some(count);
-                            encoded(ir, dir, &rel, r)
-                        }),
-                        levels::NODES => {
-                            levels::nodes(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
-                        }
-                        other => Err(format!("no reader for a part named {other}")),
+            let read = igz.as_ref().map_err(Clone::clone).and_then(|igz| {
+                let (id, rel) = (identity.clone(), ir.level_path(level, part));
+                match part {
+                    levels::SCENE => {
+                        levels::scene(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
                     }
-                });
+                    levels::PROPS => levels::props(igz, level, id).and_then(|r| {
+                        let refused =
+                            r.ir.refused
+                                .iter()
+                                .map(|p| (p.path.clone(), p.reason.clone()));
+                        props = Some((r.ir.props.len(), refused.collect::<Vec<_>>()));
+                        encoded(ir, dir, &rel, r)
+                    }),
+                    levels::COLLISION => {
+                        levels::collision(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                    }
+                    levels::PLACEMENTS => {
+                        levels::placements(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                    }
+                    levels::LIGHTS => {
+                        levels::lights(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                    }
+                    levels::ATMOSPHERE => {
+                        levels::atmosphere(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                    }
+                    levels::PALETTES => levels::palettes(igz, level, id).and_then(|r| {
+                        let mut count = PaletteCount::default();
+                        r.ir.palettes.iter().for_each(|p| count.add(p));
+                        palettes = Some(count);
+                        encoded(ir, dir, &rel, r)
+                    }),
+                    levels::NODES => {
+                        levels::nodes(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                    }
+                    levels::SPRITES => {
+                        let archive = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
+                        bytes
+                            .as_ref()
+                            .map_err(Clone::clone)
+                            .and_then(|b| crate::interface::english_pack(b))
+                            .and_then(|pack| {
+                                crate::interface::read_igz(&archive, igz, pack.as_deref(), None, id)
+                            })
+                            .and_then(|r| {
+                                let bytes =
+                                    ir.encode(&r.ir, dir, &rel).map_err(|e| e.to_string())?;
+                                Ok((bytes, r.textures))
+                            })
+                    }
+                    other => Err(format!("no reader for a part named {other}")),
+                }
+            });
             match read {
                 Ok((bytes, part_textures)) => {
                     let mut files = Vec::with_capacity(part_textures.len() + 1);
@@ -1024,7 +1048,7 @@ pub(crate) fn put(dir: &mut IdentityDir, rel: &str, bytes: &[u8], files: &mut Fi
 /// Whether the extract already holds exactly `bytes` at `rel` (recorded, and
 /// the file still hashes to the record), counted in `files` as kept or as
 /// one to write; writing it is the caller's.
-fn held(dir: &IdentityDir, rel: &str, bytes: &[u8], files: &mut Files) -> Result<bool> {
+pub(crate) fn held(dir: &IdentityDir, rel: &str, bytes: &[u8], files: &mut Files) -> Result<bool> {
     let sha = Sha256(sha2::Sha256::digest(bytes).into());
     let size = bytes.len() as u64;
     let recorded = dir

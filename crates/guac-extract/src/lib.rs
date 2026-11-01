@@ -18,6 +18,8 @@
 //! [`scripts`] (AH.22) holds the whitelist and reads the fight's script
 //! data outside a level: the script entries and the models they spawn.
 //! [`particles`] (AH.87) reads the emitters those archives place.
+//! [`interface`] (AT.8) reads the sprite templates, fonts and English text
+//! of the shared, character and menu archives, and each level's.
 //! [`stages`] (AE.3) runs everything after identity in guacamole's order:
 //! the roster and its portraits first, then the models with their hero side
 //! (AG.14) and palettes (AH.22), then the levels, then the scripts, then
@@ -28,6 +30,7 @@ pub mod dump;
 mod error;
 pub mod extract;
 pub mod ffmpeg;
+pub mod interface;
 pub mod intros;
 pub mod known;
 pub mod levels;
@@ -62,15 +65,16 @@ pub use root::{ExtractRoot, RootMode};
 /// `parts`), so v4 holds, and so are AH.22's `palettes/`, `scripts/` and
 /// `spawns/`, beside each level's `script.igz` and `palettes.*`, AE.31's
 /// `portraits` (the same files, now the right way up), AH.50's `nodes/` and
-/// AH.87's `particles/`.
+/// AH.87's `particles/` and AT.8's `interface/`, beside each level's
+/// `sprites.*`.
 pub const LAYOUT_VERSION: u32 = 4;
 
 /// The extract-wide parts this build reads (the manifest's `parts`), each
 /// recorded once its files are in: AE.31's upright portraits, AH.2's
 /// progression, AH.22's palettes, script entries and spawn models, AH.50's
-/// attach nodes, AH.87's emitters, AR.5's sounds. A start is current only once every one
-/// is, so an extract made before one resumes for it alone.
-pub const PARTS: [&str; 8] = [
+/// attach nodes, AH.87's emitters, AR.5's sounds, AT.8's interface. A start is current
+/// only once every one is, so an extract made before one resumes for it alone.
+pub const PARTS: [&str; 9] = [
     roster::PORTRAITS,
     progression::PART,
     models::PALETTES,
@@ -79,4 +83,5 @@ pub const PARTS: [&str; 8] = [
     models::NODES,
     particles::PART,
     sounds::PART,
+    interface::PART,
 ];

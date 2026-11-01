@@ -1618,6 +1618,10 @@ impl IntroFixture {
         opened
             .dir
             .record_part(guac_extract::sounds::PART, Vec::new())?;
+        // AT.8's interface: likewise no archive, so no file.
+        opened
+            .dir
+            .record_part(guac_extract::interface::PART, Vec::new())?;
 
         // Only the intros need ffmpeg.
         let ffmpeg = match intros {
@@ -2020,6 +2024,18 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
     let rel = ir.level_path(&level, guac_extract::levels::NODES);
     dir.write_output(&rel, &ir.encode(&nodes, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::NODES, vec![rel])?;
+    // AT.8's sprites: no templates, fonts or text of the level's own.
+    let sprites = guac_ir::interface::Interface {
+        identity: nodes.identity,
+        archive: format!("{}/{level}.bld", guac_extract::levels::LEVEL_FOLDER),
+        templates: Vec::new(),
+        fonts: Vec::new(),
+        strings: Vec::new(),
+        refused: Vec::new(),
+    };
+    let rel = ir.level_path(&level, guac_extract::levels::SPRITES);
+    dir.write_output(&rel, &ir.encode(&sprites, dir, &rel)?)?;
+    dir.record_level_part(&level, guac_extract::levels::SPRITES, vec![rel])?;
     // A part the level stage reads that this left out would make the TV's
     // first pick extract it again over the fixture (AH.138's nodes did, 43
     // tests failing on it): name it here instead.

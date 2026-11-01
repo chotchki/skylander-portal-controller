@@ -15,6 +15,7 @@ pub mod clip;
 pub mod glow;
 pub mod hero;
 mod identity;
+pub mod interface;
 pub mod level;
 pub mod model;
 pub mod nodes;
@@ -63,7 +64,8 @@ use serde::{Deserialize, Serialize};
 /// ([`level::Placement::activation_range`]), which a v5 placements file
 /// can't say, so a v5 extract redoes itself. AH.50's attach nodes
 /// ([`nodes`]) are a new record in files of their own, so v6 holds, and so
-/// are AH.87's emitters ([`particle`]) and AR.5's sounds ([`sound`]).
+/// are AH.87's emitters ([`particle`]), AR.5's sounds ([`sound`]) and AT.8's
+/// interface ([`interface`]).
 pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]
