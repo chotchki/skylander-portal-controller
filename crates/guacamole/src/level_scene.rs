@@ -2297,6 +2297,23 @@ mod tests {
         assert!((p.far - 243.84).abs() < 1e-4);
     }
 
+    /// AS.13: the dev view frames another level's start as the fresh state
+    /// frames chapter 1's: the same camera, moved by the start's offset from
+    /// chapter 1's, so at chapter 1's own start it's the fresh state's.
+    #[test]
+    fn the_dev_view_frames_a_levels_start_as_the_fresh_state_frames_chapter_1s() {
+        let fresh = fresh_state_transform();
+        assert_eq!(start_view(Vec3::from_array(CHAPTER_1_START)), fresh);
+        let start = Vec3::new(-0.79, 0.99, 63.86);
+        let t = start_view(start);
+        assert!(close(
+            (t.translation - fresh.translation).to_array(),
+            (start - Vec3::from_array(CHAPTER_1_START)).to_array(),
+            1e-4
+        ));
+        assert_eq!(t.rotation, fresh.rotation);
+    }
+
     /// AH.65: the three point lights a frame draws the level with, the
     /// nearest the hero first of the placed ones and the scripts', those
     /// that add nothing (dark, or no falloff) left out, the slots past them

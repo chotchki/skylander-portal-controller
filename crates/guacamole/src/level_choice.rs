@@ -6,7 +6,7 @@
 //! - When: once the Giants pick's extraction has ended (it owns the extract
 //!   while it runs: two writers would each save the manifest over the
 //!   other's), and not while the TV is in a level, which leaving for
-//!   another is AS.16's.
+//!   another is AS.49's (checked again when its parts are in).
 //! - How: on a thread of its own, the extract opened as a pick opens it, the
 //!   name checked against the dump's own level list
 //!   (`guac_extract::levels::on_disc`) before anything is read, then
@@ -52,6 +52,10 @@ pub(crate) const NEEDED: [&str; 6] = [
     levels::LIGHTS,
     levels::ATMOSPHERE,
 ];
+
+/// Why an ask is refused while a hero is in a level, at its start or at its
+/// hand-off to the load (a figure placed while its parts were read).
+const IN_A_LEVEL: &str = "the TV is in a level: leaving it for another is AS.49's";
 
 /// Levels asked for over `POST /api/_test/tv/level`, waiting for a frame;
 /// the last asked wins.
@@ -381,10 +385,7 @@ fn start_fetch(
     };
     if play.as_deref().is_some_and(crate::play::Play::started) {
         choice.waiting = None;
-        refuse(
-            &mut level,
-            "the TV is in a level: leaving it for another is AS.16's".into(),
-        );
+        refuse(&mut level, IN_A_LEVEL.into());
         return;
     }
     if !extraction_ended(&extraction) {
@@ -427,12 +428,14 @@ fn start_fetch(
 }
 
 /// The fetch's events into the report and the header; its level handed to
-/// the load once every part it needs is in.
+/// the load once every part it needs is in, unless the TV went into a level
+/// while it was read (a figure placed meanwhile): refused then, as an ask
+/// in a level is, its parts kept for the next ask.
 fn drain_fetch(
     mut choice: ResMut<LevelChoice>,
     mut level: ResMut<Level>,
     extraction: Res<Extraction>,
-    job: Option<Res<ExtractJob>>,
+    (job, play): (Option<Res<ExtractJob>>, Option<Res<crate::play::Play>>),
     mut drawn: ResMut<ExtractBand>,
 ) {
     let Some(running) = choice.running.as_mut() else {
@@ -484,7 +487,17 @@ fn drain_fetch(
     // The header goes back to what the extraction leaves it (nothing, or
     // its failure).
     drawn.set_if_neq(ExtractBand(crate::extraction::band(&extraction.status)));
+    let in_level = play.as_deref().is_some_and(crate::play::Play::started);
     match result {
+        Ok(f) if in_level => {
+            warn!(level = %name, "the TV went into a level while the level asked for was read: not loaded");
+            level.update_asked(|a| {
+                a.state = "refused".into();
+                a.kind = Some(format!("{:?}", f.kind));
+                (a.parts_read, a.parts_kept) = (f.parts_read, f.parts_kept);
+                a.reason = Some(format!("{IN_A_LEVEL} (it went in while {name} was read)"));
+            });
+        }
         Ok(f) => {
             info!(
                 level = %name,
@@ -799,6 +812,183 @@ mod tests {
         assert_eq!(
             (a.state.as_str(), a.reason.as_deref()),
             ("failed", Some("the level has no start"))
+        );
+    }
+
+    /// The ask waits while the pick's extraction runs (it owns the
+    /// manifest: two writers would each save it over the other's), Ready
+    /// included until its thread's channel is drained, and its fetch starts
+    /// once it has ended, done or failed; an ask while a hero is in a level,
+    /// or with no dump or extract to read, is refused without a fetch.
+    #[test]
+    fn the_ask_waits_for_the_picks_extraction_to_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app_with = |status: ExtractStatus, running: bool, job: bool| {
+            let mut app = App::new();
+            let (keep, feed) = crossbeam_channel::unbounded();
+            app.insert_resource(Level::new(false))
+                .insert_resource(LevelChoice {
+                    waiting: Some("level_200".into()),
+                    running: None,
+                })
+                .insert_resource(Extraction {
+                    status,
+                    feed: running.then_some(feed),
+                    ..Default::default()
+                })
+                .insert_resource(Setup(crate::screen::SetupView {
+                    giants_dir: Some(tmp.path().join("dump")),
+                    ..Default::default()
+                }))
+                .add_systems(Update, start_fetch);
+            if job {
+                app.insert_resource(ExtractJob::new(
+                    tmp.path(),
+                    Some(tmp.path().join("extract").display().to_string()),
+                    None,
+                ));
+            }
+            (app, keep)
+        };
+        let state = |app: &App| {
+            let choice = app.world().resource::<LevelChoice>();
+            let asked = app.world().resource::<Level>().asked().cloned().unwrap();
+            (
+                asked.state,
+                choice.running.is_some(),
+                choice.waiting.is_some(),
+            )
+        };
+        let sprites = ExtractStatus::Sprites { done: 3, total: 9 };
+        let ready = ExtractStatus::Ready {
+            intros: 0,
+            ran: true,
+        };
+        // Running, and Ready with its channel not yet drained: waiting.
+        for (status, running) in [(sprites.clone(), true), (ready.clone(), true)] {
+            let (mut app, _keep) = app_with(status, running, true);
+            for _ in 0..3 {
+                app.update();
+            }
+            assert_eq!(state(&app), ("waiting".into(), false, true));
+        }
+        // Ended, done or failed: the fetch starts.
+        let failed = ExtractStatus::Failed(crate::extraction::Failure::Other {
+            code: "GUAC-E-X".into(),
+            message: "made up".into(),
+        });
+        for status in [ready.clone(), failed] {
+            let (mut app, _keep) = app_with(status, false, true);
+            app.update();
+            assert_eq!(state(&app), ("opening".into(), true, false));
+        }
+        // Ended with nothing to read from: refused, no fetch.
+        let (mut app, _keep) = app_with(ready.clone(), false, false);
+        app.update();
+        assert_eq!(state(&app), ("refused".into(), false, false));
+        // A hero in a level: refused at once, the extraction running or not.
+        let (mut app, _keep) = app_with(sprites, true, true);
+        let camera = app.world_mut().spawn_empty().id();
+        app.insert_resource(crate::play::Play::started_for_tests(camera));
+        app.update();
+        assert_eq!(state(&app), ("refused".into(), false, false));
+        assert_eq!(
+            app.world()
+                .resource::<Level>()
+                .asked()
+                .and_then(|a| a.reason.clone())
+                .as_deref(),
+            Some(IN_A_LEVEL)
+        );
+    }
+
+    /// A fetch that ends after the TV went into a level (a figure placed
+    /// while its parts were read) hands the load nothing: the ask refused as
+    /// one asked in a level is, its parts kept, the header given back. With
+    /// no level started the same fetch hands its level over.
+    #[test]
+    fn a_fetch_ending_after_the_tv_went_into_a_level_hands_the_load_nothing() {
+        let run = |started: bool| {
+            let (to_load, loads) = crossbeam_channel::unbounded();
+            let (tx, feed) = crossbeam_channel::unbounded();
+            let mut app = App::new();
+            app.insert_resource(Level::new(false))
+                .insert_resource(LevelChoice {
+                    waiting: None,
+                    running: Some(Running {
+                        name: "level_208_ice".into(),
+                        started: Instant::now(),
+                        feed,
+                        status: Progress::Parts { done: 4, total: 10 },
+                    }),
+                })
+                .insert_resource(Extraction {
+                    status: ExtractStatus::Ready {
+                        intros: 0,
+                        ran: false,
+                    },
+                    ..Default::default()
+                })
+                .insert_resource(ExtractBand(Some(band(
+                    "level_208_ice",
+                    Progress::Parts { done: 4, total: 10 },
+                ))))
+                .insert_resource(ExtractJob {
+                    level: Some(to_load),
+                    ..ExtractJob::new(Path::new("."), None, None)
+                })
+                .add_systems(Update, drain_fetch);
+            if started {
+                let camera = app.world_mut().spawn_empty().id();
+                app.insert_resource(crate::play::Play::started_for_tests(camera));
+            }
+            app.world_mut()
+                .resource_mut::<Level>()
+                .set_asked(AskedReport {
+                    name: "level_208_ice".into(),
+                    state: "extracting".into(),
+                    ..Default::default()
+                });
+            let source = LevelSource::named(
+                "extract".into(),
+                guac_extract::intros::IrFormat::Ron,
+                crate::test_support::turntable::identity(),
+                "level_208_ice",
+            );
+            tx.send(FetchEvent::Done(Ok(Box::new(Fetched {
+                source,
+                kind: levels::Kind::Story,
+                parts_read: 10,
+                parts_kept: 0,
+                written: 1,
+                bytes: 1,
+                failed: Vec::new(),
+                opened: Duration::ZERO,
+                extracted: Duration::ZERO,
+            }))))
+            .unwrap();
+            app.update();
+            let asked = app.world().resource::<Level>().asked().cloned().unwrap();
+            let sent: Vec<String> = loads.try_iter().map(|s| s.level).collect();
+            let band = app.world().resource::<ExtractBand>().0.clone();
+            (asked, sent, band)
+        };
+        let (asked, sent, band) = run(true);
+        assert_eq!(sent, Vec::<String>::new(), "nothing handed to the load");
+        assert_eq!(asked.state, "refused");
+        assert_eq!(asked.parts_read, 10, "its parts in, kept for the next ask");
+        assert!(
+            asked
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.starts_with(IN_A_LEVEL) && r.contains("level_208_ice")),
+            "{asked:?}"
+        );
+        assert_eq!(band, None, "the header given back");
+        let (asked, sent, _) = run(false);
+        assert_eq!(
+            (asked.state.as_str(), sent),
+            ("loading", vec!["level_208_ice".to_owned()])
         );
     }
 

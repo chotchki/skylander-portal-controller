@@ -117,6 +117,24 @@ pub(crate) struct Heard {
     paused: bool,
 }
 
+#[cfg(test)]
+impl Heard {
+    /// A voice of run `run`'s first play: for the tests of what takes a
+    /// run's voices down.
+    pub(crate) fn of_run(run: u64) -> Self {
+        Self {
+            run,
+            serial: 0,
+            sequence: 0,
+            gains: Gains::new(1.0, 1.0),
+            volume_draw: 0.0,
+            speed_draw: 0.0,
+            ringing: false,
+            paused: false,
+        }
+    }
+}
+
 /// A sound playing, as `/api/_test/tv`'s `sounds` lists it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct PlayingShot {

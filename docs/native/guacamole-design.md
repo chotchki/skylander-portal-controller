@@ -2154,7 +2154,10 @@ test hooks, [`level_choice.rs`](../../crates/guacamole/src/level_choice.rs)). Th
 extraction to end, since that owns the manifest while it runs, is checked against the dump's own list, then goes
 through the on-demand entry with its progress in the portal's header (level 200 in 4.8 s, PvP arena 1 in 3.9 s,
 hub stage 1 in 4.0 s, 266-430 MB each at a load of about 8; a level already in kept in 0.2 s) and loads as
-chapter 1 does, the last level taken down first. It's drawn, solid and propped by AG.7's rule from its start: its
+chapter 1 does, the last level taken down first. While a hero is in a level an ask is refused, at its start and
+again when its parts are in (a figure placed while they read), so no level changes under him (AS.49), and a level
+the load can't take fails by name (level 206's start zone fogging its sky dome whole, hub stage 2 with no start:
+AS.50). It's drawn, solid and propped by AG.7's rule from its start: its
 first placement running `InitializeLevel.ai`, the script chapter 1's `213_Init_Location` runs, which past chapter
 1 has no path and so stands at its own place (on PvP arena 1 that's 40 m off the arena; stand-in ledger `spawn`,
 AS.47). Its scripts aren't read until AS.15, so a prop without a range doesn't stand. A material the TV can't
@@ -2166,8 +2169,10 @@ stage 1 holds no sky at all (AS.46). The header stays up through the load, its p
 graphics card, then its keys compiled (AS.14): a level's census is the keys its load reads off its own parts,
 the level's scene switches being the same everywhere (so a hero's, a creature's, a clone's and a particle's keys
 are the census's in any level), and the three compile 45, 19 and 28 pipelines under it and none after they
-show. Leaving a level takes its entities, solids and assets down as the next comes up, the GPU's share back to
-the byte, but malloc's live bytes keep about 6-8 MB a round trip (AS.16, open).
+show (on a level's first load on the Mac its pipelines compile one a frame at 220-260 ms under the header; later
+loads at 16-29 ms). Leaving a level takes its entities, solids and assets down as the next comes up, the GPU's
+share back to the byte, but malloc's live bytes keep -1 to +14 MB a round trip, nearly all of it Bevy's GPU
+preprocessing buffers and bind groups for the bins the last level drew (AS.48).
 
 What every other level's scripts need from the VM is measured by guac-script's `giants_levels`: each level
 linked with `bootstrap.bld`, `global.bld` and `init_setup.bld` and run strict on a host that keeps every

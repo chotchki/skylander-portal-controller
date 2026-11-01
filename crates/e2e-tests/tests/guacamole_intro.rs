@@ -92,6 +92,15 @@ async fn pick_giants(server: &TestServer, phone: &Phone, intros: usize) {
         .wait_for_portal(Duration::from_secs(15))
         .await
         .expect("phone portal");
+    // The extraction starts only once the start's pass (AE.25) is done,
+    // which a debug build under load can take most of a minute to reach
+    // (as `guacamole_tv`'s pick waits for it): the 10 s below are the
+    // current extract's check alone.
+    wait_for_tv(&server.url, Duration::from_secs(90), |s| {
+        s["prepare"]["state"] == "done"
+    })
+    .await
+    .expect("the start's pass");
     let (snap, _) = wait_for_tv(&server.url, Duration::from_secs(10), |s| {
         s["screen"] == "Portal" && s["extraction"]["state"] == "Ready"
     })
