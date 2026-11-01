@@ -273,7 +273,8 @@ pub fn find_current(
 
 /// Marked complete, its intros for this build's target, every level the
 /// build plays whole and every other part in (the progression, the
-/// palettes, the scripts and the spawn models).
+/// palettes, the scripts and the spawn models), the interface's two parts
+/// in this build's record (AT.27).
 fn current(m: &Manifest) -> bool {
     m.complete
         && m.transcode
@@ -282,6 +283,7 @@ fn current(m: &Manifest) -> bool {
         && crate::levels::complete(m)
         && crate::PARTS.iter().all(|p| m.parts.contains_key(*p))
         && crate::scripts::complete(m)
+        && crate::interface::record_current(m)
 }
 
 fn read_manifest(dir: &Path, id: &DumpIdentity) -> Result<Manifest, Stale> {

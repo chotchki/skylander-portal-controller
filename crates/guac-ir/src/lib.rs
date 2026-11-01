@@ -5,7 +5,9 @@
 //! version before the body, so an extract from older code fails with
 //! [`IrError::VersionMismatch`] instead of a confusing shape error, and the
 //! extractor re-extracts (design decision 5: a stale manifest rebuilds).
-//! Bump [`IR_VERSION`] whenever a type here changes shape.
+//! Bump [`IR_VERSION`] whenever a type here changes shape, but for a record
+//! that versions its own shape in its files' names ([`interface::RECORD`]):
+//! bump that instead.
 
 #![forbid(unsafe_code)]
 

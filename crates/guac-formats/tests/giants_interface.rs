@@ -422,6 +422,11 @@ fn every_archives_interface_reads() {
     }
     assert!(failures.is_empty(), "{} failures", failures.len());
     assert_eq!((templates, files_with), (12_275, 503));
+    // AT.29: no template holds flags bit 21, so no container joins the
+    // frame's sprite list and its quad stays unmodelled; every string's
+    // settings read (AT.27).
+    assert!(bit21.is_empty(), "{bit21:?}");
+    assert_eq!(strings, 26_260);
     assert_eq!(character, (75, 1_970));
     assert_eq!(menus, (16, 887));
     assert_eq!(

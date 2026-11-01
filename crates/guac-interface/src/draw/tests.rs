@@ -603,7 +603,7 @@ proptest! {
 /// 200 art at 100 %, parentless, alignment 0 on the root's bottom-left,
 /// bottom-right, top-left and top-right, their initial matrices turning 90,
 /// 180.00078, 0 and 270 about depth, woken) cover the frame's corners as
-/// AC.13's quads do (`at-lane/out/at3_draws.tsv`, draws 456, 512, 455 and
+/// AC.13's quads do (`at-lane/out/at3_draws.tsv`, draws 512, 456, 455 and
 /// 454 of capture 112455), each within 0.5 px.
 #[test]
 fn ac13s_four_corner_shades_stand_turned_where_the_captures_draw_them() {
@@ -878,12 +878,16 @@ fn an_image_still_loading_waits_off_the_list_dirty() {
     m.lay_out(&w);
     assert_eq!(m.drawing(), &[a]);
     assert_ne!(m.sprite(a).properties & props::DIRTY, 0);
-    // Art with no context and text with no font never build; a model
-    // always does.
+    // Art with no context, particles with no emitter and text with no font
+    // never build; a model always does.
     let mut t = template(kind::ART, 4.0, 4.0);
     t.content = Content::Empty(guac_ir::interface::Kind::Art);
     let empty = m.add_template(None, &t, Value::Null);
     let empty = m.spawn(empty);
+    let mut t = template(kind::PARTICLES, 4.0, 4.0);
+    t.content = Content::Empty(guac_ir::interface::Kind::Particles);
+    let emitterless = m.add_template(None, &t, Value::Null);
+    let emitterless = m.spawn(emitterless);
     let mut t = template(kind::TEXT, 4.0, 4.0);
     t.content = Content::Text(0);
     let fontless = m.add_template(None, &t, Value::Null);
@@ -892,12 +896,15 @@ fn an_image_still_loading_waits_off_the_list_dirty() {
     t.content = Content::Empty(guac_ir::interface::Kind::Model);
     let model_ = m.add_template(None, &t, Value::Null);
     let model_ = m.spawn(model_);
-    for x in [empty, fontless, model_] {
+    for x in [empty, emitterless, fontless, model_] {
         m.sprite_mut(x).mark_dirty();
     }
     w.0.set(false);
     m.lay_out(&w);
-    assert!(!m.drawing().contains(&empty) && !m.drawing().contains(&fontless));
+    for x in [empty, emitterless, fontless] {
+        assert!(!m.drawing().contains(&x), "{x:?} never builds");
+        assert_ne!(m.sprite(x).properties & props::DIRTY, 0, "{x:?} dirty kept");
+    }
     assert!(m.drawing().contains(&model_));
 }
 

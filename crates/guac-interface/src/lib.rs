@@ -273,10 +273,11 @@
 //! activator kept (so off its parent, its children off it, back last in
 //! `active`, its current matrix its initial one), and puts a template that
 //! isn't a clone to sleep; it answers no snapshot, so nothing is written
-//! back. AT.4's docs had it emptying the set. **Hypothesis**: a removed
-//! clone reset this way wakes again (the state change from removed to
-//! asleep isn't read); no interface script resets a set (none of the UI's
-//! archives' 114 `reset` ops names an interface member, AT.25's census).
+//! back. AT.4's docs had it emptying the set. **Hypothesis**: a sprite that
+//! isn't awake, a removed clone among them, is left as it is (the original
+//! may wake a removed clone again: its state change out of removed isn't
+//! read); no interface script resets a set (none of the UI's archives' 114
+//! `reset` ops names an interface member, AT.25's census).
 //!
 //! **States** (AT.5, read at the placement's state change, 0x69508, and its
 //! deactivate hook, 0x6A620): a template in a file is a placement too,

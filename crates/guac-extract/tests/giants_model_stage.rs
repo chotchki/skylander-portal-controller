@@ -1,7 +1,9 @@
 //! The model stage on the real Giants dump (openspec AE.6, AG.14): every
 //! character model the roster loads, its textures, its hero side and the
-//! 3D-UI rig, written into a throwaway identity dir, again as a resume and
-//! once in the install format; Eruptor's model read back from the IR
+//! 3D-UI rig, written into a throwaway identity dir, again as a resume
+//! (AT.30: kept off the stage's record, the same shelf and files as the
+//! read and as a read again) and once in the install format; Eruptor's
+//! model read back from the IR
 //! against the decoders' direct output (counts, positions, his materials,
 //! his idle skinned at AC.17's three solved times, his walk and run skinned
 //! at and between their knots); the rig; and the totals AE.6's and AG.14's
@@ -150,6 +152,31 @@ fn skin(
         .collect()
 }
 
+/// What a model stage hands on beside its files: its counts, each failure
+/// and unsettled hero with its reason (the turntable's shelf takes the
+/// failures, AE.13) and the palettes' counts.
+type Shelf = (
+    [usize; 4],
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    [usize; 4],
+);
+
+fn shelf(m: &stages::ModelStage) -> Shelf {
+    let reasons = |f: &[stages::ModelFailure]| {
+        f.iter()
+            .map(|f| (f.load_file.clone(), f.reason.clone()))
+            .collect()
+    };
+    let p = &m.palettes;
+    (
+        [m.models, m.heroes, m.textures, m.binds],
+        reasons(&m.failed),
+        reasons(&m.unsettled),
+        [p.palettes, p.clips, p.networks, p.refused],
+    )
+}
+
 /// Files under `prefix` in the manifest, and their bytes.
 fn recorded(prefix: &str, m: &guac_extract::Manifest) -> (usize, u64) {
     m.outputs
@@ -260,22 +287,85 @@ fn the_model_stage_extracts_every_character() {
         "  glow over the drawn materials: {amount} by an amount, {layer_alpha} by layer 1's alpha {by_alpha:?}, {none} none"
     );
 
-    // A resume keeps every file.
+    // A resume keeps the part off its record (AT.30) without opening an
+    // archive, and hands on what the read did: every count, failure and
+    // unsettled hero the shelf and the log take, every file as the read left
+    // it (models, heroes, nodes, the textures, the rig and the record).
+    let files = |m: &guac_extract::Manifest| -> Vec<(String, u64, String)> {
+        m.outputs
+            .iter()
+            .filter(|o| {
+                [
+                    "models/",
+                    "heroes/",
+                    "nodes/",
+                    "palettes/",
+                    "textures/",
+                    "ir/rig",
+                    "ir/models",
+                ]
+                .iter()
+                .any(|p| o.path.starts_with(p))
+            })
+            .map(|o| (o.path.clone(), o.size, o.sha256.to_string()))
+            .collect()
+    };
+    let parts = |m: &guac_extract::Manifest| -> Vec<Vec<String>> {
+        [models::PART, models::PALETTES, models::NODES]
+            .map(|p| m.parts[p].clone())
+            .to_vec()
+    };
+    let read = (
+        shelf(&stage),
+        files(opened.dir.manifest()),
+        parts(opened.dir.manifest()),
+    );
     let again =
         stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     println!(
-        "  resumed: {:?} in {:.2} s",
+        "  resumed: kept {}, {:?} in {:.2} s",
+        again.kept,
         again.files,
         again.took.as_secs_f64()
     );
+    assert!(again.kept, "kept off the record");
     assert_eq!(
         again.files,
         Files {
             written: 0,
-            kept: 67 + 67 + 67 + stage.textures + 1,
+            kept: 67 + 67 + 67 + stage.textures + 2,
             bytes: stage.files.bytes
         }
     );
+    let kept = (
+        shelf(&again),
+        files(opened.dir.manifest()),
+        parts(opened.dir.manifest()),
+    );
+    assert!(kept == read, "the kept part is the read one");
+    // Read again over the same extract (the part's key taken off): the same
+    // shelf, every file the same bytes (none written) under the same parts.
+    opened.dir.record_part(models::PART, Vec::new()).unwrap();
+    let decoded =
+        stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    println!(
+        "  read again: kept {}, {:?} in {:.2} s",
+        decoded.kept,
+        decoded.files,
+        decoded.took.as_secs_f64()
+    );
+    assert!(!decoded.kept);
+    assert_eq!(
+        (decoded.files.written, decoded.palettes.files.written),
+        (0, 0),
+        "every file as the first read wrote it"
+    );
+    let decoded = (
+        shelf(&decoded),
+        files(opened.dir.manifest()),
+        parts(opened.dir.manifest()),
+    );
+    assert!(decoded == read, "the read again is the first read");
     // The install format writes only its IR, beside.
     let post =
         stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Postcard, &|_| {}).unwrap();
@@ -297,9 +387,11 @@ fn the_model_stage_extracts_every_character() {
         post.files,
         post.took.as_secs_f64()
     );
+    // Models, heroes and nodes, the rig and the stage's record (AT.30).
+    assert!(!post.kept, "the RON record isn't the install format's");
     assert_eq!(
         (post.files.written, post.files.kept),
-        (67 + 67 + 67 + 1, stage.textures)
+        (67 + 67 + 67 + 2, stage.textures)
     );
     // Every hero's RON, read back and put in postcard, is its postcard file
     // byte for byte: the two formats hold the same bits.

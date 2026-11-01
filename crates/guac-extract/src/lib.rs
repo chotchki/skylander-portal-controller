@@ -69,7 +69,8 @@ pub use root::{ExtractRoot, RootMode};
 /// `spawns/`, beside each level's `script.igz` and `palettes.*`, AE.31's
 /// `portraits` (the same files, now the right way up), AH.50's `nodes/` and
 /// AH.87's `particles/` and AT.8's `interface/`, beside each level's
-/// `sprites.*`.
+/// `sprites.*`, and AT.30's `models` (the files v3 and v4 added, with the
+/// stage's record `ir/models.*`).
 pub const LAYOUT_VERSION: u32 = 4;
 
 /// The extract-wide parts this build reads (the manifest's `parts`), each

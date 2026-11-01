@@ -17,7 +17,8 @@
 //! Every archive gets a file, an archive with no templates an empty one, so
 //! the part knows what it holds without reading the archive. The files'
 //! names carry the record's shape ([`guac_ir::interface::RECORD`], AT.27):
-//! an extract holding another shape's reads both parts again, nothing else. An archive the
+//! an extract holding another shape's isn't current ([`record_current`]),
+//! and its next start reads both parts again, nothing else. An archive the
 //! dump lacks is listed and the part lands without it (the e2e fixture's
 //! dump holds none); one that's there and won't read refuses the part, and
 //! the other stages land.
@@ -71,6 +72,28 @@ pub fn level_path(ir: IrFormat, level: &str) -> String {
         crate::levels::SPRITES,
         ext(ir)
     )
+}
+
+/// Whether every IR file the interface part and each first-run level's
+/// `sprites` part record is named for this build's [`RECORD`] (AT.27): the
+/// manifest's currency check asks it beside the parts' keys, so an extract
+/// holding another shape's files opens as a resume and its next start reads
+/// the two parts again. A part not recorded is the keys' check's to refuse.
+pub fn record_current(m: &Manifest) -> bool {
+    let tag = format!(".v{RECORD}.");
+    let named = |files: &Vec<String>| {
+        files
+            .iter()
+            .filter(|f| !f.starts_with(models::TEXTURE_DIR))
+            .all(|f| f.contains(&tag))
+    };
+    m.parts.get(PART).is_none_or(named)
+        && crate::levels::FIRST_RUN.iter().all(|level| {
+            m.levels
+                .get(*level)
+                .and_then(|l| l.parts.get(crate::levels::SPRITES))
+                .is_none_or(named)
+        })
 }
 
 /// Whether `archive` (a path under `USRDIR`) is one of the menu archives.
