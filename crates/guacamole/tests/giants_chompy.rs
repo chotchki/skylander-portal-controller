@@ -3653,6 +3653,10 @@ struct OrbLife {
     down_ground: Option<f32>,
     /// Its height each step it's listed, m (the idle bounces, the review's).
     heights: Vec<(i64, f32)>,
+    /// Each step it's in his collecting set: whether `scripts::orbs` lists
+    /// it flying, and its distance to his pivot, m (AH.281: the TV draws
+    /// its flight off that list).
+    flight: Vec<(i64, bool, f32)>,
 }
 
 /// What the orbs' sets hold after a step: each orb's entity, its worth
@@ -3786,8 +3790,18 @@ fn follow_orbs(
                 life.down_ground = Some(feet(d.x.hypot(d.z)));
             }
         }
+        let listed = scripts::orbs(&run.vm, &run.world);
         for orb in &now.collecting {
             let life = lives.get_mut(orb).expect("a taken orb came out");
+            let drawn = listed
+                .iter()
+                .find(|o| o.actor == *orb)
+                .filter(|o| o.state == scripts::OrbState::Flying);
+            life.flight.push((
+                f,
+                drawn.is_some(),
+                drawn.map_or(f32::NAN, |o| (o.at - run.hero().pivot).length()),
+            ));
             if life.taken.is_none() {
                 life.taken = Some(f);
                 // Where it was, and he, as the take read them: the step
@@ -3988,6 +4002,24 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         assert!(
             paid.iter().any(|(f, _)| *f == arrived),
             "its worth paid the step it arrives"
+        );
+        // AH.281: listed flying every step from its take to the one before
+        // it arrives, closing on him each step, so the TV draws its flight.
+        let steps: Vec<i64> = l.flight.iter().map(|s| s.0).collect();
+        assert_eq!(
+            steps,
+            (taken..arrived).collect::<Vec<_>>(),
+            "in his collecting set from the take until it arrives"
+        );
+        assert!(
+            l.flight.iter().all(|s| s.1),
+            "listed flying every step in: {:?}",
+            l.flight
+        );
+        assert!(
+            l.flight.windows(2).all(|w| w[1].2 < w[0].2 + 1e-4),
+            "closing on him: {:?}",
+            l.flight
         );
     }
     let total: i32 = paid.iter().map(|p| p.1).sum();

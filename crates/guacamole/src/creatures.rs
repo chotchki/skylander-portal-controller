@@ -629,13 +629,13 @@ pub(crate) struct WokenShot {
     pub by: String,
 }
 
-/// An experience orb out in the level: where, its worth, whether it's
-/// still coming down.
+/// An experience orb out in the level: where, its worth, and whether it's
+/// still coming down, down or flying in to whoever took it (AH.281).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct OrbShot {
     pub at: [f32; 3],
     pub worth: i32,
-    pub falling: bool,
+    pub state: guacamole::scripts::OrbState,
 }
 
 /// The creatures' part of `/api/_test/tv`.
@@ -715,7 +715,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         .map(|o| OrbShot {
             at: o.at.to_array(),
             worth: o.worth,
-            falling: o.falling,
+            state: o.state,
         })
         .collect();
     CreaturesReport {

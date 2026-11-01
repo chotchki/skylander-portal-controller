@@ -922,6 +922,13 @@ impl Play {
 
     /// The level has started: shown, paused or held. No intro plays from
     /// then on (character-intros).
+    /// Where the last hero in the level stood as he came off (AH.280: what
+    /// a step with no hero in measures the activity rule from); none
+    /// outside a level or before one has come off.
+    pub(crate) fn last_place(&self) -> Option<Vec3> {
+        self.inside.as_ref()?.left.map(|(at, _)| at)
+    }
+
     pub(crate) fn started(&self) -> bool {
         self.inside.is_some()
     }
@@ -4280,6 +4287,29 @@ mod tests {
             active(a, SMASH_FAR)
         });
         assert!(!asleep(&app, SMASH_FAR_COIN), "the far coin runs");
+
+        // AH.280: taken off by it, the step the take-off lets run before
+        // the hold (his deactivation's tick, AH.224's and AH.105's) measures
+        // the activity rule from where he left, not the level's start 63 m
+        // off the coin, so the coin he left awake stays awake; then nothing
+        // steps until the next hero is in.
+        clear(&mut app, 0);
+        app.update();
+        assert!(
+            app.world().resource::<Play>().hero().is_none(),
+            "off in the take-off frame"
+        );
+        let steps = run_steps(&app);
+        for frame in 0..5 {
+            app.update();
+            assert!(
+                !asleep(&app, SMASH_FAR_COIN),
+                "frame {frame}: the coin slept"
+            );
+        }
+        let ran = run_steps(&app) - steps;
+        assert!((1..=2).contains(&ran), "{ran} steps with no hero in");
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
     }
 
     // ---- AG.29 over AH.24: the portal's holds and his scripts ------------

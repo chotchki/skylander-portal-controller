@@ -947,6 +947,25 @@ pub(crate) fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
     cameras.iter().next().map_or(0.0, |f| f.drawn.heading())
 }
 
+/// Where the activity rule (openspec AH.27, AG.7's rule as the headless
+/// runs apply it) measures from as a step begins: the heroes' pivots; with
+/// none in, where the last one came off once the level has had one
+/// (AH.280), else the level's start, as the props stand. A take-off lets a
+/// step run before the portal's hold stops the clock (the one his
+/// deactivation's clean-up ticks in: AH.224's beam, AH.105's helper);
+/// measured from the start, it put everything past its range from there to
+/// sleep, and a coin asleep for a step left the loot for good.
+pub(crate) fn activity_from(
+    pivots: Vec<Vec3>,
+    last_place: Option<Vec3>,
+    start: Option<Vec3>,
+) -> Vec<Vec3> {
+    if !pivots.is_empty() {
+        return pivots;
+    }
+    last_place.or(start).into_iter().collect()
+}
+
 /// One step of the run, before the hero's (the module docs).
 pub(crate) fn step_scripts(
     mut commands: Commands,
@@ -963,23 +982,21 @@ pub(crate) fn step_scripts(
     mut steps: Option<ResMut<ScriptSteps>>,
     log: Res<ScriptLog>,
     mut earning: Option<ResMut<Earning>>,
-    (level, real, mut camera, camera_placements): (
+    (level, real, mut camera, camera_placements, play): (
         Res<Level>,
         Res<Time<Real>>,
         ResMut<CameraScripts>,
         Option<Res<CameraPlacements>>,
+        Option<Res<crate::play::Play>>,
     ),
 ) {
     let began = std::time::Instant::now();
-    // The activity rule (openspec AH.27, AG.7's rule as the headless runs
-    // apply it): each managed placement woken or put to sleep by the
-    // heroes' pivots as the step begins, by the level's start before one is
-    // in, as the props stand.
     let pivots: Vec<Vec3> = heroes.iter().map(|(_, b)| b.hero.pivot).collect();
-    let from: Vec<Vec3> = match pivots.is_empty() {
-        true => level.start().into_iter().collect(),
-        false => pivots,
-    };
+    let from = activity_from(
+        pivots,
+        play.as_deref().and_then(crate::play::Play::last_place),
+        level.start(),
+    );
     runtime.vm.set_activity(&world.activity_at(&from));
     let props = standing_props(&level, &world, source.as_deref());
     let held = actions.take();
@@ -1775,6 +1792,22 @@ mod tests {
 
     use super::*;
     use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_attack, write_smash};
+
+    /// AH.280's backstop: with no hero in, the activity rule measures from
+    /// where the last one came off once the level has had one, never the
+    /// level's start; with heroes in, from them alone.
+    #[test]
+    fn with_no_hero_in_activity_measures_from_where_the_last_one_left() {
+        let (him, left, start) = (
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::new(30.0, 0.0, -6.0),
+            Vec3::new(10.0, 43.0, -93.0),
+        );
+        assert_eq!(activity_from(vec![him], Some(left), Some(start)), [him]);
+        assert_eq!(activity_from(Vec::new(), Some(left), Some(start)), [left]);
+        assert_eq!(activity_from(Vec::new(), None, Some(start)), [start]);
+        assert!(activity_from(Vec::new(), None, None).is_empty());
+    }
 
     /// A headless engine: heroes on the parry twin's open ground.
     struct Bench {
