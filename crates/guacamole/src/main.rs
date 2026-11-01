@@ -40,6 +40,7 @@ mod progress;
 mod screen;
 #[cfg(feature = "dev-tools")]
 mod shots;
+mod slow_frames;
 mod starfield;
 mod surfaces;
 mod swap;
@@ -478,8 +479,13 @@ fn run_tv(
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,
         creatures::CreaturesPlugin,
-        // AH.61's orbs and AH.87's particles of what the scripts spawn.
-        (orbs::OrbsPlugin, emitters::EmittersPlugin),
+        // AH.61's orbs and AH.87's particles of what the scripts spawn;
+        // AG.288's slow frames logged with why, in every build.
+        (
+            orbs::OrbsPlugin,
+            emitters::EmittersPlugin,
+            slow_frames::SlowFramesPlugin,
+        ),
     ));
     // AH.25's dev entry, in a dev build only.
     if let Some(entry) = dev_entry::plugin(cfg!(feature = "dev-tools"), entry_asks) {
