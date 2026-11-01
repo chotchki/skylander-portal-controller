@@ -131,6 +131,12 @@ pub struct Sprite {
     pub clones: Vec<SpriteId>,
     pub id: i32,
     pub activator: Value,
+    /// Its font: an index into the model's fonts (the host resolves a
+    /// template's `FontDataInfo`, its own archive's or `global.bld`'s).
+    pub font: Option<usize>,
+    /// The letters' colours the text colour converter set, one per glyph
+    /// drawn, in order (the crate docs, Text).
+    pub letters: Vec<[u8; 4]>,
 }
 
 impl Sprite {
@@ -158,6 +164,8 @@ impl Sprite {
             clones: Vec::new(),
             id: 0,
             activator: Value::Null,
+            font: None,
+            letters: Vec::new(),
         }
     }
 
@@ -172,6 +180,7 @@ impl Sprite {
             children: Vec::new(),
             clones: Vec::new(),
             activator: Value::Null,
+            letters: Vec::new(),
             ..self.clone()
         }
     }

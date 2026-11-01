@@ -4,11 +4,12 @@
 
 use std::collections::HashMap;
 
-use guac_ir::interface::{Content, Template};
+use guac_ir::interface::{Content, Font, Template};
 use guac_script::{Obj, Value, convert};
 
 use crate::members::Member;
 use crate::sprite::{Source, Sprite, SpriteId, State, flags, kind, placement, props};
+use crate::text::{self, Metrics, TextIn};
 
 /// Where the model's own objects sit among the host's entity ids: sprite `n`
 /// reads `Value::Entity(sprites + n)`, a string the converter made
@@ -63,10 +64,11 @@ pub enum Refusal {
     Unmodelled,
 }
 
-/// What the model asks of the kinds and the layout it doesn't hold yet (the
-/// text's measure, AT.6; the place on screen, AT.7; an image still loading;
-/// an object's name). `None` is "not known": the model falls back where the
-/// crate docs give it one and refuses as [`Refusal::Unmodelled`] otherwise.
+/// What the model asks of what it doesn't hold: a kind's answer the adapter
+/// knows better (a model's, an emitter's), the place on screen (AT.7), an
+/// image still loading, an object's name. `None` is "not known": the model
+/// answers itself where the crate docs give it a rule and refuses as
+/// [`Refusal::Unmodelled`] otherwise.
 pub trait World {
     /// The kind's computed width, height and depth for a sprite not *sized*.
     fn size(&self, model: &Model, sprite: SpriteId) -> Option<[f32; 3]> {
@@ -172,6 +174,7 @@ pub struct Model {
     converter: StringConverter,
     text_colors: TextColorConverter,
     name_object: Value,
+    fonts: Vec<Font>,
     /// `viewporttitlesafeinfo`'s margins: left, right, upper, lower. 0 until
     /// AT.10 reads the original's, as the value cells read today.
     pub title_safe: [i32; 4],
@@ -211,6 +214,7 @@ impl Model {
             converter: StringConverter::default(),
             text_colors: TextColorConverter::default(),
             name_object: Value::Null,
+            fonts: Vec::new(),
             title_safe: [0; 4],
         }
     }
@@ -241,6 +245,59 @@ impl Model {
         });
         self.file_strings.insert(obj, n);
         Value::Object(obj)
+    }
+
+    /// A font the sprites can draw in; its index is what [`Model::set_font`]
+    /// takes.
+    pub fn add_font(&mut self, font: Font) -> usize {
+        self.fonts.push(font);
+        self.fonts.len() - 1
+    }
+
+    pub fn font(&self, index: usize) -> Option<&Font> {
+        self.fonts.get(index)
+    }
+
+    /// A sprite's font (a template's, before it is cloned: clones copy it).
+    pub fn set_font(&mut self, id: SpriteId, font: Option<usize>) {
+        self.sprite_mut(id).font = font;
+    }
+
+    /// The font a text sprite measures and draws in, if it has one (the
+    /// default font is null, the crate docs' Text).
+    pub fn metrics(&self, id: SpriteId) -> Option<Metrics<'_>> {
+        self.sprite(id)
+            .font
+            .and_then(|f| self.fonts.get(f))
+            .map(Metrics::new)
+    }
+
+    /// What a text sprite's text shows (the crate docs, Text): its string,
+    /// the number filled in when the string has an `@`, or the name of the
+    /// object it holds; `None` with no string.
+    pub fn text_units(&self, id: SpriteId, world: &dyn World) -> Option<Vec<u16>> {
+        let s = self.sprite(id);
+        if s.text == Value::Null {
+            return None;
+        }
+        match self.string(s.text) {
+            Some(st) if st.flags & (string_flags::HAS_AT | string_flags::TIME) != 0 => {
+                Some(text::fill(st, s.numeric_value))
+            }
+            Some(st) => Some(st.units.clone()),
+            None => world.name_of(s.text).map(|n| n.encode_utf16().collect()),
+        }
+    }
+
+    /// What the text's layout reads of the sprite.
+    pub fn text_in(&self, id: SpriteId) -> TextIn {
+        let s = self.sprite(id);
+        TextIn {
+            flags: s.flags,
+            point_size: props::POINT_SIZE.get(s.properties),
+            width: s.size[0],
+            height: s.size[1],
+        }
     }
 
     pub fn sprite(&self, id: SpriteId) -> &Sprite {
@@ -390,26 +447,54 @@ impl Model {
         self.kind_size(id, world)
     }
 
-    /// The size a sprite reads unwritten, *sized* or not (`natural size`
-    /// reads this too): the world's when it knows it, else an image's own,
-    /// else its desired size, else the stored numbers; a text's refuses
-    /// until AT.6.
+    /// The size a sprite reads unwritten, *sized* or not: the world's when
+    /// it knows it, else its kind's (the crate docs: art's own size, the
+    /// text's size, a container's stored numbers).
     fn kind_size(&self, id: SpriteId, world: &dyn World) -> Result<[f32; 3], Refusal> {
         let s = self.sprite(id);
         if let Some(size) = world.size(self, id) {
             return Ok(size);
         }
         match (s.kind(), &s.content) {
-            // Its image's size, its data info's desired size until then
-            // (0xB6950).
-            (kind::ART, Content::Image(a)) => Ok(match (a.size, a.desired) {
+            // Its image's size when in, a bound texture's desired size × 0.5,
+            // else its stored size × 0.5 (0xB6950; 0.5 at 0x724360).
+            (kind::ART, Content::Image(a) | Content::Movie(a)) => Ok(match (a.size, a.desired) {
                 (Some([w, h]), _) => [w as f32, h as f32, s.size[2]],
-                (None, [w, h]) if w > 0 && h > 0 => [w as f32, h as f32, s.size[2]],
-                _ => s.size,
+                (None, [w, h]) if w > 0 && h > 0 => [0.5 * w as f32, 0.5 * h as f32, s.size[2]],
+                _ => [0.5 * s.size[0], 0.5 * s.size[1], s.size[2]],
             }),
-            (kind::TEXT, _) => Err(Refusal::Unmodelled),
+            (kind::ART, _) => Ok([0.5 * s.size[0], 0.5 * s.size[1], s.size[2]]),
+            // 0xB7F08: no font returns what it was handed; no string
+            // measures 0 wide.
+            (kind::TEXT, _) => Ok(match self.metrics(id) {
+                None => s.size,
+                Some(m) => {
+                    let units = self.text_units(id, world).unwrap_or_default();
+                    let [w, h] = text::size(&m, &self.text_in(id), &units);
+                    [w, h, s.size[2]]
+                }
+            }),
             _ => Ok(s.size),
         }
+    }
+
+    /// What `natural size` reads: the world's when it knows it, a text's
+    /// measure, else what the size reads unwritten.
+    fn natural(&self, id: SpriteId, world: &dyn World) -> Result<[f32; 2], Refusal> {
+        if let Some(n) = world.natural_size(self, id) {
+            return Ok(n);
+        }
+        let s = self.sprite(id);
+        if s.kind() == kind::TEXT {
+            // No font or no string: the cached width (0) by the stored
+            // height (0xB81E8).
+            return Ok(match (self.metrics(id), self.text_units(id, world)) {
+                (Some(m), Some(units)) => text::natural_size(&m, &self.text_in(id), &units),
+                _ => [0.0, s.size[1]],
+            });
+        }
+        let [w, h, _] = self.kind_size(id, world)?;
+        Ok([w, h])
     }
 
     /// Reads a sprite's member as the crate docs' Members give it; a
@@ -462,16 +547,7 @@ impl Model {
             ("spriteinfo", "height") => float(self.size_read(id, world)?[1]),
             ("spriteinfo", "depth") => float(self.size_read(id, world)?[2]),
             ("spriteinfo", "natural size") => {
-                let [w, h] = match world.natural_size(self, id) {
-                    Some(n) => n,
-                    None if s.kind() == kind::TEXT => return Err(Refusal::Unmodelled),
-                    None => {
-                        // Art and a container measure what their size reads
-                        // unwritten.
-                        let [w, h, _] = self.kind_size(id, world)?;
-                        [w, h]
-                    }
-                };
+                let [w, h] = self.natural(id, world)?;
                 Ok(Answer::Value(screen(w, h)))
             }
             ("spriteinfo", "origin") => Ok(Answer::Value(self.value_of(id))),
@@ -596,6 +672,7 @@ impl Model {
                     s.flags &= !flags::STRING;
                     s.text = v;
                     s.properties = (s.properties & !props::WIDTH_VALID) | props::DIRTY;
+                    s.letters.clear();
                 }
             }
             ("spriteinfo", "priority") => self.sprite_mut(id).priority = float(v)?,
@@ -661,6 +738,7 @@ impl Model {
                     s.numeric_value = f;
                     if s.has_text() {
                         s.properties = (s.properties & !props::WIDTH_VALID) | props::DIRTY;
+                        s.letters.clear();
                     }
                 }
             }
@@ -758,8 +836,8 @@ impl Model {
     }
 
     /// Writes a global converter's member, converted and clamped as the VM
-    /// does first.
-    pub fn set_global(&mut self, m: &Member, v: Value) -> Result<(), Refusal> {
+    /// does first. `world` names an object a text shows.
+    pub fn set_global(&mut self, m: &Member, v: Value, world: &dyn World) -> Result<(), Refusal> {
         if m.set.is_none() {
             return Err(Refusal::ReadOnly);
         }
@@ -776,7 +854,18 @@ impl Model {
             ("stringconverter", "integer digits") => self.converter.integer_digits = int(v)?,
             ("stringconverter", "decimal digits") => self.converter.decimal_digits = int(v)?,
             ("stringconverter", "use comma") => self.converter.comma = int(v)? != 0,
-            ("textcolorconverter", "text sprite") => self.text_colors.sprite = v,
+            ("textcolorconverter", "text sprite") => {
+                // Its letters' colours read back, one per glyph drawn
+                // (0xBAE20).
+                self.text_colors.sprite = v;
+                self.text_colors.colors = self.sprite_of(v).map(|id| {
+                    let s = self.sprite(id);
+                    let n = self.letter_count(id, world);
+                    (0..n)
+                        .map(|i| color(s.letters.get(i).copied().unwrap_or(LETTER)))
+                        .collect()
+                });
+            }
             ("nameextractor", "Object to name") => self.name_object = v,
             _ => return Err(Refusal::Unmodelled),
         }
@@ -821,11 +910,65 @@ impl Model {
                 self.converter.text = text;
             }
             ("textcolorconverter", "color set") => {
+                // The kept sprite's letters coloured in order (0xBB5D8).
                 self.text_colors.colors = Some(elements.to_vec());
+                if let Some(id) = self.sprite_of(self.text_colors.sprite) {
+                    let colors = elements.iter().map(|e| match *e {
+                        Value::Color(c) => c.to_be_bytes(),
+                        _ => LETTER,
+                    });
+                    let s = self.sprite_mut(id);
+                    for (i, c) in colors.enumerate() {
+                        if i < s.letters.len() {
+                            s.letters[i] = c;
+                        } else {
+                            s.letters.push(c);
+                        }
+                    }
+                }
             }
             _ => return Err(Refusal::Unmodelled),
         }
         Ok(())
+    }
+}
+
+/// A letter's colour until the text colour converter sets it: the font's
+/// colour at run time (0.5, 0.5, 0.5, 1).
+pub const LETTER: [u8; 4] = [0x80, 0x80, 0x80, 0xFF];
+
+impl Model {
+    /// How many glyphs a text sprite draws (its letters for the text colour
+    /// converter); 0 for anything else.
+    pub fn letter_count(&self, id: SpriteId, world: &dyn World) -> usize {
+        self.glyph_layout(id, world).map_or(0, |(g, _)| g.len())
+    }
+
+    /// A text sprite's glyphs, from its top-left in font pixels, and its
+    /// layout (the crate docs, Text); `None` for one that draws no text.
+    pub fn glyph_layout(
+        &self,
+        id: SpriteId,
+        world: &dyn World,
+    ) -> Option<(Vec<text::GlyphQuad>, text::TextOut)> {
+        let s = self.sprite(id);
+        if s.kind() != kind::TEXT {
+            return None;
+        }
+        let m = self.metrics(id)?;
+        let units = self.text_units(id, world)?;
+        if units.is_empty() {
+            return None;
+        }
+        let out = text::layout(&m, &self.text_in(id), &units);
+        let (width, justify) = text::break_width(
+            s.sized(),
+            out.size[0],
+            out.scale[0],
+            props::JUSTIFY.get(s.properties),
+        );
+        // The font breaks the string itself at that width (0x3D5698).
+        Some((text::glyphs(&m, width, justify, &units), out))
     }
 }
 

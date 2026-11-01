@@ -4407,6 +4407,7 @@ dependencies = [
 name = "guac-interface"
 version = "0.1.0"
 dependencies = [
+ "guac-extract",
  "guac-ir",
  "guac-script",
  "proptest",

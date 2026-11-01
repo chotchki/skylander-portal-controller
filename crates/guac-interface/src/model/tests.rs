@@ -330,13 +330,16 @@ fn a_size_written_reads_back_and_one_unwritten_is_the_kinds() {
     let [image, pending, text] = [m.spawn(image), m.spawn(pending), m.spawn(text)];
     assert_eq!(read(&m, image, si("width")), Value::Float(24.0));
     assert_eq!(read(&m, image, si("height")), Value::Float(16.0));
-    assert_eq!(read(&m, pending, si("width")), Value::Float(8.0));
+    // No image: a bound texture's desired size × 0.5 (0xB6950).
+    assert_eq!(read(&m, pending, si("width")), Value::Float(4.0));
+    assert_eq!(read(&m, pending, si("height")), Value::Float(3.0));
     // No image and a desired size that isn't one (a movie's -1, -1): the
-    // stored size (the crate docs' Hypothesis on 0xB6950's fallback).
+    // stored size × 0.5.
     let movie = m.add_template(None, &art(None, [-1, -1]), Value::Null);
     let movie = m.spawn(movie);
-    assert_eq!(read(&m, movie, si("width")), Value::Float(237.0));
-    assert_eq!(m.get(text, si("width"), &NoWorld), Err(Refusal::Unmodelled));
+    assert_eq!(read(&m, movie, si("width")), Value::Float(118.5));
+    // A text with no font: what it was handed, its stored size.
+    assert_eq!(read(&m, text, si("width")), Value::Float(237.0));
     let (_, _, boxed) = one();
     let _ = boxed;
     m.sprite_mut(image).properties &= !props::DIRTY;
@@ -526,7 +529,7 @@ fn a_text_write_clears_the_string_flags_and_a_name_extractor_shows_its_object() 
     assert_eq!(m.sprite(a).properties & props::WIDTH_VALID, 0);
     assert_eq!(read(&m, a, si("text")), Value::Entity(5));
     let named = m.value_of(t);
-    m.set_global(member("nameextractor", "Object to name"), named)
+    m.set_global(member("nameextractor", "Object to name"), named, &NoWorld)
         .unwrap();
     let extractor = m.singleton(singleton::NAME_EXTRACTOR);
     m.set(a, si("text"), extractor).unwrap();
@@ -540,7 +543,7 @@ fn read_only_members_refuse_writes_and_resets_follow_their_handlers() {
         let r = if mem.namespace == "spriteinfo" || mem.namespace == "spritematrixmeasurement" {
             m.set(a, mem, Value::Int(1))
         } else {
-            m.set_global(mem, Value::Int(1))
+            m.set_global(mem, Value::Int(1), &NoWorld)
         };
         assert_eq!(r, Err(Refusal::ReadOnly), "{}", mem.path());
     }
@@ -560,10 +563,13 @@ fn read_only_members_refuse_writes_and_resets_follow_their_handlers() {
 fn the_string_converter_turns_a_set_into_a_string_and_back() {
     let mut m = Model::default();
     let g = |n: &str| member("stringconverter", n);
-    m.set_global(g("integer digits"), Value::Int(3)).unwrap();
-    m.set_global(g("decimal digits"), Value::Int(1)).unwrap();
-    m.set_global(g("use comma"), Value::Int(9)).unwrap();
-    m.set_global(g("'@' representation"), Value::Int(1))
+    m.set_global(g("integer digits"), Value::Int(3), &NoWorld)
+        .unwrap();
+    m.set_global(g("decimal digits"), Value::Int(1), &NoWorld)
+        .unwrap();
+    m.set_global(g("use comma"), Value::Int(9), &NoWorld)
+        .unwrap();
+    m.set_global(g("'@' representation"), Value::Int(1), &NoWorld)
         .unwrap();
     assert_eq!(
         m.get_global(g("use comma"), &NoWorld),
@@ -599,7 +605,7 @@ fn the_string_converter_turns_a_set_into_a_string_and_back() {
     // A file's string taken apart into its characters.
     let obj = Obj { unit: 2, index: 9 };
     let file = m.add_file_string(obj, "Hi", Str::default());
-    m.set_global(g("text"), file).unwrap();
+    m.set_global(g("text"), file, &NoWorld).unwrap();
     assert_eq!(
         m.get_global(g("value set"), &NoWorld),
         Ok(Answer::Elements(vec![Value::Int(0x48), Value::Int(0x69)]))
@@ -625,8 +631,12 @@ fn the_name_checksum_is_the_names_fnv1a_and_the_margins_read_zero() {
         Ok(Answer::Value(Value::Int(0))),
         "no object"
     );
-    m.set_global(member("nameextractor", "Object to name"), Value::Entity(3))
-        .unwrap();
+    m.set_global(
+        member("nameextractor", "Object to name"),
+        Value::Entity(3),
+        &NoWorld,
+    )
+    .unwrap();
     assert_eq!(
         m.get_global(sum, &Names),
         Ok(Answer::Value(Value::Int(0xE40C_292Cu32 as i32)))
@@ -745,7 +755,7 @@ proptest! {
         for (i, v) in writes {
             let mem = &MEMBERS[i];
             if !matches!(mem.namespace, "spriteinfo" | "spritematrixmeasurement") {
-                let _ = m.set_global(mem, v);
+                let _ = m.set_global(mem, v, &NoWorld);
                 continue;
             }
             let target = if i % 2 == 0 { a } else { b };
@@ -766,4 +776,151 @@ proptest! {
             prop_assert_eq!(got, expected, "{}", mem.path());
         }
     }
+}
+
+/// A font 82 high with a glyph for each digit, `@` and a few letters, every
+/// cell its step wide.
+fn digits_font() -> guac_ir::interface::Font {
+    let mut glyphs: Vec<guac_ir::interface::Glyph> = " 0123456789@Lelv"
+        .chars()
+        .map(|c| guac_ir::interface::Glyph {
+            char: c as u16,
+            step: 20.0 + (c as u32 % 5) as f32,
+            offset: [0.0, 0.0],
+            size: [20.0 + (c as u32 % 5) as f32, 82.0],
+            uv_min: [0.0; 2],
+            uv_max: [0.01; 2],
+            kern: [0; 4],
+        })
+        .collect();
+    glyphs.sort_by_key(|g| g.char);
+    guac_ir::interface::Font {
+        name: None,
+        source: None,
+        height: 82.0,
+        base_line: 0.0,
+        char_padding: 0.0,
+        kern_amount: 0.0,
+        color: [0.5, 0.5, 0.5, 1.0],
+        atlas: "textures/f.ktx2".into(),
+        atlas_size: [1024, 1024],
+        glyphs,
+    }
+}
+
+/// A text clone in the digits font showing a file string `@` with *has an
+/// `@`*, at 41 points.
+fn number_text() -> (Model, SpriteId, crate::text::Metrics<'static>) {
+    let font: &'static _ = Box::leak(Box::new(digits_font()));
+    let mut m = Model::default();
+    let f = m.add_font(font.clone());
+    let obj = Obj { unit: 1, index: 9 };
+    let at = Str {
+        flags: string_flags::HAS_AT,
+        ..Str::default()
+    };
+    let s = m.add_file_string(obj, "@", at);
+    let mut t = template("Number", kind::TEXT);
+    t.flags = 0;
+    let t = m.add_template(None, &t, s);
+    m.set_font(t, Some(f));
+    let a = m.spawn(t);
+    m.set(a, si("point size"), Value::Int(41)).unwrap();
+    m.set(a, si("numeric value"), Value::Int(290)).unwrap();
+    (m, a, crate::text::Metrics::new(font))
+}
+
+#[test]
+fn a_text_measures_its_filled_string_in_its_font() {
+    let (mut m, a, f) = number_text();
+    let u = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+    assert_eq!(m.text_units(a, &NoWorld), Some(u("290")));
+    let w = f.run_width(&u("290")) * 0.5;
+    // Unwritten: the string's width by one line, at the point size.
+    assert_eq!(read(&m, a, si("width")), Value::Float(w));
+    assert_eq!(read(&m, a, si("height")), Value::Float(41.0));
+    // natural size in 12.4, truncated to a sixteenth.
+    let screen = |x: f32, y: f32| {
+        Value::Screen(
+            u32::from((x * 16.0) as i16 as u16) << 16 | u32::from((y * 16.0) as i16 as u16),
+        )
+    };
+    assert_eq!(read(&m, a, si("natural size")), screen(w, 41.0));
+    // Written back as the width, the glyphs stretch to the truncated size.
+    let Value::Screen(n) = read(&m, a, si("natural size")) else {
+        unreachable!()
+    };
+    let truncated = f32::from((n >> 16) as u16 as i16) / 16.0;
+    m.set(a, si("width"), Value::Float(truncated)).unwrap();
+    m.set(a, si("height"), Value::Float(41.0)).unwrap();
+    let (glyphs, out) = m.glyph_layout(a, &NoWorld).unwrap();
+    assert_eq!(glyphs.len(), 3);
+    assert_eq!(out.scale, [truncated / f.run_width(&u("290")), 0.5]);
+    // A string with no `@` flag keeps its `@`; no string, no glyphs.
+    m.set(a, si("text"), Value::Null).unwrap();
+    assert_eq!(m.glyph_layout(a, &NoWorld), None);
+    assert_eq!(read(&m, a, si("natural size")), screen(0.0, 41.0));
+}
+
+#[test]
+fn a_text_holding_an_object_shows_its_name() {
+    let (mut m, a, f) = number_text();
+    struct Named;
+    impl World for Named {
+        fn name_of(&self, v: Value) -> Option<String> {
+            (v == Value::Entity(77)).then(|| "Lev".into())
+        }
+    }
+    m.set(a, si("text"), Value::Entity(77)).unwrap();
+    let u: Vec<u16> = "Lev".encode_utf16().collect();
+    assert_eq!(m.text_units(a, &Named), Some(u.clone()));
+    assert_eq!(
+        read_with(&m, a, si("width"), &Named),
+        Value::Float(f.run_width(&u) * 0.5)
+    );
+    // Without the name, nothing to measure.
+    assert_eq!(read(&m, a, si("width")), Value::Float(0.0));
+}
+
+fn read_with(m: &Model, id: SpriteId, mem: &Member, w: &dyn World) -> Value {
+    match m.get(id, mem, w) {
+        Ok(Answer::Value(v)) => v,
+        other => panic!("{}: {other:?}", mem.path()),
+    }
+}
+
+#[test]
+fn the_text_colour_converter_colours_letters_and_reads_them_back() {
+    let (mut m, a, _) = number_text();
+    let tc = |n: &str| member("textcolorconverter", n);
+    let av = m.value_of(a);
+    m.set_global(tc("text sprite"), av, &NoWorld).unwrap();
+    // Read back: one colour per glyph drawn, each the font's 0x808080FF.
+    let grey = Value::Color(0x8080_80FF);
+    assert_eq!(
+        m.get_global(tc("color set"), &NoWorld),
+        Ok(Answer::Elements(vec![grey; 3]))
+    );
+    // Two colours colour the first two letters; the third keeps its own.
+    let red = Value::Color(0xFF00_00FF);
+    let blue = Value::Color(0x0000_FFFF);
+    m.set_global_elements(tc("color set"), &[red, blue])
+        .unwrap();
+    assert_eq!(
+        m.sprite(a).letters,
+        vec![[0xFF, 0, 0, 0xFF], [0, 0, 0xFF, 0xFF]]
+    );
+    m.set_global(tc("text sprite"), av, &NoWorld).unwrap();
+    assert_eq!(
+        m.get_global(tc("color set"), &NoWorld),
+        Ok(Answer::Elements(vec![red, blue, grey]))
+    );
+    // A new number rebuilds the letters in the font's colour.
+    m.set(a, si("numeric value"), Value::Int(31)).unwrap();
+    assert!(m.sprite(a).letters.is_empty());
+    m.set_global(tc("text sprite"), av, &NoWorld).unwrap();
+    assert_eq!(
+        m.get_global(tc("color set"), &NoWorld),
+        Ok(Answer::Elements(vec![grey; 2]))
+    );
 }

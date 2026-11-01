@@ -22,5 +22,9 @@ guac-ir = { path = "../guac-ir" }
 guac-script = { path = "../guac-script" }
 
 [dev-dependencies]
-# Any sequence of member writes (AT.5's property test).
+# Any sequence of member writes (AT.5's property test), any string at any
+# width (AT.6's).
 proptest = "1"
+# The disc tests read an archive's interface as the extract does (AT.6's
+# Verify, `tests/giants_text.rs`).
+guac-extract = { path = "../guac-extract" }

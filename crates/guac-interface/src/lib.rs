@@ -31,9 +31,11 @@
 //!   measure stands).
 //! - **Flags**, the template's other word (`flags` in the IR): bit 0 *sized*
 //!   (a script wrote its width, height or depth, so its kind's own size no
-//!   longer answers); bit 7 *wraps* and bit 8 *fits* (**Hypothesis**: named
-//!   from what the text's layout does with them, 0xB6F70; no member writes
-//!   either, so they come from the template, AT.6); bit 9 `Take a Picture`;
+//!   longer answers); bit 7 *wraps* and bit 8 *fits* (the text's layout
+//!   wraps on the first and fits on the second, 0xB6F70, read for AT.6; no
+//!   member writes either, so they come from the template: `global.bld`'s
+//!   `Generic_TextBox` templates hold both, its `Generic_Text` ones
+//!   neither); bit 9 `Take a Picture`;
 //!   bits 10-13 its text's string flags, copied from the string on every text
 //!   layout (bit 10 *a time*, bit 11 *has an `@`*, bit 13 *commas*; bit 12 is
 //!   read by the number fill, 0x9C858, and set by nothing read); bit 17
@@ -114,18 +116,26 @@
 //!   numbers). A write stores the value and sets *sized* and *dirty*, unless
 //!   it is the value already stored on a sprite already *sized*.
 //! - `natural size` (screen; get 0xB39C8): read-only, in 12.4: what its kind
-//!   measures, written size or not (0xBA16C): art, its image's size in pixels
-//!   (its data info's desired size until the image is in, 0xB6950); text, its
-//!   whole string at its point size, wrapped when it wraps (Text below,
-//!   0xB81E8); a container, its width and height. Before its first layout an
-//!   art sprite whose image is bound reads the data info's desired size, any
-//!   other sprite its stored width and height. The fit loops read this
-//!   against `width` until the text fits, so it has to match to the unit.
-//!   **Hypothesis** (AT.7): when art falls back to the desired size. The
-//!   decompile of 0xB6950 takes it when the data info's `_texAttr` is bound
-//!   and its `_data` isn't in, and scales whichever size it takes by a
-//!   constant at 0x724360 not read here; the model takes it when both halves
-//!   are positive (a movie's are -1) and the stored size otherwise, unscaled.
+//!   measures, written size or not (0xBA16C): art, what its size reads
+//!   unwritten (below); text, its whole string at its point size, wrapped
+//!   when it wraps (Text below, 0xB81E8); a container, its width and
+//!   height. Before its first layout an art sprite whose image is bound
+//!   reads the data info's desired size, any other sprite its stored width
+//!   and height. The value is truncated to 1/16 of a unit, and the HUD's
+//!   macros write it back as the width (and height) of the text they made,
+//!   so a stretched text draws a hair narrower than its string: AC.13's
+//!   `Level`, `1` and gold `0` at 0.9993, 0.9997 and 0.9954 of their point
+//!   size's width (AT.6).
+//!
+//!   Art's own size (0xB6950, read in the disassembly for AT.6): its image's
+//!   size in pixels when the image is in (its data info's `_data` in
+//!   memory, or a streamed source resident); else its data info's desired
+//!   size × 0.5 (the constant at 0x724360) when the texture attribute is
+//!   bound; else its stored size × 0.5. The IR keeps no texture binding, so
+//!   the model takes the extract's image size when it holds the image, else
+//!   a desired size with both halves positive (a movie's are -1) as bound
+//!   (**Hypothesis**, AT.9's census, which names any streamed image that
+//!   isn't), else the stored size, each halved where the original halves.
 //! - `origin` (matrix measurement; get 0xB3B34): the sprite's
 //!   `spritematrixmeasurement` (below).
 //! - `blend mode` (enum `opaque|crossfade|additive|cuts out|gets cut out|clears
@@ -288,20 +298,32 @@
 //! `stringinfo`'s one member, `String Converter` (string converter; get
 //! 0x3A8DF0), answers the string converter itself from any string.
 //!
-//! **The number fill** (0x9C858), done each time a text with *has an `@`* is
-//! measured: the sprite's `numeric value`, with
+//! **The number fill** (0x9C858, its fraction 0x9C4F0 and its time 0x9C674,
+//! read for AT.6), done each time a text whose string has an `@` is measured
+//! or drawn: the sprite's `numeric value`, read as a float when the string
+//! has decimal digits and as the integer it stores otherwise, written
+//! digit by digit into a buffer and copied in:
 //!
-//! - *decimal digits* above 0: its absolute value rounded at that many places
-//!   (half a unit of the last place added: 0.049995 at one place, 0.0049995
-//!   at two), the fraction written as that many digits after a `.`;
-//! - the whole part (a time: **Hypothesis**, written by 0x9C674 as minutes
-//!   and seconds, AT.6 reads it) as decimal digits: with *integer digits*
-//!   above 0 exactly that many (at most 199), zero-padded and the higher
-//!   digits dropped; else as many as it takes, at least one; with *commas* a
-//!   `,` after every third digit counting from the right when another
-//!   follows; a `-` before it when negative;
-//! - the number put where the string's first `@` stands, every later `@`
-//!   dropped, the rest of the string kept.
+//! - *decimal digits* above 0 (or the string's flag bit 12, which nothing
+//!   sets): its absolute value plus 0.49995 of a unit of the last place
+//!   (0.049995 at one place, 0.0049995 at two, the table at 0x723A58 to 9
+//!   places, 0 past that), the fraction part of that times 10 to the digits
+//!   truncated and written as exactly that many digits after a `.`, the
+//!   whole part going on as the integer;
+//! - the integer as decimal digits: with *integer digits* above 0 exactly
+//!   that many (at most 199), zero-padded and the higher digits dropped;
+//!   else as many as it takes, at least one; with *commas* a `,` after every
+//!   third digit from the right when another digit follows; a `-` before it
+//!   when negative;
+//! - or, for a time (*a time*), fields of 2 digits from the seconds up,
+//!   each the integer's absolute value mod 60 and the next the quotient,
+//!   joined by `:`, while *integer digits* (6 when 0, nothing below 0)
+//!   allows: a field taking 2 of them, or 1 when only 1 is left, that last
+//!   one a single digit taken mod 10 when above 10 (so 4 digits is `MM:SS`,
+//!   6 `HH:MM:SS`, 3 `M:SS`);
+//! - the buffer put where the string's first `@` stands, every later `@`
+//!   dropped, the rest of the string kept; a string with neither *has an
+//!   `@`* nor *a time* keeps its `@`s.
 //!
 //! ## `textcolorconverter` (2)
 //!
@@ -312,9 +334,9 @@
 //!   colours into `color set`.
 //! - `color set` (set reference; get 0xB066C, set 0xB0698, reset 0x80E0C): one
 //!   colour per letter, in order. A write colours the kept sprite's letters
-//!   from it, each glyph's six vertices in its colour (0xBB5D8); letters past
-//!   the set keep the sprite's colour (**Hypothesis**: the decompile stops at
-//!   the vertex writer, AT.6).
+//!   from it, each glyph's six vertices in its colour (0xBB5D8): as many
+//!   letters as both have, the rest keeping theirs (read for AT.6; Text
+//!   below).
 //!
 //! ## `nameextractor` (4)
 //!
@@ -337,56 +359,119 @@
 //!
 //! # Text
 //!
-//! A text sprite's font is its context's (`FontDataInfo`'s font); with none it
-//! is the default font (**Hypothesis**: `bootstrap.bld`'s `simple`, AT.6). Its
-//! string is its `text`'s, the number filled in when it has an `@`, or its
-//! object's name when it isn't a `StringInfo`. A text with no font, no
-//! string or an empty one draws nothing.
+//! AT.6, read in the EBOOT for this box (the text kind's handlers at its
+//! vtable's slots 16-21, the bitmap font's at its slots 16-25, the number
+//! fill) and checked against AC.13's 43 glyphs ([`text`] has the code).
+//! Arithmetic is single precision, rounded after every operation as the
+//! original's is, and a multiply-add where the original fuses one.
 //!
-//! - **The scale**: 1 unit a font pixel, or with *point size set* the point
-//!   size over the font's height (`contemp` is 82 pixels high, so 22 points
-//!   is 22/82). AT.3: a glyph's quad is its cell at that scale, 1.5 frame
-//!   pixels to a unit.
-//! - **A line's width** (0x3D7790): over its characters, each found in the
-//!   font adds its advance and the font's character padding, less a kern
-//!   with the character before it when there is one and the font's kern
-//!   amount is above 0: the smaller of (the one before's top-right corner plus
-//!   this one's top-left) and (the one before's bottom-right plus this one's
-//!   bottom-left), times the kern amount. A character the font lacks adds
-//!   nothing, and the next one doesn't kern against it. `contemp`'s kern
-//!   amount is 0, `simple`'s 2.
-//! - **A string's width** (0x1F4BD0): its widest line; lines end at a line
-//!   feed or a carriage return.
+//! A text sprite's font is its context's (`FontDataInfo`'s font), else the
+//! default font, a registered static the June savestate holds null and
+//! nothing read sets (0x10BBD4 registers it, 0x10C25C and 0x117618 clear
+//! it): so a text with no font context measures nothing and draws nothing,
+//! its size reads its stored numbers and its natural size 0 wide by its
+//! stored height. The default font would take 4 for −baseline; the rules
+//! below write the font's −baseline as *nb*. Its string is its `text`'s, the
+//! number filled in when the string has an `@` (the string's *has an `@`*
+//! or *a time*), or, when `text` holds an object that isn't a string (a
+//! name extractor's), that object's name. A text with no string or an empty
+//! one draws nothing.
+//!
+//! - **A glyph** is found by binary search over the font's list by
+//!   character (0x1F5238), so the list is taken as sorted, as the disc's
+//!   three are; a character it doesn't find has no glyph.
+//! - **The scale** *s*: 1, or with *point size set* the point size over the
+//!   font's height (`contemp` is 82 high, so 22 points is 22/82). AT.3: one
+//!   unit is 1.5 frame pixels, so a glyph at *s* is its cell × *s* × 1.5.
+//! - **A run's width** (0x3D7790): over its characters, each with a glyph
+//!   adds its step and the font's character padding, less a kern against the
+//!   glyph before when there is one and the kern amount is above 0: the
+//!   smaller of (the one before's top-right corner plus this one's top-left)
+//!   and (the one before's bottom-right plus this one's bottom-left), times
+//!   the kern amount. A character with no glyph adds nothing, and the next
+//!   one doesn't kern against anything. `contemp`'s padding and kern amount
+//!   are 0, `simple`'s kern amount 2.
+//! - **A string's width** (0x1F4BD0): its widest line, a line ending at a
+//!   line feed or carriage return, the next starting after that one
+//!   character (so CR LF leaves an empty line between).
 //! - **Its lines** (0x1F4CF0): one more than its line feeds and carriage
-//!   returns, less those at its end (a CR LF counts twice).
-//! - **Its height**: lines × (height − baseline) + baseline, at the scale; the
-//!   default font takes 4 for −baseline. `contemp`'s baseline is 0, so a line
-//!   is its height.
-//! - **Wrapping** (0x3D4EE8, for a sprite that *wraps*): line by line, words
-//!   (runs of anything but spaces, tabs and line ends) are added while the
-//!   line's width so far (each earlier word with the spaces and tabs after
-//!   it) plus the word stays within the width; a word that doesn't fit starts
-//!   a new line unless it is the line's first; a width of 0 doesn't wrap.
+//!   returns, less those at its end.
+//! - **A height of *n* lines**: *n* × (height + *nb*) − *nb*, one rounding.
+//! - **Wrapping at a width** (0x3D4EE8, its line count through 0x1F4C9C):
+//!   each source line (up to a line feed or carriage return) is cut into
+//!   lines; a word (a run of anything but space, tab and line ends) joins
+//!   the line while the line so far (each earlier word with the blanks after
+//!   it, each measured alone) plus the word stays within the width, or when
+//!   it is the line's first, its trailing blanks joining with it; a width
+//!   within 5e-7 of 0 doesn't wrap. The lines are written out joined by line
+//!   feeds, each keeping its trailing blanks, except that an empty source
+//!   line is counted and written as nothing.
+//! - **Lines that fit a height** (0xB6E80): *k* = (height + *nb*) ÷ (font
+//!   height + *nb*) truncated, one more when *k* + 1 lines overhang the
+//!   height by 0.001 or less.
 //!
-//! **The text's layout** (0xB6F70, each frame it's drawn after a change):
-//! measuring sets *string width valid*, and a text whose measure doesn't
-//! stand draws nothing. With *sized* off its computed size is the string's
-//! width × scale by its height × scale; with *sized* on it is its written
-//! width and height, and the glyphs scale to them: stretched on each axis
-//! (the string's width to the width, its height to the height), or with
-//! *fits* by the smaller ratio on both. A sprite that *wraps* and *fits*
-//! wraps at its width and shrinks until its lines fit its height, in steps of
-//! a tenth below its starting scale, at most twelve a pass, until a pass
-//! changes nothing or the lines fill under half (**Hypothesis** past the
-//! first pass: the loop's exits are partly lost in the decompile, AT.6 reads
-//! the disassembly).
+//! **The size** (slot 20, 0xB7F08), what `width` and `height` read on a
+//! sprite not *sized*: its string's width × *s* by the font's height × *s*
+//! (one line, whatever the string holds).
 //!
-//! **`natural size` for text** (0xB81E8): without *wraps*, the string's width
-//! and height at the scale. With *wraps*: wrapped at the width (over the
-//! scale) and cut to the lines that fit the height (0xB6E80: as many lines as
-//! fit, one more when the last's overhang is within 0.001); its height those
-//! lines', its width the last line's, or the earlier lines' when wider and
-//! still within the sprite's width.
+//! **The text's layout** (slot 16, 0xB6F70), when its string or anything it
+//! measures by changed: with *sized* off, its computed size is its string's
+//! width × *s* by its lines' height × *s*, the glyphs at *s* on both axes.
+//! With *sized* on, the size is its written width *W* and height *H*, and:
+//!
+//! - neither *wraps* nor *fits*: the glyphs stretch, *W* over the string's
+//!   width on x, *H* over its lines' height on y;
+//! - *fits* without *wraps*: y at *s* × min(1, *H* ÷ (lines' height × *s*)),
+//!   x at *s* × min(1, *W* ÷ (string's width × *s*)) and never above y; its
+//!   height the smaller of *H* and the lines' height × *s*;
+//! - *wraps* and *fits* (with *W* ÷ *s* and *H* ÷ *s* both above 0): wrapped
+//!   at *W* ÷ *s*; when the lines that fit *H* ÷ *s* are fewer, shrunk in
+//!   passes: *k* the lines that fit, at least the string's own, each pass
+//!   trying wrap widths from the string's width ÷ *k* up in tenths of it,
+//!   at most twelve, until the string wraps into *k* lines or fewer, then
+//!   one more line for the next pass, while the widest line changes and
+//!   (*W* ÷ *s* ÷ widest) ÷ min(1, *H* ÷ *s* ÷ *k* lines' height) stays under
+//!   0.5. Then a widest line past *W* ÷ *s* wraps again at its own width; x at
+//!   *s* × that width ratio, y at *s* × min(1, *H* ÷ *s* ÷ the last pass's
+//!   lines' height), x never above y; its height its lines' at y;
+//! - *wraps* without *fits*: at *s* on both axes. **Hypothesis**: the
+//!   height counts the lines of a buffer this path never fills (0xB74C0);
+//!   taken as the string's own lines: none of `global.bld`'s 409 templates
+//!   has *wraps* without *fits* and no member sets either (AT.9's census
+//!   checks the other archives').
+//!
+//! **`natural size` for text** (slot 21, 0xB81E8): without *wraps*, the
+//! string's width × *s* by its lines' height × *s*. With *wraps*: wrapped at
+//! its stored width ÷ *s*, the lines kept those that fit its stored height ÷
+//! *s*; its height the kept lines less the last plus the source string's
+//! lines from where the last kept line starts, at *s*; its width the last
+//! kept line's, measured on the source string at the wrapped text's offset
+//! (an offset the inserted line feeds move: kept as the original does it),
+//! or the earlier lines' widest when that is wider than the last and
+//! exceeds the stored width.
+//!
+//! **Its glyphs** (slot 18, 0xB79A8, through the font's 0x3D6EB0 and 0x3D5698):
+//! laid out in font pixels from the text's top-left, then drawn at the
+//! layout's x and y scales. A *sized* text's lines break at its computed
+//! width over its x scale, plus 0.4999, truncated, and take its
+//! justification; one not *sized* never breaks and sets left. Its lines are
+//! the wrap above, each with its width (its words and blanks measured
+//! alone). A line starts at x 0 left, at the width less its own right, at
+//! floor((width − its own − its leading blanks) × 0.5 + 0.5) centred (the
+//! leading blanks counted twice: kept as the original does it), the first
+//! at y 0 and each next (height − baseline) lower. A line feed ending a
+//! line is drawn with it, as a space. Each character with a glyph is
+//! kerned as in a run's width, drawn as a quad from (x + its offset) over
+//! its size with its atlas box, and moves x by its step and the padding; one
+//! without moves x by the padding only when the line's last character is a
+//! space (the character it reads, kept as the original does it).
+//!
+//! **The text colour converter** (0xBB5D8, 0xBAE20): its `color set`
+//! colours the kept sprite's first letters, one colour per glyph drawn,
+//! in order, as many as both have; the rest keep their colour. A letter's
+//! colour is 0x808080FF until set (the font's colour at run time, read live
+//! as 0.5, 0.5, 0.5, 1). Its `text sprite` write reads the kept sprite's
+//! letters' colours back into `color set`, one per glyph drawn.
 //!
 //! # Layout
 //!
@@ -468,7 +553,8 @@
 pub mod members;
 pub mod model;
 pub mod sprite;
+pub mod text;
 
 pub use members::{MEMBERS, Member, find};
-pub use model::{Answer, Bases, Model, NoWorld, Refusal, Str, World};
+pub use model::{Answer, Bases, LETTER, Model, NoWorld, Refusal, Str, World};
 pub use sprite::{Sprite, SpriteId, State};
