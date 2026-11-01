@@ -2175,6 +2175,59 @@ impl ScriptWorld {
         }
     }
 
+    /// `template` (a clip or a sequence) played on `actor`, as `start
+    /// sequence` plays it: one copy per clip and actor (openspec AH.184): a
+    /// sequence played is itself while it's his or stopped (the original's
+    /// stop clears its activator), else its clip's on him; a clip played on
+    /// him while its copy plays is that copy, refused while it has time left
+    /// and no `allow restart`.
+    fn play_on(&mut self, template: Value, actor: Handle) -> Answer {
+        let mut template = template;
+        if let Some(Object::Sequence(i)) = self.object(Some(template))
+            && let Some(s) = self.sequences.get(i as usize)
+        {
+            if s.actor == actor || s.stopped {
+                return self.start_again(i as usize, actor);
+            }
+            template = s.template;
+        }
+        if matches!(self.object(Some(template)), Some(Object::Clip { .. }))
+            && let Some(i) = self
+                .sequences
+                .iter()
+                .rposition(|s| s.actor == actor && s.template == template && s.plays())
+        {
+            return self.start_again(i, actor);
+        }
+        let length = self.length_of(template);
+        // A clip's own looping, weight and layered bit (AH.49).
+        let (info, state) = match self.object(Some(template)) {
+            Some(Object::Clip { template, slot }) => self.clip_flags(template, slot),
+            _ => (ClipInfo::default(), ClipState::default()),
+        };
+        self.sequences.push(Sequence {
+            actor,
+            template,
+            length,
+            time: 0.0,
+            rate: 100.0,
+            looping: state.looping.unwrap_or(false),
+            stopped: false,
+            done: false,
+            blend: state.blend.unwrap_or(FULL_BLEND),
+            kind: info.kind,
+            layered: state.layered.unwrap_or(info.layered),
+            allow_restart: state.allow_restart.unwrap_or(false),
+        });
+        let s = self
+            .objs
+            .value(Object::Sequence((self.sequences.len() - 1) as u32));
+        Answer::Run {
+            receiver: None,
+            result: Some(s),
+        }
+    }
+
     fn length_of(&self, v: Value) -> f32 {
         match self.object(Some(v)) {
             Some(Object::Clip { template, slot }) => self
@@ -2217,54 +2270,7 @@ impl ScriptWorld {
                 let Some(actor) = self.handle(call.receiver) else {
                     return Some(Ok(Answer::Skip));
                 };
-                // One copy per clip and actor (openspec AH.184): a sequence
-                // played is itself while it's his or stopped (the original's
-                // stop clears its activator), else its clip's on him; a clip
-                // played on him while its copy plays is that copy.
-                let mut template = template;
-                if let Some(Object::Sequence(i)) = self.object(Some(template))
-                    && let Some(s) = self.sequences.get(i as usize)
-                {
-                    if s.actor == actor || s.stopped {
-                        return Some(Ok(self.start_again(i as usize, actor)));
-                    }
-                    template = s.template;
-                }
-                if matches!(self.object(Some(template)), Some(Object::Clip { .. }))
-                    && let Some(i) = self
-                        .sequences
-                        .iter()
-                        .rposition(|s| s.actor == actor && s.template == template && s.plays())
-                {
-                    return Some(Ok(self.start_again(i, actor)));
-                }
-                let length = self.length_of(template);
-                // A clip's own looping, weight and layered bit (AH.49).
-                let (info, state) = match self.object(Some(template)) {
-                    Some(Object::Clip { template, slot }) => self.clip_flags(template, slot),
-                    _ => (ClipInfo::default(), ClipState::default()),
-                };
-                self.sequences.push(Sequence {
-                    actor,
-                    template,
-                    length,
-                    time: 0.0,
-                    rate: 100.0,
-                    looping: state.looping.unwrap_or(false),
-                    stopped: false,
-                    done: false,
-                    blend: state.blend.unwrap_or(FULL_BLEND),
-                    kind: info.kind,
-                    layered: state.layered.unwrap_or(info.layered),
-                    allow_restart: state.allow_restart.unwrap_or(false),
-                });
-                let s = self
-                    .objs
-                    .value(Object::Sequence((self.sequences.len() - 1) as u32));
-                Ok(Answer::Run {
-                    receiver: None,
-                    result: Some(s),
-                })
+                Ok(self.play_on(template, actor))
             }
             Class::StopSequence => {
                 // A sequence stops itself; a clip its copies on the
@@ -2373,12 +2379,29 @@ impl ScriptWorld {
         } else {
             guac_motion::steer::cleared(at, point, distance)
         };
+        if self
+            .actors
+            .get(&mover)
+            .and_then(|a| a.walker.as_deref())
+            .is_none()
+        {
+            // Only a creature the engine moves steers.
+            return Err(HostFault::Unmodelled);
+        }
+        // `with anim` (openspec AH.282): the palette's clip at `_indexRHS`
+        // played on the mover while he moves, as `start sequence` plays it,
+        // so the op's reissue each tick finds its copy playing and starts
+        // nothing new (AH.184); the script's own stop ends it.
+        if !(done && last)
+            && let Some(clip) = self.move_clip(call)
+        {
+            self.play_on(clip, mover);
+        }
         let Some(w) = self
             .actors
             .get_mut(&mover)
             .and_then(|a| a.walker.as_deref_mut())
         else {
-            // Only a creature the engine moves steers.
             return Err(HostFault::Unmodelled);
         };
         if done {
@@ -2408,6 +2431,37 @@ impl ScriptWorld {
             Aim::From(point)
         };
         Ok(Answer::Done)
+    }
+
+    /// The clip a `move to ... with anim` plays: its palette (`_NP`, read as
+    /// a set) at `_indexRHS`, or `_NP` itself when it names one clip; none
+    /// without one, or for anything but a clip or a sequence.
+    fn move_clip(&self, call: &OpCall) -> Option<Value> {
+        let index = call
+            .operands
+            .iter()
+            .find(|(n, _)| *n == "_indexRHS")
+            .and_then(|(_, v)| *v)
+            .and_then(|v| v.as_i32());
+        let indexed = call
+            .sets
+            .iter()
+            .find(|(n, _)| *n == "_NP")
+            .and_then(|(_, e)| index.and_then(|i| e.get(usize::try_from(i).ok()?)))
+            .copied();
+        indexed
+            .or_else(|| {
+                call.operands
+                    .iter()
+                    .find(|(n, _)| *n == "_NP")
+                    .and_then(|(_, v)| *v)
+            })
+            .filter(|v| {
+                matches!(
+                    self.object(Some(*v)),
+                    Some(Object::Clip { .. } | Object::Sequence(_))
+                )
+            })
     }
 
     /// `turn to`: the receiver turned toward a facing, degrees; the block
@@ -4388,7 +4442,7 @@ mod fight_tests {
     const C3: Handle = 0x6100_0003;
     const HERO: Handle = 0x6100_0010;
     pub(super) const STEP: f32 = 1.0 / 60.0;
-    const WP: Obj = Obj { unit: 9, index: 1 };
+    pub(super) const WP: Obj = Obj { unit: 9, index: 1 };
     const WP2: Obj = Obj { unit: 9, index: 2 };
 
     /// Open level ground whose top is y = 0; the hero and the creatures
@@ -6061,10 +6115,60 @@ mod animation_tests {
     use guac_formats::script::Class;
     use guac_script::{Answer, MemberId, Obj, OpCall};
 
-    use super::fight_tests::{C1, chompy, pit, world};
+    use super::fight_tests::{C1, STEP, WP, chompy, pit, world};
     use super::*;
 
     const TEMPLATE: Obj = Obj { unit: 4, index: 77 };
+
+    /// AH.282: `move to ... with anim` plays the palette's clip at its index
+    /// on the mover while he moves, as `start sequence` would, and its
+    /// reissue each tick (the script's loop) finds that copy playing and
+    /// starts nothing new; a move with no clip starts none.
+    #[test]
+    fn a_move_with_anim_plays_its_clip_once_while_he_moves() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        let call = |index: Option<i32>| OpCall {
+            placement: C1,
+            receiver: Value::Entity(C1),
+            class: Class::MoveTo,
+            operands: vec![
+                ("_indexRHS", index.map(Value::Int)),
+                ("_LHS", Some(Value::Object(WP))),
+                ("_RHS", Some(Value::Int(1))),
+                ("_NP", Some(Value::Null)),
+            ],
+            words: vec![("_dir", 0), ("_relOperator", 0)],
+            sets: vec![("_NP", clips.clone())],
+        };
+        let playing = |w: &ScriptWorld| -> Vec<(Value, f32)> {
+            w.sequences()
+                .iter()
+                .filter(|s| s.actor == C1 && s.plays())
+                .map(|s| (s.template, s.time))
+                .collect()
+        };
+        assert_eq!(w.op(&call(None), &mut |_| 0, &mut e).unwrap(), Answer::Done);
+        assert!(playing(&w).is_empty(), "no index, no clip");
+        assert_eq!(
+            w.op(&call(Some(2)), &mut |_| 0, &mut e).unwrap(),
+            Answer::Done
+        );
+        assert_eq!(playing(&w), [(clips[2], 0.0)], "slot 2 on the mover");
+        let started = w.sequences().len();
+        for _ in 0..3 {
+            w.advance(STEP, &mut e);
+            assert_eq!(
+                w.op(&call(Some(2)), &mut |_| 0, &mut e).unwrap(),
+                Answer::Done
+            );
+        }
+        assert_eq!(w.sequences().len(), started, "the reissue starts no copy");
+        let now = playing(&w);
+        assert_eq!(now.len(), 1);
+        assert_eq!(now[0].0, clips[2]);
+        assert!(now[0].1 > 2.5 * STEP, "never started again: {now:?}");
+    }
 
     /// Slot 0 a base clip, 1 partial, 2 additive (and partial: additive
     /// wins), 3 a base clip its file marks layered.
