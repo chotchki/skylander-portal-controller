@@ -6,8 +6,8 @@
 
 use crate::FormatError;
 use crate::{
-    atmosphere, attachments, bink, edge, exports, fsb, havok, iga, igz, language, material, model,
-    mpeg, particle, progression, roster, script, sfo, sound, texture, toys,
+    atmosphere, attachments, bink, edge, exports, fsb, havok, iga, igz, interface, language,
+    material, model, mpeg, particle, progression, roster, script, sfo, sound, texture, toys,
 };
 
 pub struct RegisteredParser {
@@ -160,6 +160,15 @@ pub const PARSERS: &[RegisteredParser] = &[
         // emitter, all off one shared list
         // (`the_particles_parser_holds_its_budget_on_...`).
         heap_budget: |len| 64 * len + 8 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "interface",
+        parse: |bytes| interface::Interface::read(&igz::Igz::parse(bytes)?).map(drop),
+        seeds: interface::builder::seeds,
+        // The IGZ parse, then one template per tfbSpriteInfo (0xE4 input
+        // bytes for about 140 held) and one glyph per igCharMetrics (0x30
+        // for 44), with the fonts' and strings' maps: well under 4x.
+        heap_budget: |len| 64 * len + 4 * len + (64 << 10),
     },
     RegisteredParser {
         name: "atmosphere",
@@ -602,8 +611,13 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = ScriptSetList::read(&file, i);
         let _ = DirectionalLightInfo::read(&file, i);
         let _ = LanguagePackInfo::read(&file, i);
-        let _ = SpriteInfo::read(&file, i);
+        let _ = SpriteInfo::read(&file, i).map(|s| s.bits());
         let _ = AnimatableTextureDataInfo::read(&file, i);
+        let _ = SpriteInfoList::read(&file, i);
+        let _ = FontDataInfo::read(&file, i);
+        let _ = BitmapFont::read(&file, i);
+        let _ = CharMetrics::read(&file, i).map(|c| c.kern());
+        let _ = CharMetricsList::read(&file, i);
         let _ = RootList::read(&file, i);
         let _ = OpCode::read(&file, i);
         let _ = ScriptInfo::read(&file, i);

@@ -16,6 +16,7 @@
 
 mod attrs;
 mod edge;
+mod font;
 mod hero;
 mod image;
 mod level;
@@ -42,6 +43,7 @@ pub use attrs::{
     UnsignedIntList, VariantMask, VertexShaderVariantMaskAttr,
 };
 pub use edge::{Attr, EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment};
+pub use font::{BitmapFont, CharMetrics, CharMetricsList, Font, FontDataInfo, KernCorners};
 pub use hero::{Clip, Hero, MaterialLists, Mesh, Palette, Passes};
 pub use image::{Image2, KNOWN_FORMATS, METAIMAGES};
 pub use level::{SceneInfo, SpatialNode, Transform, UserInfo};
@@ -71,7 +73,10 @@ pub use skeleton::{
     SkeletonBoneList,
 };
 pub use sound::{CATEGORIES, LIMIT_BEHAVIORS, SoundDataInfo, SoundInfo, flag as sound_flag};
-pub use sprite::{AbstractPlacement, AnimatableTextureDataInfo, SpriteInfo};
+pub use sprite::{
+    ALIGNMENTS, AbstractPlacement, AnimatableTextureDataInfo, SpriteBits, SpriteInfo,
+    SpriteInfoList, VISUAL_TYPES, VisualType,
+};
 pub use tfb::{
     AnimationInfo, AnimationInfoList, BodyInfo, BuildDataInfo, HAVOK_MAGIC, Info, LIP_SYNC_MAGIC,
     ModelInfo, Payload, PhysicsAnimation, PhysicsBody, PhysicsModel, TfbAnimationInfo,
@@ -244,6 +249,13 @@ pub const TYPES: &[TypeDef] = &[
     def("BoneAttachInfoList", "ScriptObjectList", 0x18),
     def("tfbSpriteInfo", "AbstractPlacement", 0xE4),
     def("AnimatableTextureDataInfo", "tfbBuildDataInfo", 0x34),
+    // The interface's templates and fonts (AT.1).
+    def("SpriteInfoList", "ScriptObjectList", 0x18),
+    def("FontDataInfo", "tfbBuildDataInfo", 0x24),
+    def("igFont", "igNamedObject", 0x40),
+    def("igBitmapFont", "igFont", 0x40),
+    def("igCharMetrics", "igObject", 0x30),
+    def("igCharMetricsList", "igObjectList", 0x18),
     // Script ops and operand stacks, what the toy table's reader walks (AE.2).
     def("tfbScriptInfo", "tfbComplexDataInfo", 0x1C),
     def("OpCodeList", "ScriptObjectList", 0x18),
@@ -391,16 +403,18 @@ pub const TYPES: &[TypeDef] = &[
     def("tfbMaterialTintAnimData", "tfbMaterialAnimData", 0x18),
 ];
 
-/// Types whose files carry an MTSZ 4 over the registry size (AC.4's open
+/// Types whose files carry an MTSZ over the registry size (AC.4's open
 /// question 2, settled by AC.14: the loader reads sections in place, so the
-/// 4 bytes sit in memory as on disc, past the layout and never marked): the
-/// script stack AE.2 reads and the four render states AE.6 reads.
+/// extra bytes sit in memory as on disc, past the layout and never marked):
+/// the script stack AE.2 reads and the four render states AE.6 reads, 4
+/// bytes over, and the bitmap font AT.1 reads, 16 over.
 pub const FILE_PADDED: &[(&str, u32)] = &[
     ("RHSReferenceStack", 0x30),
     ("igBlendStateAttr", 0x14),
     ("igDepthWriteStateAttr", 0x14),
     ("igCullFaceAttr", 0x18),
     ("igAlphaStateAttr", 0x14),
+    ("igBitmapFont", 0x50),
 ];
 
 /// The MTSZ a file gives `name`: its registry size, or the padded one.
@@ -430,6 +444,36 @@ pub fn is_a(name: &str, base: &str) -> bool {
         current = t.parent.and_then(type_def);
     }
     false
+}
+
+/// A bitfield inside a storage word: `width` bits from bit `shift`, counted
+/// from the word's low end, as a class's field registration function sets
+/// them on each `igBitFieldMetaField` (AC.4's step 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BitField {
+    pub shift: u32,
+    pub width: u32,
+}
+
+impl BitField {
+    pub const fn new(shift: u32, width: u32) -> Self {
+        assert!(width > 0 && width < 32 && shift + width <= 32);
+        Self { shift, width }
+    }
+
+    /// The field's bits, shifted down.
+    pub const fn mask(self) -> u32 {
+        (1 << self.width) - 1
+    }
+
+    pub const fn get(self, word: u32) -> u32 {
+        (word >> self.shift) & self.mask()
+    }
+
+    /// `word` with this field set to `value`'s low `width` bits.
+    pub const fn set(self, word: u32, value: u32) -> u32 {
+        (word & !(self.mask() << self.shift)) | ((value & self.mask()) << self.shift)
+    }
 }
 
 /// A type with a recovered layout, read from one object of an [`Igz`].
@@ -1013,5 +1057,7 @@ pub(crate) fn be_f32s(bytes: &[u8]) -> impl Iterator<Item = f32> + '_ {
         .map(|c| f32::from_bits(u32::from_be_bytes(*c)))
 }
 
+#[cfg(test)]
+mod interface_tests;
 #[cfg(test)]
 mod tests;

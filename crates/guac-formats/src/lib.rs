@@ -22,6 +22,7 @@ pub mod fsb;
 pub mod havok;
 pub mod iga;
 pub mod igz;
+pub mod interface;
 pub mod language;
 pub mod level;
 pub mod material;
