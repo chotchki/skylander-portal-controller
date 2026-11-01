@@ -41,7 +41,7 @@
 //!   read by the number fill, 0x9C858, and set by nothing read); bit 17
 //!   *point size set* (a positive point size written); bits 18-19 `texture
 //!   flip`; bit 25 `clipping`. Bits 21, 24, 26 and 27-29 are the updater's
-//!   and the art's (**Hypothesis**: what they do isn't read, AT.7).
+//!   and the art's (**Hypothesis**: what they do isn't read, AT.28).
 //! - **Depths**: `Z Depth` and `priority`, floats the registry ranges at
 //!   ±10,000.
 //! - **Size**: `width`, `height` and `depth`, floats in interface units.

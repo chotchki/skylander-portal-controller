@@ -65,7 +65,8 @@ pub enum Refusal {
 }
 
 /// What the model asks of what it doesn't hold: a kind's answer the adapter
-/// knows better (a model's, an emitter's), the place on screen (AT.7), an
+/// knows better (a model's, an emitter's), the place on screen (the
+/// layout's, which AT.25 hands the members), an
 /// image still loading, an object's name. `None` is "not known": the model
 /// answers itself where the crate docs give it a rule and refuses as
 /// [`Refusal::Unmodelled`] otherwise.
@@ -606,14 +607,14 @@ impl Model {
             })),
             ("spritematrixmeasurement", "activator") => Ok(Answer::Value(s.activator)),
             // The placement's matrix: a sprite's place is its location
-            // (AT.7 lays it out).
+            // (AT.25, off the layout).
             ("spritematrixmeasurement", "origin") => Err(Refusal::Unmodelled),
             _ => Err(Refusal::Unmodelled),
         }
     }
 
     /// A paired `spritepositionmeasurement` read: `id`'s place against
-    /// `other`'s, both off the layout (AT.7).
+    /// `other`'s, both off the layout's places (AT.25 hands them over).
     pub fn get_paired(
         &self,
         id: SpriteId,
