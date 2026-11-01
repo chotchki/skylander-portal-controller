@@ -125,6 +125,9 @@ fn main() -> Result<()> {
     let (portal_tx, portal_rx) = portal_channel();
     let (shelf_tx, shelf) = turntable::shelf_channel();
     let (level_tx, level_feed) = level::level_channel();
+    // The sounds part landing after chapter 1 is handed over (AR.21).
+    let (sounds_tx, sounds_feed) = level::sounds_channel();
+    let level_feed = (level_feed, sounds_feed);
     let mirror = TvMirror::default();
     // AH.62's health and AH.26's experience, asked over the test hooks.
     let asked = (
@@ -185,6 +188,7 @@ fn main() -> Result<()> {
         test_known: test_known_dump(),
         shelf: Some(shelf_tx),
         level: Some(level_tx),
+        sounds: Some(sounds_tx),
         ..ExtractJob::new(&root, loaded.extract_dir.clone(), loaded.ffmpeg.clone())
     };
     // No figures until the disc's roster lands (AE.4); without a Giants dump
@@ -416,7 +420,7 @@ fn run_tv(
     progress: Option<ProgressSink>,
     portal: Receiver<PortalChange>,
     shelf: turntable::ShelfFeed,
-    level: level::LevelFeed,
+    (level, sounds): (level::LevelFeed, level::SoundsFeed),
     setup_view: SetupView,
     mode: WindowMode,
     root: PathBuf,
@@ -438,6 +442,7 @@ fn run_tv(
         .insert_resource(PortalFeed(portal))
         .insert_resource(shelf)
         .insert_resource(level)
+        .insert_resource(sounds)
         .insert_resource(Setup(setup_view))
         .insert_resource(Framing(mode))
         .insert_resource(DataRoot(root))

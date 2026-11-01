@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
 use guac_extract::levels::{self, LEVELS, PARTS, PLAYED};
-use guac_extract::stages::{self, Event, Files};
+use guac_extract::stages::{self, Event, Files, StageEnd};
 use guac_extract::{DirState, ExtractRoot, IR_VERSION, LAYOUT_VERSION, Manifest, Stale, open};
 use guac_extract::{roster, scripts};
 use guac_formats::iga::builder::IgaBuilder;
@@ -211,14 +211,17 @@ enum Seen {
     LevelReady,
     Sprites(usize, usize),
     Sounds(usize, usize),
+    SoundsReady,
     Interface(usize, usize),
     Indexing,
     Transcode,
 }
 
 impl Seen {
-    fn of(e: &Event) -> Self {
-        match e {
+    /// The progress events; a stage's end ([`Event::Ended`], AT.31) is
+    /// [`ended`]'s.
+    fn of(e: &Event) -> Option<Self> {
+        Some(match e {
             Event::ReadingRoster => Self::ReadingRoster,
             Event::Portraits { done, total } => Self::Portraits(*done, *total),
             Event::RosterReady(r) => Self::RosterReady(r.figures.len()),
@@ -233,11 +236,31 @@ impl Seen {
             Event::LevelReady => Self::LevelReady,
             Event::Sprites { done, total } => Self::Sprites(*done, *total),
             Event::Sounds { done, total } => Self::Sounds(*done, *total),
+            Event::SoundsReady => Self::SoundsReady,
             Event::Interface { done, total } => Self::Interface(*done, *total),
             Event::Indexing => Self::Indexing,
             Event::Transcode(_) => Self::Transcode,
-        }
+            Event::Ended(_) => return None,
+        })
     }
+}
+
+/// A stage's end by name, `None` for any other event (AT.31).
+fn ended(e: &Event) -> Option<&'static str> {
+    let Event::Ended(end) = e else {
+        return None;
+    };
+    Some(match **end {
+        StageEnd::Roster(_) => "roster",
+        StageEnd::Progression(_) => "progression",
+        StageEnd::Models(_) => "models",
+        StageEnd::Level(_) => "level",
+        StageEnd::Scripts(_) => "scripts",
+        StageEnd::Particles(_) => "particles",
+        StageEnd::Sprites(_) => "sprites",
+        StageEnd::Sounds(_) => "sounds",
+        StageEnd::Interface(_) => "interface",
+    })
 }
 
 struct Setup {
@@ -285,14 +308,18 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     // when the intros started.
     let at_ready = Mutex::new(None);
     let at_indexing = Mutex::new(None);
+    let at_sounds = Mutex::new(None);
     let done = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
         if matches!(e, Event::LevelReady) {
             *at_ready.lock().unwrap() = Some(manifest_on_disk(&dir));
         }
+        if matches!(e, Event::SoundsReady) {
+            *at_sounds.lock().unwrap() = Some(manifest_on_disk(&dir));
+        }
         if matches!(e, Event::Indexing) {
             *at_indexing.lock().unwrap() = Some(manifest_on_disk(&dir));
         }
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap();
 
@@ -356,7 +383,10 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         .map(|i| Seen::Sounds(i, SOUND_ARCHIVES))
         .collect();
     assert_eq!(seen[at..=at + SOUND_ARCHIVES], sounds[..]);
+    // The sounds part in: a level loaded before it takes it up (AR.21).
     let at = at + SOUND_ARCHIVES + 1;
+    assert_eq!(seen[at], Seen::SoundsReady);
+    let at = at + 1;
     let Seen::Interface(0, menus) = seen[at] else {
         panic!("{:?}", &seen[at..]);
     };
@@ -382,6 +412,11 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     }
     assert_eq!(recorded(&m, "interface/"), 0);
     assert_eq!(recorded(&m, "sounds/"), 0);
+    // At the sounds' ready their part was recorded whole, the interface
+    // not yet.
+    let m = at_sounds.into_inner().unwrap().expect("the sounds' ready");
+    assert!(m.parts.contains_key("sounds") && !m.parts.contains_key("interface"));
+    assert_eq!(recorded(&m, "sounds/"), SOUND_ARCHIVES);
 
     // The roster's IR, every portrait, the models, their textures, the
     // heroes and the rig were recorded before the intro index.
@@ -611,6 +646,170 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     );
 }
 
+/// AT.31: each stage's result goes out the moment it ends, after its last
+/// progress event and before the next stage's first, once a stage, the same
+/// as the run hands back at its end; the sounds' ready right after theirs
+/// (AR.21).
+#[test]
+fn each_stage_ends_with_its_result_before_the_next_starts() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    // Every event in order: a stage's end by its name, the rest as read.
+    let seen: Mutex<Vec<Result<Seen, &'static str>>> = Mutex::new(Vec::new());
+    let sounds_ended = Mutex::new(None);
+    let interface_ended = Mutex::new(None);
+    let done = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
+        if let Event::Ended(end) = &e {
+            match &**end {
+                StageEnd::Sounds(x) => *sounds_ended.lock().unwrap() = Some(x.clone()),
+                StageEnd::Interface(x) => *interface_ended.lock().unwrap() = Some(x.clone()),
+                _ => {}
+            }
+        }
+        let one = match ended(&e) {
+            Some(name) => Err(name),
+            None => Ok(Seen::of(&e).unwrap()),
+        };
+        seen.lock().unwrap().push(one);
+    })
+    .unwrap();
+    let seen = seen.into_inner().unwrap();
+    let ends: Vec<&str> = seen
+        .iter()
+        .filter_map(|e| e.as_ref().err().copied())
+        .collect();
+    assert_eq!(
+        ends,
+        [
+            "roster",
+            "progression",
+            "models",
+            "level",
+            "scripts",
+            "particles",
+            "sprites",
+            "sounds",
+            "interface"
+        ]
+    );
+    let at = |e: &Seen| seen.iter().position(|x| x.as_ref() == Ok(e)).unwrap();
+    let end = |name: &str| seen.iter().position(|x| *x == Err(name)).unwrap();
+    let menus = done.interface.archives;
+    // Each end between its stage's last event and the next one's first.
+    for (name, last, next) in [
+        (
+            "roster",
+            Seen::Portraits(FIGURES, FIGURES),
+            Seen::RosterReady(FIGURES),
+        ),
+        (
+            "progression",
+            Seen::RosterReady(FIGURES),
+            Seen::ProgressionReady(SAMPLE_LEVELS.into()),
+        ),
+        (
+            "models",
+            Seen::Models(LOADS, LOADS),
+            Seen::ModelsReady(vec![MISSING.into(), REFUSED.into()]),
+        ),
+        (
+            "level",
+            Seen::Level(PLAYED.len(), PLAYED.len()),
+            Seen::Scripts(0, 2),
+        ),
+        (
+            "scripts",
+            Seen::Scripts(2, 2),
+            Seen::Particles(0, PARTICLE_ARCHIVES),
+        ),
+        (
+            "particles",
+            Seen::Particles(PARTICLE_ARCHIVES, PARTICLE_ARCHIVES),
+            Seen::LevelReady,
+        ),
+        (
+            "sprites",
+            Seen::Sprites(1, 1),
+            Seen::Sounds(0, SOUND_ARCHIVES),
+        ),
+        (
+            "sounds",
+            Seen::Sounds(SOUND_ARCHIVES, SOUND_ARCHIVES),
+            Seen::SoundsReady,
+        ),
+        ("interface", Seen::Interface(menus, menus), Seen::Indexing),
+    ] {
+        assert!(
+            at(&last) < end(name) && end(name) < at(&next),
+            "{name}: {seen:?}"
+        );
+    }
+    assert!(at(&Seen::SoundsReady) < at(&Seen::Interface(0, menus)));
+    // What each end carried is what the run handed back.
+    let so = sounds_ended.into_inner().unwrap().unwrap();
+    assert!(so.read && so.failed.is_none());
+    assert_eq!(
+        (so.archives, so.sounds, so.data, so.files),
+        (
+            done.sounds.archives,
+            done.sounds.sounds,
+            done.sounds.data,
+            done.sounds.files
+        )
+    );
+    let i = interface_ended.into_inner().unwrap().unwrap();
+    assert_eq!(
+        (i.archives, i.templates, i.files),
+        (
+            done.interface.archives,
+            done.interface.templates,
+            done.interface.files
+        )
+    );
+}
+
+/// AT.31 and AR.21: a sounds part that doesn't read ends with the archive
+/// and why, before the interface's first event, and sends no ready; the
+/// rest of the run goes on, the intros included.
+#[test]
+fn a_sounds_part_that_doesnt_read_ends_with_why_and_no_ready() {
+    let s = setup();
+    // `global.arc` is the sounds' alone: nothing else reads it.
+    fs::write(s.dump.join("PS3_GAME/USRDIR/permanent/global.arc"), b"nope").unwrap();
+    let known = known_for(&s.dump);
+    let mut opened = open(&s.dump, &s.root, &known, &|_| {}).unwrap();
+    let seen: Mutex<Vec<Result<Seen, &'static str>>> = Mutex::new(Vec::new());
+    let failed = Mutex::new(None);
+    let done = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
+        if let Event::Ended(end) = &e
+            && let StageEnd::Sounds(x) = &**end
+        {
+            *failed.lock().unwrap() = Some(x.failed.clone());
+        }
+        let one = match ended(&e) {
+            Some(name) => Err(name),
+            None => Ok(Seen::of(&e).unwrap()),
+        };
+        seen.lock().unwrap().push(one);
+    })
+    .unwrap();
+    let seen = seen.into_inner().unwrap();
+    let (archive, why) = failed.into_inner().unwrap().unwrap().expect("failed");
+    assert_eq!(archive, roster::GLOBAL);
+    assert!(why.contains(".arc"), "{why}");
+    assert_eq!(done.sounds.failed, Some((archive, why)));
+    assert!(!seen.contains(&Ok(Seen::SoundsReady)), "{seen:?}");
+    let end = seen.iter().position(|e| *e == Err("sounds")).unwrap();
+    let interface = seen
+        .iter()
+        .position(|e| matches!(e, Ok(Seen::Interface(0, _))))
+        .unwrap();
+    assert!(end < interface, "{seen:?}");
+    assert!(done.intros.is_ok());
+    let m = manifest_on_disk(opened.dir.path());
+    assert!(!m.parts.contains_key("sounds"));
+}
+
 #[test]
 fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable() {
     let s = setup();
@@ -619,7 +818,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     let dir = opened.dir.path().to_path_buf();
     let seen = Mutex::new(Vec::new());
     let done = stages::run(&mut opened.dir, Some(&missing), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap();
 
@@ -956,7 +1155,7 @@ fn a_roster_that_doesnt_read_stops_the_run_before_ffmpeg() {
     let mut opened = open(&s.dump, &s.root, &known, &|_| {}).unwrap();
     let seen = Mutex::new(Vec::new());
     let e = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap_err();
     assert_eq!(e.code(), "GUAC-E-ROSTER-UNREADABLE", "{e}");
@@ -1084,7 +1283,7 @@ fn a_level_part_the_manifest_lacks_resumes_alone() {
     );
     let seen = Mutex::new(Vec::new());
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap();
     // The parts kept whole each say so at once: none done, then all
@@ -1202,7 +1401,7 @@ fn the_progression_part_an_older_manifest_lacks_resumes_alone() {
     assert_eq!(again.state, DirState::Resume);
     let seen = Mutex::new(Vec::new());
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap();
     let p = &done.progression;
@@ -1249,7 +1448,7 @@ fn progression_tables_that_dont_read_leave_the_rest() {
     let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
     let seen = Mutex::new(Vec::new());
     let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap();
     let why = done.progression.progression.unwrap_err();
@@ -1326,7 +1525,7 @@ fn a_level_part_that_doesnt_read_leaves_the_others() {
     let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
     let seen = Mutex::new(Vec::new());
     let done = stages::run(&mut opened.dir, Some(&ffmpeg), IrFormat::Ron, &|e| {
-        seen.lock().unwrap().push(Seen::of(&e));
+        seen.lock().unwrap().extend(Seen::of(&e));
     })
     .unwrap();
     // A level the TV can't load isn't handed over (AT.26); its sprites

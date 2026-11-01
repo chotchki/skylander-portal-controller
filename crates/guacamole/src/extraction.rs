@@ -22,7 +22,7 @@ use guac_extract::dump::HashProgress;
 use guac_extract::intros::IrFormat;
 use guac_extract::known::{KNOWN_DUMPS, KnownDump};
 use guac_extract::qos::Qos;
-use guac_extract::stages::{self, Event, ModelFailure};
+use guac_extract::stages::{self, Event, ModelFailure, StageEnd};
 use guac_extract::transcode::{Done, Step, TranscodeEvent};
 use guac_extract::{DirState, ExtractError, ExtractRoot, IdentityDir, RootMode};
 use guac_ir::{CharacterTable, Roster};
@@ -31,7 +31,7 @@ use guac_server::progress::{Progression, ProgressionSlot};
 use serde::Serialize;
 use tracing::{error, info, warn};
 
-use crate::level::{LevelSender, LevelSource};
+use crate::level::{LevelSender, LevelSource, SoundsReady, SoundsSender};
 use crate::screen::TvScreen;
 use crate::turntable::{Shelf, ShelfSender};
 use crate::tv_state::{Current, ExtractBar, ExtractDetail, ExtractTitle, Setup};
@@ -58,6 +58,9 @@ pub struct ExtractJob {
     /// The TV's level loader, told where chapter 1 is once a pick finds it
     /// in the extract (AG.19); `None` with no TV to tell.
     pub level: Option<LevelSender>,
+    /// The TV's level again, told once the sounds part is in after it
+    /// loaded (AR.21); `None` with no TV to tell.
+    pub sounds: Option<SoundsSender>,
 }
 
 impl ExtractJob {
@@ -80,6 +83,7 @@ impl ExtractJob {
             progression: None,
             shelf: None,
             level: None,
+            sounds: None,
         }
     }
 
@@ -686,8 +690,18 @@ pub fn run(
             }
             Event::Sprites { done, total } => send(ExtractEvent::Sprites { done, total }),
             Event::Sounds { done, total } => send(ExtractEvent::Sounds { done, total }),
+            // The sounds part is in: the level loaded before it takes it up
+            // (AR.21).
+            Event::SoundsReady => {
+                info!(
+                    after_s = started.elapsed().as_secs_f64(),
+                    "the sounds handed to the TV"
+                );
+                send_sounds(job, &dir);
+            }
             Event::Interface { done, total } => send(ExtractEvent::Interface { done, total }),
             Event::Indexing => send(ExtractEvent::Indexing),
+            Event::Ended(end) => log_end(&end),
             Event::Transcode(e) => {
                 if let Step::Done(done) = &e.step {
                     let how = match done {
@@ -703,103 +717,7 @@ pub fn run(
             }
         },
     )?;
-    let r = &extracted.roster;
-    info!(
-        figures = r.roster.figures.len(),
-        portraits = r.portraits,
-        written = r.files.written,
-        kept = r.files.kept,
-        bytes = r.files.bytes,
-        took_s = r.took.as_secs_f64(),
-        "roster written"
-    );
-    let p = &extracted.progression;
-    match &p.progression {
-        Ok(t) => info!(
-            levels = t.level_xp.len(),
-            xp_cap = t.level_xp.last().copied().unwrap_or(0),
-            save_params = t.save_params.len(),
-            gold_cap = t.gold_cap,
-            read = p.read,
-            written = p.files.written,
-            kept = p.files.kept,
-            took_s = p.took.as_secs_f64(),
-            "progression written"
-        ),
-        Err(why) => {
-            warn!("the progression tables didn't extract; the next start tries them again: {why}")
-        }
-    }
-    let m = &extracted.models;
-    info!(
-        models = m.models,
-        failed = m.failed.len(),
-        heroes = m.heroes,
-        unsettled = m.unsettled.len(),
-        textures = m.textures,
-        binds = m.binds,
-        written = m.files.written,
-        kept = m.files.kept,
-        bytes = m.files.bytes,
-        took_s = m.took.as_secs_f64(),
-        "models written"
-    );
-    for f in &m.failed {
-        warn!(load_file = %f.load_file, reason = %f.reason, "a model didn't extract; its figures keep their portraits");
-    }
-    for f in &m.unsettled {
-        warn!(load_file = %f.load_file, reason = %f.reason, "a character's walk didn't settle; it keeps its model");
-    }
-    let p = &m.palettes;
-    info!(
-        palettes = p.palettes,
-        clips = p.clips,
-        networks = p.networks,
-        refused = p.refused,
-        written = p.files.written,
-        kept = p.files.kept,
-        bytes = p.files.bytes,
-        took_s = p.took.as_secs_f64(),
-        "palettes written"
-    );
-    let l = &extracted.levels;
-    info!(
-        levels = l.levels,
-        read = l.parts_read,
-        kept = l.parts_kept,
-        failed = l.failed.len(),
-        props = l.props,
-        refused_props = l.refused_props.len(),
-        textures = l.textures,
-        shared = l.shared,
-        written = l.files.written,
-        bytes = l.files.bytes,
-        took_s = l.took.as_secs_f64(),
-        "level written"
-    );
-    for f in &l.failed {
-        warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
-    }
-    let sc = &extracted.scripts;
-    info!(
-        read = sc.parts_read,
-        kept = sc.parts_kept,
-        failed = sc.failed.len(),
-        entries = sc.entries,
-        scripts = sc.scripts,
-        level_scripts = l.scripts,
-        creatures = l.palettes.palettes,
-        spawn_models = sc.props,
-        refused_spawn_models = sc.refused_props.len(),
-        written = sc.files.written,
-        bytes = sc.files.bytes,
-        took_s = sc.took.as_secs_f64(),
-        "the fight's scripts written"
-    );
-    for f in &sc.failed {
-        warn!(part = %f.part, archive = %f.archive, reason = %f.reason, "a script part didn't extract; the next start tries it again");
-    }
-    log_later_parts(&extracted);
+    // Every stage before them said what it did as it ended (AT.31).
     let intros = extracted.intros?;
     let ffmpeg = &intros.ffmpeg;
     info!(ffmpeg = %ffmpeg.path.display(), how = ?ffmpeg.how, version = %ffmpeg.version, "ffmpeg");
@@ -810,6 +728,7 @@ pub fn run(
         took_s = intros.took.as_secs_f64(),
         "intros converted"
     );
+    logged("intros converted");
     Ok(Ready {
         library: IntroLibrary {
             dir: opened.dir.path().to_path_buf(),
@@ -820,80 +739,211 @@ pub fn run(
     })
 }
 
-/// The parts after the fight's scripts, each with what it read or kept and
-/// a warning for one that didn't read (AT.26): the emitters, which chapter 1
-/// loads with, then the level's sprites, the sounds and the interface, read
-/// after the hand-off.
-fn log_later_parts(x: &stages::Extracted) {
-    let p = &x.particles;
-    info!(
-        read = p.read,
-        kept = p.kept,
-        emitters = p.emitters,
-        refused = p.refused.len(),
-        written = p.files.written,
-        kept_files = p.files.kept,
-        bytes = p.files.bytes,
-        took_s = p.took.as_secs_f64(),
-        "the attacks' emitters written"
-    );
-    if let Some((archive, reason)) = &p.failed {
-        warn!(%archive, %reason, "the emitters didn't extract; the next start tries them again");
-    }
-    let sp = &x.sprites;
-    info!(
-        levels = sp.levels,
-        read = sp.parts_read,
-        kept = sp.parts_kept,
-        failed = sp.failed.len(),
-        textures = sp.textures,
-        written = sp.files.written,
-        kept_files = sp.files.kept,
-        bytes = sp.files.bytes,
-        took_s = sp.took.as_secs_f64(),
-        "the level's sprites written"
-    );
-    for f in &sp.failed {
-        warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level's sprites didn't extract; the next start tries them again");
-    }
-    let so = &x.sounds;
-    info!(
-        read = so.read,
-        kept = so.kept,
-        archives = so.archives,
-        missing = so.missing.len(),
-        sounds = so.sounds,
-        data = so.data,
-        audio = so.audio,
-        refused = so.refused.len(),
-        written = so.files.written,
-        kept_files = so.files.kept,
-        bytes = so.files.bytes,
-        took_s = so.took.as_secs_f64(),
-        "the sounds written"
-    );
-    if let Some((archive, reason)) = &so.failed {
-        warn!(%archive, %reason, "the sounds didn't extract; the next start tries them again");
-    }
-    let i = &x.interface;
-    info!(
-        read = i.read,
-        kept = i.kept,
-        archives = i.archives,
-        missing = i.missing.len(),
-        templates = i.templates,
-        fonts = i.fonts,
-        strings = i.strings,
-        textures = i.textures,
-        refused = i.refused.len(),
-        written = i.files.written,
-        kept_files = i.files.kept,
-        bytes = i.files.bytes,
-        took_s = i.took.as_secs_f64(),
-        "the interface written"
-    );
-    if let Some((archive, reason)) = &i.failed {
-        warn!(%archive, %reason, "the interface didn't extract; the next start tries it again");
+#[cfg(test)]
+thread_local! {
+    /// The stage lines this thread logged, in order (AT.31's test).
+    static LOGGED: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Notes that `line` went to the log: the tests' record of when.
+fn logged(line: &'static str) {
+    #[cfg(test)]
+    LOGGED.with(|l| l.borrow_mut().push(line));
+    let _ = line;
+}
+
+/// What a stage did, said the moment it ends (openspec AT.26, AT.31): what
+/// it read, kept and wrote, with a warning for a part that didn't read, so a
+/// failed part is warned as it fails, not when the run returns after the
+/// intros or never when the app quits during them. The run's end logs only
+/// the intros.
+fn log_end(end: &StageEnd) {
+    match end {
+        StageEnd::Roster(r) => {
+            info!(
+                figures = r.roster.figures.len(),
+                portraits = r.portraits,
+                written = r.files.written,
+                kept = r.files.kept,
+                bytes = r.files.bytes,
+                took_s = r.took.as_secs_f64(),
+                "roster written"
+            );
+            logged("roster written");
+        }
+        StageEnd::Progression(p) => match &p.progression {
+            Ok(t) => {
+                info!(
+                    levels = t.level_xp.len(),
+                    xp_cap = t.level_xp.last().copied().unwrap_or(0),
+                    save_params = t.save_params.len(),
+                    gold_cap = t.gold_cap,
+                    read = p.read,
+                    written = p.files.written,
+                    kept = p.files.kept,
+                    took_s = p.took.as_secs_f64(),
+                    "progression written"
+                );
+                logged("progression written");
+            }
+            Err(why) => warn!(
+                "the progression tables didn't extract; the next start tries them again: {why}"
+            ),
+        },
+        StageEnd::Models(m) => {
+            info!(
+                models = m.models,
+                failed = m.failed.len(),
+                heroes = m.heroes,
+                unsettled = m.unsettled.len(),
+                textures = m.textures,
+                binds = m.binds,
+                written = m.files.written,
+                kept = m.files.kept,
+                bytes = m.files.bytes,
+                took_s = m.took.as_secs_f64(),
+                "models written"
+            );
+            logged("models written");
+            for f in &m.failed {
+                warn!(load_file = %f.load_file, reason = %f.reason, "a model didn't extract; its figures keep their portraits");
+            }
+            for f in &m.unsettled {
+                warn!(load_file = %f.load_file, reason = %f.reason, "a character's walk didn't settle; it keeps its model");
+            }
+            let p = &m.palettes;
+            info!(
+                palettes = p.palettes,
+                clips = p.clips,
+                networks = p.networks,
+                refused = p.refused,
+                written = p.files.written,
+                kept = p.files.kept,
+                bytes = p.files.bytes,
+                took_s = p.took.as_secs_f64(),
+                "palettes written"
+            );
+            logged("palettes written");
+        }
+        StageEnd::Level(l) => {
+            info!(
+                levels = l.levels,
+                read = l.parts_read,
+                kept = l.parts_kept,
+                failed = l.failed.len(),
+                props = l.props,
+                refused_props = l.refused_props.len(),
+                level_scripts = l.scripts,
+                creatures = l.palettes.palettes,
+                textures = l.textures,
+                shared = l.shared,
+                written = l.files.written,
+                bytes = l.files.bytes,
+                took_s = l.took.as_secs_f64(),
+                "level written"
+            );
+            logged("level written");
+            for f in &l.failed {
+                warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level part didn't extract; the next start tries it again");
+            }
+        }
+        StageEnd::Scripts(sc) => {
+            info!(
+                read = sc.parts_read,
+                kept = sc.parts_kept,
+                failed = sc.failed.len(),
+                entries = sc.entries,
+                scripts = sc.scripts,
+                spawn_models = sc.props,
+                refused_spawn_models = sc.refused_props.len(),
+                written = sc.files.written,
+                bytes = sc.files.bytes,
+                took_s = sc.took.as_secs_f64(),
+                "the fight's scripts written"
+            );
+            logged("the fight's scripts written");
+            for f in &sc.failed {
+                warn!(part = %f.part, archive = %f.archive, reason = %f.reason, "a script part didn't extract; the next start tries it again");
+            }
+        }
+        StageEnd::Particles(p) => {
+            info!(
+                read = p.read,
+                kept = p.kept,
+                emitters = p.emitters,
+                refused = p.refused.len(),
+                written = p.files.written,
+                kept_files = p.files.kept,
+                bytes = p.files.bytes,
+                took_s = p.took.as_secs_f64(),
+                "the attacks' emitters written"
+            );
+            logged("the attacks' emitters written");
+            if let Some((archive, reason)) = &p.failed {
+                warn!(%archive, %reason, "the emitters didn't extract; the next start tries them again");
+            }
+        }
+        StageEnd::Sprites(sp) => {
+            info!(
+                levels = sp.levels,
+                read = sp.parts_read,
+                kept = sp.parts_kept,
+                failed = sp.failed.len(),
+                textures = sp.textures,
+                written = sp.files.written,
+                kept_files = sp.files.kept,
+                bytes = sp.files.bytes,
+                took_s = sp.took.as_secs_f64(),
+                "the level's sprites written"
+            );
+            logged("the level's sprites written");
+            for f in &sp.failed {
+                warn!(level = %f.level, part = %f.part, reason = %f.reason, "a level's sprites didn't extract; the next start tries them again");
+            }
+        }
+        StageEnd::Sounds(so) => {
+            info!(
+                read = so.read,
+                kept = so.kept,
+                archives = so.archives,
+                missing = so.missing.len(),
+                sounds = so.sounds,
+                data = so.data,
+                audio = so.audio,
+                refused = so.refused.len(),
+                written = so.files.written,
+                kept_files = so.files.kept,
+                bytes = so.files.bytes,
+                took_s = so.took.as_secs_f64(),
+                "the sounds written"
+            );
+            logged("the sounds written");
+            if let Some((archive, reason)) = &so.failed {
+                warn!(%archive, %reason, "the sounds didn't extract; the next start tries them again");
+            }
+        }
+        StageEnd::Interface(i) => {
+            info!(
+                read = i.read,
+                kept = i.kept,
+                archives = i.archives,
+                missing = i.missing.len(),
+                templates = i.templates,
+                fonts = i.fonts,
+                strings = i.strings,
+                textures = i.textures,
+                refused = i.refused.len(),
+                written = i.files.written,
+                kept_files = i.files.kept,
+                bytes = i.files.bytes,
+                took_s = i.took.as_secs_f64(),
+                "the interface written"
+            );
+            logged("the interface written");
+            if let Some((archive, reason)) = &i.failed {
+                warn!(%archive, %reason, "the interface didn't extract; the next start tries it again");
+            }
+        }
     }
 }
 
@@ -943,6 +993,18 @@ fn send_level(job: &ExtractJob, identity: &guac_ir::DumpIdentity, dir: &Path) {
     let source = LevelSource::chapter_1(dir.to_path_buf(), job.ir, identity.clone());
     // The app is gone; nothing to tell.
     let _ = tx.send(source);
+}
+
+/// Tells the TV's level that the sounds part is whole in the extract at
+/// `dir` (AR.21): a level loaded from it before reads its sounds again.
+fn send_sounds(job: &ExtractJob, dir: &Path) {
+    let Some(tx) = &job.sounds else {
+        return;
+    };
+    // The app is gone; nothing to tell.
+    let _ = tx.send(SoundsReady {
+        dir: dir.to_path_buf(),
+    });
 }
 
 /// At start, the roster of a current extract of `dump`, published on a thread
@@ -1897,6 +1959,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             progression: Some(ProgressionSlot::default()),
             shelf: None,
             level: None,
+            sounds: None,
         }
     }
 
@@ -2069,25 +2132,54 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
         let extract = tmp.path().join("extract");
         let (level, feed) = crate::level::level_channel();
+        let (sounds, sounds_feed) = crate::level::sounds_channel();
         let job = ExtractJob {
             level: Some(level),
+            sounds: Some(sounds),
             ..job(&extract, Some(ffmpeg))
         };
         // Each status with how many sources the TV's loader had been sent
-        // by then.
+        // by then, and how many sounds' readies (AR.21).
         let seen = Mutex::new(Vec::new());
         let ready = run(&dump, &job, &known, &|e| {
-            seen.lock().unwrap().push((step(&e).kind(), feed.0.len()));
+            seen.lock()
+                .unwrap()
+                .push((step(&e).kind(), feed.0.len(), sounds_feed.0.len()));
         })
         .unwrap();
         assert!(ready.ran);
         let seen = seen.into_inner().unwrap();
         let sent_at = |kind: &str| -> Vec<usize> {
             seen.iter()
-                .filter(|(k, _)| *k == kind)
-                .map(|(_, n)| *n)
+                .filter(|(k, _, _)| *k == kind)
+                .map(|(_, n, _)| *n)
                 .collect()
         };
+        // The sounds' ready once their part is in: after every sounds
+        // status, before the interface's.
+        let sounds_at = |kind: &str| -> Vec<usize> {
+            seen.iter()
+                .filter(|(k, _, _)| *k == kind)
+                .map(|(_, _, n)| *n)
+                .collect()
+        };
+        for (kind, sent) in [
+            ("Particles", 0),
+            ("Sprites", 0),
+            ("Sounds", 0),
+            ("Interface", 1),
+            ("Indexing", 1),
+            ("Converting", 1),
+        ] {
+            let at = sounds_at(kind);
+            assert!(
+                !at.is_empty() && at.iter().all(|n| *n == sent),
+                "{kind}: {seen:?}"
+            );
+        }
+        let landed = sounds_feed.0.try_recv().unwrap();
+        assert_eq!(landed.dir, ready.library.dir);
+        assert!(sounds_feed.0.try_recv().is_err(), "sent once");
         for kind in ["Roster", "Models", "Level", "Scripts", "Particles"] {
             let at = sent_at(kind);
             assert!(
@@ -2107,11 +2199,79 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         assert_eq!(source.dir, ready.library.dir);
         assert!(feed.0.try_recv().is_err(), "sent once");
         // The extract is current now: the next pick sends it before any
-        // stage.
+        // stage, and no sounds' ready: the level's load reads them whole.
         let (result, seen) = run_all(&dump, &job, &known);
         assert!(!result.unwrap().ran);
         assert!(seen.iter().all(|s| s.kind() == "Checking"), "{seen:?}");
         assert_eq!(feed.0.try_iter().count(), 1);
+        assert_eq!(sounds_feed.0.try_iter().count(), 0);
+    }
+
+    /// AT.31: each stage's line goes to the log as the stage ends, before
+    /// the next stage's first status (so a sounds part's line, a failed
+    /// one's warning with it, is out before the interface starts, minutes
+    /// before the intros end on a first run), and the run's end logs none of
+    /// them again: each once. Read off [`LOGGED`], this thread's record of
+    /// the lines: a scoped subscriber drops events at random under the
+    /// parallel tests (tracing's shared interest cache).
+    #[test]
+    fn each_stages_line_is_logged_as_it_ends_and_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        let known = known_for(&dump);
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        let job = job(&tmp.path().join("extract"), Some(ffmpeg));
+        let lines = || LOGGED.with(|l| l.borrow().clone());
+        LOGGED.with(|l| l.borrow_mut().clear());
+        // Each status with the lines logged when it came.
+        let seen = Mutex::new(Vec::new());
+        let ready = run(&dump, &job, &known, &|e| {
+            seen.lock().unwrap().push((step(&e).kind(), lines()));
+        })
+        .unwrap();
+        assert!(ready.ran);
+        let seen = seen.into_inner().unwrap();
+        let at_first =
+            |kind: &str| -> &Vec<&str> { &seen.iter().find(|(k, _)| *k == kind).unwrap().1 };
+        let at_last =
+            |kind: &str| -> &Vec<&str> { &seen.iter().rev().find(|(k, _)| *k == kind).unwrap().1 };
+        // Out after the stage's own last status, by the next one's first.
+        for (line, own, next) in [
+            ("roster written", "Roster", "Models"),
+            ("models written", "Models", "Level"),
+            ("level written", "Level", "Scripts"),
+            ("the fight's scripts written", "Scripts", "Particles"),
+            ("the attacks' emitters written", "Particles", "Sprites"),
+            ("the level's sprites written", "Sprites", "Sounds"),
+            ("the sounds written", "Sounds", "Interface"),
+            ("the interface written", "Interface", "Indexing"),
+        ] {
+            assert!(
+                !at_last(own).contains(&line),
+                "{line} out by the last {own}"
+            );
+            assert!(
+                at_first(next).contains(&line),
+                "{line} not out by the first {next}: {:?}",
+                at_first(next)
+            );
+        }
+        assert_eq!(
+            lines(),
+            [
+                "roster written",
+                "progression written",
+                "models written",
+                "palettes written",
+                "level written",
+                "the fight's scripts written",
+                "the attacks' emitters written",
+                "the level's sprites written",
+                "the sounds written",
+                "the interface written",
+                "intros converted",
+            ]
+        );
     }
 
     /// AE.4: at start, a current extract's roster lands with no pick; one
