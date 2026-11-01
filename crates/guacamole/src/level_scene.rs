@@ -322,7 +322,7 @@ pub const DARK: PointLight = PointLight {
 /// ([`frame_point_lights`]), so a part's key never changes with how many
 /// are lit and nothing compiles mid-fight.
 pub fn view_scene(lights: &LevelLights, fog: &LevelFog, view_from_world: Mat4) -> Scene {
-    let mut scene = Scene::new();
+    let mut scene = remaster::scene();
     scene.lights = lights.directional.map(|mut l| {
         l.travel = view_from_world
             .transform_vector3(Vec3::from_array(l.travel))

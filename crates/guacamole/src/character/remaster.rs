@@ -26,6 +26,14 @@
 //!   highlights keep their reach (the coins' bronze, 2 · 0.82 stored at its
 //!   middle, multiplies by 2.9 in linear light, not 1.6 as stored or 1.3 as
 //!   decoded at strength 2). A character's rim keeps its strength (AG.95).
+//! - the directional sum (AG.286): the lights' ambient and diffuse added on
+//!   stored values ([`stored`]) and twice the sum raised to 2.2 before it
+//!   multiplies the decoded colour map, since the original multiplies its
+//!   stored colour by 2·Σ(ambient + diffuse·facing). Decoding each term
+//!   first drew every lit part at about 0.55 of the original's brightness
+//!   facing the key light; the decoded copies stay for the additive terms
+//!   (the unlit relief and specular), so an unlit part (Eruptor's) is as
+//!   AE.12 checked it.
 //!
 //! The camera ([`camera`]) is HDR (an `Rgba16Float` main texture) with 4x
 //! MSAA and TonyMcMapface into an 8-bit sRGB image ([`target`]). No
@@ -50,7 +58,7 @@ use bevy::pbr::ScreenSpaceTransmission;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::Msaa;
 use guac_ir::model::{Filter, Material, Sampler, TextureRole, Wrap};
-use guac_ir::shading::DirectionalLight;
+use guac_ir::shading::{DirectionalLight, Scene};
 
 use super::key::bit;
 
@@ -68,8 +76,9 @@ pub fn linear(code: [u8; 3]) -> [f32; 3] {
 }
 
 /// A directional light from the codes the disc stores: its three colours
-/// decoded, its way of travel (unit length, the space the shader lights
-/// in) as given.
+/// decoded for the additive terms, its ambient and diffuse also kept as
+/// stored for the directional sum ([`stored`], AG.286), its way of travel
+/// (unit length, the space the shader lights in) as given.
 pub fn light(
     travel: [f32; 3],
     ambient: [u8; 3],
@@ -81,6 +90,27 @@ pub fn light(
         ambient: linear(ambient),
         diffuse: linear(diffuse),
         specular: linear(specular),
+        ambient_stored: stored(ambient),
+        diffuse_stored: stored(diffuse),
+    }
+}
+
+/// A colour code as stored, over 255, never decoded: what the directional
+/// sum adds (openspec AG.286). The original adds its lights' ambient and
+/// diffuse on stored values and the sum multiplies the colour, so the sum
+/// goes into linear light at [`LIGHT_POWER`] once it's added up, as a
+/// multiplying rim's strength does ([`in_light`]).
+pub fn stored(code: [u8; 3]) -> [f32; 3] {
+    code.map(|c| f32::from(c) / 255.0)
+}
+
+/// A scene in the remaster's working space: the spec's defaults with the
+/// directional sum taken into linear light ([`LIGHT_POWER`], AG.286). Every
+/// scene the TV draws a lit part in starts here.
+pub fn scene() -> Scene {
+    Scene {
+        light_power: LIGHT_POWER,
+        ..Scene::new()
     }
 }
 
@@ -304,6 +334,144 @@ mod tests {
         assert_eq!(u.replace.to_array(), [r[0], r[1], r[2], 0.25]);
         // The travel and the amount are numbers, kept as given.
         assert_eq!(rgb(u.light_travel[0]), [0.0, 0.0, -1.0]);
+        // The directional sum's copies as stored (AG.286).
+        assert_eq!(
+            rgb(u.light_ambient_stored[0]),
+            [39.0 / 255.0, 42.0 / 255.0, 67.0 / 255.0]
+        );
+        assert_eq!(rgb(u.light_diffuse_stored[0]), stored([172, 134, 18]));
+        assert_eq!(stored([255, 128, 0]), [1.0, 128.0 / 255.0, 0.0]);
+    }
+
+    /// A pixel facing the eye and the key light, 5 in front of the eye.
+    fn facing_fragment() -> Fragment {
+        Fragment {
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 1.0, 0.0],
+            position: [0.0, 0.0, -5.0],
+            depth: 5.0,
+            eye: [0.0, 0.0, 1.0],
+            vertex_colour: shading::HALF_GREY,
+            uv: [[0.5; 2]; 3],
+            shadow: [0.5; 4],
+        }
+    }
+
+    /// The start zone's key light as the level lights it: the zone's
+    /// ambient (39, 42, 67) on it, its diffuse (172, 134, 18), travelling
+    /// into the screen.
+    fn start_zone_key() -> DirectionalLight {
+        light(
+            [0.0, 0.0, -1.0],
+            [39, 42, 67],
+            [172, 134, 18],
+            [75, 85, 107],
+        )
+    }
+
+    /// AG.286: a lit part draws the original's light in linear light. The
+    /// original multiplies its stored colour by 2·Σ(ambient + diffuse·facing)
+    /// on stored values, so the remaster raises twice the stored sum to 2.2
+    /// and multiplies the decoded colour by it: a stored grey of a half
+    /// facing the key light comes out about (0.649, 0.435, 0.088) at
+    /// neutral tints, where summing the decoded terms gave about (0.185,
+    /// 0.112, 0.027).
+    #[test]
+    fn a_lit_part_draws_the_originals_light_in_linear_light() {
+        let neutral = [128, 128, 128, 255];
+        let mut ir = material(neutral);
+        ir.pixel.base = 1 << bit::DIRECTIONAL;
+        let m = reference_material(&ir).unwrap();
+        assert!(m.directional);
+        let mut scene = scene();
+        assert_eq!(scene.light_power, LIGHT_POWER);
+        scene.placement_tint = tint(neutral);
+        scene.lights[0] = start_zone_key();
+        let half = LinearRgba::from(Srgba::new(0.5, 0.5, 0.5, 1.0)).red;
+        assert!((half - 0.2140).abs() < 1e-4, "{half}");
+        let colour = Flat([half, half, half, 1.0]);
+        let textures = Textures {
+            colour: Some(&colour),
+            ..Textures::default()
+        };
+        let got = shading::shade(&m, &scene, &facing_fragment(), &textures)
+            .unwrap()
+            .colour;
+        let neutral_scale = 4.0 * (128.0f32 / 255.0).powi(2);
+        let sum = [39.0 + 172.0, 42.0 + 134.0, 67.0 + 18.0].map(|s: f32| s / 255.0);
+        let want: [f32; 3] =
+            std::array::from_fn(|i| half * (2.0 * sum[i]).powf(2.2) * neutral_scale);
+        assert!(close(got, want, 1e-5), "{got:?} against {want:?}");
+        let at_neutral = got.map(|c| c / neutral_scale);
+        assert!(
+            close(at_neutral, [0.649, 0.435, 0.088], 2e-3),
+            "{at_neutral:?}"
+        );
+        // Summed on the decoded terms, as before AG.286, it drew at about
+        // a third of that.
+        let decoded: [f32; 3] = {
+            let (a, d) = (linear([39, 42, 67]), linear([172, 134, 18]));
+            std::array::from_fn(|i| 2.0 * half * (a[i] + d[i]))
+        };
+        assert!(close(decoded, [0.185, 0.112, 0.027], 2e-3), "{decoded:?}");
+        assert!((0..3).all(|i| at_neutral[i] > 3.0 * decoded[i]));
+    }
+
+    /// AG.286 moves nothing on an unlit part: Eruptor's body (rim, normal
+    /// map, spec map, no directional bit) reads neither the stored sum nor
+    /// its power, its relief and specular the decoded lights', so AE.12's
+    /// checked look stands.
+    #[test]
+    fn an_unlit_part_is_unchanged() {
+        let neutral = [128, 128, 128, 255];
+        let mut ir = material(neutral);
+        ir.pixel.base = 0x1c;
+        let m = reference_material(&ir).unwrap();
+        assert!(!m.directional && m.normal_map && m.spec_map && m.rim.is_some());
+        let (colour, normal, spec, rim) = (
+            Flat([0.4, 0.2, 0.1, 1.0]),
+            // A mapped normal tilted off the geometric one, so the relief
+            // shows.
+            Flat([0.0, 0.5, 0.0, 0.8]),
+            Flat([0.2, 0.3, 0.4, 1.0]),
+            Flat([0.1, 0.05, 0.02, 0.6]),
+        );
+        let textures = Textures {
+            colour: Some(&colour),
+            normal_map: Some(&normal),
+            spec_map: Some(&spec),
+            rim: Some(&rim),
+            ..Textures::default()
+        };
+        let shade = |stored: Option<[f32; 3]>, power: f32| {
+            let mut scene = scene();
+            scene.placement_tint = tint(neutral);
+            scene.light_power = power;
+            scene.lights[0] = DirectionalLight {
+                travel: [-0.6, 0.0, -0.8],
+                ..start_zone_key()
+            };
+            if let Some(s) = stored {
+                scene.lights[0].ambient_stored = s;
+                scene.lights[0].diffuse_stored = s;
+            }
+            shading::shade(&m, &scene, &facing_fragment(), &textures).unwrap()
+        };
+        let remaster = shade(None, LIGHT_POWER);
+        assert_eq!(remaster, shade(Some([9.0; 3]), 1.0));
+        assert_eq!(remaster, shade(Some([0.0; 3]), LIGHT_POWER));
+        // And the relief is the decoded diffuse's: with that diffuse off,
+        // the colour moves.
+        let mut scene = scene();
+        scene.placement_tint = tint(neutral);
+        scene.lights[0] = DirectionalLight {
+            travel: [-0.6, 0.0, -0.8],
+            diffuse: [0.0; 3],
+            ..start_zone_key()
+        };
+        let no_relief = shading::shade(&m, &scene, &facing_fragment(), &textures).unwrap();
+        assert_ne!(no_relief.colour, remaster.colour);
     }
 
     /// An IR material with a colour map alone and this tint.

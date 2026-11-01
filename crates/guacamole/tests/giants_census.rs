@@ -60,6 +60,9 @@ struct Cards {
     /// nothing of (helpers whose material it doesn't read).
     carried: usize,
     undrawn: usize,
+    /// The characters no part of whose model the directional lights reach
+    /// (AG.286: the lit parts' sum, which only these escape).
+    unlit: Vec<String>,
 }
 
 /// Every key the roster's figures draw on a card, as the warm reads them
@@ -84,6 +87,7 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
         models: 0,
         carried: 0,
         undrawn: 0,
+        unlit: Vec::new(),
     };
     for load in &models::character_loads(&roster) {
         let path = models::archive_path(&usrdir, load);
@@ -98,6 +102,12 @@ fn card_keys(dump: &Path, hero_scene: &Scene) -> Cards {
             model.attachments_unsettled
         );
         cards.models += 1;
+        let lit = model.materials.iter().any(|m| {
+            guacamole::character::material::reference_material(m).is_ok_and(|r| r.directional)
+        });
+        if !lit {
+            cards.unlit.push(load.to_string());
+        }
         cards.carried += model.attachments.len();
         cards.undrawn += attach::segments(&model, &attach::drawn(&model))
             .iter()
@@ -394,6 +404,11 @@ fn the_census_is_the_discs() {
         props_beyond.len(),
         level_took.as_secs_f64()
     );
+    // AG.286's guard: Eruptor alone of the roster's characters has no part
+    // the directional lights reach, so AE.12's look checked on him alone
+    // said nothing of the lit parts' sum every other character draws with.
+    eprintln!("characters with no lit part: {:?}", cards.unlit);
+    assert_eq!(cards.unlit, ["009_Eruptor"], "only Eruptor is unlit");
     // Every character drawn in the level as the hero (AH.65: his keys there
     // carry its point lights, and his glowing parts draw their masks).
     assert_eq!(

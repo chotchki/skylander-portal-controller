@@ -323,6 +323,8 @@ fn viewer_rig() -> Rig {
         ambient: [0.0; 3],
         diffuse: [1.0; 3],
         specular: [1.0; 3],
+        ambient_stored: [0.0; 3],
+        diffuse_stored: [1.0; 3],
     };
     Rig {
         lights,

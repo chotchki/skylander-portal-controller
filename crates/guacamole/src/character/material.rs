@@ -107,6 +107,12 @@ pub struct CharacterUniform {
     pub light_ambient: [Vec4; 3],
     pub light_diffuse: [Vec4; 3],
     pub light_specular: [Vec4; 3],
+    /// Each light's ambient and diffuse as stored, what the directional
+    /// sum adds before the shader raises twice it to the power in
+    /// `shadow.y` (openspec AG.286); the decoded ones above stay for the
+    /// additive terms.
+    pub light_ambient_stored: [Vec4; 3],
+    pub light_diffuse_stored: [Vec4; 3],
     /// View space, as `light_travel` is.
     pub point_position: [Vec4; 3],
     pub point_colour: [Vec4; 3],
@@ -121,7 +127,8 @@ pub struct CharacterUniform {
     /// What the shader turns the level's shadow-light visibility into the
     /// shadow-receive term's sample with ([`super::remaster::shadow_uniform`],
     /// openspec AG.23): x the original's full shadow on stored values, y the
-    /// power that takes it into linear light.
+    /// power that takes it into linear light, which the directional sum
+    /// takes too (AG.286).
     pub shadow: Vec4,
     /// x the shadow mode, y the alpha test's reference, z the glow: its
     /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
@@ -177,6 +184,8 @@ impl CharacterUniform {
             light_ambient: lights.map(|l| v3(l.ambient)),
             light_diffuse: lights.map(|l| v3(l.diffuse)),
             light_specular: lights.map(|l| v3(l.specular)),
+            light_ambient_stored: lights.map(|l| v3(l.ambient_stored)),
+            light_diffuse_stored: lights.map(|l| v3(l.diffuse_stored)),
             point_position: [0, 1, 2].map(|i| point(i, |p| v3(p.position))),
             point_colour: [0, 1, 2].map(|i| point(i, |p| v3(p.colour))),
             point_falloff: [0, 1, 2]
@@ -954,6 +963,8 @@ mod tests {
             ambient: [0.1, 0.2, 0.3],
             diffuse: [0.4, 0.5, 0.6],
             specular: [0.7, 0.8, 0.9],
+            ambient_stored: [0.15, 0.25, 0.35],
+            diffuse_stored: [0.45, 0.55, 0.65],
         };
         scene.point_lights.push(PointLight {
             position: [1.0, 2.0, -3.0],
@@ -964,6 +975,8 @@ mod tests {
         let u = CharacterUniform::new(&m, &scene, 0.3);
         assert_eq!(u.light_travel[1], Vec4::new(0.0, -1.0, 0.0, 0.0));
         assert_eq!(u.light_specular[1], Vec4::new(0.7, 0.8, 0.9, 0.0));
+        assert_eq!(u.light_ambient_stored[1], Vec4::new(0.15, 0.25, 0.35, 0.0));
+        assert_eq!(u.light_diffuse_stored[1], Vec4::new(0.45, 0.55, 0.65, 0.0));
         assert_eq!(u.point_falloff[0], Vec4::new(1.5, 0.75, 0.0, 0.0));
         assert_eq!(u.point_colour[1], Vec4::ZERO);
         assert_eq!(u.fog_range, Vec4::new(30.48, 335.28, 0.0, 0.0));

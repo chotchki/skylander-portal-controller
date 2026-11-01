@@ -269,7 +269,7 @@ pub fn rig_scene(rig: &Rig) -> Result<Scene, RigError> {
             rgb(l.specular),
         )
     };
-    let mut scene = Scene::new();
+    let mut scene = remaster::scene();
     scene.lights = [light(key), light(fill), light(back)];
     scene.fog = true;
     scene.fog_colour = [0.0; 3];
