@@ -167,7 +167,7 @@ pub struct Model {
     bases: Bases,
     sprites: Vec<Sprite>,
     templates: HashMap<Obj, SpriteId>,
-    active: Vec<SpriteId>,
+    pub(crate) active: Vec<SpriteId>,
     removed: Vec<SpriteId>,
     strings: Vec<Str>,
     file_strings: HashMap<Obj, usize>,
@@ -175,6 +175,9 @@ pub struct Model {
     text_colors: TextColorConverter,
     name_object: Value,
     fonts: Vec<Font>,
+    /// The frame's sprite list: every sprite drawn, in the order each
+    /// started being drawn (the crate docs, Draw order).
+    pub(crate) drawing: Vec<SpriteId>,
     /// `viewporttitlesafeinfo`'s margins: left, right, upper, lower. 0 until
     /// AT.10 reads the original's, as the value cells read today.
     pub title_safe: [i32; 4],
@@ -215,6 +218,7 @@ impl Model {
             text_colors: TextColorConverter::default(),
             name_object: Value::Null,
             fonts: Vec::new(),
+            drawing: Vec::new(),
             title_safe: [0; 4],
         }
     }
@@ -304,7 +308,7 @@ impl Model {
         &self.sprites[id.0 as usize]
     }
 
-    fn sprite_mut(&mut self, id: SpriteId) -> &mut Sprite {
+    pub(crate) fn sprite_mut(&mut self, id: SpriteId) -> &mut Sprite {
         &mut self.sprites[id.0 as usize]
     }
 
@@ -436,6 +440,17 @@ impl Model {
     fn reads_float(&self, id: SpriteId) -> bool {
         self.string(self.sprite(id).text)
             .is_some_and(|s| s.decimal_digits >= 1)
+    }
+
+    /// The size the layout takes for a sprite that isn't text: what `width`
+    /// and `height` read, or its stored numbers where its kind won't say.
+    pub(crate) fn size_of(&self, id: SpriteId, world: &dyn World) -> [f32; 3] {
+        self.size_read(id, world).unwrap_or(self.sprite(id).size)
+    }
+
+    /// The frame's sprite list, in the order each started being drawn.
+    pub fn drawing(&self) -> &[SpriteId] {
+        &self.drawing
     }
 
     /// The width, height and depth `width`, `height` and `depth` read.

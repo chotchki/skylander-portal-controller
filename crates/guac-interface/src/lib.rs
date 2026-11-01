@@ -502,54 +502,77 @@
 //!   dirty its kind builds its geometry again first (a text's glyphs), and a
 //!   kind not ready (an image still loading) skips the sprite this frame.
 //!
-//! **Laying out one sprite** (0xBA240), in its parent's space:
+//! **Laying out one sprite** (0xBA240, its anchors read in the disassembly
+//! for AT.7), in its parent's space ([`layout`] has the code):
 //!
-//! - its point is its `location` (12.4 to units);
+//! - its point is its `location` (12.4 to units) and its `Z Depth` × 25;
 //! - its computed scale is its own (percent over 100) times its parent's, per
 //!   axis; the z scale counts only for a model, a container or particles;
 //! - its computed priority is its `priority` plus its parent's computed
 //!   priority, its computed depth its `Z Depth` plus its parent's;
 //! - its colour is its colour with the alpha times its parent's computed
 //!   alpha over 255; its replace colour is copied;
-//! - its size is its kind's (0xB9ECC: written when *sized*, else computed),
-//!   and a sprite not *sized* stores the computed size as its width and
-//!   height; an art sprite's image stretches to it (0xB64BC);
+//! - its size is its kind's (0xB9ECC: written when *sized*, else computed;
+//!   a text's its layout's), and a sprite not *sized* stores the computed
+//!   size as its width and height; an art sprite's image stretches to it
+//!   (0xB64BC);
 //! - in a sprite parent (not hung on a model's node), its point is at the
-//!   parent's scale and, unless the parent is a model or particles, moved to
-//!   the parent's `align to parent` anchor (the parent's column × ½ its
-//!   computed width and row × ½ its computed height, at the parent's scale);
-//!   then carried by the parent's place on screen;
-//! - unless it is a model or particles, its own `alignment` anchor is
-//!   subtracted (column × ½ its computed width and row × ½ its computed
-//!   height, at its scale), so that point of it sits on the point above;
-//! - with no parent sprite its depth is 10,000 (20,000 × ½); with one, its
-//!   `Z Depth` × 25 plus what it inherits.
+//!   parent's scale and, unless the parent is a model or particles, moved by
+//!   its own `align to parent` anchor on the parent (that anchor's column ×
+//!   ½ the parent's computed width and row × ½ its height, each at the
+//!   parent's scale: 0xBAA98); then carried by the parent's place, the
+//!   parent's own top-left once its anchor is off;
+//! - unless it is a model or particles, its own `alignment` anchor (column ×
+//!   ½ its computed width and row × ½ its height, at its scale) is turned by
+//!   its orientation and taken off both axes (0xBA82C to 0xBA92C), so that
+//!   point of it sits on the point above;
+//! - with no parent sprite its depth is 10,000 (20,000 × ½) and its point
+//!   is in frame pixels; with one, its `Z Depth` × 25 at the parent's z scale
+//!   plus the parent's.
 //!
-//! **Hypothesis** (AT.7 and AT.24 settle it): the y anchor subtracts as the x
-//! one does (the decompile shows the x subtraction and folds the y into a
-//! vector op), which AT.3's parentless quads agree with.
+//! What it draws (the draw list): art its image over its size at its scale
+//! from that top-left, texture key and UV box with it; text its glyphs at
+//! the text's x and y scales times its scale from the same top-left (Text
+//! above); a model, emitter or movie an entry over the same rectangle for
+//! the adapter. A container draws nothing. **Hypothesis** (AT.28, which reads
+//! where each takes effect): `texture flip` swaps the UV box's u ends for
+//! horizontal and v ends for vertical, by its names; orientation and
+//! `clipping` aren't applied (no captured sprite clips; the four rotated
+//! corner shades AT.3 matched are parentless, their rotation the
+//! placement's, which the model holds no member for yet).
 //!
 //! # Colour and blends
 //!
-//! AT.3, off AC.13's fragment program: a sprite draws rgb = texture × tint × 2
-//! and alpha = texture alpha × tint alpha, the tint its colour bytes over 255,
-//! then mixes rgb toward its replace colour by the replace percentage. The
-//! blends the captures draw: crossfade (1: alpha over), cuts out (3: the alpha
-//! written into the destination's alpha), cuts out (invert) (7: the same, the
-//! program's alpha inverted), gets cut out (4: colour by the destination's
-//! alpha) and clears cut out (5: the destination's alpha reverse-subtracted).
-//! Opaque (0), additive (2) and gets cut out (add) (6) no captured frame
-//! draws (**Hypothesis**: by their names, AT.7).
+//! AT.3, off AC.13's fragment program and GPU states ([`draw`] has the
+//! maths as functions): a sprite draws rgb = texture × tint × 2 and alpha =
+//! texture alpha × tint alpha, the tint its colour bytes over 255, then
+//! mixes rgb toward its replace colour by the replace percentage (its fourth
+//! byte over 255), and inverts alpha where the program is told to. The
+//! blends the captures draw: crossfade (1: rgb over by the source's alpha,
+//! alpha kept), cuts out (3: the source's alpha added into the
+//! destination's, rgb kept), cuts out (invert) (7: the same with the alpha
+//! inverted), gets cut out (4: rgb by the destination's alpha, the source
+//! where it is 0, alpha kept) and clears cut out (5: the source's alpha
+//! taken off the destination's, rgb kept). **Hypothesis**: opaque (0),
+//! additive (2) and gets cut out (add) (6), which no captured frame draws,
+//! by their names; clears cut out's alpha inverted, as 10 of AC.13's 11 are
+//! (the one straight clears a straight cut; AT.24 checks each against its
+//! cut once the HUD is built).
 //!
 //! # Draw order
 //!
-//! Drawn sprites join the frame's sprite list in the updater's walk order
-//! (parents before children). **Hypothesis** (AT.7 reads the renderer and
-//! checks AC.13's 72 draws against it): the list is drawn by computed
-//! priority, lower in front (a message box's text is written at priority -2
-//! over its box), the walk order breaking ties.
+//! A sprite joins the frame's sprite list the first frame it is drawn and
+//! leaves it the first frame it isn't (0x10C59C at 0xBBD04, 0x10C5E4 at
+//! 0xB9B1C); the render side takes the list on (0x10C8A8). **Hypothesis**
+//! (AT.24 checks AC.13's 72 draws against it; the render side's sort isn't
+//! read): drawn by computed priority, lower in front (a message box's text
+//! is written at priority -2 over its box; AC.13's number shadows at 10
+//! draw before their numbers at 5), the list's order (when each started
+//! being drawn) breaking ties.
 #![forbid(unsafe_code)]
 
+pub mod draw;
+pub mod layout;
 pub mod members;
 pub mod model;
 pub mod sprite;
