@@ -310,6 +310,21 @@ impl LevelProps {
             .filter(move |&i| !taken_off(self.props[i].object))
     }
 
+    /// Each model less the materials the TV can't draw yet in `scene`, by
+    /// name (openspec AS.13, [`level_scene::refuse`]): the level's own,
+    /// read beside its scene. Each one left out comes back with why; a
+    /// model whose every material is refused stands drawing nothing.
+    pub fn refuse(
+        &mut self,
+        scene: &Scene,
+        format_of: &dyn Fn(&str) -> Option<u32>,
+    ) -> Vec<level_scene::Refused> {
+        self.models
+            .iter_mut()
+            .flat_map(|m| level_scene::refuse(&mut m.drawn, scene, format_of))
+            .collect()
+    }
+
     /// Every model's drawn part in one list, the models in order, their
     /// materials numbered across them, and each model's segments in it.
     pub fn drawn(&self) -> (Drawn, Vec<Range<usize>>) {

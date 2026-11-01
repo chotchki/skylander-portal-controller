@@ -217,25 +217,52 @@ fn level_keys(dump: &Path) -> Chapter1 {
     let archive = std::fs::read(levels::archive_path(&usrdir, level)).expect("the level archive");
     let bld = levels::level_bld(&archive).expect("its level.bld");
     let igz = Igz::parse(&bld).expect("the level parses");
-    let scene = levels::scene(&igz, level, identity())
-        .expect("the scene")
-        .ir;
+    let scene = levels::scene(&igz, level, identity()).expect("the scene");
+    // Each texture's layout off its KTX2's header, as the TV's load reads
+    // it (openspec AS.13's normal-map refusal).
+    let mut formats: std::collections::HashMap<String, u32> = scene
+        .textures
+        .iter()
+        .map(|(path, ktx2)| (path.clone(), ktx2_format(ktx2)))
+        .collect();
+    let scene = scene.ir;
     let lights = levels::lights(&igz, level, identity())
         .expect("the lights")
         .ir;
     let atmosphere = levels::atmosphere(&igz, level, identity())
         .expect("the atmosphere")
         .ir;
-    let props = levels::props(&igz, level, identity())
-        .expect("the props")
-        .ir;
+    let props = levels::props(&igz, level, identity()).expect("the props");
+    formats.extend(
+        props
+            .textures
+            .iter()
+            .map(|(path, ktx2)| (path.clone(), ktx2_format(ktx2))),
+    );
+    let props = props.ir;
     let placements = levels::placements(&igz, level, identity())
         .expect("the placements")
         .ir;
-    let start = level_scene::at_start(scene, &lights, &atmosphere).expect("chapter 1 at its start");
+    // The dev view frames another level's start as the fresh state frames
+    // this one (AS.13).
+    assert_eq!(
+        level_scene::start_point(&placements).map(|p| p.to_array()),
+        Ok(level_scene::CHAPTER_1_START),
+        "chapter 1's start"
+    );
+    let format_of = |t: &str| formats.get(t).copied();
+    let start = level_scene::at_start(scene, &lights, &atmosphere, &format_of)
+        .expect("chapter 1 at its start");
+    // Chapter 1 draws every material it holds.
+    assert_eq!(start.refused, [], "chapter 1 refuses no material");
     let view = level_scene::view_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let creatures = guacamole::creature_models::skinned_models(&placements, &props, &identity());
-    let props = LevelProps::new(&props, &placements).expect("chapter 1's props");
+    let mut props = LevelProps::new(&props, &placements).expect("chapter 1's props");
+    assert_eq!(
+        props.refuse(&view, &format_of),
+        [],
+        "chapter 1's props refuse no material"
+    );
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let spawned = spawn_models(dump);
     let (particles, _) = particle_keys(dump, &view);
@@ -252,6 +279,12 @@ fn level_keys(dump: &Path) -> Chapter1 {
         spawn_models: spawned.len(),
         hero,
     }
+}
+
+/// A KTX2's `vkFormat`, off its header (0 for one too short to hold it).
+fn ktx2_format(ktx2: &[u8]) -> u32 {
+    ktx2.get(12..16)
+        .map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
 /// The keys the spawn models draw in `view`, then those a clone draws while

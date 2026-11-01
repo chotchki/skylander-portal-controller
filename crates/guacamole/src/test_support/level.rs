@@ -283,17 +283,9 @@ pub(crate) fn write_level(dir: &Path, lights: &Lights) -> LevelSource {
     )
     .unwrap();
     write_walk(dir);
-    // A 4x4 BC1 block of one colour: built here, none of the disc's.
-    let ktx2 = Texture {
-        format: Format::Bc1RgbaUnorm,
-        width: 4,
-        height: 4,
-        levels: vec![vec![0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0]],
-    }
-    .to_ktx2();
     for m in [&ground, &sky] {
         for t in &m.textures {
-            std::fs::write(dir.join(&t.texture), &ktx2).unwrap();
+            std::fs::write(dir.join(&t.texture), map_ktx2(t.role)).unwrap();
         }
     }
     LevelSource {
@@ -302,6 +294,34 @@ pub(crate) fn write_level(dir: &Path, lights: &Lights) -> LevelSource {
         identity: identity(),
         level: LEVEL.into(),
     }
+}
+
+/// A 4x4 block of one colour in the layout the disc keeps a map of
+/// `role` in, built here, none of the disc's: a normal map DXT5, as every
+/// one chapter 1 binds is (the TV refuses a material whose normal map isn't,
+/// openspec AS.13), any other map DXT1.
+pub(crate) fn map_ktx2(role: TextureRole) -> Vec<u8> {
+    let (format, block) = if role.is_color() {
+        (
+            Format::Bc1RgbaUnorm,
+            vec![0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0],
+        )
+    } else {
+        // Alpha 255 over the same colour block: a normal pointing up.
+        (
+            Format::Bc3Unorm,
+            vec![
+                0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0x1F, 0xF8, 0x1F, 0xF8, 0, 0, 0, 0,
+            ],
+        )
+    };
+    Texture {
+        format,
+        width: 4,
+        height: 4,
+        levels: vec![block],
+    }
+    .to_ktx2()
 }
 
 /// Where [`write_walk`]'s hero starts, and its floor's height.

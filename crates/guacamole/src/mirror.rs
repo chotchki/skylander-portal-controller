@@ -258,9 +258,14 @@ impl CameraBody {
 /// The level's camera where the pin holds it, after its follow eased it
 /// and before transforms propagate, so the frame draws from the pin; the
 /// follow itself steps on, untouched, and takes over once the pin's off.
+/// The dev view's camera too (openspec AS.13), which nothing moves, so a
+/// level shown without a hero is shot from where an oracle frame stood.
 fn pin_camera(
     mirror: Res<TvMirror>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<FollowCamera>>,
+    mut cameras: Query<
+        (&mut Transform, &mut Projection),
+        Or<(With<FollowCamera>, With<crate::level::LevelCamera>)>,
+    >,
 ) {
     let Some(pin) = *mirror.8.lock().unwrap_or_else(|e| e.into_inner()) else {
         return;

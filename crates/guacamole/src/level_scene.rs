@@ -41,6 +41,7 @@ use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, MeshError, Pose}
 
 use crate::character::effect::Effect;
 use crate::character::key::bit;
+use crate::character::material::CharacterMaterial;
 use crate::character::remaster;
 use crate::character::warm::{self, WarmError, WarmKey};
 
@@ -148,7 +149,9 @@ pub enum LevelError {
     NoCollision,
     #[error("the {world} collision mesh: {error}")]
     Collision { world: String, error: MeshError },
-    #[error("the level has no {START_PLACEMENT} with a waypoint")]
+    #[error(
+        "the level has no {START_PLACEMENT} with a waypoint, nor a placement running {INIT_SCRIPT}"
+    )]
     NoStart,
 }
 
@@ -160,22 +163,40 @@ pub const START_PLACEMENT: &str = "213_Init_Location";
 /// The way the hero faces at the start, degrees (AF.9: heading 0).
 pub const START_FACING: f32 = 0.0;
 
+/// The script [`START_PLACEMENT`] runs, which every level on the disc has
+/// a placement running (openspec AS.13: `init` on level 200, `init1` on PvP
+/// arena 1, `_Level_Init` and `Temp_Initalize` on hub stage 1), by its file
+/// name.
+pub const INIT_SCRIPT: &str = "InitializeLevel.ai";
+
 /// Where the hero starts: [`START_PLACEMENT`]'s first waypoint, before he's
-/// settled onto the ground.
+/// settled onto the ground. A level without one (every level but chapter
+/// 1's) starts at its first placement running [`INIT_SCRIPT`]: its first
+/// waypoint, or its own place when it has no path (on chapter 1 the two are
+/// one point), a reading until that level's scripts set the start (AS.15;
+/// stand-in ledger: `spawn`).
 pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
-    placements
-        .actors
-        .iter()
-        .find(|a| a.name == START_PLACEMENT)
-        .and_then(|a| {
-            placements
-                .waypoints
-                .get(usize::try_from(a.waypoints?).ok()?)
-        })
-        .and_then(|path| path.first())
-        .map(|w| Vec3::from_array(w.position))
-        .filter(|p| p.is_finite())
-        .ok_or(LevelError::NoStart)
+    let first_waypoint = |a: &guac_ir::level::Placement| {
+        placements
+            .waypoints
+            .get(usize::try_from(a.waypoints?).ok()?)?
+            .first()
+            .map(|w| Vec3::from_array(w.position))
+    };
+    let start = match placements.actors.iter().find(|a| a.name == START_PLACEMENT) {
+        Some(a) => first_waypoint(a),
+        None => placements
+            .actors
+            .iter()
+            .find(|a| {
+                a.script
+                    .as_deref()
+                    .and_then(|s| s.rsplit(['/', '\\']).next())
+                    == Some(INIT_SCRIPT)
+            })
+            .map(|a| first_waypoint(a).unwrap_or(Vec3::from_array(a.position))),
+    };
+    start.filter(|p| p.is_finite()).ok_or(LevelError::NoStart)
 }
 
 /// The first body id the level's collision meshes take, one each in the
@@ -861,27 +882,152 @@ pub fn keys(drawn: &Drawn, scene: &Scene) -> Result<Vec<(WarmKey, usize)>, Level
     )?)
 }
 
+/// KTX2's `vkFormat` for DXT5 (`VK_FORMAT_BC3_UNORM_BLOCK`) and its sRGB
+/// twin: the layout of every normal map chapter 1 binds (its scene's 594
+/// slots and its props' 191, openspec AS.13) and of the hub stage's 153
+/// hinted ones, X in alpha and Y in green, as the shader reads a normal map.
+pub const DXT5: [u32; 2] = [137, 138];
+
+/// A material a level holds that the TV can't draw yet (openspec AS.13):
+/// left out of what the level draws, by name, with the segments drawing
+/// with it, rather than drawn without the feature it asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused {
+    pub material: String,
+    pub why: String,
+    /// Its segments, left out with it.
+    pub segments: usize,
+}
+
+/// Why the TV can't draw `m` in `scene` yet, if it can't: it doesn't build
+/// (a feature the shader doesn't draw, such as the water's layer 4 by
+/// positions, bit 6, `rim by position`), or it's tfbmulti2's (no `effect`)
+/// and a normal map it binds isn't DXT5 by `format_of`, a texture's KTX2
+/// `vkFormat` by its extract path (the hub's card-table felt: a DXT1 map
+/// without its `TFN1` hint, which the shader would read in DXT5's layout).
+/// AS.24 draws both. A texture whose format doesn't read isn't refused
+/// here: the load reads it after, and says why it can't.
+pub fn undrawable(
+    m: &model::Material,
+    effect: Option<Effect>,
+    scene: &Scene,
+    format_of: &dyn Fn(&str) -> Option<u32>,
+) -> Option<String> {
+    if let Err(e) = CharacterMaterial::from_ir(m, scene, |_| bevy::asset::Handle::default()) {
+        return Some(e.to_string());
+    }
+    if effect.is_some() {
+        return None;
+    }
+    m.textures
+        .iter()
+        .filter(|s| !s.role.is_color())
+        .find_map(|s| {
+            let f = format_of(&s.texture)?;
+            (!DXT5.contains(&f)).then(|| {
+                format!(
+                    "its normal map {} isn't DXT5 (vkFormat {f}), the layout the shader reads one in",
+                    s.image
+                )
+            })
+        })
+}
+
+/// `drawn` less every material [`undrawable`] names in `scene` and the
+/// segments drawing with them, the rest renumbered in order and the sky's
+/// list kept to what's left: what a level's loader draws (openspec AS.13).
+/// Each one left out comes back with why.
+pub fn refuse(
+    drawn: &mut Drawn,
+    scene: &Scene,
+    format_of: &dyn Fn(&str) -> Option<u32>,
+) -> Vec<Refused> {
+    let n = drawn.materials.len();
+    let why: Vec<Option<String>> = (0..n)
+        .map(|k| undrawable(&drawn.materials[k], drawn.effect(k), scene, format_of))
+        .collect();
+    if why.iter().all(Option::is_none) {
+        return Vec::new();
+    }
+    // Each material's new index, or its place in the refused list.
+    let mut kept: Vec<Result<u16, usize>> = Vec::with_capacity(n);
+    let mut refused = Vec::new();
+    let mut next = 0u16;
+    for (k, w) in why.into_iter().enumerate() {
+        kept.push(match w {
+            None => {
+                next += 1;
+                Ok(next - 1)
+            }
+            Some(why) => {
+                refused.push(Refused {
+                    material: drawn.materials[k].name.clone(),
+                    why,
+                    segments: 0,
+                });
+                Err(refused.len() - 1)
+            }
+        });
+    }
+    let effects = drawn.effects_padded();
+    let materials = std::mem::take(&mut drawn.materials);
+    (drawn.materials, drawn.effects) = materials
+        .into_iter()
+        .zip(effects)
+        .zip(&kept)
+        .filter(|(_, k)| k.is_ok())
+        .map(|(m, _)| m)
+        .unzip();
+    let segments = std::mem::take(&mut drawn.segments);
+    let sources = std::mem::take(&mut drawn.sources);
+    let aligned = sources.len() == segments.len();
+    let mut moved = vec![None; segments.len()];
+    for (i, mut s) in segments.into_iter().enumerate() {
+        match kept[usize::from(s.material)] {
+            Ok(m) => {
+                s.material = m;
+                moved[i] = Some(drawn.segments.len());
+                drawn.segments.push(s);
+                if aligned {
+                    drawn.sources.push(sources[i]);
+                }
+            }
+            Err(r) => refused[r].segments += 1,
+        }
+    }
+    if !aligned {
+        drawn.sources = sources;
+    }
+    drawn.sky = drawn.sky.iter().filter_map(|&i| moved[i]).collect();
+    refused
+}
+
 /// A level as it draws at its start: its drawn part, the world lights and
-/// fog its start's zone sets up, and the keys it draws at the fresh state's
-/// camera ([`at_start`]).
+/// fog its start's zone sets up, the keys it draws at the fresh state's
+/// camera and the materials it can't draw yet ([`at_start`]).
 #[derive(Debug, Clone)]
 pub struct AtStart {
     pub drawn: Drawn,
     pub lights: LevelLights,
     pub fog: LevelFog,
     pub keys: Vec<(WarmKey, usize)>,
+    /// Left out by name ([`refuse`], openspec AS.13): none of chapter 1's.
+    pub refused: Vec<Refused>,
 }
 
 /// `scene`'s drawn part (its scenes' in one list, materials numbered across
 /// them), lit and fogged by `atmosphere`'s start zone over `lights`' placed
-/// lights, the sky taking the zone's share of the fog, and the keys it
-/// draws seen from [`fresh_state_view`]. The TV's loader reads a level
-/// through this, and `tests/giants_census.rs` holds the census's level
-/// table to it, so the start's pass compiles the loader's own keys.
+/// lights, the sky taking the zone's share of the fog, less the materials
+/// the TV can't draw yet (each texture's format by `format_of`, [`refuse`]),
+/// and the keys it draws seen from [`fresh_state_view`]. The TV's loader
+/// reads a level through this, and `tests/giants_census.rs` holds the
+/// census's level table to it, so the start's pass compiles the loader's
+/// own keys.
 pub fn at_start(
     scene: guac_ir::level::Scene,
     lights: &Lights,
     atmosphere: &Atmosphere,
+    format_of: &dyn Fn(&str) -> Option<u32>,
 ) -> Result<AtStart, LevelError> {
     let zone = start_zone(atmosphere)?;
     let lights = level_lights(lights, zone)?;
@@ -891,12 +1037,15 @@ pub fn at_start(
     for graph in scene.scenes {
         all.append(drawn(graph, sky)?);
     }
-    let keys = keys(&all, &view_scene(&lights, &fog, fresh_state_view()))?;
+    let view = view_scene(&lights, &fog, fresh_state_view());
+    let refused = refuse(&mut all, &view, format_of);
+    let keys = keys(&all, &view)?;
     Ok(AtStart {
         drawn: all,
         lights,
         fog,
         keys,
+        refused,
     })
 }
 
@@ -931,6 +1080,22 @@ pub fn fresh_state_transform() -> Transform {
         facing([FRESH_STATE_TILT, FRESH_STATE_HEADING, 0.0]),
         Vec3::Y,
     )
+}
+
+/// Chapter 1's start on the disc: `213_Init_Location`'s first waypoint
+/// ([`start_point`]), metres in the level's frame (`giants_census` holds it
+/// to the dump), which the fresh state's camera frames.
+pub const CHAPTER_1_START: [f32; 3] = [10.191352, 43.37944, -93.393616];
+
+/// The dev view's camera in a level past chapter 1 (openspec AS.13): the
+/// fresh state's, moved by that level's start's offset from chapter 1's,
+/// so it frames the level's start as AF's fresh state frames chapter 1's.
+/// A view to look at a level by, not the original's: where its camera
+/// opens a level is that level's scripts' (AS.15).
+pub fn start_view(start: Vec3) -> Transform {
+    let mut t = fresh_state_transform();
+    t.translation += start - Vec3::from_array(CHAPTER_1_START);
+    t
 }
 
 /// The fresh state's projection; the aspect follows the target.
@@ -1819,6 +1984,168 @@ mod tests {
         );
     }
 
+    /// AS.14: what a level's load pre-warms is that level's own, read off
+    /// its parts: two levels whose scenes differ in one material (a gloss
+    /// map where the other has none) key differently there and alike
+    /// everywhere else, each at its start in its own zone's light.
+    #[test]
+    fn two_levels_keys_differ_where_their_materials_do() {
+        let ground = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        let level = |name: &str, second: model::Material| guac_ir::level::Scene {
+            identity: identity(),
+            level: name.into(),
+            scenes: vec![SceneGraph {
+                world: "w".into(),
+                materials: vec![
+                    LevelMaterial::Multi2(ground.clone()),
+                    LevelMaterial::Multi2(second),
+                ],
+                segments: vec![segment(0, false), segment(1, true)],
+                sky: Vec::new(),
+            }],
+        };
+        let atmosphere = Atmosphere {
+            identity: identity(),
+            level: "level_x".into(),
+            script: "Level_Definition_900.ai".into(),
+            zones: vec![zone()],
+            start: Some(0),
+        };
+        let keys_of = |scene| -> Vec<WarmKey> {
+            let s = at_start(scene, &lights(), &atmosphere, &|_| Some(137)).unwrap();
+            assert_eq!(s.refused, []);
+            s.keys.into_iter().map(|(k, _)| k).collect()
+        };
+        let plain = keys_of(level(
+            "level_a",
+            multi2(mask(0x1C, 0x3FF), mask(0x101C, 0x1BFF)),
+        ));
+        let glossed = keys_of(level(
+            "level_b",
+            multi2(mask(0x9C, 0x3FF), mask(0x109C, 0x1BFF)),
+        ));
+        assert_eq!(plain.len(), 2);
+        assert_eq!(glossed.len(), 2);
+        // The ground's key both levels share; the second material's differs
+        // by its gloss map alone.
+        assert_eq!(plain[0], glossed[0]);
+        assert_ne!(plain[1], glossed[1]);
+        assert_eq!(plain[1].mesh, glossed[1].mesh);
+        assert_eq!(
+            plain[1].material.shader.pixel() ^ glossed[1].material.shader.pixel(),
+            1 << bit::GLOSS_MAP
+        );
+        // The same level twice keys the same.
+        assert_eq!(
+            plain,
+            keys_of(level(
+                "level_a",
+                multi2(mask(0x1C, 0x3FF), mask(0x101C, 0x1BFF))
+            ))
+        );
+    }
+
+    /// AS.13: what the TV can't draw yet is left out by name with its
+    /// segments, never drawn without its feature: a material asking for the
+    /// water's layer 4 by positions (bit 6, which the shader doesn't draw)
+    /// and a tfbmulti2 normal map that isn't DXT5 (the hub's felt, DXT1),
+    /// while a DXT5 normal map draws and an effect's maps (the grass's,
+    /// read as stored) aren't held to it; the rest renumbered, the sky's
+    /// list following its segment, and every key made after it.
+    #[test]
+    fn a_material_the_tv_cant_draw_is_refused_by_name_with_its_segments() {
+        let ground = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        let mut water = multi2(mask(0x1A | 1 << 6, 0x3FF), mask(0x101A | 1 << 6, 0x1BFF));
+        water.name = "Water_MAT".into();
+        let mut felt = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        felt.name = "ship_gameRoom_cardTableFelt_01".into();
+        for t in felt.textures.iter_mut().filter(|t| !t.role.is_color()) {
+            t.texture = "textures/felt_nrm.ktx2".into();
+            t.image = "felt_nrm.png".into();
+        }
+        let sky = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
+        let graph = SceneGraph {
+            world: "Levels/Test/Test_ART_MASTER.ma".into(),
+            materials: vec![
+                LevelMaterial::Multi2(ground),
+                LevelMaterial::Multi2(water),
+                LevelMaterial::Multi2(felt),
+                effect_of(0xAA6, "grass_HIRES"),
+                LevelMaterial::Multi2(sky),
+            ],
+            segments: vec![
+                segment(1, false),
+                segment(0, false),
+                segment(2, false),
+                segment(1, true),
+                segment(3, false),
+                segment(4, true),
+            ],
+            sky: vec![SkyGroup {
+                name: "sky".into(),
+                segments: vec![5],
+            }],
+        };
+        let mut d = drawn(graph, false).unwrap();
+        assert_eq!(d.materials.len(), 5);
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
+        // Every map DXT5 but the felt's normal map and the grass's maps.
+        let format_of = |t: &str| Some(if t == "textures/x.ktx2" { 137 } else { 133 });
+        let refused = refuse(&mut d, &scene, &format_of);
+        assert_eq!(
+            refused
+                .iter()
+                .map(|r| (r.material.as_str(), r.segments))
+                .collect::<Vec<_>>(),
+            [("Water_MAT", 2), ("ship_gameRoom_cardTableFelt_01", 1)]
+        );
+        assert!(
+            refused[0].why.contains("rim by position"),
+            "{}",
+            refused[0].why
+        );
+        assert_eq!(
+            refused[1].why,
+            "its normal map felt_nrm.png isn't DXT5 (vkFormat 133), the layout the shader reads one in"
+        );
+        // The ground, the grass and the sky draw, renumbered; the sky's
+        // segment is the last drawn and still the sky.
+        assert_eq!(
+            d.materials
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>(),
+            ["0x1a", "grass_HIRES", "0x0"]
+        );
+        assert_eq!(d.effects, [None, Some(Effect::Grass { shell: 0.0 }), None]);
+        assert_eq!(
+            d.segments.iter().map(|s| s.material).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(d.sources, [1, 4, 5]);
+        assert_eq!(d.sky, [2]);
+        assert_eq!(keys(&d, &scene).map(|k| k.len()), Ok(3));
+        // Kept to DXT5's sRGB twin too, and a format that doesn't read
+        // refuses nothing here (the load says why it can't read it).
+        let mut again = drawn(
+            SceneGraph {
+                world: "w".into(),
+                materials: vec![LevelMaterial::Multi2(multi2(
+                    mask(0x1A, 0x3FF),
+                    mask(0x101A, 0x1BFF),
+                ))],
+                segments: vec![segment(0, false)],
+                sky: Vec::new(),
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(refuse(&mut again, &scene, &|_| Some(138)), []);
+        assert_eq!(refuse(&mut again, &scene, &|_| None), []);
+        assert_eq!(again.segments.len(), 1);
+    }
+
     /// AG.41: with the sky dome taking none of the fog, the sky's segments
     /// draw on copies of their materials that own their fog off, so in the
     /// level's fogged scene the sky keys without fog and the rest with it,
@@ -1970,6 +2297,23 @@ mod tests {
         assert!((p.far - 243.84).abs() < 1e-4);
     }
 
+    /// AS.13: the dev view frames another level's start as the fresh state
+    /// frames chapter 1's: the same camera, moved by the start's offset from
+    /// chapter 1's, so at chapter 1's own start it's the fresh state's.
+    #[test]
+    fn the_dev_view_frames_a_levels_start_as_the_fresh_state_frames_chapter_1s() {
+        let fresh = fresh_state_transform();
+        assert_eq!(start_view(Vec3::from_array(CHAPTER_1_START)), fresh);
+        let start = Vec3::new(-0.79, 0.99, 63.86);
+        let t = start_view(start);
+        assert!(close(
+            (t.translation - fresh.translation).to_array(),
+            (start - Vec3::from_array(CHAPTER_1_START)).to_array(),
+            1e-4
+        ));
+        assert_eq!(t.rotation, fresh.rotation);
+    }
+
     /// AH.65: the three point lights a frame draws the level with, the
     /// nearest the hero first of the placed ones and the scripts', those
     /// that add nothing (dark, or no falloff) left out, the slots past them
@@ -2081,6 +2425,56 @@ mod tests {
         p.actors[1].waypoints = None;
         assert_eq!(start_point(&p), Err(LevelError::NoStart));
         p.actors.pop();
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+    }
+
+    /// AS.13: a level without chapter 1's start placement starts at its
+    /// first placement running `InitializeLevel.ai`, by the script's file
+    /// name whatever its folder: at that one's first waypoint, or its own
+    /// place without a path; a level running it nowhere has no start.
+    #[test]
+    fn a_level_past_chapter_1_starts_at_its_initialize_level_placement() {
+        let init = |name: &str, script: &str, at: [f32; 3], waypoints| guac_ir::level::Placement {
+            script: Some(script.into()),
+            position: at,
+            ..placement(name, waypoints)
+        };
+        let generic =
+            "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/InitializeLevel.ai";
+        let mut p = Placements {
+            identity: identity(),
+            level: "level_hub_2_stage_1".into(),
+            actors: vec![
+                init("Sheep_1", "C:/tfb/scripts/Sheep.ai", [9.0; 3], None),
+                init(
+                    "_Level_Init",
+                    generic,
+                    [8.188462, -12.614639, 23.147602],
+                    None,
+                ),
+                init("Temp_Initalize", generic, [-1.0, 4.0, 109.0], None),
+            ],
+            waypoints: vec![vec![waypoint([1.0, 2.0, 3.0])]],
+        };
+        assert_eq!(
+            start_point(&p),
+            Ok(Vec3::new(8.188462, -12.614639, 23.147602))
+        );
+        // Its path's first waypoint where it has one.
+        p.actors[1].waypoints = Some(0);
+        assert_eq!(start_point(&p), Ok(Vec3::new(1.0, 2.0, 3.0)));
+        // A backslashed folder is the same file; another file of the name's
+        // tail isn't.
+        p.actors[1].script = Some("C:\\tfb\\InitializeLevel.ai".into());
+        assert_eq!(start_point(&p), Ok(Vec3::new(1.0, 2.0, 3.0)));
+        p.actors[1].script = Some("C:/tfb/NotInitializeLevel.ai".into());
+        assert_eq!(start_point(&p), Ok(Vec3::new(-1.0, 4.0, 109.0)));
+        p.actors.truncate(1);
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+        // Chapter 1's placement wins, and its own rule holds: no waypoint,
+        // no start, whatever else runs the script.
+        p.actors.push(init("init", generic, [5.0; 3], None));
+        p.actors.push(placement(START_PLACEMENT, None));
         assert_eq!(start_point(&p), Err(LevelError::NoStart));
     }
 

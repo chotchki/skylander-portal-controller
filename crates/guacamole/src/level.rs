@@ -78,7 +78,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_transform_interpolation::prelude::TransformInterpolation;
 use crossbeam_channel::{Receiver, Sender};
 use guac_extract::intros::IrFormat;
-use guac_extract::levels::{ATMOSPHERE, COLLISION, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE};
+use guac_extract::levels::{
+    ATMOSPHERE, COLLISION, FIRST_RUN, LEVELS, LIGHTS, PLACEMENTS, PROPS, SCENE,
+};
 use guac_ir::DumpIdentity;
 use guac_ir::model::{self, Sampler, Scroll};
 use guac_ir::scroll;
@@ -123,14 +125,28 @@ pub struct LevelSource {
 }
 
 impl LevelSource {
-    /// Chapter 1 in the extract at `dir`: the one level this build plays.
+    /// Chapter 1 in the extract at `dir`: what a Giants pick hands the TV.
     pub fn chapter_1(dir: PathBuf, ir: IrFormat, identity: DumpIdentity) -> Self {
+        Self::named(dir, ir, identity, LEVELS[0])
+    }
+
+    /// `level` in the extract at `dir`, its parts in (openspec AS.13: a
+    /// level asked for by name, [`crate::level_choice`]).
+    pub fn named(dir: PathBuf, ir: IrFormat, identity: DumpIdentity, level: &str) -> Self {
         Self {
             dir,
             ir,
             identity,
-            level: LEVELS[0].to_owned(),
+            level: level.to_owned(),
         }
+    }
+
+    /// Whether the TV runs this level's scripts: chapter 1's alone, until
+    /// the scripts' own level loads run another's (openspec AS.15). Any
+    /// other level is drawn, solid and propped by AG.7's rule, its scripts
+    /// unread.
+    pub fn runs_scripts(&self) -> bool {
+        FIRST_RUN.contains(&self.level.as_str())
     }
 }
 
@@ -218,6 +234,9 @@ struct Built {
     fog: LevelFog,
     /// The sky's bounds, for the log: (min, max).
     sky: Option<(Vec3, Vec3)>,
+    /// The level's materials and its props' the TV can't draw yet, left
+    /// out by name (openspec AS.13), each once with its segments summed.
+    refused: Vec<arithmetic::Refused>,
     /// Each drawn material's sort bias: the sky's blended parts first, in
     /// the scene's order (AG.79, `level_scene::depth_biases`).
     depth_bias: Vec<f32>,
@@ -338,6 +357,18 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     }
     let read = started.elapsed();
     let mut walk = read_walk(source, part)?;
+    // Each texture's layout, read once off its header (AS.13: a normal map
+    // the shader can't read refuses its material).
+    let formats_read = Mutex::new(HashMap::new());
+    let format_of = |texture: &str| -> Option<u32> {
+        if !plain(texture) {
+            return None;
+        }
+        let mut read = formats_read.lock().unwrap_or_else(|e| e.into_inner());
+        *read
+            .entry(texture.to_owned())
+            .or_insert_with(|| ktx2_format(&source.dir.join(texture)))
+    };
     // The census's level table is held to this derivation on the disc
     // (`tests/giants_census.rs`).
     let AtStart {
@@ -345,13 +376,20 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         lights,
         fog,
         mut keys,
-    } = arithmetic::at_start(scene, &lights, &atmosphere).map_err(|e| e.to_string())?;
+        refused,
+    } = arithmetic::at_start(scene, &lights, &atmosphere, &format_of).map_err(|e| e.to_string())?;
     // The props' models draw beside the level: their materials after its
     // own, their keys in its scene (the census's props table holds them,
-    // `tests/giants_census.rs`), their meshes after its segments'.
+    // `tests/giants_census.rs`), their meshes after its segments'. What
+    // the TV can't draw of them yet is left out as the level's is.
     let level_materials = drawn.materials.len();
-    let (props, prop_ranges) = walk.props.drawn();
     let scene = level_scene(&lights, &fog);
+    let refused = merged(
+        refused
+            .into_iter()
+            .chain(walk.props.refuse(&scene, &format_of)),
+    );
+    let (props, prop_ranges) = walk.props.drawn();
     for (k, m) in arithmetic::keys(&props, &scene).map_err(|e| format!("the props: {e}"))? {
         if !keys.iter().any(|(kept, _)| *kept == k) {
             keys.push((k, level_materials + m));
@@ -567,6 +605,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         lights,
         fog,
         sky,
+        refused,
         depth_bias,
         walk,
         prop_models,
@@ -576,6 +615,37 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         read,
         took: started.elapsed(),
     })
+}
+
+/// A KTX2's `vkFormat`, off its header; `None` for a file that doesn't
+/// read or isn't one.
+fn ktx2_format(path: &std::path::Path) -> Option<u32> {
+    use std::io::Read;
+    let mut head = [0u8; 16];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    (head[..12] == KTX2_IDENTIFIER)
+        .then(|| u32::from_le_bytes([head[12], head[13], head[14], head[15]]))
+}
+
+/// The 12 bytes every KTX2 file opens with.
+const KTX2_IDENTIFIER: [u8; 12] = [
+    0xAB, b'K', b'T', b'X', b' ', b'2', b'0', 0xBB, b'\r', b'\n', 0x1A, b'\n',
+];
+
+/// `refused` with each material once, in the order first met, its segments
+/// summed: a prop's material its models share is refused in each.
+fn merged(refused: impl IntoIterator<Item = arithmetic::Refused>) -> Vec<arithmetic::Refused> {
+    let mut out: Vec<arithmetic::Refused> = Vec::new();
+    for r in refused {
+        match out
+            .iter_mut()
+            .find(|o| o.material == r.material && o.why == r.why)
+        {
+            Some(o) => o.segments += r.segments,
+            None => out.push(r),
+        }
+    }
+    out
 }
 
 /// The extract's spawn part (AH.22): every model each spawn archive's
@@ -698,6 +768,12 @@ pub(crate) struct LevelReport {
     /// effect missing what its stand-in reads, AG.24; stand-in ledger: `grass-warp`).
     pub left_out: usize,
     pub segments_left_out: usize,
+    /// The level's and its props' materials the TV can't draw yet, each
+    /// by name with why and its segments left out with it (openspec AS.13).
+    pub refused: Vec<RefusedMaterial>,
+    /// The level asked for by name and how far it's got (openspec AS.13,
+    /// [`crate::level_choice`]): kept from one load to the next.
+    pub asked: Option<crate::level_choice::AskedReport>,
     /// Drawn materials that are grass shells and warps (AG.24): the
     /// level's, its props' and the clones'.
     pub grass_shells: usize,
@@ -722,6 +798,10 @@ pub(crate) struct LevelReport {
     /// From the Giants pick to ready.
     pub pick_to_ready_ms: Option<u64>,
     pub shown: bool,
+    /// When the dev view showed it, on the TV's real clock in ms: the frame
+    /// log's (`/api/_test/tv/frames`), so a compile after it counts against
+    /// it (openspec AS.14).
+    pub shown_ms: Option<f64>,
     /// The point lights the frame draws the level with (openspec AH.65),
     /// the lit ones of the level's buffer's three.
     pub lights: Vec<FrameLight>,
@@ -735,6 +815,15 @@ pub(crate) struct LevelReport {
     /// What stopped it: the reading task's error, a part's file or the
     /// lights it lacks.
     pub reason: Option<String>,
+}
+
+/// A material the TV can't draw yet, as `/api/_test/tv` reports it
+/// (openspec AS.13).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct RefusedMaterial {
+    pub material: String,
+    pub why: String,
+    pub segments: usize,
 }
 
 /// A point light the frame draws the level with (openspec AH.65): where,
@@ -1183,6 +1272,9 @@ pub(crate) struct Level {
     sounds_landed: bool,
     /// That read, on a task, with the program it was read for.
     sounds_again: Option<Task<(Arc<guac_script::Program>, guacamole::sounds::SoundPart)>>,
+    /// The level last asked for by name (openspec AS.13), kept from one load
+    /// to the next.
+    asked: Option<crate::level_choice::AskedReport>,
 }
 
 impl Level {
@@ -1199,12 +1291,37 @@ impl Level {
             scripts: None,
             sounds_landed: false,
             sounds_again: None,
+            asked: None,
         }
     }
 
-    #[cfg(test)]
+    /// The level last asked for by name and how far it's got (openspec
+    /// AS.13).
+    pub(crate) fn asked(&self) -> Option<&crate::level_choice::AskedReport> {
+        self.asked.as_ref()
+    }
+
+    pub(crate) fn set_asked(&mut self, asked: crate::level_choice::AskedReport) {
+        self.asked = Some(asked);
+    }
+
+    /// Changes the ask's report, once there's one.
+    pub(crate) fn update_asked(&mut self, f: impl FnOnce(&mut crate::level_choice::AskedReport)) {
+        if let Some(a) = self.asked.as_mut() {
+            f(a);
+        }
+    }
+
+    /// The load's report as it stands (the props as of the load's spawn).
     pub(crate) fn report(&self) -> &LevelReport {
         &self.report
+    }
+
+    /// The load's report to set by hand: for the tests of what follows it
+    /// (the asked level's header, openspec AS.14).
+    #[cfg(test)]
+    pub(crate) fn report_mut(&mut self) -> &mut LevelReport {
+        &mut self.report
     }
 
     /// A level asked for off the extract at `dir`, nothing read yet: for the
@@ -1239,6 +1356,7 @@ impl Level {
     pub(crate) fn snapshot(&self) -> LevelReport {
         let mut r = self.report.clone();
         r.props = self.stage.loaded().map(|l| l.props.report().clone());
+        r.asked = self.asked.clone();
         r
     }
 
@@ -1528,7 +1646,10 @@ fn receive_level(
         let source = source.clone();
         AsyncComputeTaskPool::get().spawn(async move { read_level(&source, formats) })
     };
-    level.scripts = Some({
+    // Chapter 1's scripts run; another level's aren't read until AS.15, and
+    // the last level's run goes with it, so it drives nothing of this one.
+    let runs_scripts = source.runs_scripts();
+    level.scripts = runs_scripts.then(|| {
         let (dir, name, ir) = (source.dir.clone(), source.level.clone(), source.ir);
         AsyncComputeTaskPool::get().spawn(async move {
             level_scripts::load(&dir, &name).map(|mut linked| {
@@ -1548,14 +1669,77 @@ fn receive_level(
             })
         })
     });
+    if !runs_scripts {
+        commands.queue(take_down_run);
+    }
     level.report = LevelReport {
         state: "reading".into(),
         level: Some(source.level.clone()),
+        scripts_reason: (!runs_scripts).then(|| NO_SCRIPTS.to_owned()),
         ..Default::default()
     };
     level.source = Some(source);
     level.stage = Stage::Reading(task);
     level.since = Some(Instant::now());
+}
+
+/// Why a level past chapter 1 runs no scripts on the TV (openspec AS.13).
+pub(crate) const NO_SCRIPTS: &str = "only chapter 1's scripts run on the TV: another level's run with the scripts' own level loads (AS.15)";
+
+/// The script run taken down (openspec AS.13): its placements', clones' and
+/// objects' entities and the run itself, so a level whose scripts the TV
+/// doesn't run isn't driven by the last level's (its props stood by that
+/// run's actors, by object, in another level's file). Its voices go too,
+/// which the player follows only while a run is in (a loop would sound on
+/// forever), and the particles' and sounds' reports say nothing draws or
+/// plays. The camera's and the steps' records stay, read by no step without
+/// a run.
+fn take_down_run(world: &mut World) {
+    use crate::emitters::ParticleReport;
+    use crate::sound_player::{Heard, SoundReport};
+    use bevy::audio::AudioSink;
+    use guacamole::scripts::{ScriptClone, ScriptObject, ScriptPlacement, ScriptRuntime};
+    let had = world.contains_resource::<ScriptRuntime>();
+    let old: Vec<Entity> = world
+        .query_filtered::<Entity, Or<(With<ScriptPlacement>, With<ScriptClone>, With<ScriptObject>)>>()
+        .iter(world)
+        .collect();
+    for e in old {
+        world.despawn(e);
+    }
+    let voices: Vec<Entity> = world
+        .query_filtered::<(Entity, Option<&AudioSink>), With<Heard>>()
+        .iter(world)
+        .map(|(e, sink)| {
+            if let Some(sink) = sink {
+                sink.stop();
+            }
+            e
+        })
+        .collect();
+    for e in voices {
+        world.despawn(e);
+    }
+    world.remove_resource::<ScriptRuntime>();
+    world.remove_resource::<ScriptWorld>();
+    world.remove_resource::<ScriptSource>();
+    if let Some(mut r) = world.get_resource_mut::<ParticleReport>() {
+        (r.systems, r.particles, r.quads) = (0, 0, 0);
+        r.emitters.clear();
+    }
+    if let Some(mut r) = world.get_resource_mut::<SoundReport>() {
+        *r = SoundReport {
+            muted: r.muted,
+            ended: std::mem::take(&mut r.ended),
+            refused: std::mem::take(&mut r.refused),
+            files: r.files,
+            released: r.released,
+            ..Default::default()
+        };
+    }
+    if had {
+        info!("the last level's script run taken down");
+    }
 }
 
 /// The sounds part landing after the level loaded (openspec AR.21): news
@@ -1687,6 +1871,7 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                     triangles = built.walk.triangles,
                     start = ?built.walk.start,
                     lights_left_out = ?built.lights.left_out,
+                    refused = built.refused.len(),
                     fog = ?built.fog,
                     read_ms = built.read.as_millis() as u64,
                     built_ms = built.took.as_millis() as u64,
@@ -1699,6 +1884,18 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
                 r.keys = built.keys.len();
                 r.left_out = built.drawn.left_out_materials;
                 r.segments_left_out = built.drawn.left_out_segments;
+                for x in &built.refused {
+                    warn!(level = %built.level, material = %x.material, reason = %x.why, segments = x.segments, "a material the TV can't draw yet: left out");
+                }
+                r.refused = built
+                    .refused
+                    .iter()
+                    .map(|x| RefusedMaterial {
+                        material: x.material.clone(),
+                        why: x.why.clone(),
+                        segments: x.segments,
+                    })
+                    .collect();
                 let effects =
                     (0..built.drawn.materials.len()).filter_map(|m| built.drawn.effect(m));
                 (r.grass_shells, r.warps) = effects.fold((0, 0), |(g, w), e| match e {
@@ -2298,7 +2495,7 @@ fn show_level(
     view: Res<LevelView>,
     mut level: ResMut<Level>,
     tv: Query<Option<&RenderTarget>, With<TvCamera>>,
-    time: Res<Time>,
+    (time, real): (Res<Time>, Res<Time<Real>>),
     mut redrawn: MessageWriter<Redrawn>,
 ) {
     if !view.0 || !matches!(level.stage, Stage::Ready(_)) {
@@ -2308,6 +2505,12 @@ fn show_level(
         return;
     };
     let target = target.cloned().unwrap_or_default();
+    // Chapter 1 at AF's fresh state; another level at its start as that
+    // frames chapter 1's (openspec AS.13).
+    let at = match (level.source.as_ref(), level.start()) {
+        (Some(source), Some(start)) if !source.runs_scripts() => arithmetic::start_view(start),
+        _ => fresh_state_transform(),
+    };
     let camera = commands
         .spawn((
             view_camera(target, VIEW_ORDER),
@@ -2315,9 +2518,12 @@ fn show_level(
             LevelCamera,
             Name::new("level view"),
         ))
+        // Over the bundle's own, which a bundle can't hold twice.
+        .insert(at)
         .id();
     spawn_alpha_clear(&mut commands, camera, LEVEL_LAYER);
     level.show(&mut commands, camera, time.elapsed());
+    level.report.shown_ms = Some(real.elapsed().as_secs_f64() * 1e3);
     info!(level = ?level.report.level, "the level shows (GUAC_LEVEL_VIEW)");
     redrawn.write(Redrawn::Level);
 }
@@ -2770,6 +2976,237 @@ mod tests {
                 .as_deref()
                 .is_some_and(|w| w.starts_with("scripts/bootstrap.igz: ")),
             "{r:?}"
+        );
+    }
+
+    /// AS.13: a level past chapter 1 loads with no script part read and
+    /// takes the last level's run down as it comes (its placements, clones
+    /// and objects, the run itself), so that run drives nothing of it;
+    /// chapter 1 asked for again links and installs its run anew.
+    #[test]
+    fn a_level_past_chapter_1_reads_no_scripts_and_takes_the_last_run_down() {
+        use guac_formats::roster::builder::{disc, sample};
+        use guacamole::scripts::{ScriptPlacement, ScriptRuntime};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        assert!(source.runs_scripts());
+        let d = disc(&sample());
+        let (creature, _) = guac_formats::script::builder::creature();
+        let entries = [&d.bootstrap, &d.global, &d.init_setup, &creature, &creature];
+        for ((rel, _), bytes) in level_scripts::files(LEVEL).iter().zip(entries) {
+            let path = tmp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        let mut app = level_app(tmp.path(), source.clone(), false);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.world().contains_resource::<ScriptRuntime>() {
+            assert!(Instant::now() < deadline, "the run never installed");
+            app.update();
+        }
+        let placements = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<(), With<ScriptPlacement>>()
+                .iter(app.world())
+                .count()
+        };
+        // The fixture's part places nothing of its own: one of the run's
+        // placements, as an install spawns them; a voice of its music and
+        // the reports of what it plays and draws, as the player and the
+        // emitters leave them.
+        app.world_mut()
+            .spawn(ScriptPlacement(Obj { unit: 4, index: 1 }));
+        assert_eq!(placements(&mut app), 1);
+        let voice = app
+            .world_mut()
+            .spawn(crate::sound_player::Heard::of_run(1))
+            .id();
+        app.insert_resource(crate::sound_player::SoundReport {
+            muted: true,
+            archives: 69,
+            started: 7,
+            voices: 1,
+            files: 2,
+            ..Default::default()
+        });
+        app.insert_resource(crate::emitters::ParticleReport {
+            systems: 3,
+            started: 3,
+            particles: 12,
+            quads: 12,
+            emitters: vec!["CoinSparkle".into()],
+            seen: vec!["CoinSparkle".into()],
+        });
+
+        let arena = LevelSource::named(
+            source.dir.clone(),
+            source.ir,
+            source.identity.clone(),
+            "pvp_level_001_cubedungeon",
+        );
+        assert!(!arena.runs_scripts());
+        send_source(&mut app, &arena, false);
+        let w = app.world();
+        assert!(!w.contains_resource::<ScriptRuntime>());
+        assert!(!w.contains_resource::<ScriptWorld>());
+        assert!(!w.contains_resource::<crate::hero_scripts::ScriptSource>());
+        assert!(w.resource::<Level>().scripts.is_none(), "no part read");
+        assert_eq!(report(&app).scripts_reason.as_deref(), Some(NO_SCRIPTS));
+        assert_eq!(placements(&mut app), 0);
+        assert!(app.world().get_entity(voice).is_err(), "its voice went");
+        let w = app.world();
+        let sounds = w.resource::<crate::sound_player::SoundReport>();
+        assert_eq!(
+            (
+                sounds.muted,
+                sounds.archives,
+                sounds.started,
+                sounds.voices,
+                sounds.files
+            ),
+            (true, 0, 0, 0, 2),
+            "nothing plays; the build's muting and the player's files as they were"
+        );
+        let particles = w.resource::<crate::emitters::ParticleReport>();
+        assert_eq!(
+            (
+                particles.systems,
+                particles.particles,
+                particles.quads,
+                particles.started
+            ),
+            (0, 0, 0, 3),
+            "nothing draws; the starts since the TV came up kept"
+        );
+        assert!(particles.emitters.is_empty() && particles.seen.len() == 1);
+
+        send_source(&mut app, &source, false);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.world().contains_resource::<ScriptRuntime>() {
+            assert!(Instant::now() < deadline, "chapter 1's run never came back");
+            app.update();
+        }
+        assert_eq!(report(&app).scripts_reason, None);
+    }
+
+    /// AS.16: leaving a level for another takes the first down as the next
+    /// comes: its root and everything under it (its parts, its props' draws,
+    /// its shadow light), its solids in Avian's world (the collision's and a
+    /// standing prop's), and its textures, meshes and materials once their
+    /// handles go, so the next, the same level from another extract, comes
+    /// up with as many of each as the first had and none of the first's.
+    #[test]
+    fn leaving_a_level_takes_its_entities_solids_and_assets_down() {
+        use crate::physics::SeamBody;
+        use guac_ir::actor::{Shape, Solid};
+        let level_in = |dir: &Path| {
+            let source = write_level(dir, &lights());
+            let scene: guac_ir::level::Scene = guac_ir::from_ron(
+                &std::fs::read_to_string(dir.join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+            )
+            .unwrap();
+            let shape = MeshShape {
+                uv_sets: 2,
+                tangents: true,
+                colours: false,
+                skinned: false,
+            };
+            let gourd = guac_ir::level::Prop {
+                path: "gourd.mdl".into(),
+                skeleton: None,
+                materials: vec![scene.scenes[0].materials[0].clone()],
+                segments: vec![segment(0, shape, 0.0)],
+                idle: None,
+            };
+            let placed = guac_ir::level::Placement {
+                object: 20,
+                id: 0,
+                name: "gourd".into(),
+                script: None,
+                position: [START[0] + 4.5, START[1], START[2]],
+                rotation: [0.0; 3],
+                scale: [100.0; 3],
+                model: Some("gourd.mdl".into()),
+                solid: Some(Solid {
+                    shape: Shape::Sphere,
+                    solid: true,
+                    world: true,
+                    actor_surface: false,
+                    offset: [0.0; 3],
+                    rotation: [0.0; 3],
+                    width: 7.25,
+                    height: 6.5,
+                    length: 3.0,
+                    weight: 1.0,
+                    rebound: 0.0,
+                }),
+                movement: None,
+                waypoints: None,
+                activity_state: 4,
+                activation_range: 160.0,
+            };
+            write_props(dir, vec![gourd], vec![placed]);
+            source
+        };
+        let (first_dir, next_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = level_in(first_dir.path());
+        let next = level_in(next_dir.path());
+        let mut app = level_app(first_dir.path(), first, false);
+        app.add_plugins(crate::physics::SeamPlugin);
+        app.finish();
+        app.cleanup();
+        until(&mut app, &["ready"], |_| {});
+        let world_counts = |app: &mut App| {
+            let w = app.world_mut();
+            let bodies = w
+                .query_filtered::<Entity, With<SeamBody>>()
+                .iter(w)
+                .collect::<Vec<_>>();
+            (
+                bodies,
+                w.resource::<Assets<Mesh>>().len(),
+                w.resource::<Assets<Image>>().len(),
+                w.resource::<Assets<CharacterMaterial>>().len(),
+            )
+        };
+        let root = app.world().resource::<Level>().loaded().unwrap().root;
+        let mut under = Vec::new();
+        let mut stack = vec![root];
+        while let Some(e) = stack.pop() {
+            under.push(e);
+            if let Some(children) = app.world().get::<Children>(e) {
+                stack.extend(children.iter());
+            }
+        }
+        let (bodies, meshes, images, materials) = world_counts(&mut app);
+        // The collision's mesh and the gourd's sphere; the level's parts,
+        // its props' draw and its shadow light under its root.
+        assert_eq!(bodies.len(), 2, "{bodies:?}");
+        assert!(under.len() > 3, "{under:?}");
+
+        send_source(&mut app, &next, false);
+        app.update();
+        for e in under.iter().chain(&bodies) {
+            assert!(
+                app.world().get_entity(*e).is_err(),
+                "{e} outlived its level"
+            );
+        }
+        assert!(
+            world_counts(&mut app).0.is_empty(),
+            "no solid but the next level's"
+        );
+        until(&mut app, &["ready"], |_| {});
+        for _ in 0..3 {
+            app.update();
+        }
+        let (now_bodies, now_meshes, now_images, now_materials) = world_counts(&mut app);
+        assert_eq!(now_bodies.len(), 2);
+        assert!(now_bodies.iter().all(|b| !bodies.contains(b)));
+        assert_eq!(
+            (now_meshes, now_images, now_materials),
+            (meshes, images, materials),
+            "the first level's assets let go"
         );
     }
 
@@ -3426,7 +3863,9 @@ mod tests {
         write(PLACEMENTS, guac_ir::to_ron(&other).unwrap());
         assert_eq!(
             read().as_deref(),
-            Some("the level has no 213_Init_Location with a waypoint")
+            Some(
+                "the level has no 213_Init_Location with a waypoint, nor a placement running InitializeLevel.ai"
+            )
         );
     }
 
@@ -4320,13 +4759,16 @@ mod tests {
         graph.materials.push(LevelMaterial::Multi2(leaves.clone()));
         graph.segments.push(segment(3, shape, 10.0));
         std::fs::write(&path, guac_ir::to_ron(&scene).unwrap()).unwrap();
-        let ktx2 = std::fs::read(tmp.path().join(&shared.texture)).unwrap();
         for t in leaves
             .textures
             .iter()
             .filter(|t| t.texture != shared.texture)
         {
-            std::fs::write(tmp.path().join(&t.texture), &ktx2).unwrap();
+            std::fs::write(
+                tmp.path().join(&t.texture),
+                crate::test_support::level::map_ktx2(t.role),
+            )
+            .unwrap();
         }
 
         let built = read_level(&source, CompressedImageFormats::BC).unwrap();
@@ -4358,6 +4800,131 @@ mod tests {
             .filter(|(k, _)| k.material.shader.switches().gloss)
             .count();
         assert_eq!((built.keys.len(), gloss), (4, 1));
+    }
+
+    /// AS.13: the load reads each normal map's layout off its KTX2's header
+    /// and leaves out by name a tfbmulti2 material whose normal map isn't
+    /// DXT5 (the hub's felt is DXT1), with its segments, in the level's
+    /// scene and in its props' models alike: one entry, its segments summed
+    /// over all three, and the report naming it. The rest load drawn.
+    #[test]
+    fn the_load_reads_each_normal_maps_layout_and_leaves_a_dxt1_one_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        // What the level draws before the felt joins it.
+        let drawn_before = read_level(&source, CompressedImageFormats::BC)
+            .unwrap()
+            .drawn
+            .segments
+            .len();
+        let path = tmp.path().join(source.ir.level_path(LEVEL, SCENE));
+        let mut scene: guac_ir::level::Scene =
+            guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let graph = &mut scene.scenes[0];
+        let LevelMaterial::Multi2(ground) = graph.materials[0].clone() else {
+            panic!("the ground");
+        };
+        let mut felt = ground.clone();
+        felt.name = "felt".into();
+        for t in felt.textures.iter_mut().filter(|t| !t.role.is_color()) {
+            t.texture = "textures/felt_nrm.ktx2".into();
+            t.image = "felt_nrm".into();
+        }
+        // Laid out as a colour map is: DXT1.
+        std::fs::write(
+            tmp.path().join("textures/felt_nrm.ktx2"),
+            crate::test_support::level::map_ktx2(TextureRole::Layer1ColorMap),
+        )
+        .unwrap();
+        let shape = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let felt_at = u16::try_from(graph.materials.len()).unwrap();
+        graph.materials.push(LevelMaterial::Multi2(felt.clone()));
+        graph.segments.push(segment(felt_at, shape, 10.0));
+        std::fs::write(&path, guac_ir::to_ron(&scene).unwrap()).unwrap();
+        // Two props, each drawing the felt beside the ground.
+        let prop = |path: &str| guac_ir::level::Prop {
+            path: path.into(),
+            skeleton: None,
+            materials: vec![
+                LevelMaterial::Multi2(ground.clone()),
+                LevelMaterial::Multi2(felt.clone()),
+            ],
+            segments: vec![segment(0, shape, 0.0), segment(1, shape, 1.0)],
+            idle: None,
+        };
+        let placed = |object: u32, name: &str, model: &str| guac_ir::level::Placement {
+            object,
+            id: 0,
+            name: name.into(),
+            script: None,
+            position: [START[0] + 2.0, START[1], START[2]],
+            rotation: [0.0; 3],
+            scale: [100.0; 3],
+            model: Some(model.into()),
+            solid: None,
+            movement: None,
+            waypoints: None,
+            activity_state: 4,
+            activation_range: 160.0,
+        };
+        write_props(
+            tmp.path(),
+            vec![prop("table_a.mdl"), prop("table_b.mdl")],
+            vec![
+                placed(20, "table_a", "table_a.mdl"),
+                placed(21, "table_b", "table_b.mdl"),
+            ],
+        );
+
+        let built = read_level(&source, CompressedImageFormats::BC).unwrap();
+        assert_eq!(
+            built
+                .refused
+                .iter()
+                .map(|r| (r.material.as_str(), r.segments))
+                .collect::<Vec<_>>(),
+            [("felt", 3)],
+            "once, the level's segment and each prop's"
+        );
+        assert_eq!(
+            built.refused[0].why,
+            "its normal map felt_nrm isn't DXT5 (vkFormat 133), the layout the shader reads one in"
+        );
+        assert!(built.drawn.materials.iter().all(|m| m.name != "felt"));
+        assert_eq!(
+            built.drawn.segments.len(),
+            drawn_before,
+            "the felt's segment left out"
+        );
+        for m in &built.walk.props.models {
+            assert_eq!(
+                m.drawn
+                    .materials
+                    .iter()
+                    .map(|x| x.name.as_str())
+                    .collect::<Vec<_>>(),
+                [ground.name.as_str()],
+                "{}",
+                m.path
+            );
+            assert_eq!(m.drawn.segments.len(), 1, "{}", m.path);
+        }
+
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        assert_eq!(
+            report(&app).refused,
+            [RefusedMaterial {
+                material: "felt".into(),
+                why: built.refused[0].why.clone(),
+                segments: 3,
+            }]
+        );
     }
 
     /// AG.24: a grass shell and a warp in the scene load drawn (their
