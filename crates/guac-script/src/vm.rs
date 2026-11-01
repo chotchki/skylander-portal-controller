@@ -10,6 +10,7 @@ use guac_formats::script::{Class, StackClass};
 use crate::host::{
     Access, Answer, Builtin, Host, HostFault, Kind, MemberId, Members, OpCall, Place,
 };
+use crate::ids::{IdMap, IdSet};
 use crate::program::{
     Container, Contents, Decl, DefId, DefKind, Elem, Global, GlobalId, Ins, LiteralClass, Obj,
     OpId, Operand, OperandId, Param, Program, ScriptId, Sym, Tag,
@@ -214,7 +215,7 @@ struct Placement {
     set_up: bool,
     behaviour: Option<u32>,
     shutdown: bool,
-    locals: HashMap<Sym, u32>,
+    locals: IdMap<Sym, u32>,
     stopped: Option<Halt>,
     inert: bool,
     /// Taken off by a `remove`: never ticked again.
@@ -439,6 +440,96 @@ fn recv(v: Value) -> Recv {
     Recv::Value(tag, bits)
 }
 
+/// The place a slide eases as a write ending it compares it: a member's
+/// `_otherPoint` aside, which a read of the same place may differ in.
+fn slide_key(spot: Spot) -> Spot {
+    match spot {
+        Spot::Member {
+            receiver,
+            member,
+            cell,
+            via,
+            ..
+        } => Spot::Member {
+            receiver,
+            member,
+            cell,
+            other: None,
+            via,
+        },
+        other => other,
+    }
+}
+
+/// A fingerprint of the place a slide eases ([`slide_key`]): equal for any
+/// two places a write ends a slide on, since it reads only parts two equal
+/// keys share (a number's bits left out, whose 0 and -0 compare equal); two
+/// places it can't tell apart the exact comparison sorts out.
+fn slid_place(spot: Spot) -> u64 {
+    use std::hash::Hasher;
+    let mut h = crate::ids::IdHasher::default();
+    let value = |h: &mut crate::ids::IdHasher, v: Value| match v {
+        Value::Float(_) | Value::Double(_) => h.write_u8(0xF0),
+        v => match recv(v) {
+            Recv::Value(tag, bits) => {
+                h.write_u8(tag);
+                h.write_u64(bits);
+            }
+            Recv::Head | Recv::ValueCell(_) => {}
+        },
+    };
+    let member = |h: &mut crate::ids::IdHasher, member: MemberId, cell: Option<u32>| {
+        h.write_u32(member.namespace);
+        h.write_u32(member.name);
+        h.write_u32(cell.map_or(u32::MAX, |c| c));
+    };
+    match spot {
+        Spot::Cell(c) => {
+            h.write_u8(1);
+            h.write_u32(c);
+        }
+        Spot::Const(v) => {
+            h.write_u8(2);
+            value(&mut h, v);
+        }
+        Spot::Count(c) => {
+            h.write_u8(3);
+            h.write_u32(c);
+        }
+        Spot::CastToInteger => h.write_u8(4),
+        Spot::Undefined => h.write_u8(5),
+        Spot::Member {
+            receiver,
+            member: m,
+            cell,
+            via,
+            ..
+        } => {
+            h.write_u8(6);
+            member(&mut h, m, cell);
+            h.write_u32(via.map_or(u32::MAX, |c| c));
+            if let Some(r) = receiver {
+                value(&mut h, r);
+            }
+        }
+        Spot::Packed { base, .. } => {
+            h.write_u8(7);
+            match base {
+                Base::Cell(c) => h.write_u32(c),
+                Base::Const(v) => value(&mut h, v),
+                Base::Member {
+                    member: m, cell, ..
+                } => member(&mut h, m, cell),
+            }
+        }
+        Spot::Slider { id, .. } => {
+            h.write_u8(8);
+            h.write_u32(id);
+        }
+    }
+    h.finish()
+}
+
 /// Whether an operand reads `its`: a path naming it, or an expression with
 /// one on either side (a right side `its.$x` wrapped in an expression is
 /// read anew for each member `find subset` tests).
@@ -595,26 +686,26 @@ pub struct Vm {
     sets: Vec<SetObj>,
     structs: Vec<StructObj>,
     globals: Vec<Option<u32>>,
-    frames: HashMap<DefId, HashMap<Sym, u32>>,
-    busy: HashSet<DefId>,
-    op_state: HashMap<OpId, OpState>,
-    value_cells: HashMap<(Recv, MemberId), u32>,
+    frames: IdMap<DefId, IdMap<Sym, u32>>,
+    busy: IdSet<DefId>,
+    op_state: IdMap<OpId, OpState>,
+    value_cells: IdMap<(Recv, MemberId), u32>,
     value_cell_values: Vec<Value>,
     /// Each engine member's reads and writes since the VM was made.
     uses: HashMap<MemberId, (u64, u64)>,
     /// A set member's set, per receiver: refilled from the host each read.
-    engine_sets: HashMap<(Recv, MemberId), u32>,
+    engine_sets: IdMap<(Recv, MemberId), u32>,
     /// The places [`Value::Bound`] names.
     bound: Vec<Spot>,
     /// What a file object naming a placement reads as: its handle.
-    objects: HashMap<Obj, Handle>,
+    objects: IdMap<Obj, Handle>,
     /// The file object each named handle stands for: what a placement with
     /// no script finds its tags by.
-    named: HashMap<Handle, Obj>,
+    named: IdMap<Handle, Obj>,
     /// The VM's placement running under each handle.
-    handles: HashMap<Handle, PlacementId>,
+    handles: IdMap<Handle, PlacementId>,
     /// `find variable`'s variables, by owner, name and declaration.
-    found: HashMap<(Recv, Sym, Decl), u32>,
+    found: IdMap<(Recv, Sym, Decl), u32>,
     cast: Value,
     reached: HashSet<MemberId>,
     calls: HashMap<DefId, u64>,
@@ -636,6 +727,14 @@ pub struct Vm {
     /// slider a session has made (about 25 a second in the fight). One
     /// that ended leaves at the next scan.
     live: Vec<u32>,
+    /// The running sliders by the place each eases, keyed by the place's
+    /// fingerprint ([`slid_place`]): a script's write looks here before it
+    /// ends any, so a write to a place nothing slides costs a lookup, not a
+    /// scan of every running slider (openspec AS.35).
+    slid_places: IdMap<u64, Vec<u32>>,
+    /// Sliders a write compared its place with, for the index's test.
+    #[cfg(test)]
+    slides_compared: u64,
     /// Frames [`Vm::slide`] has begun: a slider begun in a frame first moves
     /// in the next.
     frame: u64,
@@ -705,18 +804,18 @@ impl Vm {
             sets: Vec::new(),
             structs: Vec::new(),
             globals,
-            frames: HashMap::new(),
-            busy: HashSet::new(),
-            op_state: HashMap::new(),
-            value_cells: HashMap::new(),
+            frames: IdMap::default(),
+            busy: IdSet::default(),
+            op_state: IdMap::default(),
+            value_cells: IdMap::default(),
             value_cell_values: Vec::new(),
             uses: HashMap::new(),
-            engine_sets: HashMap::new(),
+            engine_sets: IdMap::default(),
             bound: Vec::new(),
-            objects: HashMap::new(),
-            named: HashMap::new(),
-            handles: HashMap::new(),
-            found: HashMap::new(),
+            objects: IdMap::default(),
+            named: IdMap::default(),
+            handles: IdMap::default(),
+            found: IdMap::default(),
             cast: Value::Int(0),
             reached: HashSet::new(),
             calls: HashMap::new(),
@@ -728,6 +827,9 @@ impl Vm {
             sliders: Vec::new(),
             running: 0,
             live: Vec::new(),
+            slid_places: IdMap::default(),
+            #[cfg(test)]
+            slides_compared: 0,
             frame: 0,
             slid: false,
             sliding: false,
@@ -796,7 +898,7 @@ impl Vm {
             set_up: false,
             behaviour: None,
             shutdown: false,
-            locals: HashMap::new(),
+            locals: IdMap::default(),
             stopped: None,
             inert,
             removed: false,
@@ -1615,8 +1717,7 @@ impl Vm {
             };
             let (spot, placement, ctx, receiver) = (s.spot, s.placement, s.ctx, s.receiver);
             if done {
-                s.running = false;
-                self.running -= 1;
+                self.stop_slider(id);
             }
             report.ticked += 1;
             self.begin(placement, ctx, receiver);
@@ -1626,10 +1727,7 @@ impl Vm {
             match self.finish(result) {
                 Ok(None) => {}
                 Ok(Some(halt)) => {
-                    if self.sliders[i].running {
-                        self.sliders[i].running = false;
-                        self.running -= 1;
-                    }
+                    self.stop_slider(id);
                     report.stopped.push(halt);
                 }
                 Err(halt) => {
@@ -1657,6 +1755,12 @@ impl Vm {
         if let Some(p) = self.placements.get_mut(id as usize) {
             p.active += dt;
         }
+    }
+
+    /// Sliders a script's writes have compared their places with so far.
+    #[cfg(test)]
+    pub(crate) fn slides_compared(&self) -> u64 {
+        self.slides_compared
     }
 
     /// Sliders running now.
@@ -2929,12 +3033,8 @@ impl Vm {
                     // A slider is the VM's own: stopped, its place stays
                     // where it stands.
                     if let Value::Slider(id) = t {
-                        if class == Class::StopSequence
-                            && let Some(s) = self.sliders.get_mut(id as usize)
-                            && s.running
-                        {
-                            s.running = false;
-                            self.running -= 1;
+                        if class == Class::StopSequence {
+                            self.stop_slider(id);
                         }
                         continue;
                     }
@@ -3297,6 +3397,10 @@ impl Vm {
         self.running += 1;
         let id = (self.sliders.len() - 1) as u32;
         self.live.push(id);
+        self.slid_places
+            .entry(slid_place(spot))
+            .or_default()
+            .push(id);
         self.op_state.entry(op).or_default().cached = Some(Value::Slider(id));
         self.push(program, op, BlockKind::Plain);
         Ok(())
@@ -3310,32 +3414,47 @@ impl Vm {
         if self.running == 0 {
             return;
         }
-        let key = |s: Spot| match s {
-            Spot::Member {
-                receiver,
-                member,
-                cell,
-                via,
-                ..
-            } => Spot::Member {
-                receiver,
-                member,
-                cell,
-                other: None,
-                via,
-            },
-            other => other,
+        let Some(ids) = self.slid_places.get(&slid_place(spot)) else {
+            return;
         };
-        let k = key(spot);
-        for &i in &self.live {
-            let s = &mut self.sliders[i as usize];
-            if s.running && key(s.spot) == k {
-                s.running = false;
-                self.running -= 1;
-            }
+        let k = slide_key(spot);
+        #[cfg(test)]
+        {
+            self.slides_compared += ids.len() as u64;
+        }
+        let ending: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|&i| slide_key(self.sliders[i as usize].spot) == k)
+            .collect();
+        if ending.is_empty() {
+            return;
+        }
+        for i in ending {
+            self.stop_slider(i);
         }
         let sliders = &self.sliders;
         self.live.retain(|&i| sliders[i as usize].running);
+    }
+
+    /// Ends slider `id` if it runs: off the running count and the index of
+    /// slid places. It leaves [`Vm::live`] at the next scan.
+    fn stop_slider(&mut self, id: u32) {
+        let Some(s) = self.sliders.get_mut(id as usize) else {
+            return;
+        };
+        if !s.running {
+            return;
+        }
+        s.running = false;
+        self.running -= 1;
+        let place = slid_place(s.spot);
+        if let Some(ids) = self.slid_places.get_mut(&place) {
+            ids.retain(|&i| i != id);
+            if ids.is_empty() {
+                self.slid_places.remove(&place);
+            }
+        }
     }
 
     /// A slider's `sequence` members and `slider.ignores time scales`
@@ -4968,7 +5087,7 @@ fn own_parameter(program: &Program, def: DefId, name: &str) -> Option<Param> {
 /// INTERFACE gives the same id.
 fn param_name(
     program: &Program,
-    frames: &HashMap<DefId, HashMap<Sym, u32>>,
+    frames: &IdMap<DefId, IdMap<Sym, u32>>,
     def: DefId,
     p: &Param,
 ) -> Sym {

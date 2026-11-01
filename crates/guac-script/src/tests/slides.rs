@@ -698,3 +698,77 @@ fn a_slide_a_native_call_begins_first_moves_the_frame_after() {
     let x = TICK_SECONDS / 0.125;
     assert_eq!(v(&vm), (600.0 * x * x).trunc());
 }
+
+/// AS.35: a write's slider check against many sliders. Three hundred
+/// placements each slide their own `x`: a write to one's `x` ends that
+/// slide alone, comparing its place with that one slider, and a write to a
+/// place nothing slides compares none and ends none, where every write
+/// scanned every running slider before (level 214's hurt checks, its
+/// largest single cost).
+#[test]
+fn a_writes_slider_check_finds_only_the_slides_on_its_place() {
+    let p = program(|w| {
+        let (x, y, go) = (fvar(w, "x"), fvar(w, "y"), var(w, "go"));
+        idle(
+            w,
+            |w| {
+                let (to, secs, z) = (w.float(10.0), w.float(100.0), w.int(0));
+                let z2 = w.int(0);
+                let (at, _) = slide(w, &[El::Local(x)], to, secs, z, z2);
+                w.end_block(at);
+            },
+            |w| {
+                let one = w.int(1);
+                let c = check(w, go, 1, one).0;
+                let five = w.float(5.0);
+                w.set(&[El::Local(x)], five);
+                w.end_block(c);
+                let two = w.int(2);
+                let c = check(w, go, 1, two).0;
+                let v = w.float(1.0);
+                w.set(&[El::Local(y)], v);
+                w.end_block(c);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let ids: Vec<PlacementId> = (0..300)
+        .map(|i| vm.add(0x1000 + i, &format!("Candlestick({i})"), 0))
+        .collect();
+    for &id in &ids {
+        vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    }
+    vm.slide(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    vm.slide(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.sliders_running(), 300);
+    let before = vm.slides_compared();
+    vm.set_local(ids[7], "go", Value::Int(2));
+    vm.tick(ids[7], &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.sliders_running(), 300, "nothing slides y");
+    assert_eq!(vm.slides_compared() - before, 0, "y's place compared none");
+    let before = vm.slides_compared();
+    vm.set_local(ids[7], "go", Value::Int(1));
+    vm.tick(ids[7], &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.sliders_running(), 299, "its own slide ended");
+    assert_eq!(vm.slides_compared() - before, 1, "x's place compared one");
+    // Ended, it's off the index: writing x again compares none.
+    let before = vm.slides_compared();
+    vm.tick(ids[7], &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.slides_compared() - before, 0, "none left on x's place");
+    for _ in 0..3 {
+        vm.slide(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert_eq!(
+        vm.local(ids[7], "x"),
+        Some(Value::Float(5.0)),
+        "its write held"
+    );
+    let other = vm.local(ids[8], "x").and_then(|v| v.as_f32()).unwrap();
+    assert!(other > 0.0 && other < 10.0, "the others ease on: {other}");
+    // Each of the rest ends alone, and with none left a write ends none.
+    for &id in &ids {
+        vm.set_local(id, "go", Value::Int(1));
+        vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert_eq!(vm.sliders_running(), 0);
+}

@@ -604,6 +604,7 @@
 
 mod generator;
 mod host;
+mod ids;
 pub mod members;
 mod program;
 mod slide;
