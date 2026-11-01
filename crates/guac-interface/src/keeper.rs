@@ -136,11 +136,13 @@ fn fault(r: Refusal) -> HostFault {
 }
 
 /// The gameplay viewport's title-safe margins in frame pixels, left, right,
-/// upper and lower (**Hypothesis**, AT.10's to read live): 5 % of the
-/// 1280 by 720 frame a side, the margins that make `UI - Init UI
-/// Containers` (`Init_Setup.ai`) size `_UI_Container` 768 by 432 units,
-/// standing at frame (64, 36), as the June savestate holds it and AC.13
-/// draws it (AT.3).
+/// upper and lower (**Hypothesis**, AT.10's to read live): `UI - Init UI
+/// Containers` (`Init_Setup.ai`) takes their sums off `_UI_Container` and
+/// the container stands centred, so only the sums are fitted, 128 across
+/// and 72 down making it 768 by 432 units at frame (64, 36), as the June
+/// savestate holds it and AC.13 draws it (AT.3). Any split of those sums
+/// lays every sprite out the same (AT.9's review); the even one, 5 % of the
+/// frame a side, is the usual title-safe area, not a reading.
 pub const TITLE_SAFE: [i32; 4] = [64, 64, 36, 36];
 
 /// The gameplay viewport's container as the June savestate holds it:

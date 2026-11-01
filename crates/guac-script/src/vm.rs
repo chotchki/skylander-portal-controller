@@ -4895,11 +4895,11 @@ impl Vm {
         Ok((self.sets.len() - 1) as u32)
     }
 
-    /// `count` written: shorter drops the tail, longer appends fresh default
-    /// elements of the set's element type.
     /// A fresh set of `elements`, each number in a value cell of its own
     /// (as a set of numbers a script grows holds them), anything else as
-    /// itself.
+    /// itself; a set of `ValueInfo`, so a script growing it (`Text - String
+    /// Concatenate` grows `value set`) gets number cells it can write
+    /// through, not nulls.
     fn set_of(&mut self, elements: &[Value]) -> Result<u32, Fault> {
         let mut elems = Vec::with_capacity(elements.len());
         for &e in elements {
@@ -4918,14 +4918,17 @@ impl Vm {
                 e
             });
         }
+        let elem = self.program.find_sym("valueinfo").map(Contents::Class);
         self.sets.push(SetObj {
             elems,
-            elem: None,
+            elem,
             next: 0,
         });
         Ok((self.sets.len() - 1) as u32)
     }
 
+    /// `count` written: shorter drops the tail, longer appends fresh default
+    /// elements of the set's element type.
     fn resize(&mut self, s: u32, n: usize, host: &mut dyn Host) -> Result<(), Fault> {
         let len = self.sets[s as usize].elems.len();
         if n <= len {

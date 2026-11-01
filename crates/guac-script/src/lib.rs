@@ -522,7 +522,17 @@
 //! way; a packed member takes only packed values and a reference member only
 //! references. A value that can't convert drops the write. An engine set
 //! member (an actor's waypoints) is read whole through [`Host::elements`],
-//! anew each read, and never written. A path through nothing (a null
+//! anew each read, and never written. A *set reference the host copies*
+//! (openspec AT.9: the string converter's `value set`, the text colour
+//! converter's `color set`) is a value cell holding the reference a script
+//! writes, as a reference member's does, so the script reads back its own
+//! set; each write also hands the host that set's elements as they read
+//! then (none for a null or anything not a set), and each read first asks
+//! the host whether it changed its copy since: a changed one reads from
+//! then as a fresh set of `ValueInfo`, each number in a cell of its own, so
+//! a script reads its elements through references, writes them and grows
+//! it as it would its own; a reset puts the cell back and resets the
+//! host's copy too. A path through nothing (a null
 //! receiver, a member the host answers with nothing) fails quietly as the
 //! original's does: a write drops, a check skips. [`members`] lists the
 //! members as the original registers them and who keeps each here.

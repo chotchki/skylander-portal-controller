@@ -109,19 +109,49 @@ fn a_clone_of_a_template_answers_as_an_instance() {
         ),
         Ok(source)
     );
-    // Spawned at a sprite and facing 30: its place and its facing turn.
+    // Spawned at a sprite (moved off its source's place) and facing 30:
+    // that sprite's current place and the facing turn.
+    k.model_mut().sprite_mut(id).matrix.position = [9.0, 8.0, 6.0];
     let other = k
         .spawn(Value::Object(TEMPLATE), Some(clone), Some(30.0), SPAWNER)
         .unwrap();
     let o = k.model().sprite(k.model().sprite_of(other).unwrap());
-    assert_eq!(o.init_matrix.position, [5.0, 0.0, 7.0]);
+    assert_eq!(o.init_matrix.position, [9.0, 8.0, 6.0]);
     assert_eq!(o.init_matrix.rotation, [0.0, 30.0, 0.0]);
     assert_eq!(o.matrix, o.init_matrix);
-    // Removed: off `active`, read as taken off.
+    // Spawned at a sprite's initial matrix (off its source's current
+    // place): that one's place.
+    k.model_mut().sprite_mut(id).init_matrix.position = [1.5, 2.5, 3.5];
+    let origin = k
+        .get(
+            &at(Some(clone), "spritematrixmeasurement", "origin"),
+            &NoWorld,
+        )
+        .unwrap();
+    let third = k
+        .spawn(Value::Object(TEMPLATE), Some(origin), None, SPAWNER)
+        .unwrap();
+    let t3 = k.model().sprite(k.model().sprite_of(third).unwrap());
+    assert_eq!(t3.init_matrix.position, [1.5, 2.5, 3.5]);
+    // A measurement object past the model's sprites isn't the keeper's.
+    let Value::Entity(scale) = k
+        .get(&at(Some(clone), "spriteinfo", "scale"), &NoWorld)
+        .unwrap()
+    else {
+        panic!("a scale object")
+    };
+    assert!(k.holds(Value::Entity(scale)));
+    assert!(!k.holds(Value::Entity(scale + 1_000)));
+    // Removed: off `active`, read as taken off, in the class's `removed`
+    // from any receiver.
     assert!(k.remove(clone));
     assert!(k.removed(clone));
     assert!(!k.remove(Value::Entity(9)));
-    assert_eq!(k.instances().len(), 1);
+    assert_eq!(k.instances().len(), 2);
+    assert_eq!(
+        k.elements(&at(None, "spriteinfo", "removed"), &NoWorld),
+        Ok(vec![clone])
+    );
 }
 
 #[test]
@@ -199,6 +229,10 @@ fn a_member_write_reaches_the_model() {
     assert_eq!(k.set_ref(&value_set, &NoWorld), None, "once");
     k.set_elements(&value_set, &[Value::Int(65)]).unwrap();
     assert_eq!(k.set_ref(&value_set, &NoWorld), None, "the VM's own");
+    // A reset of a member with no reset changes no set.
+    k.reset(&at(Some(converter), "stringconverter", "text"), &NoWorld)
+        .unwrap();
+    assert_eq!(k.set_ref(&value_set, &NoWorld), None, "no reset of text");
     k.reset(&value_set, &NoWorld).unwrap();
     assert_eq!(k.set_ref(&value_set, &NoWorld), Some(Vec::new()));
     // A reset reaches it too: `ID` back to before its first write.

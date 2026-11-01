@@ -2657,8 +2657,9 @@ EBOOT by aj-vm's method and written there before the code.
   template under its object in its archive's `level.bld`, its `_ID` and activity state read where the
   link parses the file; each install starts its run from a copy. The model holds the gameplay viewport's
   container (`RT Viewport 0`, the frame's size), which `viewportinfo.container sprite` names, and its
-  title-safe info at 64, 64, 36 and 36 frame pixels (a hypothesis until AT.10 reads them live: the
-  margins that make `_UI_Container` 768 by 432 as the June savestate holds it). A template its file holds
+  title-safe info at 64, 64, 36 and 36 frame pixels (a hypothesis until AT.10 reads them live: only their
+  sums are fitted, 128 across and 72 down making `_UI_Container` 768 by 432 as the June savestate holds
+  it; it stands centred, so how the sums split moves nothing). A template its file holds
   active or unmanaged is awake from the load (16 on the dump, every one in the June savestate's live
   list); `Init_Setup.ai`'s `UI - Init UI Containers` builds the root tree over them. On a first run
   chapter 1 is handed over before the interface part reads (AT.26), so that session's run keeps the

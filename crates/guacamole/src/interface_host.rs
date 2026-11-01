@@ -22,6 +22,7 @@
 //! value cells, as before AT.9.
 
 use std::path::Path;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use guac_extract::intros::IrFormat;
@@ -33,6 +34,11 @@ use guac_script::{Access, Answer, Config, HostFault, MemberId, Value, members};
 use crate::script_engine::Object;
 use crate::script_members::Member;
 use crate::scripts::ScriptWorld;
+
+/// `viewportinfo.title safe zone`, hashed once: [`ScriptWorld::to_interface`]
+/// asks it of nearly every member access a run holding the model makes.
+static TITLE_SAFE_ZONE: LazyLock<MemberId> =
+    LazyLock::new(|| MemberId::named("viewportinfo", "title safe zone"));
 
 /// `config` with the interface's members on the host, which hands them to
 /// the model it holds (`members::INTERFACE`, over the earlier tables'
@@ -196,8 +202,7 @@ impl ScriptWorld {
         let held = at.receiver.is_some_and(|r| k.holds(r));
         // The viewport's container (`RT Viewport 0`) and title-safe info
         // are the model's.
-        if self.members.get(&at.member) == Some(&Member::Container)
-            || at.member == MemberId::named("viewportinfo", "title safe zone")
+        if self.members.get(&at.member) == Some(&Member::Container) || at.member == *TITLE_SAFE_ZONE
         {
             return at.receiver.and_then(|r| self.handle(r)) == Some(self.viewport);
         }
@@ -475,6 +480,93 @@ mod tests {
         assert_eq!(
             w.get(&at(Some(clone), "spriteinfo", "width"), &mut NoEngine),
             Err(HostFault::Unmodelled)
+        );
+    }
+
+    /// The level's load's read of the part (the review of AT.9): no model
+    /// until `global.bld`'s record is in, whatever else is (a first run
+    /// hands chapter 1 over before the part reads, AT.40); with it, every
+    /// record the extract holds under its unit, each template in the model
+    /// beside the viewport's container, and each unit whose record is
+    /// absent or won't read named with why.
+    #[test]
+    fn a_part_loads_once_globals_record_is_in_and_names_what_it_lacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join(guac_extract::interface::DIR)).unwrap();
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([0; 32]),
+        };
+        let record = |archive: &str, templates: Vec<Template>| Interface {
+            identity: identity.clone(),
+            archive: archive.into(),
+            templates,
+            fonts: Vec::new(),
+            strings: Vec::new(),
+            refused: Vec::new(),
+        };
+        let write = |unit: &str, r: &Interface| {
+            let rel = record_path(IrFormat::Ron, unit).unwrap();
+            std::fs::write(dir.join(rel), guac_ir::to_ron(r).unwrap()).unwrap();
+        };
+        let units: Vec<String> = [
+            "scripts/global.igz",
+            "scripts/009_eruptor.igz",
+            "scripts/010_hotdog.igz",
+            "levels/level_213_tutotial/script.igz",
+        ]
+        .map(String::from)
+        .to_vec();
+        let keys: Vec<Keys> = (0..units.len() as u16)
+            .map(|unit| Keys {
+                unit,
+                ..Keys::default()
+            })
+            .collect();
+        let grunt = Template {
+            name: "Generic_Text".into(),
+            object: 3,
+            ..container()
+        };
+        write(
+            &units[1],
+            &record("characters/009_eruptor.bld", vec![grunt]),
+        );
+        assert!(
+            load(dir, IrFormat::Ron, &units, &keys, None).is_none(),
+            "no model before global's record"
+        );
+        write(&units[0], &record(load::GLOBAL, vec![container()]));
+        let rel = record_path(IrFormat::Ron, &units[2]).unwrap();
+        std::fs::write(dir.join(rel), "not a record").unwrap();
+        let part = load(dir, IrFormat::Ron, &units, &keys, None).expect("the model");
+        assert_eq!(
+            part.read,
+            [
+                (0, load::GLOBAL.to_owned()),
+                (1, "characters/009_eruptor.bld".to_owned())
+            ]
+        );
+        assert_eq!(
+            part.templates(),
+            3,
+            "two templates and the viewport's container"
+        );
+        let missing: Vec<&str> = part.missing.iter().map(|(u, _)| u.as_str()).collect();
+        assert_eq!(missing, [units[2].as_str(), units[3].as_str()]);
+        assert!(part.missing[1].1.contains("not in the extract"));
+        let model = part.keeper.model();
+        assert!(
+            model
+                .sprite_of(Value::Object(Obj { unit: 0, index: 7 }))
+                .is_some()
+        );
+        assert!(
+            model
+                .sprite_of(Value::Object(Obj { unit: 1, index: 3 }))
+                .is_some()
         );
     }
 

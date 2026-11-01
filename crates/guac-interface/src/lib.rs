@@ -440,7 +440,10 @@
 //! 1280x720 frame a side: `UI - Init UI Containers` takes their sums over
 //! the screen's scale off `_UI_Container`'s 853.333 by 480 units, and these
 //! leave it 768 by 432 at frame (64, 36), as the June savestate and AC.13
-//! have it (AT.3).
+//! have it (AT.3). Only the sums are fitted: the container stands centred,
+//! so every split of 128 across and 72 down lays the HUD out the same
+//! (AT.9's review: 0 and 128, 128 and 0, 34 and 94 across alike), and the
+//! even split is the usual title-safe area, not a reading.
 //!
 //! # Text
 //!
