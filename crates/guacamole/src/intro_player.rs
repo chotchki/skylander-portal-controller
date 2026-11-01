@@ -541,11 +541,11 @@ impl Playback {
                     "the decode thread stopped after {out} of {frames} frames"
                 )));
             }
-            let audio_done = match self.audio {
-                Audio::Sink(entity) => sinks.get(entity).map_or(true, |s| s.empty()),
-                _ => true,
+            let sink_empty = match self.audio {
+                Audio::Sink(entity) => Some(sinks.get(entity).map_or(true, |s| s.empty())),
+                _ => None,
             };
-            if audio_done {
+            if sound_done(muted, sink_empty) {
                 return Some(Over::Finished);
             }
         }
@@ -691,9 +691,31 @@ impl IntroShots<'_, '_> {
     }
 }
 
+/// Whether an intro whose every frame is out may end, by its sound: a muted
+/// one (`GUAC_MUTE`, dev builds only) ends on its video, whatever its sink
+/// says, since a muted sink drains as slowly as the Mac's output does
+/// (openspec AQ.167: the shut lid's speakers took 15.2 s to play 1.5 s, and
+/// the e2e's 2 s intro ended on the 2 s grace); an unmuted one once its sink
+/// is empty, or at once with no sink.
+fn sound_done(muted: bool, sink_empty: Option<bool>) -> bool {
+    muted || sink_empty.unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_muted_intro_ends_on_its_video_and_an_unmuted_one_on_its_sound() {
+        // Muted: the sink still playing doesn't hold it.
+        assert!(sound_done(true, Some(false)));
+        assert!(sound_done(true, Some(true)));
+        assert!(sound_done(true, None));
+        // Unmuted: held until the sink drains; no sink, nothing to wait on.
+        assert!(!sound_done(false, Some(false)));
+        assert!(sound_done(false, Some(true)));
+        assert!(sound_done(false, None));
+    }
 
     fn near(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
