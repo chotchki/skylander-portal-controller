@@ -458,8 +458,9 @@ cargo run -p guacamole       # add --features test-hooks for the /api/_test/* en
 - Test runs take `TMPDIR` on a RAM disk (AQ.35):
   [`.githooks/ram-tmpdir.sh`](../../.githooks/ram-tmpdir.sh) makes a 2 GiB APFS RAM disk, runs the
   command it's given with `TMPDIR` on it and detaches it after, an interrupted run included.
-  guac-extract's `write_file` flushes every file it saves (`F_FULLFSYNC`, about 4 ms each on the SSD),
-  and every test that extracts into a temp dir paid that; on the disk each flush is still called and
+  guac-extract's `write_file` flushed every file it saved (`F_FULLFSYNC`, about 4 ms each on the SSD)
+  until AS.4 left the flush on the manifest's saves alone, and every test that extracts into a temp dir
+  paid that; on the disk each flush is still called and
   answered at once. `.githooks/pre-push` runs `cargo test --workspace` through it, and the guacamole
   e2e goes the same way
   (`E2E_APP=guacamole .githooks/ram-tmpdir.sh cargo test -p skylander-e2e-tests --no-fail-fast -- --ignored --test-threads=1 --skip ios_`,
@@ -2060,7 +2061,12 @@ every level on the disc without a first run writing them:
   (positions through the matrix, normals through its inverse transpose, tangents through its 3 x 3 part,
   each at its own length, winding and handedness flipped under a mirror; a scene bakes whatever moves it,
   a prop only a still transform, so a keyframed prop stays listed until AS.20 plays it); a level's
-  material may carry the water's bit 6 and a normal map without its hint; the atmosphere's definition is
+  material may carry the water's bit 6 and a normal map without its hint (the refuse-rather-than-draw
+  rule cost ten levels their whole scene for one material each, a scene being one part; a character
+  still refuses both, and the TV has to refuse both until AS.24 draws them: bit 6 its shader key
+  already refuses, and the hub's felt, whose normal map is DXT1 where the stage's 153 hinted ones are
+  DXT5 with X in alpha, it has to refuse by its texture's format, since its shader would read it in DXT5's layout,
+  AS.13); the atmosphere's definition is
   the one script whose STARTUP adds zones, whatever it's called, a level with none (55 of them) setting
   none up; two literals under an operator compute as the VM computes them. 203 (a switch in its
   definition's STARTUP) and PvP arena 4 (one zone copying another's lights) wait on AS.23 and AS.22.

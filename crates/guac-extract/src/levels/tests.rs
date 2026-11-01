@@ -884,6 +884,89 @@ fn a_draw_under_a_transform_is_baked_into_the_levels_frame() {
     );
 }
 
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn len(a: [f32; 3]) -> f32 {
+    dot(a, a).sqrt()
+}
+
+/// `v` through `m`'s 3 × 3 part, a direction under a row-vector affine.
+fn through(v: [f32; 3], m: &Mat44) -> [f32; 3] {
+    std::array::from_fn(|c| v[0] * m[0][c] + v[1] * m[1][c] + v[2] * m[2][c])
+}
+
+/// AS.3 off the axes: a sheared, unevenly scaled and turned matrix, the
+/// same with two rows swapped (a mirror no axis lines up with) and a half
+/// turn (two axes negated, no mirror), each on a triangle whose normal and
+/// tangent aren't unit length and whose tangent lies off the axes. The
+/// normal stays square to the moved surface; the tangent runs along the
+/// matrix's 3 × 3, not its inverse transpose, which only a shear or an
+/// uneven scale tells apart; each keeps its length; the winding's face
+/// points along the normal and the bitangent the handedness makes along the
+/// moved one; the winding and the handedness flip exactly where the
+/// determinant is negative.
+#[test]
+fn a_bake_off_the_axes_keeps_the_surface_its_lengths_and_its_front() {
+    let general = row_affine(
+        [[2.0, 0.5, 0.0], [0.3, 1.0, 0.2], [0.0, -0.4, 3.0]],
+        [1.0, 2.0, 3.0],
+    );
+    let mut mirrored = general;
+    mirrored.swap(0, 1);
+    let half_turn = row_affine(
+        [[-1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
+        [0.0; 3],
+    );
+    let row = |m: &Mat44, r: usize| [m[r][0], m[r][1], m[r][2]];
+    for (m, mirror) in [(general, false), (mirrored, true), (half_turn, false)] {
+        let det = dot(cross(row(&m, 0), row(&m, 1)), row(&m, 2));
+        assert_eq!(det < 0.0, mirror, "{m:?}");
+        let mut s = triangle();
+        let (n, t) = ([0.0, 0.0, 0.5], [0.48, 0.64, 0.0]);
+        s.normals = vec![n; 3];
+        s.tangents = Some(vec![[t[0], t[1], t[2], 1.0]; 3]);
+        let before = s.clone();
+        bake(&mut s, &m).unwrap();
+        for (p, q) in before.positions.iter().zip(&s.positions) {
+            assert_eq!(*q, transform_point(*p, &m));
+        }
+        let [a, b, c] = [0, 1, 2].map(|k| s.positions[k]);
+        let edges = [
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+        ];
+        let n2 = s.normals[0];
+        for e in edges {
+            assert!(dot(n2, e).abs() < 1e-5, "{n2:?} off the surface {e:?}");
+        }
+        assert!((len(n2) - 0.5).abs() < 1e-6, "{n2:?} not at its length");
+        let [x, y, z, w] = s.tangents.as_ref().unwrap()[0];
+        let (t2, along) = ([x, y, z], through(t, &m));
+        assert!((len(t2) - 0.8).abs() < 1e-6, "{t2:?} not at its length");
+        assert!(
+            (dot(t2, along) - len(t2) * len(along)).abs() < 1e-5,
+            "{t2:?} not along {along:?}"
+        );
+        assert_eq!(w, if mirror { -1.0 } else { 1.0 }, "{m:?}");
+        assert!(
+            dot(cross(n2, t2), through(cross(n, t), &m)) * w > 0.0,
+            "the bitangent turned under {m:?}"
+        );
+        assert_eq!(s.indices, if mirror { [0, 2, 1] } else { [0, 1, 2] });
+        assert!(dot(face(&s), n2) > 0.0, "the front turned away under {m:?}");
+    }
+}
+
 /// AS.3 on a level: the scene's techniques under a still transform and
 /// under a keyframed one both read, moved into the level's frame and the
 /// keyframed listed; a prop under a still transform reads moved, the fairy

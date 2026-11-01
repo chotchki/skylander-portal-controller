@@ -19,11 +19,12 @@
 //! whatever its file is called (openspec AS.6): level 213's is
 //! `Level_Definition_213.ai`, the hub's `Hub2_LevelDef.ai`, PvP arena 1's
 //! `_LevelDefinition_PVP_Level_001.ai`; of the disc's 143 level files, 88
-//! have one such script and none has two. A level with none (the arena
-//! challenges, the mesh bundles, the ship parts, the packs, the title and
-//! the credits) sets no zone up, and reads as no zones. Other scripts call
-//! the switch macro in their own STARTUPs (a hub's zone controller, an
-//! intro's camera); those run on the VM, not here.
+//! have one such script and none has two. A level with none (the 21 arena
+//! challenges, whose arena mesh bundles carry one, the 6 challenge mesh
+//! bundles, the ship parts, the packs, the voice pack, the title, the
+//! credits and 2 challenge levels) sets no zone up, and reads as no zones.
+//! Other scripts call the switch macro in their own STARTUPs (a hub's zone
+//! controller, an intro's camera); those run on the VM, not here.
 //!
 //! This reader steps STARTUP's ops as a PS3 runs them: a check on the
 //! hardware platform is evaluated (ah-progression's comparison codes), each

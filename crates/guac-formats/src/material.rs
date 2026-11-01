@@ -25,8 +25,11 @@
 //! refusing it left the whole level out), kept in the mask for the renderer
 //! to draw; 9 is refused all the same. A level's normal map may lack its
 //! `TFN1` hint (AS.5: the hub's card-table felt, the one on the disc): it
-//! reads as the normal map its role makes it, the hint deciding nothing the
-//! extract keeps.
+//! reads as the normal map its role makes it. The hint goes with the texel
+//! layout, though: the felt's image is DXT1 where the 153 hinted normal maps
+//! in its stage's scene are DXT5, X in alpha and Y in green, so a renderer
+//! has to read its channels by its texture's format, the one trace of the
+//! hint the extract keeps (openspec AS.24).
 //!
 //! A level also draws with three other effects ([`EffectMaterial`]): the
 //! grass's `0xAA6`, `0xAA8` and tfbwarp. Their textures are kept by unit and

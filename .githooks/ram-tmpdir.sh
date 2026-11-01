@@ -2,11 +2,12 @@
 # TMPDIR on a RAM disk for one command (openspec AQ.35): makes a 2 GiB APFS RAM
 # disk, runs the command with TMPDIR on it, detaches the disk after, an
 # interrupted run (Ctrl-C, a hangup, a TERM) included, and exits with the
-# command's status. guac-extract's `write_file` ends every save with
-# `sync_all` (`F_FULLFSYNC` on macOS, about 4 ms), and every test writing
-# through it into a temp dir pays that on the SSD; here every flush is still
-# called and answered at once (AQ.35: `cargo test --workspace` 34.5-39.6 s on
-# the SSD, 16.6-19.8 s through this script, its 2-3 s of making and detaching
+# command's status. guac-extract's `write_file` ended every save with
+# `sync_all` (`F_FULLFSYNC` on macOS, about 4 ms) until AS.4 left it on the
+# manifest's saves alone, and every test writing through it into a temp dir
+# pays that on the SSD; here every flush is still called and answered at once
+# (AQ.35, every save flushed: `cargo test --workspace` 34.5-39.6 s on the SSD,
+# 16.6-19.8 s through this script, its 2-3 s of making and detaching
 # included).
 #
 # APFS only: an HFS+ disk's whole-second times fail guac-extract's
