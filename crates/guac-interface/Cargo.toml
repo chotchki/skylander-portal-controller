@@ -20,3 +20,7 @@ doctest = false
 [dependencies]
 guac-ir = { path = "../guac-ir" }
 guac-script = { path = "../guac-script" }
+
+[dev-dependencies]
+# Any sequence of member writes (AT.5's property test).
+proptest = "1"

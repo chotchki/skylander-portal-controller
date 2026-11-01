@@ -144,10 +144,10 @@
 //!   sprite; nothing here takes one).
 //! - `numeric value` (sprite value; get 0xB3E40, set 0xB3FB8): the float. It
 //!   reads as a float when the sprite's text is a string with decimal digits
-//!   (one or more), else as an integer; a write of an integer where it reads
-//!   as an integer, or of a float where it reads as a float, is truncated
-//!   toward zero first (the handler's own test, kept). A change on a sprite
-//!   with text sets *dirty* and clears *string width valid*.
+//!   (one or more), else as an integer; where it reads as an integer a float
+//!   written is truncated toward zero first (an integer written where it
+//!   reads as a float is whole already). A change on a sprite with text sets
+//!   *dirty* and clears *string width valid*.
 //! - `justify` (enum `left|center|right`, 0-2; get 0xB3DE4, set 0xB3DFC): bits
 //!   6-7; a change sets *dirty* only on a sprite with text.
 //! - `point size` (int, 0 to 2^31-1; get 0xB4750, set 0xB4768): bits 17-28; a
@@ -214,14 +214,24 @@
 //! A set's reset (0x7BB04, every set above) takes each element out of the
 //! set, last first.
 //!
-//! **Hypothesis** (AT.5 reads it, 0x69508, the placement's state change): a
-//! sprite taken off (`remove` puts it in state 3) leaves its template's
-//! `clones` and stops being walked; whether its children come off with it is
-//! the state change's to say. The updater defers a sprite whose parent
-//! hasn't been laid out this frame to the end of `active`, so a child left
-//! on a parent no longer walked could never be laid out; the scripts take
-//! children off themselves (`UI - Remove Sprite and Attached` walks
-//! `attached objects`), which suggests the engine doesn't.
+//! **States** (AT.5, read at the placement's state change, 0x69508, and its
+//! deactivate hook, 0x6A620): a template in a file is a placement too,
+//! asleep until a script wakes it, and a clone is awake from its spawn
+//! (**Hypothesis** for which templates wake: the June savestate's 153 live
+//! sprites hold the root containers and not the templates only cloned; AT.9
+//! checks it against its run). A clone hangs on nothing and holds nothing
+//! until a script hangs it (**Hypothesis**: the clone's internals, 0x69D7C,
+//! are unread here as in aj-vm's notes; AT.9's HUD build, which writes every
+//! clone's `attach node`, checks it).
+//! Only an awake sprite is in `active`, hangs on or holds anything. `remove`
+//! takes a sprite off: when it was awake, its playing animations stop, its
+//! activator is cleared, it comes off its parent and takes each of its
+//! children off itself, last first, an attach of nothing each (the
+//! disassembly passes a zero, 0x6A6E4), so they stay awake and parentless
+//! and draw on the root; it leaves the `clones` of what it was cloned from
+//! and moves from `active` to `removed`. That's why the scripts take a
+//! sprite's children off first (`UI - Remove Sprite and Attached` walks
+//! `attached objects`).
 //!
 //! ## `spritepositionmeasurement` (5)
 //!
@@ -450,3 +460,9 @@
 #![forbid(unsafe_code)]
 
 pub mod members;
+pub mod model;
+pub mod sprite;
+
+pub use members::{MEMBERS, Member, find};
+pub use model::{Answer, Bases, Model, NoWorld, Refusal, Str, World};
+pub use sprite::{Sprite, SpriteId, State};
