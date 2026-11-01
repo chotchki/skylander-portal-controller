@@ -322,6 +322,7 @@ fn art_draws_its_texture_over_its_rectangle_with_its_paint() {
         vec![Entry::Art {
             sprite: a,
             texture: Some("textures/a.ktx2".into()),
+            corners: [[5.0, 6.0], [25.0, 6.0], [25.0, 16.0], [5.0, 16.0]],
             rect: [5.0, 6.0, 25.0, 16.0],
             uv: [1.0, 0.0, 0.0, 1.0],
             paint: Paint {
@@ -595,4 +596,253 @@ proptest! {
             }
         }
     }
+}
+
+/// AT.28's Verify: AC.13's four turned corner shades from their live fields
+/// in the June savestate (`GameplayOverlay_BL`, `_BR`, `_UL`, `_UR`: 200 by
+/// 200 art at 100 %, parentless, alignment 0 on the root's bottom-left,
+/// bottom-right, top-left and top-right, their initial matrices turning 90,
+/// 180.00078, 0 and 270 about depth, woken) cover the frame's corners as
+/// AC.13's quads do (`at-lane/out/at3_draws.tsv`, draws 456, 512, 455 and
+/// 454 of capture 112455), each within 0.5 px.
+#[test]
+fn ac13s_four_corner_shades_stand_turned_where_the_captures_draw_them() {
+    let mut m = Model::default();
+    for (on, turn, want) in [
+        (6, 90.0, [0.0, 520.0, 200.0, 720.0]),
+        (8, 180.000_78, [1080.0, 520.0, 1280.0, 720.0]),
+        (0, 0.0, [0.0, 0.0, 200.0, 200.0]),
+        (2, 270.0, [1080.0, 0.0, 1280.0, 200.0]),
+    ] {
+        let mut t = template(kind::ART, 200.0, 200.0);
+        t.properties = props::VISIBLE | (1 << 3) | (on << 12) | kind::ART;
+        t.init_matrix.rotation = [0.0, turn, 0.0];
+        let s = m.add_template(None, &t, Value::Null);
+        m.wake(s);
+        let f = m.lay_out(&NoWorld);
+        let r = placed(&f, s).rect();
+        for (got, want) in r.iter().zip(want) {
+            assert!((got - want).abs() < 0.5, "{on}: {r:?}, AC.13's {want:?}");
+        }
+        let list = m.draw_list(&f);
+        let Some(Entry::Art { corners, .. }) = list.iter().find(|e| e.sprite() == s) else {
+            panic!("{list:?}")
+        };
+        // The top-left corner stays on the root's anchor; the quad turns
+        // round it.
+        let anchor = [(on % 3) as f32 * 640.0, (on / 3) as f32 * 360.0];
+        assert!(
+            (corners[0][0] - anchor[0]).abs() < 1e-3 && (corners[0][1] - anchor[1]).abs() < 1e-3
+        );
+        m.remove(s);
+    }
+}
+
+/// A parent's turn turns where its children hang (their points carried by
+/// its matrix), not the children's quads (AT.28, 0xBA240).
+#[test]
+fn a_turned_parent_carries_where_its_children_hang() {
+    let (mut m, ct, art) = model();
+    let parent = m.spawn(ct);
+    at(&mut m, parent, 100.0, 50.0);
+    m.sprite_mut(parent).matrix.rotation = [0.0, 90.0, 0.0];
+    let child = m.spawn(art);
+    at(&mut m, child, 10.0, 0.0);
+    m.attach(child, Some(parent));
+    let f = m.lay_out(&NoWorld);
+    // 10 across from the parent's top-left turned 90: 10 up from it.
+    let [x, _, y] = placed(&f, child).point;
+    assert!(
+        (x - 100.0).abs() < 1e-4 && (y - 40.0).abs() < 1e-4,
+        "{x} {y}"
+    );
+    // Its own quad unturned: 20 by 10 from there.
+    let r = placed(&f, child).rect();
+    assert!(
+        (r[2] - r[0] - 20.0).abs() < 1e-4 && (r[3] - r[1] - 10.0).abs() < 1e-4,
+        "{r:?}"
+    );
+    // The anchor on the parent turns with it too: hung on its bottom-right
+    // (100 by 60), the child's offset (110, 60) turned 90 is (60, -110).
+    m.set(child, si("align to parent"), Value::Int(8)).unwrap();
+    let f = m.lay_out(&NoWorld);
+    let [x, _, y] = placed(&f, child).point;
+    assert!(
+        (x - 160.0).abs() < 1e-3 && (y - (50.0 - 110.0)).abs() < 1e-3,
+        "{x} {y}"
+    );
+}
+
+/// A sprite's own anchor turns with it: hung by its bottom-right and turned
+/// 90, its turned bottom-right corner sits on the point it hangs from
+/// (AT.28, 0x1E2E24).
+#[test]
+fn an_own_anchor_turns_with_its_sprite() {
+    let (mut m, _, art) = model();
+    let a = m.spawn(art);
+    at(&mut m, a, 100.0, 100.0);
+    m.set(a, si("alignment"), Value::Int(8)).unwrap();
+    m.sprite_mut(a).matrix.rotation = [0.0, 90.0, 0.0];
+    let f = m.lay_out(&NoWorld);
+    let p = placed(&f, a);
+    let [x, _, y] = p.point;
+    // (20, 10) turned 90 is (10, -20): the top-left at (90, 120).
+    assert!(
+        (x - 90.0).abs() < 1e-4 && (y - 120.0).abs() < 1e-4,
+        "{x} {y}"
+    );
+    let c = p.corners();
+    assert!(
+        (c[2][0] - 100.0).abs() < 1e-4 && (c[2][1] - 100.0).abs() < 1e-4,
+        "{c:?}"
+    );
+    // Turned 90 about x instead, its bottom-left anchor's 10 down turns into
+    // depth, taken off the point's depth.
+    m.set(a, si("alignment"), Value::Int(6)).unwrap();
+    m.sprite_mut(a).matrix.rotation = [90.0, 0.0, 0.0];
+    let f = m.lay_out(&NoWorld);
+    let [x, depth, y] = placed(&f, a).point;
+    assert!(
+        (x - 100.0).abs() < 1e-4 && (y - 100.0).abs() < 1e-4,
+        "{x} {y}"
+    );
+    assert!((depth - (10_000.0 - 10.0)).abs() < 1e-3, "{depth}");
+}
+
+/// Each mode draws with its switch's state, an opaque sprite under a parent
+/// not at full alpha as crossfade, and an art sprite with flags bit 26 its
+/// cut-out modes plain (AT.28: 0x32528, 0xBA240).
+#[test]
+fn the_blend_a_sprite_draws_with() {
+    let (mut m, ct, art) = model();
+    let parent = m.spawn(ct);
+    let a = m.spawn(art);
+    m.attach(a, Some(parent));
+    let drawn_blend = |m: &mut Model| {
+        let f = m.lay_out(&NoWorld);
+        match m.draw_list(&f).iter().find(|e| e.sprite() == a) {
+            Some(Entry::Art { paint, .. }) => paint.blend,
+            other => panic!("{other:?}"),
+        }
+    };
+    m.set(a, si("blend mode"), Value::Int(0)).unwrap();
+    assert_eq!(drawn_blend(&mut m), blend::OPAQUE);
+    m.set(parent, si("color"), Value::Color(0x8080_80FE))
+        .unwrap();
+    assert_eq!(
+        drawn_blend(&mut m),
+        blend::CROSSFADE,
+        "the parent translucent"
+    );
+    m.set(parent, si("color"), Value::Color(0x8080_80FF))
+        .unwrap();
+    m.sprite_mut(a).flags |= sflags::PLAIN_BLEND;
+    for (mode, drawn) in [
+        (0, blend::OPAQUE),
+        (1, blend::CROSSFADE),
+        (2, blend::ADDITIVE),
+        (3, blend::CROSSFADE),
+        (4, blend::CROSSFADE),
+        (5, blend::CROSSFADE),
+        (6, blend::ADDITIVE),
+        (7, blend::CROSSFADE),
+    ] {
+        m.set(a, si("blend mode"), Value::Int(mode)).unwrap();
+        assert_eq!(drawn_blend(&mut m), drawn, "{mode} under bit 26");
+    }
+    // Bit 26 is the art's alone: a container keeps its mode.
+    m.sprite_mut(parent).flags |= sflags::PLAIN_BLEND;
+    m.set(parent, si("blend mode"), Value::Int(3)).unwrap();
+    let f = m.lay_out(&NoWorld);
+    assert_eq!(placed(&f, parent).blend, blend::CUTS_OUT);
+    // Each mode's equation, the opaque one included: rgb the source's,
+    // alpha kept; additive the source by its alpha onto the destination;
+    // gets cut out (add) the source where the destination's alpha is 0.
+    let (src, dst) = ([0.5, 0.25, 1.0, 0.5], [0.25, 0.5, 0.5, 0.75]);
+    assert_eq!(
+        super::blend(blend::OPAQUE, src, dst),
+        [0.5, 0.25, 1.0, 0.75]
+    );
+    assert_eq!(
+        super::blend(blend::ADDITIVE, src, dst),
+        [0.5, 0.625, 1.0, 0.75]
+    );
+    assert_eq!(
+        super::blend(blend::GETS_CUT_OUT_ADD, src, dst),
+        [0.375, 0.5625, 0.75, 0.75]
+    );
+}
+
+/// `clipping` changes nothing drawn: no draw, layout or kind reads the bit
+/// (AT.28), only its setter's quirk on *sized*.
+#[test]
+fn clipping_clips_nothing() {
+    let (mut m, ct, art) = model();
+    let parent = m.spawn(ct);
+    let a = m.spawn(art);
+    at(&mut m, a, 90.0, 50.0);
+    m.attach(a, Some(parent));
+    let f = m.lay_out(&NoWorld);
+    let before = m.draw_list(&f);
+    m.sprite_mut(a).flags |= sflags::CLIPPING;
+    m.sprite_mut(parent).flags |= sflags::CLIPPING;
+    let f = m.lay_out(&NoWorld);
+    assert_eq!(
+        m.draw_list(&f),
+        before,
+        "a child past its parent's edge drawn whole"
+    );
+}
+
+/// A turned text's glyph quads turn round its top-left (AT.28).
+#[test]
+fn a_turned_texts_glyphs_turn_round_its_top_left() {
+    use guac_ir::interface::{Font, Glyph};
+    let mut m = Model::default();
+    let font = m.add_font(Font {
+        name: None,
+        source: None,
+        height: 82.0,
+        base_line: 0.0,
+        char_padding: 0.0,
+        kern_amount: 0.0,
+        color: [0.5, 0.5, 0.5, 1.0],
+        atlas: "textures/font.ktx2".into(),
+        atlas_size: [1024, 1024],
+        glyphs: vec![Glyph {
+            char: 'a' as u16,
+            step: 40.0,
+            offset: [0.0, 0.0],
+            size: [40.0, 82.0],
+            uv_min: [0.0; 2],
+            uv_max: [0.1; 2],
+            kern: [0; 4],
+        }],
+    });
+    let s = m.add_file_string(
+        guac_script::Obj { unit: 0, index: 3 },
+        "a",
+        crate::Str::default(),
+    );
+    let mut t = template(kind::TEXT, 0.0, 0.0);
+    t.flags = 0;
+    t.init_matrix.rotation = [0.0, 90.0, 0.0];
+    let t = m.add_template(None, &t, s);
+    m.set_font(t, Some(font));
+    m.wake(t);
+    at(&mut m, t, 10.0, 200.0);
+    let f = m.lay_out(&NoWorld);
+    let list = m.draw_list(&f);
+    let Some(Entry::Glyph { corners, rect, .. }) = list.first() else {
+        panic!("{list:?}")
+    };
+    // 40 across and 82 down from (10, 200), turned 90: across goes up.
+    let near = |p: [f32; 2], q: [f32; 2]| (p[0] - q[0]).abs() < 1e-3 && (p[1] - q[1]).abs() < 1e-3;
+    assert!(near(corners[0], [10.0, 200.0]), "{corners:?}");
+    assert!(near(corners[1], [10.0, 160.0]), "{corners:?}");
+    assert!(near(corners[3], [92.0, 200.0]), "{corners:?}");
+    assert!(
+        (rect[0] - 10.0).abs() < 1e-3 && (rect[2] - 92.0).abs() < 1e-3,
+        "{rect:?}"
+    );
 }

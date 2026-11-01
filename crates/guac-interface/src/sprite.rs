@@ -71,6 +71,11 @@ pub mod flags {
     pub const POINT_SIZE_SET: u32 = 1 << 17;
     pub const FLIP: Bits = Bits::new(18, 2);
     pub const CLIPPING: u32 = 1 << 25;
+    /// Bit 26: an art sprite draws its cut-out blends plain (the crate
+    /// docs, Colour and blends) and hands bits 27-29 to the program.
+    pub const PLAIN_BLEND: u32 = 1 << 26;
+    /// Bits 27-29: the fragment program's mode under bit 26.
+    pub const PROGRAM_MODE: Bits = Bits::new(27, 3);
 }
 
 /// The placement's own flags word.

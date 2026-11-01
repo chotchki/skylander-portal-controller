@@ -2,8 +2,12 @@
 //! updater's walk over `active` and each sprite's place, scale, size,
 //! priority, depth and colour on screen.
 
+use guac_ir::interface::Matrix;
+
+use crate::draw::blend;
+use crate::matrix;
 use crate::model::{Model, World};
-use crate::sprite::{SpriteId, kind, props};
+use crate::sprite::{SpriteId, flags, kind, props};
 use crate::text::{GlyphQuad, TextOut};
 
 /// A sprite's place this frame: what the draw list draws it from and what
@@ -22,6 +26,13 @@ pub struct Placed {
     /// Its colour, the alpha times its parent's over 255.
     pub color: [u8; 4],
     pub replace: [u8; 4],
+    /// Its own matrix's turns (x, depth, y in degrees), which its quads and
+    /// its anchor turn by.
+    pub turn: [f32; 3],
+    /// The blend it draws with: its mode, opaque under a parent not at full
+    /// alpha drawn as crossfade, an art sprite with flags bit 26 drawing its
+    /// cut-out modes plain (the crate docs, Colour and blends).
+    pub blend: u32,
     /// Drawn this frame: visible, and its parent drawn.
     pub drawn: bool,
     /// Dirty this frame: its own bit or its parent's.
@@ -31,16 +42,51 @@ pub struct Placed {
 }
 
 impl Placed {
-    /// Its rectangle on screen: left, top, right, bottom in frame pixels.
-    pub fn rect(&self) -> [f32; 4] {
-        let [x, _, y] = self.point;
+    /// Its rows: its turns, at its top-left.
+    pub fn rows(&self) -> [f32; 16] {
+        matrix::rows(&Matrix {
+            position: self.point,
+            rotation: self.turn,
+        })
+    }
+
+    /// A point `x` across and `y` down from its top-left, in frame pixels,
+    /// along its turned axes.
+    pub fn at(&self, x: f32, y: f32) -> [f32; 2] {
+        let [px, _, py] = matrix::carry(&self.rows(), [x, 0.0, y]);
+        [px, py]
+    }
+
+    /// Its quad's corners on screen: top-left, top-right, bottom-right,
+    /// bottom-left, its size at its scale along its turned axes.
+    pub fn corners(&self) -> [[f32; 2]; 4] {
+        let (w, h) = (self.size[0] * self.scale[0], self.size[1] * self.scale[2]);
         [
-            x,
-            y,
-            x + self.size[0] * self.scale[0],
-            y + self.size[1] * self.scale[2],
+            self.at(0.0, 0.0),
+            self.at(w, 0.0),
+            self.at(w, h),
+            self.at(0.0, h),
         ]
     }
+
+    /// Its rectangle on screen: left, top, right, bottom in frame pixels,
+    /// round its corners.
+    pub fn rect(&self) -> [f32; 4] {
+        bounds(&self.corners())
+    }
+}
+
+/// The rectangle round some corners: left, top, right, bottom.
+pub fn bounds(corners: &[[f32; 2]]) -> [f32; 4] {
+    corners.iter().fold(
+        [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ],
+        |[l, t, r, b], &[x, y]| [l.min(x), t.min(y), r.max(x), b.max(y)],
+    )
 }
 
 /// A frame's layout: each sprite visited this frame, by its id, and the
@@ -163,6 +209,8 @@ impl Model {
             depth: 0.0,
             color: [0x80, 0x80, 0x80, 0xFF],
             replace: [0x80, 0x80, 0x80, 0],
+            turn: [0.0; 3],
+            blend: blend::CROSSFADE,
             drawn: true,
             dirty: false,
             text: None,
@@ -219,13 +267,46 @@ impl Model {
             point[0] += col * 0.5 * (p.size[0] * p.scale[0]);
             point[2] += row * 0.5 * (p.size[1] * p.scale[2]);
         }
-        for (v, at) in point.iter_mut().zip(p.point) {
-            *v += at;
-        }
+        // Carried by the parent's matrix: its turns, at its top-left; the
+        // root turns by nothing (0x113688, 0x1E2EA0).
+        let turned = s.parent.map(|q| self.sprite(q).matrix.rotation);
+        point = match turned {
+            Some(rotation) => matrix::carry(
+                &matrix::rows(&Matrix {
+                    position: p.point,
+                    rotation,
+                }),
+                point,
+            ),
+            None => std::array::from_fn(|i| point[i] + p.point[i]),
+        };
         if !unanchored(k) {
+            // Its own anchor, turned by its own turns, off all three axes
+            // (0x1E2E24, 0xBA82C-0xBA92C).
             let (col, row) = anchor(props::ALIGNMENT.get(s.properties));
-            point[0] -= col * 0.5 * (size[0] * scale[0]);
-            point[2] -= row * 0.5 * (size[1] * scale[2]);
+            let off = [
+                col * 0.5 * (size[0] * scale[0]),
+                0.0,
+                row * 0.5 * (size[1] * scale[2]),
+            ];
+            let off = matrix::turn(&matrix::rows(&s.matrix), off);
+            for (v, o) in point.iter_mut().zip(off) {
+                *v -= o;
+            }
+        }
+        let mut mode = props::BLEND.get(s.properties);
+        if mode == blend::OPAQUE && p.color[3] != 0xFF {
+            mode = blend::CROSSFADE;
+        }
+        if k == kind::ART && s.flags & flags::PLAIN_BLEND != 0 {
+            mode = match mode {
+                blend::CUTS_OUT
+                | blend::GETS_CUT_OUT
+                | blend::CLEARS_CUT_OUT
+                | blend::CUTS_OUT_INVERT => blend::CROSSFADE,
+                blend::GETS_CUT_OUT_ADD => blend::ADDITIVE,
+                other => other,
+            };
         }
         Placed {
             point,
@@ -235,6 +316,8 @@ impl Model {
             depth,
             color,
             replace: s.replace,
+            turn: s.matrix.rotation,
+            blend: mode,
             drawn: false,
             dirty: false,
             text,

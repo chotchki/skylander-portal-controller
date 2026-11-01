@@ -3,9 +3,9 @@
 
 use guac_ir::interface::Content;
 
-use crate::layout::Frame;
+use crate::layout::{Frame, bounds};
 use crate::model::{LETTER, Model};
-use crate::sprite::{SpriteId, flags, kind, props};
+use crate::sprite::{SpriteId, flags, kind};
 
 /// `blend mode`'s values, as the EBOOT's enum names them (0x5B97E0).
 pub mod blend {
@@ -33,21 +33,26 @@ pub struct Paint {
 /// One thing the frame draws, in order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
-    /// An image over a rectangle: its texture (`textures/<sha256>.ktx2`,
-    /// none when the extract holds no image) and UV box (u, v at the box's
-    /// top-left, then at its bottom-right).
+    /// An image over a quad: its texture (`textures/<sha256>.ktx2`, none
+    /// when the extract holds no image), its corners (top-left, top-right,
+    /// bottom-right, bottom-left, along the sprite's turned axes), the
+    /// rectangle round them and its UV box (u, v at the quad's top-left
+    /// corner, then at its bottom-right).
     Art {
         sprite: SpriteId,
         texture: Option<String>,
+        corners: [[f32; 2]; 4],
         rect: [f32; 4],
         uv: [f32; 4],
         paint: Paint,
     },
-    /// One glyph from its font's atlas, its letter's colour beside the
-    /// sprite's (the text colour converter's, 0x808080FF until set).
+    /// One glyph from its font's atlas over its quad, its letter's colour
+    /// beside the sprite's (the text colour converter's, 0x808080FF until
+    /// set).
     Glyph {
         sprite: SpriteId,
         atlas: String,
+        corners: [[f32; 2]; 4],
         rect: [f32; 4],
         uv: [f32; 4],
         letter: [u8; 4],
@@ -94,8 +99,8 @@ impl Entry {
     }
 }
 
-/// The UV box a `texture flip` gives (the crate docs' Hypothesis, AT.28):
-/// 1 swaps the u ends, 2 the v ends, 3 both.
+/// The UV box a `texture flip` gives (the crate docs, What it draws; art's
+/// four quads read for AT.28): 1 swaps the u ends, 2 the v ends, 3 both.
 pub fn flipped(uv: [f32; 4], flip: u32) -> [f32; 4] {
     let [mut u0, mut v0, mut u1, mut v1] = uv;
     if flip & 1 != 0 {
@@ -130,10 +135,9 @@ pub fn shade(texel: [f32; 4], paint: &Paint) -> [f32; 4] {
     out
 }
 
-/// One blend of a shaded source onto the destination, as AC.13's GPU states
-/// draw each (the crate docs, Colour and blends), clamped to 0-1 as the
-/// frame stores it. Opaque, additive and gets cut out (add) by their names
-/// (the crate docs' Hypothesis).
+/// One blend of a shaded source onto the destination, as the sprite draw's
+/// switch sets each mode's state (the crate docs, Colour and blends),
+/// clamped to 0-1 as the frame stores it.
 pub fn blend(mode: u32, src: [f32; 4], dst: [f32; 4]) -> [f32; 4] {
     let mut out = dst;
     match mode {
@@ -185,18 +189,19 @@ impl Model {
         for id in order {
             let p = frame.get(id).unwrap();
             let s = self.sprite(id);
-            let mode = props::BLEND.get(s.properties);
             let paint = Paint {
                 color: p.color,
                 replace: p.replace,
-                blend: mode,
-                invert: inverts(mode),
+                blend: p.blend,
+                invert: inverts(p.blend),
             };
-            let rect = p.rect();
+            let corners = p.corners();
+            let rect = bounds(&corners);
             match (s.kind(), &s.content) {
                 (kind::ART, Content::Image(a)) => out.push(Entry::Art {
                     sprite: id,
                     texture: a.texture.clone(),
+                    corners,
                     rect,
                     uv: flipped([0.0, 0.0, 1.0, 1.0], flags::FLIP.get(s.flags)),
                     paint,
@@ -213,19 +218,21 @@ impl Model {
                     let Some(font) = s.font.and_then(|f| self.font(f)) else {
                         continue;
                     };
-                    let [x, _, y] = p.point;
                     let sx = text.scale[0] * p.scale[0];
                     let sy = text.scale[1] * p.scale[2];
                     for (i, g) in glyphs.iter().enumerate() {
+                        let [l, t, r, b] = [
+                            g.rect[0] * sx,
+                            g.rect[1] * sy,
+                            g.rect[2] * sx,
+                            g.rect[3] * sy,
+                        ];
+                        let corners = [p.at(l, t), p.at(r, t), p.at(r, b), p.at(l, b)];
                         out.push(Entry::Glyph {
                             sprite: id,
                             atlas: font.atlas.clone(),
-                            rect: [
-                                x + g.rect[0] * sx,
-                                y + g.rect[1] * sy,
-                                x + g.rect[2] * sx,
-                                y + g.rect[3] * sy,
-                            ],
+                            corners,
+                            rect: bounds(&corners),
                             uv: g.uv,
                             letter: s.letters.get(i).copied().unwrap_or(LETTER),
                             paint,
@@ -257,6 +264,7 @@ impl Model {
                 (kind::ART, _) => out.push(Entry::Art {
                     sprite: id,
                     texture: None,
+                    corners,
                     rect,
                     uv: flipped([0.0, 0.0, 1.0, 1.0], flags::FLIP.get(s.flags)),
                     paint,

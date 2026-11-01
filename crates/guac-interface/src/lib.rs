@@ -40,8 +40,21 @@
 //!   layout (bit 10 *a time*, bit 11 *has an `@`*, bit 13 *commas*; bit 12 is
 //!   read by the number fill, 0x9C858, and set by nothing read); bit 17
 //!   *point size set* (a positive point size written); bits 18-19 `texture
-//!   flip`; bit 25 `clipping`. Bits 21, 24, 26 and 27-29 are the updater's
-//!   and the art's (**Hypothesis**: what they do isn't read, AT.28).
+//!   flip`; bit 25 `clipping`. Read for AT.28: bit 5 makes art tile (the
+//!   geometry build sets its texture's wrap from it, 0xB66BC, and the draw
+//!   scales its UVs by the image's desired size); the layout clears bit 21
+//!   on its kind's copy of the word when the sprite has no parent at all
+//!   (the frame's root alone) and sets bit 24 there when it hangs on a
+//!   model's node (0xBA240), the updater reading bit 21 (AT.29) and the
+//!   model kind's draw turning one not hung on a node by a fixed matrix
+//!   (0x8A1F90, at 0x334FC); bit 26 and bits 27-29 are copied into the art
+//!   kind's word (0xB64BC), and an art sprite with bit 26 draws its cut-out
+//!   blends plain (Colour and blends) and hands bits 27-29 to the fragment
+//!   program's mode (the render context's bits 4-6, 0x3A9EE0;
+//!   **Hypothesis**: a mask channel, the program's use unread, AT.24 or
+//!   AT.13 when a frame draws one). Bit 25 (`clipping`) is read by its own
+//!   handlers alone: no draw, layout or kind tests it (AT.28's search of the
+//!   EBOOT for every test of the bit), so it clips nothing.
 //! - **Depths**: `Z Depth` and `priority`, floats the registry ranges at
 //!   ±10,000.
 //! - **Matrices**, the placement's two (AT.25): `_initMatrix`, where it was
@@ -583,12 +596,16 @@
 //!   parent's scale and, unless the parent is a model or particles, moved by
 //!   its own `align to parent` anchor on the parent (that anchor's column ×
 //!   ½ the parent's computed width and row × ½ its height, each at the
-//!   parent's scale: 0xBAA98); then carried by the parent's place, the
-//!   parent's own top-left once its anchor is off;
+//!   parent's scale: 0xBAA98); then carried by the parent's current matrix
+//!   (0x113688, 0x1E2EA0, read for AT.28): turned by the parent's turns and
+//!   moved to the parent's top-left once its anchor is off. A parent's turn
+//!   turns where its children hang, not the children: each draws turned by
+//!   its own matrix alone;
 //! - unless it is a model or particles, its own `alignment` anchor (column ×
-//!   ½ its computed width and row × ½ its height, at its scale) is turned by
-//!   its orientation and taken off both axes (0xBA82C to 0xBA92C), so that
-//!   point of it sits on the point above;
+//!   ½ its computed width and row × ½ its height, at its scale, the depth 0)
+//!   is turned by its own matrix's turns (0x1E2E24) and taken off all three
+//!   axes (0xBA82C to 0xBA92C), so that point of it sits on the point
+//!   above;
 //! - its depth is its `Z Depth` × 25 at the parent's z scale plus the
 //!   parent's; the root's is 10,000 (20,000 × ½, taken only by a sprite with
 //!   no parent at all, 0xBAB70), so a sprite on the root stands at 10,000
@@ -598,12 +615,14 @@
 //! from that top-left, texture key and UV box with it; text its glyphs at
 //! the text's x and y scales times its scale from the same top-left (Text
 //! above); a model, emitter or movie an entry over the same rectangle for
-//! the adapter. A container draws nothing. **Hypothesis** (AT.28, which reads
-//! where each takes effect): `texture flip` swaps the UV box's u ends for
-//! horizontal and v ends for vertical, by its names; orientation and
-//! `clipping` aren't applied (no captured sprite clips; the four rotated
-//! corner shades AT.3 matched are parentless, their rotation the
-//! placement's, which the model holds no member for yet).
+//! the adapter. A container draws nothing. Art and glyph quads run from the
+//! top-left along the sprite's own turned axes (its matrix's rows): so the
+//! June savestate's corner shades, 200 by 200 at their roots' corners,
+//! turned 90, 180, 0 and 270, cover the frame's four corners as AC.13 draws
+//! them. `texture flip` picks one of art's four quads (0x32528, their UVs
+//! read in the June savestate's video memory for AT.28): none draws u along
+//! x and v up y, horizontal reverses u, vertical v, both both; text ignores
+//! it. `clipping` changes nothing drawn (the flags above).
 //!
 //! # Colour and blends
 //!
@@ -611,28 +630,44 @@
 //! maths as functions): a sprite draws rgb = texture × tint × 2 and alpha =
 //! texture alpha × tint alpha, the tint its colour bytes over 255, then
 //! mixes rgb toward its replace colour by the replace percentage (its fourth
-//! byte over 255), and inverts alpha where the program is told to. The
-//! blends the captures draw: crossfade (1: rgb over by the source's alpha,
-//! alpha kept), cuts out (3: the source's alpha added into the
-//! destination's, rgb kept), cuts out (invert) (7: the same with the alpha
-//! inverted), gets cut out (4: rgb by the destination's alpha, the source
-//! where it is 0, alpha kept) and clears cut out (5: the source's alpha
-//! taken off the destination's, rgb kept). **Hypothesis**: opaque (0),
-//! additive (2) and gets cut out (add) (6), which no captured frame draws,
-//! by their names; clears cut out's alpha inverted, as 10 of AC.13's 11 are
-//! (the one straight clears a straight cut; AT.24 checks each against its
-//! cut once the HUD is built).
+//! byte over 255), and inverts alpha where the program is told to. Each
+//! mode's state is what the sprite draw's switch (0x32528) pushes, read for
+//! AT.28 off the attributes the June savestate holds: opaque (0) blending
+//! off, one and zero (rgb the source's, alpha kept); crossfade (1) nothing
+//! pushed, the frame's default (rgb over by the source's alpha, alpha
+//! kept); additive (2) the source's alpha and one, added; cuts out (3) the
+//! destination-alpha attribute (alpha written alone) and one and one,
+//! added (the source's alpha into the destination's); gets cut out (4) one
+//! minus the destination's alpha and the destination's alpha, added (rgb by
+//! the destination's alpha, the source where it is 0); clears cut out (5)
+//! the destination-alpha attribute and one and one, reverse-subtracted (the
+//! source's alpha taken off the destination's); gets cut out (add) (6) one
+//! minus the destination's alpha and one, added; cuts out (invert) (7) as
+//! cuts out with the invert-alpha attribute. The layout draws an opaque
+//! sprite under a parent whose computed alpha isn't full as crossfade
+//! (0xBA240), and an art sprite with flags bit 26 draws 3, 4, 5 and 7 as
+//! crossfade and 6 as additive (0x32528). **Hypothesis**: clears cut out's
+//! alpha inverted, as 10 of AC.13's 11 are, each the clear of an inverted
+//! cut (the one straight clears a straight cut), though the switch pushes
+//! the invert attribute for cuts out (invert) alone (the attribute stack's
+//! push and pop, 0x1FC78C and 0x1FD118, unread; AT.24 checks each against
+//! its cut once the HUD is built).
 //!
 //! # Draw order
 //!
 //! A sprite joins the frame's sprite list the first frame it is drawn and
 //! leaves it the first frame it isn't (0x10C59C at 0xBBD04, 0x10C5E4 at
-//! 0xB9B1C); the render side takes the list on (0x10C8A8). **Hypothesis**
-//! (AT.24 checks AC.13's 72 draws against it; the render side's sort isn't
-//! read): drawn by computed priority, lower in front (a message box's text
-//! is written at priority -2 over its box; AC.13's number shadows at 10
-//! draw before their numbers at 5), the list's order (when each started
-//! being drawn) breaking ties.
+//! 0xB9B1C). The render side keeps a list of its own across frames
+//! (read for AT.28): its take-on (0x10C8A8) appends the frame's joins in
+//! order, and 0x10CB68 takes the frame's leaves off it, so it holds every
+//! drawn sprite in the order each joined; no sort is in either.
+//! **Hypothesis** (AT.33 checks AC.13's 72 draws on AT.9's HUD; the sort
+//! over that list isn't found): drawn by computed priority, lower in front
+//! (a message box's text is written at priority -2 over its box; AC.13's
+//! number shadows at 10 draw before their numbers at 5, and its
+//! bottom-left corner shade, the June savestate's lowest at -190, draws
+//! last of the 72 while the other three, at 0, draw 14th to 16th), the
+//! list's order (when each started being drawn) breaking ties.
 #![forbid(unsafe_code)]
 
 pub mod draw;
