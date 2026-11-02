@@ -23,7 +23,7 @@ While a level shows, the TV SHALL show each playing hero's HUD as the original's
 
 #### Scenario: Eon's line at the start
 - **WHEN** Eon's first line puts up his box as chapter 1 starts
-- **THEN** his HUD doesn't show until the box goes, as the original's doesn't
+- **THEN** his HUD doesn't show until the box goes, as the original's doesn't, and shows again within a frame of it going
 
 #### Scenario: The level cap
 - **WHEN** Eruptor's experience reaches the cap

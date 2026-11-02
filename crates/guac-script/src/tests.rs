@@ -1599,6 +1599,113 @@ fn a_number_variable_in_a_set_reference_is_read_and_written_through_its_element(
 }
 
 #[test]
+fn a_number_variables_set_is_its_own_and_made_anew_once_grown() {
+    // Variables, structures and sets (openspec AT.47's review): the set a
+    // number variable by reference reads as is that variable's alone: the
+    // same set again with another variable handed between, never the
+    // other's; grown past the variable it isn't the variable's, so the next
+    // write makes one anew; a write straight into the variable reads
+    // through the set it already gave; an index past 0 wraps to it.
+    let p = program(|w| {
+        let a = var(w, "a");
+        let b = var(w, "b");
+        let held = w.variable("held", "ScriptSetReference", None);
+        let other = w.variable("other", "ScriptSetReference", None);
+        let again = w.variable("again", "ScriptSetReference", None);
+        let fresh = w.variable("fresh", "ScriptSetReference", None);
+        let r = w.variable("r", "ScriptReference", None);
+        let same = var(w, "same");
+        let apart = var(w, "apart");
+        let through = var(w, "through");
+        let past = var(w, "past");
+        let before = var(w, "before");
+        let after_growing = var(w, "after growing");
+        let set_ref = |w: &mut Writer<'_>, to: Location, rhs: Location, index: Option<Location>| {
+            let lhs = w.stack(StackClass::Reference, &[El::Local(to)]);
+            let o = w.op(Class::SetReference, "set *reference||to");
+            w.refer(o, 0x1C, lhs);
+            w.refer(o, 0x20, rhs);
+            if let Some(ix) = index {
+                w.refer(o, 0x24, ix);
+            }
+            w.push(o);
+        };
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |_| {},
+            |_| {},
+            |w| {
+                let bh = w.behaviour("idle");
+                for (to, from) in [(held, a), (other, b), (again, a)] {
+                    let rhs = w.reference(&[El::Local(from)], None);
+                    set_ref(w, to, rhs, None);
+                }
+                let p = w.check_ref(&[El::Local(held)], 1, &[El::Local(again)]);
+                w.inc(&[El::Local(same)]);
+                w.end_block(p);
+                let p = w.check_ref(&[El::Local(held)], 5, &[El::Local(other)]);
+                w.inc(&[El::Local(apart)]);
+                w.end_block(p);
+                // A write straight into `a` reads through the set it gave.
+                let seven = w.int(7);
+                w.set(&[El::Local(a)], seven);
+                let set = w.reference(&[El::Local(held)], None);
+                let zero = w.int(0);
+                set_ref(w, r, set, Some(zero));
+                let got = w.rhs(INT, &[El::Local(r)]);
+                w.set(&[El::Local(through)], got);
+                // An index past 0 wraps (the crate docs): 1 and -1 read `a`.
+                for (k, wrapped) in [(1, past), (-1, before)] {
+                    let set = w.reference(&[El::Local(held)], None);
+                    let ix = w.int(k);
+                    set_ref(w, r, set, Some(ix));
+                    let got = w.rhs(INT, &[El::Local(r)]);
+                    w.set(&[El::Local(wrapped)], got);
+                }
+                // Grown, the set holds more than `a`: handing `a` again makes one anew.
+                w.inc(&[El::Local(held), El::Member("setvariant", "count")]);
+                let rhs = w.reference(&[El::Local(a)], None);
+                set_ref(w, fresh, rhs, None);
+                let n = w.rhs(INT, &[El::Local(fresh), El::Member("setvariant", "count")]);
+                w.set(&[El::Local(after_growing)], n);
+                w.end_block(bh);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config(Mode::Strict, &[]));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(
+        vm.local(id, "same"),
+        Some(Value::Int(1)),
+        "the same set again"
+    );
+    assert_eq!(
+        vm.local(id, "apart"),
+        Some(Value::Int(1)),
+        "never the other's"
+    );
+    assert_eq!(
+        vm.local(id, "through"),
+        Some(Value::Int(7)),
+        "a write into the variable read through its set"
+    );
+    assert_eq!(vm.local(id, "past"), Some(Value::Int(7)), "index 1 wraps");
+    assert_eq!(
+        vm.local(id, "before"),
+        Some(Value::Int(7)),
+        "index -1 wraps"
+    );
+    assert_eq!(
+        vm.local(id, "after growing"),
+        Some(Value::Int(1)),
+        "a set grown past the variable isn't the variable's"
+    );
+}
+
+#[test]
 fn a_placement_off_the_whitelist_stays_inert() {
     let p = program(|w| {
         let count = var(w, "count");

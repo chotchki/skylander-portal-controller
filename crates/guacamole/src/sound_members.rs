@@ -43,17 +43,19 @@
 //! sets: the copies playing of embedded sounds, of streamed ones, and no
 //! movie, rumble or category template.
 //!
-//! A sound info itself asked a sequence member (openspec AR.28): its `raw
-//! duration` is its recording's length whether or not it plays (0 for one
-//! with nothing to play), its `time remaining` and `percent remaining` the
-//! most over its copies playing on the placement asking, 0 with none. A
-//! reading of the original's getters (aj-vm's: a sequence's own remaining
-//! time, or for a template the most over its clones whose owner is the
-//! current placement, and its duration whatever plays), the template's own
-//! remaining read as 0 since a sound info never plays itself: Eon's line's
-//! activator, which waits on its sound info's `percent remaining` with its
-//! copy on the dialogue UI's placement, is taken off once his line is done,
-//! as AG.7 read it at AF's fresh state.
+//! A sound info itself asked a sequence member (openspec AR.36, split from
+//! AR.28): its `raw duration` is its recording's length whether or not it
+//! plays (0 for one with nothing to play), its `time remaining` and
+//! `percent remaining` the most over its copies playing on the placement
+//! asking, 0 with none. A reading of the original's getters (aj-vm's: a
+//! sequence's own remaining time, or for a template the most over its
+//! clones whose owner is the current placement, and its duration whatever
+//! plays), the template's own remaining read as 0 since a sound info never
+//! plays itself. So Eon's line's activator, which waits on its sound
+//! info's `percent remaining` with its copy on the dialogue UI's
+//! placement, is taken off on that wait's first tick while his line plays
+//! on; AG.7's fresh state is past his line either way, and the moment is
+//! AR.28's, for an oracle record.
 
 use guac_ir::sound::{DataHome, DataRef, Sound};
 use guac_script::{Access, Answer, Handle, HostFault, Obj, Value};
@@ -796,7 +798,7 @@ impl ScriptWorld {
     }
 
     /// What sound info `o` itself answers for sequence member `m` asked by
-    /// the placement `asker` (openspec AR.28, the module docs), or `None`
+    /// the placement `asker` (openspec AR.36, the module docs), or `None`
     /// for an object the book doesn't know as a sound: its `raw duration`
     /// its recording's length (0 for one with nothing to play), its `time
     /// remaining` and `percent remaining` the most over its copies playing
@@ -1567,12 +1569,13 @@ mod tests {
         assert_eq!(ended(&w), [(ONCE, "played out")]);
     }
 
-    /// openspec AR.28: a sound info itself, asked a sequence member by a
+    /// openspec AR.36: a sound info itself, asked a sequence member by a
     /// placement: its `raw duration` its recording's length whether or not
     /// it plays (0 for one with nothing to play); its `time remaining` and
     /// `percent remaining` the most over its copies playing on the asker,
     /// 0 for any other asker, before its copy starts and after it ends, as
-    /// Eon's line's activator reads its sound once his line is over.
+    /// Eon's line's activator reads 0 off his line playing on the dialogue
+    /// UI's placement.
     #[test]
     fn a_sound_info_answers_its_length_and_its_askers_copies() {
         let mut w = world();
