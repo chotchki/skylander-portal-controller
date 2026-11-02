@@ -443,6 +443,7 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             "script",
             "palettes",
             "nodes",
+            "particles",
             "sprites"
         ]
     );
@@ -502,6 +503,14 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .unwrap()
         .parts
         .insert(SPRITES.to_owned(), Vec::new());
+    // AS.17's particles: an extract written before them resumes for those
+    // alone.
+    assert!(!complete(&m), "the particles missing");
+    m.levels
+        .get_mut(LEVELS[0])
+        .unwrap()
+        .parts
+        .insert(PARTICLES.to_owned(), Vec::new());
     assert!(complete(&m));
     // The script is the entry as the disc holds it, in either format.
     for ir in [

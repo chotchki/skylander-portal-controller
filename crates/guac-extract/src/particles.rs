@@ -4,8 +4,14 @@
 //! guac-formats' [`particle`] reader, into
 //! `particles/<stem>.<ron|postcard>`, each generator's texture into the
 //! store. An extract-wide part of its own ([`PART`]), so an extract made
-//! before it resumes for it alone. A level's own emitters aren't read: what
-//! draws is what a script spawns.
+//! before it resumes for it alone.
+//!
+//! A level's own emitters (openspec AS.17) are a part of that level's
+//! ([`level_emitters`], [`crate::levels::PARTICLES`]): every emitter its
+//! file places, read as these are, each with its placement, read with the
+//! level's other parts (on a first run for chapter 1, on demand for the
+//! rest), so an extract made before them gains them on that level's next
+//! load.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -63,6 +69,65 @@ pub fn emitters(igz: &Igz<'_>, archive: &str, identity: DumpIdentity) -> Read<Em
             Ok(e) => {
                 textures = own;
                 out.emitters.push(e);
+            }
+            Err(why) => out.refused.push((name_of(igz, index), why)),
+        }
+    }
+    Read {
+        ir: out,
+        textures: textures.files,
+    }
+}
+
+/// Each emitter a level's `igz` places (openspec AS.17), its generators
+/// and their textures read as a spawn archive's are ([`emitters`]), with
+/// where it stands. Refused by name with the rest landing: one that doesn't
+/// read, whose texture doesn't, or that rides something (a parent, an
+/// attach node or its owner, or an object it moves with), which the TV
+/// draws nowhere yet; none of the disc's 15,383 does.
+pub fn level_emitters(
+    igz: &Igz<'_>,
+    level: &str,
+    identity: DumpIdentity,
+) -> Read<guac_ir::particle::LevelEmitters> {
+    use guac_formats::igz::layouts::ObjectRef;
+    let mut textures = Textures::default();
+    let mut out = guac_ir::particle::LevelEmitters {
+        identity,
+        level: level.to_owned(),
+        emitters: Vec::new(),
+        refused: Vec::new(),
+    };
+    for (index, read) in particle::emitters(igz) {
+        let mut own = textures.clone();
+        let placed = read.map_err(|e| e.to_string()).and_then(|e| {
+            let p = &e.info.placement;
+            let at = &p.placement;
+            let rides = [
+                ("a parent", at.parent),
+                ("an attach node", at.attach_node),
+                ("an attach node's owner", at.attach_node_owner),
+                ("an object it moves with", at.move_object),
+            ]
+            .into_iter()
+            .find(|(_, r)| *r != ObjectRef::Null);
+            if let Some((what, _)) = rides {
+                return Err(format!("it rides {what}, which isn't drawn yet"));
+            }
+            Ok(guac_ir::particle::Placed {
+                emitter: emitter(igz, &e, &mut own)?,
+                position: at.init_matrix.position,
+                rotation: at.init_matrix.rotation,
+                scale: p.scale,
+                activity_state: at.activity_state,
+                activation_range: p.activation_range,
+                activation_range_buffer: p.activation_range_buffer,
+            })
+        });
+        match placed {
+            Ok(p) => {
+                textures = own;
+                out.emitters.push(p);
             }
             Err(why) => out.refused.push((name_of(igz, index), why)),
         }

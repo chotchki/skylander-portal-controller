@@ -317,6 +317,42 @@ pub fn crowd(n: usize) -> Vec<u8> {
     b.build()
 }
 
+/// A level's own emitters (openspec AS.17), each with one textured sprite
+/// generator off one shared list: "Standing", UNMANAGED (4) at 4, 5, 6 m
+/// turned -20, 45, 0, a range of 70 ft and a buffer of 10, scaled 150, 125,
+/// 100 %; "Puff", a template (5) at the origin; "Riding", UNMANAGED, its
+/// `_parent` the first.
+pub fn placed() -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let standing = b.object(0, "tfbParticleInfo", 0xE0);
+    let puff = b.object(0, "tfbParticleInfo", 0xE0);
+    let riding = b.object(0, "tfbParticleInfo", 0xE0);
+    let gil = b.object(0, "GeneratorInfoList", 0x18);
+    let sprite = b.object(0, "GeneratorInfo", 0x54);
+    let records = [
+        b.object(0, "GeneratorGenerationFields", 0x34),
+        b.object(0, "GeneratorMovementFields", 0x4C),
+        b.object(0, "GeneratorAppearanceFields", 0x9C),
+    ];
+    let blocks = b.section(0x10);
+    let (data, _) = texture(&mut b, blocks, "Particles/textures/dust.png", 0x55);
+    let matrix = [4.0, 5.0, 6.0, -20.0, 45.0, 0.0];
+    crate::level::builder::placement(&mut b, standing, "Standing", 1, &matrix, 4);
+    floats(&mut b, standing, 0xD0, &[70.0, 10.0]);
+    crate::level::builder::placement(&mut b, puff, "Puff", 2, &[0.0; 6], 5);
+    crate::level::builder::placement(&mut b, riding, "Riding", 3, &matrix, 4);
+    b.pointer(at(riding, 0x5C), standing);
+    for e in [standing, puff, riding] {
+        b.pointer(at(e, 0xD8), gil);
+    }
+    list(&mut b, gil, blocks, &[Some(sprite)]);
+    vfx(&mut b, sprite, "", 0x16, 0.0, data);
+    for (r, offset) in records.iter().zip([0x44, 0x48, 0x50]) {
+        b.pointer(at(sprite, offset), *r);
+    }
+    b.build()
+}
+
 /// The fuzz seeds: the sample, and the sample's emitter alone with its list
 /// pointing at a record instead of a list.
 pub fn seeds() -> Vec<Vec<u8>> {

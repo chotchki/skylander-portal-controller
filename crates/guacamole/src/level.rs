@@ -274,6 +274,13 @@ struct Built {
     /// The particle part's emitters (AH.87), each generator's material in
     /// `drawn.materials`, `None` for one that draws nothing.
     particles: Vec<(Arc<guac_ir::particle::Emitter>, Vec<Option<usize>>)>,
+    /// The level's own emitters (openspec AS.17), in its particles part's
+    /// order, each generator's material as the particle part's are; what
+    /// that part refused, by name with why; and why it didn't read, if it
+    /// didn't.
+    placed: Vec<(Arc<guac_ir::particle::Placed>, Vec<Option<usize>>)>,
+    placed_refused: Vec<(String, String)>,
+    placed_unread: Option<String>,
     /// The first fight's creatures' models (openspec AH.25) and the skinned
     /// templates' (AG.150, AS.63's `props::clones_draw`), by path, with each
     /// one's palette off the level's palettes part: their textures among
@@ -518,6 +525,52 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             Some((Arc::new(emitter.clone()), materials))
         })
         .collect();
+    // The level's own emitters (openspec AS.17): its particles part, their
+    // materials after the spawn emitters', keyed in the same scene. A part
+    // that doesn't read (an extract that hasn't read it yet included) draws
+    // none of them; the level goes on.
+    let placed_part = match read_ir::<guac_ir::particle::LevelEmitters>(
+        source.ir,
+        &part(guac_extract::levels::PARTICLES),
+    )
+    .and_then(|p| {
+        if p.identity != source.identity || p.level != source.level {
+            return Err("the particles part is another dump's or level's".to_owned());
+        }
+        Ok(p)
+    }) {
+        Ok(p) => Ok(p),
+        Err(why) => {
+            warn!(reason = %why, "the level's particles part didn't read: its own emitters draw nothing");
+            Err(why)
+        }
+    };
+    let mut placed = Vec::new();
+    let mut placed_refused = Vec::new();
+    if let Ok(level_emitters) = &placed_part {
+        let (own, index) = guacamole::particles::drawn_placed(level_emitters);
+        let own_materials = drawn.materials.len();
+        for (k, m) in arithmetic::keys(&own, &scene).map_err(|e| format!("its emitters: {e}"))? {
+            if !keys.iter().any(|(kept, _)| *kept == k) {
+                keys.push((k, own_materials + m));
+            }
+        }
+        drawn.extend_materials(&own);
+        placed = level_emitters
+            .emitters
+            .iter()
+            .zip(index)
+            .map(|(p, generators)| {
+                let materials = generators
+                    .into_iter()
+                    .map(|m| m.map(|m| own_materials + usize::from(m)))
+                    .collect();
+                (Arc::new(p.clone()), materials)
+            })
+            .collect();
+        placed_refused.clone_from(&level_emitters.refused);
+    }
+    let placed_unread = placed_part.err();
     // The first fight's creatures (AH.25) and the skinned templates' clones
     // (AG.150): their models with their palettes, their textures read with
     // the level's. A palettes part that doesn't read leaves each holding its
@@ -638,6 +691,9 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         prop_models,
         spawn_models,
         particles,
+        placed,
+        placed_refused,
+        placed_unread,
         creatures,
         read,
         took: started.elapsed(),
@@ -1188,6 +1244,14 @@ pub(crate) struct EmitterDraw {
     pub(crate) materials: Vec<Option<Handle<CharacterMaterial>>>,
 }
 
+/// One of a level's own emitters as the level draws it (openspec AS.17):
+/// where its file places it and its generators with their materials.
+#[derive(Debug, Clone)]
+pub(crate) struct PlacedDraw {
+    pub(crate) placed: Arc<guac_ir::particle::Placed>,
+    pub(crate) draw: EmitterDraw,
+}
+
 /// A level the renderer has: its entities (hidden until shown), the
 /// materials and what rebuilds their uniforms when the camera moves.
 pub(crate) struct Loaded {
@@ -1214,6 +1278,15 @@ pub(crate) struct Loaded {
     /// The particle part's emitters by name: what an emitter's clone draws
     /// (AH.87).
     emitters: HashMap<String, EmitterDraw>,
+    /// The level's own emitters (openspec AS.17), in its particles part's
+    /// order: what stands in the level, and what a clone of one of its
+    /// templates draws ([`Level::level_emitter`]), by object in its file.
+    placed: Vec<PlacedDraw>,
+    placed_by_object: HashMap<u32, usize>,
+    /// What its particles part refused, by name with why, and why the part
+    /// didn't read, if it didn't.
+    placed_refused: Vec<(String, String)>,
+    placed_unread: Option<String>,
     /// The first fight's creatures' models (AH.25) and the skinned
     /// templates' (AG.150), and every texture the level read, by its view,
     /// for their materials.
@@ -1486,6 +1559,28 @@ impl Level {
         self.stage.loaded().map(|l| (&l.emitters, l.root))
     }
 
+    /// The level's own emitters (openspec AS.17) and its root, once the
+    /// level's loaded: what stands in it by AG.7's rule.
+    pub(crate) fn placed_emitters(&self) -> Option<(&[PlacedDraw], Entity)> {
+        self.stage.loaded().map(|l| (l.placed.as_slice(), l.root))
+    }
+
+    /// What a clone of the level's own emitter at `object` in its file
+    /// draws (openspec AS.17), once the level's loaded; none for an object
+    /// its particles part doesn't hold.
+    pub(crate) fn level_emitter(&self, object: u32) -> Option<&EmitterDraw> {
+        let l = self.stage.loaded()?;
+        l.placed_by_object.get(&object).map(|&i| &l.placed[i].draw)
+    }
+
+    /// What the level's particles part refused, by name with why, and why
+    /// the part didn't read, if it didn't (openspec AS.17).
+    pub(crate) fn placed_refused(&self) -> Option<(&[(String, String)], Option<&str>)> {
+        self.stage
+            .loaded()
+            .map(|l| (l.placed_refused.as_slice(), l.placed_unread.as_deref()))
+    }
+
     /// The image the particle part's emitter `name` draws with (its first
     /// textured generator's, its sRGB view where the level read both), once
     /// the level's loaded: what the HUD's level-up arrow is drawn from
@@ -1748,8 +1843,9 @@ fn take_down_run(world: &mut World) {
     world.remove_resource::<ScriptWorld>();
     world.remove_resource::<ScriptSource>();
     if let Some(mut r) = world.get_resource_mut::<ParticleReport>() {
-        (r.systems, r.particles, r.quads) = (0, 0, 0);
+        (r.systems, r.particles, r.quads, r.level_clones) = (0, 0, 0, 0);
         r.emitters.clear();
+        r.placed = crate::emitters::PlacedReport::default();
     }
     if let Some(mut r) = world.get_resource_mut::<SoundReport>() {
         *r = SoundReport {
@@ -2341,6 +2437,25 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
             )
         })
         .collect();
+    let placed: Vec<PlacedDraw> = built
+        .placed
+        .iter()
+        .map(|(p, generators)| PlacedDraw {
+            placed: p.clone(),
+            draw: EmitterDraw {
+                emitter: Arc::new(p.emitter.clone()),
+                materials: generators
+                    .iter()
+                    .map(|m| m.map(|m| materials[m].clone()))
+                    .collect(),
+            },
+        })
+        .collect();
+    let placed_by_object = placed
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.placed.emitter.object, i))
+        .collect();
     Loaded {
         root,
         materials,
@@ -2355,6 +2470,10 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         props,
         spawns,
         emitters,
+        placed,
+        placed_by_object,
+        placed_refused: std::mem::take(&mut built.placed_refused),
+        placed_unread: built.placed_unread.take(),
         creatures: std::mem::take(&mut built.creatures),
         images: image_handles,
         start: built.walk.start,
@@ -3110,6 +3229,7 @@ mod tests {
             quads: 12,
             emitters: vec!["CoinSparkle".into()],
             seen: vec!["CoinSparkle".into()],
+            ..Default::default()
         });
 
         let arena = LevelSource::named(

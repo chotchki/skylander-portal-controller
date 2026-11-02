@@ -1,6 +1,6 @@
 //! The levels guacamole plays off the dump (openspec AG.15, design decision
 //! 8): chapter 1, `level/level_213_tutotial.bld`, into IR v3's level
-//! records ([`guac_ir::level`]) in nine parts, each a file of its own under
+//! records ([`guac_ir::level`]) in eleven parts, each a file of its own under
 //! `levels/<archive>/`, the textures into the characters' store. Writing
 //! them is the level stage's ([`crate::stages`]).
 //!
@@ -38,6 +38,11 @@
 //!   English text as the interface part reads an archive's
 //!   ([`crate::interface`]), their images into the store. An extract
 //!   written before it gains this part alone on its next start.
+//! - The particles (openspec AS.17): every emitter the level places, its
+//!   generators read as the particle part reads a spawn archive's
+//!   ([`crate::particles::level_emitters`]), their images into the store,
+//!   each with its placement. An extract written before it gains this part
+//!   alone on that level's next load.
 //!
 //! A part that doesn't read is the level stage's failure for that part
 //! alone: the other parts land, and the next start tries it again.
@@ -209,15 +214,19 @@ pub const NODES: &str = "nodes";
 /// The level's own interface (openspec AT.8, [`crate::interface`]): its
 /// templates, fonts and English text, read with its other parts.
 pub const SPRITES: &str = "sprites";
-pub const PARTS: [&str; 10] = [
-    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, SPRITES,
+/// The level's own emitters (openspec AS.17, [`crate::particles::level_emitters`]):
+/// every emitter its file places, its generators and where it stands.
+pub const PARTICLES: &str = "particles";
+pub const PARTS: [&str; 11] = [
+    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, PARTICLES,
+    SPRITES,
 ];
 /// The parts the TV reads when it loads a level: every part but the
 /// sprites, which nothing draws until the interface does (openspec AT.9), so
 /// a first run hands chapter 1 over once these are in and reads the sprites
 /// after (AT.26).
-pub const PLAYED: [&str; 9] = [
-    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES,
+pub const PLAYED: [&str; 10] = [
+    SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, PARTICLES,
 ];
 
 /// The palettes part's rule past the first run's levels (openspec AS.54:
@@ -866,6 +875,17 @@ pub fn placements(
         },
         textures: Vec::new(),
     })
+}
+
+/// The particles part (openspec AS.17): every emitter the level's file
+/// places with its generators, their textures and where it stands; one that
+/// doesn't read is listed in the part with why, not fatal to it.
+pub fn particles(
+    igz: &Igz<'_>,
+    level: &str,
+    identity: DumpIdentity,
+) -> Result<Read<guac_ir::particle::LevelEmitters>, String> {
+    Ok(crate::particles::level_emitters(igz, level, identity))
 }
 
 /// The lights part: the directional rig and the placed lights.

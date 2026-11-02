@@ -2,7 +2,8 @@
 //! `tfbParticleInfo` placement's generators as the disc stores them, each
 //! with the texture it draws. A new record in files of its own,
 //! `particles/<archive>.<ron|postcard>` beside the spawn models, so
-//! [`crate::IR_VERSION`] holds.
+//! [`crate::IR_VERSION`] holds. A level's own emitters (openspec AS.17)
+//! are [`LevelEmitters`], a part of that level's.
 //!
 //! Numbers are kept as stored: lengths in metres, angles and spins in
 //! radians, colours as their four codes (0x7F is full strength on a sprite
@@ -23,6 +24,40 @@ pub struct Emitters {
     pub emitters: Vec<Emitter>,
     /// Those that don't, by name, each with why.
     pub refused: Vec<(String, String)>,
+}
+
+/// A level's own emitters (openspec AS.17): every `tfbParticleInfo` the
+/// level's file places, each with where it stands, the level part
+/// `levels/<archive>/particles.<ron|postcard>` beside the level's others,
+/// so [`crate::IR_VERSION`] holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LevelEmitters {
+    pub identity: DumpIdentity,
+    /// The level's archive name (`level_213_tutotial`).
+    pub level: String,
+    /// Each that reads, in object order.
+    pub emitters: Vec<Placed>,
+    /// Those that don't, by name, each with why.
+    pub refused: Vec<(String, String)>,
+}
+
+/// One emitter a level's file places, as stored: its generators and its
+/// placement. A template (activity state 5) stands nowhere itself, its
+/// clones the scripts' to make; an UNMANAGED one (4) stands by AG.7's
+/// rule, its range and buffer measured from the hero.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Placed {
+    pub emitter: Emitter,
+    /// Metres, in the level's frame.
+    pub position: [f32; 3],
+    /// Tilt, heading and roll, degrees (AF.9's convention).
+    pub rotation: [f32; 3],
+    /// Per axis, percent.
+    pub scale: [f32; 3],
+    pub activity_state: u32,
+    /// `_activationRange` and `_activationRangeBuffer`, feet.
+    pub activation_range: f32,
+    pub activation_range_buffer: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -259,6 +294,29 @@ mod tests {
         assert_eq!(
             from_postcard::<Emitters>(&to_postcard(&e).unwrap()).unwrap(),
             e
+        );
+        // AS.17: a level's own, each with its placement.
+        let level = LevelEmitters {
+            identity: e.identity.clone(),
+            level: "level_213_tutotial".into(),
+            emitters: vec![Placed {
+                emitter: e.emitters[0].clone(),
+                position: [14.7, 46.0, -91.1],
+                rotation: [-50.0, 320.0, 0.0],
+                scale: [100.0, 125.0, 150.0],
+                activity_state: 4,
+                activation_range: 60.0,
+                activation_range_buffer: 10.0,
+            }],
+            refused: vec![("Bent".into(), "why".into())],
+        };
+        assert_eq!(
+            from_ron::<LevelEmitters>(&to_ron(&level).unwrap()).unwrap(),
+            level
+        );
+        assert_eq!(
+            from_postcard::<LevelEmitters>(&to_postcard(&level).unwrap()).unwrap(),
+            level
         );
     }
 }

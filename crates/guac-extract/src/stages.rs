@@ -670,6 +670,9 @@ fn levels_stage(
                     levels::NODES => {
                         levels::nodes(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
                     }
+                    levels::PARTICLES => {
+                        levels::particles(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
+                    }
                     levels::SPRITES => {
                         let archive = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
                         bytes

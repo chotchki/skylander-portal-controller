@@ -134,20 +134,36 @@ fn a_stream_holds_at_its_most_alive() {
     assert_eq!(s.particles.len(), 24, "50 a second for 1 s, held at 24");
 }
 
+/// A burst makes its most at once; on, it fills its room again at once as
+/// they die (openspec AS.17: a level's placed falling dust); taken off, it
+/// makes none past its most.
 #[test]
-fn a_burst_makes_its_most_at_once_and_only_once() {
+fn a_burst_makes_its_most_at_once_and_refills_only_while_on() {
     let mut sprite = stream();
     sprite.spawn_rate = 9999.0;
     sprite.max_alive = 3;
     sprite.lifespan = 0.3;
     let g = generator(Kind::Sprite(sprite));
     let mut s = GeneratorState::default();
-    run(&mut s, &g, true, 1, 1.0 / 60.0);
-    assert_eq!(s.particles.len(), 3);
-    // Taken off the next step, its three live out their 0.3 s and none
-    // comes after, on or off.
-    run(&mut s, &g, true, 30, 1.0 / 60.0);
-    assert_eq!((s.particles.len(), s.made), (0, 3));
+    // A frame of no time still fills it: it doesn't wait on its rate.
+    run(&mut s, &g, true, 1, 0.0);
+    assert_eq!((s.particles.len(), s.made), (3, 3));
+    let mut off = s.clone();
+    // On past their 0.3 s: the three die and three more come at once, so
+    // three are alive every frame.
+    for _ in 0..30 {
+        run(&mut s, &g, true, 1, 1.0 / 60.0);
+        assert_eq!(s.particles.len(), 3);
+    }
+    assert_eq!(s.made, 6);
+    // Taken off after its first frame, its three live out their 0.3 s and
+    // none comes after.
+    run(&mut off, &g, false, 30, 1.0 / 60.0);
+    assert_eq!((off.particles.len(), off.made), (0, 3));
+    // Taken off before it made any, it still makes its most once.
+    let mut late = GeneratorState::default();
+    run(&mut late, &g, false, 30, 1.0 / 60.0);
+    assert_eq!(late.made, 3);
 }
 
 #[test]
@@ -515,4 +531,121 @@ fn the_emitters_draw_one_material_a_textured_generator_keyed_on_their_shape() {
         (1, true, true, false)
     );
     assert_eq!(keys[1].0.material.pass, crate::character::Pass::LevelGlow);
+}
+
+/// A level's own emitter (AS.17) of `generators` at `at` in activity state
+/// `state`, a range and a buffer in feet.
+fn placed(name: &str, generators: Vec<Generator>, state: u32, range: f32, buffer: f32) -> Placed {
+    Placed {
+        emitter: guac_ir::particle::Emitter {
+            name: name.into(),
+            object: 1,
+            generators,
+            unread: Vec::new(),
+        },
+        position: [1.0, 2.0, 3.0],
+        rotation: [0.0, 90.0, 0.0],
+        scale: [200.0; 3],
+        activity_state: state,
+        activation_range: range,
+        activation_range_buffer: buffer,
+    }
+}
+
+/// AS.17: a level's own emitters draw off one material for each way
+/// generators draw (texture and sampler, blend, glow), each generator
+/// indexed in its emitter's order, an untextured one drawing nothing.
+#[test]
+fn a_levels_emitters_share_a_material_where_their_generators_draw_alike() {
+    let added = generator(Kind::Sprite(stream()));
+    let mut blended = added.clone();
+    blended.blend = Blend::Blend;
+    let mut glowing = added.clone();
+    glowing.bloom = 5.0;
+    let mut other = added.clone();
+    other.texture.as_mut().unwrap().texture = "textures/y.ktx2".into();
+    let mut bare = added.clone();
+    bare.texture = None;
+    let level = LevelEmitters {
+        identity: guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([0; 32]),
+        },
+        level: "level_213_tutotial".into(),
+        emitters: vec![
+            placed(
+                "Dust",
+                vec![added.clone(), blended.clone(), bare],
+                4,
+                70.0,
+                0.0,
+            ),
+            placed("Dust(1)", vec![added, glowing], 4, 70.0, 0.0),
+            placed("Splash", vec![other, blended], 5, 0.0, 0.0),
+        ],
+        refused: Vec::new(),
+    };
+    let (d, index) = drawn_placed(&level);
+    assert_eq!(
+        index,
+        vec![
+            vec![Some(0), Some(1), None],
+            vec![Some(0), Some(2)],
+            vec![Some(3), Some(1)],
+        ]
+    );
+    assert_eq!((d.materials.len(), d.segments.len()), (4, 4));
+    assert_eq!(d.materials[2].params.glow, Glow::LayerAlpha);
+    assert_eq!(d.materials[3].textures[0].texture, "textures/y.ktx2");
+    // Each segment the shape keying its own material.
+    for (i, s) in d.segments.iter().enumerate() {
+        assert_eq!(usize::from(s.material), i);
+    }
+}
+
+/// AS.17: AG.7's rule on a level's own emitter, the hero's distance in
+/// feet: a ranged UNMANAGED one stands within its range (at it too) and,
+/// having stood, out to its range and buffer; one with no range stands
+/// always without a buffer and never with one (its scripts'); a template
+/// never; and where it stands is its place, turn and scale.
+#[test]
+fn a_levels_emitter_stands_by_ag7s_rule_where_its_file_places_it() {
+    let g = vec![generator(Kind::Sprite(stream()))];
+    let ranged = placed("Dust", g.clone(), 4, 70.0, 10.0);
+    assert!(placed_stands(&ranged, false, Some(69.0)));
+    assert!(placed_stands(&ranged, false, Some(70.0)));
+    assert!(!placed_stands(&ranged, false, Some(75.0)));
+    assert!(placed_stands(&ranged, true, Some(75.0)), "its buffer");
+    assert!(!placed_stands(&ranged, true, Some(81.0)));
+    assert!(!placed_stands(&ranged, false, None), "no hero");
+    assert!(placed_stands(
+        &placed("Mist", g.clone(), 4, 0.0, 0.0),
+        false,
+        None
+    ));
+    assert!(!placed_stands(
+        &placed("Pick", g.clone(), 4, 0.0, 1.0),
+        false,
+        Some(0.0)
+    ));
+    assert!(!placed_stands(
+        &placed("Puff", g.clone(), 5, 70.0, 0.0),
+        false,
+        Some(0.0)
+    ));
+    assert!(!placed_stands(
+        &placed("Odd", g, 1, 70.0, 0.0),
+        false,
+        Some(0.0)
+    ));
+    let f = placed_frame(&ranged);
+    assert_eq!(f.at, Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(f.scale, 2.0);
+    // A heading of 90 faces +x (AF.9's convention).
+    assert!(
+        (f.turn * Vec3::Z).distance(Vec3::X) < 1e-6,
+        "{}",
+        f.turn * Vec3::Z
+    );
 }

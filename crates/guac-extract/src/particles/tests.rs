@@ -223,3 +223,56 @@ fn each_archives_file_is_named_by_its_stem_in_either_format() {
     );
     assert_eq!(archives(), scripts::spawn_archives());
 }
+
+/// AS.17: a level's own emitters land with their generators, each texture
+/// once, and where each stands as its file stores it (metres, degrees,
+/// percent, its activity state, range and buffer in feet); one that rides
+/// a parent is refused by name, and the rest land.
+#[test]
+fn a_levels_emitters_land_where_they_stand_and_one_riding_is_refused() {
+    let bytes = guac_formats::particle::builder::placed();
+    let igz = Igz::parse(&bytes).unwrap();
+    let r = level_emitters(&igz, "level_213_tutotial", identity());
+    assert_eq!(r.ir.level, "level_213_tutotial");
+    let names: Vec<&str> =
+        r.ir.emitters
+            .iter()
+            .map(|p| p.emitter.name.as_str())
+            .collect();
+    assert_eq!(names, ["Standing", "Puff"]);
+    let standing = &r.ir.emitters[0];
+    assert_eq!(standing.position, [4.0, 5.0, 6.0]);
+    assert_eq!(standing.rotation, [-20.0, 45.0, 0.0]);
+    assert_eq!(standing.scale, [150.0, 125.0, 100.0]);
+    assert_eq!(standing.activity_state, 4);
+    assert_eq!(
+        (standing.activation_range, standing.activation_range_buffer),
+        (70.0, 10.0)
+    );
+    let puff = &r.ir.emitters[1];
+    assert_eq!((puff.activity_state, puff.position), (5, [0.0; 3]));
+    // Each with its generator read as a spawn archive's is, the one image
+    // stored once.
+    for p in &r.ir.emitters {
+        assert_eq!(p.emitter.generators.len(), 1);
+        let t = p.emitter.generators[0].texture.as_ref().unwrap();
+        assert_eq!(t.image, "Particles/textures/dust.png");
+        assert_eq!(p.emitter.generators[0].blend, Blend::Add);
+    }
+    assert_eq!(r.textures.len(), 1);
+    assert_eq!(
+        r.ir.emitters[0].emitter.generators[0]
+            .texture
+            .as_ref()
+            .unwrap()
+            .texture,
+        r.textures[0].0
+    );
+    assert_eq!(r.ir.refused.len(), 1, "{:?}", r.ir.refused);
+    assert_eq!(r.ir.refused[0].0, "Riding");
+    assert!(
+        r.ir.refused[0].1.contains("a parent"),
+        "{}",
+        r.ir.refused[0].1
+    );
+}
