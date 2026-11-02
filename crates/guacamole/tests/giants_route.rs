@@ -1973,7 +1973,7 @@ fn probe_the_pit_intro_with_its_sounds() {
                 words.iter().any(|w| !w.is_empty() && low.contains(w))
             })
             .collect();
-        if run.steps % 60 == 0 {
+        if run.steps.is_multiple_of(60) {
             fn tree(m: &guac_interface::Model, id: guac_interface::SpriteId, depth: usize) {
                 let sp = m.sprite(id);
                 let units = m.text_units(id, &guac_interface::NoWorld).map(|u| u.len());
@@ -2025,7 +2025,7 @@ fn probe_the_pit_intro_with_its_sounds() {
             .filter(|p| p.name.as_deref().is_some_and(|n| n.starts_with("vo_")))
         {
             let s = &run.world.sequences()[p.sequence as usize];
-            if run.steps % 30 == 0 {
+            if run.steps.is_multiple_of(30) {
                 println!(
                     "step {}: {:?} at {:.3} of {:.3} s",
                     run.steps, p.name, s.time, p.length

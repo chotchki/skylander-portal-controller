@@ -862,8 +862,7 @@ fn probe_member_uses() {
     ) -> bool {
         match &program.operands[o as usize] {
             Operand::Path { elems, other, .. } => {
-                elems.iter().any(|e| *e == Elem::Member(m))
-                    || other.is_some_and(|x| names(program, x, m))
+                elems.contains(&Elem::Member(m)) || other.is_some_and(|x| names(program, x, m))
             }
             Operand::Expr { a, b, .. } => {
                 a.is_some_and(|x| names(program, x, m)) || b.is_some_and(|x| names(program, x, m))
