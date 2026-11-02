@@ -1281,9 +1281,13 @@ fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
 #[test]
 fn a_reset_puts_a_structure_back_and_asks_the_host_for_a_placement() {
     let mut a = None;
+    let mut t = None;
     let (p, obj) = program_and_objects(|w| {
         let me = actor(w);
         a = Some(me);
+        // Another placement: its own reset would send it round (AS.67).
+        let them = actor(w);
+        t = Some(them);
         let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
         let (sp, def) = w.open(Class::DefineStructure, "Box");
         let v = w.variable("v", "ValueInfo", Some(INT));
@@ -1302,20 +1306,21 @@ fn a_reset_puts_a_structure_back_and_asks_the_host_for_a_placement() {
                 w.set(&[El::Local(b), El::Local(v)], five);
                 setref(w, &[El::Local(r)], &[El::Local(b)]);
                 reset(w, &[El::Local(r)]);
-                reset(w, &[El::Local(me)]);
+                reset(w, &[El::Local(them)]);
             },
         );
     });
     let me = obj.at(a.unwrap());
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let id = vm.add_at(HANDLE, "Me", 1, me);
+    vm.name_object(obj.at(t.unwrap()), 0x77);
     let mut host = Engine::default();
     vm.tick(id, &mut host).unwrap();
     let b = vm.local(id, "b").unwrap();
     assert_eq!(vm.field(b, "v"), Some(Value::Int(0)));
     assert_eq!(
         host.ops,
-        vec![(Class::Reset, vec![Some(Value::Entity(HANDLE))])]
+        vec![(Class::Reset, vec![Some(Value::Entity(0x77))])]
     );
 }
 

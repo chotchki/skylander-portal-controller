@@ -90,8 +90,20 @@
 //! mover update at its first record (`fight`'s three waves). Behind it are
 //! only placements reset after it (two push blocks' water ends, Norticus'
 //! encounter) and what Norticus' tick then spawned. A script's own `reset`
-//! of a placement doesn't send it round yet: the host resets its buffer
-//! alone (openspec AH.80).
+//! of another placement doesn't send it round yet: the host resets its
+//! buffer alone (openspec AH.80).
+//!
+//! A placement's `reset` of itself does, from its STARTUP (openspec AS.67):
+//! once the host has answered it, its SHUTDOWN, if it has one and has
+//! started, is pending and runs at the tick's end as a removal's would;
+//! after it the placement has its started flag and behaviour cleared, its
+//! locals gone (each made again at its declared value as it's next
+//! reached), its timer back to 0, and rejoins the list's end as a requeue
+//! does, running STARTUP there; where it stands is the host's. A reading,
+//! no recording: level 214's bomb resets itself after its burst, and its
+//! script needs each half: a bounce count it only ever adds to, which
+//! would burst the next bomb at its first landing, and a lit fuse, glow
+//! and gesture manager its SHUTDOWN alone takes off.
 //!
 //! The embedder puts placements to sleep and wakes them by its activity
 //! rule ([`Vm::set_activity`], a pass at a time, or [`Vm::set_asleep`]);

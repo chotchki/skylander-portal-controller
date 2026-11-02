@@ -250,6 +250,9 @@ struct Placement {
     /// last tick still to come at its place in the walk, then its started
     /// flag cleared and its SHUTDOWN run.
     last_tick: bool,
+    /// Its reset of itself pending (openspec AS.67): round from its
+    /// STARTUP once its tick, and its SHUTDOWN with it, is done.
+    restart: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -942,6 +945,7 @@ impl Vm {
             active: 0.0,
             suspended: false,
             last_tick: false,
+            restart: false,
         });
         let id = (self.placements.len() - 1) as PlacementId;
         self.order.push(id);
@@ -1202,6 +1206,42 @@ impl Vm {
         self.rejoin.push(id);
         self.placements[id as usize].active = 0.0;
         true
+    }
+
+    /// Placement `id`'s reset of itself (crate docs, The tick; openspec
+    /// AS.67): its SHUTDOWN pending when it has one and has started, and
+    /// round from its STARTUP once its tick is done ([`Vm::restart`]). One
+    /// taken off, stopped, inert or held is left as it is.
+    fn go_round(&mut self, id: PlacementId) {
+        let has_shutdown = self
+            .program
+            .scripts
+            .get(self.placements[id as usize].script as usize)
+            .is_some_and(|s| s.shutdown.is_some());
+        let p = &mut self.placements[id as usize];
+        if p.removed || p.stopped.is_some() || p.inert || p.held {
+            return;
+        }
+        p.restart = true;
+        if p.started && has_shutdown {
+            p.shutdown = true;
+        }
+    }
+
+    /// A placement its reset of itself sent round, its SHUTDOWN behind it:
+    /// started flag and behaviour cleared, its locals gone, its list not
+    /// yet made, its timer at 0, and back on the list's end as
+    /// [`Vm::requeue`] puts it, to run STARTUP there.
+    fn restart(&mut self, id: PlacementId) {
+        let p = &mut self.placements[id as usize];
+        p.restart = false;
+        p.started = false;
+        p.behaviour = None;
+        p.locals.clear();
+        p.listed = false;
+        p.active = 0.0;
+        self.unlist(id);
+        self.rejoin.push(id);
     }
 
     /// Whether the placement is an activator.
@@ -1917,6 +1957,13 @@ impl Vm {
         let out = self.finish(result);
         if let Some(p) = self.placements.get_mut(id as usize) {
             p.set_up |= p.started && p.stopped.is_none() && out.as_ref().is_ok_and(Option::is_none);
+            // Its reset of itself, its SHUTDOWN run (openspec AS.67); one
+            // taken off or stopped since goes no further.
+            if p.restart && (p.removed || p.stopped.is_some()) {
+                p.restart = false;
+            } else if p.restart && !p.shutdown {
+                self.restart(id);
+            }
         }
         out
     }
@@ -4453,7 +4500,16 @@ impl Vm {
                     sets: Vec::new(),
                 };
                 match host.op(&call) {
-                    Ok(_) => Ok(()),
+                    Ok(_) => {
+                        // Its reset of itself sends it round (crate docs,
+                        // The tick; openspec AS.67).
+                        if let Some(id) = self.run.placement
+                            && self.canon(v) == Value::Entity(self.my_handle())
+                        {
+                            self.go_round(id);
+                        }
+                        Ok(())
+                    }
                     Err(HostFault::Nothing) => Err(Fault::Nothing),
                     Err(HostFault::Unmodelled) => Err(Fault::Op(Class::Reset)),
                 }

@@ -1870,6 +1870,16 @@ impl ScriptWorld {
                     self.revived.push((h, o));
                     return Ok(Answer::Done);
                 }
+                // A placement's reset of itself (openspec AS.67): the VM
+                // sends its script round from its STARTUP, and it stands
+                // again as it was made ([`ScriptWorld::as_made`]).
+                if let Some(h) = target
+                    && h == call.placement
+                    && let Some(a) = self.as_made(h)
+                {
+                    self.actors.insert(h, a);
+                    return Ok(Answer::Done);
+                }
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
                     // A light the point-light manager took off goes back
@@ -1891,6 +1901,51 @@ impl ScriptWorld {
                 None => Err(HostFault::Unmodelled),
             },
         }
+    }
+
+    /// The live actor under `h` as it stood when made, for its reset of
+    /// itself (openspec AS.67, a reading: level 214's bomb resets itself
+    /// after its burst, and nothing in its script or its spawner's takes it
+    /// back to the spawner, which clones no other while it stands): a
+    /// file's placement as its file has it, a clone its template's numbers
+    /// at the place it was cloned (`abstractplacement.origin`) with its
+    /// turn its template's, keeping what makes it this clone (its id, its
+    /// buffer and range, its parent, activator and template, its own
+    /// clones), its motion and what it hung from gone. None for one taken
+    /// off or a template it can't find.
+    pub fn as_made(&self, h: Handle) -> Option<Actor> {
+        let k = self.actors.get(&h).filter(|k| !k.removed)?;
+        if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
+            return Some(Actor {
+                clones: k.clones.clone(),
+                ..actor_of(p)
+            });
+        }
+        let mut a = actor_of(self.templates.get(&k.template?)?);
+        a.obj = None;
+        a.template = k.template;
+        a.parent = k.parent;
+        a.activator = k.activator;
+        a.id = k.id;
+        a.buffer_loaded = k.buffer_loaded;
+        a.buffer = k.buffer;
+        a.range = k.range;
+        a.waypoints = Vec::new();
+        a.clones = k.clones.clone();
+        a.position = k.origin;
+        a.origin = k.origin;
+        a.light = k
+            .template
+            .and_then(|t| self.light_templates.get(&t))
+            .copied();
+        a.walker = k.walker.as_ref().map(|_| {
+            Box::new(crate::script_engine::Walker {
+                body: None,
+                aim: guac_motion::steer::Aim::Still,
+                along: 0,
+            })
+        });
+        Some(a)
     }
 
     /// A clone of `template` at the place `at` names (its pivot), facing
@@ -5082,6 +5137,62 @@ mod tests {
             "where its file has it"
         );
         assert_eq!(w.revived, [(grunt, GRUNT)]);
+    }
+
+    /// AS.67: a clone's reset of itself stands it again as it was made: at
+    /// the place it was cloned (`abstractplacement.origin`), its motion
+    /// gone and its template's numbers back, keeping what its spawner gave
+    /// it (its id); the VM sends its script round. Another placement's reset
+    /// of it leaves it where it stands, and one taken off isn't made again.
+    #[test]
+    fn a_clone_resetting_itself_stands_again_where_it_was_cloned() {
+        let (mut w, grunt, _) = world();
+        let at_grunt = OpCall {
+            operands: vec![
+                ("_LHS", Some(Value::Object(GRUNT))),
+                ("_RHS", Some(Value::Entity(grunt))),
+            ],
+            ..call(Class::Spawn, None)
+        };
+        w.op(&at_grunt, &mut |_| 900, &mut NoEngine).unwrap();
+        let made = w.actor(900).unwrap().clone();
+        assert_eq!(made.origin, made.position);
+        {
+            let a = w.actors.get_mut(&900).unwrap();
+            a.id = 7;
+            a.position += Vec3::new(3.0, -1.0, 2.0);
+            a.velocity = Vec3::new(0.0, 0.0, 9.0);
+            a.launched = true;
+            a.scale = [50.0; 3];
+            a.physics.gravity_acceleration = 99.0;
+        }
+        let moved = w.actor(900).unwrap().position;
+        let reset = |by: Handle| OpCall {
+            placement: by,
+            ..call(Class::Reset, Some(Value::Entity(900)))
+        };
+        w.op(&reset(1), &mut |_| 0, &mut NoEngine).unwrap();
+        assert_eq!(w.actor(900).unwrap().position, moved, "another's reset");
+        w.op(&reset(900), &mut |_| 0, &mut NoEngine).unwrap();
+        let a = w.actor(900).unwrap();
+        assert_eq!(a.position, made.origin, "where it was cloned");
+        assert_eq!(a.origin, made.origin);
+        assert_eq!(a.velocity, Vec3::ZERO);
+        assert!(!a.launched);
+        assert_eq!(a.scale, made.scale);
+        assert_eq!(a.physics, made.physics);
+        assert_eq!(a.id, 7, "its spawner's id kept");
+        assert_eq!(a.template, Some(GRUNT));
+        assert!(!a.removed);
+        assert!(w.revived.is_empty(), "the VM restarts it, not the embedder");
+        w.op(
+            &call(Class::Remove, Some(Value::Entity(900))),
+            &mut |_| 0,
+            &mut NoEngine,
+        )
+        .unwrap();
+        w.op(&reset(900), &mut |_| 0, &mut NoEngine).unwrap();
+        assert!(w.removed(900), "one taken off isn't made again");
     }
 
     #[test]
