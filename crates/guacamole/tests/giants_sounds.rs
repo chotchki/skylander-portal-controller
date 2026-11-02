@@ -760,6 +760,15 @@ fn probe_script_ops() {
                         q.decl.container
                     ),
                     Ins::UseMacro { np, .. } => format!("UseMacro {}", p(*np)),
+                    Ins::ChangeMembership { lhs, code, rhs } => {
+                        format!("ChangeMembership {} {code} {}", p(*lhs), p(*rhs))
+                    }
+                    Ins::CheckMembership { lhs, code, rhs } => {
+                        format!("CheckMembership {} {code} {}", p(*lhs), p(*rhs))
+                    }
+                    Ins::FindSubSet { lhs, relation, rhs } => {
+                        format!("FindSubSet {} {relation} {}", p(*lhs), p(*rhs))
+                    }
                     Ins::Define(d) => format!("Define {}", program.defs[*d as usize].display),
                     other => {
                         let t = format!("{other:?}");

@@ -5,9 +5,10 @@
 //! Player Health UI `) with every member on the model and no stop: each
 //! instance with its template, parent and rectangle, the main box where
 //! the build puts it. The draw list beside AC.13's quads is printed, its
-//! check within 1 px AT.39's (split from AT.9). Two probes from AT.9's
-//! review beside it: a step's cost with the model and without, and the HUD
-//! under other title-safe margins.
+//! check within 1 px AT.39's (split from AT.9); the health bars' widths
+//! are AC.13's since AT.47, checked, and one offset across. Two probes
+//! from AT.9's review beside it: a step's cost with the model and without,
+//! and the HUD under other title-safe margins.
 //!
 //! Ignored by default: it reads `GUAC_GIANTS_DUMP` (env, else `.env.dev`).
 //!
@@ -243,6 +244,63 @@ fn eruptors_join_builds_the_hud() {
         let (image, want) = AC13_QUADS[i];
         println!("  AC.13 quad {i:>2} {image:<26} {want:?}: nearest of its image {off:.2} px off");
     }
+    // The health bars (openspec AT.47): `UI - Tile Sprites` lays them out by
+    // the sprite flags the bit-field macros read, so each cap is 12 px and
+    // the tile 229.5 px across, as AC.13's are (2.0's VM read the flags 0
+    // and gave 59.6 and 134.2). Where they stand is AT.39's: each edge's
+    // offset printed, the left and right one for the whole bar, the top
+    // and bottom apart, since ours stand 75 px tall where AC.13's are 37.5.
+    let bars = [
+        "hpbar_capleft",
+        "hpbar_tile",
+        "hpbarshiny_leftcap",
+        "hpbarshiny_tile",
+        "hpbarshiny_capright",
+    ];
+    let ours: Vec<(String, [f32; 4])> = list
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Art { sprite, rect, .. } => match &m.sprite(*sprite).content {
+                Content::Image(a) => Some((stem(a.source.as_deref().unwrap_or("")), *rect)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|(s, _)| bars.contains(&s.as_str()))
+        .collect();
+    let mut edges = std::collections::BTreeSet::new();
+    for (i, (image, want)) in AC13_QUADS.iter().enumerate() {
+        if !bars.contains(image) {
+            continue;
+        }
+        let width = want[2] - want[0];
+        let mine = ours
+            .iter()
+            .filter(|(s, r)| s == image && ((r[2] - r[0]) - width).abs() < 0.01)
+            .min_by(|a, b| {
+                (a.1[0] - want[0])
+                    .abs()
+                    .total_cmp(&(b.1[0] - want[0]).abs())
+            });
+        let Some((_, r)) = mine else {
+            panic!("AC.13 quad {i} {image} {want:?}: none of ours {width} px across: {ours:?}");
+        };
+        let d = [
+            r[0] - want[0],
+            r[1] - want[1],
+            r[2] - want[2],
+            r[3] - want[3],
+        ];
+        println!("  bar quad {i:>2} {image:<20} ours {r:?}, its edges off {d:?}");
+        edges.insert(d.map(|v| (v * 100.0).round() as i32));
+    }
+    let across: std::collections::BTreeSet<_> = edges.iter().map(|d| (d[0], d[2])).collect();
+    println!("the bars' edge offsets (hundredths): {edges:?}");
+    assert_eq!(
+        across.len(),
+        1,
+        "one offset across for the whole bar: {edges:?}"
+    );
     println!(
         "HUD quads within 1 px: {within} of {}; draw list {} entries ({arts} art); {:.1} s; load after: {}",
         offsets.len(),

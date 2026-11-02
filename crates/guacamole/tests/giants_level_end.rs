@@ -392,7 +392,13 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .iter()
         .map(|n| run.placed(n).0)
         .collect();
-    assert_eq!(run.world.creatures(), spawners, "the spawners walk");
+    // The spawners walk; the level's later fights' placements walk from the
+    // start too (openspec AS.58), none of them a clone.
+    let placed = run.world.creatures();
+    assert!(
+        spawners.iter().all(|s| placed.contains(s)),
+        "the spawners walk"
+    );
     let controller = run.placement("Setup_001_Controller");
     // His arrival and the intro's hand-over played out, as the TV's dev
     // entry settles him (openspec AS.47).
@@ -421,7 +427,7 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         };
         stops.extend(run.step_play().unwrap());
         for h in run.world.creatures() {
-            if spawners.contains(&h) {
+            if placed.contains(&h) {
                 continue;
             }
             let gone = run.world.actor(h).is_none_or(|a| a.removed)
@@ -771,6 +777,33 @@ fn level_214s_intro_hands_over_on_the_ship() {
             parts_after.iter().any(|p| p == part),
             "{part} on the ship: {parts_after:?}"
         );
+    }
+    assert_eq!(
+        parts_after, parts_before,
+        "its parts on it again, once each"
+    );
+    // One ship's parts standing in the level, its engine's with them: the
+    // skip takes the cutscene's second ship off the step it's cloned, and a
+    // clone taken off before its script joins the run never starts it (the
+    // as-214-walk review: its STARTUP cloned a second set that stood for
+    // good, two engines rowing out of step on the deck).
+    let standing = |name: &str| {
+        run.world
+            .clones()
+            .into_iter()
+            .filter(|h| run.world.name(*h) == name && !run.world.removed(*h))
+            .count()
+    };
+    for part in [
+        "Hub_Engine",
+        "Hub_Masthead",
+        "Hub_Roof",
+        "00_Engine_DefaultStatic",
+        "01_Engine_Default_OarLeft",
+        "02_Engine_Default_OarRight",
+        "03_Engine_Default_Propeller",
+    ] {
+        assert_eq!(standing(part), 1, "{part} standing once");
     }
     assert!(
         !ship_clones.is_empty() && ship_clones.iter().all(|(_, off)| *off),

@@ -235,7 +235,18 @@
 //!
 //! - A check (`if value`, `if reference`, `if member`) that holds runs into
 //!   its block without pushing; one that fails, or whose left side can't be
-//!   read (a path through nothing), skips it.
+//!   read (a path through nothing), skips it. Read as a path element, a
+//!   check is what its left side read, whether it held or not: a value, a
+//!   reference, or `if member`'s set (openspec AS.57, a reading: level 214's
+//!   tool spawner checks its bomb's clones through the check before).
+//! - `if member` asks of its left side's set and its right side (a set, or
+//!   one object): code 0 holds when every member of the right side is in
+//!   the left, 1 when none is, 2 when any is, 3 when the left holds each at
+//!   least as often as the right does; one object is in the set or not (1
+//!   not). An empty right side fails every code (codes 0 and 3 since
+//!   openspec AS.57, a reading: level 214's tool spawner ends its tick when
+//!   such a check holds, and with nothing carried an empty set holding it
+//!   would keep its bomb from ever being cloned).
 //! - `else` (an `OpAbstractFlow` skip) jumps forward its block length, then
 //!   closes. As the last op of a check's block it jumps over the else block;
 //!   with length 0 it only closes; in an else-if chain it lands at the
@@ -368,9 +379,30 @@
 //!   review; `for each` walks the object its path reads with no check that
 //!   it's a set). The same set for the same object is ours: nothing on the
 //!   disc changes a set made so (AT.44's review: 411 places over every
-//!   level, none written into), so whose it is can't show. A number
-//!   variable handed by reference (the bit-field macros' `values in`, its
-//!   edit type `AbstractNumberMeasurement`) still drops, AT.47.
+//!   level, none written into), so whose it is can't show.
+//! - A number variable handed to a set reference by reference (a run-time
+//!   one, a file's, a structure's field, a number a member holds) reads as
+//!   a set of that variable: a reference read off it at an index is the
+//!   variable, so a read through that reference reads its number and a
+//!   write through it lands in the variable (openspec AT.47). Read off the
+//!   disc: the bit-field macros (`Save - Bit Field - Get Bit Field` and
+//!   `Set Bit Field`, `UI - Get/Set Sprite Bits`) take `values in` by set
+//!   reference and read or write `values in[set index]` through a
+//!   reference, and their callers hand one number variable, the right
+//!   side's edit type `AbstractNumberMeasurement`, the shape AT.44 read for
+//!   objects. Dropped, every Get read 0 and every Set wrote nothing. The
+//!   same set again while it holds that variable alone, as an object's; a
+//!   member's number is a fresh set each time, as its reference read is a
+//!   fresh place. A literal number still drops. A reading, as AT.44's:
+//!   whether the original makes a set of the variable or each reader takes
+//!   it as one isn't read, and the same set again is ours. An index past 0
+//!   wraps modulo the count, as every set's reference read at an index does
+//!   here, so it reads the one variable again, where the original's would
+//!   reach past the set (unread): the bit-field macros step `set index` on
+//!   by `bit index` / 32, so a `bit index` past 31 reads past the first.
+//!   None of the disc's callers does so on one number (AT.47's review: no
+//!   index past 0 on such a set over every level's `giants_levels` run and
+//!   chapter 1's route).
 //! - `global.bld`'s numbers, screen positions, colours, sets, structures and
 //!   references are cells made from the file on first use and shared by
 //!   every placement.

@@ -42,6 +42,20 @@
 //! volumes, the listener modes and the diagnostic level are carried. Its
 //! sets: the copies playing of embedded sounds, of streamed ones, and no
 //! movie, rumble or category template.
+//!
+//! A sound info itself asked a sequence member (openspec AR.36, split from
+//! AR.28): its `raw duration` is its recording's length whether or not it
+//! plays (0 for one with nothing to play), its `time remaining` and
+//! `percent remaining` the most over its copies playing on the placement
+//! asking, 0 with none. A reading of the original's getters (aj-vm's: a
+//! sequence's own remaining time, or for a template the most over its
+//! clones whose owner is the current placement, and its duration whatever
+//! plays), the template's own remaining read as 0 since a sound info never
+//! plays itself. So Eon's line's activator, which waits on its sound
+//! info's `percent remaining` with its copy on the dialogue UI's
+//! placement, is taken off on that wait's first tick while his line plays
+//! on; AG.7's fresh state is past his line either way, and the moment is
+//! AR.28's, for an oracle record.
 
 use guac_ir::sound::{DataHome, DataRef, Sound};
 use guac_script::{Access, Answer, Handle, HostFault, Obj, Value};
@@ -763,6 +777,12 @@ impl ScriptWorld {
                 None => Err(HostFault::Nothing),
             },
             Member::SoundSystem(f) => Ok(self.system_value(f)),
+            Member::SeqTimeRemaining | Member::SeqPercentRemaining | Member::SeqRawDuration => {
+                let Some(Value::Object(o)) = at.receiver else {
+                    return None;
+                };
+                return self.sound_info_sequence(o, at.placement, m).map(Ok);
+            }
             Member::SeqActivator => {
                 match self.handle(at.receiver?).and_then(|h| self.objs.get(h)) {
                     Some(Object::Sequence(i)) => self
@@ -775,6 +795,34 @@ impl ScriptWorld {
             }
             _ => return None,
         })
+    }
+
+    /// What sound info `o` itself answers for sequence member `m` asked by
+    /// the placement `asker` (openspec AR.36, the module docs), or `None`
+    /// for an object the book doesn't know as a sound: its `raw duration`
+    /// its recording's length (0 for one with nothing to play), its `time
+    /// remaining` and `percent remaining` the most over its copies playing
+    /// on the asker, 0 with none.
+    fn sound_info_sequence(&self, o: Obj, asker: Handle, m: Member) -> Option<Value> {
+        let length = match self.sound_lookup(o) {
+            Found::NotASound => return None,
+            Found::Silent(..) => 0.0,
+            Found::Playable(id) => match self.sounds.as_deref()?.lookup(&id.stem, id.object) {
+                Lookup::Playable(p) => play_length(PLAY_END, p.audio, p.duration),
+                _ => 0.0,
+            },
+        };
+        let most = |f: fn(&Sequence) -> f32| {
+            self.playing_copies(Value::Object(o), Some(asker))
+                .into_iter()
+                .map(|i| f(&self.sequences[i]))
+                .fold(0.0, f32::max)
+        };
+        Some(Value::Float(match m {
+            Member::SeqRawDuration => length,
+            Member::SeqTimeRemaining => most(Sequence::time_remaining),
+            _ => most(Sequence::percent_remaining),
+        }))
     }
 
     /// A write of a sound member, or `None` for any other member. The
@@ -1519,5 +1567,58 @@ mod tests {
         assert_eq!(w.plays().len(), 1, "half way through its second");
         steps(&mut w, 31);
         assert_eq!(ended(&w), [(ONCE, "played out")]);
+    }
+
+    /// openspec AR.36: a sound info itself, asked a sequence member by a
+    /// placement: its `raw duration` its recording's length whether or not
+    /// it plays (0 for one with nothing to play); its `time remaining` and
+    /// `percent remaining` the most over its copies playing on the asker,
+    /// 0 for any other asker, before its copy starts and after it ends, as
+    /// Eon's line's activator reads 0 off his line playing on the dialogue
+    /// UI's placement.
+    #[test]
+    fn a_sound_info_answers_its_length_and_its_askers_copies() {
+        let mut w = world();
+        let info = sound_value(ONCE);
+        let ask = |w: &mut ScriptWorld, asker: Handle, name: &str, on: Value| {
+            let at = Access {
+                placement: asker,
+                receiver: Some(on),
+                member: MemberId::named("sequence", name),
+                other_point: None,
+                via: None,
+                op: None,
+            };
+            w.get(&at, &mut NoEngine).unwrap().as_f32().unwrap()
+        };
+        assert_eq!(ask(&mut w, A, "raw duration", info), 1.0, "unplayed");
+        assert_eq!(ask(&mut w, A, "time remaining", info), 0.0);
+        assert_eq!(ask(&mut w, A, "percent remaining", info), 0.0);
+        let _ = started(start(&mut w, A, ONCE));
+        steps(&mut w, 15);
+        assert!((ask(&mut w, A, "time remaining", info) - 0.75).abs() < 1e-3);
+        assert!((ask(&mut w, A, "percent remaining", info) - 75.0).abs() < 0.1);
+        assert_eq!(ask(&mut w, B, "time remaining", info), 0.0, "not B's");
+        assert_eq!(ask(&mut w, B, "percent remaining", info), 0.0);
+        // A second copy on A, started later: the most left is the newer's.
+        let _ = started(start(&mut w, A, ONCE));
+        steps(&mut w, 15);
+        assert!((ask(&mut w, A, "time remaining", info) - 0.75).abs() < 1e-3);
+        assert_eq!(ask(&mut w, A, "raw duration", info), 1.0, "playing");
+        steps(&mut w, 50);
+        assert_eq!(ask(&mut w, A, "time remaining", info), 0.0, "played out");
+        assert_eq!(ask(&mut w, A, "percent remaining", info), 0.0);
+        assert_eq!(ask(&mut w, A, "raw duration", sound_value(SILENT)), 0.0);
+        assert_eq!(ask(&mut w, A, "time remaining", sound_value(SILENT)), 0.0);
+        // What the book doesn't know as a sound answers nothing, as before.
+        let at = Access {
+            placement: A,
+            receiver: Some(sound_value(99)),
+            member: MemberId::named("sequence", "time remaining"),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        assert_eq!(w.get(&at, &mut NoEngine), Err(HostFault::Nothing));
     }
 }

@@ -497,3 +497,92 @@ fn a_level_up_spawns_its_flourish_from_global_bld_s_models() {
     }
     println!("load after: {}", load());
 }
+
+/// openspec AT.47: a variant's tag gives its subtype bits. The bit-field
+/// macros take `values in` by set reference; handed the tag's `toy
+/// subtype` (one number, by reference) they read it as a set of it, so
+/// `Save - Bit Field - Get Bit Field` reads its bits and `Set Bit Field`
+/// writes them back into the tag (on 2.0's VM Get read 0 and Set wrote
+/// nothing). The portal control's `Save - Get Tag Subtype Properties`
+/// reads the deco id so; its repose, legendary and lightforce flags it
+/// clears unless the tag's `toy load hint` is on its lists, and the TV's
+/// tag names none (AH.324). Eruptor's four on the disc's roster: the base
+/// (0), Series 2 (0x800), LightCore (0x200) and an alternate deco's shape
+/// (0x403).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_variants_tag_gives_its_subtype_bits() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let outs = ["is lightforce", "is legendary", "is repose", "deco id"];
+    for subtype in [0u32, 0x800, 0x200, 0x403] {
+        let (mut run, _) = run_on(Mode::Strict);
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+        let mut tag = eruptor_tag(Values::default());
+        tag.subtype = subtype;
+        run.join_tag(tag)
+            .unwrap_or_else(|h| panic!("{subtype:#x}: {h}"));
+        for _ in 0..10 {
+            run.step().unwrap_or_else(|h| panic!("{subtype:#x}: {h}"));
+        }
+        let data = run.figure.expect("joined");
+        let field = run
+            .vm
+            .field_place(data, "toy subtype")
+            .expect("its subtype");
+        let pm = scripts::portal_manager_placement(&run.vm, &run.world).unwrap();
+        let call = |run: &mut Run, name: &str, args: &[(&str, Value)], returns: &[&str]| {
+            run.with_host(|vm, host| vm.call_with(Some(pm), name, args, returns, host))
+                .unwrap_or_else(|h| panic!("{subtype:#x} {name}: {h}"))
+                .1
+                .iter()
+                .map(|v| v.and_then(|v| v.as_i32()).unwrap_or(-1))
+                .collect::<Vec<i32>>()
+        };
+        let whole = call(
+            &mut run,
+            "Save - Bit Field - Get Bit Field",
+            &[
+                ("values in", field),
+                ("set index", Value::Int(0)),
+                ("bit index", Value::Int(0)),
+                ("number of bits", Value::Int(16)),
+            ],
+            &["value out"],
+        );
+        let props = call(
+            &mut run,
+            "Save - Get Tag Subtype Properties",
+            &[("check tag", data)],
+            &outs,
+        );
+        call(
+            &mut run,
+            "Save - Bit Field - Set Bit Field",
+            &[
+                ("values in", field),
+                ("set index", Value::Int(0)),
+                ("bit index", Value::Int(14)),
+                ("number of bits", Value::Int(1)),
+                ("value in", Value::Int(1)),
+            ],
+            &[],
+        );
+        let after = run.vm.value(field).as_i32();
+        let hint = run.vm.field(data, "toy load hint");
+        println!(
+            "subtype {subtype:#06x}: Get Bit Field 16 bits from 0 {whole:?}; {} {props:?}; \
+             bit 14 set: {after:?}; its toy load hint {hint:?}",
+            outs.join(", ")
+        );
+        assert_eq!(whole, [subtype as i32], "{subtype:#x}: read whole");
+        assert_eq!(props[3] as u32, subtype & 0xFF, "{subtype:#x}: its deco id");
+        assert_eq!(after, Some((subtype | 0x4000) as i32), "{subtype:#x}");
+    }
+    println!(
+        "{:.1} s; load after: {}",
+        started.elapsed().as_secs_f32(),
+        load()
+    );
+}
