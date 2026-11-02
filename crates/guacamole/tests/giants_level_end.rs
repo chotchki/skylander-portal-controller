@@ -737,9 +737,19 @@ fn level_214s_intro_hands_over_on_the_ship() {
     let joined_at = run.steps;
     let (mut began, mut skipped, mut gone, mut shown, mut off) = (None, None, None, None, None);
     let mut lines = Lines::default();
+    // Flynn's first line as it ended (started, ended, how): started and
+    // stopped within the skip's step, so `lines` never sees it playing.
+    let mut flynn = None;
     for _ in 0..600 {
         stops.extend(run.step_play().unwrap());
         lines.record(&run);
+        if flynn.is_none() {
+            flynn = run
+                .world
+                .sounds_ended()
+                .find(|e| e.name.as_deref() == Some("vo_flynn_lvl214_igc01_002"))
+                .map(|e| (e.started, e.ended, e.how));
+        }
         let cs = cutscene_name(&run);
         if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
             began = Some(run.steps);
@@ -862,6 +872,16 @@ fn level_214s_intro_hands_over_on_the_ship() {
     assert!(
         shown.unwrap() <= gone.unwrap() + 3,
         "the HUD back at {shown:?}, handed over at {gone:?}"
+    );
+    // The line did start, and the skip stopped it: a line that never
+    // started would pass the two checks above as well (the as-ch1-ending
+    // review).
+    println!("Flynn's first line (started, ended, how): {flynn:?}");
+    assert!(
+        flynn.is_some_and(|(started, ended, how)| started >= u64::from(began.unwrap())
+            && ended <= u64::from(skip) + 1
+            && how == guacamole::sounds::Ended::Stopped),
+        "{flynn:?}"
     );
     let handed = Vec3::from_array(HANDED_OVER);
     assert!(
@@ -1000,6 +1020,22 @@ fn chapter_1s_outro_plays_to_its_end() {
         .filter(|v| v.started >= u64::from(woken))
         .map(|v| (v.sound.clone(), v.started))
         .collect();
+    // AR.17's check kept (the as-ch1-ending review): no line plays on at the
+    // level change but Norticus' last, which AS.78's one-step second scene
+    // leaves playing (in the original its 11.78 s end inside that scene's
+    // camera clip); the TV's change takes it off with the run.
+    let playing: Vec<String> = run
+        .world
+        .plays()
+        .iter()
+        .filter_map(|p| p.name.clone())
+        .filter(|n| n.starts_with("vo_"))
+        .collect();
+    println!("lines playing at the change: {playing:?}");
+    assert!(
+        playing.iter().all(|n| n == "vo_norticus_lvl213_igc24_005"),
+        "{playing:?}"
+    );
     println!(
         "woken at {woken}; scenes (index, first step) {scenes:?}; the cutscene over at {ended:?}; \
          Norticus' clips {clips:?}; voices {voices:?}; the change at {}: {change:?}",

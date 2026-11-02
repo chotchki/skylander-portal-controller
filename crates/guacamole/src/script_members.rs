@@ -1634,8 +1634,8 @@ impl ScriptWorld {
             | Member::RelativeTilt
             | Member::Roll
             | Member::RelativeRoll => {
-                // A file waypoint turned (openspec AG.60), from nothing where
-                // the scripts never turned it.
+                // A file waypoint turned (openspec AG.60), from its file's
+                // turn (AS.52), the angles not written kept.
                 if let Some(Object::PointTurn(o)) = object {
                     let x = float(v)?;
                     let a = self.point_turns.entry(o).or_default();
