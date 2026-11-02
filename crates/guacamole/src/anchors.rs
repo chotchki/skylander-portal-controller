@@ -308,7 +308,7 @@ mod tests {
     }
 
     /// `Cutscene State` read as the run holds it: none made, no scene; set
-    /// past 0 by a script, a scene; back to 0, none.
+    /// to 1 by a script, as a scene sets it, a scene; back to 0, none.
     #[test]
     fn a_scene_holds_while_cutscene_state_is_past_0() {
         let mut b = IgzBuilder::new();
@@ -323,11 +323,12 @@ mod tests {
             w.end_block(pre);
             let idle = w.behaviour("idle");
             w.inc(&[El::Local(ticks)]);
-            // Tick 1 sets it to 2, tick 2 back to 0.
+            // Tick 1 sets it to 1, as the cutscene system does for a scene
+            // (the TV reads 1 through both of chapter 1's), tick 2 back to 0.
             let one = w.int(1);
             let check = w.check(&[El::Local(ticks)], 1, one);
-            let two = w.int(2);
-            w.set(&[El::Local(state)], two);
+            let one_on = w.int(1);
+            w.set(&[El::Local(state)], one_on);
             let other = w.otherwise(check);
             let zero = w.int(0);
             w.set(&[El::Local(state)], zero);
@@ -352,7 +353,7 @@ mod tests {
         assert!(!scene_holds(&vm), "none made yet");
         let mut host = Null;
         vm.tick(id, &mut host).unwrap();
-        assert!(scene_holds(&vm), "set to 2");
+        assert!(scene_holds(&vm), "set to 1");
         vm.tick(id, &mut host).unwrap();
         assert!(!scene_holds(&vm), "back to 0");
     }

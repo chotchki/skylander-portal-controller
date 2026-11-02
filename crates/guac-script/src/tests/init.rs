@@ -1201,10 +1201,12 @@ fn a_set_the_host_changed_grows_number_cells() {
 fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
     // A text colour converter's `color set` the host copies holds packed
     // colours (openspec AT.44): `UI.ai`'s text keyframers write a letter's
-    // colour through a reference to one of its elements. Each colour (and
-    // screen position) the host hands over is a cell of its own, as a
-    // number is, so the write lands there and reads back.
+    // colour through a reference to one of its elements, then write the set
+    // back to itself (#2897). Each colour (and screen position) the host
+    // hands over is a cell of its own, as a number is, so the write lands
+    // there, reads back, and the write-back hands the host what it holds.
     let lit = 0xFFFF_00FFu32;
+    let at = 0x0030_0040u32;
     let p = program(|w| {
         let last = var(w, "last");
         let spot = var(w, "spot");
@@ -1224,13 +1226,22 @@ fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
                     w.refer(o, 0x20, set_ref);
                     w.refer(o, 0x24, idx);
                     w.push(o);
-                    if name == "h" {
-                        let colour = w.literal("ColorMeasurement", lit, false);
-                        w.set(&[El::Local(elem), deref], colour);
-                    }
+                    let written = if name == "h" {
+                        w.literal("ColorMeasurement", lit, false)
+                    } else {
+                        w.literal("ScreenMeasurement", at, false)
+                    };
+                    w.set(&[El::Local(elem), deref], written);
                     let v = w.rhs("ColorMeasurement", &[El::Local(elem), deref]);
                     w.set(&[El::Local(read_into)], v);
                 }
+                // The set written back to itself, as `UI.ai` #2897 does.
+                let lhs = w.stack(StackClass::Reference, &colours);
+                let rhs = w.reference(&colours, None);
+                let o = w.op(Class::SetReference, "set *reference||to");
+                w.refer(o, 0x1C, lhs);
+                w.refer(o, 0x20, rhs);
+                w.push(o);
             },
         );
     });
@@ -1253,8 +1264,17 @@ fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
     );
     assert_eq!(
         vm.local(id, "spot"),
-        Some(Value::Screen(0x0010_0020)),
+        Some(Value::Screen(at)),
         "a screen position a cell too"
+    );
+    assert_eq!(
+        host.written,
+        [vec![
+            grey,
+            Value::Color(lit.swap_bytes()),
+            Value::Screen(at)
+        ]],
+        "the write-back hands the host the values, not the cells"
     );
 }
 

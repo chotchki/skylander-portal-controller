@@ -1811,7 +1811,7 @@ fn kept_in_order(a: &[String], b: &[String]) -> Vec<String> {
 /// scheduler's at AF.8's fresh state (AH.195's read), placement by
 /// placement, the run joined at the spawn (`fresh`); placements of the level
 /// only (a name the file's running placements hold once). The read holds
-/// 86 of the level's among its 165 awake, the VM 69: 55 in both, 52 of them
+/// 86 of the level's among its 165 awake, the VM 68: 55 in both, 52 of them
 /// in the same order. The three that moved got their places in the
 /// original before the state, which a run from the level's start doesn't
 /// have: `Propellar_Prop`, whose range the intro's script takes to 0 at its

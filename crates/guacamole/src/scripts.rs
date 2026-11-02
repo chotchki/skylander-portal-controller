@@ -2451,24 +2451,26 @@ pub fn smash_config(mode: Mode) -> Config {
         // Chapter 1's end (openspec AS.15).
         scripts.extend(LEVEL_END_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Its interface placement the scheduler holds (openspec AT.44).
-        placements.extend(LEVEL_UI.iter().map(|s| (*s).to_owned()));
+        scripts.extend(LEVEL_UI.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
 }
 
-/// Level 213's interface placements the original's scheduler holds
-/// (openspec AT.44), by placement name, every tick: its UI controller,
-/// awake in the June record's list (AH.59: `june_sched.txt`, 133rd of
-/// group 1's 148), whose tick shows the adventure's title for 3 s once the
-/// hero is near and takes itself off (AG.7 read it taken off at AF's fresh
-/// state). The interface's other placements in the level and `global.bld`'s
-/// (`Dialogue_UI`, `UI_PlayerHUD_Macros` and the rest) are templates
-/// (`_activityState` 5): the scheduler never holds one, so none ticks, and
-/// their macros run where the scripts call them, the UI's tick and the
-/// game systems' update set among them, as the run has them already
-/// ([`init_chain`] adds running placements, 4, alone).
-pub const LEVEL_UI: [&str; 1] = ["213_UI_Controller"];
+/// The interface placements the original's scheduler holds (openspec
+/// AT.44), by script, every tick: the UI controller, awake in the June
+/// record's list (AH.59: `june_sched.txt`, 133rd of group 1's 148), which
+/// waits for the first hero to touch its volume, then starts the
+/// adventure's title (3 s, the title's own macro) and takes itself off the
+/// same tick (AG.7 read it taken off at AF's fresh state). By script, not
+/// placement: level 212's `212_UI_Controller` runs the same file (AT.44's
+/// review: on no other level). The interface's other placements in the
+/// level and `global.bld`'s (`Dialogue_UI`, `UI_PlayerHUD_Macros` and the
+/// rest) are templates (`_activityState` 5): the scheduler never holds
+/// one, so none ticks, and their macros run where the scripts call them,
+/// the UI's tick and the game systems' update set among them, as the run
+/// has them already ([`init_chain`] adds running placements, 4, alone).
+pub const LEVEL_UI: [&str; 1] = ["213_UI_Controller.ai"];
 
 /// Eon's lines' activators (openspec AR.17), by script: each plays its
 /// line through the dialogue UI (its `string reference` and `voice
@@ -5614,8 +5616,9 @@ mod tests {
 
     /// openspec AT.44: level 213's UI controller is in the scheduler's list
     /// as the June record holds it, every tick on the TV's listing and the
-    /// fight's, by its placement's name, Eon's lines' activators off it
-    /// (AR.17); an interface template (5, as
+    /// fight's, by its script, so level 212's running the same file is too
+    /// (AT.44's review), Eon's lines' activators off it (AR.17); an
+    /// interface template (5, as
     /// `Dialogue_UI` is) never joins the run, whatever the listing, while a
     /// running placement (4) does, in its file's root-list order.
     #[test]
@@ -5633,9 +5636,17 @@ mod tests {
                 guac_script::Listed::Every
             );
             assert_eq!(
-                c.whitelist.listing("Another_UI_Controller", CONTROLLER),
+                c.whitelist.listing("212_UI_Controller", CONTROLLER),
+                guac_script::Listed::Every,
+                "level 212's, the same file"
+            );
+            assert_eq!(
+                c.whitelist.listing(
+                    "213_UI_Controller",
+                    "C:/tfb/Content/Levels/Level_213/Scripts/Another.ai"
+                ),
                 guac_script::Listed::Off,
-                "by its placement's name"
+                "by its script, not its placement's name"
             );
             // Eon's lines (openspec AR.17): off the TV's listing (AR.29).
             assert_eq!(

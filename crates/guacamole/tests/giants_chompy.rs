@@ -4543,7 +4543,16 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
         // Closing on him from its first step in flight on: it leaves the
         // take at rest, so him walking off (4 m/s) can open the gap over
         // that step (the AT.44 run's orb taken at F0 + 505: 5.720 ft to
-        // 5.736, then closing).
+        // 5.736, then closing), by no more than his step at that speed,
+        // 0.22 ft (AT.44's review: the others close 0.012-0.050 ft there).
+        assert!(
+            l.flight
+                .windows(2)
+                .take(1)
+                .all(|w| w[1].2 < w[0].2 + 4.0 * FEET_PER_METRE / 60.0),
+            "his step at most over its first: {:?}",
+            l.flight
+        );
         assert!(
             l.flight.windows(2).skip(1).all(|w| w[1].2 < w[0].2 + 1e-3),
             "closing on him: {:?}",
