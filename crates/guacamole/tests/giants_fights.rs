@@ -477,7 +477,8 @@ fn gone(run: &Run, h: Handle) -> bool {
 /// Up to `steps` steps of a fight with `foes`: every 20 steps the hero set
 /// down 1.5 m short of the nearest standing, facing it, his first attack
 /// pulsed two steps in four (a hand mashing South), until every one is
-/// beaten. The step each was beaten at.
+/// beaten. The step each was beaten at; a foe standing shapeless (a dead
+/// state's) with a body in the bench fails it (AS.85).
 fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) -> Vec<Option<u32>> {
     let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
     for k in 0..steps {
@@ -499,6 +500,18 @@ fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) ->
         for (i, h) in foes.iter().enumerate() {
             if beaten[i].is_none() && gone(run, *h) {
                 beaten[i] = Some(run.steps);
+            }
+            // A foe its dead states took the shape off has no body, as the
+            // TV's (openspec AS.85): the scripts' touch test sees it so.
+            if let Some(a) = run.world.actor(*h)
+                && !a.removed
+                && a.havok().is_none()
+            {
+                assert!(
+                    !run.bench.bodies.contains_key(h),
+                    "{} shapeless but a body",
+                    run.world.name(*h)
+                );
             }
         }
         if beaten.iter().all(Option::is_some) {
@@ -1065,6 +1078,13 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
         }
     }
     let woke = woke.expect("the controller woke its fight and went");
+    // Before his first attack, the Tree Rex has eaten one of the four.
+    let eaten: Vec<String> = foes[1..]
+        .iter()
+        .filter(|h| gone(&run, **h))
+        .map(|h| run.world.name(*h))
+        .collect();
+    assert_eq!(eaten.len(), 1, "the Tree Rex eats one: {eaten:?}");
     let health_before = run.health().unwrap();
     let beaten = fight(&mut run, &mut stops, &foes, 3600);
     let charges: Vec<Handle> = run
@@ -1081,7 +1101,7 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
         .collect();
     let charges = charges.len();
     println!(
-        "off the ship at {on_ship}, the controller gone at {woke}; beaten at {beaten:?} (the Tree Rex, then the four); {charges} homing charges made, inert; health {health_before} -> {:?}; {:.1} s; load at end: {}",
+        "off the ship at {on_ship}, the controller gone at {woke}, {eaten:?} eaten; beaten at {beaten:?} (the Tree Rex, then the four); {charges} homing charges made, inert; health {health_before} -> {:?}; {:.1} s; load at end: {}",
         run.health(),
         started.elapsed().as_secs_f64(),
         load()

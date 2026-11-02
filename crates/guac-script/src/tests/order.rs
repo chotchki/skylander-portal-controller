@@ -332,10 +332,11 @@ impl Host for Waking {
 /// openspec AS.83: the asleep are checked again after the walk, and one the
 /// host finds awake then (a range a script wrote during the walk) wakes
 /// onto its group's end and ticks there that step, its first tick its
-/// STARTUP's, behind every placement the walk ticked; the next step it ticks
-/// at that place. One put to sleep this step isn't asked (its last tick and
-/// the shutdown queue are its), one the host doesn't name stays asleep, and
-/// the asking follows the asleep list's order (C slept before B).
+/// STARTUP's, behind every placement the walk ticked and every one sent
+/// round (A, requeued as B wakes); the next step it ticks at that place.
+/// One put to sleep this step isn't asked (its last tick and the shutdown
+/// queue are its), one the host doesn't name stays asleep, and the asking
+/// follows the asleep list's order (C slept before B).
 #[test]
 fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     let mut vm = Vm::new(counting(), Config::new(Mode::Strict));
@@ -362,13 +363,15 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     assert_eq!(host.asked, [vec![0x30]], "B's last tick this step");
     assert_eq!(seen(&vm, &ids), ints(&[8, 9, 6, 10]));
     // B slept through a step's end: its SHUTDOWN queue ran, so it starts
-    // again when it wakes.
+    // again when it wakes. A is sent round as it does, so it ticks after
+    // D, and B after both.
+    assert!(vm.requeue(0x10));
     vm.step(&mut host).unwrap();
     assert_eq!(host.asked[1], [0x30, 0x20], "in the order they slept");
     assert_eq!(
         seen(&vm, &ids),
-        ints(&[11, 13, 6, 12]),
-        "B woken after the walk, behind A and D, this step"
+        ints(&[12, 13, 6, 11]),
+        "B woken after the walk and the requeued A, this step"
     );
     assert!(!vm.asleep(ids[1]) && vm.asleep(ids[2]));
     let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
@@ -378,6 +381,6 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
         "on the list's end"
     );
     vm.step(&mut host).unwrap();
-    assert_eq!(seen(&vm, &ids), ints(&[14, 16, 6, 15]), "at that place");
+    assert_eq!(seen(&vm, &ids), ints(&[15, 16, 6, 14]), "at that place");
     assert_eq!(host.asked[2], [0x30], "C, never named, still asked");
 }

@@ -490,6 +490,7 @@ impl W {
             hold_view: true,
             pads: [Pad::default(); 2],
             bodies: HashMap::new(),
+            ids: HashMap::new(),
             props,
         };
         world.activity_at(&[bench.heroes[&HERO].pivot]);

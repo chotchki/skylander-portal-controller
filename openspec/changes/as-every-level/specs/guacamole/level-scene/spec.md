@@ -50,7 +50,7 @@ A level 214 bomb SHALL stand again on the spawner that cloned it within 1.3 s of
 - **THEN** the bomb is back on its spawner, and carried to the wall past the pods and thrown it opens that wall too
 
 ### Requirement: Level 214's second fight
-On level 214 Setup_002's controller SHALL wait at its first trigger for Eon's elemental hint, which plays its line as the hero walks into it, holding him, and goes 8.7 s after the line starts (77 steps with no recording); at its second trigger its four undead Chompies SHALL run in and fight (beaten in 3.6 s on the Mac); the two Elf Nears SHALL spar unhurt by any attack until a bomb opens their wall, then play their scene and fight, nothing stopped.
+On level 214 Setup_002's controller SHALL wait at its first trigger for Eon's elemental hint, which plays its line as the hero walks into it, holding him, and goes 8.7 s after the line starts (77 steps with no recording); at its second trigger its four undead Chompies SHALL run in and fight (beaten in 3.6 s on the Mac); the two Elf Nears SHALL spar unhurt by any attack (48 of 48 hp after 1,500 steps of mashing) until a bomb opens their wall, then play their scene and fight, nothing stopped.
 
 #### Scenario: Past the wall beyond the pods
 - **WHEN** the hero walks past the opened walls into Eon's hint and on to the second trigger
@@ -60,8 +60,12 @@ On level 214 Setup_002's controller SHALL wait at its first trigger for Eon's el
 - **WHEN** the hero, set down among the two Elf Nears behind their shut wall, attacks them
 - **THEN** neither loses health, and once a bomb opens their wall and their scene is over both can be beaten
 
+#### Scenario: A lob in flight as an elf dies
+- **WHEN** Eruptor's lava lob is in flight as a beaten Elf Near's dead state takes its shape off
+- **THEN** the lob doesn't burst on it, and the portal manager and the camera's scripts run on
+
 ### Requirement: Level 214's rise over its push blocks
-On level 214 the three push blocks by the pods SHALL each move one block along its track when the hero walks into it on the stick and drop into the channel below onto its end marker, inactive, a stepping stone level with the terrace; the three SHALL bridge the channel, so the hero walks across and up onto the rise holding the second bomb spawner, whose bombs he throws over its ridge at the walls to its south part and the elves.
+On level 214 the three push blocks by the pods SHALL each move 15 ft along its track when the hero walks into it on the stick and drop into the channel below onto its end marker (within 0.4 m), inactive, level with the terrace; the three SHALL bridge the channel up onto the rise holding the second bomb spawner, whose south ridge (1.8-2.4 m) no walk crosses; its bombs SHALL open the walls beyond, thrown over the ridge or carried round off the rise's east edge.
 
 #### Scenario: From the east terrace
 - **WHEN** the hero pushes the first block, then the stacked pair, then the top one from the first's top
@@ -75,7 +79,7 @@ Once both elves are beaten, level 214's first jump pad SHALL launch a hero stand
 - **THEN** he flies onto its ledge, and a press takes the part and the sail sets him on the second island's ship
 
 ### Requirement: Level 214's second island's first fight
-On level 214's second island, the hero walking off the ship to Setup_003's trigger SHALL have its controller wake its Tree Rex and four undead Chompies; the Tree Rex SHALL eat one Chompy, and the rest and the Tree Rex SHALL be beaten by his attacks, nothing stopped.
+On level 214's second island, the hero walking off the ship to Setup_003's trigger SHALL have its controller wake its Tree Rex and four undead Chompies; the Tree Rex SHALL eat one Chompy, and the rest and the Tree Rex (89 hp) SHALL be beaten by his attacks (all five gone in 23.2 s on the Mac), nothing stopped.
 
 #### Scenario: Off the second island's ship
 - **WHEN** the hero walks off the ship to Setup_003's trigger and fights

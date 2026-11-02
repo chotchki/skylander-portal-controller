@@ -39,7 +39,10 @@
 //!   trigger ([`ELVES_TRIGGER`]: their helper wakes them and makes them
 //!   invulnerable), then among them ([`AMONG_THE_ELVES`]), where no walk
 //!   takes him before a bomb opens their wall, so their sparring can be
-//!   hit.
+//!   hit. A state no walk reaches, and one the level goes no further from:
+//!   every wall stays shut (their yard's too, so no bomb reaches it and
+//!   they spar for good), the earlier fights unfought and Eon's hint
+//!   standing; it's for the sparring alone.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
