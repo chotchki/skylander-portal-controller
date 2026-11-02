@@ -1786,7 +1786,11 @@ fn sounds_again(
         level.report.sounds_again_ms = level.ms();
         level.report.sounds_again_archives = Some(part.stems.len());
         source.set_sounds(part);
-        if let (Some(unit), Some(mut runtime)) = (source.level_unit(), runtime) {
+        // Chapter 1's music alone waits for its sounds (AR.27; AS.15's
+        // review: [`crate::hero_scripts::hold_music`]).
+        if let (true, Some(unit), Some(mut runtime)) =
+            (source.chapter_1(), source.level_unit(), runtime)
+        {
             let music =
                 guacamole::scripts::hold_music(&mut runtime.vm, &mut world, source.files(), unit);
             crate::hero_scripts::log_music(music);

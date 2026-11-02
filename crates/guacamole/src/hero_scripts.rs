@@ -321,6 +321,12 @@ impl ScriptSource {
         }
     }
 
+    /// This part as level `level`'s, its own file linked last.
+    pub(crate) fn of_level(mut self, level: &str) -> Self {
+        self.level = level.to_owned();
+        self
+    }
+
     /// This part as read off the extract at `dir`, its units' interface
     /// keys `keys`.
     pub(crate) fn with_extract(
@@ -471,8 +477,15 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     hold_music(world, source, level);
 }
 
-/// [`scripts::hold_music`] on the run just installed, logged.
+/// [`scripts::hold_music`] on the run just installed, logged: chapter 1's
+/// alone, the one level whose sounds the part holds (AR.5). Another level's
+/// music placements would wait for good (AR.27; level 214 runs
+/// `snd_level_audio_environment.ai`), so they run silent from the start as
+/// before AR.23 (AS.15's review, at the merge of AR.23).
 fn hold_music(world: &mut World, source: &ScriptSource, level: u16) {
+    if !source.chapter_1() {
+        return;
+    }
     let music = world.resource_scope::<ScriptRuntime, _>(|world, mut runtime| {
         let mut script_world = world.resource_mut::<ScriptWorld>();
         scripts::hold_music(&mut runtime.vm, &mut script_world, &source.files, level)
@@ -2131,6 +2144,11 @@ mod music_tests {
         let mut world = World::new();
         install_from(&mut world, &source);
         assert!(held(&mut world), "no sounds part yet: held");
+        // Another level's music runs silent: the part never holds its
+        // sounds (AR.27; AS.15's review).
+        let mut other = World::new();
+        install_from(&mut other, &source.clone().of_level("level_214_tutotial_2"));
+        assert!(!held(&mut other), "level 214's music isn't held");
         let book = guac_sound::SoundBook::new([guac_ir::sound::Sounds {
             identity: guac_ir::DumpIdentity {
                 title_id: "BLUS30968".into(),
