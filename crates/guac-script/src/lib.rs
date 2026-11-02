@@ -223,7 +223,18 @@
 //!
 //! - A check (`if value`, `if reference`, `if member`) that holds runs into
 //!   its block without pushing; one that fails, or whose left side can't be
-//!   read (a path through nothing), skips it.
+//!   read (a path through nothing), skips it. Read as a path element, a
+//!   check is what its left side read, whether it held or not: a value, a
+//!   reference, or `if member`'s set (openspec AS.57, a reading: level 214's
+//!   tool spawner checks its bomb's clones through the check before).
+//! - `if member` asks of its left side's set and its right side (a set, or
+//!   one object): code 0 holds when every member of the right side is in
+//!   the left, 1 when none is, 2 when any is, 3 when the left holds each at
+//!   least as often as the right does; one object is in the set or not (1
+//!   not). An empty right side fails every code (codes 0 and 3 since
+//!   openspec AS.57, a reading: level 214's tool spawner ends its tick when
+//!   such a check holds, and with nothing carried an empty set holding it
+//!   would keep its bomb from ever being cloned).
 //! - `else` (an `OpAbstractFlow` skip) jumps forward its block length, then
 //!   closes. As the last op of a check's block it jumps over the else block;
 //!   with length 0 it only closes; in an else-if chain it lands at the

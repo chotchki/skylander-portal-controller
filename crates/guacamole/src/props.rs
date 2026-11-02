@@ -150,16 +150,30 @@ pub const UNDRAWN_SPAWNS: [&str; 5] = [
 ];
 
 /// Whether a model shows nothing: every material a tfbmulti2 one blended
-/// by its alpha with a material tint whose alpha is 0, as the disc's
-/// markers are (`inviso.mdl` and `design_inviso.mdl`, an 8 mm quad on
-/// `Inviso`: chapter 1's cannon barrel marker and push-block ends, the
-/// spawn part's `Dummy_Inviso`, level 214's bomb timer and Tree Rex's
-/// homing actor). Its clones draw nothing.
+/// by its alpha with a material tint whose alpha is 0 and no tint track
+/// raising it, as the disc's markers are (`inviso.mdl` and
+/// `design_inviso.mdl`, an 8 mm quad on `Inviso`: chapter 1's cannon barrel
+/// marker and push-block ends, the spawn part's `Dummy_Inviso`, level 214's
+/// bomb timer and Tree Rex's homing actor). Its clones draw nothing. Over
+/// every level file it matches 10 models (the as-214-walk review): those
+/// two, `design_inviso_Sheep.mdl`, `dummy_transparent.mdl` and
+/// `PvP_Teleporter_End.mdl` (the challenges' teleporter ends), and five no
+/// recording settles, PvP's cube dungeon's skinned `Power_Gem_Death` and
+/// `Power_Gem_Fire` effect actors, its element wheel's ghost rings and
+/// level 204's `WaveColumn`; the character shader scales by the material
+/// tint's alpha,
+/// so the TV would draw none of them, and a script's tint scales on top of
+/// it (a hypothesis that the original's draw does the same).
 pub fn see_through(model: &guac_ir::level::Prop) -> bool {
     !model.materials.is_empty()
         && model.materials.iter().all(|m| match m {
             guac_ir::level::LevelMaterial::Multi2(m) => {
-                m.states.blend == guac_ir::model::Blend::Alpha && m.params.material_tint[3] == 0
+                m.states.blend == guac_ir::model::Blend::Alpha
+                    && m.params.material_tint[3] == 0
+                    && !m.tracks.iter().any(|t| {
+                        matches!(t, guac_ir::model::MaterialTrack::Tint { colors, .. }
+                            if colors.iter().any(|c| c[3] > 0))
+                    })
             }
             guac_ir::level::LevelMaterial::Effect(_) => false,
         })
@@ -852,6 +866,45 @@ mod tests {
             models,
             ["gourd.mdl", "coin.mdl", "ball.mdl", "torus.mdl", "rock.mdl"]
         );
+    }
+
+    /// AS.63's `see_through`, at its edges (the as-214-walk review): every
+    /// material alpha-blended at a tint alpha of 0 shows nothing; one at a
+    /// tint that shows, an opaque one at alpha 0 (its tint's alpha unread),
+    /// one tint track keyed up from 0, one material of two that shows, or
+    /// no material at all, and the model shows.
+    #[test]
+    fn a_model_shows_nothing_only_when_every_material_is_unseen() {
+        let one = |blend, alpha: u8| {
+            let mut m = model("m.mdl", false);
+            m.materials.truncate(1);
+            m.segments.truncate(1);
+            if let LevelMaterial::Multi2(x) = &mut m.materials[0] {
+                x.states.blend = blend;
+                x.params.material_tint[3] = alpha;
+            }
+            m
+        };
+        assert!(see_through(&one(Blend::Alpha, 0)));
+        assert!(!see_through(&one(Blend::Alpha, 255)));
+        assert!(!see_through(&one(Blend::Opaque, 0)));
+        let mut faded_in = one(Blend::Alpha, 0);
+        if let LevelMaterial::Multi2(x) = &mut faded_in.materials[0] {
+            x.tracks.push(guac_ir::model::MaterialTrack::Tint {
+                style: 0,
+                rate: 1.0,
+                frames: vec![0, 30],
+                colors: vec![[255, 255, 255, 0], [255, 255, 255, 128]],
+            });
+        }
+        assert!(!see_through(&faded_in), "a tint track raises it");
+        let mut half = one(Blend::Alpha, 0);
+        half.materials
+            .push(one(Blend::Alpha, 255).materials.remove(0));
+        assert!(!see_through(&half), "one material of two shows");
+        let mut bare = one(Blend::Alpha, 0);
+        bare.materials.clear();
+        assert!(!see_through(&bare));
     }
 
     /// AS.63: the spawn part's models draw as a prop's do, a static one's

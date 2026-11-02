@@ -4005,11 +4005,20 @@ impl ScriptWorld {
 
     /// The clones of scripted templates spawned since last asked, each
     /// with its template's name and script ([`guac_script::Host::adopt`]);
-    /// one whose script `program` doesn't hold is dropped.
+    /// one whose script `program` doesn't hold is dropped, and so is one
+    /// taken off before it joins (the as-214-walk review: level 214's skip
+    /// takes its cutscene's second ship off the tick that clones it, whose
+    /// script, started anyway, cloned a set of parts nothing took off). Its
+    /// script never started, so no SHUTDOWN is owed either (a reading: what
+    /// the original does with a clone taken off the tick it's made isn't
+    /// recorded).
     pub fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
         std::mem::take(&mut self.scripted)
             .into_iter()
             .filter_map(|(h, t)| {
+                if self.removed(h) {
+                    return None;
+                }
                 let sid = self.script_of(t, program)?;
                 Some((h, self.name_of(t).unwrap_or_default(), sid))
             })
@@ -5088,6 +5097,154 @@ mod tests {
             "where its file has it"
         );
         assert_eq!(w.revived, [(grunt, GRUNT)]);
+    }
+
+    /// The as-214-walk review: a scripted template's clone joins the run
+    /// with its script, but not one taken off before it joins (level 214's
+    /// skip takes its cutscene's second ship off the tick that clones it).
+    #[test]
+    fn a_clone_taken_off_before_it_joins_never_starts_its_script() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::Writer;
+        use guac_script::{Role, Unit};
+
+        const PATH: &str = "C:/tfb/Synthetic/Ship.ai";
+        let mut b = IgzBuilder::new();
+        let ship;
+        {
+            let mut w = Writer::new(&mut b);
+            ship = w.b.object(0, "tfbActorInfo", 0xF8);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            w.end_block(start);
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Program::link(&[unit]).unwrap();
+        let obj = Obj {
+            unit: 0,
+            index: igz.object_at(ship).unwrap().0 as u32,
+        };
+        let files = Files {
+            lights: HashMap::new(),
+            placed: vec![Placed::named(obj, "Ship", Some(PATH), 5)],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+            emitters: HashMap::new(),
+        };
+        let handles = headless_handles(&files);
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let (on, off) = (900, 901);
+        for (h, removed) in [(on, false), (off, true)] {
+            w.actors.insert(
+                h,
+                Actor {
+                    removed,
+                    template: Some(obj),
+                    ..Actor::blank()
+                },
+            );
+            w.scripted.push((h, obj));
+        }
+        let joined: Vec<Handle> = w.adopt(&program).into_iter().map(|(h, ..)| h).collect();
+        assert_eq!(joined, [on]);
+        assert!(
+            w.scripted.is_empty(),
+            "the taken-off one isn't kept for later"
+        );
+    }
+
+    /// AS.60's embedder half (the as-214-walk review): a running placement
+    /// a reset brings back runs its script again only once the run has
+    /// taken its old one off; one the world lists taken off while its
+    /// script still runs (a native take-off) gets no second script under
+    /// its handle.
+    #[test]
+    fn a_revived_placement_runs_its_script_again_only_once_its_old_one_is_off() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::Writer;
+        use guac_script::{Role, Unit};
+
+        const PATH: &str = "C:/tfb/Synthetic/Ship.ai";
+        let mut b = IgzBuilder::new();
+        let ship;
+        {
+            let mut w = Writer::new(&mut b);
+            ship = w.b.object(0, "tfbActorInfo", 0xF8);
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            w.end_block(start);
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let obj = Obj {
+            unit: 0,
+            index: igz.object_at(ship).unwrap().0 as u32,
+        };
+        let files = Files {
+            lights: HashMap::new(),
+            placed: vec![Placed::named(obj, "Ship", Some(PATH), RUNNING)],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+            emitters: HashMap::new(),
+        };
+        let handles = headless_handles(&files);
+        let mut c = smash_config(Mode::Play);
+        c.whitelist = Whitelist::All;
+        let mut vm = init_chain(program, &files, &handles, &[0], c);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let h = handles[&obj];
+        let first = vm.placement_of(h).expect("it runs");
+        let reset = |world: &mut ScriptWorld| {
+            world
+                .op(
+                    &call(Class::Reset, Some(Value::Entity(h))),
+                    &mut |_| 0,
+                    &mut NoEngine,
+                )
+                .unwrap();
+        };
+        // The world lists it off, its script still running: back, no second.
+        world.actors.get_mut(&h).unwrap().removed = true;
+        reset(&mut world);
+        assert!(!world.removed(h));
+        assert!(add_scripted(&mut vm, &mut world).is_empty());
+        assert_eq!(vm.placement_of(h), Some(first));
+        // Taken off by the run too: back, its script again from its STARTUP.
+        world
+            .op(
+                &call(Class::Remove, Some(Value::Entity(h))),
+                &mut |_| 0,
+                &mut NoEngine,
+            )
+            .unwrap();
+        assert!(vm.remove(h));
+        reset(&mut world);
+        let added = add_scripted(&mut vm, &mut world);
+        assert_eq!(added.len(), 1);
+        assert_eq!(vm.placement_of(h), Some(added[0]));
+        assert!(!vm.removed(added[0]));
     }
 
     #[test]
