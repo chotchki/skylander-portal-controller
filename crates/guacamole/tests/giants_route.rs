@@ -1941,9 +1941,10 @@ fn eons_first_line_is_voiced_as_the_level_starts() {
     let mut lines = Lines::default();
     let (mut done, mut off, mut off2) = (None, None, None);
     // Where each of his voices plays from (AR.29): its sound's 3D setting
-    // and falloff, its actor's pivot and the hero's, metres, at its first
-    // engine frame.
-    let mut heard: Vec<(String, bool, Option<(f32, f32)>, f32)> = Vec::new();
+    // and falloff (feet), and how far its actor is from the hero (metres),
+    // at its first engine frame.
+    type Heard = (String, bool, Option<(f32, f32)>, f32);
+    let mut heard: Vec<Heard> = Vec::new();
     let driven = drive_with(run, Mode::Strict, &mut |run: &Run| {
         lines.record(run);
         for p in run.world.plays() {
