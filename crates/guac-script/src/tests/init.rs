@@ -807,6 +807,77 @@ fn a_typed_set_reference_takes_nothing_for_another_structure() {
     assert_eq!(vm.field(copy, "started"), Some(Value::Int(0)));
 }
 
+/// AS.52, the as-ch1-ending review: two definitions that aren't the same
+/// one are compared by name, ignoring case, as the original's check does
+/// once the objects differ: a structure of a same-named definition placed
+/// in another file (a hero's file and a level's copy of his scripts, a hero
+/// and his alt) is taken through a reference typed for the other; one of
+/// another name isn't.
+#[test]
+fn a_typed_set_reference_takes_a_same_named_definitions_structure() {
+    let p = program(|w| {
+        let mut defs = Vec::new();
+        for (file, name) in [
+            ("C:/tfb/Synthetic/Hero.ai", "Play Anim Data"),
+            ("C:/tfb/Synthetic/Level.ai", "play anim DATA"),
+            ("C:/tfb/Synthetic/Other.ai", "Play Anim Datum"),
+        ] {
+            let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+            let (dp, def) = w.open(Class::DefineStructure, name);
+            let started = w.variable("started", "ValueInfo", Some(INT));
+            w.push(started);
+            w.end_block(dp);
+            w.end_block(section);
+            w.end(file);
+            defs.push(def);
+        }
+        let held: Vec<Location> = ["hero", "level", "other"]
+            .into_iter()
+            .zip(&defs)
+            .map(|(n, def)| {
+                let s = w.variable(n, "ScriptStructure", None);
+                w.refer(s, 0x24, *def);
+                s
+            })
+            .collect();
+        let extra = w.variable("extra", "ScriptSet", None);
+        let outs =
+            ["hero_of_level", "hero_of_other"].map(|n| w.variable(n, "ScriptReference", None));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                for s in &held {
+                    add_to(w, extra, &[El::Local(*s)]);
+                }
+                for (out, index) in [(outs[0], 1), (outs[1], 2)] {
+                    let r = w.reference(&[El::Local(extra)], None);
+                    w.refer(r, 0x28, defs[0]);
+                    let i = w.int(index);
+                    let lhs = w.stack(StackClass::Reference, &[El::Local(out)]);
+                    let o = w.op(Class::SetReference, "set *reference||to");
+                    w.refer(o, 0x1C, lhs);
+                    w.refer(o, 0x20, r);
+                    w.refer(o, 0x24, i);
+                    w.push(o);
+                }
+            },
+        );
+    });
+    let test = p.script_named("Test.ai").unwrap();
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Step", test);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    let of = |name: &str| vm.local(id, name).map(|v| vm.value(v));
+    assert!(matches!(of("level"), Some(Value::Struct(_))));
+    assert_eq!(
+        of("hero_of_level"),
+        of("level"),
+        "the same name, another file"
+    );
+    assert_eq!(of("hero_of_other"), Some(Value::Null), "another name");
+}
+
 /// AS.52: a static member's host read is told what it's read under
 /// (`Host::told`): the running placement, inside a tell's block the object
 /// told, and the placement again once the block ends; a member read on a

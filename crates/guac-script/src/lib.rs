@@ -359,8 +359,11 @@
 //! - A `set reference` whose right side's edit type names a structure takes
 //!   nothing for a structure of another definition (a copy keeps its
 //!   original's), as the original's checks the object it read against the
-//!   side's edit type (aj-vm's reading of the op, an aid): a cutscene's
-//!   step finds its own data among its actor's by looping over them until a
+//!   side's edit type (aj-vm's reading of the op, an aid), comparing the two
+//!   definitions' names, ignoring case, when they aren't the same one: a
+//!   structure of a definition of the same name placed in another file is
+//!   taken (a hero's file and a level's copy of his scripts both place
+//!   theirs, as do a hero's and his alt's). A cutscene's step finds its own data among its actor's by looping over them until a
 //!   typed read takes one (openspec AS.52: read untyped, chapter 1's outro
 //!   read its dialogue's data as Norticus' animation's and never started
 //!   it). An untyped side, or one naming a class, takes what it read; an

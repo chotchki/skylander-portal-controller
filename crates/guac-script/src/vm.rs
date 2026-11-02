@@ -4716,7 +4716,8 @@ impl Vm {
 
     /// What a `set reference` takes from its right side: `v`, or nothing
     /// for a structure of another definition than the side's edit type
-    /// names (the module docs, Variables, structures and sets).
+    /// names, by name when they aren't the same one (the module docs,
+    /// Variables, structures and sets).
     fn typed(&self, program: &Program, operand: Option<OperandId>, v: Value) -> Value {
         let Some(Operand::Path {
             edit: Contents::Def(e),
@@ -4732,8 +4733,15 @@ impl Vm {
             return v;
         }
         match self.peek(v) {
+            // Names are interned lower-cased: the original's compare ignores
+            // case.
             Value::Struct(s) => match self.structs[s as usize].def {
-                Some(d) if d != want => Value::Null,
+                Some(d)
+                    if d != want
+                        && program.defs[d as usize].name != program.defs[want as usize].name =>
+                {
+                    Value::Null
+                }
                 _ => v,
             },
             _ => v,
