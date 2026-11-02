@@ -3065,12 +3065,12 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// by level and placement name, listed and never walked. Level 214's from
 /// its first island to its second: once both Elf Nears are beaten the jump
 /// pad's activator pans to the jump pad (`PvP_JumpPad_NORMAL(2)`) and wakes
-/// it, which launches a hero up to the rise holding the first ship part
-/// (`Ship_part_1(1)`); taken, it shows itself to him and, gone, wakes the
-/// sail
-/// (`214_Recover_First_Part_IGC`), whose cutscene sets him down on the
-/// second island's ship and which the TV skips
-/// ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for it.
+/// it, meant to launch a hero up to the rise holding the first ship part
+/// (`Ship_part_1(1)`; headless it bounces him in place, AS.75); taken after
+/// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
+/// whose cutscene sets him down on the second island's ship and which the
+/// TV skips ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for
+/// it.
 pub const PASSAGES: [(&str, &[&str]); 1] = [(
     "level_214_tutotial_2",
     &[
