@@ -18,18 +18,18 @@ When a level's own scripts end it and name the next level, the TV SHALL hold the
 - **THEN** the level holds until the asked one is read, then that level shows with him in it and the same figures on the portal
 
 ### Requirement: Chapter 1's outro plays to its end
-When chapter 1's end wakes its outro, the TV SHALL play the outro's cutscene to its end with nothing skipped: Norticus and the three Mabu drawn at 140 % in their hats, the Mabu walking to their waypoints, its four lines voiced in order, its scenes in order, and its own level end naming level 214, nothing stopped in the run.
+When chapter 1's end wakes its outro, the TV SHALL play the outro's cutscene to its end with nothing skipped: Norticus and the three Mabu drawn at 140 % in their hats, the Mabu walking to their waypoints, its four lines voiced in order, its scenes in order, and its own level end naming level 214, nothing stopped in the run: shown within 1 s of the dev entry's end anchor, the level held for what follows within 13 s (12.52 s and 12.56 s measured).
 
 #### Scenario: The dev entry's end anchor
 - **WHEN** the hero is set down on the outro's waypoint
 - **THEN** Norticus and the Mabu are drawn and play their scene, then the level holds for level 214
 
 ### Requirement: A level end's movie plays on the TV
-When a level's end queues one of the disc's movies (chapter 1's FMV02), the TV SHALL convert it into the extract on its first play, the level held and the header saying so, then play it full screen with its sound, the level and its sounds held, △ or Start on any pad ending it, and go on to the next level after it. A second play SHALL convert nothing; a movie that won't convert or open SHALL end at once, with why in the TV's report.
+When a level's end queues one of the disc's movies (chapter 1's FMV02), the TV SHALL convert it into the extract on its first play with the level held (FMV02's 218 MB in 28 s measured), then play it full screen with its sound, the level and its sounds held, △ or Start on any pad ending it, and go on to the next level after it. A second play SHALL convert nothing and start within 1 s; one that won't convert or open SHALL end at once, why in the TV's report.
 
 #### Scenario: FMV02 after chapter 1
 - **WHEN** chapter 1's outro ends for the first time on a dump
-- **THEN** the header says FMV02 is being converted, FMV02 plays with its sound, and level 214 comes after it
+- **THEN** FMV02 is converted with the level held, plays with its sound, and level 214 comes after it
 
 #### Scenario: The movie skipped
 - **WHEN** a player presses △ while the movie plays
