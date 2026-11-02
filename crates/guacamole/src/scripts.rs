@@ -558,6 +558,13 @@ pub struct ScriptWorld {
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
+    /// The actors the engine walks as a scene walks them, under a `move
+    /// to` with no creature's body (openspec AS.52,
+    /// [`crate::script_engine::SceneWalk`]), by handle.
+    pub(crate) scene_walks: HashMap<Handle, crate::script_engine::SceneWalk>,
+    /// What the static member being read is read under ([`Host::told`]):
+    /// the running placement, or the object a tell's block tells.
+    pub(crate) told: Value,
     /// The original's interface the scripts write (openspec AT.9), when
     /// the run's install loaded it ([`crate::interface_host`]).
     pub(crate) interface: Option<guac_interface::Keeper>,
@@ -801,6 +808,8 @@ impl ScriptWorld {
             music_silent: 0,
             walk_clones: Default::default(),
             intro_held: None,
+            scene_walks: HashMap::new(),
+            told: Value::Null,
             interface: None,
             run: fresh_serial(),
         }
@@ -2037,6 +2046,9 @@ impl Host for WorldHost<'_, '_> {
     fn referenced(&mut self, cell: u32, target: Value) {
         self.world.referenced(cell, target, self.engine);
     }
+    fn told(&mut self, receiver: Value) {
+        self.world.told = receiver;
+    }
     fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
         self.world.adopt(program)
     }
@@ -2487,8 +2499,9 @@ pub const MUSIC_SCRIPTS: [&str; 20] = [
 /// Chapter 1's end (openspec AS.15), every tick: `Temp_Level_Ender`, asleep
 /// until a script wakes it (`Rope_around_Post(2)`'s last behaviour, or the
 /// dev entry's end anchor), fades the screen out and wakes the outro, whose
-/// cutscene (skipped on the TV, [`crate::level_end`]) ends in the outro's
-/// own `Game - Level End`, naming the next level.
+/// cutscene (played to its end since AS.52, its actors clones of their
+/// templates the scene walks and animates) ends in the outro's own `Game -
+/// Level End`, naming the next level.
 pub const LEVEL_END_SCRIPTS: [&str; 2] = ["Temp_Level_Ender.ai", "213_Outro_IGC.ai"];
 
 /// `config` over a level's own file, linked as `level` (openspec AS.51):

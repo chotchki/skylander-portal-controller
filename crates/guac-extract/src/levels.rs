@@ -224,9 +224,16 @@ pub const PLAYED: [&str; 9] = [
 /// every skinned model a placement names, [`palettes`]), which its file's
 /// name carries, `palettes.v2.<ron|postcard>`, so a level extracted on
 /// demand under the whitelist's rule (which held none of its creatures)
-/// reads its palettes again on its next ask. The first run's levels keep
-/// theirs, and their name.
+/// reads its palettes again on its next ask. The first run's levels' rule
+/// has its own ([`PALETTES_FIRST_RUN`]).
 pub const PALETTES_PAST_FIRST_RUN: u32 = 2;
+
+/// Chapter 1's palettes part's rule (the whitelist's, which holds its
+/// outro's actors' scripts since openspec AS.52), which its file's name
+/// carries, `palettes.v2.<ron|postcard>`, so an extract written under the
+/// rule before reads chapter 1's palettes again, and nothing else, on its
+/// next start.
+pub const PALETTES_FIRST_RUN: u32 = 2;
 
 /// The script part's file, `levels/<archive>/script.igz`: raw, so the same
 /// in either IR format.
@@ -243,6 +250,7 @@ pub fn part_path(ir: crate::intros::IrFormat, level: &str, part: &str) -> String
         PALETTES if !FIRST_RUN.contains(&level) => {
             ir.level_path(level, &format!("{PALETTES}.v{PALETTES_PAST_FIRST_RUN}"))
         }
+        PALETTES => ir.level_path(level, &format!("{PALETTES}.v{PALETTES_FIRST_RUN}")),
         _ => ir.level_path(level, part),
     }
 }

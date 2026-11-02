@@ -242,6 +242,19 @@ pub struct Walker {
     pub along: usize,
 }
 
+/// An actor the engine doesn't walk as a creature, steered by a script's
+/// `move to` or `move from` (openspec AS.52: a cutscene's actors, chapter
+/// 1's outro's Mabu): what the scripts last asked of its steering this
+/// tick, which waypoint of a path it's walking to, and its walk in m/s as
+/// the engine's velocity model leaves it. No body is under it, so nothing
+/// it meets stops it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SceneWalk {
+    pub aim: guac_motion::steer::Aim,
+    pub along: usize,
+    pub velocity: Vec3,
+}
+
 /// A contact the engine reports: a point, the normal out of the surface
 /// and the triangle's collision material.
 #[derive(Debug, Clone, Copy, PartialEq)]

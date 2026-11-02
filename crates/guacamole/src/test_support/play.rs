@@ -737,7 +737,8 @@ pub(crate) fn write_creature_model(dir: &std::path::Path) {
             refused: Vec::new(),
         }],
     };
-    let rel = IrFormat::Ron.level_path(
+    let rel = guac_extract::levels::part_path(
+        IrFormat::Ron,
         crate::test_support::hero_scripts::LEVEL,
         guac_extract::levels::PALETTES,
     );
@@ -865,7 +866,8 @@ pub(crate) fn write_art_model(dir: &std::path::Path) {
             },
         }],
     };
-    let rel = IrFormat::Ron.level_path(
+    let rel = guac_extract::levels::part_path(
+        IrFormat::Ron,
         crate::test_support::hero_scripts::LEVEL,
         guac_extract::levels::PALETTES,
     );

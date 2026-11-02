@@ -434,7 +434,7 @@ mod tests {
         use guac_ir::palette::{LevelPalettes, Palette, PaletteSlot, SlotEntry};
         let tmp = tempfile::tempdir().unwrap();
         let ir = IrFormat::Ron;
-        let rel = ir.level_path(LEVEL, levels::PALETTES);
+        let rel = levels::part_path(ir, LEVEL, levels::PALETTES);
         let e = level_palettes(tmp.path(), LEVEL, ir).unwrap_err();
         assert!(e.starts_with(&rel), "{e}");
         let identity = guac_ir::DumpIdentity {

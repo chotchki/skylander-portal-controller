@@ -783,6 +783,11 @@ pub const WHITELIST: [Whitelisted; 71] = [
             // and the pit's intro cutscene, on the cutscene system.
             "Pan_Show_Cannon.ai",
             "Pan_Show_Norticu.ai",
+            // AS.52: the outro's actors (Norticus and the three Mabu), whose
+            // clips its cutscene plays; their own scripts stay off the TV's
+            // listing.
+            "213_Mabu_Generic.ai",
+            "213_Norticus_NPC.ai",
         ],
     },
 ];

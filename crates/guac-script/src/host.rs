@@ -405,6 +405,15 @@ pub trait Host {
         let _ = (cell, target);
     }
 
+    /// What a static member (one heading its path, [`Access::receiver`]
+    /// `None`) about to be read is read under: the running placement, or
+    /// inside a tell's or a clone's block the object told (aj-vm: the block
+    /// runs with it as its receiver; crate docs, Left to the host). The
+    /// default ignores it.
+    fn told(&mut self, receiver: Value) {
+        let _ = receiver;
+    }
+
     /// The scripted placements world ops have spawned since it was last
     /// asked, each with its name and its script in `program`: the VM adds
     /// them and ticks each this tick, after every placement in the order

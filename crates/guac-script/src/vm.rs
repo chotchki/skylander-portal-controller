@@ -210,6 +210,8 @@ enum Lone {
 #[derive(Debug, Clone)]
 struct StructObj {
     fields: Vec<(Sym, u32)>,
+    /// Its definition, resolved: what a `set reference` checks it against.
+    def: Option<DefId>,
 }
 
 #[derive(Debug, Clone)]
@@ -2551,6 +2553,7 @@ impl Vm {
             Ins::SetReference { lhs, rhs, index } => {
                 let spot = self.path(program, *lhs, host)?;
                 let v = self.rhs_ref(program, *rhs, *index, host)?;
+                let v = self.typed(program, *rhs, v);
                 self.write(spot, v, host)?;
             }
             Ins::Inc { lhs } | Ins::Dec { lhs } => {
@@ -4166,6 +4169,9 @@ impl Vm {
             } => {
                 self.uses.entry(member).or_default().0 += 1;
                 let at = self.access(receiver, member, other, via);
+                if receiver.is_none() {
+                    host.told(self.run.receiver);
+                }
                 if self
                     .config
                     .members
@@ -4609,6 +4615,32 @@ impl Vm {
         }
     }
 
+    /// What a `set reference` takes from its right side: `v`, or nothing
+    /// for a structure of another definition than the side's edit type
+    /// names (the module docs, Variables, structures and sets).
+    fn typed(&self, program: &Program, operand: Option<OperandId>, v: Value) -> Value {
+        let Some(Operand::Path {
+            edit: Contents::Def(e),
+            ..
+        }) = operand.and_then(|o| program.operands.get(o as usize))
+        else {
+            return v;
+        };
+        let Some(want) = program.resolve(*e) else {
+            return v;
+        };
+        if program.defs[want as usize].kind != DefKind::Structure {
+            return v;
+        }
+        match self.peek(v) {
+            Value::Struct(s) => match self.structs[s as usize].def {
+                Some(d) if d != want => Value::Null,
+                _ => v,
+            },
+            _ => v,
+        }
+    }
+
     /// A reference to a number (a variable's cell, a file's `ValueInfo`)
     /// read as the number.
     fn deref(&mut self, v: Value) -> Value {
@@ -4788,7 +4820,10 @@ impl Vm {
                 fields.push((*name, c));
             }
         }
-        self.structs.push(StructObj { fields });
+        self.structs.push(StructObj {
+            fields,
+            def: Some(d),
+        });
         Ok(Some((self.structs.len() - 1) as u32))
     }
 
@@ -5052,6 +5087,7 @@ impl Vm {
             return unsupported(format!("structures nested past {MAX_DEPTH}"));
         }
         let fields = self.structs[src as usize].fields.clone();
+        let def = self.structs[src as usize].def;
         let mut copied = Vec::with_capacity(fields.len());
         for (name, c) in fields {
             let cell = self.cells[c as usize].clone();
@@ -5069,7 +5105,10 @@ impl Vm {
             });
             copied.push((name, (self.cells.len() - 1) as u32));
         }
-        self.structs.push(StructObj { fields: copied });
+        self.structs.push(StructObj {
+            fields: copied,
+            def,
+        });
         Ok((self.structs.len() - 1) as u32)
     }
 

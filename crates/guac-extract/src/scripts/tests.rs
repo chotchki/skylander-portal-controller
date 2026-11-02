@@ -116,11 +116,17 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
     // eight, the level's 18 and the 15 they spawn there; AG.60's 8 start
     // scripts on the props and the 5 they spawn; AG.28's 7 camera volumes
     // and the sliding rocks' activator; AG.177's goats; AH.42's two from
-    // AH.8's route, the cannon's pan and the pit's intro.
+    // AH.8's route, the cannon's pan and the pit's intro; AS.52's two, the
+    // outro's actors' (followed to their palettes).
     let counts: Vec<usize> = WHITELIST.iter().map(|w| w.scripts.len()).collect();
     assert_eq!(counts[..4], [1, 22, 3, 8]);
-    assert_eq!(counts[70], 57);
-    for s in ["Pan_Show_Cannon.ai", "Pan_Show_Norticu.ai"] {
+    assert_eq!(counts[70], 59);
+    for s in [
+        "Pan_Show_Cannon.ai",
+        "Pan_Show_Norticu.ai",
+        "213_Mabu_Generic.ai",
+        "213_Norticus_NPC.ai",
+    ] {
         assert!(WHITELIST[70].scripts.contains(&s), "{s}");
     }
     // Off it, by decision 6: the hints, Eon's lines and the zone names

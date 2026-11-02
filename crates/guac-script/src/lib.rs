@@ -338,6 +338,15 @@
 //! - A structure has the fields its definition's block declares, built on
 //!   first use and found by name ignoring case. Writing a structure into a
 //!   structure variable copies it field by field.
+//! - A `set reference` whose right side's edit type names a structure takes
+//!   nothing for a structure of another definition (a copy keeps its
+//!   original's), as the original's checks the object it read against the
+//!   side's edit type (aj-vm's reading of the op, an aid): a cutscene's
+//!   step finds its own data among its actor's by looping over them until a
+//!   typed read takes one (openspec AS.52: read untyped, chapter 1's outro
+//!   read its dialogue's data as Norticus' animation's and never started
+//!   it). An untyped side, or one naming a class, takes what it read; an
+//!   object against a class isn't checked here.
 //! - A set is an ordered list. Combine codes: 0 adds if absent (a set's
 //!   members in order, or copied whole into an empty set), 1 removes one
 //!   occurrence of each, 2 intersects, 3 replaces, 4 appends with duplicates,
@@ -692,9 +701,17 @@
 //! reading: `EnemySystem_` resets its action references, then nulls them);
 //! and slides, with their sliders (Slides).
 //!
+//! A static member (one heading its path) is read under what the block
+//! runs on: the running placement, or inside a tell's or a clone's block the
+//! object told. The VM tells the host before each such host read
+//! ([`Host::told`]); the host decides what that member makes of it
+//! (openspec AS.52: a cutscene's game systems' placement reads each told
+//! actor's animation palette).
+//!
 //! Not modelled yet: a colour's multiplication and division and screen
 //! division (they stop as unsupported), the set properties (unmodelled members); and, with no
-//! stop, a reference's type check against the stack's edit type,
+//! stop, a reference's type check of an object against a class edit type
+//! (a structure's is, above), a `check reference`'s or a parameter's,
 //! `for each`'s shuffled order (any order that visits each member once)
 //! and the scheduler's placement groups past its awake and asleep lists
 //! (activity by distance is the embedder's, a pass at a time through

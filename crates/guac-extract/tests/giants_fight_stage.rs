@@ -211,7 +211,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         println!("  {prefix} {n} files, {bytes} bytes");
     }
     let script = levels::script_path(LEVELS[0]);
-    let creature_rel = IrFormat::Ron.level_path(LEVELS[0], levels::PALETTES);
+    let creature_rel = levels::part_path(IrFormat::Ron, LEVELS[0], levels::PALETTES);
     for rel in [&script, &creature_rel] {
         let size = m.outputs.iter().find(|o| o.path == *rel).unwrap().size;
         println!("  {rel}: {size} bytes");
@@ -509,8 +509,12 @@ fn the_fights_parts_extract_whole_and_resume() {
         agreed += 1;
     }
     assert_eq!(agreed, 67);
-    let post = std::fs::read(dir.join(IrFormat::Postcard.level_path(LEVELS[0], levels::PALETTES)))
-        .unwrap();
+    let post = std::fs::read(dir.join(levels::part_path(
+        IrFormat::Postcard,
+        LEVELS[0],
+        levels::PALETTES,
+    )))
+    .unwrap();
     assert!(guac_ir::to_postcard(&creatures).unwrap() == post);
     for archive in scripts::spawn_archives() {
         let ron: SpawnModels = read(&dir, &IrFormat::Ron.spawn_path(&archive));

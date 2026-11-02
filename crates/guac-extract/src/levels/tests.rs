@@ -514,12 +514,14 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         );
         assert_eq!(
             part_path(ir, LEVELS[0], PALETTES),
-            ir.level_path(LEVELS[0], PALETTES)
+            ir.level_path(LEVELS[0], "palettes.v2")
         );
     }
+    // Named for its rule since AS.52 (its outro's actors), so an extract
+    // before it reads it again.
     assert_eq!(
         part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES),
-        "levels/level_213_tutotial/palettes.ron"
+        "levels/level_213_tutotial/palettes.v2.ron"
     );
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),
@@ -728,7 +730,7 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
             "{script:?}"
         );
     }
-    // Its file named for its rule there, chapter 1's as it was.
+    // Its file named for its rule there, chapter 1's for its own.
     assert_eq!(
         part_path(
             crate::intros::IrFormat::Ron,
@@ -739,8 +741,29 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
     );
     assert_eq!(
         part_path(crate::intros::IrFormat::Postcard, LEVEL, PALETTES),
-        format!("levels/{LEVEL}/palettes.postcard")
+        format!("levels/{LEVEL}/palettes.v{PALETTES_FIRST_RUN}.postcard")
     );
+}
+
+/// AS.52: on a first run's level the outro's actors' palettes are read,
+/// by their scripts on the whitelist.
+#[test]
+fn the_outros_actors_have_their_palettes() {
+    const CHEST: &str = "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl";
+    for script in [
+        "C:/tfb/Content/Levels/Level_213/cutscenes/scripts/213_Mabu_Generic.ai",
+        "C:/tfb/Content/Levels/Level_213/cutscenes/scripts/213_Norticus_NPC.ai",
+    ] {
+        let r = palettes(parsed(&creature_level(Some(script))), LEVEL, identity()).unwrap();
+        assert_eq!(
+            r.ir.palettes
+                .iter()
+                .map(|p| p.owner.as_str())
+                .collect::<Vec<_>>(),
+            [CHEST],
+            "{script}"
+        );
+    }
 }
 
 /// The nodes part (openspec AH.138): the skinned chest's attach list on its

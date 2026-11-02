@@ -2,16 +2,17 @@
 //! scripts' own level end and the next level, ours where the host doesn't
 //! run the original's yet. Chapter 1's end runs on the VM from
 //! `Temp_Level_Ender`'s wake (its fade, the outro woken, the outro's
-//! cutscene begun: [`crate::scripts::LEVEL_END_SCRIPTS`]) to the outro's own
-//! `Game - Level End`, which records the level to load next in `level
-//! progression data`; then, each step after the walk ([`step`]):
+//! cutscene played to its end since AS.52:
+//! [`crate::scripts::LEVEL_END_SCRIPTS`]) to the outro's own `Game - Level
+//! End`, which records the level to load next in `level progression data`;
+//! then, each step after the walk ([`step`]):
 //!
-//! - A cutscene the TV doesn't play to its end ([`SKIPPED_CUTSCENES`]: the
-//!   outro, whose first scene stalls on a step our host never starts) is
-//!   skipped once it has run a frame, by the original's own skip (`CS
-//!   Internal - Skip Cutscene` on the cutscene in play, as a player's skip
-//!   press runs it), so the scripts after it run as they would after a skip
-//!   (stand-in ledger: `cutscene-skip`).
+//! - A cutscene the TV doesn't play to its end ([`SKIPPED_CUTSCENES`]:
+//!   level 214's intro, whose first scene runs on and never ends on our
+//!   host) is skipped once it has run a frame, by the original's own skip
+//!   (`CS Internal - Skip Cutscene` on the cutscene in play, as a player's
+//!   skip press runs it), so the scripts after it run as they would after a
+//!   skip (stand-in ledger: `cutscene-skip`).
 //! - The level end recorded (`level end seq` 1 or more with `level end load
 //!   to level` set), the level it names is written to `system.load level`
 //!   once, as the Pause Controller's level switch writes it, in place of the
@@ -29,11 +30,13 @@ use tracing::info;
 use crate::scripts::{WorldHost, running};
 
 /// The cutscenes the TV skips once they've run a frame, by the name of the
-/// macro defining them: chapter 1's outro, whose first scene's sixth step
-/// (Norticus' animation) waits on a thread time our host never brings past
-/// its delay of 0, and level 214's intro (openspec AS.47), whose first scene
-/// runs on and never ends on our host (70 s of it, headless).
-pub const SKIPPED_CUTSCENES: [&str; 2] = ["213 Outro IGC", "214 Intro IGC"];
+/// macro defining them: level 214's intro (openspec AS.47), whose first
+/// scene runs on and never ends on our host (70 s of it, headless).
+/// Chapter 1's outro left the list at AS.52: its first scene's step for
+/// Norticus' animation read the step's dialogue's data as its own, the
+/// scripts' typed reference read unmodelled, and its walks reached `move
+/// to` on actors no creature's body walks.
+pub const SKIPPED_CUTSCENES: [&str; 1] = ["214 Intro IGC"];
 
 /// The macro the original's skip runs, and the game systems' script whose
 /// tick runs the cutscene system's update.

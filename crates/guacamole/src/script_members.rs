@@ -2153,9 +2153,19 @@ impl ScriptWorld {
                     .collect()
             }
             Member::Palette => {
-                // The running placement's, as the static member reads it.
-                let template = self.template_of(at.placement, engine);
-                let lengths = template.and_then(|t| self.palettes.get(&t).map(|p| (t, p.len())));
+                // The running placement's, as the static member reads it;
+                // with none of its own, the told actor's under a tell
+                // (openspec AS.52: a cutscene's animations, which the game
+                // systems' placement starts on each actor it tells).
+                let of = |w: &Self, h: Handle| {
+                    let t = w.template_of(h)?;
+                    w.palettes.get(&t).map(|p| (t, p.len()))
+                };
+                let lengths = of(self, at.placement).or_else(|| {
+                    self.actor_of(Some(self.told))
+                        .filter(|&h| h != at.placement)
+                        .and_then(|h| of(self, h))
+                });
                 match lengths {
                     Some((t, n)) => (0..n as u32)
                         .map(|slot| self.objs.value(Object::Clip { template: t, slot }))
@@ -2226,7 +2236,7 @@ impl ScriptWorld {
     }
 
     /// The template an actor was made from (itself for a file's).
-    fn template_of(&self, h: Handle, _engine: &mut dyn Engine) -> Option<Obj> {
+    fn template_of(&self, h: Handle) -> Option<Obj> {
         let a = self.actors.get(&h)?;
         a.template.or(a.obj)
     }
@@ -2465,12 +2475,7 @@ impl ScriptWorld {
         let (target, last) = match &path {
             Some(p) if p.is_empty() => return Ok(Answer::Skip),
             Some(p) => {
-                let i = self
-                    .actors
-                    .get(&mover)
-                    .and_then(|a| a.walker.as_ref())
-                    .map_or(0, |w| w.along)
-                    .min(p.len() - 1);
+                let i = self.along(mover).min(p.len() - 1);
                 (p[i], i + 1 == p.len())
             }
             None => (named("_LHS").ok_or(HostFault::Nothing)?, true),
@@ -2487,8 +2492,14 @@ impl ScriptWorld {
             .and_then(|a| a.walker.as_deref())
             .is_none()
         {
-            // Only a creature the engine moves steers.
-            return Err(HostFault::Unmodelled);
+            return self.scene_move(
+                mover,
+                call,
+                path.as_deref(),
+                point,
+                (toward, done, last),
+                engine,
+            );
         }
         // `with anim` (openspec AH.282): the palette's clip at `_indexRHS`
         // played on the mover while he moves, as `start sequence` plays it,
@@ -2533,6 +2544,116 @@ impl ScriptWorld {
             Aim::From(point)
         };
         Ok(Answer::Done)
+    }
+
+    /// Which waypoint of a path `mover` is walking to: its walker's, or its
+    /// scene walk's ([`ScriptWorld::scene_move`]); the first for one neither
+    /// has.
+    fn along(&self, mover: Handle) -> usize {
+        match self.actors.get(&mover).and_then(|a| a.walker.as_deref()) {
+            Some(w) => w.along,
+            None => self.scene_walks.get(&mover).map_or(0, |s| s.along),
+        }
+    }
+
+    /// [`ScriptWorld::op_move`] for an actor the engine doesn't walk as a
+    /// creature (openspec AS.52): steered all the same, as the engine's
+    /// velocity model steers every actor with movement numbers, with no
+    /// body under it ([`ScriptWorld::move_scene_walks`]; chapter 1's
+    /// outro walks its Mabu so, `CS Walk Obj to Location` handing the
+    /// engine an actor no movement data of the scripts' moves). Reached,
+    /// the block runs, as a creature's. A hero walks on his controller
+    /// alone, so one the op moves is still unmodelled.
+    fn scene_move(
+        &mut self,
+        mover: Handle,
+        call: &OpCall,
+        path: Option<&[Value]>,
+        point: Vec3,
+        (toward, done, last): (bool, bool, bool),
+        engine: &mut dyn Engine,
+    ) -> Result<Answer, HostFault> {
+        if engine.hero(mover).is_some() {
+            return Err(HostFault::Unmodelled);
+        }
+        if !(done && last)
+            && let Some(clip) = self.move_clip(call)
+        {
+            self.play_on(clip, mover);
+        }
+        let mut aim = Aim::Still;
+        let mut along = self.along(mover);
+        if done {
+            if let Some(p) = path
+                && !last
+            {
+                along += 1;
+                if let Some(next) = self.point(p[along], engine) {
+                    aim = Aim::To(next);
+                }
+            }
+        } else {
+            aim = if toward {
+                Aim::To(point)
+            } else {
+                Aim::From(point)
+            };
+        }
+        let walk = self.scene_walks.entry(mover).or_default();
+        walk.aim = aim;
+        walk.along = along;
+        Ok(if done {
+            Answer::Run {
+                receiver: None,
+                result: None,
+            }
+        } else {
+            Answer::Done
+        })
+    }
+
+    /// One frame of each scene walk ([`ScriptWorld::scene_move`]): the
+    /// engine's velocity model ([`guac_motion::steer::step`]) on its
+    /// movement numbers under the aim its scripts left this tick, on level
+    /// ground, its place moved by the walk and its facing turned as the
+    /// model turns it, `actorinfo.velocity` reading the walk. The aim lasts
+    /// the tick it was asked for, as a creature's does. One taken off, hung
+    /// on something or walked as a creature since is let go.
+    pub(crate) fn move_scene_walks(&mut self, dt: f32) {
+        let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
+        walking.sort_unstable();
+        for h in walking {
+            let Some(a) = self
+                .actors
+                .get_mut(&h)
+                .filter(|a| !a.removed && a.walker.is_none() && a.attach == Value::Null)
+            else {
+                self.scene_walks.remove(&h);
+                continue;
+            };
+            let Some(walk) = self.scene_walks.get_mut(&h) else {
+                continue;
+            };
+            let aim = std::mem::take(&mut walk.aim);
+            let dt = dt * a.physics.time_scale / 100.0;
+            let frame = guac_motion::steer::step(
+                guac_motion::steer::Frame {
+                    velocity: walk.velocity,
+                    facing: a.angles.facing,
+                    airborne: false,
+                },
+                &steer_physics(&a.physics),
+                aim,
+                a.position,
+                Some(Vec3::Y),
+                true,
+                dt,
+            );
+            walk.velocity = frame.velocity;
+            a.position += frame.velocity * dt;
+            a.angles.facing = frame.facing;
+            a.velocity = frame.velocity * FEET_PER_METRE;
+        }
     }
 
     /// The clip a `move to ... with anim` plays: its palette (`_NP`, read as
@@ -2854,6 +2975,7 @@ impl ScriptWorld {
     /// `collisioninfo.environment contacts`.
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
+        self.move_scene_walks(dt);
         let mut flying: Vec<Handle> = self
             .actors
             .iter()
@@ -4782,6 +4904,108 @@ mod fight_tests {
         assert_eq!(w2.aim, guac_motion::steer::Aim::Still);
     }
 
+    /// AS.52: an actor the engine doesn't walk as a creature (a cutscene's
+    /// actor, no body under it) steered by `move to` all the same: toward
+    /// the point at its ground speed, turning at its rate, at the height it
+    /// stands, the block running once it's within reach, a wall in its way
+    /// no stop; asked no more, it slows to a stop; along a path, each
+    /// waypoint in turn. A hero moved so is still unmodelled.
+    #[test]
+    fn an_actor_no_creature_walks_is_steered_by_move_to_with_no_body() {
+        let mut e = pit();
+        // A wall across its way, which a creature's body would stop on.
+        let wall = Body {
+            id: BodyId(2),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(4.0, 1.0, -3.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(0.2, 1.0, 5.0),
+                margin: 0.0,
+            }),
+        };
+        e.world = ParryWorld::new(&[wall]).unwrap();
+        let mut w = world();
+        let mut mabu = chompy(Vec3::new(0.0, 0.3, 0.0), 0.0);
+        mabu.walker = None;
+        w.actors.insert(C1, mabu);
+        let goal = Vec3::new(8.0, 0.0, -6.0);
+        let (mut frames, mut top) = (0, 0.0f32);
+        let mut last = (Vec3::new(0.0, 0.3, 0.0), 0.0f32);
+        loop {
+            match ask(&mut w, &mut e, &move_to(Value::Object(WP), 5)) {
+                Answer::Run { .. } => break,
+                Answer::Done => {}
+                other => panic!("{other:?}"),
+            }
+            w.advance(STEP, &mut e);
+            frames += 1;
+            let a = w.actor(C1).unwrap();
+            let across = Vec3::new(a.position.x - last.0.x, 0.0, a.position.z - last.0.z);
+            top = top.max(across.length() / STEP / FOOT);
+            let turned = wrap(a.angles.facing - last.1).abs();
+            assert!(turned <= 12.0 + 1e-3, "frame {frames}: {turned}°");
+            assert!(
+                (a.position.y - 0.3).abs() < 1e-6,
+                "at its height: {}",
+                a.position
+            );
+            last = (a.position, a.angles.facing);
+            assert!(frames < 200, "never got there: {:?}", a.position);
+        }
+        assert!(top <= 20.0 + 1e-3 && top > 19.9, "{top}");
+        let at = w.actor(C1).unwrap().position;
+        assert!(Vec3::new(at.x - goal.x, 0.0, at.z - goal.z).length() <= 5.0 * FOOT);
+        assert!((92..=100).contains(&frames), "{frames}");
+        assert_eq!(w.scene_walks[&C1].aim, Aim::Still);
+        assert!(
+            w.actor(C1).unwrap().walker.is_none(),
+            "no creature made of it"
+        );
+        // Asked no more, it slows (80 ft/s² from 20 ft/s) to a stop.
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        let stopped = w.actor(C1).unwrap().position;
+        w.advance(STEP, &mut e);
+        assert_eq!(w.actor(C1).unwrap().position, stopped);
+        assert_eq!(w.scene_walks[&C1].velocity, Vec3::ZERO);
+        // Along a path: each waypoint in turn, the next its aim at once.
+        let path = vec![Value::Object(WP), Value::Object(WP2)];
+        let mut reached = Vec::new();
+        for k in 0..400 {
+            let call = op(
+                Class::MoveTo,
+                C1,
+                vec![
+                    ("_indexRHS", None),
+                    ("_LHS", Some(Value::Null)),
+                    ("_RHS", Some(Value::Int(2))),
+                    ("_NP", None),
+                ],
+                vec![("_LHS", path.clone())],
+            );
+            if matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }) {
+                reached.push(k);
+                if reached.len() == 1 {
+                    assert_eq!(w.scene_walks[&C1].aim, Aim::To(Vec3::new(8.0, 0.0, 6.0)));
+                }
+            }
+            w.advance(STEP, &mut e);
+        }
+        assert_eq!(w.scene_walks[&C1].along, 1, "on the last waypoint");
+        let at = w.actor(C1).unwrap().position;
+        assert!(
+            (at - Vec3::new(8.0, at.y, 6.0)).length() <= 2.0 * FOOT,
+            "{at}"
+        );
+        // A hero walks on his controller alone.
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0));
+        let mut call = move_to(Value::Object(WP), 5);
+        call.receiver = Value::Entity(HERO);
+        assert_eq!(w.op(&call, &mut |_| 0, &mut e), Err(HostFault::Unmodelled));
+        assert!(!w.scene_walks.contains_key(&HERO));
+    }
+
     #[test]
     fn along_a_path_it_walks_to_each_waypoint_in_turn() {
         let mut e = pit();
@@ -6349,6 +6573,42 @@ mod animation_tests {
         assert_eq!(now.len(), 1);
         assert_eq!(now[0].0, clips[2]);
         assert!(now[0].1 > 2.5 * STEP, "never started again: {now:?}");
+    }
+
+    /// AS.52: the static palette is the running placement's; one with none
+    /// of its own reads the actor its tell's block tells (a cutscene's
+    /// game systems' placement starting an animation on each of its
+    /// actors), never its own again, and nothing outside a tell.
+    #[test]
+    fn a_static_palette_under_a_tell_is_the_told_actors_with_none_of_its_own() {
+        const SYSTEMS: Handle = 0x6100_0040;
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        w.actors
+            .insert(SYSTEMS, crate::script_engine::Actor::blank());
+        let static_palette = Access {
+            placement: SYSTEMS,
+            receiver: None,
+            member: MemberId::named("animationinfo", "animation palette"),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        w.told = Value::Entity(SYSTEMS);
+        assert_eq!(
+            w.elements(&static_palette, &mut e),
+            Err(HostFault::Nothing),
+            "its own, which it hasn't"
+        );
+        w.told = Value::Entity(C1);
+        assert_eq!(w.elements(&static_palette, &mut e).unwrap(), clips);
+        // One with a palette of its own reads its own, told or not.
+        let mine = Access {
+            placement: C1,
+            ..static_palette
+        };
+        w.told = Value::Entity(SYSTEMS);
+        assert_eq!(w.elements(&mine, &mut e).unwrap(), clips);
     }
 
     /// Slot 0 a base clip, 1 partial, 2 additive (and partial: additive
