@@ -1587,9 +1587,12 @@ no buffer) join the awake list then in that order (29 at the state, none out of 
 asleep list in that order (468 at the state, none out of it), and the activity check walks that list, so
 those waking in one frame join the awake list's end in its order (54 of the 56 that woke 13.18 s before
 the state, the other two at their end). One going back to sleep joins the asleep list's end, and one that had started
-runs its SHUTDOWN on the way (the state-change handler puts it on the shutdown queue the scripts' updater runs after
-its groups) and its STARTUP again when it wakes: AR.22, the first fight's combat watcher writing its own activation
-range to 0 once the four are gone, so its sleep runs the SHUTDOWN that plays the victory stinger. A placement woken ticks
+ticks once more that frame and runs its SHUTDOWN on the way (the state-change handler puts it on the shutdown queue
+the scripts' updater runs after its groups, its started flag cleared there), then its STARTUP again when it wakes,
+its active time from 0: AR.22, the first fight's combat watcher writing its own activation range to 0 once the four
+are gone, so its sleep runs the SHUTDOWN that plays the victory stinger. AH.59's and AH.195's `--sched` reads hold
+it: no asleep placement started in any snapshot, that frame's time added to each of the 17 that went to sleep
+started and to none of the 9 that went unstarted, each of the 6 woken again at one frame's time. A placement woken ticks
 in its wake frame, and what that tick spawns stands right behind it and first ticks a frame later
 (`Bird_nest_egg` behind `Bird_nest(1)` a frame younger; a boulder waking mid-walk with its five pebbles
 behind it at 0.0 s): AH.210. Three of the state's placements stand where an earlier frame put them:

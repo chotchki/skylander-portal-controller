@@ -1417,7 +1417,13 @@ fn a_placement_added_again_under_a_handle_taken_off_runs_under_it() {
     assert!(vm.is_activator(again) && !vm.is_activator(first));
     assert!(vm.set_asleep(1, true));
     vm.step(&mut Bare).unwrap();
-    assert_eq!(vm.local(again, "count"), Some(Value::Int(1)), "asleep");
+    assert_eq!(
+        vm.local(again, "count"),
+        Some(Value::Int(2)),
+        "its last tick (openspec AR.22)"
+    );
+    vm.step(&mut Bare).unwrap();
+    assert_eq!(vm.local(again, "count"), Some(Value::Int(2)), "asleep");
     assert!(vm.remove(1));
     assert!(vm.removed(again));
     // Under a live placement's handle the first keeps it.

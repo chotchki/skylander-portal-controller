@@ -31,7 +31,9 @@ use guac_motion::scenarios;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pose, Vec3};
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
-use guac_script::members::{CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, WALKERS};
+use guac_script::members::{
+    CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, MUSIC, SOUNDS, WALKERS,
+};
 
 use guac_script::{
     Generator, Halt, Handle, Kind, MemberId, MemberSpec, Mode, Obj, PlacementId, Program, Role,
@@ -838,6 +840,9 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
             .chain(FIGURE)
             .chain(CAMERA)
             .chain(WALKERS)
+            // The music controller's sound system update's (openspec AR.25).
+            .chain(SOUNDS)
+            .chain(MUSIC)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

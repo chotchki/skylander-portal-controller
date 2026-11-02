@@ -203,6 +203,10 @@ pub(crate) struct SoundReport {
     /// go at a run's change (AR.18).
     pub files: usize,
     pub released: usize,
+    /// The level's music placements held until the level's sounds are read
+    /// (openspec AR.23): over 0 while a first run's sounds haven't landed,
+    /// and for good when they never do.
+    pub music_held: usize,
 }
 
 /// How many of the last plays ended and starts refused the report lists.
@@ -486,6 +490,7 @@ fn hear_sounds(
         voices: heard.iter().count(),
         files: out.files.len(),
         released: out.released,
+        music_held: world.music_held(),
     };
 }
 

@@ -719,6 +719,12 @@ impl ScriptWorld {
         book.file(stem).is_some()
     }
 
+    /// How many of the level's music placements [`hold_music`] holds now,
+    /// waiting for the level's sounds (openspec AR.23).
+    pub fn music_held(&self) -> usize {
+        self.music_held.len()
+    }
+
     /// The book the scripts' sounds come from, if one was set.
     pub fn sound_book(&self) -> Option<&guac_sound::SoundBook> {
         self.sounds.as_deref()
@@ -1744,12 +1750,33 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
-/// The VM's config for AH.16's run: the init chain's members and listing.
+/// The VM's config for AH.16's run: the init chain's members and listing,
+/// with the sounds' and the music's ([`music_members`]).
 pub fn config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
     members::register(&mut c.members, INIT_CHAIN);
+    music_members(&mut c);
     c.whitelist = Whitelist::with_first_ticks(&[], &EVERY_TICK, &GLOBAL_FIRST_TICKS);
     c
+}
+
+/// The sounds' members on the host and what the music controller's sound
+/// system update reaches past them (openspec AR.10, AR.11), registered
+/// last: the player loop runs that update at `Macros_Music`'s place in any
+/// run that holds it (AR.11), so a config without them stops there
+/// (openspec AR.25: `giants_eruptor` and the init chain's plugin run, on
+/// `491e0a9c.0a72b658`), and on a placement's clones (the hero's table's
+/// `abstractplacement.clones`) in a run without the hero's members.
+fn music_members(c: &mut Config) {
+    members::register(&mut c.members, members::SOUNDS);
+    members::register(&mut c.members, members::MUSIC);
+    if c.members
+        .get(guac_script::MemberId::named("abstractplacement", "clones"))
+        .is_none()
+        && let Some(r) = members::find(members::HERO, "abstractplacement", "clones")
+    {
+        members::register(&mut c.members, &[r]);
+    }
 }
 
 /// `global.bld`'s placements AH.17 ticks every step: the UI's (its tick
@@ -1793,6 +1820,7 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::CAMERA);
     // What the walkers' scripts reach past those (openspec AG.160).
     members::register(&mut c.members, members::WALKERS);
+    music_members(&mut c);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
         .copied()
@@ -2073,10 +2101,9 @@ pub fn smash_config(mode: Mode) -> Config {
     // table the VM lane grows reaches the TV only once it's named here.
     members::register(&mut c.members, members::LEVELS);
     // The sounds' members on the host, over the cells the tables above
-    // registered for them (openspec AR.10).
-    members::register(&mut c.members, members::SOUNDS);
-    // And what chapter 1's music reaches past them (openspec AR.11).
-    members::register(&mut c.members, members::MUSIC);
+    // registered for them (openspec AR.10), and what chapter 1's music
+    // reaches past them (openspec AR.11), again after those tables.
+    music_members(&mut c);
     if let Whitelist::Only {
         placements,
         scripts,
@@ -4790,13 +4817,19 @@ mod tests {
         load_order_step(&mut vm, &mut world, toward_a);
         assert_eq!(
             load_order_seen(&vm, &files, &handles, &all),
-            ints(&[6, 7, 8, 5])
+            ints(&[6, 7, 8, 9]),
+            "B's last tick as it goes to sleep (openspec AR.22)"
         );
         load_order_step(&mut vm, &mut world, far);
+        assert_eq!(
+            load_order_seen(&vm, &files, &handles, &all),
+            ints(&[10, 11, 12, 9]),
+            "A's last tick, B asleep"
+        );
         load_order_step(&mut vm, &mut world, both);
         assert_eq!(
             load_order_seen(&vm, &files, &handles, &all),
-            ints(&[11, 12, 14, 13]),
+            ints(&[13, 14, 16, 15]),
             "B, then A, as they went to sleep"
         );
     }
@@ -5055,6 +5088,43 @@ mod tests {
         vm.field(containers, name).map(|v| vm.value(v)).unwrap()
     }
 
+    /// openspec AR.25: every config a run is built on registers the
+    /// sounds' and the music's members, each as their table keeps it, and
+    /// the placement's clones the music update checks, since the player
+    /// loop runs the music controller's sound system update in any run that
+    /// holds `Macros_Music`; the TV's after every table that registered a
+    /// sound member as a value cell.
+    #[test]
+    fn every_config_registers_the_music_systems_members() {
+        use guac_script::MemberId;
+        use guac_script::members::{Keeper, MUSIC, SOUNDS};
+        for (name, c) in [
+            ("config", config(Mode::Strict)),
+            ("hero_config", hero_config(Mode::Strict)),
+            ("smash_config", smash_config(Mode::Strict)),
+            ("fight_config", fight_config(Mode::Strict)),
+        ] {
+            for r in SOUNDS.iter().chain(MUSIC) {
+                let id = MemberId::named(r.namespace, r.name);
+                let got = c.members.get(id).map(|(_, place)| place);
+                let want = match r.keeper {
+                    Keeper::Cell => Some(guac_script::Place::ValueCell),
+                    Keeper::Host | Keeper::Interface => Some(guac_script::Place::Host),
+                    Keeper::Vm => continue,
+                };
+                assert_eq!(got, want, "{name}: {}.{}", r.namespace, r.name);
+            }
+            // The music update's check on a placement's clones, past the
+            // init chain's table (the hero's registers it).
+            let clones = MemberId::named("abstractplacement", "clones");
+            assert_eq!(
+                c.members.get(clones).map(|(_, place)| place),
+                Some(guac_script::Place::Host),
+                "{name}: abstractplacement.clones"
+            );
+        }
+    }
+
     /// openspec AR.23: the level's music scripts wait for the level's
     /// sounds. With no book, or one lacking the level's archive, each
     /// placement of the level running one of [`MUSIC_SCRIPTS`] is held
@@ -5156,6 +5226,7 @@ mod tests {
         };
         let stems = HashMap::from([(0u16, "level_213_tutotial".to_owned())]);
         assert_eq!(hold_music(&mut vm, &mut world, &files, 0), Music::Waits(1));
+        assert_eq!(world.music_held(), 1, "reported");
         for _ in 0..3 {
             step(&mut vm, &mut world);
         }
@@ -5178,6 +5249,7 @@ mod tests {
         );
         world.set_sounds(book("level/level_213_tutotial.bld"), stems);
         assert_eq!(hold_music(&mut vm, &mut world, &files, 0), Music::Starts(1));
+        assert_eq!(world.music_held(), 0, "none held now");
         step(&mut vm, &mut world);
         assert_eq!(vm.local(music_id, "starts"), Some(Value::Int(1)));
         assert_eq!(
