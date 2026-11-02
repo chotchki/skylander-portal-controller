@@ -324,6 +324,21 @@ fn a_levels_own_sounds_extract_with_it_on_demand_and_resume() {
     sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     let dir = &mut opened.dir;
     let part_before = dir.manifest().parts[PART].clone();
+    // Each audio file as the part left it, by inode: a bank the level shares
+    // is kept, never written again (a write lands as a new file, renamed in).
+    #[cfg(unix)]
+    let inodes = |dir: &guac_extract::IdentityDir| -> Vec<(String, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        audio_outputs(dir)
+            .into_iter()
+            .map(|f| {
+                let ino = fs::metadata(dir.path().join(&f)).unwrap().ino();
+                (f, ino)
+            })
+            .collect()
+    };
+    #[cfg(unix)]
+    let audio_before = inodes(dir);
 
     let events = std::sync::Mutex::new(Vec::new());
     let stage = stages::extract_level(dir, NEXT, IrFormat::Ron, &|e| {
@@ -345,6 +360,12 @@ fn a_levels_own_sounds_extract_with_it_on_demand_and_resume() {
         (st.audio_files.written, st.audio_files.kept),
         (0, 5),
         "every bank shared with chapter 1's part"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        inodes(dir),
+        audio_before,
+        "the shared banks not written again"
     );
     assert_eq!(events.into_inner().unwrap(), [(0, 1), (1, 1)]);
     let rel = sounds::path(IrFormat::Ron, &sounds::level_archive(NEXT));

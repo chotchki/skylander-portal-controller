@@ -5554,6 +5554,83 @@ mod tests {
         }
     }
 
+    /// AR.30's review: the sounds are on their way through every stage up to
+    /// and through the sounds stage, whichever one chapter 1's hand-off
+    /// lands in (a first run hands it over before its sprites, AT.26), and
+    /// never past it, nor with no pick or a failed one.
+    #[test]
+    fn the_sounds_are_coming_until_the_sounds_stage_ends() {
+        use crate::extraction::{ExtractStatus as S, Failure};
+        let coming = |status: S| {
+            sounds_coming(Some(&Extraction {
+                status,
+                ..Default::default()
+            }))
+        };
+        let n = || (0, 1);
+        for status in [
+            S::Starting,
+            S::Checking {
+                bytes_done: 0,
+                bytes_total: 1,
+            },
+            S::Roster {
+                done: n().0,
+                total: n().1,
+            },
+            S::Models {
+                done: n().0,
+                total: n().1,
+            },
+            S::Level {
+                done: n().0,
+                total: n().1,
+            },
+            S::Scripts {
+                done: n().0,
+                total: n().1,
+            },
+            S::Particles {
+                done: n().0,
+                total: n().1,
+            },
+            S::Sprites {
+                done: n().0,
+                total: n().1,
+            },
+            S::Sounds {
+                done: n().0,
+                total: n().1,
+            },
+        ] {
+            assert!(coming(status.clone()), "{status:?}");
+        }
+        for status in [
+            S::Idle,
+            S::Interface {
+                done: n().0,
+                total: n().1,
+            },
+            S::Indexing,
+            S::Converting {
+                done: 0,
+                total: 1,
+                movie: "intro".into(),
+            },
+            S::Ready {
+                intros: 0,
+                ran: true,
+            },
+            S::Failed(Failure::Other {
+                code: "GUAC-E-EXTRACT-IO".into(),
+                message: "gone".into(),
+            }),
+        ] {
+            assert!(!coming(status.clone()), "{status:?}");
+        }
+        assert!(!sounds_coming(None), "no pick");
+    }
+
     /// openspec AR.30: the level's music, held while its sounds were on
     /// their way, is let go to run silent once the extraction moves past its
     /// sounds stage without news of them (the stage failed), never held for

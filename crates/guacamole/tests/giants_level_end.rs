@@ -505,8 +505,12 @@ fn cutscene_name(run: &Run) -> Option<String> {
 /// first tick until Eruptor's minion is in, as the TV's install would hold
 /// it; then its cutscene begins with him in it, is skipped a frame in by the
 /// original's own skip (`level_end::SKIPPED_CUTSCENES`), and its hand-over
-/// sets him down on the deck; the intro takes itself off, the HUD it hid
-/// shows again, nothing stops. And what keeps it off the TV: its STARTUP
+/// sets him down on the deck; the intro takes itself off, nothing stops.
+/// Its first line (Flynn's, voiced, since AT.44 reads a lone string as a set
+/// of one) is up as the skip comes and plays on past it, its box holding the
+/// HUD hidden until it's over (the as-214-alive review, on the merge of
+/// AT.44: 350 steps); then the HUD shows again. And what keeps it off the
+/// TV: its STARTUP
 /// takes `The_Ship_1` off, and the skip takes off both clones its cutscene
 /// made of `214_Intro_Ship`, so no ship is left under him.
 #[test]
@@ -534,8 +538,10 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
     run.join().unwrap_or_else(|h| panic!("{h}"));
     let joined_at = run.steps;
     let (mut began, mut skipped, mut gone, mut shown) = (None, None, None, None);
-    for _ in 0..300 {
+    let mut lines = Lines::default();
+    for _ in 0..600 {
         stops.extend(run.step_play().unwrap());
+        lines.record(&run);
         let cs = cutscene_name(&run);
         if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
             began = Some(run.steps);
@@ -579,8 +585,16 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
         "the marker {marker:?}; joined at {joined_at}; the intro's cutscene at {began:?}, skipped by {skipped:?}, the intro off at {gone:?}, the HUD shown at {shown:?}; handed over at {at:?} ({:.2} m off the marker)",
         at.distance(marker)
     );
+    println!("its lines: {:?}; {:?}", lines.boxes, lines.voices);
     assert!(began.is_some_and(|b| b <= joined_at + 2), "{began:?}");
     assert!(skipped.is_some() && gone.is_some() && shown.is_some());
+    // The HUD back once the line its box holds up is over, not before.
+    let last_box = lines.boxes.iter().filter_map(|b| b.gone).max();
+    assert!(
+        last_box.is_none_or(|g| shown.is_some_and(|s| s >= g)),
+        "{shown:?} {:?}",
+        lines.boxes
+    );
     let handed = Vec3::from_array(HANDED_OVER);
     assert!(
         Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
@@ -597,7 +611,6 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
         load()
     );
 }
-
 
 /// openspec AR.17: chapter 1's end with its sounds. The outro's lines (its
 /// cutscene skipped a frame in, `level_end::SKIPPED_CUTSCENES`, AS.15) go

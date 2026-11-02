@@ -2387,7 +2387,10 @@ pub const EFFECT_SCRIPTS: [&str; 2] = ["LevelUp.ai", "MinionDeathActor.ai"];
 /// elemental and cabin watchers and explore switchers, the wall blow-ups'
 /// transitions, the scenes' music player, the two jukeboxes (the hub's
 /// script), the music's mute mix and the beat timer. Neither level places
-/// the other's.
+/// the other's, but by script they join every level placing them: the beat
+/// timer, the mute mix and the jukebox controller run on 36 other levels
+/// too (the story levels' beat timer, the hub stages' jukeboxes and radios,
+/// the arena challenges'; the as-214-alive review's whole-disc listing).
 pub const MUSIC_SCRIPTS: [&str; 20] = [
     "Music_Level_Controller.ai",
     "snd_combat_watcher_213.ai",
