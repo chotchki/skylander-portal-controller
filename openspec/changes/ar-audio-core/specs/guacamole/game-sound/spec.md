@@ -35,6 +35,14 @@ Chapter 1 SHALL play its own music tracks from the disc (ten: four 129 s beds, a
 - **WHEN** the first fight's creatures wake in chapter 1
 - **THEN** the music moves from the level's exploring track to its fighting track the way the level's scripts switch them
 
+#### Scenario: The first fight is won
+- **WHEN** the last of the first fight's four Chompies is beaten
+- **THEN** the fight's victory stinger takes over from the level's track on the music's beat, as the original's does within three seconds of the fight's end
+
+#### Scenario: A first run's music
+- **WHEN** chapter 1 is played on a first run before its sounds have extracted
+- **THEN** its music starts once they're in, the intro first and the exploring track on its bar, as a level start plays it
+
 ### Requirement: Voices hold a scene for their length
 A cutscene or dialogue that waits on its voices SHALL last as long as those voices play, as the original's does.
 
