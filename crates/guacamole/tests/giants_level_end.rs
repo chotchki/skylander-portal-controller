@@ -10,8 +10,8 @@
 //! outro's player waypoint, as the TV's dev entry's end anchor does; from
 //! there every step is the scripts' (the fade, the outro woken and its
 //! cutscene begun, the outro skipped by the original's skip and its own
-//! `Game - Level End`), with guacamole's stand-ins between that and the
-//! level change (`guacamole::level_end`).
+//! `Game - Level End`), then `guacamole::level_end`'s level change
+//! (stand-in ledger: `cutscene-skip`, `level-end`).
 
 use guac_motion::seam::Vec3;
 use guac_script::{Mode, Value};

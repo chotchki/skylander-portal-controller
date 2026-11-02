@@ -3267,6 +3267,27 @@ mod tests {
         assert_eq!(report(&app).keys_waiting, 0);
     }
 
+    /// AS.49: a ready level isn't one the hero can come into while its
+    /// script part is still linking (he'd walk it with no run, his join
+    /// off), and is once the part is in.
+    #[test]
+    fn a_ready_level_is_walkable_only_once_its_scripts_are_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let mut level = app.world_mut().resource_mut::<Level>();
+        level.scripts = None;
+        assert!(level.walkable().is_some());
+        level.scripts = Some(
+            AsyncComputeTaskPool::get()
+                .spawn(std::future::pending::<Result<level_scripts::Linked, String>>()),
+        );
+        assert!(level.walkable().is_none(), "its part still linking");
+        level.scripts = None;
+        assert!(level.walkable().is_some());
+    }
+
     /// A second source while the first still waits on the renderer: what
     /// the first left pending goes with it, so the second waits on its own
     /// parts alone (the first's never turn up).
