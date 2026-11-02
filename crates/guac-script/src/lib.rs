@@ -107,7 +107,20 @@
 //! the 56 that woke in one frame 13.18 s before it in that order too
 //! (the other two at their end, an earlier frame's doing), behind the 29
 //! awake from the load; the embedder adds a file's placements in that
-//! order). A placement a tick spawns with a script
+//! order). One that has started goes to sleep through the shutdown queue
+//! (openspec AR.22): its SHUTDOWN runs once the step's walk is done, as a
+//! taken-off placement's does (below), its started flag cleared (at once
+//! when its script has none), so woken it runs STARTUP again; one never
+//! started, held, inert, taken off or stopped runs none, and one woken
+//! before the step whose walk would run it never slept and runs none. Two
+//! reads agree: the original's state-change handler queues a started
+//! placement going to sleep for shutdown (AH.59's decompile, an aid), and
+//! the oracle's first combat watcher, whose own write of an activation
+//! range of 0 takes it to sleep between two reads 90 flips apart, reads no
+//! behaviour from then, and its SHUTDOWN's stinger is the music by the
+//! next read but one. Whether the original
+//! ticks it again, asleep and still started, before its queue runs isn't
+//! read; the VM doesn't. A placement a tick spawns with a script
 //! of its own ([`Host::adopt`]) joins the end and ticks that same tick:
 //! AH.54's recordings list the eruption's first wave of lava at the
 //! eruption's own first record, which its first tick spawns. It joins at
