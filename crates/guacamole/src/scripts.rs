@@ -5475,7 +5475,7 @@ mod tests {
     /// manager that reads the throw and the pan to the first bomb run every
     /// tick by script, the bomb hints by name; the hints' script on any
     /// other placement (chapter 1's fifteen) and the countdown's numbers
-    /// stay off.
+    /// stay off. AS.60: its ship by name.
     #[test]
     fn level_214s_bombs_and_their_walls_run_on_the_tvs_listing() {
         let c = smash_config(Mode::Play);
@@ -5496,6 +5496,12 @@ mod tests {
             "Bomb_Timer",
             "C:/tfb/Content/Levels/Includes/GameElement_Bomb/Scripts/BombTImer.ai"
         ));
+        // AS.60: its ship by name, the ships' script on any other off.
+        let ships = "C:/tfb/Content/Levels/Level_214/Scripts/Ships.ai";
+        for name in SHIP {
+            assert!(c.whitelist.lists(name, ships), "{name}");
+        }
+        assert!(!c.whitelist.lists("Hub_Ship", ships));
     }
 
     #[test]
