@@ -1958,6 +1958,16 @@ impl ScriptWorld {
                     self.revived.push((h, o));
                     return Ok(Answer::Done);
                 }
+                // A placement's reset of itself (openspec AS.67): the VM
+                // sends its script round from its STARTUP, and it stands
+                // again as it was made ([`ScriptWorld::as_made`]).
+                if let Some(h) = target
+                    && h == call.placement
+                    && let Some(a) = self.as_made(h)
+                {
+                    self.actors.insert(h, a);
+                    return Ok(Answer::Done);
+                }
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
                     // A light the point-light manager took off goes back
@@ -1979,6 +1989,55 @@ impl ScriptWorld {
                 None => Err(HostFault::Unmodelled),
             },
         }
+    }
+
+    /// The live actor under `h` as it stood when made, for its reset of
+    /// itself (openspec AS.67, a reading: level 214's bomb resets itself
+    /// after its burst, and nothing in its script or its spawner's takes it
+    /// back to the spawner, which clones no other while it stands): a
+    /// file's placement as its file has it, a clone its template's numbers
+    /// at the place it was cloned (`abstractplacement.origin`) with its
+    /// turn its template's, keeping what makes it this clone (its id, its
+    /// buffer and range, its parent, activator and template, its own
+    /// clones), its motion and what it hung from gone. Either way one the
+    /// engine walks still walks, its body made again ([`ScriptWorld::walk`]
+    /// is the embedder's, once). None for one taken off or a template it
+    /// can't find.
+    pub fn as_made(&self, h: Handle) -> Option<Actor> {
+        let k = self.actors.get(&h).filter(|k| !k.removed)?;
+        let walker = k.walker.as_ref().map(|_| {
+            Box::new(crate::script_engine::Walker {
+                body: None,
+                aim: guac_motion::steer::Aim::Still,
+                along: 0,
+            })
+        });
+        if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
+            return Some(Actor {
+                clones: k.clones.clone(),
+                walker,
+                ..actor_of(p)
+            });
+        }
+        let mut a = actor_of(self.templates.get(&k.template?)?);
+        a.obj = None;
+        a.template = k.template;
+        a.parent = k.parent;
+        a.activator = k.activator;
+        a.id = k.id;
+        a.buffer_loaded = k.buffer_loaded;
+        a.buffer = k.buffer;
+        a.range = k.range;
+        a.waypoints = Vec::new();
+        a.clones = k.clones.clone();
+        a.position = k.origin;
+        a.origin = k.origin;
+        a.light = k
+            .template
+            .and_then(|t| self.light_templates.get(&t))
+            .copied();
+        a.walker = walker;
+        Some(a)
     }
 
     /// A clone of `template` at the place `at` names (its pivot), facing
@@ -2294,13 +2353,29 @@ pub struct Encounter {
 /// Chompy pods on the first island past the dock, Setup_001's controller
 /// (it plays the pods' scene as the hero passes its first trigger, then
 /// wakes them) and its two spawners, each cloning its pod at its start and
-/// Chompies from the undead Chompy template (its `chompy type`) once woken.
+/// Chompies from the undead Chompy template (its `chompy type`) once woken;
+/// then its second fight past the pods (openspec AS.58), Setup_002's
+/// controller (at its first trigger it sets its four undead Chompies going
+/// and waits for Eon's elemental hint, `Explain_Elemental`, to take itself
+/// off once its line has played, then at its second trigger runs them in)
+/// and its helper (the two Elf Nears spar, invulnerable, until a bomb opens
+/// their wall, then play their scene and fight).
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
         "Setup_001_Controller",
         "Enemy_Chompy_Spawner(1)",
         "Enemy_Chompy_Spawner(5)",
+        // Setup_002 (openspec AS.58).
+        "Setup_002_Controller",
+        "Setup_002_Controller_Helper",
+        "Explain_Elemental",
+        "Enemy_Chompy2_E",
+        "Enemy_Chompy2_F",
+        "Enemy_Chompy2_G",
+        "Enemy_Chompy2_H",
+        "Enemy_Elf_Near_S2(3)",
+        "Enemy_Elf_Near_S2(4)",
     ],
     clones: &["_Template_Undead_Chompy"],
 }];
@@ -3082,7 +3157,40 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
         placements.push(i.to_owned());
     }
+    // What takes the way on past its fights (openspec AS.59).
+    if let Whitelist::Only { placements, .. } = &mut config.whitelist {
+        placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
+    }
     with_level(config, files, level)
+}
+
+/// What takes the way on through a level past its fights (openspec AS.59),
+/// by level and placement name, listed and never walked. Level 214's from
+/// its first island to its second: once both Elf Nears are beaten the jump
+/// pad's activator pans to the jump pad (`PvP_JumpPad_NORMAL(2)`) and wakes
+/// it, meant to launch a hero up to the rise holding the first ship part
+/// (`Ship_part_1(1)`; headless it bounces him in place, AS.75); taken after
+/// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
+/// whose cutscene sets him down on the second island's ship and which the
+/// TV skips ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for
+/// it.
+pub const PASSAGES: [(&str, &[&str]); 1] = [(
+    "level_214_tutotial_2",
+    &[
+        "Jumpad_Activator_First_Island",
+        "PvP_JumpPad_NORMAL(2)",
+        "Ship_part_1(1)",
+        "214_Recover_First_Part_IGC",
+    ],
+)];
+
+/// The placements [`PASSAGES`] lists for the level whose archive is
+/// `level`.
+pub fn passages(level: &str) -> &'static [&'static str] {
+    PASSAGES
+        .iter()
+        .find(|(l, _)| *l == level)
+        .map_or(&[], |(_, p)| p)
 }
 
 /// The VM over `program` with every running placement of `files` added
@@ -4881,6 +4989,51 @@ mod tests {
         assert!(encounter("level_212").is_none());
     }
 
+    /// openspec AS.58: level 214's second fight by name: its controller and
+    /// helper, the Eon hint its controller waits on, the four undead
+    /// Chompies and the two Elf Nears, where island 2's Chompies running the
+    /// same script stay off.
+    #[test]
+    fn level_214s_second_fight_is_listed_by_name() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        for name in [
+            "Setup_002_Controller",
+            "Setup_002_Controller_Helper",
+            "Explain_Elemental",
+            "Enemy_Chompy2_E",
+            "Enemy_Chompy2_F",
+            "Enemy_Chompy2_G",
+            "Enemy_Chompy2_H",
+            "Enemy_Elf_Near_S2(3)",
+            "Enemy_Elf_Near_S2(4)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        assert!(
+            !l214
+                .whitelist
+                .lists("Enemy_Chompy2_E(1)", "C:/x/S2_Enemy_Chompy.ai")
+        );
+    }
+
+    /// openspec AS.59: level 214's way from its first island to its second
+    /// by name, on 214's listing alone and in no encounter (never walked).
+    #[test]
+    fn level_214s_way_to_its_second_island_is_listed_by_name() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        let e = encounter("level_214_tutotial_2").unwrap();
+        for name in passages("level_214_tutotial_2") {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!e.placements.contains(name), "{name} isn't walked");
+        }
+        assert!(passages("level_214_tutotial_2").contains(&"214_Recover_First_Part_IGC"));
+        assert!(passages("level_212").is_empty());
+    }
+
     /// openspec AS.54: a level's first encounter walks its placements that
     /// have movement numbers (its spawners), in the level's own file alone,
     /// and each clone made later of one of its templates walks as it's
@@ -5227,6 +5380,93 @@ mod tests {
             "where its file has it"
         );
         assert_eq!(w.revived, [(grunt, GRUNT)]);
+    }
+
+    /// AS.67: a clone's reset of itself stands it again as it was made: at
+    /// the place it was cloned (`abstractplacement.origin`), its motion
+    /// gone and its template's numbers back, keeping what its spawner gave
+    /// it (its id); the VM sends its script round. Another placement's reset
+    /// of it leaves it where it stands, and one taken off isn't made again.
+    #[test]
+    fn a_clone_resetting_itself_stands_again_where_it_was_cloned() {
+        let (mut w, grunt, _) = world();
+        let at_grunt = OpCall {
+            operands: vec![
+                ("_LHS", Some(Value::Object(GRUNT))),
+                ("_RHS", Some(Value::Entity(grunt))),
+            ],
+            ..call(Class::Spawn, None)
+        };
+        w.op(&at_grunt, &mut |_| 900, &mut NoEngine).unwrap();
+        let made = w.actor(900).unwrap().clone();
+        assert_eq!(made.origin, made.position);
+        {
+            let a = w.actors.get_mut(&900).unwrap();
+            a.id = 7;
+            a.position += Vec3::new(3.0, -1.0, 2.0);
+            a.velocity = Vec3::new(0.0, 0.0, 9.0);
+            a.launched = true;
+            a.scale = [50.0; 3];
+            a.physics.gravity_acceleration = 99.0;
+        }
+        let moved = w.actor(900).unwrap().position;
+        let reset = |by: Handle| OpCall {
+            placement: by,
+            ..call(Class::Reset, Some(Value::Entity(900)))
+        };
+        w.op(&reset(1), &mut |_| 0, &mut NoEngine).unwrap();
+        assert_eq!(w.actor(900).unwrap().position, moved, "another's reset");
+        w.op(&reset(900), &mut |_| 0, &mut NoEngine).unwrap();
+        let a = w.actor(900).unwrap();
+        assert_eq!(a.position, made.origin, "where it was cloned");
+        assert_eq!(a.origin, made.origin);
+        assert_eq!(a.velocity, Vec3::ZERO);
+        assert!(!a.launched);
+        assert_eq!(a.scale, made.scale);
+        assert_eq!(a.physics, made.physics);
+        assert_eq!(a.id, 7, "its spawner's id kept");
+        assert_eq!(a.template, Some(GRUNT));
+        assert!(!a.removed);
+        assert!(w.revived.is_empty(), "the VM restarts it, not the embedder");
+        w.op(
+            &call(Class::Remove, Some(Value::Entity(900))),
+            &mut |_| 0,
+            &mut NoEngine,
+        )
+        .unwrap();
+        w.op(&reset(900), &mut |_| 0, &mut NoEngine).unwrap();
+        assert!(w.removed(900), "one taken off isn't made again");
+    }
+
+    /// The AS.67 review: a file placement's reset of itself stands it again
+    /// as its file has it (its place, its buffer), its motion gone, and one
+    /// the engine walks still walks, its body to be made again. Nothing is
+    /// listed for the embedder to run again: the VM sends its script round.
+    #[test]
+    fn a_file_placement_resetting_itself_stands_as_its_file_has_it_and_still_walks() {
+        let (mut w, grunt, _) = world();
+        let made = w.actor(grunt).unwrap().clone();
+        assert!(w.walk(grunt));
+        {
+            let a = w.actors.get_mut(&grunt).unwrap();
+            a.position += Vec3::new(4.0, 0.5, -2.0);
+            a.velocity = Vec3::new(1.0, 0.0, 0.0);
+            a.buffer = 0.0;
+        }
+        let by_itself = OpCall {
+            placement: grunt,
+            ..call(Class::Reset, Some(Value::Entity(grunt)))
+        };
+        w.op(&by_itself, &mut |_| 0, &mut NoEngine).unwrap();
+        let a = w.actor(grunt).unwrap();
+        assert_eq!(a.position, made.position, "its file's place");
+        assert_eq!(a.velocity, Vec3::ZERO);
+        assert_eq!(a.buffer, 12.5, "its file's buffer");
+        assert!(
+            a.walker.as_ref().is_some_and(|k| k.body.is_none()),
+            "still walked, its body made again"
+        );
+        assert!(w.revived.is_empty());
     }
 
     /// The as-214-walk review: a scripted template's clone joins the run

@@ -6,7 +6,7 @@
 //! for a placement that never started or stopped. AR.22: one that started
 //! going to sleep runs its SHUTDOWN the same way and starts again awake.
 
-use super::init::{Engine, actor, behaviour, program_and_objects};
+use super::init::{Engine, actor, behaviour, program_and_objects, script};
 use super::*;
 
 /// A script whose SHUTDOWN runs `shutdown`, PRESCRIPT's own ops after its
@@ -566,4 +566,208 @@ fn a_suspended_placement_holds_still_and_goes_on_where_it_was() {
     vm.step(&mut host).unwrap();
     assert_eq!(vm.local(id, "starts"), Some(Value::Int(1)), "not again");
     assert_eq!(vm.local(id, "count"), Some(Value::Int(2)));
+}
+
+/// openspec AS.67: a placement's `reset` of itself sends it round from its
+/// STARTUP. Bomb adds to a local it never sets and resets itself at 3 (level
+/// 214's bomb after its burst): its SHUTDOWN runs once at that tick's end,
+/// then it rejoins the list's end and ticks there that same step, behind
+/// Other, its STARTUP again (`at start` reads Other's count, 0 the first
+/// time, 3 the second), its local made again at 0 (1 after its tick, not
+/// 4, where a kept one would reset it again at once), its timer one tick's.
+/// A reset of another placement (Resetter's of Other, each tick) leaves it
+/// running as it was, its local growing and its STARTUP once, and sends
+/// the resetter round no more than it.
+#[test]
+fn a_placement_resetting_itself_goes_round_from_its_startup() {
+    let mut other_obj = None;
+    let (p, obj) = program_and_objects(|w| {
+        let other = actor(w);
+        other_obj = Some(other);
+        let bounces = var(w, "bounces");
+        let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+        let (start, _) = w.open(Class::StartUp, "STARTUP");
+        w.inc(&[El::Member("test", "starts")]);
+        let seq = w.rhs(INT, &[El::Member("test", "seq")]);
+        w.set(&[El::Member("test", "at start")], seq);
+        w.end_block(start);
+        let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+        w.inc(&[El::Member("test", "shuts")]);
+        w.end_block(shut);
+        let (section, _) = w.open(Class::MacroSection, "MACROS");
+        w.end_block(section);
+        w.end_block(pre);
+        behaviour(w, |w| {
+            w.inc(&[El::Local(bounces)]);
+            let three = w.literal(INT, 3, false);
+            let c = w.check(&[El::Local(bounces)], 2, three);
+            reset(w, &[El::Member("optoplevelbehavior", "my")]);
+            w.end_block(c);
+        });
+        w.end("C:/tfb/Synthetic/Bomb.ai");
+        let n = var(w, "n");
+        script(
+            w,
+            "C:/tfb/Synthetic/Other.ai",
+            |w| {
+                w.inc(&[El::Member("test", "other starts")]);
+            },
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    w.inc(&[El::Local(n)]);
+                    w.inc(&[El::Member("test", "seq")]);
+                });
+            },
+        );
+        script(
+            w,
+            "C:/tfb/Synthetic/Resetter.ai",
+            |w| {
+                w.inc(&[El::Member("test", "resetter starts")]);
+            },
+            |_| {},
+            |w| {
+                behaviour(w, |w| reset(w, &[El::Local(other)]));
+            },
+        );
+    });
+    let cells = [
+        "starts",
+        "at start",
+        "shuts",
+        "seq",
+        "other starts",
+        "resetter starts",
+    ];
+    let mut vm = Vm::new(p, config(Mode::Strict, &cells));
+    let bomb = vm.add(0x10, "Bomb", 0);
+    let other = vm.add_at(0x20, "Other", 1, obj.at(other_obj.unwrap()));
+    vm.add(0x30, "Resetter", 2);
+    let mut host = Engine::default();
+    for _ in 0..2 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.local(bomb, "bounces"), Some(Value::Int(2)));
+    assert_eq!(cell(&vm, "at start"), Some(Value::Int(0)), "ahead of Other");
+    let r = vm.step(&mut host).unwrap();
+    assert_eq!(r.ticked, 4, "Bomb, Other, Resetter, then Bomb again");
+    assert_eq!(cell(&vm, "shuts"), Some(Value::Int(1)), "its SHUTDOWN once");
+    assert_eq!(
+        cell(&vm, "starts"),
+        Some(Value::Int(2)),
+        "its STARTUP again"
+    );
+    assert_eq!(
+        cell(&vm, "at start"),
+        Some(Value::Int(3)),
+        "behind Other, this step"
+    );
+    assert_eq!(vm.local(bomb, "bounces"), Some(Value::Int(1)), "made again");
+    assert_eq!(vm.active_seconds(bomb), Some(TICK_SECONDS), "from 0");
+    assert_eq!(vm.behaviour(bomb), Some("idle"));
+    assert!(!vm.removed(bomb));
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(bomb, "bounces"), Some(Value::Int(2)));
+    assert_eq!(cell(&vm, "starts"), Some(Value::Int(2)));
+    let r = vm.step(&mut host).unwrap();
+    assert_eq!(r.ticked, 4, "round again at 3");
+    assert_eq!(cell(&vm, "starts"), Some(Value::Int(3)));
+    assert_eq!(cell(&vm, "shuts"), Some(Value::Int(2)));
+    assert_eq!(vm.local(bomb, "bounces"), Some(Value::Int(1)));
+    assert_eq!(vm.local(other, "n"), Some(Value::Int(5)), "Other runs on");
+    assert_eq!(cell(&vm, "other starts"), Some(Value::Int(1)));
+    assert_eq!(
+        cell(&vm, "resetter starts"),
+        Some(Value::Int(1)),
+        "nor is the one resetting it"
+    );
+}
+
+/// The AS.67 review: a placement resetting itself in its STARTUP can't spin
+/// a step. Looper's STARTUP counts and resets it; its SHUTDOWN runs at that
+/// tick's end, before any behaviour, and it goes round to the list's end:
+/// the step ticks it there once more (two STARTUPs in its first step), and
+/// sent again after that turn it waits for the next step, then goes round
+/// once a step, its behaviour never reached. Other, behind it, ticks once a
+/// step throughout, and every step returns.
+#[test]
+fn a_placement_resetting_itself_in_its_startup_goes_round_once_a_step() {
+    let p = program(|w| {
+        let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+        let (start, _) = w.open(Class::StartUp, "STARTUP");
+        w.inc(&[El::Member("test", "starts")]);
+        reset(w, &[El::Member("optoplevelbehavior", "my")]);
+        w.end_block(start);
+        let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+        w.inc(&[El::Member("test", "shuts")]);
+        w.end_block(shut);
+        let (section, _) = w.open(Class::MacroSection, "MACROS");
+        w.end_block(section);
+        w.end_block(pre);
+        behaviour(w, |w| {
+            w.inc(&[El::Member("test", "behaved")]);
+        });
+        w.end("C:/tfb/Synthetic/Looper.ai");
+        script(
+            w,
+            "C:/tfb/Synthetic/Other.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    w.inc(&[El::Member("test", "other")]);
+                })
+            },
+        );
+    });
+    let cells = ["starts", "shuts", "behaved", "other"];
+    let mut vm = Vm::new(p, config(Mode::Strict, &cells));
+    let looper = vm.add(0x10, "Looper", 0);
+    vm.add(0x20, "Other", 1);
+    let mut host = Engine::default();
+    let r = vm.step(&mut host).unwrap();
+    assert_eq!(r.ticked, 3, "Looper, Other, Looper again");
+    assert_eq!(cell(&vm, "starts"), Some(Value::Int(2)));
+    assert_eq!(cell(&vm, "shuts"), Some(Value::Int(2)));
+    for n in 3..=6 {
+        let r = vm.step(&mut host).unwrap();
+        assert_eq!(r.ticked, 2, "Other, then Looper off the rejoin list");
+        assert_eq!(cell(&vm, "starts"), Some(Value::Int(n)));
+        assert_eq!(cell(&vm, "shuts"), Some(Value::Int(n)));
+    }
+    assert_eq!(cell(&vm, "behaved"), None, "its behaviour never reached");
+    assert_eq!(cell(&vm, "other"), Some(Value::Int(5)));
+    assert!(!vm.removed(looper));
+}
+
+/// The AS.67 review: a script with no SHUTDOWN goes round as well. Plain
+/// resets itself from its behaviour every tick: its first tick runs its
+/// STARTUP and behaviour, round it goes and ticks again behind (STARTUP and
+/// behaviour once more), and sent again it waits; each step after, one
+/// round.
+#[test]
+fn a_placement_with_no_shutdown_resetting_itself_goes_round_too() {
+    let p = program(|w| {
+        let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+        let (start, _) = w.open(Class::StartUp, "STARTUP");
+        w.inc(&[El::Member("test", "starts")]);
+        w.end_block(start);
+        let (section, _) = w.open(Class::MacroSection, "MACROS");
+        w.end_block(section);
+        w.end_block(pre);
+        behaviour(w, |w| {
+            w.inc(&[El::Member("test", "behaved")]);
+            reset(w, &[El::Member("optoplevelbehavior", "my")]);
+        });
+        w.end("C:/tfb/Synthetic/Plain.ai");
+    });
+    let mut vm = Vm::new(p, config(Mode::Strict, &["starts", "behaved"]));
+    vm.add(0x10, "Plain", 0);
+    let mut host = Engine::default();
+    for n in 1..=4 {
+        vm.step(&mut host).unwrap();
+        assert_eq!(cell(&vm, "starts"), Some(Value::Int(n + 1)), "round at {n}");
+        assert_eq!(cell(&vm, "behaved"), Some(Value::Int(n + 1)));
+    }
 }

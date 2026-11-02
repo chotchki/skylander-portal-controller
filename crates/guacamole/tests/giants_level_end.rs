@@ -392,7 +392,26 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .iter()
         .map(|n| run.placed(n).0)
         .collect();
-    assert_eq!(run.world.creatures(), spawners, "the spawners walk");
+    // The spawners walk; the second fight's Chompies and elves walk from the
+    // start too (openspec AS.58), none of them a clone, and nothing else.
+    let placed = run.world.creatures();
+    let mut walking: Vec<String> = placed.iter().map(|h| run.world.name(*h)).collect();
+    walking.sort_unstable();
+    assert_eq!(
+        walking,
+        [
+            "Enemy_Chompy2_E",
+            "Enemy_Chompy2_F",
+            "Enemy_Chompy2_G",
+            "Enemy_Chompy2_H",
+            "Enemy_Chompy_Spawner(1)",
+            "Enemy_Chompy_Spawner(5)",
+            "Enemy_Elf_Near_S2(3)",
+            "Enemy_Elf_Near_S2(4)",
+        ],
+        "the spawners and the second fight's own walk"
+    );
+    assert!(spawners.iter().all(|s| placed.contains(s)));
     let controller = run.placement("Setup_001_Controller");
     // His arrival and the intro's hand-over played out, as the TV's dev
     // entry settles him (openspec AS.47).
@@ -421,7 +440,7 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         };
         stops.extend(run.step_play().unwrap());
         for h in run.world.creatures() {
-            if spawners.contains(&h) {
+            if placed.contains(&h) {
                 continue;
             }
             let gone = run.world.actor(h).is_none_or(|a| a.removed)

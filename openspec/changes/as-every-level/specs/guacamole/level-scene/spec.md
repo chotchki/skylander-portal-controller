@@ -59,3 +59,24 @@ Level 214's intro SHALL hold until a hero's minion is in, be skipped a frame in,
 #### Scenario: Chapter 1's end into level 214
 - **WHEN** chapter 1's end takes the hero into level 214
 - **THEN** he stands on the ship's drawn deck, one engine on it, the dock's props back around him
+
+### Requirement: Level 214's bomb comes back to its spawner
+A level 214 bomb SHALL stand again on the spawner that cloned it within 1.3 s of its burst, waiting to be taken, nothing left at the blast and its burst sounding once, and taken again it SHALL open the next castle wall, so one spawner's bombs open the wall before the pods, the wall past them and the wall before Eon's elemental hint in turn.
+
+#### Scenario: The wall past the pods
+- **WHEN** the first bomb has opened the wall before the pods
+- **THEN** the bomb is back on its spawner, and carried to the wall past the pods and thrown it opens that wall too
+
+### Requirement: Level 214's second fight
+On level 214 Setup_002's controller SHALL wait at its first trigger for Eon's elemental hint, which plays its line as the hero walks into it, holding him, and goes 8.7 s after the line starts (77 steps with no recording); at its second trigger its four undead Chompies SHALL run in and fight (beaten in 3.6 s on the Mac); once a bomb opens the elves' wall, the two Elf Nears SHALL stop sparring, play their scene and fight, nothing stopped.
+
+#### Scenario: Past the wall beyond the pods
+- **WHEN** the hero walks past the opened walls into Eon's hint and on to the second trigger
+- **THEN** the hint's line plays, the four Chompies run in, and beaten they pay his figure experience
+
+### Requirement: Level 214's second island after the sail
+Once level 214's sail is done or skipped, what its cutscene took off SHALL stand again as its file has it: the second island's ship the hero is set down on, the island's NPCs and the ship's doors and hatches, since a reset of a set of placements resets each one and keeps the set.
+
+#### Scenario: The first ship part taken
+- **WHEN** the hero takes the first ship part and the sail is skipped
+- **THEN** he stands on the second island's ship at (-383.18, -12.58, 714.41), the ship, `Flynn_Island_2` and `Door_(1)` standing again

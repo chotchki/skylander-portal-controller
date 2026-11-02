@@ -254,6 +254,9 @@ struct Placement {
     /// last tick still to come at its place in the walk, then its started
     /// flag cleared and its SHUTDOWN run.
     last_tick: bool,
+    /// Its reset of itself pending (openspec AS.67): round from its
+    /// STARTUP once its tick, and its SHUTDOWN with it, is done.
+    restart: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -946,6 +949,7 @@ impl Vm {
             active: 0.0,
             suspended: false,
             last_tick: false,
+            restart: false,
         });
         let id = (self.placements.len() - 1) as PlacementId;
         self.order.push(id);
@@ -1206,6 +1210,42 @@ impl Vm {
         self.rejoin.push(id);
         self.placements[id as usize].active = 0.0;
         true
+    }
+
+    /// Placement `id`'s reset of itself (crate docs, The tick; openspec
+    /// AS.67): its SHUTDOWN pending when it has one and has started, and
+    /// round from its STARTUP once its tick is done ([`Vm::restart`]). One
+    /// taken off, stopped, inert or held is left as it is.
+    fn go_round(&mut self, id: PlacementId) {
+        let has_shutdown = self
+            .program
+            .scripts
+            .get(self.placements[id as usize].script as usize)
+            .is_some_and(|s| s.shutdown.is_some());
+        let p = &mut self.placements[id as usize];
+        if p.removed || p.stopped.is_some() || p.inert || p.held {
+            return;
+        }
+        p.restart = true;
+        if p.started && has_shutdown {
+            p.shutdown = true;
+        }
+    }
+
+    /// A placement its reset of itself sent round, its SHUTDOWN behind it:
+    /// started flag and behaviour cleared, its locals gone, its list not
+    /// yet made, its timer at 0, and back on the list's end as
+    /// [`Vm::requeue`] puts it, to run STARTUP there.
+    fn restart(&mut self, id: PlacementId) {
+        let p = &mut self.placements[id as usize];
+        p.restart = false;
+        p.started = false;
+        p.behaviour = None;
+        p.locals.clear();
+        p.listed = false;
+        p.active = 0.0;
+        self.unlist(id);
+        self.rejoin.push(id);
     }
 
     /// Whether the placement is an activator.
@@ -1939,6 +1979,13 @@ impl Vm {
         let out = self.finish(result);
         if let Some(p) = self.placements.get_mut(id as usize) {
             p.set_up |= p.started && p.stopped.is_none() && out.as_ref().is_ok_and(Option::is_none);
+            // Its reset of itself, its SHUTDOWN run (openspec AS.67); one
+            // taken off or stopped since goes no further.
+            if p.restart && (p.removed || p.stopped.is_some()) {
+                p.restart = false;
+            } else if p.restart && !p.shutdown {
+                self.restart(id);
+            }
         }
         out
     }
@@ -4375,37 +4422,20 @@ impl Vm {
             // A reference resets what it names, the reference kept.
             Spot::Cell(c) if self.cells[c as usize].kind == CellKind::Reference => {
                 let named = self.cells[c as usize].value;
-                // A number it names (a run-time cell, or a file variable's)
-                // goes back as a reset of the variable itself puts it.
-                let number = match named {
-                    Value::Cell(v) if self.cells[v as usize].kind == CellKind::Value => {
-                        match self.cells[v as usize].value {
-                            // A set's element: the cell it names.
-                            Value::Cell(_) => None,
-                            _ => Some(v),
-                        }
-                    }
-                    Value::Object(o) => match self.program.global_of(o) {
-                        Some(g)
-                            if matches!(self.program.globals[g as usize].1, Global::Number(_)) =>
-                        {
-                            Some(self.global_cell(g)?)
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if let Some(v) = number {
-                    self.reset_cell(v, 0);
-                    return Ok(());
-                }
-                match self.peek(named) {
-                    Value::Null => Ok(()),
-                    Value::Cell(v) => {
-                        self.reset_cell(v, 0);
-                        Ok(())
-                    }
-                    other => self.reset(Spot::Const(other), host),
+                self.reset_named(named, host, 0)
+            }
+            // A set, or a set reference, resets what it holds, the set and
+            // the reference kept (crate docs; openspec AS.77).
+            Spot::Cell(c)
+                if matches!(
+                    self.cells[c as usize].kind,
+                    CellKind::Set | CellKind::SetReference
+                ) =>
+            {
+                let held = self.cells[c as usize].value;
+                match self.materialize(held) {
+                    Value::Set(s) => self.reset_members(s, host, 0),
+                    _ => Ok(()),
                 }
             }
             Spot::Cell(c) => {
@@ -4450,8 +4480,8 @@ impl Vm {
                 self.placements[id as usize].suspended = false;
                 Ok(())
             }
-            // A structure or set a reference names, back to its defaults
-            // as a variable holding it would be.
+            // A structure a reference names, back to its defaults as a
+            // variable holding it would be; a set, what it holds reset.
             Spot::Const(Value::Struct(st)) => {
                 let fields: Vec<u32> = self.structs[st as usize]
                     .fields
@@ -4463,10 +4493,7 @@ impl Vm {
                 }
                 Ok(())
             }
-            Spot::Const(Value::Set(set)) => {
-                self.sets[set as usize].elems.clear();
-                Ok(())
-            }
+            Spot::Const(Value::Set(set)) => self.reset_members(set, host, 0),
             // A placement (or any engine object) reset whole: back to how
             // it was loaded, which is the engine's to do.
             Spot::Const(v @ (Value::Object(_) | Value::Entity(_))) => {
@@ -4479,13 +4506,85 @@ impl Vm {
                     sets: Vec::new(),
                 };
                 match host.op(&call) {
-                    Ok(_) => Ok(()),
+                    Ok(_) => {
+                        // Its reset of itself sends it round (crate docs,
+                        // The tick; openspec AS.67).
+                        if let Some(id) = self.run.placement
+                            && self.canon(v) == Value::Entity(self.my_handle())
+                        {
+                            self.go_round(id);
+                        }
+                        Ok(())
+                    }
                     Err(HostFault::Nothing) => Err(Fault::Nothing),
                     Err(HostFault::Unmodelled) => Err(Fault::Op(Class::Reset)),
                 }
             }
             other => unsupported(format!("reset of {other:?}")),
         }
+    }
+
+    /// What a reference, or a set's element (`depth` past 0), names, reset:
+    /// a number (a run-time cell, or a file variable's) as a reset of the
+    /// variable itself puts it, a structure's fields back, a set's own
+    /// members, a placement by the host. A number a set holds as itself has
+    /// nothing to put back.
+    fn reset_named(&mut self, named: Value, host: &mut dyn Host, depth: u32) -> Result<(), Fault> {
+        let number = match named {
+            Value::Cell(v) if self.cells[v as usize].kind == CellKind::Value => {
+                match self.cells[v as usize].value {
+                    // A set's element: the cell it names.
+                    Value::Cell(_) => None,
+                    _ => Some(v),
+                }
+            }
+            Value::Object(o) => match self.program.global_of(o) {
+                Some(g) if matches!(self.program.globals[g as usize].1, Global::Number(_)) => {
+                    Some(self.global_cell(g)?)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(v) = number {
+            self.reset_cell(v, 0);
+            return Ok(());
+        }
+        match self.materialize(named) {
+            Value::Null => Ok(()),
+            Value::Cell(v) => {
+                self.reset_cell(v, 0);
+                Ok(())
+            }
+            Value::Set(s) => self.reset_members(s, host, depth + 1),
+            v @ (Value::Struct(_) | Value::Object(_) | Value::Entity(_)) => {
+                self.reset(Spot::Const(v), host)
+            }
+            _ if depth > 0 => Ok(()),
+            other => self.reset(Spot::Const(other), host),
+        }
+    }
+
+    /// A set's reset (crate docs; openspec AS.77): each thing it holds
+    /// reset once as a reset of that thing would be ([`Vm::reset_named`]),
+    /// in its order, the set kept; one that reads nothing passes.
+    fn reset_members(&mut self, s: u32, host: &mut dyn Host, depth: u32) -> Result<(), Fault> {
+        if depth > MAX_DEPTH {
+            return Ok(());
+        }
+        let held = self.sets[s as usize].elems.clone();
+        let mut done: Vec<Value> = Vec::with_capacity(held.len());
+        for e in held {
+            if done.contains(&e) {
+                continue;
+            }
+            done.push(e);
+            match self.reset_named(e, host, depth + 1) {
+                Ok(()) | Err(Fault::Nothing) => {}
+                Err(f) => return Err(f),
+            }
+        }
+        Ok(())
     }
 
     /// A value read: an expression computed, a literal, or a path read with

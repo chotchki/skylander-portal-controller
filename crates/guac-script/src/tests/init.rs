@@ -1441,9 +1441,13 @@ fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
 #[test]
 fn a_reset_puts_a_structure_back_and_asks_the_host_for_a_placement() {
     let mut a = None;
+    let mut t = None;
     let (p, obj) = program_and_objects(|w| {
         let me = actor(w);
         a = Some(me);
+        // Another placement: its own reset would send it round (AS.67).
+        let them = actor(w);
+        t = Some(them);
         let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
         let (sp, def) = w.open(Class::DefineStructure, "Box");
         let v = w.variable("v", "ValueInfo", Some(INT));
@@ -1462,20 +1466,91 @@ fn a_reset_puts_a_structure_back_and_asks_the_host_for_a_placement() {
                 w.set(&[El::Local(b), El::Local(v)], five);
                 setref(w, &[El::Local(r)], &[El::Local(b)]);
                 reset(w, &[El::Local(r)]);
-                reset(w, &[El::Local(me)]);
+                reset(w, &[El::Local(them)]);
             },
         );
     });
     let me = obj.at(a.unwrap());
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let id = vm.add_at(HANDLE, "Me", 1, me);
+    vm.name_object(obj.at(t.unwrap()), 0x77);
     let mut host = Engine::default();
     vm.tick(id, &mut host).unwrap();
     let b = vm.local(id, "b").unwrap();
     assert_eq!(vm.field(b, "v"), Some(Value::Int(0)));
     assert_eq!(
         host.ops,
-        vec![(Class::Reset, vec![Some(Value::Entity(HANDLE))])]
+        vec![(Class::Reset, vec![Some(Value::Entity(0x77))])]
+    );
+}
+
+/// openspec AS.77: a reset of a set resets each thing it holds, once, as a
+/// reset of that thing would (a number variable back to 0, a placement by
+/// the host, held twice or not), and keeps the set; through a set
+/// reference the same, the reference kept. Combat's `reset on new state` is a set of six number
+/// variables reset at each state change; a cutscene's `deactivated actors`
+/// the placements its STARTUP took off, reset by its SHUTDOWN.
+#[test]
+fn a_reset_of_a_set_resets_what_it_holds_and_keeps_it() {
+    let mut a = None;
+    let mut t = None;
+    let (p, obj) = program_and_objects(|w| {
+        let me = actor(w);
+        a = Some(me);
+        let them = actor(w);
+        t = Some(them);
+        let held = w.variable("held", "ScriptSet", None);
+        let via = w.variable("via", "ScriptSetReference", None);
+        let (flag, kept, after) = (var(w, "flag"), var(w, "kept"), var(w, "after"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let five = w.int(5);
+                w.set(&[El::Local(flag)], five);
+                let five = w.int(5);
+                w.set(&[El::Local(kept)], five);
+                add_to(w, held, &[El::Local(flag)]);
+                add_to(w, held, &[El::Local(them)]);
+                // Appended again (code 4): held twice, reset once.
+                let lhs = w.stack(StackClass::Set, &[El::Local(held)]);
+                let rhs = w.group(&[El::Local(them)], None);
+                let o = w.op(Class::ChangeMembership, "set [set]||to");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, 4);
+                w.refer(o, 0x24, rhs);
+                w.push(o);
+                reset(w, &[El::Local(held)]);
+                let f = w.rhs(INT, &[El::Local(flag)]);
+                w.set(&[El::Local(after)], f);
+                setref(w, &[El::Local(via)], &[El::Local(held)]);
+                let seven = w.int(7);
+                w.set(&[El::Local(flag)], seven);
+                reset(w, &[El::Local(via)]);
+            },
+        );
+    });
+    let me = obj.at(a.unwrap());
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add_at(HANDLE, "Me", 0, me);
+    vm.name_object(obj.at(t.unwrap()), 0x77);
+    let mut host = Engine::default();
+    vm.tick(id, &mut host).unwrap();
+    assert_eq!(
+        vm.local(id, "after"),
+        Some(Value::Int(0)),
+        "the set's reset"
+    );
+    assert_eq!(vm.local(id, "flag"), Some(Value::Int(0)), "the reference's");
+    assert_eq!(vm.local(id, "kept"), Some(Value::Int(5)), "not in the set");
+    let held = vm.local(id, "held").unwrap();
+    assert_eq!(vm.set(held).map(<[Value]>::len), Some(3), "the set kept");
+    assert_eq!(vm.local(id, "via"), Some(held), "the reference kept");
+    let them = Value::Entity(0x77);
+    assert_eq!(
+        host.ops,
+        vec![(Class::Reset, vec![Some(them)]); 2],
+        "the placement reset by the host, once a reset"
     );
 }
 

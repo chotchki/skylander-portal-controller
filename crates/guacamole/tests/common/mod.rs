@@ -814,6 +814,9 @@ pub struct Setup {
     /// Scripts listed past the TV's listing, by file name (a probe's way to
     /// run what the TV doesn't yet).
     pub scripts: &'static [&'static str],
+    /// Placements listed past the TV's listing, by name (the same, for a
+    /// script others share that only these should run).
+    pub placements: &'static [&'static str],
 }
 
 /// The interface records of the script part's archives (`ARCHIVES`, by
@@ -989,8 +992,14 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     if setup.interface {
         config = guacamole::interface_host::with_interface(config);
     }
-    if let guac_script::Whitelist::Only { scripts, .. } = &mut config.whitelist {
+    if let guac_script::Whitelist::Only {
+        scripts,
+        placements,
+        ..
+    } = &mut config.whitelist
+    {
         scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
+        placements.extend(setup.placements.iter().map(|s| (*s).to_owned()));
     }
     let found = discovery(&mut config);
     let mut vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
