@@ -236,6 +236,15 @@ impl LevelChoice {
     pub(crate) fn changing(&self) -> bool {
         self.waiting.is_some() || self.running.is_some()
     }
+
+    /// `name` asked and waiting, as an ask leaves it.
+    #[cfg(test)]
+    pub(crate) fn waiting_for_tests(name: &str) -> Self {
+        Self {
+            waiting: Some(name.to_owned()),
+            ..Default::default()
+        }
+    }
 }
 
 struct Running {
