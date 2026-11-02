@@ -74,6 +74,13 @@ Once both elves are beaten, level 214's first jump pad SHALL launch a hero stand
 - **WHEN** the hero walks onto the pad holding the stick toward the first ship part
 - **THEN** he flies onto its ledge, and a press takes the part and the sail sets him on the second island's ship
 
+### Requirement: Level 214's second island's first fight
+On level 214's second island, the hero walking off the ship to Setup_003's trigger SHALL have its controller wake its Tree Rex and four undead Chompies; the Tree Rex SHALL eat one Chompy, and the rest and the Tree Rex SHALL be beaten by his attacks, nothing stopped.
+
+#### Scenario: Off the second island's ship
+- **WHEN** the hero walks off the ship to Setup_003's trigger and fights
+- **THEN** the Tree Rex eats a Chompy, and the other three and the Tree Rex go down
+
 ### Requirement: Level 214's second island after the sail
 Once level 214's sail is done or skipped, what its cutscene took off SHALL stand again as its file has it: the second island's ship the hero is set down on, the island's NPCs and the ship's doors and hatches, since a reset of a set of placements resets each one and keeps the set.
 
