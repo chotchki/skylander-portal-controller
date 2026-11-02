@@ -81,8 +81,11 @@ fn tags_are_found_from_the_start_and_declared_locals_after_startup() {
     );
 }
 
-/// A placement asleep isn't ticked and keeps its state; woken, it carries
-/// on where it was, its STARTUP run once.
+/// A placement asleep isn't ticked and keeps its locals. One asleep from
+/// its start never ticks; one that started ticks once more the step it goes
+/// to sleep, then its shutdown runs (openspec AR.22), so woken it runs
+/// STARTUP again; one put to sleep and woken between two steps never slept
+/// and carries on started.
 #[test]
 fn an_asleep_placement_waits_and_wakes_where_it_was() {
     let p = program(|w| {
@@ -111,11 +114,21 @@ fn an_asleep_placement_waits_and_wakes_where_it_was() {
     vm.step(&mut host).unwrap();
     vm.step(&mut host).unwrap();
     vm.set_asleep(HANDLE, true);
-    vm.step(&mut host).unwrap();
     vm.set_asleep(HANDLE, false);
     vm.step(&mut host).unwrap();
-    assert_eq!(vm.local(id, "starts"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "starts"), Some(Value::Int(1)), "never slept");
     assert_eq!(vm.local(id, "ticks"), Some(Value::Int(3)));
+    vm.set_asleep(HANDLE, true);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(id, "ticks"), Some(Value::Int(4)), "its last tick");
+    assert_eq!(vm.behaviour(id), None, "its shutdown ran");
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(id, "ticks"), Some(Value::Int(4)), "not ticked");
+    vm.set_asleep(HANDLE, false);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(id, "starts"), Some(Value::Int(2)), "started again");
+    assert_eq!(vm.local(id, "ticks"), Some(Value::Int(5)), "where it was");
+    assert_eq!(vm.behaviour(id), Some("idle"));
 }
 
 /// A structure's number set from outside is what scripts read next (the
@@ -193,19 +206,25 @@ fn a_placement_woken_ticks_after_those_already_awake() {
     );
     vm.set_asleep(0x20, true);
     vm.step(&mut host).unwrap();
-    assert_eq!(seen(&vm), [3, 1, 4].map(|n| Some(Value::Int(n))));
+    assert_eq!(
+        seen(&vm),
+        [3, 4, 5].map(|n| Some(Value::Int(n))),
+        "B's last tick, at its place (openspec AR.22)"
+    );
+    vm.step(&mut host).unwrap();
+    assert_eq!(seen(&vm), [6, 4, 7].map(|n| Some(Value::Int(n))));
     vm.set_asleep(0x20, false);
     vm.step(&mut host).unwrap();
     assert_eq!(
         seen(&vm),
-        [5, 7, 6].map(|n| Some(Value::Int(n))),
+        [8, 10, 9].map(|n| Some(Value::Int(n))),
         "B woken last"
     );
     vm.set_asleep(0x10, false);
     vm.step(&mut host).unwrap();
     assert_eq!(
         seen(&vm),
-        [8, 10, 9].map(|n| Some(Value::Int(n))),
+        [11, 13, 12].map(|n| Some(Value::Int(n))),
         "A kept awake"
     );
 }

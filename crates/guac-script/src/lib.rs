@@ -107,7 +107,24 @@
 //! the 56 that woke in one frame 13.18 s before it in that order too
 //! (the other two at their end, an earlier frame's doing), behind the 29
 //! awake from the load; the embedder adds a file's placements in that
-//! order). A placement a tick spawns with a script
+//! order). One that has started goes to sleep through the shutdown queue
+//! (openspec AR.22): the step's walk still ticks it once at its place, its
+//! seconds counted, then the queue, once the walk is done, clears its
+//! started flag and runs its SHUTDOWN as a taken-off placement's (below),
+//! if its script has one; woken, its `system.script timer` starts from 0
+//! and it runs STARTUP again. One never started, held, inert, taken off or
+//! stopped gets none of that, and one woken before the step's walk never
+//! slept: it ticks on started, its timer kept. The recordings settle it:
+//! the oracle's census has the first combat watcher, whose own write of an
+//! activation range of 0 takes it to sleep, started and `Watching` at one
+//! read and neither 90 flips on, its SHUTDOWN's stinger the music by the
+//! read after (AR.16); in AH.59's and AH.195's scheduler reads no asleep
+//! placement is ever started, the 17 that went to sleep started each had
+//! that frame's time added and the 9 that went unstarted none, and the 6
+//! woken again each restarted its timer at one frame's. AH.59's decompile
+//! reads the same way (an aid): the state-change handler queues a started
+//! sleeper, and the tick runs a started placement whatever its state. A
+//! placement a tick spawns with a script
 //! of its own ([`Host::adopt`]) joins the end and ticks that same tick:
 //! AH.54's recordings list the eruption's first wave of lava at the
 //! eruption's own first record, which its first tick spawns. It joins at

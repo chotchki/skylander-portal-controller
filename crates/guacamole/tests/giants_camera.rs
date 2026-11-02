@@ -1696,19 +1696,22 @@ fn the_rock_slides_three_waves_on_the_corridor_walks() {
         // Each VM rock's fall starts an `x` wave two records on, or its
         // call (the step after the fall shows) comes inside one at the new
         // wave's peak and leaves it running, or the next rock falls a record
-        // later and its call restarts the axis before this one's wave has
-        // first moved (`Game - Shake Cam` restarts an axis below 2.5 times
-        // the magnitude), so the wave is the later fall's. The last came
-        // with AH.195's order, which changed every draw of the VM's own from
-        // the first step on: on AG.13's `W-01` the activator's two rocks now
-        // fall at records 411 and 412, the wave from 414.
+        // or two later and its call restarts the axis before this one's wave
+        // has first moved (`Game - Shake Cam` restarts an axis below 2.5
+        // times the magnitude), so the wave is the later fall's. The first
+        // came with AH.195's order, which changed every draw of the VM's own
+        // from the first step on: on AG.13's `W-01` the activator's two rocks
+        // fell at records 411 and 412, the wave from 414; the second with
+        // AR.16's music rolls, which moved the draws again: 412 and 414, the
+        // wave from 416 (openspec AR.26).
         for &f in vm_falls {
             let k = f + WAVE_AFTER_FALL;
             assert!(
                 vm_starts.contains(&k)
                     || shake_x[f + 1].abs() + 1e-4 >= x_keys[0]
-                    || vm_falls.contains(&(f + 1)) && vm_starts.contains(&(k + 1)),
-                "{}: the fall at {f}: x starts {vm_starts:?}",
+                    || (1..=WAVE_AFTER_FALL)
+                        .any(|g| vm_falls.contains(&(f + g)) && vm_starts.contains(&(k + g))),
+                "{}: the fall at {f} (falls {vm_falls:?}): x starts {vm_starts:?}",
                 r.name
             );
         }

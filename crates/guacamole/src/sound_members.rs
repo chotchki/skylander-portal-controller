@@ -149,15 +149,40 @@ impl ScriptWorld {
     }
 
     /// Sequence `i` started again from its start (`start_again`): a sound's
-    /// is a new play from now.
+    /// is a new play from now, one started before the book held its sound
+    /// given the recording's length and looping first.
     pub(crate) fn sound_restarted(&mut self, i: u32) {
         let Some(Value::Object(o)) = self.sequences.get(i as usize).map(|s| s.template) else {
             return;
         };
         if let Found::Playable(id) = self.sound_lookup(o) {
             self.end_play(i, Ended::Stopped);
+            self.fit_to_recording(i, o, &id);
             self.begin_play(i, id);
         }
+    }
+
+    /// Sequence `i`, started on sound info `o` while the book lacked it (no
+    /// length: it played as any other object, done at its first advance),
+    /// given its recording's length and the sound's looping and restart, as
+    /// a start now would give them; a sequence with a length keeps it.
+    fn fit_to_recording(&mut self, i: u32, o: Obj, id: &SoundId) {
+        let Some(book) = self.sounds.clone() else {
+            return;
+        };
+        let Lookup::Playable(p) = book.lookup(&id.stem, id.object) else {
+            return;
+        };
+        let params = self.written_params(o, p.params);
+        let Some(s) = self.sequences.get_mut(i as usize) else {
+            return;
+        };
+        if s.length > 0.0 {
+            return;
+        }
+        s.length = play_length(PLAY_END, p.audio, p.duration);
+        s.looping = params.looping;
+        s.allow_restart = params.allow_restart;
     }
 
     /// The copies of `template` a limit counts: a stopped or played-out one
@@ -1446,5 +1471,53 @@ mod tests {
             op: None,
         };
         assert_eq!(w.get(&at, &mut NoEngine), Err(HostFault::Nothing));
+    }
+
+    /// The world with the actors and no book: the sounds part not read yet.
+    fn bookless() -> ScriptWorld {
+        let handles = HashMap::new();
+        let mut w = ScriptWorld::new(&Files::default(), &handles, headless_objects(&handles));
+        for (h, x) in [(A, 0.0), (B, 3.0)] {
+            let mut a = Actor::blank();
+            a.position = Vec3::new(x, 0.0, 0.0);
+            w.actors.insert(h, a);
+        }
+        w
+    }
+
+    fn land(w: &mut ScriptWorld) {
+        w.set_sounds(
+            Arc::new(book()),
+            HashMap::from([(LEVEL, "level_213_tutotial".to_owned())]),
+        );
+    }
+
+    /// openspec AR.23: a sequence started on a sound before the book held it
+    /// (it played as any object: no length, done at once) isn't taken up as
+    /// the book lands, and started again after (`start sequence` on the
+    /// copy) is a play of the recording's length from then.
+    #[test]
+    fn a_copy_started_again_after_the_book_lands_has_its_recordings_length() {
+        let mut w = bookless();
+        let copy = started(start(&mut w, A, ONCE));
+        steps(&mut w, 2);
+        land(&mut w);
+        assert!(w.plays().is_empty(), "a one-shot isn't taken up");
+        let again = w
+            .op(
+                &call(Class::StartSequence, A, copy),
+                &mut |_| 0,
+                &mut NoEngine,
+            )
+            .unwrap();
+        assert_eq!(started(again), copy, "the same copy");
+        assert_eq!(w.plays().len(), 1);
+        let s = &w.sequences()[0];
+        assert!((s.length - 1.0).abs() < 1e-6, "{}", s.length);
+        assert!(!s.done && !s.looping);
+        steps(&mut w, 30);
+        assert_eq!(w.plays().len(), 1, "half way through its second");
+        steps(&mut w, 31);
+        assert_eq!(ended(&w), [(ONCE, "played out")]);
     }
 }

@@ -25,7 +25,8 @@ use common::*;
 use guac_motion::seam::{PhysicsSeam, Shape, Vec3};
 use guac_motion::stick::Stick;
 use guac_script::members::{
-    CAMERA, COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LOOP,
+    CAMERA, COMBAT, CREATURES, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LEVEL_UP, LEVELS, LOOP,
+    MUSIC, ROUTE, SOUNDS, WALKERS,
 };
 use guac_script::{Handle, MemberId, Mode, Obj, Value};
 use guacamole::script_engine::{FEET_PER_METRE, Pad, heading_of};
@@ -416,6 +417,30 @@ fn check_debris(w: &Watch, ah9: &[Replay]) {
     }
 }
 
+/// The turn from one frame's angles to the next's, degrees and axis, the
+/// short way: q and -q are one rotation, and an Euler triple's quaternion
+/// can land in either half, which reads a 0.4° turn as 359.6° about the axis
+/// turned round (openspec AR.26: a debris piece whose draws moved with
+/// AR.16's music rolls).
+fn turn_between(a: &[f32; 3], b: &[f32; 3]) -> (f32, Vec3) {
+    let q = |x: &[f32; 3]| guac_motion::solid::euler(*x);
+    let d = q(a).inverse() * q(b);
+    let d = if d.w < 0.0 { -d } else { d };
+    let (axis, angle) = d.to_axis_angle();
+    (angle.to_degrees(), axis)
+}
+
+/// openspec AR.26: a 0.4° turn across the facing's wrap, whose two
+/// quaternions lie in opposite halves, reads 0.4°, not 359.6°.
+#[test]
+fn a_turn_across_the_wrap_reads_the_short_way() {
+    let (angle, axis) = turn_between(&[0.0, 179.8, 0.0], &[0.0, -179.8, 0.0]);
+    assert!((angle - 0.4).abs() < 1e-2, "{angle}");
+    assert!(axis.y.abs() > 0.999, "{axis:?}");
+    let (angle, _) = turn_between(&[45.0, 10.0, 45.0], &[45.0, 10.3, 45.0]);
+    assert!((angle - 0.3).abs() < 1e-2, "{angle}");
+}
+
 /// A piece of debris turns as AH.9's 150 pieces do (openspec AH.145; their
 /// own turns off `debris_stats.py`): from 45° tilt and roll, each step about
 /// one axis fixed in its own frame (AH.9's strays at most 0.49°), its slides
@@ -425,15 +450,11 @@ fn check_debris(w: &Watch, ah9: &[Replay]) {
 /// last (AH.9's at most 0.107° apart on one piece, their frames' lengths
 /// varying). Within 0.02° of AH.9's ranges, 1° on the axis.
 fn check_turns(d: &Debris) {
-    let q = |a: &[f32; 3]| guac_motion::solid::euler(*a);
     let turns: Vec<(f32, Vec3)> = d
         .turns
         .windows(2)
         .take(13)
-        .map(|w| {
-            let (axis, angle) = (q(&w[0]).inverse() * q(&w[1])).to_axis_angle();
-            (angle.to_degrees(), axis)
-        })
+        .map(|w| turn_between(&w[0], &w[1]))
         .collect();
     assert_eq!(turns.len(), 13, "{d:?}");
     let (first, axis) = turns[0];
@@ -1236,6 +1257,14 @@ fn the_members_the_breakables_reach_stay_under_the_ceiling() {
             .chain(LOOP)
             .chain(FIGURE)
             .chain(CAMERA)
+            // The rest of the TV's listing's tables, the music controller's
+            // sound system update's among them (openspec AR.25).
+            .chain(WALKERS)
+            .chain(ROUTE)
+            .chain(LEVEL_UP)
+            .chain(LEVELS)
+            .chain(SOUNDS)
+            .chain(MUSIC)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

@@ -127,7 +127,8 @@ struct Played {
     time: f32,
 }
 
-/// The run joined, his minion asleep, and his five clips' slots.
+/// The run joined, his minion suspended (not ticked; asleep it would run
+/// his SHUTDOWN, openspec AR.22), and his five clips' slots.
 struct Loco {
     run: Run,
     slots: [u32; 6],
@@ -145,7 +146,7 @@ impl Loco {
             .expect("the locomotion's placement");
         assert!(run.vm.placement_of(h).is_some(), "the locomotion runs");
         let mut run = run;
-        assert!(run.vm.set_asleep(HERO, true), "his minion");
+        assert!(run.vm.set_suspended(HERO, true), "his minion");
         let slots = CLIPS.map(|name| {
             run.rig
                 .palette
@@ -209,7 +210,7 @@ impl Loco {
         // The frame's slides and every placement's tick in the original's
         // order, as `Run::step`'s, at the record's step: the locomotion's,
         // and the UI's after it, whose tick runs the keyframers the
-        // locomotion eases his rates by. His minion is asleep, so his
+        // locomotion eases his rates by. His minion is suspended, so his
         // movement script leaves the walk set here for the locomotion to
         // read; the engine doesn't move him.
         self.run.vm.set_tick_seconds(dt);

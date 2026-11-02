@@ -238,6 +238,10 @@ struct Placement {
     /// `placement.script suspended`: the walk passes it (crate docs, The
     /// tick).
     suspended: bool,
+    /// Put to sleep started, on the shutdown queue (openspec AR.22): its
+    /// last tick still to come at its place in the walk, then its started
+    /// flag cleared and its SHUTDOWN run.
+    last_tick: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -685,9 +689,10 @@ pub struct Vm {
     /// off their group's list until the walk has passed every group, then
     /// back on its end and ticked there.
     rejoin: Vec<PlacementId>,
-    /// Placements taken off with their SHUTDOWN still to run (crate docs,
-    /// The tick), in the order taken off: run once the step's walk is done,
-    /// or by the embedder after its own removals ([`Vm::shut_down`]).
+    /// Placements taken off with their SHUTDOWN still to run, or put to
+    /// sleep started (crate docs, The tick), in the order they joined: run
+    /// once the step's walk is done, or by the embedder after its own
+    /// removals ([`Vm::shut_down`]).
     shutting: Vec<PlacementId>,
     /// The walk's place during a step: the group (true the activators') and
     /// the index of the next placement in it, stepped back when a placement
@@ -924,6 +929,7 @@ impl Vm {
             activator: false,
             active: 0.0,
             suspended: false,
+            last_tick: false,
         });
         let id = (self.placements.len() - 1) as PlacementId;
         self.order.push(id);
@@ -1002,6 +1008,20 @@ impl Vm {
             .is_some_and(|p| p.suspended)
     }
 
+    /// Suspends the placement running under `handle`, or lets it go on, as
+    /// a script's write of `placement.script suspended` does: the step's
+    /// walk passes it and it keeps its state, started or not (crate docs,
+    /// The tick). An embedder's or a test's way to hold a placement still
+    /// where a sleep would run its SHUTDOWN (openspec AR.22). False when no
+    /// placement runs under it.
+    pub fn set_suspended(&mut self, handle: Handle, suspended: bool) -> bool {
+        let Some(&id) = self.handles.get(&handle) else {
+            return false;
+        };
+        self.placements[id as usize].suspended = suspended;
+        true
+    }
+
     pub fn held(&self) -> Vec<Handle> {
         self.placements
             .iter()
@@ -1049,8 +1069,10 @@ impl Vm {
 
     /// Puts the placement running under `handle` to sleep or wakes it
     /// (crate docs, The tick): an inactive placement isn't ticked and keeps
-    /// its state, its STARTUP running on its first tick awake; one put to
-    /// sleep joins the asleep list's end, and one woken ticks after every
+    /// its locals, its STARTUP running on its first tick awake (again, for
+    /// one that started: its sleep ran its SHUTDOWN, after one last tick),
+    /// its `system.script timer` from 0; one put to sleep
+    /// joins the asleep list's end, and one woken ticks after every
     /// placement already awake. False when no placement runs under it.
     pub fn set_asleep(&mut self, handle: Handle, asleep: bool) -> bool {
         let Some(&id) = self.handles.get(&handle) else {
@@ -1095,20 +1117,43 @@ impl Vm {
         }
     }
 
-    /// `id` asleep, on the asleep list's end if it wasn't already.
+    /// `id` asleep, on the asleep list's end if it wasn't already. One that
+    /// has started and runs (not inert, held, taken off or stopped) joins
+    /// the shutdown queue as it goes to sleep (crate docs, The tick): the
+    /// next walk still ticks it once at its place, then the queue
+    /// ([`Vm::shut_down`]) clears its started flag and runs its SHUTDOWN,
+    /// if its script has one, so it runs STARTUP again when it wakes.
     fn sleep(&mut self, id: PlacementId) {
         let p = &mut self.placements[id as usize];
-        if !p.asleep {
-            p.asleep = true;
-            self.sleeping.push(id);
+        if p.asleep {
+            return;
+        }
+        let last_tick =
+            p.started && !p.shutdown && !p.inert && !p.held && !p.removed && p.stopped.is_none();
+        p.asleep = true;
+        self.sleeping.push(id);
+        if last_tick {
+            p.last_tick = true;
+            self.shutting.push(id);
         }
     }
 
-    /// `id` awake: off the asleep list and on its group's end, if it slept.
+    /// `id` awake: off the asleep list and on its group's end, if it slept,
+    /// its `system.script timer` from 0 again. Woken before the queue its
+    /// sleep joined has run (between two steps), it never slept: off the
+    /// queue, it carries on started, its timer kept.
     fn wake(&mut self, id: PlacementId) {
         let p = &mut self.placements[id as usize];
         if p.asleep {
             p.asleep = false;
+            if p.last_tick {
+                p.last_tick = false;
+                if !p.removed {
+                    self.shutting.retain(|&s| s != id);
+                }
+            } else {
+                p.active = 0.0;
+            }
             self.sleeping.retain(|&s| s != id);
             self.move_to_end(id);
         }
@@ -1217,11 +1262,13 @@ impl Vm {
         self.handles.contains_key(&handle) && self.take_off(Value::Entity(handle))
     }
 
-    /// Runs the SHUTDOWN of every placement taken off since the last run
-    /// that still has one to run, in the order taken off (crate docs, The
-    /// tick): each in a tick of its own that runs PRESCRIPT to its
-    /// SHUTDOWN and ends there, its `system.script timer` not growing; one a
-    /// SHUTDOWN takes off runs its own after. [`Vm::step`] runs this once
+    /// Runs the SHUTDOWN of every placement taken off or put to sleep
+    /// started since the last run that still has one to run, in the order
+    /// they joined the queue (crate docs, The tick): each in a tick of its
+    /// own that runs PRESCRIPT to its SHUTDOWN and ends there, its
+    /// `system.script timer` not growing; one a SHUTDOWN takes off runs its
+    /// own after; a sleeper whose script has no SHUTDOWN only has its
+    /// started flag cleared. [`Vm::step`] runs this once
     /// its walk is done; an embedder
     /// that takes placements off between steps runs it before it adds a
     /// placement under one of their handles (a character's file again,
@@ -1237,6 +1284,27 @@ impl Vm {
         let program = self.program.clone();
         while !self.shutting.is_empty() {
             let id = self.shutting.remove(0);
+            // One its sleep queued, its last tick behind it: its started flag
+            // cleared, its SHUTDOWN, if any, run below. One taken off since
+            // runs its SHUTDOWN as a taken-off one does; one stopped, none.
+            if let Some(p) = self.placements.get_mut(id as usize)
+                && p.last_tick
+            {
+                p.last_tick = false;
+                if p.removed || p.stopped.is_some() || !p.started {
+                    continue;
+                }
+                let has_shutdown = program
+                    .scripts
+                    .get(p.script as usize)
+                    .is_some_and(|s| s.shutdown.is_some());
+                if !has_shutdown {
+                    p.started = false;
+                    p.behaviour = None;
+                    continue;
+                }
+                p.shutdown = true;
+            }
             let pending = self
                 .placements
                 .get(id as usize)
@@ -1258,9 +1326,11 @@ impl Vm {
         Ok(())
     }
 
-    /// A taken-off placement's last tick: PRESCRIPT to its SHUTDOWN, whose
-    /// end ends it (crate docs, A script's frame), no seconds counted. Off
-    /// for good after, however it went.
+    /// A taken-off or sleeping placement's shutdown tick: PRESCRIPT to its
+    /// SHUTDOWN, whose end ends it (crate docs, A script's frame), no
+    /// seconds counted, its started flag and behaviour cleared after,
+    /// however it went: a taken-off one is off for good, a sleeping one
+    /// runs STARTUP again when it wakes.
     fn shutdown_tick(
         &mut self,
         id: PlacementId,
@@ -1665,7 +1735,8 @@ impl Vm {
     }
 
     /// Placement `id`'s turn in the walk: nothing if it's inert, taken off,
-    /// asleep or stopped; `native` if it's held; else its tick. What the
+    /// asleep (but for the last tick of one its sleep put on the shutdown
+    /// queue) or stopped; `native` if it's held; else its tick. What the
     /// turn spawns is adopted after it.
     fn tick_in_place(
         &mut self,
@@ -1676,7 +1747,8 @@ impl Vm {
         native: &mut Native<'_>,
     ) -> Result<(), Halt> {
         let p = &self.placements[id as usize];
-        if p.inert || p.removed || p.asleep || p.suspended || p.stopped.is_some() {
+        if p.inert || p.removed || (p.asleep && !p.last_tick) || p.suspended || p.stopped.is_some()
+        {
             return Ok(());
         }
         if p.held {
@@ -1815,7 +1887,7 @@ impl Vm {
         let Some(p) = self.placements.get(id as usize) else {
             return Ok(None);
         };
-        if p.inert || p.removed || p.held || p.asleep || p.stopped.is_some() {
+        if p.inert || p.removed || p.held || (p.asleep && !p.last_tick) || p.stopped.is_some() {
             return Ok(None);
         }
         let handle = p.handle;

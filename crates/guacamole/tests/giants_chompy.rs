@@ -41,7 +41,8 @@ use guac_script::members::{
     ROUTE as ROUTE_MEMBERS, WALKERS,
 };
 use guac_script::{
-    Generator, MemberId, Mode, PlacementId, Stall, StallDetector, StallLimit, Value, random_literal,
+    Generator, MemberId, Mode, Obj, PlacementId, Stall, StallDetector, StallLimit, Value,
+    random_literal,
 };
 use guacamole::anchors::{ANCHOR_B, FIRST_ALERT, OPENING, ROUTE};
 use guacamole::player_loop::called;
@@ -485,7 +486,17 @@ struct Snap {
     /// Whom `combat control data`'s `creature descriptions` names, and
     /// `Minions_Loaded`'s members, by name (openspec AH.200).
     sets: CreatureSets,
+    /// [`WATCHER`]'s behaviour and whether it's asleep (openspec AR.22).
+    watcher: (Option<String>, bool),
+    /// The music controller's `current music source file` (AR.22).
+    music: Option<Obj>,
+    /// The music tracks playing (`mu_*`), each with its sequence's rate.
+    tracks: Vec<(String, f32)>,
 }
+
+/// The first fight's combat music watcher (`snd_combat_watcher_213.ai`, its
+/// `my.id` 1): its SHUTDOWN plays the victory stinger (openspec AR.22).
+const WATCHER: &str = "combat watcher 1 (first_chompies)";
 
 /// [`Snap::sets`]: each description's `creature` and each member of
 /// `Minions_Loaded`, by placement name, in set order.
@@ -680,6 +691,28 @@ impl Run {
             ),
             controller: self.vm.behaviour(ctl).map(str::to_owned),
             sets: self.creature_sets(),
+            watcher: {
+                let id = self.placement(WATCHER);
+                (self.vm.behaviour(id).map(str::to_owned), self.vm.asleep(id))
+            },
+            music: guacamole::player_loop::Places::of(&self.vm, &self.world)
+                .music
+                .and_then(|m| self.vm.local(m, "music data"))
+                .and_then(|d| self.vm.field(self.vm.value(d), "current music source file"))
+                .and_then(|v| match self.vm.value(v) {
+                    Value::Object(o) => Some(o),
+                    _ => None,
+                }),
+            tracks: self
+                .world
+                .plays()
+                .iter()
+                .filter_map(|p| {
+                    let name = p.name.as_deref().filter(|n| n.starts_with("mu_"))?;
+                    let rate = self.world.sequences()[p.sequence as usize].rate;
+                    Some((name.to_owned(), rate))
+                })
+                .collect(),
         }
     }
 
@@ -2327,6 +2360,76 @@ fn the_fight_with_its_sounds_plays_and_norticus_scene_waits_on_them() {
         "past AG.28's ceiling: {}",
         reached.len()
     );
+}
+
+/// openspec AR.22: the first fight's combat watcher hands the music to the
+/// victory stinger, as AR.16's oracle reads from anchor B have it
+/// (`captures/BLUS30968/ar16-fight-music-*`, every 90 flips: `watching` at
+/// F0; still at flip 258, 19.30 s active, inactive by 348 at 19.59 s, so
+/// 17 flips on, its behaviour none from then; the music controller's
+/// current music the stinger at every read from flip 438 to 888, not at
+/// 348). Its `watching` sets `victory` once every enemy it watches is gone,
+/// then its own activation range to 0, so the activity rule puts it to
+/// sleep and its SHUTDOWN, run by the shutdown queue, asks for
+/// `mu_213_combat_stinger_percussion` on the music's beat. Ours: asleep
+/// within two steps of the last of the four going, the stinger asked at
+/// its shutdown and the current music from 73 to 163 steps on (the
+/// oracle's window from its flip 275), still at F0 + 400, 900 and 1,449.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_first_fights_watcher_hands_the_music_to_the_stinger() {
+    println!("load before: {}", load());
+    let (_, snaps) = fight(Script {
+        lob: Some(90),
+        erupt: Some(160),
+        erupt_every: Some(700),
+        props: true,
+        sounds: true,
+        steps: 1450,
+        ..Script::default()
+    });
+    let (book, stems) = sound_part();
+    let named =
+        |o: Option<Obj>| o.and_then(|o| book.sound(stems.get(&o.unit)?, o.index)?.name.clone());
+    let at = |k: i64| snaps.iter().find(|s| s.k == k).expect("a snap there");
+    let first = |f: &dyn Fn(&Snap) -> bool| snaps.iter().find(|s| f(s)).map(|s| s.k);
+    const STINGER: &str = "mu_213_combat_stinger_percussion";
+    let last_gone = first(&|s| s.chompies.iter().all(|c| c.gone)).expect("the four beaten");
+    let asleep = first(&|s| s.watcher.1).expect("the watcher sleeps");
+    let asked = first(&|s| s.tracks.iter().any(|t| t.0 == STINGER)).expect("the stinger asked");
+    let heard = first(&|s| s.tracks.iter().any(|t| t.0 == STINGER && t.1 > 0.0));
+    let current =
+        first(&|s| named(s.music).as_deref() == Some(STINGER)).expect("the stinger current");
+    println!(
+        "the four gone at F0 + {last_gone}; the watcher asleep at {asleep} ({:?}); the stinger asked at {asked}, playing from {heard:?}, current from {current} ({} on); load after: {}",
+        at(asleep).watcher.0,
+        current - asleep,
+        load()
+    );
+    for k in [0, 400, 900, 1449] {
+        println!(
+            "  F0 + {k}: watcher {:?}, current {:?}, playing {:?}",
+            at(k).watcher,
+            named(at(k).music),
+            at(k).tracks
+        );
+    }
+    assert_eq!(at(0).watcher, (Some("watching".to_owned()), false));
+    assert!(
+        (last_gone..=last_gone + 2).contains(&asleep),
+        "asleep at {asleep}, the four gone at {last_gone}"
+    );
+    assert_eq!(at(asleep).watcher.0, None, "its SHUTDOWN ran");
+    assert_eq!(asked, asleep, "its SHUTDOWN asks for the stinger");
+    assert!(
+        (73..=163).contains(&(current - asleep)),
+        "the stinger current {} steps on",
+        current - asleep
+    );
+    for k in [400, 900, 1449] {
+        assert_eq!(at(k).watcher, (None, true), "F0 + {k}");
+        assert_eq!(named(at(k).music).as_deref(), Some(STINGER), "F0 + {k}");
+    }
 }
 
 /// The members the fight reaches from the join to the end of Norticus'
