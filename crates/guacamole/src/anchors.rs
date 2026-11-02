@@ -114,6 +114,41 @@ pub const ANCHOR_B: [(&str, [f32; 3], f32); 5] = [
 /// creatures set there again at it.
 pub const OPENING: u32 = 480;
 
+/// Whether a scene holds the game: the cutscene system's `Cutscene State`
+/// past 0, as the run holds it (none made yet: no scene). The route waits
+/// on it before setting him down at anchor B (openspec AR.17,
+/// [`route_waits`]).
+pub fn scene_holds(vm: &Vm) -> bool {
+    vm.program()
+        .global_named("Cutscene State")
+        .and_then(|g| vm.global_peek(g))
+        .is_some_and(|v| match vm.value(v) {
+            Value::Int(i) => i != 0,
+            Value::Float(f) => f != 0.0,
+            _ => false,
+        })
+}
+
+/// The most steps the route waits on a scene ([`route_waits`]): one that
+/// never ends (a stopped script) lets the route go on 30 s later rather
+/// than never.
+pub const SCENE_WAIT_LIMIT: u32 = 1_800;
+
+/// Whether the route holds for another step at its anchor set-down (`at`,
+/// the route's step, none before it starts; `anchor`, the step it sets him
+/// down at anchor B and the creatures where anchor B has them): a scene
+/// holds the game and it has waited fewer than [`SCENE_WAIT_LIMIT`] steps
+/// (openspec AR.17). AH.8's route walked to anchor B only once the pit's
+/// intro was over ('Cutscene OUT' 449 game frames, then the walk and 120
+/// flips settling there), and voiced, ours runs 438 steps from the landing:
+/// set down mid-scene, the four had found him and bitten by F0. A run
+/// without the level's sounds keeps AH.25's schedule (pass `scene` false):
+/// its lines silent, the intro ends 141 steps from the landing, inside the
+/// settle, as the runs calibrated on that schedule had it.
+pub fn route_waits(at: Option<u32>, anchor: u32, scene: bool, waited: u32) -> bool {
+    at == Some(anchor) && scene && waited < SCENE_WAIT_LIMIT
+}
+
 /// The combat manager's first alert from F0, steps: anchor B's state holds
 /// the 0.25 s check's phase, AH.10's first alert landing at F0 + 24 (or 25,
 /// by F0's own frame time).
@@ -227,5 +262,99 @@ pub fn equivalence(
         placements,
         triggers_fired,
         loot: [Rarity::Common, Rarity::Uncommon, Rarity::Rare].map(|r| loot_index(vm, world, r)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph};
+    use guac_script::{Config, Mode, Program, Role, Unit, Whitelist};
+
+    use super::*;
+
+    /// A host modelling no member.
+    struct Null;
+
+    impl guac_script::Host for Null {
+        fn get(&mut self, _: &guac_script::Access) -> Result<Value, guac_script::HostFault> {
+            Err(guac_script::HostFault::Unmodelled)
+        }
+        fn set(&mut self, _: &guac_script::Access, _: Value) -> Result<(), guac_script::HostFault> {
+            Err(guac_script::HostFault::Unmodelled)
+        }
+        fn reset(&mut self, _: &guac_script::Access) -> Result<(), guac_script::HostFault> {
+            Err(guac_script::HostFault::Unmodelled)
+        }
+        fn draw(&mut self) -> u32 {
+            0
+        }
+    }
+
+    /// openspec AR.17: the route holds at its anchor set-down alone, while
+    /// a scene holds the game, up to its limit.
+    #[test]
+    fn the_route_waits_at_its_anchor_while_a_scene_holds() {
+        assert!(route_waits(Some(360), 360, true, 0));
+        assert!(route_waits(Some(360), 360, true, SCENE_WAIT_LIMIT - 1));
+        assert!(!route_waits(Some(360), 360, true, SCENE_WAIT_LIMIT));
+        assert!(!route_waits(Some(360), 360, false, 0), "no scene");
+        assert!(!route_waits(Some(359), 360, true, 0), "not its step");
+        assert!(!route_waits(None, 360, true, 0), "not under way");
+    }
+
+    /// `Cutscene State` read as the run holds it: none made, no scene; set
+    /// to 1 by a script, as a scene sets it, a scene; back to 0, none.
+    #[test]
+    fn a_scene_holds_while_cutscene_state_is_past_0() {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let state = w.b.object(0, "ValueInfo", 0x24);
+            w.text(state, 0x08, "Cutscene State");
+            w.meta_word(state, 0x1C, "IntMeasurement");
+            w.word(state, 0x20, 0);
+            let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            w.end_block(pre);
+            let idle = w.behaviour("idle");
+            w.inc(&[El::Local(ticks)]);
+            // Tick 1 sets it to 1, as the cutscene system does for a scene
+            // (the TV reads 1 through both of chapter 1's), tick 2 back to 0.
+            let one = w.int(1);
+            let check = w.check(&[El::Local(ticks)], 1, one);
+            let one_on = w.int(1);
+            w.set(&[El::Local(state)], one_on);
+            let other = w.otherwise(check);
+            let zero = w.int(0);
+            w.set(&[El::Local(state)], zero);
+            w.close(other);
+            w.end_block(idle);
+            w.end("C:/tfb/Synthetic/Scene.ai");
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let mut c = Config::new(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let mut vm = Vm::new(program, c);
+        let id = vm.add(0x51, "Scene", 0);
+        assert!(!scene_holds(&vm), "none made yet");
+        let mut host = Null;
+        vm.tick(id, &mut host).unwrap();
+        assert!(scene_holds(&vm), "set to 1");
+        vm.tick(id, &mut host).unwrap();
+        assert!(!scene_holds(&vm), "back to 0");
     }
 }

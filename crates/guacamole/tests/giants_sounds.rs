@@ -712,3 +712,190 @@ fn a_first_runs_music_starts_once_its_sounds_land() {
         late.beds
     );
 }
+
+/// A development probe for AT.44 and AR.17: the ops `AR17_OPS` names
+/// (`<script suffix>#<from>-<to>`, comma-separated) with their operands as
+/// paths, a macro's parameters among them.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_script_ops() {
+    use guac_script::Ins;
+    let (run, _) = common::run_on_with(guac_script::Mode::Play, common::Setup::default());
+    let program = run.vm.program_arc();
+    let p = |o| operand_path(&program, o);
+    for spec in std::env::var("AR17_OPS").unwrap_or_default().split(',') {
+        let Some((suffix, range)) = spec.split_once('#') else {
+            continue;
+        };
+        let (a, b) = range.split_once('-').unwrap_or((range, range));
+        let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
+        for s in program.scripts.iter().filter(|s| s.name.ends_with(suffix)) {
+            println!("== {}", s.name);
+            for k in a..=b.min(s.ops.len().saturating_sub(1)) {
+                let op = s.ops[k];
+                let text = match &program.ops[op as usize] {
+                    Ins::World { operands, words } => format!(
+                        "World {} {:?}",
+                        operands
+                            .iter()
+                            .map(|(n, o)| format!("{n}={}", p(*o)))
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        words
+                    ),
+                    Ins::SetValue { lhs, rhs } => format!("SetValue {} = {}", p(*lhs), p(*rhs)),
+                    Ins::SetReference { lhs, rhs, .. } => {
+                        format!("SetReference {} = {}", p(*lhs), p(*rhs))
+                    }
+                    Ins::CheckValue { lhs, relation, rhs } => {
+                        format!("CheckValue {} {relation} {}", p(*lhs), p(*rhs))
+                    }
+                    Ins::CheckReference {
+                        lhs, relation, rhs, ..
+                    } => format!("CheckReference {} {relation} {}", p(*lhs), p(*rhs)),
+                    Ins::Parameter(q) => format!(
+                        "Parameter {} = {} ({:?})",
+                        program.sym(q.name),
+                        p(q.rhs),
+                        q.decl.container
+                    ),
+                    Ins::UseMacro { np, .. } => format!("UseMacro {}", p(*np)),
+                    Ins::Define(d) => format!("Define {}", program.defs[*d as usize].display),
+                    other => {
+                        let t = format!("{other:?}");
+                        t.chars().take(200).collect()
+                    }
+                };
+                println!("  #{k} {:?} {text}", program.op_info[op as usize].class);
+            }
+        }
+    }
+}
+
+/// A development probe for AT.44 and AR.17: for each op `AR17_OPS` names
+/// (`<script suffix>#<from>-<to>`), every operand field's stack class and,
+/// for an RHS reference or group stack, its `_editType` and the type of
+/// each object its path names, read off the op's own file.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_edit_types() {
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::layouts::{ObjectRef, TypeRef};
+    use guac_formats::script::{Field, Op, Operand};
+    let (run, _) = common::run_on_with(guac_script::Mode::Play, common::Setup::default());
+    let program = run.vm.program_arc();
+    let usr = common::dump().join("PS3_GAME/USRDIR");
+    let part: Vec<Vec<u8>> = common::ARCHIVES
+        .iter()
+        .map(|(a, _)| guac_extract::scripts::entry(&usr, a).unwrap())
+        .collect();
+    let igzs: Vec<Igz<'_>> = part.iter().map(|b| Igz::parse(b).unwrap()).collect();
+    let ty = |igz: &Igz<'_>, t: &TypeRef<'_>| match t {
+        TypeRef::Object(i) => igz.objects().get(*i).map_or(format!("object {i}"), |o| {
+            format!("{} #{i}", igz.type_name(o))
+        }),
+        other => format!("{other:?}"),
+    };
+    for spec in std::env::var("AR17_OPS").unwrap_or_default().split(',') {
+        let Some((suffix, range)) = spec.split_once('#') else {
+            continue;
+        };
+        let (a, b) = range.split_once('-').unwrap_or((range, range));
+        let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
+        for s in program.scripts.iter().filter(|s| s.name.ends_with(suffix)) {
+            println!("== {}", s.name);
+            for k in a..=b.min(s.ops.len().saturating_sub(1)) {
+                let op = s.ops[k];
+                let obj = program.op_info[op as usize].obj;
+                let igz = &igzs[obj.unit as usize];
+                let Ok(read) = Op::read(igz, obj.index as usize) else {
+                    continue;
+                };
+                for (name, field) in read.fields() {
+                    let Field::Ref(ObjectRef::Object(i)) = field else {
+                        continue;
+                    };
+                    let Ok(Operand::Stack(path)) = Operand::read(igz, i) else {
+                        continue;
+                    };
+                    let elems: Vec<String> = path
+                        .elements
+                        .iter()
+                        .map(|e| match e {
+                            ObjectRef::Object(j) => igz
+                                .objects()
+                                .get(*j)
+                                .map_or(format!("#{j}"), |o| igz.type_name(o).to_owned()),
+                            other => format!("{other:?}").chars().take(60).collect(),
+                        })
+                        .collect();
+                    println!(
+                        "  #{k} {:?} {name}: {:?} edit type {} path {elems:?}",
+                        read.class(),
+                        path.class,
+                        ty(igz, &path.edit_type)
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A development probe for AT.44: every op of the linked program an operand
+/// of which names the member `AR17_MEMBER` (`<namespace>.<name>`), with its
+/// script, place and the definition it sits in.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_member_uses() {
+    use guac_script::{Elem, Ins, Operand};
+    let (run, _) = common::run_on_with(guac_script::Mode::Play, common::Setup::default());
+    let program = run.vm.program_arc();
+    let spec = std::env::var("AR17_MEMBER").unwrap_or_default();
+    let Some((ns, name)) = spec.split_once('.') else {
+        return;
+    };
+    let wanted = guac_script::MemberId::named(ns, name);
+    fn names(
+        program: &guac_script::Program,
+        o: guac_script::OperandId,
+        m: guac_script::MemberId,
+    ) -> bool {
+        match &program.operands[o as usize] {
+            Operand::Path { elems, other, .. } => {
+                elems.contains(&Elem::Member(m)) || other.is_some_and(|x| names(program, x, m))
+            }
+            Operand::Expr { a, b, .. } => {
+                a.is_some_and(|x| names(program, x, m)) || b.is_some_and(|x| names(program, x, m))
+            }
+        }
+    }
+    for s in &program.scripts {
+        let mut def = String::new();
+        for (k, &op) in s.ops.iter().enumerate() {
+            if let Some(d) = program.defs.iter().find(|d| d.op == op) {
+                def = d.display.clone();
+            }
+            let operands: Vec<guac_script::OperandId> = match &program.ops[op as usize] {
+                Ins::SetValue { lhs, rhs } => [*lhs, *rhs].into_iter().flatten().collect(),
+                Ins::SetReference { lhs, rhs, .. } => [*lhs, *rhs].into_iter().flatten().collect(),
+                Ins::CheckValue { lhs, rhs, .. } => [*lhs, *rhs].into_iter().flatten().collect(),
+                Ins::CheckReference { lhs, rhs, .. } => {
+                    [*lhs, *rhs].into_iter().flatten().collect()
+                }
+                Ins::ChangeMembership { lhs, rhs, .. } => {
+                    [*lhs, *rhs].into_iter().flatten().collect()
+                }
+                Ins::Parameter(p) => p.rhs.into_iter().collect(),
+                Ins::World { operands, .. } => operands.iter().filter_map(|(_, o)| *o).collect(),
+                _ => Vec::new(),
+            };
+            if operands.iter().any(|o| names(&program, *o, wanted)) {
+                println!(
+                    "{} #{k} in '{def}': {:?}",
+                    s.name.rsplit('/').next().unwrap_or(&s.name),
+                    program.op_info[op as usize].class
+                );
+            }
+        }
+    }
+}

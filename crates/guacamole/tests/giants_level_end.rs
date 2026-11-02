@@ -597,3 +597,63 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
         load()
     );
 }
+
+
+/// openspec AR.17: chapter 1's end with its sounds. The outro's lines (its
+/// cutscene skipped a frame in, `level_end::SKIPPED_CUTSCENES`, AS.15) go
+/// with the skip: no voice the outro started plays on at the level change,
+/// so none plays into level 214. Every voice started from the ender's wake
+/// printed with how it ended.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_outros_lines_go_with_its_skip() {
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_with(Mode::Play, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.put(Vec3::from_array(END.0), END.1);
+    let (ender, _) = run.placed("Temp_Level_Ender");
+    assert!(run.world.wake(ender));
+    let woken = u64::from(run.steps);
+    let mut lines = Lines::default();
+    while run.world.level_change().is_none() {
+        assert!(u64::from(run.steps) < woken + 600, "no level change");
+        stops.extend(run.step_play().unwrap());
+        lines.record(&run);
+    }
+    let since: Vec<&Voice> = lines.voices.iter().filter(|v| v.started >= woken).collect();
+    let playing: Vec<String> = run
+        .world
+        .plays()
+        .iter()
+        .filter_map(|p| p.name.clone())
+        .filter(|n| n.starts_with("vo_"))
+        .collect();
+    println!(
+        "woken at {woken}, the change at {}: voices since {since:?}; boxes {:?}; playing at the change {playing:?}; load at end: {}",
+        run.steps,
+        lines
+            .boxes
+            .iter()
+            .filter(|b| u64::from(b.made) >= woken)
+            .collect::<Vec<_>>(),
+        load()
+    );
+    assert!(playing.is_empty(), "{playing:?}");
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+}

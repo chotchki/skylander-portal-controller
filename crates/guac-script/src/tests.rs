@@ -1314,6 +1314,157 @@ fn sets_combine_grow_iterate_and_filter() {
     assert_eq!(vm.local(id, "high"), Some(Value::Int(7)));
 }
 
+/// A set-reference parameter named `name` binding into `def`, at no
+/// position.
+fn set_reference_parameter(w: &mut Writer<'_>, name: &str, def: Location) -> Location {
+    let o = w.op(Class::MacroParameter, "parameter");
+    w.text(o, 0x1C, name);
+    w.class_word(o, 0x20, "ScriptSetReference");
+    w.word(o, 0x28, u32::MAX);
+    w.refer(o, 0x38, def);
+    o
+}
+
+#[test]
+fn a_lone_object_in_a_set_reference_reads_as_a_set_of_one() {
+    // Variables, structures and sets (openspec AT.44): Giants' cutscenes
+    // hand `Add Dialogue` one string and one sound for its set-reference
+    // parameters, and the music controller's transition plane macro sets
+    // its trigger set to the one actor it was given and walks it. A lone
+    // object written into a set reference reads as a set of one, by a
+    // parameter or a `set reference`; the same object again while that set
+    // holds it alone is the same set; a number makes none.
+    let callee = std::cell::Cell::new(None);
+    let p = program(|w| {
+        let lone = w.b.object(0, "tfbActorInfo", 0xF8);
+        let them = w.variable("them", "ScriptSetReference", None);
+        let old = w.variable("old", "ScriptSetReference", None);
+        let numbered = w.variable("numbered", "ScriptSetReference", None);
+        let got = w.variable("got", "ScriptSet", None);
+        let count = var(w, "count");
+        let visits = var(w, "visits");
+        let same = var(w, "same");
+        let after_growing = var(w, "after growing");
+        let nulled = var(w, "nulled");
+        let set_ref = |w: &mut Writer<'_>, to: Location, rhs: Location| {
+            let lhs = w.stack(StackClass::Reference, &[El::Local(to)]);
+            let o = w.op(Class::SetReference, "set *reference||to");
+            w.refer(o, 0x1C, lhs);
+            w.refer(o, 0x20, rhs);
+            w.push(o);
+        };
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                // Count Them: one visit a member of its set reference.
+                let (at, d) = w.open(Class::DefineMacro, "Count Them");
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let given = set_reference_parameter(w, "given", d);
+                let none = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+                w.refer(given, 0x30, none);
+                w.push(given);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                let lhs = w.stack(StackClass::Set, &[El::Local(given)]);
+                let zero = w.int(0);
+                let (fe_at, fe) = w.open(Class::ForEach, "for each");
+                w.refer(fe, 0x20, lhs);
+                w.refer(fe, 0x28, zero);
+                // A value cell: the macro's own variables reset as it returns.
+                w.inc(&[El::Member("test", "called")]);
+                w.end_loop(fe_at);
+                w.end_block(at);
+                callee.set(Some(d));
+            },
+            |_| {},
+            |w| {
+                let d = callee.get().unwrap();
+                let bh = w.behaviour("idle");
+                // them := the lone object; its count and a walk over it.
+                let rhs = w.reference(&[El::Local(lone)], None);
+                set_ref(w, them, rhs);
+                let n = w.rhs(INT, &[El::Local(them), El::Member("setvariant", "count")]);
+                w.set(&[El::Local(count)], n);
+                let lhs = w.stack(StackClass::Set, &[El::Local(them)]);
+                let zero = w.int(0);
+                let (fe_at, fe) = w.open(Class::ForEach, "for each");
+                w.refer(fe, 0x20, lhs);
+                w.refer(fe, 0x28, zero);
+                w.inc(&[El::Local(visits)]);
+                w.end_loop(fe_at);
+                // got += them: the object, combined in.
+                add_to(w, got, &[El::Local(them)]);
+                // Count Them(given := the lone object).
+                let np = w.group(&[El::Local(d)], None);
+                let (call, o) = w.open(Class::UseMacro, "use macro");
+                w.refer(o, 0x1C, np);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let given = set_reference_parameter(w, "given", d);
+                let arg = w.reference(&[El::Local(lone)], None);
+                w.refer(given, 0x30, arg);
+                w.push(given);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.end_block(call);
+                // old := them; them := the object again: the same set.
+                let rhs = w.reference(&[El::Local(them)], None);
+                set_ref(w, old, rhs);
+                let rhs = w.reference(&[El::Local(lone)], None);
+                set_ref(w, them, rhs);
+                let p = w.check_ref(&[El::Local(old)], 1, &[El::Local(them)]);
+                w.inc(&[El::Local(same)]);
+                w.end_block(p);
+                // Grown past the object, the next write makes a set anew.
+                add_to(w, them, &[El::Named("SpriteInfo", "B")]);
+                let rhs = w.reference(&[El::Local(lone)], None);
+                set_ref(w, them, rhs);
+                let n = w.rhs(INT, &[El::Local(them), El::Member("setvariant", "count")]);
+                w.set(&[El::Local(after_growing)], n);
+                // numbered := 5: no set, still nothing.
+                let five = w.int(5);
+                set_ref(w, numbered, five);
+                let p = w.check_ref(
+                    &[El::Local(numbered)],
+                    1,
+                    &[El::Member("abstractscriptgroup", "null")],
+                );
+                w.inc(&[El::Local(nulled)]);
+                w.end_block(p);
+                w.end_block(bh);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config(Mode::Strict, &["called"]));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "count"), Some(Value::Int(1)), "a set of one");
+    assert_eq!(vm.local(id, "visits"), Some(Value::Int(1)), "walked once");
+    let got = vm.local(id, "got").unwrap();
+    let elems = vm.set(got).unwrap().to_vec();
+    assert_eq!(elems.len(), 1, "combined in");
+    assert!(matches!(elems[0], Value::Object(_)), "{elems:?}");
+    assert_eq!(cell(&vm, "called"), Some(Value::Int(1)), "by a parameter");
+    assert_eq!(
+        vm.local(id, "same"),
+        Some(Value::Int(1)),
+        "the same set again"
+    );
+    assert_eq!(
+        vm.local(id, "after growing"),
+        Some(Value::Int(1)),
+        "a set grown past the object isn't the object's"
+    );
+    assert_eq!(
+        vm.local(id, "nulled"),
+        Some(Value::Int(1)),
+        "a number makes none"
+    );
+}
+
 #[test]
 fn a_placement_off_the_whitelist_stays_inert() {
     let p = program(|w| {

@@ -13,8 +13,10 @@
 //!   played out (120 steps, as the headless runs settle him), he's set down
 //!   along AH.8's route ([`guacamole::anchors::ROUTE`]) a step at a time,
 //!   each set-down before that step's scripts, so the route's triggers fire
-//!   in the original's order and wake what they woke there; then at anchor
-//!   B's pose. The creatures are set where anchor B has them there and
+//!   in the original's order and wake what they woke there; then, once a
+//!   scene the landing started is over when the level's sounds voice it
+//!   (the pit's intro, which voiced runs past the step: openspec AR.17,
+//!   [`anchors::route_waits`]), at anchor B's pose. The creatures are set where anchor B has them there and
 //!   again at F0, 120 steps on, with the rest of the state anchor B holds
 //!   that the set-downs don't make, off AH.4's reads ([`ANCHOR_FIELDS`]):
 //!   the combat manager's next alert in its phase, the level's loot counts,
@@ -222,6 +224,20 @@ impl Plan {
             },
         }
     }
+
+    /// Whether the route holds for another step `ran` steps into his join
+    /// (openspec AR.17): at its anchor set-down, the step it sets the
+    /// creatures where the anchor has them, while a scene holds the game
+    /// and the level's sounds voice it (`voiced`: a run without them keeps
+    /// AH.25's schedule; [`anchors::route_waits`]).
+    pub(crate) fn waits(&self, ran: u32, voiced: bool, scene: bool, waited: u32) -> bool {
+        anchors::route_waits(
+            ran.checked_sub(self.settle),
+            self.creatures_at,
+            voiced && scene,
+            waited,
+        )
+    }
 }
 
 /// An entry asked for: its route, and the seed the session's generator
@@ -262,6 +278,9 @@ pub(crate) struct DevEntry {
     /// load file, or the one it refused to run on (AH.167).
     hero: Option<Entity>,
     ran: u32,
+    /// The steps the route has waited on a scene before its anchor
+    /// set-down (openspec AR.17, [`anchors::route_waits`]).
+    waited: u32,
     load_file: Option<String>,
     /// F0's step in the scripts' log, and the list read there.
     f0: Option<u64>,
@@ -284,6 +303,9 @@ pub(crate) struct EntryShot {
     /// F0's step in `/api/_test/tv/scripts`' log: the step the anchor's
     /// state is in place for.
     pub f0_step: Option<u64>,
+    /// The steps the route waited on a scene before its anchor set-down
+    /// (openspec AR.17).
+    pub scene_wait: u32,
     pub equivalence: Option<Equivalence>,
     /// What the entry set off AH.4's reads, past the set-downs.
     pub set: Vec<&'static str>,
@@ -306,6 +328,7 @@ impl DevEntry {
                 .filter(|_| self.phase != Phase::Waiting)
                 .and_then(|p| self.ran.checked_sub(p.settle + 1)),
             f0_step: self.f0,
+            scene_wait: self.waited,
             equivalence: self.equivalence.clone(),
             set: match plan.map(|p| p.anchor) {
                 Some(Anchor::B) => ANCHOR_FIELDS.to_vec(),
@@ -440,12 +463,21 @@ pub(crate) fn drive(
         // His activation ran in the step before this one.
         entry.hero = Some(hero);
         entry.ran = 1;
+        entry.waited = 0;
         entry.phase = Phase::Route;
         entry.load_file = Some(load_file);
         entry.refused = None;
         info!(anchor = ?plan.anchor, "the dev entry's route starts once he's settled");
     }
     let ran = entry.ran;
+    // The route waits on a scene the landing started before its anchor
+    // set-down, as AH.8's walked to anchor B only after the pit's intro
+    // (openspec AR.17), when the level's sounds voice its lines.
+    let voiced = world.holds_sounds_of(level);
+    if plan.waits(ran, voiced, anchors::scene_holds(&runtime.vm), entry.waited) {
+        entry.waited += 1;
+        return;
+    }
     entry.ran += 1;
     let Some(k) = ran.checked_sub(plan.settle) else {
         return;
@@ -895,6 +927,23 @@ mod tests {
             entry(&app).f0_step,
             "F0 the step that ran with the state in"
         );
+    }
+
+    /// openspec AR.17: anchor B's route holds at its anchor set-down while a
+    /// voiced scene holds, never at F0 or another step, nor unvoiced; the
+    /// level's start never.
+    #[test]
+    fn the_route_holds_at_anchor_bs_set_down_while_a_scene_plays() {
+        let b = Plan::of(Anchor::B);
+        let at = b.settle + b.creatures_at;
+        assert!(b.waits(at, true, true, 0));
+        assert!(!b.waits(at, true, false, 0), "no scene");
+        assert!(!b.waits(at, false, true, 0), "unvoiced: AH.25's schedule");
+        assert!(!b.waits(b.settle + b.f0, true, true, 0), "not F0");
+        assert!(!b.waits(at - 1, true, true, 0));
+        assert!(!b.waits(at, true, true, anchors::SCENE_WAIT_LIMIT));
+        let start = Plan::of(Anchor::Start);
+        assert!(!start.waits(start.settle + 1, true, true, 0));
     }
 
     /// Once he's in the level an ask is refused: nothing is set.

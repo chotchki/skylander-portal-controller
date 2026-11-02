@@ -409,14 +409,20 @@ fn step(run: &mut Run, mode: Mode) -> Vec<Halt> {
 /// his spawn played out: the init chain's two steps, the join with a fresh
 /// figure, 120 steps; the stops in play on the way.
 fn joined(mode: Mode) -> (Run, Vec<(u32, Halt)>, HashMap<MemberId, String>) {
-    let (mut run, found) = run_on_with(
+    joined_with(
         mode,
         Setup {
             props: true,
             interface: true,
             ..Setup::default()
         },
-    );
+    )
+}
+
+/// [`joined`] over a run set up as `setup` says (openspec AR.17: with its
+/// sounds, the lines voiced).
+fn joined_with(mode: Mode, setup: Setup) -> (Run, Vec<(u32, Halt)>, HashMap<MemberId, String>) {
+    let (mut run, found) = run_on_with(mode, setup);
     let mut stops = Vec::new();
     let go = |run: &mut Run, stops: &mut Vec<(u32, Halt)>| {
         let k = run.steps;
@@ -606,7 +612,13 @@ impl Driven {
 
 /// AH.8's plan driven from where `run` stands, each look read as the plan
 /// reaches it; `AH28_WATCH`'s placements printed as they change.
-fn drive(mut run: Run, mode: Mode) -> Driven {
+fn drive(run: Run, mode: Mode) -> Driven {
+    drive_with(run, mode, &mut |_| {})
+}
+
+/// [`drive`], `each` called with the run after every step it takes
+/// (openspec AR.17: what a scene's lines do step by step).
+fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
     let mut driver = Driver::new();
     let mut looks = Vec::new();
     let mut stops: Vec<(u32, usize, Halt)> = Vec::new();
@@ -642,6 +654,7 @@ fn drive(mut run: Run, mode: Mode) -> Driven {
                 let k = run.steps;
                 let s = step(&mut run, mode);
                 stops.extend(s.into_iter().map(|h| (k, driver.index, h)));
+                each(&run);
                 played.record(&run);
                 let hidden = scripts::player_hud_hidden(&run.vm);
                 if global_int(&mut run, "Cutscene State") != 0 {
@@ -1703,4 +1716,340 @@ fn probe_the_routes_surfaces() {
             tris.len()
         );
     }
+}
+
+/// AH.8's route from the start, strict, with the props and the interface's
+/// model and, asked, the sounds part (openspec AT.44, AR.17): the pit's
+/// intro's 'cutscene out' (its first step and the step it's done), what
+/// the scene's lines did on the model and which voices they started.
+struct PitIntro {
+    driven: Driven,
+    lines: Lines,
+    out: (u32, u32),
+}
+
+fn pit_intro(sounds: bool) -> PitIntro {
+    pit_intro_with(sounds, &[])
+}
+
+/// [`pit_intro`] with `scripts` listed past the TV's listing (openspec
+/// AR.17: Eon's lines, `scripts::LINE_SCRIPTS`).
+fn pit_intro_with(sounds: bool, scripts: &'static [&'static str]) -> PitIntro {
+    let (run, stops, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            interface: true,
+            sounds,
+            scripts,
+            ..Setup::default()
+        },
+    );
+    assert!(stops.is_empty());
+    let mut lines = Lines::default();
+    let (mut out, mut done) = (None, None);
+    let driven = drive_with(run, Mode::Strict, &mut |run: &Run| {
+        lines.record(run);
+        let b = ours(run, "Eon_4_help_Norticus").and_then(|s| s.behaviour);
+        match b.as_deref() {
+            Some("undead chompy - cutscene out") if out.is_none() => out = Some(run.steps),
+            Some("done") if done.is_none() => done = Some(run.steps),
+            _ => {}
+        }
+    });
+    let out = (
+        out.expect("the intro's cutscene out"),
+        done.expect("the intro done"),
+    );
+    println!(
+        "the intro's 'cutscene out' from step {} to {} ({} steps); boxes {:?}; voices {:?}; \
+         the scene's steps {}",
+        out.0,
+        out.1,
+        out.1 - out.0,
+        lines.boxes,
+        lines.voices,
+        driven.scene_steps
+    );
+    PitIntro { driven, lines, out }
+}
+
+/// openspec AT.44: the pit's intro's line on the interface's model, its
+/// sounds left out. Norticus' line is a dialogue box the dialogue UI's
+/// macros build through the cutscene system (`Add Dialogue` handing it a
+/// lone string and sound, a set of one each): its container on the
+/// gameplay container, the backdrop, his portrait and the text box holding
+/// the line, made as the intro starts and taken off before it's done; then
+/// the enemy intro card and the hint. Strict, nothing stopped; the level's
+/// UI controller (listed every tick, `scripts::LEVEL_UI`) shows the
+/// adventure's title near the start and takes itself off, AG.7's taken off
+/// at AF's fresh state.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_pit_intros_line_is_a_dialogue_box_on_the_model() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let p = pit_intro(false);
+    println!("in {:.1?}; load after: {}", started.elapsed(), load());
+    assert!(p.driven.stops.is_empty());
+    let in_intro: Vec<&DialogueBox> = p.lines.boxes.iter().filter(|b| b.made >= p.out.0).collect();
+    let [line] = in_intro.as_slice() else {
+        panic!("one line in the intro: {:?}", p.lines.boxes);
+    };
+    assert_eq!(line.portrait.as_deref(), Some("Norticus"));
+    assert!(line.letters > 20, "the line set: {line:?}");
+    assert!(line.made > p.out.0 && line.made <= p.out.0 + 3, "{line:?}");
+    let gone = line.gone.expect("taken off");
+    assert!(
+        gone < p.out.1,
+        "taken off before the intro's done: {line:?}"
+    );
+    // No sounds: the lines play nothing, so the intro waits on nothing.
+    assert!(p.lines.voices.is_empty(), "{:?}", p.lines.voices);
+    let ui = p.driven.run.placed("213_UI_Controller").0;
+    let id = p.driven.run.vm.placement_of(ui).expect("in the run");
+    assert!(p.driven.run.vm.removed(id), "took itself off");
+}
+
+/// openspec AR.17: the pit's intro with its sounds. The dialogue UI's
+/// `Dialogue Internal - Manage Dialogue UI` starts Norticus' line's voice
+/// (its `start sequence` on the dialogue's sounds) as his box goes up, on
+/// him, the recording's 5.12 s; the box comes down as it ends, the enemy
+/// intro card's announcer after it, and the intro waits on both: its
+/// 'cutscene out' 438 steps, against AH.8's 449 game frames (its hop 8's
+/// read of `Eon_4_help_Norticus` taken off 7.45 s active), 11 steps
+/// (0.18 s) short, unread why.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_pit_intro_voices_norticus_line_and_waits_on_it() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let p = pit_intro(true);
+    println!("in {:.1?}; load after: {}", started.elapsed(), load());
+    assert!(p.driven.stops.is_empty());
+    let line = p
+        .lines
+        .voices
+        .iter()
+        .find(|v| v.sound.starts_with("vo_norticus_lvl213_igc02"))
+        .unwrap_or_else(|| panic!("his line voiced: {:?}", p.lines.voices));
+    assert_eq!(line.actor, NORTICUS);
+    let in_intro: Vec<&DialogueBox> = p.lines.boxes.iter().filter(|b| b.made >= p.out.0).collect();
+    let [b] = in_intro.as_slice() else {
+        panic!("one box in the intro: {:?}", p.lines.boxes);
+    };
+    assert!(
+        line.started as u32 >= b.made.saturating_sub(1) && line.started as u32 <= b.made + 1,
+        "started as his box goes up: {line:?} {b:?}"
+    );
+    assert!((line.length - 5.12).abs() < 0.01, "{line:?}");
+    let ended = line.ended.expect("ended") as u32;
+    assert!(
+        ended.abs_diff(line.started as u32 + 307) <= 1,
+        "played to its end: {line:?}"
+    );
+    let gone = b.gone.expect("taken off");
+    assert!(gone >= ended && gone <= ended + 20, "{b:?} {line:?}");
+    assert!(
+        p.lines
+            .voices
+            .iter()
+            .any(|v| v.sound == "vo_announcer_general_165" && v.started as u32 > ended),
+        "the card's announcer after it: {:?}",
+        p.lines.voices
+    );
+    let out = p.out.1 - p.out.0;
+    assert!((430..=455).contains(&out), "AH.8: 449; ours {out}");
+}
+
+/// openspec AR.17: Eon's lines ride the same path, on a run listing them
+/// (`scripts::LINE_SCRIPTS`; the TV's doesn't yet, AR.29).
+/// `Eon_1_Move_along_path` (`Eon_Line_Activator.ai`) wakes as the level
+/// starts and plays its line through the dialogue UI: his box (his
+/// portrait) and his voice, started on the placement running the dialogue
+/// UI's update, the recording's length, the box down after it, the
+/// dialogue UI setting its `speaking_done`. `Eon_2_Keep_Going` waits on:
+/// AH.8's route never brings him where it speaks.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn eons_first_line_is_voiced_as_the_level_starts() {
+    println!("load before: {}", load());
+    let p = pit_intro_with(true, &scripts::LINE_SCRIPTS);
+    println!("load after: {}", load());
+    let eon: Vec<&DialogueBox> = p
+        .lines
+        .boxes
+        .iter()
+        .filter(|b| b.portrait.as_deref() == Some("Eon"))
+        .collect();
+    let [b] = eon.as_slice() else {
+        panic!("one line of his: {:?}", p.lines.boxes);
+    };
+    let v = p
+        .lines
+        .voices
+        .iter()
+        .find(|v| v.sound.starts_with("vo_eon_lvl213"))
+        .unwrap_or_else(|| panic!("his line voiced: {:?}", p.lines.voices));
+    println!("Eon: {b:?} {v:?}");
+    assert!(b.made < 200, "as the level starts: {b:?}");
+    assert!((v.started as i64 - b.made as i64).abs() <= 1, "{v:?} {b:?}");
+    let ended = v.ended.expect("ended");
+    let frames = (v.length * 60.0).round() as u64;
+    assert!(ended.abs_diff(v.started + frames) <= 1, "{v:?}");
+    let gone = u64::from(b.gone.expect("taken off"));
+    assert!(gone >= ended, "{b:?} {v:?}");
+    // Its take-off waits on `percent remaining` of the line's sound info
+    // itself, which our host answers nothing for (AR.28): it stays in
+    // 'text box remove', its speaking done set.
+    let first = p.driven.run.placed("Eon_1_Move_along_path").0;
+    let id = p.driven.run.vm.placement_of(first).expect("in the run");
+    assert_eq!(p.driven.run.vm.behaviour(id), Some("text box remove"));
+    assert_eq!(
+        p.driven
+            .run
+            .vm
+            .local(id, "speaking_done")
+            .map(|v| p.driven.run.vm.value(v)),
+        Some(guac_script::Value::Int(1))
+    );
+    let second = p.driven.run.placed("Eon_2_Keep_Going").0;
+    let id = p.driven.run.vm.placement_of(second).expect("in the run");
+    assert_eq!(p.driven.run.vm.behaviour(id), Some("wait"), "not reached");
+}
+
+/// A development probe for AT.44 and AR.17: AH.8's route with the sounds
+/// part and the interface's model, strict; each step the pit's intro's
+/// behaviour changes, and while a dialogue is up, the clones whose
+/// template's name holds `AR17_TEMPLATES` (comma-separated, "dialog" by
+/// default) as they change; the voices played at the end.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_the_pit_intro_with_its_sounds() {
+    let words: Vec<String> = std::env::var("AR17_TEMPLATES")
+        .unwrap_or_else(|_| "dialog".into())
+        .split(',')
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let (run, _, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            interface: true,
+            sounds: true,
+            ..Setup::default()
+        },
+    );
+    let mut last_b: Option<Option<String>> = None;
+    let mut last_i: Vec<guac_interface::SpriteId> = Vec::new();
+    let d = drive_with(run, Mode::Strict, &mut |run: &Run| {
+        let b = ours(run, "Eon_4_help_Norticus").and_then(|s| s.behaviour);
+        if last_b.as_ref() != Some(&b) {
+            println!(
+                "step {} clock {}: the intro {b:?}",
+                run.steps,
+                run.world.sound_clock()
+            );
+            last_b = Some(b);
+        }
+        let Some(k) = run.world.interface() else {
+            return;
+        };
+        let m = k.model();
+        let label = |id: guac_interface::SpriteId| {
+            let sp = m.sprite(id);
+            let from = match sp.cloned_from {
+                guac_interface::sprite::Source::Sprite(t) => m.sprite(t).name.clone(),
+                guac_interface::sprite::Source::None => "-".into(),
+            };
+            let parent = sp.parent.map_or("-".into(), |p| m.sprite(p).name.clone());
+            format!("{from} on {parent}")
+        };
+        let ids: Vec<guac_interface::SpriteId> = k
+            .instances()
+            .into_iter()
+            .filter(|&id| {
+                let low = label(id).to_ascii_lowercase();
+                words.iter().any(|w| !w.is_empty() && low.contains(w))
+            })
+            .collect();
+        if run.steps.is_multiple_of(60) {
+            fn tree(m: &guac_interface::Model, id: guac_interface::SpriteId, depth: usize) {
+                let sp = m.sprite(id);
+                let units = m.text_units(id, &guac_interface::NoWorld).map(|u| u.len());
+                println!(
+                    "    {:indent$}{} text {units:?} letters {} colour {:?}",
+                    "",
+                    sp.name,
+                    m.letter_count(id, &guac_interface::NoWorld),
+                    sp.color,
+                    indent = depth * 2
+                );
+                for &c in &sp.children {
+                    tree(m, c, depth + 1);
+                }
+            }
+            for id in k.instances() {
+                if m.sprite(id).name == "UI_Dialogue_FullBackdrop"
+                    && let Some(p) = m.sprite(id).parent
+                {
+                    println!("step {}: the dialogue box", run.steps);
+                    tree(m, p, 0);
+                }
+            }
+        }
+        if ids != last_i {
+            let added: Vec<String> = ids
+                .iter()
+                .filter(|n| !last_i.contains(n))
+                .map(|&n| label(n))
+                .collect();
+            let gone: Vec<String> = last_i
+                .iter()
+                .filter(|n| !ids.contains(n))
+                .map(|&n| label(n))
+                .collect();
+            if !added.is_empty() || !gone.is_empty() {
+                println!(
+                    "step {}: {} clones, made {added:?}, taken off {gone:?}",
+                    run.steps,
+                    ids.len()
+                );
+            }
+            last_i = ids;
+        }
+        for p in run
+            .world
+            .plays()
+            .iter()
+            .filter(|p| p.name.as_deref().is_some_and(|n| n.starts_with("vo_")))
+        {
+            let s = &run.world.sequences()[p.sequence as usize];
+            if run.steps.is_multiple_of(30) {
+                println!(
+                    "step {}: {:?} at {:.3} of {:.3} s",
+                    run.steps, p.name, s.time, p.length
+                );
+            }
+        }
+    });
+    let w = &d.run.world;
+    let vo = |n: &Option<String>| n.as_deref().is_some_and(|n| n.starts_with("vo_"));
+    for e in w.sounds_ended().filter(|e| vo(&e.name)) {
+        println!(
+            "ended {:?} {} to {} ({:?})",
+            e.name, e.started, e.ended, e.how
+        );
+    }
+    for p in w.plays().iter().filter(|p| vo(&p.name)) {
+        println!(
+            "playing {:?} from {} length {:.3}",
+            p.name, p.started, p.length
+        );
+    }
+    println!(
+        "the scene's steps {}, stops {:?}",
+        d.scene_steps,
+        d.stops.iter().map(|s| s.2.to_string()).collect::<Vec<_>>()
+    );
 }

@@ -53,3 +53,7 @@ A cutscene or dialogue that waits on its voices SHALL last as long as those voic
 #### Scenario: Norticus' scene
 - **WHEN** Norticus' scene plays after the first fight
 - **THEN** it ends after its lines have played, at the original's 300 game steps rather than 183
+
+#### Scenario: The pit's intro
+- **WHEN** the hero lands in the first fight's pit and its intro plays
+- **THEN** Norticus' line is voiced on him as its box goes up, and the intro ends after the line and the enemy card's announcer have played, at the original's 449 game steps rather than 141

@@ -337,6 +337,28 @@
 //!   an orb's landing point is a new `ActorWaypoint`), so `inc count`
 //!   appends one. `first` and `last` read the ends, nothing when
 //!   empty; `random` a member by a draw modulo the count.
+//! - A set reference given what isn't a set: a lone object, a file's or the
+//!   host's, reads as a set of that one object (`count` 1, a `for each`
+//!   walking it once, a set combined with it gaining it), the same set
+//!   again while it holds that object alone; anything else (a number, a
+//!   structure) drops the write. Read off the disc (openspec AT.44): the
+//!   cutscenes hand `Add Dialogue` one string and one sound for its two
+//!   set-reference parameters, each right side's edit type the element's
+//!   class, which the original's reference read checks the object against
+//!   (aj-vm's reading: a mismatch gives nothing), and the music
+//!   controller's `Environmental Sound - Define Transition Plane` sets its
+//!   trigger set to the one actor it was given, then walks it. Dropped,
+//!   every line ran with no words and no voice. A reading: whether the
+//!   original makes a set of the object or keeps it for each reader to
+//!   take as one isn't read; a set of one is what every reader needs, and
+//!   aj-vm's reads agree with it (`random` draws whatever the count, so a
+//!   set of one costs a draw: a text box's four corners take four, AT.44's
+//!   review; `for each` walks the object its path reads with no check that
+//!   it's a set). The same set for the same object is ours: nothing on the
+//!   disc changes a set made so (AT.44's review: 411 places over every
+//!   level, none written into), so whose it is can't show. A number
+//!   variable handed by reference (the bit-field macros' `values in`, its
+//!   edit type `AbstractNumberMeasurement`) still drops, AT.47.
 //! - `global.bld`'s numbers, screen positions, colours, sets, structures and
 //!   references are cells made from the file on first use and shared by
 //!   every placement.
