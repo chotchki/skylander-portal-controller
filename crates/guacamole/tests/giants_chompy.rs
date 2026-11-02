@@ -780,6 +780,26 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
     let mut snaps = Vec::new();
     let end = OPENING + script.steps;
     for k in 0..end {
+        if k == ROUTE[4].0 {
+            // The route waits for the pit's intro to end before anchor B, as
+            // AH.8's walked there only after it, when the sounds voice it
+            // (openspec AR.17).
+            let mut waited = 0;
+            while guacamole::anchors::route_waits(
+                Some(k),
+                ROUTE[4].0,
+                run.world.holds_sounds_of(LEVEL) && guacamole::anchors::scene_holds(&run.vm),
+                waited,
+            ) {
+                run.bench.pads[0] = stick(Stick::CENTRED);
+                run.step()
+                    .unwrap_or_else(|h| panic!("waiting on the scene {waited}: {h}"));
+                waited += 1;
+            }
+            if waited > 0 {
+                println!("the route waited {waited} steps for the scene to end");
+            }
+        }
         if let Some((_, at, facing)) = ROUTE.iter().find(|r| r.0 == k) {
             run.put(Vec3::from_array(*at), *facing);
         }
@@ -2312,6 +2332,161 @@ fn the_fight_ends_with_norticus_walking_into_the_cave() {
     println!("woken off the whitelist: {woken:?}; load after: {}", load());
 }
 
+thread_local! {
+    /// What a fight's scene lines did ([`norticus_scene`]), step by step.
+    static LINES: std::cell::RefCell<Lines> = std::cell::RefCell::new(Lines::default());
+}
+
+/// The standing fight to Norticus' scene's end, strict, with the props and
+/// the interface's model and, asked, the sounds part (openspec AT.44,
+/// AR.17): his states with their first steps from F0, his scene's line on
+/// the model and the voices it started, and the sound clock at F0.
+struct NorticusScene {
+    states: Vec<(Option<String>, i64)>,
+    lines: Lines,
+    f0_clock: u64,
+}
+
+fn norticus_scene(sounds: bool) -> NorticusScene {
+    fn each(run: &mut Run, f: i64) {
+        LINES.with(|l| l.borrow_mut().record(run));
+        if f == 0 {
+            F0_CLOCK.with(|c| c.set(run.world.sound_clock()));
+        }
+    }
+    thread_local! {
+        static F0_CLOCK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    LINES.with(|l| *l.borrow_mut() = Lines::default());
+    let (_, snaps) = fight(Script {
+        lob: Some(90),
+        erupt: Some(160),
+        erupt_every: Some(700),
+        props: true,
+        sounds,
+        interface: true,
+        steps: 1450,
+        each: Some(each),
+        ..Script::default()
+    });
+    let states = snaps.iter().fold(Vec::new(), |mut v, s| {
+        if v.last()
+            .is_none_or(|l: &(Option<String>, i64)| l.0 != s.norticus.0)
+        {
+            v.push((s.norticus.0.clone(), s.k));
+        }
+        v
+    });
+    let mut lines = LINES.with(|l| l.borrow().clone());
+    let f0_clock = F0_CLOCK.with(std::cell::Cell::get);
+    // The scene's own: the pit's intro's line came before F0.
+    lines.boxes.retain(|b| u64::from(b.made) >= f0_clock);
+    println!(
+        "Norticus {states:?}; boxes from F0 {:?}; voices {:?}; F0 at sound clock {f0_clock}",
+        lines.boxes, lines.voices
+    );
+    NorticusScene {
+        states,
+        lines,
+        f0_clock,
+    }
+}
+
+impl NorticusScene {
+    /// The step from F0 his state `name` begins.
+    fn at(&self, name: &str) -> i64 {
+        self.states
+            .iter()
+            .find(|n| n.0.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("Norticus' {name}: {:?}", self.states))
+            .1
+    }
+
+    /// A step from F0 as the run's step (the sound clock's, the step the
+    /// tracker records).
+    fn step(&self, f: i64) -> i64 {
+        self.f0_clock as i64 + f
+    }
+}
+
+/// openspec AT.44: Norticus' line in his scene, on the interface's model,
+/// its sounds left out. The scene's `Add Dialogue` hands the cutscene a
+/// lone string and sound, a set of one each: a dialogue box built as the
+/// scene goes, the backdrop on its container, his portrait and the text
+/// box holding the line, taken off before he advances. Strict, nothing
+/// stopped (the fight panics on a stop).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn norticus_line_is_a_dialogue_box_on_the_model() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let n = norticus_scene(false);
+    println!("in {:.1?}; load after: {}", started.elapsed(), load());
+    let (go, advance) = (n.at("cutscene go"), n.at("advance with player"));
+    let [line] = n.lines.boxes.as_slice() else {
+        panic!("one line from F0: {:?}", n.lines.boxes);
+    };
+    assert_eq!(line.portrait.as_deref(), Some("Norticus"));
+    assert!(line.letters > 5, "the line set: {line:?}");
+    let made = line.made as i64;
+    assert!(
+        (n.step(go) - 2..=n.step(go) + 3).contains(&made),
+        "made as the scene goes (F0 + {go}): {line:?}"
+    );
+    let gone = line.gone.expect("taken off") as i64;
+    assert!(gone < n.step(advance), "{line:?}");
+}
+
+/// openspec AR.17: Norticus' scene with its sounds. The dialogue UI starts
+/// his line's voice as his box goes up, on him, and the scene waits on it
+/// before he advances: 'cutscene go' to 'advance with player' 298 steps,
+/// against AH.10's 300 frames in all 20 fights, where it ran 183 with his
+/// line silent.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn norticus_scene_voices_his_line_and_waits_on_it() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let n = norticus_scene(true);
+    println!("in {:.1?}; load after: {}", started.elapsed(), load());
+    let (go, advance) = (n.at("cutscene go"), n.at("advance with player"));
+    let line = n
+        .lines
+        .voices
+        .iter()
+        .find(|v| v.sound.starts_with("vo_norticus_lvl213_igc03"))
+        .unwrap_or_else(|| panic!("his line voiced: {:?}", n.lines.voices));
+    assert_eq!(line.actor, NORTICUS);
+    let [b] = n.lines.boxes.as_slice() else {
+        panic!("one box from F0: {:?}", n.lines.boxes);
+    };
+    assert!(
+        (line.started as i64 - b.made as i64).abs() <= 1,
+        "started as his box goes up: {line:?} {b:?}"
+    );
+    let ended = line.ended.expect("ended") as i64;
+    let frames = (line.length * 60.0).round() as i64;
+    assert!(
+        (ended - line.started as i64 - frames).abs() <= 1,
+        "played to its end: {line:?}"
+    );
+    println!(
+        "his line {} on {}, F0 + {} for {:.3} s (built {:.3} s); 'cutscene go' F0 + {go}, \
+         'advance with player' {} steps on (AH.10: 300)",
+        line.sound,
+        line.actor,
+        line.started as i64 - n.f0_clock as i64,
+        line.length,
+        line.built,
+        advance - go
+    );
+    assert!(
+        (295..=305).contains(&(advance - go)),
+        "AH.10: 300; ours {}",
+        advance - go
+    );
+}
+
 /// The fight above with its sounds (openspec AR.9, AR.12): every start of a
 /// sound the book gives audio for plays its recording on the game clock,
 /// Eruptor's throws and eruptions and the Chompies' bites among them, and
@@ -2427,7 +2602,7 @@ fn the_fight_with_its_sounds_plays_and_norticus_scene_waits_on_them() {
 /// `mu_213_combat_stinger_percussion` on the music's beat. Ours: asleep
 /// within two steps of the last of the four going, the stinger asked at
 /// its shutdown and the current music from 73 to 163 steps on (the
-/// oracle's window from its flip 275), still at F0 + 400, 900 and 1,449.
+/// oracle's window from its flip 275), still to the run's end.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn the_first_fights_watcher_hands_the_music_to_the_stinger() {
@@ -2479,7 +2654,13 @@ fn the_first_fights_watcher_hands_the_music_to_the_stinger() {
         "the stinger current {} steps on",
         current - asleep
     );
-    for k in [400, 900, 1449] {
+    // Still the stinger to the run's end, at three steps past it (at F0 +
+    // 400, 900 and 1,449 while the four went by F0 + 270; since AT.44's
+    // route waits out the pit's voiced intro before anchor B, F0 holds
+    // anchor B's state, and with the sounds `Enemy_Chompy(4)` misses the
+    // call there, AH.140's hazard, the four going later).
+    let end = snaps.last().expect("snaps").k;
+    for k in [current + 50, (current + end) / 2, end] {
         assert_eq!(at(k).watcher, (None, true), "F0 + {k}");
         assert_eq!(named(at(k).music).as_deref(), Some(STINGER), "F0 + {k}");
     }
@@ -2981,12 +3162,21 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             assert!((p.knock - 0.125).abs() < 2e-4);
         }
         // His resistance rises by half the strength, 12.5, on what the
-        // combat manager's falling left of it that step.
+        // combat manager's falling left of it that step: the fall gains
+        // 0.003 a step, so a bite late in one loses more of its 12.5 (the
+        // AT.44 run's bite at F0 + 601, 73 steps into a fall, 0.223; the
+        // runs before it, earlier in theirs, under 0.2).
         let rose = p.resist_after - p.resist_before;
         if p.resist_before == 0.0 {
             assert!((rose - 12.5).abs() < 1e-3, "{rose}");
         } else {
-            assert!((12.3..=12.501).contains(&rose), "{rose}");
+            let at = snaps.iter().position(|s| s.k == p.k).unwrap();
+            let fell = snaps[at - 2].hero_hurt.resist - snaps[at - 1].hero_hurt.resist;
+            let falls = fell + 0.003;
+            assert!(
+                (rose - (12.5 - falls)).abs() < 2e-3,
+                "{rose} against 12.5 less the step's fall, {falls}"
+            );
         }
         // Moving from the bite's own step, as AH.10's from its own frame.
         let at = snaps.iter().position(|s| s.k == p.k).unwrap();
@@ -4348,8 +4538,12 @@ fn check_orbs(l: &Lobbed, per_chompy: usize) {
             "listed flying every step in: {:?}",
             l.flight
         );
+        // Closing on him from its first step in flight on: it leaves the
+        // take at rest, so him walking off (4 m/s) can open the gap over
+        // that step (the AT.44 run's orb taken at F0 + 505: 5.720 ft to
+        // 5.736, then closing).
         assert!(
-            l.flight.windows(2).all(|w| w[1].2 < w[0].2 + 1e-3),
+            l.flight.windows(2).skip(1).all(|w| w[1].2 < w[0].2 + 1e-3),
             "closing on him: {:?}",
             l.flight
         );

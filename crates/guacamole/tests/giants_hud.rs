@@ -221,7 +221,12 @@ fn eruptors_join_builds_the_hud() {
     assert_eq!(boxes.len(), 1, "the main box, once");
     let main = frame.get(boxes[0]).unwrap();
     println!("main box at {:?} on screen", main.rect());
-    assert_eq!(instances.len(), 60, "the HUD's instances at the join");
+    // 75 (openspec AT.44): AT.9's 60, the 10 the HUD's builders hand over
+    // as a lone sprite where a set reference takes it (each health bar's
+    // middle, the shine's, the frame's four corners and four edges: a set
+    // of one since AT.44, none before), and the adventure's title card, 5,
+    // which the level's UI controller holds up 3 s from the start.
+    assert_eq!(instances.len(), 75, "the HUD's instances at the join");
     // The draw list beside AC.13's quads: each HUD quad's nearest entry of
     // its image, how far off (AT.39 holds them within 1 px).
     let list = m.draw_list(&frame);
@@ -414,10 +419,11 @@ fn probe_the_hud_under_other_title_safe_margins() {
 
 /// AT.9's review: the HUD through a swap, as the TV's runs it (AH.105's
 /// deactivate path, then the next join on the same run), strict, every
-/// member on the model: his coming off takes his HUD down (60 instances to
-/// 9 on the dump, 51 taken off) and the next join builds it once (60
-/// again, not 111); what's taken off stays in the model, as a run's
-/// sprites all do.
+/// member on the model: his coming off takes his HUD down and the next
+/// join builds it once (AT.9's review: 60 instances to 9 on the dump, 51
+/// taken off, and 60 again, not 111; AT.44's: 70, the bars' middles and
+/// the frame's corners and edges in since a lone sprite reads as a set of
+/// one); what's taken off stays in the model, as a run's sprites all do.
 #[test]
 #[ignore = "reads the Giants dump (GUAC_GIANTS_DUMP)"]
 fn a_swap_takes_his_hud_down_and_the_next_join_builds_it_once() {
@@ -436,6 +442,11 @@ fn a_swap_takes_his_hud_down_and_the_next_join_builds_it_once() {
             k.model().removed().len(),
         )
     };
+    // Past the adventure's title (openspec AT.44: the level's UI controller
+    // holds it up 3 s from the start), so what comes and goes is his HUD.
+    for _ in 0..120 {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+    }
     let at_join = count(&run);
     let values = run.figure_values().expect("his figure's words");
     run.deactivate()

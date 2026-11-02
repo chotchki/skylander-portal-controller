@@ -1198,6 +1198,67 @@ fn a_set_the_host_changed_grows_number_cells() {
 }
 
 #[test]
+fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
+    // A text colour converter's `color set` the host copies holds packed
+    // colours (openspec AT.44): `UI.ai`'s text keyframers write a letter's
+    // colour through a reference to one of its elements. Each colour (and
+    // screen position) the host hands over is a cell of its own, as a
+    // number is, so the write lands there and reads back.
+    let lit = 0xFFFF_00FFu32;
+    let p = program(|w| {
+        let last = var(w, "last");
+        let spot = var(w, "spot");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let colours = [El::Member("test", "colours")];
+                let deref = El::Member("abstractscriptgroup", "valuedereferencer");
+                for (name, idx, read_into) in [("h", 1, last), ("s", 2, spot)] {
+                    let set_ref = w.reference(&colours, None);
+                    let idx = w.int(idx);
+                    let elem = w.variable(name, "ScriptReference", None);
+                    let o = w.op(Class::SetReference, "set *reference||to");
+                    let lhs = w.stack(StackClass::Reference, &[El::Local(elem)]);
+                    w.refer(o, 0x1C, lhs);
+                    w.refer(o, 0x20, set_ref);
+                    w.refer(o, 0x24, idx);
+                    w.push(o);
+                    if name == "h" {
+                        let colour = w.literal("ColorMeasurement", lit, false);
+                        w.set(&[El::Local(elem), deref], colour);
+                    }
+                    let v = w.rhs("ColorMeasurement", &[El::Local(elem), deref]);
+                    w.set(&[El::Local(read_into)], v);
+                }
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "colours", MemberSpec::new(Kind::SetRef, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Keyframer", 0);
+    let grey = Value::Color(0x8080_80FF);
+    let mut host = Engine {
+        refs: vec![Some(vec![grey, grey, Value::Screen(0x0010_0020)])].into(),
+        ..Engine::default()
+    };
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    // A file's colour word is its bytes the other way round.
+    assert_eq!(
+        vm.local(id, "last"),
+        Some(Value::Color(lit.swap_bytes())),
+        "written through the reference"
+    );
+    assert_eq!(
+        vm.local(id, "spot"),
+        Some(Value::Screen(0x0010_0020)),
+        "a screen position a cell too"
+    );
+}
+
+#[test]
 fn a_reset_puts_a_structure_back_and_asks_the_host_for_a_placement() {
     let mut a = None;
     let (p, obj) = program_and_objects(|w| {

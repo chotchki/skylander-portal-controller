@@ -2450,10 +2450,35 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Chapter 1's end (openspec AS.15).
         scripts.extend(LEVEL_END_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // Its interface placement the scheduler holds (openspec AT.44).
+        placements.extend(LEVEL_UI.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
 }
+
+/// Level 213's interface placements the original's scheduler holds
+/// (openspec AT.44), by placement name, every tick: its UI controller,
+/// awake in the June record's list (AH.59: `june_sched.txt`, 133rd of
+/// group 1's 148), whose tick shows the adventure's title for 3 s once the
+/// hero is near and takes itself off (AG.7 read it taken off at AF's fresh
+/// state). The interface's other placements in the level and `global.bld`'s
+/// (`Dialogue_UI`, `UI_PlayerHUD_Macros` and the rest) are templates
+/// (`_activityState` 5): the scheduler never holds one, so none ticks, and
+/// their macros run where the scripts call them, the UI's tick and the
+/// game systems' update set among them, as the run has them already
+/// ([`init_chain`] adds running placements, 4, alone).
+pub const LEVEL_UI: [&str; 1] = ["213_UI_Controller"];
+
+/// Eon's lines' activators (openspec AR.17), by script: each plays its
+/// line through the dialogue UI (its `string reference` and `voice
+/// reference` tags a lone string and sound each, a set of one), voiced,
+/// as `Eon_1_Move_along_path` does as the level starts on a run that lists
+/// it. Not on the TV's listing (AR.29): listed, his line at the start
+/// hides the player's HUD outside any scene and moves the join's checks,
+/// and his activator's take-off waits on its sound's `percent remaining`,
+/// which the host answers nothing for on a sound info itself (AR.28).
+pub const LINE_SCRIPTS: [&str; 1] = ["Eon_Line_Activator.ai"];
 
 /// One walker's scripts on the whitelist (openspec AG.27, AH.42's way) and
 /// what they ask of the gameplay viewport beyond the TV's own run
@@ -5584,6 +5609,82 @@ mod tests {
                 "Spyro_PortalControl",
                 "movementUpdate"
             ]
+        );
+    }
+
+    /// openspec AT.44: level 213's UI controller is in the scheduler's list
+    /// as the June record holds it, every tick on the TV's listing and the
+    /// fight's, by its placement's name, Eon's lines' activators off it
+    /// (AR.17); an interface template (5, as
+    /// `Dialogue_UI` is) never joins the run, whatever the listing, while a
+    /// running placement (4) does, in its file's root-list order.
+    #[test]
+    fn the_levels_ui_controller_ticks_and_no_interface_template_joins() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::Writer;
+        const CONTROLLER: &str =
+            "C:/tfb/Content/Levels/Level_213/cutscenes/scripts/213_UI_Controller.ai";
+        const DIALOGUE: &str =
+            "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/Dialogue_UI.ai";
+        for c in [smash_config(Mode::Play), fight_config(Mode::Play)] {
+            assert_eq!(
+                c.whitelist.listing("213_UI_Controller", CONTROLLER),
+                guac_script::Listed::Every
+            );
+            assert_eq!(
+                c.whitelist.listing("Another_UI_Controller", CONTROLLER),
+                guac_script::Listed::Off,
+                "by its placement's name"
+            );
+            // Eon's lines (openspec AR.17): off the TV's listing (AR.29).
+            assert_eq!(
+                c.whitelist.listing(
+                    "Eon_2_Keep_Going",
+                    "C:/tfb/Content/Levels/Level_213/Scripts/Eon_Line_Activator.ai"
+                ),
+                guac_script::Listed::Off
+            );
+        }
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            for path in [CONTROLLER, DIALOGUE] {
+                let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+                w.end_block(pre);
+                w.end(path);
+            }
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = guac_script::Unit {
+            name: "level",
+            role: guac_script::Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let obj = |index| Obj { unit: 0, index };
+        let mut template = Placed::named(obj(100), "Dialogue_UI", Some(DIALOGUE), 5);
+        template.load = 0;
+        let mut controller =
+            Placed::named(obj(101), "213_UI_Controller", Some(CONTROLLER), RUNNING);
+        controller.load = 1;
+        let files = Files {
+            placed: vec![template, controller],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut c = Config::new(Mode::Strict);
+        c.whitelist = Whitelist::All;
+        let vm = init_chain(program, &files, &handles, &[0], c);
+        let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+        assert_eq!(order, ["213_UI_Controller"]);
+        assert_eq!(
+            vm.placement_of(handles[&obj(100)]),
+            None,
+            "a template never joins"
         );
     }
 

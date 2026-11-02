@@ -1136,3 +1136,124 @@ pub fn row_after(sent: &[Values]) -> FigureProgress {
             .progress
     })
 }
+
+/// One dialogue box a scene's line made on the interface's model (openspec
+/// AT.44): the step it was made and taken off, its speaker's portrait
+/// (the template its portrait is a clone of) and how many letters its text
+/// box's line holds as the scripts set it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DialogueBox {
+    pub made: u32,
+    pub gone: Option<u32>,
+    pub portrait: Option<String>,
+    pub letters: usize,
+}
+
+/// One voice a line started (openspec AR.17): its sound, its actor's name,
+/// the step it started and ended, its length on the game clock (the
+/// recording's frames) and the length the build measured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Voice {
+    pub sound: String,
+    pub actor: String,
+    pub started: u64,
+    pub ended: Option<u64>,
+    pub length: f32,
+    pub built: f32,
+}
+
+/// The template a dialogue box's backdrop is a clone of: the box's
+/// container holds it, the portrait and the text box hang on it.
+pub const DIALOGUE_BACKDROP: &str = "UI_Dialogue_FullBackdrop";
+
+/// What a run's scene lines did, step by step: each dialogue box made and
+/// taken off on the model, each voice (a `vo_` sound) started.
+#[derive(Debug, Clone, Default)]
+pub struct Lines {
+    pub boxes: Vec<DialogueBox>,
+    pub voices: Vec<Voice>,
+    open: Vec<(guac_interface::SpriteId, usize)>,
+}
+
+impl Lines {
+    /// What changed since the last step: boxes made or taken off, the
+    /// letters a box's line holds, voices started and ended.
+    pub fn record(&mut self, run: &Run) {
+        let step = run.steps;
+        if let Some(k) = run.world.interface() {
+            let m = k.model();
+            let backdrops: Vec<guac_interface::SpriteId> = k
+                .instances()
+                .into_iter()
+                .filter(|&id| m.sprite(id).name == DIALOGUE_BACKDROP)
+                .collect();
+            for &id in &backdrops {
+                let sprite = m.sprite(id);
+                let portrait = sprite.children.iter().find_map(|&c| {
+                    let s = m.sprite(c);
+                    (!s.name.contains("Text")).then(|| s.name.clone())
+                });
+                let letters = sprite
+                    .children
+                    .iter()
+                    .map(|&c| m.letter_count(c, &guac_interface::NoWorld))
+                    .max()
+                    .unwrap_or(0);
+                match self.open.iter().find(|(o, _)| *o == id) {
+                    Some(&(_, at)) => {
+                        let b = &mut self.boxes[at];
+                        b.letters = b.letters.max(letters);
+                        b.portrait = b.portrait.take().or(portrait);
+                    }
+                    None => {
+                        self.open.push((id, self.boxes.len()));
+                        self.boxes.push(DialogueBox {
+                            made: step,
+                            gone: None,
+                            portrait,
+                            letters,
+                        });
+                    }
+                }
+            }
+            self.open.retain(|&(id, at)| {
+                let alive = backdrops.contains(&id);
+                if !alive {
+                    self.boxes[at].gone = Some(step);
+                }
+                alive
+            });
+        }
+        let w = &run.world;
+        for p in w.plays() {
+            let Some(name) = p.name.as_deref().filter(|n| n.starts_with("vo_")) else {
+                continue;
+            };
+            if self
+                .voices
+                .iter()
+                .any(|v| v.sound == name && v.started == p.started)
+            {
+                continue;
+            }
+            let s = &w.sequences()[p.sequence as usize];
+            self.voices.push(Voice {
+                sound: name.to_owned(),
+                actor: w.name(s.actor).to_owned(),
+                started: p.started,
+                ended: None,
+                length: p.length,
+                built: p.params.rumble_duration,
+            });
+        }
+        for e in w.sounds_ended() {
+            if let Some(v) = self
+                .voices
+                .iter_mut()
+                .find(|v| Some(v.sound.as_str()) == e.name.as_deref() && v.started == e.started)
+            {
+                v.ended = Some(e.ended);
+            }
+        }
+    }
+}
