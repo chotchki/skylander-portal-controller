@@ -472,6 +472,11 @@ pub struct ScriptWorld {
     /// Clones of scripted templates the scripts made this step, with the
     /// template: the embedder adds each as a placement running its script.
     pub scripted: Vec<(Handle, Obj)>,
+    /// File placements a script reset after one took them off, this step
+    /// (openspec AS.60): each back on as its file has it, and the embedder
+    /// adds each running one's script again from its STARTUP
+    /// ([`add_scripted`]).
+    pub revived: Vec<(Handle, Obj)>,
     time_scale: f32,
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
@@ -765,6 +770,7 @@ impl ScriptWorld {
             kept_via: HashMap::new(),
             waypoints_made: Vec::new(),
             scripted: Vec::new(),
+            revived: Vec::new(),
             time_scale: FULL_SPEED,
             load_level: Value::Null,
             requests: Vec::new(),
@@ -1847,6 +1853,23 @@ impl ScriptWorld {
                 Ok(Answer::Done)
             }
             Class::Reset => {
+                // A file placement taken off comes back as its file has it
+                // (openspec AS.60, a reading: level 214's intro takes the
+                // ship the players stand on off at its start and resets it
+                // in its SHUTDOWN, as it does the barrels it took off), its
+                // script running again from its STARTUP.
+                if let Some(h) = target
+                    && let Some(o) = self
+                        .actors
+                        .get(&h)
+                        .filter(|k| k.removed)
+                        .and_then(|k| k.obj)
+                    && let Some(p) = self.templates.get(&o)
+                {
+                    self.actors.insert(h, actor_of(p));
+                    self.revived.push((h, o));
+                    return Ok(Answer::Done);
+                }
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
                     // A light the point-light manager took off goes back
@@ -2192,14 +2215,24 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
 }];
 
 /// The intros the TV runs past chapter 1's, by level and placement
-/// (openspec AS.47): none yet. Level 214's (`214_Intro_IGC`, awake from the
-/// load) runs headless to its hand-over, held for the hero
-/// ([`hold_intro`]) and skipped a frame in
-/// ([`crate::level_end::SKIPPED_CUTSCENES`]), but takes the ship the
-/// players stand on with it: its STARTUP takes `The_Ship_1` off and the
-/// skip takes off both clones its cutscene made of `214_Intro_Ship`, so the
-/// deck would show nothing under them (AS.60).
-pub const INTROS: [(&str, &str); 0] = [];
+/// (openspec AS.47, AS.60). Level 214's (`214_Intro_IGC`, awake from the
+/// load), held for the hero ([`hold_intro`]) and skipped a frame in
+/// ([`crate::level_end::SKIPPED_CUTSCENES`]), hands him over on the ship's
+/// deck: its STARTUP takes `The_Ship_1` off (its parts with it, its
+/// SHUTDOWN's) and the barrels by the dock, its cutscene draws two clones of
+/// `214_Intro_Ship`, which the skip takes off, and its own SHUTDOWN resets
+/// the ship, the gun deck's hatch and the barrels, which a reset brings back
+/// as their files have them, the ship's script cloning its parts again
+/// ([`SHIP`]).
+pub const INTROS: [(&str, &str); 1] = [("level_214_tutotial_2", "214_Intro_IGC")];
+
+/// Level 214's ship (openspec AS.60), by placement name, every tick: the
+/// ship the players stand on (`Ships.ai`, cloning its engine, masthead and
+/// roof onto itself at its STARTUP and taking them off at its SHUTDOWN),
+/// the intro's own ship, and the engine (`214_Hub_Engine.ai`, cloning its
+/// oars, propeller and body onto its nodes and turning between its two
+/// clips). By name, since the ships' scripts are the hub's too.
+pub const SHIP: [&str; 3] = ["The_Ship_1", "214_Intro_Ship", "Hub_Engine"];
 
 /// The intro placement of the level whose archive is `level`, if the TV
 /// runs one.
@@ -2378,6 +2411,33 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
     "Pan_Show_Cannon.ai",
     "Pan_Show_Norticu.ai",
 ];
+
+/// Level 214's bombs and the walls they open (openspec AS.57), every tick, by
+/// script: each bomb spawner (`Tools_Spawner.ai`, its id 1 the bomb's)
+/// clones a bomb while none of its own stands and no player carries one;
+/// the bomb (`Bomb_Rocket_Template.ai`) is taken by a hero coming within
+/// 10 ft and carried 12 ft over him, counting down, until a tap of his
+/// fourth action (△, the PS3's tap gesture: `global.bld`'s gesture manager,
+/// `UI_Controller_Prompt.ai`, its update run by the game systems' tick) throws
+/// it, and where it bursts it opens every breakable castle wall within 20 ft
+/// (`StoneWall_Game2_Version.ai`), which falls in pieces; the pan to the
+/// first bomb (`Pan_Show_Bomb.ai`) with them, and the bomb hints by name
+/// ([`BOMB_HINTS`]). Off: the countdown's floating numbers (`BombTImer.ai`,
+/// a sprite the TV draws nowhere, whose `move to` its carrier the host
+/// doesn't move yet).
+pub const BOMB_SCRIPTS: [&str; 5] = [
+    "Tools_Spawner.ai",
+    "Bomb_Rocket_Template.ai",
+    "UI_Controller_Prompt.ai",
+    "StoneWall_Game2_Version.ai",
+    "Pan_Show_Bomb.ai",
+];
+
+/// Level 214's bomb hints (openspec AS.57), by placement name: each plays
+/// Eon's line once a hero touches its volume, its text an announcement the
+/// TV draws nowhere. By name, since the hints' script is every level's
+/// (chapter 1's fifteen stay off).
+pub const BOMB_HINTS: [&str; 2] = ["0_Hint_Use_Bombs", "0_Hint_Use_Bombs(1)"];
 
 /// What the scripts spawn that draws from `global.bld`'s own models (openspec
 /// AH.39), by file name: the level-up's flourish (its warp ring, tube and
@@ -2641,6 +2701,11 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // Level 214's bombs (openspec AS.57).
+        scripts.extend(BOMB_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        placements.extend(BOMB_HINTS.iter().map(|s| (*s).to_owned()));
+        // Level 214's ship (openspec AS.60).
+        placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // The levels' music (openspec AR.16, AS.54): their rolls draw on
         // the session's generator, as the original's do.
@@ -3755,11 +3820,27 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
 /// of those waits for this.
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
-    world
+    let mut added: Vec<PlacementId> = world
         .adopt(&program)
         .into_iter()
         .map(|(h, name, sid)| vm.add(h, &name, sid))
-        .collect()
+        .collect();
+    // A running placement a script reset after it was taken off runs its
+    // script again from its STARTUP under its handle (openspec AS.60), as a
+    // character's file joining again does (AH.105).
+    for (h, o) in std::mem::take(&mut world.revived) {
+        let Some(p) = world.templates.get(&o) else {
+            continue;
+        };
+        let off = vm.placement_of(h).is_none_or(|id| vm.removed(id));
+        if p.activity_state != RUNNING || !off {
+            continue;
+        }
+        if let Some(sid) = world.script_of(o, &program) {
+            added.push(vm.add_at(h, &p.name, sid, o));
+        }
+    }
+    added
 }
 
 pub(crate) fn outside(why: String) -> Halt {
@@ -4646,8 +4727,9 @@ mod tests {
             );
         }
         assert!(!l214.whitelist.lists("Enemy_Chompy(4)", "C:/x/Any.ai"));
-        // Not its intro yet (openspec AS.47, AS.60).
-        assert!(!l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
+        // Its intro, 214's alone (openspec AS.47, AS.60).
+        assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
+        assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(
             !l214
                 .whitelist
@@ -4959,6 +5041,47 @@ mod tests {
             }
             assert!(vm.inert().contains(&handles[&objs[2]]), "{mode:?}");
         }
+    }
+
+    /// AS.60: a reset of a file placement a script took off brings it back
+    /// as its file has it (level 214's intro resets the ship it took off),
+    /// listed for the embedder to run its script again; a reset of one
+    /// standing leaves it where it is, nothing listed.
+    #[test]
+    fn a_reset_brings_a_placement_taken_off_back() {
+        let (mut w, grunt, _) = world();
+        let file = w.actor(grunt).unwrap().position;
+        w.actors.get_mut(&grunt).unwrap().position = file + Vec3::X;
+        assert_eq!(
+            w.op(
+                &call(Class::Reset, Some(Value::Entity(grunt))),
+                &mut |_| 0,
+                &mut NoEngine
+            ),
+            Ok(Answer::Done)
+        );
+        assert!(w.revived.is_empty(), "a standing one isn't revived");
+        assert_eq!(w.actor(grunt).unwrap().position, file + Vec3::X);
+        w.op(
+            &call(Class::Remove, Some(Value::Entity(grunt))),
+            &mut |_| 0,
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert!(w.removed(grunt));
+        w.op(
+            &call(Class::Reset, Some(Value::Entity(grunt))),
+            &mut |_| 0,
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert!(!w.removed(grunt), "back on");
+        assert_eq!(
+            w.actor(grunt).unwrap().position,
+            file,
+            "where its file has it"
+        );
+        assert_eq!(w.revived, [(grunt, GRUNT)]);
     }
 
     #[test]
@@ -5348,6 +5471,33 @@ mod tests {
     /// the Titan boulders' its first tick alone (their cylinders and pebbles,
     /// the feat held), so nothing takes them off; the fight's own listing
     /// AH.27's with the four; AH.8's route's scripts and members (AH.28).
+    /// AS.57: level 214's bombs, the castle walls they open, the gesture
+    /// manager that reads the throw and the pan to the first bomb run every
+    /// tick by script, the bomb hints by name; the hints' script on any
+    /// other placement (chapter 1's fifteen) and the countdown's numbers
+    /// stay off.
+    #[test]
+    fn level_214s_bombs_and_their_walls_run_on_the_tvs_listing() {
+        let c = smash_config(Mode::Play);
+        for script in BOMB_SCRIPTS {
+            let path = format!("C:/tfb/Content/Levels/Includes/{script}");
+            assert_eq!(
+                c.whitelist.listing("a placement", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
+        let hints = "C:/tfb/Content/Levels/Level_214/Scripts/Hints_Passive.ai";
+        for name in BOMB_HINTS {
+            assert!(c.whitelist.lists(name, hints), "{name}");
+        }
+        assert!(!c.whitelist.lists("Hint_Use_attacks", hints));
+        assert!(!c.whitelist.lists(
+            "Bomb_Timer",
+            "C:/tfb/Content/Levels/Includes/GameElement_Bomb/Scripts/BombTImer.ai"
+        ));
+    }
+
     #[test]
     fn the_tvs_listing_runs_the_breakables_and_no_creature_or_titan_feat() {
         let c = smash_config(Mode::Play);
@@ -6379,8 +6529,9 @@ mod tests {
         assert!(!release_intro(&mut vm, &mut world), "once");
         music_step(&mut vm, &mut world);
         assert_eq!(vm.local(intro_id, "starts"), Some(Value::Int(1)));
-        // None on the TV's listing yet (AS.60).
-        assert_eq!(intro("level_214_tutotial_2"), None);
+        // Level 214's on the TV's listing since AS.60, no other level's.
+        assert_eq!(intro("level_214_tutotial_2"), Some("214_Intro_IGC"));
+        assert_eq!(intro("level_212"), None);
     }
 
     /// openspec AR.30 (AR.27's key): the music waits only while the level's

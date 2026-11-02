@@ -2602,6 +2602,10 @@ impl Vm {
                         unsupported(format!("membership of {set:?}"))
                     };
                 };
+                // As a path element the check reads the set its left side
+                // read, as a value check does (openspec AS.57: 214's tool
+                // spawner asks the next check of its bomb's clones so).
+                self.op_state.entry(op).or_default().cached = Some(Value::Set(s));
                 let r = self.rhs_ref(program, *rhs, None, host)?;
                 self.materialize(r);
                 if !self.membership(s, r, *code) {
@@ -5181,13 +5185,21 @@ impl Vm {
             Value::Set(r) => {
                 let rs = &self.sets[r as usize].elems;
                 match code {
-                    0 => rs.iter().all(|x| set.contains(x)),
+                    // An empty set is in no set (openspec AS.57, a reading):
+                    // level 214's tool spawner fills a set from the two
+                    // players' carried-object references and spawns its bomb
+                    // only once no bomb is among them, which an empty set
+                    // passing an all-check would stop for good.
+                    0 => !rs.is_empty() && rs.iter().all(|x| set.contains(x)),
                     1 => !rs.is_empty() && !rs.iter().any(|x| set.contains(x)),
                     2 => rs.iter().any(|x| set.contains(x)),
-                    3 => rs.iter().all(|x| {
-                        set.iter().filter(|y| *y == x).count()
-                            >= rs.iter().filter(|y| *y == x).count()
-                    }),
+                    3 => {
+                        !rs.is_empty()
+                            && rs.iter().all(|x| {
+                                set.iter().filter(|y| *y == x).count()
+                                    >= rs.iter().filter(|y| *y == x).count()
+                            })
+                    }
                     _ => false,
                 }
             }

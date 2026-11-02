@@ -110,9 +110,10 @@ fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
 /// The clones level 214's start makes (openspec AS.63), each drawn by the
 /// rule off 214's own props part or named left out: its six red push
 /// blocks, the spike gate's spikes, holes and enemy gate lock, the Chompy
-/// spawners' pods (skinned, scripted by nothing) and the undead Chompies;
-/// the Titan boulders' pebbles by name. Play mode, Eruptor joined at its
-/// start, 600 steps.
+/// spawners' pods (skinned, scripted by nothing) and the undead Chompies,
+/// and since AS.57 and AS.60 the bombs, the ship's parts and the intro's
+/// actors; the Titan boulders' pebbles by name, a template with no model
+/// drawing nothing. Play mode, Eruptor joined at its start, 600 steps.
 #[test]
 #[ignore = "disc: GUAC_GIANTS_DUMP (AS.63)"]
 fn level_214s_start_clones_draw_by_the_rule() {
@@ -160,9 +161,15 @@ fn level_214s_start_clones_draw_by_the_rule() {
         load()
     );
     for name in clones.keys() {
+        // A template with no model (a hint's marker) has nothing to draw.
+        let modelled = run
+            .files
+            .placed
+            .iter()
+            .any(|p| p.obj.unit == LEVEL && p.name == *name && p.model.is_some());
         assert_eq!(
             drawn.contains(name.as_str()),
-            !UNDRAWN_SPAWNS.contains(&name.as_str()),
+            modelled && !UNDRAWN_SPAWNS.contains(&name.as_str()),
             "{name}"
         );
     }

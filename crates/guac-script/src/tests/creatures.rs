@@ -788,6 +788,82 @@ fn a_set_change_into_undefined_goes_nowhere() {
     assert_eq!(vm.local(id, "inside"), None);
 }
 
+/// openspec AS.57: an empty set is in no set, an all-check (code 0, or 3
+/// with multiplicity) of one on the right skipping its block as an any-check
+/// (2) does, where a set holding the right side's members passes; and a
+/// membership check read as a path element is the set its left side read,
+/// as a value check's is (214's tool spawner asks its next check of its
+/// bomb's clones so).
+#[test]
+fn an_empty_set_is_in_no_set_and_a_check_reads_its_set() {
+    let p = program(|w| {
+        let full = w.variable("full", "ScriptSet", None);
+        let empty = w.variable("empty", "ScriptSet", None);
+        let names = [
+            "all of empty",
+            "all of full",
+            "every of empty",
+            "any of empty",
+            "path",
+        ];
+        let counters: Vec<Location> = names.iter().map(|n| var(w, n)).collect();
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let lhs = w.stack(StackClass::Set, &[El::Local(full)]);
+                let rhs = w.reference(&[my()], None);
+                let o = w.op(Class::ChangeMembership, "set [set]||to");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, 0);
+                w.refer(o, 0x24, rhs);
+                w.push(o);
+                for (code, right, counter) in [
+                    (0, empty, counters[0]),
+                    (0, full, counters[1]),
+                    (3, empty, counters[2]),
+                    (2, empty, counters[3]),
+                ] {
+                    let lhs = w.stack(StackClass::Set, &[El::Local(full)]);
+                    let rhs = w.reference(&[El::Local(right)], None);
+                    let (at, o) = w.open(Class::CheckMembership, "check [set]");
+                    w.refer(o, 0x1C, lhs);
+                    w.word(o, 0x20, code);
+                    w.refer(o, 0x24, rhs);
+                    w.inc(&[El::Local(counter)]);
+                    w.end_block(at);
+                }
+                // A check whose own set the next check reads.
+                let lhs = w.stack(StackClass::Set, &[El::Local(full)]);
+                let rhs = w.reference(&[El::Local(empty)], None);
+                let (at, first) = w.open(Class::CheckMembership, "check [set]");
+                w.refer(first, 0x1C, lhs);
+                w.word(first, 0x20, 0);
+                w.refer(first, 0x24, rhs);
+                w.end_block(at);
+                let lhs = w.stack(StackClass::Set, &[El::Local(first)]);
+                let rhs = w.reference(&[my()], None);
+                let (at, o) = w.open(Class::CheckMembership, "check [set]");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, 0);
+                w.refer(o, 0x24, rhs);
+                w.inc(&[El::Local(counters[4])]);
+                w.end_block(at);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Spawner", 0);
+    vm.tick(id, &mut Engine::default())
+        .unwrap_or_else(|h| panic!("{h}"));
+    let ran = |n: &str| vm.local(id, n) == Some(Value::Int(1));
+    assert!(!ran("all of empty"), "an empty set isn't in the set");
+    assert!(ran("all of full"), "a set is in itself");
+    assert!(!ran("every of empty"));
+    assert!(!ran("any of empty"));
+    assert!(ran("path"), "the check reads the set it checked");
+}
+
 /// Answers a field-of-view check with targets from its `_LHS` set: the
 /// members it was handed past the first, or none.
 #[derive(Default)]

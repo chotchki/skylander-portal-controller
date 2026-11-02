@@ -481,6 +481,166 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
     );
 }
 
+/// Where level 214's first bomb spawner stands (metres, its file's place).
+const BOMB_SPAWNER: [f32; 3] = [39.005, -16.018, 27.887];
+/// Short of the castle wall in front of the pods, facing it.
+const BEFORE_THE_WALL: ([f32; 3], f32) = ([50.0, -17.9, 30.0], 77.7);
+
+/// openspec AS.57: level 214's way to its pods, on the TV's listing for it
+/// (`scripts::BOMB_SCRIPTS`, `BOMB_HINTS`). The first spawner clones a bomb;
+/// Eruptor coming within its 10 ft takes it, and it rides 12 ft over him;
+/// carried before the castle wall that shuts the pods in, a tap of his
+/// fourth action (△, pulsed a step) throws it (`bomb`), and its burst opens
+/// the wall (`Breakable_Stone_Wall_Castle_206(1)` taken off, its bricks and
+/// pieces cloned), its solid gone from the seam. The spawner clones no
+/// second bomb while the first stands. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_wall_opens_to_a_bomb() {
+    use guac_motion::stick::Stick;
+    use guacamole::script_engine::Pad;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        props: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..60 {
+        stops.extend(run.step_play().unwrap());
+    }
+    let bombs = |run: &Run| -> Vec<guac_script::Handle> {
+        run.world
+            .clones()
+            .into_iter()
+            .filter(|h| run.world.name(*h) == "Bomb_Template")
+            .filter(|h| run.world.actor(*h).is_some_and(|a| !a.removed))
+            .collect()
+    };
+    let behaviour = |run: &Run, h: guac_script::Handle| {
+        run.vm
+            .placement_of(h)
+            .and_then(|id| run.vm.behaviour(id))
+            .map(str::to_owned)
+    };
+    // Set down 3 m short of the spawner: the bomb is his.
+    let at = Vec3::from_array(BOMB_SPAWNER) - Vec3::X * 3.0;
+    run.put(at, 90.0);
+    let mut carried = None;
+    for _ in 0..240 {
+        stops.extend(run.step_play().unwrap());
+        if carried.is_none()
+            && let Some(&b) = bombs(&run).first()
+            && behaviour(&run, b).as_deref() == Some("following player")
+        {
+            carried = Some((b, run.steps));
+        }
+    }
+    let (bomb, taken) = carried.expect("the bomb taken and carried");
+    // The first spawner's: each clone of a bomb starts where it was cloned.
+    let from_first = |run: &Run| -> Vec<guac_script::Handle> {
+        bombs(run)
+            .into_iter()
+            .filter(|h| {
+                run.world
+                    .actor(*h)
+                    .is_some_and(|a| a.origin.distance(Vec3::from_array(BOMB_SPAWNER)) < 3.0)
+            })
+            .collect()
+    };
+    assert_eq!(from_first(&run), [bomb], "one bomb from the spawner");
+    let over = run.world.actor(bomb).unwrap().position - run.hero().pivot;
+    println!("carried from step {taken}, {over} over his pivot");
+    assert!(
+        (over.y - 12.0 / guacamole::script_engine::FEET_PER_METRE).abs() < 0.05
+            && over.x.abs() < 0.01
+            && over.z.abs() < 0.01,
+        "12 ft over him: {over}"
+    );
+    let (wall, _) = run.placed("Breakable_Stone_Wall_Castle_206(1)");
+    let wall_object = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == "Breakable_Stone_Wall_Castle_206(1)")
+        .unwrap()
+        .obj
+        .index;
+    assert!(
+        run.bench
+            .props
+            .as_ref()
+            .unwrap()
+            .standing
+            .contains(&wall_object),
+        "the wall stands, solid"
+    );
+    let (to, facing) = BEFORE_THE_WALL;
+    run.put(Vec3::from_array(to), facing);
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    assert_eq!(
+        behaviour(&run, bomb).as_deref(),
+        Some("following player"),
+        "still carried"
+    );
+    let mut thrown = None;
+    let mut opened = None;
+    for k in 0..300u32 {
+        run.bench.pads[0] = Pad {
+            stick: Stick::new(0.0, 0.0),
+            actions: [false, false, false, k == 0],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap());
+        if thrown.is_none() && behaviour(&run, bomb).as_deref() == Some("bomb") {
+            thrown = Some(run.steps);
+        }
+        if opened.is_none() && run.world.actor(wall).is_some_and(|a| a.removed) {
+            opened = Some(run.steps);
+        }
+    }
+    let thrown = thrown.expect("△ throws it");
+    let opened = opened.expect("its burst opens the wall");
+    let pieces = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| {
+            let n = run.world.name(*h);
+            n == "StoneWall_Brick_Castle_206" || n.starts_with("Wall Piece")
+        })
+        .count();
+    println!(
+        "thrown at step {thrown}, the wall opened at {opened}, {pieces} pieces; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(pieces >= 6, "the wall falls in pieces: {pieces}");
+    assert!(
+        !run.bench
+            .props
+            .as_ref()
+            .unwrap()
+            .standing
+            .contains(&wall_object),
+        "its solid gone"
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+}
+
 /// Where level 214's intro hands the player over (metres, the run's own
 /// read): its cutscene, skipped a frame in, sets him down on the deck here,
 /// 4.3 m from the level's `InitializeLevel.ai` marker.
@@ -500,29 +660,30 @@ fn cutscene_name(run: &Run) -> Option<String> {
     }
 }
 
-/// openspec AS.47: level 214's own intro (`214_Intro_IGC`, listed here past
-/// the TV's listing, which doesn't run it yet: AS.60), held before its
-/// first tick until Eruptor's minion is in, as the TV's install would hold
-/// it; then its cutscene begins with him in it, is skipped a frame in by the
-/// original's own skip (`level_end::SKIPPED_CUTSCENES`), and its hand-over
-/// sets him down on the deck; the intro takes itself off, nothing stops.
-/// Its first line (Flynn's, voiced, since AT.44 reads a lone string as a set
-/// of one) is up as the skip comes and plays on past it, its box holding the
+/// openspec AS.47, AS.60: level 214's own intro (`214_Intro_IGC`), on the
+/// TV's listing (`scripts::INTROS`), held before its first tick until
+/// Eruptor's minion is in, as the TV's install holds it; then its cutscene
+/// begins with him in it, is skipped a frame in by the original's own skip
+/// (`level_end::SKIPPED_CUTSCENES`), and its hand-over sets him down on the
+/// deck; the intro takes itself off, nothing stops. Its STARTUP takes
+/// `The_Ship_1` off (its parts with it) and the skip both clones its
+/// cutscene made of `214_Intro_Ship`; its SHUTDOWN resets the ship, the gun
+/// deck's hatch and the barrels it took off, and a reset brings a placement
+/// taken off back (AS.60): the ship stands under him again, its script
+/// cloning its engine, masthead and roof onto it (`scripts::SHIP`). Its
+/// first line (Flynn's, voiced, since AT.44 reads a lone string as a set of
+/// one) is up as the skip comes and plays on past it, its box holding the
 /// HUD hidden until it's over (the as-214-alive review, on the merge of
-/// AT.44: 350 steps); then the HUD shows again. And what keeps it off the
-/// TV: its STARTUP
-/// takes `The_Ship_1` off, and the skip takes off both clones its cutscene
-/// made of `214_Intro_Ship`, so no ship is left under him.
+/// AT.44: 350 steps); then the HUD shows again.
 #[test]
 #[ignore = "reads the Giants dump"]
-fn level_214s_intro_hands_over_and_takes_the_ship() {
+fn level_214s_intro_hands_over_on_the_ship() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
     let setup = Setup {
         interface: true,
         props: true,
         sounds: true,
-        scripts: &["214_Intro_IGC.ai"],
         ..Setup::default()
     };
     let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
@@ -535,9 +696,26 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
     assert!(run.vm.is_suspended(intro), "held until a hero joins");
     assert_eq!(run.vm.behaviour(intro), None);
     assert_eq!(cutscene_name(&run), None);
+    let (ship, _) = run.placed("The_Ship_1");
+    let parts = |run: &Run| -> Vec<String> {
+        let mut p: Vec<String> = run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| {
+                run.world
+                    .actor(*h)
+                    .is_some_and(|a| !a.removed && a.attach == guac_script::Value::Entity(ship))
+            })
+            .map(|h| run.world.name(h))
+            .collect();
+        p.sort();
+        p
+    };
+    let parts_before = parts(&run);
     run.join().unwrap_or_else(|h| panic!("{h}"));
     let joined_at = run.steps;
-    let (mut began, mut skipped, mut gone, mut shown) = (None, None, None, None);
+    let (mut began, mut skipped, mut gone, mut shown, mut off) = (None, None, None, None, None);
     let mut lines = Lines::default();
     for _ in 0..600 {
         stops.extend(run.step_play().unwrap());
@@ -545,6 +723,9 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
         let cs = cutscene_name(&run);
         if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
             began = Some(run.steps);
+        }
+        if off.is_none() && run.world.removed(ship) {
+            off = Some(run.steps);
         }
         if began.is_some() && skipped.is_none() && cs.is_none() {
             skipped = Some(run.steps);
@@ -557,7 +738,6 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
         }
     }
     let at = run.hero().pivot;
-    let (ship, _) = run.placed("The_Ship_1");
     let (template, _) = run.placed("214_Intro_Ship");
     let ship_clones: Vec<(guac_script::Handle, bool)> = run
         .world
@@ -569,17 +749,32 @@ fn level_214s_intro_hands_over_and_takes_the_ship() {
         })
         .map(|h| (h, run.world.removed(h)))
         .collect();
+    let back: Vec<(&str, bool)> = [
+        "The_Ship_1",
+        "Hatch",
+        "barrel_b_intact(17)",
+        "barrel_b_intact(18)",
+    ]
+    .iter()
+    .map(|n| (*n, !run.world.removed(run.placed(n).0)))
+    .collect();
+    let parts_after = parts(&run);
     println!(
-        "The_Ship_1 taken off {}; the intro ship's clones (taken off): {ship_clones:?}",
-        run.world.removed(ship)
+        "The_Ship_1 off at {off:?}; standing after: {back:?}; its parts before {parts_before:?}, after {parts_after:?}; the intro ship's clones (taken off): {ship_clones:?}"
     );
-    assert!(
-        run.world.removed(ship),
-        "the intro takes the placed ship off"
-    );
+    assert!(off.is_some(), "the intro's STARTUP takes the ship off");
+    assert!(back.iter().all(|(_, on)| *on), "back on after it: {back:?}");
+    let ship_run = run.vm.placement_of(ship).expect("the ship runs");
+    assert!(!run.vm.removed(ship_run), "its script runs again");
+    for part in ["Hub_Engine", "Hub_Masthead", "Hub_Roof"] {
+        assert!(
+            parts_after.iter().any(|p| p == part),
+            "{part} on the ship: {parts_after:?}"
+        );
+    }
     assert!(
         !ship_clones.is_empty() && ship_clones.iter().all(|(_, off)| *off),
-        "and the skip its cutscene's ship clones: {ship_clones:?}"
+        "the skip takes its cutscene's ship clones: {ship_clones:?}"
     );
     println!(
         "the marker {marker:?}; joined at {joined_at}; the intro's cutscene at {began:?}, skipped by {skipped:?}, the intro off at {gone:?}, the HUD shown at {shown:?}; handed over at {at:?} ({:.2} m off the marker)",
