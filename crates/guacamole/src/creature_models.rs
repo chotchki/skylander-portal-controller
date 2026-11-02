@@ -1,7 +1,8 @@
 //! What the first fight's creatures draw with (openspec AH.25), and the
-//! clones of the level's skinned templates (AG.150: the push blocks'
-//! tortoises, the cannon's top): each skinned model they name, off the
-//! level's props part,
+//! clones of the level's skinned templates (AG.150, AS.63's rule: chapter
+//! 1's push blocks' tortoises and cannon top, level 214's Chompy pods and
+//! enemy gate lock): each skinned model they name, off the level's props
+//! part,
 //! as a model the character pipeline draws and poses (its skeleton, its
 //! tfbmulti2 parts, its idle), keyed in the hero's scene as the walking
 //! hero is (the census's creatures table holds them, `tests/giants_census.rs`).
@@ -17,7 +18,7 @@ use guac_ir::shading::Scene;
 
 use crate::character::warm::{self, WarmError, WarmKey};
 use crate::level_scene::drawn_material;
-use crate::props::SKINNED_SPAWNS;
+use crate::props::clones_draw;
 use crate::scripts::FIRST_FIGHT;
 
 /// `prop` as a model the character pipeline draws: its skeleton, the
@@ -78,8 +79,9 @@ pub fn creature_model(prop: &guac_ir::level::Prop, identity: DumpIdentity) -> Op
 /// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) on
 /// chapter 1, or a later level's first encounter's placements and clones'
 /// templates (openspec AS.54, [`crate::scripts::encounter`]), and the
-/// templates [`SKINNED_SPAWNS`] names name, once, by its path, the fight's
-/// first, each in its list's order, as [`creature_model`] makes it: what the
+/// level's templates whose clones draw ([`clones_draw`], openspec AS.63)
+/// name, once, by its path, the fight's first, each in its list's order
+/// (the templates in the file's), as [`creature_model`] makes it: what the
 /// TV draws its creatures and those templates' clones with. A model the
 /// props part doesn't hold, or holds static, is left out.
 pub fn skinned_models(
@@ -99,15 +101,24 @@ pub fn skinned_models(
         .then_some(FIRST_FIGHT.iter())
         .into_iter()
         .flatten();
-    for name in first_fight.chain(encounter).chain(SKINNED_SPAWNS.iter()) {
-        let Some(path) = placements
+    // The level's templates (AS.63): a clone draws its template's model.
+    let templates = placements.actors.iter().filter(|a| {
+        a.activity_state == guac_formats::level::ActivityState::Template.raw()
+            && a.model.as_deref().is_some_and(|m| {
+                props
+                    .props
+                    .iter()
+                    .any(|p| p.path == m && p.skeleton.is_some() && clones_draw(&a.name, p))
+            })
+    });
+    let named = first_fight.chain(encounter).filter_map(|name| {
+        placements
             .actors
             .iter()
             .find(|a| a.name == *name)
             .and_then(|a| a.model.clone())
-        else {
-            continue;
-        };
+    });
+    for path in named.chain(templates.filter_map(|a| a.model.clone())) {
         if out.iter().any(|(p, _)| *p == path) {
             continue;
         }
@@ -226,6 +237,14 @@ mod tests {
         }
     }
 
+    /// A template placement (`_activityState` 5) naming `model`.
+    fn template(name: &str, model: &str) -> Placement {
+        Placement {
+            activity_state: 5,
+            ..placed(name, Some(model))
+        }
+    }
+
     /// A skinned prop becomes a model: its skeleton, the tfbmulti2
     /// material alone (the warp left out with its segment), the body's
     /// segment on it, its reference pose held as its idle, named by its
@@ -259,7 +278,7 @@ mod tests {
                 placed("Enemy_Chompy_Spawner(5)", Some("legs.mdl")),
                 placed("Enemy_Chompy_Spawner(1)", Some("legs.mdl")),
                 placed("Setup_001_Controller", None),
-                placed("2_Push_Block_Art_Sheep", Some("tortoise.mdl")),
+                template("2_Push_Block_Art_Sheep", "tortoise.mdl"),
             ],
             waypoints: Vec::new(),
         };
@@ -284,20 +303,24 @@ mod tests {
     /// The models the first fight's placements name, each once, in their
     /// order: two Chompies on one model, Norticus on another; one naming a
     /// static model and placements off the fight left out. Then the skinned
-    /// templates' (AG.150), each once, in `SKINNED_SPAWNS`' order wherever
-    /// the placements hold them: the tortoises', the cannon top's; Norticus'
-    /// hat, a skinned template off the list, left out. Their keys are the
-    /// hero's skinned key, it blending as a creature fades (AH.139) and its
-    /// glow mask, once each.
+    /// templates' (AG.150, AS.63's rule), each once, in the file's order:
+    /// the cannon top's, the tortoises', a hat's; a pebble
+    /// `props::UNDRAWN_SPAWNS` names and a static template left out, and a
+    /// skinned placement that isn't a template. Their keys are the hero's
+    /// skinned key, it blending as a creature fades (AH.139) and its glow
+    /// mask, once each.
     #[test]
     fn the_first_fights_models_each_once_and_their_keys() {
         let placements = Placements {
             identity: identity(),
             level: "level_213_tutotial".into(),
             actors: vec![
-                placed("Push_Canon_Art_Top", Some("cannon_top.mdl")),
-                placed("2_Push_Block_Art_Sheep", Some("tortoise.mdl")),
-                placed("Turban_hat", Some("hat.mdl")),
+                template("Push_Canon_Art_Top", "cannon_top.mdl"),
+                template("2_Push_Block_Art_Sheep", "tortoise.mdl"),
+                template("2_Push_Block_Art_Sheep", "tortoise.mdl"),
+                template("Turban_hat", "hat.mdl"),
+                template(crate::props::UNDRAWN_SPAWNS[0], "pebble.mdl"),
+                template("Bird_nest_egg", "barrel.mdl"),
                 placed("Enemy_Chompy(1)", Some("chompy.mdl")),
                 placed("Enemy_Chompy(2)", Some("chompy.mdl")),
                 placed("1.NPC_Norticus_First_Encounter", Some("mabu.mdl")),
@@ -317,13 +340,20 @@ mod tests {
                 prop("cannon_top.mdl", true),
                 prop("tortoise.mdl", true),
                 prop("hat.mdl", true),
+                prop("pebble.mdl", true),
             ],
             refused: Vec::new(),
         };
         let models = skinned_models(&placements, &props, &identity());
         assert_eq!(
             models.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
-            ["chompy.mdl", "mabu.mdl", "tortoise.mdl", "cannon_top.mdl"]
+            [
+                "chompy.mdl",
+                "mabu.mdl",
+                "cannon_top.mdl",
+                "tortoise.mdl",
+                "hat.mdl"
+            ]
         );
         let scene = Scene {
             fog: true,

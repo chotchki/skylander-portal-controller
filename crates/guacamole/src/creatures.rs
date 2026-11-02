@@ -24,11 +24,12 @@
 //!   in its tint as its scripts leave it ([`tint_creatures`], AH.67's rule
 //!   since AH.139: a beaten Chompy's death fades its alpha to nothing over
 //!   its last steps). Taken off or asleep, it goes. The clones of the
-//!   level's skinned templates (openspec AG.150,
-//!   [`guacamole::props::SKINNED_SPAWNS`]: the
-//!   push blocks' tortoises, the cannon's top) are drawn and posed the same
-//!   way while their scripts run, turned by all three of their angles as
-//!   the static clones are.
+//!   level's skinned templates (openspec AG.150, AS.63's rule,
+//!   [`guacamole::props::clones_draw`]: chapter 1's push blocks' tortoises
+//!   and cannon top, level 214's Chompy pods and enemy gate lock) are drawn
+//!   and posed the same way while they're on, whether their script runs or
+//!   not (a pod has none), turned by all three of their angles as the
+//!   static clones are.
 //! - The report (`/api/_test/tv`'s `creatures`): each creature's behaviour,
 //!   health and place, what the fight woke past its own (design decision
 //!   6, listed once each), what the scripts have spawned that's still on,
@@ -353,25 +354,30 @@ pub(crate) struct CreatureSpawner<'w, 's> {
     time: Res<'w, Time>,
 }
 
-/// The clones of the templates [`guacamole::props::SKINNED_SPAWNS`] names
-/// (openspec AG.150): drawn as a creature is.
-pub(crate) fn skinned_clones(world: &ScriptWorld) -> Vec<Handle> {
+/// The clones whose template's model the level draws skinned (openspec
+/// AG.150, AS.63: `holds` says whether the level holds a creature model at
+/// a path), but a template `props::UNDRAWN_SPAWNS` names, the creatures the
+/// engine walks left to [`ScriptWorld::creatures`]: drawn as a creature is.
+pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) -> Vec<Handle> {
     world
         .clones()
         .into_iter()
         .filter(|&h| {
-            world
-                .actor(h)
-                .and_then(|a| a.template)
-                .and_then(|t| world.template(t))
-                .is_some_and(|p| guacamole::props::SKINNED_SPAWNS.contains(&p.name.as_str()))
+            world.actor(h).is_some_and(|a| {
+                a.walker.is_none()
+                    && a.template.and_then(|t| world.template(t)).is_some_and(|p| {
+                        !guacamole::props::UNDRAWN_SPAWNS.contains(&p.name.as_str())
+                            && p.model.as_deref().is_some_and(&holds)
+                    })
+            })
         })
         .collect()
 }
 
-/// Each awake creature and skinned clone whose script runs drawn on its
-/// model, once its keys are compiled (asked for if they aren't); each taken
-/// off, asleep or gone from the run let go (the module docs).
+/// Each awake creature whose script runs and each skinned clone that's on
+/// drawn on its model, once its keys are compiled (asked for if they
+/// aren't); each taken off, asleep or gone from the run let go (the module
+/// docs).
 fn draw_creatures(
     world: Res<ScriptWorld>,
     runtime: Option<Res<ScriptRuntime>>,
@@ -386,11 +392,12 @@ fn draw_creatures(
     };
     let vm = &runtime.vm;
     let inert = vm.inert();
+    let clones = skinned_clones(&world, |path| level.creature(path).is_some());
     let wanted: Vec<(Handle, String)> = world
         .creatures()
         .into_iter()
-        .chain(skinned_clones(&world))
         .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
+        .chain(clones)
         .filter_map(|h| {
             let a = world.actor(h)?;
             if a.removed || !a.active {
@@ -614,11 +621,16 @@ pub(crate) struct CreatureShot {
     pub body: bool,
 }
 
-/// What the scripts spawned that's still on: its template's name and where.
+/// What the scripts spawned that's still on: its template's name, where,
+/// and whether the TV draws it now (openspec AS.63: a static clone's parts,
+/// or a skinned one as a creature is).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct SpawnShot {
     pub name: String,
     pub at: [f32; 3],
+    pub drawn: bool,
+    #[serde(skip)]
+    pub handle: Handle,
 }
 
 /// A placement off the whitelist a whitelisted script woke (design
@@ -655,22 +667,33 @@ pub(crate) struct CreaturesReport {
 
 /// The creatures' part of `/api/_test/tv` (openspec AQ.8).
 #[derive(SystemParam)]
-pub(crate) struct CreatureShots<'w> {
+pub(crate) struct CreatureShots<'w, 's> {
     runtime: Option<Res<'w, ScriptRuntime>>,
     world: Option<Res<'w, ScriptWorld>>,
     orbs: Option<Res<'w, crate::orbs::DrawnOrbs>>,
     drawn: Option<Res<'w, DrawnCreatures>>,
+    clones: Query<'w, 's, (Entity, &'static crate::hero_scripts::CloneDrawn)>,
 }
 
-impl CreatureShots<'_> {
+impl CreatureShots<'_, '_> {
     /// None until the run is made.
     pub(crate) fn shot(&self) -> Option<CreaturesReport> {
         let (rt, world) = (self.runtime.as_deref()?, self.world.as_deref()?);
-        Some(CreaturesReport {
+        let mut out = CreaturesReport {
             orbs_drawn: self.orbs.as_ref().map_or(0, |d| d.0.len()),
             drawn: self.drawn.as_ref().map_or(0, |d| d.0.len()),
             ..report(&rt.vm, world)
-        })
+        };
+        for s in &mut out.spawned {
+            s.drawn = self
+                .drawn
+                .as_ref()
+                .is_some_and(|d| d.0.contains_key(&s.handle))
+                || Entity::try_from_bits(s.handle)
+                    .and_then(|e| self.clones.get(e).ok())
+                    .is_some_and(|(_, c)| c.draws);
+        }
+        Some(out)
     }
 }
 
@@ -712,6 +735,8 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
             Some(SpawnShot {
                 name: world.name(c),
                 at: world.actor(c)?.position.to_array(),
+                drawn: false,
+                handle: c,
             })
         })
         .collect();
@@ -1034,7 +1059,7 @@ mod tests {
         );
     }
 
-    /// AG.150: the clone of a skinned template `SKINNED_SPAWNS` names (a
+    /// AG.150: the clone of a level's skinned template (AS.63's rule: a
     /// push block's tortoise), made once by its spawner's script where the
     /// template stands, is drawn on the template's model in the level's
     /// layer, at its actor's place, turned as the spawner faced it and
@@ -1048,7 +1073,6 @@ mod tests {
         use crate::test_support::play::{ART_AT, ART_TOP, fight_app_with_art};
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, _) = fight_app_with_art(tmp.path(), None);
-        let art = |app: &App| skinned_clones(app.world().resource::<ScriptWorld>());
         until(&mut app, "the art drawn", |a| {
             art(a)
                 .first()
@@ -1203,14 +1227,59 @@ mod tests {
         assert!(a.angles.tilt.abs() > 1.0, "a tilted clone: {:?}", a.angles);
     }
 
-    /// The art clone, once it's drawn.
-    fn until_art(app: &mut App) -> Handle {
-        until(app, "the art drawn", |a| {
-            skinned_clones(a.world().resource::<ScriptWorld>())
+    /// The skinned clones the level holds models for of the template
+    /// named `name`.
+    fn skinned_of(app: &App, name: &str) -> Vec<Handle> {
+        let level = app.world().resource::<Level>();
+        let world = app.world().resource::<ScriptWorld>();
+        skinned_clones(world, |p| level.creature(p).is_some())
+            .into_iter()
+            .filter(|&h| world.name(h) == name)
+            .collect()
+    }
+
+    /// The art piece's skinned clones.
+    fn art(app: &App) -> Vec<Handle> {
+        skinned_of(app, guac_formats::script::builder::FIGHT_ART)
+    }
+
+    /// AS.63: a skinned clone no script runs (the pod the spawner clones
+    /// beside the art, as 214's Chompy spawners clone theirs) is drawn on its
+    /// template's model while it's on, at its actor's place, posed by its
+    /// reference pose; it has no placement in the run.
+    #[test]
+    fn a_skinned_clone_no_script_runs_is_drawn() {
+        use guac_formats::script::builder::FIGHT_POD;
+
+        use crate::test_support::play::{ART_AT, fight_app_with_art};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app_with_art(tmp.path(), None);
+        until(&mut app, "the pod drawn", |a| {
+            skinned_of(a, FIGHT_POD)
                 .first()
                 .is_some_and(|h| a.world().resource::<DrawnCreatures>().0.contains_key(h))
         });
-        skinned_clones(app.world().resource::<ScriptWorld>())[0]
+        let pods = skinned_of(&app, FIGHT_POD);
+        assert_eq!(pods.len(), 1, "cloned once");
+        let pod = pods[0];
+        let vm = &app.world().resource::<ScriptRuntime>().vm;
+        assert!(vm.placement_of(pod).is_none(), "no script runs it");
+        let root = app.world().resource::<DrawnCreatures>().0[&pod];
+        let t = *app.world().get::<Transform>(root).unwrap();
+        assert!(
+            t.translation.distance(Vec3::from_array(ART_AT)) < 1e-4,
+            "{t:?}"
+        );
+    }
+
+    /// The art clone, once it's drawn.
+    fn until_art(app: &mut App) -> Handle {
+        until(app, "the art drawn", |a| {
+            art(a)
+                .first()
+                .is_some_and(|h| a.world().resource::<DrawnCreatures>().0.contains_key(h))
+        });
+        art(app)[0]
     }
 
     fn ticked_to_battle(app: &App) -> bool {

@@ -1820,6 +1820,10 @@ pub const FIGHT_ART: &str = "2_Push_Block_Art_Sheep";
 pub const FIGHT_ART_MODEL: &str = "C:/tfb/Content/Models/Props/Synthetic_Tortoise.mdl";
 /// The placement that clones it, running from the level's start.
 pub const FIGHT_ART_SPAWNER: &str = "Synthetic_Push_Block";
+/// A second template the spawner clones where the art stands, naming the
+/// same model and running no script, as level 214's Chompy spawners clone
+/// their pods (openspec AS.63): a skinned clone no script runs.
+pub const FIGHT_POD: &str = "Synthetic_Pod";
 /// The tick of the clone's script (from its first, which counts 1) that
 /// starts its palette's [`FIGHT_ART_SLOT`] on it.
 pub const FIGHT_ART_PLAY: i32 = 20;
@@ -1833,10 +1837,11 @@ pub const FIGHT_ART_TILT: f32 = 10.0;
 /// template at `art_at`, tilted [`FIGHT_ART_TILT`], naming
 /// [`FIGHT_ART_MODEL`], running
 /// `Box_Tortoise.ai`, which counts its ticks and starts its palette's
-/// [`FIGHT_ART_SLOT`] on itself at tick [`FIGHT_ART_PLAY`]; and
-/// [`FIGHT_ART_SPAWNER`], running `PushBlock_Template.ai` from the level's
-/// start with no range, which clones it once where the template stands,
-/// facing [`FIGHT_ART_FACING`], as the push blocks clone their tortoises.
+/// [`FIGHT_ART_SLOT`] on itself at tick [`FIGHT_ART_PLAY`]; [`FIGHT_POD`], a
+/// template on the same model running nothing; and [`FIGHT_ART_SPAWNER`],
+/// running `PushBlock_Template.ai` from the level's start with no range,
+/// which clones each once where the art's template stands, facing
+/// [`FIGHT_ART_FACING`], as the push blocks clone their tortoises.
 pub fn fight_with_art(creature_at: [f32; 3], triggers: [[f32; 3]; 2], art_at: [f32; 3]) -> Vec<u8> {
     fight_built(creature_at, triggers, Some(art_at))
 }
@@ -1966,9 +1971,10 @@ fn fight_built(
     b.build()
 }
 
-/// [`fight_with_art`]'s template and its spawner: their placements.
-fn art(b: &mut IgzBuilder, [x, y, z]: [f32; 3]) -> [Location; 2] {
+/// [`fight_with_art`]'s templates and its spawner: their placements.
+fn art(b: &mut IgzBuilder, [x, y, z]: [f32; 3]) -> [Location; 3] {
     let template = b.object(0, "tfbActorInfo", 0xF8);
+    let pod = b.object(0, "tfbActorInfo", 0xF8);
     let art_script = {
         let mut w = Writer::new(b);
         let ticks = w.variable("ticks", "ValueInfo", Some("IntMeasurement"));
@@ -2004,6 +2010,9 @@ fn art(b: &mut IgzBuilder, [x, y, z]: [f32; 3]) -> [Location; 2] {
                 let facing = w.int(FIGHT_ART_FACING);
                 let s = w.spawn(&[El::Local(template)], &[El::Local(template)], facing);
                 w.end_block(s);
+                let facing = w.int(FIGHT_ART_FACING);
+                let s = w.spawn(&[El::Local(pod)], &[El::Local(template)], facing);
+                w.end_block(s);
                 w.set_behavior(spawned);
                 w.end_block(p);
                 let p = w.push(spawned);
@@ -2022,8 +2031,12 @@ fn art(b: &mut IgzBuilder, [x, y, z]: [f32; 3]) -> [Location; 2] {
     let model = b.object(0, "tfbPhysicsModel", 0x30);
     crate::model::builder::info(b, model, FIGHT_ART_MODEL);
     b.pointer(at(template, 0xDC), model);
+    place(b, pod, FIGHT_POD, None, 5, &[x, y, z, 0.0, 0.0, 0.0]);
+    let model = b.object(0, "tfbPhysicsModel", 0x30);
+    crate::model::builder::info(b, model, FIGHT_ART_MODEL);
+    b.pointer(at(pod, 0xDC), model);
     let spawner = actor_with(b, FIGHT_ART_SPAWNER, Some(spawner_script), 4);
-    [template, spawner]
+    [template, pod, spawner]
 }
 
 /// `ActorParameters` on the placement at `a`: its own gravity `fall`

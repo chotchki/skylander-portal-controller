@@ -665,12 +665,14 @@ fn the_starts_scripts_leave_the_props_as_the_originals_are() {
     // three tortoises on their blocks, the cannon's top on its base.
     let path = captures.join(AG7_RUN).join("actors-00002.json");
     let actors: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let skinned: Vec<String> = common::skinned_models()
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
     let mut live_clones: HashMap<&str, Vec<Placed>> = HashMap::new();
     for a in actors["actors"].as_array().unwrap() {
         let name = a["name"].as_str().unwrap();
-        if !guacamole::props::DRAWN_SPAWNS.contains(&name)
-            && !guacamole::props::SKINNED_SPAWNS.contains(&name)
-        {
+        if !common::clones_drawn(&run, &skinned, name) {
             continue;
         }
         let v = |k: &str| {

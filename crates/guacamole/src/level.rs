@@ -275,7 +275,7 @@ struct Built {
     /// `drawn.materials`, `None` for one that draws nothing.
     particles: Vec<(Arc<guac_ir::particle::Emitter>, Vec<Option<usize>>)>,
     /// The first fight's creatures' models (openspec AH.25) and the skinned
-    /// templates' (AG.150, `props::SKINNED_SPAWNS`), by path, with each
+    /// templates' (AG.150, AS.63's `props::clones_draw`), by path, with each
     /// one's palette off the level's palettes part: their textures among
     /// `images`.
     creatures: Vec<CreatureModel>,
@@ -432,8 +432,8 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         })
         .collect::<Result<Vec<_>, String>>()?;
     drawn.extend_materials(&props);
-    // The level's templates whose clones the TV draws (AG.60,
-    // `props::DRAWN_SPAWNS`): their models are among the props', drawn by
+    // The level's placements whose clones the TV draws (AG.60, AS.63's
+    // `props::clones_draw`): their models are among the props', drawn by
     // path as the spawn part's are.
     let level_spawns: Vec<(String, Vec<(usize, u16)>)> = walk
         .props
@@ -1471,8 +1471,8 @@ impl Level {
     }
 
     /// The spawn part's models by path, once the level's loaded, and the
-    /// level's templates' `props::DRAWN_SPAWNS` names (AG.60): what the
-    /// scripts' clones draw (AH.24).
+    /// level's placements' static ones by AS.63's rule
+    /// (`props::clones_draw`): what the scripts' clones draw (AH.24).
     pub(crate) fn spawn_models(
         &self,
     ) -> Option<&HashMap<String, Vec<(Handle<Mesh>, Handle<CharacterMaterial>)>>> {
@@ -3808,11 +3808,12 @@ mod tests {
         assert_eq!(bodies(&mut app), [1, PROP_BODIES + 24]);
     }
 
-    /// AG.60: a level template `props::DRAWN_SPAWNS` names draws its clones
-    /// from its model among the props', found by path as the spawn part's
-    /// are; one it doesn't name draws none.
+    /// AG.60, AS.63: a level template draws its clones from its model
+    /// among the props', found by path as the spawn part's are, whatever
+    /// its name; a marker that shows nothing (`props::see_through`) and a
+    /// pebble `props::UNDRAWN_SPAWNS` names draw none.
     #[test]
-    fn a_drawn_templates_model_is_there_for_its_clones() {
+    fn a_templates_model_is_there_for_its_clones() {
         let tmp = tempfile::tempdir().unwrap();
         let source = write_level(tmp.path(), &lights());
         let scene: guac_ir::level::Scene = guac_ir::from_ron(
@@ -3847,12 +3848,24 @@ mod tests {
             activity_state: 5,
             activation_range: 0.0,
         };
+        let mut marker = model("inviso.mdl");
+        if let guac_ir::level::LevelMaterial::Multi2(m) = &mut marker.materials[0] {
+            m.states.blend = guac_ir::model::Blend::Alpha;
+            m.params.material_tint[3] = 0;
+        }
         write_props(
             tmp.path(),
-            vec![model("egg.mdl"), model("lock.mdl")],
+            vec![
+                model("egg.mdl"),
+                model("lock.mdl"),
+                model("pebble.mdl"),
+                marker,
+            ],
             vec![
                 template(20, "Bird_nest_egg", "egg.mdl"),
                 template(21, "Chest_Lock", "lock.mdl"),
+                template(22, guacamole::props::UNDRAWN_SPAWNS[0], "pebble.mdl"),
+                template(23, "Canon_Barrel_Marker", "inviso.mdl"),
             ],
         );
         let mut app = level_app(tmp.path(), source, false);
@@ -3860,7 +3873,9 @@ mod tests {
         let level = app.world().resource::<Level>();
         let models = level.spawn_models().expect("loaded");
         assert_eq!(models.get("egg.mdl").map(Vec::len), Some(1));
-        assert!(!models.contains_key("lock.mdl"));
+        assert_eq!(models.get("lock.mdl").map(Vec::len), Some(1));
+        assert!(!models.contains_key("pebble.mdl"));
+        assert!(!models.contains_key("inviso.mdl"));
     }
 
     /// AH.87: the particle part's emitters load with the level, each

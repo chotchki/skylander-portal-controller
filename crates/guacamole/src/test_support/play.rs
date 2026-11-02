@@ -642,18 +642,16 @@ pub(crate) const BATTLE_TOP: [f32; 3] = [1.5, 1.0, 0.0];
 /// palette in the level's palettes part, whose battle slot holds the top
 /// joint at [`BATTLE_TOP`].
 /// An opaque skinned key the census holds for the first fight's creatures:
-/// the first creature row drawn opaque (since every character's keys as the
-/// hero joined the census, the heroes' table holds the creatures' opaque
-/// ones, the creatures' table their faded twins).
+/// the first creature row whose opaque twin the heroes' table holds (since
+/// every character's keys as the hero joined the census, the heroes' table
+/// holds the Chompies' opaque keys, the creatures' table their faded twins
+/// and, since AS.63, the skinned templates' keys past both).
 fn creature_key() -> guacamole::character::warm::WarmKey {
-    let row = guacamole::census::Row {
-        blend: 0,
-        ..guacamole::census::CREATURES[0]
-    };
-    assert!(
-        guacamole::census::HEROES.contains(&row),
-        "{row:?} in the census"
-    );
+    let row = guacamole::census::CREATURES
+        .iter()
+        .map(|r| guacamole::census::Row { blend: 0, ..*r })
+        .find(|r| guacamole::census::HEROES.contains(r))
+        .expect("a creature row whose opaque twin the heroes' table holds");
     row.key(true).unwrap()
 }
 

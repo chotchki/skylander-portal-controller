@@ -35,7 +35,6 @@ use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Halt, MemberId, Mode};
 use guacamole::anchors::{ANCHOR_B_FIRED, ANCHOR_B_POSE, NORTICUS};
-use guacamole::props::SKINNED_SPAWNS;
 use guacamole::script_engine::Pad;
 use guacamole::scripts;
 
@@ -567,13 +566,16 @@ fn invulnerable(run: &Run) -> bool {
         .is_some_and(|f| f == 1.0)
 }
 
-/// The palette slots the scripts played on the clones of each template
-/// `SKINNED_SPAWNS` names, by the template's name; and each clip one of
-/// them played out of another placement's palette (none on the route).
+/// The palette slots the scripts played on the clones of each template the
+/// TV draws skinned (AG.150, AS.63's rule), by the template's name; and each
+/// clip one of them played out of another placement's palette (none on the
+/// route).
 #[derive(Debug, Default)]
 struct Played {
     slots: BTreeMap<String, BTreeSet<u32>>,
     foreign: BTreeSet<(String, u32)>,
+    /// The creature models' paths: a skinned template's clone draws on one.
+    skinned: Vec<String>,
 }
 
 impl Played {
@@ -587,7 +589,7 @@ impl Played {
             let Some(t) = a.template.and_then(|t| w.template(t)) else {
                 continue;
             };
-            if !SKINNED_SPAWNS.contains(&t.name.as_str()) {
+            if !t.model.as_ref().is_some_and(|m| self.skinned.contains(m)) {
                 continue;
             }
             if let Some((owner, slot)) = w.clip_of(s) {
@@ -627,7 +629,10 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
         .map(|w| w.split(',').map(str::to_owned).collect())
         .unwrap_or_default();
     let mut watched: BTreeMap<String, State> = BTreeMap::new();
-    let mut played = Played::default();
+    let mut played = Played {
+        skinned: skinned_models().into_iter().map(|(p, _)| p).collect(),
+        ..Played::default()
+    };
     let (mut scene_steps, mut held_steps) = (0, 0);
     let (mut hidden_steps, mut hidden_outside) = (0, 0);
     while run.steps < limit {
@@ -919,7 +924,7 @@ fn fight(run: &mut Run, mode: Mode, steps: u32) -> Fight {
 /// The level's templates the route's scripts clone that the TV doesn't
 /// draw (openspec AG.239), with why; every other template cloned on the
 /// way draws ([`route_clones_drawn`]).
-const ROUTE_UNDRAWN: [(&str, &str); 8] = [
+const ROUTE_UNDRAWN: [(&str, &str); 6] = [
     (
         "Boulder_Titan_Pebble_01(1)",
         "on the boulder's attach nodes",
@@ -940,14 +945,13 @@ const ROUTE_UNDRAWN: [(&str, &str); 8] = [
         "Boulder_Titan_Pebble_05(1)",
         "on the boulder's attach nodes",
     ),
-    ("Chest_Lock", "the chest's, a creature's"),
-    ("Canon_Barrel_Marker", "invisible"),
-    ("Dummy_Inviso", "invisible"),
+    ("Canon_Barrel_Marker", "shows nothing"),
 ];
 
 /// Every level template `run`'s scripts have cloned that has a model is
-/// drawn on the TV (its model among the props part's spawn models, or a
-/// skinned one [`SKINNED_SPAWNS`] names) unless [`ROUTE_UNDRAWN`] lists it.
+/// drawn on the TV (AS.63's rule: its model among the props part's spawn
+/// models, or a skinned one among the creature models) unless
+/// [`ROUTE_UNDRAWN`] lists it.
 fn route_clones_drawn(run: &Run) {
     let mut clones: BTreeMap<String, usize> = BTreeMap::new();
     for c in run.world.clones() {
@@ -960,7 +964,6 @@ fn route_clones_drawn(run: &Run) {
         }
     }
     println!("the level's templates cloned on the route: {clones:?}");
-    let props = run.bench.props.as_ref().unwrap();
     let skinned: Vec<String> = skinned_models().into_iter().map(|(p, _)| p).collect();
     for name in clones.keys() {
         let placed = run
@@ -972,18 +975,7 @@ fn route_clones_drawn(run: &Run) {
         if placed.is_some_and(|p| p.model.is_none()) {
             continue;
         }
-        let drawn = run.files.placed.iter().any(|p| {
-            p.obj.unit == LEVEL
-                && p.name == *name
-                && p.model.as_ref().is_some_and(|m| {
-                    props
-                        .level
-                        .spawn_models
-                        .iter()
-                        .any(|&i| &props.level.models[i].path == m)
-                        || (SKINNED_SPAWNS.contains(&name.as_str()) && skinned.contains(m))
-                })
-        });
+        let drawn = clones_drawn(run, &skinned, name);
         let undrawn = ROUTE_UNDRAWN.iter().find(|(n, _)| n == name);
         assert!(
             drawn != undrawn.is_some(),

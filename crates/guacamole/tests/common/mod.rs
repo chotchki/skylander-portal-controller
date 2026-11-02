@@ -676,6 +676,43 @@ pub fn skinned_models() -> Vec<(String, guac_ir::Model)> {
     guacamole::creature_models::skinned_models(&placements, &props, &identity())
 }
 
+/// [`skinned_models`] for the level whose archive is `level` (openspec
+/// AS.63: any level's skinned templates' clones).
+pub fn skinned_models_of(level: &str) -> Vec<(String, guac_ir::Model)> {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let bytes = guac_extract::scripts::entry(&usr, &format!("level/{level}.bld")).unwrap();
+    let igz = Igz::parse(&bytes).unwrap();
+    let props = levels::props(&igz, level, identity())
+        .expect("the props")
+        .ir;
+    let placements = levels::placements(&igz, level, identity())
+        .expect("the placements")
+        .ir;
+    guacamole::creature_models::skinned_models(&placements, &props, &identity())
+}
+
+/// Whether the TV draws the clones of the level placement `name` (openspec
+/// AS.63's rule, `props::clones_draw`): its static model among the props'
+/// spawn models (`run` stands the level's props, `Setup::props`), or its
+/// skinned one among `skinned`, the creature models' paths, unless
+/// `props::UNDRAWN_SPAWNS` names it (the TV's `clone_parts`).
+pub fn clones_drawn(run: &Run, skinned: &[String], name: &str) -> bool {
+    let props = run.bench.props.as_ref().expect("the props stood");
+    !guacamole::props::UNDRAWN_SPAWNS.contains(&name)
+        && run.files.placed.iter().any(|p| {
+            p.obj.unit == LEVEL
+                && p.name == name
+                && p.model.as_ref().is_some_and(|m| {
+                    props
+                        .level
+                        .spawn_models
+                        .iter()
+                        .any(|&i| &props.level.models[i].path == m)
+                        || skinned.contains(m)
+                })
+        })
+}
+
 /// Chapter 1's palettes part through the extractor's own reader: what the
 /// TV poses its creatures and skinned clones by.
 pub fn level_palettes() -> guac_ir::palette::LevelPalettes {

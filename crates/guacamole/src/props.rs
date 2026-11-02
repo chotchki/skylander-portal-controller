@@ -26,8 +26,8 @@
 //!   tfbshadow's left out (AG.24), placed by
 //!   its position, its Euler angles (AF.9's convention) and its scale. A
 //!   skinned model with no script, or one the stage refused, draws nothing.
-//!   The templates [`DRAWN_SPAWNS`] names draw their clones (AG.60), those
-//!   [`SKINNED_SPAWNS`] names as creatures (AG.150).
+//!   A placement's clones draw its model, static as a prop or skinned as a
+//!   creature, by AS.63's rule ([`clones_draw`]).
 //! - What it stops ([`solid`]): its `CollisionInfo` as the original builds it
 //!   ([`guac_motion::solid`], AG.7's table), a solid one a kinematic seam
 //!   body, a shaped non-solid one a sensor that stops nothing, a shapeless or
@@ -129,75 +129,52 @@ pub struct LevelProps {
     /// Ranged placements naming a model that draws nothing, with why: a
     /// prop for its solid, or left out as [`LeftOut::Nothing`] without one.
     pub undrawn: Vec<(String, &'static str)>,
-    /// The models of the placements [`DRAWN_SPAWNS`] names, into `models`:
-    /// what their clones draw (openspec AG.60, AG.239).
+    /// The static models the level's clones draw ([`clones_draw`]), into
+    /// `models`, each once (openspec AG.60, AS.63).
     pub spawn_models: Vec<usize>,
 }
 
-/// The level's placements whose clones the TV draws (openspec AG.60), by
-/// name: what chapter 1's start scripts spawn that draws, the walkway
-/// fence's cross beam and planks (its spawner draws nothing, its tint
-/// see-through) and the pieces they break into, a bird nest's egg and the
-/// cannon's base; and what AH.8's route spawns on the way to the pit
-/// (openspec AG.239, found on AH.28's TV run, where each broke or rose
-/// unseen): the breakables' pieces and the coins they drop, the fence's
-/// warp torus (a placement standing itself), the cannon's ball and its
-/// warp ring, the rubble wall's pieces and the spike gate's spikes and
-/// holes. Left out: the Titan boulders' pebbles, laid on the boulder's
-/// attach nodes, which no prop model's extract carries (they'd sit under
-/// the boulder); the chest's locks (the chest is a creature, drawn
-/// nowhere); the push blocks' tortoises and the cannon's top (skinned, as
-/// a prop draws none: [`SKINNED_SPAWNS`] draws them); the invisible
-/// markers. Norticus' turban draws on his head's node (openspec AH.138,
-/// the level's nodes part). `giants_start` and `giants_route` hold it to
-/// what a headless start and the route clone.
-pub const DRAWN_SPAWNS: [&str; 33] = [
-    "Fence Cross Beam",
-    "Wooden Plank_one",
-    "Wooden Plank_Two",
-    "Top_A",
-    "Middle_A",
-    "Bottom_A",
-    "Bird_nest_egg",
-    "Push_Canon_Art_Bottom",
-    // AH.8's route (AG.239): a broken barrel's, gourd's and pot's pieces,
-    // the coins and treasure they drop (the five the loot rolls among).
-    "barrel_b_debris_01",
-    "barrel_b_debris_02",
-    "barrel_b_debris_03",
-    "gourd_debris_(1)",
-    "gourd_debris_(2)",
-    "gourd_debris_(3)",
-    "pottery_debris_(1)",
-    "pottery_debris_(2)",
-    "pottery_debris_(3)",
-    "1_Coin",
-    "2_Coin(1)",
-    "3_Coin(2)",
-    "4_Coin(3)",
-    "5_Coin(1)",
-    // The walkway fence's warp torus as it breaks.
-    "Torus_Effect_Wood_Fence",
-    // The cannon's ball and its warp ring; the rubble wall's pieces.
-    "Canon_Ball",
-    "Cannon_Warp_Effect_Ring",
-    "Debris_BigRock",
-    "Debris_Gate",
-    "Debris_Pole",
-    "Debris_PoleTop",
-    "Debris_SmallRock",
-    // The spike gate's spikes and the holes they lower into.
-    "Gate_Spikes_Spike",
-    "Gate_Spikes_Hole",
-    // Norticus' turban, on his head's node (AH.138).
-    "Turban_hat",
+/// The level's placements whose clones the TV leaves undrawn by name, each
+/// with a model the rule ([`clones_draw`]) would draw: the Titan boulders'
+/// pebbles, laid on the boulder's attach nodes, which no prop model's
+/// extract carries, so drawn they'd sit at the boulder's pivot (chapter 1's
+/// boulders and level 214's lay the same five). `giants_start` and
+/// `giants_route` hold the rule to what a headless start and the route
+/// clone on chapter 1, the level-214 disc test to what 214's start clones.
+pub const UNDRAWN_SPAWNS: [&str; 5] = [
+    "Boulder_Titan_Pebble_01(1)",
+    "Boulder_Titan_Pebble_02(1)",
+    "Boulder_Titan_Pebble_03(1)",
+    "Boulder_Titan_Pebble_04(1)",
+    "Boulder_Titan_Pebble_05(1)",
 ];
 
-/// The level's templates whose clones the TV draws skinned, as it draws a
-/// creature (openspec AG.150, `crate::creature_models`): the push blocks'
-/// tortoises and the cannon's top, each posed by the clips its script plays
-/// on it. `giants_start` holds them to what a headless start clones.
-pub const SKINNED_SPAWNS: [&str; 2] = ["2_Push_Block_Art_Sheep", "Push_Canon_Art_Top"];
+/// Whether a model shows nothing: every material a tfbmulti2 one blended
+/// by its alpha with a material tint whose alpha is 0, as the disc's
+/// markers are (`inviso.mdl` and `design_inviso.mdl`, an 8 mm quad on
+/// `Inviso`: chapter 1's cannon barrel marker and push-block ends, the
+/// spawn part's `Dummy_Inviso`, level 214's bomb timer and Tree Rex's
+/// homing actor). Its clones draw nothing.
+pub fn see_through(model: &guac_ir::level::Prop) -> bool {
+    !model.materials.is_empty()
+        && model.materials.iter().all(|m| match m {
+            guac_ir::level::LevelMaterial::Multi2(m) => {
+                m.states.blend == guac_ir::model::Blend::Alpha && m.params.material_tint[3] == 0
+            }
+            guac_ir::level::LevelMaterial::Effect(_) => false,
+        })
+}
+
+/// Whether the clones of the level placement `name` draw its `model` off
+/// the level's props part (openspec AS.63): any placement's, a template's
+/// or a standing one's the scripts copy (chapter 1's walkway fence's warp
+/// torus), static as a prop draws it, skinned as a creature
+/// ([`crate::creature_models`]), unless it shows nothing ([`see_through`])
+/// or [`UNDRAWN_SPAWNS`] names it. The rule replaces AG.60's, AG.239's and
+/// AG.150's name lists, which drew chapter 1's clones alone.
+pub fn clones_draw(name: &str, model: &guac_ir::level::Prop) -> bool {
+    !UNDRAWN_SPAWNS.contains(&name) && !see_through(model)
+}
 
 /// `m`'s index into `models`, drawn into it the first time its path comes.
 fn model_at<'a>(
@@ -228,10 +205,8 @@ impl LevelProps {
             let model = a.model.as_deref().and_then(|m| by_path.get(m).copied());
             let skinned = model.is_some_and(|m| m.skeleton.is_some());
             // What its clones draw, a template's or a standing placement's
-            // the scripts copy (AG.60, AG.239): a static model, once.
-            if DRAWN_SPAWNS.contains(&a.name.as_str())
-                && let Some(m) = model.filter(|m| m.skeleton.is_none())
-            {
+            // the scripts copy (AS.63's rule): a static model, once.
+            if let Some(m) = model.filter(|m| m.skeleton.is_none() && clones_draw(&a.name, m)) {
                 let i = model_at(&mut out.models, &mut model_index, m)?;
                 if !out.spawn_models.contains(&i) {
                     out.spawn_models.push(i);
@@ -415,12 +390,14 @@ pub fn actor_body(prop: &Prop, a: &Actor) -> Option<Body> {
 /// prop draws its own (openspec AH.24: what a clone of a template naming
 /// one draws): each static model's tfbmulti2 segments on their materials,
 /// its grass and warps on their stand-ins and tfbshadow's left out as a
-/// level's are (AG.24); a skinned one draws nothing here.
+/// level's are (AG.24); a skinned one draws nothing here, nor one that
+/// shows nothing ([`see_through`], AS.63: `global.bld`'s `Dummy_Inviso`,
+/// Eruptor's lava collider).
 pub fn spawn_models(spawns: &guac_ir::spawn::SpawnModels) -> Result<Vec<PropModel>, LevelError> {
     spawns
         .props
         .iter()
-        .filter(|p| p.skeleton.is_none())
+        .filter(|p| p.skeleton.is_none() && !see_through(p))
         .map(|p| {
             Ok(PropModel {
                 path: p.path.clone(),
@@ -549,7 +526,7 @@ mod tests {
     use super::*;
     use crate::census;
     use guac_ir::level::{EffectMaterial, LevelMaterial, RefusedProp};
-    use guac_ir::model::{Joint, Skeleton};
+    use guac_ir::model::{Blend, Joint, Skeleton};
     use guac_ir::{DumpIdentity, Sha256};
     use guac_motion::parry::ParryWorld;
     use guac_motion::scenarios::{self, Soup, eruptor, run, stick};
@@ -799,16 +776,27 @@ mod tests {
         standing.map(|i| props.props[i].name.as_str()).collect()
     }
 
-    /// AG.239: what [`DRAWN_SPAWNS`] names draws its clones, a template's
-    /// model and a standing placement's alike (the walkway fence's warp
-    /// torus is both a prop and what its script copies), each model once;
-    /// a skinned model, or a name the list lacks, draws none.
+    /// AS.63: a level's placements draw their clones by the rule, whatever
+    /// their names: a template's model and a standing placement's alike
+    /// (the walkway fence's warp torus is both a prop and what its script
+    /// copies), each model once; a skinned model (a creature draws it), a
+    /// model that shows nothing ([`see_through`]: the markers' `inviso.mdl`)
+    /// and a pebble [`UNDRAWN_SPAWNS`] names draw none.
     #[test]
-    fn the_routes_templates_and_placements_draw_their_clones() {
+    fn a_levels_placements_draw_their_clones_by_the_rule() {
         let (mut props, mut placements) = level();
-        for m in ["ball.mdl", "torus.mdl", "rock.mdl"] {
+        for m in ["ball.mdl", "torus.mdl", "rock.mdl", "pebble.mdl"] {
             props.props.push(model(m, false));
         }
+        let mut marker = model("inviso.mdl", false);
+        marker.materials.truncate(1);
+        marker.segments.truncate(1);
+        if let LevelMaterial::Multi2(m) = &mut marker.materials[0] {
+            m.states.blend = Blend::Alpha;
+            m.params.material_tint[3] = 0;
+        }
+        assert!(see_through(&marker));
+        props.props.push(marker);
         let template = |object, name: &str, model: &str, script| {
             actor(
                 object,
@@ -836,9 +824,10 @@ mod tests {
                 Some("Torus_Effect.ai"),
             ),
             template(22, "Gate_Spikes_Spike", "chompy.mdl", None),
-            template(23, "Debris_Pole", "rock.mdl", None),
+            template(23, "0_Push_Block_Art_Stone_Red", "rock.mdl", None),
             template(24, "Debris_PoleTop", "rock.mdl", None),
-            template(25, "Not_On_The_List", "coin.mdl", None),
+            template(25, UNDRAWN_SPAWNS[2], "pebble.mdl", None),
+            template(26, "Canon_Barrel_Marker", "inviso.mdl", None),
         ]);
         let p = LevelProps::new(&props, &placements).unwrap();
         let spawn: Vec<&str> = p
@@ -846,7 +835,10 @@ mod tests {
             .iter()
             .map(|&i| p.models[i].path.as_str())
             .collect();
-        assert_eq!(spawn, ["ball.mdl", "torus.mdl", "rock.mdl"]);
+        assert_eq!(
+            spawn,
+            ["gourd.mdl", "coin.mdl", "ball.mdl", "torus.mdl", "rock.mdl"]
+        );
         assert!(
             names(&p, 0..p.props.len()).contains(&"Torus_Effect_Wood_Fence"),
             "the torus still stands by its actor"
@@ -860,6 +852,30 @@ mod tests {
             models,
             ["gourd.mdl", "coin.mdl", "ball.mdl", "torus.mdl", "rock.mdl"]
         );
+    }
+
+    /// AS.63: the spawn part's models draw as a prop's do, a static one's
+    /// parts; a skinned one draws nothing here and neither does one that
+    /// shows nothing (`global.bld`'s `Dummy_Inviso` on `inviso.mdl`).
+    #[test]
+    fn the_spawn_parts_see_through_models_draw_nothing() {
+        let mut marker = model("inviso.mdl", false);
+        if let LevelMaterial::Multi2(m) = &mut marker.materials[0] {
+            m.states.blend = Blend::Alpha;
+            m.params.material_tint[3] = 0;
+        }
+        marker.materials.truncate(1);
+        marker.segments.truncate(1);
+        let spawns = guac_ir::spawn::SpawnModels {
+            identity: identity(),
+            archive: "permanent/global.bld".into(),
+            props: vec![model("ball.mdl", false), model("rig.mdl", true), marker],
+            refused: Vec::new(),
+        };
+        let drawn = spawn_models(&spawns).unwrap();
+        let paths: Vec<&str> = drawn.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(paths, ["ball.mdl"]);
+        assert_eq!(drawn[0].drawn.segments.len(), 1);
     }
 
     /// AG.7's rule as the props' set: templates and creatures stand
@@ -883,7 +899,12 @@ mod tests {
                 ("hero", LeftOut::State),
             ]
         );
-        assert!(p.spawn_models.is_empty(), "no template DRAWN_SPAWNS names");
+        let spawn: Vec<&str> = p
+            .spawn_models
+            .iter()
+            .map(|&i| p.models[i].path.as_str())
+            .collect();
+        assert_eq!(spawn, ["gourd.mdl", "coin.mdl"], "every static model once");
         assert_eq!(
             p.undrawn,
             [
@@ -1197,11 +1218,12 @@ mod tests {
         assert_eq!(actor_body(gourd, a), gourd.body);
     }
 
-    /// A template [`DRAWN_SPAWNS`] names draws its clones (openspec AG.60):
-    /// its static model joins the props' models once, its keys and the keys
-    /// a tint fading it draws among the props'; a skinned one draws nothing.
+    /// A template draws its clones (openspec AG.60, AS.63's rule): its
+    /// static model joins the props' models once, its keys and the keys a
+    /// tint fading it draws among the props'; a skinned one draws nothing
+    /// here (a creature draws it).
     #[test]
-    fn a_drawn_spawns_template_brings_its_model() {
+    fn a_templates_static_model_joins_the_props() {
         let (mut props, mut placements) = level();
         props.props.push(model("egg.mdl", false));
         props.props.push(model("tortoise.mdl", true));
@@ -1228,7 +1250,11 @@ mod tests {
             .iter()
             .map(|&i| p.models[i].path.as_str())
             .collect();
-        assert_eq!(spawned, ["egg.mdl"], "once, and no skinned one");
+        assert_eq!(
+            spawned,
+            ["gourd.mdl", "coin.mdl", "egg.mdl"],
+            "once, and no skinned one"
+        );
         assert!(
             p.props.iter().all(|x| !x.name.starts_with("Bird")),
             "a template stands nowhere"
@@ -1481,11 +1507,14 @@ mod tests {
             ..Scene::new()
         };
         // The census's material glows, so its level glow mask keys too
-        // (AH.65).
+        // (AH.65); and its clones draw it (AS.63's rule), so its opaque key
+        // blending as a clone fades too (AH.67).
         let key = census::LEVEL[0].key(false).unwrap();
         let mut glow = key;
         glow.material.pass = crate::character::Pass::LevelGlow;
-        assert_eq!(p.keys(&scene).unwrap(), [key, glow]);
+        let mut faded = key;
+        faded.material.states = key.material.states.faded();
+        assert_eq!(p.keys(&scene).unwrap(), [key, glow, faded]);
     }
 
     /// What only a Giant moves stays put (openspec AH.27; breakables' Tree

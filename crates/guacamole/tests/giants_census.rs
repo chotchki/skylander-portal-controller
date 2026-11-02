@@ -485,9 +485,13 @@ fn the_census_is_the_discs() {
         glows(&heroes).into_iter().partition(|k| k.mesh.skinned);
     let hero_glow_static = beyond(&hero_glow_static, &[census::LEVEL_GLOW]);
     // The first fight's creatures and the skinned templates' clones (AH.25,
-    // AG.150), skinned in the hero's scene: what the heroes' tables don't
-    // hold.
-    let creatures = beyond(&colour(&creatures_all), &[census::HEROES]);
+    // AG.150, AS.63), skinned in the hero's scene: what the heroes' and the
+    // cards' tables don't hold (AS.63's rule draws a template whose key a
+    // card draws too).
+    let creatures = beyond(
+        &colour(&creatures_all),
+        &[census::HEROES, census::TURNTABLE],
+    );
     let creature_glow = beyond(&glows(&creatures_all), &[census::HEROES_GLOW]);
     eprintln!(
         "the first fight's creatures and the skinned clones: {} keys off {creature_models} models ({} past the heroes'), {} level glow masks ({} past)",
@@ -589,15 +593,20 @@ fn the_census_is_the_discs() {
     );
     assert_eq!(
         (prop_models, props.len(), props_beyond.len()),
-        (91, 74, 68),
-        "chapter 1's props: the models that can stand and that their clones draw (AG.60, AG.239, AH.138's turban), their keys, those past the level's"
+        // AS.63: 91, 74 and 68 while AG.60's, AG.239's and AH.138's names
+        // said which clones draw.
+        (177, 131, 124),
+        "chapter 1's props: the models that can stand and that their clones draw (AS.63's rule), their keys, those past the level's"
     );
     // AH.39: 13 models, 13 keys and 3 past before `global.bld`'s 23 read
     // (22 of them static; its cinematic camera's rig is skinned and left out
     // of the spawn models).
     assert_eq!(
         (spawn_models, spawns.len(), spawns_beyond.len()),
-        (35, 26, 13),
+        // AS.63: 13 past while its rule hadn't taken 6 into the props', 35
+        // models and 26 keys while the 3 that show nothing (`inviso.mdl`
+        // and `design_inviso.mdl`) were drawn.
+        (32, 25, 7),
         "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
     );
     assert_eq!(
@@ -611,15 +620,17 @@ fn the_census_is_the_discs() {
         // AH.39: 22 glow masks before `global.bld`'s models; the heroes'
         // 1, 0, 1, 0 while only Eruptor's were (before the arrival lane),
         // their static keys 7 before AG.23's receiving level keys left 16
-        // of them to the heroes' table.
-        (29, 33, 23, 17, 8),
+        // of them to the heroes' table; 29 glow masks before AS.63's rule.
+        (37, 33, 23, 17, 8),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(
         (creature_models, creatures.len(), creature_glow.len()),
         // AH.139: 5 keys before each opaque one's faded twin; 10 before
-        // every character's keys as the hero took 8 of them.
-        (4, 2, 0),
-        "the first fight's creatures' and the skinned clones' models (the Chompies', Norticus', the tortoises', the cannon top's), their keys past the heroes', their glow masks"
+        // every character's keys as the hero took 8 of them; 4 models, 2
+        // keys and no glow mask while AG.150's names said which skinned
+        // clones draw (AS.63).
+        (32, 21, 1),
+        "the first fight's creatures' and the skinned clones' models (the Chompies', Norticus', every skinned template's whose clones draw), their keys past the heroes', their glow masks"
     );
 }

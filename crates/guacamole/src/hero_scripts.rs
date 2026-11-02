@@ -1858,6 +1858,29 @@ pub(crate) fn clone_transform(a: &guacamole::script_engine::Actor) -> Transform 
     }
 }
 
+/// A clone's drawn part: a model segment's mesh on its material.
+pub(crate) type ClonePart = (
+    bevy::asset::Handle<Mesh>,
+    bevy::asset::Handle<guacamole::character::CharacterMaterial>,
+);
+
+/// The parts a clone of `template` draws off `models` (the level's
+/// [`Level::spawn_models`]), by its template's model's path: none for a
+/// template with no model or one `models` lacks, nor for one
+/// [`guacamole::props::UNDRAWN_SPAWNS`] names, whose model another
+/// placement may share (level 214's cave rock lies on a pebble's model;
+/// openspec AS.63).
+pub(crate) fn clone_parts<'m>(
+    template: Option<&guacamole::scripts::Placed>,
+    models: &'m std::collections::HashMap<String, Vec<ClonePart>>,
+) -> Option<&'m Vec<ClonePart>> {
+    let template = template?;
+    if guacamole::props::UNDRAWN_SPAWNS.contains(&template.name.as_str()) {
+        return None;
+    }
+    models.get(template.model.as_deref()?)
+}
+
 /// Each clone the scripts made, drawn from its template's model off the
 /// extract's spawn part while it's on: placed each step, eased between
 /// steps, hidden once taken off. One made before the level's loaded (the
@@ -1885,11 +1908,9 @@ pub(crate) fn draw_clones(
         let place = clone_transform(actor);
         match (drawn, transform) {
             (None, _) => {
-                let path = actor
-                    .template
-                    .and_then(|t| world.template(t))
-                    .and_then(|p| p.model.as_deref());
-                let model = path.and_then(|m| models.get(m));
+                let template = actor.template.and_then(|t| world.template(t));
+                let path = template.and_then(|p| p.model.as_deref());
+                let model = clone_parts(template, models);
                 // A button icon draws the walking pad's prompt (AG.290).
                 let icon = path.and_then(crate::button_prompt::icon_face);
                 // A model whose effects draw nothing (its parts left out)
@@ -3103,6 +3124,31 @@ mod tests {
         }
         assert_eq!(run.clones_named(SMASH_COIN).len(), 1, "no second coin");
         assert_eq!(run.clones_named(ATTACK_BALL).len(), 2);
+    }
+
+    /// AS.63: a clone draws its template's model's parts by path, unless
+    /// `props::UNDRAWN_SPAWNS` names its template (a pebble whose model a
+    /// placement of the level shares draws nothing) or it has no template,
+    /// no model or one the level lacks.
+    #[test]
+    fn a_clone_draws_its_templates_model_unless_named_left_out() {
+        let parts = vec![(
+            bevy::asset::Handle::<Mesh>::default(),
+            bevy::asset::Handle::default(),
+        )];
+        let models = std::collections::HashMap::from([("pebble.mdl".to_owned(), parts)]);
+        let template = |name: &str, model: Option<&str>| {
+            let mut p = scripts::Placed::named(Obj { unit: 4, index: 7 }, name, None, 5);
+            p.model = model.map(str::to_owned);
+            p
+        };
+        let rock = template("Cave_effects_rock", Some("pebble.mdl"));
+        assert_eq!(clone_parts(Some(&rock), &models).map(Vec::len), Some(1));
+        let pebble = template(guacamole::props::UNDRAWN_SPAWNS[0], Some("pebble.mdl"));
+        assert!(clone_parts(Some(&pebble), &models).is_none());
+        assert!(clone_parts(Some(&template("bare", None)), &models).is_none());
+        assert!(clone_parts(Some(&template("other", Some("x.mdl"))), &models).is_none());
+        assert!(clone_parts(None, &models).is_none());
     }
 
     /// AG.60: a clone the scripts make before the level's loaded (the
