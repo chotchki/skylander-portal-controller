@@ -283,13 +283,6 @@ impl ScriptSource {
             levels: Arc::default(),
         }
     }
-
-    /// The part as level `level`'s, among `levels` (openspec AS.15, AS.51).
-    pub(crate) fn for_level(mut self, level: &str, levels: &[&str]) -> Self {
-        self.level = level.to_owned();
-        self.levels = Arc::new(levels.iter().map(|l| (*l).to_owned()).collect());
-        self
-    }
 }
 
 /// A level's script part as the level's load hands it to the TV.

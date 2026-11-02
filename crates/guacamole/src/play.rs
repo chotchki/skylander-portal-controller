@@ -2398,6 +2398,9 @@ pub(crate) fn drawn_clips(
 }
 
 #[cfg(test)]
+mod level_change_tests;
+
+#[cfg(test)]
 mod tests {
     use std::time::Instant;
 

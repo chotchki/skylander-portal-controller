@@ -296,6 +296,34 @@ pub(crate) fn write_level(dir: &Path, lights: &Lights) -> LevelSource {
     }
 }
 
+/// The made-up level [`write_level`] (and whatever parts were written beside
+/// it, its script part among them) copied to `levels/<name>/` as level
+/// `name`'s, each IR part's level renamed (openspec AS.51: a level past
+/// chapter 1 the TV enters and runs the scripts of): its source.
+pub(crate) fn write_level_as(dir: &Path, name: &str) -> LevelSource {
+    let from = dir.join("levels").join(LEVEL);
+    let to = dir.join("levels").join(name);
+    std::fs::create_dir_all(&to).unwrap();
+    for e in std::fs::read_dir(&from).unwrap() {
+        let e = e.unwrap();
+        let bytes = std::fs::read(e.path()).unwrap();
+        let bytes = match e.path().extension().and_then(|x| x.to_str()) {
+            Some("ron") => String::from_utf8(bytes)
+                .unwrap()
+                .replace(&format!("\"{LEVEL}\""), &format!("\"{name}\""))
+                .into_bytes(),
+            _ => bytes,
+        };
+        std::fs::write(to.join(e.file_name()), bytes).unwrap();
+    }
+    LevelSource {
+        dir: dir.to_path_buf(),
+        ir: IrFormat::Ron,
+        identity: identity(),
+        level: name.into(),
+    }
+}
+
 /// A 4x4 block of one colour in the layout the disc keeps a map of
 /// `role` in, built here, none of the disc's: a normal map DXT5, as every
 /// one chapter 1 binds is (the TV refuses a material whose normal map isn't,

@@ -3868,6 +3868,190 @@ mod tests {
         assert_eq!(w.requests.len(), 1, "taken once");
     }
 
+    /// A world whose interface holds a file string for each of `texts`, in
+    /// order: the world and each string's object.
+    fn world_with_texts(texts: &[&str]) -> (ScriptWorld, Vec<Value>) {
+        let (mut w, ..) = world();
+        let mut keeper = guac_interface::load::load(&[], None).keeper;
+        let values = texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                keeper.model_mut().add_file_string(
+                    Obj {
+                        unit: 1,
+                        index: 9000 + i as u32,
+                    },
+                    t,
+                    guac_interface::Str {
+                        units: Vec::new(),
+                        flags: 0,
+                        integer_digits: 0,
+                        decimal_digits: 0,
+                    },
+                )
+            })
+            .collect();
+        w.set_interface(keeper);
+        (w, values)
+    }
+
+    /// AS.15: a request whose text names a level on the disc is a level
+    /// change, held (the member reads it on later steps, taken once); one
+    /// naming none (a stream's path, a level not on the disc, a string the
+    /// world can't read without the interface's model) reads none the next
+    /// step, kept among the streams with its text; the stream comes and
+    /// goes under a held change.
+    #[test]
+    fn a_level_change_is_held_and_a_stream_read_as_loaded() {
+        let level = at("system", "load level", None);
+        let (mut w, v) = world_with_texts(&["Level_214_Tutotial_2", "debug/debug", "Level_999"]);
+        let (to_214, debug, missing) = (v[0], v[1], v[2]);
+        w.set_levels(Arc::new(
+            [
+                "level_214_tutotial_2".to_owned(),
+                "level_213_tutotial".to_owned(),
+            ]
+            .into(),
+        ));
+        for stream in [debug, missing] {
+            w.set(&level, stream, &mut NoEngine).unwrap();
+            w.end_step();
+            assert_eq!(w.get(&level, &mut NoEngine), Ok(Value::Null), "{stream:?}");
+            assert_eq!(w.level_change(), None);
+        }
+        assert_eq!(
+            w.streams.iter().cloned().collect::<Vec<_>>(),
+            [Some("debug/debug".to_owned()), Some("Level_999".to_owned())]
+        );
+        w.set(&level, to_214, &mut NoEngine).unwrap();
+        for _ in 0..3 {
+            w.end_step();
+            assert_eq!(w.get(&level, &mut NoEngine), Ok(to_214), "held");
+        }
+        assert_eq!(
+            w.level_change(),
+            Some(&LevelChange {
+                name: "level_214_tutotial_2".into(),
+                text: "Level_214_Tutotial_2".into(),
+                value: to_214,
+            })
+        );
+        assert_eq!(w.requests, [debug, missing, to_214], "taken once each");
+        // No interface's model: the text unread, a stream.
+        let (mut bare, ..) = world();
+        bare.set_levels(Arc::new(["level_214_tutotial_2".to_owned()].into()));
+        bare.set(&level, to_214, &mut NoEngine).unwrap();
+        bare.end_step();
+        assert_eq!(bare.get(&level, &mut NoEngine), Ok(Value::Null));
+        assert_eq!(
+            (bare.level_change(), bare.streams.back()),
+            (None, Some(&None))
+        );
+        // No level list: nothing changes level.
+        let (mut unlisted, v) = world_with_texts(&["Level_214_Tutotial_2"]);
+        unlisted.ask_level(v[0]);
+        unlisted.end_step();
+        assert_eq!(unlisted.level_change(), None);
+    }
+
+    /// AS.15: a request's text as an archive's name: lower-cased, a level
+    /// folder and the extension taken off; nothing for blank text.
+    #[test]
+    fn a_requests_text_names_its_archive() {
+        assert_eq!(
+            level_name("Level_214_Tutotial_2").as_deref(),
+            Some("level_214_tutotial_2")
+        );
+        assert_eq!(
+            level_name(" PvP_Level_200_Two_Towers ").as_deref(),
+            Some("pvp_level_200_two_towers")
+        );
+        assert_eq!(
+            level_name("level/Level_200.bld").as_deref(),
+            Some("level_200")
+        );
+        assert_eq!(level_name("debug/debug").as_deref(), Some("debug/debug"));
+        assert_eq!(level_name("  "), None);
+    }
+
+    /// AS.51: a level's own listing gains its definition and the level's
+    /// spellings of the listed scripts, a first tick's as a first tick,
+    /// and nothing for a script listed as its file spells it, one listed
+    /// nowhere or another file's placement; chapter 1's listing names its
+    /// first fight's placements, another level's doesn't.
+    #[test]
+    fn a_levels_listing_gains_its_definition_and_its_spellings() {
+        let level = 4;
+        let placed = |i: u32, name: &str, script: &str, unit: u16| Placed {
+            ..Placed::named(Obj { unit, index: i }, name, Some(script), RUNNING)
+        };
+        let files = Files {
+            placed: vec![
+                placed(
+                    1,
+                    "__Level_Definition",
+                    "C:/l/Level_Definition_214.ai",
+                    level,
+                ),
+                placed(2, "pop_to_Camera_X_1", "C:/l/Pop_to_Camera_X.ai", level),
+                placed(3, "Boulder", "C:/l/titan_carriable_object.ai", level),
+                placed(4, "Scaler", "C:/l/Scale.ai", level),
+                placed(5, "Unlisted", "C:/l/Persephone.ai", level),
+                placed(6, "Elsewhere", "C:/g/Pop_to_Camera_Y.ai", 1),
+            ],
+            ..Files::default()
+        };
+        let base = smash_config(Mode::Play);
+        let with = with_level(base.clone(), &files, level);
+        let lists = |c: &Config, script: &str| c.whitelist.listing("", script);
+        use guac_script::Listed;
+        assert_eq!(lists(&base, "C:/l/Level_Definition_214.ai"), Listed::Off);
+        assert_eq!(lists(&with, "C:/l/Level_Definition_214.ai"), Listed::Every);
+        assert_eq!(lists(&base, "C:/l/Pop_to_Camera_X.ai"), Listed::Off);
+        assert_eq!(lists(&with, "C:/l/Pop_to_Camera_X.ai"), Listed::Every);
+        assert_eq!(
+            lists(&with, "C:/l/titan_carriable_object.ai"),
+            Listed::FirstTick
+        );
+        assert_eq!(lists(&with, "C:/l/Persephone.ai"), Listed::Off);
+        let Whitelist::Only {
+            scripts,
+            first_tick,
+            ..
+        } = &with.whitelist
+        else {
+            panic!("a listing");
+        };
+        let Whitelist::Only {
+            scripts: base_scripts,
+            first_tick: base_first,
+            ..
+        } = &base.whitelist
+        else {
+            panic!("a listing");
+        };
+        assert_eq!(scripts.len(), base_scripts.len() + 2, "{scripts:?}");
+        assert_eq!(first_tick.len(), base_first.len() + 1);
+        // Chapter 1's fight is chapter 1's.
+        let fight = level_config(Mode::Play, &files, level, true);
+        let other = level_config(Mode::Play, &files, level, false);
+        assert!(fight.whitelist.lists(FIRST_FIGHT[0], "C:/x/Any.ai"));
+        assert!(!other.whitelist.lists(FIRST_FIGHT[0], "C:/x/Any.ai"));
+        assert!(other.whitelist.lists("", "C:/l/Level_Definition_214.ai"));
+    }
+
+    /// AS.15's dev entry: a placement woken has no range and no buffer, so
+    /// the activity rule keeps it awake; no actor, no wake.
+    #[test]
+    fn a_placement_woken_has_no_range_or_buffer() {
+        let (mut w, grunt, _) = world();
+        assert!(w.wake(grunt));
+        let a = w.actor(grunt).unwrap();
+        assert_eq!((a.range, a.buffer), (0.0, 0.0));
+        assert!(!w.wake(0xDEAD));
+    }
+
     /// AH.220: a script that unlocks an achievement (`set system.game
     /// achievement = 23`, as `System - Achievements - Complete Achievement
     /// by ID` does) runs on past the write, in strict mode and in play mode

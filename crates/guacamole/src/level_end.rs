@@ -99,3 +99,132 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     host.world.ask_level(to);
     Ok(Some(Ended::Asked(to)))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph};
+    use guac_script::{Config, Generator, Mode, Obj, Program, Role, Unit, Whitelist};
+
+    use super::*;
+    use crate::script_engine::NoEngine;
+    use crate::scripts::{Files, Placed, ScriptWorld, headless_objects, headless_spawner};
+
+    const FILE: Obj = Obj { unit: 0, index: 2 };
+    const HANDLE: u64 = 0x30;
+    const PATH: &str = "C:/tfb/Content/Levels/Includes/Global/scripts/LevelEnd.ai";
+
+    /// A file in the original's shape, our ops: `level progression data` a
+    /// file structure whose STARTUP records a level end when `seq` is more
+    /// than 0, `level end load to level` set to a marker object.
+    fn level_ends(seq: i32) -> Arc<Program> {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            let ty = w.op(Class::DefineStructure, "Level Progression Data");
+            let seq_var = w.variable("level end seq", "ValueInfo", Some("IntMeasurement"));
+            let to = w.variable("level end load to level", "ScriptReference", None);
+            let data = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(data, 0x08, "level progression data");
+            w.refer(data, 0x1C, ty);
+            let marker = w.op(Class::DefineMacro, "Level_214");
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let n = w.int(seq);
+            w.set(&[El::Local(data), El::Local(seq_var)], n);
+            let l = w.value(&[El::Local(data), El::Local(to)]);
+            let r = w.reference(&[El::Local(marker)], None);
+            let o = w.op(Class::SetReference, "setref||=");
+            w.refer(o, 0x1C, l);
+            w.refer(o, 0x20, r);
+            w.push(o);
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (section, _) = w.open(Class::MacroSection, "MACROS");
+            let p = w.push(marker);
+            let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+            let enter = w.flow(Class::FlowMacro);
+            w.push(enter);
+            w.close(iface);
+            w.end_block(p);
+            w.end_block(section);
+            let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+            let p = w.push(ty);
+            w.push(seq_var);
+            w.push(to);
+            w.end_block(p);
+            w.end_block(types);
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    /// The file's placement ticked once (its STARTUP), then `steps` of
+    /// [`step`] over it: what each returned and the world after.
+    fn run(seq: i32, steps: usize) -> (Vec<Option<Ended>>, ScriptWorld, Value) {
+        let program = level_ends(seq);
+        let files = Files {
+            placed: vec![Placed::named(FILE, "Level End", Some(PATH), 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(FILE, HANDLE)]);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        config.whitelist = Whitelist::only(&[], &["LevelEnd.ai"]);
+        let sid = program.script_named("LevelEnd.ai").unwrap();
+        let marker = program
+            .defs
+            .iter()
+            .find(|d| d.display == "Level_214")
+            .map(|d| Value::Object(d.obj))
+            .expect("the marker");
+        let mut vm = Vm::new(program, config);
+        vm.add_at(HANDLE, "Level End", sid, FILE);
+        let mut generator = Generator::seeded(1);
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x1000);
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator: &mut generator,
+            spawn: &mut spawn,
+        };
+        vm.step(&mut host).unwrap();
+        let out = (0..steps)
+            .map(|_| step(&mut vm, &mut host).unwrap())
+            .collect();
+        (out, world, marker)
+    }
+
+    /// A level end recorded is asked for once, the level it names written
+    /// where a script's `system.load level` write lands; none recorded, or
+    /// `level end seq` still 0, asks nothing.
+    #[test]
+    fn a_recorded_level_end_is_asked_for_once() {
+        let (out, mut world, marker) = run(1, 3);
+        assert_eq!(out, [Some(Ended::Asked(marker)), None, None]);
+        world.set_levels(Arc::new(std::collections::HashSet::new()));
+        world.end_step();
+        assert_eq!(world.requests, [marker], "the request the host takes");
+        let (out, world, _) = run(0, 3);
+        assert_eq!(out, [None, None, None]);
+        assert!(world.requests.is_empty());
+    }
+}
