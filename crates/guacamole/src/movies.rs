@@ -5,7 +5,8 @@
 //! [`guacamole::scripts::LevelEndMovie`]). Here it's converted the first
 //! time it's played, by AS.9's `transcode_movie` into the extract, on a
 //! thread of its own while the level holds (the portal's header saying so,
-//! [`Movies::band`]), then played full screen on AB.10's player with its
+//! [`Movies::band`], drawn on the portal view under the held level: AS.88),
+//! then played full screen on AB.10's player with its
 //! sound, the level and its sounds held until it's over. The original's
 //! skip ends it: △ or Start pressed on any pad, the two buttons the
 //! original's movie fader reads off a joined player's controller (`action
@@ -14,7 +15,9 @@
 //! (Stand-in ledger: `level-end`.)
 //!
 //! A movie that won't convert or open is over all the same, with why: the
-//! level goes on as if it had played.
+//! level goes on as if it had played. One whose run is installed again
+//! before it's over (the TV leaving the level or restarting it) goes with
+//! it, playing or converting.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -85,7 +88,8 @@ pub(crate) struct MovieReport {
     /// (a dev build's `GUAC_MUTE`).
     pub audio: Option<String>,
     pub muted: bool,
-    /// `finished`, `skipped`, or `failed: <why>`.
+    /// `finished`, `skipped`, `failed: <why>`, or `left with its level`
+    /// (the run that queued it installed again before it was over).
     pub ended: Option<String>,
     /// How many have played to an end, a skip or a failure.
     pub plays: usize,
@@ -201,6 +205,24 @@ fn play_movies(
         return;
     };
     let now = Instant::now();
+    // The run that queued it installed again (the TV left the level or
+    // restarted it): the movie goes with its level, a conversion's result
+    // left unwatched, rather than playing over the portal view or holding
+    // the next entry (the as-ch1-ending review).
+    if movies.current.is_some()
+        && world
+            .level_end_movie()
+            .is_none_or(|m| m.state != MovieState::Playing)
+    {
+        if let Some(Running::Playing { playback, .. }) = movies.current.take() {
+            playback.stop(&mut commands, &mut images, &sinks, "its level left");
+        }
+        info!("the level end's movie: its level left, the movie with it");
+        movies.report.state = "over".into();
+        movies.report.ended = Some("left with its level".into());
+        movies.report.plays += 1;
+        return;
+    }
     if movies.current.is_none() {
         let Some(m) = world
             .level_end_movie()
@@ -547,6 +569,71 @@ mod tests {
                 .count();
             assert_eq!(overlays, 0, "{skip:?}: its overlay taken down");
         }
+    }
+
+    /// The as-ch1-ending review: the run that queued it installed again
+    /// (the TV leaving the level or restarting it) takes the movie with it,
+    /// playing or converting: its overlay down, the hold let go, and a
+    /// conversion that lands after it starts nothing.
+    #[test]
+    fn a_movie_goes_with_the_run_that_queued_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = tv(clip(tmp.path(), 250));
+        let fresh = |app: &mut App| {
+            let handles = HashMap::new();
+            app.insert_resource(ScriptWorld::new(
+                &Files::default(),
+                &handles,
+                headless_objects(&handles),
+            ));
+        };
+        let overlays = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<(), With<crate::intro_player::IntroOverlay>>()
+                .iter(app.world())
+                .count()
+        };
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .queue_movie("fmv02");
+        until(&mut app, "the movie playing", |app| {
+            app.world().resource::<Movies>().report().shown > 0
+        });
+        assert_eq!(overlays(&mut app), 1);
+        fresh(&mut app);
+        app.update();
+        app.update();
+        let movies = app.world().resource::<Movies>();
+        assert!(!movies.holds(), "the hold let go with its level");
+        assert_eq!(
+            movies.report().ended.as_deref(),
+            Some("left with its level")
+        );
+        assert!(movies.report().shown < 250);
+        assert_eq!(overlays(&mut app), 0, "its overlay taken down");
+        // Converting: the conversion landing after the run's gone plays
+        // nothing.
+        let (gate, open) = crossbeam_channel::bounded::<()>(1);
+        let inner = clip(tmp.path(), 10);
+        app.insert_resource(Converter(Arc::new(move |name: &str| {
+            let _ = open.recv();
+            (inner.0)(name)
+        })));
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .queue_movie("fmv02");
+        app.update();
+        assert!(app.world().resource::<Movies>().holds(), "converting");
+        fresh(&mut app);
+        app.update();
+        assert!(!app.world().resource::<Movies>().holds());
+        gate.send(()).unwrap();
+        for _ in 0..20 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(overlays(&mut app), 0, "nothing played once its run went");
+        assert_eq!(app.world().resource::<Movies>().report().plays, 2);
     }
 
     /// AS.19: one that won't convert is over all the same, with why, so the
