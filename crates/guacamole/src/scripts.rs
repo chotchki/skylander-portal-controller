@@ -547,6 +547,9 @@ pub struct ScriptWorld {
     /// AS.54, [`ScriptWorld::walk_encounter`]): what a level's spawners
     /// clone.
     pub(crate) walk_clones: std::collections::HashSet<Obj>,
+    /// The level's intro held until a hero's minion is in (openspec AS.47,
+    /// [`hold_intro`]), by handle.
+    pub(crate) intro_held: Option<Handle>,
     /// The original's interface the scripts write (openspec AT.9), when
     /// the run's install loaded it ([`crate::interface_host`]).
     pub(crate) interface: Option<guac_interface::Keeper>,
@@ -787,6 +790,7 @@ impl ScriptWorld {
             sound_system: HashMap::new(),
             music_held: Vec::new(),
             walk_clones: Default::default(),
+            intro_held: None,
             interface: None,
             run: fresh_serial(),
         }
@@ -2177,6 +2181,62 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     clones: &["_Template_Undead_Chompy"],
 }];
 
+/// The intros the TV runs past chapter 1's, by level and placement
+/// (openspec AS.47): none yet. Level 214's (`214_Intro_IGC`, awake from the
+/// load) runs headless to its hand-over, held for the hero
+/// ([`hold_intro`]) and skipped a frame in
+/// ([`crate::level_end::SKIPPED_CUTSCENES`]), but takes the ship the
+/// players stand on with it: its STARTUP takes `The_Ship_1` off and the
+/// skip takes off both clones its cutscene made of `214_Intro_Ship`, so the
+/// deck would show nothing under them (AS.60).
+pub const INTROS: [(&str, &str); 0] = [];
+
+/// The intro placement of the level whose archive is `level`, if the TV
+/// runs one.
+pub fn intro(level: &str) -> Option<&'static str> {
+    INTROS.iter().find(|(l, _)| *l == level).map(|(_, p)| *p)
+}
+
+/// The intro placement `placement` of the file linked as `level` (a level's
+/// [`intro`]) held before its first tick until a hero's
+/// minion is in (his join's activation lets it go, openspec AS.47; on the
+/// TV once his entry beam lands): the original's
+/// players are in the level when its intro starts, so its cutscene takes
+/// them and hands them over where it ends; the TV's run starts on the
+/// portal view, before any hero is in (a hypothesis: stand-in ledger
+/// `spawn`). Whether it held one.
+pub fn hold_intro(
+    vm: &mut Vm,
+    world: &mut ScriptWorld,
+    files: &Files,
+    level: u16,
+    placement: &str,
+) -> bool {
+    let Some(&h) = files
+        .placed
+        .iter()
+        .find(|p| p.obj.unit == level && p.name == placement)
+        .and_then(|p| world.handles().get(&p.obj))
+    else {
+        return false;
+    };
+    if vm.placement_of(h).is_none() || !vm.set_suspended(h, true) {
+        return false;
+    }
+    world.intro_held = Some(h);
+    true
+}
+
+/// The intro [`hold_intro`] held let go, to run its STARTUP at its next
+/// tick: what a hero's join does once his minion's in. Whether one was
+/// held.
+pub fn release_intro(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
+    match world.intro_held.take() {
+        Some(h) => vm.set_suspended(h, false),
+        None => false,
+    }
+}
+
 /// The first encounter of the level whose archive is `level`, if the TV
 /// runs one past chapter 1's.
 pub fn encounter(level: &str) -> Option<&'static Encounter> {
@@ -2793,7 +2853,8 @@ pub fn fight_config(mode: Mode) -> Config {
 /// other, whose placements named as chapter 1's fight's are its own (level
 /// 214 holds an `Enemy_Chompy(4)` and a `Setup_001_Controller`), with its
 /// first encounter's placements and clones by name where the TV runs one
-/// ([`encounter`], openspec AS.54); either with [`with_level`] (AS.51).
+/// ([`encounter`], openspec AS.54) and its intro ([`intro`], AS.47);
+/// either with [`with_level`] (AS.51).
 pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config {
     let mut config = if guac_extract::levels::FIRST_RUN.contains(&name) {
         fight_config(mode)
@@ -2803,6 +2864,10 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if let (Some(e), Whitelist::Only { placements, .. }) = (encounter(name), &mut config.whitelist)
     {
         placements.extend(e.placements.iter().chain(e.clones).map(|s| (*s).to_owned()));
+    }
+    // Its intro (openspec AS.47).
+    if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
+        placements.push(i.to_owned());
     }
     with_level(config, files, level)
 }
@@ -3044,13 +3109,15 @@ fn activate(
 
 /// After the activation: the portal in adventure mode, the minion's script
 /// and every scripted clone the activation made on the VM, the minion's the
-/// activator. Returns his placement.
+/// activator, and the level's intro let go with his minion in the level to
+/// take (openspec AS.47, [`release_intro`]). Returns his placement.
 fn joined(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     pm: PlacementId,
     hero: Handle,
 ) -> Result<PlacementId, Halt> {
+    release_intro(vm, host.world);
     adventure_mode(vm, host, pm)?;
     let scripted = std::mem::take(&mut host.world.scripted);
     let mut minion_placement = None;
@@ -4411,6 +4478,33 @@ mod tests {
         assert_eq!(w.level_end(), None);
     }
 
+    /// openspec AS.47: an attach node's root is the actor it's on; an actor
+    /// named as one is its own; nothing reads nothing. Read-only: a write
+    /// goes nowhere.
+    #[test]
+    fn an_attach_nodes_root_is_the_actor_its_on() {
+        let (mut w, grunt, _) = world();
+        let root = |w: &mut ScriptWorld, v: Option<Value>| {
+            w.get(&at("abstractattachnode", "root", v), &mut NoEngine)
+        };
+        let node = w.objs.value(Object::Node(grunt, 2));
+        assert_eq!(root(&mut w, Some(node)), Ok(Value::Entity(grunt)));
+        assert_eq!(
+            root(&mut w, Some(Value::Entity(grunt))),
+            Ok(Value::Entity(grunt))
+        );
+        assert_eq!(root(&mut w, Some(Value::Null)), Ok(Value::Null));
+        assert!(
+            w.set(
+                &at("abstractattachnode", "root", Some(node)),
+                Value::Null,
+                &mut NoEngine
+            )
+            .is_ok()
+        );
+        assert_eq!(root(&mut w, Some(node)), Ok(Value::Entity(grunt)));
+    }
+
     /// AS.15: a request's text as an archive's name: lower-cased, a level
     /// folder and the extension taken off; nothing for blank text.
     #[test]
@@ -4509,6 +4603,8 @@ mod tests {
             );
         }
         assert!(!l214.whitelist.lists("Enemy_Chompy(4)", "C:/x/Any.ai"));
+        // Not its intro yet (openspec AS.47, AS.60).
+        assert!(!l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(
             !l214
                 .whitelist
@@ -6123,6 +6219,40 @@ mod tests {
             "c:/tfb/content/levels/level_213/scripts/snd_robo_ducking.ai"
         ));
         assert!(!is_music_script(OTHER));
+    }
+
+    /// openspec AS.47: a level's intro is held before its first tick, by its
+    /// placement in the level's own file (another file's named alike, and
+    /// any other placement, run on), and let go to run its STARTUP at its
+    /// next tick; nothing's let go twice.
+    #[test]
+    fn a_levels_intro_waits_for_a_hero() {
+        let (mut vm, mut world, mut files, [intro_id, other_id, _]) = music_fixture();
+        files.placed[0].name = "214_Intro_IGC".into();
+        assert!(
+            !hold_intro(&mut vm, &mut world, &files, 1, "214_Intro_IGC"),
+            "another file's"
+        );
+        assert!(
+            !hold_intro(&mut vm, &mut world, &files, 0, "Intro"),
+            "no such placement"
+        );
+        assert!(hold_intro(&mut vm, &mut world, &files, 0, "214_Intro_IGC"));
+        for _ in 0..3 {
+            music_step(&mut vm, &mut world);
+        }
+        assert_eq!(
+            vm.local(intro_id, "starts"),
+            None,
+            "held before its first tick"
+        );
+        assert_eq!(vm.local(other_id, "count"), Some(Value::Int(3)));
+        assert!(release_intro(&mut vm, &mut world));
+        assert!(!release_intro(&mut vm, &mut world), "once");
+        music_step(&mut vm, &mut world);
+        assert_eq!(vm.local(intro_id, "starts"), Some(Value::Int(1)));
+        // None on the TV's listing yet (AS.60).
+        assert_eq!(intro("level_214_tutotial_2"), None);
     }
 
     /// openspec AR.30 (AR.27's key): the music waits only while the level's

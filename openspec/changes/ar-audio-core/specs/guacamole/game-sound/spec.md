@@ -29,7 +29,7 @@ A sound SHALL play at the volume its data gives, varied per play by its own volu
 - **THEN** nothing of it is heard
 
 ### Requirement: The level's music is the original's
-Chapter 1 SHALL play its own music tracks from the disc (ten: four 129 s beds, an 18.8 s intro, four stingers and a silence), switched, layered and faded as the level's scripts direct (exploring, fighting, the stingers), and SHALL play none while the scripts play silence.
+Each level SHALL play its own music tracks from the disc (chapter 1's ten: four 129 s beds, an 18.8 s intro, four stingers and a silence), switched, layered and faded as the level's scripts direct (exploring, fighting, the stingers), and SHALL play none while the scripts play silence.
 
 #### Scenario: The first fight keeps the exploring track
 - **WHEN** the first fight's creatures wake and fight in chapter 1
@@ -42,6 +42,10 @@ Chapter 1 SHALL play its own music tracks from the disc (ten: four 129 s beds, a
 #### Scenario: A first run's music
 - **WHEN** chapter 1 is played on a first run before its sounds have extracted
 - **THEN** its music starts once they're in, the intro first and the exploring track on its bar, as a level start plays it
+
+#### Scenario: The next level's music
+- **WHEN** level 214 starts
+- **THEN** its own exploring track plays from its start, looping, with the docks' ambience under it, as its scripts start them
 
 ### Requirement: Voices hold a scene for their length
 A cutscene or dialogue that waits on its voices SHALL last as long as those voices play, as the original's does.

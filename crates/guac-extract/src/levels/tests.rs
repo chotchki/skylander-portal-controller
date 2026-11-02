@@ -730,7 +730,11 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
     }
     // Its file named for its rule there, chapter 1's as it was.
     assert_eq!(
-        part_path(crate::intros::IrFormat::Ron, "level_999_elsewhere", PALETTES),
+        part_path(
+            crate::intros::IrFormat::Ron,
+            "level_999_elsewhere",
+            PALETTES
+        ),
         "levels/level_999_elsewhere/palettes.v2.ron"
     );
     assert_eq!(

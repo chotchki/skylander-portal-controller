@@ -479,6 +479,22 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     }
     // The level's music waits for its sounds (openspec AR.23).
     hold_music(world, source, level);
+    // Its intro waits for a hero (openspec AS.47).
+    if let Some(intro) = scripts::intro(source.level()) {
+        let held = world.resource_scope::<ScriptRuntime, _>(|world, mut runtime| {
+            let mut script_world = world.resource_mut::<ScriptWorld>();
+            scripts::hold_intro(
+                &mut runtime.vm,
+                &mut script_world,
+                &source.files,
+                level,
+                intro,
+            )
+        });
+        if held {
+            info!(level = %source.level(), "the level's intro waits for a hero");
+        }
+    }
 }
 
 /// [`scripts::hold_music_while`] on the run just installed, logged: the

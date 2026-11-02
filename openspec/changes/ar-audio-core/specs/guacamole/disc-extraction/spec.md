@@ -16,3 +16,11 @@ Extraction SHALL include every sound chapter 1 can play (the shared sounds, each
 #### Scenario: Playing before the sounds are in
 - **WHEN** a character plays chapter 1 on a first run before its sounds have extracted
 - **THEN** the level plays without them until they're in, and every sound the scripts start from then on plays (17.3 s after chapter 1 was ready on the M3 Max)
+
+### Requirement: A level's sounds are extracted with it
+A level past chapter 1 SHALL bring its own sounds the first time it's entered, extracted with its other parts before it loads (level 214's 444 sounds in 439 recordings, 57 MiB, about 3 s on the M3 Max), so its music and sounds play from its start; a level whose sounds don't extract SHALL play silent rather than wait for them.
+
+#### Scenario: Level 214 entered from chapter 1's end
+- **WHEN** chapter 1's end takes the hero into level 214 for the first time
+- **THEN** level 214's sounds extract with it and its music plays from its start
+

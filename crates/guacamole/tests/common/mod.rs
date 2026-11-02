@@ -956,9 +956,26 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
     }
     let found = discovery(&mut config);
-    let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
+    let mut vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
+    // Its intro waits for the hero, as the TV's install holds it (openspec
+    // AS.47); one a test lists past the TV's listing (`Setup::scripts`) too.
+    let intro: Option<String> = scripts::intro(level).map(str::to_owned).or_else(|| {
+        files
+            .placed
+            .iter()
+            .find(|p| {
+                p.obj.unit == LEVEL
+                    && p.script.as_deref().is_some_and(|s| {
+                        s.ends_with("_Intro_IGC.ai") && setup.scripts.iter().any(|l| s.ends_with(l))
+                    })
+            })
+            .map(|p| p.name.clone())
+    });
+    if let Some(intro) = intro {
+        scripts::hold_intro(&mut vm, &mut world, &files, LEVEL, &intro);
+    }
     if setup.sounds {
         let (book, stems) = match chapter_1 {
             true => sound_part(),

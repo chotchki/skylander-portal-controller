@@ -648,6 +648,9 @@ pub(crate) struct CreaturesReport {
     pub orbs: Vec<OrbShot>,
     /// How many of them the TV draws (openspec AH.61, `crate::orbs`).
     pub orbs_drawn: usize,
+    /// How many creatures and skinned clones the TV draws now (openspec
+    /// AS.54: a level's encounter drawn as chapter 1's fight is).
+    pub drawn: usize,
 }
 
 /// The creatures' part of `/api/_test/tv` (openspec AQ.8).
@@ -656,6 +659,7 @@ pub(crate) struct CreatureShots<'w> {
     runtime: Option<Res<'w, ScriptRuntime>>,
     world: Option<Res<'w, ScriptWorld>>,
     orbs: Option<Res<'w, crate::orbs::DrawnOrbs>>,
+    drawn: Option<Res<'w, DrawnCreatures>>,
 }
 
 impl CreatureShots<'_> {
@@ -664,6 +668,7 @@ impl CreatureShots<'_> {
         let (rt, world) = (self.runtime.as_deref()?, self.world.as_deref()?);
         Some(CreaturesReport {
             orbs_drawn: self.orbs.as_ref().map_or(0, |d| d.0.len()),
+            drawn: self.drawn.as_ref().map_or(0, |d| d.0.len()),
             ..report(&rt.vm, world)
         })
     }
@@ -724,6 +729,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         spawned,
         orbs,
         orbs_drawn: 0,
+        drawn: 0,
     }
 }
 

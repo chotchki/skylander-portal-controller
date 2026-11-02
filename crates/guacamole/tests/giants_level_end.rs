@@ -213,7 +213,7 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
         ..Setup::default()
     };
     let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
-    let start = run.hero().pivot;
+    let mut start = run.hero().pivot;
     let listing = run.vm.config().whitelist.clone();
     for script in ["Level_Definition_214.ai", "Pop_to_Camera_X.ai"] {
         assert!(listing.lists("", &format!("C:/x/{script}")), "{script}");
@@ -228,6 +228,10 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
     for k in 0..480u32 {
+        if k == 120 {
+            // Where his intro handed him over (openspec AS.47).
+            start = run.hero().pivot;
+        }
         if k >= 120 {
             run.bench.pads[0] = Pad {
                 stick: Stick::new(0.0, 1.0),
@@ -390,6 +394,11 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .collect();
     assert_eq!(run.world.creatures(), spawners, "the spawners walk");
     let controller = run.placement("Setup_001_Controller");
+    // His arrival and the intro's hand-over played out, as the TV's dev
+    // entry settles him (openspec AS.47).
+    for _ in 0..120 {
+        stops.extend(run.step_play().unwrap());
+    }
     run.put(Vec3::from_array(POD_TRIGGER), 0.0);
     let mut scene = None;
     for _ in 0..400 {
@@ -459,6 +468,123 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         run.vm.stopped(run.minion.unwrap()),
         None,
         "his script runs on"
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Where level 214's intro hands the player over (metres, the run's own
+/// read): its cutscene, skipped a frame in, sets him down on the deck here,
+/// 4.3 m from the level's `InitializeLevel.ai` marker.
+const HANDED_OVER: [f32; 3] = [-9.144, -12.578118, 18.10268];
+
+/// The cutscene in play's macro's name, if any (as `level_end` reads it).
+fn cutscene_name(run: &Run) -> Option<String> {
+    let vm = &run.vm;
+    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
+    let current = vm
+        .field(data, "current cs")
+        .filter(|v| *v != guac_script::Value::Null)?;
+    let def = vm.field(current, "cutscene definition")?;
+    match vm.field(def, "define macro")? {
+        guac_script::Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// openspec AS.47: level 214's own intro (`214_Intro_IGC`, listed here past
+/// the TV's listing, which doesn't run it yet: AS.60), held before its
+/// first tick until Eruptor's minion is in, as the TV's install would hold
+/// it; then its cutscene begins with him in it, is skipped a frame in by the
+/// original's own skip (`level_end::SKIPPED_CUTSCENES`), and its hand-over
+/// sets him down on the deck; the intro takes itself off, the HUD it hid
+/// shows again, nothing stops. And what keeps it off the TV: its STARTUP
+/// takes `The_Ship_1` off, and the skip takes off both clones its cutscene
+/// made of `214_Intro_Ship`, so no ship is left under him.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_intro_hands_over_and_takes_the_ship() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        props: true,
+        sounds: true,
+        scripts: &["214_Intro_IGC.ai"],
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+    let marker = run.hero().pivot;
+    let intro = run.placement("214_Intro_IGC");
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    assert!(run.vm.is_suspended(intro), "held until a hero joins");
+    assert_eq!(run.vm.behaviour(intro), None);
+    assert_eq!(cutscene_name(&run), None);
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let joined_at = run.steps;
+    let (mut began, mut skipped, mut gone, mut shown) = (None, None, None, None);
+    for _ in 0..300 {
+        stops.extend(run.step_play().unwrap());
+        let cs = cutscene_name(&run);
+        if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
+            began = Some(run.steps);
+        }
+        if began.is_some() && skipped.is_none() && cs.is_none() {
+            skipped = Some(run.steps);
+        }
+        if gone.is_none() && run.vm.removed(intro) {
+            gone = Some(run.steps);
+        }
+        if gone.is_some() && shown.is_none() && !guacamole::scripts::player_hud_hidden(&run.vm) {
+            shown = Some(run.steps);
+        }
+    }
+    let at = run.hero().pivot;
+    let (ship, _) = run.placed("The_Ship_1");
+    let (template, _) = run.placed("214_Intro_Ship");
+    let ship_clones: Vec<(guac_script::Handle, bool)> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| {
+            run.world.actor(*h).and_then(|a| a.template)
+                == run.world.actor(template).and_then(|a| a.obj)
+        })
+        .map(|h| (h, run.world.removed(h)))
+        .collect();
+    println!(
+        "The_Ship_1 taken off {}; the intro ship's clones (taken off): {ship_clones:?}",
+        run.world.removed(ship)
+    );
+    assert!(
+        run.world.removed(ship),
+        "the intro takes the placed ship off"
+    );
+    assert!(
+        !ship_clones.is_empty() && ship_clones.iter().all(|(_, off)| *off),
+        "and the skip its cutscene's ship clones: {ship_clones:?}"
+    );
+    println!(
+        "the marker {marker:?}; joined at {joined_at}; the intro's cutscene at {began:?}, skipped by {skipped:?}, the intro off at {gone:?}, the HUD shown at {shown:?}; handed over at {at:?} ({:.2} m off the marker)",
+        at.distance(marker)
+    );
+    assert!(began.is_some_and(|b| b <= joined_at + 2), "{began:?}");
+    assert!(skipped.is_some() && gone.is_some() && shown.is_some());
+    let handed = Vec3::from_array(HANDED_OVER);
+    assert!(
+        Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
+        "set down where the hand-over puts him: {at:?}"
     );
     assert!(
         stops.is_empty(),

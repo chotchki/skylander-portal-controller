@@ -2347,6 +2347,10 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// A placement's `script suspended` (AS.29: PvP's bricks, the challenges'
 /// replays, 003's catapult master, 202's closing scene), the VM's: the step's
 /// walk passes a placement it's set on (crate docs, The tick).
+///
+/// An attach node's `root` (AS.47: level 214's intro attaches its scene's
+/// actors to the camera rig's node and reads the rig back by it), the
+/// host's: the actor the node is on.
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2457,6 +2461,15 @@ pub const LEVELS: &[Registered] = &[
         0.0,
         1.0,
         Vm,
+    ),
+    m(
+        "abstractattachnode",
+        "root",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
     ),
 ];
 
