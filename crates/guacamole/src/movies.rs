@@ -128,6 +128,24 @@ impl Movies {
     }
 }
 
+#[cfg(test)]
+impl Movies {
+    /// One converting `name` whose conversion comes back only through the
+    /// sender returned: the hold, for the portal's tests.
+    pub(crate) fn converting(name: &str) -> (Self, crossbeam_channel::Sender<Converted>) {
+        let (tx, feed) = crossbeam_channel::bounded(1);
+        let movies = Movies {
+            current: Some(Running::Converting {
+                name: name.to_owned(),
+                feed,
+                started: Instant::now(),
+            }),
+            ..Default::default()
+        };
+        (movies, tx)
+    }
+}
+
 pub(crate) struct MoviesPlugin;
 
 impl Plugin for MoviesPlugin {

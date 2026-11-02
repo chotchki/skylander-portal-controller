@@ -6388,6 +6388,28 @@ mod tests {
         assert!(on.distance(at) < 3.0, "from where he stopped: {at} -> {on}");
     }
 
+    /// AS.19: the level end's movie holds the level while it converts or
+    /// plays, him and the clock still under the stick, and lets it go once
+    /// it's over.
+    #[test]
+    fn the_level_ends_movie_holds_the_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        assert_eq!(mode(&app), Mode::Level);
+        let (movies, _feed) = crate::movies::Movies::converting("fmv02");
+        app.insert_resource(movies);
+        until(&mut app, "the hold", |a| mode(a) == Mode::Held);
+        assert_eq!(alert(&app), None, "no alert: the movie's hold");
+        let at = stands_still(&mut app, 30);
+        app.insert_resource(crate::movies::Movies::default());
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        for _ in 0..10 {
+            app.update();
+        }
+        let on = hero(&app).pivot;
+        assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
+    }
+
     /// AG.63: with a second Eruptor holding the level, the hero taken off
     /// brings the other in where he stood and the way he faced, the camera
     /// the same, and the level carries on.
