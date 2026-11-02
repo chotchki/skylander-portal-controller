@@ -549,6 +549,21 @@ struct Driven {
     /// `scripts::player_hud_hidden`) in a scene, and outside one.
     hidden_steps: u32,
     hidden_outside: u32,
+    /// Outside a scene, the steps a line's dialogue box stood on the
+    /// interface's model (openspec AR.29: Eon's at the level's start), and
+    /// of those the steps the HUD was hidden; `hidden_outside` counts none
+    /// of them.
+    line_steps: u32,
+    hidden_line: u32,
+}
+
+/// Whether a line's dialogue box stands on the interface's model.
+fn line_up(run: &Run) -> bool {
+    run.world.interface().is_some_and(|k| {
+        k.instances()
+            .into_iter()
+            .any(|id| k.model().sprite(id).name == DIALOGUE_BACKDROP)
+    })
 }
 
 /// Whether the joined hero's minion reads invulnerable
@@ -630,6 +645,7 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
     let mut played = Played::default();
     let (mut scene_steps, mut held_steps) = (0, 0);
     let (mut hidden_steps, mut hidden_outside) = (0, 0);
+    let (mut line_steps, mut hidden_line) = (0, 0);
     while run.steps < limit {
         for n in &watch {
             let now = ours(&run, n).map(|s| (s.state, s.behaviour));
@@ -661,6 +677,9 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
                     scene_steps += 1;
                     held_steps += u32::from(invulnerable(&run));
                     hidden_steps += u32::from(hidden);
+                } else if line_up(&run) {
+                    line_steps += 1;
+                    hidden_line += u32::from(hidden);
                 } else {
                     hidden_outside += u32::from(hidden);
                 }
@@ -677,6 +696,8 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
         held_steps,
         hidden_steps,
         hidden_outside,
+        line_steps,
+        hidden_line,
     }
 }
 
@@ -1113,14 +1134,19 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     // control wrapper: under designer control, invulnerable), then lets go.
     println!(
         "the scene's steps on the route {}, his minion held {}, the player's HUD hidden {} \
-         (outside it {})",
-        d.scene_steps, d.held_steps, d.hidden_steps, d.hidden_outside
+         (outside it {}); a line's box up outside a scene {} steps, the HUD hidden {} of them",
+        d.scene_steps, d.held_steps, d.hidden_steps, d.hidden_outside, d.line_steps, d.hidden_line
     );
     assert!(d.scene_steps > 0, "the intro set Cutscene State");
     assert!(d.held_steps + 1 >= d.scene_steps, "held through the intro");
     // The scripts hide the player's HUD for the intro (`Game - Cutscene`'s
-    // hide UI), so the TV hides its own: through it and nowhere else.
+    // hide UI) and for Eon's line at the level's start (the dialogue's UI;
+    // AR.29: the original's hidden with his box up, AG.6's `c1-place` at
+    // flips 30,073 and 30,160, back at 30,247), so the TV hides its own:
+    // through those and nowhere else.
     assert_eq!(d.hidden_steps, d.scene_steps, "hidden through the intro");
+    assert!(d.line_steps > 0, "Eon's line's box at the level's start");
+    assert_eq!(d.hidden_line, d.line_steps, "hidden while his box is up");
     assert_eq!(d.hidden_outside, 0);
     assert!(!invulnerable(&d.run), "let go once it's over");
     // Anchor B, where AH.8's stood, its triggers fired as AH.8's were bar
@@ -1732,8 +1758,8 @@ fn pit_intro(sounds: bool) -> PitIntro {
     pit_intro_with(sounds, &[])
 }
 
-/// [`pit_intro`] with `scripts` listed past the TV's listing (openspec
-/// AR.17: Eon's lines, `scripts::LINE_SCRIPTS`).
+/// [`pit_intro`] with `scripts` listed past the TV's listing (a probe's
+/// way to run what the TV doesn't yet; AR.17 listed Eon's lines so).
 fn pit_intro_with(sounds: bool, scripts: &'static [&'static str]) -> PitIntro {
     let (run, stops, _) = joined_with(
         Mode::Strict,
@@ -1862,8 +1888,8 @@ fn the_pit_intro_voices_norticus_line_and_waits_on_it() {
     assert!((430..=455).contains(&out), "AH.8: 449; ours {out}");
 }
 
-/// openspec AR.17 and AR.36: Eon's lines ride the same path, on a run
-/// listing them (`scripts::LINE_SCRIPTS`). `Eon_1_Move_along_path`
+/// openspec AR.17, AR.29 and AR.36: Eon's lines ride the same path, on the
+/// TV's listing (`scripts::LINE_SCRIPTS`). `Eon_1_Move_along_path`
 /// (`Eon_Line_Activator.ai`) wakes as the level starts and plays its line
 /// through the dialogue UI: his box (his portrait) and his voice, started on
 /// the placement running the dialogue UI's update, the recording's length,
@@ -1890,17 +1916,52 @@ fn eons_first_line_is_voiced_as_the_level_starts() {
             props: true,
             interface: true,
             sounds: true,
-            scripts: &scripts::LINE_SCRIPTS,
             ..Setup::default()
         },
     );
     assert!(stops.is_empty());
+    for name in ["Eon_1_Move_along_path", "Eon_2_Keep_Going"] {
+        let p = run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == name)
+            .expect("placed");
+        println!(
+            "{name}: at {:?} turned {:?} scale {:?}, its trigger {:?}; the hero at {:?}",
+            p.position,
+            p.rotation,
+            p.scale,
+            p.solid,
+            run.hero().pivot
+        );
+    }
     let first = run.placed("Eon_1_Move_along_path").0;
     let second = run.placed("Eon_2_Keep_Going").0;
     let mut lines = Lines::default();
     let (mut done, mut off, mut off2) = (None, None, None);
+    // Where each of his voices plays from (AR.29): its sound's 3D setting
+    // and falloff, its actor's pivot and the hero's, metres, at its first
+    // engine frame.
+    let mut heard: Vec<(String, bool, Option<(f32, f32)>, f32)> = Vec::new();
     let driven = drive_with(run, Mode::Strict, &mut |run: &Run| {
         lines.record(run);
+        for p in run.world.plays() {
+            let Some(name) = p.name.as_deref().filter(|n| n.starts_with("vo_eon")) else {
+                continue;
+            };
+            let (Some(at), false) = (p.at, heard.iter().any(|h| h.0 == name)) else {
+                continue;
+            };
+            let params = run.world.play_params(p);
+            let d = at.distance(run.hero().pivot);
+            heard.push((
+                name.to_owned(),
+                params.three_d,
+                params.falloff.map(|f| (f.full, f.silent)),
+                d,
+            ));
+        }
         if let Some(id) = run.vm.placement_of(second)
             && run.vm.removed(id)
             && off2.is_none()
@@ -1956,6 +2017,13 @@ fn eons_first_line_is_voiced_as_the_level_starts() {
         .unwrap_or_else(|| panic!("his second line voiced: {:?}", lines.voices));
     let off2 = off2.expect("the second taken off");
     println!("Eon_2_Keep_Going: {keep:?}, taken off at {off2}");
+    for (name, three_d, falloff, d) in &heard {
+        println!(
+            "{name}: 3D {three_d}, falloff {falloff:?} ft, its actor {d:.2} m ({:.1} ft) from \
+             the hero",
+            d * 3.280_84
+        );
+    }
     assert!(
         keep.started > u64::from(off),
         "once the first let go: {keep:?}"
