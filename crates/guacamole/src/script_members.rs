@@ -2154,16 +2154,23 @@ impl ScriptWorld {
             }
             Member::Palette => {
                 // The running placement's, as the static member reads it;
-                // with none of its own, the told actor's under a tell
-                // (openspec AS.52: a cutscene's animations, which the game
-                // systems' placement starts on each actor it tells).
+                // with none of its own, a clone's it tells (openspec AS.52:
+                // a cutscene's own actors, cloned from their templates, on
+                // which the game systems' placement starts each scene's
+                // animations). A file's placement told so reads nothing
+                // still: the pit's intro, which tells `Enemy_Chompy(1)` its
+                // three clips, runs AH.8's 449 frames that way and 64 more
+                // with them played (AS.80).
                 let of = |w: &Self, h: Handle| {
                     let t = w.template_of(h)?;
                     w.palettes.get(&t).map(|p| (t, p.len()))
                 };
                 let lengths = of(self, at.placement).or_else(|| {
                     self.actor_of(Some(self.told))
-                        .filter(|&h| h != at.placement)
+                        .filter(|&h| {
+                            h != at.placement
+                                && self.actors.get(&h).is_some_and(|a| a.obj.is_none())
+                        })
                         .and_then(|h| of(self, h))
                 });
                 match lengths {
@@ -6596,14 +6603,23 @@ mod animation_tests {
     }
 
     /// AS.52: the static palette is the running placement's; one with none
-    /// of its own reads the actor its tell's block tells (a cutscene's
-    /// game systems' placement starting an animation on each of its
-    /// actors), never its own again, and nothing outside a tell.
+    /// of its own reads the clone its tell's block tells (a cutscene's game
+    /// systems' placement starting an animation on each of its actors),
+    /// never its own again, and nothing outside a tell; a file's placement
+    /// told so reads nothing yet (AS.80).
     #[test]
     fn a_static_palette_under_a_tell_is_the_told_actors_with_none_of_its_own() {
         const SYSTEMS: Handle = 0x6100_0040;
+        const FILES: Handle = 0x6100_0041;
         let (mut w, mut e) = (world(), pit());
         let clips = palette(&mut w);
+        // C1 a clone of the template; FILES a placement of its own file.
+        let mut clone = w.actors.remove(&C1).unwrap();
+        clone.template = clone.obj.take();
+        w.actors.insert(C1, clone);
+        let mut placed = chompy(Vec3::ZERO, 0.0);
+        placed.obj = Some(TEMPLATE);
+        w.actors.insert(FILES, placed);
         w.actors
             .insert(SYSTEMS, crate::script_engine::Actor::blank());
         let static_palette = Access {
@@ -6622,6 +6638,12 @@ mod animation_tests {
         );
         w.told = Value::Entity(C1);
         assert_eq!(w.elements(&static_palette, &mut e).unwrap(), clips);
+        w.told = Value::Entity(FILES);
+        assert_eq!(
+            w.elements(&static_palette, &mut e),
+            Err(HostFault::Nothing),
+            "a file's placement told: nothing yet"
+        );
         // One with a palette of its own reads its own, told or not.
         let mine = Access {
             placement: C1,
