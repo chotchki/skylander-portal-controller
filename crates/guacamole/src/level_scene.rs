@@ -173,7 +173,7 @@ pub const INIT_SCRIPT: &str = "InitializeLevel.ai";
 /// settled onto the ground. A level without one (every level but chapter
 /// 1's) starts at its first placement running [`INIT_SCRIPT`]: its first
 /// waypoint, or its own place when it has no path (on chapter 1 the two are
-/// one point), a reading until that level's scripts set the start (AS.15;
+/// one point), a reading until that level's scripts set the start (AS.47;
 /// stand-in ledger: `spawn`).
 pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
     let first_waypoint = |a: &guac_ir::level::Placement| {
@@ -1091,7 +1091,7 @@ pub const CHAPTER_1_START: [f32; 3] = [10.191352, 43.37944, -93.393616];
 /// fresh state's, moved by that level's start's offset from chapter 1's,
 /// so it frames the level's start as AF's fresh state frames chapter 1's.
 /// A view to look at a level by, not the original's: where its camera
-/// opens a level is that level's scripts' (AS.15).
+/// opens a level is that level's scripts' (AS.47).
 pub fn start_view(start: Vec3) -> Transform {
     let mut t = fresh_state_transform();
     t.translation += start - Vec3::from_array(CHAPTER_1_START);
