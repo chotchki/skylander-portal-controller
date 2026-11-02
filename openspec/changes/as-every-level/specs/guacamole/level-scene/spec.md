@@ -103,6 +103,27 @@ On level 214's second island, the hero walking off the ship to Setup_003's trigg
 - **WHEN** the hero walks off the ship to Setup_003's trigger and fights
 - **THEN** the Tree Rex eats a Chompy, and the other three and the Tree Rex go down
 
+### Requirement: A Tree Rex's homing charge
+On level 214 a Tree Rex's ranged attack SHALL make a homing charge 10 ft in front of it, which its script steers at its target at 25 ft/s turning at most 50°/s with no body, so nothing it meets stops it, for 2.5 s at most, laying a trail of dirt mounds; within 4 ft of a creature it SHALL strike it (19-21 to Eruptor unless his armour turns it), a bramble rising, and take itself off 0.4 s on, as it does when its time runs out.
+
+#### Scenario: The hero walking at the Tree Rex
+- **WHEN** the Tree Rex throws its charge as the hero walks at it from Setup_003's trigger
+- **THEN** the charge comes at him across the ground, strikes him and goes
+
+### Requirement: A carried bomb counts down
+A level 214 bomb carried SHALL clone a countdown timer at each count past its first, its id the count (11 to 1, 1.1 s apart), each following its bomb by `move to` at its own 17 ft/s with no body and taking itself and its sprite off 2 s after it's made, and the bomb SHALL burst at 0, 12.1 s after the take, nothing stopped.
+
+#### Scenario: A bomb carried to its burst
+- **WHEN** the hero takes the first spawner's bomb and walks about with it
+- **THEN** eleven timers follow it in turn, each gone 2 s on, and it bursts in his hands
+
+### Requirement: Level 214's locked door and its fourth fight
+On level 214's second island the hero SHALL take the key in the lobe below the gangplank's yard by walking into it, and a tap of △ by the yard's locked door SHALL open it; past it Setup_004's second trigger SHALL send its Mabu along his waypoints into the house by the yard, and its three Elf Nears, its Tree Rex and its Chompy spawner SHALL be beaten by his attacks, nothing stopped.
+
+#### Scenario: Through the locked door
+- **WHEN** the hero takes the key, taps △ at the door and walks on to Setup_004's triggers
+- **THEN** the door opens, the Mabu runs into the house, and the five are beaten
+
 ### Requirement: Level 214's second island after the sail
 Once level 214's sail is done or skipped, what its cutscene took off SHALL stand again as its file has it: the second island's ship the hero is set down on, the island's NPCs and the ship's doors and hatches, since a reset of a set of placements resets each one and keeps the set.
 
