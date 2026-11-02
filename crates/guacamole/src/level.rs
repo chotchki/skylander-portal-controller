@@ -5543,6 +5543,11 @@ mod tests {
         let w = app.world().resource::<ScriptWorld>();
         assert_eq!(w.plays().last().unwrap().file, file);
         assert!(!landing.music_held(&app), "the music starts with them");
+        assert_eq!(
+            app.world().resource::<ScriptWorld>().music_silent(),
+            0,
+            "with its sounds, not silent"
+        );
     }
 
     /// An extraction short of its sounds stage's end: the level's sounds on
@@ -5662,6 +5667,7 @@ mod tests {
         app.update();
         assert!(!landing.music_held(&app), "let go once they aren't");
         assert_eq!(app.world().resource::<ScriptWorld>().music_held(), 0);
+        assert_eq!(app.world().resource::<ScriptWorld>().music_silent(), 1);
         for _ in 0..5 {
             app.update();
         }

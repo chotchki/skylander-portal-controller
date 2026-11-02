@@ -543,6 +543,9 @@ pub struct ScriptWorld {
     /// The level's music placements [`hold_music`] holds until the level's
     /// sounds are read (openspec AR.23), by handle.
     pub(crate) music_held: Vec<Handle>,
+    /// How many of those were let go to run silent, their sounds not coming
+    /// (openspec AR.30, [`Music::Silent`]): what `/api/_test/tv` says of it.
+    pub(crate) music_silent: usize,
     /// The templates whose clones the engine walks as creatures (openspec
     /// AS.54, [`ScriptWorld::walk_encounter`]): what a level's spawners
     /// clone.
@@ -789,6 +792,7 @@ impl ScriptWorld {
             copy_written: HashMap::new(),
             sound_system: HashMap::new(),
             music_held: Vec::new(),
+            music_silent: 0,
             walk_clones: Default::default(),
             intro_held: None,
             interface: None,
@@ -817,6 +821,12 @@ impl ScriptWorld {
     /// waiting for the level's sounds (openspec AR.23).
     pub fn music_held(&self) -> usize {
         self.music_held.len()
+    }
+
+    /// How many held music placements were let go to run silent, the
+    /// level's sounds not coming (openspec AR.30).
+    pub fn music_silent(&self) -> usize {
+        self.music_silent
     }
 
     /// The book the scripts' sounds come from, if one was set.
@@ -2562,7 +2572,10 @@ pub fn hold_music_while(
         return match (held.len(), booked) {
             (0, _) => Music::Runs,
             (n, true) => Music::Starts(n),
-            (n, false) => Music::Silent(n),
+            (n, false) => {
+                world.music_silent += n;
+                Music::Silent(n)
+            }
         };
     }
     for p in files.placed.iter().filter(|p| p.obj.unit == level) {
@@ -6387,6 +6400,7 @@ mod tests {
         assert_eq!(world.music_held(), 0);
         music_step(&mut vm, &mut world);
         assert_eq!(vm.local(music_id, "starts"), Some(Value::Int(1)));
+        assert_eq!(world.music_silent(), 0, "none held, none let go");
         // Coming: held; then none coming without the book: let go, silent.
         let (mut vm, mut world, files, [music_id, _, suspended_id]) = music_fixture();
         assert_eq!(
@@ -6401,6 +6415,7 @@ mod tests {
             Music::Silent(1)
         );
         assert_eq!(world.music_held(), 0);
+        assert_eq!(world.music_silent(), 1, "said");
         music_step(&mut vm, &mut world);
         assert_eq!(vm.local(music_id, "starts"), Some(Value::Int(1)));
         assert!(vm.is_suspended(suspended_id), "a script's suspension stays");

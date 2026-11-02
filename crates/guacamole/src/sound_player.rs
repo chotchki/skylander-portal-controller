@@ -207,6 +207,9 @@ pub(crate) struct SoundReport {
     /// (openspec AR.23): over 0 while a first run's sounds haven't landed;
     /// let go to run silent once none are on their way (AR.30).
     pub music_held: usize,
+    /// How many of them were let go to run silent, the level's sounds not
+    /// coming (AR.30's review: a driver can tell it from their landing).
+    pub music_silent: usize,
 }
 
 /// How many of the last plays ended and starts refused the report lists.
@@ -491,6 +494,7 @@ fn hear_sounds(
         files: out.files.len(),
         released: out.released,
         music_held: world.music_held(),
+        music_silent: world.music_silent(),
     };
 }
 
