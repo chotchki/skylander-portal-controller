@@ -393,7 +393,8 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .map(|n| run.placed(n).0)
         .collect();
     // The spawners walk; the second fight's Chompies and elves walk from the
-    // start too (openspec AS.58), none of them a clone, and nothing else.
+    // start too (openspec AS.58), and the second island's Tree Rex and four
+    // Chompies (AS.75), none of them a clone, and nothing else.
     let placed = run.world.creatures();
     let mut walking: Vec<String> = placed.iter().map(|h| run.world.name(*h)).collect();
     walking.sort_unstable();
@@ -401,6 +402,10 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         walking,
         [
             "Enemy_Chompy2_E",
+            "Enemy_Chompy2_E(1)",
+            "Enemy_Chompy2_E(2)",
+            "Enemy_Chompy2_E(3)",
+            "Enemy_Chompy2_E(4)",
             "Enemy_Chompy2_F",
             "Enemy_Chompy2_G",
             "Enemy_Chompy2_H",
@@ -408,8 +413,9 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
             "Enemy_Chompy_Spawner(5)",
             "Enemy_Elf_Near_S2(3)",
             "Enemy_Elf_Near_S2(4)",
+            "Enemy_TreeRex(2)",
         ],
-        "the spawners and the second fight's own walk"
+        "the spawners and the later fights' own walk"
     );
     assert!(spawners.iter().all(|s| placed.contains(s)));
     let controller = run.placement("Setup_001_Controller");

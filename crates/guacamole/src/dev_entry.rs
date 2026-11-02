@@ -34,6 +34,12 @@
 //!   trigger ([`POD_TRIGGER`]: the pods' scene), then among the pods
 //!   ([`AMONG_THE_PODS`]) once it's over, past the breakable wall the
 //!   original's bombs open (the bombs' carry and throw aren't run yet).
+//! - Elves (openspec AS.83): level 214's two Elf Nears sparring behind
+//!   their shut wall: once he's settled, set down at Setup_002's first
+//!   trigger ([`ELVES_TRIGGER`]: their helper wakes them and makes them
+//!   invulnerable), then among them ([`AMONG_THE_ELVES`]), where no walk
+//!   takes him before a bomb opens their wall, so their sparring can be
+//!   hit.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -78,6 +84,9 @@ pub(crate) enum Anchor {
     /// Level 214's first encounter (openspec AS.54): set down past its
     /// pods' trigger, then among the pods.
     Pods,
+    /// Level 214's sparring elves (openspec AS.83): set down at Setup_002's
+    /// first trigger, then among them behind their wall.
+    Elves,
 }
 
 impl Anchor {
@@ -88,6 +97,7 @@ impl Anchor {
             "start" => Some(Anchor::Start),
             "end" => Some(Anchor::End),
             "pods" => Some(Anchor::Pods),
+            "elves" => Some(Anchor::Elves),
             _ => None,
         }
     }
@@ -149,6 +159,16 @@ pub(crate) const POD_TRIGGER: [f32; 3] = [17.934004, -13.715616, 20.65423];
 pub(crate) const AMONG_THE_PODS: ([f32; 3], f32) = ([55.0, -17.5, 35.0], 90.0);
 /// Steps from the trigger's set-down to the pods': the scene played out.
 pub(crate) const POD_SCENE: u32 = 400;
+/// Level 214's `Setup_002_trigger(1)` as its file places it (metres): set
+/// down here, the elves' helper wakes them and, a tick on, makes them
+/// invulnerable (openspec AS.83).
+pub(crate) const ELVES_TRIGGER: [f32; 3] = [82.6, -18.03, 38.58];
+/// Among level 214's two sparring Elf Nears behind their wall, on their
+/// yard's floor (metres), facing between them.
+pub(crate) const AMONG_THE_ELVES: ([f32; 3], f32) = ([22.5, -10.8, 77.5], 310.0);
+/// Steps from the trigger's set-down to the elves': their helper's wake
+/// and writes done.
+pub(crate) const ELVES_WOKEN: u32 = 60;
 
 impl Plan {
     pub(crate) fn of(anchor: Anchor) -> Self {
@@ -191,6 +211,25 @@ impl Plan {
                 creatures_at: u32::MAX,
                 creatures: Vec::new(),
                 f0: POD_SCENE + 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
+            },
+            Anchor::Elves => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![
+                    (0, Vec3::from_array(ELVES_TRIGGER), 0.0),
+                    (
+                        ELVES_WOKEN,
+                        Vec3::from_array(AMONG_THE_ELVES.0),
+                        AMONG_THE_ELVES.1,
+                    ),
+                ],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: ELVES_WOKEN + 1,
                 first_alert: None,
                 loot: None,
                 view: None,
@@ -367,7 +406,10 @@ impl Plugin for DevEntryPlugin {
         let env = std::env::var("GUAC_DEV_ENTRY").ok();
         let at_start = asked_at_start(true, env.as_deref());
         if env.is_some() && at_start.is_none() {
-            warn!(value = ?env, "GUAC_DEV_ENTRY isn't `b`, `start`, `end` or `pods`: no entry");
+            warn!(
+                value = ?env,
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods` or `elves`: no entry"
+            );
         }
         if let Some(a) = &at_start {
             info!(anchor = ?a.plan.anchor, "the dev entry asked at start");
@@ -659,6 +701,19 @@ mod tests {
         );
         assert_eq!((pods.settle, pods.f0), (SETTLE, POD_SCENE + 1));
         assert!(pods.creatures.is_empty() && pods.wake.is_empty());
+        // Level 214's sparring elves (openspec AS.83): the trigger, then
+        // among them once their helper's writes are done.
+        assert_eq!(anchor("elves"), Some(Anchor::Elves));
+        let elves = Plan::of(Anchor::Elves);
+        assert_eq!(
+            elves.set_downs,
+            [
+                (0, Vec3::from_array(ELVES_TRIGGER), 0.0),
+                (ELVES_WOKEN, Vec3::from_array(AMONG_THE_ELVES.0), 310.0)
+            ]
+        );
+        assert_eq!((elves.settle, elves.f0), (SETTLE, ELVES_WOKEN + 1));
+        assert!(elves.creatures.is_empty() && elves.wake.is_empty());
         assert_eq!(asked_at_start(true, None), None);
         // Anchor B's plan is AH.8's route and AH.4's reads: the camera
         // volumes on the way to the strip, then the route from the strip,

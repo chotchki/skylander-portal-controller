@@ -1604,7 +1604,14 @@ it: no asleep placement started in any snapshot, that frame's time added to each
 started and to none of the 9 that went unstarted, each of the 6 woken again at one frame's time. A placement woken ticks
 in its wake frame, and what that tick spawns stands right behind it and first ticks a frame later
 (`Bird_nest_egg` behind `Bird_nest(1)` a frame younger; a boulder waking mid-walk with its five pebbles
-behind it at 0.0 s): AH.210. Three of the state's placements stand where an earlier frame put them:
+behind it at 0.0 s): AH.210. Since AS.83 the VM checks the asleep again after the walk and the requeued
+(`Host::wakes`): one a script's write of its range brought in range during the walk wakes and runs its
+STARTUP that frame, as the decompile reads group 2's walk (take each placement's activity, then tick it if
+it's awake; an aid). Level 214's elf helper needs it: it writes its two elves' range, then a tick on asks
+combat for both, which knows a creature only once its STARTUP has run; woken a frame late by the pass
+between frames, neither answered and its invulnerability never landed. A hero's walk into range still wakes
+one at the pass between frames, ticking it at the awake list's end ahead of the walk's requeued, where the
+original's group 2 ticks it after them (a difference no recording has shown yet). Three of the state's placements stand where an earlier frame put them:
 `Propellar_Prop`, whose range the intro's STARTUP takes to 0 and its SHUTDOWN puts back, so it slept and
 woke from the list's end; `Sliding_Rock(5)`, which the goats' STARTUP resets (`Goat_Jumping_Pit.ai` and
 `Goat_Running.ai`, op 2), sending it round to the end behind them, so it reads the `open` `Sheep_1` sets the

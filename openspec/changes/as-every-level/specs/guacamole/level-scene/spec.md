@@ -50,11 +50,29 @@ A level 214 bomb SHALL stand again on the spawner that cloned it within 1.3 s of
 - **THEN** the bomb is back on its spawner, and carried to the wall past the pods and thrown it opens that wall too
 
 ### Requirement: Level 214's second fight
-On level 214 Setup_002's controller SHALL wait at its first trigger for Eon's elemental hint, which plays its line as the hero walks into it, holding him, and goes 8.7 s after the line starts (77 steps with no recording); at its second trigger its four undead Chompies SHALL run in and fight (beaten in 3.6 s on the Mac); once a bomb opens the elves' wall, the two Elf Nears SHALL stop sparring, play their scene and fight, nothing stopped.
+On level 214 Setup_002's controller SHALL wait at its first trigger for Eon's elemental hint, which plays its line as the hero walks into it, holding him, and goes 8.7 s after the line starts (77 steps with no recording); at its second trigger its four undead Chompies SHALL run in and fight (beaten in 3.6 s on the Mac); the two Elf Nears SHALL spar unhurt by any attack until a bomb opens their wall, then play their scene and fight, nothing stopped.
 
 #### Scenario: Past the wall beyond the pods
 - **WHEN** the hero walks past the opened walls into Eon's hint and on to the second trigger
 - **THEN** the hint's line plays, the four Chompies run in, and beaten they pay his figure experience
+
+#### Scenario: Attacks among the sparring elves
+- **WHEN** the hero, set down among the two Elf Nears behind their shut wall, attacks them
+- **THEN** neither loses health, and once a bomb opens their wall and their scene is over both can be beaten
+
+### Requirement: Level 214's rise over its push blocks
+On level 214 the three push blocks by the pods SHALL each move one block along its track when the hero walks into it on the stick and drop into the channel below onto its end marker, inactive, a stepping stone level with the terrace; the three SHALL bridge the channel, so the hero walks across and up onto the rise holding the second bomb spawner, whose bombs he throws over its ridge at the walls to its south part and the elves.
+
+#### Scenario: From the east terrace
+- **WHEN** the hero pushes the first block, then the stacked pair, then the top one from the first's top
+- **THEN** the three lie inactive on their end markers and he walks over them onto the rise
+
+### Requirement: Level 214's jump pad to the first ship part
+Once both elves are beaten, level 214's first jump pad SHALL launch a hero standing on it at its own pitch and speed (80° and 90 ft/s) along his facing, his ground speed in the air his stick's: let go, the launch's ground speed is taken off and he goes 9 m up and comes back down on the pad; held toward the first ship part, he lands on the ledge holding it, where a press takes it.
+
+#### Scenario: On the stick toward the part
+- **WHEN** the hero walks onto the pad holding the stick toward the first ship part
+- **THEN** he flies onto its ledge, and a press takes the part and the sail sets him on the second island's ship
 
 ### Requirement: Level 214's second island after the sail
 Once level 214's sail is done or skipped, what its cutscene took off SHALL stand again as its file has it: the second island's ship the hero is set down on, the island's NPCs and the ship's doors and hatches, since a reset of a set of placements resets each one and keeps the set.

@@ -1011,3 +1011,83 @@ fn level_214s_jump_pad_carries_him_to_the_first_ship_part() {
     assert!(!off_the_world(&run, ship), "The_Ship_2 standing under him");
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// Where Setup_003's trigger lies on the second island, off the ship's
+/// gangplank (metres, its file's place).
+const SETUP_003_TRIGGER: [f32; 2] = [-357.64, 723.11];
+
+/// openspec AS.75: level 214's second island's first fight, Setup_003, on
+/// the TV's listing (`scripts::ENCOUNTERS`). Set down at the first ship part,
+/// a press takes it and the sail sets him on the second island's ship; off
+/// it on the stick to Setup_003's trigger, its controller wakes its Tree Rex
+/// and four undead Chompies and goes; the Tree Rex eats a Chompy, and the
+/// rest and the Tree Rex are beaten. The Tree Rex's homing charge stays off
+/// the listing (its `move to` is AS.68's): each ranged attack's clone of
+/// `TreeRex_special_homing_actor` stands inert. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_third_fight_is_fought_on_the_second_island() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let controller = handle(&run, "Setup_003_Controller");
+    let foes: Vec<Handle> = [
+        "Enemy_TreeRex(2)",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+    ]
+    .iter()
+    .map(|n| handle(&run, n))
+    .collect();
+    let sail = handle(&run, "214_Recover_First_Part_IGC");
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    for k in 0..600u32 {
+        step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        if gone(&run, sail) {
+            break;
+        }
+    }
+    assert!(gone(&run, sail), "the sail done");
+    for _ in 0..60 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let on_ship = run.hero().pivot;
+    // Off the ship on the stick to the trigger: the controller wakes the
+    // fight and goes.
+    assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
+    let mut woke = None;
+    for _ in 0..120 {
+        step(&mut run, &mut stops, [false; 4]);
+        if woke.is_none() && gone(&run, controller) {
+            woke = Some(run.steps);
+        }
+    }
+    let woke = woke.expect("the controller woke its fight and went");
+    let health_before = run.health().unwrap();
+    let beaten = fight(&mut run, &mut stops, &foes, 3600);
+    let charges: Vec<Handle> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "TreeRex_special_homing_actor")
+        .collect();
+    let inert = run.vm.inert();
+    let running: Vec<Handle> = charges
+        .iter()
+        .copied()
+        .filter(|h| run.vm.placement_of(*h).is_some() && !inert.contains(h))
+        .collect();
+    let charges = charges.len();
+    println!(
+        "off the ship at {on_ship}, the controller gone at {woke}; beaten at {beaten:?} (the Tree Rex, then the four); {charges} homing charges made, inert; health {health_before} -> {:?}; {:.1} s; load at end: {}",
+        run.health(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
+    assert!(charges > 0, "its ranged attack made its charge");
+    assert!(running.is_empty(), "no homing charge runs: {running:?}");
+    assert!(stops.is_empty(), "{stops:#?}");
+}

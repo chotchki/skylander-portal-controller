@@ -2309,7 +2309,12 @@ pub struct Encounter {
 /// and waits for Eon's elemental hint, `Explain_Elemental`, to take itself
 /// off once its line has played, then at its second trigger runs them in)
 /// and its helper (the two Elf Nears spar, invulnerable, until a bomb opens
-/// their wall, then play their scene and fight).
+/// their wall, then play their scene and fight); then the second island's
+/// first fight (openspec AS.75), Setup_003's controller (at its trigger off
+/// the ship it wakes its Tree Rex and four undead Chompies; the Tree Rex
+/// eats one). Off: the Tree Rex's homing charge
+/// (`TreeRex_special_homing_actor`), whose clone stops on `move to` on our
+/// host (AS.68): its clones stay inert.
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2326,6 +2331,13 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Chompy2_H",
         "Enemy_Elf_Near_S2(3)",
         "Enemy_Elf_Near_S2(4)",
+        // Setup_003, the second island's first fight (openspec AS.75).
+        "Setup_003_Controller",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+        "Enemy_TreeRex(2)",
     ],
     clones: &["_Template_Undead_Chompy"],
 }];
@@ -2441,7 +2453,8 @@ pub const BREAKABLES: [&str; 3] = [
 /// and bricks' scales (`Scale.ai`), the propeller's turn, the bird nests'
 /// size and eggs, every placed coin and gem (the spinning ones spin by the
 /// UI's loot update), the push blocks and the cannon (their art, their 15 x
-/// 12 x 15 ft boxes), the walkway's fence (its cross beam and planks; it
+/// 12 x 15 ft boxes; level 214's three by its pods, its way up onto the
+/// rise, openspec AS.74), the walkway's fence (its cross beam and planks; it
 /// makes itself a combat target), the cannon's rubble wall, the sliding
 /// rocks and the global reference the chests share; then the scripts of
 /// what those spawn. The Titan boulders run their first tick alone
@@ -3110,8 +3123,10 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// by level and placement name, listed and never walked. Level 214's from
 /// its first island to its second: once both Elf Nears are beaten the jump
 /// pad's activator pans to the jump pad (`PvP_JumpPad_NORMAL(2)`) and wakes
-/// it, meant to launch a hero up to the rise holding the first ship part
-/// (`Ship_part_1(1)`; headless it bounces him in place, AS.75); taken after
+/// it, which launches a hero at its own pitch and speed along his facing,
+/// his stick steering him up onto the ledge holding the first ship part
+/// (`Ship_part_1(1)`), or with it let go straight up and back onto it (the
+/// mover update takes the launch's ground speed off: AS.75); taken after
 /// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
 /// whose cutscene sets him down on the second island's ship and which the
 /// TV skips ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for
@@ -4926,7 +4941,37 @@ mod tests {
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_Chompy2_E(1)", "C:/x/S2_Enemy_Chompy.ai")
+                .lists("Enemy_Chompy2_E(5)", "C:/x/S2_Enemy_Chompy.ai")
+        );
+    }
+
+    /// openspec AS.75: the second island's first fight by name, its homing
+    /// charge's template left off (AS.68), so its clones stay inert.
+    #[test]
+    fn level_214s_third_fight_is_listed_by_name_without_its_homing_charge() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        for name in [
+            "Setup_003_Controller",
+            "Enemy_Chompy2_E(1)",
+            "Enemy_Chompy2_E(2)",
+            "Enemy_Chompy2_E(3)",
+            "Enemy_Chompy2_E(4)",
+            "Enemy_TreeRex(2)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        assert!(
+            !l214.whitelist.lists(
+                "TreeRex_special_homing_actor",
+                "C:/x/Enemy_TreeRex_special_homingcharge_actor.ai"
+            ),
+            "the homing charge off"
+        );
+        assert!(
+            !l214
+                .whitelist
+                .lists("Enemy_TreeRex(1)", "C:/x/S2_Enemy_TreeRex.ai")
         );
     }
 
