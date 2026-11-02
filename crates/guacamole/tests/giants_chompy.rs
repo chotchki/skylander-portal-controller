@@ -411,6 +411,9 @@ struct Script {
     /// The interface's model held, as the TV's run holds it (openspec AT.9,
     /// `common::Setup::interface`).
     interface: bool,
+    /// Called after each step from F0 - 1 with the run and the step from
+    /// F0 (openspec AT.44, AR.17: what a scene's dialogue does each step).
+    each: Option<fn(&mut Run, i64)>,
 }
 
 /// The last step [`Script::pinned`] sets the four at.
@@ -896,6 +899,19 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
         if traced {
             run.vm.trace(Some(2_000_000));
         }
+        // A dev aid: `AR17_TRACE=<words>` (comma-separated, case ignored)
+        // prints, each step from F0, the ops run in a script whose source
+        // path holds one, a run of consecutive ops as its first and last.
+        let ar17: Vec<String> = std::env::var("AR17_TRACE")
+            .map(|w| w.split(',').map(str::to_ascii_lowercase).collect())
+            .unwrap_or_default();
+        let ar17_from: i64 = std::env::var("AR17_FROM")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if !ar17.is_empty() && f >= ar17_from {
+            run.vm.trace(Some(4_000_000));
+        }
         if let Some(&(_, serial)) = script.swaps.iter().find(|s| f == s.0 as i64) {
             // Off and on again: the deactivate path, then the join, whose
             // request step is this one.
@@ -932,8 +948,45 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
             let out = std::env::var("AH19_TRACE_OUT").expect("AH19_TRACE_OUT");
             std::fs::write(out, text).unwrap();
         }
+        if !ar17.is_empty() && f >= ar17_from {
+            let program = run.vm.program_arc();
+            let ops = run.vm.traced();
+            run.vm.trace(None);
+            let mut runs: Vec<(u32, u32, u32)> = Vec::new();
+            for (s, at) in ops {
+                let low = program.scripts[s as usize].name.to_ascii_lowercase();
+                if !ar17.iter().any(|w| !w.is_empty() && low.contains(w)) {
+                    continue;
+                }
+                match runs.last_mut() {
+                    Some(r) if r.0 == s && r.2 + 1 == at => r.2 = at,
+                    _ => runs.push((s, at, at)),
+                }
+            }
+            let defs: HashMap<guac_script::OpId, &str> = program
+                .defs
+                .iter()
+                .map(|d| (d.op, d.display.as_str()))
+                .collect();
+            for (s, a, b) in runs {
+                let script = &program.scripts[s as usize];
+                let name = script.name.rsplit('/').next().unwrap_or(&script.name);
+                let def = (0..=a as usize)
+                    .rev()
+                    .find_map(|i| defs.get(&script.ops[i]))
+                    .copied()
+                    .unwrap_or("-");
+                println!(
+                    "F0 + {f}: {name} #{a}-#{b} in '{def}': {}",
+                    describe_op(&program, script.ops[b as usize])
+                );
+            }
+        }
         if f >= -1 {
             snaps.push(run.snap(f));
+            if let Some(each) = script.each {
+                each(&mut run, f);
+            }
         }
         // A dev aid: `AH200_SETS=<from>-<to>` (steps from F0) prints each
         // Chompy's behaviour, alert and whom it's alerted on, and whose
@@ -5064,5 +5117,144 @@ fn probe_the_eruption_at_anchor_a() {
             })
             .collect();
         println!("step {k}: reach {reach:?} hurt {hurt:?} {round:?}");
+    }
+}
+
+/// A development probe for AT.44 and AR.17: the fight with its sounds and
+/// the interface's model to Norticus' scene's end, then every definition
+/// called whose name holds one of `AR17_WORDS` (comma-separated, case
+/// ignored; "dialogue" by default) with its count, and the VM's notes
+/// naming one.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; a probe"]
+fn probe_the_dialogue() {
+    let words: Vec<String> = std::env::var("AR17_WORDS")
+        .unwrap_or_else(|_| "dialogue".into())
+        .split(',')
+        .map(str::to_ascii_lowercase)
+        .collect();
+    fn each(run: &mut Run, f: i64) {
+        if f == 0 {
+            println!("F0 at sound clock {}", run.world.sound_clock());
+        }
+        if std::env::var_os("AR17_EACH").is_none() {
+            return;
+        }
+        let vm = &mut run.vm;
+        let program = vm.program_arc();
+        let g53 = program
+            .name_of(program.globals[53].0)
+            .unwrap_or("?")
+            .to_owned();
+        let Some(g) = vm.global(53) else { return };
+        let ui = vm.value(g);
+        let Some(current) = vm.field(ui, "current dialogue ui").map(|v| vm.value(v)) else {
+            return;
+        };
+        if matches!(current, Value::Null) {
+            return;
+        }
+        let state = vm.field(current, "state").map(|v| vm.value(v));
+        let text = vm.field(current, "text data").map(|v| vm.value(v));
+        let count = |vm: &guac_script::Vm, v: Option<Value>| {
+            v.map(|v| vm.value(v))
+                .and_then(|s| vm.set(s).map(|e| e.to_vec()))
+                .map(|e| {
+                    e.iter()
+                        .map(|x| format!("{:?}", vm.value(*x)))
+                        .collect::<Vec<_>>()
+                })
+        };
+        let sounds = text.and_then(|t| vm.field(t, "sounds"));
+        let strings = text.and_then(|t| vm.field(t, "strings"));
+        println!(
+            "F0 + {f}: {g53}.current dialogue ui {current:?} state {state:?} sounds {:?} strings {:?} fields {:?}",
+            count(vm, sounds),
+            count(vm, strings),
+            text.map(|t| vm
+                .fields(t)
+                .iter()
+                .map(|(n, _)| n.to_string())
+                .collect::<Vec<_>>())
+        );
+    }
+    let (run, _) = fight(Script {
+        lob: Some(90),
+        erupt: Some(160),
+        erupt_every: Some(700),
+        props: true,
+        sounds: true,
+        interface: true,
+        steps: 1450,
+        each: Some(each),
+        ..Script::default()
+    });
+    let program = run.vm.program_arc();
+    let hit = |s: &str| {
+        let low = s.to_ascii_lowercase();
+        words.iter().any(|w| !w.is_empty() && low.contains(w))
+    };
+    let mut calls: Vec<(String, u64)> = run
+        .vm
+        .calls()
+        .iter()
+        .map(|(d, n)| (program.defs[*d as usize].display.clone(), *n))
+        .filter(|(d, _)| hit(d))
+        .collect();
+    calls.sort();
+    for (d, n) in &calls {
+        println!("called {n}: {d}");
+    }
+    for l in run.vm.log().iter().filter(|l| hit(&l.text)) {
+        println!("note {:?}: {}", l.placement, l.text);
+    }
+    let w = &run.world;
+    let vo = |n: &Option<String>| n.as_deref().is_some_and(|n| n.contains("vo_"));
+    for e in w.sounds_ended().filter(|e| vo(&e.name)) {
+        println!(
+            "ended {:?} {} to {} ({:?})",
+            e.name, e.started, e.ended, e.how
+        );
+    }
+    for p in w.plays().iter().filter(|p| vo(&p.name)) {
+        println!(
+            "playing {:?} from {} length {:.3}",
+            p.name, p.started, p.length
+        );
+    }
+    for r in w.sounds_refused().filter(|r| vo(&r.name)) {
+        println!("refused {:?} at {}: {}", r.name, r.at, r.why);
+    }
+    // `AR17_OBJS=<unit>:<index>,...`: each object's name, whether it links
+    // as a file variable, and what that holds.
+    let mut run = run;
+    for spec in std::env::var("AR17_OBJS").unwrap_or_default().split(',') {
+        let Some((u, i)) = spec.split_once(':') else {
+            continue;
+        };
+        let obj = Obj {
+            unit: u.parse().unwrap(),
+            index: i.parse().unwrap(),
+        };
+        let g = program.global_of(obj);
+        let held = g.and_then(|g| run.vm.global(g)).map(|v| run.vm.value(v));
+        let elems = held
+            .and_then(|v| run.vm.set(v).map(<[Value]>::to_vec))
+            .unwrap_or_default();
+        let elems: Vec<String> = elems
+            .iter()
+            .map(|e| match run.vm.value(*e) {
+                Value::Object(o) => format!("{:?} {:?}", o, program.name_of(o)),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        println!(
+            "{obj:?} {:?}: global {g:?} {:?} {elems:?}",
+            program.name_of(obj),
+            program
+                .globals
+                .get(g.unwrap_or(u32::MAX) as usize)
+                .map(|(_, gl)| format!("{gl:?}").chars().take(300).collect::<String>())
+        );
     }
 }

@@ -197,6 +197,14 @@ struct SetObj {
     next: usize,
 }
 
+/// A lone object a set reference was given, as [`Vm::set_of_one`] keys
+/// its set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Lone {
+    Object(Obj),
+    Entity(u64),
+}
+
 #[derive(Debug, Clone)]
 struct StructObj {
     fields: Vec<(Sym, u32)>,
@@ -704,6 +712,9 @@ pub struct Vm {
     walking: bool,
     cells: Vec<Cell>,
     sets: Vec<SetObj>,
+    /// The sets of one lone objects written into set references read as,
+    /// by object ([`Vm::set_of_one`]).
+    lone: HashMap<Lone, u32>,
     structs: Vec<StructObj>,
     globals: Vec<Option<u32>>,
     frames: IdMap<DefId, IdMap<Sym, u32>>,
@@ -822,6 +833,7 @@ impl Vm {
             walking: false,
             cells: Vec::new(),
             sets: Vec::new(),
+            lone: HashMap::new(),
             structs: Vec::new(),
             globals,
             frames: IdMap::default(),
@@ -4866,6 +4878,10 @@ impl Vm {
                     self.cells[c as usize].value = m;
                 } else if v == Value::Null {
                     self.cells[c as usize].value = v;
+                } else if let Some(one) = self.set_of_one(m) {
+                    // A lone object read as a set of one (crate docs,
+                    // Variables, structures and sets; openspec AT.44).
+                    self.cells[c as usize].value = Value::Set(one);
                 }
             }
             CellKind::Set => {
@@ -4881,6 +4897,32 @@ impl Vm {
                 }
             }
         }
+    }
+
+    /// The set of one a lone object written into a set reference reads
+    /// as (crate docs, Variables, structures and sets): an object of a file
+    /// or of the host, the same set again while it holds that object alone,
+    /// so a script handing the same object round every tick makes one set,
+    /// not one a tick. Anything else (a number, a structure) makes none.
+    fn set_of_one(&mut self, v: Value) -> Option<u32> {
+        let key = match v {
+            Value::Object(o) => Lone::Object(o),
+            Value::Entity(e) => Lone::Entity(e),
+            _ => return None,
+        };
+        if let Some(&s) = self.lone.get(&key)
+            && self.sets[s as usize].elems.as_slice() == [v]
+        {
+            return Some(s);
+        }
+        self.sets.push(SetObj {
+            elems: vec![v],
+            elem: None,
+            next: 0,
+        });
+        let s = (self.sets.len() - 1) as u32;
+        self.lone.insert(key, s);
+        Some(s)
     }
 
     fn copy_struct(&mut self, src: u32, dst: u32, depth: u32) {
@@ -4967,28 +5009,33 @@ impl Vm {
         Ok((self.sets.len() - 1) as u32)
     }
 
-    /// A fresh set of `elements`, each number in a value cell of its own
-    /// (as a set of numbers a script grows holds them), anything else as
-    /// itself; a set of `ValueInfo`, so a script growing it (`Text - String
-    /// Concatenate` grows `value set`) gets number cells it can write
-    /// through, not nulls.
+    /// A fresh set of `elements`, each number, colour or screen position
+    /// in a value cell of its own (as a set of numbers a script grows holds
+    /// them), anything else as itself; a set of `ValueInfo`, so a script
+    /// growing it (`Text - String Concatenate` grows `value set`) gets
+    /// number cells it can write through, not nulls, and one writing a
+    /// letter's colour through a reference to an element of a text colour
+    /// converter's `color set` (`UI.ai`'s text keyframers) writes its cell
+    /// (openspec AT.44: held raw, the write stopped).
     fn set_of(&mut self, elements: &[Value]) -> Result<u32, Fault> {
         let mut elems = Vec::with_capacity(elements.len());
         for &e in elements {
-            elems.push(if e.is_number() {
-                let cell = self.new_cell(
-                    Decl {
-                        container: Container::Value,
-                        contents: Contents::None,
-                    },
-                    None,
-                    0,
-                )?;
-                self.cells[cell as usize].value = e;
-                Value::Cell(cell)
-            } else {
-                e
-            });
+            elems.push(
+                if e.is_number() || matches!(e, Value::Color(_) | Value::Screen(_)) {
+                    let cell = self.new_cell(
+                        Decl {
+                            container: Container::Value,
+                            contents: Contents::None,
+                        },
+                        None,
+                        0,
+                    )?;
+                    self.cells[cell as usize].value = e;
+                    Value::Cell(cell)
+                } else {
+                    e
+                },
+            );
         }
         let elem = self.program.find_sym("valueinfo").map(Contents::Class);
         self.sets.push(SetObj {
