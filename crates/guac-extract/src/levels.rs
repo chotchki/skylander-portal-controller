@@ -287,7 +287,7 @@ fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
     .into_iter()
     .any(|ir| {
         let current = part_path(ir, level, part);
-        files.iter().any(|f| *f == current)
+        files.contains(&current)
     })
 }
 

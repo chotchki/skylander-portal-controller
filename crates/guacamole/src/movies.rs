@@ -52,7 +52,7 @@ enum Running {
     },
     Playing {
         name: String,
-        playback: Playback,
+        playback: Box<Playback>,
         started: Instant,
     },
 }
@@ -278,7 +278,8 @@ fn play_movies(
                     figure_id: String::new(),
                     movie: name.clone(),
                 };
-                let playback = Playback::open(&mut commands, entry, Some((mp4, mp3)), now);
+                let playback =
+                    Box::new(Playback::open(&mut commands, entry, Some((mp4, mp3)), now));
                 movies.current = Some(Running::Playing {
                     name,
                     playback,

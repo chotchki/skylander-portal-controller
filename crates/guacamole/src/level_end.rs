@@ -200,14 +200,10 @@ mod tests {
 
     /// A file in the original's shape, our ops: `level progression data` a
     /// file structure whose STARTUP records a level end when `seq` is more
-    /// than 0, `level end load to level` set to a marker object.
-    fn level_ends(seq: i32) -> Arc<Program> {
-        level_ends_with(seq, false)
-    }
-
-    /// [`level_ends`], its STARTUP queuing a movie too when `movie`, as
-    /// `Game - Level End - Play Movie` does: `level end movie sprite` set
-    /// to a marker named as chapter 1's FMV02 sprite is.
+    /// than 0, `level end load to level` set to a marker object, and queues
+    /// a movie too when `movie`, as `Game - Level End - Play Movie` does:
+    /// `level end movie sprite` set to a marker named as chapter 1's FMV02
+    /// sprite is.
     fn level_ends_with(seq: i32, movie: bool) -> Arc<Program> {
         let mut b = IgzBuilder::new();
         {
@@ -226,7 +222,7 @@ mod tests {
             let (start, _) = w.open(Class::StartUp, "STARTUP");
             let n = w.int(seq);
             w.set(&[El::Local(data), El::Local(seq_var)], n);
-            let mut setref = |w: &mut Writer<'_>, var, to_what| {
+            let setref = |w: &mut Writer<'_>, var, to_what| {
                 let l = w.value(&[El::Local(data), El::Local(var)]);
                 let r = w.reference(&[El::Local(to_what)], None);
                 let o = w.op(Class::SetReference, "setref||=");
