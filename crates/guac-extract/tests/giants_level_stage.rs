@@ -55,8 +55,8 @@ fn read<T: serde::de::DeserializeOwned>(dir: &Path, rel: &str) -> T {
 /// `part`'s RON decoded and encoded as postcard is its postcard file, byte
 /// for byte (postcard keeps each float's bits as they are).
 fn agree<T: serde::de::DeserializeOwned + serde::Serialize>(dir: &Path, level: &str, part: &str) {
-    let ron: T = read(dir, &IrFormat::Ron.level_path(level, part));
-    let post = std::fs::read(dir.join(IrFormat::Postcard.level_path(level, part))).unwrap();
+    let ron: T = read(dir, &levels::part_path(IrFormat::Ron, level, part));
+    let post = std::fs::read(dir.join(levels::part_path(IrFormat::Postcard, level, part))).unwrap();
     assert!(guac_ir::to_postcard(&ron).unwrap() == post, "{part}");
     println!("  {part}: RON and postcard agree, {} bytes", post.len());
 }

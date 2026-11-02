@@ -261,8 +261,8 @@ pub fn archive_path(usrdir: &Path, level: &str) -> PathBuf {
 }
 
 /// Whether `m` holds every part of every level a first run extracts
-/// ([`FIRST_RUN`]), each recorded with its file as its rule names it now; a
-/// level extracted on demand, or not, changes nothing.
+/// ([`FIRST_RUN`]), the palettes recorded with their file as their rule
+/// names it now; a level extracted on demand, or not, changes nothing.
 pub fn complete(m: &Manifest) -> bool {
     FIRST_RUN.iter().all(|level| {
         m.levels.get(*level).is_some_and(|l| {
@@ -276,10 +276,15 @@ pub fn complete(m: &Manifest) -> bool {
 }
 
 /// Whether a part's recorded files hold its file under its rule now, in
-/// either IR format ([`part_path`]): one recorded under an older name is a
-/// part to read again (openspec AS.52: chapter 1's palettes recorded as
-/// `palettes.<ext>` before its rule's `palettes.v2`).
+/// either IR format ([`part_path`]), for the palettes, the one part whose
+/// file's name carries its rule: recorded under an older name it's a part
+/// to read again (openspec AS.52: chapter 1's palettes recorded as
+/// `palettes.<ext>` before its rule's `palettes.v2`). Any other part is
+/// held once it's recorded.
 fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
+    if part != PALETTES {
+        return true;
+    }
     [
         crate::intros::IrFormat::Ron,
         crate::intros::IrFormat::Postcard,
