@@ -989,14 +989,18 @@ fn chapter_1s_outro_plays_to_its_end() {
                 .count(),
         );
         let actor = |n: &str| n == "213_Outro_Norticus_Actor" || n.starts_with("213_Outro_Mabu_");
-        if scales.is_empty() && on.iter().filter(|n| actor(n)).count() == 4 {
-            scales = run
-                .world
-                .clones()
-                .into_iter()
-                .filter(|h| !run.world.removed(*h) && actor(&run.world.name(*h)))
-                .map(|h| run.world.actor(h).unwrap().scale[0])
-                .collect();
+        // The step all four are made, then the next: made by the outro's
+        // tick, which the wake check runs after the walk (2.0's AS.83), they
+        // first tick, and scale themselves, at the next step's walk.
+        if scales.len() < 2 && on.iter().filter(|n| actor(n)).count() == 4 {
+            scales.push(
+                run.world
+                    .clones()
+                    .into_iter()
+                    .filter(|h| !run.world.removed(*h) && actor(&run.world.name(*h)))
+                    .map(|h| run.world.actor(h).unwrap().scale[0])
+                    .collect::<Vec<f32>>(),
+            );
         }
         match scene_of(&run) {
             Some((k, n)) => {
@@ -1090,9 +1094,13 @@ fn chapter_1s_outro_plays_to_its_end() {
         );
     }
     assert!(clips.len() >= 3, "Norticus' animations: {clips:?}");
-    println!("hats on at once: {hats}; the actors' scales: {scales:?}");
+    println!("hats on at once: {hats}; the actors' scales as made and a step on: {scales:?}");
     assert_eq!(hats, 4, "Norticus' turban and the three Mabu's beanies");
-    assert_eq!(scales, [140.0; 4]);
+    assert_eq!(
+        scales.get(1).map(Vec::as_slice),
+        Some([140.0; 4].as_slice()),
+        "140 % by their own scripts' first tick"
+    );
     assert_eq!(
         voices.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>(),
         [

@@ -18,7 +18,7 @@ When a level's own scripts end it and name the next level, the TV SHALL hold the
 - **THEN** the level holds until the asked one is read, then that level shows with him in it and the same figures on the portal
 
 ### Requirement: Chapter 1's outro plays to its end
-When chapter 1's end wakes its outro, the TV SHALL play the outro's cutscene to its end with nothing skipped: Norticus and the three Mabu drawn at 140 % in their hats, the Mabu walking to their waypoints, its four lines voiced in order, its scenes in order, and its own level end naming level 214, nothing stopped in the run: shown within 1 s of the dev entry's end anchor, the level held for what follows within 13 s (12.52 s and 12.56 s measured).
+When chapter 1's end wakes its outro, the TV SHALL play the outro's cutscene to its end with nothing skipped: Norticus and the three Mabu drawn at 140 % in their hats, the Mabu walking to their waypoints, its four lines voiced in order, its scenes in order, and its own level end naming level 214, nothing stopped in the run: shown within 1 s of the dev entry's end anchor, the level held for what follows within 13 s (12.52-12.57 s measured).
 
 #### Scenario: The dev entry's end anchor
 - **WHEN** the hero is set down on the outro's waypoint
