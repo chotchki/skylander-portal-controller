@@ -31,9 +31,9 @@ A sound SHALL play at the volume its data gives, varied per play by its own volu
 ### Requirement: The level's music is the original's
 Chapter 1 SHALL play its own music tracks from the disc (ten: four 129 s beds, an 18.8 s intro, four stingers and a silence), switched, layered and faded as the level's scripts direct (exploring, fighting, the stingers), and SHALL play none while the scripts play silence.
 
-#### Scenario: A fight starts
-- **WHEN** the first fight's creatures wake in chapter 1
-- **THEN** the music moves from the level's exploring track to its fighting track the way the level's scripts switch them
+#### Scenario: The first fight keeps the exploring track
+- **WHEN** the first fight's creatures wake and fight in chapter 1
+- **THEN** the level's exploring track plays on through the fight, as the original's does, with no fighting track started
 
 #### Scenario: The first fight is won
 - **WHEN** the last of the first fight's four Chompies is beaten
