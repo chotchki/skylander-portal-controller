@@ -17,6 +17,10 @@ When a level's or a character's scripts play a sound, guacamole SHALL play that 
 - **WHEN** Eon's line plays in chapter 1
 - **THEN** it is the English recording, never another language's
 
+#### Scenario: Eon's two lines in chapter 1
+- **WHEN** chapter 1 starts, and later when the hero reaches the ledge path
+- **THEN** Eon's two lines are voiced, the first with his box up and the second alone, each heard in full wherever the hero stands
+
 ### Requirement: A sound plays at its own settings
 A sound SHALL play at the volume its data gives, varied per play by its own volume randomness and pitch randomness, and one marked as falling off with distance SHALL play full inside its full distance, silent past its silent distance and quieter between, measured from where the actor playing it stands to the listener (the camera, a hypothesis until the original's listener is read). A sound marked looping SHALL loop until its scripts stop it or its actor leaves.
 
