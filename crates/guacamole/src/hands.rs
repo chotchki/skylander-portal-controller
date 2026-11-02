@@ -262,6 +262,7 @@ mod tests {
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let handles = HashMap::new();
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));

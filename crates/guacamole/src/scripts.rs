@@ -160,6 +160,10 @@ pub struct Files {
     /// Every waypoint's place in the level, metres (openspec AH.18: what a
     /// `move to` along a path walks to and a measurement is taken from).
     pub points: HashMap<Obj, Vec3>,
+    /// Every waypoint's turn as its file holds it (openspec AS.52: what a
+    /// script reads of one until a script turns it, a cutscene's camera
+    /// looking from it as it faces).
+    pub turns: HashMap<Obj, Angles>,
     /// Every placed light's values as its file holds them (openspec AH.65):
     /// the point-light manager's template and the lights the scripts name
     /// for it to copy.
@@ -191,13 +195,14 @@ impl Files {
             for (index, o) in igz.objects().iter().enumerate() {
                 if is_a(igz.type_name(o), ActorWaypoint::TYPE) {
                     let w = ActorWaypoint::read(igz, index).map_err(|e| e.to_string())?;
-                    out.points.insert(
-                        Obj {
-                            unit,
-                            index: index as u32,
-                        },
-                        Vec3::from_array(w.init_matrix.position),
-                    );
+                    let obj = Obj {
+                        unit,
+                        index: index as u32,
+                    };
+                    out.points
+                        .insert(obj, Vec3::from_array(w.init_matrix.position));
+                    let [tilt, facing, roll] = w.init_matrix.rotation;
+                    out.turns.insert(obj, Angles { tilt, facing, roll });
                 }
             }
             let placements = Placements::read(igz).map_err(|e| e.to_string())?;
@@ -417,8 +422,8 @@ pub struct ScriptWorld {
     pub(crate) emitters: HashMap<Obj, String>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
-    /// The file waypoints' turns the scripts wrote (openspec AG.60); one
-    /// never written reads nothing, its file's turn unread.
+    /// The file waypoints' turns: as their files hold them (openspec
+    /// AS.52), then as the scripts wrote them (AG.60).
     pub(crate) point_turns: HashMap<Obj, Angles>,
     pub(crate) controllers: [Handle; 2],
     pub(crate) physical: [Handle; 4],
@@ -753,7 +758,7 @@ impl ScriptWorld {
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
             points: files.points.clone(),
-            point_turns: HashMap::new(),
+            point_turns: files.turns.clone(),
             controllers: [objects[0], objects[1]],
             physical: [objects[2], objects[3], objects[4], objects[5]],
             portal: objects[6],
@@ -2501,8 +2506,15 @@ pub const MUSIC_SCRIPTS: [&str; 20] = [
 /// dev entry's end anchor), fades the screen out and wakes the outro, whose
 /// cutscene (played to its end since AS.52, its actors clones of their
 /// templates the scene walks and animates) ends in the outro's own `Game -
-/// Level End`, naming the next level.
-pub const LEVEL_END_SCRIPTS: [&str; 2] = ["Temp_Level_Ender.ai", "213_Outro_IGC.ai"];
+/// Level End`, naming the next level. The outro's actors run their own
+/// (AS.52): Norticus and the Mabu at 140 %, each with his hat on his head's
+/// node.
+pub const LEVEL_END_SCRIPTS: [&str; 4] = [
+    "Temp_Level_Ender.ai",
+    "213_Outro_IGC.ai",
+    "213_Norticus_NPC.ai",
+    "213_Mabu_Generic.ai",
+];
 
 /// `config` over a level's own file, linked as `level` (openspec AS.51):
 /// each level placement's definition script ([`is_level_definition`];
@@ -4288,6 +4300,7 @@ mod tests {
             }],
             ids: HashMap::from([(GRUNT, 41), (SPRITE, 77)]),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let handles = headless_handles(&files);
         let objects = headless_objects(&handles);
@@ -4385,6 +4398,34 @@ mod tests {
             Some(obj.index as usize),
             igz.object_at(s.emitter).map(|(i, _)| i)
         );
+    }
+
+    /// AS.52: each waypoint a file holds is read with its turn beside its
+    /// place, and the world the scripts read it in starts with that turn
+    /// (the outro's camera looks from its waypoint as the waypoint faces).
+    #[test]
+    fn the_files_read_each_waypoints_place_and_turn() {
+        let s = guac_formats::level::builder::sample();
+        let igz = Igz::parse(&s.bytes).unwrap();
+        let files = Files::read(&[(3, &igz)]).unwrap();
+        let obj = |l| Obj {
+            unit: 3,
+            index: igz.object_at(l).unwrap().0 as u32,
+        };
+        let [w0, w1, w2] = s.waypoints.map(obj);
+        assert_eq!(files.points[&w1], Vec3::new(12.0, 43.0, -90.0));
+        let turn = |facing| Angles {
+            tilt: 0.0,
+            facing,
+            roll: 0.0,
+        };
+        assert_eq!(
+            [w0, w1, w2].map(|w| files.turns[&w]),
+            [turn(0.0), turn(45.0), turn(90.0)]
+        );
+        let handles = HashMap::new();
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert_eq!(world.point_turns[&w1], turn(45.0));
     }
 
     fn at(namespace: &str, name: &str, receiver: Option<Value>) -> Access {
@@ -4929,6 +4970,7 @@ mod tests {
             placed: vec![Placed::named(obj, "Unlocker", Some(PATH), RUNNING)],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5036,6 +5078,7 @@ mod tests {
             ],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5153,6 +5196,7 @@ mod tests {
             placed: vec![Placed::named(obj, "Ship", Some(PATH), 5)],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5220,6 +5264,7 @@ mod tests {
             placed: vec![Placed::named(obj, "Ship", Some(PATH), RUNNING)],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5461,6 +5506,7 @@ mod tests {
             }],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let objects = |app: &mut App| {
             let w = app.world_mut();
@@ -5958,6 +6004,7 @@ mod tests {
             ],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let mut handles = headless_handles(&files);
         handles.insert(hero, HIM);

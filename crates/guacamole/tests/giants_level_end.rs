@@ -860,7 +860,8 @@ const OUTRO_MABU: [(&str, &str); 3] = [
 /// (`level_end::SKIPPED_CUTSCENES` lists it no more): its four scenes in
 /// order, Norticus' animations started on him from his palette, the Mabu
 /// walked to their last waypoints by `move to` with no creature's body
-/// under them, every line voiced in order; then its own `Game - Level End`
+/// under them, the actors on their own scripts (140 %, a hat each), every
+/// line voiced in order; then its own `Game - Level End`
 /// names level 214, which the TV asks for. Nothing stops. The second scene
 /// ends a frame in, its animated camera's clip unread (stand-in ledger:
 /// `cinematic-camera`).
@@ -893,6 +894,7 @@ fn chapter_1s_outro_plays_to_its_end() {
     let mut ended = None;
     let mut since = run.world.start_count();
     let mut clips: Vec<(u32, String)> = Vec::new();
+    let (mut hats, mut scales) = (0usize, Vec::new());
     while run.world.level_change().is_none() {
         assert!(
             run.steps < woken + 1200,
@@ -901,6 +903,29 @@ fn chapter_1s_outro_plays_to_its_end() {
         );
         stops.extend(run.step_play().unwrap());
         lines.record(&run);
+        // Their own scripts: each actor at 140 %, his hat on his head.
+        let on: Vec<String> = run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| !run.world.removed(*h))
+            .map(|h| run.world.name(h))
+            .collect();
+        hats = hats.max(
+            on.iter()
+                .filter(|n| *n == "Turban_hat" || *n == "Propellar_Beenie")
+                .count(),
+        );
+        let actor = |n: &str| n == "213_Outro_Norticus_Actor" || n.starts_with("213_Outro_Mabu_");
+        if scales.is_empty() && on.iter().filter(|n| actor(n)).count() == 4 {
+            scales = run
+                .world
+                .clones()
+                .into_iter()
+                .filter(|h| !run.world.removed(*h) && actor(&run.world.name(*h)))
+                .map(|h| run.world.actor(h).unwrap().scale[0])
+                .collect();
+        }
         match scene_of(&run) {
             Some((k, n)) => {
                 assert_eq!(n, 4, "the outro's four scenes");
@@ -977,6 +1002,9 @@ fn chapter_1s_outro_plays_to_its_end() {
         );
     }
     assert!(clips.len() >= 3, "Norticus' animations: {clips:?}");
+    println!("hats on at once: {hats}; the actors' scales: {scales:?}");
+    assert_eq!(hats, 4, "Norticus' turban and the three Mabu's beanies");
+    assert_eq!(scales, [140.0; 4]);
     assert_eq!(
         voices.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>(),
         [

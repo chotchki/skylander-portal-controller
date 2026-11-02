@@ -1135,8 +1135,8 @@ impl ScriptWorld {
                             self.actors.get(&h).ok_or(HostFault::Nothing)?.solid.angles;
                         Angles { tilt, facing, roll }
                     }
-                    // One the scripts never turned reads nothing, as before:
-                    // its file's turn isn't read.
+                    // Its file's turn until a script turns it (openspec
+                    // AS.52); one with neither reads nothing.
                     Some(Object::PointTurn(o)) => {
                         *self.point_turns.get(&o).ok_or(HostFault::Nothing)?
                     }
@@ -3377,6 +3377,7 @@ mod tests {
             placed: Vec::new(),
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let handles = HashMap::new();
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
@@ -4801,6 +4802,7 @@ mod fight_tests {
                 (WP, Vec3::new(8.0, 0.0, -6.0)),
                 (WP2, Vec3::new(8.0, 0.0, 6.0)),
             ]),
+            turns: HashMap::new(),
         };
         let handles = HashMap::new();
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
@@ -6395,8 +6397,8 @@ mod light_tests {
     /// turns it (openspec AG.60: a push block lays its track's waypoints
     /// from its own place and faces along the first, so it stands where
     /// its file has it, as AG.7's live read does); one never turned reads
-    /// nothing, its file's turn unread; an object no waypoint is has no
-    /// turn.
+    /// as its file holds it (AS.52) until a script turns it; one with no
+    /// turn read reads nothing; an object no waypoint is has no turn.
     #[test]
     fn a_file_waypoint_moves_and_turns_as_the_scripts_put_it() {
         let mut w = world();
@@ -6417,9 +6419,27 @@ mod light_tests {
             )
             .unwrap();
         let facing = member("orientationmeasurement", "facing", turn, None);
-        assert_eq!(w.get(&facing, e), Err(HostFault::Nothing), "never turned");
+        let tilt = member("orientationmeasurement", "tilt", turn, None);
+        assert_eq!(w.get(&facing, e), Err(HostFault::Nothing), "no turn read");
+        // Its file's turn, read with the files (AS.52: the outro's camera
+        // looks from its waypoint as the waypoint faces), until a script's.
+        w.point_turns.insert(
+            wp,
+            Angles {
+                tilt: -12.5,
+                facing: 196.0,
+                roll: 0.0,
+            },
+        );
+        assert_eq!(w.get(&facing, e), Ok(Value::Float(196.0)));
+        assert_eq!(w.get(&tilt, e), Ok(Value::Float(-12.5)));
         w.set(&facing, Value::Float(90.0), e).unwrap();
         assert_eq!(w.get(&facing, e), Ok(Value::Float(90.0)));
+        assert_eq!(
+            w.get(&tilt, e),
+            Ok(Value::Float(-12.5)),
+            "the rest as it was"
+        );
         let none = Value::Object(Obj { unit: 4, index: 1 });
         assert_eq!(
             w.get(&member("matrixmeasurement", "orientation", none, None), e),
