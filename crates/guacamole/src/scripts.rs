@@ -5090,10 +5090,11 @@ mod tests {
         // Its intro, 214's alone (openspec AS.47, AS.60).
         assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
+        // A spawner of a fight past the TV's (the third island's).
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_Chompy_Spawner(2)", "C:/x/Any.ai")
+                .lists("Enemy_Chompy_Spawner(4)", "C:/x/Any.ai")
         );
         assert!(encounter("level_212").is_none());
     }
@@ -5157,10 +5158,11 @@ mod tests {
                 && !e.clones.contains(&"TreeRex_special_homing_actor"),
             "never walked"
         );
+        // A Tree Rex of a fight past the TV's (Setup_005's yard).
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_TreeRex(1)", "C:/x/S2_Enemy_TreeRex.ai")
+                .lists("Enemy_TreeRex(3)", "C:/x/S2_Enemy_TreeRex.ai")
         );
     }
 
