@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: A level's end takes the hero into the next level
-When a level's own scripts end it and name the next level, the TV SHALL hold the level within 1.1 s, read the next (extracted on its first entry: level 214's 432 MB in 4.6 s) and enter it with the hero in it, the portal's figures as they stood, the first placed that walks joining that level's own scripts with his experience and gold, within 14 s on a first entry and 4 s after. Chapter 1's end SHALL lead to level 214, on a first run too.
+When a level's own scripts end it and name the next level, the TV SHALL hold the level within 1.1 s, read the next (extracted on its first entry: level 214's 432 MB in 4.6 s) and enter it with the hero in it, the portal's figures as they stood, the first placed that walks joining that level's own scripts with his experience and gold, within 14 s of any movie the end queued being over on a first entry and 4 s after. Chapter 1's end SHALL lead to level 214, on a first run too.
 
 #### Scenario: Chapter 1's end
 - **WHEN** the hero reaches chapter 1's end
@@ -16,6 +16,24 @@ When a level's own scripts end it and name the next level, the TV SHALL hold the
 #### Scenario: Another level asked for while he walks
 - **WHEN** a level is asked for by name while the hero walks a level
 - **THEN** the level holds until the asked one is read, then that level shows with him in it and the same figures on the portal
+
+### Requirement: Chapter 1's outro plays to its end
+When chapter 1's end wakes its outro, the TV SHALL play the outro's cutscene to its end with nothing skipped: Norticus and the three Mabu drawn at 140 % in their hats, the Mabu walking to their waypoints, its four lines voiced in order, its scenes in order, and its own level end naming level 214, nothing stopped in the run.
+
+#### Scenario: The dev entry's end anchor
+- **WHEN** the hero is set down on the outro's waypoint
+- **THEN** Norticus and the Mabu are drawn and play their scene, then the level holds for level 214
+
+### Requirement: A level end's movie plays on the TV
+When a level's end queues one of the disc's movies (chapter 1's FMV02), the TV SHALL convert it into the extract on its first play, the level held and the header saying so, then play it full screen with its sound, the level and its sounds held, △ or Start on any pad ending it, and go on to the next level after it. A second play SHALL convert nothing; a movie that won't convert or open SHALL end at once, with why in the TV's report.
+
+#### Scenario: FMV02 after chapter 1
+- **WHEN** chapter 1's outro ends for the first time on a dump
+- **THEN** the header says FMV02 is being converted, FMV02 plays with its sound, and level 214 comes after it
+
+#### Scenario: The movie skipped
+- **WHEN** a player presses △ while the movie plays
+- **THEN** it ends and the next level is asked for
 
 ### Requirement: A level's clones draw their templates' models
 A clone a level's scripts make SHALL draw its template's model off the level's own props, static as a prop, skinned as a creature whether or not a script runs it, unless every material is alpha-blended at a tint alpha of 0 with no tint track raising it (10 models over the disc) or it is a Titan pebble. Chapter 1's start SHALL draw 8 of the 14 templates it clones, as before, and no pipeline SHALL compile after a level shows (none in 10,040 frames on level 214).

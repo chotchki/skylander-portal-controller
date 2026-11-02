@@ -437,6 +437,16 @@ impl Playback {
         (self.shown, self.opened.as_ref().map(|o| o.frames))
     }
 
+    /// Its sound: `waiting`, `starting`, `playing` (a sink) or `none`.
+    pub(crate) fn audio(&self) -> &'static str {
+        match self.audio {
+            Audio::Waiting => "waiting",
+            Audio::Spawned { .. } => "starting",
+            Audio::Sink(_) => "playing",
+            Audio::Silent => "none",
+        }
+    }
+
     /// Fills `pending` from the decode thread if it's empty.
     fn pull(&mut self, commands: &mut Commands, images: &mut Assets<Image>) -> Result<(), String> {
         while self.pending.is_none() && !self.decoded {

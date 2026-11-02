@@ -2160,7 +2160,7 @@ impl ScriptWorld {
                 // animations). A file's placement told so reads nothing
                 // still: the pit's intro, which tells `Enemy_Chompy(1)` its
                 // three clips, runs AH.8's 449 frames that way and 64 more
-                // with them played (AS.80).
+                // with them played (AS.80; stand-in ledger: `told-palette`).
                 let of = |w: &Self, h: Handle| {
                     let t = w.template_of(h)?;
                     w.palettes.get(&t).map(|p| (t, p.len()))
@@ -2341,6 +2341,9 @@ impl ScriptWorld {
         }
     }
 
+    /// A clip's length; 0 for a slot the extract refused, so an animator
+    /// camera's shot on a clip past one Havok block lasts no time (openspec
+    /// AS.52, AS.78; stand-in ledger: `cinematic-camera`).
     fn length_of(&self, v: Value) -> f32 {
         match self.object(Some(v)) {
             Some(Object::Clip { template, slot }) => self
@@ -2571,6 +2574,7 @@ impl ScriptWorld {
     /// engine an actor no movement data of the scripts' moves). Reached,
     /// the block runs, as a creature's. A hero walks on his controller
     /// alone, so one the op moves is still unmodelled.
+    /// (Stand-in ledger: `scene-walk`.)
     fn scene_move(
         &mut self,
         mover: Handle,

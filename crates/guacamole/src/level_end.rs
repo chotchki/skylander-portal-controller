@@ -8,8 +8,8 @@
 //! then, each step after the walk ([`step`]):
 //!
 //! - A cutscene the TV doesn't play to its end ([`SKIPPED_CUTSCENES`]:
-//!   level 214's intro, whose first scene runs on and never ends on our
-//!   host) is skipped once it has run a frame, by the original's own skip
+//!   level 214's intro, whose sixth scene of ten waits on our host on a walk
+//!   with no actor, AS.81) is skipped once it has run a frame, by the original's own skip
 //!   (`CS Internal - Skip Cutscene` on the cutscene in play, as a player's
 //!   skip press runs it), so the scripts after it run as they would after a
 //!   skip (stand-in ledger: `cutscene-skip`).
@@ -33,8 +33,9 @@ use tracing::info;
 use crate::scripts::{LevelEndMovie, MovieEnd, MovieState, ScriptWorld, WorldHost, running};
 
 /// The cutscenes the TV skips once they've run a frame, by the name of the
-/// macro defining them: level 214's intro (openspec AS.47), whose first
-/// scene runs on and never ends on our host (70 s of it, headless).
+/// macro defining them: level 214's intro (openspec AS.47), which ran on
+/// past 70 s headless; since AS.52's typed read its sixth scene of ten
+/// waits on a walk whose scene object has no actor (AS.81).
 /// Chapter 1's outro left the list at AS.52: its first scene's step for
 /// Norticus' animation read the step's dialogue's data as its own, the
 /// scripts' typed reference read unmodelled, and its walks reached `move

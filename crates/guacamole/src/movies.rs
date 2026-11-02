@@ -11,6 +11,7 @@
 //! original's movie fader reads off a joined player's controller (`action
 //! 4` and `start button`), the fader's skipped branch left to the scripts
 //! once the TV runs the end-of-level sequencing (AS.53).
+//! (Stand-in ledger: `level-end`.)
 //!
 //! A movie that won't convert or open is over all the same, with why: the
 //! level goes on as if it had played.
@@ -79,6 +80,11 @@ pub(crate) struct MovieReport {
     pub frames: Option<usize>,
     /// From its first frame's start to its end, milliseconds.
     pub played_ms: Option<u64>,
+    /// Its sound as the player had it last: `waiting`, `starting`,
+    /// `playing` (an output's sink) or `none`; and whether it was muted
+    /// (a dev build's `GUAC_MUTE`).
+    pub audio: Option<String>,
+    pub muted: bool,
     /// `finished`, `skipped`, or `failed: <why>`.
     pub ended: Option<String>,
     /// How many have played to an end, a skip or a failure.
@@ -298,6 +304,8 @@ fn play_movies(
             let progress = playback.progress();
             movies.report.shown = progress.0;
             movies.report.frames = progress.1;
+            movies.report.audio = Some(playback.audio().to_owned());
+            movies.report.muted = muted;
             let end = match (skip, over_now) {
                 (true, _) => Some(MovieEnd::Skipped),
                 (false, Some(Ok(()))) => Some(MovieEnd::Finished),

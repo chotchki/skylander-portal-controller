@@ -10,8 +10,8 @@
 //! outro's player waypoint, as the TV's dev entry's end anchor does; from
 //! there every step is the scripts' (the fade, the outro woken and its
 //! cutscene played to its end since AS.52, its own `Game - Level End`),
-//! then `guacamole::level_end`'s level change (stand-in ledger:
-//! `level-end`).
+//! then `guacamole::level_end`'s level change.
+//! (Stand-in ledger: `level-end`.)
 
 use guac_motion::seam::Vec3;
 use guac_script::{Mode, Value};
@@ -671,10 +671,11 @@ fn cutscene_name(run: &Run) -> Option<String> {
 /// deck's hatch and the barrels it took off, and a reset brings a placement
 /// taken off back (AS.60): the ship stands under him again, its script
 /// cloning its engine, masthead and roof onto it (`scripts::SHIP`). Its
-/// first line (Flynn's, voiced, since AT.44 reads a lone string as a set of
-/// one) is up as the skip comes and plays on past it, its box holding the
-/// HUD hidden until it's over (the as-214-alive review, on the merge of
-/// AT.44: 350 steps); then the HUD shows again.
+/// first line (Flynn's) ends with the skip, no box held up past it, and the
+/// HUD shows again within a few steps of the hand-over (AS.69: until
+/// AS.52's typed read, the step's dialogue data read nothing at the skip's
+/// completion and the line played on to step 341, its box holding the HUD
+/// hidden to 356).
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_intro_hands_over_on_the_ship() {
@@ -817,6 +818,32 @@ fn level_214s_intro_hands_over_on_the_ship() {
         "{shown:?} {:?}",
         lines.boxes
     );
+    // AS.69: the skip ends its scene's line with it (the step's dialogue
+    // data found among its actor's, AS.52's typed read): no voice plays on
+    // past the skip, no box, and the HUD is back within a few steps of the
+    // hand-over (before AS.52, Flynn's line played on to step 341 and its
+    // box held the HUD hidden to 356).
+    let skip = skipped.unwrap();
+    assert!(
+        lines
+            .voices
+            .iter()
+            .all(|v| v.ended.is_some_and(|e| e <= u64::from(skip))),
+        "a line playing past the skip at {skip}: {:?}",
+        lines.voices
+    );
+    assert!(
+        lines
+            .boxes
+            .iter()
+            .all(|b| b.gone.is_some_and(|g| g <= skip + 1)),
+        "{:?}",
+        lines.boxes
+    );
+    assert!(
+        shown.unwrap() <= gone.unwrap() + 3,
+        "the HUD back at {shown:?}, handed over at {gone:?}"
+    );
     let handed = Vec3::from_array(HANDED_OVER);
     assert!(
         Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
@@ -863,8 +890,8 @@ const OUTRO_MABU: [(&str, &str); 3] = [
 /// under them, the actors on their own scripts (140 %, a hat each), every
 /// line voiced in order; then its own `Game - Level End`
 /// names level 214, which the TV asks for. Nothing stops. The second scene
-/// ends a frame in, its animated camera's clip unread (stand-in ledger:
-/// `cinematic-camera`).
+/// ends a frame in, its animated camera's clip unread.
+/// (Stand-in ledger: `cinematic-camera`.)
 #[test]
 #[ignore = "reads the Giants dump"]
 fn chapter_1s_outro_plays_to_its_end() {
