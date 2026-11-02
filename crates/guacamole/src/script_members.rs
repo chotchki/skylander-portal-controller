@@ -975,8 +975,10 @@ impl ScriptWorld {
         match self.actors.get_mut(&h) {
             Some(a) => {
                 a.velocity = v;
-                // A creature walks by it; anything else flies.
-                a.launched |= a.walker.is_none() && v != Vec3::ZERO;
+                // A creature walks by it, and a scene walk steers from it
+                // (AS.68); anything else flies.
+                a.launched |=
+                    a.walker.is_none() && !self.scene_walks.contains_key(&h) && v != Vec3::ZERO;
                 Ok(())
             }
             None => Err(HostFault::Nothing),
@@ -2626,10 +2628,14 @@ impl ScriptWorld {
     /// One frame of each scene walk ([`ScriptWorld::scene_move`]): the
     /// engine's velocity model ([`guac_motion::steer::step`]) on its
     /// movement numbers under the aim its scripts left this tick, on level
-    /// ground, its place moved by the walk and its facing turned as the
-    /// model turns it, `actorinfo.velocity` reading the walk. The aim lasts
-    /// the tick it was asked for, as a creature's does. One taken off, hung
-    /// on something or walked as a creature since is let go.
+    /// ground, from the actor's velocity as its scripts left it (AS.68: the
+    /// homing charge sets its speed each tick before its `move to`), its
+    /// place moved by the walk and its facing turned as the model turns it,
+    /// `actorinfo.velocity` the walk's. The walk is its one motion: a
+    /// velocity a script writes never also flies it
+    /// ([`ScriptWorld::move_actors`]). The aim lasts the tick it was asked
+    /// for, as a creature's does. One taken off, hung on something or
+    /// walked as a creature since is let go.
     pub(crate) fn move_scene_walks(&mut self, dt: f32) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
@@ -2649,7 +2655,7 @@ impl ScriptWorld {
             let dt = dt * a.physics.time_scale / 100.0;
             let frame = guac_motion::steer::step(
                 guac_motion::steer::Frame {
-                    velocity: walk.velocity,
+                    velocity: a.velocity * METRES_PER_FOOT,
                     facing: a.angles.facing,
                     airborne: false,
                 },
@@ -2660,7 +2666,6 @@ impl ScriptWorld {
                 true,
                 dt,
             );
-            walk.velocity = frame.velocity;
             a.position += frame.velocity * dt;
             a.angles.facing = frame.facing;
             a.velocity = frame.velocity * FEET_PER_METRE;
@@ -2987,10 +2992,16 @@ impl ScriptWorld {
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
         self.move_scene_walks(dt);
+        // A scene walk is its actor's one motion (AS.68).
         let mut flying: Vec<Handle> = self
             .actors
             .iter()
-            .filter(|(_, a)| !a.removed && a.attach == Value::Null && a.launched)
+            .filter(|(h, a)| {
+                !a.removed
+                    && a.attach == Value::Null
+                    && a.launched
+                    && !self.scene_walks.contains_key(h)
+            })
             .map(|(&h, _)| h)
             .collect();
         flying.sort_unstable();
@@ -4989,7 +5000,7 @@ mod fight_tests {
         let stopped = w.actor(C1).unwrap().position;
         w.advance(STEP, &mut e);
         assert_eq!(w.actor(C1).unwrap().position, stopped);
-        assert_eq!(w.scene_walks[&C1].velocity, Vec3::ZERO);
+        assert_eq!(w.actor(C1).unwrap().velocity, Vec3::ZERO);
         // Along a path: each waypoint in turn, the next its aim at once.
         let path = vec![Value::Object(WP), Value::Object(WP2)];
         let mut reached = Vec::new();
@@ -5025,6 +5036,84 @@ mod fight_tests {
         call.receiver = Value::Entity(HERO);
         assert_eq!(w.op(&call, &mut |_| 0, &mut e), Err(HostFault::Unmodelled));
         assert!(!w.scene_walks.contains_key(&HERO));
+    }
+
+    /// AS.68: a scene walk steps from its actor's velocity, which is its
+    /// one motion. Level 214's homing charge (no body: it meets neither
+    /// actors nor the level) writes its speed, 25 ft/s, each tick before
+    /// its `move to` on its own numbers (25 ft/s, 250 ft/s² up, none down,
+    /// 50°/s): it gets up to that speed and never past it, turning no
+    /// faster than its rate, the write never flying it besides; a velocity
+    /// left over from a flight doesn't fly it while it's walked; and asked
+    /// no more, with nothing to slow it, it slides on at its speed.
+    #[test]
+    fn a_scene_walk_steps_from_its_actors_velocity_and_alone_moves_it() {
+        let mut e = pit();
+        let mut w = world();
+        let mut charge = chompy(Vec3::new(0.0, 0.3, 0.0), 90.0);
+        charge.walker = None;
+        charge.solid.shape = 1;
+        charge.solid.interacts_with_actors = 0;
+        charge.solid.interacts_with_level_mesh = 0;
+        charge.physics = Physics {
+            ground_max_speed: 25.0,
+            ground_acceleration: 250.0,
+            ground_deceleration: 0.0,
+            ground_turn_rate: 50.0,
+            time_scale: 100.0,
+            ..Physics::default()
+        };
+        w.actors.insert(C1, charge);
+        let velocity = w.objs.value(Object::Facet(C1, Facet::Velocity));
+        let length = Access {
+            placement: C1,
+            receiver: Some(velocity),
+            member: MemberId::named("vectormeasurement", "length"),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        let mut speeds = Vec::new();
+        let mut last = w.actor(C1).unwrap().clone();
+        for k in 0..120 {
+            if k == 60 {
+                // As if a flight had set it going: the walk still moves it
+                // alone.
+                w.actors.get_mut(&C1).unwrap().launched = true;
+            }
+            w.set_member(
+                &length,
+                Member::Vector(VectorField::Length),
+                Value::Float(25.0),
+                &mut e,
+            )
+            .unwrap();
+            assert!(matches!(
+                ask(&mut w, &mut e, &move_to(Value::Object(WP), 0)),
+                Answer::Done
+            ));
+            w.advance(STEP, &mut e);
+            let a = w.actor(C1).unwrap().clone();
+            let across = Vec3::new(
+                a.position.x - last.position.x,
+                0.0,
+                a.position.z - last.position.z,
+            );
+            speeds.push(across.length() / STEP / FOOT);
+            let turned = wrap(a.angles.facing - last.angles.facing).abs();
+            assert!(turned <= 50.0 * STEP + 1e-3, "frame {k}: {turned}°");
+            assert!(k >= 60 || !a.launched, "frame {k}: the write launched it");
+            last = a;
+        }
+        let top = speeds.iter().copied().fold(0.0f32, f32::max);
+        assert!(top <= 25.0 + 1e-3, "past its speed: {top}");
+        assert!(speeds[10..].iter().all(|s| *s > 24.9), "{speeds:?}");
+        // Asked no more: no deceleration, so on at its speed.
+        let before = w.actor(C1).unwrap().position;
+        w.advance(STEP, &mut e);
+        let after = w.actor(C1).unwrap().position;
+        let slid = Vec3::new(after.x - before.x, 0.0, after.z - before.z).length() / STEP / FOOT;
+        assert!((slid - 25.0).abs() < 1e-2, "{slid}");
     }
 
     #[test]
