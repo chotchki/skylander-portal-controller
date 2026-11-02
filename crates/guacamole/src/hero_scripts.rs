@@ -360,6 +360,31 @@ fn install_from(world: &mut World, source: &ScriptSource) {
             script_world.set_palette(p.obj, lengths.clone());
         }
     }
+    // The level's music waits for its sounds (openspec AR.23).
+    hold_music(world, source, level);
+}
+
+/// [`scripts::hold_music`] on the run just installed, logged.
+fn hold_music(world: &mut World, source: &ScriptSource, level: u16) {
+    let music = world.resource_scope::<ScriptRuntime, _>(|world, mut runtime| {
+        let mut script_world = world.resource_mut::<ScriptWorld>();
+        scripts::hold_music(&mut runtime.vm, &mut script_world, &source.files, level)
+    });
+    log_music(music);
+}
+
+/// What [`scripts::hold_music`] did, logged: at the install and when the
+/// sounds part lands after it (AR.21's read again).
+pub(crate) fn log_music(music: scripts::Music) {
+    match music {
+        scripts::Music::Waits(held) => {
+            info!(held, "the level's music waits for its sounds")
+        }
+        scripts::Music::Starts(released) => {
+            info!(released, "the level's music starts with its sounds")
+        }
+        scripts::Music::Runs => {}
+    }
 }
 
 /// The run installed again from its part: what leaving the level does, the
@@ -1842,6 +1867,106 @@ impl LootShots<'_> {
 
 #[cfg(test)]
 mod camera_tests;
+
+#[cfg(test)]
+mod music_tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use bevy::prelude::*;
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph};
+    use guac_script::{Obj, Program, Role, Unit};
+    use guacamole::scripts::{Files, Placed, ScriptRuntime};
+
+    use super::{ScriptSource, install_from};
+
+    const MUSIC: &str = "C:/tfb/Content/Levels/Level_213/Scripts/Music_Level_Controller.ai";
+
+    /// openspec AR.23: an install over a part with no sounds yet (a first
+    /// run's hand-off) holds the placement running the level's music
+    /// controller before its first tick; one over a part whose book holds
+    /// the level's sounds (a reinstall after they landed, or any later run)
+    /// holds nothing.
+    #[test]
+    fn an_install_holds_the_levels_music_until_its_sounds_are_in() {
+        let mut b = IgzBuilder::new();
+        let actor;
+        {
+            let mut w = Writer::new(&mut b);
+            actor = w.b.object(0, "tfbActorInfo", 0xF8);
+            let count = w.variable("count", "ValueInfo", Some("IntMeasurement"));
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (macros, _) = w.open(Class::MacroSection, "MACROS");
+            w.end_block(macros);
+            w.end_block(pre);
+            let idle = w.behaviour("transitions");
+            w.inc(&[El::Local(count)]);
+            w.end_block(idle);
+            w.end(MUSIC);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let obj = Obj {
+            unit: 0,
+            index: igz.object_at(actor).unwrap().0 as u32,
+        };
+        let files = Files {
+            placed: vec![Placed::named(
+                obj,
+                "dynamic_sound_controller",
+                Some(MUSIC),
+                4,
+            )],
+            ..Files::default()
+        };
+        let mut source = ScriptSource::of(program, files, vec![0]);
+        let held = |world: &mut World| {
+            let h = world
+                .resource::<guacamole::scripts::ScriptWorld>()
+                .handles()[&obj];
+            let vm = &world.resource::<ScriptRuntime>().vm;
+            vm.is_suspended(vm.placement_of(h).expect("it runs"))
+        };
+        let mut world = World::new();
+        install_from(&mut world, &source);
+        assert!(held(&mut world), "no sounds part yet: held");
+        let book = guac_sound::SoundBook::new([guac_ir::sound::Sounds {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([1; 32]),
+            },
+            archive: "level/level_213_tutotial.bld".into(),
+            sounds: Vec::new(),
+            data: Vec::new(),
+            refused: Vec::new(),
+        }]);
+        source.set_sounds(guacamole::sounds::SoundPart {
+            book: Arc::new(book),
+            stems: HashMap::from([(0, "level_213_tutotial".to_owned())]),
+            missing: Vec::new(),
+            read: Duration::ZERO,
+        });
+        install_from(&mut world, &source);
+        assert!(!held(&mut world), "its sounds in: nothing held");
+    }
+}
 
 #[cfg(test)]
 mod tests {

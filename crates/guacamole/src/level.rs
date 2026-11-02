@@ -1754,12 +1754,15 @@ fn receive_sounds(feed: Option<Res<SoundsFeed>>, mut level: ResMut<Level>) {
 /// linked and installed, the run's [`guacamole::sounds::SoundPart`] read
 /// again for its units, then handed to the run and kept with its part for a
 /// reinstall. A play started before stays as it began (silent where the book
-/// lacked it); one after finds its recording. A read for a run since
-/// replaced is dropped.
+/// lacked it); one after finds its recording; the level's music, held
+/// while the book lacked the level's sounds, starts (AR.23,
+/// [`crate::hero_scripts::hold_music`]). A read for a run since replaced is
+/// dropped.
 fn sounds_again(
     mut level: ResMut<Level>,
     source: Option<ResMut<ScriptSource>>,
     world: Option<ResMut<ScriptWorld>>,
+    runtime: Option<ResMut<guacamole::scripts::ScriptRuntime>>,
 ) {
     let level = &mut *level;
     if let Some(task) = level.sounds_again.as_mut() {
@@ -1779,6 +1782,11 @@ fn sounds_again(
         level.report.sounds_again_ms = level.ms();
         level.report.sounds_again_archives = Some(part.stems.len());
         source.set_sounds(part);
+        if let (Some(unit), Some(mut runtime)) = (source.level_unit(), runtime) {
+            let music =
+                guacamole::scripts::hold_music(&mut runtime.vm, &mut world, source.files(), unit);
+            crate::hero_scripts::log_music(music);
+        }
         return;
     }
     if !level.sounds_landed || level.scripts.is_some() {
@@ -5130,6 +5138,8 @@ mod tests {
         files: guacamole::scripts::Files,
         actor: guac_script::Handle,
         sound: Obj,
+        /// A placement running the level's music controller (AR.23).
+        music: guac_script::Handle,
     }
 
     const LANDING_SOUND: u32 = 10;
@@ -5148,19 +5158,59 @@ mod tests {
             unit: 0,
             index: 500,
         };
+        let music_obj = Obj {
+            unit: 0,
+            index: 501,
+        };
         let files = Files {
-            placed: vec![Placed::named(actor_obj, "thrower", None, 4)],
+            placed: vec![
+                Placed::named(actor_obj, "thrower", None, 4),
+                Placed::named(
+                    music_obj,
+                    "dynamic_sound_controller",
+                    Some("C:/tfb/Content/Levels/Level_213/Scripts/Music_Level_Controller.ai"),
+                    4,
+                ),
+            ],
             ..Files::default()
         };
-        let actor = headless_handles(&files)[&actor_obj];
+        let handles = headless_handles(&files);
         Landing {
             program,
+            actor: handles[&actor_obj],
+            music: handles[&music_obj],
             files,
-            actor,
             sound: Obj {
                 unit: 0,
                 index: LANDING_SOUND,
             },
+        }
+    }
+
+    impl Landing {
+        /// The run's VM as an install leaves it (AR.23): the music
+        /// controller's placement in it, held while the book lacks the
+        /// level's sounds.
+        fn runtime(&self, world: &mut ScriptWorld) -> guacamole::scripts::ScriptRuntime {
+            let mut vm = guac_script::Vm::new(
+                self.program.clone(),
+                guac_script::Config::new(guac_script::Mode::Play),
+            );
+            vm.add(self.music, "dynamic_sound_controller", 0);
+            guacamole::scripts::hold_music(&mut vm, world, &self.files, 0);
+            guacamole::scripts::ScriptRuntime {
+                vm,
+                generator: guac_script::Generator::seeded(1),
+                player_loop: Default::default(),
+                steps: 0,
+                stopped: Vec::new(),
+                entry_stopped: None,
+            }
+        }
+
+        fn music_held(&self, app: &App) -> bool {
+            let vm = &app.world().resource::<guacamole::scripts::ScriptRuntime>().vm;
+            vm.is_suspended(vm.placement_of(self.music).unwrap())
         }
     }
 
@@ -5250,7 +5300,8 @@ mod tests {
     /// AR.21's live run: a sounds part landing after the level's load is
     /// read again into the run once its news names the level's extract, its
     /// book replaced on the run and kept with the part for a reinstall; a
-    /// start before it plays nothing, one after finds its recording. News of
+    /// start before it plays nothing, one after finds its recording; the
+    /// level's music, held until then, let go (AR.23). News of
     /// another extract changes nothing, and a read for a run replaced before
     /// it lands is dropped.
     #[test]
@@ -5265,13 +5316,17 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         let (tx, feed) = sounds_channel();
+        let mut world = landing.world(&empty);
+        let runtime = landing.runtime(&mut world);
         app.insert_resource(Level::from_extract_for_tests(dir.clone()))
             .insert_resource(landing.source())
-            .insert_resource(landing.world(&empty))
+            .insert_resource(world)
+            .insert_resource(runtime)
             .insert_resource(feed)
             .add_systems(Update, (receive_sounds, sounds_again).chain());
         let plays = |app: &mut App| landing.plays(app);
         assert_eq!(plays(&mut app), 0, "no book holds it yet");
+        assert!(landing.music_held(&app), "the music waits (AR.23)");
 
         // The part lands.
         land_sounds(&dir);
@@ -5314,6 +5369,7 @@ mod tests {
         }
         assert_eq!(taken_up(&app), None);
         assert_eq!(plays(&mut app), 0, "the replaced run's read dropped");
+        assert!(landing.music_held(&app), "still waiting");
 
         // Its news again while the level's scripts still link: held until
         // they're in, then read into the run as it stands.
@@ -5352,6 +5408,7 @@ mod tests {
         assert_eq!(plays(&mut app), 1, "a start after it plays");
         let w = app.world().resource::<ScriptWorld>();
         assert_eq!(w.plays().last().unwrap().file, file);
+        assert!(!landing.music_held(&app), "the music starts with them");
     }
 
     /// AR.21's other orders: news that comes before any level is asked for

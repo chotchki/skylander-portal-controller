@@ -554,3 +554,157 @@ fn the_music_plays_the_intro_then_explore_on_its_bar() {
     println!("the music controller's time {time:.3} s");
     assert!(time > 19.9, "the music controller's time {time}");
 }
+
+/// The music controller's `current music source file`, by the sound's name
+/// in the book.
+fn current_music(run: &common::Run) -> Option<String> {
+    let places = guacamole::player_loop::Places::of(&run.vm, &run.world);
+    let data = run
+        .vm
+        .local(places.music?, "music data")
+        .map(|v| run.vm.value(v))?;
+    let guac_script::Value::Object(o) = run
+        .vm
+        .field(data, "current music source file")
+        .map(|v| run.vm.value(v))?
+    else {
+        return None;
+    };
+    let (book, stems) = common::sound_part();
+    book.sound(stems.get(&o.unit)?, o.index)?.name.clone()
+}
+
+/// The music and ambience playing (`mu_*`, `am_*`): name, the step its play
+/// started, its sequence's rate and its volume as read now.
+fn beds(run: &common::Run) -> Vec<(String, u64, f32, f32)> {
+    run.world
+        .plays()
+        .iter()
+        .filter_map(|p| {
+            let name = p
+                .name
+                .as_deref()
+                .filter(|n| n.starts_with("mu_") || n.starts_with("am_"))?;
+            let rate = run.world.sequences()[p.sequence as usize].rate;
+            let volume = run.world.play_params(p).volume_percent;
+            Some((name.to_owned(), p.started, rate, volume))
+        })
+        .collect()
+}
+
+/// The steps a run's music makes: the intro's play's start, explore's, the
+/// step explore first plays (rate over 0), and the beds and current music
+/// at the end.
+#[derive(Debug, Default)]
+struct MusicSteps {
+    intro: Option<u64>,
+    explore: Option<u64>,
+    explore_plays: Option<u64>,
+    beds: Vec<(String, u64, f32, f32)>,
+    current: Option<String>,
+}
+
+fn follow_music(run: &mut common::Run, steps: u64) -> MusicSteps {
+    let mut m = MusicSteps::default();
+    for _ in 0..steps {
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+        for (name, started, rate, _) in beds(run) {
+            match name.as_str() {
+                "mu_213_intro" => m.intro = m.intro.or(Some(started)),
+                "mu_213_explore" => {
+                    m.explore = m.explore.or(Some(started));
+                    if rate > 0.0 && m.explore_plays.is_none() {
+                        m.explore_plays = Some(run.world.sound_clock());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    m.beds = beds(run);
+    m.current = current_music(run);
+    m
+}
+
+/// The joined run's steps as `common::joined_with` makes them, on `run`.
+fn join(run: &mut common::Run) {
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.step().unwrap_or_else(|h| panic!("{h}"));
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+}
+
+/// openspec AR.23: a first run's music, its sounds part landing after the
+/// level (AR.21: 17.3 s after chapter 1's hand-off on a fresh root, step
+/// 1,038 here), the level's music scripts held until then as the TV holds
+/// them (`scripts::hold_music`). Before the landing nothing plays; let go
+/// as the book lands, they make the music a run with its sounds makes from
+/// the level's start, offset to the landing: the intro from it at its
+/// volume, explore asked 301 steps after the intro and playing from 1,045
+/// steps after it (on its bar), at its volume, the current music, the
+/// ambience bed under it.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_first_runs_music_starts_once_its_sounds_land() {
+    use guacamole::scripts::{Music, hold_music};
+    const LANDS: u64 = 1_038;
+    const AFTER: u64 = 1_200;
+    println!("load before: {}", common::load());
+    let setup = |sounds| common::Setup {
+        props: true,
+        sounds,
+        ..Default::default()
+    };
+    let (mut late, _) = common::run_on_with(guac_script::Mode::Strict, setup(false));
+    let level = late.files.placed.iter().map(|p| p.obj.unit).max().unwrap();
+    let held = hold_music(&mut late.vm, &mut late.world, &late.files, level);
+    let Music::Waits(n) = held else {
+        panic!("held at the install: {held:?}")
+    };
+    assert!(n > 0, "the music's placements held");
+    join(&mut late);
+    while late.world.sound_clock() < LANDS {
+        late.step().unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert!(late.world.plays().is_empty(), "no book, nothing plays");
+    let (book, stems) = common::sound_part();
+    late.world.set_sounds(book, stems);
+    let started = hold_music(&mut late.vm, &mut late.world, &late.files, level);
+    assert_eq!(started, Music::Starts(n), "let go as the book lands");
+    let late = follow_music(&mut late, AFTER);
+    let (mut booked, _) = common::run_on_with(guac_script::Mode::Strict, setup(true));
+    assert_eq!(
+        hold_music(&mut booked.vm, &mut booked.world, &booked.files, level),
+        Music::Runs,
+        "with its sounds nothing waits"
+    );
+    join(&mut booked);
+    let booked = follow_music(&mut booked, AFTER);
+    println!(
+        "{n} held; late: {late:?}\nwith its sounds: {booked:?}\nload after: {}",
+        common::load()
+    );
+    let from = |m: &MusicSteps| {
+        let i = m.intro.expect("the intro");
+        (m.explore.map(|e| e - i), m.explore_plays.map(|e| e - i))
+    };
+    assert!(late.intro >= Some(LANDS), "the intro from the landing");
+    assert_eq!(from(&late), from(&booked), "explore by the same steps");
+    assert_eq!(from(&late).1, Some(1_045));
+    assert_eq!(late.current.as_deref(), Some("mu_213_explore"));
+    assert_eq!(late.current, booked.current);
+    let explore = |m: &MusicSteps| {
+        m.beds
+            .iter()
+            .find(|b| b.0 == "mu_213_explore")
+            .map(|b| (b.2, b.3))
+    };
+    let (rate, volume) = explore(&late).expect("explore plays");
+    assert_eq!(rate, 100.0);
+    assert!((volume - 78.0).abs() < 0.5, "at its volume: {volume}");
+    assert_eq!(explore(&late), explore(&booked));
+    assert!(
+        late.beds.iter().any(|b| b.0.starts_with("am_") && b.3 > 0.0),
+        "the ambience bed: {:?}",
+        late.beds
+    );
+}
